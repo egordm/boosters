@@ -9,7 +9,7 @@ use super::{
     TEST_CASES_DIR, load_config, load_test_data, load_train_data, make_dataset, pearson_correlation,
 };
 use approx::assert_relative_eq;
-use boosters::data::FeaturesView;
+use boosters::data::{FeaturesView, TargetsView, WeightsView};
 use boosters::data::transpose_to_c_order;
 use boosters::training::{GBLinearParams, GBLinearTrainer, PinballLoss, Rmse, Verbosity};
 use rstest::rstest;
@@ -32,7 +32,8 @@ fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
     let (data, labels) = load_train_data(name);
     let config = load_config(name);
     let (test_data, test_labels) = load_test_data(name).expect("Test data should exist");
-    let train = make_dataset(&data, &labels);
+    let (train, targets) = make_dataset(&data, &labels);
+    let targets_view = TargetsView::new(targets.view());
 
     // Verify config has correct quantile alpha
     let alpha = config
@@ -52,7 +53,9 @@ fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
     };
 
     let trainer = GBLinearTrainer::new(PinballLoss::new(alpha), Rmse, params);
-    let model = trainer.train(&train, &[]).unwrap();
+    let model = trainer
+        .train(&train, targets_view, WeightsView::None, &[])
+        .unwrap();
 
     // Compute predictions on test set
     // test_data is sample-major [n_samples, n_features], need feature-major [n_features, n_samples]
@@ -107,7 +110,8 @@ fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
 fn quantile_regression_predictions_differ() {
     let (data, labels) = load_train_data("quantile_regression");
     let config = load_config("quantile_regression");
-    let train = make_dataset(&data, &labels);
+    let (train, targets) = make_dataset(&data, &labels);
+    let targets_view = TargetsView::new(targets.view());
 
     let base_params = GBLinearParams {
         n_rounds: config.num_boost_round as u32,
@@ -125,9 +129,15 @@ fn quantile_regression_predictions_differ() {
     let trainer_med = GBLinearTrainer::new(PinballLoss::new(0.5), Rmse, base_params.clone());
     let trainer_high = GBLinearTrainer::new(PinballLoss::new(0.9), Rmse, base_params);
 
-    let model_low = trainer_low.train(&train, &[]).unwrap();
-    let model_med = trainer_med.train(&train, &[]).unwrap();
-    let model_high = trainer_high.train(&train, &[]).unwrap();
+    let model_low = trainer_low
+        .train(&train, targets_view.clone(), WeightsView::None, &[])
+        .unwrap();
+    let model_med = trainer_med
+        .train(&train, targets_view.clone(), WeightsView::None, &[])
+        .unwrap();
+    let model_high = trainer_high
+        .train(&train, targets_view, WeightsView::None, &[])
+        .unwrap();
 
     // For prediction, data is already feature-major [n_features, n_samples]
     let features_view = FeaturesView::from_array(data.view());
@@ -197,7 +207,8 @@ fn train_multi_quantile_regression() {
     let (test_data, _test_labels) = load_test_data("multi_quantile").expect("Test data required");
     let config = load_multi_quantile_config();
     let xgb_preds = load_multi_quantile_xgb_predictions();
-    let train = make_dataset(&data, &labels);
+    let (train, targets) = make_dataset(&data, &labels);
+    let targets_view = TargetsView::new(targets.view());
 
     let quantile_alphas = config.quantile_alpha.clone();
     let num_quantiles = quantile_alphas.len();
@@ -219,7 +230,9 @@ fn train_multi_quantile_regression() {
         Rmse,
         params,
     );
-    let model = trainer.train(&train, &[]).unwrap();
+    let model = trainer
+        .train(&train, targets_view, WeightsView::None, &[])
+        .unwrap();
 
     // Verify model has correct number of output groups
     assert_eq!(model.n_groups(), num_quantiles);
@@ -279,7 +292,8 @@ fn multi_quantile_vs_separate_models() {
     let (data, labels) = load_train_data("multi_quantile");
     let config = load_multi_quantile_config();
     let quantile_alphas = config.quantile_alpha.clone();
-    let train = make_dataset(&data, &labels);
+    let (train, targets) = make_dataset(&data, &labels);
+    let targets_view = TargetsView::new(targets.view());
 
     let base_params = GBLinearParams {
         n_rounds: config.num_boost_round as u32,
@@ -298,14 +312,18 @@ fn multi_quantile_vs_separate_models() {
         Rmse,
         base_params.clone(),
     );
-    let multi_model = multi_trainer.train(&train, &[]).unwrap();
+    let multi_model = multi_trainer
+        .train(&train, targets_view.clone(), WeightsView::None, &[])
+        .unwrap();
 
     // Train 3 separate single-quantile models
     let single_models: Vec<_> = quantile_alphas
         .iter()
         .map(|&alpha| {
             let trainer = GBLinearTrainer::new(PinballLoss::new(alpha), Rmse, base_params.clone());
-            trainer.train(&train, &[]).unwrap()
+            trainer
+                .train(&train, targets_view.clone(), WeightsView::None, &[])
+                .unwrap()
         })
         .collect();
 

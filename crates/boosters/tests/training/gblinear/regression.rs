@@ -21,7 +21,8 @@ use rstest::rstest;
 #[case("regression_multifeature")]
 fn train_regression_matches_xgboost(#[case] name: &str) {
     let (data, labels) = load_train_data(name);
-    let train = make_dataset(&data, &labels);
+    let (train, targets) = make_dataset(&data, &labels);
+    let targets_view = TargetsView::new(targets.view());
     let xgb_weights = load_xgb_weights(name);
     let config = load_config(name);
 
@@ -38,7 +39,9 @@ fn train_regression_matches_xgboost(#[case] name: &str) {
     };
 
     let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
-    let model = trainer.train(&train, &[]).unwrap();
+    let model = trainer
+        .train(&train, targets_view, WeightsView::None, &[])
+        .unwrap();
 
     // Compare weights
     // XGBoost stores weights as [w0, w1, ..., wn-1, bias]
@@ -63,7 +66,8 @@ fn train_regression_matches_xgboost(#[case] name: &str) {
 fn train_l2_regularization_shrinks_weights() {
     let (data, labels) = load_train_data("regression_l2");
     let n_features = data.nrows();
-    let train = make_dataset(&data, &labels);
+    let (train, targets) = make_dataset(&data, &labels);
+    let targets_view = TargetsView::new(targets.view());
     let config = load_config("regression_l2");
 
     // Train without regularization
@@ -77,7 +81,9 @@ fn train_l2_regularization_shrinks_weights() {
         ..Default::default()
     };
     let trainer_no_reg = GBLinearTrainer::new(SquaredLoss, Rmse, params_no_reg);
-    let no_reg_model = trainer_no_reg.train(&train, &[]).unwrap();
+    let no_reg_model = trainer_no_reg
+        .train(&train, targets_view.clone(), WeightsView::None, &[])
+        .unwrap();
 
     // Train with L2 regularization
     let params_l2 = GBLinearParams {
@@ -90,7 +96,9 @@ fn train_l2_regularization_shrinks_weights() {
         ..Default::default()
     };
     let trainer_l2 = GBLinearTrainer::new(SquaredLoss, Rmse, params_l2);
-    let l2_model = trainer_l2.train(&train, &[]).unwrap();
+    let l2_model = trainer_l2
+        .train(&train, targets_view, WeightsView::None, &[])
+        .unwrap();
 
     // L2 should produce smaller weights on average
     let no_reg_l2_norm: f32 = (0..n_features)
@@ -111,7 +119,8 @@ fn trained_model_predictions_reasonable() {
     // Feature-major: [n_features=1, n_samples=5]
     let data = Array2::from_shape_vec((1, 5), vec![1.0, 2.0, 3.0, 4.0, 5.0]).unwrap();
     let labels = vec![3.0, 5.0, 7.0, 9.0, 11.0];
-    let train = make_dataset(&data, &labels);
+    let (train, targets) = make_dataset(&data, &labels);
+    let targets_view = TargetsView::new(targets.view());
 
     let params = GBLinearParams {
         n_rounds: 100,
@@ -124,7 +133,9 @@ fn trained_model_predictions_reasonable() {
     };
 
     let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
-    let model = trainer.train(&train, &[]).unwrap();
+    let model = trainer
+        .train(&train, targets_view, WeightsView::None, &[])
+        .unwrap();
 
     // Predictions should be close to actual values
     for i in 0..5 {
@@ -159,7 +170,8 @@ fn parallel_vs_sequential_similar() {
     )
     .unwrap();
     let labels = vec![3.0, 4.0, 5.0, 6.0]; // y = x0 + 2*x1
-    let train = make_dataset(&data, &labels);
+    let (train, targets) = make_dataset(&data, &labels);
+    let targets_view = TargetsView::new(targets.view());
 
     let params_seq = GBLinearParams {
         n_rounds: 50,
@@ -169,7 +181,9 @@ fn parallel_vs_sequential_similar() {
         ..Default::default()
     };
     let trainer_seq = GBLinearTrainer::new(SquaredLoss, Rmse, params_seq);
-    let seq_model = trainer_seq.train(&train, &[]).unwrap();
+    let seq_model = trainer_seq
+        .train(&train, targets_view.clone(), WeightsView::None, &[])
+        .unwrap();
 
     let params_par = GBLinearParams {
         n_rounds: 50,
@@ -179,7 +193,9 @@ fn parallel_vs_sequential_similar() {
         ..Default::default()
     };
     let trainer_par = GBLinearTrainer::new(SquaredLoss, Rmse, params_par);
-    let par_model = trainer_par.train(&train, &[]).unwrap();
+    let par_model = trainer_par
+        .train(&train, targets_view, WeightsView::None, &[])
+        .unwrap();
 
     // Predictions should be similar
     let mut seq_output = [0.0f32; 1];
@@ -206,7 +222,8 @@ fn weight_correlation_with_xgboost(#[case] name: &str) {
     use super::pearson_correlation;
 
     let (data, labels) = load_train_data(name);
-    let train = make_dataset(&data, &labels);
+    let (train, targets) = make_dataset(&data, &labels);
+    let targets_view = TargetsView::new(targets.view());
     let xgb_weights = load_xgb_weights(name);
     let config = load_config(name);
 
@@ -221,7 +238,9 @@ fn weight_correlation_with_xgboost(#[case] name: &str) {
     };
 
     let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
-    let model = trainer.train(&train, &[]).unwrap();
+    let model = trainer
+        .train(&train, targets_view, WeightsView::None, &[])
+        .unwrap();
 
     // Collect our weights (excluding bias)
     let our_weights: Vec<f32> = (0..xgb_weights.num_features)
@@ -249,7 +268,8 @@ fn test_set_prediction_quality(#[case] name: &str) {
     use super::{load_test_data, load_xgb_predictions, rmse};
 
     let (train_data, train_labels) = load_train_data(name);
-    let train = make_dataset(&train_data, &train_labels);
+    let (train, targets) = make_dataset(&train_data, &train_labels);
+    let targets_view = TargetsView::new(targets.view());
     let config = load_config(name);
 
     // Skip if no test data
@@ -269,7 +289,9 @@ fn test_set_prediction_quality(#[case] name: &str) {
     };
 
     let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
-    let model = trainer.train(&train, &[]).unwrap();
+    let model = trainer
+        .train(&train, targets_view, WeightsView::None, &[])
+        .unwrap();
 
     use boosters::training::MetricFn;
     // test_data is sample-major [n_samples, n_features], need feature-major [n_features, n_samples]
@@ -278,8 +300,8 @@ fn test_set_prediction_quality(#[case] name: &str) {
     let output = model.predict(test_view);
     // output is [n_groups, n_samples], metrics expect [n_outputs, n_samples]
     let targets_2d = Array2::from_shape_vec((1, test_labels.len()), test_labels.clone()).unwrap();
-    let targets = TargetsView::new(targets_2d.view());
-    let our_rmse = Rmse.compute(output.view(), targets, WeightsView::None);
+    let test_targets = TargetsView::new(targets_2d.view());
+    let our_rmse = Rmse.compute(output.view(), test_targets, WeightsView::None);
 
     // Compare to XGBoost if available
     if let Some(xgb_preds) = load_xgb_predictions(name) {

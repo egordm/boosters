@@ -9,9 +9,8 @@
 //!
 //! # Data Format
 //!
-//! The updaters require feature-major layout for efficient feature iteration:
-//!
-//! - [`FeaturesView`](crate::data::FeaturesView): Feature-major view `[n_features, n_samples]`
+//! The updaters work with [`BinnedDataset`] which provides efficient per-feature
+//! iteration via [`for_each_feature_value()`].
 //!
 //! # Gradient Storage
 //!
@@ -22,7 +21,7 @@
 use ndarray::ArrayViewMut2;
 use rayon::prelude::*;
 
-use crate::data::FeaturesView;
+use crate::data::BinnedDataset;
 use crate::repr::gblinear::LinearModel;
 use crate::training::Gradients;
 
@@ -100,7 +99,7 @@ impl Updater {
     /// # Arguments
     ///
     /// * `model` - Linear model to update
-    /// * `data` - Training data as FeaturesView `[n_features, n_samples]`
+    /// * `data` - Training data as BinnedDataset (uses `for_each_feature_value()`)
     /// * `buffer` - Gradient buffer with shape `[n_samples, n_outputs]`
     /// * `selector` - Feature selection strategy
     /// * `output` - Which output (group) to update (0 to n_outputs-1)
@@ -111,7 +110,7 @@ impl Updater {
     pub fn update_round<Sel>(
         &self,
         model: &mut LinearModel,
-        data: &FeaturesView<'_>,
+        data: &BinnedDataset,
         buffer: &Gradients,
         selector: &mut Sel,
         output: usize,
@@ -162,23 +161,22 @@ impl Updater {
     ///
     /// # Arguments
     ///
-    /// * `data` - Training data as FeaturesView `[n_features, n_samples]`
+    /// * `data` - Training data as BinnedDataset
     /// * `deltas` - Weight deltas from coordinate descent: (feature_idx, delta) pairs
     /// * `output` - Which output group these deltas apply to
     /// * `predictions` - Prediction buffer `[n_outputs, n_samples]`
     pub fn apply_weight_deltas_to_predictions(
         &self,
-        data: &FeaturesView<'_>,
+        data: &BinnedDataset,
         deltas: &[(usize, f32)],
         output: usize,
         mut predictions: ArrayViewMut2<'_, f32>,
     ) {
         let mut output_row = predictions.row_mut(output);
         for &(feature, delta) in deltas {
-            let feature_values = data.feature(feature);
-            for (row, &value) in feature_values.iter().enumerate() {
+            data.for_each_feature_value(feature, |row, value| {
                 output_row[row] += value * delta;
-            }
+            });
         }
     }
 
@@ -216,7 +214,7 @@ impl Updater {
 /// Returns deltas for incremental prediction updates.
 fn sequential_update<Sel>(
     model: &mut LinearModel,
-    data: &FeaturesView<'_>,
+    data: &BinnedDataset,
     buffer: &Gradients,
     selector: &mut Sel,
     output: usize,
@@ -246,7 +244,7 @@ where
 /// Returns deltas for incremental prediction updates.
 fn parallel_update<Sel>(
     model: &mut LinearModel,
-    data: &FeaturesView<'_>,
+    data: &BinnedDataset,
     buffer: &Gradients,
     selector: &mut Sel,
     output: usize,
@@ -286,7 +284,7 @@ where
 /// ```
 fn compute_weight_update(
     model: &LinearModel,
-    data: &FeaturesView<'_>,
+    data: &BinnedDataset,
     buffer: &Gradients,
     feature: usize,
     output: usize,
@@ -301,11 +299,10 @@ fn compute_weight_update(
     let mut sum_grad = 0.0f32;
     let mut sum_hess = 0.0f32;
 
-    let feature_values = data.feature(feature);
-    for (row, &value) in feature_values.iter().enumerate() {
+    data.for_each_feature_value(feature, |row, value| {
         sum_grad += grad_hess[row].grad * value;
         sum_hess += grad_hess[row].hess * value * value;
-    }
+    });
 
     // Add L2 regularization
     let grad_l2 = sum_grad + config.lambda * current_weight;
@@ -354,15 +351,22 @@ fn soft_threshold(x: f32, threshold: f32) -> f32 {
 mod tests {
     use super::super::selector::CyclicSelector;
     use super::*;
-    use crate::data::FeaturesView;
-    use ndarray::{Array2, array};
+    use crate::data::binned::builder::DatasetBuilder;
+    use ndarray::array;
 
-    fn make_test_data() -> (Array2<f32>, Gradients) {
-        // Simple 2 features x 4 samples dataset (feature-major layout)
-        let feature_data = array![
-            [1.0f32, 0.0, 1.0, 2.0], // feature 0
-            [0.0, 1.0, 1.0, 0.5],    // feature 1
-        ];
+    fn make_test_data() -> (BinnedDataset, Gradients) {
+        // Simple 2 features x 4 samples dataset
+        // Original feature-major layout transposed to sample-major for DatasetBuilder
+        // Row 0: feature 0 = 1.0, feature 1 = 0.0
+        // Row 1: feature 0 = 0.0, feature 1 = 1.0
+        // Row 2: feature 0 = 1.0, feature 1 = 1.0
+        // Row 3: feature 0 = 2.0, feature 1 = 0.5
+
+        let dataset = DatasetBuilder::new()
+            .add_numeric("f0", array![1.0f32, 0.0, 1.0, 2.0].view())
+            .add_numeric("f1", array![0.0f32, 1.0, 1.0, 0.5].view())
+            .build()
+            .unwrap();
 
         // Gradients (simulating squared error loss)
         let mut buffer = Gradients::new(4, 1);
@@ -371,7 +375,7 @@ mod tests {
         buffer.set(2, 0, 0.2, 1.0);
         buffer.set(3, 0, -0.1, 1.0);
 
-        (feature_data, buffer)
+        (dataset, buffer)
     }
 
     #[test]
@@ -392,8 +396,7 @@ mod tests {
 
     #[test]
     fn sequential_updater_changes_weights() {
-        let (feature_data, buffer) = make_test_data();
-        let data = FeaturesView::from_array(feature_data.view());
+        let (dataset, buffer) = make_test_data();
         let mut model = LinearModel::zeros(2, 1);
         let mut selector = CyclicSelector::new();
 
@@ -406,7 +409,7 @@ mod tests {
 
         updater.update_round(
             &mut model,
-            &data,
+            &dataset,
             &buffer,
             &mut selector,
             0, // output
@@ -420,8 +423,7 @@ mod tests {
 
     #[test]
     fn parallel_updater_changes_weights() {
-        let (feature_data, buffer) = make_test_data();
-        let data = FeaturesView::from_array(feature_data.view());
+        let (dataset, buffer) = make_test_data();
         let mut model = LinearModel::zeros(2, 1);
         let mut selector = CyclicSelector::new();
 
@@ -434,7 +436,7 @@ mod tests {
 
         updater.update_round(
             &mut model,
-            &data,
+            &dataset,
             &buffer,
             &mut selector,
             0, // output
@@ -448,8 +450,7 @@ mod tests {
 
     #[test]
     fn l2_regularization_shrinks_weights() {
-        let (feature_data, buffer) = make_test_data();
-        let data = FeaturesView::from_array(feature_data.view());
+        let (dataset, buffer) = make_test_data();
 
         // No regularization
         let mut model1 = LinearModel::zeros(2, 1);
@@ -464,7 +465,7 @@ mod tests {
 
         updater1.update_round(
             &mut model1,
-            &data,
+            &dataset,
             &buffer,
             &mut selector,
             0, // output
@@ -483,7 +484,7 @@ mod tests {
 
         updater2.update_round(
             &mut model2,
-            &data,
+            &dataset,
             &buffer,
             &mut selector,
             0, // output

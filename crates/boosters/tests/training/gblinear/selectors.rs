@@ -24,7 +24,8 @@ use ndarray::Array2;
 #[test]
 fn train_all_selectors_regression() {
     let (data, labels) = load_train_data("regression_l2");
-    let train = make_dataset(&data, &labels);
+    let (train, targets) = make_dataset(&data, &labels);
+    let targets_view = TargetsView::new(targets.view());
     let (test_data, test_labels) = match load_test_data("regression_l2") {
         Some(d) => d,
         None => {
@@ -56,12 +57,14 @@ fn train_all_selectors_regression() {
         ..Default::default()
     };
     let shuffle_trainer = GBLinearTrainer::new(SquaredLoss, Rmse, shuffle_params);
-    let shuffle_model = shuffle_trainer.train(&train, &[]).unwrap();
+    let shuffle_model = shuffle_trainer
+        .train(&train, targets_view.clone(), WeightsView::None, &[])
+        .unwrap();
     use boosters::training::MetricFn;
     let shuffle_output = shuffle_model.predict(test_view);
     let targets_2d = Array2::from_shape_vec((1, test_labels.len()), test_labels.clone()).unwrap();
-    let targets = TargetsView::new(targets_2d.view());
-    let shuffle_rmse = Rmse.compute(shuffle_output.view(), targets, WeightsView::None);
+    let eval_targets = TargetsView::new(targets_2d.view());
+    let shuffle_rmse = Rmse.compute(shuffle_output.view(), eval_targets, WeightsView::None);
 
     for (name, selector) in selectors {
         let params = GBLinearParams {
@@ -77,9 +80,11 @@ fn train_all_selectors_regression() {
         };
 
         let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
-        let model = trainer.train(&train, &[]).unwrap();
+        let model = trainer
+            .train(&train, targets_view.clone(), WeightsView::None, &[])
+            .unwrap();
         let output = model.predict(test_view);
-        let rmse = Rmse.compute(output.view(), targets, WeightsView::None);
+        let rmse = Rmse.compute(output.view(), eval_targets, WeightsView::None);
 
         // All selectors should produce reasonable models
         // (within 2x of shuffle baseline)
@@ -97,7 +102,8 @@ fn train_all_selectors_regression() {
 #[test]
 fn train_all_selectors_multiclass() {
     let (data, labels) = load_train_data("multiclass_classification");
-    let train = make_dataset(&data, &labels);
+    let (train, targets) = make_dataset(&data, &labels);
+    let targets_view = TargetsView::new(targets.view());
     let (test_data, test_labels) = match load_test_data("multiclass_classification") {
         Some(d) => d,
         None => {
@@ -134,7 +140,9 @@ fn train_all_selectors_multiclass() {
         MulticlassLogLoss,
         shuffle_params,
     );
-    let shuffle_model = shuffle_trainer.train(&train, &[]).unwrap();
+    let shuffle_model = shuffle_trainer
+        .train(&train, targets_view.clone(), WeightsView::None, &[])
+        .unwrap();
     use boosters::training::{MetricFn, MulticlassAccuracy};
     let shuffle_output = shuffle_model.predict(test_view);
     // output is [n_groups, n_samples] = [3, n_samples]
@@ -155,9 +163,10 @@ fn train_all_selectors_multiclass() {
         .collect();
     let shuffle_pred_arr = Array2::from_shape_vec((1, n_samples), shuffle_pred_classes).unwrap();
     let targets_2d = Array2::from_shape_vec((1, test_labels.len()), test_labels.clone()).unwrap();
-    let targets = TargetsView::new(targets_2d.view());
+    let eval_targets = TargetsView::new(targets_2d.view());
     let shuffle_acc =
-        MulticlassAccuracy.compute(shuffle_pred_arr.view(), targets, WeightsView::None) as f32;
+        MulticlassAccuracy.compute(shuffle_pred_arr.view(), eval_targets, WeightsView::None)
+            as f32;
 
     for (name, selector) in selectors {
         let params = GBLinearParams {
@@ -174,7 +183,9 @@ fn train_all_selectors_multiclass() {
 
         let trainer =
             GBLinearTrainer::new(SoftmaxLoss::new(num_classes), MulticlassLogLoss, params);
-        let model = trainer.train(&train, &[]).unwrap();
+        let model = trainer
+            .train(&train, targets_view.clone(), WeightsView::None, &[])
+            .unwrap();
         let output = model.predict(test_view);
         // output is [n_groups, n_samples]
         let n_samples = output.ncols();
@@ -193,7 +204,8 @@ fn train_all_selectors_multiclass() {
             })
             .collect();
         let pred_arr = Array2::from_shape_vec((1, n_samples), pred_classes).unwrap();
-        let acc = MulticlassAccuracy.compute(pred_arr.view(), targets, WeightsView::None) as f32;
+        let acc =
+            MulticlassAccuracy.compute(pred_arr.view(), eval_targets, WeightsView::None) as f32;
 
         // All selectors should achieve reasonable accuracy
         // (at least 50% of shuffle baseline accuracy)
@@ -211,7 +223,8 @@ fn train_all_selectors_multiclass() {
 #[test]
 fn train_greedy_selector_feature_priority() {
     let (data, labels) = load_train_data("regression_l2");
-    let train = make_dataset(&data, &labels);
+    let (train, targets) = make_dataset(&data, &labels);
+    let targets_view = TargetsView::new(targets.view());
     let n_features = data.nrows(); // feature-major: rows are features
 
     // Train with greedy selector with small top_k
@@ -242,8 +255,12 @@ fn train_greedy_selector_feature_priority() {
     };
     let cyclic_trainer = GBLinearTrainer::new(SquaredLoss, Rmse, cyclic_params);
 
-    let greedy_model = greedy_trainer.train(&train, &[]).unwrap();
-    let cyclic_model = cyclic_trainer.train(&train, &[]).unwrap();
+    let greedy_model = greedy_trainer
+        .train(&train, targets_view.clone(), WeightsView::None, &[])
+        .unwrap();
+    let cyclic_model = cyclic_trainer
+        .train(&train, targets_view, WeightsView::None, &[])
+        .unwrap();
 
     // Both should produce valid models (non-zero weights somewhere)
     let greedy_has_weights: bool = (0..n_features).any(|i| greedy_model.weight(i, 0).abs() > 1e-6);
@@ -263,7 +280,8 @@ fn train_greedy_selector_feature_priority() {
 #[test]
 fn train_thrifty_selector_convergence() {
     let (data, labels) = load_train_data("regression_l2");
-    let train = make_dataset(&data, &labels);
+    let (train, targets) = make_dataset(&data, &labels);
+    let targets_view = TargetsView::new(targets.view());
     let (test_data, test_labels) = match load_test_data("regression_l2") {
         Some(d) => d,
         None => {
@@ -289,12 +307,14 @@ fn train_thrifty_selector_convergence() {
     };
 
     let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
-    let model = trainer.train(&train, &[]).unwrap();
+    let model = trainer
+        .train(&train, targets_view, WeightsView::None, &[])
+        .unwrap();
     use boosters::training::MetricFn;
     let output = model.predict(test_view);
     let targets_2d = Array2::from_shape_vec((1, test_labels.len()), test_labels.clone()).unwrap();
-    let targets = TargetsView::new(targets_2d.view());
-    let rmse = Rmse.compute(output.view(), targets, WeightsView::None);
+    let eval_targets = TargetsView::new(targets_2d.view());
+    let rmse = Rmse.compute(output.view(), eval_targets, WeightsView::None);
 
     // Thrifty should converge to a reasonable model
     assert!(rmse < 100.0, "Thrifty should converge: RMSE = {}", rmse);

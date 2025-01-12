@@ -21,9 +21,9 @@ mod quantile;
 mod regression;
 mod selectors;
 
-use boosters::Dataset;
+use boosters::data::binned::DatasetBuilder;
 use boosters::data::transpose_to_c_order;
-use boosters::data::{TargetsView, WeightsView};
+use boosters::data::{BinnedDataset, TargetsView, WeightsView};
 use boosters::training::Rmse;
 use ndarray::{Array2, ArrayView2};
 use serde::Deserialize;
@@ -164,15 +164,30 @@ pub fn load_xgb_predictions(name: &str) -> Option<Vec<f32>> {
     Some(data.predictions)
 }
 
-/// Create a Dataset from feature-major data and labels.
+/// Create a BinnedDataset and targets array from feature-major data and labels.
 ///
 /// Takes data in `[n_features, n_samples]` format (as returned by load_train_data)
-/// and creates a Dataset for training.
-pub fn make_dataset(features: &Array2<f32>, labels: &[f32]) -> Dataset {
+/// and creates a BinnedDataset for training with targets in `[n_outputs, n_samples]` format.
+///
+/// Returns (BinnedDataset, targets_array) where targets_array is owned.
+pub fn make_dataset(features: &Array2<f32>, labels: &[f32]) -> (BinnedDataset, Array2<f32>) {
     let n_samples = features.ncols();
+    let n_features = features.nrows();
+
+    // Build BinnedDataset from features using DatasetBuilder
+    let mut builder = DatasetBuilder::new();
+    for f in 0..n_features {
+        let name = format!("f{}", f);
+        let col: Vec<f32> = (0..n_samples).map(|s| features[[f, s]]).collect();
+        builder = builder.add_numeric(&name, ndarray::ArrayView1::from(&col));
+    }
+    let dataset = builder.build().expect("dataset build should succeed");
+
+    // Create targets array [n_outputs=1, n_samples]
     let targets =
         Array2::from_shape_vec((1, n_samples), labels.to_vec()).expect("targets shape mismatch");
-    Dataset::new(features.view(), Some(targets.view()), None)
+
+    (dataset, targets)
 }
 
 // =============================================================================

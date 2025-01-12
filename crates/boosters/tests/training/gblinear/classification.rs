@@ -17,7 +17,8 @@ use ndarray::Array2;
 fn train_binary_classification() {
     let (data, labels) = load_train_data("binary_classification");
     let config = load_config("binary_classification");
-    let train = make_dataset(&data, &labels);
+    let (train, targets) = make_dataset(&data, &labels);
+    let targets_view = TargetsView::new(targets.view());
 
     let params = GBLinearParams {
         n_rounds: config.num_boost_round as u32,
@@ -31,7 +32,9 @@ fn train_binary_classification() {
     };
 
     let trainer = GBLinearTrainer::new(LogisticLoss, LogLoss, params);
-    let model = trainer.train(&train, &[]).unwrap();
+    let model = trainer
+        .train(&train, targets_view, WeightsView::None, &[])
+        .unwrap();
 
     // Verify predictions are in reasonable range for logits.
     // Data is feature-major [n_features, n_samples]
@@ -56,7 +59,8 @@ fn train_multioutput_classification() {
     let (data, labels) = load_train_data("multiclass_classification");
     let config = load_config("multiclass_classification");
     let num_class = 3;
-    let train = make_dataset(&data, &labels);
+    let (train, targets) = make_dataset(&data, &labels);
+    let targets_view = TargetsView::new(targets.view());
 
     let params = GBLinearParams {
         n_rounds: config.num_boost_round as u32,
@@ -70,7 +74,9 @@ fn train_multioutput_classification() {
     };
 
     let trainer = GBLinearTrainer::new(SoftmaxLoss::new(num_class), MulticlassLogLoss, params);
-    let model = trainer.train(&train, &[]).unwrap();
+    let model = trainer
+        .train(&train, targets_view, WeightsView::None, &[])
+        .unwrap();
 
     // Verify model has correct number of output groups
     assert_eq!(model.n_groups(), num_class);
@@ -120,8 +126,8 @@ fn train_multioutput_classification() {
     // Metrics expect shape [n_groups, n_samples] - for class predictions, n_groups=1
     let pred_arr = Array2::from_shape_vec((1, n_samples), pred_classes).unwrap();
     let targets_2d = Array2::from_shape_vec((1, labels.len()), labels.clone()).unwrap();
-    let targets = TargetsView::new(targets_2d.view());
-    let accuracy = MulticlassAccuracy.compute(pred_arr.view(), targets, WeightsView::None);
+    let metric_targets = TargetsView::new(targets_2d.view());
+    let accuracy = MulticlassAccuracy.compute(pred_arr.view(), metric_targets, WeightsView::None);
 
     // Training accuracy should be reasonable for linear model
     // (better than random = 33.3% for 3 classes)

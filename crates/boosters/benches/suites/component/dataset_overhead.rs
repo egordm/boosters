@@ -88,10 +88,11 @@ fn bench_dataset_construction(c: &mut Criterion) {
 // GBLinear Training Overhead (CRITICAL)
 // =============================================================================
 
-/// Benchmark: GBLinear training with Dataset vs BinnedDataset
+/// Benchmark: GBLinear training with BinnedDataset
 ///
-/// This is the CRITICAL benchmark. GBLinear doesn't need bins, so any overhead
-/// from using BinnedDataset is pure waste. Target: <2x on small datasets.
+/// After migration, GBLinear uses BinnedDataset directly via for_each_feature_value().
+/// This benchmark measures actual training performance with the new unified path.
+/// Target: <2x on small datasets compared to raw feature access.
 fn bench_gblinear_training_overhead(c: &mut Criterion) {
     let mut group = c.benchmark_group("component/overhead/gblinear_train");
     group.sample_size(10);
@@ -113,9 +114,12 @@ fn bench_gblinear_training_overhead(c: &mut Criterion) {
             None,
         );
 
-        // Create BinnedDataset
+        // Create BinnedDataset (bundling disabled for GBLinear - simpler features)
         let binned = BinnedDatasetBuilder::with_config(
-            BinningConfig::builder().max_bins(256).build(),
+            BinningConfig::builder()
+                .max_bins(256)
+                .enable_bundling(false) // GBLinear doesn't use feature bundling
+                .build(),
         )
         .add_features(dataset.features(), Parallelism::Parallel)
         .build()
@@ -134,37 +138,41 @@ fn bench_gblinear_training_overhead(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements((n_rows * n_features) as u64));
 
-        // Benchmark with Dataset (current production path)
+        // Benchmark GBLinear training with BinnedDataset (current unified path)
+        let targets_view = TargetsView::new(targets_2d.view());
         group.bench_with_input(
-            BenchmarkId::new("Dataset", n_rows),
-            &dataset,
-            |b, ds| {
-                b.iter(|| black_box(trainer.train(black_box(ds), &[])).unwrap())
+            BenchmarkId::new("BinnedDataset", n_rows),
+            &(&binned, targets_view.clone()),
+            |b, (binned_ds, targets)| {
+                b.iter(|| {
+                    black_box(
+                        trainer
+                            .train(black_box(*binned_ds), targets.clone(), WeightsView::None, &[])
+                            .unwrap(),
+                    )
+                })
             },
         );
 
-        // Benchmark with BinnedDataset (proposed consolidated path)
-        // Note: GBLinearTrainer needs to support BinnedDataset for this to work.
-        // For now, we just measure the overhead of accessing raw features from BinnedDataset.
-        let targets_view = TargetsView::new(targets_2d.view());
+        // Benchmark raw access pattern overhead (BinnedDataset)
         group.bench_with_input(
             BenchmarkId::new("BinnedDataset_raw_access", n_rows),
-            &(&binned, &targets_view),
-            |b, (binned_ds, _targets)| {
-                // Simulate GBLinear's access pattern: iterate features, compute gradients
+            &binned,
+            |b, binned_ds| {
+                // Simulate GBLinear's access pattern: iterate features via for_each_feature_value
                 b.iter(|| {
                     let mut sum = 0.0f32;
                     for feature_idx in 0..binned_ds.n_features() {
-                        if let Some(slice) = binned_ds.raw_feature_slice(feature_idx) {
-                            sum += slice.iter().sum::<f32>();
-                        }
+                        binned_ds.for_each_feature_value(feature_idx, |_row, value| {
+                            sum += value;
+                        });
                     }
                     black_box(sum)
                 })
             },
         );
 
-        // Benchmark Dataset raw access for comparison
+        // Benchmark Dataset raw access for comparison (baseline)
         let features_view = dataset.features();
         group.bench_with_input(
             BenchmarkId::new("Dataset_raw_access", n_rows),

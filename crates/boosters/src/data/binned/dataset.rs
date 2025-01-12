@@ -733,15 +733,6 @@ impl BinnedDataset {
             } => {
                 let group = &self.groups[group_idx as usize];
 
-                // Check if this is a categorical feature (no raw values)
-                if group.is_categorical() {
-                    panic!(
-                        "for_each_feature_value: feature {} is categorical, \
-                        linear models don't use categorical features",
-                        feature
-                    );
-                }
-
                 // Match on storage type ONCE, then iterate directly
                 match group.storage() {
                     super::FeatureStorage::Numeric(storage) => {
@@ -843,15 +834,6 @@ impl BinnedDataset {
                 idx_in_group,
             } => {
                 let group = &self.groups[group_idx as usize];
-
-                // Check if this is a categorical feature (no raw values)
-                if group.is_categorical() {
-                    panic!(
-                        "gather_feature_values: feature {} is categorical, \
-                        linear trees don't use categorical features",
-                        feature
-                    );
-                }
 
                 // Match on storage type ONCE, then gather efficiently
                 match group.storage() {

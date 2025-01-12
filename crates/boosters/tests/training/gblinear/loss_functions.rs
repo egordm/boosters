@@ -34,7 +34,8 @@ use rstest::rstest;
 #[case(10.0, 20.0)] // Large delta: similar to squared loss
 fn train_pseudo_huber_with_delta(#[case] delta: f32, #[case] max_rmse: f64) {
     let (data, labels) = load_train_data("regression_l2");
-    let train = make_dataset(&data, &labels);
+    let (train, targets) = make_dataset(&data, &labels);
+    let targets_view = TargetsView::new(targets.view());
     let (test_data, test_labels) = match load_test_data("regression_l2") {
         Some(d) => d,
         None => {
@@ -55,7 +56,9 @@ fn train_pseudo_huber_with_delta(#[case] delta: f32, #[case] max_rmse: f64) {
     };
 
     let trainer = GBLinearTrainer::new(PseudoHuberLoss::new(delta), Rmse, params);
-    let model = trainer.train(&train, &[]).unwrap();
+    let model = trainer
+        .train(&train, targets_view, WeightsView::None, &[])
+        .unwrap();
 
     use boosters::training::MetricFn;
 
@@ -81,7 +84,8 @@ fn train_pseudo_huber_with_delta(#[case] delta: f32, #[case] max_rmse: f64) {
 #[test]
 fn pseudo_huber_large_delta_matches_squared() {
     let (data, labels) = load_train_data("regression_l2");
-    let train = make_dataset(&data, &labels);
+    let (train, targets) = make_dataset(&data, &labels);
+    let targets_view = TargetsView::new(targets.view());
     let (test_data, test_labels) = match load_test_data("regression_l2") {
         Some(d) => d,
         None => {
@@ -103,11 +107,15 @@ fn pseudo_huber_large_delta_matches_squared() {
 
     // Train with large delta PseudoHuber
     let trainer_ph = GBLinearTrainer::new(PseudoHuberLoss::new(10.0), Rmse, base_params.clone());
-    let ph_model = trainer_ph.train(&train, &[]).unwrap();
+    let ph_model = trainer_ph
+        .train(&train, targets_view.clone(), WeightsView::None, &[])
+        .unwrap();
 
     // Train with squared loss for reference
     let trainer_sq = GBLinearTrainer::new(SquaredLoss, Rmse, base_params);
-    let sq_model = trainer_sq.train(&train, &[]).unwrap();
+    let sq_model = trainer_sq
+        .train(&train, targets_view, WeightsView::None, &[])
+        .unwrap();
 
     use boosters::training::MetricFn;
 
@@ -146,7 +154,8 @@ fn pseudo_huber_large_delta_matches_squared() {
 #[test]
 fn train_hinge_binary_classification() {
     let (data, labels) = load_train_data("binary_classification");
-    let train = make_dataset(&data, &labels);
+    let (train, targets) = make_dataset(&data, &labels);
+    let targets_view = TargetsView::new(targets.view());
     let (test_data, test_labels) = match load_test_data("binary_classification") {
         Some(d) => d,
         None => {
@@ -169,11 +178,15 @@ fn train_hinge_binary_classification() {
     // Train with hinge loss — evaluate with MarginAccuracy (threshold=0)
     let trainer_hinge =
         GBLinearTrainer::new(HingeLoss, MarginAccuracy::default(), base_params.clone());
-    let hinge_model = trainer_hinge.train(&train, &[]).unwrap();
+    let hinge_model = trainer_hinge
+        .train(&train, targets_view.clone(), WeightsView::None, &[])
+        .unwrap();
 
     // Also train with logistic for comparison
     let trainer_logistic = GBLinearTrainer::new(LogisticLoss, LogLoss, base_params);
-    let logistic_model = trainer_logistic.train(&train, &[]).unwrap();
+    let logistic_model = trainer_logistic
+        .train(&train, targets_view, WeightsView::None, &[])
+        .unwrap();
 
     // Compute accuracy.
     // - Hinge: MarginAccuracy (threshold on margins at 0.0).

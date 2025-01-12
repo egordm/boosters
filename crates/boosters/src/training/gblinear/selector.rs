@@ -24,7 +24,7 @@
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 
-use crate::data::FeaturesView;
+use crate::data::BinnedDataset;
 use crate::repr::gblinear::LinearModel;
 use crate::training::Gradients;
 
@@ -107,7 +107,7 @@ impl SelectorState {
     pub fn setup_round(
         &mut self,
         model: &LinearModel,
-        data: &FeaturesView<'_>,
+        data: &BinnedDataset,
         buffer: &Gradients,
         output: usize,
         alpha: f32,
@@ -392,7 +392,7 @@ impl GreedySelector {
     /// # Arguments
     ///
     /// * `model` - Current model weights
-    /// * `data` - Training data (feature-major view)
+    /// * `data` - Training data (BinnedDataset)
     /// * `buffer` - Gradient buffer
     /// * `output` - Which output (group) to compute for
     /// * `alpha` - L1 regularization strength
@@ -400,7 +400,7 @@ impl GreedySelector {
     pub fn setup(
         &mut self,
         model: &LinearModel,
-        data: &FeaturesView<'_>,
+        data: &BinnedDataset,
         buffer: &Gradients,
         output: usize,
         alpha: f32,
@@ -421,11 +421,10 @@ impl GreedySelector {
             let mut sum_grad = 0.0f32;
             let mut sum_hess = 0.0f32;
 
-            let feature_values = data.feature(feature_idx);
-            for (row, &value) in feature_values.iter().enumerate() {
+            data.for_each_feature_value(feature_idx, |row, value| {
                 sum_grad += grad_hess[row].grad * value;
                 sum_hess += grad_hess[row].hess * value * value;
-            }
+            });
 
             // Compute coordinate descent update with elastic net
             let magnitude =
@@ -538,7 +537,7 @@ impl ThriftySelector {
     /// # Arguments
     ///
     /// * `model` - Current model weights
-    /// * `data` - Training data (feature-major view)
+    /// * `data` - Training data (BinnedDataset)
     /// * `buffer` - Gradient buffer
     /// * `output` - Which output (group) to compute for
     /// * `alpha` - L1 regularization strength
@@ -546,7 +545,7 @@ impl ThriftySelector {
     pub fn setup(
         &mut self,
         model: &LinearModel,
-        data: &FeaturesView<'_>,
+        data: &BinnedDataset,
         buffer: &Gradients,
         output: usize,
         alpha: f32,
@@ -564,11 +563,10 @@ impl ThriftySelector {
                 let mut sum_grad = 0.0f32;
                 let mut sum_hess = 0.0f32;
 
-                let feature_values = data.feature(feature_idx);
-                for (row, &value) in feature_values.iter().enumerate() {
+                data.for_each_feature_value(feature_idx, |row, value| {
                     sum_grad += grad_hess[row].grad * value;
                     sum_hess += grad_hess[row].hess * value * value;
-                }
+                });
 
                 let magnitude =
                     coordinate_delta_magnitude(sum_grad, sum_hess, current_weight, alpha, lambda);
@@ -801,20 +799,19 @@ mod tests {
 
     #[test]
     fn greedy_selector_with_setup() {
-        use crate::data::FeaturesView;
+        use crate::data::binned::DatasetBuilder;
         use crate::repr::gblinear::LinearModel;
         use crate::training::Gradients;
+        use ndarray::array;
 
-        // Create simple test data in feature-major order
-        // 3 features, 3 samples
-        // FeaturesView shape: [n_features, n_samples]
-        // Data: [f0_s0, f0_s1, f0_s2, f1_s0, f1_s1, f1_s2, f2_s0, f2_s1, f2_s2]
-        let data = [
-            1.0, 0.0, 1.0, // feature 0: samples 0,1,2
-            0.0, 1.0, 1.0, // feature 1: samples 0,1,2
-            0.5, 0.5, 0.5, // feature 2: samples 0,1,2
-        ];
-        let features = FeaturesView::from_slice(&data, 3, 3).unwrap();
+        // Create simple test data: 3 features, 3 samples
+        // Build BinnedDataset using DatasetBuilder
+        let dataset = DatasetBuilder::new()
+            .add_numeric("f0", array![1.0, 0.0, 1.0].view())
+            .add_numeric("f1", array![0.0, 1.0, 1.0].view())
+            .add_numeric("f2", array![0.5, 0.5, 0.5].view())
+            .build()
+            .unwrap();
 
         let model = LinearModel::zeros(3, 1);
 
@@ -825,7 +822,7 @@ mod tests {
         buffer.set(2, 0, 0.2, 1.0);
 
         let mut sel = GreedySelector::new(0);
-        sel.setup(&model, &features, &buffer, 0, 0.0, 0.0);
+        sel.setup(&model, &dataset, &buffer, 0, 0.0, 0.0);
         sel.reset(3);
 
         // Feature 1 should be selected first (largest gradient impact)
@@ -860,18 +857,18 @@ mod tests {
 
     #[test]
     fn thrifty_selector_with_setup() {
-        use crate::data::FeaturesView;
+        use crate::data::binned::DatasetBuilder;
         use crate::repr::gblinear::LinearModel;
         use crate::training::Gradients;
+        use ndarray::array;
 
-        // Same setup as greedy test
-        // 3 features, 3 samples in feature-major order
-        let data = [
-            1.0, 0.0, 1.0, // feature 0: samples 0,1,2
-            0.0, 1.0, 1.0, // feature 1: samples 0,1,2
-            0.5, 0.5, 0.5, // feature 2: samples 0,1,2
-        ];
-        let features = FeaturesView::from_slice(&data, 3, 3).unwrap();
+        // Same setup as greedy test: 3 features, 3 samples
+        let dataset = DatasetBuilder::new()
+            .add_numeric("f0", array![1.0, 0.0, 1.0].view())
+            .add_numeric("f1", array![0.0, 1.0, 1.0].view())
+            .add_numeric("f2", array![0.5, 0.5, 0.5].view())
+            .build()
+            .unwrap();
 
         let model = LinearModel::zeros(3, 1);
 
@@ -881,7 +878,7 @@ mod tests {
         buffer.set(2, 0, 0.2, 1.0);
 
         let mut sel = ThriftySelector::new(0);
-        sel.setup(&model, &features, &buffer, 0, 0.0, 0.0);
+        sel.setup(&model, &dataset, &buffer, 0, 0.0, 0.0);
         sel.reset(3);
 
         // Should return all 3 features in sorted order

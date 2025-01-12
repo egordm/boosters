@@ -4,12 +4,13 @@
 //! Access components via [`linear()`](GBLinearModel::linear), [`meta()`](GBLinearModel::meta),
 //! and [`config()`](GBLinearModel::config).
 
-use crate::data::Dataset;
+use crate::data::{BinnedDatasetBuilder, BinningConfig, Dataset};
 use crate::explainability::{ExplainError, LinearExplainer, ShapValues};
 use crate::model::meta::ModelMeta;
 use crate::repr::gblinear::LinearModel;
 use crate::training::gblinear::GBLinearTrainer;
 use crate::training::{EvalSet, Metric, ObjectiveFn};
+use crate::Parallelism;
 
 use ndarray::Array2;
 
@@ -47,8 +48,8 @@ impl GBLinearModel {
         config: GBLinearConfig,
         n_threads: usize,
     ) -> Option<Self> {
-        crate::run_with_threads(n_threads, |_parallelism| {
-            Self::train_inner(dataset, eval_sets, config)
+        crate::run_with_threads(n_threads, |parallelism| {
+            Self::train_inner(dataset, eval_sets, config, parallelism)
         })
     }
 
@@ -60,6 +61,7 @@ impl GBLinearModel {
         dataset: &Dataset,
         eval_sets: &[EvalSet<'_>],
         config: GBLinearConfig,
+        parallelism: Parallelism,
     ) -> Option<Self> {
         let n_features = dataset.n_features();
         let n_outputs = config.objective.n_outputs();
@@ -67,6 +69,22 @@ impl GBLinearModel {
         // Get task kind from objective (not inferred from n_outputs)
         // This correctly handles multi-output regression (e.g., multi-quantile)
         let task = config.objective.task_kind();
+
+        // Build BinnedDataset for training (without binning - GBLinear uses raw values)
+        // The BinnedDataset storage keeps raw f32 values for numeric features
+        let binning_config = BinningConfig::builder()
+            .enable_bundling(false) // GBLinear doesn't use bundling
+            .build();
+        let binned = BinnedDatasetBuilder::with_config(binning_config)
+            .add_features(dataset.features(), parallelism)
+            .build()
+            .expect("dataset binning should not fail");
+
+        // Extract targets and weights from Dataset
+        let targets = dataset
+            .targets()
+            .expect("dataset must have targets for training");
+        let weights = dataset.weights();
 
         // Convert config to trainer params
         let params = config.to_trainer_params();
@@ -76,7 +94,7 @@ impl GBLinearModel {
 
         // Create trainer with objective and metric from config
         let trainer = GBLinearTrainer::new(config.objective.clone(), metric, params);
-        let linear_model = trainer.train(dataset, eval_sets)?;
+        let linear_model = trainer.train(&binned, targets, weights, eval_sets)?;
 
         let meta = ModelMeta {
             n_features,
