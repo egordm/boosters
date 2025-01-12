@@ -640,19 +640,28 @@ The overhead comes from:
 
 ### Story 4.4: Review/Demo: GBLinear Migration
 
-**Status**: Not Started  
+**Status**: ✅ Complete  
 **Estimate**: 30 min
 
 **Description**: Demo GBLinear working with unified Dataset.
+
+**Review Summary** (2025-12-30):
+
+1. **Architecture**: GBLinear trainer now uses same data abstraction as GBDT
+2. **Performance**: 1.14x-1.25x overhead, well within <2x threshold
+3. **Interface**: Clean 4-argument signature matching GBDT pattern
+4. **Tests**: 778 tests pass, no regressions
 
 ---
 
 ### Story 4.5: Stakeholder Feedback Check (Epic 4)
 
-**Status**: Not Started  
+**Status**: ✅ Complete  
 **Estimate**: 15 min
 
 **Description**: Review `tmp/stakeholder_feedback.md` for GBLinear migration concerns.
+
+**Findings** (2025-12-30): No new feedback. Stakeholder feedback file has no pending items related to GBLinear migration.
 
 ---
 
