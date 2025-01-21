@@ -10,7 +10,7 @@
 use super::{load_config, load_train_data, load_xgb_weights, make_dataset};
 use approx::assert_relative_eq;
 use boosters::data::transpose_to_c_order;
-use boosters::dataset::{FeaturesView, TargetsView};
+use boosters::dataset::{FeaturesView, TargetsView, WeightsView};
 use boosters::training::{GBLinearParams, GBLinearTrainer, Rmse, SquaredLoss, Verbosity};
 use ndarray::Array2;
 use rstest::rstest;
@@ -277,7 +277,7 @@ fn test_set_prediction_quality(#[case] name: &str) {
     // output is [n_groups, n_samples], metrics expect [n_outputs, n_samples]
     let targets_2d = Array2::from_shape_vec((1, test_labels.len()), test_labels.clone()).unwrap();
     let targets = TargetsView::new(targets_2d.view());
-    let our_rmse = Rmse.compute(output.view(), targets, None);
+    let our_rmse = Rmse.compute(output.view(), targets, WeightsView::None);
 
     // Compare to XGBoost if available
     if let Some(xgb_preds) = load_xgb_predictions(name) {

@@ -1,6 +1,6 @@
 //! Canonical forest representation (collection of trees).
 
-use super::{tree::TreeValidationError, LeafValue, ScalarLeaf, Tree};
+use super::{LeafValue, ScalarLeaf, Tree, TreeValidationError};
 
 /// Structural validation errors for [`Forest`].
 #[derive(Debug, Clone, PartialEq, Eq)]

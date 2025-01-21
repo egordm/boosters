@@ -6,7 +6,7 @@ mod common;
 use common::criterion_config::default_criterion;
 
 use boosters::data::{binned::BinnedDatasetBuilder, BinningConfig};
-use boosters::dataset::{Dataset, FeaturesView, TargetsView};
+use boosters::dataset::{Dataset, FeaturesView, TargetsView, WeightsView};
 use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
 use boosters::testing::data::{select_rows, select_targets, split_indices, synthetic_regression};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
@@ -58,7 +58,7 @@ fn bench_train_then_predict_regression(c: &mut Criterion) {
 	group.bench_function("train_then_predict", |b| {
 		b.iter(|| {
 			let targets = TargetsView::new(y_train_2d.view());
-			let forest = trainer.train(black_box(&binned_train), targets, None, &[], Parallelism::Sequential).unwrap();
+			let forest = trainer.train(black_box(&binned_train), targets, WeightsView::None, &[], Parallelism::Sequential).unwrap();
 			let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
 			let preds = predictor.predict(black_box(valid_features), Parallelism::Sequential);
 			black_box(preds)

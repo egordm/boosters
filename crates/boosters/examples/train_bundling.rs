@@ -15,7 +15,7 @@ use std::time::Instant;
 
 use boosters::data::binned::{BinnedDatasetBuilder, BundlingConfig};
 use boosters::data::BinningConfig;
-use boosters::dataset::{Dataset, TargetsView};
+use boosters::dataset::{Dataset, TargetsView, WeightsView};
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism, TreeParams};
 use ndarray::{Array1, Array2};
 
@@ -162,7 +162,7 @@ fn main() {
     let model_no_bundle = GBDTModel::train_binned(
         &dataset_no_bundle,
         targets.clone(),
-        None,
+        WeightsView::None,
         &[],
         config.clone(),
         1,
@@ -173,7 +173,7 @@ fn main() {
     let model_bundled = GBDTModel::train_binned(
         &dataset_bundled,
         targets,
-        None,
+        WeightsView::None,
         &[],
         config,
         1,

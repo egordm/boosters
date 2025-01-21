@@ -1,12 +1,12 @@
 //! Classification objective functions.
 
-use ndarray::{ArrayView1, ArrayView2, ArrayViewMut2};
+use ndarray::{ArrayView2, ArrayViewMut2};
 
 use super::{ObjectiveFn, TargetSchema, TaskKind};
 use crate::dataset::TargetsView;
 use crate::inference::PredictionKind;
 use crate::training::GradsTuple;
-use crate::utils::weight_iter;
+use crate::dataset::WeightsView;
 
 // =============================================================================
 // Logistic Loss
@@ -37,7 +37,7 @@ impl ObjectiveFn for LogisticLoss {
         &self,
         predictions: ArrayView2<f32>,
         targets: TargetsView<'_>,
-        weights: Option<ArrayView1<'_, f32>>,
+        weights: WeightsView<'_>,
         mut grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         const HESS_MIN: f32 = 1e-6;
@@ -54,7 +54,7 @@ impl ObjectiveFn for LogisticLoss {
             for (i, ((&pred, &target), w)) in preds_row
                 .iter()
                 .zip(targets.iter())
-                .zip(weight_iter(weights, n_rows))
+                .zip(weights.iter(n_rows))
                 .enumerate()
             {
                 let p = Self::sigmoid(pred);
@@ -67,7 +67,7 @@ impl ObjectiveFn for LogisticLoss {
     fn compute_base_score(
         &self,
         targets: TargetsView<'_>,
-        weights: Option<ArrayView1<'_, f32>>,
+        weights: WeightsView<'_>,
     ) -> Vec<f32> {
         let targets = targets.output(0);
         let n_rows = targets.len();
@@ -79,7 +79,7 @@ impl ObjectiveFn for LogisticLoss {
         // Single output: compute weighted mean of targets, convert to log-odds
         let (pos_weight, total_weight) = targets
             .iter()
-            .zip(weight_iter(weights, n_rows))
+            .zip(weights.iter(n_rows))
             .map(|(&t, w)| (w as f64 * t as f64, w as f64))
             .fold((0.0f64, 0.0f64), |(pos, total), (p, w)| (pos + p, total + w));
 
@@ -129,7 +129,7 @@ impl ObjectiveFn for HingeLoss {
         &self,
         predictions: ArrayView2<f32>,
         targets: TargetsView<'_>,
-        weights: Option<ArrayView1<'_, f32>>,
+        weights: WeightsView<'_>,
         mut grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         let (n_outputs, n_rows) = predictions.dim();
@@ -144,7 +144,7 @@ impl ObjectiveFn for HingeLoss {
             for (i, ((&pred, &target), w)) in preds_row
                 .iter()
                 .zip(targets.iter())
-                .zip(weight_iter(weights, n_rows))
+                .zip(weights.iter(n_rows))
                 .enumerate()
             {
                 // Convert {0, 1} to {-1, +1}
@@ -160,7 +160,7 @@ impl ObjectiveFn for HingeLoss {
     fn compute_base_score(
         &self,
         _targets: TargetsView<'_>,
-        _weights: Option<ArrayView1<'_, f32>>,
+        _weights: WeightsView<'_>,
     ) -> Vec<f32> {
         vec![0.0]
     }
@@ -224,7 +224,7 @@ impl ObjectiveFn for SoftmaxLoss {
         &self,
         predictions: ArrayView2<f32>,
         targets: TargetsView<'_>,
-        weights: Option<ArrayView1<'_, f32>>,
+        weights: WeightsView<'_>,
         mut grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         const HESS_MIN: f32 = 1e-6;
@@ -237,7 +237,7 @@ impl ObjectiveFn for SoftmaxLoss {
         // Use column views to avoid repeated double-indexing
         for (i, (&target, w)) in targets
             .iter()
-            .zip(weight_iter(weights, n_rows))
+            .zip(weights.iter(n_rows))
             .enumerate()
         {
             let label = target as usize;
@@ -267,7 +267,7 @@ impl ObjectiveFn for SoftmaxLoss {
     fn compute_base_score(
         &self,
         targets: TargetsView<'_>,
-        weights: Option<ArrayView1<'_, f32>>,
+        weights: WeightsView<'_>,
     ) -> Vec<f32> {
         let targets = targets.output(0);
         let n_rows = targets.len();
@@ -281,7 +281,7 @@ impl ObjectiveFn for SoftmaxLoss {
         let mut class_weights = vec![0.0f64; n_outputs];
         let mut total_weight = 0.0f64;
 
-        for (&target, w) in targets.iter().zip(weight_iter(weights, n_rows)) {
+        for (&target, w) in targets.iter().zip(weights.iter(n_rows)) {
             let label = target as usize;
             if label < n_outputs {
                 class_weights[label] += w as f64;
@@ -413,7 +413,7 @@ impl ObjectiveFn for LambdaRankLoss {
         &self,
         predictions: ArrayView2<f32>,
         targets: TargetsView<'_>,
-        weights: Option<ArrayView1<'_, f32>>,
+        weights: WeightsView<'_>,
         mut grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         let (_, n_rows) = predictions.dim();
@@ -459,7 +459,7 @@ impl ObjectiveFn for LambdaRankLoss {
             });
 
             // Get weights slice for this group
-            let group_weights: Vec<f32> = weight_iter(weights, n_rows)
+            let group_weights: Vec<f32> = weights.iter(n_rows)
                 .skip(start)
                 .take(group_len)
                 .collect();
@@ -509,7 +509,7 @@ impl ObjectiveFn for LambdaRankLoss {
     fn compute_base_score(
         &self,
         _targets: TargetsView<'_>,
-        _weights: Option<ArrayView1<'_, f32>>,
+        _weights: WeightsView<'_>,
     ) -> Vec<f32> {
         vec![0.0]
     }
@@ -540,6 +540,7 @@ mod tests {
     use super::*;
     use approx::assert_abs_diff_eq;
     use crate::testing::DEFAULT_TOLERANCE;
+    use crate::dataset::WeightsView;
     use ndarray::Array2;
 
     fn make_preds(n_outputs: usize, n_samples: usize, data: &[f32]) -> Array2<f32> {
@@ -561,7 +562,7 @@ mod tests {
         let targets = make_targets(&[1.0]);
         let mut gh = make_grad_hess(1, 1);
 
-        obj.compute_gradients_into(preds.view(), TargetsView::new(targets.view()), None, gh.view_mut());
+        obj.compute_gradients_into(preds.view(), TargetsView::new(targets.view()), WeightsView::None, gh.view_mut());
 
         // sigmoid(0) = 0.5, grad = 0.5 - 1 = -0.5
         assert_abs_diff_eq!(gh[[0, 0]].grad, -0.5, epsilon = DEFAULT_TOLERANCE);
@@ -574,7 +575,7 @@ mod tests {
         let obj = LogisticLoss;
         let targets = make_targets(&[0.0, 0.0, 1.0, 1.0]);
 
-        let output = obj.compute_base_score(TargetsView::new(targets.view()), None);
+        let output = obj.compute_base_score(TargetsView::new(targets.view()), WeightsView::None);
 
         // 50% positive: log-odds = log(0.5/0.5) = 0
         assert_eq!(output.len(), 1);
@@ -589,7 +590,7 @@ mod tests {
         let weights = ndarray::array![2.0f32, 0.5];
         let mut gh = make_grad_hess(1, 2);
 
-        obj.compute_gradients_into(preds.view(), TargetsView::new(targets.view()), Some(weights.view()), gh.view_mut());
+        obj.compute_gradients_into(preds.view(), TargetsView::new(targets.view()), WeightsView::from_array(weights.view()), gh.view_mut());
 
         // sigmoid(0) = 0.5
         // grad[0] = 2.0 * (0.5 - 1) = -1.0
@@ -607,13 +608,13 @@ mod tests {
         let targets = make_targets(&[1.0]);
         let mut gh = make_grad_hess(1, 1);
 
-        obj.compute_gradients_into(preds.view(), TargetsView::new(targets.view()), None, gh.view_mut());
+        obj.compute_gradients_into(preds.view(), TargetsView::new(targets.view()), WeightsView::None, gh.view_mut());
         // margin = 1 * 2 = 2 >= 1, so grad = 0
         assert_abs_diff_eq!(gh[[0, 0]].grad, 0.0, epsilon = DEFAULT_TOLERANCE);
 
         // Misclassified
         let preds = make_preds(1, 1, &[-0.5]);
-        obj.compute_gradients_into(preds.view(), TargetsView::new(targets.view()), None, gh.view_mut());
+        obj.compute_gradients_into(preds.view(), TargetsView::new(targets.view()), WeightsView::None, gh.view_mut());
         // margin = 1 * -0.5 < 1, so grad = -y = -1
         assert_abs_diff_eq!(gh[[0, 0]].grad, -1.0, epsilon = DEFAULT_TOLERANCE);
     }
@@ -631,7 +632,7 @@ mod tests {
         let targets = make_targets(&[0.0, 1.0]);
         let mut gh = make_grad_hess(3, 2);
 
-        obj.compute_gradients_into(preds.view(), TargetsView::new(targets.view()), None, gh.view_mut());
+        obj.compute_gradients_into(preds.view(), TargetsView::new(targets.view()), WeightsView::None, gh.view_mut());
 
         // For sample 0 (label=0): grad for class 0 should be negative (correct class)
         assert!(gh[[0, 0]].grad < 0.0);
@@ -645,7 +646,7 @@ mod tests {
         // Class indices
         let targets = make_targets(&[0.0, 0.0, 1.0, 2.0]);
 
-        let outputs = obj.compute_base_score(TargetsView::new(targets.view()), None);
+        let outputs = obj.compute_base_score(TargetsView::new(targets.view()), WeightsView::None);
 
         // Class 0: 2/4, Class 1: 1/4, Class 2: 1/4
         assert_eq!(outputs.len(), 3);
@@ -662,7 +663,7 @@ mod tests {
         let targets = make_targets(&[2.0, 0.0, 1.0]);
         let mut gh = make_grad_hess(1, 3);
 
-        obj.compute_gradients_into(preds.view(), TargetsView::new(targets.view()), None, gh.view_mut());
+        obj.compute_gradients_into(preds.view(), TargetsView::new(targets.view()), WeightsView::None, gh.view_mut());
 
         // All hessians should be positive
         assert!(gh[[0, 0]].hess > 0.0);
@@ -679,7 +680,7 @@ mod tests {
         let targets = make_targets(&[1.0, 0.0, 2.0, 1.0]);
         let mut gh = make_grad_hess(1, 4);
 
-        obj.compute_gradients_into(preds.view(), TargetsView::new(targets.view()), None, gh.view_mut());
+        obj.compute_gradients_into(preds.view(), TargetsView::new(targets.view()), WeightsView::None, gh.view_mut());
 
         // Both queries should contribute gradients
         assert!(gh[[0, 0]].hess > 0.0);
@@ -692,7 +693,7 @@ mod tests {
         let obj = LambdaRankLoss::new(query_groups);
         let targets = make_targets(&[0.0, 0.0, 0.0]);
 
-        let output = obj.compute_base_score(TargetsView::new(targets.view()), None);
+        let output = obj.compute_base_score(TargetsView::new(targets.view()), WeightsView::None);
         assert_eq!(output.len(), 1);
         assert_abs_diff_eq!(output[0], 0.0, epsilon = DEFAULT_TOLERANCE);
     }

@@ -3,7 +3,7 @@
 //! Focused on behavior and invariants (not default params or superficial shapes).
 
 use boosters::data::{transpose_to_c_order, BinnedDatasetBuilder, BinningConfig, GroupLayout, GroupStrategy};
-use boosters::dataset::{Dataset, TargetsView};
+use boosters::dataset::{Dataset, TargetsView, WeightsView};
 use boosters::inference::gbdt::SimplePredictor;
 use boosters::model::gbdt::{GBDTConfig, GBDTModel};
 use boosters::repr::gbdt::{Forest, TreeView, SplitType};
@@ -38,7 +38,7 @@ fn train_rejects_invalid_targets_len() {
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, GBDTParams::default());
     let targets_2d = Array2::from_shape_vec((1, targets.len()), targets).unwrap();
     let targets_view = TargetsView::new(targets_2d.view());
-    let result = trainer.train(&dataset, targets_view, None, &[], Parallelism::Sequential);
+    let result = trainer.train(&dataset, targets_view, WeightsView::None, &[], Parallelism::Sequential);
 
     assert!(result.is_none());
 }
@@ -68,7 +68,7 @@ fn trained_model_improves_over_base_score_on_simple_problem() {
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
     let targets_2d = Array2::from_shape_vec((1, targets.len()), targets.clone()).unwrap();
     let targets_view = TargetsView::new(targets_2d.view());
-    let forest = trainer.train(&dataset, targets_view, None, &[], Parallelism::Sequential).unwrap();
+    let forest = trainer.train(&dataset, targets_view, WeightsView::None, &[], Parallelism::Sequential).unwrap();
 
     forest
         .validate()
@@ -133,7 +133,7 @@ fn trained_model_improves_over_base_score_on_medium_problem() {
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
     let targets_2d = Array2::from_shape_vec((1, targets.len()), targets.clone()).unwrap();
     let targets_view = TargetsView::new(targets_2d.view());
-    let forest = trainer.train(&dataset, targets_view, None, &[], Parallelism::Sequential).unwrap();
+    let forest = trainer.train(&dataset, targets_view, WeightsView::None, &[], Parallelism::Sequential).unwrap();
 
     forest
         .validate()
@@ -216,7 +216,7 @@ fn train_with_categorical_features_produces_categorical_splits() {
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
     let targets_2d = Array2::from_shape_vec((1, targets.len()), targets.clone()).unwrap();
     let targets_view = TargetsView::new(targets_2d.view());
-    let forest = trainer.train(&dataset, targets_view, None, &[], Parallelism::Sequential).unwrap();
+    let forest = trainer.train(&dataset, targets_view, WeightsView::None, &[], Parallelism::Sequential).unwrap();
 
     forest
         .validate()

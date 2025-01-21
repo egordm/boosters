@@ -5,7 +5,7 @@
 
 use boosters::data::binned::{BinnedDatasetBuilder, GroupLayout, GroupStrategy};
 use boosters::data::BinningConfig;
-use boosters::dataset::{Dataset, TargetsView};
+use boosters::dataset::{Dataset, TargetsView, WeightsView};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
 use ndarray::Array2;
@@ -88,7 +88,7 @@ fn main() {
         let start = Instant::now();
         // Single thread for accurate comparison
         let _ = GBDTTrainer::new(SquaredLoss, Rmse, params.clone())
-            .train(&row_major_dataset, targets.clone(), None, &[], Parallelism::Sequential)
+            .train(&row_major_dataset, targets.clone(), WeightsView::None, &[], Parallelism::Sequential)
             .unwrap();
         row_times.push(start.elapsed());
     }
@@ -100,7 +100,7 @@ fn main() {
     for _ in 0..n_runs {
         let start = Instant::now();
         let _ = GBDTTrainer::new(SquaredLoss, Rmse, params.clone())
-            .train(&col_major_dataset, targets.clone(), None, &[], Parallelism::Sequential)
+            .train(&col_major_dataset, targets.clone(), WeightsView::None, &[], Parallelism::Sequential)
             .unwrap();
         col_times.push(start.elapsed());
     }

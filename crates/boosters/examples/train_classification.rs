@@ -19,7 +19,7 @@
 
 use boosters::data::BinningConfig;
 use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::dataset::{Dataset, TargetsView};
+use boosters::dataset::{Dataset, TargetsView, WeightsView};
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism, TreeParams};
 use ndarray::{Array1, Array2, ArrayView1};
 
@@ -80,7 +80,7 @@ fn main() {
     let targets_2d = labels.clone().insert_axis(ndarray::Axis(0));
     let targets = TargetsView::new(targets_2d.view());
 
-    let model_depth = GBDTModel::train_binned(&dataset, targets.clone(), None, &[], config_depth, 1)
+    let model_depth = GBDTModel::train_binned(&dataset, targets.clone(), WeightsView::None, &[], config_depth, 1)
         .expect("Training failed");
 
     // Predict: features_dataset is already feature-major
@@ -105,7 +105,7 @@ fn main() {
         .build()
         .expect("Invalid configuration");
 
-    let model_leaf = GBDTModel::train_binned(&dataset, targets.clone(), None, &[], config_leaf, 1)
+    let model_leaf = GBDTModel::train_binned(&dataset, targets.clone(), WeightsView::None, &[], config_leaf, 1)
         .expect("Training failed");
 
     let predictions = model_leaf.predict(&features_dataset, 1);
@@ -142,7 +142,7 @@ fn main() {
     let model_weighted = GBDTModel::train_binned(
         &dataset,
         targets,
-        Some(ArrayView1::from(&weights[..])),
+        WeightsView::from_array(ArrayView1::from(&weights[..])),
         &[],
         config_weighted,
         1,

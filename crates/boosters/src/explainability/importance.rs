@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use crate::repr::gbdt::tree::TreeView;
+use crate::repr::gbdt::TreeView;
 use crate::repr::gbdt::{Forest, ScalarLeaf};
 
 /// Error type for explainability operations.

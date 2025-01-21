@@ -6,7 +6,7 @@
 
 use super::{load_test_data, load_train_data, make_dataset};
 use boosters::data::transpose_to_c_order;
-use boosters::dataset::{FeaturesView, TargetsView};
+use boosters::dataset::{FeaturesView, TargetsView, WeightsView};
 use boosters::training::{
     Accuracy, GBLinearParams, GBLinearTrainer, HingeLoss, LogLoss, LogisticLoss, MarginAccuracy,
     ObjectiveFn, PseudoHuberLoss, Rmse, SquaredLoss, Verbosity,
@@ -66,7 +66,7 @@ fn train_pseudo_huber_with_delta(#[case] delta: f32, #[case] max_rmse: f64) {
     // output is [n_groups, n_samples]
     let targets_2d = Array2::from_shape_vec((1, test_labels.len()), test_labels.clone()).unwrap();
     let targets = TargetsView::new(targets_2d.view());
-    let rmse = Rmse.compute(output.view(), targets, None);
+    let rmse = Rmse.compute(output.view(), targets, WeightsView::None);
 
     assert!(
         rmse < max_rmse,
@@ -121,8 +121,8 @@ fn pseudo_huber_large_delta_matches_squared() {
     let targets_2d = Array2::from_shape_vec((1, test_labels.len()), test_labels.clone()).unwrap();
     let targets = TargetsView::new(targets_2d.view());
 
-    let ph_rmse = Rmse.compute(ph_output.view(), targets, None);
-    let sq_rmse = Rmse.compute(sq_output.view(), targets, None);
+    let ph_rmse = Rmse.compute(ph_output.view(), targets, WeightsView::None);
+    let sq_rmse = Rmse.compute(sq_output.view(), targets, WeightsView::None);
 
     // Large delta should be very close to squared loss
     let diff = (ph_rmse - sq_rmse).abs();
@@ -187,7 +187,7 @@ fn train_hinge_binary_classification() {
     let targets_2d = Array2::from_shape_vec((1, test_labels.len()), test_labels.clone()).unwrap();
     let targets = TargetsView::new(targets_2d.view());
     let hinge_acc = MarginAccuracy::default()
-        .compute(hinge_output.view(), targets, None)
+        .compute(hinge_output.view(), targets, WeightsView::None)
         as f32;
 
     let logistic_output = logistic_model.predict(test_view);
@@ -195,7 +195,7 @@ fn train_hinge_binary_classification() {
     let mut logistic_arr = logistic_output.clone();
     LogisticLoss.transform_predictions_inplace(logistic_arr.view_mut());
     let logistic_acc = Accuracy::with_threshold(0.5)
-        .compute(logistic_arr.view(), targets, None) as f32;
+        .compute(logistic_arr.view(), targets, WeightsView::None) as f32;
 
     // Both should achieve reasonable accuracy (better than random = 50%)
     assert!(

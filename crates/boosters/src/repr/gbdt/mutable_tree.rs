@@ -4,7 +4,8 @@ use super::categories::CategoriesStorage;
 use super::coefficients::LeafCoefficientsBuilder;
 use super::leaf::LeafValue;
 use super::node::SplitType;
-use super::tree::{Tree, TreeView};
+use super::tree::Tree;
+use super::tree_view::TreeView;
 use super::NodeId;
 
 /// Mutable tree for use during training.

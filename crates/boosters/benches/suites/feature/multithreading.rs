@@ -12,7 +12,7 @@ use common::criterion_config::default_criterion;
 use common::matrix::THREAD_COUNTS;
 use common::threading::with_rayon_threads;
 
-use boosters::dataset::TargetsView;
+use boosters::dataset::{TargetsView, WeightsView};
 use boosters::testing::data::synthetic_regression;
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
@@ -95,7 +95,7 @@ fn bench_multithreading(c: &mut Criterion) {
                 with_rayon_threads(n_threads, || {
                     black_box(
                         trainer
-                            .train(black_box(&binned), targets_view, None, &[], Parallelism::Parallel)
+                            .train(black_box(&binned), targets_view, WeightsView::None, &[], Parallelism::Parallel)
                             .unwrap(),
                     )
                 })

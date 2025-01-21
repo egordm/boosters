@@ -10,7 +10,7 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
-use boosters::dataset::TargetsView;
+use boosters::dataset::{TargetsView, WeightsView};
 use boosters::testing::data::synthetic_regression;
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
@@ -92,7 +92,7 @@ fn bench_row_scaling(c: &mut Criterion) {
             b.iter(|| {
                 black_box(
                     trainer
-                        .train(black_box(&binned), targets_view, None, &[], Parallelism::Sequential)
+                        .train(black_box(&binned), targets_view, WeightsView::None, &[], Parallelism::Sequential)
                         .unwrap(),
                 )
             })
@@ -239,7 +239,7 @@ fn bench_feature_scaling(c: &mut Criterion) {
             b.iter(|| {
                 black_box(
                     trainer
-                        .train(black_box(&binned), targets_view, None, &[], Parallelism::Sequential)
+                        .train(black_box(&binned), targets_view, WeightsView::None, &[], Parallelism::Sequential)
                         .unwrap(),
                 )
             })

@@ -7,7 +7,7 @@ use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
 use super::column::Column;
 use super::error::DatasetError;
 use super::schema::{DatasetSchema, FeatureMeta};
-use super::views::{FeaturesView, TargetsView};
+use super::views::{FeaturesView, TargetsView, WeightsView};
 
 /// The unified dataset container for all boosters models.
 ///
@@ -183,11 +183,15 @@ impl Dataset {
         self.targets.as_ref().map(|t| TargetsView::new(t.view()))
     }
 
-    /// Get sample weights.
+    /// Get sample weights as a WeightsView.
     ///
-    /// Returns `None` if no weights were provided.
-    pub fn weights(&self) -> Option<ArrayView1<'_, f32>> {
-        self.weights.as_ref().map(|w| w.view())
+    /// Returns `WeightsView::None` if no weights were provided,
+    /// or `WeightsView::Some(array)` if weights exist.
+    pub fn weights(&self) -> WeightsView<'_> {
+        match &self.weights {
+            Some(w) => WeightsView::from_array(w.view()),
+            None => WeightsView::none(),
+        }
     }
 
     // =========================================================================
@@ -501,7 +505,7 @@ mod tests {
         let ds = Dataset::new(features.view(), Some(targets.view()), Some(weights.view()));
 
         assert!(ds.has_weights());
-        assert_eq!(ds.weights().unwrap().to_vec(), vec![0.5, 1.5]);
+        assert_eq!(ds.weights().as_array().unwrap().to_vec(), vec![0.5, 1.5]);
     }
 
     #[test]

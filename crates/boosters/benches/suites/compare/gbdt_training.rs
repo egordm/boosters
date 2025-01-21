@@ -10,7 +10,7 @@ use common::criterion_config::default_criterion;
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{transpose_to_c_order, BinningConfig};
-use boosters::dataset::{Dataset, TargetsView};
+use boosters::dataset::{Dataset, TargetsView, WeightsView};
 use boosters::testing::data::synthetic_regression;
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
@@ -88,7 +88,7 @@ fn bench_train_regression(c: &mut Criterion) {
 					.unwrap();
 				let targets_2d = Array2::from_shape_vec((1, targets.len()), targets.clone()).unwrap();
 				let targets_view = TargetsView::new(targets_2d.view());
-				black_box(trainer.train(black_box(&binned), targets_view, None, &[], Parallelism::Sequential).unwrap())
+				black_box(trainer.train(black_box(&binned), targets_view, WeightsView::None, &[], Parallelism::Sequential).unwrap())
 			})
 		});
 

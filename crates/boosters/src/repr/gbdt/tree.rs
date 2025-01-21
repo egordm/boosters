@@ -1,10 +1,9 @@
-//! Canonical tree representation (SoA) and read-only tree interface.
+//! Canonical tree representation (SoA) for efficient traversal.
 //!
 //! This module provides:
 //! - [`Tree`]: Immutable SoA tree storage for efficient traversal
-//! - [`TreeView`]: Read-only trait for unified tree access
-//! - [`TreeValidationError`]: Structural validation errors
 //!
+//! For the read-only tree interface, see [`super::tree_view::TreeView`].
 //! For mutable tree construction during training, see [`super::mutable_tree::MutableTree`].
 
 // Allow many constructor arguments for creating trees with all their fields.
@@ -14,187 +13,16 @@ use ndarray::ArrayViewMut1;
 
 use crate::data::{DataAccessor, SampleAccessor};
 
-use super::categories::{float_to_category, CategoriesStorage};
+use super::categories::CategoriesStorage;
 use super::coefficients::LeafCoefficients;
 use super::leaf::LeafValue;
 use super::node::SplitType;
+use super::tree_view::{validate_tree, TreeValidationError, TreeView};
 use super::NodeId;
 
 // ============================================================================
-// TreeView Trait
+// Tree Structure
 // ============================================================================
-
-/// Read-only view of a tree for traversal.
-///
-/// Provides the minimal interface needed to traverse a tree from root to leaf.
-/// Implemented for both [`Tree`] and [`MutableTree`].
-///
-/// # Design
-///
-/// This trait abstracts tree structure access, enabling generic prediction code
-/// that works with both immutable trees (inference) and mutable trees (training).
-///
-/// # Example
-///
-/// ```ignore
-/// use boosters::repr::gbdt::TreeView;
-///
-/// fn count_leaves<T: TreeView>(tree: &T) -> usize {
-///     (0..tree.n_nodes())
-///         .filter(|&n| tree.is_leaf(n as u32))
-///         .count()
-/// }
-/// ```
-pub trait TreeView {
-    /// The leaf value type (e.g., `ScalarLeaf`).
-    type LeafValue: LeafValue;
-
-    /// Number of nodes in the tree.
-    fn n_nodes(&self) -> usize;
-
-    /// Check if a node is a leaf.
-    fn is_leaf(&self, node: NodeId) -> bool;
-
-    /// Get the feature index for a split node.
-    fn split_index(&self, node: NodeId) -> u32;
-
-    /// Get the split threshold for a numeric split.
-    fn split_threshold(&self, node: NodeId) -> f32;
-
-    /// Get the left child node index.
-    fn left_child(&self, node: NodeId) -> NodeId;
-
-    /// Get the right child node index.
-    fn right_child(&self, node: NodeId) -> NodeId;
-
-    /// Get the default direction for missing values.
-    fn default_left(&self, node: NodeId) -> bool;
-
-    /// Get the split type (numeric or categorical).
-    fn split_type(&self, node: NodeId) -> SplitType;
-
-    /// Get reference to categories storage for categorical splits.
-    fn categories(&self) -> &CategoriesStorage;
-
-    /// Get the leaf value at a leaf node.
-    fn leaf_value(&self, node: NodeId) -> &Self::LeafValue;
-
-    /// Check if the tree has any categorical splits.
-    fn has_categorical(&self) -> bool {
-        !self.categories().is_empty()
-    }
-
-    /// Traverse the tree to find the leaf node for a sample.
-    ///
-    /// This is the primary traversal method that works with any `SampleAccessor`.
-    /// The traversal handles NaN values using the tree's default direction,
-    /// and supports both numeric and categorical splits.
-    ///
-    /// # Arguments
-    ///
-    /// * `sample` - Feature values for the sample (implements [`SampleAccessor`])
-    ///
-    /// # Returns
-    ///
-    /// The `NodeId` of the reached leaf node.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use boosters::repr::gbdt::TreeView;
-    /// use boosters::data::SampleAccessor;
-    ///
-    /// let features: &[f32] = &[0.5, 1.0, 2.3];
-    /// let leaf_id = tree.traverse_to_leaf(features);
-    /// ```
-    #[inline]
-    fn traverse_to_leaf<S: SampleAccessor + ?Sized>(&self, sample: &S) -> NodeId {
-        self.traverse_to_leaf_from(0, sample)
-    }
-
-    /// Traverse the tree starting from a specific node.
-    ///
-    /// This is useful for resuming traversal after unrolled levels or
-    /// partial tree traversal.
-    ///
-    /// # Arguments
-    ///
-    /// * `start_node` - Node ID to start traversal from
-    /// * `sample` - Feature values for the sample (implements [`SampleAccessor`])
-    ///
-    /// # Returns
-    ///
-    /// The `NodeId` of the reached leaf node.
-    #[inline]
-    fn traverse_to_leaf_from<S: SampleAccessor + ?Sized>(&self, start_node: NodeId, sample: &S) -> NodeId {
-        let mut node = start_node;
-
-        while !self.is_leaf(node) {
-            let feat_idx = self.split_index(node) as usize;
-            let fvalue = sample.feature(feat_idx);
-
-            node = if fvalue.is_nan() {
-                // Missing value: use default direction
-                if self.default_left(node) {
-                    self.left_child(node)
-                } else {
-                    self.right_child(node)
-                }
-            } else {
-                match self.split_type(node) {
-                    SplitType::Numeric => {
-                        if fvalue < self.split_threshold(node) {
-                            self.left_child(node)
-                        } else {
-                            self.right_child(node)
-                        }
-                    }
-                    SplitType::Categorical => {
-                        let category = float_to_category(fvalue);
-                        if self.categories().category_goes_right(node, category) {
-                            self.right_child(node)
-                        } else {
-                            self.left_child(node)
-                        }
-                    }
-                }
-            };
-        }
-
-        node
-    }
-}
-
-// ============================================================================
-// TreeValidationError
-// ============================================================================
-
-/// Structural validation errors for [`Tree`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TreeValidationError {
-    /// Tree has no nodes.
-    EmptyTree,
-    /// A child pointer references an out-of-bounds node.
-    ChildOutOfBounds {
-        node: NodeId,
-        side: &'static str,
-        child: NodeId,
-        n_nodes: usize,
-    },
-    /// A node references itself as a child.
-    SelfLoop { node: NodeId },
-    /// A node was reached by more than one path (DAG) or due to a cycle.
-    DuplicateVisit { node: NodeId },
-    /// A cycle was detected during traversal.
-    CycleDetected { node: NodeId },
-    /// A node exists in storage but is unreachable from the root.
-    UnreachableNode { node: NodeId },
-    /// Tree contains categorical splits but the category segments array is not sized to nodes.
-    CategoricalSegmentsLenMismatch {
-        segments_len: usize,
-        n_nodes: usize,
-    },
-}
 
 /// Structure-of-Arrays tree storage for efficient traversal.
 ///
@@ -354,97 +182,25 @@ impl<L: LeafValue> Tree<L> {
     /// Validate basic structural invariants for this tree.
     ///
     /// Intended for debug checks and tests (e.g., model conversion invariants).
+    /// This delegates to [`validate_tree`] for generic validation, then
+    /// performs Tree-specific checks like categorical segment validation.
     pub fn validate(&self) -> Result<(), TreeValidationError> {
-        let n_nodes = self.n_nodes();
-        if n_nodes == 0 {
-            return Err(TreeValidationError::EmptyTree);
-        }
+        // Run generic TreeView validation first
+        validate_tree(self)?;
 
-        // If categorical splits exist, segments must be indexed by node.
+        // Tree-specific: If categorical splits exist, segments must be indexed by node.
         let has_cat_split = self
             .split_types
             .iter()
             .any(|t| matches!(t, SplitType::Categorical));
         if has_cat_split {
             let segments_len = self.categories.segments().len();
+            let n_nodes = self.n_nodes();
             if segments_len != n_nodes {
                 return Err(TreeValidationError::CategoricalSegmentsLenMismatch {
                     segments_len,
                     n_nodes,
                 });
-            }
-        }
-
-        // Iterative DFS with color marking.
-        // 0 = unvisited, 1 = visiting, 2 = done
-        let mut color = vec![0u8; n_nodes];
-        let mut stack: Vec<(NodeId, u8)> = vec![(0, 0)];
-
-        while let Some((node, phase)) = stack.pop() {
-            let node_usize = node as usize;
-            if node_usize >= n_nodes {
-                return Err(TreeValidationError::ChildOutOfBounds {
-                    node,
-                    side: "root",
-                    child: node,
-                    n_nodes,
-                });
-            }
-
-            match phase {
-                0 => {
-                    match color[node_usize] {
-                        0 => {}
-                        1 => return Err(TreeValidationError::CycleDetected { node }),
-                        2 => return Err(TreeValidationError::DuplicateVisit { node }),
-                        _ => unreachable!(),
-                    }
-
-                    color[node_usize] = 1;
-                    stack.push((node, 1));
-
-                    if !self.is_leaf(node) {
-                        let left = self.left_child(node);
-                        let right = self.right_child(node);
-
-                        if left == node || right == node {
-                            return Err(TreeValidationError::SelfLoop { node });
-                        }
-
-                        let left_usize = left as usize;
-                        if left_usize >= n_nodes {
-                            return Err(TreeValidationError::ChildOutOfBounds {
-                                node,
-                                side: "left",
-                                child: left,
-                                n_nodes,
-                            });
-                        }
-                        let right_usize = right as usize;
-                        if right_usize >= n_nodes {
-                            return Err(TreeValidationError::ChildOutOfBounds {
-                                node,
-                                side: "right",
-                                child: right,
-                                n_nodes,
-                            });
-                        }
-
-                        // Visit children
-                        stack.push((right, 0));
-                        stack.push((left, 0));
-                    }
-                }
-                1 => {
-                    color[node_usize] = 2;
-                }
-                _ => unreachable!(),
-            }
-        }
-
-        for (i, &c) in color.iter().enumerate() {
-            if c == 0 {
-                return Err(TreeValidationError::UnreachableNode { node: i as u32 });
             }
         }
 
@@ -502,24 +258,20 @@ impl<L: LeafValue> Tree<L> {
     ) where
         L: Into<f32> + Copy + Send + Sync,
     {
-        let n_samples = data.n_samples();
-        debug_assert_eq!(predictions.len(), n_samples);
+        debug_assert_eq!(predictions.len(), data.n_samples());
 
-        // Get underlying slice for parallel unsafe access
-        // ArrayViewMut1 is contiguous so as_slice_mut().unwrap() is safe
+        // Get underlying slice and iterate with index - this is safe because
+        // each (row_idx, pred) pair is unique and owned by a single thread
         let pred_slice = predictions.as_slice_mut().expect("predictions must be contiguous");
 
         if self.has_linear_leaves() {
-            parallelism.maybe_par_for_each(0..n_samples, |row_idx| {
-                // Safety: each row_idx is unique, so we can safely write to predictions[row_idx]
-                let pred = unsafe { &mut *pred_slice.as_ptr().add(row_idx).cast_mut() };
+            parallelism.maybe_par_bridge_for_each(pred_slice.iter_mut().enumerate(), |(row_idx, pred)| {
                 let sample = data.sample(row_idx);
                 let leaf_idx = self.traverse_to_leaf(&sample);
                 *pred += self.compute_leaf_value(leaf_idx, &sample);
             });
         } else {
-            parallelism.maybe_par_for_each(0..n_samples, |row_idx| {
-                let pred = unsafe { &mut *pred_slice.as_ptr().add(row_idx).cast_mut() };
+            parallelism.maybe_par_bridge_for_each(pred_slice.iter_mut().enumerate(), |(row_idx, pred)| {
                 let sample = data.sample(row_idx);
                 let leaf_idx = self.traverse_to_leaf(&sample);
                 *pred += (*self.leaf_value(leaf_idx)).into();

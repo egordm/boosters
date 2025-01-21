@@ -11,7 +11,7 @@
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
-use boosters::dataset::{Dataset, TargetsView};
+use boosters::dataset::{Dataset, TargetsView, WeightsView};
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism, TreeParams};
 use ndarray::{Array1, Array2};
 
@@ -63,7 +63,7 @@ fn main() {
     let targets = TargetsView::new(targets_2d.view());
 
     let model =
-        GBDTModel::train_binned(&dataset, targets, None, &[], config, 1).expect("Training failed");
+        GBDTModel::train_binned(&dataset, targets, WeightsView::None, &[], config, 1).expect("Training failed");
 
     // =========================================================================
     // 4. Results

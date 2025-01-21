@@ -40,10 +40,10 @@ mod regression;
 pub use classification::{HingeLoss, LambdaRankLoss, LogisticLoss, SoftmaxLoss};
 pub use regression::{AbsoluteLoss, PinballLoss, PoissonLoss, PseudoHuberLoss, SquaredLoss};
 
-use crate::dataset::TargetsView;
+use crate::dataset::{TargetsView, WeightsView};
 use crate::inference::PredictionKind;
 use crate::training::GradsTuple;
-use ndarray::{ArrayView1, ArrayView2, ArrayViewMut2};
+use ndarray::{ArrayView2, ArrayViewMut2};
 
 // Re-export TaskKind from model module for unified usage
 pub use crate::model::TaskKind;
@@ -107,13 +107,13 @@ pub trait ObjectiveFn: Send + Sync {
     /// * `n_outputs` - Number of outputs (predictions per sample)
     /// * `predictions` - Model predictions, column-major `[n_outputs * n_rows]`
     /// * `targets` - Ground truth labels, column-major `[n_targets * n_rows]`
-    /// * `weights` - Sample weights (`None` for unweighted)
+    /// * `weights` - Sample weights (use `WeightsView::uniform(n)` for unweighted)
     /// * `grad_hess` - Interleaved (grad, hess) pairs, column-major `[n_outputs * n_rows]`
     fn compute_gradients_into(
         &self,
         predictions: ArrayView2<f32>,
         targets: TargetsView<'_>,
-        weights: Option<ArrayView1<'_, f32>>,
+        weights: WeightsView<'_>,
         grad_hess: ArrayViewMut2<GradsTuple>,
     );
 
@@ -125,11 +125,11 @@ pub trait ObjectiveFn: Send + Sync {
     /// # Arguments
     ///
     /// * `targets` - Ground truth labels
-    /// * `weights` - Sample weights (`None` for unweighted)
+    /// * `weights` - Sample weights (use `WeightsView::uniform(n)` for unweighted)
     fn compute_base_score(
         &self,
         targets: TargetsView<'_>,
-        weights: Option<ArrayView1<'_, f32>>,
+        weights: WeightsView<'_>,
     ) -> Vec<f32>;
 
     // =========================================================================
@@ -296,7 +296,7 @@ impl ObjectiveFn for Objective {
         &self,
         predictions: ArrayView2<f32>,
         targets: TargetsView<'_>,
-        weights: Option<ArrayView1<'_, f32>>,
+        weights: WeightsView<'_>,
         grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         match self {
@@ -315,7 +315,7 @@ impl ObjectiveFn for Objective {
     fn compute_base_score(
         &self,
         targets: TargetsView<'_>,
-        weights: Option<ArrayView1<'_, f32>>,
+        weights: WeightsView<'_>,
     ) -> Vec<f32> {
         match self {
             Self::SquaredLoss(inner) => inner.compute_base_score(targets, weights),
@@ -394,7 +394,7 @@ impl ObjectiveFn for Objective {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dataset::TargetsView;
+    use crate::dataset::{TargetsView, WeightsView};
     use ndarray::Array2;
 
     fn make_grad_hess_array(n_outputs: usize, n_samples: usize) -> Array2<GradsTuple> {
@@ -412,7 +412,7 @@ mod tests {
         let targets = make_targets(&[0.5, 2.5, 2.5]);
         let mut grad_hess = make_grad_hess_array(1, 3);
 
-        obj.compute_gradients_into(preds.view(), TargetsView::new(targets.view()), None, grad_hess.view_mut());
+        obj.compute_gradients_into(preds.view(), TargetsView::new(targets.view()), WeightsView::None, grad_hess.view_mut());
 
         // grad = pred - target
         assert!((grad_hess[[0, 0]].grad - 0.5).abs() < 1e-6);
@@ -433,7 +433,7 @@ mod tests {
         let weights = ndarray::array![2.0f32, 0.5];
         let mut grad_hess = make_grad_hess_array(1, 2);
 
-        obj.compute_gradients_into(preds.view(), TargetsView::new(targets.view()), Some(weights.view()), grad_hess.view_mut());
+        obj.compute_gradients_into(preds.view(), TargetsView::new(targets.view()), WeightsView::from_array(weights.view()), grad_hess.view_mut());
 
         // grad = weight * (pred - target)
         assert!((grad_hess[[0, 0]].grad - 1.0).abs() < 1e-6); // 2.0 * 0.5
@@ -451,7 +451,7 @@ mod tests {
         let targets = make_targets(&[0.5, 2.5, 2.5]);
         let mut grad_hess = make_grad_hess_array(1, 3);
 
-        obj.compute_gradients_into(preds.view(), TargetsView::new(targets.view()), None, grad_hess.view_mut());
+        obj.compute_gradients_into(preds.view(), TargetsView::new(targets.view()), WeightsView::None, grad_hess.view_mut());
 
         // For alpha=0.5: grad = 0.5 if pred > target, -0.5 if pred < target
         assert!((grad_hess[[0, 0]].grad - 0.5).abs() < 1e-6); // pred > target

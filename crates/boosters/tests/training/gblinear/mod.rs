@@ -22,7 +22,7 @@ mod regression;
 mod selectors;
 
 use boosters::data::transpose_to_c_order;
-use boosters::dataset::TargetsView;
+use boosters::dataset::{TargetsView, WeightsView};
 use boosters::Dataset;
 use boosters::training::Rmse;
 use ndarray::{Array2, ArrayView2};
@@ -200,5 +200,5 @@ pub fn rmse(predictions: &[f32], labels: &[f32]) -> f64 {
     let targets_data: Vec<f32> = labels.to_vec();
     let targets_2d = Array2::from_shape_vec((1, n), targets_data).unwrap();
     let targets = TargetsView::new(targets_2d.view());
-    Rmse.compute(pred_arr.view(), targets, None)
+    Rmse.compute(pred_arr.view(), targets, WeightsView::None)
 }

@@ -19,7 +19,7 @@ use common::criterion_config::default_criterion;
 
 use boosters::data::binned::{BinnedDatasetBuilder, BundlingConfig};
 use boosters::data::{transpose_to_c_order, BinningConfig};
-use boosters::dataset::{Dataset, TargetsView};
+use boosters::dataset::{Dataset, TargetsView, WeightsView};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
 
@@ -239,7 +239,7 @@ fn bench_boosters_training(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("no_bundling", config.name), |b| {
             let targets_view = TargetsView::new(targets_2d.view());
             b.iter(|| {
-                black_box(trainer.train(black_box(&binned_no_bundle), targets_view, None, &[], Parallelism::Sequential).unwrap())
+                black_box(trainer.train(black_box(&binned_no_bundle), targets_view, WeightsView::None, &[], Parallelism::Sequential).unwrap())
             })
         });
 
@@ -247,7 +247,7 @@ fn bench_boosters_training(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("with_bundling", config.name), |b| {
             let targets_view = TargetsView::new(targets_2d.view());
             b.iter(|| {
-                black_box(trainer.train(black_box(&binned_with_bundle), targets_view, None, &[], Parallelism::Sequential).unwrap())
+                black_box(trainer.train(black_box(&binned_with_bundle), targets_view, WeightsView::None, &[], Parallelism::Sequential).unwrap())
             })
         });
     }

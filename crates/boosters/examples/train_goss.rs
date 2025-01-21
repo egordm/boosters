@@ -17,7 +17,7 @@ use std::time::Instant;
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
-use boosters::dataset::{Dataset, TargetsView};
+use boosters::dataset::{Dataset, TargetsView, WeightsView};
 use boosters::inference::gbdt::SimplePredictor;
 use boosters::repr::gbdt::Forest;
 use boosters::testing::data::synthetic_regression;
@@ -110,7 +110,7 @@ fn main() {
 
     let start = Instant::now();
     let forest_baseline = trainer_baseline
-        .train(&dataset, targets.clone(), None, &[], Parallelism::Sequential)
+        .train(&dataset, targets.clone(), WeightsView::None, &[], Parallelism::Sequential)
         .unwrap();
     let time_baseline = start.elapsed();
 
@@ -145,7 +145,7 @@ fn main() {
 
     let start = Instant::now();
     let forest_goss = trainer_goss
-        .train(&dataset, targets.clone(), None, &[], Parallelism::Sequential)
+        .train(&dataset, targets.clone(), WeightsView::None, &[], Parallelism::Sequential)
         .unwrap();
     let time_goss = start.elapsed();
 
@@ -181,7 +181,7 @@ fn main() {
 
     let start = Instant::now();
     let forest_uniform = trainer_uniform
-        .train(&dataset, targets, None, &[], Parallelism::Sequential)
+        .train(&dataset, targets, WeightsView::None, &[], Parallelism::Sequential)
         .unwrap();
     let time_uniform = start.elapsed();
 

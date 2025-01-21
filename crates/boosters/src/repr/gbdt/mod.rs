@@ -12,6 +12,7 @@ pub mod leaf;
 pub mod mutable_tree;
 pub mod node;
 pub mod tree;
+pub mod tree_view;
 
 pub use categories::{categories_to_bitset, float_to_category, CategoriesStorage};
 pub use coefficients::{LeafCoefficients, LeafCoefficientsBuilder};
@@ -19,4 +20,5 @@ pub use forest::{Forest, ForestValidationError};
 pub use leaf::{LeafValue, ScalarLeaf, VectorLeaf};
 pub use mutable_tree::MutableTree;
 pub use node::SplitType;
-pub use tree::{Tree, TreeValidationError, TreeView};
+pub use tree::Tree;
+pub use tree_view::{validate_tree, TreeValidationError, TreeView};

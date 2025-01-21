@@ -5,7 +5,7 @@
 //! and [`config()`](GBDTModel::config).
 
 use crate::data::binned::BinnedDataset;
-use crate::dataset::{Dataset, TargetsView};
+use crate::dataset::{Dataset, TargetsView, WeightsView};
 use crate::explainability::{
     compute_forest_importance, ExplainError, FeatureImportance, ImportanceType, ShapValues,
     TreeExplainer,
@@ -17,7 +17,7 @@ use crate::training::gbdt::GBDTTrainer;
 use crate::training::{EvalSet, Metric, ObjectiveFn};
 use crate::utils::{Parallelism, run_with_threads};
 
-use ndarray::{Array2, ArrayView1};
+use ndarray::Array2;
 
 use super::GBDTConfig;
 
@@ -151,7 +151,7 @@ impl GBDTModel {
 
             // Get targets - panics if dataset has no targets
             let targets = dataset.targets().expect("dataset must have targets for training");
-            // Get weights as ArrayView1 (matching Dataset::weights() return type)
+            // Get weights as WeightsView
             let weights = dataset.weights();
 
             Self::train_inner(&binned, targets, weights, eval_sets, config, parallelism)
@@ -166,14 +166,14 @@ impl GBDTModel {
     ///
     /// * `dataset` - Binned training dataset
     /// * `targets` - Target values, shape `[n_outputs, n_rows]`
-    /// * `weights` - Optional sample weights (None for uniform)
+    /// * `weights` - Optional sample weights (`WeightsView::None` for uniform)
     /// * `eval_sets` - Evaluation sets for monitoring and early stopping (`&[]` if not needed)
     /// * `config` - Training configuration
     /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
     pub fn train_binned(
         dataset: &BinnedDataset,
         targets: TargetsView<'_>,
-        weights: Option<ArrayView1<'_, f32>>,
+        weights: WeightsView<'_>,
         eval_sets: &[EvalSet<'_>],
         config: GBDTConfig,
         n_threads: usize,
@@ -190,7 +190,7 @@ impl GBDTModel {
     fn train_inner(
         dataset: &BinnedDataset,
         targets: TargetsView<'_>,
-        weights: Option<ArrayView1<'_, f32>>,
+        weights: WeightsView<'_>,
         eval_sets: &[EvalSet<'_>],
         config: GBDTConfig,
         parallelism: Parallelism,

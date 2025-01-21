@@ -8,7 +8,7 @@ mod common;
 use common::criterion_config::default_criterion;
 
 use boosters::data::{binned::BinnedDatasetBuilder, BinningConfig};
-use boosters::dataset::{Dataset, TargetsView};
+use boosters::dataset::{Dataset, TargetsView, WeightsView};
 use boosters::testing::data::{select_rows, select_targets, split_indices, synthetic_regression};
 use boosters::training::{
     GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, LinearLeafConfig, Rmse, SquaredLoss,
@@ -56,7 +56,7 @@ fn bench_linear_training_overhead(c: &mut Criterion) {
         b.iter(|| {
             let targets = TargetsView::new(y_train_2d.view());
             let forest = trainer_baseline
-                .train(black_box(&binned_train), targets, None, &[], Parallelism::Sequential)
+                .train(black_box(&binned_train), targets, WeightsView::None, &[], Parallelism::Sequential)
                 .unwrap();
             black_box(forest)
         })
@@ -72,7 +72,7 @@ fn bench_linear_training_overhead(c: &mut Criterion) {
         b.iter(|| {
             let targets = TargetsView::new(y_train_2d.view());
             let forest = trainer_linear
-                .train(black_box(&binned_train), targets, None, &[], Parallelism::Sequential)
+                .train(black_box(&binned_train), targets, WeightsView::None, &[], Parallelism::Sequential)
                 .unwrap();
             black_box(forest)
         })

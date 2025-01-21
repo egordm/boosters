@@ -131,9 +131,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
 
         // Get feature data as array [n_features, n_samples]
         let train_data = train.features().view();
-        // Get targets view
         let targets = train.targets().expect("dataset must have targets for training");
-        // Get weights as ArrayView1 (matching Dataset::weights() return type)
         let weights = train.weights();
 
         let n_features = train.n_features();
@@ -146,7 +144,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
             n_outputs
         );
         debug_assert_eq!(targets.n_samples(), n_samples);
-        debug_assert!(weights.is_none_or(|w| w.len() == n_samples));
+        debug_assert!(weights.is_none() || weights.as_array().is_some_and(|w| w.len() == n_samples));
 
         // Compute base scores using objective
         let base_scores = self.objective.compute_base_score(targets, weights);

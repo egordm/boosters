@@ -6,7 +6,7 @@
 use crate::dataset::FeaturesView;
 use crate::explainability::shap::{PathState, ShapValues};
 use crate::explainability::ExplainError;
-use crate::repr::gbdt::tree::TreeView;
+use crate::repr::gbdt::TreeView;
 use crate::repr::gbdt::{Forest, ScalarLeaf, Tree};
 
 /// TreeSHAP explainer for tree-based models.

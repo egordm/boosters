@@ -10,7 +10,7 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
-use boosters::dataset::TargetsView;
+use boosters::dataset::{TargetsView, WeightsView};
 use boosters::testing::data::synthetic_regression;
 use boosters::training::{
     GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, RowSamplingParams, SquaredLoss,
@@ -74,7 +74,7 @@ fn bench_sampling_strategies(c: &mut Criterion) {
             b.iter(|| {
                 black_box(
                     trainer
-                        .train(black_box(&binned), black_box(targets), None, &[], Parallelism::Sequential)
+                        .train(black_box(&binned), black_box(targets), WeightsView::None, &[], Parallelism::Sequential)
                         .unwrap(),
                 )
             })

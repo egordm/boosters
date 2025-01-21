@@ -21,7 +21,7 @@
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
-use boosters::dataset::{Dataset, TargetsView};
+use boosters::dataset::{Dataset, TargetsView, WeightsView};
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism, TreeParams};
 use ndarray::{Array1, Array2, ArrayView1};
 
@@ -101,7 +101,7 @@ fn main() {
     let model_unweighted = GBDTModel::train_binned(
         &dataset,
         targets.clone(),
-        None,
+        WeightsView::None,
         &[],
         config.clone(),
         1,
@@ -123,7 +123,7 @@ fn main() {
     let model_weighted = GBDTModel::train_binned(
         &dataset,
         targets,
-        Some(ArrayView1::from(&class_weights[..])),
+        WeightsView::from_array(ArrayView1::from(&class_weights[..])),
         &[],
         config,
         1,

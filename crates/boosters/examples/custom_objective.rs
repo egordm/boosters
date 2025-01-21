@@ -10,13 +10,13 @@
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
-use boosters::dataset::{Dataset, TargetsView};
+use boosters::dataset::{Dataset, TargetsView, WeightsView};
 use boosters::inference::gbdt::SimplePredictor;
 use boosters::repr::gbdt::Forest;
 use boosters::training::{GBDTParams, GBDTTrainer, GradsTuple, GrowthStrategy, Rmse, TargetSchema};
 use boosters::{ObjectiveFn, Parallelism, TaskKind};
 use boosters::inference::PredictionKind;
-use ndarray::{Array2, ArrayView1, ArrayView2, ArrayViewMut2};
+use ndarray::{Array2, ArrayView2, ArrayViewMut2};
 
 /// Predict a single row using the predictor.
 fn predict_row(forest: &Forest, features: &[f32]) -> Vec<f32> {
@@ -55,11 +55,10 @@ impl ObjectiveFn for HuberLoss {
         &self,
         predictions: ArrayView2<f32>,
         targets: TargetsView<'_>,
-        weights: Option<ArrayView1<f32>>,
+        weights: WeightsView<'_>,
         mut grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
-        let (n_outputs, _n_rows) = predictions.dim();
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
+        let (n_outputs, n_rows) = predictions.dim();
         // Get targets row for single-output objective
         let targets_row = targets.output(0);
         let targets_slice = targets_row.as_slice().unwrap();
@@ -70,9 +69,8 @@ impl ObjectiveFn for HuberLoss {
             let mut gh_row = grad_hess.row_mut(out_idx);
             let gh_slice = gh_row.as_slice_mut().unwrap();
 
-            for (i, (gh, &pred)) in gh_slice.iter_mut().zip(preds_slice.iter()).enumerate() {
+            for (i, (gh, (&pred, w))) in gh_slice.iter_mut().zip(preds_slice.iter().zip(weights.iter(n_rows))).enumerate() {
                 let target = targets_slice[i];
-                let w = if weights_slice.is_empty() { 1.0 } else { weights_slice[i] };
                 let error = pred - target;
 
                 let (grad, hess) = if error.abs() <= self.delta {
@@ -92,7 +90,7 @@ impl ObjectiveFn for HuberLoss {
     fn compute_base_score(
         &self,
         targets: TargetsView<'_>,
-        _weights: Option<ArrayView1<f32>>,
+        _weights: WeightsView<'_>,
     ) -> Vec<f32> {
         // Use median for Huber (more robust than mean)
         // For simplicity, using mean here
@@ -158,7 +156,7 @@ fn main() {
     let huber = HuberLoss::new(1.0);
     let trainer = GBDTTrainer::new(huber, Rmse, params);
     let forest = trainer
-        .train(&dataset, targets, None, &[], Parallelism::Sequential)
+        .train(&dataset, targets, WeightsView::None, &[], Parallelism::Sequential)
         .unwrap();
 
     // =========================================================================

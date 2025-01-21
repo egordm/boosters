@@ -47,7 +47,7 @@ use std::path::{Path, PathBuf};
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
-use boosters::dataset::{Dataset, TargetsView};
+use boosters::dataset::{Dataset, TargetsView, WeightsView};
 use boosters::model::gbdt::{GBDTConfig, GBDTModel, TreeParams};
 use boosters::testing::data::{
 	random_features_array, split_indices, synthetic_binary, synthetic_multiclass,
@@ -650,8 +650,8 @@ fn train_boosters(
 ) -> LibraryMetrics {
 	// Create sample-major array [n_samples, n_features]
 	let sample_major = ArrayView2::from_shape((rows_train, cols), x_train).expect("train features must be contiguous");
-	// Transpose to feature-major [n_features, n_samples] for training
-	let feature_major = sample_major.t().to_owned();
+	// Transpose to feature-major [n_features, n_samples] with C-order layout
+	let feature_major = sample_major.t().as_standard_layout().into_owned();
 	// Wrap in Dataset for BinnedDatasetBuilder (feature_major is already feature-major)
 	let dataset_train = Dataset::new(feature_major.view(), None, None);
 	let binned_train = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
@@ -660,7 +660,7 @@ fn train_boosters(
 		.unwrap();
 	// Create feature-major array for validation predictions
 	let sample_major_valid = ArrayView2::from_shape((rows_valid, cols), x_valid).expect("valid features must be contiguous");
-	let feature_major_valid = sample_major_valid.t().to_owned();
+	let feature_major_valid = sample_major_valid.t().as_standard_layout().into_owned();
 	let dataset_valid = Dataset::new(feature_major_valid.view(), None, None);
 
 	let linear_leaves = if config.linear_leaves {
@@ -706,7 +706,7 @@ fn train_boosters(
 	let targets_arr = Array2::from_shape_vec((1, y_train.len()), y_train.to_vec())
 		.expect("valid shape");
 	let targets = TargetsView::new(targets_arr.view());
-	let model = GBDTModel::train_binned(&binned_train, targets, None, &[], gbdt_config, 1)
+	let model = GBDTModel::train_binned(&binned_train, targets, WeightsView::None, &[], gbdt_config, 1)
 		.expect("training should succeed");
 
 	// Predict using model API (applies transform automatically)
@@ -718,18 +718,18 @@ fn train_boosters(
 	// Compute metrics
 	match config.task {
 		Task::Regression => {
-			let rmse = Rmse.compute(pred.view(), valid_targets, None);
-			let mae = Mae.compute(pred.view(), valid_targets, None);
+			let rmse = Rmse.compute(pred.view(), valid_targets, WeightsView::None);
+			let mae = Mae.compute(pred.view(), valid_targets, WeightsView::None);
 			LibraryMetrics { metrics: MetricsJson { rmse: Some(rmse), mae: Some(mae), ..Default::default() } }
 		}
 		Task::Binary => {
-			let ll = LogLoss.compute(pred.view(), valid_targets, None);
-			let acc = Accuracy::default().compute(pred.view(), valid_targets, None);
+			let ll = LogLoss.compute(pred.view(), valid_targets, WeightsView::None);
+			let acc = Accuracy::default().compute(pred.view(), valid_targets, WeightsView::None);
 			LibraryMetrics { metrics: MetricsJson { logloss: Some(ll), acc: Some(acc), ..Default::default() } }
 		}
 		Task::Multiclass => {
-			let ll = MulticlassLogLoss.compute(pred.view(), valid_targets, None);
-			let acc = MulticlassAccuracy.compute(pred.view(), valid_targets, None);
+			let ll = MulticlassLogLoss.compute(pred.view(), valid_targets, WeightsView::None);
+			let acc = MulticlassAccuracy.compute(pred.view(), valid_targets, WeightsView::None);
 			LibraryMetrics { metrics: MetricsJson { mlogloss: Some(ll), acc: Some(acc), ..Default::default() } }
 		}
 	}
@@ -799,8 +799,8 @@ fn train_xgboost(
 			let pred_arr = make_preds_array(&pred_f32, 1, rows_valid);
 			let targets_arr = Array2::from_shape_vec((1, y_valid.len()), y_valid.to_vec()).expect("valid shape");
 			let targets = TargetsView::new(targets_arr.view());
-			let rmse = Rmse.compute(pred_arr.view(), targets, None);
-			let mae = Mae.compute(pred_arr.view(), targets, None);
+			let rmse = Rmse.compute(pred_arr.view(), targets, WeightsView::None);
+			let mae = Mae.compute(pred_arr.view(), targets, WeightsView::None);
 			LibraryMetrics { metrics: MetricsJson { rmse: Some(rmse), mae: Some(mae), ..Default::default() } }
 		}
 		Task::Binary => {
@@ -808,8 +808,8 @@ fn train_xgboost(
 			let pred_arr = make_preds_array(&pred_f32, 1, rows_valid);
 			let targets_arr = Array2::from_shape_vec((1, y_valid.len()), y_valid.to_vec()).expect("valid shape");
 			let targets = TargetsView::new(targets_arr.view());
-			let ll = LogLoss.compute(pred_arr.view(), targets, None);
-			let acc = Accuracy::default().compute(pred_arr.view(), targets, None);
+			let ll = LogLoss.compute(pred_arr.view(), targets, WeightsView::None);
+			let acc = Accuracy::default().compute(pred_arr.view(), targets, WeightsView::None);
 			LibraryMetrics { metrics: MetricsJson { logloss: Some(ll), acc: Some(acc), ..Default::default() } }
 		}
 		Task::Multiclass => {
@@ -820,8 +820,8 @@ fn train_xgboost(
 			let pred_arr = make_preds_array(&prob_col_major, n_classes, rows_valid);
 			let targets_arr = Array2::from_shape_vec((1, y_valid.len()), y_valid.to_vec()).expect("valid shape");
 			let targets = TargetsView::new(targets_arr.view());
-			let ll = MulticlassLogLoss.compute(pred_arr.view(), targets, None);
-			let acc = MulticlassAccuracy.compute(pred_arr.view(), targets, None);
+			let ll = MulticlassLogLoss.compute(pred_arr.view(), targets, WeightsView::None);
+			let acc = MulticlassAccuracy.compute(pred_arr.view(), targets, WeightsView::None);
 			LibraryMetrics { metrics: MetricsJson { mlogloss: Some(ll), acc: Some(acc), ..Default::default() } }
 		}
 	}
@@ -875,8 +875,8 @@ fn train_lightgbm(
 			let pred_arr = make_preds_array(&pred_f32, 1, rows_valid);
 			let targets_arr = Array2::from_shape_vec((1, y_valid.len()), y_valid.to_vec()).expect("valid shape");
 			let targets = TargetsView::new(targets_arr.view());
-			let rmse = Rmse.compute(pred_arr.view(), targets, None);
-			let mae = Mae.compute(pred_arr.view(), targets, None);
+			let rmse = Rmse.compute(pred_arr.view(), targets, WeightsView::None);
+			let mae = Mae.compute(pred_arr.view(), targets, WeightsView::None);
 			LibraryMetrics { metrics: MetricsJson { rmse: Some(rmse), mae: Some(mae), ..Default::default() } }
 		}
 		Task::Binary => {
@@ -884,8 +884,8 @@ fn train_lightgbm(
 			let pred_arr = make_preds_array(&pred_f32, 1, rows_valid);
 			let targets_arr = Array2::from_shape_vec((1, y_valid.len()), y_valid.to_vec()).expect("valid shape");
 			let targets = TargetsView::new(targets_arr.view());
-			let ll = LogLoss.compute(pred_arr.view(), targets, None);
-			let acc = Accuracy::default().compute(pred_arr.view(), targets, None);
+			let ll = LogLoss.compute(pred_arr.view(), targets, WeightsView::None);
+			let acc = Accuracy::default().compute(pred_arr.view(), targets, WeightsView::None);
 			LibraryMetrics { metrics: MetricsJson { logloss: Some(ll), acc: Some(acc), ..Default::default() } }
 		}
 		Task::Multiclass => {
@@ -896,8 +896,8 @@ fn train_lightgbm(
 			let pred_arr = make_preds_array(&prob_col_major, n_classes, rows_valid);
 			let targets_arr = Array2::from_shape_vec((1, y_valid.len()), y_valid.to_vec()).expect("valid shape");
 			let targets = TargetsView::new(targets_arr.view());
-			let ll = MulticlassLogLoss.compute(pred_arr.view(), targets, None);
-			let acc = MulticlassAccuracy.compute(pred_arr.view(), targets, None);
+			let ll = MulticlassLogLoss.compute(pred_arr.view(), targets, WeightsView::None);
+			let acc = MulticlassAccuracy.compute(pred_arr.view(), targets, WeightsView::None);
 			LibraryMetrics { metrics: MetricsJson { mlogloss: Some(ll), acc: Some(acc), ..Default::default() } }
 		}
 	}

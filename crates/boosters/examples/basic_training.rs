@@ -10,7 +10,7 @@
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
-use boosters::dataset::{Dataset, TargetsView};
+use boosters::dataset::{Dataset, TargetsView, WeightsView};
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism, TreeParams};
 use ndarray::{Array1, Array2};
 
@@ -55,7 +55,7 @@ fn main() {
     let targets = TargetsView::new(targets_2d.view());
 
     // Train using GBDTModel (high-level API)
-    let model = GBDTModel::train_binned(&binned_dataset, targets, None, &[], config, 1).expect("Training failed");
+    let model = GBDTModel::train_binned(&binned_dataset, targets, WeightsView::None, &[], config, 1).expect("Training failed");
 
     // =========================================================================
     // 3. Make Predictions

@@ -46,4 +46,4 @@ pub use column::{Column, SparseColumn};
 pub use dataset::{Dataset, DatasetBuilder};
 pub use error::DatasetError;
 pub use schema::{DatasetSchema, FeatureMeta, FeatureType};
-pub use views::{FeaturesView, SamplesView, TargetsView};
+pub use views::{FeaturesView, SamplesView, TargetsView, WeightsIter, WeightsView};

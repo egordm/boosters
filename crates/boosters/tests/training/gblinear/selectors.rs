@@ -9,7 +9,7 @@
 
 use super::{load_test_data, load_train_data, make_dataset};
 use boosters::data::transpose_to_c_order;
-use boosters::dataset::{FeaturesView, TargetsView};
+use boosters::dataset::{FeaturesView, TargetsView, WeightsView};
 use boosters::training::gblinear::FeatureSelectorKind;
 use boosters::training::{
     GBLinearParams, GBLinearTrainer, MulticlassLogLoss, Rmse, SoftmaxLoss, SquaredLoss, Verbosity,
@@ -61,7 +61,7 @@ fn train_all_selectors_regression() {
     let shuffle_output = shuffle_model.predict(test_view);
     let targets_2d = Array2::from_shape_vec((1, test_labels.len()), test_labels.clone()).unwrap();
     let targets = TargetsView::new(targets_2d.view());
-    let shuffle_rmse = Rmse.compute(shuffle_output.view(), targets, None);
+    let shuffle_rmse = Rmse.compute(shuffle_output.view(), targets, WeightsView::None);
 
     for (name, selector) in selectors {
         let params = GBLinearParams {
@@ -79,7 +79,7 @@ fn train_all_selectors_regression() {
         let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
         let model = trainer.train(&train, &[]).unwrap();
         let output = model.predict(test_view);
-        let rmse = Rmse.compute(output.view(), targets, None);
+        let rmse = Rmse.compute(output.view(), targets, WeightsView::None);
 
         // All selectors should produce reasonable models
         // (within 2x of shuffle baseline)
@@ -154,7 +154,7 @@ fn train_all_selectors_multiclass() {
     let targets_2d = Array2::from_shape_vec((1, test_labels.len()), test_labels.clone()).unwrap();
     let targets = TargetsView::new(targets_2d.view());
     let shuffle_acc = MulticlassAccuracy
-        .compute(shuffle_pred_arr.view(), targets, None)
+        .compute(shuffle_pred_arr.view(), targets, WeightsView::None)
         as f32;
 
     for (name, selector) in selectors {
@@ -192,7 +192,7 @@ fn train_all_selectors_multiclass() {
             .collect();
         let pred_arr = Array2::from_shape_vec((1, n_samples), pred_classes).unwrap();
         let acc = MulticlassAccuracy
-            .compute(pred_arr.view(), targets, None)
+            .compute(pred_arr.view(), targets, WeightsView::None)
             as f32;
 
         // All selectors should achieve reasonable accuracy
@@ -297,7 +297,7 @@ fn train_thrifty_selector_convergence() {
     let output = model.predict(test_view);
     let targets_2d = Array2::from_shape_vec((1, test_labels.len()), test_labels.clone()).unwrap();
     let targets = TargetsView::new(targets_2d.view());
-    let rmse = Rmse.compute(output.view(), targets, None);
+    let rmse = Rmse.compute(output.view(), targets, WeightsView::None);
 
     // Thrifty should converge to a reasonable model
     assert!(rmse < 100.0, "Thrifty should converge: RMSE = {}", rmse);

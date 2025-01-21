@@ -3,9 +3,9 @@
 //! Provides the [`Evaluator`] component for computing metrics during training,
 //! and [`MetricValue`] for wrapping computed metrics with metadata.
 
-use ndarray::{Array2, ArrayView1, ArrayView2};
+use ndarray::{Array2, ArrayView2};
 
-use crate::dataset::{Dataset, TargetsView};
+use crate::dataset::{Dataset, TargetsView, WeightsView};
 use crate::inference::PredictionKind;
 
 use super::metrics::MetricFn;
@@ -169,7 +169,7 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
         &mut self,
         predictions: ArrayView2<f32>,
         targets: TargetsView<'_>,
-        weights: Option<ArrayView1<'_, f32>>,
+        weights: WeightsView<'_>,
     ) -> f64 {
         let needs_transform =
             self.metric.expected_prediction_kind() != PredictionKind::Margin;
@@ -220,7 +220,7 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
         name: impl Into<String>,
         predictions: ArrayView2<f32>,
         targets: TargetsView<'_>,
-        weights: Option<ArrayView1<'_, f32>>,
+        weights: WeightsView<'_>,
     ) -> MetricValue {
         let value = self.compute(predictions, targets, weights);
         MetricValue::new(name, value, self.higher_is_better())
@@ -242,7 +242,7 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
         &mut self,
         train_predictions: ArrayView2<f32>,
         train_targets: TargetsView<'_>,
-        train_weights: Option<ArrayView1<'_, f32>>,
+        train_weights: WeightsView<'_>,
         eval_sets: &[EvalSet<'_>],
         eval_predictions: &[Array2<f32>],
     ) -> Vec<MetricValue> {
