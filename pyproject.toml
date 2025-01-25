@@ -210,6 +210,13 @@ args = [
   { name = "release", type = "boolean", help = "Run tests in release mode", default = false },
 ]
 
+[tool.poe.tasks."python:develop"]
+help = "Build and install the Python package in development mode (editable)"
+cmd = "maturin develop -m packages/boosters-python/Cargo.toml ${release:+ --release}"
+args = [
+  { name = "release", type = "boolean", help = "Build in release mode", default = false },
+]
+
 [tool.poe.tasks."python:all"]
 help = "Run all CI calls"
 control.expr = "check"

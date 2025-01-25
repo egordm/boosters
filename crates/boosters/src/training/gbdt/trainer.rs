@@ -696,6 +696,125 @@ mod tests {
         );
     }
 
+    /// Regression test: linear leaves should improve RMSE on linearly structured data.
+    ///
+    /// This test was added after a bug where training predictions didn't use linear
+    /// coefficients (only inference did), causing gradient boosting to diverge.
+    /// The fix ensures training predictions match inference predictions.
+    #[test]
+    fn test_linear_leaves_improve_rmse() {
+        use crate::data::{BinnedDatasetBuilder, BinningConfig, FeaturesView};
+        use crate::testing::synthetic_datasets::synthetic_regression;
+
+        // Create a synthetic regression dataset with linear structure
+        let data = synthetic_regression(200, 10, 42, 0.05);
+        let features_view = FeaturesView::from_array(data.features.view());
+        let dataset = BinnedDatasetBuilder::new(BinningConfig::default())
+            .add_features(features_view, Parallelism::Sequential)
+            .build()
+            .unwrap();
+        let targets_arr = data.targets.clone().insert_axis(ndarray::Axis(0));
+        let targets = TargetsView::new(targets_arr.view());
+
+        // Train WITHOUT linear leaves
+        let params_base = GBDTParams {
+            n_trees: 20,
+            learning_rate: 0.1,
+            growth_strategy: GrowthStrategy::DepthWise { max_depth: 4 },
+            linear_leaves: None,
+            ..Default::default()
+        };
+        let trainer_base = GBDTTrainer::new(SquaredLoss, Rmse, params_base);
+        let forest_base = trainer_base
+            .train(
+                &dataset,
+                targets,
+                WeightsView::None,
+                &[],
+                Parallelism::Sequential,
+            )
+            .unwrap();
+
+        // Train WITH linear leaves
+        let params_linear = GBDTParams {
+            n_trees: 20,
+            learning_rate: 0.1,
+            growth_strategy: GrowthStrategy::DepthWise { max_depth: 4 },
+            linear_leaves: Some(LinearLeafConfig {
+                lambda: 0.01,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let trainer_linear = GBDTTrainer::new(SquaredLoss, Rmse, params_linear);
+        let forest_linear = trainer_linear
+            .train(
+                &dataset,
+                targets,
+                WeightsView::None,
+                &[],
+                Parallelism::Sequential,
+            )
+            .unwrap();
+
+        // Compute predictions and RMSE
+        use crate::inference::SimplePredictor;
+
+        let n_samples = data.targets.len();
+        let mut preds_base = vec![0.0f32; n_samples];
+        let mut preds_linear = vec![0.0f32; n_samples];
+        let mut output = vec![0.0f32; 1];
+
+        let predictor_base = SimplePredictor::new(&forest_base);
+        let predictor_linear = SimplePredictor::new(&forest_linear);
+
+        // Features are in feature-major [n_features, n_samples], need sample-major for predict
+        for sample in 0..n_samples {
+            let row_features: Vec<f32> = (0..data.features.nrows())
+                .map(|f| data.features[[f, sample]])
+                .collect();
+
+            predictor_base.predict_row_into(&row_features, None, &mut output);
+            preds_base[sample] = output[0];
+
+            predictor_linear.predict_row_into(&row_features, None, &mut output);
+            preds_linear[sample] = output[0];
+        }
+
+        let rmse_base = (preds_base
+            .iter()
+            .zip(data.targets.iter())
+            .map(|(p, t)| (p - t).powi(2))
+            .sum::<f32>()
+            / n_samples as f32)
+            .sqrt();
+
+        let rmse_linear = (preds_linear
+            .iter()
+            .zip(data.targets.iter())
+            .map(|(p, t)| (p - t).powi(2))
+            .sum::<f32>()
+            / n_samples as f32)
+            .sqrt();
+
+        // Linear leaves should improve RMSE (at least not make it significantly worse)
+        // On synthetic linear data, we expect meaningful improvement
+        assert!(
+            rmse_linear <= rmse_base * 1.1, // Allow 10% tolerance for numerical variance
+            "Linear leaves should not worsen RMSE. Base: {:.4}, Linear: {:.4}",
+            rmse_base,
+            rmse_linear
+        );
+
+        // Stricter check: linear should meaningfully improve
+        assert!(
+            rmse_linear < rmse_base,
+            "Linear leaves should improve RMSE on linear data. Base: {:.4}, Linear: {:.4}",
+            rmse_base,
+            rmse_linear
+        );
+    }
+
     #[test]
     fn test_training_populates_gains_and_covers() {
         use crate::repr::gbdt::TreeView;
