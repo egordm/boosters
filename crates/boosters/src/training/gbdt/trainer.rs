@@ -291,12 +291,16 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
 
                 // Update predictions (row of Array2)
                 let pred_row = predictions.row_mut(output);
-                if sampled.is_none() {
+                // Use fast path only when no sampling AND no linear leaves.
+                // Linear leaves require tree.predict_into to compute correct predictions
+                // since grower.update_predictions_from_last_tree uses only scalar values.
+                let has_linear_leaves = tree.has_linear_leaves();
+                if sampled.is_none() && !has_linear_leaves {
                     // Fast path: use partitioner for O(n) prediction update
                     grower.update_predictions_from_last_tree(pred_row);
                 } else {
-                    // Fallback: row sampling trains on a subset; we must still apply the
-                    // trained tree to all rows to keep predictions correct.
+                    // Fallback: row sampling trains on a subset, or linear leaves
+                    // require computing linear predictions for correct gradient updates.
                     tree.predict_into(dataset, pred_row, parallelism);
                 }
 

@@ -187,9 +187,9 @@ impl TreeGrower {
     ///
     /// # Note
     ///
-    /// This method uses only the base leaf values (not linear coefficients), which is
-    /// correct for training: we accumulate predictions incrementally using constant
-    /// leaf values, and linear adjustments are inference-time only.
+    /// This method uses only the base scalar leaf values (not linear coefficients).
+    /// When linear leaves are enabled, the trainer should use `tree.predict_into()`
+    /// instead to correctly compute linear predictions for gradient updates.
     pub fn update_predictions_from_last_tree(&self, mut predictions: ArrayViewMut1<f32>) {
         for (leaf_node, leaf_value) in self.last_leaf_values.iter().enumerate() {
             if leaf_value.is_nan() {
