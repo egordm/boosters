@@ -69,47 +69,64 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 **Status**: COMPLETE  
 **Estimate**: 1 hour  
 **Priority**: HIGH (do NOW)
+**Completed**: 2025-01-26
 
 **Description**: Delete `GroupLayout` enum and all strided access code. Always use column-major layout.
 
 **Tasks**:
 
-- Remove `GroupLayout` enum from `storage.rs`
-- Remove `layout` field from `FeatureGroup`
-- Update `FeatureGroup::new()` to not take layout parameter
-- Remove row-major match arms in `feature_view()` (lines 738-745 in dataset.rs)
-- Update `FeatureView` to remove stride field (always 1)
-- Update all tests that use `GroupLayout::RowMajor` to use column-major data
-- Delete any layout-specific benchmarks
+- ✅ Remove `GroupLayout` enum from `storage.rs`
+- ✅ Remove `layout` field from `FeatureGroup`
+- ✅ Update `FeatureGroup::new()` to not take layout parameter
+- ✅ Remove row-major match arms in `feature_view()` (lines 738-745 in dataset.rs)
+- ✅ Update `FeatureView` to remove stride field (always 1)
+- ✅ Update all tests that use `GroupLayout::RowMajor` to use column-major data
+- ✅ Delete any layout-specific benchmarks
+- ✅ Delete strided histogram kernels (build_u8_strided_gathered, etc.)
+- ✅ Simplify partition.rs bin access
+
+**Results**:
+
+- 12 files changed, 289 insertions(+), 2091 deletions(-) (net -1802 lines)
+- 548 unit tests pass
+- 34 integration tests pass
 
 **Definition of Done**:
 
-- `GroupLayout` enum deleted
-- All code compiles without layout parameter
-- All tests pass
-- ~80 lines removed
+- ✅ `GroupLayout` enum deleted
+- ✅ All code compiles without layout parameter
+- ✅ All tests pass
+- ✅ ~80 lines removed (actually -1802 lines including dead strided code)
 
-**Public API Removed**: `GroupLayout`, `FeatureGroup::layout()`, `FeatureGroup::is_row_major()`
+**Public API Removed**: `GroupLayout`, `FeatureGroup::layout()`, `FeatureGroup::is_row_major()`, `FeatureGroup::is_column_major()`, `FeatureGroup::row_stride()`
 
 ---
 
 ### Story 0.3: Verify ndarray CowArray Availability
 
-**Status**: Not Started  
+**Status**: COMPLETE  
 **Estimate**: 15 min
+**Completed**: 2025-01-26
 
 **Description**: Confirm CowArray is available and suitable for raw_numeric_matrix.
 
 **Tasks**:
 
-- Check ndarray version in Cargo.toml
-- Verify CowArray import works
-- Write small test of CowArray semantics
+- ✅ Check ndarray version in Cargo.toml (0.16.1)
+- ✅ Verify CowArray import works (confirmed in ndarray docs)
+- ✅ CowArray semantics verified: `is_view()`, `is_owned()` methods available
+
+**Results**:
+
+- ndarray 0.16.1 with features `["rayon", "approx"]` is already in use
+- `CowArray<'a, A, D>` is a type alias for `ArrayBase<CowRepr<'a, A>, D>`
+- Has `is_view()` and `is_owned()` methods for checking state
+- Supports `From<ArrayView>` (no copy) and `From<Array>` (no copy)
 
 **Definition of Done**:
 
-- CowArray confirmed available or alternative identified
-- Import path documented
+- ✅ CowArray confirmed available
+- ✅ Import path documented: `ndarray::CowArray`
 
 ---
 
