@@ -1,24 +1,19 @@
 //! Feature group - a collection of features with shared storage layout.
 
 use super::BinMapper;
-use super::storage::{BinStorage, BinType, GroupLayout};
+use super::storage::{BinStorage, BinType};
 
 /// A group of features with shared storage layout.
 ///
 /// Features in a group share:
 /// - Storage format (dense or sparse)
 /// - Bin width (u8 or u16)
-/// - Memory layout (row-major or column-major for dense)
+/// - Memory layout (always column-major)
 ///
 /// # Storage Types
 ///
-/// ## Dense (Row-Major or Column-Major)
+/// ## Dense (Column-Major)
 /// For features with mostly non-zero values.
-///
-/// ### Row-Major Layout
-/// ```text
-/// [row0_f0, row0_f1, ..., row0_fK, row1_f0, row1_f1, ...]
-/// ```
 ///
 /// ### Column-Major Layout
 /// ```text
@@ -28,13 +23,10 @@ use super::storage::{BinStorage, BinType, GroupLayout};
 /// ## Sparse (CSR-like)
 /// For highly sparse features (>80% zeros). Single feature per group.
 /// Stores only non-zero (row_index, bin_value) pairs.
-/// Always uses ColumnMajor layout.
 #[derive(Clone, Debug)]
 pub struct FeatureGroup {
     /// Global feature indices in this group.
     feature_indices: Box<[u32]>,
-    /// Storage layout (only meaningful for dense storage).
-    layout: GroupLayout,
     /// Number of rows in the dataset.
     n_rows: usize,
     /// Bin data.
@@ -51,17 +43,15 @@ impl FeatureGroup {
     ///
     /// # Arguments
     /// * `feature_indices` - Global feature IDs in this group
-    /// * `layout` - Row-major or column-major storage (column-major for sparse)
     /// * `n_rows` - Number of rows (samples)
     /// * `storage` - Bin data (DenseU8, DenseU16, SparseU8, or SparseU16)
     /// * `bin_counts` - Number of bins per feature
     ///
     /// # Validation
     /// - Dense storage: verifies size = n_rows * n_features
-    /// - Sparse storage: requires single feature, uses ColumnMajor layout
+    /// - Sparse storage: requires single feature
     pub fn new(
         feature_indices: Vec<u32>,
-        layout: GroupLayout,
         n_rows: usize,
         storage: BinStorage,
         bin_counts: Vec<u32>,
@@ -88,17 +78,16 @@ impl FeatureGroup {
                 n_features
             );
         } else {
-            // Sparse storage: single feature, column-major
+            // Sparse storage: single feature
             debug_assert_eq!(n_features, 1, "Sparse storage requires single feature");
         }
 
-        Self::new_unchecked(feature_indices, layout, n_rows, storage, bin_counts)
+        Self::new_unchecked(feature_indices, n_rows, storage, bin_counts)
     }
 
     /// Internal constructor without validation.
     fn new_unchecked(
         feature_indices: Vec<u32>,
-        layout: GroupLayout,
         n_rows: usize,
         storage: BinStorage,
         bin_counts: Vec<u32>,
@@ -116,7 +105,6 @@ impl FeatureGroup {
 
         Self {
             feature_indices: feature_indices.into_boxed_slice(),
-            layout,
             n_rows,
             storage,
             bin_counts: bin_counts.into_boxed_slice(),
@@ -134,12 +122,6 @@ impl FeatureGroup {
     #[inline]
     pub fn n_rows(&self) -> usize {
         self.n_rows
-    }
-
-    /// Storage layout (only meaningful for dense storage).
-    #[inline]
-    pub fn layout(&self) -> GroupLayout {
-        self.layout
     }
 
     /// Bin type for this group.
@@ -204,38 +186,15 @@ impl FeatureGroup {
         self.storage.is_sparse()
     }
 
-    /// Row stride (number of bins per row) for row-major layout.
-    /// Returns `None` for column-major or sparse storage.
-    #[inline]
-    pub fn row_stride(&self) -> Option<usize> {
-        if self.storage.is_dense() && self.layout == GroupLayout::RowMajor {
-            Some(self.n_features())
-        } else {
-            None
-        }
-    }
-
     /// Feature stride (number of bins per feature) for column-major layout.
-    /// Returns `None` for row-major or sparse storage.
+    /// Returns `None` for sparse storage.
     #[inline]
     pub fn feature_stride(&self) -> Option<usize> {
-        if self.storage.is_dense() && self.layout == GroupLayout::ColumnMajor {
+        if self.storage.is_dense() {
             Some(self.n_rows)
         } else {
             None
         }
-    }
-
-    /// Check if this is a row-major group.
-    #[inline]
-    pub fn is_row_major(&self) -> bool {
-        self.storage.is_dense() && self.layout == GroupLayout::RowMajor
-    }
-
-    /// Check if this is a column-major group.
-    #[inline]
-    pub fn is_column_major(&self) -> bool {
-        self.storage.is_dense() && self.layout == GroupLayout::ColumnMajor
     }
 
     /// Memory size in bytes.
@@ -244,30 +203,30 @@ impl FeatureGroup {
         self.storage.size_bytes()
     }
 
-    /// Get a contiguous slice for a feature (column-major only).
+    /// Get a contiguous slice for a feature (single-feature groups only).
     ///
-    /// For column-major layout, returns the slice of bins for the given feature.
-    /// Returns `None` for row-major layout (bins are interleaved).
+    /// Returns the slice of bins for the given feature.
+    /// Returns `None` for multi-feature groups.
     ///
     /// # Arguments
     /// * `_feature_in_group` - Index of the feature within this group (not global feature ID)
     ///   Currently only single-feature groups are supported for direct slice access.
     #[inline]
     pub fn feature_bins_slice(&self, _feature_in_group: usize) -> Option<&BinStorage> {
-        if self.is_column_major() && self.n_features() == 1 {
+        if self.storage.is_dense() && self.n_features() == 1 {
             Some(&self.storage)
         } else {
             None
         }
     }
 
-    /// Get feature bins as a range within the storage (column-major only).
+    /// Get feature bins as a range within the storage.
     ///
     /// For column-major layout with multiple features, returns the (start, end) indices
-    /// into the storage for the given feature. Returns `None` for row-major layout.
+    /// into the storage for the given feature. Returns `None` for sparse storage.
     #[inline]
     pub fn feature_range(&self, feature_in_group: usize) -> Option<(usize, usize)> {
-        if !self.is_column_major() {
+        if self.storage.is_sparse() {
             return None;
         }
         let start = feature_in_group * self.n_rows;
@@ -348,56 +307,23 @@ mod tests {
     }
 
     #[test]
-    fn test_feature_group_row_major() {
-        // 3 rows, 2 features
-        // Row-major: [r0f0, r0f1, r1f0, r1f1, r2f0, r2f1]
-        let storage = BinStorage::from_u8(vec![0, 1, 2, 3, 4, 5]);
-        let group = FeatureGroup::new(
-            vec![0, 1], // feature indices
-            GroupLayout::RowMajor,
-            3, // n_rows
-            storage,
-            vec![4, 4], // bin counts
-        );
-
-        assert_eq!(group.n_features(), 2);
-        assert_eq!(group.n_rows(), 3);
-        assert!(group.is_row_major());
-        assert_eq!(group.row_stride(), Some(2));
-        assert_eq!(group.feature_stride(), None);
-        assert_eq!(group.total_bins(), 8);
-        assert_eq!(group.bin_offsets(), &[0, 4, 8]);
-
-        // Access via match on storage
-        match group.storage() {
-            BinStorage::DenseU8(data) => {
-                assert_eq!(data[0], 0); // row 0, feature 0
-                assert_eq!(data[1], 1); // row 0, feature 1
-                assert_eq!(data[2], 2); // row 1, feature 0
-            }
-            _ => panic!("expected DenseU8"),
-        }
-    }
-
-    #[test]
     fn test_feature_group_column_major() {
         // 3 rows, 2 features
         // Column-major: [f0r0, f0r1, f0r2, f1r0, f1r1, f1r2]
         let storage = BinStorage::from_u8(vec![0, 1, 2, 3, 4, 5]);
         let group = FeatureGroup::new(
             vec![10, 11], // feature indices (non-zero to test they're stored)
-            GroupLayout::ColumnMajor,
-            3, // n_rows
+            3,            // n_rows
             storage,
             vec![4, 4], // bin counts
         );
 
         assert_eq!(group.n_features(), 2);
         assert_eq!(group.n_rows(), 3);
-        assert!(group.is_column_major());
-        assert_eq!(group.row_stride(), None);
         assert_eq!(group.feature_stride(), Some(3));
         assert_eq!(group.feature_indices(), &[10, 11]);
+        assert_eq!(group.total_bins(), 8);
+        assert_eq!(group.bin_offsets(), &[0, 4, 8]);
 
         // Access via match on storage
         match group.storage() {
@@ -414,11 +340,11 @@ mod tests {
 
     #[test]
     fn test_feature_group_u16_storage() {
+        // 2 rows, 2 features - column-major
         let storage = BinStorage::from_u16(vec![0, 256, 1000, 500]);
         let group = FeatureGroup::new(
             vec![0, 1],
-            GroupLayout::RowMajor,
-            2,
+            2, // n_rows
             storage,
             vec![1024, 1024],
         );
@@ -426,10 +352,11 @@ mod tests {
         assert_eq!(group.bin_type(), BinType::U16);
         match group.storage() {
             BinStorage::DenseU16(data) => {
-                assert_eq!(data[0], 0);
-                assert_eq!(data[1], 256);
-                assert_eq!(data[2], 1000);
-                assert_eq!(data[3], 500);
+                // Column-major: [f0r0, f0r1, f1r0, f1r1]
+                assert_eq!(data[0], 0);   // f0r0
+                assert_eq!(data[1], 256); // f0r1
+                assert_eq!(data[2], 1000); // f1r0
+                assert_eq!(data[3], 500); // f1r1
             }
             _ => panic!("expected DenseU16"),
         }

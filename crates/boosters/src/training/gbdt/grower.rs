@@ -743,7 +743,7 @@ impl TreeGrower {
 mod tests {
     use super::*;
     use crate::data::{
-        BinMapper, BinnedDataset, BinnedDatasetBuilder, BinningConfig, DataAccessor, GroupLayout,
+        BinMapper, BinnedDataset, BinnedDatasetBuilder, BinningConfig, DataAccessor,
         GroupStrategy, MissingType, SampleAccessor,
     };
     use crate::repr::gbdt::{Tree, TreeView};
@@ -769,9 +769,7 @@ mod tests {
         );
         BinnedDatasetBuilder::new(BinningConfig::default())
             .add_binned(bins, mapper, None)
-            .group_strategy(GroupStrategy::SingleGroup {
-                layout: GroupLayout::ColumnMajor,
-            })
+            .group_strategy(GroupStrategy::SingleGroup)
             .build()
             .unwrap()
     }
@@ -788,9 +786,7 @@ mod tests {
         BinnedDatasetBuilder::new(BinningConfig::default())
             .add_binned(f0_bins, f0_mapper, None)
             .add_binned(f1_bins, f1_mapper, None)
-            .group_strategy(GroupStrategy::SingleGroup {
-                layout: GroupLayout::ColumnMajor,
-            })
+            .group_strategy(GroupStrategy::SingleGroup)
             .build()
             .unwrap()
     }
@@ -802,9 +798,7 @@ mod tests {
         let mapper = BinMapper::numerical(vec![0.5, 1.5], MissingType::None, 0, 0, 0.0, 0.0, 1.0);
         BinnedDatasetBuilder::new(BinningConfig::default())
             .add_binned(bins, mapper, None)
-            .group_strategy(GroupStrategy::SingleGroup {
-                layout: GroupLayout::ColumnMajor,
-            })
+            .group_strategy(GroupStrategy::SingleGroup)
             .build()
             .unwrap()
     }
@@ -818,9 +812,7 @@ mod tests {
             BinMapper::categorical(vec![1000, 2000, 3000, 4000], MissingType::None, 0, 0, 0.0);
         BinnedDatasetBuilder::new(BinningConfig::default())
             .add_binned(bins, mapper, None)
-            .group_strategy(GroupStrategy::SingleGroup {
-                layout: GroupLayout::ColumnMajor,
-            })
+            .group_strategy(GroupStrategy::SingleGroup)
             .build()
             .unwrap()
     }

@@ -28,60 +28,126 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 
 ---
 
-## Epic 0: Prework and Baselines ✅ COMPLETED
+## Epic 0: Prework and Baselines
 
-*Establish baselines and verify assumptions before implementation.*
+*Establish baselines, verify assumptions, and prepare codebase for clean implementation.*
 
-### Story 0.1: Baseline Linear Trees Performance and Verify Issue ✅
+**Approach**: We deprecate/isolate old code FIRST, then write new implementation from scratch. This gives us a clean slate without mixing old and new patterns.
 
-**Status**: Completed  
-**Completed**: 2025-01-27
+### Story 0.1: Baseline Benchmarks (Speed + Quality)
 
-**Findings**:
-- Linear trees on covertype: boosters=0.7611 vs lightgbm=0.4064 (87% worse)
-- Root cause confirmed: `BinnedSample::feature()` uses `bin_to_midpoint()` at dataset.rs:888-892
-- Documented in `tmp/ndarray-migration-baselines.md`
+**Status**: COMPLETE  
+**Estimate**: 30 min  
+**Priority**: BLOCKING
 
----
+**Description**: Run full benchmark suite to capture current performance and quality baselines across ALL models.
 
-### Story 0.2: Verify Strided Paths Are Dead Code ✅
+**Command**: `uv run boosters-eval full`
 
-**Status**: Completed  
-**Completed**: 2025-01-27
+**Baseline Results** (captured 2025-12-28):
 
-**Findings**:
-- RowMajor was only used in tests (lines 969, 997, 1008 in dataset.rs)
-- Production code always used ColumnMajor
-- All strided code paths removed in Epic 1
+| Dataset | Model | Library | Metric | Value |
+|---------|-------|---------|--------|-------|
+| covertype | gbdt | boosters | mlogloss | 0.3807±0.0061 |
+| covertype | linear_trees | boosters | mlogloss | 0.3772±0.0060 |
+| covertype | linear_trees | lightgbm | mlogloss | 0.4053±0.0091 |
+| california | linear_trees | boosters | rmse | 0.4726±0.0074 |
+| synthetic_reg_medium | linear_trees | boosters | rmse | 18.7762±0.9837 |
 
----
+**Quality Gate**: No regression >5% in any metric after implementation.
 
-### Story 0.3: Verify ndarray CowArray Availability ✅
+**Definition of Done**:
 
-**Status**: Completed  
-**Completed**: 2025-01-27
-
-**Findings**:
-- ndarray version: 0.16.1
-- CowArray: Available and suitable
-- Import: `use ndarray::CowArray;`
+- Full benchmark run completed
+- Results documented
+- Baseline established for regression testing
 
 ---
 
-## Epic 1: Storage Types Foundation ✅ COMPLETED
+### Story 0.2: Remove GroupLayout Enum
+
+**Status**: COMPLETE  
+**Estimate**: 1 hour  
+**Priority**: HIGH (do NOW)
+
+**Description**: Delete `GroupLayout` enum and all strided access code. Always use column-major layout.
+
+**Tasks**:
+
+- Remove `GroupLayout` enum from `storage.rs`
+- Remove `layout` field from `FeatureGroup`
+- Update `FeatureGroup::new()` to not take layout parameter
+- Remove row-major match arms in `feature_view()` (lines 738-745 in dataset.rs)
+- Update `FeatureView` to remove stride field (always 1)
+- Update all tests that use `GroupLayout::RowMajor` to use column-major data
+- Delete any layout-specific benchmarks
+
+**Definition of Done**:
+
+- `GroupLayout` enum deleted
+- All code compiles without layout parameter
+- All tests pass
+- ~80 lines removed
+
+**Public API Removed**: `GroupLayout`, `FeatureGroup::layout()`, `FeatureGroup::is_row_major()`
+
+---
+
+### Story 0.3: Verify ndarray CowArray Availability
+
+**Status**: Not Started  
+**Estimate**: 15 min
+
+**Description**: Confirm CowArray is available and suitable for raw_numeric_matrix.
+
+**Tasks**:
+
+- Check ndarray version in Cargo.toml
+- Verify CowArray import works
+- Write small test of CowArray semantics
+
+**Definition of Done**:
+
+- CowArray confirmed available or alternative identified
+- Import path documented
+
+---
+
+### Story 0.4: Deprecate Old Dataset Module (Isolation)
+
+**Status**: Not Started  
+**Estimate**: 30 min
+
+**Description**: Mark existing binned dataset code as deprecated and isolate it, preparing for clean new implementation.
+
+**Tasks**:
+
+- Add `#[deprecated(note = "Use new storage types from v0.2")]` to:
+  - `BinType` enum
+  - `BinStorage` enum (will be replaced by `BinData`)
+  - Old builder methods that will be replaced
+- Create `data/binned/v2/` module for new implementation
+- Document that old code will be removed after migration
+
+**Definition of Done**:
+
+- Deprecation warnings on old types
+- New module structure created
+- Clear separation between old and new code
+
+**Note**: This allows us to write clean new code without touching old implementation until integration.
+
+---
+
+## Epic 1: Storage Types Foundation
 
 *Create the new typed storage hierarchy that encodes numeric vs categorical semantics.*
 
 **Milestone**: After this epic, new storage types exist but aren't used yet.
 
-**Completed**: 2025-12-28  
-**Commit**: 6acd69f  
-**LOC Added**: ~1458 lines (including tests)  
-**Tests**: 39 new tests for all storage types
+### Story 1.1: Create BinData Enum and Module Structure
 
-### Story 1.1: Create BinData Enum and Module Structure ✅
-
-**Status**: Completed  
+**Status**: Not Started  
 **Estimate**: ~80 LOC
 
 **Description**: Create storage module and `BinData` enum replacing `BinType`.
@@ -108,9 +174,9 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 
 ---
 
-### Story 1.2: Create NumericStorage and CategoricalStorage ✅
+### Story 1.2: Create NumericStorage and CategoricalStorage
 
-**Status**: Completed  
+**Status**: Not Started  
 **Estimate**: ~120 LOC  
 **Depends on**: 1.1
 
@@ -138,9 +204,9 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 
 ---
 
-### Story 1.3: Create Sparse Storage Types ✅
+### Story 1.3: Create Sparse Storage Types
 
-**Status**: Completed  
+**Status**: Not Started  
 **Estimate**: ~100 LOC  
 **Depends on**: 1.1
 
@@ -168,9 +234,9 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 
 ---
 
-### Story 1.4: Create BundleStorage ✅
+### Story 1.4: Create BundleStorage
 
-**Status**: Completed  
+**Status**: Not Started  
 **Estimate**: ~80 LOC  
 **Depends on**: 1.1
 
@@ -197,9 +263,9 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 
 ---
 
-### Story 1.5: Create FeatureStorage Enum ✅
+### Story 1.5: Create FeatureStorage Enum
 
-**Status**: Completed  
+**Status**: Not Started  
 **Estimate**: ~50 LOC  
 **Depends on**: 1.2, 1.3, 1.4
 
@@ -226,9 +292,9 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 
 ---
 
-### Story 1.6: Stakeholder Feedback Check - Epic 1 ✅
+### Story 1.6: Stakeholder Feedback Check - Epic 1
 
-**Status**: Completed
+**Status**: Not Started
 
 **Description**: Review stakeholder feedback after storage types are complete.
 

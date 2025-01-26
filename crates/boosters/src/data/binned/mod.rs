@@ -37,7 +37,7 @@ pub use bundling::{
 pub use dataset::{BinnedDataset, BinnedSample, BundlingStats};
 pub use feature_analysis::{FeatureInfo, analyze_features, analyze_features_sequential};
 pub use group::{BinnedFeatureInfo, FeatureGroup};
-pub use storage::{BinStorage, BinType, FeatureView, GroupLayout};
+pub use storage::{BinStorage, BinType, FeatureView};
 
 // Internal types exposed for tests and benchmarks
 #[doc(hidden)]

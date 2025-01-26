@@ -298,12 +298,11 @@ impl RowPartitioner {
         }
 
         match (&split.split_type, &view) {
-            (SplitType::Numerical { bin: threshold }, FeatureView::U8 { bins, stride }) => {
+            (SplitType::Numerical { bin: threshold }, FeatureView::U8 { bins }) => {
                 let threshold = *threshold as u8;
-                let stride = *stride;
                 for &idx in &indices[begin..end] {
                     let row = idx as usize;
-                    let bin = bins[row * stride];
+                    let bin = bins[row];
                     let goes_left = if bin == default_bin as u8 && has_missing {
                         default_left
                     } else {
@@ -325,12 +324,11 @@ impl RowPartitioner {
                     }
                 }
             }
-            (SplitType::Numerical { bin: threshold }, FeatureView::U16 { bins, stride }) => {
+            (SplitType::Numerical { bin: threshold }, FeatureView::U16 { bins }) => {
                 let threshold = *threshold;
-                let stride = *stride;
                 for &idx in &indices[begin..end] {
                     let row = idx as usize;
-                    let bin = bins[row * stride];
+                    let bin = bins[row];
                     let goes_left = if bin == default_bin as u16 && has_missing {
                         default_left
                     } else {
@@ -352,11 +350,10 @@ impl RowPartitioner {
                     }
                 }
             }
-            (SplitType::Categorical { left_cats }, FeatureView::U8 { bins, stride }) => {
-                let stride = *stride;
+            (SplitType::Categorical { left_cats }, FeatureView::U8 { bins }) => {
                 for &idx in &indices[begin..end] {
                     let row = idx as usize;
-                    let bin = bins[row * stride] as u32;
+                    let bin = bins[row] as u32;
                     let goes_left = if bin == default_bin && has_missing {
                         default_left
                     } else {
@@ -378,11 +375,10 @@ impl RowPartitioner {
                     }
                 }
             }
-            (SplitType::Categorical { left_cats }, FeatureView::U16 { bins, stride }) => {
-                let stride = *stride;
+            (SplitType::Categorical { left_cats }, FeatureView::U16 { bins }) => {
                 for &idx in &indices[begin..end] {
                     let row = idx as usize;
-                    let bin = bins[row * stride] as u32;
+                    let bin = bins[row] as u32;
                     let goes_left = if bin == default_bin && has_missing {
                         default_left
                     } else {
@@ -468,7 +464,7 @@ impl RowPartitioner {
 mod tests {
     use super::*;
     use crate::data::{
-        BinMapper, BinnedDataset, BinnedDatasetBuilder, BinningConfig, GroupLayout, GroupStrategy,
+        BinMapper, BinnedDataset, BinnedDatasetBuilder, BinningConfig, GroupStrategy,
         MissingType,
     };
 
@@ -487,9 +483,7 @@ mod tests {
         BinnedDatasetBuilder::new(BinningConfig::default())
             .add_binned(f0_bins, f0_mapper, None)
             .add_binned(f1_bins, f1_mapper, None)
-            .group_strategy(GroupStrategy::SingleGroup {
-                layout: GroupLayout::ColumnMajor,
-            })
+            .group_strategy(GroupStrategy::SingleGroup)
             .build()
             .unwrap()
     }

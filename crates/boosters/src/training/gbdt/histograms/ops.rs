@@ -157,17 +157,11 @@ fn build_feature_gathered(
     view: &FeatureView<'_>,
 ) {
     match view {
-        FeatureView::U8 { bins, stride: 1 } => {
+        FeatureView::U8 { bins } => {
             build_u8_gathered(bins, ordered_grad_hess, histogram, indices);
         }
-        FeatureView::U16 { bins, stride: 1 } => {
+        FeatureView::U16 { bins } => {
             build_u16_gathered(bins, ordered_grad_hess, histogram, indices);
-        }
-        FeatureView::U8 { bins, stride } => {
-            build_u8_strided_gathered(bins, *stride, ordered_grad_hess, histogram, indices);
-        }
-        FeatureView::U16 { bins, stride } => {
-            build_u16_strided_gathered(bins, *stride, ordered_grad_hess, histogram, indices);
         }
         FeatureView::SparseU8 { .. } | FeatureView::SparseU16 { .. } => {
             // Sparse features not supported in gathered path
@@ -209,42 +203,6 @@ fn build_u16_gathered(
     }
 }
 
-#[inline]
-fn build_u8_strided_gathered(
-    bins: &[u8],
-    stride: usize,
-    ordered_grad_hess: &[GradsTuple],
-    histogram: &mut [HistogramBin],
-    indices: &[u32],
-) {
-    for i in 0..indices.len() {
-        let row = unsafe { *indices.get_unchecked(i) } as usize;
-        let bin = unsafe { *bins.get_unchecked(row * stride) } as usize;
-        let slot = unsafe { histogram.get_unchecked_mut(bin) };
-        let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
-        slot.0 += gh.grad as f64;
-        slot.1 += gh.hess as f64;
-    }
-}
-
-#[inline]
-fn build_u16_strided_gathered(
-    bins: &[u16],
-    stride: usize,
-    ordered_grad_hess: &[GradsTuple],
-    histogram: &mut [HistogramBin],
-    indices: &[u32],
-) {
-    for i in 0..indices.len() {
-        let row = unsafe { *indices.get_unchecked(i) } as usize;
-        let bin = unsafe { *bins.get_unchecked(row * stride) } as usize;
-        let slot = unsafe { histogram.get_unchecked_mut(bin) };
-        let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
-        slot.0 += gh.grad as f64;
-        slot.1 += gh.hess as f64;
-    }
-}
-
 // =============================================================================
 // Single-Feature Kernels (Contiguous)
 // =============================================================================
@@ -258,17 +216,11 @@ fn build_feature_contiguous(
     view: &FeatureView<'_>,
 ) {
     match view {
-        FeatureView::U8 { bins, stride: 1 } => {
+        FeatureView::U8 { bins } => {
             build_u8_contiguous(bins, ordered_grad_hess, histogram, start_row);
         }
-        FeatureView::U16 { bins, stride: 1 } => {
+        FeatureView::U16 { bins } => {
             build_u16_contiguous(bins, ordered_grad_hess, histogram, start_row);
-        }
-        FeatureView::U8 { bins, stride } => {
-            build_u8_strided_contiguous(bins, *stride, ordered_grad_hess, histogram, start_row);
-        }
-        FeatureView::U16 { bins, stride } => {
-            build_u16_strided_contiguous(bins, *stride, ordered_grad_hess, histogram, start_row);
         }
         FeatureView::SparseU8 {
             row_indices,
@@ -328,46 +280,6 @@ fn build_u16_contiguous(
         let slot = unsafe { histogram.get_unchecked_mut(bin) };
         slot.0 += gh.grad as f64;
         slot.1 += gh.hess as f64;
-    }
-}
-
-#[inline]
-fn build_u8_strided_contiguous(
-    bins: &[u8],
-    stride: usize,
-    ordered_grad_hess: &[GradsTuple],
-    histogram: &mut [HistogramBin],
-    start_row: usize,
-) {
-    let mut row = start_row;
-    for i in 0..ordered_grad_hess.len() {
-        let bin_idx = row * stride;
-        let bin = unsafe { *bins.get_unchecked(bin_idx) } as usize;
-        let slot = unsafe { histogram.get_unchecked_mut(bin) };
-        let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
-        slot.0 += gh.grad as f64;
-        slot.1 += gh.hess as f64;
-        row += 1;
-    }
-}
-
-#[inline]
-fn build_u16_strided_contiguous(
-    bins: &[u16],
-    stride: usize,
-    ordered_grad_hess: &[GradsTuple],
-    histogram: &mut [HistogramBin],
-    start_row: usize,
-) {
-    let mut row = start_row;
-    for i in 0..ordered_grad_hess.len() {
-        let bin_idx = row * stride;
-        let bin = unsafe { *bins.get_unchecked(bin_idx) } as usize;
-        let slot = unsafe { histogram.get_unchecked_mut(bin) };
-        let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
-        slot.0 += gh.grad as f64;
-        slot.1 += gh.hess as f64;
-        row += 1;
     }
 }
 
@@ -487,10 +399,7 @@ mod tests {
         let mut histogram = vec![(0.0, 0.0); 3];
 
         let features = make_features(&[3]);
-        let bin_views = vec![FeatureView::U8 {
-            bins: &bins,
-            stride: 1,
-        }];
+        let bin_views = vec![FeatureView::U8 { bins: &bins }];
         let ordered_grad_hess: Vec<GradsTuple> = grad
             .iter()
             .zip(&hess)
@@ -515,10 +424,7 @@ mod tests {
         let indices: Vec<u32> = vec![0, 2, 4];
 
         let features = make_features(&[3]);
-        let bin_views = vec![FeatureView::U8 {
-            bins: &bins,
-            stride: 1,
-        }];
+        let bin_views = vec![FeatureView::U8 { bins: &bins }];
         let ordered_grad_hess: Vec<GradsTuple> = indices
             .iter()
             .map(|&r| {
@@ -589,18 +495,9 @@ mod tests {
         let bins_f2: Vec<u8> = (0..n_samples).map(|i| ((i + 2) % 4) as u8).collect();
 
         let bin_views = vec![
-            FeatureView::U8 {
-                bins: &bins_f0,
-                stride: 1,
-            },
-            FeatureView::U8 {
-                bins: &bins_f1,
-                stride: 1,
-            },
-            FeatureView::U8 {
-                bins: &bins_f2,
-                stride: 1,
-            },
+            FeatureView::U8 { bins: &bins_f0 },
+            FeatureView::U8 { bins: &bins_f1 },
+            FeatureView::U8 { bins: &bins_f2 },
         ];
 
         let grad: Vec<f32> = (0..n_samples).map(|i| i as f32).collect();
@@ -631,14 +528,8 @@ mod tests {
         let bins_f1: Vec<u8> = (0..n_samples).map(|i| ((i + 1) % 4) as u8).collect();
 
         let bin_views = vec![
-            FeatureView::U8 {
-                bins: &bins_f0,
-                stride: 1,
-            },
-            FeatureView::U8 {
-                bins: &bins_f1,
-                stride: 1,
-            },
+            FeatureView::U8 { bins: &bins_f0 },
+            FeatureView::U8 { bins: &bins_f1 },
         ];
 
         let indices: Vec<u32> = (0..n_samples as u32).step_by(3).collect();
@@ -693,10 +584,7 @@ mod tests {
         let bins: Vec<u8> = (0..n_samples).map(|i| (i % 4) as u8).collect();
 
         let bin_views: Vec<_> = (0..4)
-            .map(|_| FeatureView::U8 {
-                bins: &bins,
-                stride: 1,
-            })
+            .map(|_| FeatureView::U8 { bins: &bins })
             .collect();
 
         let ordered_grad_hess: Vec<GradsTuple> = (0..n_samples)

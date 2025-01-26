@@ -2,7 +2,7 @@
 
 use super::bundling::{BundlePlan, FeatureLocation};
 use super::group::{BinnedFeatureInfo, FeatureGroup};
-use super::storage::{BinStorage, FeatureView, GroupLayout};
+use super::storage::{BinStorage, FeatureView};
 use crate::data::FeatureType;
 use crate::data::{DataAccessor, SampleAccessor};
 
@@ -257,10 +257,7 @@ impl BinnedDataset {
 
             // Add bundle views (u16 encoded bins)
             for bundle_bins in &bc.bundle_bins {
-                views.push(FeatureView::U16 {
-                    bins: bundle_bins,
-                    stride: 1,
-                });
+                views.push(FeatureView::U16 { bins: bundle_bins });
             }
 
             // Add standalone feature views (unchanged)
@@ -293,7 +290,6 @@ impl BinnedDataset {
             if feature_idx < n_bundles {
                 FeatureView::U16 {
                     bins: &bc.bundle_bins[feature_idx],
-                    stride: 1,
                 }
             } else {
                 let standalone_idx = feature_idx - n_bundles;
@@ -635,43 +631,20 @@ pub struct BundlingStats {
 }
 
 impl BinnedDataset {
-    /// Check if all groups use the same layout.
-    pub fn is_uniform_layout(&self) -> Option<GroupLayout> {
-        let first = self.groups.first()?.layout();
-        if self.groups.iter().all(|g| g.layout() == first) {
-            Some(first)
-        } else {
-            None
-        }
-    }
-
-    /// Get groups by layout type (dense groups only).
-    pub fn groups_by_layout(
-        &self,
-        layout: GroupLayout,
-    ) -> impl Iterator<Item = (usize, &FeatureGroup)> {
-        self.groups
-            .iter()
-            .enumerate()
-            .filter(move |(_, g)| g.is_dense() && g.layout() == layout)
-    }
-
-    /// Get row-major groups (dense only).
-    pub fn row_major_groups(&self) -> impl Iterator<Item = (usize, &FeatureGroup)> {
-        self.groups_by_layout(GroupLayout::RowMajor)
-    }
-
-    /// Get column-major groups (dense only).
-    pub fn column_major_groups(&self) -> impl Iterator<Item = (usize, &FeatureGroup)> {
-        self.groups_by_layout(GroupLayout::ColumnMajor)
-    }
-
     /// Get sparse groups.
     pub fn sparse_groups(&self) -> impl Iterator<Item = (usize, &FeatureGroup)> {
         self.groups
             .iter()
             .enumerate()
             .filter(|(_, g)| g.is_sparse())
+    }
+
+    /// Get dense groups.
+    pub fn dense_groups(&self) -> impl Iterator<Item = (usize, &FeatureGroup)> {
+        self.groups
+            .iter()
+            .enumerate()
+            .filter(|(_, g)| g.is_dense())
     }
 
     /// Find the group and in-group index for a global feature index.
@@ -687,8 +660,7 @@ impl BinnedDataset {
     /// Get a zero-cost slice view for a single feature's bins.
     ///
     /// Returns a `FeatureView` that provides direct typed access to the bins.
-    /// For column-major groups, the slice is contiguous (stride=1).
-    /// For row-major groups, the slice spans all features with stride > 1.
+    /// For dense groups, the slice is contiguous (column-major layout).
     /// For sparse groups, the slice contains only non-zero entries.
     ///
     /// # Example
@@ -696,14 +668,9 @@ impl BinnedDataset {
     /// ```ignore
     /// let slice = dataset.feature_view(0);
     /// match slice {
-    ///     FeatureView::U8 { bins, stride } => {
-    ///         if stride == 1 {
-    ///             // Column-major: bins[row] is the bin for this row
-    ///             for &bin in bins { ... }
-    ///         } else {
-    ///             // Row-major: bins[row * stride] is the bin
-    ///             for row in 0..n_rows { let bin = bins[row * stride]; }
-    ///         }
+    ///     FeatureView::U8 { bins } => {
+    ///         // bins[row] is the bin for this row
+    ///         for &bin in bins { ... }
     ///     }
     ///     FeatureView::SparseU8 { row_indices, bin_values } => { ... }
     ///     ...
@@ -714,58 +681,37 @@ impl BinnedDataset {
         let meta = &self.features[feature];
         let group = &self.groups[meta.group_index as usize];
         let idx_in_group = meta.index_in_group as usize;
-        let n_features = group.n_features();
 
-        match (group.storage(), group.layout()) {
-            // Column-major dense: extract contiguous slice for this feature
-            (BinStorage::DenseU8(data), GroupLayout::ColumnMajor) => {
+        match group.storage() {
+            // Dense: extract contiguous slice for this feature (column-major)
+            BinStorage::DenseU8(data) => {
                 let start = idx_in_group * self.n_rows;
                 let end = start + self.n_rows;
                 FeatureView::U8 {
                     bins: &data[start..end],
-                    stride: 1,
                 }
             }
-            (BinStorage::DenseU16(data), GroupLayout::ColumnMajor) => {
+            BinStorage::DenseU16(data) => {
                 let start = idx_in_group * self.n_rows;
                 let end = start + self.n_rows;
                 FeatureView::U16 {
                     bins: &data[start..end],
-                    stride: 1,
                 }
             }
-            // Row-major dense: provide full data with stride
-            (BinStorage::DenseU8(data), GroupLayout::RowMajor) => {
-                // Slice from feature offset, stride = n_features
-                FeatureView::U8 {
-                    bins: &data[idx_in_group..],
-                    stride: n_features,
-                }
-            }
-            (BinStorage::DenseU16(data), GroupLayout::RowMajor) => FeatureView::U16 {
-                bins: &data[idx_in_group..],
-                stride: n_features,
-            },
             // Sparse: always contiguous (one feature per group)
-            (
-                BinStorage::SparseU8 {
-                    row_indices,
-                    bin_values,
-                    ..
-                },
-                _,
-            ) => FeatureView::SparseU8 {
+            BinStorage::SparseU8 {
+                row_indices,
+                bin_values,
+                ..
+            } => FeatureView::SparseU8 {
                 row_indices,
                 bin_values,
             },
-            (
-                BinStorage::SparseU16 {
-                    row_indices,
-                    bin_values,
-                    ..
-                },
-                _,
-            ) => FeatureView::SparseU16 {
+            BinStorage::SparseU16 {
+                row_indices,
+                bin_values,
+                ..
+            } => FeatureView::SparseU16 {
                 row_indices,
                 bin_values,
             },
@@ -958,15 +904,14 @@ mod tests {
 
     #[test]
     fn test_binned_dataset_single_group() {
-        // 4 rows, 2 features in one group
+        // 4 rows, 2 features in one group (column-major)
+        // Column-major: [f0r0, f0r1, f0r2, f0r3, f1r0, f1r1, f1r2, f1r3]
         let storage = BinStorage::from_u8(vec![
-            0, 1, // row 0
-            2, 3, // row 1
-            0, 2, // row 2
-            1, 3, // row 3
+            0, 2, 0, 1, // feature 0: rows 0-3
+            1, 3, 2, 3, // feature 1: rows 0-3
         ]);
 
-        let group = FeatureGroup::new(vec![0, 1], GroupLayout::RowMajor, 4, storage, vec![4, 4]);
+        let group = FeatureGroup::new(vec![0, 1], 4, storage, vec![4, 4]);
 
         let features = vec![
             BinnedFeatureInfo::new(make_simple_mapper(4), 0, 0),
@@ -984,36 +929,30 @@ mod tests {
         // Access via feature_view
         let slice = dataset.feature_view(0);
         assert!(slice.is_dense());
-        assert!(!slice.is_contiguous()); // row-major has stride > 1
-        assert_eq!(slice.stride(), 2); // 2 features in group
 
         // Verify bin access
         assert_eq!(dataset.get_bin(0, 0), Some(0)); // row 0, feature 0
         assert_eq!(dataset.get_bin(0, 1), Some(1)); // row 0, feature 1
         assert_eq!(dataset.get_bin(1, 0), Some(2)); // row 1, feature 0
         assert_eq!(dataset.get_bin(3, 1), Some(3)); // row 3, feature 1
-
-        assert!(dataset.is_uniform_layout().is_some());
-        assert_eq!(dataset.is_uniform_layout(), Some(GroupLayout::RowMajor));
     }
 
     #[test]
     fn test_binned_dataset_multiple_groups() {
-        // 3 rows, 3 features in 2 groups
-        // Group 0: features 0,1 (row-major)
-        // Group 1: feature 2 (column-major)
+        // 3 rows, 3 features in 2 groups (all column-major)
+        // Group 0: features 0,1
+        // Group 1: feature 2
 
         let group0 = FeatureGroup::new(
             vec![0, 1],
-            GroupLayout::RowMajor,
             3,
-            BinStorage::from_u8(vec![0, 1, 2, 3, 4, 5]), // 3 rows * 2 features
+            // Column-major: [f0r0, f0r1, f0r2, f1r0, f1r1, f1r2]
+            BinStorage::from_u8(vec![0, 2, 4, 1, 3, 5]),
             vec![4, 4],
         );
 
         let group1 = FeatureGroup::new(
             vec![2],
-            GroupLayout::ColumnMajor,
             3,
             BinStorage::from_u8(vec![10, 11, 12]), // 3 rows * 1 feature
             vec![16],
@@ -1036,26 +975,19 @@ mod tests {
         // Verify access patterns
         let slice0 = dataset.feature_view(0);
         assert!(slice0.is_dense());
-        assert!(!slice0.is_contiguous()); // row-major
 
         let slice2 = dataset.feature_view(2);
         assert!(slice2.is_dense());
-        assert!(slice2.is_contiguous()); // column-major
 
         // Verify bin values
         assert_eq!(dataset.get_bin(0, 2), Some(10));
         assert_eq!(dataset.get_bin(2, 2), Some(12));
 
-        // Mixed layouts
-        assert!(dataset.is_uniform_layout().is_none());
-
-        // Group iteration by layout
-        let row_major: Vec<_> = dataset.row_major_groups().collect();
-        let col_major: Vec<_> = dataset.column_major_groups().collect();
-        assert_eq!(row_major.len(), 1);
-        assert_eq!(col_major.len(), 1);
-        assert_eq!(row_major[0].0, 0); // group 0
-        assert_eq!(col_major[0].0, 1); // group 1
+        // Group iteration
+        let dense: Vec<_> = dataset.dense_groups().collect();
+        let sparse: Vec<_> = dataset.sparse_groups().collect();
+        assert_eq!(dense.len(), 2);
+        assert_eq!(sparse.len(), 0);
     }
 
     #[test]
@@ -1068,7 +1000,6 @@ mod tests {
 
         let group = FeatureGroup::new(
             vec![0, 1],
-            GroupLayout::ColumnMajor,
             4,
             storage,
             vec![4, 16],
@@ -1083,20 +1014,16 @@ mod tests {
         let slices = dataset.feature_views();
 
         assert_eq!(slices.len(), 2);
-        assert!(slices[0].is_contiguous());
-        assert!(slices[1].is_contiguous());
 
         // Verify slice contents
         match slices[0] {
-            FeatureView::U8 { bins, stride } => {
-                assert_eq!(stride, 1);
+            FeatureView::U8 { bins } => {
                 assert_eq!(bins, &[0, 1, 2, 3]);
             }
             _ => panic!("Expected U8"),
         }
         match slices[1] {
-            FeatureView::U8 { bins, stride } => {
-                assert_eq!(stride, 1);
+            FeatureView::U8 { bins } => {
                 assert_eq!(bins, &[10, 11, 12, 13]);
             }
             _ => panic!("Expected U8"),

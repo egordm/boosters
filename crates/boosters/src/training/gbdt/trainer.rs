@@ -397,7 +397,7 @@ mod tests {
     use super::*;
     use crate::data::WeightsView;
     use crate::data::{
-        BinMapper, BinStorage, BinnedDataset, BinnedFeatureInfo, FeatureGroup, GroupLayout,
+        BinMapper, BinStorage, BinnedDataset, BinnedFeatureInfo, FeatureGroup,
         MissingType,
     };
     use crate::training::metrics::Rmse;
@@ -418,19 +418,14 @@ mod tests {
     }
 
     fn make_test_dataset() -> BinnedDataset {
-        // 8 rows, 2 features
+        // 8 rows, 2 features (column-major)
+        // Column-major: [f0r0, f0r1, ..., f0r7, f1r0, f1r1, ..., f1r7]
         let storage = BinStorage::from_u8(vec![
-            0, 1, // row 0
-            1, 2, // row 1
-            2, 0, // row 2
-            3, 1, // row 3
-            0, 2, // row 4
-            1, 0, // row 5
-            2, 1, // row 6
-            3, 2, // row 7
+            0, 1, 2, 3, 0, 1, 2, 3, // feature 0: 8 rows
+            1, 2, 0, 1, 2, 0, 1, 2, // feature 1: 8 rows
         ]);
 
-        let group = FeatureGroup::new(vec![0, 1], GroupLayout::RowMajor, 8, storage, vec![4, 3]);
+        let group = FeatureGroup::new(vec![0, 1], 8, storage, vec![4, 3]);
 
         let features = vec![
             BinnedFeatureInfo::new(make_simple_mapper(4), 0, 0),

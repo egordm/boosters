@@ -4,7 +4,7 @@
 
 use boosters::Parallelism;
 use boosters::data::{
-    BinnedDatasetBuilder, BinningConfig, GroupLayout, GroupStrategy, transpose_to_c_order,
+    BinnedDatasetBuilder, BinningConfig, GroupStrategy, transpose_to_c_order,
 };
 use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::inference::gbdt::SimplePredictor;
@@ -226,9 +226,7 @@ fn train_with_categorical_features_produces_categorical_splits() {
     // Build binned dataset - should detect categorical from schema
     let dataset = BinnedDatasetBuilder::new(BinningConfig::default())
         .add_features(features_dataset.features(), Parallelism::Sequential)
-        .group_strategy(GroupStrategy::SingleGroup {
-            layout: GroupLayout::ColumnMajor,
-        })
+        .group_strategy(GroupStrategy::SingleGroup)
         .build()
         .expect("Failed to build binned dataset");
 
