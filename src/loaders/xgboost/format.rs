@@ -99,7 +99,10 @@ where
             if t.eq_ignore_ascii_case("false") || t == "0" {
                 return Ok(false);
             }
-            Err(SerdeError::custom(format!("cannot parse bool from string: {}", s)))
+            Err(SerdeError::custom(format!(
+                "cannot parse bool from string: {}",
+                s
+            )))
         }
         _ => Err(SerdeError::custom("unsupported type for bool")),
     }
@@ -157,7 +160,7 @@ fn default_num_class() -> i64 {
 // --- Tree / model level definitions -------------------------------------------------
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct TreeParam {
+pub struct TreeParam {
     // These 3 fields are always serialized in TreeParam::ToJson()
     #[serde_as(as = "DisplayFromStr")]
     pub num_nodes: i64,
@@ -171,7 +174,7 @@ pub(crate) struct TreeParam {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Tree {
+pub struct Tree {
     pub tree_param: TreeParam,
     pub id: i32,
     pub loss_changes: Vec<f64>,
@@ -192,7 +195,7 @@ pub(crate) struct Tree {
 
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct GBTreeModelParam {
+pub struct GBTreeModelParam {
     // Both fields are always serialized in GBTreeModel::SaveModel()
     #[serde_as(as = "DisplayFromStr")]
     pub num_trees: i64,
@@ -201,7 +204,7 @@ pub(crate) struct GBTreeModelParam {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ModelTrees {
+pub struct ModelTrees {
     pub trees: Vec<Tree>,
     pub tree_info: Vec<i32>,
     pub gbtree_model_param: GBTreeModelParam,
@@ -209,19 +212,19 @@ pub(crate) struct ModelTrees {
 
 // --- Gradient booster variants (gbtree | gblinear | dart) ---------------------------
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct GbLinearModel {
+pub struct GbLinearModel {
     pub weights: Vec<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct GBTreeDefinition {
+pub struct GBTreeDefinition {
     pub name: String,
     pub model: ModelTrees,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "name", rename_all = "lowercase")]
-pub(crate) enum GradientBooster {
+pub enum GradientBooster {
     Gbtree {
         model: ModelTrees,
     },
@@ -237,7 +240,7 @@ pub(crate) enum GradientBooster {
 // --- Objective / learner-level definitions ---------------------------------------
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct RegLossParam {
+pub struct RegLossParam {
     // scale_pos_weight defaults to 1.0 in C++
     #[serde_as(as = "DisplayFromStr")]
     #[serde(default = "default_scale_pos_weight")]
@@ -253,7 +256,7 @@ impl Default for RegLossParam {
 
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct PoissonRegressionParam {
+pub struct PoissonRegressionParam {
     // max_delta_step defaults to 0.7 in C++
     #[serde_as(as = "DisplayFromStr")]
     #[serde(default = "default_max_delta_step")]
@@ -269,7 +272,7 @@ impl Default for PoissonRegressionParam {
 
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct TweedieRegressionParam {
+pub struct TweedieRegressionParam {
     // tweedie_variance_power defaults to 1.5, range [1.0, 2.0) in C++
     #[serde_as(as = "DisplayFromStr")]
     #[serde(default = "default_tweedie_variance_power")]
@@ -285,7 +288,7 @@ impl Default for TweedieRegressionParam {
 
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct QuantileLossParam {
+pub struct QuantileLossParam {
     // quantle_alpha can be single float or array
     #[serde_as(as = "OneOrMany<DisplayFromStr>")]
     #[serde(default)]
@@ -301,7 +304,7 @@ impl Default for QuantileLossParam {
 
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct SoftmaxMulticlassParam {
+pub struct SoftmaxMulticlassParam {
     // num_class is always serialized as a required parameter
     #[serde_as(as = "DisplayFromStr")]
     #[serde(default = "default_num_class")]
@@ -315,7 +318,7 @@ impl Default for SoftmaxMulticlassParam {
 
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct LambdaRankParam {
+pub struct LambdaRankParam {
     #[serde_as(as = "DisplayFromStr")]
     #[serde(default = "default_num_pairsample")]
     pub num_pairsample: i64,
@@ -334,7 +337,7 @@ impl Default for LambdaRankParam {
 
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct LambdarankParam {
+pub struct LambdarankParam {
     // lambdarank_num_pair_per_sample defaults to NotSet (max uint) or auto-configured
     #[serde_as(as = "DisplayFromStr")]
     #[serde(default = "default_lambdarank_num_pair_per_sample")]
@@ -369,7 +372,7 @@ impl Default for LambdarankParam {
 
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct AftLossParam {
+pub struct AftLossParam {
     // aft_loss_distribution defaults to "normal" (enum: normal, logistic, extreme)
     #[serde(default = "default_aft_loss_distribution")]
     pub aft_loss_distribution: String,
@@ -392,7 +395,7 @@ impl Default for AftLossParam {
 // input strings without writing custom Deserialize implementations.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum FeatureType {
+pub enum FeatureType {
     #[serde(rename = "float", alias = "float32", alias = "f")]
     Float,
     #[serde(rename = "int", alias = "i")]
@@ -413,7 +416,7 @@ impl std::fmt::Display for FeatureType {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "name")]
-pub(crate) enum Objective {
+pub enum Objective {
     #[serde(rename = "reg:squarederror")]
     RegSquaredError {
         #[serde(default)]
@@ -506,7 +509,7 @@ pub(crate) enum Objective {
 
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct LearnerModelParam {
+pub struct LearnerModelParam {
     // base_score is always serialized - can be single number, string, or array
     #[serde(deserialize_with = "deserialize_base_score")]
     pub base_score: f32,
@@ -537,7 +540,7 @@ impl Default for LearnerModelParam {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Learner {
+pub struct Learner {
     #[serde(default)]
     pub feature_names: Vec<String>,
     #[serde(default)]
@@ -555,7 +558,7 @@ pub struct Model {
 }
 
 impl Model {
-    pub(crate) fn from_value(value: &Value) -> Result<Self, serde_json::Error> {
+    pub fn from_value(value: &Value) -> Result<Self, serde_json::Error> {
         serde_json::from_value(value.clone())
     }
 }
@@ -566,8 +569,6 @@ impl Model {
 pub fn test_parse_model(value: &Value) -> Result<Model, serde_json::Error> {
     serde_json::from_value(value.clone())
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -624,5 +625,4 @@ mod tests {
         assert!(!p0.lambdarank_unbiased);
         assert!(!p0.ndcg_exp_gain);
     }
-
 }

@@ -863,6 +863,7 @@ name = "xgboost-rs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "glob",
  "rstest",
  "serde",
  "serde_json",
