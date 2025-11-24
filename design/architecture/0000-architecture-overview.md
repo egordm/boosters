@@ -11,6 +11,7 @@ This document provides a birds-eye view of the xgboost-rs library architecture, 
 ## Motivation
 
 A clear architectural overview helps:
+
 1. Onboard contributors to the codebase structure
 2. Identify component boundaries and interfaces
 3. Guide decisions about where new functionality belongs
@@ -18,7 +19,7 @@ A clear architectural overview helps:
 
 ## Architecture Diagram
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │                              xgboost-rs Library                                  │
 ├─────────────────────────────────────────────────────────────────────────────────┤
@@ -81,22 +82,26 @@ A clear architectural overview helps:
 ## Component Responsibilities
 
 ### Public API Layer
+
 - **Booster**: High-level training API, manages iterations and early stopping
 - **DMatrix**: Data abstraction for features, labels, weights
 - **Model**: Load/save interface, format conversion
 - **Predict**: High-level prediction API with batching
 
 ### Orchestration Layer
+
 - **Trainer**: Implements gradient boosting loop, histogram building, tree growing
 - **Predictor**: Dispatches to CPU/GPU implementations, manages threading
 - **Serialization**: JSON and binary model formats, compatibility with XGBoost
 
 ### Core Data Structures
+
 - **Forest Module**: Collection of trees with metadata (see RFC-0001)
 - **Tree Module**: Individual tree structures (see RFC-0002)
 - **Data Module**: Feature matrices and quantization (future RFC)
 
 ### Support Modules
+
 - **Visitors**: Tree traversal abstractions (see RFC-0003)
 - **Buffers**: Thread-local buffer pools
 - **SIMD**: Portable SIMD operations
@@ -107,7 +112,7 @@ A clear architectural overview helps:
 
 ### Training Flow
 
-```
+```text
                     ┌─────────────────┐
                     │   Input Data    │
                     │ (features, y)   │
@@ -150,7 +155,7 @@ A clear architectural overview helps:
 
 ### Inference Flow
 
-```
+```text
               ┌─────────────────┐
               │  Saved Model    │
               └────────┬────────┘

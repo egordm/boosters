@@ -8,6 +8,7 @@
 ## Summary
 
 This RFC defines the visitor pattern for tree traversal, covering:
+
 1. **`Visitor` trait**: Core abstraction for traversal behavior
 2. **`Predictor`**: Orchestration of batch prediction with threading
 3. **Block traversal**: Processing rows in blocks for cache efficiency
@@ -16,6 +17,7 @@ This RFC defines the visitor pattern for tree traversal, covering:
 ## Motivation
 
 Tree traversal is the hot path for inference. We need:
+
 - Zero-cost abstraction over different forest layouts
 - Efficient batch processing with thread-local buffers
 - Specialization to eliminate runtime branches
@@ -27,7 +29,7 @@ XGBoost uses C++ templates for specialization. We use Rust's const generics and 
 
 ### Visitor Trait Hierarchy
 
-```
+```text
                     ┌─────────────────────────────────┐
                     │      TreeVisitor<F, L>          │
                     │  (single tree, single row)      │
@@ -467,7 +469,7 @@ impl BlockBuffers {
 
 ### Data Flow Diagram
 
-```
+```text
                             ┌─────────────────────────────┐
                             │       FeatureMatrix         │
                             │   (input: n_rows × n_feat)  │
@@ -594,6 +596,7 @@ This section records architectural decisions with rationale.
 **Decision**: Visitors **borrow** the forest via lifetime parameter.
 
 **Rationale**:
+
 - Lifetimes are Rust's strength; embrace them
 - Borrow enables stack-allocated visitors (no `Box` overhead)
 - Forest can be shared across multiple visitors
@@ -627,6 +630,7 @@ impl<'f, F: Forest + Sync> Predictor<'f, F> {
 **Decision**: Use **ephemeral** creation like XGBoost, with opt-in caching.
 
 **XGBoost approach analysis**:
+
 - XGBoost creates `ArrayTreeLayout` per prediction call (in `GetArrayTreeLayout`)
 - Rationale: Layout is small (~500 bytes for depth 6), creation is cheap
 - Memory: Don't hold N×500 bytes for N trees when not predicting
@@ -681,6 +685,7 @@ impl<'f, F: Forest> CachedPredictor<'f, F> {
 **Decision**: Use **flat `Vec<f32>`** with a zero-cost wrapper type.
 
 **Rationale**:
+
 - Single allocation (no per-row Vec)
 - Cache-friendly contiguous memory
 - Easy to convert to/from ndarray, nalgebra, etc.

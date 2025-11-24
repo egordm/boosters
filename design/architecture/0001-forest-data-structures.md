@@ -8,12 +8,14 @@
 ## Summary
 
 This RFC defines the forest-level data structures that hold collections of trees. We establish two primary representations:
+
 1. **`NodeForest`**: Mutable, AoS-based, node-oriented representation
 2. **`SoAForest`**: Immutable, SoA-based, optimized for inference
 
 ## Motivation
 
 A gradient boosting model is an ensemble of trees. The forest container must:
+
 - Support efficient tree addition during training
 - Enable fast batch prediction during inference
 - Handle multi-target/multi-class scenarios with tree groups
@@ -25,7 +27,7 @@ XGBoost uses a single `GBTreeModel` for both training and inference, with transi
 
 ### Type Hierarchy
 
-```
+```text
                                     ┌─────────────────────────────┐
                                     │     Forest<L: LeafValue>    │
                                     │         (trait)             │
@@ -226,7 +228,7 @@ pub struct SoATreeStorage<L: LeafValue> {
 
 ### Memory Layout Visualization
 
-```
+```text
 NodeForest (AoS)                       SoAForest (SoA)
 ─────────────────                      ─────────────────
 
@@ -434,16 +436,19 @@ This section records architectural decisions with rationale. Decisions marked **
 **Decision**: Use `Box<[T]>` for immutable SoA storage.
 
 **Rationale**:
+
 - `Box<[T]>` signals immutability at the type level (no `push`, `pop`, etc.)
 - Same memory layout as `Vec<T>` (pointer + length), no capacity overhead
 - Enables `&[T]` slicing without additional indirection
 - Conversion: `vec.into_boxed_slice()` is O(1) if capacity == length
 
 **Trade-offs**:
+
 - Cannot grow after creation (by design for inference)
 - Slight ergonomic cost vs `Vec` (less familiar to some Rust users)
 
 **Alternatives considered**:
+
 - `Vec<T>`: Keeps capacity field (8 bytes wasted), allows accidental mutation
 - `Arc<[T]>`: Use when sharing across threads; adds refcount overhead
 - Arena allocation: Defer to future optimization; adds lifetime complexity
@@ -453,12 +458,14 @@ This section records architectural decisions with rationale. Decisions marked **
 **Decision**: Use **relative** (tree-local) indices with `u32` type.
 
 **Analysis** (practical limits):
+
 - Max tree depth in practice: ~15-20 (deeper is overfitting)
 - Max nodes per tree: 2^20 ≈ 1M nodes (extreme case)
 - Max trees in forest: ~10,000 (typical: 100-1000)
 - Global index range: up to ~10B nodes theoretically
 
 **Rationale**:
+
 - Relative indices keep values small (fit in u16 for most trees)
 - Tree-local indexing enables independent tree processing
 - Each `SoATreeView` stores `node_offset`, making absolute calculation O(1)
@@ -487,12 +494,14 @@ pub type FeatureIdx = u32;  // Could be u16 for most datasets
 **Decision**: Use **separate** leaf storage with indirection.
 
 **Rationale**:
+
 - Enables compact leaf arrays (no wasted space for internal nodes)
 - Better for SIMD: leaf values are contiguous for vectorized accumulation
 - Required for variable-size leaves (vector leaves)
 - XGBoost also uses separate leaf storage in the SoA prediction path
 
 **Trade-off**:
+
 - Extra indirection via `node_to_leaf` mapping
 - For small trees (< 15 nodes), interleaved might be faster (cache line)
 
@@ -503,10 +512,12 @@ pub type FeatureIdx = u32;  // Could be u16 for most datasets
 **Decision**: Use **sorted array with binary search** for default; allow HashMap for high-cardinality cases.
 
 **Analysis**:
+
 - Typical case: 5-20% of nodes have categorical splits
 - Category count per split: usually < 100
 
 **Rationale**:
+
 - Sorted array: O(log n) lookup, cache-friendly, no hashing overhead
 - For n < 50 nodes with categorical splits, binary search is fast
 - HashMap adds per-lookup overhead (hashing, potential cache miss)
@@ -550,11 +561,13 @@ pub struct CategoryIdx(u32);
 ```
 
 **Pros**:
+
 - Type safety: Can't accidentally mix node index with feature index
 - Documentation: Types are self-documenting
 - Zero-cost: `#[repr(transparent)]` guarantees same layout as inner type
 
 **Cons**:
+
 - Boilerplate: Need `From`, `Into`, arithmetic ops
 - Slice indexing: `slice[idx.0 as usize]` is less ergonomic than `slice[idx]`
 - May complicate generic code

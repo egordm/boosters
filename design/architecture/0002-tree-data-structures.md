@@ -8,6 +8,7 @@
 ## Summary
 
 This RFC defines tree-level data structures for training and inference:
+
 1. **`NodeTree`**: Mutable AoS representation with per-node structs
 2. **`SoATreeView`**: Immutable SoA representation as array slices
 3. **`ArrayTreeLayout`**: Unrolled top-k levels for block traversal
@@ -15,6 +16,7 @@ This RFC defines tree-level data structures for training and inference:
 ## Motivation
 
 Individual trees are the atomic unit of the ensemble. The tree structure must:
+
 - Support efficient node addition during training (splits)
 - Enable fast traversal during inference
 - Handle both numerical and categorical splits
@@ -493,7 +495,7 @@ impl<const DEPTH: usize> ArrayTreeLayout<DEPTH> {
 
 ### Array Layout Visualization
 
-```
+```text
 Original Tree (depth 4):            ArrayTreeLayout<3> (unroll 3 levels):
 
         [0]                                    Array indices:
@@ -785,11 +787,13 @@ pub struct SoATreeStorage<L: LeafValue> {
 **Decision**: Use **lazy deletion** with compaction on `freeze()`. Optionally track deleted slots for reuse.
 
 **Analysis of XGBoost approach**:
+
 - XGBoost marks deleted nodes but doesn't compact during training
 - Compaction happens when serializing or converting to prediction format
 - Rationale: Training frequently prunes and re-expands; compaction would be O(n) per prune
 
 **Our approach**:
+
 - `NodeTree`: Track `num_deleted`, mark nodes with `DELETED_MARKER`
 - On `freeze()` to `SoAForest`: Compact (skip deleted nodes, renumber indices)
 - Inference path never sees deleted nodes
@@ -814,6 +818,7 @@ impl<L: LeafValue> NodeTree<L> {
 **Decision**: Use **const generic** with common depths as type aliases.
 
 **Rationale**:
+
 - SIMD unrolling benefits from compile-time known depth
 - XGBoost uses depth 6 as default (63 nodes = fits in cache line well)
 - Runtime configurability adds branches in hot loop
