@@ -14,6 +14,7 @@ This document outlines the terminology, design philosophy, and naming convention
 - **SoA (Structure-of-Arrays)**: Memory layout where node attributes (e.g., split indices, thresholds) are stored in separate contiguous arrays rather than interleaved structs.
 - **Packed Layout**: A memory layout optimized for a specific backend (CPU SIMD or GPU), often aligned and contiguous.
 - **Visitor**: A traversal abstraction that operates on a view of the forest and performs actions (like accumulation) on leaf hits.
+- **Accumulation**: The process of summing leaf values from multiple trees into an output buffer. In gradient boosting, predictions are additive: `output[group] = base_score + Σ leaf_values[tree]`. Accumulation happens per-group for multi-class, and can be vectorized (SIMD) when processing multiple rows or trees. The `accumulate()` method on `LeafValue` adds a single leaf's contribution to the running total.
 
 ## 2. Design Principles
 
@@ -32,11 +33,13 @@ This document outlines the terminology, design philosophy, and naming convention
 ### Semantic Types
 Use names that describe *what* the structure is and *how* it is laid out.
 
-*   **`TrainForest`**: Mutable, training-focused representation.
+*   **`NodeForest`**: Mutable, AoS/node-based representation.
 *   **`SoAForest`**: Inference-oriented, Structure-of-Arrays layout.
 *   **`SoAGroupedForest`**: SoA layout with explicit group mapping metadata.
 *   **`LeafVecForest`**: SoA layout where leaves store vectors.
 *   **`PackedForest`**: Backend-specific (CPU/GPU) packed representation.
+
+**Naming Rationale**: We use layout-descriptive names (Node, SoA, Packed) rather than use-case names (Train, Infer). This avoids semantic lock-in: a "NodeForest" could be used for training, model inspection, or serialization. The name describes the *structure*, not the *purpose*.
 
 ### Container Choices & Explicit Typing
 Encode the container type in the name or generic parameters to clarify ownership.
@@ -65,4 +68,4 @@ Encode the container type in the name or generic parameters to clarify ownership
 ## 5. Idioms
 *   Use **Enums** or **Generics** to encode invariants (e.g., `LeafKind::Scalar` vs `LeafKind::Vector`) to reduce runtime branching.
 *   Favor **Const Generics** for small fixed sizes in hot loops.
-*   Keep **API Boundaries** explicit: conversion from `TrainForest` to `SoAForest` is a distinct operation.
+*   Keep **API Boundaries** explicit: conversion from `NodeForest` to `SoAForest` is a distinct operation.
