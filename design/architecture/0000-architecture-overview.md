@@ -191,6 +191,8 @@ A clear architectural overview helps:
 | [0003](./0003-visitor-and-traversal.md) | Visitor and Traversal Patterns | Accepted |
 | [0004](./0004-dmatrix.md) | DMatrix and Data Input | Draft |
 | 0005 | Threading and Buffer Management | Planned |
+| 0006 | Training Pipeline | Planned |
+| [0007](./0007-serialization.md) | Serialization | Draft |
 
 ## Open Questions
 

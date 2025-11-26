@@ -33,7 +33,7 @@ Each RFC follows this structure:
 | [0004](./0004-dmatrix.md) | DMatrix and Data Input | Draft | `DataMatrix` trait, Arrow integration, quantization |
 | 0005 | Threading & Buffers | Planned | Thread pools, buffer management |
 | 0006 | Training Pipeline | Planned | Histogram building, tree growing |
-| 0007 | Serialization | Planned | JSON/binary formats, XGBoost compatibility |
+| [0007](./0007-serialization.md) | Serialization | Draft | Model loading, XGBoost/LightGBM formats, conversion |
 | 0008 | SIMD Acceleration | Planned | `std::simd` integration |
 | 0009 | GPU Backend | Planned | `wgpu`/CUDA support |
 
