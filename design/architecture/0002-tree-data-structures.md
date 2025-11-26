@@ -1,8 +1,8 @@
 # RFC-0002: Tree Data Structures
 
-- **Status**: Draft
+- **Status**: Accepted
 - **Created**: 2024-11-24
-- **Depends on**: RFC-0001 (Forest Data Structures)
+- **Related to**: RFC-0001 (Forest Data Structures)
 - **Scope**: Individual tree representations and node layouts
 
 ## Summary

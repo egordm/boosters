@@ -1,8 +1,8 @@
 # RFC-0001: Forest Data Structures
 
-- **Status**: Draft
+- **Status**: Accepted
 - **Created**: 2024-11-24
-- **Depends on**: RFC-0002 (Tree Data Structures)
+- **Related to**: RFC-0002 (Tree Data Structures)
 - **Scope**: Forest-level data structures for training and inference
 
 ## Summary

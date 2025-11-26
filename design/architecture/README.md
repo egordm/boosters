@@ -6,20 +6,31 @@ This folder contains RFC-style design documents for the xgboost-rs library archi
 
 Each RFC follows this structure:
 
-- **Status**: Draft | Active | Accepted | Deprecated | Superseded
+- **Status**: See status definitions below
 - **Created**: Date
 - **Depends on**: Related RFCs
 - **Scope**: What aspect of the system this covers
+
+## Status Definitions
+
+| Status | Meaning |
+|--------|---------|
+| **Draft** | Initial proposal, under development or not yet reviewed |
+| **Review** | Ready for review, awaiting feedback |
+| **Accepted** | Approved design, not yet implemented |
+| **Active** | Accepted and currently being implemented |
+| **Implemented** | Fully implemented in code |
+| **Deprecated** | No longer applicable, superseded by another RFC |
 
 ## RFC Index
 
 | RFC | Title | Status | Summary |
 |-----|-------|--------|---------|
-| [0000](./0000-architecture-overview.md) | Architecture Overview | Draft | High-level system architecture and component map |
-| [0001](./0001-forest-data-structures.md) | Forest Data Structures | Draft | `NodeForest`, `SoAForest`, container types |
-| [0002](./0002-tree-data-structures.md) | Tree Data Structures | Draft | Node layout, `NodeTree`, `SoATreeView`, `ArrayTreeLayout` |
-| [0003](./0003-visitor-and-traversal.md) | Visitor and Traversal | Draft | `Visitor` trait, `Predictor`, block traversal |
-| 0004 | Data Matrix | Planned | Feature matrices, sparse/dense, quantization |
+| [0000](./0000-architecture-overview.md) | Architecture Overview | Accepted | High-level system architecture and component map |
+| [0001](./0001-forest-data-structures.md) | Forest Data Structures | Accepted | `NodeForest`, `SoAForest`, container types |
+| [0002](./0002-tree-data-structures.md) | Tree Data Structures | Accepted | Node layout, `NodeTree`, `SoATreeView`, `ArrayTreeLayout` |
+| [0003](./0003-visitor-and-traversal.md) | Visitor and Traversal | Accepted | `Visitor` trait, `Predictor`, block traversal |
+| [0004](./0004-dmatrix.md) | DMatrix and Data Input | Draft | `DataMatrix` trait, Arrow integration, quantization |
 | 0005 | Threading & Buffers | Planned | Thread pools, buffer management |
 | 0006 | Training Pipeline | Planned | Histogram building, tree growing |
 | 0007 | Serialization | Planned | JSON/binary formats, XGBoost compatibility |
@@ -38,25 +49,29 @@ Each RFC follows this structure:
          ▼                   ▼                   ▼
 ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
 │ 0001: Forest    │ │ 0004: DMatrix   │ │ 0006: Training  │
+│                 │ │                 │ │                 │
 └────────┬────────┘ └────────┬────────┘ └────────┬────────┘
          │                   │                   │
          ▼                   │                   │
 ┌─────────────────┐          │                   │
-│ 0002: Tree      │◀─────────┘                   │
-└────────┬────────┘                              │
-         │                                       │
-         ▼                                       │
-┌─────────────────┐                              │
-│ 0003: Visitor   │◀─────────────────────────────┘
-└────────┬────────┘
-         │
-    ┌────┴────┐
-    │         │
-    ▼         ▼
-┌───────┐ ┌───────┐
-│ 0005  │ │ 0008  │
-│Buffer │ │ SIMD  │
-└───────┘ └───────┘
+│ 0002: Tree      │◀─ ─ ─ ─ ─┤                   │
+│ (related: 0001) │          │                   │
+└────────┬────────┘          │                   │
+         │                   │                   │
+         └─────────┬─────────┘                   │
+                   ▼                             │
+         ┌─────────────────┐                     │
+         │ 0003: Visitor   │◀────────────────────┘
+         │ (0001+0002+0004)│
+         └────────┬────────┘
+                  │
+             ┌────┴────┐
+             │         │
+             ▼         ▼
+         ┌───────┐ ┌───────┐
+         │ 0005  │ │ 0008  │
+         │Buffer │ │ SIMD  │
+         └───────┘ └───────┘
 ```
 
 ## How to Use These Documents

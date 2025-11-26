@@ -1,6 +1,6 @@
 # RFC-0000: Architecture Overview
 
-- **Status**: Draft
+- **Status**: Accepted
 - **Created**: 2024-11-24
 - **Scope**: High-level system architecture
 
@@ -62,8 +62,8 @@ A clear architectural overview helps:
 │  │  ┌─────────────────────────────────────────────────────────────────┐    │    │
 │  │  │                        Data Module                               │    │    │
 │  │  │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐          │    │    │
-│  │  │  │FeatureMatrix│    │QuantizedMat │    │  EllpackMat │          │    │    │
-│  │  │  │  (sparse)   │    │   (bins)    │    │   (GPU)     │          │    │    │
+│  │  │  │ DataMatrix  │    │ DenseMatrix │    │SparseMatrix │          │    │    │
+│  │  │  │   (trait)   │    │  (f32/u16)  │    │   (sprs?)   │          │    │    │
 │  │  │  └─────────────┘    └─────────────┘    └─────────────┘          │    │    │
 │  │  └─────────────────────────────────────────────────────────────────┘    │    │
 │  └──────────────────────────────────────────────────────────────────────────┘    │
@@ -186,10 +186,10 @@ A clear architectural overview helps:
 
 | RFC | Title | Status |
 |-----|-------|--------|
-| [0001](./0001-forest-data-structures.md) | Forest Data Structures | Draft |
-| [0002](./0002-tree-data-structures.md) | Tree Data Structures | Draft |
-| [0003](./0003-visitor-and-traversal.md) | Visitor and Traversal Patterns | Draft |
-| 0004 | Data Matrix and Quantization | Planned |
+| [0001](./0001-forest-data-structures.md) | Forest Data Structures | Accepted |
+| [0002](./0002-tree-data-structures.md) | Tree Data Structures | Accepted |
+| [0003](./0003-visitor-and-traversal.md) | Visitor and Traversal Patterns | Accepted |
+| [0004](./0004-dmatrix.md) | DMatrix and Data Input | Draft |
 | 0005 | Threading and Buffer Management | Planned |
 
 ## Open Questions

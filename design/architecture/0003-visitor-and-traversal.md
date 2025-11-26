@@ -1,8 +1,8 @@
 # RFC-0003: Visitor and Traversal Patterns
 
-- **Status**: Draft
+- **Status**: Accepted
 - **Created**: 2024-11-24
-- **Depends on**: RFC-0001, RFC-0002
+- **Depends on**: RFC-0001, RFC-0002, RFC-0004
 - **Scope**: Tree traversal abstractions and prediction orchestration
 
 ## Summary
