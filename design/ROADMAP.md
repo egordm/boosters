@@ -16,10 +16,10 @@
 
 Implement the foundational types from RFC-0002.
 
-- [ ] `LeafValue` trait + `ScalarLeaf` implementation
-- [ ] `Node<L>` enum (Split/Leaf variants)
-- [ ] `SplitCondition` struct (feature index, threshold, default direction)
-- [ ] Basic tests for node construction
+- [x] `LeafValue` trait + `ScalarLeaf` implementation
+- [x] `Node<L>` enum (Split/Leaf variants)
+- [x] `SplitCondition` struct (feature index, threshold, default direction)
+- [x] Basic tests for node construction
 
 **Files**: `src/trees/node.rs`, `src/trees/leaf.rs`
 
