@@ -1,6 +1,6 @@
 # RFC-0004: DMatrix and Data Input
 
-- **Status**: Draft
+- **Status**: Accepted
 - **Created**: 2024-11-24
 - **Scope**: Data input abstraction, feature storage, quantization transforms
 

@@ -1,6 +1,6 @@
 # RFC-0007: Serialization and Model Loading
 
-- **Status**: Draft
+- **Status**: Accepted
 - **Created**: 2024-11-26
 - **Related to**: RFC-0001 (Forest), RFC-0002 (Tree)
 - **Scope**: Model serialization, external format parsing, format conversion
