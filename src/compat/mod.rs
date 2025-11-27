@@ -5,4 +5,8 @@
 //!
 //! Each loader is feature-gated to avoid pulling in unnecessary dependencies.
 
-pub mod xgboost_json;
+#[cfg(feature = "xgboost-compat")]
+pub mod xgboost;
+
+#[cfg(feature = "xgboost-compat")]
+pub use xgboost::{ConversionError, XgbModel};

@@ -4,13 +4,19 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-anyhow = "1.0"
 thiserror = "1.0"
-serde_with = { version = "3.16.0", features = ["json"] }
+
+# Optional: XGBoost compatibility
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_json = { version = "1.0", optional = true }
+serde_with = { version = "3.16.0", features = ["json"], optional = true }
 
 [dev-dependencies]
 glob = "0.3.3"
 rstest = "0.21"
+serde_json = "1.0"  # Always available in tests
+
+[features]
+default = ["xgboost-compat"]
+xgboost-compat = ["dep:serde", "dep:serde_json", "dep:serde_with"]
 

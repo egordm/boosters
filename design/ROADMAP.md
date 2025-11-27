@@ -49,22 +49,21 @@ Implement forest from RFC-0001.
 
 Refactor existing loader code per RFC-0007.
 
-- [ ] Move/refactor `src/loaders/xgboost/` → `src/compat/xgboost_json.rs`
-- [ ] Foreign types: `XgbModel`, `XgbTree`, `XgbNode` (serde)
-- [ ] Conversion: `XgbModel` → `SoAForest<ScalarLeaf>`
-- [ ] Basic model metadata extraction
-- [ ] Feature-gate behind `xgboost-compat`
+- [x] Foreign types: `XgbModel`, `XgbTree`, `XgbNode` (serde) — already existed
+- [x] Conversion: `XgbModel::to_forest()` → `SoAForest<ScalarLeaf>`
+- [x] Basic model metadata extraction (base_score, num_class)
+- [x] Feature-gate behind `xgboost-compat`
 
-**Files**: `src/compat/mod.rs`, `src/compat/xgboost_json.rs`
+**Files**: `src/compat/mod.rs`, `src/compat/xgboost/json.rs`, `src/compat/xgboost/convert.rs`
 
 ### Milestone 1.5: Simple Prediction API
 
 Minimal prediction without full `Model` wrapper.
 
-- [ ] `SoAForest::predict_batch(&[&[f32]]) -> Vec<f32>`
-- [ ] Integration test: load XGBoost model, predict, compare to Python
+- [x] `SoAForest::predict_batch()` — implemented in M1.3
+- [x] Integration test: load XGBoost model, predict, compare to Python
 
-**Test**: `tests/predict_xgboost.rs`
+**Files**: `tests/xgboost_compat.rs`, `tools/data_generation/scripts/generate_test_cases.py`
 
 ### ✅ Phase 1 Complete
 
@@ -204,15 +203,22 @@ Performance optimization from RFC-0003.
 
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
-│  PHASE 1: Minimal Viable Prediction                             │
+│  PHASE 1: Minimal Viable Prediction  ✅ COMPLETE                │
 │  ═══════════════════════════════════                            │
 │                                                                  │
-│  [x] Design complete (RFCs accepted)                            │
-│  [ ] 1.1 Core Types ◄── START HERE                              │
-│  [ ] 1.2 Tree Storage                                           │
-│  [ ] 1.3 Forest                                                 │
-│  [ ] 1.4 XGBoost JSON Loader                                    │
-│  [ ] 1.5 Simple Prediction                                      │
+│  [x] 1.1 Core Types                                             │
+│  [x] 1.2 Tree Storage                                           │
+│  [x] 1.3 Forest                                                 │
+│  [x] 1.4 XGBoost JSON Loader                                    │
+│  [x] 1.5 Simple Prediction                                      │
+│                                                                  │
+│  PHASE 2: Full Inference Pipeline ◄── NEXT                      │
+│  ════════════════════════════════                               │
+│                                                                  │
+│  [ ] 2.1 DataMatrix Trait                                       │
+│  [ ] 2.2 Predictor & Visitor                                    │
+│  [ ] 2.3 Model Wrapper                                          │
+│  [ ] 2.4 Objective Transforms                                   │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -236,10 +242,10 @@ For validation, we need reference predictions from Python XGBoost.
 
 ```bash
 # tools/data_generation/
-python main.py --model regression --trees 10 --output tests/test-cases/xgboost-models/
+uv run python scripts/generate_test_cases.py
 ```
 
-Generates: `model.json`, `test_data.csv`, `expected_predictions.csv`
+Generates per test case: `{name}.model.json`, `{name}.input.json`, `{name}.expected.json`
 
 ---
 
