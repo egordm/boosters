@@ -81,10 +81,10 @@ Minimal prediction without full `Model` wrapper.
 
 Implement core data abstraction from RFC-0004.
 
-- [ ] `DataMatrix` trait definition
-- [ ] `DenseMatrix<f32>` implementation
-- [ ] `RowView` trait and dense row view
-- [ ] Missing value handling (NaN)
+- [x] `DataMatrix` trait definition
+- [x] `DenseMatrix<f32>` implementation
+- [x] `RowView` trait and dense row view
+- [x] Missing value handling (NaN)
 
 **Files**: `src/data/mod.rs`, `src/data/dense.rs`, `src/data/traits.rs`
 
@@ -212,11 +212,11 @@ Performance optimization from RFC-0003.
 │  [x] 1.4 XGBoost JSON Loader                                    │
 │  [x] 1.5 Simple Prediction                                      │
 │                                                                  │
-│  PHASE 2: Full Inference Pipeline ◄── NEXT                      │
+│  PHASE 2: Full Inference Pipeline ◄── IN PROGRESS               │
 │  ════════════════════════════════                               │
 │                                                                  │
-│  [ ] 2.1 DataMatrix Trait                                       │
-│  [ ] 2.2 Predictor & Visitor                                    │
+│  [x] 2.1 DataMatrix Trait                                       │
+│  [ ] 2.2 Predictor & Visitor ◄── NEXT                           │
 │  [ ] 2.3 Model Wrapper                                          │
 │  [ ] 2.4 Objective Transforms                                   │
 │                                                                  │
