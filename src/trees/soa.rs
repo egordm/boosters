@@ -1,4 +1,4 @@
-//! Tree storage implementations.
+//! Structure-of-Arrays tree storage implementation.
 
 use super::leaf::LeafValue;
 

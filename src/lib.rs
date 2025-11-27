@@ -4,4 +4,5 @@
 //! with support for loading models from external frameworks like XGBoost.
 
 pub mod compat;
+pub mod forest;
 pub mod trees;

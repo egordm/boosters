@@ -32,16 +32,16 @@ Implement tree storage from RFC-0002.
 - [x] Tree construction from node data (`TreeBuilder`)
 - [x] Traversal: `predict_row(&[f32]) -> LeafValue`
 
-**Files**: `src/trees/storage.rs`
+**Files**: `src/trees/soa.rs`
 
 ### Milestone 1.3: Forest
 
 Implement forest from RFC-0001.
 
-- [ ] `SoAForest<L>` — collection of trees with group assignments
-- [ ] `SoATreeView<'a, L>` — borrowed view into a single tree (from RFC-0002)
-- [ ] `Forest::predict_row()` — sum leaf values across trees
-- [ ] Tree iteration via views
+- [x] `SoAForest<L>` — collection of trees with group assignments
+- [x] `SoATreeView<'a, L>` — borrowed view into a single tree (from RFC-0002)
+- [x] `Forest::predict_row()` — sum leaf values across trees
+- [x] Tree iteration via views
 
 **Files**: `src/forest/mod.rs`, `src/forest/soa.rs`
 
