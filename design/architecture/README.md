@@ -1,6 +1,6 @@
 # Architecture Design Documents
 
-This folder contains RFC-style design documents for the xgboost-rs library architecture.
+This folder contains RFC-style design documents for the booste-rs library architecture.
 
 ## Document Format
 

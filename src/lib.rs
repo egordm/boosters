@@ -1,4 +1,7 @@
-pub mod loaders;
+//! booste-rs: A gradient boosting library for Rust.
+//!
+//! This crate provides native Rust implementations for gradient boosted decision trees,
+//! with support for loading models from external frameworks like XGBoost.
 
-// Re-export commonly used loader modules for integration tests and consumers
-pub use loaders::xgboost::format;
+pub mod compat;
+pub mod trees;

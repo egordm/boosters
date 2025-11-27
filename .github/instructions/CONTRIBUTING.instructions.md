@@ -1,3 +1,6 @@
+---
+applyTo: '**'
+---
 # Development Workflow Guide
 
 This document describes conventions and best practices for implementing booste-rs.
@@ -8,7 +11,7 @@ This document describes conventions and best practices for implementing booste-r
 
 For each milestone in the roadmap:
 
-```text
+```
 ┌─────────────────────────────────────────────────────────────┐
 │  1. Read relevant RFC section                                │
 │  2. Implement types/functions                                │
@@ -50,17 +53,17 @@ If you update an accepted RFC, add a changelog at the bottom:
 
 ### Decision Flow
 
-```text
+```
 ┌─────────────────────────────────────────────────────┐
-│  "The RFC doesn't cover X..."                       │
-│                                                     │
-│  Is X a fundamental design choice?                  │
-│    YES → Update RFC with new DD                     │
-│    NO  → Document in code comments                  │
-│                                                     │
-│  Will X affect other components?                    │
-│    YES → Update RFC, check integration table        │
-│    NO  → Just implement and document locally        │
+│  "The RFC doesn't cover X..."                        │
+│                                                      │
+│  Is X a fundamental design choice?                   │
+│    YES → Update RFC with new DD                      │
+│    NO  → Document in code comments                   │
+│                                                      │
+│  Will X affect other components?                     │
+│    YES → Update RFC, check integration table         │
+│    NO  → Just implement and document locally         │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -105,7 +108,7 @@ pub struct SoATreeStorage<L: LeafValue> { /* ... */ }
 
 ### Test Organization
 
-```text
+```
 src/
 ├── trees/
 │   ├── node.rs         # Contains #[cfg(test)] mod tests { } at bottom
@@ -170,7 +173,7 @@ Use `design/analysis/` for deep dives:
 
 Example structure:
 
-```text
+```
 design/analysis/
 ├── xgboost_cpp_inference.md    # How XGBoost C++ does prediction
 ├── simd_traversal_experiment.md # Performance experiment notes
@@ -181,7 +184,7 @@ design/analysis/
 
 ## Commit Message Convention
 
-```text
+```
 <type>(<scope>): <description> [M<milestone>]
 
 <body>
@@ -200,7 +203,7 @@ Refs: RFC-XXXX
 
 ### Examples
 
-```text
+```
 feat(trees): implement SoATreeStorage [M1.2]
 
 - Flat array layout for cache-friendly traversal
@@ -210,7 +213,7 @@ feat(trees): implement SoATreeStorage [M1.2]
 Refs: RFC-0002
 ```
 
-```text
+```
 fix(compat): handle XGBoost default_left edge case [M1.4]
 
 XGBoost JSON uses 0/1 for default direction, not boolean.
@@ -219,7 +222,7 @@ Updated parser to handle numeric values.
 Refs: RFC-0007
 ```
 
-```text
+```
 docs(trees): add module-level rustdoc [M1.2]
 
 Refs: RFC-0002

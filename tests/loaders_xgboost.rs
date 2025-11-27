@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
-use xgboost_rs::loaders::xgboost::format::test_parse_model;
+use booste_rs::compat::xgboost_json::test_parse_model;
 
 
 

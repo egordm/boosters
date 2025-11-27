@@ -39,6 +39,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "booste-rs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "glob",
+ "rstest",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "thiserror",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -856,17 +869,4 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "21a0236b59786fed61e2a80582dd500fe61f18b5dca67a4a067d0bc9039339cf"
 dependencies = [
  "memchr",
-]
-
-[[package]]
-name = "xgboost-rs"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "glob",
- "rstest",
- "serde",
- "serde_json",
- "serde_with",
- "thiserror",
 ]

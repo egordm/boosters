@@ -6,7 +6,7 @@
 
 ## Summary
 
-This document provides a birds-eye view of the xgboost-rs library architecture, establishing the major components, their responsibilities, and how they interact. It serves as a map for navigating the more detailed RFCs.
+This document provides a birds-eye view of the booste-rs library architecture, establishing the major components, their responsibilities, and how they interact. It serves as a map for navigating the more detailed RFCs.
 
 ## Motivation
 
@@ -21,7 +21,7 @@ A clear architectural overview helps:
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│                              xgboost-rs Library                                  │
+│                              booste-rs Library                                   │
 ├─────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                  │
 │  ┌─────────────────────────────────────────────────────────────────────────┐    │

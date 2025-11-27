@@ -1,22 +1,21 @@
+//! XGBoost JSON model loader.
+//!
+//! Parses XGBoost >= 2.0 JSON format. These are "foreign types" used only for parsing;
+//! conversion to native booste-rs types will be added later.
+
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use serde_with::{DisplayFromStr, OneOrMany, serde_as};
 
-// --- Custom deserializers for XGBoost-specific formats ------------------------------
+// =============================================================================
+// Custom deserializers for XGBoost-specific formats
+// =============================================================================
 
-/// Deserialize base_score which can be:
-/// - A single number: 1.5
-/// - A stringified number: "1.5"
-/// - An array: [1.5]
-/// - A bracketed format: "[1.5E0]"
-/// We extract the first element if it's an array
-/// This field is always present in XGBoost JSON models
 fn deserialize_base_score<'de, D>(deserializer: D) -> Result<f32, D::Error>
 where
     D: Deserializer<'de>,
 {
     use serde::de::Error as SerdeError;
-    use serde_json::Value;
 
     let value = Value::deserialize(deserializer)?;
     // Normalize the value by unwrapping arrays and stringified arrays to a scalar
@@ -71,13 +70,11 @@ where
     }
 }
 
-/// Deserialize booleans that may be represented as bool, int (0/1), or string ("0"/"1"/"true"/"false").
 fn deserialize_bool_any<'de, D>(deserializer: D) -> Result<bool, D::Error>
 where
     D: Deserializer<'de>,
 {
     use serde::de::Error as SerdeError;
-    use serde_json::Value;
 
     let value = Value::deserialize(deserializer)?;
     match value {
@@ -108,8 +105,9 @@ where
     }
 }
 
-// Default value helpers for serde defaults
-// The loader supports xgboost >= 2.0; default values are implemented via Default trait
+// =============================================================================
+// Default value helpers for serde
+// =============================================================================
 
 fn default_scale_pos_weight() -> f32 {
     1.0
@@ -157,18 +155,19 @@ fn default_num_class() -> i64 {
     1
 }
 
-// --- Tree / model level definitions -------------------------------------------------
+// =============================================================================
+// Tree / model level definitions
+// =============================================================================
+
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TreeParam {
-    // These 3 fields are always serialized in TreeParam::ToJson()
     #[serde_as(as = "DisplayFromStr")]
     pub num_nodes: i64,
     #[serde_as(as = "DisplayFromStr")]
     pub size_leaf_vector: i64,
     #[serde_as(as = "DisplayFromStr")]
     pub num_feature: i64,
-    // num_deleted was added in XGBoost 1.0 and is present in >=2.0 models
     #[serde_as(as = "DisplayFromStr")]
     pub num_deleted: i64,
 }
@@ -196,7 +195,6 @@ pub struct Tree {
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GBTreeModelParam {
-    // Both fields are always serialized in GBTreeModel::SaveModel()
     #[serde_as(as = "DisplayFromStr")]
     pub num_trees: i64,
     #[serde_as(as = "DisplayFromStr")]
@@ -210,7 +208,10 @@ pub struct ModelTrees {
     pub gbtree_model_param: GBTreeModelParam,
 }
 
-// --- Gradient booster variants (gbtree | gblinear | dart) ---------------------------
+// =============================================================================
+// Gradient booster variants (gbtree | gblinear | dart)
+// =============================================================================
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GbLinearModel {
     pub weights: Vec<f32>,
@@ -237,15 +238,18 @@ pub enum GradientBooster {
     },
 }
 
-// --- Objective / learner-level definitions ---------------------------------------
+// =============================================================================
+// Objective / learner-level definitions
+// =============================================================================
+
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegLossParam {
-    // scale_pos_weight defaults to 1.0 in C++
     #[serde_as(as = "DisplayFromStr")]
     #[serde(default = "default_scale_pos_weight")]
     pub scale_pos_weight: f32,
 }
+
 impl Default for RegLossParam {
     fn default() -> Self {
         Self {
@@ -257,11 +261,11 @@ impl Default for RegLossParam {
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PoissonRegressionParam {
-    // max_delta_step defaults to 0.7 in C++
     #[serde_as(as = "DisplayFromStr")]
     #[serde(default = "default_max_delta_step")]
     pub max_delta_step: f32,
 }
+
 impl Default for PoissonRegressionParam {
     fn default() -> Self {
         Self {
@@ -273,11 +277,11 @@ impl Default for PoissonRegressionParam {
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TweedieRegressionParam {
-    // tweedie_variance_power defaults to 1.5, range [1.0, 2.0) in C++
     #[serde_as(as = "DisplayFromStr")]
     #[serde(default = "default_tweedie_variance_power")]
     pub tweedie_variance_power: f32,
 }
+
 impl Default for TweedieRegressionParam {
     fn default() -> Self {
         Self {
@@ -289,11 +293,11 @@ impl Default for TweedieRegressionParam {
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QuantileLossParam {
-    // quantle_alpha can be single float or array
     #[serde_as(as = "OneOrMany<DisplayFromStr>")]
     #[serde(default)]
     pub quantle_alpha: Vec<f32>,
 }
+
 impl Default for QuantileLossParam {
     fn default() -> Self {
         Self {
@@ -305,11 +309,11 @@ impl Default for QuantileLossParam {
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SoftmaxMulticlassParam {
-    // num_class is always serialized as a required parameter
     #[serde_as(as = "DisplayFromStr")]
     #[serde(default = "default_num_class")]
     pub num_class: i64,
 }
+
 impl Default for SoftmaxMulticlassParam {
     fn default() -> Self {
         Self { num_class: 1 }
@@ -326,6 +330,7 @@ pub struct LambdaRankParam {
     #[serde(default = "default_fix_list_weight")]
     pub fix_list_weight: f32,
 }
+
 impl Default for LambdaRankParam {
     fn default() -> Self {
         Self {
@@ -338,26 +343,22 @@ impl Default for LambdaRankParam {
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LambdarankParam {
-    // lambdarank_num_pair_per_sample defaults to NotSet (max uint) or auto-configured
     #[serde_as(as = "DisplayFromStr")]
     #[serde(default = "default_lambdarank_num_pair_per_sample")]
     pub lambdarank_num_pair_per_sample: i64,
-    // lambdarank_pair_method defaults to "topk" (enum: topk, mean)
     #[serde(default = "default_lambdarank_pair_method")]
     pub lambdarank_pair_method: String,
-    // lambdarank_unbiased defaults to false
     #[serde(deserialize_with = "deserialize_bool_any")]
     #[serde(default = "default_lambdarank_unbiased")]
     pub lambdarank_unbiased: bool,
-    // Note: In C++ this is lambdarank_bias_norm (double, default 1.0), but schema has it as bool
     #[serde_as(as = "DisplayFromStr")]
     #[serde(default = "default_lambdarank_bias_norm")]
     pub lambdarank_bias_norm: f64,
-    // ndcg_exp_gain defaults to true
     #[serde(deserialize_with = "deserialize_bool_any")]
     #[serde(default = "default_ndcg_exp_gain")]
     pub ndcg_exp_gain: bool,
 }
+
 impl Default for LambdarankParam {
     fn default() -> Self {
         Self {
@@ -373,14 +374,13 @@ impl Default for LambdarankParam {
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AftLossParam {
-    // aft_loss_distribution defaults to "normal" (enum: normal, logistic, extreme)
     #[serde(default = "default_aft_loss_distribution")]
     pub aft_loss_distribution: String,
-    // aft_loss_distribution_scale defaults to 1.0 in C++
     #[serde_as(as = "DisplayFromStr")]
     #[serde(default = "default_aft_loss_distribution_scale")]
     pub aft_loss_distribution_scale: f32,
 }
+
 impl Default for AftLossParam {
     fn default() -> Self {
         Self {
@@ -390,9 +390,6 @@ impl Default for AftLossParam {
     }
 }
 
-// Minimal FeatureType for loader: a compact, string-backed enum with serde aliases.
-// Keep it loader-local and minimal; we derive serde with rename/alias to support multiple
-// input strings without writing custom Deserialize implementations.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FeatureType {
@@ -510,23 +507,20 @@ pub enum Objective {
 #[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LearnerModelParam {
-    // base_score is always serialized - can be single number, string, or array
     #[serde(deserialize_with = "deserialize_base_score")]
     pub base_score: f32,
-    // num_class and num_feature are always serialized as strings
     #[serde_as(as = "DisplayFromStr")]
     pub num_class: i64,
     #[serde_as(as = "DisplayFromStr")]
     pub num_feature: i64,
-    // num_target is serialized; default 1 in C++
     #[serde_as(as = "DisplayFromStr")]
     #[serde(default = "default_num_target")]
     pub num_target: i64,
-    // boost_from_average default true in C++
     #[serde(deserialize_with = "deserialize_bool_any")]
     #[serde(default = "default_boost_from_average")]
     pub boost_from_average: bool,
 }
+
 impl Default for LearnerModelParam {
     fn default() -> Self {
         Self {
@@ -550,25 +544,35 @@ pub struct Learner {
     pub learner_model_param: LearnerModelParam,
 }
 
-// --- Top-level model -------------------------------------------------------------
+// =============================================================================
+// Top-level XGBoost model
+// =============================================================================
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Model {
+pub struct XgbModel {
     pub version: [u32; 3],
     pub learner: Learner,
 }
 
-impl Model {
+impl XgbModel {
     pub fn from_value(value: &Value) -> Result<Self, serde_json::Error> {
         serde_json::from_value(value.clone())
     }
 }
 
-// Public helper that allows external code (e.g. integration tests) to verify that a
-// JSON value can be parsed into the internal `Model` representation without exposing
-// the internal types publicly.
-pub fn test_parse_model(value: &Value) -> Result<Model, serde_json::Error> {
+// =============================================================================
+// Public API
+// =============================================================================
+
+// TODO: Implement conversion to native types once they exist
+
+pub fn test_parse_model(value: &Value) -> Result<XgbModel, serde_json::Error> {
     serde_json::from_value(value.clone())
 }
+
+// =============================================================================
+// Tests
+// =============================================================================
 
 #[cfg(test)]
 mod tests {
