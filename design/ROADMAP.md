@@ -27,10 +27,10 @@ Implement the foundational types from RFC-0002.
 
 Implement tree storage from RFC-0002.
 
-- [ ] `SoATreeStorage<L>` — flat arrays for nodes
-- [ ] Node indexing (left/right child access)
-- [ ] Tree construction from node data
-- [ ] Traversal: `predict_row(&[f32]) -> LeafValue`
+- [x] `SoATreeStorage<L>` — flat arrays for nodes
+- [x] Node indexing (left/right child access)
+- [x] Tree construction from node data (`TreeBuilder`)
+- [x] Traversal: `predict_row(&[f32]) -> LeafValue`
 
 **Files**: `src/trees/storage.rs`
 
@@ -39,8 +39,9 @@ Implement tree storage from RFC-0002.
 Implement forest from RFC-0001.
 
 - [ ] `SoAForest<L>` — collection of trees with group assignments
+- [ ] `SoATreeView<'a, L>` — borrowed view into a single tree (from RFC-0002)
 - [ ] `Forest::predict_row()` — sum leaf values across trees
-- [ ] Tree iteration
+- [ ] Tree iteration via views
 
 **Files**: `src/forest/mod.rs`, `src/forest/soa.rs`
 

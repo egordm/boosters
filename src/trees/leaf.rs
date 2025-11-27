@@ -1,7 +1,7 @@
 //! Leaf value types for tree nodes.
 
 /// Trait for values stored in leaf nodes.
-pub trait LeafValue: Clone + Default {
+pub trait LeafValue: Clone + Default + Send + Sync {
     /// Accumulate another leaf value (for prediction summation)
     fn accumulate(&mut self, other: &Self);
 }
