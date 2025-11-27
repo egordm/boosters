@@ -6,7 +6,7 @@
 
 ## Summary
 
-This RFC defines the data input layer for xgboost-rs:
+This RFC defines the data input layer for booste-rs:
 
 1. **`DataMatrix` trait**: Common interface for feature matrices
 2. **Dense and Sparse storage**: Leveraging existing crates where possible
@@ -23,7 +23,7 @@ XGBoost's `DMatrix` serves multiple purposes:
 - Quantization for histogram-based training
 - Device portability (CPU/GPU)
 
-For xgboost-rs, we need:
+For booste-rs, we need:
 
 1. Ergonomic APIs for Rust users (slices, iterators)
 2. Zero-copy interop with Python ecosystem (Arrow, PyArrow, pandas/polars)

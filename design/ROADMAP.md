@@ -1,4 +1,4 @@
-# xgboost-rs Implementation Roadmap
+# booste-rs Implementation Roadmap
 
 ## Philosophy
 
@@ -182,7 +182,7 @@ Performance optimization from RFC-0003.
 
 ### Milestone 5.1: Python Bindings (PyO3)
 
-- [ ] `xgboost-rs-python` crate
+- [ ] `booste-rs-python` crate
 - [ ] `Model` wrapper with `predict()` method
 - [ ] NumPy array input support
 
@@ -201,7 +201,7 @@ Performance optimization from RFC-0003.
 
 ## Current Focus
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │  PHASE 1: Minimal Viable Prediction                             │
 │  ═══════════════════════════════════                            │

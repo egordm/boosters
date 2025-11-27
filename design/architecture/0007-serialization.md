@@ -7,7 +7,7 @@
 
 ## Summary
 
-This RFC defines the serialization layer for xgboost-rs:
+This RFC defines the serialization layer for booste-rs:
 
 1. **Native formats**: JSON (human-readable) and binary (efficient) with version stability
 2. **External format loaders**: XGBoost JSON, with extensibility for LightGBM, CatBoost
@@ -19,7 +19,7 @@ This RFC defines the serialization layer for xgboost-rs:
 Model serialization serves multiple purposes:
 
 - **Interop**: Load models trained in Python XGBoost, LightGBM, etc.
-- **Persistence**: Save/load native xgboost-rs models across library versions
+- **Persistence**: Save/load native booste-rs models across library versions
 - **Deployment**: Efficient binary format for production inference
 
 ### Design Philosophy
