@@ -291,19 +291,11 @@ impl Default for TweedieRegressionParam {
 }
 
 #[serde_as]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct QuantileLossParam {
     #[serde_as(as = "OneOrMany<DisplayFromStr>")]
     #[serde(default)]
     pub quantle_alpha: Vec<f32>,
-}
-
-impl Default for QuantileLossParam {
-    fn default() -> Self {
-        Self {
-            quantle_alpha: Vec::new(),
-        }
-    }
 }
 
 #[serde_as]
@@ -502,6 +494,34 @@ pub enum Objective {
     },
     #[serde(rename = "binary:hinge")]
     BinaryHinge,
+}
+
+impl Objective {
+    /// Get the objective name as it appears in XGBoost JSON.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Objective::RegSquaredError { .. } => "reg:squarederror",
+            Objective::RegPseudohuberError { .. } => "reg:pseudohubererror",
+            Objective::RegSquaredLogError { .. } => "reg:squaredlogerror",
+            Objective::RegLinear { .. } => "reg:linear",
+            Objective::RegLogistic { .. } => "reg:logistic",
+            Objective::BinaryLogistic { .. } => "binary:logistic",
+            Objective::BinaryLogitRaw { .. } => "binary:logitraw",
+            Objective::CountPoisson { .. } => "count:poisson",
+            Objective::RegTweedie { .. } => "reg:tweedie",
+            Objective::RegAbsoluteError => "reg:absoluteerror",
+            Objective::RegQuantileError { .. } => "reg:quantileerror",
+            Objective::SurvivalCox => "survival:cox",
+            Objective::RegGamma => "reg:gamma",
+            Objective::MultiSoftprob { .. } => "multi:softprob",
+            Objective::MultiSoftmax { .. } => "multi:softmax",
+            Objective::RankPairwise { .. } => "rank:pairwise",
+            Objective::RankNdcg { .. } => "rank:ndcg",
+            Objective::RankMap { .. } => "rank:map",
+            Objective::SurvivalAft { .. } => "survival:aft",
+            Objective::BinaryHinge => "binary:hinge",
+        }
+    }
 }
 
 #[serde_as]
