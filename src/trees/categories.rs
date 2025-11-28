@@ -78,9 +78,14 @@ impl CategoriesStorage {
             return false;
         }
 
-        // Which word and bit within that word
-        // Using bit operations: / 32 == >> 5, % 32 == & 31
+        // Determine which word contains this category:
+        //   word_idx = category / 32
+        // Using bit shift: >> 5 is equivalent to / 32 (since 32 = 2^5)
         let word_idx = category >> 5;
+
+        // Determine which bit within the word:
+        //   bit_idx = category % 32
+        // Using bitwise AND: & 31 is equivalent to % 32 (since 31 = 0b11111)
         let bit_idx = category & 31;
 
         // Check if within bounds
@@ -89,6 +94,7 @@ impl CategoriesStorage {
             return false;
         }
 
+        // Extract the bit: shift the word right by bit_idx, then mask to get LSB
         let word = self.categories[(start + word_idx) as usize];
         (word >> bit_idx) & 1 != 0
     }
@@ -143,6 +149,19 @@ pub fn float_to_category(value: f32) -> u32 {
 ///
 /// Sets bit `c` for each category value `c` in the input.
 ///
+/// # Bitset Layout
+///
+/// Categories are packed into u32 words, 32 categories per word:
+/// - Categories 0-31 are stored in word 0
+/// - Categories 32-63 are stored in word 1
+/// - And so on...
+///
+/// Within each word, bit `i` represents category `word_index * 32 + i`:
+/// ```text
+/// Word 0: [cat 31] [cat 30] ... [cat 1] [cat 0]   (LSB = cat 0)
+/// Word 1: [cat 63] [cat 62] ... [cat 33] [cat 32]
+/// ```
+///
 /// # Example
 ///
 /// ```
@@ -157,13 +176,24 @@ pub fn categories_to_bitset(categories: &[u32]) -> Vec<u32> {
         return vec![];
     }
 
+    // Find the maximum category to determine how many u32 words we need.
+    // Each word stores 32 categories, so we need ceil((max_cat + 1) / 32) words.
     let max_cat = categories.iter().copied().max().unwrap_or(0);
     let num_words = ((max_cat >> 5) + 1) as usize; // max_cat / 32 + 1
     let mut bitset = vec![0u32; num_words];
 
     for &cat in categories {
+        // Determine which word this category belongs to:
+        //   word_idx = cat / 32
+        // Using bit shift: >> 5 is equivalent to / 32 (since 32 = 2^5)
         let word_idx = (cat >> 5) as usize;
+
+        // Determine which bit within the word:
+        //   bit_idx = cat % 32
+        // Using bitwise AND: & 31 is equivalent to % 32 (since 31 = 0b11111)
         let bit_idx = cat & 31;
+
+        // Set the bit: shift 1 to the correct position and OR it in
         bitset[word_idx] |= 1u32 << bit_idx;
     }
 
