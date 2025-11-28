@@ -294,6 +294,161 @@ def generate_wide_features():
     save_test_case("wide_features", booster, X_test, objective='reg:squarederror')
 
 
+def generate_categorical():
+    """Regression with categorical features.
+    
+    Creates a model with both numeric and categorical features to test
+    categorical split handling.
+    """
+    np.random.seed(42)
+    n_samples = 200
+    
+    # Create numeric features
+    X_numeric = np.random.randn(n_samples, 3)
+    
+    # Create categorical features (3 categories: 0, 1, 2)
+    X_cat1 = np.random.randint(0, 3, size=(n_samples, 1)).astype(np.float32)
+    # Create another categorical feature (5 categories: 0-4)
+    X_cat2 = np.random.randint(0, 5, size=(n_samples, 1)).astype(np.float32)
+    
+    # Combine all features: [num0, num1, num2, cat1, cat2]
+    X = np.hstack([X_numeric, X_cat1, X_cat2])
+    
+    # Target depends on categorical features
+    y = (
+        X[:, 0] * 2  # numeric
+        + np.where(X[:, 3] == 0, 10, np.where(X[:, 3] == 1, -5, 0))  # cat1 effect
+        + np.where(X[:, 4] >= 3, 8, -4)  # cat2 effect
+        + np.random.randn(n_samples) * 2  # noise
+    )
+    
+    # Test data covers various category values
+    X_test = X[:10].copy()
+    # Ensure we have different category values in test data
+    X_test[0, 3] = 0  # cat1 = 0
+    X_test[1, 3] = 1  # cat1 = 1
+    X_test[2, 3] = 2  # cat1 = 2
+    X_test[3, 4] = 0  # cat2 = 0
+    X_test[4, 4] = 2  # cat2 = 2
+    X_test[5, 4] = 4  # cat2 = 4
+    
+    # Create DMatrix with categorical feature specification
+    dtrain = xgb.DMatrix(X, label=y, enable_categorical=True)
+    dtrain.set_info(feature_types=['q', 'q', 'q', 'c', 'c'])  # q=quantitative, c=categorical
+    
+    dtest = xgb.DMatrix(X_test, enable_categorical=True)
+    dtest.set_info(feature_types=['q', 'q', 'q', 'c', 'c'])
+    
+    params = {
+        'objective': 'reg:squarederror',
+        'max_depth': 3,
+        'eta': 0.3,
+        'booster': 'gbtree',
+        'tree_method': 'hist',  # Required for categorical
+        'max_cat_to_onehot': 1,  # Force partition-based splits
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=5)
+    
+    # Save model
+    model_path = OUT_DIR / "categorical.model.json"
+    booster.save_model(str(model_path))
+    
+    # Save test inputs
+    input_path = OUT_DIR / "categorical.input.json"
+    with open(input_path, "w") as f:
+        json.dump({
+            "features": nan_to_null(X_test),
+            "num_rows": len(X_test),
+            "num_features": X_test.shape[1],
+            "feature_types": ['q', 'q', 'q', 'c', 'c'],
+        }, f, indent=2)
+    
+    # Get predictions from XGBoost
+    raw_predictions = booster.predict(dtest, output_margin=True)
+    transformed_predictions = booster.predict(dtest, output_margin=False)
+    
+    expected_path = OUT_DIR / "categorical.expected.json"
+    with open(expected_path, "w") as f:
+        json.dump({
+            "predictions": raw_predictions.tolist(),
+            "predictions_transformed": transformed_predictions.tolist(),
+            "objective": 'reg:squarederror',
+            "num_class": 0,
+        }, f, indent=2)
+    
+    print(f"✓ categorical: model + {len(X_test)} test cases")
+
+
+def generate_categorical_binary():
+    """Binary classification with categorical features."""
+    np.random.seed(42)
+    n_samples = 200
+    
+    # Create features: 2 numeric + 1 categorical (4 categories)
+    X_numeric = np.random.randn(n_samples, 2)
+    X_cat = np.random.randint(0, 4, size=(n_samples, 1)).astype(np.float32)
+    X = np.hstack([X_numeric, X_cat])
+    
+    # Target: categories 0,2 -> class 1, categories 1,3 -> class 0
+    base_prob = 1 / (1 + np.exp(-X[:, 0]))  # sigmoid of first numeric
+    cat_effect = np.where((X[:, 2] == 0) | (X[:, 2] == 2), 0.3, -0.3)
+    prob = np.clip(base_prob + cat_effect, 0.05, 0.95)
+    y = (np.random.rand(n_samples) < prob).astype(np.float32)
+    
+    X_test = X[:10].copy()
+    # Ensure test data has all category values
+    X_test[0, 2] = 0
+    X_test[1, 2] = 1
+    X_test[2, 2] = 2
+    X_test[3, 2] = 3
+    
+    # Create DMatrix with categorical feature specification
+    dtrain = xgb.DMatrix(X, label=y, enable_categorical=True)
+    dtrain.set_info(feature_types=['q', 'q', 'c'])
+    
+    dtest = xgb.DMatrix(X_test, enable_categorical=True)
+    dtest.set_info(feature_types=['q', 'q', 'c'])
+    
+    params = {
+        'objective': 'binary:logistic',
+        'max_depth': 3,
+        'eta': 0.3,
+        'booster': 'gbtree',
+        'tree_method': 'hist',
+        'max_cat_to_onehot': 1,
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=5)
+    
+    # Save model
+    model_path = OUT_DIR / "categorical_binary.model.json"
+    booster.save_model(str(model_path))
+    
+    # Save test inputs
+    input_path = OUT_DIR / "categorical_binary.input.json"
+    with open(input_path, "w") as f:
+        json.dump({
+            "features": nan_to_null(X_test),
+            "num_rows": len(X_test),
+            "num_features": X_test.shape[1],
+            "feature_types": ['q', 'q', 'c'],
+        }, f, indent=2)
+    
+    # Get predictions from XGBoost
+    raw_predictions = booster.predict(dtest, output_margin=True)
+    transformed_predictions = booster.predict(dtest, output_margin=False)
+    
+    expected_path = OUT_DIR / "categorical_binary.expected.json"
+    with open(expected_path, "w") as f:
+        json.dump({
+            "predictions": raw_predictions.tolist(),
+            "predictions_transformed": transformed_predictions.tolist(),
+            "objective": 'binary:logistic',
+            "num_class": 0,
+        }, f, indent=2)
+    
+    print(f"✓ categorical_binary: model + {len(X_test)} test cases")
+
+
 if __name__ == "__main__":
     print(f"Generating XGBoost test cases to {OUT_DIR}...\n")
     
@@ -311,5 +466,9 @@ if __name__ == "__main__":
     generate_single_tree()
     generate_many_trees()
     generate_wide_features()
+    
+    # Categorical features
+    generate_categorical()
+    generate_categorical_binary()
     
     print(f"\nDone! Test cases saved to {OUT_DIR}")

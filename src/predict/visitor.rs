@@ -2,7 +2,8 @@
 
 use crate::data::DataMatrix;
 use crate::forest::{SoAForest, SoATreeView};
-use crate::trees::{LeafValue, ScalarLeaf};
+use crate::trees::node::SplitType;
+use crate::trees::{float_to_category, LeafValue, ScalarLeaf};
 
 use super::output::PredictionOutput;
 
@@ -21,7 +22,7 @@ pub trait TreeVisitor<L: LeafValue> {
 /// Visitor for forests with scalar leaves.
 ///
 /// Traverses from root to leaf, handling missing values via default direction.
-/// Uses const generics for specialization (future: categorical support).
+/// Supports both numeric and categorical splits.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ScalarVisitor;
 
@@ -34,7 +35,6 @@ impl TreeVisitor<ScalarLeaf> for ScalarVisitor {
 
         while !tree.is_leaf(idx) {
             let feat_idx = tree.split_index(idx) as usize;
-            let threshold = tree.split_threshold(idx);
             let fvalue = features.get(feat_idx).copied().unwrap_or(f32::NAN);
 
             idx = if fvalue.is_nan() {
@@ -44,10 +44,26 @@ impl TreeVisitor<ScalarLeaf> for ScalarVisitor {
                 } else {
                     tree.right_child(idx)
                 }
-            } else if fvalue < threshold {
-                tree.left_child(idx)
             } else {
-                tree.right_child(idx)
+                match tree.split_type(idx) {
+                    SplitType::Numeric => {
+                        // Numeric split: go left if value < threshold
+                        if fvalue < tree.split_threshold(idx) {
+                            tree.left_child(idx)
+                        } else {
+                            tree.right_child(idx)
+                        }
+                    }
+                    SplitType::Categorical => {
+                        // Categorical split: go right if category is in the set
+                        let category = float_to_category(fvalue);
+                        if tree.categories().category_goes_right(idx, category) {
+                            tree.right_child(idx)
+                        } else {
+                            tree.left_child(idx)
+                        }
+                    }
+                }
             };
         }
 

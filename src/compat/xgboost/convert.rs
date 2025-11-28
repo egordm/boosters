@@ -125,6 +125,14 @@ fn convert_tree(
         return Err(ConversionError::EmptyTree(tree_idx));
     }
 
+    // Build a lookup map from node index to categorical bitset.
+    // XGBoost stores categorical data in parallel arrays:
+    // - categories_nodes: which node indices have categorical splits
+    // - categories_segments: start index into categories array
+    // - categories_sizes: number of u32 words for this node's bitset
+    // - categories: flat array of bitset words
+    let categorical_map = build_categorical_map(xgb_tree);
+
     let mut builder = TreeBuilder::new();
 
     // XGBoost stores nodes in BFS order, which matches our expected layout.
@@ -161,20 +169,86 @@ fn convert_tree(
             }
 
             let feature_index = xgb_tree.split_indices[node_idx] as u32;
-            let threshold = xgb_tree.split_conditions[node_idx];
             let default_left = xgb_tree.default_left[node_idx] != 0;
 
-            builder.add_split(
-                feature_index,
-                threshold,
-                default_left,
-                left_child as u32,
-                right_child as u32,
-            );
+            // Check if this is a categorical split
+            // XGBoost split_type: 0 = numeric, 1 = categorical
+            let is_categorical = xgb_tree.split_type.get(node_idx).copied().unwrap_or(0) == 1;
+
+            if is_categorical {
+                // Get the category bitset for this node
+                let bitset = categorical_map
+                    .get(&node_idx)
+                    .cloned()
+                    .unwrap_or_default();
+
+                builder.add_categorical_split(
+                    feature_index,
+                    bitset,
+                    default_left,
+                    left_child as u32,
+                    right_child as u32,
+                );
+            } else {
+                // Numeric split
+                let threshold = xgb_tree.split_conditions[node_idx];
+
+                builder.add_split(
+                    feature_index,
+                    threshold,
+                    default_left,
+                    left_child as u32,
+                    right_child as u32,
+                );
+            }
         }
     }
 
     Ok(builder.build())
+}
+
+/// Build a map from node index to category bitset.
+///
+/// XGBoost JSON stores categories as integer values (not packed bitsets).
+/// The `categories` array contains the actual category values, and we need to
+/// convert them to a packed bitset where bit `c` is set if category `c` goes right.
+///
+/// XGBoost JSON format:
+/// - categories_nodes: which node indices have categorical splits
+/// - categories_segments: start index into categories array for each node
+/// - categories_sizes: number of category VALUES for each node
+/// - categories: flat array of category INTEGER VALUES (not bitset words)
+fn build_categorical_map(xgb_tree: &Tree) -> std::collections::HashMap<usize, Vec<u32>> {
+    let mut map = std::collections::HashMap::new();
+
+    for i in 0..xgb_tree.categories_nodes.len() {
+        let node_idx = xgb_tree.categories_nodes[i] as usize;
+        let start = xgb_tree.categories_segments[i] as usize;
+        let size = xgb_tree.categories_sizes[i] as usize;
+
+        // Get the category VALUES (integers) for this node
+        let category_values: Vec<u32> = xgb_tree.categories[start..start + size]
+            .iter()
+            .map(|&x| x as u32)
+            .collect();
+
+        // Convert category values to a packed bitset
+        // Find max category to determine bitset size
+        let max_cat = category_values.iter().copied().max().unwrap_or(0);
+        let num_words = (max_cat / 32 + 1) as usize;
+        let mut bitset = vec![0u32; num_words];
+
+        // Set bits for each category that goes right
+        for cat in category_values {
+            let word_idx = (cat / 32) as usize;
+            let bit_idx = cat % 32;
+            bitset[word_idx] |= 1u32 << bit_idx;
+        }
+
+        map.insert(node_idx, bitset);
+    }
+
+    map
 }
 
 /// Extract model trees from a gradient booster.

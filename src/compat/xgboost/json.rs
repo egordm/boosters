@@ -391,6 +391,10 @@ pub enum FeatureType {
     Int,
     #[serde(rename = "indicator")]
     Indicator,
+    #[serde(rename = "q", alias = "quantitative")]
+    Quantitative,
+    #[serde(rename = "c", alias = "categorical")]
+    Categorical,
 }
 
 impl std::fmt::Display for FeatureType {
@@ -399,6 +403,8 @@ impl std::fmt::Display for FeatureType {
             FeatureType::Float => write!(f, "float"),
             FeatureType::Int => write!(f, "int"),
             FeatureType::Indicator => write!(f, "i"),
+            FeatureType::Quantitative => write!(f, "q"),
+            FeatureType::Categorical => write!(f, "c"),
         }
     }
 }

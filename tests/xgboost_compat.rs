@@ -428,3 +428,103 @@ fn predict_wide_features() {
         );
     }
 }
+
+// =============================================================================
+// Categorical features tests
+// =============================================================================
+
+#[test]
+fn parse_categorical_model() {
+    let (model, _input, _expected) = load_test_case("categorical");
+
+    // Check feature types include categorical
+    assert!(!model.learner.feature_types.is_empty());
+    let feature_types = &model.learner.feature_types;
+    let has_categorical = feature_types
+        .iter()
+        .any(|ft| matches!(ft, booste_rs::compat::xgboost::FeatureType::Categorical));
+    assert!(
+        has_categorical,
+        "Expected categorical feature type in {:?}",
+        feature_types
+    );
+}
+
+#[test]
+fn convert_categorical_model() {
+    let (model, _input, _expected) = load_test_case("categorical");
+    let forest = model.to_forest().expect("conversion failed");
+
+    assert_eq!(forest.num_groups(), 1);
+    assert!(forest.num_trees() > 0);
+
+    // Check that at least one tree has categorical splits
+    let mut has_categorical = false;
+    for tree_idx in 0..forest.num_trees() {
+        if forest.tree(tree_idx).has_categorical() {
+            has_categorical = true;
+            break;
+        }
+    }
+    assert!(
+        has_categorical,
+        "Expected at least one tree to have categorical splits"
+    );
+}
+
+#[test]
+fn predict_categorical() {
+    let (model, input, expected) = load_test_case("categorical");
+    let forest = model.to_forest().expect("conversion failed");
+    let rows = input.to_f32_rows();
+
+    let expected_preds: Vec<f64> = serde_json::from_value(expected.predictions).unwrap();
+
+    for (i, features) in rows.iter().enumerate() {
+        let pred = forest.predict_row(features);
+        assert_eq!(pred.len(), 1);
+        let diff = (pred[0] as f64 - expected_preds[i]).abs();
+        assert!(
+            diff < TOLERANCE,
+            "categorical row {i}: got {}, expected {}, diff {diff}",
+            pred[0],
+            expected_preds[i]
+        );
+    }
+}
+
+#[test]
+fn parse_categorical_binary_model() {
+    let (model, _input, _expected) = load_test_case("categorical_binary");
+
+    let feature_types = &model.learner.feature_types;
+    let has_categorical = feature_types
+        .iter()
+        .any(|ft| matches!(ft, booste_rs::compat::xgboost::FeatureType::Categorical));
+    assert!(
+        has_categorical,
+        "Expected categorical feature type in {:?}",
+        feature_types
+    );
+}
+
+#[test]
+fn predict_categorical_binary() {
+    let (model, input, expected) = load_test_case("categorical_binary");
+    let forest = model.to_forest().expect("conversion failed");
+    let rows = input.to_f32_rows();
+
+    let expected_preds: Vec<f64> = serde_json::from_value(expected.predictions).unwrap();
+
+    for (i, features) in rows.iter().enumerate() {
+        let pred = forest.predict_row(features);
+        assert_eq!(pred.len(), 1);
+        let diff = (pred[0] as f64 - expected_preds[i]).abs();
+        assert!(
+            diff < TOLERANCE,
+            "categorical_binary row {i}: got {}, expected {}, diff {diff}",
+            pred[0],
+            expected_preds[i]
+        );
+    }
+}

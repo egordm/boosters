@@ -1,6 +1,6 @@
 //! Structure-of-Arrays forest implementation.
 
-use crate::trees::{LeafValue, ScalarLeaf, SoATreeStorage};
+use crate::trees::{CategoriesStorage, LeafValue, ScalarLeaf, SoATreeStorage};
 
 /// Structure-of-Arrays forest for efficient inference.
 ///
@@ -172,6 +172,24 @@ impl<'a, L: LeafValue> SoATreeView<'a, L> {
     #[inline]
     pub fn leaf_value(&self, node_idx: u32) -> &L {
         self.storage.leaf_value(node_idx)
+    }
+
+    /// Get split type for a node.
+    #[inline]
+    pub fn split_type(&self, node_idx: u32) -> crate::trees::node::SplitType {
+        self.storage.split_type(node_idx)
+    }
+
+    /// Check if this tree has any categorical splits.
+    #[inline]
+    pub fn has_categorical(&self) -> bool {
+        self.storage.has_categorical()
+    }
+
+    /// Get reference to categories storage.
+    #[inline]
+    pub fn categories(&self) -> &CategoriesStorage {
+        self.storage.categories()
     }
 
     /// Traverse the tree to find the leaf for given features.
