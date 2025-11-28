@@ -179,6 +179,9 @@ mod xgboost_comparison {
     }
 
     /// Benchmark booste-rs vs XGBoost C++ on various batch sizes.
+    ///
+    /// Note: XGBoost caches predictions for the same DMatrix, so we must
+    /// create a fresh DMatrix inside the benchmark loop for fair comparison.
     pub fn bench_comparison(c: &mut Criterion) {
         let boosters_model = load_boosters_model("bench_medium");
         let xgb_model = load_xgb_model("bench_medium");
@@ -187,9 +190,8 @@ mod xgboost_comparison {
         let mut group = c.benchmark_group("comparison");
 
         for batch_size in [100, 1_000, 10_000].iter() {
+            // booste-rs: can reuse the same matrix (no caching issues)
             let input_data = generate_random_input(*batch_size, num_features, 42);
-
-            // booste-rs
             let matrix = DenseMatrix::from_vec(input_data.clone(), *batch_size, num_features);
             group.throughput(Throughput::Elements(*batch_size as u64));
             group.bench_with_input(
@@ -203,24 +205,27 @@ mod xgboost_comparison {
                 },
             );
 
-            // XGBoost C++
-            let dmatrix = create_dmatrix(&input_data, *batch_size);
-            group.bench_with_input(
-                BenchmarkId::new("xgboost", batch_size),
-                &dmatrix,
-                |b, dmatrix| {
-                    b.iter(|| {
-                        let output = xgb_model.predict(black_box(dmatrix)).unwrap();
-                        black_box(output)
-                    });
-                },
-            );
+            // XGBoost C++: must create fresh DMatrix each iteration to avoid caching
+            // Store input data for reuse, but create DMatrix inside the loop
+            let input_for_xgb = input_data.clone();
+            let batch = *batch_size;
+            group.bench_function(BenchmarkId::new("xgboost", batch_size), |b| {
+                b.iter(|| {
+                    // Create fresh DMatrix to avoid XGBoost's prediction caching
+                    let dmatrix = create_dmatrix(black_box(&input_for_xgb), batch);
+                    let output = xgb_model.predict(&dmatrix).unwrap();
+                    black_box(output)
+                });
+            });
         }
 
         group.finish();
     }
 
     /// Benchmark single-row latency comparison.
+    ///
+    /// Note: XGBoost caches predictions for the same DMatrix, so we must
+    /// create a fresh DMatrix inside the benchmark loop for fair comparison.
     pub fn bench_single_row_comparison(c: &mut Criterion) {
         let boosters_model = load_boosters_model("bench_medium");
         let xgb_model = load_xgb_model("bench_medium");
@@ -230,7 +235,7 @@ mod xgboost_comparison {
 
         let mut group = c.benchmark_group("single_row_comparison");
 
-        // booste-rs
+        // booste-rs: can reuse the same matrix (no caching issues)
         let matrix = DenseMatrix::from_vec(input_data.clone(), 1, num_features);
         group.bench_function("boosters", |b| {
             b.iter(|| {
@@ -239,11 +244,11 @@ mod xgboost_comparison {
             });
         });
 
-        // XGBoost C++
-        let dmatrix = create_dmatrix(&input_data, 1);
+        // XGBoost C++: create fresh DMatrix each iteration to avoid caching
         group.bench_function("xgboost", |b| {
             b.iter(|| {
-                let output = xgb_model.predict(black_box(&dmatrix)).unwrap();
+                let dmatrix = create_dmatrix(black_box(&input_data), 1);
+                let output = xgb_model.predict(&dmatrix).unwrap();
                 black_box(output)
             });
         });
