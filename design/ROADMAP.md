@@ -177,15 +177,39 @@ stores category integer values which are converted to bitsets during loading.
 `src/forest/soa.rs`, `src/predict/visitor.rs`, `src/compat/xgboost/json.rs`,
 `src/compat/xgboost/convert.rs`
 
-### Milestone 3.3: Block Traversal
+### Milestone 3.3: Benchmarking Infrastructure
+
+Establish baseline performance measurements before optimization work.
+
+- [ ] Add `criterion` dev-dependency for benchmarks
+- [ ] Add `xgb` (XGBoost Rust bindings) as optional bench dependency
+- [ ] Create `benches/` directory with benchmark harness
+- [ ] Implement benchmark scenarios:
+  - [ ] Small model (10 trees, 5 features) - single row
+  - [ ] Medium model (100 trees, 50 features) - batch 1K rows
+  - [ ] Large model (500 trees, 100 features) - batch 10K rows
+  - [ ] Varying batch sizes (1, 10, 100, 1K, 10K rows)
+- [ ] Baseline: booste-rs vs `xgb` crate (XGBoost C++ via FFI)
+- [ ] Document baseline results in `design/analysis/benchmarks.md`
+
+**Files**: `benches/prediction.rs`, `Cargo.toml`, `design/analysis/benchmarks.md`
+
+**Notes**:
+
+- Using `xgb` crate (Rust bindings to XGBoost C++) provides fair comparison
+- Both load from same model file, predict on same data
+- Avoids Python overhead issues
+- `xgb` uses prebuilt XGBoost libs, requires `libclang-dev` on Linux
+
+### Milestone 3.4: Block Traversal
 
 Performance optimization from RFC-0003.
 
 - [ ] `BlockVisitor` — process multiple rows together
 - [ ] SIMD-friendly traversal (future)
-- [ ] Benchmark vs row-at-a-time
+- [ ] Benchmark vs row-at-a-time (using infrastructure from M3.3)
 
-### Milestone 3.4: Sparse Data
+### Milestone 3.5: Sparse Data
 
 - [ ] `SparseMatrix` (CSR format, possibly via `sprs`)
 - [ ] `DataMatrix` impl for sparse
@@ -261,8 +285,9 @@ Performance optimization from RFC-0003.
 │                                                                  │
 │  [x] 3.1 DART Support                                           │
 │  [x] 3.2 Categorical Features                                   │
-│  [ ] 3.3 Block Traversal              ◄── NEXT                  │
-│  [ ] 3.4 Sparse Data                                            │
+│  [ ] 3.3 Benchmarking Infrastructure   ◄── NEXT                 │
+│  [ ] 3.4 Block Traversal                                        │
+│  [ ] 3.5 Sparse Data                                            │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
