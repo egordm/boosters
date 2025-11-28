@@ -6,5 +6,6 @@
 pub mod compat;
 pub mod data;
 pub mod forest;
+pub mod model;
 pub mod predict;
 pub mod trees;
