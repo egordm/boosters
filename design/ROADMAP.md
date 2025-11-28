@@ -104,10 +104,10 @@ Implement traversal patterns from RFC-0003.
 
 Complete `Model` type from RFC-0007.
 
-- [ ] `Model` struct (booster, meta, features, objective)
-- [ ] `Booster` enum (Tree variant only for now)
-- [ ] `ModelMeta`, `FeatureInfo`, `Objective` types
-- [ ] `Model::predict()` high-level API
+- [x] `Model` struct (booster, meta, features, objective)
+- [x] `Booster` enum (Tree and Dart variants)
+- [x] `ModelMeta`, `FeatureInfo`, `Objective` types
+- [x] `Model::predict()` high-level API
 
 **Files**: `src/model.rs`
 
@@ -115,11 +115,22 @@ Complete `Model` type from RFC-0007.
 
 Post-prediction transformations.
 
-- [ ] `Objective` enum with common objectives
-- [ ] `Objective::transform()` — apply sigmoid, softmax, etc.
-- [ ] Wire into `Model::predict()`
+- [x] `Objective` enum with common objectives
+- [x] `Objective::transform()` — apply sigmoid, softmax, etc.
+- [x] Wire into `Model::predict()`
 
 **Files**: `src/objective.rs`
+
+### Milestone 2.5: Model Integration Tests
+
+Validate full pipeline against Python XGBoost.
+
+- [ ] Test `Model::predict()` for regression models
+- [ ] Test `Model::predict()` for binary classification (sigmoid)
+- [ ] Test `Model::predict()` for multiclass (softmax)
+- [ ] Generate test data with Python script
+
+**Files**: `tests/model_integration.rs`, `tools/data_generation/`
 
 ### ✅ Phase 2 Complete
 
@@ -133,7 +144,7 @@ Post-prediction transformations.
 
 ### Milestone 3.1: DART Support
 
-- [ ] `Booster::Dart` variant with tree weights
+- [x] `Booster::Dart` variant with tree weights (implemented in M2.3)
 - [ ] DART-aware prediction (weighted tree contributions)
 - [ ] XGBoost JSON: parse DART models
 
@@ -218,8 +229,9 @@ Performance optimization from RFC-0003.
 │                                                                  │
 │  [x] 2.1 DataMatrix Trait                                       │
 │  [x] 2.2 Predictor & Visitor                                    │
-│  [ ] 2.3 Model Wrapper ◄── NEXT                                 │
-│  [ ] 2.4 Objective Transforms                                   │
+│  [x] 2.3 Model Wrapper                                          │
+│  [x] 2.4 Objective Transforms                                   │
+│  [ ] 2.5 Model Integration Tests ◄── NEXT                       │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
