@@ -14,9 +14,11 @@ import numpy as np
 from sklearn.datasets import make_regression, make_classification
 import xgboost as xgb
 
-# Output to tests/test-cases/xgboost/
+# Output directories
 OUT_DIR = Path(__file__).parents[3] / "tests" / "test-cases" / "xgboost"
+BENCH_DIR = Path(__file__).parents[3] / "tests" / "test-cases" / "benchmark"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
+BENCH_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def nan_to_null(obj):
@@ -449,6 +451,83 @@ def generate_categorical_binary():
     print(f"✓ categorical_binary: model + {len(X_test)} test cases")
 
 
+# =============================================================================
+# Benchmark Models (for performance testing)
+# =============================================================================
+
+def save_benchmark_model(name: str, booster: xgb.Booster, num_features: int):
+    """Save a benchmark model (model only, no test data needed)."""
+    model_path = BENCH_DIR / f"{name}.model.json"
+    booster.save_model(str(model_path))
+    
+    # Get file size for reporting
+    size_kb = model_path.stat().st_size / 1024
+    print(f"✓ {name}: {size_kb:.1f} KB")
+
+
+def generate_bench_small():
+    """Small benchmark model: 10 trees, 5 features, max_depth=3.
+    
+    Target: ~10-20 KB model file.
+    Use case: Single-row latency testing.
+    """
+    np.random.seed(42)
+    X, y = make_regression(n_samples=500, n_features=5, noise=10.0, random_state=42)
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'reg:squarederror',
+        'max_depth': 3,
+        'eta': 0.1,
+        'booster': 'gbtree',
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=10)
+    save_benchmark_model("bench_small", booster, num_features=5)
+
+
+def generate_bench_medium():
+    """Medium benchmark model: 100 trees, 50 features, max_depth=4.
+    
+    Target: ~200-500 KB model file.
+    Use case: Batch prediction throughput testing.
+    """
+    np.random.seed(42)
+    X, y = make_regression(n_samples=2000, n_features=50, n_informative=30, noise=10.0, random_state=42)
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'reg:squarederror',
+        'max_depth': 4,
+        'eta': 0.05,
+        'booster': 'gbtree',
+        'colsample_bytree': 0.8,
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=100)
+    save_benchmark_model("bench_medium", booster, num_features=50)
+
+
+def generate_bench_large():
+    """Large benchmark model: 500 trees, 100 features, max_depth=5.
+    
+    Target: ~2-5 MB model file.
+    Use case: Stress testing, scaling behavior.
+    """
+    np.random.seed(42)
+    X, y = make_regression(n_samples=5000, n_features=100, n_informative=50, noise=10.0, random_state=42)
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'reg:squarederror',
+        'max_depth': 5,
+        'eta': 0.02,
+        'booster': 'gbtree',
+        'colsample_bytree': 0.7,
+        'subsample': 0.8,
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=500)
+    save_benchmark_model("bench_large", booster, num_features=100)
+
+
 if __name__ == "__main__":
     print(f"Generating XGBoost test cases to {OUT_DIR}...\n")
     
@@ -471,4 +550,12 @@ if __name__ == "__main__":
     generate_categorical()
     generate_categorical_binary()
     
-    print(f"\nDone! Test cases saved to {OUT_DIR}")
+    print(f"\nTest cases saved to {OUT_DIR}")
+    
+    # Benchmark models
+    print(f"\nGenerating benchmark models to {BENCH_DIR}...\n")
+    generate_bench_small()
+    generate_bench_medium()
+    generate_bench_large()
+    
+    print(f"\nDone! Benchmark models saved to {BENCH_DIR}")

@@ -177,22 +177,28 @@ stores category integer values which are converted to bitsets during loading.
 `src/forest/soa.rs`, `src/predict/visitor.rs`, `src/compat/xgboost/json.rs`,
 `src/compat/xgboost/convert.rs`
 
-### Milestone 3.3: Benchmarking Infrastructure
+### ✅ Milestone 3.3: Benchmarking Infrastructure
 
 Establish baseline performance measurements before optimization work.
 
-- [ ] Add `criterion` dev-dependency for benchmarks
-- [ ] Add `xgb` (XGBoost Rust bindings) as optional bench dependency
-- [ ] Create `benches/` directory with benchmark harness
-- [ ] Implement benchmark scenarios:
-  - [ ] Small model (10 trees, 5 features) - single row
-  - [ ] Medium model (100 trees, 50 features) - batch 1K rows
-  - [ ] Large model (500 trees, 100 features) - batch 10K rows
-  - [ ] Varying batch sizes (1, 10, 100, 1K, 10K rows)
-- [ ] Baseline: booste-rs vs `xgb` crate (XGBoost C++ via FFI)
-- [ ] Document baseline results in `design/analysis/benchmarks.md`
+- [x] Add `criterion` dev-dependency for benchmarks
+- [x] Add `xgb` (XGBoost Rust bindings) as optional bench dependency
+- [x] Create `benches/` directory with benchmark harness
+- [x] Implement benchmark scenarios:
+  - [x] Small model (10 trees, 5 features) - single row
+  - [x] Medium model (100 trees, 50 features) - batch 1K rows
+  - [x] Large model (500 trees, 100 features) - batch 10K rows
+  - [x] Varying batch sizes (1, 10, 100, 1K, 10K rows)
+- [x] Baseline: booste-rs vs `xgb` crate (XGBoost C++ via FFI)
+- [x] Document baseline results in `docs/benchmarks/`
 
-**Files**: `benches/prediction.rs`, `Cargo.toml`, `design/analysis/benchmarks.md`
+**Files**: `benches/prediction.rs`, `Cargo.toml`, `docs/benchmarks/`, `README.md`
+
+**Key findings** (baseline, pre-optimization):
+
+- **Single-row latency**: booste-rs ~860ns vs XGBoost C++ ~4.2µs (4.9x faster!)
+- **Batch prediction**: XGBoost C++ significantly faster (SIMD-optimized)
+- **Opportunity**: Block traversal (M3.4) should close the batch gap
 
 **Notes**:
 
@@ -285,8 +291,8 @@ Performance optimization from RFC-0003.
 │                                                                  │
 │  [x] 3.1 DART Support                                           │
 │  [x] 3.2 Categorical Features                                   │
-│  [ ] 3.3 Benchmarking Infrastructure   ◄── NEXT                 │
-│  [ ] 3.4 Block Traversal                                        │
+│  [x] 3.3 Benchmarking Infrastructure                            │
+│  [ ] 3.4 Block Traversal              ◄── NEXT                  │
 │  [ ] 3.5 Sparse Data                                            │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
