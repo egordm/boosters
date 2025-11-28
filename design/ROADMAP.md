@@ -155,11 +155,27 @@ during accumulation, matching XGBoost C++ DART inference behavior.
 
 **Files**: `src/predict/visitor.rs`, `src/model.rs`, `src/compat/xgboost/convert.rs`
 
-### Milestone 3.2: Categorical Features
+### ✅ Milestone 3.2: Categorical Features
 
-- [ ] Categorical split condition (bitset-based)
-- [ ] `FeatureType::Categorical` in metadata
-- [ ] XGBoost JSON: parse categorical splits
+- [x] `SplitType` enum: `Numeric` / `Categorical`
+- [x] `CategoriesStorage` for bitset-based categorical splits (in `src/trees/categories.rs`)
+- [x] `categories_to_bitset()` helper for building bitsets from category values
+- [x] `float_to_category()` with debug validation for safe f32→u32 conversion
+- [x] `TreeBuilder::add_categorical_split()` with bitset
+- [x] `SoATreeStorage` / `SoATreeView` categorical accessors
+- [x] `ScalarVisitor` handles categorical splits
+- [x] `FeatureType::Categorical` and `FeatureType::Quantitative` in metadata
+- [x] XGBoost JSON: parse categorical splits (categories → bitset conversion)
+- [x] Integration tests with XGBoost categorical models
+
+**Implementation**: Categorical splits store categories as packed u32 bitsets
+using bit operations (`>> 5` and `& 31` for efficient indexing). Categories
+in the set go RIGHT, others go LEFT (matching XGBoost behavior). XGBoost JSON
+stores category integer values which are converted to bitsets during loading.
+
+**Files**: `src/trees/categories.rs`, `src/trees/node.rs`, `src/trees/soa.rs`,
+`src/forest/soa.rs`, `src/predict/visitor.rs`, `src/compat/xgboost/json.rs`,
+`src/compat/xgboost/convert.rs`
 
 ### Milestone 3.3: Block Traversal
 
@@ -240,12 +256,12 @@ Performance optimization from RFC-0003.
 │  [x] 2.4 Objective Transforms                                   │
 │  [x] 2.5 Model Integration Tests                                │
 │                                                                  │
-│  PHASE 3: Advanced Features ◄── NEXT                            │
+│  PHASE 3: Advanced Features                                      │
 │  ═════════════════════════                                      │
 │                                                                  │
-│  [ ] 3.1 DART Support                                           │
-│  [ ] 3.2 Categorical Features                                   │
-│  [ ] 3.3 Block Traversal                                        │
+│  [x] 3.1 DART Support                                           │
+│  [x] 3.2 Categorical Features                                   │
+│  [ ] 3.3 Block Traversal              ◄── NEXT                  │
 │  [ ] 3.4 Sparse Data                                            │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
