@@ -47,7 +47,11 @@ impl TestInput {
 struct TestExpected {
     predictions: serde_json::Value, // Can be Vec<f64> or Vec<Vec<f64>>
     #[allow(dead_code)]
-    output_margin: bool,
+    predictions_transformed: Option<serde_json::Value>, // Transformed predictions (sigmoid/softmax)
+    #[allow(dead_code)]
+    objective: Option<String>,
+    #[allow(dead_code)]
+    num_class: Option<u32>,
 }
 
 fn test_cases_dir() -> PathBuf {
@@ -303,6 +307,124 @@ fn predict_batch_regression() {
             diff < TOLERANCE,
             "row {i}: got {}, expected {exp}, diff {diff}",
             pred[0]
+        );
+    }
+}
+
+// =============================================================================
+// Additional test cases for expanded coverage
+// =============================================================================
+
+#[test]
+fn parse_deep_trees_model() {
+    let (model, input, _) = load_test_case("deep_trees");
+    assert_eq!(input.num_features, 8);
+    assert!(model.to_forest().is_ok());
+}
+
+#[test]
+fn parse_single_tree_model() {
+    let (model, input, _) = load_test_case("single_tree");
+    assert_eq!(input.num_features, 3);
+    let forest = model.to_forest().expect("conversion failed");
+    assert_eq!(forest.num_trees(), 1);
+}
+
+#[test]
+fn parse_many_trees_model() {
+    let (model, input, _) = load_test_case("many_trees");
+    assert_eq!(input.num_features, 5);
+    let forest = model.to_forest().expect("conversion failed");
+    assert_eq!(forest.num_trees(), 50);
+}
+
+#[test]
+fn parse_wide_features_model() {
+    let (model, input, _) = load_test_case("wide_features");
+    assert_eq!(input.num_features, 100);
+    assert!(model.to_forest().is_ok());
+}
+
+#[test]
+fn predict_deep_trees() {
+    let (model, input, expected) = load_test_case("deep_trees");
+    let forest = model.to_forest().expect("conversion failed");
+    let rows = input.to_f32_rows();
+
+    let expected_preds: Vec<f64> = serde_json::from_value(expected.predictions).unwrap();
+
+    for (i, features) in rows.iter().enumerate() {
+        let pred = forest.predict_row(features);
+        assert_eq!(pred.len(), 1);
+        let diff = (pred[0] as f64 - expected_preds[i]).abs();
+        assert!(
+            diff < TOLERANCE,
+            "deep_trees row {i}: got {}, expected {}, diff {diff}",
+            pred[0],
+            expected_preds[i]
+        );
+    }
+}
+
+#[test]
+fn predict_single_tree() {
+    let (model, input, expected) = load_test_case("single_tree");
+    let forest = model.to_forest().expect("conversion failed");
+    let rows = input.to_f32_rows();
+
+    let expected_preds: Vec<f64> = serde_json::from_value(expected.predictions).unwrap();
+
+    for (i, features) in rows.iter().enumerate() {
+        let pred = forest.predict_row(features);
+        assert_eq!(pred.len(), 1);
+        let diff = (pred[0] as f64 - expected_preds[i]).abs();
+        assert!(
+            diff < TOLERANCE,
+            "single_tree row {i}: got {}, expected {}, diff {diff}",
+            pred[0],
+            expected_preds[i]
+        );
+    }
+}
+
+#[test]
+fn predict_many_trees() {
+    let (model, input, expected) = load_test_case("many_trees");
+    let forest = model.to_forest().expect("conversion failed");
+    let rows = input.to_f32_rows();
+
+    let expected_preds: Vec<f64> = serde_json::from_value(expected.predictions).unwrap();
+
+    for (i, features) in rows.iter().enumerate() {
+        let pred = forest.predict_row(features);
+        assert_eq!(pred.len(), 1);
+        let diff = (pred[0] as f64 - expected_preds[i]).abs();
+        assert!(
+            diff < TOLERANCE,
+            "many_trees row {i}: got {}, expected {}, diff {diff}",
+            pred[0],
+            expected_preds[i]
+        );
+    }
+}
+
+#[test]
+fn predict_wide_features() {
+    let (model, input, expected) = load_test_case("wide_features");
+    let forest = model.to_forest().expect("conversion failed");
+    let rows = input.to_f32_rows();
+
+    let expected_preds: Vec<f64> = serde_json::from_value(expected.predictions).unwrap();
+
+    for (i, features) in rows.iter().enumerate() {
+        let pred = forest.predict_row(features);
+        assert_eq!(pred.len(), 1);
+        let diff = (pred[0] as f64 - expected_preds[i]).abs();
+        assert!(
+            diff < TOLERANCE,
+            "wide_features row {i}: got {}, expected {}, diff {diff}",
+            pred[0],
+            expected_preds[i]
         );
     }
 }
