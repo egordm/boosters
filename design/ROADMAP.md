@@ -142,11 +142,18 @@ Validate full pipeline against Python XGBoost.
 
 ## Phase 3: Advanced Features
 
-### Milestone 3.1: DART Support
+### ✅ Milestone 3.1: DART Support
 
 - [x] `Booster::Dart` variant with tree weights (implemented in M2.3)
-- [ ] DART-aware prediction (weighted tree contributions)
-- [ ] XGBoost JSON: parse DART models
+- [x] DART-aware prediction (weighted tree contributions)
+- [x] `XgbModel::to_booster()` returns proper `Booster::Dart` with weights
+- [x] `XgbModel::is_dart()` helper method
+- [x] XGBoost JSON: parse DART models (already working)
+
+**Implementation**: `Predictor::predict_weighted()` applies per-tree weights
+during accumulation, matching XGBoost C++ DART inference behavior.
+
+**Files**: `src/predict/visitor.rs`, `src/model.rs`, `src/compat/xgboost/convert.rs`
 
 ### Milestone 3.2: Categorical Features
 

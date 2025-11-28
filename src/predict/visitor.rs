@@ -98,6 +98,36 @@ impl<'f> Predictor<'f, ScalarLeaf> {
     ///
     /// Returns a [`PredictionOutput`] with shape `(num_rows, num_groups)`.
     pub fn predict<M: DataMatrix<Element = f32>>(&self, features: &M) -> PredictionOutput {
+        self.predict_internal(features, None)
+    }
+
+    /// Predict with per-tree weights (for DART).
+    ///
+    /// Each tree's contribution is multiplied by its corresponding weight.
+    /// This matches XGBoost's DART inference where `weight_drop[i]` scales tree `i`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `weights.len() != forest.num_trees()`.
+    pub fn predict_weighted<M: DataMatrix<Element = f32>>(
+        &self,
+        features: &M,
+        weights: &[f32],
+    ) -> PredictionOutput {
+        assert_eq!(
+            weights.len(),
+            self.forest.num_trees(),
+            "weights length must match number of trees"
+        );
+        self.predict_internal(features, Some(weights))
+    }
+
+    /// Internal prediction with optional weights.
+    fn predict_internal<M: DataMatrix<Element = f32>>(
+        &self,
+        features: &M,
+        weights: Option<&[f32]>,
+    ) -> PredictionOutput {
         let num_rows = features.num_rows();
         let num_groups = self.num_groups();
         let num_features = features.num_features();
@@ -120,9 +150,13 @@ impl<'f> Predictor<'f, ScalarLeaf> {
             // Copy row into buffer
             features.copy_row(row_idx, &mut row_buf);
 
-            for (tree, group) in self.forest.trees_with_groups() {
+            for (tree_idx, (tree, group)) in self.forest.trees_with_groups().enumerate() {
                 let leaf_value = visitor.visit_tree(&tree, &row_buf);
-                output.row_mut(row_idx)[group as usize] += leaf_value;
+                let weighted_value = match weights {
+                    Some(w) => leaf_value * w[tree_idx],
+                    None => leaf_value,
+                };
+                output.row_mut(row_idx)[group as usize] += weighted_value;
             }
         }
 
@@ -139,6 +173,31 @@ impl<'f> Predictor<'f, ScalarLeaf> {
         for (tree, group) in self.forest.trees_with_groups() {
             let leaf_value = visitor.visit_tree(&tree, features);
             output[group as usize] += leaf_value;
+        }
+
+        output
+    }
+
+    /// Predict for a single row with per-tree weights (for DART).
+    ///
+    /// Each tree's contribution is multiplied by its corresponding weight.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `weights.len() != forest.num_trees()`.
+    pub fn predict_row_weighted(&self, features: &[f32], weights: &[f32]) -> Vec<f32> {
+        assert_eq!(
+            weights.len(),
+            self.forest.num_trees(),
+            "weights length must match number of trees"
+        );
+
+        let mut output: Vec<f32> = self.forest.base_score().to_vec();
+        let visitor = ScalarVisitor;
+
+        for (tree_idx, (tree, group)) in self.forest.trees_with_groups().enumerate() {
+            let leaf_value = visitor.visit_tree(&tree, features);
+            output[group as usize] += leaf_value * weights[tree_idx];
         }
 
         output
@@ -286,5 +345,111 @@ mod tests {
 
         let nested = output.to_nested();
         assert_eq!(nested, vec![vec![1.0], vec![2.0]]);
+    }
+
+    // ==========================================================================
+    // Weighted prediction tests (DART support)
+    // ==========================================================================
+
+    #[test]
+    fn predictor_weighted_single_tree() {
+        let mut forest = SoAForest::for_regression();
+        forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
+
+        let predictor = Predictor::new(&forest);
+
+        // Weight of 0.5 halves the tree contribution
+        assert_eq!(predictor.predict_row_weighted(&[0.3], &[0.5]), vec![0.5]);
+        assert_eq!(predictor.predict_row_weighted(&[0.7], &[0.5]), vec![1.0]);
+    }
+
+    #[test]
+    fn predictor_weighted_multiple_trees() {
+        let mut forest = SoAForest::for_regression();
+        forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0); // tree 0
+        forest.push_tree(build_simple_tree(0.5, 1.5, 0.5), 0); // tree 1
+
+        let predictor = Predictor::new(&forest);
+
+        // Weight tree 0 at 1.0, tree 1 at 0.5
+        // For row with feature 0.3 (go left): 1.0*1.0 + 0.5*0.5 = 1.25
+        let result = predictor.predict_row_weighted(&[0.3], &[1.0, 0.5]);
+        assert!((result[0] - 1.25).abs() < 1e-6);
+
+        // For row with feature 0.7 (go right): 2.0*1.0 + 1.5*0.5 = 2.75
+        let result = predictor.predict_row_weighted(&[0.7], &[1.0, 0.5]);
+        assert!((result[0] - 2.75).abs() < 1e-6);
+    }
+
+    #[test]
+    fn predictor_weighted_batch() {
+        let mut forest = SoAForest::for_regression();
+        forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
+        forest.push_tree(build_simple_tree(0.5, 1.5, 0.5), 0);
+
+        let predictor = Predictor::new(&forest);
+        let features = DenseMatrix::from_vec(vec![0.3, 0.7], 2, 1);
+        let output = predictor.predict_weighted(&features, &[1.0, 0.5]);
+
+        assert_eq!(output.shape(), (2, 1));
+        // Row 0 (0.3 < 0.5): 1.0*1.0 + 0.5*0.5 = 1.25
+        assert!((output.row(0)[0] - 1.25).abs() < 1e-6);
+        // Row 1 (0.7 >= 0.5): 2.0*1.0 + 1.5*0.5 = 2.75
+        assert!((output.row(1)[0] - 2.75).abs() < 1e-6);
+    }
+
+    #[test]
+    fn predictor_weighted_with_base_score() {
+        let mut forest = SoAForest::for_regression().with_base_score(vec![0.5]);
+        forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
+
+        let predictor = Predictor::new(&forest);
+
+        // base_score + weighted leaf = 0.5 + 1.0*0.5 = 1.0
+        let result = predictor.predict_row_weighted(&[0.3], &[0.5]);
+        assert!((result[0] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn predictor_weighted_multiclass() {
+        let mut forest = SoAForest::new(3);
+        forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
+        forest.push_tree(build_simple_tree(3.0, 4.0, 0.5), 1);
+        forest.push_tree(build_simple_tree(5.0, 6.0, 0.5), 2);
+
+        let predictor = Predictor::new(&forest);
+
+        // Weights: [0.5, 1.0, 2.0]
+        // Row 0.3 (go left): [1.0*0.5, 3.0*1.0, 5.0*2.0] = [0.5, 3.0, 10.0]
+        let result = predictor.predict_row_weighted(&[0.3], &[0.5, 1.0, 2.0]);
+        assert!((result[0] - 0.5).abs() < 1e-6);
+        assert!((result[1] - 3.0).abs() < 1e-6);
+        assert!((result[2] - 10.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn predictor_weighted_zero_weights() {
+        let mut forest = SoAForest::for_regression();
+        forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
+        forest.push_tree(build_simple_tree(100.0, 200.0, 0.5), 0);
+
+        let predictor = Predictor::new(&forest);
+
+        // Weight of 0 for tree 1 means it doesn't contribute
+        let result = predictor.predict_row_weighted(&[0.3], &[1.0, 0.0]);
+        assert!((result[0] - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    #[should_panic(expected = "weights length must match number of trees")]
+    fn predictor_weighted_wrong_weights_length() {
+        let mut forest = SoAForest::for_regression();
+        forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
+        forest.push_tree(build_simple_tree(0.5, 1.5, 0.5), 0);
+
+        let predictor = Predictor::new(&forest);
+
+        // Should panic: only 1 weight for 2 trees
+        predictor.predict_row_weighted(&[0.3], &[1.0]);
     }
 }
