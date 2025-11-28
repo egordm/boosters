@@ -765,6 +765,14 @@ impl From<PredictionOutput> for ndarray::Array2<f32> {
 - `Vec<Vec<f32>>`: Per-row allocation overhead, but more ergonomic for simple cases
 - `ndarray::Array2`: External dependency, but richer API
 - `[[f32; G]; N]`: Compile-time size, too restrictive
+- `DenseMatrix<f32>`: Reuse input matrix type for output
+
+**Why not reuse `DenseMatrix`?**
+
+- **Semantic clarity**: `DenseMatrix` is *input* features, `PredictionOutput` is *output* predictions. Different concepts deserve different types.
+- **Different typical shapes**: Features are `(rows, many_features)`, predictions are `(rows, few_groups)`. Predictions are often 1D (regression) or small K (K-class).
+- **No `DataMatrix` trait needed**: Output doesn't need `has_missing()`, `density()`, `copy_row()`, etc. Those are input traversal concerns.
+- **Conversion ergonomics**: `PredictionOutput` provides output-specific conveniences like `to_nested()` and future `From<PredictionOutput> for ndarray::Array2`.
 
 ## Open Questions
 

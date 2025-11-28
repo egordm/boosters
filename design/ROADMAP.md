@@ -92,12 +92,13 @@ Implement core data abstraction from RFC-0004.
 
 Implement traversal patterns from RFC-0003.
 
-- [ ] `TreeVisitor` trait
-- [ ] `PredictVisitor` — simple row-at-a-time prediction
-- [ ] `Predictor` struct wrapping forest + visitor strategy
-- [ ] Wire up `DataMatrix` input
+- [x] `TreeVisitor` trait
+- [x] `ScalarVisitor` — simple row-at-a-time prediction
+- [x] `Predictor` struct wrapping forest + visitor
+- [x] `PredictionOutput` flat buffer with shape metadata
+- [x] Wire up `DataMatrix` input
 
-**Files**: `src/predict/mod.rs`, `src/predict/visitor.rs`
+**Files**: `src/predict/mod.rs`, `src/predict/visitor.rs`, `src/predict/output.rs`
 
 ### Milestone 2.3: Model Wrapper
 
@@ -216,8 +217,8 @@ Performance optimization from RFC-0003.
 │  ════════════════════════════════                               │
 │                                                                  │
 │  [x] 2.1 DataMatrix Trait                                       │
-│  [ ] 2.2 Predictor & Visitor ◄── NEXT                           │
-│  [ ] 2.3 Model Wrapper                                          │
+│  [x] 2.2 Predictor & Visitor                                    │
+│  [ ] 2.3 Model Wrapper ◄── NEXT                                 │
 │  [ ] 2.4 Objective Transforms                                   │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
