@@ -1,6 +1,7 @@
 //! Conversion from XGBoost JSON types to native booste-rs types.
 
 use crate::forest::SoAForest;
+use crate::model::Booster;
 use crate::trees::{ScalarLeaf, TreeBuilder};
 
 use super::json::{GradientBooster, ModelTrees, Tree, XgbModel};
@@ -46,10 +47,47 @@ impl XgbModel {
     ///
     /// This only supports gbtree and dart boosters (tree-based models).
     /// gblinear models will return an error.
+    ///
+    /// Note: For DART models, this returns just the forest without weights.
+    /// Use [`to_booster()`](Self::to_booster) to get proper DART weighting.
     pub fn to_forest(&self) -> Result<SoAForest<ScalarLeaf>, ConversionError> {
+        let (forest, _weights) = self.to_forest_with_weights()?;
+        Ok(forest)
+    }
+
+    /// Convert to a native `Booster`.
+    ///
+    /// Returns `Booster::Tree` for gbtree models and `Booster::Dart` for DART models.
+    /// DART models include per-tree weights for proper weighted prediction.
+    pub fn to_booster(&self) -> Result<Booster, ConversionError> {
+        let (forest, weights) = self.to_forest_with_weights()?;
+
+        match weights {
+            Some(w) => Ok(Booster::Dart {
+                forest,
+                weights: w.into_boxed_slice(),
+            }),
+            None => Ok(Booster::Tree(forest)),
+        }
+    }
+
+    /// Returns true if this model uses DART booster.
+    pub fn is_dart(&self) -> bool {
+        matches!(
+            &self.learner.gradient_booster,
+            GradientBooster::Dart { .. }
+        )
+    }
+
+    /// Internal: Convert to forest with optional DART weights.
+    fn to_forest_with_weights(
+        &self,
+    ) -> Result<(SoAForest<ScalarLeaf>, Option<Vec<f32>>), ConversionError> {
         let (model_trees, tree_weights) = match &self.learner.gradient_booster {
             GradientBooster::Gbtree { model } => (model, None),
-            GradientBooster::Dart { gbtree, weight_drop } => (&gbtree.model, Some(weight_drop)),
+            GradientBooster::Dart { gbtree, weight_drop } => {
+                (&gbtree.model, Some(weight_drop.clone()))
+            }
             GradientBooster::Gblinear { .. } => return Err(ConversionError::UnsupportedBooster),
         };
 
@@ -69,11 +107,11 @@ impl XgbModel {
         // Convert each tree
         for (tree_idx, xgb_tree) in model_trees.trees.iter().enumerate() {
             let tree_group = model_trees.tree_info.get(tree_idx).copied().unwrap_or(0) as u32;
-            let native_tree = convert_tree(xgb_tree, tree_idx, tree_weights)?;
+            let native_tree = convert_tree(xgb_tree, tree_idx)?;
             forest.push_tree(native_tree, tree_group);
         }
 
-        Ok(forest)
+        Ok((forest, tree_weights))
     }
 }
 
@@ -81,7 +119,6 @@ impl XgbModel {
 fn convert_tree(
     xgb_tree: &Tree,
     tree_idx: usize,
-    _tree_weights: Option<&Vec<f32>>,
 ) -> Result<crate::trees::SoATreeStorage<ScalarLeaf>, ConversionError> {
     let num_nodes = xgb_tree.tree_param.num_nodes as usize;
     if num_nodes == 0 {
@@ -196,6 +233,33 @@ mod tests {
 
         assert_eq!(forest.num_groups(), 1);
         assert!(forest.num_trees() > 0);
+    }
+
+    #[test]
+    fn to_booster_gbtree_returns_tree() {
+        let model = load_test_model("regression");
+        let booster = model.to_booster().expect("Conversion failed");
+
+        assert!(!model.is_dart());
+        match booster {
+            Booster::Tree(_) => {}
+            Booster::Dart { .. } => panic!("Expected Booster::Tree"),
+        }
+    }
+
+    #[test]
+    fn to_booster_dart_returns_dart_with_weights() {
+        let model = load_test_model("dart_regression");
+        let booster = model.to_booster().expect("Conversion failed");
+
+        assert!(model.is_dart());
+        match booster {
+            Booster::Dart { forest, weights } => {
+                assert!(forest.num_trees() > 0);
+                assert_eq!(weights.len(), forest.num_trees());
+            }
+            Booster::Tree(_) => panic!("Expected Booster::Dart"),
+        }
     }
 
     #[test]

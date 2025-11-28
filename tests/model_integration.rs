@@ -18,7 +18,7 @@ use serde::Deserialize;
 
 use booste_rs::compat::XgbModel;
 use booste_rs::data::DenseMatrix;
-use booste_rs::model::{Booster, FeatureInfo, Model, ModelMeta, ModelSource};
+use booste_rs::model::{FeatureInfo, Model, ModelMeta, ModelSource};
 use booste_rs::objective::Objective;
 
 // =============================================================================
@@ -97,12 +97,12 @@ fn parse_objective(objective: &str, num_class: u32) -> Objective {
 
 /// Build a Model from XgbModel for testing.
 fn build_model(xgb: &XgbModel, objective: Objective) -> Model {
-    let forest = xgb.to_forest().expect("conversion failed");
+    let booster = xgb.to_booster().expect("conversion failed");
     let num_features = xgb.learner.learner_model_param.num_feature as u32;
-    let num_groups = forest.num_groups() as u32;
+    let num_groups = booster.forest().num_groups();
 
     Model::new(
-        Booster::Tree(forest),
+        booster,
         ModelMeta {
             num_features,
             num_groups,
@@ -497,6 +497,65 @@ fn model_predict_wide_features() {
         assert!(
             diff < TOLERANCE,
             "wide_features row {i}: got {actual}, expected {exp}, diff {diff}"
+        );
+    }
+}
+
+// =============================================================================
+// DART booster tests
+// =============================================================================
+
+#[test]
+fn model_predict_dart_regression() {
+    let (xgb_model, input, expected) = load_test_case("dart_regression");
+    let objective = parse_objective(&expected.objective, expected.num_class);
+    let model = build_model(&xgb_model, objective);
+
+    // Verify it's actually a DART model
+    assert!(xgb_model.is_dart());
+    match &model.booster {
+        booste_rs::model::Booster::Dart { weights, .. } => {
+            assert_eq!(weights.len(), model.booster.num_trees());
+        }
+        _ => panic!("Expected DART booster"),
+    }
+
+    let features = input.to_dense_matrix();
+    let output = model.predict(&features);
+
+    let expected_preds: Vec<f64> =
+        serde_json::from_value(expected.predictions_transformed).unwrap();
+
+    assert_eq!(output.shape(), (input.num_rows, 1));
+    for (i, exp) in expected_preds.iter().enumerate() {
+        let actual = output.row(i)[0] as f64;
+        let diff = (actual - exp).abs();
+        assert!(
+            diff < TOLERANCE,
+            "dart_regression row {i}: got {actual}, expected {exp}, diff {diff}"
+        );
+    }
+}
+
+#[test]
+fn model_predict_dart_raw_matches_expected() {
+    let (xgb_model, input, expected) = load_test_case("dart_regression");
+    let objective = parse_objective(&expected.objective, expected.num_class);
+    let model = build_model(&xgb_model, objective);
+
+    let features = input.to_dense_matrix();
+    let output = model.predict_raw(&features);
+
+    // For regression, raw and transformed should be the same
+    let expected_preds: Vec<f64> = serde_json::from_value(expected.predictions).unwrap();
+
+    assert_eq!(output.shape(), (input.num_rows, 1));
+    for (i, exp) in expected_preds.iter().enumerate() {
+        let actual = output.row(i)[0] as f64;
+        let diff = (actual - exp).abs();
+        assert!(
+            diff < TOLERANCE,
+            "dart_regression raw row {i}: got {actual}, expected {exp}, diff {diff}"
         );
     }
 }

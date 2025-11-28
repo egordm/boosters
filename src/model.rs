@@ -86,22 +86,10 @@ impl Model {
                 predictor.predict(features)
             }
             Booster::Dart { forest, weights } => {
-                // DART: apply tree weights during prediction
+                // DART: apply per-tree weights during prediction
+                // Each tree's contribution is multiplied by its weight_drop value
                 let predictor = Predictor::new(forest);
-                let mut output = predictor.predict(features);
-
-                // Weight the tree contributions
-                // Note: This is a simplified approach; proper DART weighting
-                // requires per-tree accumulation. For now, we scale the entire output.
-                let weight_sum: f32 = weights.iter().sum();
-                if weight_sum > 0.0 {
-                    let scale = weights.len() as f32 / weight_sum;
-                    for val in output.as_mut_slice() {
-                        *val *= scale;
-                    }
-                }
-
-                output
+                predictor.predict_weighted(features, weights)
             }
         }
     }
