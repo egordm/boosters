@@ -26,7 +26,7 @@ The goal is to learn from XGBoost's solutions, avoid reinventing solved problems
 
 ### Challenge
 
-XGBoost's `ArrayTreeLayout` unrolls only the **top 6 levels** of each tree into contiguous arrays for faster traversal. Why not unroll the entire tree?
+XGBoost's `UnrolledTreeLayout` unrolls only the **top 6 levels** of each tree into contiguous arrays for faster traversal. Why not unroll the entire tree?
 
 ```cpp
 /* Ad-hoc value.
@@ -52,7 +52,7 @@ constexpr static int kMaxNumDeepLevels = 6;
 
 - **Configurable unroll depth**: Use a const generic parameter for unroll depth, defaulting to 6.
   ```rust
-  struct ArrayTreeLayout<const DEPTH: usize> { ... }
+  struct UnrolledTreeLayout<const DEPTH: usize> { ... }
   ```
 
 - **Benchmark different depths**: Create benchmarks comparing depths 4, 6, 8, and 10 for typical model depths.

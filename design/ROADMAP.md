@@ -145,7 +145,7 @@ Validate full pipeline against Python XGBoost.
 **Goal**: Match or beat XGBoost C++ on batch prediction benchmarks.
 
 **Context**: We already win on single-row latency (4.9x faster). XGBoost's batch
-advantage comes from ArrayTreeLayout + SIMD. This phase closes that gap.
+advantage comes from UnrolledTreeLayout + SIMD. This phase closes that gap.
 
 ### ✅ Milestone 3.1: DART Support
 
@@ -232,18 +232,18 @@ tree nodes in L1/L2 cache while processing multiple rows.
 
 **Files**: `src/predict/block.rs`, `benches/prediction.rs`
 
-### ✅ Milestone 3.5: ArrayTreeLayout
+### ✅ Milestone 3.5: UnrolledTreeLayout
 
 Unroll top tree levels into flat arrays for cache-friendly level-by-level traversal.
 This is XGBoost's key batch optimization.
 
-- [x] `ArrayTreeLayout` struct — flatten top K levels (default 6)
+- [x] `UnrolledTreeLayout` struct — flatten top K levels (default 6)
 - [x] Level-by-level traversal instead of pointer-chasing
 - [x] `process_block()` for batch processing
-- [x] Conversion from `SoATreeStorage` to `ArrayTreeLayout`
-- [x] `ArrayPredictor` using the new layout
+- [x] Conversion from `SoATreeStorage` to `UnrolledTreeLayout`
+- [x] `UnrolledPredictor` using the new layout
 - [x] Benchmark: **achieved 2.1-2.8x improvement** on 1K+ row batches
-- [ ] **(Future)** Const-generic version `ArrayTreeLayout<const DEPTH>` for stack allocation
+- [ ] **(Future)** Const-generic version `UnrolledTreeLayout<const DEPTH>` for stack allocation
 
 **Theory**: A complete binary tree of depth K has `2^K - 1` nodes. Unrolling
 the top 6 levels gives 63 nodes in a contiguous array. For each row, we can
@@ -272,7 +272,7 @@ Process multiple rows simultaneously using SIMD instructions.
 - [ ] Fallback for non-SIMD platforms
 - [ ] Benchmark: target 2-4x improvement on batch prediction
 
-**Theory**: With ArrayTreeLayout, all rows at the same tree level can be
+**Theory**: With UnrolledTreeLayout, all rows at the same tree level can be
 processed together. SIMD lets us compare 4-8 thresholds simultaneously and
 compute the next node index for all rows in one instruction.
 
@@ -380,7 +380,7 @@ Comprehensive benchmarking to validate optimization gains.
 │  [x] 3.2 Categorical Features                                   │
 │  [x] 3.3 Benchmarking Infrastructure                            │
 │  [x] 3.4 Block Traversal                                        │
-│  [x] 3.5 ArrayTreeLayout (2.8x speedup!)                        │
+│  [x] 3.5 UnrolledTreeLayout (2.8x speedup!)                        │
 │  [ ] 3.6 SIMD Traversal           ◄── NEXT                      │
 │  [ ] 3.7 Memory Prefetching                                     │
 │  [ ] 3.8 Performance Validation                                 │

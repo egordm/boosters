@@ -1,8 +1,8 @@
-//! Array-based tree layout for cache-friendly batch traversal.
+//! Unrolled tree layout for cache-friendly batch traversal.
 //!
-//! This module implements the ArrayTreeLayout optimization from XGBoost.
-//! The top K levels of a tree are unrolled into a flat array, enabling
-//! level-by-level traversal with simple index arithmetic instead of
+//! This module implements the UnrolledTreeLayout optimization (based on XGBoost's
+//! `array_tree_layout`). The top K levels of a tree are unrolled into a flat array,
+//! enabling level-by-level traversal with simple index arithmetic instead of
 //! pointer-chasing.
 //!
 //! # Theory
@@ -33,14 +33,14 @@
 //!
 //! ```ignore
 //! // Future implementation
-//! pub struct ArrayTreeLayout<const DEPTH: usize = 6> {
+//! pub struct UnrolledTreeLayout<const DEPTH: usize = 6> {
 //!     split_indices: [u32; (1 << DEPTH) - 1],  // Stack allocated
 //!     exit_node_idx: [u32; 1 << DEPTH],
 //!     // ...
 //! }
 //!
-//! pub type ArrayTreeLayout6 = ArrayTreeLayout<6>;  // 63 nodes
-//! pub type ArrayTreeLayout4 = ArrayTreeLayout<4>;  // 15 nodes
+//! pub type UnrolledTreeLayout6 = UnrolledTreeLayout<6>;  // 63 nodes
+//! pub type UnrolledTreeLayout4 = UnrolledTreeLayout<4>;  // 15 nodes
 //! ```
 //!
 //! The current structure is designed for easy migration to const generics.
@@ -65,13 +65,13 @@ const fn exits_at_depth(depth: usize) -> usize {
     1 << depth
 }
 
-/// Array-based layout for the top levels of a tree.
+/// Unrolled layout for the top levels of a tree.
 ///
 /// Stores the top `depth` levels in a flat array for cache-friendly
 /// traversal. After traversing these levels, use `exit_node_idx` to
 /// get the original tree node index for continued traversal.
 #[derive(Debug, Clone)]
-pub struct ArrayTreeLayout {
+pub struct UnrolledTreeLayout {
     /// Number of levels unrolled into the array.
     depth: usize,
 
@@ -108,8 +108,8 @@ pub struct ArrayTreeLayout {
     cat_bitsets: Box<[u32]>,
 }
 
-impl ArrayTreeLayout {
-    /// Create an array layout from a SoATreeStorage.
+impl UnrolledTreeLayout {
+    /// Create an unrolled layout from a SoATreeStorage.
     ///
     /// Unrolls up to `max_depth` levels (capped at MAX_UNROLL_DEPTH).
     /// If the tree is shallower than `max_depth`, uses the tree's actual depth.
@@ -503,7 +503,7 @@ mod tests {
     }
 
     #[test]
-    fn array_layout_basic() {
+    fn unrolled_layout_basic() {
         // Build a depth-2 tree (3 internal nodes, 4 leaves)
         let mut builder = TreeBuilder::new();
         builder.add_split(0, 0.5, true, 1, 2); // root
@@ -512,7 +512,7 @@ mod tests {
         let tree = builder.build();
 
         // Unroll 2 levels
-        let layout = ArrayTreeLayout::from_tree(&tree, 2);
+        let layout = UnrolledTreeLayout::from_tree(&tree, 2);
 
         assert_eq!(layout.depth(), 2);
         assert_eq!(layout.num_nodes(), 3); // 2^2 - 1 = 3
@@ -524,7 +524,7 @@ mod tests {
     }
 
     #[test]
-    fn array_layout_traverse() {
+    fn unrolled_layout_traverse() {
         // Build a simple tree:
         //        [0] feat0 < 0.5
         //        /          \
@@ -535,7 +535,7 @@ mod tests {
         builder.add_leaf(ScalarLeaf(2.0));
         let tree = builder.build();
 
-        let layout = ArrayTreeLayout::from_tree(&tree, 2);
+        let layout = UnrolledTreeLayout::from_tree(&tree, 2);
 
         // Test traversal
         let exit_left = layout.traverse_to_exit(&[0.3]); // < 0.5, go left
@@ -557,12 +557,12 @@ mod tests {
     }
 
     #[test]
-    fn array_layout_deeper_tree() {
+    fn unrolled_layout_deeper_tree() {
         // Build a complete tree of depth 3 (7 internal nodes, 8 leaves)
         let tree = build_complete_tree(3);
 
         // Unroll 3 levels
-        let layout = ArrayTreeLayout::from_tree(&tree, 3);
+        let layout = UnrolledTreeLayout::from_tree(&tree, 3);
 
         assert_eq!(layout.depth(), 3);
         assert_eq!(layout.num_nodes(), 7); // 2^3 - 1
@@ -570,7 +570,7 @@ mod tests {
     }
 
     #[test]
-    fn array_layout_block_processing() {
+    fn unrolled_layout_block_processing() {
         // Build simple tree
         let mut builder = TreeBuilder::new();
         builder.add_split(0, 0.5, true, 1, 2);
@@ -578,7 +578,7 @@ mod tests {
         builder.add_leaf(ScalarLeaf(2.0));
         let tree = builder.build();
 
-        let layout = ArrayTreeLayout::from_tree(&tree, 2);
+        let layout = UnrolledTreeLayout::from_tree(&tree, 2);
 
         // Process a block of 4 rows
         let features = vec![
@@ -607,7 +607,7 @@ mod tests {
     }
 
     #[test]
-    fn array_layout_missing_values() {
+    fn unrolled_layout_missing_values() {
         // Build tree with default_left = true
         let mut builder = TreeBuilder::new();
         builder.add_split(0, 0.5, true, 1, 2); // default goes left
@@ -615,7 +615,7 @@ mod tests {
         builder.add_leaf(ScalarLeaf(2.0)); // right leaf
         let tree = builder.build();
 
-        let layout = ArrayTreeLayout::from_tree(&tree, 2);
+        let layout = UnrolledTreeLayout::from_tree(&tree, 2);
 
         // Test with NaN (missing value) - should go left (default)
         let exit_nan = layout.traverse_to_exit(&[f32::NAN]);

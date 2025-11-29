@@ -29,7 +29,7 @@ This document consolidates three prior analyses of XGBoost's C++ implementation,
 - `ShouldUseBlock` decides between per-row and per-block traversal based on density.
 
 ### Transient Array Layout (SoA-ish hot-path)
-- `ProcessArrayTree` / `ArrayTreeLayout` unrolls top tree levels into contiguous arrays for block traversal. This reduces pointer chasing and improves prefetch and branch prediction.
+- `ProcessArrayTree` / `UnrolledTreeLayout` unrolls top tree levels into contiguous arrays for block traversal. This reduces pointer chasing and improves prefetch and branch prediction.
 
 ### Feature Staging & Zero-Copy Viewing
 - `FVec` buffers (per thread) stage feature values for a block. They are reused by rows inside the block to avoid repeated decoding.

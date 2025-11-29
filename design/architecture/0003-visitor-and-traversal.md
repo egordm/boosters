@@ -187,7 +187,7 @@ pub trait BlockVisitor<F: Forest> {
 /// Block visitor with array tree layout optimization
 pub struct ArrayBlockVisitor<const DEPTH: usize, const HAS_MISSING: bool, const HAS_CATEGORICAL: bool> {
     /// Cached array layouts per tree (lazily populated)
-    layouts: Vec<Option<ArrayTreeLayout<DEPTH>>>,
+    layouts: Vec<Option<UnrolledTreeLayout<DEPTH>>>,
 }
 
 impl<F, const DEPTH: usize, const HAS_MISSING: bool, const HAS_CATEGORICAL: bool> 
@@ -207,7 +207,7 @@ where
         // Phase 1: Process through unrolled array layout
         let mut subtree_roots = vec![0u32; block_size];
         
-        // Note: get_or_build_layout creates an ephemeral ArrayTreeLayout per call,
+        // Note: get_or_build_layout creates an ephemeral UnrolledTreeLayout per call,
         // matching XGBoost's approach. For repeated predictions, use CachedPredictor.
         if let Some(layout) = self.get_or_build_layout(tree) {
             layout.process_block(features, &mut subtree_roots);
@@ -504,7 +504,7 @@ impl BlockBuffers {
   │      accumulate     │     │          │          │
   └──────────┬──────────┘     │          ▼          │
              │                │ ┌─────────────────┐ │
-             │                │ │ ArrayTreeLayout │ │
+             │                │ │ UnrolledTreeLayout │ │
              │                │ │ process_block() │ │
              │                │ └────────┬────────┘ │
              │                │          │          │
@@ -625,13 +625,13 @@ impl<'f, F: Forest + Sync> Predictor<'f, F> {
 
 **Reversal criteria**: If we find lifetime annotations spreading through too many APIs or blocking async integration, we may add an owned variant.
 
-### DD-2: ArrayTreeLayout Caching — Ephemeral vs Cached **[DECIDED]**
+### DD-2: UnrolledTreeLayout Caching — Ephemeral vs Cached **[DECIDED]**
 
 **Decision**: Use **ephemeral** creation like XGBoost, with opt-in caching.
 
 **XGBoost approach analysis**:
 
-- XGBoost creates `ArrayTreeLayout` per prediction call (in `GetArrayTreeLayout`)
+- XGBoost creates `UnrolledTreeLayout` per prediction call (in `GetUnrolledTreeLayout`)
 - Rationale: Layout is small (~500 bytes for depth 6), creation is cheap
 - Memory: Don't hold N×500 bytes for N trees when not predicting
 
@@ -646,9 +646,9 @@ pub struct Predictor<'f, F: Forest> {
 
 impl<'f, F: Forest> Predictor<'f, F> {
     /// Create layout on-demand during prediction
-    fn get_layout(&self, tree_idx: usize) -> ArrayTreeLayout<6> {
+    fn get_layout(&self, tree_idx: usize) -> UnrolledTreeLayout<6> {
         let tree = self.forest.tree(tree_idx);
-        ArrayTreeLayout::from_tree(&tree)  // ~500 bytes, fast construction
+        UnrolledTreeLayout::from_tree(&tree)  // ~500 bytes, fast construction
     }
 }
 
@@ -656,13 +656,13 @@ impl<'f, F: Forest> Predictor<'f, F> {
 pub struct CachedPredictor<'f, F: Forest> {
     forest: &'f F,
     config: PredictorConfig,
-    layouts: Vec<ArrayTreeLayout<6>>,  // Pre-built for all trees
+    layouts: Vec<UnrolledTreeLayout<6>>,  // Pre-built for all trees
 }
 
 impl<'f, F: Forest> CachedPredictor<'f, F> {
     pub fn new(forest: &'f F, config: PredictorConfig) -> Self {
         let layouts = (0..forest.num_trees())
-            .map(|i| ArrayTreeLayout::from_tree(&forest.tree(i)))
+            .map(|i| UnrolledTreeLayout::from_tree(&forest.tree(i)))
             .collect();
         Self { forest, config, layouts }
     }

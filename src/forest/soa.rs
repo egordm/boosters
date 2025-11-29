@@ -200,7 +200,7 @@ impl<'a, L: LeafValue> SoATreeView<'a, L> {
 
     /// Get a reference to the underlying storage.
     ///
-    /// Useful for building optimized representations like `ArrayTreeLayout`.
+    /// Useful for building optimized representations like `UnrolledTreeLayout`.
     #[inline]
     pub fn into_storage(self) -> &'a SoATreeStorage<L> {
         self.storage
