@@ -29,15 +29,28 @@ Thoughts that might be useful later.
 
 Implemented `SimdTraversal` using `wide` crate (f32x8) to process 8 rows in parallel.
 
-**Benchmark Results (1000 rows, 100 trees, depth 6):**
+**Comprehensive Benchmark (100 trees, 50 features):**
 
-| Strategy | Time | vs Unrolled |
-|----------|------|-------------|
-| Standard | 2.11ms | 2.9x slower |
-| Unrolled | 739µs | baseline |
-| SIMD | 832µs | 12% slower |
+| Strategy | 1K No-Block | 1K Block64 | 10K No-Block | 10K Block64 |
+|----------|-------------|------------|--------------|-------------|
+| Standard | 2.13ms | 2.14ms | 21.1ms | 21.4ms |
+| Unrolled | 793µs | 752µs | 10.2ms | **7.59ms** |
+| SIMD | 845µs | 842µs | 8.72ms | 8.41ms |
 
-**Why SIMD was slower:**
+**Key Findings:**
+
+1. **Standard + blocking = no benefit** (-1.6% at 10K due to overhead)
+2. **Unrolled + blocking = huge benefit** (+35% at 10K rows!)
+3. **SIMD + blocking = minor benefit** (+3.7%)
+4. **SIMD is still 11% slower than Unrolled+Block** (8.41ms vs 7.59ms)
+
+**Why Unrolled+Block is fastest:**
+
+- Level-by-level processing keeps split data in L1/L2 cache
+- All rows in a 64-row block traverse same tree level together
+- Memory prefetching works optimally with predictable access pattern
+
+**Why SIMD doesn't help more:**
 
 1. **No hardware gather** - `wide` doesn't expose AVX2 `vpgatherdd` instructions
 2. **Scalar feature gather** - Must manually extract indices and gather feature values in loops
@@ -51,8 +64,8 @@ Implemented `SimdTraversal` using `wide` crate (f32x8) to process 8 rows in para
 - **AVX2 intrinsics** - Use `_mm256_i32gather_ps` for hardware gather
 - **std::simd (nightly)** - Has scatter/gather support
 
-**Conclusion:** Row-parallel SIMD isn't beneficial with row-major data layout and no gather.
-UnrolledTraversal remains the best stable option (2.9x speedup over standard).
+**Conclusion:** `UnrolledTraversal` with default block size (64) is the best option.
+SIMD row-parallel approach doesn't help with row-major data layout.
 
 <!-- Notes about performance observations, potential optimizations -->
 
