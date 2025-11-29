@@ -232,7 +232,7 @@ tree nodes in L1/L2 cache while processing multiple rows.
 
 **Files**: `src/predict/block.rs`, `benches/prediction.rs`
 
-### Milestone 3.5: ArrayTreeLayout
+### ✅ Milestone 3.5: ArrayTreeLayout
 
 Unroll top tree levels into flat arrays for cache-friendly level-by-level traversal.
 This is XGBoost's key batch optimization.
@@ -241,14 +241,20 @@ This is XGBoost's key batch optimization.
 - [x] Level-by-level traversal instead of pointer-chasing
 - [x] `process_block()` for batch processing
 - [x] Conversion from `SoATreeStorage` to `ArrayTreeLayout`
-- [ ] `ArrayTreePredictor` using the new layout
-- [ ] Benchmark: target 2x improvement on 1K+ row batches
+- [x] `ArrayPredictor` using the new layout
+- [x] Benchmark: **achieved 2.1-2.8x improvement** on 1K+ row batches
 - [ ] **(Future)** Const-generic version `ArrayTreeLayout<const DEPTH>` for stack allocation
 
 **Theory**: A complete binary tree of depth K has `2^K - 1` nodes. Unrolling
 the top 6 levels gives 63 nodes in a contiguous array. For each row, we can
 traverse these 6 levels with simple index arithmetic (`2*i+1`, `2*i+2`) before
 falling back to the regular tree for deeper nodes.
+
+**Benchmark results** (bench_medium, 100 trees, 50 features):
+
+- 100 rows: 85µs → 72µs (16% faster)
+- 1,000 rows: 2.2ms → 789µs (**2.8x faster**)
+- 10,000 rows: 21.8ms → 10.4ms (**2.1x faster**)
 
 **Current implementation**: Runtime depth with heap allocation (simpler).
 **Target implementation**: Const-generic depth with stack allocation per RFC-0002 DD-4.
@@ -374,8 +380,8 @@ Comprehensive benchmarking to validate optimization gains.
 │  [x] 3.2 Categorical Features                                   │
 │  [x] 3.3 Benchmarking Infrastructure                            │
 │  [x] 3.4 Block Traversal                                        │
-│  [ ] 3.5 ArrayTreeLayout          ◄── NEXT                      │
-│  [ ] 3.6 SIMD Traversal                                         │
+│  [x] 3.5 ArrayTreeLayout (2.8x speedup!)                        │
+│  [ ] 3.6 SIMD Traversal           ◄── NEXT                      │
 │  [ ] 3.7 Memory Prefetching                                     │
 │  [ ] 3.8 Performance Validation                                 │
 │                                                                  │
