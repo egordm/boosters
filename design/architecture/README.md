@@ -28,7 +28,7 @@ Each RFC follows this structure:
 |-----|-------|--------|---------|
 | [0000](./0000-architecture-overview.md) | Architecture Overview | Accepted | High-level system architecture and component map |
 | [0001](./0001-forest-data-structures.md) | Forest Data Structures | Accepted | `NodeForest`, `SoAForest`, container types |
-| [0002](./0002-tree-data-structures.md) | Tree Data Structures | Accepted | Node layout, `NodeTree`, `SoATreeView`, `ArrayTreeLayout` |
+| [0002](./0002-tree-data-structures.md) | Tree Data Structures | Accepted | Node layout, `NodeTree`, `SoATreeView`, `UnrolledTreeLayout` |
 | [0003](./0003-visitor-and-traversal.md) | Visitor and Traversal | Accepted | `Visitor` trait, `Predictor`, block traversal |
 | [0004](./0004-dmatrix.md) | DMatrix and Data Input | Draft | `DataMatrix` trait, Arrow integration, quantization |
 | 0005 | Threading & Buffers | Planned | Thread pools, buffer management |

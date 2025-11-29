@@ -11,13 +11,13 @@
 //! - [`ScalarVisitor`]: Visitor for forests with scalar leaves
 //! - [`Predictor`]: Orchestrates batch prediction over a forest
 //! - [`BlockPredictor`]: Block-based prediction for improved cache locality
-//! - [`ArrayPredictor`]: Array-layout optimization for batch prediction
+//! - [`UnrolledPredictor`]: Unrolled-layout optimization for batch prediction
 //!
 //! # Choosing a Predictor
 //!
 //! - **Single row or small batches (<100 rows)**: Use [`Predictor`]
-//! - **Large batches (100+ rows)**: Use [`BlockPredictor`] or [`ArrayPredictor`]
-//! - **Maximum batch performance**: Use [`ArrayPredictor`] (unrolls top tree levels)
+//! - **Large batches (100+ rows)**: Use [`BlockPredictor`] or [`UnrolledPredictor`]
+//! - **Maximum batch performance**: Use [`UnrolledPredictor`] (unrolls top tree levels)
 //!
 //! # Output Format
 //!
@@ -27,12 +27,12 @@
 //!
 //! See RFC-0003 for design rationale.
 
-mod array;
 mod block;
 mod output;
+mod unrolled;
 mod visitor;
 
-pub use array::ArrayPredictor;
 pub use block::{BlockConfig, BlockPredictor, DEFAULT_BLOCK_SIZE};
 pub use output::PredictionOutput;
+pub use unrolled::UnrolledPredictor;
 pub use visitor::{Predictor, ScalarVisitor, TreeVisitor};

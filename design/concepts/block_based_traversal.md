@@ -45,7 +45,7 @@ Block-based traversal is **highly beneficial on CPU**:
 
 1. **Cache Locality**: When processing 64 rows through a tree's top levels, the tree nodes stay in L1/L2 cache. Without blocking, each row might evict tree nodes before the next row uses them.
 
-2. **Branch Prediction**: Level-by-level processing with `ArrayTreeLayout` converts data-dependent branches into predictable loops:
+2. **Branch Prediction**: Level-by-level processing with `UnrolledTreeLayout` converts data-dependent branches into predictable loops:
 
    ```rust
    // Without blocking: unpredictable branches per row
@@ -60,7 +60,7 @@ Block-based traversal is **highly beneficial on CPU**:
        }
    }
    
-   // With blocking + ArrayTreeLayout: predictable loop
+   // With blocking + UnrolledTreeLayout: predictable loop
    for level in 0..DEPTH {  // Fixed iteration count
        for (row_idx, pos) in positions.iter_mut().enumerate() {
            // All rows process same level simultaneously
@@ -97,7 +97,7 @@ Having a CPU implementation of block-based traversal is valuable even if targeti
 - **Reference**: Validates GPU results against CPU
 - **Profiling**: Isolate algorithmic performance from GPU overhead
 
-## ArrayTreeLayout: SIMD Considerations
+## UnrolledTreeLayout: SIMD Considerations
 
 The main challenge with SIMD in tree traversal is the **gather operation**: each row may need a different feature index and threshold, requiring scatter-gather patterns that are slower than sequential loads on current hardware.
 
@@ -107,7 +107,7 @@ Key insights:
 - **What doesn't**: Feature/threshold lookups (different indices per row)
 - **Recommendation**: Start with scalar gather loops; hardware gather may or may not help (benchmark!)
 
-For detailed analysis of SIMD optimization in ArrayTreeLayout, see [RFC-0002: Tree Data Structures](../architecture/0002-tree-data-structures.md#simd-optimization-analysis).
+For detailed analysis of SIMD optimization in UnrolledTreeLayout, see [RFC-0002: Tree Data Structures](../architecture/0002-tree-data-structures.md#simd-optimization-analysis).
 
 ## Training vs Inference
 

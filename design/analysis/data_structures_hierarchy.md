@@ -26,7 +26,7 @@ DMatrix (data)
 Predictor Views & Ephemeral Layouts
 ├─ HostModel / ScalarTreeView / MultiTargetTreeView => read-only views over RegTree
 ├─ DeviceModel (Device mem copy) [GPU] => persistent device-side model
-├─ ArrayTreeLayout (transient) [CPU] => unrolled top-k levels (SoA-like hot path)
+├─ UnrolledTreeLayout (transient) [CPU] => unrolled top-k levels (SoA-like hot path)
 ├─ ThreadTmp / FVec => per-thread staging/feature buffers for block traversal
 └─ Bitvectors (Column-split) => distributed / column-split inference (two-pass)
 
@@ -52,7 +52,7 @@ Input EllpackPage / SparsePage -> loaders (EllpackLoader / SparsePageLoader) -> 
   - Role: lightweight read-only views used by predictors to avoid copying the full model.
   - Optimization: zero-copy read-only access and minimal preparation for prediction.
 
-- `ArrayTreeLayout` / `ProcessArrayTree` [CPU]
+- `UnrolledTreeLayout` / `ProcessArrayTree` [CPU]
   - Role: transient array layout that unrolls the top `k` levels of trees.
   - Optimization: improves branch predictability, cache locality, fewer pointer dereferences.
   - Use case: `PredictBatchByBlockKernel` in `cpu_predictor.cc` (block traversal).
@@ -85,7 +85,7 @@ Input EllpackPage / SparsePage -> loaders (EllpackLoader / SparsePageLoader) -> 
 
 ## Possible Mapping to Rust (Naming & Types)
 - `RegTree` (AoS) -> `TrainTree` / `TrainForest` (for training types; `Vec<Node>`)
-- `ArrayTreeLayout` (AoS->SoA hot path) -> `SoAForest` / `SoATree` (persistent SoA storage)
+- `UnrolledTreeLayout` (AoS->SoA hot path) -> `SoAForest` / `SoATree` (persistent SoA storage)
 - `HostModel` / `DeviceModel` -> `ForestView` / `DeviceForest` with `Arc<[T]>`/`DeviceBuf<T>` ownership
 - `ThreadTmp` -> `ThreadLocal<Buffer>` pool for `BlockVisitor`
 - `FVec` -> `FeatureBlock` / `QuantizedBlock` typed arrays
@@ -97,7 +97,7 @@ Input EllpackPage / SparsePage -> loaders (EllpackLoader / SparsePageLoader) -> 
 ## Use Case Matrix (quick reference)
 
 - Fast single-row latency: per-row traversal + persistent `DeviceModel` for GPU or `SoAForest` optimized CPU sequential path.
-- Batch throughput: block traversal (`PredictBatchByBlockKernel`), `ArrayTreeLayout`, `ThreadTmp` reuse.
+- Batch throughput: block traversal (`PredictBatchByBlockKernel`), `UnrolledTreeLayout`, `ThreadTmp` reuse.
 - Memory-constrained: quantized `GHistIndexMatrix` / `Ellpack`.
 - Distributed column-split: bitvector two-pass (minimal network traffic, reduced read-set).
 - Multi-target: vector leaves (`size_leaf_vector`) and `MultiTargetTreeView` or vectorized `LeafVecForest` in Rust.

@@ -11,7 +11,7 @@ This RFC defines tree-level data structures for training and inference:
 
 1. **`NodeTree`**: Mutable AoS representation with per-node structs
 2. **`SoATreeView`**: Immutable SoA representation as array slices
-3. **`ArrayTreeLayout`**: Unrolled top-k levels for block traversal
+3. **`UnrolledTreeLayout`**: Unrolled top-k levels for block traversal
 
 ## Motivation
 
@@ -364,7 +364,7 @@ impl<'a, L: LeafValue> SoATreeView<'a, L> {
 }
 ```
 
-### ArrayTreeLayout (Unrolled Top Levels)
+### UnrolledTreeLayout (Unrolled Top Levels)
 
 For block-based traversal, we unroll the top K levels into a perfect binary tree array layout:
 
@@ -377,7 +377,7 @@ For block-based traversal, we unroll the top K levels into a perfect binary tree
 /// - Nodes 3-6: level 2
 /// - ...
 /// - Nodes (2^K - 1) - 1: pointers to subtrees at level K
-pub struct ArrayTreeLayout<const DEPTH: usize = 6> {
+pub struct UnrolledTreeLayout<const DEPTH: usize = 6> {
     /// Number of nodes in unrolled section: 2^DEPTH - 1
     const NUM_NODES: usize = (1 << DEPTH) - 1;
     
@@ -398,7 +398,7 @@ pub struct ArrayTreeLayout<const DEPTH: usize = 6> {
     subtree_roots: [u32; 1 << DEPTH],
 }
 
-impl<const DEPTH: usize> ArrayTreeLayout<DEPTH> {
+impl<const DEPTH: usize> UnrolledTreeLayout<DEPTH> {
     /// Build from a SoATreeView
     pub fn from_tree<L: LeafValue>(tree: &SoATreeView<'_, L>) -> Self {
         let mut layout = Self {
@@ -493,10 +493,10 @@ impl<const DEPTH: usize> ArrayTreeLayout<DEPTH> {
 }
 ```
 
-### Array Layout Visualization
+### Unrolled Layout Visualization
 
 ```text
-Original Tree (depth 4):            ArrayTreeLayout<3> (unroll 3 levels):
+Original Tree (depth 4):            UnrolledTreeLayout<3> (unroll 3 levels):
 
         [0]                                    Array indices:
        /   \                                        [0]          Level 0
@@ -525,7 +525,7 @@ subtree_roots:   [7, 8, 9, 10, 11, 12, 13, 14]  (continue from here)
 mod simd {
     use std::simd::{f32x8, mask32x8, Simd};
     
-    impl<const DEPTH: usize> ArrayTreeLayout<DEPTH> {
+    impl<const DEPTH: usize> UnrolledTreeLayout<DEPTH> {
         /// Process 8 rows simultaneously through one level
         #[inline]
         pub fn process_level_simd(
@@ -610,7 +610,7 @@ impl TreeCategoricalSplits {
 }
 ```
 
-## ArrayTreeLayout vs SoATreeView
+## UnrolledTreeLayout vs SoATreeView
 
 Both provide tree traversal, but serve different purposes.
 
@@ -619,7 +619,7 @@ Both provide tree traversal, but serve different purposes.
 │                        Tree Representations                          │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                      │
-│  SoATreeView (Dynamic)              ArrayTreeLayout (Static)         │
+│  SoATreeView (Dynamic)              UnrolledTreeLayout (Static)         │
 │  ─────────────────────              ──────────────────────────       │
 │                                                                      │
 │  • Variable depth trees             • Fixed top-K levels only        │
@@ -629,7 +629,7 @@ Both provide tree traversal, but serve different purposes.
 │                                                                      │
 │  Storage: pointers to SoA arrays    Storage: inline fixed arrays     │
 │                                                                      │
-│       SoATreeView                         ArrayTreeLayout<3>         │
+│       SoATreeView                         UnrolledTreeLayout<3>         │
 │           │                                                          │
 │     ┌─────┴─────┐                         [0][1][2][3][4][5][6]      │
 │     │ storage ──┼──▶ SoATreeStorage       └─level─┘└─level─┘└─l3─┘   │
@@ -642,7 +642,7 @@ Both provide tree traversal, but serve different purposes.
 
 ### Comparison
 
-| Aspect | SoATreeView | ArrayTreeLayout |
+| Aspect | SoATreeView | UnrolledTreeLayout |
 |--------|-------------|-----------------|
 | **Purpose** | General tree access | Block traversal optimization |
 | **Storage** | Borrows from `SoATreeStorage` | Owns fixed-size arrays |
@@ -652,7 +652,7 @@ Both provide tree traversal, but serve different purposes.
 | **Cache behavior** | Depends on tree shape | Predictable, prefetch-friendly |
 | **Lifetime** | Ephemeral (created per prediction) | Can be cached |
 
-### When to use ArrayTreeLayout
+### When to use UnrolledTreeLayout
 
 1. **Block processing**: Process multiple rows through top levels in lockstep
 2. **CPU SIMD**: Level-by-level enables vectorized comparisons
@@ -660,14 +660,14 @@ Both provide tree traversal, but serve different purposes.
 
 ### When to use SoATreeView directly
 
-1. **Deep trees**: When tree depth > K, ArrayTreeLayout only helps partially
+1. **Deep trees**: When tree depth > K, UnrolledTreeLayout only helps partially
 2. **Single-row prediction**: Block overhead not justified
 3. **Sparse data**: Rows may exit at different levels anyway
 
 ### Combined Workflow
 
 ```text
-Input rows ──▶ ArrayTreeLayout.process_block()
+Input rows ──▶ UnrolledTreeLayout.process_block()
                          │
                          │ (rows reach level K)
                          ▼
@@ -775,7 +775,7 @@ pub struct SoATreeStorage<L: LeafValue> {
 
 **Rationale**:
 
-- BFS aligns with ArrayTreeLayout (levels are contiguous)
+- BFS aligns with UnrolledTreeLayout (levels are contiguous)
 - XGBoost uses BFS ordering
 - Enables level-by-level SIMD processing
 - Subtree locality matters less than level locality for inference
@@ -813,7 +813,7 @@ impl<L: LeafValue> NodeTree<L> {
 }
 ```
 
-### DD-4: Const Generic Depth for ArrayTreeLayout **[DECIDED]**
+### DD-4: Const Generic Depth for UnrolledTreeLayout **[DECIDED]**
 
 **Decision**: Use **const generic** with common depths as type aliases.
 
@@ -824,16 +824,16 @@ impl<L: LeafValue> NodeTree<L> {
 - Runtime configurability adds branches in hot loop
 
 ```rust
-pub type ArrayTreeLayout6 = ArrayTreeLayout<6>;  // 63 nodes, default
-pub type ArrayTreeLayout4 = ArrayTreeLayout<4>;  // 15 nodes, small trees
-pub type ArrayTreeLayout8 = ArrayTreeLayout<8>;  // 255 nodes, deep trees
+pub type UnrolledTreeLayout6 = UnrolledTreeLayout<6>;  // 63 nodes, default
+pub type UnrolledTreeLayout4 = UnrolledTreeLayout<4>;  // 15 nodes, small trees
+pub type UnrolledTreeLayout8 = UnrolledTreeLayout<8>;  // 255 nodes, deep trees
 
 // Usage determined at forest-load time based on max_depth
 fn select_layout(max_depth: u32) -> Box<dyn BlockTraversal> {
     match max_depth {
-        0..=4 => Box::new(ArrayTreeLayout4::new()),
-        5..=6 => Box::new(ArrayTreeLayout6::new()),
-        _ => Box::new(ArrayTreeLayout8::new()),
+        0..=4 => Box::new(UnrolledTreeLayout4::new()),
+        5..=6 => Box::new(UnrolledTreeLayout6::new()),
+        _ => Box::new(UnrolledTreeLayout8::new()),
     }
 }
 ```
@@ -849,6 +849,10 @@ fn select_layout(max_depth: u32) -> Box<dyn BlockTraversal> {
 ## References
 
 - XGBoost `RegTree::Node`: `include/xgboost/tree_model.h:86`
-- XGBoost `ArrayTreeLayout`: `src/predictor/array_tree_layout.h`
+- XGBoost `array_tree_layout.h`: `src/predictor/array_tree_layout.h` (our `UnrolledTreeLayout` is based on this)
 - RFC-0001: Forest Data Structures
 - [design/analysis/design_challenges_and_tradeoffs.md](../analysis/design_challenges_and_tradeoffs.md) §1
+
+## Changelog
+
+- 2024-12-XX: Renamed `ArrayTreeLayout` to `UnrolledTreeLayout`, `ArrayPredictor` to `UnrolledPredictor` for clarity. The "unrolled" name better describes what the structure does (unrolls top tree levels for cache-friendly traversal) rather than the implementation detail (array storage).

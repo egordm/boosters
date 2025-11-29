@@ -1,6 +1,6 @@
-//! Array-layout based predictor for optimized batch prediction.
+//! Unrolled-layout based predictor for optimized batch prediction.
 //!
-//! This module provides `ArrayPredictor` which uses `ArrayTreeLayout` to
+//! This module provides `UnrolledPredictor` which uses `UnrolledTreeLayout` to
 //! accelerate batch prediction by:
 //!
 //! 1. Unrolling top tree levels for cache-friendly traversal
@@ -9,42 +9,42 @@
 //!
 //! # When to Use
 //!
-//! - **Use `ArrayPredictor`**: For batch prediction (100+ rows)
+//! - **Use `UnrolledPredictor`**: For batch prediction (100+ rows)
 //! - **Use `Predictor`**: For single-row or very small batches
 //!
-//! The overhead of building `ArrayTreeLayout` is amortized over many rows.
+//! The overhead of building `UnrolledTreeLayout` is amortized over many rows.
 
 use crate::data::DataMatrix;
 use crate::forest::SoAForest;
-use crate::trees::{ArrayTreeLayout, LeafValue, ScalarLeaf, MAX_UNROLL_DEPTH};
+use crate::trees::{UnrolledTreeLayout, LeafValue, ScalarLeaf, MAX_UNROLL_DEPTH};
 
 use super::output::PredictionOutput;
 
-/// Predictor using array-layout optimization for batch processing.
+/// Predictor using unrolled-layout optimization for batch processing.
 ///
-/// Builds `ArrayTreeLayout` for each tree on first prediction, then
+/// Builds `UnrolledTreeLayout` for each tree on first prediction, then
 /// uses level-by-level traversal for the unrolled portion.
 #[derive(Debug)]
-pub struct ArrayPredictor<'f, L: LeafValue = ScalarLeaf> {
+pub struct UnrolledPredictor<'f, L: LeafValue = ScalarLeaf> {
     forest: &'f SoAForest<L>,
-    /// Cached array layouts for each tree (built lazily or eagerly)
-    layouts: Vec<ArrayTreeLayout>,
+    /// Cached unrolled layouts for each tree (built lazily or eagerly)
+    layouts: Vec<UnrolledTreeLayout>,
     /// Unroll depth used for layouts
     unroll_depth: usize,
 }
 
-impl<'f, L: LeafValue> ArrayPredictor<'f, L> {
-    /// Create a new array predictor with default unroll depth (6 levels).
+impl<'f, L: LeafValue> UnrolledPredictor<'f, L> {
+    /// Create a new unrolled predictor with default unroll depth (6 levels).
     pub fn new(forest: &'f SoAForest<L>) -> Self {
         Self::with_depth(forest, MAX_UNROLL_DEPTH)
     }
 
-    /// Create a new array predictor with custom unroll depth.
+    /// Create a new unrolled predictor with custom unroll depth.
     pub fn with_depth(forest: &'f SoAForest<L>, unroll_depth: usize) -> Self {
         // Build layouts for all trees upfront
         let layouts = forest
             .trees()
-            .map(|tree| ArrayTreeLayout::from_tree(&tree.into_storage(), unroll_depth))
+            .map(|tree| UnrolledTreeLayout::from_tree(&tree.into_storage(), unroll_depth))
             .collect();
 
         Self {
@@ -73,8 +73,8 @@ impl<'f, L: LeafValue> ArrayPredictor<'f, L> {
     }
 }
 
-impl<'f> ArrayPredictor<'f, ScalarLeaf> {
-    /// Predict for a batch of features using array-layout optimization.
+impl<'f> UnrolledPredictor<'f, ScalarLeaf> {
+    /// Predict for a batch of features using unrolled-layout optimization.
     ///
     /// Returns a [`PredictionOutput`] with shape `(num_rows, num_groups)`.
     pub fn predict<M: DataMatrix<Element = f32>>(&self, features: &M) -> PredictionOutput {
@@ -267,13 +267,13 @@ mod tests {
     }
 
     #[test]
-    fn array_predictor_matches_regular() {
+    fn unrolled_predictor_matches_regular() {
         let mut forest = SoAForest::for_regression();
         forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
         forest.push_tree(build_simple_tree(0.5, 1.5, 0.5), 0);
 
         let regular = Predictor::new(&forest);
-        let array = ArrayPredictor::new(&forest);
+        let unrolled = UnrolledPredictor::new(&forest);
 
         // Test with various batch sizes
         for num_rows in [1, 10, 64, 100, 128, 200] {
@@ -281,32 +281,32 @@ mod tests {
             let features = DenseMatrix::from_vec(data, num_rows, 1);
 
             let regular_output = regular.predict(&features);
-            let array_output = array.predict(&features);
+            let unrolled_output = unrolled.predict(&features);
 
-            assert_eq!(regular_output.shape(), array_output.shape());
+            assert_eq!(regular_output.shape(), unrolled_output.shape());
             for row_idx in 0..num_rows {
                 let r = regular_output.row(row_idx);
-                let a = array_output.row(row_idx);
+                let u = unrolled_output.row(row_idx);
                 assert!(
-                    (r[0] - a[0]).abs() < 1e-6,
+                    (r[0] - u[0]).abs() < 1e-6,
                     "Mismatch at row {} with {} total rows: {:?} vs {:?}",
                     row_idx,
                     num_rows,
                     r,
-                    a
+                    u
                 );
             }
         }
     }
 
     #[test]
-    fn array_predictor_deeper_tree() {
+    fn unrolled_predictor_deeper_tree() {
         let mut forest = SoAForest::for_regression();
         forest.push_tree(build_deeper_tree(), 0);
 
         let regular = Predictor::new(&forest);
-        // Use depth 2 to test continuation after array layout
-        let array = ArrayPredictor::with_depth(&forest, 2);
+        // Use depth 2 to test continuation after unrolled layout
+        let unrolled = UnrolledPredictor::with_depth(&forest, 2);
 
         let features = DenseMatrix::from_vec(
             vec![
@@ -320,13 +320,13 @@ mod tests {
         );
 
         let regular_output = regular.predict(&features);
-        let array_output = array.predict(&features);
+        let unrolled_output = unrolled.predict(&features);
 
-        assert_eq!(regular_output.shape(), array_output.shape());
+        assert_eq!(regular_output.shape(), unrolled_output.shape());
         for row_idx in 0..4 {
             assert_eq!(
                 regular_output.row(row_idx),
-                array_output.row(row_idx),
+                unrolled_output.row(row_idx),
                 "Mismatch at row {}",
                 row_idx
             );
@@ -334,16 +334,16 @@ mod tests {
     }
 
     #[test]
-    fn array_predictor_multiclass() {
+    fn unrolled_predictor_multiclass() {
         let mut forest = SoAForest::new(3);
         forest.push_tree(build_simple_tree(0.1, 0.9, 0.5), 0);
         forest.push_tree(build_simple_tree(0.2, 0.8, 0.5), 1);
         forest.push_tree(build_simple_tree(0.3, 0.7, 0.5), 2);
 
-        let array = ArrayPredictor::new(&forest);
+        let unrolled = UnrolledPredictor::new(&forest);
 
         let features = DenseMatrix::from_vec(vec![0.3, 0.7], 2, 1);
-        let output = array.predict(&features);
+        let output = unrolled.predict(&features);
 
         assert_eq!(output.shape(), (2, 3));
         assert_eq!(output.row(0), &[0.1, 0.2, 0.3]); // all go left
@@ -351,42 +351,42 @@ mod tests {
     }
 
     #[test]
-    fn array_predictor_weighted() {
+    fn unrolled_predictor_weighted() {
         let mut forest = SoAForest::for_regression();
         forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
         forest.push_tree(build_simple_tree(0.5, 1.5, 0.5), 0);
 
         let regular = Predictor::new(&forest);
-        let array = ArrayPredictor::new(&forest);
+        let unrolled = UnrolledPredictor::new(&forest);
 
         let features = DenseMatrix::from_vec(vec![0.3, 0.7], 2, 1);
         let weights = &[1.0, 0.5];
 
         let regular_output = regular.predict_weighted(&features, weights);
-        let array_output = array.predict_weighted(&features, weights);
+        let unrolled_output = unrolled.predict_weighted(&features, weights);
 
         for row_idx in 0..2 {
             let r = regular_output.row(row_idx);
-            let a = array_output.row(row_idx);
+            let u = unrolled_output.row(row_idx);
             assert!(
-                (r[0] - a[0]).abs() < 1e-6,
+                (r[0] - u[0]).abs() < 1e-6,
                 "Mismatch at row {}: {:?} vs {:?}",
                 row_idx,
                 r,
-                a
+                u
             );
         }
     }
 
     #[test]
-    fn array_predictor_empty_input() {
+    fn unrolled_predictor_empty_input() {
         let mut forest = SoAForest::for_regression();
         forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
 
-        let array = ArrayPredictor::new(&forest);
+        let unrolled = UnrolledPredictor::new(&forest);
 
         let features = DenseMatrix::from_vec(vec![], 0, 1);
-        let output = array.predict(&features);
+        let output = unrolled.predict(&features);
 
         assert_eq!(output.shape(), (0, 1));
     }
