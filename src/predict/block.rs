@@ -120,29 +120,30 @@ impl<'f> BlockPredictor<'f, ScalarLeaf> {
             output.row_mut(row_idx).copy_from_slice(base_score);
         }
 
-        // Pre-allocate feature buffer for the block
+        // Pre-allocate a single flat buffer for features (one contiguous allocation)
+        // Layout: [row0_feat0, row0_feat1, ..., row1_feat0, row1_feat1, ...]
         let actual_block_size = block_size.min(num_rows);
-        let mut feature_buffer: Vec<Vec<f32>> = (0..actual_block_size)
-            .map(|_| vec![f32::NAN; num_features])
-            .collect();
+        let mut feature_buffer = vec![f32::NAN; actual_block_size * num_features];
 
         // Process in blocks
         for block_start in (0..num_rows).step_by(block_size) {
             let block_end = (block_start + block_size).min(num_rows);
             let current_block_size = block_end - block_start;
 
-            // Load features for this block
-            for (i, row_idx) in (block_start..block_end).enumerate() {
-                features.copy_row(row_idx, &mut feature_buffer[i]);
+            // Load features for this block into flat buffer
+            for i in 0..current_block_size {
+                let buf_offset = i * num_features;
+                features.copy_row(block_start + i, &mut feature_buffer[buf_offset..][..num_features]);
             }
 
             // Process all trees for this block
             // Key optimization: tree data stays in cache while processing multiple rows
             for (tree, group) in self.forest.trees_with_groups() {
+                let group_idx = group as usize;
                 for i in 0..current_block_size {
-                    let row_idx = block_start + i;
-                    let leaf_value = visitor.visit_tree(&tree, &feature_buffer[i]);
-                    output.row_mut(row_idx)[group as usize] += leaf_value;
+                    let buf_offset = i * num_features;
+                    let leaf_value = visitor.visit_tree(&tree, &feature_buffer[buf_offset..][..num_features]);
+                    output.row_mut(block_start + i)[group_idx] += leaf_value;
                 }
             }
         }
@@ -180,29 +181,29 @@ impl<'f> BlockPredictor<'f, ScalarLeaf> {
             output.row_mut(row_idx).copy_from_slice(base_score);
         }
 
-        // Pre-allocate feature buffer for the block
+        // Pre-allocate a single flat buffer for features
         let actual_block_size = block_size.min(num_rows);
-        let mut feature_buffer: Vec<Vec<f32>> = (0..actual_block_size)
-            .map(|_| vec![f32::NAN; num_features])
-            .collect();
+        let mut feature_buffer = vec![f32::NAN; actual_block_size * num_features];
 
         // Process in blocks
         for block_start in (0..num_rows).step_by(block_size) {
             let block_end = (block_start + block_size).min(num_rows);
             let current_block_size = block_end - block_start;
 
-            // Load features for this block
-            for (i, row_idx) in (block_start..block_end).enumerate() {
-                features.copy_row(row_idx, &mut feature_buffer[i]);
+            // Load features for this block into flat buffer
+            for i in 0..current_block_size {
+                let buf_offset = i * num_features;
+                features.copy_row(block_start + i, &mut feature_buffer[buf_offset..][..num_features]);
             }
 
             // Process all trees for this block
             for (tree_idx, (tree, group)) in self.forest.trees_with_groups().enumerate() {
                 let weight = weights[tree_idx];
+                let group_idx = group as usize;
                 for i in 0..current_block_size {
-                    let row_idx = block_start + i;
-                    let leaf_value = visitor.visit_tree(&tree, &feature_buffer[i]);
-                    output.row_mut(row_idx)[group as usize] += leaf_value * weight;
+                    let buf_offset = i * num_features;
+                    let leaf_value = visitor.visit_tree(&tree, &feature_buffer[buf_offset..][..num_features]);
+                    output.row_mut(block_start + i)[group_idx] += leaf_value * weight;
                 }
             }
         }
