@@ -207,13 +207,29 @@ Establish baseline performance measurements before optimization work.
 - Avoids Python overhead issues
 - `xgb` uses prebuilt XGBoost libs, requires `libclang-dev` on Linux
 
-### Milestone 3.4: Block Traversal
+### ✅ Milestone 3.4: Block Traversal
 
 Performance optimization from RFC-0003.
 
-- [ ] `BlockVisitor` — process multiple rows together
-- [ ] SIMD-friendly traversal (future)
-- [ ] Benchmark vs row-at-a-time (using infrastructure from M3.3)
+- [x] `BlockPredictor` — process multiple rows in blocks of 64
+- [x] Block-based feature loading for cache locality
+- [x] Benchmark vs row-at-a-time predictor
+
+**Implementation**: `BlockPredictor` processes rows in blocks (default 64),
+loading features into a buffer and processing all trees per block. This keeps
+tree nodes in L1/L2 cache while processing multiple rows.
+
+**Benchmark results** (bench_medium model):
+
+- 100 rows: 30% faster (87.6µs → 61.2µs)
+- 1,000 rows: 7% faster (2.18ms → 2.04ms)
+- 10,000 rows: 7% faster (22.0ms → 20.5ms)
+
+**Files**: `src/predict/block.rs`, `benches/prediction.rs`
+
+**Future work**: ArrayTreeLayout optimization (unroll top 6 levels into flat
+array for SIMD-friendly level-by-level traversal). This is what XGBoost does
+for additional 2-3x batch speedup.
 
 ### Milestone 3.5: Sparse Data
 
@@ -292,8 +308,8 @@ Performance optimization from RFC-0003.
 │  [x] 3.1 DART Support                                           │
 │  [x] 3.2 Categorical Features                                   │
 │  [x] 3.3 Benchmarking Infrastructure                            │
-│  [ ] 3.4 Block Traversal              ◄── NEXT                  │
-│  [ ] 3.5 Sparse Data                                            │
+│  [x] 3.4 Block Traversal                                        │
+│  [ ] 3.5 Sparse Data              ◄── NEXT                      │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
