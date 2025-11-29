@@ -362,14 +362,19 @@ optimization stack: array tree layout + block processing + OpenMP threading.
 
 ### Milestone 3.7: Thread Parallelism (Rayon)
 
-Hint CPU about upcoming memory accesses to reduce cache misses.
+Parallelize prediction across rows/batches using Rayon for multi-core scaling.
 
-- [ ] Research: `core::arch` prefetch intrinsics
-- [ ] Prefetch next tree nodes during traversal
-- [ ] Prefetch feature data for upcoming rows
-- [ ] Benchmark: target 10-30% improvement
+- [ ] Add rayon dependency
+- [ ] `par_predict` method on `Predictor`
+- [ ] Parallel block processing with work stealing
+- [ ] Thread-local output accumulation
+- [ ] Benchmark: target 4-8x speedup on 8+ cores
 
-**Files**: `src/predict/prefetch.rs` or inline in existing predictors
+**Theory**: XGBoost's main advantage over our single-threaded code is OpenMP
+parallelism. With Rayon, we can parallelize block processing across CPU cores,
+achieving similar or better scaling.
+
+**Files**: `src/predict/parallel.rs` or extend `predictor.rs`
 
 ### Milestone 3.8: Performance Validation
 
