@@ -243,7 +243,7 @@ This is XGBoost's key batch optimization.
 - [x] Conversion from `SoATreeStorage` to `UnrolledTreeLayout`
 - [x] `UnrolledPredictor` using the new layout
 - [x] Benchmark: **achieved 2.1-2.8x improvement** on 1K+ row batches
-- [ ] **(Future)** Const-generic version `UnrolledTreeLayout<const DEPTH>` for stack allocation
+- [x] Const-generic version via sealed trait pattern (M3.5.1)
 
 **Theory**: A complete binary tree of depth K has `2^K - 1` nodes. Unrolling
 the top 6 levels gives 63 nodes in a contiguous array. For each row, we can
@@ -256,11 +256,63 @@ falling back to the regular tree for deeper nodes.
 - 1,000 rows: 2.2ms → 789µs (**2.8x faster**)
 - 10,000 rows: 21.8ms → 10.4ms (**2.1x faster**)
 
-**Current implementation**: Runtime depth with heap allocation (simpler).
-**Target implementation**: Const-generic depth with stack allocation per RFC-0002 DD-4.
-The current structure is designed for easy conversion to const generics.
+**Implementation**: Uses a sealed trait pattern (`UnrollDepth`) with marker types
+(`Depth4`, `Depth6`, `Depth8`) to provide type-level array sizing without requiring
+unstable Rust features. Arrays are stack-allocated at compile time.
 
-**Files**: `src/trees/array_layout.rs`, `src/predict/array.rs`
+**Files**: `src/trees/unrolled_layout.rs`, `src/predict/unrolled.rs`
+
+### ✅ Milestone 3.5.1: Const-Generic UnrolledTreeLayout
+
+Convert `UnrolledTreeLayout` from runtime depth to const-generic for stack allocation.
+
+- [x] Sealed trait pattern (`UnrollDepth`) for depth-specific array sizes
+- [x] Depth marker types: `Depth4`, `Depth6`, `Depth8`
+- [x] Stack-allocated node arrays (no heap allocation in hot path)
+- [x] Type aliases: `UnrolledTreeLayout6`, `UnrolledTreeLayout4`, `UnrolledTreeLayout8`
+- [x] Updated `UnrolledPredictor` to use depth marker types
+- [x] Benchmark validation: benchmarks compile and run with new types
+
+**Implementation notes**: Initially tried using `generic_const_exprs` nightly feature
+with `where [(); (1 << DEPTH) - 1]:` bounds, but this caused "overflow evaluating
+requirement" errors in cross-crate contexts (benchmarks). Pivoted to a sealed trait
+pattern that provides the same ergonomics without nightly features:
+
+```rust
+pub trait UnrollDepth: sealed::Sealed {
+    const DEPTH: usize;
+    const NUM_NODES: usize;
+    const NUM_EXITS: usize;
+    type NodeArray<T: Copy + Debug>: AsRef<[T]> + AsMut<[T]> + Clone + Debug;
+    type ExitArray<T: Copy + Debug>: AsRef<[T]> + AsMut<[T]> + Clone + Debug;
+}
+```
+
+This approach works on stable Rust while still enabling stack allocation.
+
+**Files**: `src/trees/unrolled_layout.rs`, `src/predict/unrolled.rs`
+
+### Milestone 3.5.2: Predictor Trait Refactor
+
+Refactor predictors to compose batching strategy with traversal strategy.
+
+- [ ] `TreeTraversal` trait with `traverse_row()` and `traverse_block()`
+- [ ] `StandardTraversal` — current `ScalarVisitor` logic
+- [ ] `UnrolledTraversal` — uses `UnrolledTreeLayout`
+- [ ] Single `Predictor<T: TreeTraversal>` that composes batching + traversal
+- [ ] Remove `BlockPredictor`, `UnrolledPredictor` (consolidated into `Predictor`)
+- [ ] Block size as configuration, not separate struct
+
+**Motivation**: Currently `BlockPredictor`, `UnrolledPredictor`, and `Predictor`
+have significant code duplication. The optimizations (blocking, unrolling) are
+orthogonal and should compose. This refactor:
+
+1. Eliminates ~200 lines of duplicate code
+2. Enables stacking optimizations (block + unrolled + SIMD)
+3. Provides cleaner foundation for SIMD (M3.6)
+4. Simplifies API (one `Predictor` with configuration)
+
+**Files**: `src/predict/mod.rs`, `src/predict/visitor.rs`, `src/predict/traversal.rs`
 
 ### Milestone 3.6: SIMD Traversal
 
@@ -380,8 +432,10 @@ Comprehensive benchmarking to validate optimization gains.
 │  [x] 3.2 Categorical Features                                   │
 │  [x] 3.3 Benchmarking Infrastructure                            │
 │  [x] 3.4 Block Traversal                                        │
-│  [x] 3.5 UnrolledTreeLayout (2.8x speedup!)                        │
-│  [ ] 3.6 SIMD Traversal           ◄── NEXT                      │
+│  [x] 3.5 UnrolledTreeLayout (2.8x speedup!)                     │
+│  [x] 3.5.1 Const-Generic Layout (sealed trait pattern)          │
+│  [ ] 3.5.2 Predictor Refactor  ◄── NEXT                         │
+│  [ ] 3.6 SIMD Traversal                                         │
 │  [ ] 3.7 Memory Prefetching                                     │
 │  [ ] 3.8 Performance Validation                                 │
 │                                                                  │
