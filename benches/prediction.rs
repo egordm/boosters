@@ -183,7 +183,7 @@ fn bench_all_combinations(c: &mut Criterion) {
     let unroll_no_block = Predictor::<UnrolledTraversal6>::new(forest).with_block_size(100_000);
     let unroll_block64 = Predictor::<UnrolledTraversal6>::new(forest).with_block_size(64);
 
-    // SIMD traversal combinations
+    // SIMD traversal combinations (wide crate)
     #[cfg(feature = "simd")]
     let simd_no_block = Predictor::<SimdTraversal6>::new(forest).with_block_size(100_000);
     #[cfg(feature = "simd")]
@@ -221,7 +221,7 @@ fn bench_all_combinations(c: &mut Criterion) {
             |b, matrix| b.iter(|| black_box(unroll_block64.predict(black_box(matrix)))),
         );
 
-        // SIMD traversal
+        // SIMD traversal (wide crate)
         #[cfg(feature = "simd")]
         {
             group.bench_with_input(
@@ -250,9 +250,23 @@ mod xgboost_comparison {
     use xgb::{Booster, DMatrix};
 
     /// Load an XGBoost model using the xgb crate.
+    ///
+    /// **Important**: Configures XGBoost to use:
+    /// - Single thread (nthread=1) for fair comparison with single-threaded booste-rs
+    /// - CPU-only prediction (no GPU/CUDA) even if available
     fn load_xgb_model(name: &str) -> Booster {
         let path = bench_models_dir().join(format!("{}.model.json", name));
-        Booster::load(&path).unwrap_or_else(|_| panic!("Failed to load XGB model: {:?}", path))
+        let mut booster = Booster::load(&path)
+            .unwrap_or_else(|_| panic!("Failed to load XGB model: {:?}", path));
+
+        // Force single-thread for fair comparison
+        // XGBoost uses OpenMP by default which would be unfair vs our single-threaded code
+        booster.set_param("nthread", "1").expect("Failed to set nthread");
+
+        // Force CPU predictor - disable GPU even if CUDA is available
+        booster.set_param("predictor", "cpu_predictor").expect("Failed to set predictor");
+
+        booster
     }
 
     /// Create XGBoost DMatrix from flat f32 data.

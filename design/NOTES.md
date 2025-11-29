@@ -25,47 +25,57 @@ Thoughts that might be useful later.
 
 ### Performance
 
-#### 2024-12: SIMD Row-Parallel Traversal Analysis
+#### 2024-11-28: SIMD Row-Parallel Traversal Analysis
 
 Implemented `SimdTraversal` using `wide` crate (f32x8) to process 8 rows in parallel.
 
-**Comprehensive Benchmark (100 trees, 50 features):**
+**Comprehensive Benchmark (100 trees, 50 features, depth 6):**
 
 | Strategy | 1K No-Block | 1K Block64 | 10K No-Block | 10K Block64 |
 |----------|-------------|------------|--------------|-------------|
 | Standard | 2.13ms | 2.14ms | 21.1ms | 21.4ms |
 | Unrolled | 793µs | 752µs | 10.2ms | **7.59ms** |
-| SIMD | 845µs | 842µs | 8.72ms | 8.41ms |
+| SIMD (wide) | 845µs | 842µs | 8.72ms | 8.41ms |
 
 **Key Findings:**
 
 1. **Standard + blocking = no benefit** (-1.6% at 10K due to overhead)
 2. **Unrolled + blocking = huge benefit** (+35% at 10K rows!)
 3. **SIMD + blocking = minor benefit** (+3.7%)
-4. **SIMD is still 11% slower than Unrolled+Block** (8.41ms vs 7.59ms)
+4. **SIMD is 11% slower than Unrolled+Block** (8.41ms vs 7.59ms)
 
-**Why Unrolled+Block is fastest:**
+#### 2024-11-28: Nightly std::simd Gather Experiment
 
-- Level-by-level processing keeps split data in L1/L2 cache
-- All rows in a 64-row block traverse same tree level together
-- Memory prefetching works optimally with predictable access pattern
+Tested whether `std::simd` hardware gather (`Simd::gather_or`) would help.
 
-**Why SIMD doesn't help more:**
+| Strategy | 10K (no AVX2) | 10K (AVX2 native) |
+|----------|---------------|-------------------|
+| Unrolled+Block64 | 7.56ms | 7.57ms |
+| Nightly SIMD gather | 27.5ms | 14.5ms |
 
-1. **No hardware gather** - `wide` doesn't expose AVX2 `vpgatherdd` instructions
-2. **Scalar feature gather** - Must manually extract indices and gather feature values in loops
-3. **Scalar NaN handling** - Must check NaN individually per lane
-4. **Memory access pattern** - Features stored row-major, but we need column values
+**Results:** Even with hardware gather, nightly SIMD is **1.9x slower** than Unrolled.
 
-**Better approaches (future work):**
+**Why gather doesn't help:**
+- AVX2 `vpgatherdd` has ~10-20 cycle latency per 8 elements
+- Random memory access defeats cache prefetching
+- Tree traversal is **latency-bound**, not throughput-bound
+- Overhead of SIMD setup/teardown per level exceeds scalar loop cost
 
-- **Column-major (transposed) features** - Would allow vectorized loads
-- **Multiple trees in parallel** - Same row through 8 trees simultaneously
-- **AVX2 intrinsics** - Use `_mm256_i32gather_ps` for hardware gather
-- **std::simd (nightly)** - Has scatter/gather support
+#### 2024-11-28: XGBoost C++ Analysis
 
-**Conclusion:** `UnrolledTraversal` with default block size (64) is the best option.
-SIMD row-parallel approach doesn't help with row-major data layout.
+Analyzed XGBoost source - they also do **NOT use SIMD** for prediction.
+
+| Technique | XGBoost | booste-rs |
+|-----------|---------|-----------|
+| Explicit SIMD | ❌ No | ❌ No (doesn't help) |
+| Array tree layout | ✅ Yes (6 levels) | ✅ Yes |
+| Block processing | ✅ Yes (64 rows) | ✅ Yes |
+| OpenMP threading | ✅ Yes | ❌ Not yet |
+
+**Conclusion:** SIMD row-parallel doesn't work for tree traversal. Focus on:
+1. ✅ Unrolled traversal (done)
+2. ✅ Block processing (done)
+3. 🔜 Thread parallelism (next priority)
 
 <!-- Notes about performance observations, potential optimizations -->
 

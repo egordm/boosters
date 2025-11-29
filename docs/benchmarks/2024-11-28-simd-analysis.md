@@ -230,8 +230,53 @@ __m256 _mm256_i32gather_ps(float const* base, __m256i vindex, int scale);
 ### Recommendations for Effective SIMD
 
 1. **Short-term**: Don't use SIMD for row-parallel traversal
-2. **Medium-term**: Consider `std::simd` on nightly for gather support
+2. **Medium-term**: Focus on thread parallelism (rayon) instead of SIMD
 3. **Long-term**: Alternative approaches that don't need gather:
    - **Tree-parallel**: Same row through 8 trees (same feature indices!)
    - **Column-major data**: Transpose for contiguous access
    - **Quantized features**: Pack 8 features per SIMD lane
+
+---
+
+## Appendix B: Nightly std::simd Gather Experiment
+
+### Hypothesis
+
+We hypothesized that `std::simd`'s `Simd::gather_or` would provide hardware gather
+instructions (AVX2 `vpgatherdd`) and improve SIMD performance.
+
+### Experiment
+
+Implemented `NightlySimdTraversal` using `std::simd` portable SIMD with:
+- `Simd::gather_or` for feature value gathering
+- Full SIMD comparison and position updates
+- Requires `#![feature(portable_simd)]` on nightly Rust
+
+### Results
+
+| Strategy | 10K rows (no AVX2) | 10K rows (AVX2 native) |
+|----------|-------------------|------------------------|
+| Unrolled+Block64 | 7.56ms | 7.57ms |
+| wide SIMD | 8.33ms | ~8.3ms |
+| **Nightly SIMD (gather)** | **27.5ms** | **14.5ms** |
+
+### Analysis
+
+1. **Without AVX2**: `std::simd` falls back to scalar gather emulation (3.6x slower)
+2. **With AVX2** (`-C target-cpu=native`): Uses hardware gather but still **1.9x slower**
+
+**Key finding**: Even with hardware gather, row-parallel SIMD doesn't help because:
+
+- AVX2 gather (`vpgatherdd`) has ~10-20 cycle latency per 8 elements
+- Random memory access patterns defeat cache prefetching
+- The overhead of SIMD setup/teardown per level exceeds scalar loop cost
+- Tree traversal is **latency-bound**, not **throughput-bound**
+
+### Conclusion
+
+**Hardware gather doesn't help**. The fundamental problem is that tree traversal
+requires random memory access based on data-dependent decisions at each level.
+This is an inherently serial workload that SIMD cannot effectively parallelize.
+
+**Recommendation**: Remove `simd-nightly` feature and focus on thread parallelism
+for scaling. The `wide` crate SIMD is retained as experimental baseline.
