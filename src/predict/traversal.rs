@@ -273,49 +273,27 @@ impl<D: UnrollDepth> TreeTraversal<ScalarLeaf> for UnrolledTraversal<D> {
     ) {
         let block_size = output.len();
 
-        // For small blocks, use stack allocation
+        // Phase 2 logic: continue from exit nodes to leaves
+        let mut accumulate_from_exits = |indices: &[usize]| {
+            for (row_idx, &exit_idx) in indices.iter().enumerate() {
+                let node_idx = state.exit_node_idx(exit_idx);
+                let row_offset = row_idx * num_features;
+                let row_features = &feature_buffer[row_offset..][..num_features];
+                let leaf_idx = traverse_from_node(tree, node_idx, row_features);
+                output[row_idx] += tree.leaf_value(leaf_idx).0 * weight;
+            }
+        };
+
+        // Use stack for small blocks, heap for large
         if block_size <= 256 {
             let mut indices = [0usize; 256];
             let indices = &mut indices[..block_size];
-
-            // Phase 1: Traverse unrolled levels for ALL rows at once (level-by-level)
             state.process_block(feature_buffer, num_features, indices);
-
-            // Phase 2: Continue from exit nodes to leaves and accumulate
-            for (row_idx, &exit_idx) in indices.iter().enumerate() {
-                let node_idx = state.exit_node_idx(exit_idx);
-
-                // Get features for this row
-                let row_offset = row_idx * num_features;
-                let row_features = &feature_buffer[row_offset..][..num_features];
-
-                // Continue traversal from exit node if not already at a leaf
-                let leaf_idx = traverse_from_node(tree, node_idx, row_features);
-
-                // Accumulate weighted leaf value
-                output[row_idx] += tree.leaf_value(leaf_idx).0 * weight;
-            }
+            accumulate_from_exits(indices);
         } else {
-            // For large blocks, use heap allocation
             let mut indices = vec![0usize; block_size];
-
-            // Phase 1: Traverse unrolled levels for ALL rows at once (level-by-level)
             state.process_block(feature_buffer, num_features, &mut indices);
-
-            // Phase 2: Continue from exit nodes to leaves and accumulate
-            for (row_idx, &exit_idx) in indices.iter().enumerate() {
-                let node_idx = state.exit_node_idx(exit_idx);
-
-                // Get features for this row
-                let row_offset = row_idx * num_features;
-                let row_features = &feature_buffer[row_offset..][..num_features];
-
-                // Continue traversal from exit node if not already at a leaf
-                let leaf_idx = traverse_from_node(tree, node_idx, row_features);
-
-                // Accumulate weighted leaf value
-                output[row_idx] += tree.leaf_value(leaf_idx).0 * weight;
-            }
+            accumulate_from_exits(&indices);
         }
     }
 }

@@ -159,19 +159,22 @@ fn bench_single_row(c: &mut Criterion) {
     });
 }
 
-/// Benchmark block predictor vs regular predictor.
+/// Benchmark different block sizes and traversal strategies.
 ///
-/// Block predictor should show improvement for larger batch sizes due to
-/// better cache locality (tree data stays hot while processing multiple rows).
+/// For StandardTraversal, blocking adds overhead without benefit.
+/// For UnrolledTraversal, the level-by-level processing provides 2-3x speedup.
 fn bench_block_vs_regular(c: &mut Criterion) {
     let model = load_boosters_model("bench_medium");
     let forest = model.booster.forest();
-    let simple_predictor = SimplePredictor::new(forest);
+    // "Regular" = large block size (effectively no blocking within batch)
+    let no_block_predictor = SimplePredictor::new(forest).with_block_size(100_000);
+    // "Block" = standard block size (64 rows) - mainly for memory efficiency
     let block_predictor = SimplePredictor::new(forest).with_block_size(64);
+    // "Unrolled" = level-by-level traversal, benefits from blocking
     let unrolled_predictor = UnrolledPredictor6::new(forest);
     let num_features = model.num_features();
 
-    let mut group = c.benchmark_group("block_vs_regular");
+    let mut group = c.benchmark_group("traversal_strategies");
 
     for batch_size in [100, 1_000, 10_000].iter() {
         let input_data = generate_random_input(*batch_size, num_features, 42);
@@ -179,13 +182,13 @@ fn bench_block_vs_regular(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements(*batch_size as u64));
 
-        // Regular predictor (row-by-row)
+        // No blocking (all rows at once)
         group.bench_with_input(
-            BenchmarkId::new("regular", batch_size),
+            BenchmarkId::new("no_block", batch_size),
             &matrix,
             |b, matrix| {
                 b.iter(|| {
-                    let output = simple_predictor.predict(black_box(matrix));
+                    let output = no_block_predictor.predict(black_box(matrix));
                     black_box(output)
                 });
             },
