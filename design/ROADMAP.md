@@ -237,16 +237,22 @@ tree nodes in L1/L2 cache while processing multiple rows.
 Unroll top tree levels into flat arrays for cache-friendly level-by-level traversal.
 This is XGBoost's key batch optimization.
 
-- [ ] `ArrayTreeLayout` struct — flatten top K levels (typically 6-8)
-- [ ] Level-by-level traversal instead of pointer-chasing
+- [x] `ArrayTreeLayout` struct — flatten top K levels (default 6)
+- [x] Level-by-level traversal instead of pointer-chasing
+- [x] `process_block()` for batch processing
+- [x] Conversion from `SoATreeStorage` to `ArrayTreeLayout`
 - [ ] `ArrayTreePredictor` using the new layout
-- [ ] Conversion from `SoATreeStorage` to `ArrayTreeLayout`
 - [ ] Benchmark: target 2x improvement on 1K+ row batches
+- [ ] **(Future)** Const-generic version `ArrayTreeLayout<const DEPTH>` for stack allocation
 
 **Theory**: A complete binary tree of depth K has `2^K - 1` nodes. Unrolling
 the top 6 levels gives 63 nodes in a contiguous array. For each row, we can
 traverse these 6 levels with simple index arithmetic (`2*i+1`, `2*i+2`) before
 falling back to the regular tree for deeper nodes.
+
+**Current implementation**: Runtime depth with heap allocation (simpler).
+**Target implementation**: Const-generic depth with stack allocation per RFC-0002 DD-4.
+The current structure is designed for easy conversion to const generics.
 
 **Files**: `src/trees/array_layout.rs`, `src/predict/array.rs`
 

@@ -105,6 +105,18 @@ impl CategoriesStorage {
         self.categories.is_empty()
     }
 
+    /// Get the segments array (for copying to array layout).
+    #[inline]
+    pub fn segments(&self) -> &[(u32, u32)] {
+        &self.segments
+    }
+
+    /// Get the raw bitsets array (for copying to array layout).
+    #[inline]
+    pub fn bitsets(&self) -> &[u32] {
+        &self.categories
+    }
+
     /// Get the bitset slice for a specific node (for testing/debugging).
     #[inline]
     pub fn bitset_for_node(&self, node_idx: u32) -> &[u32] {
