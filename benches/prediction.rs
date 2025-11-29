@@ -31,10 +31,6 @@ use booste_rs::compat::XgbModel;
 use booste_rs::data::DenseMatrix;
 use booste_rs::model::{FeatureInfo, Model, ModelMeta, ModelSource};
 use booste_rs::objective::Objective;
-use booste_rs::predict::{SimplePredictor, UnrolledPredictor6};
-
-#[cfg(feature = "simd")]
-use booste_rs::predict::SimdPredictor6;
 
 // =============================================================================
 // Benchmark Data Setup
@@ -162,81 +158,83 @@ fn bench_single_row(c: &mut Criterion) {
     });
 }
 
-/// Benchmark different block sizes and traversal strategies.
+/// Comprehensive benchmark of all traversal strategy and blocking combinations.
 ///
-/// For StandardTraversal, blocking adds overhead without benefit.
-/// For UnrolledTraversal, the level-by-level processing provides 2-3x speedup.
-/// For SimdTraversal, SIMD parallelism provides additional speedup.
-fn bench_block_vs_regular(c: &mut Criterion) {
+/// Tests:
+/// - Standard traversal: no-block, block-64
+/// - Unrolled traversal: no-block, block-64
+/// - SIMD traversal: no-block, block-64 (when simd feature enabled)
+///
+/// This helps identify whether blocking helps each strategy independently.
+fn bench_all_combinations(c: &mut Criterion) {
+    use booste_rs::predict::{Predictor, StandardTraversal, UnrolledTraversal6};
+    #[cfg(feature = "simd")]
+    use booste_rs::predict::SimdTraversal6;
+
     let model = load_boosters_model("bench_medium");
     let forest = model.booster.forest();
-    // "Regular" = large block size (effectively no blocking within batch)
-    let no_block_predictor = SimplePredictor::new(forest).with_block_size(100_000);
-    // "Block" = standard block size (64 rows) - mainly for memory efficiency
-    let block_predictor = SimplePredictor::new(forest).with_block_size(64);
-    // "Unrolled" = level-by-level traversal, benefits from blocking
-    let unrolled_predictor = UnrolledPredictor6::new(forest);
-    // "SIMD" = SIMD-accelerated traversal (when feature enabled)
-    #[cfg(feature = "simd")]
-    let simd_predictor = SimdPredictor6::new(forest);
     let num_features = model.num_features();
 
-    let mut group = c.benchmark_group("traversal_strategies");
+    // Standard traversal combinations
+    let std_no_block = Predictor::<StandardTraversal>::new(forest).with_block_size(100_000);
+    let std_block64 = Predictor::<StandardTraversal>::new(forest).with_block_size(64);
 
-    for batch_size in [100, 1_000, 10_000].iter() {
+    // Unrolled traversal combinations
+    let unroll_no_block = Predictor::<UnrolledTraversal6>::new(forest).with_block_size(100_000);
+    let unroll_block64 = Predictor::<UnrolledTraversal6>::new(forest).with_block_size(64);
+
+    // SIMD traversal combinations
+    #[cfg(feature = "simd")]
+    let simd_no_block = Predictor::<SimdTraversal6>::new(forest).with_block_size(100_000);
+    #[cfg(feature = "simd")]
+    let simd_block64 = Predictor::<SimdTraversal6>::new(forest).with_block_size(64);
+
+    let mut group = c.benchmark_group("all_combinations");
+
+    for batch_size in [1_000, 10_000].iter() {
         let input_data = generate_random_input(*batch_size, num_features, 42);
         let matrix = DenseMatrix::from_vec(input_data, *batch_size, num_features);
 
         group.throughput(Throughput::Elements(*batch_size as u64));
 
-        // No blocking (all rows at once)
+        // Standard traversal
         group.bench_with_input(
-            BenchmarkId::new("no_block", batch_size),
+            BenchmarkId::new("std_no_block", batch_size),
             &matrix,
-            |b, matrix| {
-                b.iter(|| {
-                    let output = no_block_predictor.predict(black_box(matrix));
-                    black_box(output)
-                });
-            },
+            |b, matrix| b.iter(|| black_box(std_no_block.predict(black_box(matrix)))),
+        );
+        group.bench_with_input(
+            BenchmarkId::new("std_block64", batch_size),
+            &matrix,
+            |b, matrix| b.iter(|| black_box(std_block64.predict(black_box(matrix)))),
         );
 
-        // Block predictor (block-based)
+        // Unrolled traversal
         group.bench_with_input(
-            BenchmarkId::new("block", batch_size),
+            BenchmarkId::new("unroll_no_block", batch_size),
             &matrix,
-            |b, matrix| {
-                b.iter(|| {
-                    let output = block_predictor.predict(black_box(matrix));
-                    black_box(output)
-                });
-            },
+            |b, matrix| b.iter(|| black_box(unroll_no_block.predict(black_box(matrix)))),
+        );
+        group.bench_with_input(
+            BenchmarkId::new("unroll_block64", batch_size),
+            &matrix,
+            |b, matrix| b.iter(|| black_box(unroll_block64.predict(black_box(matrix)))),
         );
 
-        // Unrolled predictor (unrolled-layout based)
-        group.bench_with_input(
-            BenchmarkId::new("unrolled", batch_size),
-            &matrix,
-            |b, matrix| {
-                b.iter(|| {
-                    let output = unrolled_predictor.predict(black_box(matrix));
-                    black_box(output)
-                });
-            },
-        );
-
-        // SIMD predictor (when feature enabled)
+        // SIMD traversal
         #[cfg(feature = "simd")]
-        group.bench_with_input(
-            BenchmarkId::new("simd", batch_size),
-            &matrix,
-            |b, matrix| {
-                b.iter(|| {
-                    let output = simd_predictor.predict(black_box(matrix));
-                    black_box(output)
-                });
-            },
-        );
+        {
+            group.bench_with_input(
+                BenchmarkId::new("simd_no_block", batch_size),
+                &matrix,
+                |b, matrix| b.iter(|| black_box(simd_no_block.predict(black_box(matrix)))),
+            );
+            group.bench_with_input(
+                BenchmarkId::new("simd_block64", batch_size),
+                &matrix,
+                |b, matrix| b.iter(|| black_box(simd_block64.predict(black_box(matrix)))),
+            );
+        }
     }
 
     group.finish();
@@ -351,7 +349,7 @@ criterion_group!(
     bench_batch_sizes,
     bench_model_sizes,
     bench_single_row,
-    bench_block_vs_regular
+    bench_all_combinations
 );
 
 #[cfg(feature = "bench-xgboost")]
@@ -360,7 +358,7 @@ criterion_group!(
     bench_batch_sizes,
     bench_model_sizes,
     bench_single_row,
-    bench_block_vs_regular,
+    bench_all_combinations,
     xgboost_comparison::bench_comparison,
     xgboost_comparison::bench_single_row_comparison
 );
