@@ -292,27 +292,40 @@ This approach works on stable Rust while still enabling stack allocation.
 
 **Files**: `src/trees/unrolled_layout.rs`, `src/predict/unrolled.rs`
 
-### Milestone 3.5.2: Predictor Trait Refactor
+### ✅ Milestone 3.5.2: Predictor Trait Refactor
 
-Refactor predictors to compose batching strategy with traversal strategy.
+Refactored predictors to compose batching strategy with traversal strategy.
 
-- [ ] `TreeTraversal` trait with `traverse_row()` and `traverse_block()`
-- [ ] `StandardTraversal` — current `ScalarVisitor` logic
-- [ ] `UnrolledTraversal` — uses `UnrolledTreeLayout`
-- [ ] Single `Predictor<T: TreeTraversal>` that composes batching + traversal
-- [ ] Remove `BlockPredictor`, `UnrolledPredictor` (consolidated into `Predictor`)
-- [ ] Block size as configuration, not separate struct
+- [x] `TreeTraversal` trait with `traverse_tree()` and `traverse_block()`
+- [x] `StandardTraversal` — current per-row traversal logic
+- [x] `UnrolledTraversal<D>` — level-by-level traversal with depth marker
+- [x] Single `Predictor<T: TreeTraversal>` that composes batching + traversal
+- [x] Removed `BlockPredictor`, `UnrolledPredictor` (consolidated into `Predictor<T>`)
+- [x] `USES_BLOCK_OPTIMIZATION` const flag for compile-time code path selection
 
-**Motivation**: Currently `BlockPredictor`, `UnrolledPredictor`, and `Predictor`
-have significant code duplication. The optimizations (blocking, unrolling) are
-orthogonal and should compose. This refactor:
+**Implementation notes**:
 
-1. Eliminates ~200 lines of duplicate code
-2. Enables stacking optimizations (block + unrolled + SIMD)
-3. Provides cleaner foundation for SIMD (M3.6)
-4. Simplifies API (one `Predictor` with configuration)
+- `TreeTraversal` trait defines `TreeState`, `traverse_tree()`, and `traverse_block()`
+- `USES_BLOCK_OPTIMIZATION` flag enables compile-time selection between simple
+  and blocked prediction paths
+- StandardTraversal: `USES_BLOCK_OPTIMIZATION = false` (blocking adds overhead)
+- UnrolledTraversal: `USES_BLOCK_OPTIMIZATION = true` (level-by-level benefits)
+- `traverse_block()` uses `process_block()` for cache-friendly batch processing
 
-**Files**: `src/predict/mod.rs`, `src/predict/visitor.rs`, `src/predict/traversal.rs`
+**Key finding**: Blocking alone doesn't help StandardTraversal (slight overhead).
+The speedup comes from UnrolledTraversal's level-by-level processing where all
+rows traverse the same tree level together, maximizing instruction cache reuse.
+
+**Benchmark results** (bench_medium, 100 trees, 50 features):
+
+| Traversal | 1K rows | 10K rows | vs Standard |
+|-----------|---------|----------|-------------|
+| Standard (no block) | 2.06ms | 20.6ms | baseline |
+| Standard (block 64) | 2.08ms | 21.0ms | ~0.98x |
+| Unrolled (block 64) | 706µs | 7.1ms | **2.9x** |
+
+**Files**: `src/predict/predictor.rs`, `src/predict/traversal.rs`, `src/predict/mod.rs`
+**Deleted**: `src/predict/block.rs`, `src/predict/unrolled.rs`, `src/predict/visitor.rs`
 
 ### Milestone 3.6: SIMD Traversal
 
@@ -434,8 +447,8 @@ Comprehensive benchmarking to validate optimization gains.
 │  [x] 3.4 Block Traversal                                        │
 │  [x] 3.5 UnrolledTreeLayout (2.8x speedup!)                     │
 │  [x] 3.5.1 Const-Generic Layout (sealed trait pattern)          │
-│  [ ] 3.5.2 Predictor Refactor  ◄── NEXT                         │
-│  [ ] 3.6 SIMD Traversal                                         │
+│  [x] 3.5.2 Predictor Trait Refactor                             │
+│  [ ] 3.6 SIMD Traversal  ◄── NEXT                               │
 │  [ ] 3.7 Memory Prefetching                                     │
 │  [ ] 3.8 Performance Validation                                 │
 │                                                                  │
