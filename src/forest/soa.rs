@@ -197,6 +197,14 @@ impl<'a, L: LeafValue> SoATreeView<'a, L> {
     pub fn predict_row(&self, features: &[f32]) -> &L {
         self.storage.predict_row(features)
     }
+
+    /// Get a reference to the underlying storage.
+    ///
+    /// Useful for building optimized representations like `ArrayTreeLayout`.
+    #[inline]
+    pub fn into_storage(self) -> &'a SoATreeStorage<L> {
+        self.storage
+    }
 }
 
 #[cfg(test)]
