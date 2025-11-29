@@ -819,3 +819,194 @@ trait TreeVisitor {
 - RFC-0001: Forest Data Structures
 - RFC-0002: Tree Data Structures
 - [design/concepts/block_based_traversal.md](../concepts/block_based_traversal.md)
+
+## Changelog
+
+- 2024-11-28: Added M3.5.2 Predictor Refactor design (below)
+
+---
+
+## Appendix: Predictor Refactor Design (M3.5.2)
+
+This section documents the planned refactor to consolidate `Predictor`, `BlockPredictor`,
+and `UnrolledPredictor` into a composable design.
+
+### Problem
+
+The current implementation has three separate predictor types with significant code duplication:
+
+```text
+┌─────────────────────────────────────────────────────────────────┐
+│  Current State: Three Separate Predictors                        │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Predictor          BlockPredictor      UnrolledPredictor        │
+│  ──────────         ──────────────      ─────────────────        │
+│  • Row-by-row       • Block of 64      • Unrolled layout         │
+│  • ScalarVisitor    • ScalarVisitor    • process_block()         │
+│  • ~100 lines       • ~150 lines       • ~200 lines              │
+│                                                                  │
+│  Problem: ~200 lines of duplicate code                           │
+│  Problem: Optimizations don't compose                            │
+│           (can't use block + unrolled together)                  │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Solution: Composable Traits
+
+Separate **batching strategy** from **tree traversal strategy**:
+
+```rust
+/// Strategy for traversing a single tree
+pub trait TreeTraversal {
+    /// Traverse one row through a tree, return leaf value
+    fn traverse_row(&self, tree: &SoATreeView<ScalarLeaf>, features: &[f32]) -> f32;
+    
+    /// Traverse a block of rows through a tree (default: call traverse_row N times)
+    fn traverse_block(
+        &self,
+        tree: &SoATreeView<ScalarLeaf>,
+        features: &[f32],        // flat buffer: row_major[num_rows * num_features]
+        num_features: usize,
+        leaf_values: &mut [f32], // output: one per row
+    ) {
+        let num_rows = leaf_values.len();
+        for row_idx in 0..num_rows {
+            let row_start = row_idx * num_features;
+            let row_features = &features[row_start..][..num_features];
+            leaf_values[row_idx] = self.traverse_row(tree, row_features);
+        }
+    }
+}
+
+/// Standard pointer-chasing traversal (current ScalarVisitor logic)
+pub struct StandardTraversal;
+
+impl TreeTraversal for StandardTraversal {
+    fn traverse_row(&self, tree: &SoATreeView<ScalarLeaf>, features: &[f32]) -> f32 {
+        // ... existing ScalarVisitor logic
+    }
+}
+
+/// Unrolled traversal using UnrolledTreeLayout
+pub struct UnrolledTraversal {
+    layouts: Vec<UnrolledTreeLayout>,
+    depth: usize,
+}
+
+impl TreeTraversal for UnrolledTraversal {
+    fn traverse_row(&self, tree: &SoATreeView<ScalarLeaf>, features: &[f32]) -> f32 {
+        // Single-row: use layout.traverse_to_exit() then continue
+        // ...
+    }
+    
+    fn traverse_block(
+        &self,
+        tree: &SoATreeView<ScalarLeaf>,
+        features: &[f32],
+        num_features: usize,
+        leaf_values: &mut [f32],
+    ) {
+        // Optimized: use layout.process_block() for level-by-level traversal
+        // ...
+    }
+}
+```
+
+### Unified Predictor
+
+```rust
+/// Configuration for prediction
+pub struct PredictConfig {
+    /// Block size (1 = row-by-row, 64 = blocked)
+    pub block_size: usize,
+}
+
+impl Default for PredictConfig {
+    fn default() -> Self {
+        Self { block_size: 64 }
+    }
+}
+
+/// Single predictor that composes batching + traversal
+pub struct Predictor<'f, T: TreeTraversal = StandardTraversal> {
+    forest: &'f SoAForest<ScalarLeaf>,
+    traversal: T,
+    config: PredictConfig,
+}
+
+impl<'f> Predictor<'f, StandardTraversal> {
+    /// Create with standard traversal (current behavior)
+    pub fn new(forest: &'f SoAForest<ScalarLeaf>) -> Self {
+        Self {
+            forest,
+            traversal: StandardTraversal,
+            config: PredictConfig::default(),
+        }
+    }
+}
+
+impl<'f> Predictor<'f, UnrolledTraversal> {
+    /// Create with unrolled traversal (optimized for batches)
+    pub fn unrolled(forest: &'f SoAForest<ScalarLeaf>) -> Self {
+        Self {
+            forest,
+            traversal: UnrolledTraversal::new(forest),
+            config: PredictConfig::default(),
+        }
+    }
+}
+
+impl<'f, T: TreeTraversal> Predictor<'f, T> {
+    /// Set block size (1 = disable blocking)
+    pub fn with_block_size(mut self, block_size: usize) -> Self {
+        self.config.block_size = block_size;
+        self
+    }
+    
+    /// Predict for a batch
+    pub fn predict<M: DataMatrix<Element = f32>>(&self, features: &M) -> PredictionOutput {
+        // Single predict loop using self.traversal
+        // Blocking controlled by self.config.block_size
+        // ...
+    }
+}
+```
+
+### Usage After Refactor
+
+```rust
+// Simple case (current Predictor behavior)
+let predictor = Predictor::new(&forest);
+let output = predictor.predict(&features);
+
+// Optimized batch prediction (current UnrolledPredictor behavior)
+let predictor = Predictor::unrolled(&forest);
+let output = predictor.predict(&features);
+
+// Row-by-row with unrolled traversal (NEW: composable!)
+let predictor = Predictor::unrolled(&forest).with_block_size(1);
+let output = predictor.predict(&features);
+
+// Block with standard traversal (current BlockPredictor behavior)
+let predictor = Predictor::new(&forest).with_block_size(64);
+let output = predictor.predict(&features);
+```
+
+### Benefits
+
+1. **~200 lines of duplicate code eliminated**
+2. **Optimizations compose**: block_size × traversal_strategy
+3. **Cleaner API**: one `Predictor` type with configuration
+4. **Extensible**: add `SimdTraversal` as new `TreeTraversal` impl (M3.6)
+5. **Type-safe**: `T: TreeTraversal` ensures valid combinations
+
+### Migration Path
+
+1. Add `TreeTraversal` trait alongside existing code
+2. Implement `StandardTraversal` (extract from `ScalarVisitor`)
+3. Implement `UnrolledTraversal` (extract from `UnrolledPredictor`)
+4. Create new unified `Predictor<T>`
+5. Deprecate old `BlockPredictor`, `UnrolledPredictor`
+6. Remove deprecated types in next major version

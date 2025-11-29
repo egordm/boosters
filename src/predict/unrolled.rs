@@ -13,51 +13,55 @@
 //! - **Use `Predictor`**: For single-row or very small batches
 //!
 //! The overhead of building `UnrolledTreeLayout` is amortized over many rows.
+//!
+//! # Depth Selection
+//!
+//! The predictor uses a depth marker type parameter which determines how many
+//! tree levels are unrolled. Common type aliases:
+//!
+//! - `UnrolledPredictor6` (default) — 6 levels, matches XGBoost
+//! - `UnrolledPredictor4` — 4 levels, for shallow trees
+//! - `UnrolledPredictor8` — 8 levels, for deep trees
 
 use crate::data::DataMatrix;
 use crate::forest::SoAForest;
-use crate::trees::{UnrolledTreeLayout, LeafValue, ScalarLeaf, MAX_UNROLL_DEPTH};
+use crate::trees::{Depth6, LeafValue, ScalarLeaf, UnrollDepth, UnrolledTreeLayout};
 
 use super::output::PredictionOutput;
 
 /// Predictor using unrolled-layout optimization for batch processing.
 ///
-/// Builds `UnrolledTreeLayout` for each tree on first prediction, then
-/// uses level-by-level traversal for the unrolled portion.
+/// Uses depth marker type parameter for compile-time unroll depth.
+/// Default depth is `Depth6` (matching XGBoost).
+///
+/// # Type Parameters
+///
+/// - `D`: Depth marker type (`Depth4`, `Depth6`, or `Depth8`)
+/// - `L`: Leaf value type (default `ScalarLeaf`)
 #[derive(Debug)]
-pub struct UnrolledPredictor<'f, L: LeafValue = ScalarLeaf> {
+pub struct UnrolledPredictor<'f, D: UnrollDepth = Depth6, L: LeafValue = ScalarLeaf> {
     forest: &'f SoAForest<L>,
-    /// Cached unrolled layouts for each tree (built lazily or eagerly)
-    layouts: Vec<UnrolledTreeLayout>,
-    /// Unroll depth used for layouts
-    unroll_depth: usize,
+    /// Cached unrolled layouts for each tree
+    layouts: Vec<UnrolledTreeLayout<D>>,
 }
 
-impl<'f, L: LeafValue> UnrolledPredictor<'f, L> {
-    /// Create a new unrolled predictor with default unroll depth (6 levels).
+impl<'f, D: UnrollDepth, L: LeafValue> UnrolledPredictor<'f, D, L> {
+    /// Create a new unrolled predictor.
+    ///
+    /// Builds `UnrolledTreeLayout<D>` for each tree upfront.
     pub fn new(forest: &'f SoAForest<L>) -> Self {
-        Self::with_depth(forest, MAX_UNROLL_DEPTH)
-    }
-
-    /// Create a new unrolled predictor with custom unroll depth.
-    pub fn with_depth(forest: &'f SoAForest<L>, unroll_depth: usize) -> Self {
-        // Build layouts for all trees upfront
         let layouts = forest
             .trees()
-            .map(|tree| UnrolledTreeLayout::from_tree(&tree.into_storage(), unroll_depth))
+            .map(|tree| UnrolledTreeLayout::<D>::from_tree(&tree.into_storage()))
             .collect();
 
-        Self {
-            forest,
-            layouts,
-            unroll_depth,
-        }
+        Self { forest, layouts }
     }
 
     /// Get the unroll depth.
     #[inline]
-    pub fn unroll_depth(&self) -> usize {
-        self.unroll_depth
+    pub const fn unroll_depth(&self) -> usize {
+        D::DEPTH
     }
 
     /// Get reference to the underlying forest.
@@ -73,7 +77,7 @@ impl<'f, L: LeafValue> UnrolledPredictor<'f, L> {
     }
 }
 
-impl<'f> UnrolledPredictor<'f, ScalarLeaf> {
+impl<'f, D: UnrollDepth> UnrolledPredictor<'f, D, ScalarLeaf> {
     /// Predict for a batch of features using unrolled-layout optimization.
     ///
     /// Returns a [`PredictionOutput`] with shape `(num_rows, num_groups)`.
@@ -227,6 +231,21 @@ impl<'f> UnrolledPredictor<'f, ScalarLeaf> {
     }
 }
 
+// =============================================================================
+// Type Aliases for Common Depths
+// =============================================================================
+
+use crate::trees::{Depth4, Depth8};
+
+/// Unrolled predictor with depth 4 (15 nodes, 16 exits) - for shallow trees.
+pub type UnrolledPredictor4<'f, L = ScalarLeaf> = UnrolledPredictor<'f, Depth4, L>;
+
+/// Unrolled predictor with depth 6 (63 nodes, 64 exits) - default, matches XGBoost.
+pub type UnrolledPredictor6<'f, L = ScalarLeaf> = UnrolledPredictor<'f, Depth6, L>;
+
+/// Unrolled predictor with depth 8 (255 nodes, 256 exits) - for deep trees.
+pub type UnrolledPredictor8<'f, L = ScalarLeaf> = UnrolledPredictor<'f, Depth8, L>;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,7 +292,7 @@ mod tests {
         forest.push_tree(build_simple_tree(0.5, 1.5, 0.5), 0);
 
         let regular = Predictor::new(&forest);
-        let unrolled = UnrolledPredictor::new(&forest);
+        let unrolled = UnrolledPredictor6::new(&forest);
 
         // Test with various batch sizes
         for num_rows in [1, 10, 64, 100, 128, 200] {
@@ -305,8 +324,8 @@ mod tests {
         forest.push_tree(build_deeper_tree(), 0);
 
         let regular = Predictor::new(&forest);
-        // Use depth 2 to test continuation after unrolled layout
-        let unrolled = UnrolledPredictor::with_depth(&forest, 2);
+        // Use depth-4 predictor to test continuation after unrolled layout
+        let unrolled = UnrolledPredictor4::new(&forest);
 
         let features = DenseMatrix::from_vec(
             vec![
@@ -340,7 +359,7 @@ mod tests {
         forest.push_tree(build_simple_tree(0.2, 0.8, 0.5), 1);
         forest.push_tree(build_simple_tree(0.3, 0.7, 0.5), 2);
 
-        let unrolled = UnrolledPredictor::new(&forest);
+        let unrolled = UnrolledPredictor6::new(&forest);
 
         let features = DenseMatrix::from_vec(vec![0.3, 0.7], 2, 1);
         let output = unrolled.predict(&features);
@@ -357,7 +376,7 @@ mod tests {
         forest.push_tree(build_simple_tree(0.5, 1.5, 0.5), 0);
 
         let regular = Predictor::new(&forest);
-        let unrolled = UnrolledPredictor::new(&forest);
+        let unrolled = UnrolledPredictor6::new(&forest);
 
         let features = DenseMatrix::from_vec(vec![0.3, 0.7], 2, 1);
         let weights = &[1.0, 0.5];
@@ -383,11 +402,28 @@ mod tests {
         let mut forest = SoAForest::for_regression();
         forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
 
-        let unrolled = UnrolledPredictor::new(&forest);
+        let unrolled = UnrolledPredictor6::new(&forest);
 
         let features = DenseMatrix::from_vec(vec![], 0, 1);
         let output = unrolled.predict(&features);
 
         assert_eq!(output.shape(), (0, 1));
     }
+
+    #[test]
+    fn unrolled_predictor_const_depth() {
+        // Test that we can use different depths at compile time
+        let mut forest = SoAForest::for_regression();
+        forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
+
+        let _p4 = UnrolledPredictor4::new(&forest);
+        let _p6 = UnrolledPredictor6::new(&forest);
+        let _p8 = UnrolledPredictor8::new(&forest);
+
+        // Verify depths
+        assert_eq!(_p4.unroll_depth(), 4);
+        assert_eq!(_p6.unroll_depth(), 6);
+        assert_eq!(_p8.unroll_depth(), 8);
+    }
 }
+
