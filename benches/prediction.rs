@@ -31,6 +31,7 @@ use booste_rs::compat::XgbModel;
 use booste_rs::data::DenseMatrix;
 use booste_rs::model::{FeatureInfo, Model, ModelMeta, ModelSource};
 use booste_rs::objective::Objective;
+use booste_rs::predict::BlockPredictor;
 
 // =============================================================================
 // Benchmark Data Setup
@@ -158,6 +159,52 @@ fn bench_single_row(c: &mut Criterion) {
     });
 }
 
+/// Benchmark block predictor vs regular predictor.
+///
+/// Block predictor should show improvement for larger batch sizes due to
+/// better cache locality (tree data stays hot while processing multiple rows).
+fn bench_block_vs_regular(c: &mut Criterion) {
+    let model = load_boosters_model("bench_medium");
+    let forest = model.booster.forest();
+    let block_predictor = BlockPredictor::new(forest);
+    let num_features = model.num_features();
+
+    let mut group = c.benchmark_group("block_vs_regular");
+
+    for batch_size in [100, 1_000, 10_000].iter() {
+        let input_data = generate_random_input(*batch_size, num_features, 42);
+        let matrix = DenseMatrix::from_vec(input_data, *batch_size, num_features);
+
+        group.throughput(Throughput::Elements(*batch_size as u64));
+
+        // Regular predictor (row-by-row)
+        group.bench_with_input(
+            BenchmarkId::new("regular", batch_size),
+            &matrix,
+            |b, matrix| {
+                b.iter(|| {
+                    let output = model.predict(black_box(matrix));
+                    black_box(output)
+                });
+            },
+        );
+
+        // Block predictor (block-based)
+        group.bench_with_input(
+            BenchmarkId::new("block", batch_size),
+            &matrix,
+            |b, matrix| {
+                b.iter(|| {
+                    let output = block_predictor.predict(black_box(matrix));
+                    black_box(output)
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
 // =============================================================================
 // XGBoost Comparison Benchmarks (optional)
 // =============================================================================
@@ -262,7 +309,13 @@ mod xgboost_comparison {
 // =============================================================================
 
 #[cfg(not(feature = "bench-xgboost"))]
-criterion_group!(benches, bench_batch_sizes, bench_model_sizes, bench_single_row);
+criterion_group!(
+    benches,
+    bench_batch_sizes,
+    bench_model_sizes,
+    bench_single_row,
+    bench_block_vs_regular
+);
 
 #[cfg(feature = "bench-xgboost")]
 criterion_group!(
@@ -270,6 +323,7 @@ criterion_group!(
     bench_batch_sizes,
     bench_model_sizes,
     bench_single_row,
+    bench_block_vs_regular,
     xgboost_comparison::bench_comparison,
     xgboost_comparison::bench_single_row_comparison
 );
