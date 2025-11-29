@@ -278,10 +278,18 @@ mod xgboost_comparison {
     ///
     /// Note: XGBoost caches predictions for the same DMatrix, so we must
     /// create a fresh DMatrix inside the benchmark loop for fair comparison.
+    ///
+    /// Uses UnrolledTraversal6+Block64 (our fastest) vs XGBoost single-thread.
     pub fn bench_comparison(c: &mut Criterion) {
+        use booste_rs::predict::{Predictor, UnrolledTraversal6};
+
         let boosters_model = load_boosters_model("bench_medium");
         let xgb_model = load_xgb_model("bench_medium");
         let num_features = boosters_model.num_features();
+        let forest = boosters_model.booster.forest();
+
+        // Use our fastest configuration: UnrolledTraversal6 + Block64
+        let predictor = Predictor::<UnrolledTraversal6>::new(forest).with_block_size(64);
 
         let mut group = c.benchmark_group("comparison");
 
@@ -295,7 +303,7 @@ mod xgboost_comparison {
                 &matrix,
                 |b, matrix| {
                     b.iter(|| {
-                        let output = boosters_model.predict(black_box(matrix));
+                        let output = predictor.predict(black_box(matrix));
                         black_box(output)
                     });
                 },
@@ -322,10 +330,18 @@ mod xgboost_comparison {
     ///
     /// Note: XGBoost caches predictions for the same DMatrix, so we must
     /// create a fresh DMatrix inside the benchmark loop for fair comparison.
+    ///
+    /// Uses UnrolledTraversal6+Block64 (our fastest) vs XGBoost single-thread.
     pub fn bench_single_row_comparison(c: &mut Criterion) {
+        use booste_rs::predict::{Predictor, UnrolledTraversal6};
+
         let boosters_model = load_boosters_model("bench_medium");
         let xgb_model = load_xgb_model("bench_medium");
         let num_features = boosters_model.num_features();
+        let forest = boosters_model.booster.forest();
+
+        // Use our fastest configuration
+        let predictor = Predictor::<UnrolledTraversal6>::new(forest).with_block_size(64);
 
         let input_data = generate_random_input(1, num_features, 42);
 
@@ -335,7 +351,7 @@ mod xgboost_comparison {
         let matrix = DenseMatrix::from_vec(input_data.clone(), 1, num_features);
         group.bench_function("boosters", |b| {
             b.iter(|| {
-                let output = boosters_model.predict(black_box(&matrix));
+                let output = predictor.predict(black_box(&matrix));
                 black_box(output)
             });
         });
