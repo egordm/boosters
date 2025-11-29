@@ -19,7 +19,7 @@
 use crate::data::DataMatrix;
 use crate::forest::SoAForest;
 use crate::objective::Objective;
-use crate::predict::{PredictionOutput, Predictor};
+use crate::predict::{PredictionOutput, SimplePredictor};
 use crate::trees::ScalarLeaf;
 
 // =============================================================================
@@ -82,13 +82,13 @@ impl Model {
     pub fn predict_raw<M: DataMatrix<Element = f32>>(&self, features: &M) -> PredictionOutput {
         match &self.booster {
             Booster::Tree(forest) => {
-                let predictor = Predictor::new(forest);
+                let predictor = SimplePredictor::new(forest);
                 predictor.predict(features)
             }
             Booster::Dart { forest, weights } => {
                 // DART: apply per-tree weights during prediction
                 // Each tree's contribution is multiplied by its weight_drop value
-                let predictor = Predictor::new(forest);
+                let predictor = SimplePredictor::new(forest);
                 predictor.predict_weighted(features, weights)
             }
         }

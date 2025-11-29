@@ -31,8 +31,7 @@ use booste_rs::compat::XgbModel;
 use booste_rs::data::DenseMatrix;
 use booste_rs::model::{FeatureInfo, Model, ModelMeta, ModelSource};
 use booste_rs::objective::Objective;
-use booste_rs::predict::{BlockPredictor, UnrolledPredictor};
-use booste_rs::trees::Depth6;
+use booste_rs::predict::{SimplePredictor, UnrolledPredictor6};
 
 // =============================================================================
 // Benchmark Data Setup
@@ -167,8 +166,9 @@ fn bench_single_row(c: &mut Criterion) {
 fn bench_block_vs_regular(c: &mut Criterion) {
     let model = load_boosters_model("bench_medium");
     let forest = model.booster.forest();
-    let block_predictor = BlockPredictor::new(forest);
-    let unrolled_predictor: UnrolledPredictor<'_, Depth6> = UnrolledPredictor::new(forest);
+    let simple_predictor = SimplePredictor::new(forest);
+    let block_predictor = SimplePredictor::new(forest).with_block_size(64);
+    let unrolled_predictor = UnrolledPredictor6::new(forest);
     let num_features = model.num_features();
 
     let mut group = c.benchmark_group("block_vs_regular");
@@ -185,7 +185,7 @@ fn bench_block_vs_regular(c: &mut Criterion) {
             &matrix,
             |b, matrix| {
                 b.iter(|| {
-                    let output = model.predict(black_box(matrix));
+                    let output = simple_predictor.predict(black_box(matrix));
                     black_box(output)
                 });
             },
