@@ -327,23 +327,40 @@ rows traverse the same tree level together, maximizing instruction cache reuse.
 **Files**: `src/predict/predictor.rs`, `src/predict/traversal.rs`, `src/predict/mod.rs`
 **Deleted**: `src/predict/block.rs`, `src/predict/unrolled.rs`, `src/predict/visitor.rs`
 
-### Milestone 3.6: SIMD Traversal
+### ✅ Milestone 3.6: SIMD Traversal
 
-Process multiple rows simultaneously using SIMD instructions.
+Investigated SIMD row-parallel traversal. **Result: Not beneficial.**
 
-- [ ] Research: portable SIMD (`std::simd` or `wide` crate)
-- [ ] `SimdVisitor` — process 4/8 rows in parallel with AVX2/AVX-512
-- [ ] SIMD-friendly comparison operations
-- [ ] Fallback for non-SIMD platforms
-- [ ] Benchmark: target 2-4x improvement on batch prediction
+- [x] Research: portable SIMD (`wide` crate, `std::simd` nightly)
+- [x] `SimdTraversal` — process 8 rows in parallel using `wide` crate
+- [x] Nightly experiment: `std::simd` with hardware gather (`Simd::gather_or`)
+- [x] XGBoost C++ analysis: they also don't use SIMD for prediction
+- [x] Benchmark and document findings
 
-**Theory**: With UnrolledTreeLayout, all rows at the same tree level can be
-processed together. SIMD lets us compare 4-8 thresholds simultaneously and
-compute the next node index for all rows in one instruction.
+**Key findings**:
 
-**Files**: `src/predict/simd.rs`
+| Strategy | 10K rows | vs Unrolled+Block |
+|----------|----------|-------------------|
+| Standard | 21.1ms | 2.8x slower |
+| Unrolled+Block64 | **7.59ms** | baseline |
+| SIMD (wide) | 8.41ms | 11% slower |
+| SIMD (nightly gather) | 14.5ms | 1.9x slower |
 
-### Milestone 3.7: Memory Prefetching
+**Why SIMD row-parallel doesn't help**:
+
+1. **Gather bottleneck**: Each of 8 rows needs different feature indices
+2. **Row-major layout**: Features stored `[row][col]`, SIMD needs columns
+3. **Hardware gather is slow**: AVX2 `vpgatherdd` ~10-20 cycles latency
+4. **Latency-bound**: Tree traversal is serial per level, not throughput-bound
+
+**XGBoost C++ analysis**: They also do NOT use SIMD for prediction. Their
+optimization stack: array tree layout + block processing + OpenMP threading.
+
+**Conclusion**: SIMD row-parallel is a dead end. Focus on thread parallelism.
+
+**Files**: `src/predict/simd.rs`, `docs/benchmarks/2024-11-28-simd-analysis.md`
+
+### Milestone 3.7: Thread Parallelism (Rayon)
 
 Hint CPU about upcoming memory accesses to reduce cache misses.
 
@@ -448,8 +465,8 @@ Comprehensive benchmarking to validate optimization gains.
 │  [x] 3.5 UnrolledTreeLayout (2.8x speedup!)                     │
 │  [x] 3.5.1 Const-Generic Layout (sealed trait pattern)          │
 │  [x] 3.5.2 Predictor Trait Refactor                             │
-│  [ ] 3.6 SIMD Traversal  ◄── NEXT                               │
-│  [ ] 3.7 Memory Prefetching                                     │
+│  [x] 3.6 SIMD Traversal (researched — not beneficial)           │
+│  [ ] 3.7 Thread Parallelism (Rayon)  ◄── NEXT                   │
 │  [ ] 3.8 Performance Validation                                 │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘

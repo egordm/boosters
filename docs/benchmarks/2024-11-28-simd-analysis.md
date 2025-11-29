@@ -13,6 +13,17 @@ limitation of the row-parallel SIMD approach with row-major data layout.
 **Key finding**: XGBoost C++ also does **NOT use SIMD** for tree prediction. They rely
 on the same optimizations we have: array tree layout + block processing + thread parallelism.
 
+**Final comparison**: With single-threaded XGBoost (`nthread=1`, `predictor=cpu_predictor`):
+
+| Batch Size | booste-rs | XGBoost | Result |
+|------------|-----------|---------|--------|
+| 100 rows | 72.0 µs | 94.1 µs | **booste-rs 31% faster** |
+| 1,000 rows | 706 µs | 754 µs | **booste-rs 7% faster** |
+| 10,000 rows | 7.06 ms | 7.43 ms | **booste-rs 5% faster** |
+| Single row | 5.88 µs | 20.5 µs | **booste-rs 3.5x faster** |
+
+booste-rs now **outperforms XGBoost C++** on single-threaded inference!
+
 ## Benchmark Results
 
 ### All Strategy/Blocking Combinations (100 trees, 50 features, depth 6)
