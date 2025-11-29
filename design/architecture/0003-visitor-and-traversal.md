@@ -774,6 +774,60 @@ impl From<PredictionOutput> for ndarray::Array2<f32> {
 - **No `DataMatrix` trait needed**: Output doesn't need `has_missing()`, `density()`, `copy_row()`, etc. Those are input traversal concerns.
 - **Conversion ergonomics**: `PredictionOutput` provides output-specific conveniences like `to_nested()` and future `From<PredictionOutput> for ndarray::Array2`.
 
+### DD-4: Block Optimization Flag **[DECIDED]** (M3.5.2)
+
+**Decision**: Use a `const USES_BLOCK_OPTIMIZATION: bool` flag on `TreeTraversal` trait
+to enable compile-time code path selection.
+
+**Discovery**: During M3.5.2 implementation, we found that blocking alone doesn't help
+`StandardTraversal` — in fact, it adds slight overhead (~2%). The speedup from
+`UnrolledTraversal` comes specifically from **level-by-level processing** where all rows
+in a block traverse the same tree level together.
+
+**Implementation**:
+
+```rust
+pub trait TreeTraversal<L: LeafValue>: Clone {
+    type TreeState: Clone;
+
+    /// Whether this traversal benefits from block-level optimization.
+    const USES_BLOCK_OPTIMIZATION: bool = false;
+
+    fn build_tree_state(tree: &SoATreeStorage<L>) -> Self::TreeState;
+    fn traverse_tree(tree: &SoATreeView<'_, L>, state: &Self::TreeState, features: &[f32]) -> L;
+    fn traverse_block(...);
+}
+
+// StandardTraversal: USES_BLOCK_OPTIMIZATION = false (default)
+// UnrolledTraversal: USES_BLOCK_OPTIMIZATION = true
+
+impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
+    fn predict_internal(&self, features: &M, weights: Option<&[f32]>) -> PredictionOutput {
+        // Compile-time branch elimination
+        if T::USES_BLOCK_OPTIMIZATION {
+            self.predict_block_optimized(features, weights)
+        } else {
+            self.predict_simple(features, weights)
+        }
+    }
+}
+```
+
+**Rationale**:
+
+- **Compile-time selection**: No runtime branching in hot path
+- **Clear semantics**: Traversals declare their optimization preferences
+- **Benchmark-validated**: StandardTraversal is ~2% faster without blocking overhead
+- **Extensible**: Future `SimdTraversal` will set `USES_BLOCK_OPTIMIZATION = true`
+
+**Benchmark results** (100 trees, 50 features, 10K rows):
+
+| Strategy | USES_BLOCK_OPT | Time | vs Baseline |
+|----------|----------------|------|-------------|
+| Standard | false | 20.9ms | baseline |
+| Standard | true (forced) | 21.3ms | -2% |
+| Unrolled | true | 7.05ms | **+196%** |
+
 ## Open Questions
 
 1. **Async prediction**: Should `predict()` be async-compatible for web services?
@@ -822,13 +876,15 @@ trait TreeVisitor {
 
 ## Changelog
 
-- 2024-11-28: Added M3.5.2 Predictor Refactor design (below)
+- 2024-11-28: M3.5.2 implemented — added `USES_BLOCK_OPTIMIZATION` const flag
+- 2024-11-28: Key finding: blocking alone doesn't help StandardTraversal (slight overhead)
+- 2024-11-28: UnrolledTraversal achieves 2.9x speedup via level-by-level processing
 
 ---
 
-## Appendix: Predictor Refactor Design (M3.5.2)
+## Appendix: Predictor Refactor Design (M3.5.2) — IMPLEMENTED
 
-This section documents the planned refactor to consolidate `Predictor`, `BlockPredictor`,
+This section documents the M3.5.2 refactor that consolidated `Predictor`, `BlockPredictor`,
 and `UnrolledPredictor` into a composable design.
 
 ### Problem
