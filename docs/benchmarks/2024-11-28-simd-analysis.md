@@ -2,6 +2,7 @@
 
 **Date**: 2024-11-28  
 **Milestone**: M3.6 SIMD Investigation  
+**Platform**: Linux Home Lab
 **Author**: Benchmark analysis
 
 ## Executive Summary
