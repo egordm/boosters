@@ -10,6 +10,12 @@
 //! - [`TreeVisitor`]: Core trait for traversing a single tree
 //! - [`ScalarVisitor`]: Visitor for forests with scalar leaves
 //! - [`Predictor`]: Orchestrates batch prediction over a forest
+//! - [`BlockPredictor`]: Block-based prediction for improved cache locality
+//!
+//! # Choosing a Predictor
+//!
+//! - **Single row or small batches (<100 rows)**: Use [`Predictor`]
+//! - **Large batches (100+ rows)**: Use [`BlockPredictor`] for better performance
 //!
 //! # Output Format
 //!
@@ -19,8 +25,10 @@
 //!
 //! See RFC-0003 for design rationale.
 
+mod block;
 mod output;
 mod visitor;
 
+pub use block::{BlockConfig, BlockPredictor, DEFAULT_BLOCK_SIZE};
 pub use output::PredictionOutput;
 pub use visitor::{Predictor, ScalarVisitor, TreeVisitor};
