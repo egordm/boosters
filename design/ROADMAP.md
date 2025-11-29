@@ -140,7 +140,12 @@ Validate full pipeline against Python XGBoost.
 
 ---
 
-## Phase 3: Advanced Features
+## Phase 3: Performance Optimization
+
+**Goal**: Match or beat XGBoost C++ on batch prediction benchmarks.
+
+**Context**: We already win on single-row latency (4.9x faster). XGBoost's batch
+advantage comes from ArrayTreeLayout + SIMD. This phase closes that gap.
 
 ### ✅ Milestone 3.1: DART Support
 
@@ -227,35 +232,89 @@ tree nodes in L1/L2 cache while processing multiple rows.
 
 **Files**: `src/predict/block.rs`, `benches/prediction.rs`
 
-**Future work**: ArrayTreeLayout optimization (unroll top 6 levels into flat
-array for SIMD-friendly level-by-level traversal). This is what XGBoost does
-for additional 2-3x batch speedup.
+### Milestone 3.5: ArrayTreeLayout
 
-### Milestone 3.5: Sparse Data
+Unroll top tree levels into flat arrays for cache-friendly level-by-level traversal.
+This is XGBoost's key batch optimization.
 
-- [ ] `SparseMatrix` (CSR format, possibly via `sprs`)
-- [ ] `DataMatrix` impl for sparse
-- [ ] Sparse-aware traversal
+- [ ] `ArrayTreeLayout` struct — flatten top K levels (typically 6-8)
+- [ ] Level-by-level traversal instead of pointer-chasing
+- [ ] `ArrayTreePredictor` using the new layout
+- [ ] Conversion from `SoATreeStorage` to `ArrayTreeLayout`
+- [ ] Benchmark: target 2x improvement on 1K+ row batches
+
+**Theory**: A complete binary tree of depth K has `2^K - 1` nodes. Unrolling
+the top 6 levels gives 63 nodes in a contiguous array. For each row, we can
+traverse these 6 levels with simple index arithmetic (`2*i+1`, `2*i+2`) before
+falling back to the regular tree for deeper nodes.
+
+**Files**: `src/trees/array_layout.rs`, `src/predict/array.rs`
+
+### Milestone 3.6: SIMD Traversal
+
+Process multiple rows simultaneously using SIMD instructions.
+
+- [ ] Research: portable SIMD (`std::simd` or `wide` crate)
+- [ ] `SimdVisitor` — process 4/8 rows in parallel with AVX2/AVX-512
+- [ ] SIMD-friendly comparison operations
+- [ ] Fallback for non-SIMD platforms
+- [ ] Benchmark: target 2-4x improvement on batch prediction
+
+**Theory**: With ArrayTreeLayout, all rows at the same tree level can be
+processed together. SIMD lets us compare 4-8 thresholds simultaneously and
+compute the next node index for all rows in one instruction.
+
+**Files**: `src/predict/simd.rs`
+
+### Milestone 3.7: Memory Prefetching
+
+Hint CPU about upcoming memory accesses to reduce cache misses.
+
+- [ ] Research: `core::arch` prefetch intrinsics
+- [ ] Prefetch next tree nodes during traversal
+- [ ] Prefetch feature data for upcoming rows
+- [ ] Benchmark: target 10-30% improvement
+
+**Files**: `src/predict/prefetch.rs` or inline in existing predictors
+
+### Milestone 3.8: Performance Validation
+
+Comprehensive benchmarking to validate optimization gains.
+
+- [ ] Re-run all benchmarks with optimizations enabled
+- [ ] Compare against XGBoost C++ across all batch sizes
+- [ ] Profile to identify remaining bottlenecks
+- [ ] Document final performance characteristics
+- [ ] Update README with benchmark results
+
+**Success criteria**: Match or beat XGBoost C++ on batch prediction for
+1K-10K row batches while maintaining single-row latency advantage.
 
 ---
 
-## Phase 4: Native Serialization
+## Phase 4: Compatibility & Data Formats
 
-### Milestone 4.1: Schema Types
+### Milestone 4.1: Sparse Data
+
+- [ ] `SparseMatrix` (CSR format, possibly via `sprs`)
+- [ ] `DataMatrix` impl for sparse
+- [ ] Sparse-aware traversal (skip missing features)
+- [ ] Benchmark sparse vs dense for high-sparsity data
+
+**Files**: `src/data/sparse.rs`
+
+### Milestone 4.2: Native Serialization
 
 - [ ] `ModelSchema`, `TreeSchema`, etc. (stable interchange)
 - [ ] `Model` ↔ `ModelSchema` conversion
-
-### Milestone 4.2: Binary Format
-
-- [ ] `bincode` serialization of schema
-- [ ] Magic bytes, version header
+- [ ] `bincode` serialization with magic bytes, version header
 - [ ] `save()` / `load()` API
 
-### Milestone 4.3: JSON Format
+### Milestone 4.3: Additional XGBoost Formats
 
-- [ ] `serde_json` serialization of schema
-- [ ] Pretty-print for debugging
+- [ ] XGBoost binary format (.bin) loader
+- [ ] XGBoost UBJSON format loader
+- [ ] LightGBM model loader (stretch goal)
 
 ---
 
@@ -309,7 +368,10 @@ for additional 2-3x batch speedup.
 │  [x] 3.2 Categorical Features                                   │
 │  [x] 3.3 Benchmarking Infrastructure                            │
 │  [x] 3.4 Block Traversal                                        │
-│  [ ] 3.5 Sparse Data              ◄── NEXT                      │
+│  [ ] 3.5 ArrayTreeLayout          ◄── NEXT                      │
+│  [ ] 3.6 SIMD Traversal                                         │
+│  [ ] 3.7 Memory Prefetching                                     │
+│  [ ] 3.8 Performance Validation                                 │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -363,8 +425,9 @@ xgboost-compat = ["dep:serde", "dep:serde_json"]
 
 ### Added in Later Phases
 
+- `wide` or `std::simd` — SIMD operations (Phase 3)
+- `sprs` — sparse matrices (Phase 4)
 - `bincode` — native binary format (Phase 4)
-- `sprs` — sparse matrices (Phase 3)
 - `arrow` — Arrow integration (Phase 5)
 - `pyo3` — Python bindings (Phase 5)
 
