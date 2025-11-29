@@ -11,6 +11,6 @@ pub use leaf::{LeafValue, ScalarLeaf};
 pub use node::{Node, SplitCondition};
 pub use soa::{SoATreeStorage, TreeBuilder};
 pub use unrolled_layout::{
-    Depth4, Depth6, Depth8, UnrollDepth, UnrolledTreeLayout, UnrolledTreeLayout4,
+    nodes_at_depth, Depth4, Depth6, Depth8, UnrollDepth, UnrolledTreeLayout, UnrolledTreeLayout4,
     UnrolledTreeLayout6, UnrolledTreeLayout8, DEFAULT_UNROLL_DEPTH, MAX_UNROLL_DEPTH,
 };

@@ -15,6 +15,10 @@
 //! // Unrolled predictor (faster for large batches)
 //! let fast_predictor = UnrolledPredictor6::new(&forest);
 //!
+//! // SIMD predictor (fastest for large batches, requires `simd` feature)
+//! #[cfg(feature = "simd")]
+//! let simd_predictor = booste_rs::predict::SimdPredictor6::new(&forest);
+//!
 //! // Predict
 //! let output = predictor.predict(&features);
 //! ```
@@ -26,6 +30,7 @@
 //! | Single row | `SimplePredictor` |
 //! | Small batches (<100 rows) | `SimplePredictor` |
 //! | Large batches (100+ rows) | `UnrolledPredictor6` |
+//! | Large batches + AVX2 | `SimdPredictor6` (requires `simd` feature) |
 //! | Very deep trees (>6 levels) | `UnrolledPredictor8` |
 //!
 //! # Block Size
@@ -51,6 +56,9 @@ mod output;
 mod predictor;
 mod traversal;
 
+#[cfg(feature = "simd")]
+mod simd;
+
 // Re-export predictor types
 pub use predictor::{
     Predictor, SimplePredictor, UnrolledPredictor4, UnrolledPredictor6, UnrolledPredictor8,
@@ -63,6 +71,21 @@ pub use traversal::{
     UnrolledTraversal8,
 };
 
+// Re-export SIMD types when feature is enabled
+#[cfg(feature = "simd")]
+pub use simd::{SimdTraversal, SimdTraversal4, SimdTraversal6, SimdTraversal8, SIMD_WIDTH};
+
 // Re-export output type
 pub use output::PredictionOutput;
+
+// Type aliases for SIMD predictors
+#[cfg(feature = "simd")]
+/// SIMD-accelerated predictor with depth 4.
+pub type SimdPredictor4<'f> = Predictor<'f, SimdTraversal4>;
+#[cfg(feature = "simd")]
+/// SIMD-accelerated predictor with depth 6 (default).
+pub type SimdPredictor6<'f> = Predictor<'f, SimdTraversal6>;
+#[cfg(feature = "simd")]
+/// SIMD-accelerated predictor with depth 8.
+pub type SimdPredictor8<'f> = Predictor<'f, SimdTraversal8>;
 

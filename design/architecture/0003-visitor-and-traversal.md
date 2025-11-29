@@ -828,6 +828,43 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
 | Standard | true (forced) | 21.3ms | -2% |
 | Unrolled | true | 7.05ms | **+196%** |
 
+### DD-5: SIMD Row-Parallel Strategy **[DECIDED]** (M3.6)
+
+**Decision**: Row-parallel SIMD (processing 8 rows simultaneously) with row-major data
+layout provides **no benefit** and is actually ~12% slower than `UnrolledTraversal`.
+
+**Implementation**: Created `SimdTraversal` using `wide` crate (stable Rust) with f32x8
+for 8-way parallel comparisons. The implementation works correctly but benchmarks show:
+
+| Strategy | 1000 rows | vs Unrolled |
+|----------|-----------|-------------|
+| Standard | 2.11ms | 2.9x slower |
+| Unrolled | 739µs | **baseline** |
+| SIMD | 832µs | 12% slower |
+
+**Root cause analysis**:
+
+1. **Gather bottleneck**: `wide` crate doesn't expose AVX2 `vpgatherdd` instructions
+2. **Scalar fallback**: Must manually gather feature values in a loop before SIMD comparison
+3. **Memory layout mismatch**: Features are row-major; SIMD needs column values (same feature index across 8 rows)
+4. **NaN handling**: Must check NaN per-lane in scalar code
+
+**Rationale for keeping implementation**:
+
+- Validates that this SIMD strategy doesn't work with current data layout
+- Foundation for future optimizations
+- Educational value for contributors
+
+**Future directions** (if SIMD revisited):
+
+1. **Column-major features**: Transpose input for vectorized loads
+2. **Tree-parallel SIMD**: Same row through 8 trees (not 8 rows through 1 tree)
+3. **AVX2 intrinsics**: Use `_mm256_i32gather_ps` for hardware gather
+4. **Nightly `std::simd`**: Has portable gather support
+
+**Recommendation**: Use `UnrolledTraversal` for production (2.9x speedup). SIMD module
+is behind `simd` feature flag for experimentation.
+
 ## Open Questions
 
 1. **Async prediction**: Should `predict()` be async-compatible for web services?
@@ -879,6 +916,8 @@ trait TreeVisitor {
 - 2024-11-28: M3.5.2 implemented — added `USES_BLOCK_OPTIMIZATION` const flag
 - 2024-11-28: Key finding: blocking alone doesn't help StandardTraversal (slight overhead)
 - 2024-11-28: UnrolledTraversal achieves 2.9x speedup via level-by-level processing
+- 2024-12: M3.6 DD-5 added — row-parallel SIMD ~12% slower than UnrolledTraversal
+- 2024-12: Finding: gather overhead negates SIMD benefits with row-major data layout
 
 ---
 

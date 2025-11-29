@@ -33,6 +33,9 @@ use booste_rs::model::{FeatureInfo, Model, ModelMeta, ModelSource};
 use booste_rs::objective::Objective;
 use booste_rs::predict::{SimplePredictor, UnrolledPredictor6};
 
+#[cfg(feature = "simd")]
+use booste_rs::predict::SimdPredictor6;
+
 // =============================================================================
 // Benchmark Data Setup
 // =============================================================================
@@ -163,6 +166,7 @@ fn bench_single_row(c: &mut Criterion) {
 ///
 /// For StandardTraversal, blocking adds overhead without benefit.
 /// For UnrolledTraversal, the level-by-level processing provides 2-3x speedup.
+/// For SimdTraversal, SIMD parallelism provides additional speedup.
 fn bench_block_vs_regular(c: &mut Criterion) {
     let model = load_boosters_model("bench_medium");
     let forest = model.booster.forest();
@@ -172,6 +176,9 @@ fn bench_block_vs_regular(c: &mut Criterion) {
     let block_predictor = SimplePredictor::new(forest).with_block_size(64);
     // "Unrolled" = level-by-level traversal, benefits from blocking
     let unrolled_predictor = UnrolledPredictor6::new(forest);
+    // "SIMD" = SIMD-accelerated traversal (when feature enabled)
+    #[cfg(feature = "simd")]
+    let simd_predictor = SimdPredictor6::new(forest);
     let num_features = model.num_features();
 
     let mut group = c.benchmark_group("traversal_strategies");
@@ -213,6 +220,19 @@ fn bench_block_vs_regular(c: &mut Criterion) {
             |b, matrix| {
                 b.iter(|| {
                     let output = unrolled_predictor.predict(black_box(matrix));
+                    black_box(output)
+                });
+            },
+        );
+
+        // SIMD predictor (when feature enabled)
+        #[cfg(feature = "simd")]
+        group.bench_with_input(
+            BenchmarkId::new("simd", batch_size),
+            &matrix,
+            |b, matrix| {
+                b.iter(|| {
+                    let output = simd_predictor.predict(black_box(matrix));
                     black_box(output)
                 });
             },

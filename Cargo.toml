@@ -6,6 +6,9 @@ edition = "2024"
 [dependencies]
 thiserror = "1.0"
 
+# Optional: SIMD acceleration
+wide = { version = "0.7", optional = true }
+
 # Optional: XGBoost compatibility
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", optional = true }
@@ -25,6 +28,7 @@ rand = "0.8"  # For generating random benchmark inputs
 [features]
 default = ["xgboost-compat"]
 xgboost-compat = ["dep:serde", "dep:serde_json", "dep:serde_with"]
+simd = ["dep:wide"]
 bench-xgboost = ["dep:xgb", "xgboost-compat"]
 
 [[bench]]
