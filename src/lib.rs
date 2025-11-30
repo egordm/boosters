@@ -13,4 +13,5 @@ pub mod linear;
 pub mod model;
 pub mod objective;
 pub mod predict;
+pub mod training;
 pub mod trees;
