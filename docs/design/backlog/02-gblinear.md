@@ -25,17 +25,17 @@ Validates training infrastructure before GBTree training.
 
 ---
 
-## Story 2: Training Infrastructure
+## Story 2: Training Infrastructure ✓
 
 **Goal**: Core training types reusable for GBLinear and GBTree.
 
-- [ ] 2.1 `GradientPair` struct (grad, hess)
-- [ ] 2.2 `Objective` trait — compute gradients from predictions + labels
-- [ ] 2.3 Common objectives: squared error, logistic, softmax
-- [ ] 2.4 `Metric` trait — evaluate model quality
-- [ ] 2.5 Common metrics: RMSE, MAE, logloss, AUC, accuracy
-- [ ] 2.6 `EarlyStopping` callback
-- [ ] 2.7 `TrainingLogger` with verbosity levels
+- [x] 2.1 `GradientPair` struct (grad, hess)
+- [x] 2.2 `Loss` trait — compute gradients from predictions + labels
+- [x] 2.3 Common losses: squared error, logistic, softmax
+- [x] 2.4 `Metric` trait — evaluate model quality
+- [x] 2.5 Common metrics: RMSE, MAE, logloss, AUC, accuracy
+- [x] 2.6 `EarlyStopping` callback
+- [x] 2.7 `TrainingLogger` with verbosity levels
 
 ---
 
