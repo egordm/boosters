@@ -18,6 +18,7 @@
 
 use crate::data::DataMatrix;
 use crate::forest::SoAForest;
+use crate::linear::LinearModel;
 use crate::objective::Objective;
 use crate::predict::{PredictionOutput, SimplePredictor};
 use crate::trees::ScalarLeaf;
@@ -91,6 +92,10 @@ impl Model {
                 let predictor = SimplePredictor::new(forest);
                 predictor.predict_weighted(features, weights)
             }
+            Booster::Linear(linear) => {
+                // Linear: simple dot product with base_score
+                linear.predict_batch(features, &self.meta.base_score)
+            }
         }
     }
 
@@ -120,20 +125,38 @@ pub enum Booster {
         forest: SoAForest<ScalarLeaf>,
         weights: Box<[f32]>,
     },
+
+    /// Linear model (gblinear).
+    Linear(LinearModel),
 }
 
 impl Booster {
-    /// Get the underlying forest (for both Tree and Dart).
-    pub fn forest(&self) -> &SoAForest<ScalarLeaf> {
+    /// Get the underlying forest (for Tree and Dart variants).
+    ///
+    /// Returns `None` for Linear booster.
+    pub fn forest(&self) -> Option<&SoAForest<ScalarLeaf>> {
         match self {
-            Booster::Tree(f) => f,
-            Booster::Dart { forest, .. } => forest,
+            Booster::Tree(f) => Some(f),
+            Booster::Dart { forest, .. } => Some(forest),
+            Booster::Linear(_) => None,
         }
     }
 
     /// Number of trees in the booster.
+    ///
+    /// Returns 0 for Linear booster.
     pub fn num_trees(&self) -> usize {
-        self.forest().num_trees()
+        self.forest().map_or(0, |f| f.num_trees())
+    }
+
+    /// Returns true if this is a linear booster.
+    pub fn is_linear(&self) -> bool {
+        matches!(self, Booster::Linear(_))
+    }
+
+    /// Returns true if this is a tree-based booster.
+    pub fn is_tree_based(&self) -> bool {
+        matches!(self, Booster::Tree(_) | Booster::Dart { .. })
     }
 }
 
@@ -334,6 +357,48 @@ mod tests {
 
         let booster = Booster::Tree(forest);
         assert_eq!(booster.num_trees(), 1);
+        assert!(booster.forest().is_some());
+        assert!(booster.is_tree_based());
+        assert!(!booster.is_linear());
+    }
+
+    #[test]
+    fn booster_linear() {
+        use crate::linear::LinearModel;
+
+        let linear = LinearModel::zeros(3, 1);
+        let booster = Booster::Linear(linear);
+
+        assert_eq!(booster.num_trees(), 0);
+        assert!(booster.forest().is_none());
+        assert!(booster.is_linear());
+        assert!(!booster.is_tree_based());
+    }
+
+    #[test]
+    fn model_predict_linear() {
+        use crate::linear::LinearModel;
+
+        // Model: y = 1.0*x0 + 2.0*x1 + 0.5 (bias) + 0.0 (base_score)
+        let weights: Box<[f32]> = vec![1.0, 2.0, 0.5].into();
+        let linear = LinearModel::new(weights, 2, 1);
+
+        let mut meta = ModelMeta::regression(2);
+        meta.base_score = vec![0.0];
+
+        let model = Model::new(
+            Booster::Linear(linear),
+            meta,
+            FeatureInfo::numeric(2),
+            Objective::SquaredError,
+        );
+
+        // x0=1.0, x1=2.0 → 1.0*1.0 + 2.0*2.0 + 0.5 = 5.5
+        let features = DenseMatrix::from_vec(vec![1.0, 2.0], 1, 2);
+        let output = model.predict(&features);
+
+        assert_eq!(output.shape(), (1, 1));
+        assert!((output.row(0)[0] - 5.5).abs() < 1e-6);
     }
 
     #[test]

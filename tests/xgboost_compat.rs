@@ -167,6 +167,14 @@ fn convert_dart_model() {
 
 const TOLERANCE: f64 = 1e-5;
 
+/// Check if two values are close within tolerance (absolute or relative).
+fn is_close(actual: f64, expected: f64, abs_tol: f64) -> bool {
+    let diff = (actual - expected).abs();
+    // Use both absolute and relative tolerance
+    let rel_tol = expected.abs() * 1e-6; // f32 precision
+    diff < abs_tol || diff < rel_tol
+}
+
 fn assert_predictions_match(actual: &[f32], expected: &[f64], tolerance: f64) {
     assert_eq!(
         actual.len(),
@@ -526,5 +534,135 @@ fn predict_categorical_binary() {
             pred[0],
             expected_preds[i]
         );
+    }
+}
+
+// =============================================================================
+// GBLinear tests
+// =============================================================================
+
+#[test]
+fn parse_gblinear_regression_model() {
+    let (model, input, _) = load_test_case("gblinear_regression");
+    assert_eq!(input.num_features, 5);
+    assert_eq!(input.num_rows, 10);
+    assert_eq!(model.learner.learner_model_param.num_class, 0);
+
+    // Verify it's a gblinear model
+    assert!(model.is_linear());
+}
+
+#[test]
+fn parse_gblinear_multiclass_model() {
+    let (model, input, _) = load_test_case("gblinear_multiclass");
+    assert_eq!(input.num_features, 4);
+    assert_eq!(input.num_rows, 10);
+    assert_eq!(model.learner.learner_model_param.num_class, 3);
+
+    assert!(model.is_linear());
+}
+
+#[test]
+fn predict_gblinear_regression() {
+    use booste_rs::model::Booster;
+
+    let (model, input, expected) = load_test_case("gblinear_regression");
+    let booster = model.to_booster().expect("conversion failed");
+
+    // Get base_score - for regression it's already in margin space
+    let base_score = model.learner.learner_model_param.base_score;
+
+    let linear = match booster {
+        Booster::Linear(l) => l,
+        _ => panic!("Expected linear booster"),
+    };
+
+    let rows = input.to_f32_rows();
+    let expected_preds: Vec<f64> = serde_json::from_value(expected.predictions).unwrap();
+
+    for (i, features) in rows.iter().enumerate() {
+        let pred = linear.predict_row(features, &[base_score]);
+        assert_eq!(pred.len(), 1);
+        let diff = (pred[0] as f64 - expected_preds[i]).abs();
+        assert!(
+            is_close(pred[0] as f64, expected_preds[i], TOLERANCE),
+            "gblinear_regression row {i}: got {}, expected {}, diff {diff}",
+            pred[0],
+            expected_preds[i]
+        );
+    }
+}
+
+/// Convert probability-space base_score to margin space based on objective.
+fn prob_to_margin(base_score: f32, objective: &str) -> f32 {
+    match objective {
+        "binary:logistic" | "reg:logistic" => {
+            let p = base_score.clamp(1e-7, 1.0 - 1e-7);
+            (p / (1.0 - p)).ln()
+        }
+        "reg:gamma" | "reg:tweedie" => base_score.max(1e-7).ln(),
+        _ => base_score,
+    }
+}
+
+#[test]
+fn predict_gblinear_binary() {
+    use booste_rs::model::Booster;
+
+    let (model, input, expected) = load_test_case("gblinear_binary");
+    let booster = model.to_booster().expect("conversion failed");
+
+    // For binary:logistic, convert base_score from probability to margin space
+    let prob_base_score = model.learner.learner_model_param.base_score;
+    let objective = model.learner.objective.name();
+    let margin_base_score = prob_to_margin(prob_base_score, objective);
+
+    let linear = match booster {
+        Booster::Linear(l) => l,
+        _ => panic!("Expected linear booster"),
+    };
+
+    let rows = input.to_f32_rows();
+    let expected_preds: Vec<f64> = serde_json::from_value(expected.predictions).unwrap();
+
+    for (i, features) in rows.iter().enumerate() {
+        let pred = linear.predict_row(features, &[margin_base_score]);
+        assert_eq!(pred.len(), 1);
+        let diff = (pred[0] as f64 - expected_preds[i]).abs();
+        assert!(
+            diff < TOLERANCE,
+            "gblinear_binary row {i}: got {}, expected {}, diff {diff}",
+            pred[0],
+            expected_preds[i]
+        );
+    }
+}
+
+#[test]
+fn predict_gblinear_multiclass() {
+    use booste_rs::model::Booster;
+
+    let (model, input, expected) = load_test_case("gblinear_multiclass");
+    let booster = model.to_booster().expect("conversion failed");
+
+    // Multiclass has per-group base scores
+    // XGBoost JSON stores this as "[0.333, 0.333, 0.333]" but our parser extracts first value
+    // For now we use a vector of the same base_score
+    let base_score_single = model.learner.learner_model_param.base_score;
+    let num_class = model.learner.learner_model_param.num_class as usize;
+    let base_scores = vec![base_score_single; num_class];
+
+    let linear = match booster {
+        Booster::Linear(l) => l,
+        _ => panic!("Expected linear booster"),
+    };
+
+    let rows = input.to_f32_rows();
+    let expected_preds: Vec<Vec<f64>> = serde_json::from_value(expected.predictions).unwrap();
+
+    for (i, features) in rows.iter().enumerate() {
+        let pred = linear.predict_row(features, &base_scores);
+        assert_eq!(pred.len(), num_class, "expected {} classes", num_class);
+        assert_predictions_match(&pred, &expected_preds[i], TOLERANCE);
     }
 }
