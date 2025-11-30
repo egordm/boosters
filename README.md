@@ -2,14 +2,28 @@
 
 A fast, pure-Rust gradient boosting inference library. Load XGBoost models and predict without any C++ dependencies.
 
+## Performance
+
+booste-rs significantly outperforms XGBoost C++ on inference:
+
+| Scenario | booste-rs | XGBoost C++ | Speedup |
+|----------|-----------|-------------|---------|
+| Single row | 1.2µs | 11.6µs | **9.4x faster** |
+| 1K rows (batch) | 1.1ms | 1.4ms | **1.3x faster** |
+| 10K rows (8 threads) | 1.6ms | 5.0ms | **3.2x faster** |
+
+*Benchmarks on Apple M1 Pro. See [full benchmark results](docs/benchmarks/2024-11-29-m38-performance-validation.md).*
+
 ## Features
 
-- 🚀 **Pure Rust** - No C++ dependencies for core inference
-- 📦 **XGBoost Compatible** - Load models from XGBoost JSON format
-- 🎯 **Feature Complete** - Supports regression, binary classification, multiclass
-- 🌳 **DART Support** - Full DART booster with tree weights
-- 📊 **Categorical Features** - Native categorical split support
-- 🔢 **Missing Values** - Proper NaN handling
+- 🚀 **Pure Rust** — No C++ dependencies for core inference
+- ⚡ **Fast** — 9x faster single-row latency, 3x faster parallel batch prediction
+- 📦 **XGBoost Compatible** — Load models from XGBoost JSON format
+- 🎯 **Feature Complete** — Supports regression, binary classification, multiclass
+- 🌳 **DART Support** — Full DART booster with tree weights
+- 📊 **Categorical Features** — Native categorical split support
+- 🔢 **Missing Values** — Proper NaN handling
+- 🧵 **Parallel Prediction** — Multi-threaded batch prediction with Rayon
 
 ## Quick Start
 
