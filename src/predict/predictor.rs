@@ -246,11 +246,11 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
         output
     }
 
-    /// Process a single block for parallel prediction.
-    /// Process a single block of rows in parallel.
+    /// Process a single block of rows for parallel prediction.
     ///
-    /// This method uses block-optimized traversal, which is most efficient for
-    /// `UnrolledTraversal`. For `StandardTraversal`, use sequential prediction instead.
+    /// Uses block-optimized traversal (`traverse_block`), which is most efficient for
+    /// `UnrolledTraversal`. For `StandardTraversal`, the default `traverse_block`
+    /// implementation falls back to per-row traversal.
     fn process_block_parallel<M: DataMatrix<Element = f32>>(
         &self,
         features: &M,
