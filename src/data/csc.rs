@@ -3,6 +3,7 @@
 //! CSC format is optimal for coordinate descent training where we iterate
 //! over features (columns) and need efficient access to all values in a column.
 
+use super::layout::RowMajor;
 use super::{DataMatrix, DenseMatrix};
 
 /// Compressed Sparse Column matrix for efficient column-wise access.
@@ -23,10 +24,10 @@ use super::{DataMatrix, DenseMatrix};
 /// # Example
 ///
 /// ```
-/// use booste_rs::data::{CSCMatrix, DenseMatrix};
+/// use booste_rs::data::{CSCMatrix, RowMatrix};
 ///
 /// // Create from dense matrix
-/// let dense = DenseMatrix::from_vec(vec![
+/// let dense = RowMatrix::from_vec(vec![
 ///     1.0, 0.0, 2.0,
 ///     0.0, 3.0, 0.0,
 ///     4.0, 0.0, 5.0,
@@ -62,7 +63,7 @@ impl<T: Copy + PartialEq + Default> CSCMatrix<T> {
     /// # Note
     ///
     /// NaN values ARE stored (they are not equal to default).
-    pub fn from_dense<S: AsRef<[T]>>(dense: &DenseMatrix<T, S>) -> Self {
+    pub fn from_dense<S: AsRef<[T]>>(dense: &DenseMatrix<T, RowMajor, S>) -> Self {
         Self::from_dense_with_predicate(dense, |v| v != T::default())
     }
 }
@@ -71,7 +72,7 @@ impl<T: Copy> CSCMatrix<T> {
     /// Create a CSC matrix from a dense matrix with a custom inclusion predicate.
     ///
     /// Values for which `include(value)` returns `true` are stored.
-    pub fn from_dense_with_predicate<S, F>(dense: &DenseMatrix<T, S>, include: F) -> Self
+    pub fn from_dense_with_predicate<S, F>(dense: &DenseMatrix<T, RowMajor, S>, include: F) -> Self
     where
         S: AsRef<[T]>,
         F: Fn(T) -> bool,
@@ -136,7 +137,7 @@ impl<T: Copy> CSCMatrix<T> {
     ///
     /// This is useful when you want column-major access to dense data
     /// without sparsity compression.
-    pub fn from_dense_full<S: AsRef<[T]>>(dense: &DenseMatrix<T, S>) -> Self {
+    pub fn from_dense_full<S: AsRef<[T]>>(dense: &DenseMatrix<T, RowMajor, S>) -> Self {
         Self::from_dense_with_predicate(dense, |_| true)
     }
 
@@ -281,10 +282,13 @@ impl<T: Copy> std::iter::FusedIterator for ColumnIter<'_, T> {}
 mod tests {
     use super::*;
 
+    // Type alias for convenience in tests
+    type RowMatrix<T = f32, S = Box<[T]>> = DenseMatrix<T, RowMajor, S>;
+
     #[test]
     fn from_dense_basic() {
         // 3x3 matrix with some zeros
-        let dense = DenseMatrix::from_vec(
+        let dense = RowMatrix::from_vec(
             vec![
                 1.0, 0.0, 2.0, // row 0
                 0.0, 3.0, 0.0, // row 1
@@ -303,7 +307,7 @@ mod tests {
 
     #[test]
     fn column_iteration() {
-        let dense = DenseMatrix::from_vec(
+        let dense = RowMatrix::from_vec(
             vec![
                 1.0, 0.0, 2.0, // row 0
                 0.0, 3.0, 0.0, // row 1
@@ -330,7 +334,7 @@ mod tests {
 
     #[test]
     fn column_nnz() {
-        let dense = DenseMatrix::from_vec(
+        let dense = RowMatrix::from_vec(
             vec![
                 1.0, 0.0, 2.0, // row 0
                 0.0, 3.0, 0.0, // row 1
@@ -349,7 +353,7 @@ mod tests {
 
     #[test]
     fn from_dense_full() {
-        let dense = DenseMatrix::from_vec(
+        let dense = RowMatrix::from_vec(
             vec![
                 1.0, 0.0, // row 0
                 0.0, 2.0, // row 1
@@ -373,7 +377,7 @@ mod tests {
 
     #[test]
     fn density() {
-        let dense = DenseMatrix::from_vec(
+        let dense = RowMatrix::from_vec(
             vec![
                 1.0, 0.0, 2.0, // row 0
                 0.0, 3.0, 0.0, // row 1
@@ -390,7 +394,7 @@ mod tests {
 
     #[test]
     fn empty_column() {
-        let dense = DenseMatrix::from_vec(
+        let dense = RowMatrix::from_vec(
             vec![
                 1.0, 0.0, // row 0
                 2.0, 0.0, // row 1
@@ -409,7 +413,7 @@ mod tests {
 
     #[test]
     fn handles_nan() {
-        let dense = DenseMatrix::from_vec(
+        let dense = RowMatrix::from_vec(
             vec![
                 1.0,
                 f32::NAN, // NaN should be stored (it's not 0.0)
@@ -433,7 +437,7 @@ mod tests {
 
     #[test]
     fn column_values_and_indices() {
-        let dense = DenseMatrix::from_vec(
+        let dense = RowMatrix::from_vec(
             vec![
                 1.0, 0.0, // row 0
                 2.0, 3.0, // row 1
@@ -461,7 +465,7 @@ mod tests {
             data[i * 10] = (i as f32) + 1.0;
         }
 
-        let dense = DenseMatrix::from_vec(data, 1000, 100);
+        let dense = RowMatrix::from_vec(data, 1000, 100);
         let csc = CSCMatrix::from_dense(&dense);
 
         assert_eq!(csc.num_rows(), 1000);
@@ -472,7 +476,7 @@ mod tests {
 
     #[test]
     fn into_and_from_raw_parts() {
-        let dense = DenseMatrix::from_vec(vec![1.0, 2.0, 3.0, 4.0], 2, 2);
+        let dense = RowMatrix::from_vec(vec![1.0, 2.0, 3.0, 4.0], 2, 2);
         let csc = CSCMatrix::from_dense_full(&dense);
 
         let (values, row_indices, col_ptrs, num_rows, num_cols) = csc.into_raw_parts();

@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use serde::Deserialize;
 
 use booste_rs::compat::XgbModel;
-use booste_rs::data::DenseMatrix;
+use booste_rs::data::RowMatrix;
 use booste_rs::model::{FeatureInfo, Model, ModelMeta, ModelSource};
 use booste_rs::objective::Objective;
 
@@ -33,8 +33,8 @@ struct TestInput {
 }
 
 impl TestInput {
-    /// Convert to flat f32 vec for DenseMatrix, mapping None to NaN.
-    fn to_dense_matrix(&self) -> DenseMatrix<f32, Box<[f32]>> {
+    /// Convert to flat f32 vec for RowMatrix, mapping None to NaN.
+    fn to_dense_matrix(&self) -> RowMatrix<f32, Box<[f32]>> {
         let flat: Vec<f32> = self
             .features
             .iter()
@@ -43,7 +43,7 @@ impl TestInput {
                     .map(|&x| x.map(|v| v as f32).unwrap_or(f32::NAN))
             })
             .collect();
-        DenseMatrix::from_vec(flat, self.num_rows, self.num_features)
+        RowMatrix::from_vec(flat, self.num_rows, self.num_features)
     }
 }
 

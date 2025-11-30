@@ -256,7 +256,7 @@ impl TestInput {
             .collect()
     }
 
-    /// Convert to flat f32 slice for DenseMatrix.
+    /// Convert to flat f32 slice for RowMatrix.
     pub fn to_flat_f32(&self) -> Vec<f32> {
         self.features
             .iter()

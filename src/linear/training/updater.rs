@@ -222,11 +222,11 @@ pub fn update_bias(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::DenseMatrix;
+    use crate::data::RowMatrix;
 
     fn make_test_data() -> (CSCMatrix<f32>, Vec<GradientPair>) {
         // Simple 4x2 dataset
-        let dense = DenseMatrix::from_vec(
+        let dense = RowMatrix::from_vec(
             vec![
                 1.0, 0.0, // row 0
                 0.0, 1.0, // row 1
