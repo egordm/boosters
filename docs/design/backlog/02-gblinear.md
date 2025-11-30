@@ -43,26 +43,46 @@ Validates training infrastructure before GBTree training.
 
 **Goal**: Train linear models via coordinate descent.
 
-- [ ] 3.1 `CSCMatrix` — column-sparse format
-- [ ] 3.2 `CSCMatrix::from_dense()` conversion
-- [ ] 3.3 Coordinate descent update with elastic net
-- [ ] 3.4 `ShotgunUpdater` — parallel (default)
-- [ ] 3.5 `CoordinateUpdater` — sequential
-- [ ] 3.6 `CyclicSelector` and `ShuffleSelector`
+- [ ] 3.1 `CSCMatrix` — column-sparse format for efficient column access
+- [ ] 3.2 `CSCMatrix::from_dense()` and column iteration
+- [ ] 3.3 Coordinate descent update with elastic net regularization
+- [ ] 3.4 `ShotgunUpdater` — parallel feature updates (default)
+- [ ] 3.5 `CoordinateUpdater` — sequential feature updates
+- [ ] 3.6 `CyclicSelector` and `ShuffleSelector` for feature order
 - [ ] 3.7 `LinearTrainer` high-level API
 - [ ] 3.8 Early stopping + logging integration
-- [ ] 3.9 Integration tests vs Python XGBoost
 
 **Refs**: [RFC-0009](../rfcs/0009-gblinear-training.md)
 
 ---
 
-## Story 4: Benchmarks
+## Story 4: Training Validation
+
+**Goal**: Verify trained models match XGBoost quality.
+
+- [ ] 4.1 Generate reference training data with Python XGBoost
+- [ ] 4.2 Compare final metrics (RMSE, logloss) within tolerance
+- [ ] 4.3 Compare predictions on held-out test set
+- [ ] 4.4 Verify weight correlation (Pearson r > 0.95)
+- [ ] 4.5 Test convergence on regression, binary, multiclass tasks
+
+**Validation approach**: Since exact weight matching is unlikely due to
+randomness and floating-point differences, we validate:
+
+1. Final metrics are within 5% of XGBoost
+2. Test predictions have < 1e-3 RMSE vs XGBoost predictions
+3. Weight vectors are highly correlated (not necessarily identical)
+
+---
+
+## Story 5: Benchmarks
 
 **Goal**: Validate performance.
 
-- [ ] 4.1 Inference benchmark vs Python XGBoost
-- [ ] 4.2 Training benchmark vs Python XGBoost
+- [ ] 5.1 Inference benchmark vs Python XGBoost
+- [ ] 5.2 Training benchmark vs Python XGBoost
+- [ ] 5.3 Compare CSC vs dense column access for training
+- [ ] 5.4 Document results and recommend defaults
 - [ ] 4.3 Document results
 
 ---
@@ -70,6 +90,7 @@ Validates training infrastructure before GBTree training.
 ## Success Criteria
 
 1. Load XGBoost GBLinear JSON models and predict correctly
-2. Train models matching Python XGBoost quality
-3. Training infrastructure (objectives, metrics, callbacks) is reusable
+2. Train models matching Python XGBoost quality (metrics within 5%)
+3. Training infrastructure (losses, metrics, callbacks) is reusable
 4. Early stopping and logging work correctly
+5. Trained model predictions correlate highly with XGBoost predictions
