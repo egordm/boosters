@@ -3,9 +3,14 @@
 **Date**: 2024-11-28  
 **Milestone**: M3.6 SIMD Investigation  
 **Platform**: Linux Home Lab
-**Author**: Benchmark analysis
 
-## Executive Summary
+## Goal
+
+Investigate whether SIMD can improve tree traversal performance.
+Hypothesis: Processing 8 rows in parallel with SIMD should be faster.
+Also: understand how XGBoost achieves its batch performance.
+
+## Summary
 
 Our SIMD implementation using the `wide` crate is **11% slower** than the UnrolledTraversal,
 not faster as expected. Investigation reveals this is **not a bug** but a fundamental
@@ -260,6 +265,7 @@ instructions (AVX2 `vpgatherdd`) and improve SIMD performance.
 ### Experiment
 
 Implemented `NightlySimdTraversal` using `std::simd` portable SIMD with:
+
 - `Simd::gather_or` for feature value gathering
 - Full SIMD comparison and position updates
 - Requires `#![feature(portable_simd)]` on nightly Rust

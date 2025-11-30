@@ -6,19 +6,17 @@ This directory contains versioned benchmark results for tracking performance ove
 
 | File | Description |
 |------|-------------|
-| [2024-11-27-baseline.md](2024-11-27-baseline.md) | Initial baseline before M3.4 Block Traversal |
+| [2024-11-27-baseline.md](2024-11-27-baseline.md) | Initial baseline before block traversal |
+| [2024-11-28-m352-unrolled.md](2024-11-28-m352-unrolled.md) | Predictor refactor with unrolled layout |
+| [2024-11-28-simd-analysis.md](2024-11-28-simd-analysis.md) | SIMD investigation (concluded: not beneficial) |
+| [2024-11-28-m37-thread-parallelism.md](2024-11-28-m37-thread-parallelism.md) | Thread parallelism with Rayon |
+| [2024-11-29-m38-performance-validation.md](2024-11-29-m38-performance-validation.md) | Final performance validation |
 
 ## Naming Convention
 
 ```text
 YYYY-MM-DD-<description>.md
 ```
-
-Examples:
-
-- `2024-11-27-baseline.md` - Initial baseline
-- `2024-12-15-block-traversal.md` - After M3.4 implementation
-- `2024-12-20-simd.md` - After SIMD optimization
 
 ## Running Benchmarks
 
