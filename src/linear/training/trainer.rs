@@ -1,6 +1,6 @@
 //! High-level linear model trainer.
 
-use crate::data::{CSCMatrix, DataMatrix, DenseMatrix, RowView};
+use crate::data::{CSCMatrix, DataMatrix, RowMatrix, RowView};
 use crate::linear::LinearModel;
 use crate::training::{GradientPair, Loss, TrainingLogger, Verbosity};
 
@@ -217,7 +217,7 @@ impl LinearTrainer {
             }
         }
 
-        let dense = DenseMatrix::from_vec(dense_data, num_rows, num_features);
+        let dense = RowMatrix::from_vec(dense_data, num_rows, num_features);
         CSCMatrix::from_dense_full(&dense)
     }
 
@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn train_simple_regression() {
         // y = 2*x + 1
-        let train_data = DenseMatrix::from_vec(
+        let train_data = RowMatrix::from_vec(
             vec![
                 1.0, // x=1 → y=3
                 2.0, // x=2 → y=5
@@ -345,7 +345,7 @@ mod tests {
 
     #[test]
     fn train_with_regularization() {
-        let train_data = DenseMatrix::from_vec(vec![1.0, 2.0, 3.0, 4.0], 4, 1);
+        let train_data = RowMatrix::from_vec(vec![1.0, 2.0, 3.0, 4.0], 4, 1);
         let train_labels = vec![3.0, 5.0, 7.0, 9.0];
 
         // Train without regularization
@@ -387,7 +387,7 @@ mod tests {
     #[test]
     fn train_multifeature() {
         // y = x0 + 2*x1
-        let train_data = DenseMatrix::from_vec(
+        let train_data = RowMatrix::from_vec(
             vec![
                 1.0, 1.0, // x0=1, x1=1 → y=3
                 2.0, 1.0, // x0=2, x1=1 → y=4
@@ -423,7 +423,7 @@ mod tests {
 
     #[test]
     fn parallel_vs_sequential_similar() {
-        let train_data = DenseMatrix::from_vec(vec![1.0, 2.0, 3.0, 4.0], 4, 1);
+        let train_data = RowMatrix::from_vec(vec![1.0, 2.0, 3.0, 4.0], 4, 1);
         let train_labels = vec![3.0, 5.0, 7.0, 9.0];
 
         let config_seq = LinearTrainerConfig {

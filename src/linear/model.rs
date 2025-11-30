@@ -257,7 +257,7 @@ impl LinearModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::DenseMatrix;
+    use crate::data::RowMatrix;
 
     #[test]
     fn linear_model_new() {
@@ -331,7 +331,7 @@ mod tests {
         let weights = vec![0.5, 0.3, 0.1].into_boxed_slice();
         let model = LinearModel::new(weights, 2, 1);
 
-        let data = DenseMatrix::from_vec(
+        let data = RowMatrix::from_vec(
             vec![
                 2.0, 3.0, // row 0: 0.5*2 + 0.3*3 + 0.1 = 2.0
                 1.0, 1.0, // row 1: 0.5*1 + 0.3*1 + 0.1 = 0.9
@@ -358,7 +358,7 @@ mod tests {
         .into_boxed_slice();
         let model = LinearModel::new(weights, 2, 2);
 
-        let data = DenseMatrix::from_vec(vec![1.0, 1.0], 1, 2);
+        let data = RowMatrix::from_vec(vec![1.0, 1.0], 1, 2);
         let output = model.predict_batch(&data, &[0.0, 0.0]);
 
         assert_eq!(output.shape(), (1, 2));
@@ -373,7 +373,7 @@ mod tests {
         let weights = vec![0.5, 0.3, 0.1].into_boxed_slice();
         let model = LinearModel::new(weights, 2, 1);
 
-        let data = DenseMatrix::from_vec(
+        let data = RowMatrix::from_vec(
             vec![
                 2.0, 3.0, // row 0
                 1.0, 1.0, // row 1

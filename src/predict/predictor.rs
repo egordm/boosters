@@ -521,7 +521,7 @@ pub type UnrolledPredictor8<'f> = Predictor<'f, UnrolledTraversal<Depth8>>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::DenseMatrix;
+    use crate::data::RowMatrix;
     use crate::forest::SoAForest;
     use crate::trees::{ScalarLeaf, TreeBuilder};
 
@@ -571,7 +571,7 @@ mod tests {
 
         let predictor = SimplePredictor::new(&forest);
 
-        let features = DenseMatrix::from_vec(vec![0.3, 0.7, 0.5], 3, 1);
+        let features = RowMatrix::from_vec(vec![0.3, 0.7, 0.5], 3, 1);
         let output = predictor.predict(&features);
 
         assert_eq!(output.shape(), (3, 1));
@@ -599,7 +599,7 @@ mod tests {
 
         let predictor = SimplePredictor::new(&forest);
 
-        let features = DenseMatrix::from_vec(vec![0.3, 0.7], 2, 1);
+        let features = RowMatrix::from_vec(vec![0.3, 0.7], 2, 1);
         let output = predictor.predict(&features);
 
         assert_eq!(output.shape(), (2, 3));
@@ -636,7 +636,7 @@ mod tests {
             let data: Vec<f32> = (0..num_rows)
                 .map(|i| (i as f32) / (num_rows as f32))
                 .collect();
-            let features = DenseMatrix::from_vec(data, num_rows, 1);
+            let features = RowMatrix::from_vec(data, num_rows, 1);
 
             let simple_output = simple.predict(&features);
             let unrolled_output = unrolled.predict(&features);
@@ -665,7 +665,7 @@ mod tests {
         let simple = SimplePredictor::new(&forest);
         let unrolled = UnrolledPredictor4::new(&forest);
 
-        let features = DenseMatrix::from_vec(
+        let features = RowMatrix::from_vec(
             vec![
                 0.2, 0.1, // leaf 1.0
                 0.2, 0.5, // leaf 2.0
@@ -698,7 +698,7 @@ mod tests {
         let simple = SimplePredictor::new(&forest);
         let unrolled = UnrolledPredictor6::new(&forest);
 
-        let features = DenseMatrix::from_vec(vec![0.3, 0.7], 2, 1);
+        let features = RowMatrix::from_vec(vec![0.3, 0.7], 2, 1);
         let weights = &[1.0, 0.5];
 
         let simple_output = simple.predict_weighted(&features, weights);
@@ -729,7 +729,7 @@ mod tests {
         let predictor = SimplePredictor::new(&forest).with_block_size(16);
         assert_eq!(predictor.block_size(), 16);
 
-        let features = DenseMatrix::from_vec(vec![0.3; 100], 100, 1);
+        let features = RowMatrix::from_vec(vec![0.3; 100], 100, 1);
         let output = predictor.predict(&features);
 
         assert_eq!(output.shape(), (100, 1));
@@ -745,7 +745,7 @@ mod tests {
         forest.push_tree(build_simple_tree(0.5, 1.5, 0.5), 0);
 
         let data: Vec<f32> = (0..200).map(|i| (i as f32) / 200.0).collect();
-        let features = DenseMatrix::from_vec(data, 200, 1);
+        let features = RowMatrix::from_vec(data, 200, 1);
 
         let p16 = SimplePredictor::new(&forest).with_block_size(16);
         let p64 = SimplePredictor::new(&forest).with_block_size(64);
@@ -772,7 +772,7 @@ mod tests {
 
         let predictor = SimplePredictor::new(&forest);
 
-        let features = DenseMatrix::from_vec(vec![], 0, 1);
+        let features = RowMatrix::from_vec(vec![], 0, 1);
         let output = predictor.predict(&features);
 
         assert_eq!(output.shape(), (0, 1));
@@ -786,7 +786,7 @@ mod tests {
 
         let predictor = SimplePredictor::new(&forest);
 
-        let features = DenseMatrix::from_vec(vec![0.3, 0.7], 2, 1);
+        let features = RowMatrix::from_vec(vec![0.3, 0.7], 2, 1);
         let output = predictor.predict(&features);
 
         assert_eq!(output.row(0), &[1.5]); // 1.0 + 0.5
@@ -822,7 +822,7 @@ mod tests {
             let data: Vec<f32> = (0..num_rows * 2)
                 .map(|i| (i as f32) / (num_rows as f32 * 2.0))
                 .collect();
-            let features = DenseMatrix::from_vec(data, num_rows, 2);
+            let features = RowMatrix::from_vec(data, num_rows, 2);
 
             let seq_simple = simple.predict(&features);
             let par_simple = simple.par_predict(&features);
@@ -870,7 +870,7 @@ mod tests {
         let weights = &[1.0, 0.5];
 
         let data: Vec<f32> = (0..100).map(|i| (i as f32) / 100.0).collect();
-        let features = DenseMatrix::from_vec(data, 100, 1);
+        let features = RowMatrix::from_vec(data, 100, 1);
 
         let seq_output = predictor.predict_weighted(&features, weights);
         let par_output = predictor.par_predict_weighted(&features, weights);
@@ -897,7 +897,7 @@ mod tests {
 
         let predictor = UnrolledPredictor6::new(&forest);
 
-        let features = DenseMatrix::from_vec(vec![0.3, 0.7, 0.4, 0.6], 4, 1);
+        let features = RowMatrix::from_vec(vec![0.3, 0.7, 0.4, 0.6], 4, 1);
 
         let seq_output = predictor.predict(&features);
         let par_output = predictor.par_predict(&features);
@@ -921,7 +921,7 @@ mod tests {
 
         let predictor = UnrolledPredictor6::new(&forest);
 
-        let features = DenseMatrix::from_vec(vec![], 0, 1);
+        let features = RowMatrix::from_vec(vec![], 0, 1);
         let output = predictor.par_predict(&features);
 
         assert_eq!(output.shape(), (0, 1));

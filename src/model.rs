@@ -10,7 +10,7 @@
 //! use booste_rs::data::DenseMatrix;
 //!
 //! let model = Model::load("model.json")?;
-//! let features = DenseMatrix::from_vec(data, num_rows, num_features);
+//! let features = RowMatrix::from_vec(data, num_rows, num_features);
 //! let predictions = model.predict(&features);
 //! ```
 //!
@@ -283,7 +283,7 @@ pub enum FeatureType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::DenseMatrix;
+    use crate::data::RowMatrix;
     use crate::trees::TreeBuilder;
 
     /// Build a simple tree: feat0 < threshold → left_val, else right_val
@@ -327,7 +327,7 @@ mod tests {
     #[test]
     fn model_predict_raw() {
         let model = build_regression_model();
-        let features = DenseMatrix::from_vec(vec![0.3, 0.7], 2, 1);
+        let features = RowMatrix::from_vec(vec![0.3, 0.7], 2, 1);
 
         let output = model.predict_raw(&features);
 
@@ -339,7 +339,7 @@ mod tests {
     #[test]
     fn model_predict_with_transform() {
         let model = build_binary_model();
-        let features = DenseMatrix::from_vec(vec![0.3, 0.7], 2, 1);
+        let features = RowMatrix::from_vec(vec![0.3, 0.7], 2, 1);
 
         let output = model.predict(&features);
 
@@ -394,7 +394,7 @@ mod tests {
         );
 
         // x0=1.0, x1=2.0 → 1.0*1.0 + 2.0*2.0 + 0.5 = 5.5
-        let features = DenseMatrix::from_vec(vec![1.0, 2.0], 1, 2);
+        let features = RowMatrix::from_vec(vec![1.0, 2.0], 1, 2);
         let output = model.predict(&features);
 
         assert_eq!(output.shape(), (1, 1));

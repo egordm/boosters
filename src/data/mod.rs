@@ -11,20 +11,43 @@
 //!
 //! # Storage Types
 //!
-//! - [`DenseMatrix`]: Row-major dense storage, optimal for row-based access
+//! - [`DenseMatrix`]: Dense storage with configurable layout (row-major or column-major)
 //! - [`CSCMatrix`]: Column-sparse storage, optimal for column-based access (training)
+//!
+//! # Layouts
+//!
+//! Dense matrices support two memory layouts via [`Layout`]:
+//! - [`RowMajor`] (default): Rows are contiguous, optimal for row-based access (inference)
+//! - [`ColMajor`]: Columns are contiguous, optimal for column-based access (training)
 //!
 //! # Missing Values
 //!
 //! Missing values are represented as `f32::NAN`. This is the modern standard
 //! used by XGBoost and other libraries.
 //!
-//! See RFC-0004 for design rationale.
+//! See RFC-0004 for design rationale, RFC-0010 for layout abstraction.
 
 mod csc;
 mod dense;
+mod layout;
 mod traits;
 
 pub use csc::{CSCMatrix, ColumnIter};
 pub use dense::DenseMatrix;
+pub use layout::{ColMajor, Layout, RowMajor, StridedIter};
 pub use traits::{DataMatrix, RowView};
+
+/// Type alias for row-major dense matrix (the common case).
+///
+/// This is equivalent to `DenseMatrix<T, RowMajor>` but with better type inference
+/// when working with code that accepts multiple layout variants.
+///
+/// Use this when you need to explicitly specify a concrete matrix type,
+/// especially when passing to generic functions that accept `impl DataMatrix`.
+pub type RowMatrix<T = f32, S = Box<[T]>> = DenseMatrix<T, RowMajor, S>;
+
+/// Type alias for column-major dense matrix.
+///
+/// Use this layout when column iteration is the primary access pattern
+/// (e.g., during training where you iterate over features).
+pub type ColMatrix<T = f32, S = Box<[T]>> = DenseMatrix<T, ColMajor, S>;

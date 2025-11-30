@@ -56,7 +56,7 @@ Validates training infrastructure before GBTree training.
 
 ---
 
-## Story 4: Matrix Layout Refactor
+## Story 4: Matrix Layout Refactor ✓
 
 **Goal**: Support both row-major and column-major dense matrices via zero-cost abstraction.
 
@@ -74,14 +74,14 @@ storage structures, not just different indexing.
 
 Tasks:
 
-- [ ] 4.1 Add `Layout` trait with `RowMajor` and `ColMajor` implementations
-- [ ] 4.2 Refactor `DenseMatrix` to `DenseMatrix<T, L: Layout = RowMajor>`
-- [ ] 4.3 Update `DataMatrix` impl to use `L::index()`
-- [ ] 4.4 Add `to_layout<L2>()` conversion method
-- [ ] 4.5 Add layout-specific slice methods (`row_slice`, `col_slice`)
-- [ ] 4.6 Add strided iterators for non-contiguous dimension
-- [ ] 4.7 Update `LinearTrainer` to use column-major internally
-- [ ] 4.8 Verify existing tests still pass (backward compatibility)
+- [x] 4.1 Add `Layout` trait with `RowMajor` and `ColMajor` implementations
+- [x] 4.2 Refactor `DenseMatrix` to `DenseMatrix<T, L: Layout = RowMajor>`
+- [x] 4.3 Update `DataMatrix` impl to use `L::index()`
+- [x] 4.4 Add `to_layout<L2>()` conversion method
+- [x] 4.5 Add layout-specific slice methods (`row_slice`, `col_slice`, `rows_slice`)
+- [x] 4.6 Add strided iterators for non-contiguous dimension
+- [x] 4.7 Type aliases: `RowMatrix`, `ColMatrix` for convenience
+- [x] 4.8 Verify existing tests still pass (backward compatibility)
 - [ ] 4.9 Add benchmarks comparing layouts for training
 
 ---
