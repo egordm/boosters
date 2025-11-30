@@ -1,0 +1,11 @@
+{
+  "objective": "multi:softprob",
+  "num_class": 3,
+  "booster": "gblinear",
+  "eta": 0.3,
+  "lambda": 0.1,
+  "alpha": 0.0,
+  "updater": "coord_descent",
+  "feature_selector": "cyclic",
+  "num_boost_round": 100
+}
