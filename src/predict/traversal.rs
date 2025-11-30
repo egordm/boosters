@@ -32,7 +32,7 @@ pub trait TreeTraversal<L: LeafValue>: Clone {
     ///
     /// For simple traversal, this is `()`. For unrolled traversal, this is
     /// `UnrolledTreeLayout<D>`.
-    type TreeState: Clone;
+    type TreeState: Clone + Send + Sync;
 
     /// Whether this traversal benefits from block-level optimization.
     ///

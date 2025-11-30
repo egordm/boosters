@@ -38,6 +38,7 @@
 use crate::data::DataMatrix;
 use crate::forest::SoAForest;
 use crate::trees::ScalarLeaf;
+use rayon::prelude::*;
 
 use super::output::PredictionOutput;
 use super::traversal::TreeTraversal;
@@ -148,6 +149,160 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
             "weights length must match number of trees"
         );
         self.predict_internal(features, Some(weights))
+    }
+
+    /// Parallel prediction for a batch of features.
+    ///
+    /// Uses Rayon to parallelize block processing across available CPU cores.
+    /// Each block is processed independently, enabling work-stealing load balancing.
+    ///
+    /// Returns a [`PredictionOutput`] with shape `(num_rows, num_groups)`.
+    ///
+    /// # Performance
+    ///
+    /// Best for large batches (1000+ rows) on multi-core systems. For small batches
+    /// or single-core systems, [`predict`](Self::predict) may be faster due to lower overhead.
+    #[inline]
+    pub fn par_predict<M: DataMatrix<Element = f32> + Sync>(
+        &self,
+        features: &M,
+    ) -> PredictionOutput {
+        self.par_predict_internal(features, None)
+    }
+
+    /// Parallel prediction with per-tree weights (for DART).
+    ///
+    /// Uses Rayon to parallelize block processing. Each tree's contribution
+    /// is multiplied by its corresponding weight.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `weights.len() != forest.num_trees()`.
+    #[inline]
+    pub fn par_predict_weighted<M: DataMatrix<Element = f32> + Sync>(
+        &self,
+        features: &M,
+        weights: &[f32],
+    ) -> PredictionOutput {
+        assert_eq!(
+            weights.len(),
+            self.forest.num_trees(),
+            "weights length must match number of trees"
+        );
+        self.par_predict_internal(features, Some(weights))
+    }
+
+    /// Internal parallel prediction with optional weights.
+    fn par_predict_internal<M: DataMatrix<Element = f32> + Sync>(
+        &self,
+        features: &M,
+        weights: Option<&[f32]>,
+    ) -> PredictionOutput {
+        let num_rows = features.num_rows();
+        let num_groups = self.num_groups();
+        let num_features = features.num_features();
+
+        if num_rows == 0 {
+            return PredictionOutput::zeros(0, num_groups);
+        }
+
+        let base_score = self.forest.base_score();
+
+        // Split rows into blocks and process in parallel
+        let blocks: Vec<_> = (0..num_rows)
+            .step_by(self.block_size)
+            .map(|block_start| {
+                let block_end = (block_start + self.block_size).min(num_rows);
+                (block_start, block_end)
+            })
+            .collect();
+
+        // Process each block in parallel
+        let block_outputs: Vec<_> = blocks
+            .par_iter()
+            .map(|&(block_start, block_end)| {
+                let current_block_size = block_end - block_start;
+                self.process_block_parallel(
+                    features,
+                    block_start,
+                    current_block_size,
+                    num_features,
+                    num_groups,
+                    base_score,
+                    weights,
+                )
+            })
+            .collect();
+
+        // Combine results
+        let mut output = PredictionOutput::zeros(num_rows, num_groups);
+        for (block_idx, &(block_start, block_end)) in blocks.iter().enumerate() {
+            let block_output = &block_outputs[block_idx];
+            for i in 0..(block_end - block_start) {
+                output.row_mut(block_start + i).copy_from_slice(block_output.row(i));
+            }
+        }
+
+        output
+    }
+
+    /// Process a single block for parallel prediction.
+    /// Process a single block of rows in parallel.
+    ///
+    /// This method uses block-optimized traversal, which is most efficient for
+    /// `UnrolledTraversal`. For `StandardTraversal`, use sequential prediction instead.
+    fn process_block_parallel<M: DataMatrix<Element = f32>>(
+        &self,
+        features: &M,
+        block_start: usize,
+        block_size: usize,
+        num_features: usize,
+        num_groups: usize,
+        base_score: &[f32],
+        weights: Option<&[f32]>,
+    ) -> PredictionOutput {
+        let mut block_output = PredictionOutput::zeros(block_size, num_groups);
+
+        // Initialize with base scores
+        for row_idx in 0..block_size {
+            block_output.row_mut(row_idx).copy_from_slice(base_score);
+        }
+
+        // Load features for this block into contiguous buffer
+        let mut feature_buffer = vec![f32::NAN; block_size * num_features];
+        for i in 0..block_size {
+            let buf_offset = i * num_features;
+            features.copy_row(
+                block_start + i,
+                &mut feature_buffer[buf_offset..][..num_features],
+            );
+        }
+
+        // Use block-optimized traversal
+        let mut group_buffer = vec![0.0f32; block_size];
+
+        for (tree_idx, (tree, group)) in self.forest.trees_with_groups().enumerate() {
+            let state = &self.tree_states[tree_idx];
+            let group_idx = group as usize;
+            let weight = weights.map(|w| w[tree_idx]).unwrap_or(1.0);
+
+            group_buffer[..block_size].fill(0.0);
+
+            T::traverse_block(
+                &tree,
+                state,
+                &feature_buffer[..block_size * num_features],
+                num_features,
+                &mut group_buffer[..block_size],
+                weight,
+            );
+
+            for i in 0..block_size {
+                block_output.row_mut(i)[group_idx] += group_buffer[i];
+            }
+        }
+
+        block_output
     }
 
     /// Internal prediction with optional weights.
@@ -647,5 +802,128 @@ mod tests {
 
         let predictor = SimplePredictor::new(&forest);
         predictor.predict_row_weighted(&[0.3], &[1.0]); // only 1 weight for 2 trees
+    }
+
+    // =========================================================================
+    // Parallel prediction tests
+    // =========================================================================
+
+    #[test]
+    fn par_predict_matches_sequential() {
+        let mut forest = SoAForest::for_regression();
+        forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
+        forest.push_tree(build_simple_tree(0.5, 1.5, 0.5), 0);
+        forest.push_tree(build_deeper_tree(), 0);
+
+        let simple = SimplePredictor::new(&forest);
+        let unrolled = UnrolledPredictor6::new(&forest);
+
+        for num_rows in [1, 10, 64, 100, 128, 200, 1000] {
+            let data: Vec<f32> = (0..num_rows * 2)
+                .map(|i| (i as f32) / (num_rows as f32 * 2.0))
+                .collect();
+            let features = DenseMatrix::from_vec(data, num_rows, 2);
+
+            let seq_simple = simple.predict(&features);
+            let par_simple = simple.par_predict(&features);
+
+            let seq_unrolled = unrolled.predict(&features);
+            let par_unrolled = unrolled.par_predict(&features);
+
+            assert_eq!(seq_simple.shape(), par_simple.shape());
+            assert_eq!(seq_unrolled.shape(), par_unrolled.shape());
+
+            for row_idx in 0..num_rows {
+                let ss = seq_simple.row(row_idx);
+                let ps = par_simple.row(row_idx);
+                let su = seq_unrolled.row(row_idx);
+                let pu = par_unrolled.row(row_idx);
+
+                assert!(
+                    (ss[0] - ps[0]).abs() < 1e-6,
+                    "Simple: Mismatch at row {} with {} total rows: seq={:?} vs par={:?}",
+                    row_idx,
+                    num_rows,
+                    ss,
+                    ps
+                );
+
+                assert!(
+                    (su[0] - pu[0]).abs() < 1e-6,
+                    "Unrolled: Mismatch at row {} with {} total rows: seq={:?} vs par={:?}",
+                    row_idx,
+                    num_rows,
+                    su,
+                    pu
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn par_predict_weighted_matches_sequential() {
+        let mut forest = SoAForest::for_regression();
+        forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
+        forest.push_tree(build_simple_tree(0.5, 1.5, 0.5), 0);
+
+        let predictor = UnrolledPredictor6::new(&forest);
+        let weights = &[1.0, 0.5];
+
+        let data: Vec<f32> = (0..100).map(|i| (i as f32) / 100.0).collect();
+        let features = DenseMatrix::from_vec(data, 100, 1);
+
+        let seq_output = predictor.predict_weighted(&features, weights);
+        let par_output = predictor.par_predict_weighted(&features, weights);
+
+        for row_idx in 0..100 {
+            let s = seq_output.row(row_idx);
+            let p = par_output.row(row_idx);
+            assert!(
+                (s[0] - p[0]).abs() < 1e-6,
+                "Mismatch at row {}: {:?} vs {:?}",
+                row_idx,
+                s,
+                p
+            );
+        }
+    }
+
+    #[test]
+    fn par_predict_multiclass() {
+        let mut forest = SoAForest::new(3);
+        forest.push_tree(build_simple_tree(0.1, 0.9, 0.5), 0);
+        forest.push_tree(build_simple_tree(0.2, 0.8, 0.5), 1);
+        forest.push_tree(build_simple_tree(0.3, 0.7, 0.5), 2);
+
+        let predictor = UnrolledPredictor6::new(&forest);
+
+        let features = DenseMatrix::from_vec(vec![0.3, 0.7, 0.4, 0.6], 4, 1);
+
+        let seq_output = predictor.predict(&features);
+        let par_output = predictor.par_predict(&features);
+
+        assert_eq!(seq_output.shape(), par_output.shape());
+        for row_idx in 0..4 {
+            for group_idx in 0..3 {
+                assert!(
+                    (seq_output.row(row_idx)[group_idx] - par_output.row(row_idx)[group_idx])
+                        .abs()
+                        < 1e-6
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn par_predict_empty_input() {
+        let mut forest = SoAForest::for_regression();
+        forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
+
+        let predictor = UnrolledPredictor6::new(&forest);
+
+        let features = DenseMatrix::from_vec(vec![], 0, 1);
+        let output = predictor.par_predict(&features);
+
+        assert_eq!(output.shape(), (0, 1));
     }
 }

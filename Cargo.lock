@@ -83,6 +83,7 @@ dependencies = [
  "criterion",
  "glob",
  "rand",
+ "rayon",
  "rstest",
  "serde",
  "serde_json",
