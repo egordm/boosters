@@ -227,6 +227,65 @@ def generate_dart():
     save_test_case("dart_regression", booster, X_test, objective='reg:squarederror')
 
 
+def generate_gblinear_regression():
+    """GBLinear regression model."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=100, n_features=5, noise=5.0, random_state=42)
+    X_test = X[:10]
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'reg:squarederror',
+        'booster': 'gblinear',
+        'eta': 0.1,
+        'lambda': 0.1,
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=50)
+    save_test_case("gblinear_regression", booster, X_test, objective='reg:squarederror')
+
+
+def generate_gblinear_binary():
+    """GBLinear binary classification."""
+    np.random.seed(42)
+    X, y = make_classification(
+        n_samples=100, n_features=4, n_informative=3,
+        n_redundant=0, n_repeated=0, random_state=42
+    )
+    X_test = X[:10]
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'binary:logistic',
+        'booster': 'gblinear',
+        'eta': 0.1,
+        'lambda': 0.1,
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=50)
+    save_test_case("gblinear_binary", booster, X_test, objective='binary:logistic')
+
+
+def generate_gblinear_multiclass():
+    """GBLinear multiclass classification."""
+    np.random.seed(42)
+    X, y = make_classification(
+        n_samples=120, n_features=4, n_informative=3,
+        n_redundant=0, n_repeated=0, n_classes=3,
+        n_clusters_per_class=1, random_state=42
+    )
+    X_test = X[:10]
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'multi:softprob',
+        'num_class': 3,
+        'booster': 'gblinear',
+        'eta': 0.1,
+        'lambda': 0.1,
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=50)
+    save_test_case("gblinear_multiclass", booster, X_test, objective='multi:softprob', num_class=3)
+
+
 def generate_deep_trees():
     """Regression with deep trees (max_depth=6) for longer traversal paths."""
     np.random.seed(42)
@@ -537,6 +596,11 @@ if __name__ == "__main__":
     generate_multiclass()
     generate_with_missing()
     generate_dart()
+    
+    # GBLinear cases
+    generate_gblinear_regression()
+    generate_gblinear_binary()
+    generate_gblinear_multiclass()
     
     # Additional coverage
     generate_binary_logistic_missing()

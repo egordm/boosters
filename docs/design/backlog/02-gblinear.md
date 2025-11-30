@@ -9,17 +9,17 @@ Validates training infrastructure before GBTree training.
 
 ---
 
-## Story 1: GBLinear Inference
+## Story 1: GBLinear Inference ✓
 
 **Goal**: Load and predict with XGBoost GBLinear models.
 
-- [ ] 1.1 `LinearModel` struct with `Box<[f32]>` weight storage
-- [ ] 1.2 Weight indexing: `weights[feature * num_groups + group]`
-- [ ] 1.3 `predict_row()` and `predict_batch()` methods
-- [ ] 1.4 `par_predict_batch()` with Rayon
-- [ ] 1.5 `Model::GBLinear` variant in booster enum
-- [ ] 1.6 XGBoost JSON parser for `gblinear` section
-- [ ] 1.7 Integration tests vs Python XGBoost
+- [x] 1.1 `LinearModel` struct with `Box<[f32]>` weight storage
+- [x] 1.2 Weight indexing: `weights[feature * num_groups + group]`
+- [x] 1.3 `predict_row()` and `predict_batch()` methods
+- [x] 1.4 `par_predict_batch()` with Rayon
+- [x] 1.5 `Booster::Linear` variant in model enum
+- [x] 1.6 XGBoost JSON parser for `gblinear` section
+- [x] 1.7 Integration tests vs Python XGBoost
 
 **Refs**: [RFC-0008](../rfcs/0008-gblinear-inference.md)
 

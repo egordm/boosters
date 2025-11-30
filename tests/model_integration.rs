@@ -99,7 +99,15 @@ fn parse_objective(objective: &str, num_class: u32) -> Objective {
 fn build_model(xgb: &XgbModel, objective: Objective) -> Model {
     let booster = xgb.to_booster().expect("conversion failed");
     let num_features = xgb.learner.learner_model_param.num_feature as u32;
-    let num_groups = booster.forest().num_groups();
+
+    // For tree-based models, get num_groups from forest
+    // For linear models, use num_class (or 1 for regression/binary)
+    let num_groups = match &booster {
+        booste_rs::model::Booster::Tree(f) | booste_rs::model::Booster::Dart { forest: f, .. } => {
+            f.num_groups()
+        }
+        booste_rs::model::Booster::Linear(l) => l.num_groups() as u32,
+    };
 
     Model::new(
         booster,

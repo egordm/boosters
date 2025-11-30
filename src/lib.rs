@@ -6,6 +6,7 @@
 pub mod compat;
 pub mod data;
 pub mod forest;
+pub mod linear;
 pub mod model;
 pub mod objective;
 pub mod predict;

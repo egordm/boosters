@@ -1,6 +1,7 @@
 //! Conversion from XGBoost JSON types to native booste-rs types.
 
 use crate::forest::SoAForest;
+use crate::linear::LinearModel;
 use crate::model::Booster;
 use crate::trees::{ScalarLeaf, TreeBuilder};
 
@@ -9,8 +10,6 @@ use super::json::{GradientBooster, ModelTrees, Tree, XgbModel};
 /// Error type for XGBoost model conversion.
 #[derive(Debug, thiserror::Error)]
 pub enum ConversionError {
-    #[error("unsupported booster type: gblinear models are not supported for tree prediction")]
-    UnsupportedBooster,
     #[error("tree {0} has no nodes")]
     EmptyTree(usize),
     #[error("invalid node index in tree {tree}: node {node} references child {child} but tree has {num_nodes} nodes")]
@@ -20,6 +19,8 @@ pub enum ConversionError {
         child: i32,
         num_nodes: usize,
     },
+    #[error("gblinear weights length {actual} doesn't match (num_features + 1) * num_groups = {expected}")]
+    InvalidLinearWeights { actual: usize, expected: usize },
 }
 
 /// Convert base_score from probability space to margin space based on objective.
@@ -46,28 +47,45 @@ impl XgbModel {
     /// Convert to a native `SoAForest<ScalarLeaf>`.
     ///
     /// This only supports gbtree and dart boosters (tree-based models).
-    /// gblinear models will return an error.
+    /// For gblinear models, use [`to_booster()`](Self::to_booster) instead.
     ///
     /// Note: For DART models, this returns just the forest without weights.
     /// Use [`to_booster()`](Self::to_booster) to get proper DART weighting.
     pub fn to_forest(&self) -> Result<SoAForest<ScalarLeaf>, ConversionError> {
+        if self.is_linear() {
+            // For linear models, to_forest doesn't make sense
+            // Users should use to_booster() instead
+            return Err(ConversionError::InvalidLinearWeights {
+                actual: 0,
+                expected: 0,
+            });
+        }
         let (forest, _weights) = self.to_forest_with_weights()?;
         Ok(forest)
     }
 
     /// Convert to a native `Booster`.
     ///
-    /// Returns `Booster::Tree` for gbtree models and `Booster::Dart` for DART models.
-    /// DART models include per-tree weights for proper weighted prediction.
+    /// Returns:
+    /// - `Booster::Tree` for gbtree models
+    /// - `Booster::Dart` for DART models (with per-tree weights)
+    /// - `Booster::Linear` for gblinear models
     pub fn to_booster(&self) -> Result<Booster, ConversionError> {
-        let (forest, weights) = self.to_forest_with_weights()?;
-
-        match weights {
-            Some(w) => Ok(Booster::Dart {
-                forest,
-                weights: w.into_boxed_slice(),
-            }),
-            None => Ok(Booster::Tree(forest)),
+        match &self.learner.gradient_booster {
+            GradientBooster::Gbtree { .. } | GradientBooster::Dart { .. } => {
+                let (forest, weights) = self.to_forest_with_weights()?;
+                match weights {
+                    Some(w) => Ok(Booster::Dart {
+                        forest,
+                        weights: w.into_boxed_slice(),
+                    }),
+                    None => Ok(Booster::Tree(forest)),
+                }
+            }
+            GradientBooster::Gblinear { model } => {
+                let linear = self.convert_linear_model(&model.weights)?;
+                Ok(Booster::Linear(linear))
+            }
         }
     }
 
@@ -79,6 +97,40 @@ impl XgbModel {
         )
     }
 
+    /// Returns true if this model uses gblinear booster.
+    pub fn is_linear(&self) -> bool {
+        matches!(
+            &self.learner.gradient_booster,
+            GradientBooster::Gblinear { .. }
+        )
+    }
+
+    /// Convert gblinear weights to LinearModel.
+    ///
+    /// XGBoost stores weights in column-major order: all weights for feature 0 across
+    /// all groups, then all weights for feature 1, etc., followed by biases.
+    /// Layout: [w(f0,g0), w(f0,g1), ..., w(fn,g0), w(fn,g1), ..., bias(g0), bias(g1), ...]
+    fn convert_linear_model(&self, weights: &[f32]) -> Result<LinearModel, ConversionError> {
+        let num_features = self.learner.learner_model_param.num_feature as usize;
+        let num_class = self.learner.learner_model_param.num_class;
+        let num_groups = if num_class <= 1 { 1 } else { num_class as usize };
+
+        let expected_len = (num_features + 1) * num_groups;
+        if weights.len() != expected_len {
+            return Err(ConversionError::InvalidLinearWeights {
+                actual: weights.len(),
+                expected: expected_len,
+            });
+        }
+
+        // XGBoost uses the same layout as our LinearModel: feature × group + bias
+        Ok(LinearModel::new(
+            weights.to_vec().into_boxed_slice(),
+            num_features,
+            num_groups,
+        ))
+    }
+
     /// Internal: Convert to forest with optional DART weights.
     fn to_forest_with_weights(
         &self,
@@ -88,7 +140,10 @@ impl XgbModel {
             GradientBooster::Dart { gbtree, weight_drop } => {
                 (&gbtree.model, Some(weight_drop.clone()))
             }
-            GradientBooster::Gblinear { .. } => return Err(ConversionError::UnsupportedBooster),
+            GradientBooster::Gblinear { .. } => {
+                // This shouldn't happen - callers should use convert_linear_model directly
+                unreachable!("to_forest_with_weights called on gblinear model")
+            }
         };
 
         // Determine number of groups (1 for regression, num_class for multiclass)
@@ -318,6 +373,7 @@ mod tests {
         match booster {
             Booster::Tree(_) => {}
             Booster::Dart { .. } => panic!("Expected Booster::Tree"),
+            Booster::Linear(_) => panic!("Expected Booster::Tree"),
         }
     }
 
@@ -333,6 +389,7 @@ mod tests {
                 assert_eq!(weights.len(), forest.num_trees());
             }
             Booster::Tree(_) => panic!("Expected Booster::Dart"),
+            Booster::Linear(_) => panic!("Expected Booster::Dart"),
         }
     }
 
@@ -348,5 +405,58 @@ mod tests {
         assert_eq!(predictions.len(), 1);
         // The prediction should be a finite number
         assert!(predictions[0].is_finite());
+    }
+
+    #[test]
+    fn convert_gblinear_regression() {
+        let model = load_test_model("gblinear_regression");
+        let booster = model.to_booster().expect("Conversion failed");
+
+        assert!(model.is_linear());
+        match booster {
+            Booster::Linear(linear) => {
+                assert_eq!(linear.num_features(), 5);
+                assert_eq!(linear.num_groups(), 1);
+            }
+            _ => panic!("Expected Booster::Linear"),
+        }
+    }
+
+    #[test]
+    fn convert_gblinear_binary() {
+        let model = load_test_model("gblinear_binary");
+        let booster = model.to_booster().expect("Conversion failed");
+
+        assert!(model.is_linear());
+        match booster {
+            Booster::Linear(linear) => {
+                assert_eq!(linear.num_features(), 4);
+                assert_eq!(linear.num_groups(), 1); // Binary is single output
+            }
+            _ => panic!("Expected Booster::Linear"),
+        }
+    }
+
+    #[test]
+    fn convert_gblinear_multiclass() {
+        let model = load_test_model("gblinear_multiclass");
+        let booster = model.to_booster().expect("Conversion failed");
+
+        assert!(model.is_linear());
+        match booster {
+            Booster::Linear(linear) => {
+                assert_eq!(linear.num_features(), 4);
+                assert_eq!(linear.num_groups(), 3); // 3-class multiclass
+            }
+            _ => panic!("Expected Booster::Linear"),
+        }
+    }
+
+    #[test]
+    fn gblinear_to_forest_fails() {
+        let model = load_test_model("gblinear_regression");
+
+        // to_forest should fail for gblinear models
+        assert!(model.to_forest().is_err());
     }
 }
