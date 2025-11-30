@@ -78,26 +78,30 @@ graph TB
 ### Component Responsibilities
 
 **Public API Layer**
+
 - `Model` — Load/save interface, format conversion
 - `predict()` — High-level prediction with batching and parallelism
 - `DenseMatrix` — Feature matrix abstraction
 
 **Prediction Engine**
+
 - `Predictor<T>` — Generic predictor over traversal strategies
 - `TreeTraversal` — Trait for tree traversal (Standard, Unrolled)
 - Rayon integration for parallel batch processing
 
 **Core Data Structures**
+
 - `SoAForest` — Collection of trees with metadata ([RFC-0001](./rfcs/0001-forest-data-structures.md))
 - `UnrolledTreeLayout` — Cache-optimized tree structure ([RFC-0002](./rfcs/0002-tree-data-structures.md))
 
 **Serialization**
+
 - XGBoost JSON — Complete support for GBTree, DART, categorical ([RFC-0007](./rfcs/0007-serialization.md))
 - LightGBM — Planned
 
 ### Data Flow
 
-```
+```text
 ┌─────────────────┐
 │  Model File     │  (XGBoost JSON, LightGBM, etc.)
 └────────┬────────┘

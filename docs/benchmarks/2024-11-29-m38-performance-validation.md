@@ -6,7 +6,13 @@
 **Rust**: 1.83.0  
 **XGBoost**: 2.1.3 (via `xgb` crate)
 
-## Executive Summary
+## Goal
+
+Comprehensive performance validation after completing all M3.x optimizations.
+Answer: Does booste-rs meet production performance requirements? How does it
+compare to XGBoost C++ across all scenarios?
+
+## Summary
 
 booste-rs achieves **significant performance advantages** over XGBoost C++ across all benchmarked scenarios:
 
@@ -19,6 +25,7 @@ booste-rs achieves **significant performance advantages** over XGBoost C++ acros
 | 8-thread parallel (10K) | 1.58ms | 5.0ms | **3.17x faster** |
 
 **Key findings**:
+
 1. **Single-row latency**: 9.4x faster than XGBoost C++ (1.24µs vs 11.6µs)
 2. **Batch prediction**: 29% faster with UnrolledTraversal
 3. **Thread scaling**: 6.9x speedup with 8 threads, 3.17x faster than XGBoost at same thread count
@@ -38,7 +45,7 @@ Using `bench_medium` model (100 trees, depth 6, 50 features):
 | 1,000 | 3.61ms | 277K elem/s | Standard batch |
 | 10,000 | 36.3ms | 276K elem/s | Large batch |
 
-**Note**: `Model::predict()` uses StandardTraversal by default for compatibility. 
+**Note**: `Model::predict()` uses StandardTraversal by default for compatibility.
 Use `Predictor::<UnrolledTraversal6>` directly for 3x better batch performance.
 
 ### 2. Model Size Comparison
@@ -51,7 +58,7 @@ All with 1,000 rows:
 | Medium | 100 | 50 | 3.6ms | 277K elem/s |
 | Large | 500 | 100 | 23.0ms | 43K elem/s |
 
-**Scaling**: Near-linear with tree count. Large model (500 trees) is ~6.4x slower than 
+**Scaling**: Near-linear with tree count. Large model (500 trees) is ~6.4x slower than
 medium (100 trees), consistent with 5x more trees.
 
 ### 3. Traversal Strategy Comparison
@@ -64,6 +71,7 @@ medium (100 trees), consistent with 5x more trees.
 | Unrolled | Block-64 | **1.08ms** | **10.8ms** | **3.3x faster** |
 
 **Key insights**:
+
 - Blocking alone doesn't help StandardTraversal (slight overhead)
 - UnrolledTraversal + Block-64 is optimal: **3.3x faster** than Standard
 - Level-by-level processing keeps tree levels in cache
@@ -80,7 +88,7 @@ Using UnrolledTraversal with 10K rows:
 | 4 | 2.94ms | 3.72x | 93% |
 | 8 | 1.60ms | **6.88x** | 86% |
 
-**Parallel efficiency**: 86% at 8 threads is excellent, considering M1 Pro has 
+**Parallel efficiency**: 86% at 8 threads is excellent, considering M1 Pro has
 8 performance + 2 efficiency cores. Memory bandwidth limits prevent perfect scaling.
 
 ### 5. XGBoost Comparison
@@ -93,6 +101,7 @@ Using UnrolledTraversal with 10K rows:
 | XGBoost C++ | 11.6µs | 9.4x slower |
 
 **Analysis**: XGBoost's single-row overhead comes from:
+
 - DMatrix creation (~8µs overhead)
 - Safety checks and padding
 - Less optimized for latency
@@ -105,7 +114,7 @@ Using UnrolledTraversal with 10K rows:
 | 1,000 | 1.07ms | 1.38ms | 1.29x |
 | 10,000 | 10.73ms | 13.80ms | 1.29x |
 
-**Note**: Both using default settings (XGBoost with all threads, booste-rs with 
+**Note**: Both using default settings (XGBoost with all threads, booste-rs with
 UnrolledTraversal sequential). booste-rs maintains consistent 29% advantage.
 
 #### 5.3 Thread Scaling Comparison
@@ -121,6 +130,7 @@ With controlled thread counts (10K rows):
 
 **Analysis**: XGBoost scales poorly on M1 Pro (only 2.75x at 8 threads vs our 6.9x).
 Likely causes:
+
 - OpenMP may not optimize for Apple Silicon's hybrid architecture
 - Higher thread synchronization overhead
 - Different cache behavior
@@ -162,7 +172,7 @@ let output = predictor.par_predict(&matrix);
 
 ## Platform Notes
 
-These benchmarks were run on **Apple M1 Pro (macOS)**. Expect different absolute 
+These benchmarks were run on **Apple M1 Pro (macOS)**. Expect different absolute
 numbers on other platforms:
 
 - **x86-64 (Intel/AMD)**: Similar relative performance, may see better SIMD gains

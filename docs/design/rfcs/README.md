@@ -42,22 +42,23 @@ Each RFC follows this structure:
 | [0003](./0003-visitor-and-traversal.md) | Visitor and Traversal | Implemented | `TreeTraversal`, `Predictor`, parallelism |
 | [0004](./0004-dmatrix.md) | DMatrix and Data Input | Implemented | `DataMatrix` trait, `DenseMatrix` |
 | [0007](./0007-serialization.md) | Serialization | Active | XGBoost JSON ✅, LightGBM planned |
+| [0008](./0008-gblinear-inference.md) | GBLinear Inference | Approved | Linear model loading and prediction |
+| [0009](./0009-gblinear-training.md) | GBLinear Training | Approved | Coordinate descent training |
 
 ### Planned RFCs (pending research)
 
 | RFC | Title | Status | Research Needed |
 |-----|-------|--------|-----------------|
-| 0008 | GBLinear | Planned | `../research/gblinear.md` |
-| 0009 | LightGBM Support | Planned | `../research/lightgbm.md` |
-| 0010 | Quantization | Planned | `../research/quantization.md` |
-| 0011 | Training Pipeline | Planned | `../research/training.md` |
-| 0012 | GPU Backend | Planned | Future |
+| 0010 | LightGBM Support | Planned | `../research/lightgbm.md` |
+| 0011 | Quantization | Planned | `../research/quantization.md` |
+| 0012 | Training Pipeline | Planned | `../research/training.md` |
+| 0013 | GPU Backend | Planned | Future |
 
 ### Research Conclusions (no RFC needed)
 
 | Topic | Conclusion | Notes |
 |-------|------------|-------|
-| SIMD Acceleration | Not beneficial | Gather bottleneck, see [M3.6 analysis](../../benchmarks/2024-11-28-simd-analysis.md) |
+| SIMD Acceleration | Not beneficial | Gather bottleneck, see [SIMD analysis](../../benchmarks/2024-11-28-simd-analysis.md) |
 
 ## Dependency Graph
 
@@ -71,11 +72,15 @@ graph TD
         RFC0007["0007: Serialization"]
     end
 
+    subgraph "Draft 📝"
+        RFC0008["0008: GBLinear Inference"]
+        RFC0009["0009: GBLinear Training"]
+    end
+
     subgraph "Planned ⏳"
-        RFC0008["0008: GBLinear"]
-        RFC0009["0009: LightGBM"]
-        RFC0010["0010: Quantization"]
-        RFC0011["0011: Training"]
+        RFC0010["0010: LightGBM"]
+        RFC0011["0011: Quantization"]
+        RFC0012["0012: Training"]
     end
 
     RFC0001 --> RFC0002
@@ -83,10 +88,11 @@ graph TD
     RFC0004 --> RFC0003
     RFC0007 --> RFC0001
     
-    RFC0003 --> RFC0008
-    RFC0007 --> RFC0009
-    RFC0004 --> RFC0010
-    RFC0010 --> RFC0011
+    RFC0007 --> RFC0008
+    RFC0008 --> RFC0009
+    RFC0007 --> RFC0010
+    RFC0004 --> RFC0011
+    RFC0011 --> RFC0012
 ```
 
 ## Writing a New RFC

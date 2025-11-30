@@ -5,6 +5,12 @@
 **Platform**: Apple M1 Pro (10-core, 8P+2E), 32GB RAM, macOS 15.1  
 **Rust**: 1.83.0
 
+## Goal
+
+Add and validate thread parallelism via Rayon for multi-core scaling.
+Hypothesis: Parallel prediction should scale near-linearly with thread count.
+Also: compare our thread scaling against XGBoost's OpenMP parallelism.
+
 ## Summary
 
 M3.7 adds thread parallelism via Rayon for multi-core prediction scaling. Key findings:
@@ -27,6 +33,7 @@ Using `bench_medium` model (100 trees, 50 features), 10K rows:
 | 8 threads | 1.61ms | 6.23M elem/s | **6.80x** | 85% |
 
 **Parallel efficiency**: 85% at 8 threads is excellent, considering:
+
 - M1 Pro has 8 performance cores + 2 efficiency cores
 - Memory bandwidth limits prevent perfect linear scaling
 - Theoretical max speedup ~8x, achieved 6.8x (85% efficiency)
@@ -43,6 +50,7 @@ Both tested with controlled thread counts (10K rows):
 | 8 | 1.59ms | 5.06ms | **3.18x** | +218% faster |
 
 **Key observations**:
+
 - booste-rs is faster at **all** thread counts
 - Gap **widens** with more threads (XGBoost scales poorly on M1 Pro)
 - XGBoost achieves only ~2.7x speedup at 8 threads vs our 6.8x
@@ -50,6 +58,7 @@ Both tested with controlled thread counts (10K rows):
 ### XGBoost Scaling Analysis
 
 XGBoost's poor scaling on M1 Pro (2.7x at 8 threads) likely due to:
+
 1. OpenMP may not optimize well for Apple Silicon's hybrid architecture
 2. C++ implementation may have thread synchronization overhead
 3. DMatrix creation overhead in benchmarks (though we tried to minimize this)
@@ -59,6 +68,7 @@ XGBoost's poor scaling on M1 Pro (2.7x at 8 threads) likely due to:
 ### Thread Pool Management
 
 **Initial approach (broken)**:
+
 ```rust
 rayon::ThreadPoolBuilder::new()
     .num_threads(num_threads)
@@ -69,6 +79,7 @@ predictor.par_predict(matrix)  // Uses default pool
 ```
 
 **Fixed approach**:
+
 ```rust
 let pool = rayon::ThreadPoolBuilder::new()
     .num_threads(num_threads)
@@ -85,10 +96,12 @@ pool.install(|| predictor.par_predict(matrix))
 Removed branching in `process_block_parallel`:
 
 **Before**: Two paths based on `USES_BLOCK_OPTIMIZATION`
+
 - Block-optimized path for `UnrolledTraversal` (calls `traverse_block`)
 - Per-row path for `StandardTraversal` (calls `traverse_tree`)
 
 **After**: Single path always using block-optimized traversal
+
 - `UnrolledTraversal`: optimized batch processing via `traverse_block`
 - `StandardTraversal`: falls back to default `traverse_block` (per-row loop)
 
@@ -98,9 +111,10 @@ Removed branching in `process_block_parallel`:
 
 ## Platform Notes
 
-These benchmarks were run on **macOS (Apple M1 Pro)**. Previous benchmarks were on **Linux (AMD Ryzen 9 9950X)**. 
+These benchmarks were run on **macOS (Apple M1 Pro)**. Previous benchmarks were on **Linux (AMD Ryzen 9 9950X)**.
 
 Key differences:
+
 - M1 Pro: 10 cores (8P+2E), unified memory, 3.2GHz base
 - Ryzen 9950X: 16 cores (Zen 5), 192KB L1 cache, up to 5.7GHz boost
 
@@ -138,6 +152,7 @@ Expect different absolute numbers but similar relative scaling patterns.
 ## Next Steps
 
 M3.8 Performance Validation will:
+
 - Re-run comprehensive benchmarks with all optimizations
 - Test on Linux (Ryzen 9950X) for higher core counts
 - Profile to identify any remaining bottlenecks

@@ -7,9 +7,38 @@ This document describes conventions and best practices for implementing booste-r
 
 ---
 
+## Project Organization
+
+### Epics, Stories, and Tasks
+
+We use a lightweight agile structure:
+
+| Level | Description | Location |
+|-------|-------------|----------|
+| **Epic** | Large feature area (e.g., "GBLinear Support") | `docs/design/backlog/<epic>.md` |
+| **Story** | Deliverable chunk within an epic | Numbered sections in epic file |
+| **Task** | Individual work item within a story | Checklist items (1.1, 1.2, etc.) |
+
+### Backlog Structure
+
+```
+docs/design/
+├── ROADMAP.md              # High-level priorities & current focus
+├── backlog/
+│   ├── gbtree-inference.md # Epic: GBTree Inference (complete)
+│   ├── gblinear.md         # Epic: GBLinear Support (active)
+│   └── future.md           # Backlog of future epics
+└── rfcs/                   # Design documents
+```
+
+**Key principle**: Each epic file uses relative numbering (Story 1, 2, 3...) so
+adding/removing epics doesn't require renumbering other files.
+
+---
+
 ## Development Loop
 
-For each milestone in the roadmap:
+For each task in a story:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -18,8 +47,8 @@ For each milestone in the roadmap:
 │  3. Write unit tests (inline)                                │
 │  4. Write rustdoc for public items                           │
 │  5. If design changes needed → update RFC, note why          │
-│  6. Integration test at milestone boundary                   │
-│  7. Commit with clear message referencing milestone          │
+│  6. Integration test at story boundary                       │
+│  7. Commit with clear message referencing story/task         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -140,7 +169,7 @@ The `tests/` folder is only for **integration tests** that use the crate as an e
 ### Testing Workflow
 
 1. **Unit tests**: Write as you implement each function
-2. **Integration tests**: Add at milestone boundaries
+2. **Integration tests**: Add at story boundaries
 3. **Reference data**: Generate with Python, commit to repo
 
 ```rust
@@ -165,7 +194,7 @@ mod tests {
 
 Use `docs/design/research/` for deep dives:
 
-- XGBoost internals exploration
+- XGBoost/LightGBM internals exploration
 - Performance experiments
 - Algorithm alternatives
 
@@ -175,9 +204,9 @@ Example structure:
 
 ```
 docs/design/research/
-├── xgboost-inference.md        # How XGBoost C++ does prediction
-├── simd_traversal_experiment.md # Performance experiment notes
-└── quantized_data_structures/   # Deep dive on quantization
+├── xgboost-gbtree/         # GBTree-specific research
+├── gblinear/               # GBLinear-specific research
+└── lightgbm/               # Future LightGBM research
 ```
 
 ---
@@ -185,7 +214,7 @@ docs/design/research/
 ## Commit Message Convention
 
 ```
-<type>(<scope>): <description> [M<milestone>]
+<type>(<scope>): <description> [<epic>/<story>.<task>]
 
 <body>
 
@@ -204,28 +233,22 @@ Refs: RFC-XXXX
 ### Examples
 
 ```
-feat(trees): implement SoATreeStorage [M1.2]
+feat(linear): implement LinearModel struct [gblinear/1.1]
 
-- Flat array layout for cache-friendly traversal
-- predict_row() traverses to leaf
-- Tests for binary tree structure
+- Box<[f32]> weight storage
+- Weight indexing for feature × group
+- predict_row() dot product
 
-Refs: RFC-0002
+Refs: RFC-0008
 ```
 
 ```
-fix(compat): handle XGBoost default_left edge case [M1.4]
+fix(compat): handle XGBoost default_left edge case [gbtree/1.4]
 
 XGBoost JSON uses 0/1 for default direction, not boolean.
 Updated parser to handle numeric values.
 
 Refs: RFC-0007
-```
-
-```
-docs(trees): add module-level rustdoc [M1.2]
-
-Refs: RFC-0002
 ```
 
 ---
@@ -234,8 +257,9 @@ Refs: RFC-0002
 
 | Content | Location |
 |---------|----------|
+| High-level roadmap | `docs/design/ROADMAP.md` |
+| Epic details | `docs/design/backlog/<epic>.md` |
 | RFCs (design docs) | `docs/design/rfcs/0XXX-*.md` |
-| Implementation roadmap | `docs/design/ROADMAP.md` |
 | Research & deep dives | `docs/design/research/` |
 | Scratch notes | `docs/design/NOTES.md` |
 | This guide | `docs/design/CONTRIBUTING.md` |
@@ -249,8 +273,8 @@ Refs: RFC-0002
 
 ## Summary
 
-1. **RFCs are stable** — update only for significant design changes
-2. **Document in code** — rustdoc for public APIs, comments for internals
-3. **Test as you go** — don't batch testing at the end
-4. **Use NOTES.md** — for quick thoughts, promote important bits later
-5. **Clear commits** — reference milestones and RFCs
+1. **Epics organize work** — one file per major feature, relative numbering
+2. **RFCs are stable** — update only for significant design changes
+3. **Document in code** — rustdoc for public APIs, comments for internals
+4. **Test as you go** — don't batch testing at the end
+5. **Clear commits** — reference epic/story/task and RFCs
