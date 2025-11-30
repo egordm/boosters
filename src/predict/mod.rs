@@ -6,32 +6,31 @@
 //! # Quick Start
 //!
 //! ```ignore
-//! use booste_rs::predict::{SimplePredictor, UnrolledPredictor6};
+//! use booste_rs::predict::{Predictor, StandardTraversal, UnrolledTraversal6};
 //! use booste_rs::data::DenseMatrix;
 //!
-//! // Simple predictor (no pre-computation)
-//! let predictor = SimplePredictor::new(&forest);
+//! // Simple predictor (no pre-computation, good for single rows)
+//! let predictor = Predictor::<StandardTraversal>::new(&forest);
 //!
-//! // Unrolled predictor (faster for large batches)
-//! let fast_predictor = UnrolledPredictor6::new(&forest);
+//! // Unrolled predictor (faster for large batches, 2-3x speedup)
+//! let fast_predictor = Predictor::<UnrolledTraversal6>::new(&forest);
 //!
-//! // SIMD predictor (fastest for large batches, requires `simd` feature)
-//! #[cfg(feature = "simd")]
-//! let simd_predictor = booste_rs::predict::SimdPredictor6::new(&forest);
-//!
-//! // Predict
+//! // Sequential prediction
 //! let output = predictor.predict(&features);
+//!
+//! // Parallel prediction (for large batches on multi-core)
+//! let output = fast_predictor.par_predict(&features);
 //! ```
 //!
-//! # Choosing a Predictor
+//! # Choosing a Traversal Strategy
 //!
-//! | Scenario | Recommended |
-//! |----------|-------------|
-//! | Single row | `SimplePredictor` |
-//! | Small batches (<100 rows) | `SimplePredictor` |
-//! | Large batches (100+ rows) | `UnrolledPredictor6` |
-//! | Large batches + AVX2 | `SimdPredictor6` (requires `simd` feature) |
-//! | Very deep trees (>6 levels) | `UnrolledPredictor8` |
+//! | Scenario | Traversal | Method |
+//! |----------|-----------|--------|
+//! | Single row | `StandardTraversal` | `predict()` |
+//! | Small batches (<100 rows) | `StandardTraversal` | `predict()` |
+//! | Large batches (100+ rows) | `UnrolledTraversal6` | `predict()` |
+//! | Large batches + multi-core | `UnrolledTraversal6` | `par_predict()` |
+//! | Very deep trees (>6 levels) | `UnrolledTraversal8` | `predict()` |
 //!
 //! # Block Size
 //!
@@ -42,9 +41,11 @@
 //!
 //! [`UnrolledTraversal`] uses compile-time depth for optimization:
 //!
-//! - `UnrolledPredictor4`: 4 levels (15 nodes) — shallow trees
-//! - `UnrolledPredictor6`: 6 levels (63 nodes) — default, matches XGBoost
-//! - `UnrolledPredictor8`: 8 levels (255 nodes) — deep trees
+//! - `UnrolledTraversal4`: 4 levels (15 nodes) — shallow trees
+//! - `UnrolledTraversal6`: 6 levels (63 nodes) — default, matches XGBoost
+//! - `UnrolledTraversal8`: 8 levels (255 nodes) — deep trees
+//!
+//! Type aliases `UnrolledPredictor4/6/8` are provided for convenience.
 //!
 //! # Output Format
 //!
@@ -78,14 +79,14 @@ pub use simd::{SimdTraversal, SimdTraversal4, SimdTraversal6, SimdTraversal8, SI
 // Re-export output type
 pub use output::PredictionOutput;
 
-// Type aliases for SIMD predictors
+// Type aliases for SIMD predictors (experimental, see simd.rs for status)
 #[cfg(feature = "simd")]
-/// SIMD-accelerated predictor with depth 4.
+/// SIMD-accelerated predictor with depth 4 (experimental).
 pub type SimdPredictor4<'f> = Predictor<'f, SimdTraversal4>;
 #[cfg(feature = "simd")]
-/// SIMD-accelerated predictor with depth 6 (default).
+/// SIMD-accelerated predictor with depth 6 (experimental).
 pub type SimdPredictor6<'f> = Predictor<'f, SimdTraversal6>;
 #[cfg(feature = "simd")]
-/// SIMD-accelerated predictor with depth 8.
+/// SIMD-accelerated predictor with depth 8 (experimental).
 pub type SimdPredictor8<'f> = Predictor<'f, SimdTraversal8>;
 

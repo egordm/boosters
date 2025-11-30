@@ -918,6 +918,9 @@ trait TreeVisitor {
 - 2024-11-28: UnrolledTraversal achieves 2.9x speedup via level-by-level processing
 - 2024-12: M3.6 DD-5 added — row-parallel SIMD ~12% slower than UnrolledTraversal
 - 2024-12: Finding: gather overhead negates SIMD benefits with row-major data layout
+- 2024-11-28: M3.7 implemented — `par_predict()` using Rayon for thread parallelism
+- 2024-11-28: Added `Send + Sync` bounds to `TreeState` for parallel block processing
+- 2024-11-28: Achieved 6.8x speedup with 8 threads, 3.18x faster than XGBoost (M1 Pro)
 
 ---
 
