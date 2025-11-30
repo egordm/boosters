@@ -1,5 +1,7 @@
 //! Prediction output types.
 
+use approx::{AbsDiffEq, RelativeEq};
+
 /// Prediction output: flat storage with shape metadata.
 ///
 /// Stores predictions in row-major layout for cache efficiency.
@@ -132,6 +134,49 @@ impl PredictionOutput {
     }
 }
 
+// =============================================================================
+// Approx Trait Implementations
+// =============================================================================
+
+impl AbsDiffEq for PredictionOutput {
+    type Epsilon = f32;
+
+    fn default_epsilon() -> Self::Epsilon {
+        f32::default_epsilon()
+    }
+
+    fn abs_diff_eq(&self, other: &Self, epsilon: Self::Epsilon) -> bool {
+        self.num_rows == other.num_rows
+            && self.num_groups == other.num_groups
+            && self
+                .data
+                .iter()
+                .zip(other.data.iter())
+                .all(|(a, b)| a.abs_diff_eq(b, epsilon))
+    }
+}
+
+impl RelativeEq for PredictionOutput {
+    fn default_max_relative() -> Self::Epsilon {
+        f32::default_max_relative()
+    }
+
+    fn relative_eq(
+        &self,
+        other: &Self,
+        epsilon: Self::Epsilon,
+        max_relative: Self::Epsilon,
+    ) -> bool {
+        self.num_rows == other.num_rows
+            && self.num_groups == other.num_groups
+            && self
+                .data
+                .iter()
+                .zip(other.data.iter())
+                .all(|(a, b)| a.relative_eq(b, epsilon, max_relative))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,5 +236,57 @@ mod tests {
     #[should_panic(expected = "does not match shape")]
     fn wrong_size_panics() {
         PredictionOutput::new(vec![1.0, 2.0, 3.0], 2, 2);
+    }
+
+    // =========================================================================
+    // Approx trait tests
+    // =========================================================================
+
+    #[test]
+    fn abs_diff_eq_equal() {
+        let a = PredictionOutput::new(vec![1.0, 2.0, 3.0, 4.0], 2, 2);
+        let b = PredictionOutput::new(vec![1.0, 2.0, 3.0, 4.0], 2, 2);
+        assert!(a.abs_diff_eq(&b, 0.0));
+    }
+
+    #[test]
+    fn abs_diff_eq_within_epsilon() {
+        let a = PredictionOutput::new(vec![1.0, 2.0], 2, 1);
+        let b = PredictionOutput::new(vec![1.00001, 2.00001], 2, 1);
+        assert!(a.abs_diff_eq(&b, 1e-4));
+        assert!(!a.abs_diff_eq(&b, 1e-6));
+    }
+
+    #[test]
+    fn abs_diff_eq_shape_mismatch() {
+        let a = PredictionOutput::new(vec![1.0, 2.0], 2, 1);
+        let b = PredictionOutput::new(vec![1.0, 2.0], 1, 2);
+        assert!(!a.abs_diff_eq(&b, 1.0));
+    }
+
+    #[test]
+    fn relative_eq_equal() {
+        let a = PredictionOutput::new(vec![1.0, 2.0, 3.0], 3, 1);
+        let b = PredictionOutput::new(vec![1.0, 2.0, 3.0], 3, 1);
+        assert!(a.relative_eq(&b, 0.0, 0.0));
+    }
+
+    #[test]
+    fn relative_eq_within_tolerance() {
+        let a = PredictionOutput::new(vec![100.0, 200.0], 2, 1);
+        let b = PredictionOutput::new(vec![100.001, 200.002], 2, 1);
+        // Should pass with relative tolerance of 1e-4 (0.01%)
+        assert!(a.relative_eq(&b, 0.0, 1e-4));
+    }
+
+    #[test]
+    fn approx_macro_integration() {
+        use approx::{assert_abs_diff_eq, assert_relative_eq};
+
+        let a = PredictionOutput::new(vec![1.0, 2.0, 3.0], 3, 1);
+        let b = PredictionOutput::new(vec![1.0, 2.0, 3.0], 3, 1);
+
+        assert_abs_diff_eq!(a, b);
+        assert_relative_eq!(a, b);
     }
 }

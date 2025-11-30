@@ -1,0 +1,586 @@
+"""Generate XGBoost test cases with models, input data, and expected predictions.
+
+Each test case generates:
+- {name}.model.json      - The XGBoost model
+- {name}.input.json      - Test input features  
+- {name}.expected.json   - Expected predictions (raw margin + transformed)
+
+Test cases are organized by booster type:
+- gbtree/   - Standard tree ensemble models
+- gblinear/ - Linear booster models  
+- dart/     - DART booster models
+
+This allows Rust tests to load a model, predict on inputs, and compare to expected output.
+We use XGBoost's own predictions for both raw and transformed to ensure correctness.
+"""
+from pathlib import Path
+import numpy as np
+from sklearn.datasets import make_regression, make_classification
+import xgboost as xgb
+
+from .common import nan_to_null, save_test_input, save_test_expected, print_success
+
+# Output directories
+BASE_DIR = Path(__file__).parents[3] / "tests" / "test-cases" / "xgboost"
+GBTREE_DIR = BASE_DIR / "gbtree"
+GBLINEAR_DIR = BASE_DIR / "gblinear"
+DART_DIR = BASE_DIR / "dart"
+BENCH_DIR = Path(__file__).parents[3] / "tests" / "test-cases" / "benchmark"
+
+# Ensure directories exist
+for d in [GBTREE_DIR, GBLINEAR_DIR, DART_DIR, BENCH_DIR]:
+    d.mkdir(parents=True, exist_ok=True)
+
+
+def save_xgb_test_case(
+    name: str,
+    booster: xgb.Booster,
+    X_test: np.ndarray,
+    objective: str,
+    num_class: int = 0,
+    output_dir: Path = GBTREE_DIR,
+    dtest: xgb.DMatrix | None = None,
+    feature_types: list[str] | None = None,
+):
+    """Save a complete XGBoost test case: model, inputs, and expected predictions.
+    
+    Args:
+        name: Test case name (without extension)
+        booster: Trained XGBoost booster
+        X_test: Test features
+        objective: Objective function name
+        num_class: Number of classes (0 for regression/binary)
+        output_dir: Directory to save files
+        dtest: Optional pre-built DMatrix for categorical features
+        feature_types: Optional feature type list for categorical features
+    """
+    # Save model
+    model_path = output_dir / f"{name}.model.json"
+    booster.save_model(str(model_path))
+    
+    # Save test inputs
+    input_path = output_dir / f"{name}.input.json"
+    save_test_input(input_path, X_test, feature_types)
+    
+    # Get predictions from XGBoost itself
+    if dtest is None:
+        dtest = xgb.DMatrix(X_test)
+    raw_predictions = booster.predict(dtest, output_margin=True)
+    transformed_predictions = booster.predict(dtest, output_margin=False)
+    
+    # Save expected predictions
+    expected_path = output_dir / f"{name}.expected.json"
+    save_test_expected(expected_path, raw_predictions, transformed_predictions, objective, num_class)
+    
+    print_success(name, len(X_test))
+
+
+# =============================================================================
+# GBTree Test Cases
+# =============================================================================
+
+def generate_regression():
+    """Simple regression: 5 features, 5 trees."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=100, n_features=5, noise=10.0, random_state=42)
+    X_test = X[:10]
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'reg:squarederror',
+        'max_depth': 3,
+        'eta': 0.1,
+        'booster': 'gbtree',
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=5)
+    save_xgb_test_case("gbtree_regression", booster, X_test, objective='reg:squarederror')
+
+
+def generate_binary_logistic():
+    """Binary classification with logistic objective."""
+    np.random.seed(42)
+    X, y = make_classification(
+        n_samples=100, n_features=4, n_informative=3,
+        n_redundant=0, n_repeated=0, random_state=42
+    )
+    X_test = X[:10]
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'binary:logistic',
+        'max_depth': 2,
+        'eta': 0.15,
+        'booster': 'gbtree',
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=5)
+    save_xgb_test_case("gbtree_binary_logistic", booster, X_test, objective='binary:logistic')
+
+
+def generate_binary_logistic_missing():
+    """Binary classification with missing values."""
+    np.random.seed(42)
+    X, y = make_classification(
+        n_samples=100, n_features=4, n_informative=3,
+        n_redundant=0, n_repeated=0, random_state=42
+    )
+    
+    X_test = X[:10].copy()
+    X_test[0, 0] = np.nan
+    X_test[2, 1] = np.nan
+    X_test[4, :2] = np.nan
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'binary:logistic',
+        'max_depth': 2,
+        'eta': 0.15,
+        'booster': 'gbtree',
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=5)
+    save_xgb_test_case("gbtree_binary_logistic_missing", booster, X_test, objective='binary:logistic')
+
+
+def generate_multiclass():
+    """Multiclass classification (3 classes)."""
+    np.random.seed(42)
+    X, y = make_classification(
+        n_samples=120, n_features=4, n_informative=3,
+        n_redundant=0, n_repeated=0, n_classes=3,
+        n_clusters_per_class=1, random_state=42
+    )
+    X_test = X[:10]
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'multi:softprob',
+        'num_class': 3,
+        'max_depth': 2,
+        'eta': 0.1,
+        'booster': 'gbtree',
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=4)
+    save_xgb_test_case("gbtree_multiclass", booster, X_test, objective='multi:softprob', num_class=3)
+
+
+def generate_multiclass_missing():
+    """Multiclass classification with missing values."""
+    np.random.seed(42)
+    X, y = make_classification(
+        n_samples=120, n_features=4, n_informative=3,
+        n_redundant=0, n_repeated=0, n_classes=3,
+        n_clusters_per_class=1, random_state=42
+    )
+    
+    X_test = X[:10].copy()
+    X_test[1, 0] = np.nan
+    X_test[3, 2] = np.nan
+    X_test[7, :] = np.nan
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'multi:softprob',
+        'num_class': 3,
+        'max_depth': 2,
+        'eta': 0.1,
+        'booster': 'gbtree',
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=4)
+    save_xgb_test_case("gbtree_multiclass_missing", booster, X_test, objective='multi:softprob', num_class=3)
+
+
+def generate_regression_missing():
+    """Regression with missing values (NaN) in test data."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=100, n_features=4, noise=5.0, random_state=42)
+    
+    X_test = X[:10].copy()
+    X_test[0, 0] = np.nan
+    X_test[2, 1] = np.nan
+    X_test[5, :] = np.nan
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'reg:squarederror',
+        'max_depth': 3,
+        'eta': 0.1,
+        'booster': 'gbtree',
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=5)
+    save_xgb_test_case("gbtree_regression_missing", booster, X_test, objective='reg:squarederror')
+
+
+def generate_deep_trees():
+    """Regression with deep trees (max_depth=6)."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=200, n_features=8, noise=5.0, random_state=42)
+    X_test = X[:10]
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'reg:squarederror',
+        'max_depth': 6,
+        'eta': 0.1,
+        'booster': 'gbtree',
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=5)
+    save_xgb_test_case("gbtree_deep_trees", booster, X_test, objective='reg:squarederror')
+
+
+def generate_single_tree():
+    """Single tree regression - edge case."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=50, n_features=3, noise=5.0, random_state=42)
+    X_test = X[:10]
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'reg:squarederror',
+        'max_depth': 3,
+        'eta': 1.0,
+        'booster': 'gbtree',
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=1)
+    save_xgb_test_case("gbtree_single_tree", booster, X_test, objective='reg:squarederror')
+
+
+def generate_many_trees():
+    """Many trees (50) to test accumulation precision."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=200, n_features=5, noise=10.0, random_state=42)
+    X_test = X[:10]
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'reg:squarederror',
+        'max_depth': 2,
+        'eta': 0.05,
+        'booster': 'gbtree',
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=50)
+    save_xgb_test_case("gbtree_many_trees", booster, X_test, objective='reg:squarederror')
+
+
+def generate_wide_features():
+    """Wide data (100 features) to test feature indexing."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=200, n_features=100, n_informative=20, noise=10.0, random_state=42)
+    X_test = X[:10]
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'reg:squarederror',
+        'max_depth': 3,
+        'eta': 0.1,
+        'booster': 'gbtree',
+        'colsample_bytree': 0.5,
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=5)
+    save_xgb_test_case("gbtree_wide_features", booster, X_test, objective='reg:squarederror')
+
+
+def generate_categorical():
+    """Regression with categorical features."""
+    np.random.seed(42)
+    n_samples = 200
+    
+    X_numeric = np.random.randn(n_samples, 3)
+    X_cat1 = np.random.randint(0, 3, size=(n_samples, 1)).astype(np.float32)
+    X_cat2 = np.random.randint(0, 5, size=(n_samples, 1)).astype(np.float32)
+    X = np.hstack([X_numeric, X_cat1, X_cat2])
+    
+    y = (
+        X[:, 0] * 2
+        + np.where(X[:, 3] == 0, 10, np.where(X[:, 3] == 1, -5, 0))
+        + np.where(X[:, 4] >= 3, 8, -4)
+        + np.random.randn(n_samples) * 2
+    )
+    
+    X_test = X[:10].copy()
+    X_test[0, 3] = 0
+    X_test[1, 3] = 1
+    X_test[2, 3] = 2
+    X_test[3, 4] = 0
+    X_test[4, 4] = 2
+    X_test[5, 4] = 4
+    
+    feature_types = ['q', 'q', 'q', 'c', 'c']
+    
+    dtrain = xgb.DMatrix(X, label=y, enable_categorical=True)
+    dtrain.set_info(feature_types=feature_types)
+    
+    dtest = xgb.DMatrix(X_test, enable_categorical=True)
+    dtest.set_info(feature_types=feature_types)
+    
+    params = {
+        'objective': 'reg:squarederror',
+        'max_depth': 3,
+        'eta': 0.3,
+        'booster': 'gbtree',
+        'tree_method': 'hist',
+        'max_cat_to_onehot': 1,
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=5)
+    save_xgb_test_case(
+        "gbtree_categorical", booster, X_test, objective='reg:squarederror',
+        dtest=dtest, feature_types=feature_types
+    )
+
+
+def generate_categorical_binary():
+    """Binary classification with categorical features."""
+    np.random.seed(42)
+    n_samples = 200
+    
+    X_numeric = np.random.randn(n_samples, 2)
+    X_cat = np.random.randint(0, 4, size=(n_samples, 1)).astype(np.float32)
+    X = np.hstack([X_numeric, X_cat])
+    
+    base_prob = 1 / (1 + np.exp(-X[:, 0]))
+    cat_effect = np.where((X[:, 2] == 0) | (X[:, 2] == 2), 0.3, -0.3)
+    prob = np.clip(base_prob + cat_effect, 0.05, 0.95)
+    y = (np.random.rand(n_samples) < prob).astype(np.float32)
+    
+    X_test = X[:10].copy()
+    X_test[0, 2] = 0
+    X_test[1, 2] = 1
+    X_test[2, 2] = 2
+    X_test[3, 2] = 3
+    
+    feature_types = ['q', 'q', 'c']
+    
+    dtrain = xgb.DMatrix(X, label=y, enable_categorical=True)
+    dtrain.set_info(feature_types=feature_types)
+    
+    dtest = xgb.DMatrix(X_test, enable_categorical=True)
+    dtest.set_info(feature_types=feature_types)
+    
+    params = {
+        'objective': 'binary:logistic',
+        'max_depth': 3,
+        'eta': 0.3,
+        'booster': 'gbtree',
+        'tree_method': 'hist',
+        'max_cat_to_onehot': 1,
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=5)
+    save_xgb_test_case(
+        "gbtree_categorical_binary", booster, X_test, objective='binary:logistic',
+        dtest=dtest, feature_types=feature_types
+    )
+
+
+# =============================================================================
+# DART Test Cases
+# =============================================================================
+
+def generate_dart_regression():
+    """DART booster regression."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=90, n_features=3, noise=5.0, random_state=42)
+    X_test = X[:10]
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'reg:squarederror',
+        'booster': 'dart',
+        'max_depth': 2,
+        'eta': 0.1,
+        'rate_drop': 0.1,
+        'skip_drop': 0.5,
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=4)
+    save_xgb_test_case(
+        "dart_regression", booster, X_test, 
+        objective='reg:squarederror', output_dir=DART_DIR
+    )
+
+
+# =============================================================================
+# GBLinear Test Cases
+# =============================================================================
+
+def generate_gblinear_regression():
+    """GBLinear regression model."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=100, n_features=5, noise=5.0, random_state=42)
+    X_test = X[:10]
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'reg:squarederror',
+        'booster': 'gblinear',
+        'eta': 0.1,
+        'lambda': 0.1,
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=50)
+    save_xgb_test_case(
+        "gblinear_regression", booster, X_test,
+        objective='reg:squarederror', output_dir=GBLINEAR_DIR
+    )
+
+
+def generate_gblinear_binary():
+    """GBLinear binary classification."""
+    np.random.seed(42)
+    X, y = make_classification(
+        n_samples=100, n_features=4, n_informative=3,
+        n_redundant=0, n_repeated=0, random_state=42
+    )
+    X_test = X[:10]
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'binary:logistic',
+        'booster': 'gblinear',
+        'eta': 0.1,
+        'lambda': 0.1,
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=50)
+    save_xgb_test_case(
+        "gblinear_binary", booster, X_test,
+        objective='binary:logistic', output_dir=GBLINEAR_DIR
+    )
+
+
+def generate_gblinear_multiclass():
+    """GBLinear multiclass classification."""
+    np.random.seed(42)
+    X, y = make_classification(
+        n_samples=120, n_features=4, n_informative=3,
+        n_redundant=0, n_repeated=0, n_classes=3,
+        n_clusters_per_class=1, random_state=42
+    )
+    X_test = X[:10]
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'multi:softprob',
+        'num_class': 3,
+        'booster': 'gblinear',
+        'eta': 0.1,
+        'lambda': 0.1,
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=50)
+    save_xgb_test_case(
+        "gblinear_multiclass", booster, X_test,
+        objective='multi:softprob', num_class=3, output_dir=GBLINEAR_DIR
+    )
+
+
+# =============================================================================
+# Benchmark Models
+# =============================================================================
+
+def save_benchmark_model(name: str, booster: xgb.Booster, num_features: int):
+    """Save a benchmark model (model only, no test data needed)."""
+    model_path = BENCH_DIR / f"{name}.model.json"
+    booster.save_model(str(model_path))
+    size_kb = model_path.stat().st_size / 1024
+    print(f"✓ {name}: {size_kb:.1f} KB")
+
+
+def generate_bench_small():
+    """Small benchmark model: 10 trees, 5 features, max_depth=3."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=500, n_features=5, noise=10.0, random_state=42)
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'reg:squarederror',
+        'max_depth': 3,
+        'eta': 0.1,
+        'booster': 'gbtree',
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=10)
+    save_benchmark_model("bench_small", booster, num_features=5)
+
+
+def generate_bench_medium():
+    """Medium benchmark model: 100 trees, 50 features, max_depth=4."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=2000, n_features=50, n_informative=30, noise=10.0, random_state=42)
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'reg:squarederror',
+        'max_depth': 4,
+        'eta': 0.05,
+        'booster': 'gbtree',
+        'colsample_bytree': 0.8,
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=100)
+    save_benchmark_model("bench_medium", booster, num_features=50)
+
+
+def generate_bench_large():
+    """Large benchmark model: 500 trees, 100 features, max_depth=5."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=5000, n_features=100, n_informative=50, noise=10.0, random_state=42)
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'reg:squarederror',
+        'max_depth': 5,
+        'eta': 0.02,
+        'booster': 'gbtree',
+        'colsample_bytree': 0.7,
+        'subsample': 0.8,
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=500)
+    save_benchmark_model("bench_large", booster, num_features=100)
+
+
+# =============================================================================
+# Main Entry Points
+# =============================================================================
+
+def generate_all_gbtree():
+    """Generate all GBTree test cases."""
+    print("Generating GBTree test cases...")
+    generate_regression()
+    generate_binary_logistic()
+    generate_multiclass()
+    generate_regression_missing()
+    generate_binary_logistic_missing()
+    generate_multiclass_missing()
+    generate_deep_trees()
+    generate_single_tree()
+    generate_many_trees()
+    generate_wide_features()
+    generate_categorical()
+    generate_categorical_binary()
+
+
+def generate_all_dart():
+    """Generate all DART test cases."""
+    print("\nGenerating DART test cases...")
+    generate_dart_regression()
+
+
+def generate_all_gblinear():
+    """Generate all GBLinear test cases."""
+    print("\nGenerating GBLinear test cases...")
+    generate_gblinear_regression()
+    generate_gblinear_binary()
+    generate_gblinear_multiclass()
+
+
+def generate_all_benchmarks():
+    """Generate all benchmark models."""
+    print("\nGenerating benchmark models...")
+    generate_bench_small()
+    generate_bench_medium()
+    generate_bench_large()
+
+
+def generate_all():
+    """Generate all XGBoost test cases and benchmarks."""
+    generate_all_gbtree()
+    generate_all_dart()
+    generate_all_gblinear()
+    generate_all_benchmarks()
+    print("\nDone!")
+
+
+if __name__ == "__main__":
+    generate_all()

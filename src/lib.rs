@@ -3,6 +3,9 @@
 //! This crate provides native Rust implementations for gradient boosted decision trees,
 //! with support for loading models from external frameworks like XGBoost.
 
+// Re-export approx traits for users who want to compare predictions
+pub use approx;
+
 pub mod compat;
 pub mod data;
 pub mod forest;

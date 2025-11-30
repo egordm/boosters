@@ -320,9 +320,25 @@ mod tests {
     use std::fs::File;
     use std::path::PathBuf;
 
-    fn load_test_model(name: &str) -> XgbModel {
+    fn load_gbtree(name: &str) -> XgbModel {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/test-cases/xgboost")
+            .join("tests/test-cases/xgboost/gbtree")
+            .join(format!("{name}.model.json"));
+        let file = File::open(&path).expect("Failed to open test model");
+        serde_json::from_reader(file).expect("Failed to parse test model")
+    }
+
+    fn load_gblinear(name: &str) -> XgbModel {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/test-cases/xgboost/gblinear")
+            .join(format!("{name}.model.json"));
+        let file = File::open(&path).expect("Failed to open test model");
+        serde_json::from_reader(file).expect("Failed to parse test model")
+    }
+
+    fn load_dart(name: &str) -> XgbModel {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/test-cases/xgboost/dart")
             .join(format!("{name}.model.json"));
         let file = File::open(&path).expect("Failed to open test model");
         serde_json::from_reader(file).expect("Failed to parse test model")
@@ -330,7 +346,7 @@ mod tests {
 
     #[test]
     fn convert_gbtree_regression() {
-        let model = load_test_model("regression");
+        let model = load_gbtree("gbtree_regression");
         let forest = model.to_forest().expect("Conversion failed");
 
         assert_eq!(forest.num_groups(), 1);
@@ -339,7 +355,7 @@ mod tests {
 
     #[test]
     fn convert_gbtree_binary_logistic() {
-        let model = load_test_model("binary_logistic");
+        let model = load_gbtree("gbtree_binary_logistic");
         let forest = model.to_forest().expect("Conversion failed");
 
         assert_eq!(forest.num_groups(), 1); // Binary uses single output
@@ -348,7 +364,7 @@ mod tests {
 
     #[test]
     fn convert_gbtree_multiclass() {
-        let model = load_test_model("multiclass");
+        let model = load_gbtree("gbtree_multiclass");
         let forest = model.to_forest().expect("Conversion failed");
 
         assert_eq!(forest.num_groups(), 3); // 3-class
@@ -357,7 +373,7 @@ mod tests {
 
     #[test]
     fn convert_dart_regression() {
-        let model = load_test_model("dart_regression");
+        let model = load_dart("dart_regression");
         let forest = model.to_forest().expect("Conversion failed");
 
         assert_eq!(forest.num_groups(), 1);
@@ -366,7 +382,7 @@ mod tests {
 
     #[test]
     fn to_booster_gbtree_returns_tree() {
-        let model = load_test_model("regression");
+        let model = load_gbtree("gbtree_regression");
         let booster = model.to_booster().expect("Conversion failed");
 
         assert!(!model.is_dart());
@@ -379,7 +395,7 @@ mod tests {
 
     #[test]
     fn to_booster_dart_returns_dart_with_weights() {
-        let model = load_test_model("dart_regression");
+        let model = load_dart("dart_regression");
         let booster = model.to_booster().expect("Conversion failed");
 
         assert!(model.is_dart());
@@ -395,7 +411,7 @@ mod tests {
 
     #[test]
     fn converted_forest_can_predict() {
-        let model = load_test_model("regression");
+        let model = load_gbtree("gbtree_regression");
         let forest = model.to_forest().expect("Conversion failed");
 
         // Simple smoke test: predict on dummy features
@@ -409,7 +425,7 @@ mod tests {
 
     #[test]
     fn convert_gblinear_regression() {
-        let model = load_test_model("gblinear_regression");
+        let model = load_gblinear("gblinear_regression");
         let booster = model.to_booster().expect("Conversion failed");
 
         assert!(model.is_linear());
@@ -424,7 +440,7 @@ mod tests {
 
     #[test]
     fn convert_gblinear_binary() {
-        let model = load_test_model("gblinear_binary");
+        let model = load_gblinear("gblinear_binary");
         let booster = model.to_booster().expect("Conversion failed");
 
         assert!(model.is_linear());
@@ -439,7 +455,7 @@ mod tests {
 
     #[test]
     fn convert_gblinear_multiclass() {
-        let model = load_test_model("gblinear_multiclass");
+        let model = load_gblinear("gblinear_multiclass");
         let booster = model.to_booster().expect("Conversion failed");
 
         assert!(model.is_linear());
@@ -454,7 +470,7 @@ mod tests {
 
     #[test]
     fn gblinear_to_forest_fails() {
-        let model = load_test_model("gblinear_regression");
+        let model = load_gblinear("gblinear_regression");
 
         // to_forest should fail for gblinear models
         assert!(model.to_forest().is_err());

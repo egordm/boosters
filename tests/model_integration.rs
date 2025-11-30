@@ -4,10 +4,10 @@
 //! (e.g., sigmoid for binary classification, softmax for multiclass) matching
 //! Python XGBoost predictions.
 //!
-//! Test case structure:
-//! - {name}.model.json    - XGBoost model file
-//! - {name}.input.json    - Test input features
-//! - {name}.expected.json - Expected predictions (raw + transformed)
+//! Test case structure (organized by booster type):
+//! - xgboost/gbtree/{name}.*    - GBTree models
+//! - xgboost/gblinear/{name}.*  - GBLinear models
+//! - xgboost/dart/{name}.*      - DART models
 
 #![cfg(feature = "xgboost-compat")]
 
@@ -55,13 +55,19 @@ struct TestExpected {
     num_class: u32,
 }
 
-fn test_cases_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test-cases/xgboost")
+// =============================================================================
+// Test Case Loading
+// =============================================================================
+
+fn gbtree_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test-cases/xgboost/gbtree")
 }
 
-fn load_test_case(name: &str) -> (XgbModel, TestInput, TestExpected) {
-    let dir = test_cases_dir();
+fn dart_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test-cases/xgboost/dart")
+}
 
+fn load_from_dir(dir: &PathBuf, name: &str) -> (XgbModel, TestInput, TestExpected) {
     let model: XgbModel = serde_json::from_reader(
         File::open(dir.join(format!("{name}.model.json"))).expect("model file"),
     )
@@ -78,6 +84,14 @@ fn load_test_case(name: &str) -> (XgbModel, TestInput, TestExpected) {
     .expect("parse expected");
 
     (model, input, expected)
+}
+
+fn load_gbtree(name: &str) -> (XgbModel, TestInput, TestExpected) {
+    load_from_dir(&gbtree_dir(), name)
+}
+
+fn load_dart(name: &str) -> (XgbModel, TestInput, TestExpected) {
+    load_from_dir(&dart_dir(), name)
 }
 
 /// Convert XGBoost objective string to native Objective enum.
@@ -153,7 +167,7 @@ fn assert_predictions_match(actual: &[f32], expected: &[f64], tolerance: f64, co
 
 #[test]
 fn model_predict_raw_regression() {
-    let (xgb_model, input, expected) = load_test_case("regression");
+    let (xgb_model, input, expected) = load_gbtree("gbtree_regression");
     let objective = parse_objective(&expected.objective, expected.num_class);
     let model = build_model(&xgb_model, objective);
 
@@ -175,7 +189,7 @@ fn model_predict_raw_regression() {
 
 #[test]
 fn model_predict_raw_binary() {
-    let (xgb_model, input, expected) = load_test_case("binary_logistic");
+    let (xgb_model, input, expected) = load_gbtree("gbtree_binary_logistic");
     let objective = parse_objective(&expected.objective, expected.num_class);
     let model = build_model(&xgb_model, objective);
 
@@ -197,7 +211,7 @@ fn model_predict_raw_binary() {
 
 #[test]
 fn model_predict_raw_multiclass() {
-    let (xgb_model, input, expected) = load_test_case("multiclass");
+    let (xgb_model, input, expected) = load_gbtree("gbtree_multiclass");
     let objective = parse_objective(&expected.objective, expected.num_class);
     let model = build_model(&xgb_model, objective);
 
@@ -218,7 +232,7 @@ fn model_predict_raw_multiclass() {
 
 #[test]
 fn model_predict_regression_transform() {
-    let (xgb_model, input, expected) = load_test_case("regression");
+    let (xgb_model, input, expected) = load_gbtree("gbtree_regression");
     let objective = parse_objective(&expected.objective, expected.num_class);
     let model = build_model(&xgb_model, objective);
 
@@ -242,7 +256,7 @@ fn model_predict_regression_transform() {
 
 #[test]
 fn model_predict_binary_sigmoid() {
-    let (xgb_model, input, expected) = load_test_case("binary_logistic");
+    let (xgb_model, input, expected) = load_gbtree("gbtree_binary_logistic");
     let objective = parse_objective(&expected.objective, expected.num_class);
     let model = build_model(&xgb_model, objective);
 
@@ -272,7 +286,7 @@ fn model_predict_binary_sigmoid() {
 
 #[test]
 fn model_predict_multiclass_softmax() {
-    let (xgb_model, input, expected) = load_test_case("multiclass");
+    let (xgb_model, input, expected) = load_gbtree("gbtree_multiclass");
     // Use MultiSoftprob to get probability distribution
     let objective = Objective::MultiSoftprob {
         num_class: expected.num_class,
@@ -306,7 +320,7 @@ fn model_predict_multiclass_softmax() {
 
 #[test]
 fn model_predict_with_missing_values() {
-    let (xgb_model, input, expected) = load_test_case("regression_missing");
+    let (xgb_model, input, expected) = load_gbtree("gbtree_regression_missing");
     let objective = parse_objective(&expected.objective, expected.num_class);
     let model = build_model(&xgb_model, objective);
 
@@ -352,7 +366,7 @@ fn objective_produces_correct_flags() {
 
 #[test]
 fn model_predict_binary_with_missing() {
-    let (xgb_model, input, expected) = load_test_case("binary_logistic_missing");
+    let (xgb_model, input, expected) = load_gbtree("gbtree_binary_logistic_missing");
     let objective = parse_objective(&expected.objective, expected.num_class);
     let model = build_model(&xgb_model, objective);
 
@@ -381,7 +395,7 @@ fn model_predict_binary_with_missing() {
 
 #[test]
 fn model_predict_multiclass_with_missing() {
-    let (xgb_model, input, expected) = load_test_case("multiclass_missing");
+    let (xgb_model, input, expected) = load_gbtree("gbtree_multiclass_missing");
     let objective = Objective::MultiSoftprob {
         num_class: expected.num_class,
     };
@@ -413,7 +427,7 @@ fn model_predict_multiclass_with_missing() {
 
 #[test]
 fn model_predict_deep_trees() {
-    let (xgb_model, input, expected) = load_test_case("deep_trees");
+    let (xgb_model, input, expected) = load_gbtree("gbtree_deep_trees");
     let objective = parse_objective(&expected.objective, expected.num_class);
     let model = build_model(&xgb_model, objective);
 
@@ -436,7 +450,7 @@ fn model_predict_deep_trees() {
 
 #[test]
 fn model_predict_single_tree() {
-    let (xgb_model, input, expected) = load_test_case("single_tree");
+    let (xgb_model, input, expected) = load_gbtree("gbtree_single_tree");
     let objective = parse_objective(&expected.objective, expected.num_class);
     let model = build_model(&xgb_model, objective);
 
@@ -461,7 +475,7 @@ fn model_predict_single_tree() {
 
 #[test]
 fn model_predict_many_trees() {
-    let (xgb_model, input, expected) = load_test_case("many_trees");
+    let (xgb_model, input, expected) = load_gbtree("gbtree_many_trees");
     let objective = parse_objective(&expected.objective, expected.num_class);
     let model = build_model(&xgb_model, objective);
 
@@ -486,7 +500,7 @@ fn model_predict_many_trees() {
 
 #[test]
 fn model_predict_wide_features() {
-    let (xgb_model, input, expected) = load_test_case("wide_features");
+    let (xgb_model, input, expected) = load_gbtree("gbtree_wide_features");
     let objective = parse_objective(&expected.objective, expected.num_class);
     let model = build_model(&xgb_model, objective);
 
@@ -515,7 +529,7 @@ fn model_predict_wide_features() {
 
 #[test]
 fn model_predict_dart_regression() {
-    let (xgb_model, input, expected) = load_test_case("dart_regression");
+    let (xgb_model, input, expected) = load_dart("dart_regression");
     let objective = parse_objective(&expected.objective, expected.num_class);
     let model = build_model(&xgb_model, objective);
 
@@ -547,7 +561,7 @@ fn model_predict_dart_regression() {
 
 #[test]
 fn model_predict_dart_raw_matches_expected() {
-    let (xgb_model, input, expected) = load_test_case("dart_regression");
+    let (xgb_model, input, expected) = load_dart("dart_regression");
     let objective = parse_objective(&expected.objective, expected.num_class);
     let model = build_model(&xgb_model, objective);
 

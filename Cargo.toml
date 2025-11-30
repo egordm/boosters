@@ -6,6 +6,9 @@ edition = "2024"
 [dependencies]
 thiserror = "1.0"
 
+# Approximate equality traits (used in PredictionOutput)
+approx = "0.5"
+
 # Parallel processing
 rayon = "1.10"
 
