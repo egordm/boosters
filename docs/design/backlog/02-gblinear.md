@@ -58,27 +58,31 @@ Validates training infrastructure before GBTree training.
 
 ## Story 4: Matrix Layout Refactor
 
-**Goal**: Support both row-major and column-major dense matrices.
+**Goal**: Support both row-major and column-major dense matrices via zero-cost abstraction.
 
 **Motivation**: Current `DenseMatrix` is row-major, which is optimal for tree
 prediction (iterate rows, access features). But coordinate descent iterates
 over features (columns), so column-major storage would give better cache
 locality for training.
 
-- [ ] 4.1 Rename `DenseMatrix` → `RowMajorMatrix` (or add `DenseMatrix<RowMajor>`)
-- [ ] 4.2 Add `ColMajorMatrix` for column-major dense storage
-- [ ] 4.3 Implement `DataMatrix` trait for `ColMajorMatrix`
-- [ ] 4.4 Add efficient column iteration for `ColMajorMatrix`
-- [ ] 4.5 Update `LinearTrainer` to use `ColMajorMatrix` internally
-- [ ] 4.6 Add `from_row_major()` conversion
-- [ ] 4.7 Benchmark CSC vs ColMajor vs converting from RowMajor
+**Design Decision**: Use generic `DenseMatrix<T, L: Layout>` with `RowMajor`/`ColMajor`
+type parameters. This is zero-cost (monomorphized) and allows writing code generic
+over layout. Keep CSC/CSR as separate types since they have fundamentally different
+storage structures, not just different indexing.
 
-**Design options**:
-1. Generic `DenseMatrix<L: Layout>` with `RowMajor`/`ColMajor` types
-2. Separate `RowMajorMatrix` and `ColMajorMatrix` structs
-3. Keep `DenseMatrix` as row-major, add separate `ColMajorMatrix`
+**RFC**: [0010-matrix-layouts.md](../rfcs/0010-matrix-layouts.md) ✓ Accepted
 
-Option 3 is simplest for now — keeps `DenseMatrix` stable for existing code.
+Tasks:
+
+- [ ] 4.1 Add `Layout` trait with `RowMajor` and `ColMajor` implementations
+- [ ] 4.2 Refactor `DenseMatrix` to `DenseMatrix<T, L: Layout = RowMajor>`
+- [ ] 4.3 Update `DataMatrix` impl to use `L::index()`
+- [ ] 4.4 Add `to_layout<L2>()` conversion method
+- [ ] 4.5 Add layout-specific slice methods (`row_slice`, `col_slice`)
+- [ ] 4.6 Add strided iterators for non-contiguous dimension
+- [ ] 4.7 Update `LinearTrainer` to use column-major internally
+- [ ] 4.8 Verify existing tests still pass (backward compatibility)
+- [ ] 4.9 Add benchmarks comparing layouts for training
 
 ---
 
