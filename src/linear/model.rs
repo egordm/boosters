@@ -123,6 +123,42 @@ impl LinearModel {
         &self.weights
     }
 
+    /// Mutable access to weights (for training).
+    #[inline]
+    pub fn weights_mut(&mut self) -> &mut [f32] {
+        &mut self.weights
+    }
+
+    /// Set weight for a feature and group.
+    #[inline]
+    pub fn set_weight(&mut self, feature: usize, group: usize, value: f32) {
+        debug_assert!(feature < self.num_features, "feature index out of bounds");
+        debug_assert!(group < self.num_groups, "group index out of bounds");
+        self.weights[feature * self.num_groups + group] = value;
+    }
+
+    /// Set bias for a group.
+    #[inline]
+    pub fn set_bias(&mut self, group: usize, value: f32) {
+        debug_assert!(group < self.num_groups, "group index out of bounds");
+        self.weights[self.num_features * self.num_groups + group] = value;
+    }
+
+    /// Add to weight for a feature and group.
+    #[inline]
+    pub fn add_weight(&mut self, feature: usize, group: usize, delta: f32) {
+        debug_assert!(feature < self.num_features, "feature index out of bounds");
+        debug_assert!(group < self.num_groups, "group index out of bounds");
+        self.weights[feature * self.num_groups + group] += delta;
+    }
+
+    /// Add to bias for a group.
+    #[inline]
+    pub fn add_bias(&mut self, group: usize, delta: f32) {
+        debug_assert!(group < self.num_groups, "group index out of bounds");
+        self.weights[self.num_features * self.num_groups + group] += delta;
+    }
+
     /// Predict for a single row.
     ///
     /// Returns a vector of length `num_groups`.

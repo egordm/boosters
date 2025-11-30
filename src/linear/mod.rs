@@ -10,5 +10,6 @@
 //! See RFC-0008 for design rationale.
 
 mod model;
+pub mod training;
 
 pub use model::LinearModel;

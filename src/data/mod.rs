@@ -1,7 +1,7 @@
 //! Data input abstractions for feature matrices.
 //!
 //! This module provides the [`DataMatrix`] trait and implementations for
-//! accessing feature data during tree traversal.
+//! accessing feature data during tree traversal and training.
 //!
 //! # Overview
 //!
@@ -11,7 +11,8 @@
 //!
 //! # Storage Types
 //!
-//! - [`DenseMatrix`]: Row-major dense storage, the most common format
+//! - [`DenseMatrix`]: Row-major dense storage, optimal for row-based access
+//! - [`CSCMatrix`]: Column-sparse storage, optimal for column-based access (training)
 //!
 //! # Missing Values
 //!
@@ -20,8 +21,10 @@
 //!
 //! See RFC-0004 for design rationale.
 
+mod csc;
 mod dense;
 mod traits;
 
+pub use csc::{CSCMatrix, ColumnIter};
 pub use dense::DenseMatrix;
 pub use traits::{DataMatrix, RowView};

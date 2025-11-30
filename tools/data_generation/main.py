@@ -1,8 +1,8 @@
 """Main entry point for test data generation.
 
 Usage:
-    uv run python -m data_generation.main           # Generate all test cases
-    uv run python -m data_generation.main xgboost   # Generate XGBoost only
+    uv run python -m data_generation.main             # Generate all test cases
+    uv run python -m data_generation.main xgboost     # Generate XGBoost only (inference + training)
 """
 import sys
 

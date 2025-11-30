@@ -39,32 +39,58 @@ Validates training infrastructure before GBTree training.
 
 ---
 
-## Story 3: GBLinear Training
+## Story 3: GBLinear Training ✓
 
 **Goal**: Train linear models via coordinate descent.
 
-- [ ] 3.1 `CSCMatrix` — column-sparse format for efficient column access
-- [ ] 3.2 `CSCMatrix::from_dense()` and column iteration
-- [ ] 3.3 Coordinate descent update with elastic net regularization
-- [ ] 3.4 `ShotgunUpdater` — parallel feature updates (default)
-- [ ] 3.5 `CoordinateUpdater` — sequential feature updates
-- [ ] 3.6 `CyclicSelector` and `ShuffleSelector` for feature order
-- [ ] 3.7 `LinearTrainer` high-level API
-- [ ] 3.8 Early stopping + logging integration
+- [x] 3.1 `CSCMatrix` — column-sparse format for efficient column access
+- [x] 3.2 `CSCMatrix::from_dense()` and column iteration
+- [x] 3.3 Coordinate descent update with elastic net regularization
+- [x] 3.4 `ShotgunUpdater` — parallel feature updates (default)
+- [x] 3.5 `CoordinateUpdater` — sequential feature updates
+- [x] 3.6 `CyclicSelector` and `ShuffleSelector` for feature order
+- [x] 3.7 `LinearTrainer` high-level API
+- [x] 3.8 Integration tests comparing to XGBoost
 
 **Refs**: [RFC-0009](../rfcs/0009-gblinear-training.md)
 
 ---
 
-## Story 4: Training Validation
+## Story 4: Matrix Layout Refactor
+
+**Goal**: Support both row-major and column-major dense matrices.
+
+**Motivation**: Current `DenseMatrix` is row-major, which is optimal for tree
+prediction (iterate rows, access features). But coordinate descent iterates
+over features (columns), so column-major storage would give better cache
+locality for training.
+
+- [ ] 4.1 Rename `DenseMatrix` → `RowMajorMatrix` (or add `DenseMatrix<RowMajor>`)
+- [ ] 4.2 Add `ColMajorMatrix` for column-major dense storage
+- [ ] 4.3 Implement `DataMatrix` trait for `ColMajorMatrix`
+- [ ] 4.4 Add efficient column iteration for `ColMajorMatrix`
+- [ ] 4.5 Update `LinearTrainer` to use `ColMajorMatrix` internally
+- [ ] 4.6 Add `from_row_major()` conversion
+- [ ] 4.7 Benchmark CSC vs ColMajor vs converting from RowMajor
+
+**Design options**:
+1. Generic `DenseMatrix<L: Layout>` with `RowMajor`/`ColMajor` types
+2. Separate `RowMajorMatrix` and `ColMajorMatrix` structs
+3. Keep `DenseMatrix` as row-major, add separate `ColMajorMatrix`
+
+Option 3 is simplest for now — keeps `DenseMatrix` stable for existing code.
+
+---
+
+## Story 5: Training Validation
 
 **Goal**: Verify trained models match XGBoost quality.
 
-- [ ] 4.1 Generate reference training data with Python XGBoost
-- [ ] 4.2 Compare final metrics (RMSE, logloss) within tolerance
-- [ ] 4.3 Compare predictions on held-out test set
-- [ ] 4.4 Verify weight correlation (Pearson r > 0.95)
-- [ ] 4.5 Test convergence on regression, binary, multiclass tasks
+- [ ] 5.1 Generate reference training data with Python XGBoost
+- [ ] 5.2 Compare final metrics (RMSE, logloss) within tolerance
+- [ ] 5.3 Compare predictions on held-out test set
+- [ ] 5.4 Verify weight correlation (Pearson r > 0.95)
+- [ ] 5.5 Test convergence on regression, binary, multiclass tasks
 
 **Validation approach**: Since exact weight matching is unlikely due to
 randomness and floating-point differences, we validate:
@@ -75,15 +101,14 @@ randomness and floating-point differences, we validate:
 
 ---
 
-## Story 5: Benchmarks
+## Story 6: Benchmarks
 
 **Goal**: Validate performance.
 
-- [ ] 5.1 Inference benchmark vs Python XGBoost
-- [ ] 5.2 Training benchmark vs Python XGBoost
-- [ ] 5.3 Compare CSC vs dense column access for training
-- [ ] 5.4 Document results and recommend defaults
-- [ ] 4.3 Document results
+- [ ] 6.1 Inference benchmark vs Python XGBoost
+- [ ] 6.2 Training benchmark vs Python XGBoost
+- [ ] 6.3 Compare CSC vs ColMajor vs RowMajor for training
+- [ ] 6.4 Document results and recommend defaults
 
 ---
 
@@ -91,6 +116,7 @@ randomness and floating-point differences, we validate:
 
 1. Load XGBoost GBLinear JSON models and predict correctly
 2. Train models matching Python XGBoost quality (metrics within 5%)
-3. Training infrastructure (losses, metrics, callbacks) is reusable
-4. Early stopping and logging work correctly
-5. Trained model predictions correlate highly with XGBoost predictions
+3. Training performance equal to or faster than XGBoost
+4. Training infrastructure (losses, metrics, callbacks) is reusable
+5. Early stopping and logging work correctly
+6. Trained model predictions correlate highly with XGBoost predictions
