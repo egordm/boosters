@@ -360,21 +360,34 @@ optimization stack: array tree layout + block processing + OpenMP threading.
 
 **Files**: `src/predict/simd.rs`, `docs/benchmarks/2024-11-28-simd-analysis.md`
 
-### Milestone 3.7: Thread Parallelism (Rayon)
+### Milestone 3.7: Thread Parallelism (Rayon) ✅
+
+**Status**: COMPLETE (2024-11-28)
 
 Parallelize prediction across rows/batches using Rayon for multi-core scaling.
 
-- [ ] Add rayon dependency
-- [ ] `par_predict` method on `Predictor`
-- [ ] Parallel block processing with work stealing
-- [ ] Thread-local output accumulation
-- [ ] Benchmark: target 4-8x speedup on 8+ cores
+- [x] Add rayon dependency (v1.10)
+- [x] `par_predict` and `par_predict_weighted` methods on `Predictor`
+- [x] Parallel block processing with work stealing via `par_iter()`
+- [x] Thread-local feature buffers and output accumulation
+- [x] Benchmark: achieved 6.8x speedup with 8 threads on M1 Pro
 
-**Theory**: XGBoost's main advantage over our single-threaded code is OpenMP
-parallelism. With Rayon, we can parallelize block processing across CPU cores,
-achieving similar or better scaling.
+**Implementation notes**:
 
-**Files**: `src/predict/parallel.rs` or extend `predictor.rs`
+- Used `ThreadPoolBuilder::build() + pool.install()` for proper thread control
+- Global thread pool (`build_global()`) can only be set once - caused initial benchmark issues
+- Simplified `process_block_parallel` to always use block-optimized path
+- Added `Send + Sync` bounds to `TreeState`, `NodeArray`, `ExitArray`
+
+**Performance (Apple M1 Pro, 10-core, 10K rows)**:
+
+- Sequential: 10.95ms baseline
+- 8 threads: 1.61ms (6.8x speedup)
+- vs XGBoost: 1.59ms vs 5.06ms (3.18x faster at 8 threads)
+
+**Files**: `src/predict/predictor.rs`, `benches/prediction.rs`
+
+**Refs**: RFC-0003
 
 ### Milestone 3.8: Performance Validation
 
