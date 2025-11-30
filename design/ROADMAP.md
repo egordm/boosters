@@ -389,18 +389,30 @@ Parallelize prediction across rows/batches using Rayon for multi-core scaling.
 
 **Refs**: RFC-0003
 
-### Milestone 3.8: Performance Validation
+### Milestone 3.8: Performance Validation ✅
+
+**Status**: COMPLETE (2024-11-29)
 
 Comprehensive benchmarking to validate optimization gains.
 
-- [ ] Re-run all benchmarks with optimizations enabled
-- [ ] Compare against XGBoost C++ across all batch sizes
-- [ ] Profile to identify remaining bottlenecks
-- [ ] Document final performance characteristics
-- [ ] Update README with benchmark results
+- [x] Re-run all benchmarks with optimizations enabled
+- [x] Compare against XGBoost C++ across all batch sizes
+- [x] Profile to identify remaining bottlenecks
+- [x] Document final performance characteristics
+- [x] Update README with benchmark results
 
-**Success criteria**: Match or beat XGBoost C++ on batch prediction for
-1K-10K row batches while maintaining single-row latency advantage.
+**Results** (Apple M1 Pro):
+
+| Metric | booste-rs | XGBoost C++ | Winner |
+|--------|-----------|-------------|--------|
+| Single-row latency | 1.24µs | 11.6µs | **booste-rs 9.4x** |
+| 1K batch | 1.07ms | 1.38ms | **booste-rs 1.3x** |
+| 10K batch (8 threads) | 1.58ms | 5.0ms | **booste-rs 3.2x** |
+| Thread scaling (8T) | 6.9x | 2.75x | **booste-rs 2.5x better** |
+
+**Success criteria**: ✅ EXCEEDED — beat XGBoost C++ on all metrics
+
+**Files**: `docs/benchmarks/2024-11-29-m38-performance-validation.md`
 
 ---
 
