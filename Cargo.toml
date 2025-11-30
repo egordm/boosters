@@ -6,6 +6,9 @@ edition = "2024"
 [dependencies]
 thiserror = "1.0"
 
+# Parallel processing
+rayon = "1.10"
+
 # Optional: SIMD acceleration
 wide = { version = "0.7", optional = true }
 

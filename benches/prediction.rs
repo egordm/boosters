@@ -367,6 +367,124 @@ mod xgboost_comparison {
 
         group.finish();
     }
+
+    /// Benchmark thread scaling with XGBoost comparison.
+    ///
+    /// Tests different thread counts for both booste-rs and XGBoost.
+    pub fn bench_thread_scaling_xgboost(c: &mut Criterion) {
+        use booste_rs::predict::{Predictor, UnrolledTraversal6};
+
+        let boosters_model = load_boosters_model("bench_medium");
+        let forest = boosters_model.booster.forest();
+        let num_features = boosters_model.num_features();
+
+        // Test different thread counts
+        let thread_counts = [1, 2, 4, 8];
+        let batch_size = 10_000;
+
+        let input_data = generate_random_input(batch_size, num_features, 42);
+        let matrix = DenseMatrix::from_vec(input_data.clone(), batch_size, num_features);
+
+        let predictor = Predictor::<UnrolledTraversal6>::new(forest).with_block_size(64);
+
+        let mut group = c.benchmark_group("thread_scaling_comparison");
+        group.throughput(Throughput::Elements(batch_size as u64));
+
+        for &num_threads in &thread_counts {
+            // Create a separate thread pool for booste-rs
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(num_threads)
+                .build()
+                .unwrap();
+
+            // booste-rs parallel
+            group.bench_with_input(
+                BenchmarkId::new("boosters", num_threads),
+                &matrix,
+                |b, matrix| {
+                    b.iter(|| {
+                        pool.install(|| black_box(predictor.par_predict(black_box(matrix))))
+                    });
+                },
+            );
+
+            // XGBoost with configured thread count (must create fresh DMatrix to avoid caching)
+            let input_for_xgb = input_data.clone();
+            let mut xgb_booster = load_xgb_model("bench_medium");
+            xgb_booster
+                .set_param("nthread", &num_threads.to_string())
+                .expect("Failed to set nthread");
+
+            group.bench_function(BenchmarkId::new("xgboost", num_threads), |b| {
+                b.iter(|| {
+                    let dmatrix = create_dmatrix(black_box(&input_for_xgb), batch_size);
+                    let output = xgb_booster.predict(&dmatrix).unwrap();
+                    black_box(output)
+                });
+            });
+        }
+
+        group.finish();
+    }
+}
+
+// =============================================================================
+// Thread Scaling Benchmarks
+// =============================================================================
+
+/// Benchmark thread scaling with different core counts.
+///
+/// Compares sequential vs parallel prediction with controlled thread counts.
+/// Both booste-rs and XGBoost are tested with the same thread counts for fairness.
+fn bench_thread_scaling(c: &mut Criterion) {
+    use booste_rs::predict::{Predictor, UnrolledTraversal6};
+
+    let model = load_boosters_model("bench_medium");
+    let forest = model.booster.forest();
+    let num_features = model.num_features();
+
+    // Test different thread counts
+    let thread_counts = [1, 2, 4, 8];
+    let batch_size = 10_000;
+
+    let input_data = generate_random_input(batch_size, num_features, 42);
+    let matrix = DenseMatrix::from_vec(input_data.clone(), batch_size, num_features);
+
+    let predictor = Predictor::<UnrolledTraversal6>::new(forest).with_block_size(64);
+
+    let mut group = c.benchmark_group("thread_scaling");
+    group.throughput(Throughput::Elements(batch_size as u64));
+
+    for &num_threads in &thread_counts {
+        // Create a separate thread pool for each thread count
+        // Note: The global pool can only be set once, so we use install() with a custom pool
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build()
+            .unwrap();
+
+        group.bench_with_input(
+            BenchmarkId::new("boosters_parallel", num_threads),
+            &matrix,
+            |b, matrix| {
+                b.iter(|| {
+                    // Run prediction in the custom thread pool
+                    pool.install(|| black_box(predictor.par_predict(black_box(matrix))))
+                });
+            },
+        );
+    }
+
+    // Sequential baseline (single-threaded)
+    group.bench_with_input(
+        BenchmarkId::new("boosters_sequential", 1),
+        &matrix,
+        |b, matrix| {
+            b.iter(|| black_box(predictor.predict(black_box(matrix))));
+        },
+    );
+
+    group.finish();
 }
 
 // =============================================================================
@@ -379,7 +497,8 @@ criterion_group!(
     bench_batch_sizes,
     bench_model_sizes,
     bench_single_row,
-    bench_all_combinations
+    bench_all_combinations,
+    bench_thread_scaling
 );
 
 #[cfg(feature = "bench-xgboost")]
@@ -389,6 +508,8 @@ criterion_group!(
     bench_model_sizes,
     bench_single_row,
     bench_all_combinations,
+    bench_thread_scaling,
+    xgboost_comparison::bench_thread_scaling_xgboost,
     xgboost_comparison::bench_comparison,
     xgboost_comparison::bench_single_row_comparison
 );

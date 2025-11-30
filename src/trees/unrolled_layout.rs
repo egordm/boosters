@@ -79,20 +79,24 @@ pub trait UnrollDepth: private::Sealed + core::fmt::Debug + Clone + Copy {
     const NUM_EXITS: usize;
 
     /// Type for the node array (sized to NUM_NODES).
-    type NodeArray<T: Copy + core::fmt::Debug>: AsRef<[T]>
+    type NodeArray<T: Copy + core::fmt::Debug + Send + Sync>: AsRef<[T]>
         + AsMut<[T]>
         + Clone
-        + core::fmt::Debug;
+        + core::fmt::Debug
+        + Send
+        + Sync;
     /// Type for the exit array (sized to NUM_EXITS).
-    type ExitArray<T: Copy + core::fmt::Debug>: AsRef<[T]>
+    type ExitArray<T: Copy + core::fmt::Debug + Send + Sync>: AsRef<[T]>
         + AsMut<[T]>
         + Clone
-        + core::fmt::Debug;
+        + core::fmt::Debug
+        + Send
+        + Sync;
 
     /// Create a node array filled with a value.
-    fn node_array_fill<T: Copy + core::fmt::Debug>(val: T) -> Self::NodeArray<T>;
+    fn node_array_fill<T: Copy + core::fmt::Debug + Send + Sync>(val: T) -> Self::NodeArray<T>;
     /// Create an exit array filled with a value.
-    fn exit_array_fill<T: Copy + core::fmt::Debug>(val: T) -> Self::ExitArray<T>;
+    fn exit_array_fill<T: Copy + core::fmt::Debug + Send + Sync>(val: T) -> Self::ExitArray<T>;
 }
 
 mod private {
@@ -111,15 +115,19 @@ macro_rules! impl_unroll_depth {
             const DEPTH: usize = $depth;
             const NUM_NODES: usize = $num_nodes;
             const NUM_EXITS: usize = $num_exits;
-            type NodeArray<T: Copy + core::fmt::Debug> = [T; $num_nodes];
-            type ExitArray<T: Copy + core::fmt::Debug> = [T; $num_exits];
+            type NodeArray<T: Copy + core::fmt::Debug + Send + Sync> = [T; $num_nodes];
+            type ExitArray<T: Copy + core::fmt::Debug + Send + Sync> = [T; $num_exits];
 
             #[inline]
-            fn node_array_fill<T: Copy + core::fmt::Debug>(val: T) -> Self::NodeArray<T> {
+            fn node_array_fill<T: Copy + core::fmt::Debug + Send + Sync>(
+                val: T,
+            ) -> Self::NodeArray<T> {
                 [val; $num_nodes]
             }
             #[inline]
-            fn exit_array_fill<T: Copy + core::fmt::Debug>(val: T) -> Self::ExitArray<T> {
+            fn exit_array_fill<T: Copy + core::fmt::Debug + Send + Sync>(
+                val: T,
+            ) -> Self::ExitArray<T> {
                 [val; $num_exits]
             }
         }
