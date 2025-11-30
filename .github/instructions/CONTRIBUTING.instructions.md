@@ -78,8 +78,8 @@ If you update an accepted RFC, add a changelog at the bottom:
 | Public API docs | `///` rustdoc on pub items | As you implement |
 | Internal notes | `//` comments | When non-obvious |
 | Module overview | `//!` at top of file | Once module is stable |
-| Design rationale | RFC or `design/analysis/` | Before/during implementation |
-| Quick thoughts | `design/NOTES.md` | Anytime |
+| Design rationale | RFC or `docs/design/research/` | Before/during implementation |
+| Quick thoughts | `docs/design/NOTES.md` | Anytime |
 
 ### Rustdoc Guidelines
 
@@ -163,7 +163,7 @@ mod tests {
 
 ## Implementation Research
 
-Use `design/analysis/` for deep dives:
+Use `docs/design/research/` for deep dives:
 
 - XGBoost internals exploration
 - Performance experiments
@@ -174,8 +174,8 @@ Use `design/analysis/` for deep dives:
 Example structure:
 
 ```
-design/analysis/
-├── xgboost_cpp_inference.md    # How XGBoost C++ does prediction
+docs/design/research/
+├── xgboost-inference.md        # How XGBoost C++ does prediction
 ├── simd_traversal_experiment.md # Performance experiment notes
 └── quantized_data_structures/   # Deep dive on quantization
 ```
@@ -234,11 +234,12 @@ Refs: RFC-0002
 
 | Content | Location |
 |---------|----------|
-| Architecture decisions | `design/architecture/0XXX-*.md` |
-| Implementation roadmap | `design/ROADMAP.md` |
-| Research & deep dives | `design/analysis/` |
-| Scratch notes | `design/NOTES.md` |
-| This guide | `design/CONTRIBUTING.md` |
+| RFCs (design docs) | `docs/design/rfcs/0XXX-*.md` |
+| Implementation roadmap | `docs/design/ROADMAP.md` |
+| Research & deep dives | `docs/design/research/` |
+| Scratch notes | `docs/design/NOTES.md` |
+| This guide | `docs/design/CONTRIBUTING.md` |
+| Benchmarks | `docs/benchmarks/` |
 | Source code | `src/` |
 | Integration tests | `tests/` |
 | Test data | `tests/test-cases/` |
