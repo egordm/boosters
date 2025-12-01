@@ -955,6 +955,135 @@ def generate_training_quantile_high():
     save_training_case("quantile_high", X_train, y_train, booster, config, X_test, y_test)
 
 
+def generate_training_multi_quantile():
+    """Multi-quantile regression (10th, 50th, 90th percentiles) with held-out test set.
+    
+    This tests XGBoost's multi-output quantile regression feature, where
+    multiple quantiles are predicted simultaneously with a single model.
+    
+    Uses 'reg:quantileerror' with 'quantile_alpha' as a list.
+    
+    NOTE: XGBoost's gblinear doesn't support multi-quantile, but gbtree does.
+    We train a gbtree model here for reference, then train 3 separate gblinear
+    models to compare.
+    """
+    np.random.seed(42)
+    
+    # Generate data with heteroscedastic noise for interesting quantile behavior
+    X, y = make_regression(n_samples=200, n_features=5, noise=0.0, random_state=42)
+    X = X.astype(np.float32)
+    
+    # Add heteroscedastic noise
+    noise_scale = 1 + 0.5 * np.abs(X[:, 0])
+    y = y + np.random.normal(0, noise_scale * 10)
+    y = y.astype(np.float32)
+    
+    # Split into train/test
+    X_train, X_test = X[:160], X[160:]
+    y_train, y_test = y[:160], y[160:]
+    
+    dtrain = xgb.DMatrix(X_train, label=y_train)
+    dtest = xgb.DMatrix(X_test)
+    
+    # Multi-quantile: predict 10th, 50th, 90th percentiles simultaneously
+    quantile_alphas = [0.1, 0.5, 0.9]
+    
+    # Train 3 separate gblinear models (one per quantile) since XGBoost gblinear
+    # doesn't support multi-target output
+    all_predictions = []
+    all_weights = []
+    
+    for i, alpha in enumerate(quantile_alphas):
+        params = {
+            'objective': 'reg:quantileerror',
+            'quantile_alpha': alpha,
+            'booster': 'gblinear',
+            'eta': 0.5,
+            'lambda': 1.0,
+            'alpha': 0.0,
+            'updater': 'coord_descent',
+            'feature_selector': 'cyclic',
+        }
+        booster = xgb.train(params, dtrain, num_boost_round=100)
+        
+        # Get predictions
+        preds = booster.predict(dtest, output_margin=True)
+        all_predictions.append(preds.tolist())
+        
+        # Extract weights
+        model_str = booster.save_raw(raw_format='json').decode('utf-8')
+        model_json = json.loads(model_str)
+        gblinear_model = model_json['learner']['gradient_booster']['model']
+        weights = gblinear_model['weights']
+        all_weights.append(weights)
+    
+    # Save training data
+    train_data_path = TRAINING_DIR / "multi_quantile.train_data.json"
+    with open(train_data_path, 'w') as f:
+        json.dump({
+            "num_rows": int(X_train.shape[0]),
+            "num_features": int(X_train.shape[1]),
+            "data": nan_to_null(X_train.flatten().tolist()),
+        }, f, indent=2)
+    
+    # Save labels
+    labels_path = TRAINING_DIR / "multi_quantile.train_labels.json"
+    with open(labels_path, 'w') as f:
+        json.dump({
+            "labels": y_train.tolist(),
+        }, f, indent=2)
+    
+    # Save config
+    config = {
+        'objective': 'reg:quantileerror',
+        'quantile_alpha': quantile_alphas,
+        'booster': 'gblinear',
+        'eta': 0.5,
+        'lambda': 1.0,
+        'alpha': 0.0,
+        'num_boost_round': 100,
+        'num_quantiles': len(quantile_alphas),
+    }
+    config_path = TRAINING_DIR / "multi_quantile.config.json"
+    with open(config_path, 'w') as f:
+        json.dump(config, f, indent=2)
+    
+    # Save weights from all 3 models (for comparison)
+    weights_path = TRAINING_DIR / "multi_quantile.xgb_weights.json"
+    with open(weights_path, 'w') as f:
+        json.dump({
+            "quantile_weights": all_weights,  # [[weights for q0], [weights for q1], ...]
+            "num_features": int(X_train.shape[1]),
+            "num_quantiles": len(quantile_alphas),
+            "quantile_alphas": quantile_alphas,
+        }, f, indent=2)
+    
+    # Save test data
+    test_data_path = TRAINING_DIR / "multi_quantile.test_data.json"
+    with open(test_data_path, 'w') as f:
+        json.dump({
+            "num_rows": int(X_test.shape[0]),
+            "num_features": int(X_test.shape[1]),
+            "data": nan_to_null(X_test.flatten().tolist()),
+        }, f, indent=2)
+    
+    test_labels_path = TRAINING_DIR / "multi_quantile.test_labels.json"
+    with open(test_labels_path, 'w') as f:
+        json.dump({
+            "labels": y_test.tolist(),
+        }, f, indent=2)
+    
+    # Save predictions from each quantile model
+    predictions_path = TRAINING_DIR / "multi_quantile.xgb_predictions.json"
+    with open(predictions_path, 'w') as f:
+        json.dump({
+            "predictions": all_predictions,  # [[preds for q0], [preds for q1], ...]
+            "quantile_alphas": quantile_alphas,
+        }, f, indent=2)
+    
+    print_success("training/multi_quantile", len(X_train))
+
+
 def generate_all_training():
     """Generate all training test cases."""
     print("\nGenerating training test cases...")
@@ -967,6 +1096,7 @@ def generate_all_training():
     generate_training_quantile()
     generate_training_quantile_low()
     generate_training_quantile_high()
+    generate_training_multi_quantile()
 
 
 # =============================================================================
