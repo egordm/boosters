@@ -8,14 +8,20 @@
 //! - [`Loss`]: Single-output losses (regression, binary classification)
 //! - [`MulticlassLoss`]: Multi-output losses requiring all class predictions
 //!
+//! # Gradient Storage
+//!
+//! Gradients are stored in [`GradientBuffer`] (Structure-of-Arrays layout):
+//! - Separate `grads[]` and `hess[]` arrays for cache efficiency
+//! - Shape `[n_samples, n_outputs]` with natural multi-output indexing
+//!
 //! # Design for GBTree Compatibility
 //!
 //! The gradient computation is designed to work with both linear and tree models:
-//! - Gradients are stored per (sample, group) pair
-//! - For regression/binary: 1 group, gradients[i] = gradient for sample i
-//! - For multiclass: K groups, gradients[i * K + k] = gradient for sample i, class k
+//! - Gradients are stored per (sample, output) pair
+//! - For regression/binary: 1 output, `buffer.n_outputs() == 1`
+//! - For multiclass: K outputs, `buffer.n_outputs() == K`
 
-use super::GradientPair;
+use super::GradientBuffer;
 
 /// A loss function for single-output models (regression, binary classification).
 ///
@@ -24,8 +30,8 @@ use super::GradientPair;
 ///
 /// # Implementation Notes
 ///
-/// - `compute_gradient`: Called per sample, returns (grad, hess) pair
-/// - `gradient_batch`: Computes gradients for entire batch (can be parallelized)
+/// - `compute_gradient`: Compute grad/hess for a single sample
+/// - `gradient_buffer`: Batch method that writes to SoA buffer (primary API)
 pub trait Loss: Send + Sync {
     /// Compute gradient and hessian for a single sample.
     ///
@@ -36,21 +42,36 @@ pub trait Loss: Send + Sync {
     ///
     /// # Returns
     ///
-    /// Gradient pair (grad, hess) where:
+    /// Tuple (grad, hess) where:
     /// - grad = ∂L/∂pred (first derivative)
     /// - hess = ∂²L/∂pred² (second derivative)
-    fn compute_gradient(&self, pred: f32, label: f32) -> GradientPair;
+    fn compute_gradient(&self, pred: f32, label: f32) -> (f32, f32);
 
-    /// Compute gradients for a batch of samples.
+    /// Compute gradients for a batch of samples into SoA buffer.
     ///
-    /// Default implementation calls `compute_gradient` for each sample.
-    /// Can be overridden for vectorized implementations.
-    fn gradient_batch(&self, preds: &[f32], labels: &[f32], out: &mut [GradientPair]) {
+    /// This is the primary method for training. Default implementation calls
+    /// `compute_gradient` for each sample; can be overridden for vectorized
+    /// implementations.
+    ///
+    /// # Arguments
+    ///
+    /// * `preds` - Predictions, length = n_samples (single-output loss)
+    /// * `labels` - Labels, length = n_samples
+    /// * `buffer` - Output buffer with `n_samples` samples and `n_outputs == 1`
+    ///
+    /// # Panics
+    ///
+    /// Panics if buffer dimensions don't match input lengths.
+    fn gradient_buffer(&self, preds: &[f32], labels: &[f32], buffer: &mut GradientBuffer) {
         debug_assert_eq!(preds.len(), labels.len());
-        debug_assert_eq!(preds.len(), out.len());
+        debug_assert_eq!(preds.len(), buffer.n_samples());
+        debug_assert_eq!(buffer.n_outputs(), 1, "Loss trait expects n_outputs == 1");
 
-        for ((pred, label), gp) in preds.iter().zip(labels.iter()).zip(out.iter_mut()) {
-            *gp = self.compute_gradient(*pred, *label);
+        let (grads, hess) = buffer.as_mut_slices();
+        for (i, (pred, label)) in preds.iter().zip(labels.iter()).enumerate() {
+            let (g, h) = self.compute_gradient(*pred, *label);
+            grads[i] = g;
+            hess[i] = h;
         }
     }
 
@@ -65,8 +86,8 @@ pub trait Loss: Send + Sync {
 ///
 /// # Gradient Layout
 ///
-/// For N samples and K classes, gradients are stored as:
-/// `gradients[sample_idx * num_classes + class_idx]`
+/// For N samples and K classes, gradients are stored in SoA buffer as:
+/// `buffer.grads[sample_idx * num_classes + class_idx]`
 ///
 /// This layout matches XGBoost and allows efficient per-group weight updates.
 pub trait MulticlassLoss: Send + Sync {
@@ -79,27 +100,44 @@ pub trait MulticlassLoss: Send + Sync {
     ///
     /// * `preds` - Raw predictions for all classes (length = num_classes)
     /// * `label` - True class index (0-based, must be < num_classes)
-    /// * `out` - Output gradient pairs for each class (length = num_classes)
-    fn compute_gradient(&self, preds: &[f32], label: usize, out: &mut [GradientPair]);
+    /// * `grads` - Output gradient slice for each class (length = num_classes)
+    /// * `hess` - Output hessian slice for each class (length = num_classes)
+    fn compute_gradient(&self, preds: &[f32], label: usize, grads: &mut [f32], hess: &mut [f32]);
 
-    /// Compute gradients for a batch of samples.
+    /// Compute gradients for a batch of samples into SoA buffer.
+    ///
+    /// This is the primary method for training.
     ///
     /// # Arguments
     ///
     /// * `preds` - Predictions, layout: `preds[sample * num_classes + class]`
     /// * `labels` - Class labels (0-based indices)
-    /// * `out` - Output gradients, same layout as preds
-    fn gradient_batch(&self, preds: &[f32], labels: &[f32], out: &mut [GradientPair]) {
+    /// * `buffer` - Output buffer with `n_samples` samples and `n_outputs == num_classes`
+    ///
+    /// # Panics
+    ///
+    /// Panics if buffer dimensions don't match.
+    fn gradient_buffer(&self, preds: &[f32], labels: &[f32], buffer: &mut GradientBuffer) {
         let num_classes = self.num_classes();
         let num_samples = labels.len();
         debug_assert_eq!(preds.len(), num_samples * num_classes);
-        debug_assert_eq!(out.len(), num_samples * num_classes);
+        debug_assert_eq!(buffer.n_samples(), num_samples);
+        debug_assert_eq!(buffer.n_outputs(), num_classes);
+
+        let (grads, hess) = buffer.as_mut_slices();
 
         for i in 0..num_samples {
             let start = i * num_classes;
             let end = start + num_classes;
             let label = labels[i] as usize;
-            self.compute_gradient(&preds[start..end], label, &mut out[start..end]);
+            let sample_preds = &preds[start..end];
+
+            self.compute_gradient(
+                sample_preds,
+                label,
+                &mut grads[start..end],
+                &mut hess[start..end],
+            );
         }
     }
 
@@ -123,10 +161,10 @@ pub struct SquaredLoss;
 
 impl Loss for SquaredLoss {
     #[inline]
-    fn compute_gradient(&self, pred: f32, label: f32) -> GradientPair {
+    fn compute_gradient(&self, pred: f32, label: f32) -> (f32, f32) {
         let grad = pred - label;
         let hess = 1.0;
-        GradientPair::new(grad, hess)
+        (grad, hess)
     }
 
     fn name(&self) -> &'static str {
@@ -150,12 +188,12 @@ pub struct LogisticLoss;
 
 impl Loss for LogisticLoss {
     #[inline]
-    fn compute_gradient(&self, pred: f32, label: f32) -> GradientPair {
+    fn compute_gradient(&self, pred: f32, label: f32) -> (f32, f32) {
         let p = sigmoid(pred);
         let grad = p - label;
         // Hessian with small epsilon for numerical stability
         let hess = (p * (1.0 - p)).max(1e-16);
-        GradientPair::new(grad, hess)
+        (grad, hess)
     }
 
     fn name(&self) -> &'static str {
@@ -186,18 +224,18 @@ impl Loss for LogisticLoss {
 /// # Example
 ///
 /// ```
-/// use booste_rs::training::{Loss, QuantileLoss, GradientPair};
+/// use booste_rs::training::{Loss, QuantileLoss};
 ///
 /// // Median regression (α = 0.5)
 /// let loss = QuantileLoss::new(0.5);
 ///
 /// // Under-prediction: pred=1, label=2 → grad = -0.5
-/// let gp = loss.compute_gradient(1.0, 2.0);
-/// assert!(gp.grad() < 0.0);
+/// let (grad, _) = loss.compute_gradient(1.0, 2.0);
+/// assert!(grad < 0.0);
 ///
 /// // Over-prediction: pred=3, label=2 → grad = 0.5
-/// let gp = loss.compute_gradient(3.0, 2.0);
-/// assert!(gp.grad() > 0.0);
+/// let (grad, _) = loss.compute_gradient(3.0, 2.0);
+/// assert!(grad > 0.0);
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct QuantileLoss {
@@ -232,7 +270,7 @@ impl QuantileLoss {
 
 impl Loss for QuantileLoss {
     #[inline]
-    fn compute_gradient(&self, pred: f32, label: f32) -> GradientPair {
+    fn compute_gradient(&self, pred: f32, label: f32) -> (f32, f32) {
         // Pinball loss gradient:
         // - If pred >= label (over-prediction): grad = 1 - alpha
         // - If pred < label (under-prediction): grad = -alpha
@@ -243,10 +281,9 @@ impl Loss for QuantileLoss {
         };
 
         // Hessian is 1 for pinball loss (piecewise linear)
-        // Using 1.0 provides stable updates
         let hess = 1.0;
 
-        GradientPair::new(grad, hess)
+        (grad, hess)
     }
 
     fn name(&self) -> &'static str {
@@ -266,7 +303,6 @@ impl Loss for QuantileLoss {
 /// - hess_k = softmax_k * (1 - softmax_k)
 ///
 /// Implements [`MulticlassLoss`] for proper multiclass gradient handling.
-/// The trainer must use the multiclass API when num_groups > 1.
 #[derive(Debug, Clone, Copy)]
 pub struct SoftmaxLoss {
     /// Number of classes.
@@ -286,9 +322,10 @@ impl MulticlassLoss for SoftmaxLoss {
         self.num_classes
     }
 
-    fn compute_gradient(&self, preds: &[f32], label: usize, out: &mut [GradientPair]) {
+    fn compute_gradient(&self, preds: &[f32], label: usize, grads: &mut [f32], hess: &mut [f32]) {
         debug_assert_eq!(preds.len(), self.num_classes);
-        debug_assert_eq!(out.len(), self.num_classes);
+        debug_assert_eq!(grads.len(), self.num_classes);
+        debug_assert_eq!(hess.len(), self.num_classes);
         debug_assert!(
             label < self.num_classes,
             "Label {} >= num_classes {}",
@@ -296,33 +333,15 @@ impl MulticlassLoss for SoftmaxLoss {
             self.num_classes
         );
 
-        // Compute softmax probabilities (stack allocated for small num_classes)
-        let mut probs = [0.0f32; 64]; // Max 64 classes on stack
-        let probs = if self.num_classes <= 64 {
-            softmax(preds, &mut probs[..self.num_classes]);
-            &probs[..self.num_classes]
-        } else {
-            // Fall back to heap for large num_classes
-            let mut heap_probs = vec![0.0f32; self.num_classes];
-            softmax(preds, &mut heap_probs);
-            // Can't return reference to local, so inline the computation
-            for (k, gp) in out.iter_mut().enumerate() {
-                let prob = heap_probs[k];
-                let is_true_class = if k == label { 1.0 } else { 0.0 };
-                let grad = prob - is_true_class;
-                let hess = (prob * (1.0 - prob)).max(1e-16);
-                *gp = GradientPair::new(grad, hess);
-            }
-            return;
-        };
+        // Compute softmax probabilities directly into grads (reuse as temp)
+        softmax(preds, grads);
 
-        // Compute gradients for each class
-        for (k, (prob, gp)) in probs.iter().zip(out.iter_mut()).enumerate() {
+        // Now grads contains softmax probabilities, convert to gradients
+        for k in 0..self.num_classes {
+            let prob = grads[k];
             let is_true_class = if k == label { 1.0 } else { 0.0 };
-            let grad = *prob - is_true_class;
-            // Hessian: p * (1 - p), with epsilon for numerical stability
-            let hess = (prob * (1.0 - prob)).max(1e-16);
-            *gp = GradientPair::new(grad, hess);
+            grads[k] = prob - is_true_class;
+            hess[k] = (prob * (1.0 - prob)).max(1e-16);
         }
     }
 
@@ -380,13 +399,13 @@ mod tests {
         let loss = SquaredLoss;
 
         // pred = 1.0, label = 0.5 → grad = 0.5, hess = 1.0
-        let gp = loss.compute_gradient(1.0, 0.5);
-        assert!((gp.grad() - 0.5).abs() < 1e-6);
-        assert!((gp.hess() - 1.0).abs() < 1e-6);
+        let (grad, hess) = loss.compute_gradient(1.0, 0.5);
+        assert!((grad - 0.5).abs() < 1e-6);
+        assert!((hess - 1.0).abs() < 1e-6);
 
         // pred = label → grad = 0
-        let gp = loss.compute_gradient(2.0, 2.0);
-        assert!(gp.grad().abs() < 1e-6);
+        let (grad, _) = loss.compute_gradient(2.0, 2.0);
+        assert!(grad.abs() < 1e-6);
     }
 
     #[test]
@@ -396,13 +415,13 @@ mod tests {
         // pred = 0.0 → p = 0.5
         // label = 0 → grad = 0.5 - 0 = 0.5
         // hess = 0.5 * 0.5 = 0.25
-        let gp = loss.compute_gradient(0.0, 0.0);
-        assert!((gp.grad() - 0.5).abs() < 1e-6);
-        assert!((gp.hess() - 0.25).abs() < 1e-6);
+        let (grad, hess) = loss.compute_gradient(0.0, 0.0);
+        assert!((grad - 0.5).abs() < 1e-6);
+        assert!((hess - 0.25).abs() < 1e-6);
 
         // pred = 0.0, label = 1 → grad = 0.5 - 1 = -0.5
-        let gp = loss.compute_gradient(0.0, 1.0);
-        assert!((gp.grad() - (-0.5)).abs() < 1e-6);
+        let (grad, _) = loss.compute_gradient(0.0, 1.0);
+        assert!((grad - (-0.5)).abs() < 1e-6);
     }
 
     #[test]
@@ -410,39 +429,39 @@ mod tests {
         let loss = LogisticLoss;
 
         // Large positive pred → p ≈ 1.0
-        let gp = loss.compute_gradient(100.0, 1.0);
-        assert!(gp.grad().abs() < 0.01); // grad ≈ 0 when correct
-        assert!(gp.hess() > 0.0); // hess always positive
+        let (grad, hess) = loss.compute_gradient(100.0, 1.0);
+        assert!(grad.abs() < 0.01); // grad ≈ 0 when correct
+        assert!(hess > 0.0); // hess always positive
 
         // Large negative pred → p ≈ 0.0
-        let gp = loss.compute_gradient(-100.0, 0.0);
-        assert!(gp.grad().abs() < 0.01);
-        assert!(gp.hess() > 0.0);
+        let (grad, hess) = loss.compute_gradient(-100.0, 0.0);
+        assert!(grad.abs() < 0.01);
+        assert!(hess > 0.0);
     }
 
     #[test]
     fn softmax_loss_gradient() {
         let loss = SoftmaxLoss::new(3);
         let preds = [1.0, 2.0, 3.0];
-        let mut grads = [GradientPair::ZERO; 3];
+        let mut grads = [0.0f32; 3];
+        let mut hess = [0.0f32; 3];
 
         // True class is 2
-        loss.compute_gradient(&preds, 2, &mut grads);
+        loss.compute_gradient(&preds, 2, &mut grads, &mut hess);
 
-        // All gradients should be prob - indicator
         // Class 2 should have negative gradient (we want to increase it)
-        assert!(grads[2].grad() < 0.0);
+        assert!(grads[2] < 0.0);
         // Class 0 and 1 should have positive gradient (we want to decrease them)
-        assert!(grads[0].grad() > 0.0);
-        assert!(grads[1].grad() > 0.0);
+        assert!(grads[0] > 0.0);
+        assert!(grads[1] > 0.0);
 
         // Sum of gradients should be approximately 0
-        let grad_sum: f32 = grads.iter().map(|gp| gp.grad()).sum();
+        let grad_sum: f32 = grads.iter().sum();
         assert!(grad_sum.abs() < 1e-6);
 
         // All hessians should be positive
-        for gp in &grads {
-            assert!(gp.hess() > 0.0);
+        for h in &hess {
+            assert!(*h > 0.0);
         }
     }
 
@@ -450,31 +469,17 @@ mod tests {
     fn softmax_loss_uniform_preds() {
         let loss = SoftmaxLoss::new(3);
         let preds = [0.0, 0.0, 0.0]; // Uniform predictions
-        let mut grads = [GradientPair::ZERO; 3];
+        let mut grads = [0.0f32; 3];
+        let mut hess = [0.0f32; 3];
 
-        loss.compute_gradient(&preds, 1, &mut grads);
+        loss.compute_gradient(&preds, 1, &mut grads, &mut hess);
 
         // With uniform preds, p = 1/3 for all
         // True class (1): grad = 1/3 - 1 = -2/3
-        assert!((grads[1].grad() - (-2.0 / 3.0)).abs() < 1e-5);
+        assert!((grads[1] - (-2.0 / 3.0)).abs() < 1e-5);
         // Other classes: grad = 1/3 - 0 = 1/3
-        assert!((grads[0].grad() - (1.0 / 3.0)).abs() < 1e-5);
-        assert!((grads[2].grad() - (1.0 / 3.0)).abs() < 1e-5);
-    }
-
-    #[test]
-    fn gradient_batch() {
-        let loss = SquaredLoss;
-        let preds = [1.0, 2.0, 3.0];
-        let labels = [0.5, 2.0, 2.5];
-        let mut grads = [GradientPair::ZERO; 3];
-
-        loss.gradient_batch(&preds, &labels, &mut grads);
-
-        // Check each gradient
-        assert!((grads[0].grad() - 0.5).abs() < 1e-6); // 1.0 - 0.5
-        assert!((grads[1].grad() - 0.0).abs() < 1e-6); // 2.0 - 2.0
-        assert!((grads[2].grad() - 0.5).abs() < 1e-6); // 3.0 - 2.5
+        assert!((grads[0] - (1.0 / 3.0)).abs() < 1e-5);
+        assert!((grads[2] - (1.0 / 3.0)).abs() < 1e-5);
     }
 
     #[test]
@@ -485,25 +490,118 @@ mod tests {
         assert_eq!(QuantileLoss::new(0.5).name(), "quantile");
     }
 
+    // =========================================================================
+    // GradientBuffer tests
+    // =========================================================================
+
+    #[test]
+    fn squared_loss_gradient_buffer() {
+        let loss = SquaredLoss;
+        let preds = vec![1.0, 2.0, 3.0];
+        let labels = vec![0.5, 2.0, 2.5];
+        let mut buffer = GradientBuffer::new(3, 1);
+
+        loss.gradient_buffer(&preds, &labels, &mut buffer);
+
+        // Check gradients match expected values
+        assert!((buffer.grad(0, 0) - 0.5).abs() < 1e-6); // 1.0 - 0.5
+        assert!((buffer.grad(1, 0) - 0.0).abs() < 1e-6); // 2.0 - 2.0
+        assert!((buffer.grad(2, 0) - 0.5).abs() < 1e-6); // 3.0 - 2.5
+
+        // All hessians should be 1.0
+        assert!((buffer.hess(0, 0) - 1.0).abs() < 1e-6);
+        assert!((buffer.hess(1, 0) - 1.0).abs() < 1e-6);
+        assert!((buffer.hess(2, 0) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn logistic_loss_gradient_buffer() {
+        let loss = LogisticLoss;
+        let preds = vec![0.0, 0.0]; // p = 0.5 for both
+        let labels = vec![0.0, 1.0];
+        let mut buffer = GradientBuffer::new(2, 1);
+
+        loss.gradient_buffer(&preds, &labels, &mut buffer);
+
+        // label=0: grad = 0.5 - 0 = 0.5
+        assert!((buffer.grad(0, 0) - 0.5).abs() < 1e-6);
+        // label=1: grad = 0.5 - 1 = -0.5
+        assert!((buffer.grad(1, 0) - (-0.5)).abs() < 1e-6);
+        // hess = 0.5 * 0.5 = 0.25
+        assert!((buffer.hess(0, 0) - 0.25).abs() < 1e-6);
+        assert!((buffer.hess(1, 0) - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn softmax_loss_gradient_buffer() {
+        let loss = SoftmaxLoss::new(3);
+        // 2 samples, 3 classes each
+        let preds = vec![
+            1.0, 2.0, 3.0, // sample 0
+            0.0, 0.0, 0.0, // sample 1 (uniform)
+        ];
+        let labels = vec![2.0, 1.0]; // true classes
+        let mut buffer = GradientBuffer::new(2, 3);
+
+        loss.gradient_buffer(&preds, &labels, &mut buffer);
+
+        // Sample 0: true class is 2, should have negative gradient
+        assert!(buffer.grad(0, 2) < 0.0);
+        // Other classes should have positive gradient
+        assert!(buffer.grad(0, 0) > 0.0);
+        assert!(buffer.grad(0, 1) > 0.0);
+
+        // Sample 1 (uniform): true class is 1
+        // grad = 1/3 - 1 = -2/3 for class 1
+        assert!((buffer.grad(1, 1) - (-2.0 / 3.0)).abs() < 1e-5);
+        // grad = 1/3 - 0 = 1/3 for classes 0, 2
+        assert!((buffer.grad(1, 0) - (1.0 / 3.0)).abs() < 1e-5);
+        assert!((buffer.grad(1, 2) - (1.0 / 3.0)).abs() < 1e-5);
+
+        // All hessians should be positive
+        for sample in 0..2 {
+            for class in 0..3 {
+                assert!(buffer.hess(sample, class) > 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn quantile_loss_gradient_buffer() {
+        let loss = QuantileLoss::new(0.5);
+        let preds = vec![1.0, 3.0, 2.0]; // under, over, exact
+        let labels = vec![2.0, 2.0, 2.0];
+        let mut buffer = GradientBuffer::new(3, 1);
+
+        loss.gradient_buffer(&preds, &labels, &mut buffer);
+
+        // Under-prediction: grad = -0.5
+        assert!((buffer.grad(0, 0) - (-0.5)).abs() < 1e-6);
+        // Over-prediction: grad = 0.5
+        assert!((buffer.grad(1, 0) - 0.5).abs() < 1e-6);
+        // Exact: grad = 0.5 (convention: pred >= label is over)
+        assert!((buffer.grad(2, 0) - 0.5).abs() < 1e-6);
+    }
+
     #[test]
     fn quantile_loss_median() {
         // α = 0.5: symmetric loss (median regression)
         let loss = QuantileLoss::new(0.5);
 
         // Under-prediction: pred < label → grad = -α = -0.5
-        let gp = loss.compute_gradient(1.0, 2.0);
-        assert!((gp.grad() - (-0.5)).abs() < 1e-6);
-        assert!((gp.hess() - 1.0).abs() < 1e-6);
+        let (grad, hess) = loss.compute_gradient(1.0, 2.0);
+        assert!((grad - (-0.5)).abs() < 1e-6);
+        assert!((hess - 1.0).abs() < 1e-6);
 
         // Over-prediction: pred > label → grad = 1-α = 0.5
-        let gp = loss.compute_gradient(3.0, 2.0);
-        assert!((gp.grad() - 0.5).abs() < 1e-6);
-        assert!((gp.hess() - 1.0).abs() < 1e-6);
+        let (grad, hess) = loss.compute_gradient(3.0, 2.0);
+        assert!((grad - 0.5).abs() < 1e-6);
+        assert!((hess - 1.0).abs() < 1e-6);
 
         // Perfect prediction: pred == label → grad = 1-α = 0.5
         // (convention: pred >= label counts as over-prediction)
-        let gp = loss.compute_gradient(2.0, 2.0);
-        assert!((gp.grad() - 0.5).abs() < 1e-6);
+        let (grad, _) = loss.compute_gradient(2.0, 2.0);
+        assert!((grad - 0.5).abs() < 1e-6);
     }
 
     #[test]
@@ -512,12 +610,12 @@ mod tests {
         let loss = QuantileLoss::new(0.1);
 
         // Under-prediction: grad = -α = -0.1 (small penalty)
-        let gp = loss.compute_gradient(1.0, 2.0);
-        assert!((gp.grad() - (-0.1)).abs() < 1e-6);
+        let (grad, _) = loss.compute_gradient(1.0, 2.0);
+        assert!((grad - (-0.1)).abs() < 1e-6);
 
         // Over-prediction: grad = 1-α = 0.9 (large penalty)
-        let gp = loss.compute_gradient(3.0, 2.0);
-        assert!((gp.grad() - 0.9).abs() < 1e-6);
+        let (grad, _) = loss.compute_gradient(3.0, 2.0);
+        assert!((grad - 0.9).abs() < 1e-6);
     }
 
     #[test]
@@ -526,12 +624,12 @@ mod tests {
         let loss = QuantileLoss::new(0.9);
 
         // Under-prediction: grad = -α = -0.9 (large penalty)
-        let gp = loss.compute_gradient(1.0, 2.0);
-        assert!((gp.grad() - (-0.9)).abs() < 1e-6);
+        let (grad, _) = loss.compute_gradient(1.0, 2.0);
+        assert!((grad - (-0.9)).abs() < 1e-6);
 
         // Over-prediction: grad = 1-α = 0.1 (small penalty)
-        let gp = loss.compute_gradient(3.0, 2.0);
-        assert!((gp.grad() - 0.1).abs() < 1e-6);
+        let (grad, _) = loss.compute_gradient(3.0, 2.0);
+        assert!((grad - 0.1).abs() < 1e-6);
     }
 
     #[test]

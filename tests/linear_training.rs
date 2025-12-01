@@ -113,7 +113,7 @@ fn train_regression_matches_xgboost(#[case] name: &str) {
     };
 
     let trainer = LinearTrainer::new(trainer_config);
-    let model = trainer.train(&data, &labels, &SquaredLoss, 1);
+    let model = trainer.train(&data, &labels, &SquaredLoss);
 
     // Compare weights
     // XGBoost stores weights as [w0, w1, ..., wn-1, bias]
@@ -166,7 +166,7 @@ fn train_l2_regularization_shrinks_weights() {
         verbosity: Verbosity::Silent,
         ..Default::default()
     };
-    let no_reg_model = LinearTrainer::new(no_reg_config).train(&data, &labels, &SquaredLoss, 1);
+    let no_reg_model = LinearTrainer::new(no_reg_config).train(&data, &labels, &SquaredLoss);
 
     // Train with L2 regularization
     let l2_config = LinearTrainerConfig {
@@ -178,7 +178,7 @@ fn train_l2_regularization_shrinks_weights() {
         verbosity: Verbosity::Silent,
         ..Default::default()
     };
-    let l2_model = LinearTrainer::new(l2_config).train(&data, &labels, &SquaredLoss, 1);
+    let l2_model = LinearTrainer::new(l2_config).train(&data, &labels, &SquaredLoss);
 
     // L2 should produce smaller weights on average
     let no_reg_l2_norm: f32 = (0..data.num_features())
@@ -215,7 +215,7 @@ fn train_elastic_net_produces_sparse_weights() {
     };
 
     let trainer = LinearTrainer::new(trainer_config);
-    let model = trainer.train(&data, &labels, &SquaredLoss, 1);
+    let model = trainer.train(&data, &labels, &SquaredLoss);
 
     // Count near-zero weights in both
     let xgb_near_zero = xgb_weights
@@ -259,7 +259,7 @@ fn trained_model_predictions_reasonable() {
     };
 
     let trainer = LinearTrainer::new(config);
-    let model = trainer.train(&data, &labels, &SquaredLoss, 1);
+    let model = trainer.train(&data, &labels, &SquaredLoss);
 
     // Predictions should be close to actual values
     for i in 0..5 {
@@ -301,7 +301,7 @@ fn parallel_vs_sequential_similar() {
         verbosity: Verbosity::Silent,
         ..Default::default()
     };
-    let seq_model = LinearTrainer::new(seq_config).train(&data, &labels, &SquaredLoss, 1);
+    let seq_model = LinearTrainer::new(seq_config).train(&data, &labels, &SquaredLoss);
 
     let par_config = LinearTrainerConfig {
         num_rounds: 50,
@@ -310,7 +310,7 @@ fn parallel_vs_sequential_similar() {
         verbosity: Verbosity::Silent,
         ..Default::default()
     };
-    let par_model = LinearTrainer::new(par_config).train(&data, &labels, &SquaredLoss, 1);
+    let par_model = LinearTrainer::new(par_config).train(&data, &labels, &SquaredLoss);
 
     // Predictions should be similar
     let seq_pred = seq_model.predict_row(&[2.0, 2.0], &[0.0])[0];
@@ -431,7 +431,7 @@ fn weight_correlation_with_xgboost(#[case] name: &str) {
     };
 
     let trainer = LinearTrainer::new(trainer_config);
-    let model = trainer.train(&data, &labels, &SquaredLoss, 1);
+    let model = trainer.train(&data, &labels, &SquaredLoss);
 
     // Extract weights (excluding bias for correlation)
     let num_features = xgb_weights.num_features;
@@ -482,7 +482,7 @@ fn test_set_prediction_quality(#[case] name: &str) {
     };
 
     let trainer = LinearTrainer::new(trainer_config);
-    let model = trainer.train(&train_data, &train_labels, &SquaredLoss, 1);
+    let model = trainer.train(&train_data, &train_labels, &SquaredLoss);
 
     // Get our predictions on test set
     let mut our_predictions = vec![0.0f32; test_data.num_rows()];
@@ -539,7 +539,7 @@ fn train_binary_classification() {
     };
 
     let trainer = LinearTrainer::new(trainer_config);
-    let model = trainer.train(&data, &labels, &LogisticLoss, 1);
+    let model = trainer.train(&data, &labels, &LogisticLoss);
 
     // Verify predictions are in reasonable range for logits
     let mut predictions = Vec::new();
@@ -674,7 +674,7 @@ fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
 
     let trainer = LinearTrainer::new(trainer_config);
     let loss = QuantileLoss::new(alpha);
-    let model = trainer.train(&data, &labels, &loss, 1);
+    let model = trainer.train(&data, &labels, &loss);
 
     // Compute predictions on test set
     let mut test_preds = Vec::with_capacity(test_data.num_rows());
@@ -756,9 +756,9 @@ fn quantile_regression_predictions_differ() {
     let trainer = LinearTrainer::new(trainer_config);
 
     // Train three models with different quantiles
-    let model_low = trainer.train(&data, &labels, &QuantileLoss::new(0.1), 1);
-    let model_med = trainer.train(&data, &labels, &QuantileLoss::new(0.5), 1);
-    let model_high = trainer.train(&data, &labels, &QuantileLoss::new(0.9), 1);
+    let model_low = trainer.train(&data, &labels, &QuantileLoss::new(0.1));
+    let model_med = trainer.train(&data, &labels, &QuantileLoss::new(0.5));
+    let model_high = trainer.train(&data, &labels, &QuantileLoss::new(0.9));
 
     // Get predictions for first sample
     let features: Vec<f32> = (0..data.num_features())

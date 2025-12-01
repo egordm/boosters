@@ -99,19 +99,75 @@ Validates training infrastructure before GBTree training.
 
 ---
 
-## Future Considerations
+### Story 11: Multi-Quantile Regression 🟢 MEDIUM
 
-### GradientPair as Array
+**Goal**: Train multiple quantiles simultaneously (like XGBoost's `quantile_alpha` array).
 
-When refactoring `GradientPair` to use array storage (e.g., `[f32; 2]` or SIMD),
-revisit multiclass gradient handling. Currently we use strided indexing with
-`gradient_stride` parameter. An array-based approach might enable:
+- [ ] 11.1 `MultiQuantileLoss` that takes `alpha: &[f32]` (e.g., `[0.1, 0.5, 0.9]`)
+- [ ] 11.2 Use `num_groups = num_quantiles` to leverage existing multi-output infra
+- [ ] 11.3 Per-quantile gradient computation (each output gets its own α)
+- [ ] 11.4 Generate XGBoost multi-quantile test data
+- [ ] 11.5 Integration tests — 3 quantiles in one model vs 3 separate models
 
-- Contiguous K-gradient storage per sample as a single unit
-- SIMD-friendly multiclass gradient computation
-- Cleaner API without separate `MulticlassLoss` trait
+**Note**: XGBoost supports this via `reg:quantileerror` with `quantile_alpha=[...]`.
+Our multi-output training infrastructure already handles `num_groups > 1`, so this
+should be a natural extension of Story 8.
 
-Track this in GBTree training epic when gradient storage is optimized.
+---
+
+### Story 12: Gradient Batch Optimization 🟢 MEDIUM
+
+**Goal**: Vectorized gradient computation for SIMD potential.
+
+- [ ] 12.1 Add `gradient_batch(&preds, &labels, &mut out)` method to `Loss` trait
+- [ ] 12.2 Implement batch gradient for `SquaredLoss`, `LogisticLoss`, `QuantileLoss`
+- [ ] 12.3 Implement batch gradient for `MulticlassLoss` (K outputs per sample)
+- [ ] 12.4 Benchmark single vs batch gradient computation
+- [ ] 12.5 Explore SIMD intrinsics for batch exp/log operations
+- [ ] 12.6 Document performance findings in `docs/benchmarks/`
+
+**Note**: Current per-sample gradient computation leaves performance on the table.
+Batch operations enable auto-vectorization and explicit SIMD. This is foundational
+for GBTree training where gradient computation is a larger fraction of time.
+
+---
+
+### Story 13: SoA Gradient Storage ✅ COMPLETE
+
+**Goal**: Replace `Vec<GradientPair>` with Structure-of-Arrays layout.
+
+**Hypothesis**: Separate `grads: Vec<f32>` and `hess: Vec<f32>` arrays will be:
+
+1. **Faster** — better cache utilization, auto-vectorization friendly
+2. **Cleaner code** — no `gradient_stride` hacks for multiclass/multi-quantile
+3. **More ergonomic** — natural `[n_samples, n_outputs]` shape for multi-output
+
+**Tasks**:
+
+- [x] 13.1 Create `GradientBuffer` struct with `grads: Vec<f32>`, `hess: Vec<f32>`
+- [x] 13.2 Add shape info: `n_samples`, `n_outputs` (1 for regression, K for multiclass)
+- [x] 13.3 Indexing: `grads[sample * n_outputs + output]` (row-major per sample)
+- [x] 13.4 Refactor `Loss::compute_gradient` to write to slices
+- [x] 13.5 Refactor `MulticlassLoss` to use same buffer (no separate trait needed?)
+- [x] 13.6 Update `LinearUpdater` to use SoA gradients
+- [x] 13.7 Remove `gradient_stride` parameter — shape is in buffer
+
+**Benchmarks** (before/after):
+
+- [x] 13.8 Gradient computation throughput (single-output regression)
+- [x] 13.9 Gradient computation throughput (multiclass K=10)
+- [x] 13.10 Full training loop (regression, binary, multiclass)
+- [x] 13.11 Document findings in `docs/benchmarks/gradient-soa.md`
+
+**Results**:
+
+- ✅ Performance equal (AoS and SoA identical: ~26.5 Melem/s single-output, ~4.4 Melem/s 5-class)
+- ✅ Code complexity reduced (no stride parameters, unified multi-output handling)
+- ✅ Cleaner API for multiclass and multi-quantile
+
+**Findings**: SoA provides **code quality benefits** (cleaner API, no stride hacks) without
+performance penalty. Performance is memory-bound on coordinate descent regardless of layout.
+See `docs/benchmarks/2025-11-29-gradient-soa.md` for detailed analysis.
 
 ---
 

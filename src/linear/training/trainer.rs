@@ -6,18 +6,24 @@
 //! - [`ColMatrix`]: Best for dense data (columns are contiguous)
 //! - [`CSCMatrix`]: Best for sparse data (only stores non-zeros)
 //!
+//! # Gradient Storage
+//!
+//! Training uses Structure-of-Arrays (SoA) gradient storage via [`GradientBuffer`]:
+//! - Shape `[n_samples, n_outputs]` for unified single/multi-output handling
+//! - Separate `grads[]` and `hess[]` arrays for cache efficiency
+//!
 //! For row-major input, convert to column-major first:
 //! ```ignore
 //! let col_matrix: ColMatrix = row_matrix.to_layout();
-//! trainer.train(&col_matrix, labels, loss, 1);
+//! trainer.train(&col_matrix, labels, loss);
 //! ```
 
 use crate::data::ColumnAccess;
 use crate::linear::LinearModel;
-use crate::training::{GradientPair, Loss, MulticlassLoss, TrainingLogger, Verbosity};
+use crate::training::{GradientBuffer, Loss, MulticlassLoss, TrainingLogger, Verbosity};
 
 use super::selector::ShuffleSelector;
-use super::updater::{update_bias, update_bias_multiclass, UpdateConfig, UpdaterKind};
+use super::updater::{update_bias, UpdateConfig, UpdaterKind};
 
 /// Configuration for linear model training.
 #[derive(Debug, Clone)]
@@ -83,7 +89,6 @@ impl LinearTrainer {
     /// * `train_data` - Training features (must implement `ColumnAccess`)
     /// * `train_labels` - Training labels
     /// * `loss` - Loss function for gradient computation
-    /// * `num_groups` - Number of output groups (1 for regression, K for K-class)
     ///
     /// # Returns
     ///
@@ -101,20 +106,19 @@ impl LinearTrainer {
     /// let col_data: ColMatrix = row_data.to_layout();
     ///
     /// let trainer = LinearTrainer::default_config();
-    /// let model = trainer.train(&col_data, &labels, &SquaredLoss, 1);
+    /// let model = trainer.train(&col_data, &labels, &SquaredLoss);
     /// ```
     pub fn train<C, L>(
         &self,
         train_data: &C,
         train_labels: &[f32],
         loss: &L,
-        num_groups: usize,
     ) -> LinearModel
     where
         C: ColumnAccess<Element = f32> + Sync,
         L: Loss,
     {
-        self.train_with_validation::<C, C, L>(train_data, train_labels, None, None, loss, num_groups)
+        self.train_with_validation::<C, C, L>(train_data, train_labels, None, None, loss)
     }
 
     /// Train a linear model with validation data.
@@ -126,7 +130,6 @@ impl LinearTrainer {
     /// * `val_data` - Optional validation features (same type as train_data)
     /// * `val_labels` - Optional validation labels
     /// * `loss` - Loss function
-    /// * `num_groups` - Number of output groups
     pub fn train_with_validation<C, V, L>(
         &self,
         train_data: &C,
@@ -134,7 +137,6 @@ impl LinearTrainer {
         val_data: Option<&V>,
         val_labels: Option<&[f32]>,
         loss: &L,
-        num_groups: usize,
     ) -> LinearModel
     where
         C: ColumnAccess<Element = f32> + Sync,
@@ -143,6 +145,7 @@ impl LinearTrainer {
     {
         let num_features = train_data.num_columns();
         let num_samples = train_data.num_rows();
+        let num_outputs = 1; // Loss trait is single-output
 
         assert_eq!(
             train_labels.len(),
@@ -151,7 +154,7 @@ impl LinearTrainer {
         );
 
         // Initialize model
-        let mut model = LinearModel::zeros(num_features, num_groups);
+        let mut model = LinearModel::zeros(num_features, num_outputs);
 
         // Create updater
         let updater = if self.config.parallel {
@@ -169,66 +172,50 @@ impl LinearTrainer {
             learning_rate: self.config.learning_rate,
         };
 
-        // Gradient storage
-        let mut gradients = vec![GradientPair::ZERO; num_samples];
+        // SoA gradient storage
+        let mut gradients = GradientBuffer::new(num_samples, num_outputs);
 
         // Predictions buffer
-        let mut predictions = vec![0.0f32; num_samples * num_groups];
+        let mut predictions = vec![0.0f32; num_samples];
 
         // Logger
         let mut logger = TrainingLogger::new(self.config.verbosity);
         logger.start_training(self.config.num_rounds);
 
-        // Early stopping (using train loss as metric if no validation)
-        let use_early_stopping =
-            self.config.early_stopping_rounds > 0 && val_data.is_some() && val_labels.is_some();
-
         // Training loop
         for round in 0..self.config.num_rounds {
-            // Compute predictions using column access
+            // Compute predictions
             Self::compute_predictions_col(&model, train_data, &mut predictions);
 
-            // Compute gradients
-            Self::compute_gradients(&predictions, train_labels, loss, num_groups, &mut gradients);
+            // Compute gradients using SoA buffer
+            loss.gradient_buffer(&predictions, train_labels, &mut gradients);
 
-            // Update each output group
-            for group in 0..num_groups {
-                // Update bias (no regularization)
-                update_bias(&mut model, &gradients, group, self.config.learning_rate);
+            // Update bias
+            update_bias(&mut model, &gradients, 0, self.config.learning_rate);
 
-                // Update feature weights
-                // For single-output Loss trait, gradient_stride is always 1
-                // (each sample has exactly one gradient pair)
-                updater.update_round(
-                    &mut model,
-                    train_data,
-                    &gradients,
-                    &mut selector,
-                    group,
-                    1, // gradient_stride = 1 for Loss trait
-                    &update_config,
-                );
-            }
+            // Update feature weights
+            updater.update_round(
+                &mut model,
+                train_data,
+                &gradients,
+                &mut selector,
+                0, // output
+                &update_config,
+            );
 
             // Logging
             if self.config.verbosity >= Verbosity::Info {
-                let train_loss = Self::compute_loss(&predictions, train_labels, num_groups);
+                let train_loss = Self::compute_loss(&predictions, train_labels);
                 let mut metrics = vec![("train_loss".to_string(), train_loss)];
 
                 if let (Some(vd), Some(vl)) = (val_data, val_labels) {
-                    let mut val_preds = vec![0.0f32; vd.num_rows() * num_groups];
+                    let mut val_preds = vec![0.0f32; vd.num_rows()];
                     Self::compute_predictions_col(&model, vd, &mut val_preds);
-                    let val_loss = Self::compute_loss(&val_preds, vl, num_groups);
+                    let val_loss = Self::compute_loss(&val_preds, vl);
                     metrics.push(("val_loss".to_string(), val_loss));
                 }
 
                 logger.log_round(round, &metrics);
-            }
-
-            // Early stopping check
-            if use_early_stopping {
-                // TODO: Implement proper early stopping with validation metric
-                // For now, we just train for num_rounds
             }
         }
 
@@ -294,12 +281,12 @@ impl LinearTrainer {
     {
         let num_features = train_data.num_columns();
         let num_samples = train_data.num_rows();
-        let num_groups = loss.num_classes();
+        let num_outputs = loss.num_classes();
 
         assert!(
-            num_groups >= 2,
+            num_outputs >= 2,
             "Multiclass requires at least 2 classes, got {}",
-            num_groups
+            num_outputs
         );
         assert_eq!(
             train_labels.len(),
@@ -308,7 +295,7 @@ impl LinearTrainer {
         );
 
         // Initialize model
-        let mut model = LinearModel::zeros(num_features, num_groups);
+        let mut model = LinearModel::zeros(num_features, num_outputs);
 
         // Create updater
         let updater = if self.config.parallel {
@@ -326,11 +313,11 @@ impl LinearTrainer {
             learning_rate: self.config.learning_rate,
         };
 
-        // Gradient storage: K gradients per sample for K classes
-        let mut gradients = vec![GradientPair::ZERO; num_samples * num_groups];
+        // SoA gradient storage: K outputs per sample
+        let mut gradients = GradientBuffer::new(num_samples, num_outputs);
 
         // Predictions buffer: K predictions per sample
-        let mut predictions = vec![0.0f32; num_samples * num_groups];
+        let mut predictions = vec![0.0f32; num_samples * num_outputs];
 
         // Logger
         let mut logger = TrainingLogger::new(self.config.verbosity);
@@ -338,51 +325,38 @@ impl LinearTrainer {
 
         // Training loop
         for round in 0..self.config.num_rounds {
-            // Compute predictions using column access
-            Self::compute_predictions_col(&model, train_data, &mut predictions);
+            // Compute predictions
+            Self::compute_predictions_col_multiclass(&model, train_data, &mut predictions);
 
-            // Compute multiclass gradients (K per sample)
-            Self::compute_gradients_multiclass(
-                &predictions,
-                train_labels,
-                loss,
-                num_groups,
-                &mut gradients,
-            );
+            // Compute multiclass gradients using SoA buffer
+            loss.gradient_buffer(&predictions, train_labels, &mut gradients);
 
-            // Update each output group (class)
-            for group in 0..num_groups {
-                // Update bias using strided gradient access
-                update_bias_multiclass(
-                    &mut model,
-                    &gradients,
-                    group,
-                    num_groups, // stride = num_classes
-                    num_samples,
-                    self.config.learning_rate,
-                );
+            // Update each output (class)
+            for output in 0..num_outputs {
+                // Update bias
+                update_bias(&mut model, &gradients, output, self.config.learning_rate);
 
-                // Update feature weights with strided gradients
+                // Update feature weights
                 updater.update_round(
                     &mut model,
                     train_data,
                     &gradients,
                     &mut selector,
-                    group,
-                    num_groups, // gradient_stride = num_classes
+                    output,
                     &update_config,
                 );
             }
 
             // Logging
             if self.config.verbosity >= Verbosity::Info {
-                let train_acc = Self::compute_multiclass_accuracy(&predictions, train_labels, num_groups);
+                let train_acc =
+                    Self::compute_multiclass_accuracy(&predictions, train_labels, num_outputs);
                 let mut metrics = vec![("train_acc".to_string(), train_acc)];
 
                 if let (Some(vd), Some(vl)) = (val_data, val_labels) {
-                    let mut val_preds = vec![0.0f32; vd.num_rows() * num_groups];
-                    Self::compute_predictions_col(&model, vd, &mut val_preds);
-                    let val_acc = Self::compute_multiclass_accuracy(&val_preds, vl, num_groups);
+                    let mut val_preds = vec![0.0f32; vd.num_rows() * num_outputs];
+                    Self::compute_predictions_col_multiclass(&model, vd, &mut val_preds);
+                    let val_acc = Self::compute_multiclass_accuracy(&val_preds, vl, num_outputs);
                     metrics.push(("val_acc".to_string(), val_acc));
                 }
 
@@ -394,11 +368,31 @@ impl LinearTrainer {
         model
     }
 
-    /// Compute predictions for all samples using column-based access.
-    ///
-    /// This is less efficient than row-based prediction but works with any
-    /// `ColumnAccess` type without requiring `DataMatrix`.
+    /// Compute predictions for all samples (single-output).
     fn compute_predictions_col<C: ColumnAccess<Element = f32>>(
+        model: &LinearModel,
+        data: &C,
+        output: &mut [f32],
+    ) {
+        let num_rows = data.num_rows();
+        let num_features = model.num_features();
+
+        // Initialize with bias
+        for row_idx in 0..num_rows {
+            output[row_idx] = model.bias(0);
+        }
+
+        // Add weighted features column by column
+        for feat_idx in 0..num_features {
+            let weight = model.weight(feat_idx, 0);
+            for (row_idx, value) in data.column(feat_idx) {
+                output[row_idx] += value * weight;
+            }
+        }
+    }
+
+    /// Compute predictions for all samples (multiclass).
+    fn compute_predictions_col_multiclass<C: ColumnAccess<Element = f32>>(
         model: &LinearModel,
         data: &C,
         output: &mut [f32],
@@ -424,89 +418,18 @@ impl LinearTrainer {
         }
     }
 
-    /// Compute gradients from predictions and labels.
-    fn compute_gradients<L: Loss>(
-        predictions: &[f32],
-        labels: &[f32],
-        loss: &L,
-        num_groups: usize,
-        gradients: &mut [GradientPair],
-    ) {
-        // For single-output (regression, binary), just compute gradients directly
-        if num_groups == 1 {
-            for (i, (pred, label)) in predictions.iter().zip(labels.iter()).enumerate() {
-                gradients[i] = loss.compute_gradient(*pred, *label);
-            }
-        } else {
-            // For multiclass, we need to handle differently
-            // For now, use first group's prediction vs label
-            // TODO: Proper multiclass gradient handling
-            for (i, label) in labels.iter().enumerate() {
-                let pred = predictions[i * num_groups]; // Use first group
-                gradients[i] = loss.compute_gradient(pred, *label);
-            }
-        }
-    }
-
-    /// Compute average loss.
-    fn compute_loss(predictions: &[f32], labels: &[f32], num_groups: usize) -> f64 {
-        if num_groups == 1 {
-            // Simple MSE for regression
-            let mse: f64 = predictions
-                .iter()
-                .zip(labels.iter())
-                .map(|(p, l)| {
-                    let diff = (*p as f64) - (*l as f64);
-                    diff * diff
-                })
-                .sum::<f64>()
-                / predictions.len() as f64;
-            mse.sqrt() // RMSE
-        } else {
-            // For multiclass, compute accuracy or cross-entropy
-            // Simplified: just return RMSE of first group
-            let n = labels.len();
-            let mse: f64 = (0..n)
-                .map(|i| {
-                    let p = predictions[i * num_groups] as f64;
-                    let l = labels[i] as f64;
-                    (p - l) * (p - l)
-                })
-                .sum::<f64>()
-                / n as f64;
-            mse.sqrt()
-        }
-    }
-
-    /// Compute multiclass gradients using the MulticlassLoss trait.
-    ///
-    /// Stores K gradient pairs per sample (where K = num_groups).
-    /// Gradient layout: [sample0_class0, sample0_class1, ..., sample1_class0, ...]
-    fn compute_gradients_multiclass<L: MulticlassLoss>(
-        predictions: &[f32],
-        labels: &[f32],
-        loss: &L,
-        num_groups: usize,
-        gradients: &mut [GradientPair],
-    ) {
-        let num_samples = labels.len();
-        debug_assert_eq!(predictions.len(), num_samples * num_groups);
-        debug_assert_eq!(gradients.len(), num_samples * num_groups);
-
-        for i in 0..num_samples {
-            let preds_start = i * num_groups;
-            let preds_end = preds_start + num_groups;
-            let sample_preds = &predictions[preds_start..preds_end];
-
-            let grads_start = i * num_groups;
-            let grads_end = grads_start + num_groups;
-            let sample_grads = &mut gradients[grads_start..grads_end];
-
-            // Label is class index (0 to K-1)
-            let label = labels[i] as usize;
-
-            loss.compute_gradient(sample_preds, label, sample_grads);
-        }
+    /// Compute RMSE loss (single-output).
+    fn compute_loss(predictions: &[f32], labels: &[f32]) -> f64 {
+        let mse: f64 = predictions
+            .iter()
+            .zip(labels.iter())
+            .map(|(p, l)| {
+                let diff = (*p as f64) - (*l as f64);
+                diff * diff
+            })
+            .sum::<f64>()
+            / predictions.len() as f64;
+        mse.sqrt()
     }
 
     /// Compute multiclass accuracy.
@@ -570,7 +493,7 @@ mod tests {
         };
 
         let trainer = LinearTrainer::new(config);
-        let model = trainer.train(&train_data, &train_labels, &SquaredLoss, 1);
+        let model = trainer.train(&train_data, &train_labels, &SquaredLoss);
 
         // Check predictions
         let pred1 = model.predict_row(&[1.0], &[0.0])[0];
@@ -601,7 +524,6 @@ mod tests {
             &train_data,
             &train_labels,
             &SquaredLoss,
-            1,
         );
 
         // Train with L2 regularization
@@ -615,7 +537,7 @@ mod tests {
             ..Default::default()
         };
         let model_l2 =
-            LinearTrainer::new(config_l2).train(&train_data, &train_labels, &SquaredLoss, 1);
+            LinearTrainer::new(config_l2).train(&train_data, &train_labels, &SquaredLoss);
 
         // L2 should produce smaller weights
         let w_no_reg = model_no_reg.weight(0, 0).abs();
@@ -650,7 +572,7 @@ mod tests {
         };
 
         let trainer = LinearTrainer::new(config);
-        let model = trainer.train(&train_data, &train_labels, &SquaredLoss, 1);
+        let model = trainer.train(&train_data, &train_labels, &SquaredLoss);
 
         // Check weights are roughly correct
         let w0 = model.weight(0, 0);
@@ -674,7 +596,7 @@ mod tests {
             ..Default::default()
         };
         let model_seq =
-            LinearTrainer::new(config_seq).train(&train_data, &train_labels, &SquaredLoss, 1);
+            LinearTrainer::new(config_seq).train(&train_data, &train_labels, &SquaredLoss);
 
         let config_par = LinearTrainerConfig {
             num_rounds: 50,
@@ -683,7 +605,7 @@ mod tests {
             ..Default::default()
         };
         let model_par =
-            LinearTrainer::new(config_par).train(&train_data, &train_labels, &SquaredLoss, 1);
+            LinearTrainer::new(config_par).train(&train_data, &train_labels, &SquaredLoss);
 
         // Results should be similar (not identical due to race conditions in shotgun)
         let pred_seq = model_seq.predict_row(&[2.5], &[0.0])[0];
@@ -697,16 +619,13 @@ mod tests {
         use crate::training::SoftmaxLoss;
 
         // Simple 3-class classification
-        // Class 0: x0 > x1
-        // Class 1: x0 < x1, x0 + x1 < 3
-        // Class 2: x0 + x1 >= 3
         let row_data = RowMatrix::from_vec(
             vec![
                 2.0, 1.0, // Class 0: x0=2 > x1=1
-                0.0, 1.0, // Class 1: x0=0 < x1=1, sum=1 < 3
+                0.0, 1.0, // Class 1: x0=0 < x1=1
                 3.0, 1.0, // Class 0: x0=3 > x1=1
                 1.0, 3.0, // Class 2: sum=4 >= 3
-                0.5, 0.5, // Class 1: x0 < x1 (barely), sum=1 < 3
+                0.5, 0.5, // Class 1
                 2.0, 2.0, // Class 2: sum=4 >= 3
             ],
             6,
@@ -732,21 +651,10 @@ mod tests {
         // Model should have 3 output groups
         assert_eq!(model.num_groups(), 3);
 
-        // Verify at least some predictions work
-        // For class 0 sample: should have highest logit for class 0
-        let preds0 = model.predict_row(&[2.0, 1.0], &[0.0, 0.0, 0.0]);
-        let _argmax0 = preds0
-            .iter()
-            .enumerate()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-            .map(|(i, _)| i)
-            .unwrap();
-
         // Verify model produces different outputs for different classes
-        // (not all same due to proper gradient computation)
+        let preds0 = model.predict_row(&[2.0, 1.0], &[0.0, 0.0, 0.0]);
         let preds1 = model.predict_row(&[0.0, 1.0], &[0.0, 0.0, 0.0]);
 
-        // The predictions should differ for different inputs
         let diff: f32 = preds0
             .iter()
             .zip(preds1.iter())

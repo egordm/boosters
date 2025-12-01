@@ -16,12 +16,18 @@
 //! ```ignore
 //! let col_matrix: ColMatrix = row_matrix.to_layout();
 //! ```
+//!
+//! # Gradient Storage
+//!
+//! Gradients are stored in Structure-of-Arrays (SoA) layout via [`GradientBuffer`]:
+//! - Shape `[n_samples, n_outputs]` for unified single/multi-output handling
+//! - Separate `grads[]` and `hess[]` arrays for cache efficiency
 
 use rayon::prelude::*;
 
 use crate::data::ColumnAccess;
 use crate::linear::LinearModel;
-use crate::training::GradientPair;
+use crate::training::GradientBuffer;
 
 use super::FeatureSelector;
 
@@ -47,24 +53,27 @@ impl UpdaterKind {
     ///
     /// # Arguments
     ///
-    /// * `gradient_stride` - Number of gradient pairs per sample. Use 1 for single-output,
-    ///   `num_groups` for multiclass (where each sample has K gradients).
+    /// * `model` - Linear model to update
+    /// * `data` - Training data with column access
+    /// * `buffer` - Gradient buffer with shape `[n_samples, n_outputs]`
+    /// * `selector` - Feature selection strategy
+    /// * `output` - Which output (group) to update (0 to n_outputs-1)
+    /// * `config` - Update configuration (learning rate, regularization)
     pub fn update_round<C: ColumnAccess<Element = f32> + Sync>(
         &self,
         model: &mut LinearModel,
         data: &C,
-        gradients: &[GradientPair],
+        buffer: &GradientBuffer,
         selector: &mut dyn FeatureSelector,
-        group: usize,
-        gradient_stride: usize,
+        output: usize,
         config: &UpdateConfig,
     ) {
         match self {
             UpdaterKind::Sequential => {
-                sequential_update(model, data, gradients, selector, group, gradient_stride, config)
+                sequential_update(model, data, buffer, selector, output, config)
             }
             UpdaterKind::Parallel => {
-                parallel_update(model, data, gradients, selector, group, gradient_stride, config)
+                parallel_update(model, data, buffer, selector, output, config)
             }
         }
     }
@@ -101,19 +110,17 @@ impl Default for UpdateConfig {
 fn sequential_update<C: ColumnAccess<Element = f32>>(
     model: &mut LinearModel,
     data: &C,
-    gradients: &[GradientPair],
+    buffer: &GradientBuffer,
     selector: &mut dyn FeatureSelector,
-    group: usize,
-    gradient_stride: usize,
+    output: usize,
     config: &UpdateConfig,
 ) {
     selector.reset(model.num_features());
 
     while let Some(feature) = selector.next() {
-        let delta =
-            compute_weight_update(model, data, gradients, feature, group, gradient_stride, config);
+        let delta = compute_weight_update(model, data, buffer, feature, output, config);
         if delta.abs() > 1e-10 {
-            model.add_weight(feature, group, delta);
+            model.add_weight(feature, output, delta);
         }
     }
 }
@@ -125,10 +132,9 @@ fn sequential_update<C: ColumnAccess<Element = f32>>(
 fn parallel_update<C: ColumnAccess<Element = f32> + Sync>(
     model: &mut LinearModel,
     data: &C,
-    gradients: &[GradientPair],
+    buffer: &GradientBuffer,
     selector: &mut dyn FeatureSelector,
-    group: usize,
-    gradient_stride: usize,
+    output: usize,
     config: &UpdateConfig,
 ) {
     selector.reset(model.num_features());
@@ -138,15 +144,7 @@ fn parallel_update<C: ColumnAccess<Element = f32> + Sync>(
     let deltas: Vec<(usize, f32)> = features
         .par_iter()
         .map(|&feature| {
-            let delta = compute_weight_update(
-                model,
-                data,
-                gradients,
-                feature,
-                group,
-                gradient_stride,
-                config,
-            );
+            let delta = compute_weight_update(model, data, buffer, feature, output, config);
             (feature, delta)
         })
         .collect();
@@ -154,12 +152,12 @@ fn parallel_update<C: ColumnAccess<Element = f32> + Sync>(
     // Apply updates sequentially (thread-safe)
     for (feature, delta) in deltas {
         if delta.abs() > 1e-10 {
-            model.add_weight(feature, group, delta);
+            model.add_weight(feature, output, delta);
         }
     }
 }
 
-/// Compute the weight update for a single feature using elastic net regularization.
+/// Compute weight update for a single feature using elastic net regularization.
 ///
 /// Uses soft-thresholding for L1 regularization:
 /// ```text
@@ -167,33 +165,30 @@ fn parallel_update<C: ColumnAccess<Element = f32> + Sync>(
 /// hess_l2 = Σ(hessian × feature²) + lambda
 /// delta = soft_threshold(-grad_l2 / hess_l2, alpha / hess_l2) × learning_rate
 /// ```
-///
-/// # Arguments
-///
-/// * `gradient_stride` - Number of gradient pairs per sample. For single-output, use 1.
-///   For multiclass with K classes, use K. The gradient for sample `row` and group `g`
-///   is at index `row * gradient_stride + g`.
 fn compute_weight_update<C: ColumnAccess<Element = f32>>(
     model: &LinearModel,
     data: &C,
-    gradients: &[GradientPair],
+    buffer: &GradientBuffer,
     feature: usize,
-    group: usize,
-    gradient_stride: usize,
+    output: usize,
     config: &UpdateConfig,
 ) -> f32 {
-    let current_weight = model.weight(feature, group);
+    let current_weight = model.weight(feature, output);
+    let n_outputs = buffer.n_outputs();
+
+    // Get raw slices for better cache access
+    let grads = buffer.grads();
+    let hess = buffer.hess_slice();
 
     // Accumulate gradient and hessian for this feature
     let mut sum_grad = 0.0f32;
     let mut sum_hess = 0.0f32;
 
     for (row, value) in data.column(feature) {
-        // For multiclass: gradients[row * num_groups + group]
-        // For single-output: gradients[row * 1 + 0] = gradients[row]
-        let gp = &gradients[row * gradient_stride + group];
-        sum_grad += gp.grad() * value;
-        sum_hess += gp.hess() * value * value;
+        // SoA index: grads[row * n_outputs + output]
+        let idx = row * n_outputs + output;
+        sum_grad += grads[idx] * value;
+        sum_hess += hess[idx] * value * value;
     }
 
     // Add L2 regularization
@@ -230,55 +225,31 @@ fn soft_threshold(x: f32, threshold: f32) -> f32 {
     }
 }
 
+// =============================================================================
+// Bias update function
+// =============================================================================
+
 /// Update bias term (no regularization).
-pub fn update_bias(
-    model: &mut LinearModel,
-    gradients: &[GradientPair],
-    group: usize,
-    learning_rate: f32,
-) {
-    let mut sum_grad = 0.0f32;
-    let mut sum_hess = 0.0f32;
-
-    for gp in gradients {
-        sum_grad += gp.grad();
-        sum_hess += gp.hess();
-    }
-
-    if sum_hess.abs() > 1e-10 {
-        let delta = -sum_grad / sum_hess * learning_rate;
-        model.add_bias(group, delta);
-    }
-}
-
-/// Update bias term for multiclass with strided gradient storage.
+///
+/// This works for both single-output and multi-output models.
 ///
 /// # Arguments
 ///
-/// * `gradients` - Gradient array with `num_samples * num_groups` elements
-/// * `group` - Which group (class) to update
-/// * `gradient_stride` - Number of groups (gradient pairs per sample)
-/// * `num_samples` - Number of training samples
-pub fn update_bias_multiclass(
+/// * `model` - Linear model to update
+/// * `buffer` - Gradient buffer with shape `[n_samples, n_outputs]`
+/// * `output` - Which output to update (0 to n_outputs-1)
+/// * `learning_rate` - Step size multiplier
+pub fn update_bias(
     model: &mut LinearModel,
-    gradients: &[GradientPair],
-    group: usize,
-    gradient_stride: usize,
-    num_samples: usize,
+    buffer: &GradientBuffer,
+    output: usize,
     learning_rate: f32,
 ) {
-    let mut sum_grad = 0.0f32;
-    let mut sum_hess = 0.0f32;
-
-    for sample in 0..num_samples {
-        let gp = &gradients[sample * gradient_stride + group];
-        sum_grad += gp.grad();
-        sum_hess += gp.hess();
-    }
+    let (sum_grad, sum_hess) = buffer.sum_for_output(output);
 
     if sum_hess.abs() > 1e-10 {
         let delta = -sum_grad / sum_hess * learning_rate;
-        model.add_bias(group, delta);
+        model.add_bias(output, delta);
     }
 }
 
@@ -287,7 +258,7 @@ mod tests {
     use super::*;
     use crate::data::{ColMatrix, RowMatrix};
 
-    fn make_test_data() -> (ColMatrix<f32>, Vec<GradientPair>) {
+    fn make_test_data() -> (ColMatrix<f32>, GradientBuffer) {
         // Simple 4x2 dataset
         let dense = RowMatrix::from_vec(
             vec![
@@ -302,14 +273,13 @@ mod tests {
         let col_matrix: ColMatrix = dense.to_layout();
 
         // Gradients (simulating squared error loss)
-        let gradients = vec![
-            GradientPair::new(0.5, 1.0),
-            GradientPair::new(-0.3, 1.0),
-            GradientPair::new(0.2, 1.0),
-            GradientPair::new(-0.1, 1.0),
-        ];
+        let mut buffer = GradientBuffer::new(4, 1);
+        buffer.set(0, 0, 0.5, 1.0);
+        buffer.set(1, 0, -0.3, 1.0);
+        buffer.set(2, 0, 0.2, 1.0);
+        buffer.set(3, 0, -0.1, 1.0);
 
-        (col_matrix, gradients)
+        (col_matrix, buffer)
     }
 
     #[test]
@@ -330,7 +300,7 @@ mod tests {
 
     #[test]
     fn sequential_updater_changes_weights() {
-        let (data, gradients) = make_test_data();
+        let (data, buffer) = make_test_data();
         let mut model = LinearModel::zeros(2, 1);
         let mut selector = super::super::CyclicSelector::new();
 
@@ -343,10 +313,9 @@ mod tests {
         UpdaterKind::Sequential.update_round(
             &mut model,
             &data,
-            &gradients,
+            &buffer,
             &mut selector,
-            0, // group
-            1, // gradient_stride (single-output)
+            0, // output
             &config,
         );
 
@@ -358,7 +327,7 @@ mod tests {
 
     #[test]
     fn parallel_updater_changes_weights() {
-        let (data, gradients) = make_test_data();
+        let (data, buffer) = make_test_data();
         let mut model = LinearModel::zeros(2, 1);
         let mut selector = super::super::CyclicSelector::new();
 
@@ -371,10 +340,9 @@ mod tests {
         UpdaterKind::Parallel.update_round(
             &mut model,
             &data,
-            &gradients,
+            &buffer,
             &mut selector,
-            0, // group
-            1, // gradient_stride (single-output)
+            0, // output
             &config,
         );
 
@@ -386,7 +354,7 @@ mod tests {
 
     #[test]
     fn l2_regularization_shrinks_weights() {
-        let (data, gradients) = make_test_data();
+        let (data, buffer) = make_test_data();
 
         // No regularization
         let mut model1 = LinearModel::zeros(2, 1);
@@ -401,10 +369,9 @@ mod tests {
         UpdaterKind::Sequential.update_round(
             &mut model1,
             &data,
-            &gradients,
+            &buffer,
             &mut selector,
-            0, // group
-            1, // gradient_stride (single-output)
+            0, // output
             &config_no_reg,
         );
         let w1_no_reg = model1.weight(0, 0);
@@ -421,10 +388,9 @@ mod tests {
         UpdaterKind::Sequential.update_round(
             &mut model2,
             &data,
-            &gradients,
+            &buffer,
             &mut selector,
-            0, // group
-            1, // gradient_stride (single-output)
+            0, // output
             &config_l2,
         );
         let w1_l2 = model2.weight(0, 0);
@@ -435,14 +401,13 @@ mod tests {
 
     #[test]
     fn update_bias_works() {
-        let gradients = vec![
-            GradientPair::new(0.5, 1.0),
-            GradientPair::new(-0.3, 1.0),
-            GradientPair::new(0.2, 1.0),
-        ];
+        let mut buffer = GradientBuffer::new(3, 1);
+        buffer.set(0, 0, 0.5, 1.0);
+        buffer.set(1, 0, -0.3, 1.0);
+        buffer.set(2, 0, 0.2, 1.0);
 
         let mut model = LinearModel::zeros(2, 1);
-        update_bias(&mut model, &gradients, 0, 1.0);
+        update_bias(&mut model, &buffer, 0, 1.0);
 
         // Bias should have changed
         // sum_grad = 0.5 - 0.3 + 0.2 = 0.4
@@ -450,5 +415,29 @@ mod tests {
         // delta = -0.4 / 3.0 ≈ -0.133
         let bias = model.bias(0);
         assert!((bias - (-0.4 / 3.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn update_bias_multiclass() {
+        // 3 samples, 2 outputs
+        let mut buffer = GradientBuffer::new(3, 2);
+
+        // Output 0: sum_grad = 1.0, sum_hess = 3.0 → delta = -1/3
+        buffer.set(0, 0, 0.5, 1.0);
+        buffer.set(1, 0, 0.3, 1.0);
+        buffer.set(2, 0, 0.2, 1.0);
+
+        // Output 1: sum_grad = -0.6, sum_hess = 3.0 → delta = 0.2
+        buffer.set(0, 1, -0.1, 1.0);
+        buffer.set(1, 1, -0.2, 1.0);
+        buffer.set(2, 1, -0.3, 1.0);
+
+        let mut model = LinearModel::zeros(2, 2);
+
+        update_bias(&mut model, &buffer, 0, 1.0);
+        update_bias(&mut model, &buffer, 1, 1.0);
+
+        assert!((model.bias(0) - (-1.0 / 3.0)).abs() < 1e-6);
+        assert!((model.bias(1) - 0.2).abs() < 1e-6);
     }
 }

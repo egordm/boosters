@@ -1,9 +1,10 @@
 //! Linear model training benchmarks for booste-rs.
 //!
 //! Benchmarks cover:
-//! - ColMajor vs CSC matrix formats for training (actual training performance)
+//! - ColMajor vs CSC matrix formats for training
 //! - Different dataset sizes
 //! - Sequential vs Parallel (Shotgun) updaters
+//! - Feature count scaling
 //!
 //! # Running benchmarks
 //!
@@ -106,7 +107,7 @@ fn bench_training_formats(c: &mut Criterion) {
             |b, (matrix, labels)| {
                 let trainer = LinearTrainer::new(config.clone());
                 b.iter(|| {
-                    let model = trainer.train(black_box(*matrix), black_box(*labels), &SquaredLoss, 1);
+                    let model = trainer.train(black_box(*matrix), black_box(*labels), &SquaredLoss);
                     black_box(model)
                 });
             },
@@ -119,7 +120,7 @@ fn bench_training_formats(c: &mut Criterion) {
             |b, (matrix, labels)| {
                 let trainer = LinearTrainer::new(config.clone());
                 b.iter(|| {
-                    let model = trainer.train(black_box(*matrix), black_box(*labels), &SquaredLoss, 1);
+                    let model = trainer.train(black_box(*matrix), black_box(*labels), &SquaredLoss);
                     black_box(model)
                 });
             },
@@ -207,7 +208,7 @@ fn bench_updater_comparison(c: &mut Criterion) {
         |b, (matrix, labels)| {
             let trainer = LinearTrainer::new(seq_config.clone());
             b.iter(|| {
-                let model = trainer.train(black_box(*matrix), black_box(*labels), &SquaredLoss, 1);
+                let model = trainer.train(black_box(*matrix), black_box(*labels), &SquaredLoss);
                 black_box(model)
             });
         },
@@ -221,7 +222,7 @@ fn bench_updater_comparison(c: &mut Criterion) {
         |b, (matrix, labels)| {
             let trainer = LinearTrainer::new(par_config.clone());
             b.iter(|| {
-                let model = trainer.train(black_box(*matrix), black_box(*labels), &SquaredLoss, 1);
+                let model = trainer.train(black_box(*matrix), black_box(*labels), &SquaredLoss);
                 black_box(model)
             });
         },
@@ -254,7 +255,7 @@ fn bench_feature_scaling(c: &mut Criterion) {
             |b, (matrix, labels)| {
                 let trainer = LinearTrainer::new(config.clone());
                 b.iter(|| {
-                    let model = trainer.train(black_box(*matrix), black_box(*labels), &SquaredLoss, 1);
+                    let model = trainer.train(black_box(*matrix), black_box(*labels), &SquaredLoss);
                     black_box(model)
                 });
             },
@@ -408,7 +409,7 @@ fn bench_column_access(c: &mut Criterion) {
 /// - CSC column iterator - for sparse data
 fn bench_cd_core_operation(c: &mut Criterion) {
     use booste_rs::data::ColumnAccess;
-    use booste_rs::training::GradientPair;
+    use booste_rs::training::GradientBuffer;
     
     let num_features = 100;
     let num_rows = 50_000;
@@ -419,61 +420,123 @@ fn bench_cd_core_operation(c: &mut Criterion) {
     let col_matrix: ColMatrix = row_matrix.to_layout();
     let csc_matrix = CSCMatrix::from_dense_full(&row_matrix);
 
-    // Simulate gradients as GradientPair (more realistic)
-    let gradients: Vec<GradientPair> = (0..num_rows)
-        .map(|i| GradientPair::new((i as f32) * 0.001 - 5.0, 1.0))
-        .collect();
+    // Simulate gradients as GradientBuffer (SoA)
+    let mut buffer = GradientBuffer::new(num_rows, 1);
+    for i in 0..num_rows {
+        buffer.set(i, 0, (i as f32) * 0.001 - 5.0, 1.0);
+    }
 
     let mut group = c.benchmark_group("gradient_column_sum");
     group.throughput(Throughput::Elements((num_rows * num_features) as u64));
 
-    // 1. Direct slice access with GradientPair - optimal for dense
+    // 1. Direct slice access with GradientBuffer
     group.bench_function("col_slice_direct", |b| {
+        let grads = buffer.grads();
+        let hess = buffer.hess_slice();
         b.iter(|| {
             let mut total_grad = 0.0f32;
             let mut total_hess = 0.0f32;
             for col_idx in 0..num_features {
                 let col = col_matrix.col_slice(col_idx);
-                for (x, gp) in col.iter().zip(&gradients) {
-                    total_grad += x * gp.grad();
-                    total_hess += x * x * gp.hess();
+                for (i, &x) in col.iter().enumerate() {
+                    total_grad += x * grads[i];
+                    total_hess += x * x * hess[i];
                 }
             }
             black_box((total_grad, total_hess))
         });
     });
 
-    // 2. ColumnAccess trait on ColMatrix with GradientPair
+    // 2. ColumnAccess trait on ColMatrix with GradientBuffer
     group.bench_function("col_trait_dense", |b| {
+        let grads = buffer.grads();
+        let hess = buffer.hess_slice();
         b.iter(|| {
             let mut total_grad = 0.0f32;
             let mut total_hess = 0.0f32;
             for col_idx in 0..num_features {
                 for (row, val) in col_matrix.column(col_idx) {
-                    let gp = &gradients[row];
-                    total_grad += val * gp.grad();
-                    total_hess += val * val * gp.hess();
+                    total_grad += val * grads[row];
+                    total_hess += val * val * hess[row];
                 }
             }
             black_box((total_grad, total_hess))
         });
     });
 
-    // 3. ColumnAccess trait on CSC with GradientPair
+    // 3. ColumnAccess trait on CSC with GradientBuffer
     group.bench_function("csc_trait", |b| {
+        let grads = buffer.grads();
+        let hess = buffer.hess_slice();
         b.iter(|| {
             let mut total_grad = 0.0f32;
             let mut total_hess = 0.0f32;
             for col_idx in 0..num_features {
                 for (row, val) in csc_matrix.column(col_idx) {
-                    let gp = &gradients[row];
-                    total_grad += val * gp.grad();
-                    total_hess += val * val * gp.hess();
+                    total_grad += val * grads[row];
+                    total_hess += val * val * hess[row];
                 }
             }
             black_box((total_grad, total_hess))
         });
     });
+
+    group.finish();
+}
+
+// =============================================================================
+// Multiclass Training Benchmarks
+// =============================================================================
+
+/// Benchmark multiclass training.
+fn bench_multiclass_training(c: &mut Criterion) {
+    use booste_rs::training::SoftmaxLoss;
+
+    let num_features = 50;
+    let num_classes = 10;
+
+    let mut group = c.benchmark_group("multiclass_training");
+
+    for num_rows in [1_000, 5_000, 10_000] {
+        let (features, mut labels) = generate_training_data(num_rows, num_features, 42);
+        // Convert labels to class indices
+        for label in &mut labels {
+            *label = (label.abs() * num_classes as f32) as f32 % num_classes as f32;
+        }
+
+        let row_matrix = RowMatrix::from_vec(features, num_rows, num_features);
+        let col_matrix: ColMatrix = row_matrix.to_layout();
+        let loss = SoftmaxLoss::new(num_classes);
+
+        group.throughput(Throughput::Elements((num_rows * num_features) as u64));
+
+        let config = bench_trainer_config(false);
+
+        group.bench_with_input(
+            BenchmarkId::new("sequential", num_rows),
+            &(&col_matrix, &labels),
+            |b, (matrix, labels)| {
+                let trainer = LinearTrainer::new(config.clone());
+                b.iter(|| {
+                    let model = trainer.train_multiclass(black_box(*matrix), black_box(*labels), &loss);
+                    black_box(model)
+                });
+            },
+        );
+
+        let config_par = bench_trainer_config(true);
+        group.bench_with_input(
+            BenchmarkId::new("parallel", num_rows),
+            &(&col_matrix, &labels),
+            |b, (matrix, labels)| {
+                let trainer = LinearTrainer::new(config_par.clone());
+                b.iter(|| {
+                    let model = trainer.train_multiclass(black_box(*matrix), black_box(*labels), &loss);
+                    black_box(model)
+                });
+            },
+        );
+    }
 
     group.finish();
 }
@@ -491,6 +554,7 @@ criterion_group!(
     bench_row_access,
     bench_column_access,
     bench_cd_core_operation,
+    bench_multiclass_training,
 );
 
 criterion_main!(benches);
