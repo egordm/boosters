@@ -2,12 +2,19 @@
 //!
 //! This module provides the core types needed for training:
 //!
-//! - [`GradientPair`]: Gradient and hessian pair for optimization
+//! - [`GradientBuffer`]: Structure-of-Arrays gradient storage
 //! - [`Loss`]: Trait for computing gradients from predictions and labels
 //! - [`MulticlassLoss`]: Trait for multiclass gradient computation
 //! - [`Metric`]: Trait for evaluating model quality
 //! - [`EarlyStopping`]: Callback for stopping training when validation metric plateaus
 //! - [`TrainingLogger`]: Structured logging with verbosity levels
+//!
+//! ## Gradient Storage
+//!
+//! Gradients are stored in Structure-of-Arrays (SoA) layout via [`GradientBuffer`]:
+//! - Separate `grads[]` and `hess[]` arrays for better cache efficiency
+//! - Shape `[n_samples, n_outputs]` for unified single/multi-output handling
+//! - More SIMD-friendly memory access patterns
 //!
 //! ## Loss Functions
 //!
@@ -26,14 +33,14 @@
 //!
 //! See RFC-0009 for design rationale.
 
+mod buffer;
 mod callback;
-mod gradient;
 mod logger;
 mod loss;
 mod metric;
 
+pub use buffer::GradientBuffer;
 pub use callback::EarlyStopping;
-pub use gradient::GradientPair;
 pub use logger::{TrainingLogger, Verbosity};
 pub use loss::{LogisticLoss, Loss, MulticlassLoss, QuantileLoss, SoftmaxLoss, SquaredLoss};
 pub use metric::{Accuracy, Auc, LogLoss, Mae, Metric, MulticlassAccuracy, Rmse};
