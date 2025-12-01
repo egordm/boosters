@@ -695,23 +695,32 @@ impl<T: Copy> FusedIterator for StridedRowIter<'_, T> {}
 
 /// Iterator over (row_index, value) pairs in a column of a ColMajor matrix.
 ///
-/// This wraps `enumerate()` on a slice iterator.
+/// Provides the same interface as CSC's `ColumnIter` for unified column access.
 #[derive(Debug, Clone)]
 pub struct DenseColumnIter<'a, T> {
-    inner: std::iter::Enumerate<std::slice::Iter<'a, T>>,
+    data: &'a [T],
+    row_idx: usize,
 }
 
-impl<'a, T: Copy> Iterator for DenseColumnIter<'a, T> {
+impl<T: Copy> Iterator for DenseColumnIter<'_, T> {
     type Item = (usize, T);
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().map(|(i, v)| (i, *v))
+        if self.row_idx < self.data.len() {
+            let idx = self.row_idx;
+            let val = self.data[idx];
+            self.row_idx += 1;
+            Some((idx, val))
+        } else {
+            None
+        }
     }
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner.size_hint()
+        let remaining = self.data.len() - self.row_idx;
+        (remaining, Some(remaining))
     }
 }
 
@@ -735,7 +744,8 @@ impl<T: Copy, S: AsRef<[T]>> super::ColumnAccess for DenseMatrix<T, ColMajor, S>
     #[inline]
     fn column(&self, col: usize) -> Self::ColumnIter<'_> {
         DenseColumnIter {
-            inner: self.col_slice(col).iter().enumerate(),
+            data: self.col_slice(col),
+            row_idx: 0,
         }
     }
 }
