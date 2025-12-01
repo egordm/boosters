@@ -35,7 +35,7 @@ mod traits;
 pub use csc::{CSCMatrix, ColumnIter};
 pub use dense::DenseMatrix;
 pub use layout::{ColMajor, Layout, RowMajor, StridedIter};
-pub use traits::{DataMatrix, RowView};
+pub use traits::{ColumnAccess, DataMatrix, RowView};
 
 /// Type alias for row-major dense matrix (the common case).
 ///

@@ -4,7 +4,7 @@
 //! over features (columns) and need efficient access to all values in a column.
 
 use super::layout::RowMajor;
-use super::{DataMatrix, DenseMatrix};
+use super::{DataMatrix, DenseMatrix, RowView};
 
 /// Compressed Sparse Column matrix for efficient column-wise access.
 ///
@@ -141,6 +141,62 @@ impl<T: Copy> CSCMatrix<T> {
         Self::from_dense_with_predicate(dense, |_| true)
     }
 
+    /// Create a CSC matrix from any `DataMatrix`.
+    ///
+    /// This is a generic conversion that works with any matrix type implementing
+    /// `DataMatrix`. For better performance with dense matrices, use `from_dense`
+    /// or `from_dense_full` directly.
+    ///
+    /// All values are stored (no sparsity filtering).
+    pub fn from_data_matrix<M>(matrix: &M) -> Self
+    where
+        M: DataMatrix<Element = T>,
+    {
+        let num_rows = matrix.num_rows();
+        let num_cols = matrix.num_features();
+        let nnz = num_rows * num_cols;
+
+        // For full storage, column pointers are uniform
+        let col_ptrs: Vec<u32> = (0..=num_cols).map(|c| (c * num_rows) as u32).collect();
+
+        // Allocate storage
+        let mut values = Vec::with_capacity(nnz);
+        let mut row_indices = Vec::with_capacity(nnz);
+
+        // Fill column by column (CSC order)
+        for col in 0..num_cols {
+            for row in 0..num_rows {
+                let val = matrix.row(row).get(col).unwrap_or_else(|| {
+                    // Safety: we're iterating within bounds
+                    unsafe { std::mem::zeroed() }
+                });
+                values.push(val);
+                row_indices.push(row as u32);
+            }
+        }
+
+        Self {
+            values: values.into_boxed_slice(),
+            row_indices: row_indices.into_boxed_slice(),
+            col_ptrs: col_ptrs.into_boxed_slice(),
+            num_rows,
+            num_cols,
+        }
+    }
+}
+
+// =============================================================================
+// From implementations
+// =============================================================================
+
+/// Convert from any DataMatrix to CSC (stores all values).
+impl<T: Copy, M: DataMatrix<Element = T>> From<&M> for CSCMatrix<T> {
+    fn from(source: &M) -> Self {
+        CSCMatrix::from_data_matrix(source)
+    }
+}
+
+impl<T: Copy> CSCMatrix<T> {
     /// Number of rows.
     #[inline]
     pub fn num_rows(&self) -> usize {
@@ -277,6 +333,30 @@ impl<'a, T: Copy> Iterator for ColumnIter<'a, T> {
 
 impl<T: Copy> ExactSizeIterator for ColumnIter<'_, T> {}
 impl<T: Copy> std::iter::FusedIterator for ColumnIter<'_, T> {}
+
+// =============================================================================
+// ColumnAccess implementation
+// =============================================================================
+
+impl<T: Copy> super::ColumnAccess for CSCMatrix<T> {
+    type Element = T;
+    type ColumnIter<'a> = ColumnIter<'a, T> where T: 'a;
+
+    #[inline]
+    fn num_rows(&self) -> usize {
+        self.num_rows
+    }
+
+    #[inline]
+    fn num_columns(&self) -> usize {
+        self.num_cols
+    }
+
+    #[inline]
+    fn column(&self, col: usize) -> Self::ColumnIter<'_> {
+        CSCMatrix::column(self, col)
+    }
+}
 
 #[cfg(test)]
 mod tests {

@@ -1,38 +1,67 @@
 //! Coordinate descent updaters for linear models.
 //!
 //! Two variants:
-//! - `ShotgunUpdater`: Parallel updates (faster, slight approximation)
-//! - `CoordinateUpdater`: Sequential updates (exact gradients)
+//! - [`UpdaterKind::Parallel`]: Parallel updates (faster, slight approximation)
+//! - [`UpdaterKind::Sequential`]: Sequential updates (exact gradients)
+//!
+//! # Data Format
+//!
+//! The updaters use the [`ColumnAccess`] trait for column iteration.
+//! This supports both dense and sparse matrices:
+//!
+//! - [`ColMatrix`](crate::data::ColMatrix): Optimal for dense data (contiguous columns)
+//! - [`CSCMatrix`](crate::data::CSCMatrix): Optimal for sparse data
+//!
+//! For dense row-major data, convert first:
+//! ```ignore
+//! let col_matrix: ColMatrix = row_matrix.to_layout();
+//! ```
 
 use rayon::prelude::*;
 
-use crate::data::CSCMatrix;
+use crate::data::ColumnAccess;
 use crate::linear::LinearModel;
 use crate::training::GradientPair;
 
 use super::FeatureSelector;
 
-/// Trait for coordinate descent updaters.
-pub trait Updater: Send + Sync {
+/// Coordinate descent updater selection.
+///
+/// Use [`UpdaterKind::Parallel`] (shotgun) for better performance on most workloads.
+/// Use [`UpdaterKind::Sequential`] for exact gradient computation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum UpdaterKind {
+    /// Sequential coordinate descent - exact gradients, slower
+    Sequential,
+    /// Parallel (shotgun) coordinate descent - approximate, faster
+    #[default]
+    Parallel,
+}
+
+impl UpdaterKind {
     /// Perform one round of coordinate descent updates.
     ///
-    /// # Arguments
+    /// # Type Parameters
     ///
-    /// * `model` - Model to update
-    /// * `data` - Training data in CSC format
-    /// * `gradients` - Per-sample gradient pairs
-    /// * `selector` - Feature selector
-    /// * `group` - Output group to update
-    /// * `config` - Regularization config
-    fn update_round(
+    /// * `C` - Any type implementing [`ColumnAccess`], e.g., `ColMatrix` or `CSCMatrix`
+    pub fn update_round<C: ColumnAccess<Element = f32> + Sync>(
         &self,
         model: &mut LinearModel,
-        data: &CSCMatrix<f32>,
+        data: &C,
         gradients: &[GradientPair],
         selector: &mut dyn FeatureSelector,
         group: usize,
         config: &UpdateConfig,
-    );
+    ) {
+        match self {
+            UpdaterKind::Sequential => {
+                sequential_update(model, data, gradients, selector, group, config)
+            }
+            UpdaterKind::Parallel => {
+                parallel_update(model, data, gradients, selector, group, config)
+            }
+        }
+    }
 }
 
 /// Configuration for coordinate descent updates.
@@ -56,82 +85,59 @@ impl Default for UpdateConfig {
     }
 }
 
-/// Sequential coordinate descent updater.
+// =============================================================================
+// Update implementations
+// =============================================================================
+
+/// Sequential coordinate descent update.
 ///
 /// Updates features one at a time with exact gradient computation.
-/// Each update immediately affects subsequent updates within the same round.
-#[derive(Debug, Clone, Default)]
-pub struct CoordinateUpdater;
+fn sequential_update<C: ColumnAccess<Element = f32>>(
+    model: &mut LinearModel,
+    data: &C,
+    gradients: &[GradientPair],
+    selector: &mut dyn FeatureSelector,
+    group: usize,
+    config: &UpdateConfig,
+) {
+    selector.reset(model.num_features());
 
-impl CoordinateUpdater {
-    /// Create a new sequential updater.
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl Updater for CoordinateUpdater {
-    fn update_round(
-        &self,
-        model: &mut LinearModel,
-        data: &CSCMatrix<f32>,
-        gradients: &[GradientPair],
-        selector: &mut dyn FeatureSelector,
-        group: usize,
-        config: &UpdateConfig,
-    ) {
-        selector.reset(model.num_features());
-
-        while let Some(feature) = selector.next() {
-            let delta = compute_weight_update(model, data, gradients, feature, group, config);
-            if delta.abs() > 1e-10 {
-                model.add_weight(feature, group, delta);
-            }
+    while let Some(feature) = selector.next() {
+        let delta = compute_weight_update(model, data, gradients, feature, group, config);
+        if delta.abs() > 1e-10 {
+            model.add_weight(feature, group, delta);
         }
     }
 }
 
-/// Parallel (shotgun) coordinate descent updater.
+/// Parallel (shotgun) coordinate descent update.
 ///
 /// Updates all features in parallel. Race conditions in residual updates
 /// are tolerable with reasonable learning rates.
-#[derive(Debug, Clone, Default)]
-pub struct ShotgunUpdater;
+fn parallel_update<C: ColumnAccess<Element = f32> + Sync>(
+    model: &mut LinearModel,
+    data: &C,
+    gradients: &[GradientPair],
+    selector: &mut dyn FeatureSelector,
+    group: usize,
+    config: &UpdateConfig,
+) {
+    selector.reset(model.num_features());
+    let features = selector.all_indices();
 
-impl ShotgunUpdater {
-    /// Create a new parallel updater.
-    pub fn new() -> Self {
-        Self
-    }
-}
+    // Compute all deltas in parallel
+    let deltas: Vec<(usize, f32)> = features
+        .par_iter()
+        .map(|&feature| {
+            let delta = compute_weight_update(model, data, gradients, feature, group, config);
+            (feature, delta)
+        })
+        .collect();
 
-impl Updater for ShotgunUpdater {
-    fn update_round(
-        &self,
-        model: &mut LinearModel,
-        data: &CSCMatrix<f32>,
-        gradients: &[GradientPair],
-        selector: &mut dyn FeatureSelector,
-        group: usize,
-        config: &UpdateConfig,
-    ) {
-        selector.reset(model.num_features());
-        let features = selector.all_indices();
-
-        // Compute all deltas in parallel
-        let deltas: Vec<(usize, f32)> = features
-            .par_iter()
-            .map(|&feature| {
-                let delta = compute_weight_update(model, data, gradients, feature, group, config);
-                (feature, delta)
-            })
-            .collect();
-
-        // Apply updates sequentially (thread-safe)
-        for (feature, delta) in deltas {
-            if delta.abs() > 1e-10 {
-                model.add_weight(feature, group, delta);
-            }
+    // Apply updates sequentially (thread-safe)
+    for (feature, delta) in deltas {
+        if delta.abs() > 1e-10 {
+            model.add_weight(feature, group, delta);
         }
     }
 }
@@ -144,9 +150,9 @@ impl Updater for ShotgunUpdater {
 /// hess_l2 = Σ(hessian × feature²) + lambda
 /// delta = soft_threshold(-grad_l2 / hess_l2, alpha / hess_l2) × learning_rate
 /// ```
-fn compute_weight_update(
+fn compute_weight_update<C: ColumnAccess<Element = f32>>(
     model: &LinearModel,
-    data: &CSCMatrix<f32>,
+    data: &C,
     gradients: &[GradientPair],
     feature: usize,
     group: usize,
@@ -222,9 +228,9 @@ pub fn update_bias(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::RowMatrix;
+    use crate::data::{ColMatrix, RowMatrix};
 
-    fn make_test_data() -> (CSCMatrix<f32>, Vec<GradientPair>) {
+    fn make_test_data() -> (ColMatrix<f32>, Vec<GradientPair>) {
         // Simple 4x2 dataset
         let dense = RowMatrix::from_vec(
             vec![
@@ -236,7 +242,7 @@ mod tests {
             4,
             2,
         );
-        let csc = CSCMatrix::from_dense_full(&dense);
+        let col_matrix: ColMatrix = dense.to_layout();
 
         // Gradients (simulating squared error loss)
         let gradients = vec![
@@ -246,7 +252,7 @@ mod tests {
             GradientPair::new(-0.1, 1.0),
         ];
 
-        (csc, gradients)
+        (col_matrix, gradients)
     }
 
     #[test]
@@ -266,8 +272,8 @@ mod tests {
     }
 
     #[test]
-    fn coordinate_updater_changes_weights() {
-        let (csc, gradients) = make_test_data();
+    fn sequential_updater_changes_weights() {
+        let (data, gradients) = make_test_data();
         let mut model = LinearModel::zeros(2, 1);
         let mut selector = super::super::CyclicSelector::new();
 
@@ -277,8 +283,14 @@ mod tests {
             learning_rate: 1.0,
         };
 
-        let updater = CoordinateUpdater::new();
-        updater.update_round(&mut model, &csc, &gradients, &mut selector, 0, &config);
+        UpdaterKind::Sequential.update_round(
+            &mut model,
+            &data,
+            &gradients,
+            &mut selector,
+            0,
+            &config,
+        );
 
         // Weights should have changed
         let w0 = model.weight(0, 0);
@@ -287,8 +299,8 @@ mod tests {
     }
 
     #[test]
-    fn shotgun_updater_changes_weights() {
-        let (csc, gradients) = make_test_data();
+    fn parallel_updater_changes_weights() {
+        let (data, gradients) = make_test_data();
         let mut model = LinearModel::zeros(2, 1);
         let mut selector = super::super::CyclicSelector::new();
 
@@ -298,8 +310,14 @@ mod tests {
             learning_rate: 1.0,
         };
 
-        let updater = ShotgunUpdater::new();
-        updater.update_round(&mut model, &csc, &gradients, &mut selector, 0, &config);
+        UpdaterKind::Parallel.update_round(
+            &mut model,
+            &data,
+            &gradients,
+            &mut selector,
+            0,
+            &config,
+        );
 
         // Weights should have changed
         let w0 = model.weight(0, 0);
@@ -309,7 +327,7 @@ mod tests {
 
     #[test]
     fn l2_regularization_shrinks_weights() {
-        let (csc, gradients) = make_test_data();
+        let (data, gradients) = make_test_data();
 
         // No regularization
         let mut model1 = LinearModel::zeros(2, 1);
@@ -321,8 +339,14 @@ mod tests {
             learning_rate: 1.0,
         };
 
-        let updater = CoordinateUpdater::new();
-        updater.update_round(&mut model1, &csc, &gradients, &mut selector, 0, &config_no_reg);
+        UpdaterKind::Sequential.update_round(
+            &mut model1,
+            &data,
+            &gradients,
+            &mut selector,
+            0,
+            &config_no_reg,
+        );
         let w1_no_reg = model1.weight(0, 0);
 
         // With L2 regularization
@@ -334,7 +358,14 @@ mod tests {
             learning_rate: 1.0,
         };
 
-        updater.update_round(&mut model2, &csc, &gradients, &mut selector, 0, &config_l2);
+        UpdaterKind::Sequential.update_round(
+            &mut model2,
+            &data,
+            &gradients,
+            &mut selector,
+            0,
+            &config_l2,
+        );
         let w1_l2 = model2.weight(0, 0);
 
         // L2 should shrink more towards zero

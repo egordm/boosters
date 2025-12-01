@@ -1,11 +1,23 @@
 //! High-level linear model trainer.
+//!
+//! Uses column-based access ([`ColumnAccess`]) for efficient coordinate descent.
+//! Accepts data in any format that implements `ColumnAccess`:
+//!
+//! - [`ColMatrix`]: Best for dense data (columns are contiguous)
+//! - [`CSCMatrix`]: Best for sparse data (only stores non-zeros)
+//!
+//! For row-major input, convert to column-major first:
+//! ```ignore
+//! let col_matrix: ColMatrix = row_matrix.to_layout();
+//! trainer.train(&col_matrix, labels, loss, 1);
+//! ```
 
-use crate::data::{CSCMatrix, DataMatrix, RowMatrix, RowView};
+use crate::data::ColumnAccess;
 use crate::linear::LinearModel;
 use crate::training::{GradientPair, Loss, TrainingLogger, Verbosity};
 
 use super::selector::ShuffleSelector;
-use super::updater::{update_bias, CoordinateUpdater, ShotgunUpdater, UpdateConfig, Updater};
+use super::updater::{update_bias, UpdateConfig, UpdaterKind};
 
 /// Configuration for linear model training.
 #[derive(Debug, Clone)]
@@ -59,11 +71,16 @@ impl LinearTrainer {
         Self::new(LinearTrainerConfig::default())
     }
 
-    /// Train a linear model.
+    /// Train a linear model on column-accessible data.
+    ///
+    /// This is the primary training method. It accepts any data type implementing
+    /// [`ColumnAccess`], including:
+    /// - [`ColMatrix`](crate::data::ColMatrix): Best for dense data
+    /// - [`CSCMatrix`](crate::data::CSCMatrix): Best for sparse data
     ///
     /// # Arguments
     ///
-    /// * `train_data` - Training features
+    /// * `train_data` - Training features (must implement `ColumnAccess`)
     /// * `train_labels` - Training labels
     /// * `loss` - Loss function for gradient computation
     /// * `num_groups` - Number of output groups (1 for regression, K for K-class)
@@ -71,44 +88,60 @@ impl LinearTrainer {
     /// # Returns
     ///
     /// Trained `LinearModel`.
-    pub fn train<M, L>(
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use booste_rs::data::{ColMatrix, RowMatrix};
+    /// use booste_rs::linear::training::LinearTrainer;
+    /// use booste_rs::training::SquaredLoss;
+    ///
+    /// // Convert row-major to column-major for training
+    /// let row_data = RowMatrix::from_vec(data, num_rows, num_features);
+    /// let col_data: ColMatrix = row_data.to_layout();
+    ///
+    /// let trainer = LinearTrainer::default_config();
+    /// let model = trainer.train(&col_data, &labels, &SquaredLoss, 1);
+    /// ```
+    pub fn train<C, L>(
         &self,
-        train_data: &M,
+        train_data: &C,
         train_labels: &[f32],
         loss: &L,
         num_groups: usize,
     ) -> LinearModel
     where
-        M: DataMatrix<Element = f32> + Sync,
+        C: ColumnAccess<Element = f32> + Sync,
         L: Loss,
     {
-        self.train_with_validation(train_data, train_labels, None, None, loss, num_groups)
+        self.train_with_validation::<C, C, L>(train_data, train_labels, None, None, loss, num_groups)
     }
 
     /// Train a linear model with validation data.
     ///
     /// # Arguments
     ///
-    /// * `train_data` - Training features
+    /// * `train_data` - Training features (must implement `ColumnAccess`)
     /// * `train_labels` - Training labels
-    /// * `val_data` - Optional validation features
+    /// * `val_data` - Optional validation features (same type as train_data)
     /// * `val_labels` - Optional validation labels
     /// * `loss` - Loss function
     /// * `num_groups` - Number of output groups
-    pub fn train_with_validation<M, L>(
+    pub fn train_with_validation<C, V, L>(
         &self,
-        train_data: &M,
+        train_data: &C,
         train_labels: &[f32],
-        val_data: Option<&M>,
+        val_data: Option<&V>,
         val_labels: Option<&[f32]>,
         loss: &L,
         num_groups: usize,
     ) -> LinearModel
     where
-        M: DataMatrix<Element = f32> + Sync,
+        C: ColumnAccess<Element = f32> + Sync,
+        V: ColumnAccess<Element = f32>,
         L: Loss,
     {
-        let num_features = train_data.num_features();
+        let num_features = train_data.num_columns();
         let num_samples = train_data.num_rows();
 
         assert_eq!(
@@ -120,14 +153,11 @@ impl LinearTrainer {
         // Initialize model
         let mut model = LinearModel::zeros(num_features, num_groups);
 
-        // Convert to CSC for efficient column access
-        let csc = self.to_csc(train_data);
-
-        // Create updater and selector
-        let updater: Box<dyn Updater> = if self.config.parallel {
-            Box::new(ShotgunUpdater::new())
+        // Create updater
+        let updater = if self.config.parallel {
+            UpdaterKind::Parallel
         } else {
-            Box::new(CoordinateUpdater::new())
+            UpdaterKind::Sequential
         };
 
         let mut selector = ShuffleSelector::new(self.config.seed);
@@ -155,11 +185,11 @@ impl LinearTrainer {
 
         // Training loop
         for round in 0..self.config.num_rounds {
-            // Compute predictions
-            self.compute_predictions(&model, train_data, &mut predictions);
+            // Compute predictions using column access
+            Self::compute_predictions_col(&model, train_data, &mut predictions);
 
             // Compute gradients
-            self.compute_gradients(&predictions, train_labels, loss, num_groups, &mut gradients);
+            Self::compute_gradients(&predictions, train_labels, loss, num_groups, &mut gradients);
 
             // Update each output group
             for group in 0..num_groups {
@@ -169,7 +199,7 @@ impl LinearTrainer {
                 // Update feature weights
                 updater.update_round(
                     &mut model,
-                    &csc,
+                    train_data,
                     &gradients,
                     &mut selector,
                     group,
@@ -179,13 +209,13 @@ impl LinearTrainer {
 
             // Logging
             if self.config.verbosity >= Verbosity::Info {
-                let train_loss = self.compute_loss(&predictions, train_labels, num_groups);
+                let train_loss = Self::compute_loss(&predictions, train_labels, num_groups);
                 let mut metrics = vec![("train_loss".to_string(), train_loss)];
 
                 if let (Some(vd), Some(vl)) = (val_data, val_labels) {
                     let mut val_preds = vec![0.0f32; vd.num_rows() * num_groups];
-                    self.compute_predictions(&model, vd, &mut val_preds);
-                    let val_loss = self.compute_loss(&val_preds, vl, num_groups);
+                    Self::compute_predictions_col(&model, vd, &mut val_preds);
+                    let val_loss = Self::compute_loss(&val_preds, vl, num_groups);
                     metrics.push(("val_loss".to_string(), val_loss));
                 }
 
@@ -203,51 +233,38 @@ impl LinearTrainer {
         model
     }
 
-    /// Convert data matrix to CSC format.
-    fn to_csc<M: DataMatrix<Element = f32>>(&self, data: &M) -> CSCMatrix<f32> {
-        // First convert to dense, then to CSC
-        let num_rows = data.num_rows();
-        let num_features = data.num_features();
-
-        let mut dense_data = vec![0.0f32; num_rows * num_features];
-        for row_idx in 0..num_rows {
-            let row = data.row(row_idx);
-            for feat_idx in 0..num_features {
-                dense_data[row_idx * num_features + feat_idx] = row.get(feat_idx).unwrap_or(0.0);
-            }
-        }
-
-        let dense = RowMatrix::from_vec(dense_data, num_rows, num_features);
-        CSCMatrix::from_dense_full(&dense)
-    }
-
-    /// Compute predictions for all samples.
-    fn compute_predictions<M: DataMatrix<Element = f32>>(
-        &self,
+    /// Compute predictions for all samples using column-based access.
+    ///
+    /// This is less efficient than row-based prediction but works with any
+    /// `ColumnAccess` type without requiring `DataMatrix`.
+    fn compute_predictions_col<C: ColumnAccess<Element = f32>>(
         model: &LinearModel,
-        data: &M,
+        data: &C,
         output: &mut [f32],
     ) {
         let num_rows = data.num_rows();
         let num_groups = model.num_groups();
         let num_features = model.num_features();
 
+        // Initialize with bias
         for row_idx in 0..num_rows {
-            let row = data.row(row_idx);
             for group in 0..num_groups {
-                let mut sum = model.bias(group);
-                for feat_idx in 0..num_features {
-                    let value = row.get(feat_idx).unwrap_or(0.0);
-                    sum += value * model.weight(feat_idx, group);
+                output[row_idx * num_groups + group] = model.bias(group);
+            }
+        }
+
+        // Add weighted features column by column
+        for feat_idx in 0..num_features {
+            for (row_idx, value) in data.column(feat_idx) {
+                for group in 0..num_groups {
+                    output[row_idx * num_groups + group] += value * model.weight(feat_idx, group);
                 }
-                output[row_idx * num_groups + group] = sum;
             }
         }
     }
 
     /// Compute gradients from predictions and labels.
     fn compute_gradients<L: Loss>(
-        &self,
         predictions: &[f32],
         labels: &[f32],
         loss: &L,
@@ -271,7 +288,7 @@ impl LinearTrainer {
     }
 
     /// Compute average loss.
-    fn compute_loss(&self, predictions: &[f32], labels: &[f32], num_groups: usize) -> f64 {
+    fn compute_loss(predictions: &[f32], labels: &[f32], num_groups: usize) -> f64 {
         if num_groups == 1 {
             // Simple MSE for regression
             let mse: f64 = predictions
@@ -304,12 +321,13 @@ impl LinearTrainer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::{ColMatrix, RowMatrix};
     use crate::training::SquaredLoss;
 
     #[test]
     fn train_simple_regression() {
         // y = 2*x + 1
-        let train_data = RowMatrix::from_vec(
+        let row_data = RowMatrix::from_vec(
             vec![
                 1.0, // x=1 → y=3
                 2.0, // x=2 → y=5
@@ -319,6 +337,7 @@ mod tests {
             4,
             1,
         );
+        let train_data: ColMatrix = row_data.to_layout();
         let train_labels = vec![3.0, 5.0, 7.0, 9.0];
 
         let config = LinearTrainerConfig {
@@ -345,7 +364,8 @@ mod tests {
 
     #[test]
     fn train_with_regularization() {
-        let train_data = RowMatrix::from_vec(vec![1.0, 2.0, 3.0, 4.0], 4, 1);
+        let row_data = RowMatrix::from_vec(vec![1.0, 2.0, 3.0, 4.0], 4, 1);
+        let train_data: ColMatrix = row_data.to_layout();
         let train_labels = vec![3.0, 5.0, 7.0, 9.0];
 
         // Train without regularization
@@ -387,7 +407,7 @@ mod tests {
     #[test]
     fn train_multifeature() {
         // y = x0 + 2*x1
-        let train_data = RowMatrix::from_vec(
+        let row_data = RowMatrix::from_vec(
             vec![
                 1.0, 1.0, // x0=1, x1=1 → y=3
                 2.0, 1.0, // x0=2, x1=1 → y=4
@@ -397,6 +417,7 @@ mod tests {
             4,
             2,
         );
+        let train_data: ColMatrix = row_data.to_layout();
         let train_labels = vec![3.0, 4.0, 5.0, 6.0];
 
         let config = LinearTrainerConfig {
@@ -423,7 +444,8 @@ mod tests {
 
     #[test]
     fn parallel_vs_sequential_similar() {
-        let train_data = RowMatrix::from_vec(vec![1.0, 2.0, 3.0, 4.0], 4, 1);
+        let row_data = RowMatrix::from_vec(vec![1.0, 2.0, 3.0, 4.0], 4, 1);
+        let train_data: ColMatrix = row_data.to_layout();
         let train_labels = vec![3.0, 5.0, 7.0, 9.0];
 
         let config_seq = LinearTrainerConfig {

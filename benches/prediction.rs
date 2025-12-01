@@ -28,7 +28,7 @@ use std::fs::File;
 use std::path::PathBuf;
 
 use booste_rs::compat::XgbModel;
-use booste_rs::data::DenseMatrix;
+use booste_rs::data::RowMatrix;
 use booste_rs::model::{FeatureInfo, Model, ModelMeta, ModelSource};
 use booste_rs::objective::Objective;
 
@@ -86,7 +86,7 @@ fn bench_batch_sizes(c: &mut Criterion) {
 
     for batch_size in [1, 10, 100, 1_000, 10_000].iter() {
         let input_data = generate_random_input(*batch_size, num_features, 42);
-        let matrix = DenseMatrix::from_vec(input_data, *batch_size, num_features);
+        let matrix = RowMatrix::from_vec(input_data, *batch_size, num_features);
 
         group.throughput(Throughput::Elements(*batch_size as u64));
         group.bench_with_input(
@@ -128,7 +128,7 @@ fn bench_model_sizes(c: &mut Criterion) {
 
         let num_features = model.num_features();
         let input_data = generate_random_input(batch_size, num_features, 42);
-        let matrix = DenseMatrix::from_vec(input_data, batch_size, num_features);
+        let matrix = RowMatrix::from_vec(input_data, batch_size, num_features);
 
         group.throughput(Throughput::Elements(batch_size as u64));
         group.bench_with_input(BenchmarkId::new("boosters", label), &matrix, |b, matrix| {
@@ -148,7 +148,7 @@ fn bench_single_row(c: &mut Criterion) {
     let num_features = model.num_features();
 
     let input_data = generate_random_input(1, num_features, 42);
-    let matrix = DenseMatrix::from_vec(input_data, 1, num_features);
+    let matrix = RowMatrix::from_vec(input_data, 1, num_features);
 
     c.bench_function("single_row/boosters", |b| {
         b.iter(|| {
@@ -172,7 +172,7 @@ fn bench_all_combinations(c: &mut Criterion) {
     use booste_rs::predict::SimdTraversal6;
 
     let model = load_boosters_model("bench_medium");
-    let forest = model.booster.forest();
+    let forest = model.booster.forest().expect("Benchmark model must be tree-based");
     let num_features = model.num_features();
 
     // Standard traversal combinations
@@ -193,7 +193,7 @@ fn bench_all_combinations(c: &mut Criterion) {
 
     for batch_size in [1_000, 10_000].iter() {
         let input_data = generate_random_input(*batch_size, num_features, 42);
-        let matrix = DenseMatrix::from_vec(input_data, *batch_size, num_features);
+        let matrix = RowMatrix::from_vec(input_data, *batch_size, num_features);
 
         group.throughput(Throughput::Elements(*batch_size as u64));
 
@@ -286,7 +286,7 @@ mod xgboost_comparison {
         let boosters_model = load_boosters_model("bench_medium");
         let xgb_model = load_xgb_model("bench_medium");
         let num_features = boosters_model.num_features();
-        let forest = boosters_model.booster.forest();
+        let forest = boosters_model.booster.forest().expect("Benchmark model must be tree-based");
 
         // Use our fastest configuration: UnrolledTraversal6 + Block64
         let predictor = Predictor::<UnrolledTraversal6>::new(forest).with_block_size(64);
@@ -296,7 +296,7 @@ mod xgboost_comparison {
         for batch_size in [100, 1_000, 10_000].iter() {
             // booste-rs: can reuse the same matrix (no caching issues)
             let input_data = generate_random_input(*batch_size, num_features, 42);
-            let matrix = DenseMatrix::from_vec(input_data.clone(), *batch_size, num_features);
+            let matrix = RowMatrix::from_vec(input_data.clone(), *batch_size, num_features);
             group.throughput(Throughput::Elements(*batch_size as u64));
             group.bench_with_input(
                 BenchmarkId::new("boosters", batch_size),
@@ -338,7 +338,7 @@ mod xgboost_comparison {
         let boosters_model = load_boosters_model("bench_medium");
         let xgb_model = load_xgb_model("bench_medium");
         let num_features = boosters_model.num_features();
-        let forest = boosters_model.booster.forest();
+        let forest = boosters_model.booster.forest().expect("Benchmark model must be tree-based");
 
         // Use our fastest configuration
         let predictor = Predictor::<UnrolledTraversal6>::new(forest).with_block_size(64);
@@ -348,7 +348,7 @@ mod xgboost_comparison {
         let mut group = c.benchmark_group("single_row_comparison");
 
         // booste-rs: can reuse the same matrix (no caching issues)
-        let matrix = DenseMatrix::from_vec(input_data.clone(), 1, num_features);
+        let matrix = RowMatrix::from_vec(input_data.clone(), 1, num_features);
         group.bench_function("boosters", |b| {
             b.iter(|| {
                 let output = predictor.predict(black_box(&matrix));
@@ -375,7 +375,7 @@ mod xgboost_comparison {
         use booste_rs::predict::{Predictor, UnrolledTraversal6};
 
         let boosters_model = load_boosters_model("bench_medium");
-        let forest = boosters_model.booster.forest();
+        let forest = boosters_model.booster.forest().expect("Benchmark model must be tree-based");
         let num_features = boosters_model.num_features();
 
         // Test different thread counts
@@ -383,7 +383,7 @@ mod xgboost_comparison {
         let batch_size = 10_000;
 
         let input_data = generate_random_input(batch_size, num_features, 42);
-        let matrix = DenseMatrix::from_vec(input_data.clone(), batch_size, num_features);
+        let matrix = RowMatrix::from_vec(input_data.clone(), batch_size, num_features);
 
         let predictor = Predictor::<UnrolledTraversal6>::new(forest).with_block_size(64);
 
@@ -440,7 +440,7 @@ fn bench_thread_scaling(c: &mut Criterion) {
     use booste_rs::predict::{Predictor, UnrolledTraversal6};
 
     let model = load_boosters_model("bench_medium");
-    let forest = model.booster.forest();
+    let forest = model.booster.forest().expect("Benchmark model must be tree-based");
     let num_features = model.num_features();
 
     // Test different thread counts
@@ -448,7 +448,7 @@ fn bench_thread_scaling(c: &mut Criterion) {
     let batch_size = 10_000;
 
     let input_data = generate_random_input(batch_size, num_features, 42);
-    let matrix = DenseMatrix::from_vec(input_data.clone(), batch_size, num_features);
+    let matrix = RowMatrix::from_vec(input_data.clone(), batch_size, num_features);
 
     let predictor = Predictor::<UnrolledTraversal6>::new(forest).with_block_size(64);
 

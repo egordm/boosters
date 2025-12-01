@@ -3,7 +3,7 @@
 //! Compares booste-rs trained models to XGBoost reference weights.
 
 use approx::assert_relative_eq;
-use booste_rs::data::{DataMatrix, RowMatrix};
+use booste_rs::data::{ColMatrix, DataMatrix, RowMatrix};
 use booste_rs::linear::training::{LinearTrainer, LinearTrainerConfig};
 use booste_rs::training::{SquaredLoss, Verbosity};
 
@@ -47,7 +47,7 @@ struct TrainConfig {
     num_boost_round: usize,
 }
 
-fn load_train_data(name: &str) -> (RowMatrix<f32>, Vec<f32>) {
+fn load_train_data(name: &str) -> (ColMatrix<f32>, Vec<f32>) {
     let data_path = Path::new(TEST_CASES_DIR).join(format!("{}.train_data.json", name));
     let labels_path = Path::new(TEST_CASES_DIR).join(format!("{}.train_labels.json", name));
 
@@ -67,8 +67,9 @@ fn load_train_data(name: &str) -> (RowMatrix<f32>, Vec<f32>) {
         .map(|v| v.unwrap_or(f32::NAN))
         .collect();
 
-    let matrix = RowMatrix::from_vec(features, data.num_rows, data.num_features);
-    (matrix, labels.labels)
+    let row_matrix = RowMatrix::from_vec(features, data.num_rows, data.num_features);
+    let col_matrix: ColMatrix = row_matrix.to_layout();
+    (col_matrix, labels.labels)
 }
 
 fn load_xgb_weights(name: &str) -> XgbWeights {
@@ -234,11 +235,12 @@ fn train_elastic_net_produces_sparse_weights() {
 #[test]
 fn trained_model_predictions_reasonable() {
     // Simple test: y = 2x + 1
-    let data = RowMatrix::from_vec(
+    let row_data = RowMatrix::from_vec(
         vec![1.0, 2.0, 3.0, 4.0, 5.0],
         5,
         1,
     );
+    let data: ColMatrix = row_data.to_layout();
     let labels = vec![3.0, 5.0, 7.0, 9.0, 11.0];
 
     let config = LinearTrainerConfig {
@@ -274,7 +276,7 @@ fn trained_model_predictions_reasonable() {
 /// Test parallel and sequential training produce similar results.
 #[test]
 fn parallel_vs_sequential_similar() {
-    let data = RowMatrix::from_vec(
+    let row_data = RowMatrix::from_vec(
         vec![
             1.0, 1.0,
             2.0, 1.0,
@@ -284,6 +286,7 @@ fn parallel_vs_sequential_similar() {
         4,
         2,
     );
+    let data: ColMatrix = row_data.to_layout();
     let labels = vec![3.0, 4.0, 5.0, 6.0]; // y = x0 + 2*x1
 
     let seq_config = LinearTrainerConfig {
