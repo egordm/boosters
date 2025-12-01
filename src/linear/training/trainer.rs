@@ -14,10 +14,10 @@
 
 use crate::data::ColumnAccess;
 use crate::linear::LinearModel;
-use crate::training::{GradientPair, Loss, TrainingLogger, Verbosity};
+use crate::training::{GradientPair, Loss, MulticlassLoss, TrainingLogger, Verbosity};
 
 use super::selector::ShuffleSelector;
-use super::updater::{update_bias, UpdateConfig, UpdaterKind};
+use super::updater::{update_bias, update_bias_multiclass, UpdateConfig, UpdaterKind};
 
 /// Configuration for linear model training.
 #[derive(Debug, Clone)]
@@ -197,12 +197,15 @@ impl LinearTrainer {
                 update_bias(&mut model, &gradients, group, self.config.learning_rate);
 
                 // Update feature weights
+                // For single-output Loss trait, gradient_stride is always 1
+                // (each sample has exactly one gradient pair)
                 updater.update_round(
                     &mut model,
                     train_data,
                     &gradients,
                     &mut selector,
                     group,
+                    1, // gradient_stride = 1 for Loss trait
                     &update_config,
                 );
             }
@@ -226,6 +229,164 @@ impl LinearTrainer {
             if use_early_stopping {
                 // TODO: Implement proper early stopping with validation metric
                 // For now, we just train for num_rounds
+            }
+        }
+
+        logger.finish_training();
+        model
+    }
+
+    /// Train a multiclass linear model.
+    ///
+    /// This method is specifically for multiclass classification with K > 2 classes.
+    /// It uses the [`MulticlassLoss`] trait which computes proper per-class gradients
+    /// using the full prediction vector (e.g., softmax needs all class logits).
+    ///
+    /// # Arguments
+    ///
+    /// * `train_data` - Training features
+    /// * `train_labels` - Class labels (0 to K-1)
+    /// * `loss` - Multiclass loss function (e.g., `SoftmaxLoss`)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use booste_rs::linear::training::LinearTrainer;
+    /// use booste_rs::training::SoftmaxLoss;
+    ///
+    /// let loss = SoftmaxLoss::new(3); // 3 classes
+    /// let model = trainer.train_multiclass(&data, &labels, &loss);
+    /// ```
+    pub fn train_multiclass<C, L>(
+        &self,
+        train_data: &C,
+        train_labels: &[f32],
+        loss: &L,
+    ) -> LinearModel
+    where
+        C: ColumnAccess<Element = f32> + Sync,
+        L: MulticlassLoss,
+    {
+        self.train_multiclass_with_validation::<C, C, L>(train_data, train_labels, None, None, loss)
+    }
+
+    /// Train a multiclass linear model with validation data.
+    ///
+    /// # Arguments
+    ///
+    /// * `train_data` - Training features
+    /// * `train_labels` - Class labels (0 to K-1)
+    /// * `val_data` - Optional validation features
+    /// * `val_labels` - Optional validation labels
+    /// * `loss` - Multiclass loss function
+    pub fn train_multiclass_with_validation<C, V, L>(
+        &self,
+        train_data: &C,
+        train_labels: &[f32],
+        val_data: Option<&V>,
+        val_labels: Option<&[f32]>,
+        loss: &L,
+    ) -> LinearModel
+    where
+        C: ColumnAccess<Element = f32> + Sync,
+        V: ColumnAccess<Element = f32>,
+        L: MulticlassLoss,
+    {
+        let num_features = train_data.num_columns();
+        let num_samples = train_data.num_rows();
+        let num_groups = loss.num_classes();
+
+        assert!(
+            num_groups >= 2,
+            "Multiclass requires at least 2 classes, got {}",
+            num_groups
+        );
+        assert_eq!(
+            train_labels.len(),
+            num_samples,
+            "Labels length must match number of samples"
+        );
+
+        // Initialize model
+        let mut model = LinearModel::zeros(num_features, num_groups);
+
+        // Create updater
+        let updater = if self.config.parallel {
+            UpdaterKind::Parallel
+        } else {
+            UpdaterKind::Sequential
+        };
+
+        let mut selector = ShuffleSelector::new(self.config.seed);
+
+        // Create update config
+        let update_config = UpdateConfig {
+            alpha: self.config.alpha,
+            lambda: self.config.lambda,
+            learning_rate: self.config.learning_rate,
+        };
+
+        // Gradient storage: K gradients per sample for K classes
+        let mut gradients = vec![GradientPair::ZERO; num_samples * num_groups];
+
+        // Predictions buffer: K predictions per sample
+        let mut predictions = vec![0.0f32; num_samples * num_groups];
+
+        // Logger
+        let mut logger = TrainingLogger::new(self.config.verbosity);
+        logger.start_training(self.config.num_rounds);
+
+        // Training loop
+        for round in 0..self.config.num_rounds {
+            // Compute predictions using column access
+            Self::compute_predictions_col(&model, train_data, &mut predictions);
+
+            // Compute multiclass gradients (K per sample)
+            Self::compute_gradients_multiclass(
+                &predictions,
+                train_labels,
+                loss,
+                num_groups,
+                &mut gradients,
+            );
+
+            // Update each output group (class)
+            for group in 0..num_groups {
+                // Update bias using strided gradient access
+                update_bias_multiclass(
+                    &mut model,
+                    &gradients,
+                    group,
+                    num_groups, // stride = num_classes
+                    num_samples,
+                    self.config.learning_rate,
+                );
+
+                // Update feature weights with strided gradients
+                updater.update_round(
+                    &mut model,
+                    train_data,
+                    &gradients,
+                    &mut selector,
+                    group,
+                    num_groups, // gradient_stride = num_classes
+                    &update_config,
+                );
+            }
+
+            // Logging
+            if self.config.verbosity >= Verbosity::Info {
+                let train_acc = Self::compute_multiclass_accuracy(&predictions, train_labels, num_groups);
+                let mut metrics = vec![("train_acc".to_string(), train_acc)];
+
+                if let (Some(vd), Some(vl)) = (val_data, val_labels) {
+                    let mut val_preds = vec![0.0f32; vd.num_rows() * num_groups];
+                    Self::compute_predictions_col(&model, vd, &mut val_preds);
+                    let val_acc = Self::compute_multiclass_accuracy(&val_preds, vl, num_groups);
+                    metrics.push(("val_acc".to_string(), val_acc));
+                }
+
+                logger.log_round(round, &metrics);
             }
         }
 
@@ -315,6 +476,64 @@ impl LinearTrainer {
                 / n as f64;
             mse.sqrt()
         }
+    }
+
+    /// Compute multiclass gradients using the MulticlassLoss trait.
+    ///
+    /// Stores K gradient pairs per sample (where K = num_groups).
+    /// Gradient layout: [sample0_class0, sample0_class1, ..., sample1_class0, ...]
+    fn compute_gradients_multiclass<L: MulticlassLoss>(
+        predictions: &[f32],
+        labels: &[f32],
+        loss: &L,
+        num_groups: usize,
+        gradients: &mut [GradientPair],
+    ) {
+        let num_samples = labels.len();
+        debug_assert_eq!(predictions.len(), num_samples * num_groups);
+        debug_assert_eq!(gradients.len(), num_samples * num_groups);
+
+        for i in 0..num_samples {
+            let preds_start = i * num_groups;
+            let preds_end = preds_start + num_groups;
+            let sample_preds = &predictions[preds_start..preds_end];
+
+            let grads_start = i * num_groups;
+            let grads_end = grads_start + num_groups;
+            let sample_grads = &mut gradients[grads_start..grads_end];
+
+            // Label is class index (0 to K-1)
+            let label = labels[i] as usize;
+
+            loss.compute_gradient(sample_preds, label, sample_grads);
+        }
+    }
+
+    /// Compute multiclass accuracy.
+    fn compute_multiclass_accuracy(predictions: &[f32], labels: &[f32], num_groups: usize) -> f64 {
+        let num_samples = labels.len();
+        let mut correct = 0usize;
+
+        for i in 0..num_samples {
+            let preds_start = i * num_groups;
+            let preds_end = preds_start + num_groups;
+            let sample_preds = &predictions[preds_start..preds_end];
+
+            // Find predicted class (argmax)
+            let predicted_class = sample_preds
+                .iter()
+                .enumerate()
+                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                .map(|(idx, _)| idx)
+                .unwrap_or(0);
+
+            let true_class = labels[i] as usize;
+            if predicted_class == true_class {
+                correct += 1;
+            }
+        }
+
+        correct as f64 / num_samples as f64
     }
 }
 
@@ -471,5 +690,95 @@ mod tests {
         let pred_par = model_par.predict_row(&[2.5], &[0.0])[0];
 
         assert!((pred_seq - pred_par).abs() < 1.0);
+    }
+
+    #[test]
+    fn train_multiclass_simple() {
+        use crate::training::SoftmaxLoss;
+
+        // Simple 3-class classification
+        // Class 0: x0 > x1
+        // Class 1: x0 < x1, x0 + x1 < 3
+        // Class 2: x0 + x1 >= 3
+        let row_data = RowMatrix::from_vec(
+            vec![
+                2.0, 1.0, // Class 0: x0=2 > x1=1
+                0.0, 1.0, // Class 1: x0=0 < x1=1, sum=1 < 3
+                3.0, 1.0, // Class 0: x0=3 > x1=1
+                1.0, 3.0, // Class 2: sum=4 >= 3
+                0.5, 0.5, // Class 1: x0 < x1 (barely), sum=1 < 3
+                2.0, 2.0, // Class 2: sum=4 >= 3
+            ],
+            6,
+            2,
+        );
+        let train_data: ColMatrix = row_data.to_layout();
+        let train_labels = vec![0.0, 1.0, 0.0, 2.0, 1.0, 2.0];
+
+        let config = LinearTrainerConfig {
+            num_rounds: 200,
+            learning_rate: 0.3,
+            alpha: 0.0,
+            lambda: 0.1,
+            parallel: false,
+            verbosity: Verbosity::Silent,
+            ..Default::default()
+        };
+
+        let trainer = LinearTrainer::new(config);
+        let loss = SoftmaxLoss::new(3);
+        let model = trainer.train_multiclass(&train_data, &train_labels, &loss);
+
+        // Model should have 3 output groups
+        assert_eq!(model.num_groups(), 3);
+
+        // Verify at least some predictions work
+        // For class 0 sample: should have highest logit for class 0
+        let preds0 = model.predict_row(&[2.0, 1.0], &[0.0, 0.0, 0.0]);
+        let _argmax0 = preds0
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .map(|(i, _)| i)
+            .unwrap();
+
+        // Verify model produces different outputs for different classes
+        // (not all same due to proper gradient computation)
+        let preds1 = model.predict_row(&[0.0, 1.0], &[0.0, 0.0, 0.0]);
+
+        // The predictions should differ for different inputs
+        let diff: f32 = preds0
+            .iter()
+            .zip(preds1.iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum();
+        assert!(
+            diff > 0.1,
+            "Multiclass model should produce different outputs: {:?} vs {:?}",
+            preds0,
+            preds1
+        );
+
+        // Check that training accuracy is reasonable (> 50% for 3 classes)
+        let mut correct = 0;
+        for (i, &label) in train_labels.iter().enumerate() {
+            let row = &row_data.as_slice()[i * 2..(i + 1) * 2];
+            let preds = model.predict_row(row, &[0.0, 0.0, 0.0]);
+            let predicted = preds
+                .iter()
+                .enumerate()
+                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                .map(|(idx, _)| idx)
+                .unwrap();
+            if predicted == label as usize {
+                correct += 1;
+            }
+        }
+        let accuracy = correct as f64 / train_labels.len() as f64;
+        assert!(
+            accuracy > 0.5,
+            "Training accuracy should be > 50%, got {}",
+            accuracy
+        );
     }
 }
