@@ -586,6 +586,8 @@ def save_training_case(
     y_train: np.ndarray,
     booster: xgb.Booster,
     config: dict,
+    X_test: np.ndarray | None = None,
+    y_test: np.ndarray | None = None,
     output_dir: Path = TRAINING_DIR,
 ):
     """Save a complete training test case.
@@ -596,6 +598,8 @@ def save_training_case(
         y_train: Training labels
         booster: Trained XGBoost booster
         config: Training configuration
+        X_test: Optional held-out test features
+        y_test: Optional held-out test labels
         output_dir: Directory to save files
     """
     # Save training data
@@ -634,6 +638,32 @@ def save_training_case(
     config_path = output_dir / f"{name}.config.json"
     with open(config_path, 'w') as f:
         json.dump(config, f, indent=2)
+    
+    # Save held-out test data and predictions if provided
+    if X_test is not None and y_test is not None:
+        test_data_path = output_dir / f"{name}.test_data.json"
+        with open(test_data_path, 'w') as f:
+            json.dump({
+                "num_rows": int(X_test.shape[0]),
+                "num_features": int(X_test.shape[1]),
+                "data": nan_to_null(X_test.flatten().tolist()),
+            }, f, indent=2)
+        
+        test_labels_path = output_dir / f"{name}.test_labels.json"
+        with open(test_labels_path, 'w') as f:
+            json.dump({
+                "labels": y_test.tolist(),
+            }, f, indent=2)
+        
+        # Get XGBoost predictions on test data
+        dtest = xgb.DMatrix(X_test)
+        xgb_predictions = booster.predict(dtest, output_margin=True)
+        
+        predictions_path = output_dir / f"{name}.xgb_predictions.json"
+        with open(predictions_path, 'w') as f:
+            json.dump({
+                "predictions": xgb_predictions.tolist(),
+            }, f, indent=2)
     
     print_success(f"training/{name}", len(X_train))
 
@@ -700,13 +730,17 @@ def generate_training_regression_multifeature():
 
 
 def generate_training_regression_l2():
-    """Regression with L2 regularization."""
+    """Regression with L2 regularization and held-out test set."""
     np.random.seed(42)
-    X, y = make_regression(n_samples=50, n_features=5, noise=5.0, random_state=42)
+    X, y = make_regression(n_samples=100, n_features=5, noise=5.0, random_state=42)
     X = X.astype(np.float32)
     y = y.astype(np.float32)
     
-    dtrain = xgb.DMatrix(X, label=y)
+    # Split into train/test
+    X_train, X_test = X[:80], X[80:]
+    y_train, y_test = y[:80], y[80:]
+    
+    dtrain = xgb.DMatrix(X_train, label=y_train)
     
     config = {
         'objective': 'reg:squarederror',
@@ -722,17 +756,21 @@ def generate_training_regression_l2():
     params = {k: v for k, v in config.items() if k != 'num_boost_round'}
     booster = xgb.train(params, dtrain, num_boost_round=config['num_boost_round'])
     
-    save_training_case("regression_l2", X, y, booster, config)
+    save_training_case("regression_l2", X_train, y_train, booster, config, X_test, y_test)
 
 
 def generate_training_regression_elastic_net():
-    """Regression with elastic net (L1 + L2) regularization."""
+    """Regression with elastic net (L1 + L2) regularization and held-out test set."""
     np.random.seed(42)
-    X, y = make_regression(n_samples=50, n_features=10, noise=5.0, random_state=42)
+    X, y = make_regression(n_samples=100, n_features=10, noise=5.0, random_state=42)
     X = X.astype(np.float32)
     y = y.astype(np.float32)
     
-    dtrain = xgb.DMatrix(X, label=y)
+    # Split into train/test
+    X_train, X_test = X[:80], X[80:]
+    y_train, y_test = y[:80], y[80:]
+    
+    dtrain = xgb.DMatrix(X_train, label=y_train)
     
     config = {
         'objective': 'reg:squarederror',
@@ -748,20 +786,24 @@ def generate_training_regression_elastic_net():
     params = {k: v for k, v in config.items() if k != 'num_boost_round'}
     booster = xgb.train(params, dtrain, num_boost_round=config['num_boost_round'])
     
-    save_training_case("regression_elastic_net", X, y, booster, config)
+    save_training_case("regression_elastic_net", X_train, y_train, booster, config, X_test, y_test)
 
 
 def generate_training_binary():
-    """Binary logistic classification."""
+    """Binary logistic classification with held-out test set."""
     np.random.seed(42)
     X, y = make_classification(
-        n_samples=100, n_features=4, n_informative=3,
+        n_samples=150, n_features=4, n_informative=3,
         n_redundant=0, n_repeated=0, random_state=42
     )
     X = X.astype(np.float32)
     y = y.astype(np.float32)
     
-    dtrain = xgb.DMatrix(X, label=y)
+    # Split into train/test
+    X_train, X_test = X[:120], X[120:]
+    y_train, y_test = y[:120], y[120:]
+    
+    dtrain = xgb.DMatrix(X_train, label=y_train)
     
     config = {
         'objective': 'binary:logistic',
@@ -777,21 +819,25 @@ def generate_training_binary():
     params = {k: v for k, v in config.items() if k != 'num_boost_round'}
     booster = xgb.train(params, dtrain, num_boost_round=config['num_boost_round'])
     
-    save_training_case("binary_classification", X, y, booster, config)
+    save_training_case("binary_classification", X_train, y_train, booster, config, X_test, y_test)
 
 
 def generate_training_multiclass():
-    """Multiclass softmax classification."""
+    """Multiclass softmax classification with held-out test set."""
     np.random.seed(42)
     X, y = make_classification(
-        n_samples=120, n_features=4, n_informative=3,
+        n_samples=180, n_features=4, n_informative=3,
         n_redundant=0, n_repeated=0, n_classes=3,
         n_clusters_per_class=1, random_state=42
     )
     X = X.astype(np.float32)
     y = y.astype(np.float32)
     
-    dtrain = xgb.DMatrix(X, label=y)
+    # Split into train/test
+    X_train, X_test = X[:150], X[150:]
+    y_train, y_test = y[:150], y[150:]
+    
+    dtrain = xgb.DMatrix(X_train, label=y_train)
     
     config = {
         'objective': 'multi:softprob',
@@ -808,7 +854,7 @@ def generate_training_multiclass():
     params = {k: v for k, v in config.items() if k != 'num_boost_round'}
     booster = xgb.train(params, dtrain, num_boost_round=config['num_boost_round'])
     
-    save_training_case("multiclass_classification", X, y, booster, config)
+    save_training_case("multiclass_classification", X_train, y_train, booster, config, X_test, y_test)
 
 
 def generate_all_training():
