@@ -11,4 +11,4 @@ mod updater;
 
 pub use selector::{CyclicSelector, FeatureSelector, ShuffleSelector};
 pub use trainer::{LinearTrainer, LinearTrainerConfig};
-pub use updater::{CoordinateUpdater, ShotgunUpdater, Updater};
+pub use updater::{UpdateConfig, UpdaterKind};

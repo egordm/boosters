@@ -82,7 +82,6 @@ Tasks:
 - [x] 4.6 Add strided iterators for non-contiguous dimension
 - [x] 4.7 Type aliases: `RowMatrix`, `ColMatrix` for convenience
 - [x] 4.8 Verify existing tests still pass (backward compatibility)
-- [ ] 4.9 Add benchmarks comparing layouts for training
 
 ---
 
@@ -105,14 +104,24 @@ randomness and floating-point differences, we validate:
 
 ---
 
-## Story 6: Benchmarks
+## Story 6: Benchmarks & Optimization ✓
 
-**Goal**: Validate performance.
+**Goal**: Validate performance and optimize based on findings.
 
-- [ ] 6.1 Inference benchmark vs Python XGBoost
-- [ ] 6.2 Training benchmark vs Python XGBoost
-- [ ] 6.3 Compare CSC vs ColMajor vs RowMajor for training
-- [ ] 6.4 Document results and recommend defaults
+- [x] 6.1 Inference benchmark vs Python XGBoost
+- [x] 6.2 Training benchmark vs Python XGBoost
+- [x] 6.3 Compare CSC vs ColMajor vs RowMajor for training
+- [x] 6.4 Layout benchmark: measure impact of row/column access patterns
+- [x] 6.5 Evaluate zero-copy optimizations (determined: not needed, <10% overhead)
+- [x] 6.6 Document results and recommend defaults
+
+**Results**: See [2025-11-29-matrix-layout-training.md](../../benchmarks/2025-11-29-matrix-layout-training.md)
+
+**Key findings**:
+- RowMajor input is 12-21% faster than ColMajor for training (better CSC conversion)
+- Parallel (shotgun) training is 61% faster than sequential
+- Direct slice access is 2.7× faster than DataMatrix trait for row iteration
+- Conversion overhead is <10% of training time — zero-copy not worth complexity
 
 ---
 

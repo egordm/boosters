@@ -44,3 +44,7 @@ bench-xgboost = ["dep:xgb", "xgboost-compat"]
 name = "prediction"
 harness = false
 
+[[bench]]
+name = "linear_training"
+harness = false
+

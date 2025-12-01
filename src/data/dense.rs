@@ -232,6 +232,24 @@ impl<T: Copy, L: Layout, S: AsRef<[T]>> DenseMatrix<T, L, S> {
 }
 
 // =============================================================================
+// From implementations for layout conversion
+// =============================================================================
+
+/// Convert from RowMajor to ColMajor.
+impl<T: Copy, S: AsRef<[T]>> From<&DenseMatrix<T, RowMajor, S>> for DenseMatrix<T, ColMajor, Box<[T]>> {
+    fn from(source: &DenseMatrix<T, RowMajor, S>) -> Self {
+        source.to_layout()
+    }
+}
+
+/// Convert from ColMajor to RowMajor.
+impl<T: Copy, S: AsRef<[T]>> From<&DenseMatrix<T, ColMajor, S>> for DenseMatrix<T, RowMajor, Box<[T]>> {
+    fn from(source: &DenseMatrix<T, ColMajor, S>) -> Self {
+        source.to_layout()
+    }
+}
+
+// =============================================================================
 // Row-major specific methods
 // =============================================================================
 
@@ -295,6 +313,42 @@ impl<T, S: AsRef<[T]> + AsMut<[T]>> DenseMatrix<T, RowMajor, S> {
 // =============================================================================
 // Column-major specific methods
 // =============================================================================
+
+impl<T: Copy + Default> DenseMatrix<T, ColMajor, Box<[T]>> {
+    /// Create a column-major matrix from any [`DataMatrix`].
+    ///
+    /// This is the recommended way to convert arbitrary input formats
+    /// for coordinate descent training, which requires column iteration.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use booste_rs::data::{ColMatrix, RowMatrix};
+    ///
+    /// let row_major = RowMatrix::from_vec(vec![1.0, 2.0, 3.0, 4.0], 2, 2);
+    /// let col_major = ColMatrix::from_data_matrix(&row_major);
+    /// ```
+    pub fn from_data_matrix<M: DataMatrix<Element = T>>(source: &M) -> Self {
+        let num_rows = source.num_rows();
+        let num_cols = source.num_features();
+        let mut data = vec![T::default(); num_rows * num_cols];
+
+        // Fill column by column for optimal cache usage
+        for col in 0..num_cols {
+            for row in 0..num_rows {
+                let idx = col * num_rows + row;
+                data[idx] = source.get(row, col).unwrap_or_default();
+            }
+        }
+
+        DenseMatrix {
+            data: data.into_boxed_slice(),
+            num_rows,
+            num_cols,
+            _marker: PhantomData,
+        }
+    }
+}
 
 impl<T, S: AsRef<[T]>> DenseMatrix<T, ColMajor, S> {
     /// Get a column as a contiguous slice. O(1).
@@ -634,6 +688,57 @@ impl<T: Copy> Iterator for StridedRowIter<'_, T> {
 
 impl<T: Copy> ExactSizeIterator for StridedRowIter<'_, T> {}
 impl<T: Copy> FusedIterator for StridedRowIter<'_, T> {}
+
+// =============================================================================
+// ColumnAccess implementation for ColMajor
+// =============================================================================
+
+/// Iterator over (row_index, value) pairs in a column of a ColMajor matrix.
+///
+/// This wraps `enumerate()` on a slice iterator.
+#[derive(Debug, Clone)]
+pub struct DenseColumnIter<'a, T> {
+    inner: std::iter::Enumerate<std::slice::Iter<'a, T>>,
+}
+
+impl<'a, T: Copy> Iterator for DenseColumnIter<'a, T> {
+    type Item = (usize, T);
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next().map(|(i, v)| (i, *v))
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+
+impl<T: Copy> ExactSizeIterator for DenseColumnIter<'_, T> {}
+impl<T: Copy> FusedIterator for DenseColumnIter<'_, T> {}
+
+impl<T: Copy, S: AsRef<[T]>> super::ColumnAccess for DenseMatrix<T, ColMajor, S> {
+    type Element = T;
+    type ColumnIter<'a> = DenseColumnIter<'a, T> where Self: 'a;
+
+    #[inline]
+    fn num_rows(&self) -> usize {
+        self.num_rows
+    }
+
+    #[inline]
+    fn num_columns(&self) -> usize {
+        self.num_cols
+    }
+
+    #[inline]
+    fn column(&self, col: usize) -> Self::ColumnIter<'_> {
+        DenseColumnIter {
+            inner: self.col_slice(col).iter().enumerate(),
+        }
+    }
+}
 
 // =============================================================================
 // Tests
