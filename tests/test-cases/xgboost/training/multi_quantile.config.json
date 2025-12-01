@@ -1,0 +1,14 @@
+{
+  "objective": "reg:quantileerror",
+  "quantile_alpha": [
+    0.1,
+    0.5,
+    0.9
+  ],
+  "booster": "gblinear",
+  "eta": 0.5,
+  "lambda": 1.0,
+  "alpha": 0.0,
+  "num_boost_round": 100,
+  "num_quantiles": 3
+}

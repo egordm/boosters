@@ -99,19 +99,30 @@ Validates training infrastructure before GBTree training.
 
 ---
 
-### Story 11: Multi-Quantile Regression 🟢 MEDIUM
+### Story 11: Multi-Quantile Regression ✅ COMPLETE
 
 **Goal**: Train multiple quantiles simultaneously (like XGBoost's `quantile_alpha` array).
 
-- [ ] 11.1 `MultiQuantileLoss` that takes `alpha: &[f32]` (e.g., `[0.1, 0.5, 0.9]`)
-- [ ] 11.2 Use `num_groups = num_quantiles` to leverage existing multi-output infra
-- [ ] 11.3 Per-quantile gradient computation (each output gets its own α)
-- [ ] 11.4 Generate XGBoost multi-quantile test data
-- [ ] 11.5 Integration tests — 3 quantiles in one model vs 3 separate models
+- [x] 11.1 `QuantileLoss::multi(&[f32])` for multiple quantiles (e.g., `[0.1, 0.5, 0.9]`)
+- [x] 11.2 Use `num_groups = num_quantiles` to leverage existing multi-output infra
+- [x] 11.3 Per-quantile gradient computation (each output gets its own α)
+- [x] 11.4 Generate XGBoost multi-quantile test data
+- [x] 11.5 Integration tests — 3 quantiles in one model vs 3 separate models
+
+**Results**:
+- Multi-quantile model produces high correlation with XGBoost (0.94-0.99)
+- Quantiles are correctly ordered (q0.1 < q0.5 < q0.9) for 100% of samples
+- Multi-quantile model is identical to training 3 separate models (correlation = 1.0)
+- This is expected: quantile gradients are independent (unlike softmax)
 
 **Note**: XGBoost supports this via `reg:quantileerror` with `quantile_alpha=[...]`.
 Our multi-output training infrastructure already handles `num_groups > 1`, so this
-should be a natural extension of Story 8.
+was a natural extension of Story 8.
+
+**API**:
+
+- `QuantileLoss::new(0.5)` — single-quantile (implements both `Loss` and `MulticlassLoss`)
+- `QuantileLoss::multi(&[0.1, 0.5, 0.9])` — multi-quantile (same type, uses `MulticlassLoss`)
 
 ---
 

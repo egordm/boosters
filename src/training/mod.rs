@@ -21,7 +21,7 @@
 //! - [`SquaredLoss`]: Squared error for regression
 //! - [`LogisticLoss`]: Binary cross-entropy for classification
 //! - [`SoftmaxLoss`]: Multiclass cross-entropy
-//! - [`QuantileLoss`]: Pinball loss for quantile regression
+//! - [`QuantileLoss`]: Pinball loss for quantile regression (single or multiple quantiles)
 //!
 //! ## Metrics
 //!
