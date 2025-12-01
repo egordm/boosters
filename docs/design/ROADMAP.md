@@ -16,19 +16,17 @@
 │  ══════════════════════════════════════════════════             │
 │  Load XGBoost JSON models, predict with 3x+ speedup vs C++      │
 │                                                                  │
-│  GBLinear Support                       ✅ COMPLETE             │
+│  GBLinear Support                       ◄── ACTIVE              │
 │  ════════════════════════════════════════════════               │
-│  Story 1: GBLinear Inference            ✓                       │
-│  Story 2: Training Infrastructure       ✓                       │
-│  Story 3: GBLinear Training             ✓                       │
-│  Story 4: Matrix Layout Refactor        ✓                       │
-│  Story 5: Training Validation           ✓                       │
-│  Story 6: Benchmarks & Optimization     ✓                       │
+│  Core training complete, working on feature parity:             │
+│  Story 7: Fix Multiclass Training       [ ] HIGH                │
+│  Story 8: Quantile Regression           [ ] MEDIUM              │
+│  Story 9: Additional Loss Functions     [ ] LOW                 │
+│  Story 10: Additional Feature Selectors [ ] LOW                 │
 │                                                                  │
-│  Future (backlog)                       ◄── NEXT                │
+│  Future (backlog)                                                │
 │  ════════════════                                                │
 │  - Sparse data, LightGBM, GBTree training, Python bindings      │
-│  - SIMD/BLAS optimizations for linear training                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -39,7 +37,7 @@
 | Epic | Status | Summary |
 |------|--------|---------|
 | [GBTree Inference](backlog/01-gbtree-inference.md) | ✅ Complete | Tree inference, 3x faster than XGBoost C++ |
-| [GBLinear](backlog/02-gblinear.md) | ✅ Complete | Linear booster inference + training |
+| [GBLinear](backlog/02-gblinear.md) | 🔄 Active | Linear booster, working on feature parity |
 | [Future](backlog/99-future.md) | 📋 Backlog | Sparse data, LightGBM, bindings, etc. |
 
 ---
