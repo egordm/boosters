@@ -1,6 +1,6 @@
 # Epic: GBLinear Support
 
-**Status**: ✅ Complete  
+**Status**: 🔄 Active (feature parity work)
 **Priority**: High  
 **RFCs**: [0008](../rfcs/0008-gblinear-inference.md), [0009](../rfcs/0009-gblinear-training.md)
 
@@ -9,9 +9,9 @@ Validates training infrastructure before GBTree training.
 
 ---
 
-## Story 1: GBLinear Inference ✓
+## Completed Stories
 
-**Goal**: Load and predict with XGBoost GBLinear models.
+### Story 1: GBLinear Inference ✓
 
 - [x] 1.1 `LinearModel` struct with `Box<[f32]>` weight storage
 - [x] 1.2 Weight indexing: `weights[feature * num_groups + group]`
@@ -21,13 +21,7 @@ Validates training infrastructure before GBTree training.
 - [x] 1.6 XGBoost JSON parser for `gblinear` section
 - [x] 1.7 Integration tests vs Python XGBoost
 
-**Refs**: [RFC-0008](../rfcs/0008-gblinear-inference.md)
-
----
-
-## Story 2: Training Infrastructure ✓
-
-**Goal**: Core training types reusable for GBLinear and GBTree.
+### Story 2: Training Infrastructure ✓
 
 - [x] 2.1 `GradientPair` struct (grad, hess)
 - [x] 2.2 `Loss` trait — compute gradients from predictions + labels
@@ -37,111 +31,119 @@ Validates training infrastructure before GBTree training.
 - [x] 2.6 `EarlyStopping` callback
 - [x] 2.7 `TrainingLogger` with verbosity levels
 
----
-
-## Story 3: GBLinear Training ✓
-
-**Goal**: Train linear models via coordinate descent.
+### Story 3: GBLinear Training ✓
 
 - [x] 3.1 `CSCMatrix` — column-sparse format for efficient column access
 - [x] 3.2 `CSCMatrix::from_dense()` and column iteration
 - [x] 3.3 Coordinate descent update with elastic net regularization
-- [x] 3.4 `ShotgunUpdater` — parallel feature updates (default)
-- [x] 3.5 `CoordinateUpdater` — sequential feature updates
+- [x] 3.4 Parallel updater — all features with stale gradients (default)
+- [x] 3.5 Sequential updater — features in order with stale gradients
 - [x] 3.6 `CyclicSelector` and `ShuffleSelector` for feature order
 - [x] 3.7 `LinearTrainer` high-level API
 - [x] 3.8 Integration tests comparing to XGBoost
 
-**Refs**: [RFC-0009](../rfcs/0009-gblinear-training.md)
-
----
-
-## Story 4: Matrix Layout Refactor ✓
-
-**Goal**: Support both row-major and column-major dense matrices via zero-cost abstraction.
-
-**Motivation**: Current `DenseMatrix` is row-major, which is optimal for tree
-prediction (iterate rows, access features). But coordinate descent iterates
-over features (columns), so column-major storage would give better cache
-locality for training.
-
-**Design Decision**: Use generic `DenseMatrix<T, L: Layout>` with `RowMajor`/`ColMajor`
-type parameters. This is zero-cost (monomorphized) and allows writing code generic
-over layout. Keep CSC/CSR as separate types since they have fundamentally different
-storage structures, not just different indexing.
-
-**RFC**: [0010-matrix-layouts.md](../rfcs/0010-matrix-layouts.md) ✓ Accepted
-
-Tasks:
+### Story 4: Matrix Layout Refactor ✓
 
 - [x] 4.1 Add `Layout` trait with `RowMajor` and `ColMajor` implementations
 - [x] 4.2 Refactor `DenseMatrix` to `DenseMatrix<T, L: Layout = RowMajor>`
-- [x] 4.3 Update `DataMatrix` impl to use `L::index()`
-- [x] 4.4 Add `to_layout<L2>()` conversion method
-- [x] 4.5 Add layout-specific slice methods (`row_slice`, `col_slice`, `rows_slice`)
-- [x] 4.6 Add strided iterators for non-contiguous dimension
-- [x] 4.7 Type aliases: `RowMatrix`, `ColMatrix` for convenience
-- [x] 4.8 Verify existing tests still pass (backward compatibility)
+- [x] 4.3-4.8 Full layout support with conversions and iterators
+
+### Story 5: Training Validation ✓
+
+- [x] 5.1-5.5 Full validation vs XGBoost (weight correlation > 0.9, good test RMSE)
+
+### Story 6: Benchmarks & Optimization ✓
+
+- [x] 6.1-6.6 Performance validated and documented
 
 ---
 
-## Story 5: Training Validation ✓
+## Active Stories (Feature Parity)
 
-**Goal**: Verify trained models match XGBoost quality.
+### Story 7: Fix Multiclass Training 🔴 HIGH
 
-- [x] 5.1 Generate reference training data with Python XGBoost
-- [x] 5.2 Compare final metrics (RMSE, logloss) within tolerance
-- [x] 5.3 Compare predictions on held-out test set
-- [x] 5.4 Verify weight correlation (Pearson r > 0.95)
-- [x] 5.5 Test convergence on regression, binary, multiclass tasks
+**Goal**: Multiclass classification currently broken — all groups get identical gradients.
 
-**Validation approach**: Since exact weight matching is unlikely due to
-randomness and floating-point differences, we validate:
+**Problem**: In `LinearTrainer::compute_gradients()`, we use the same gradient
+for all output groups instead of per-class softmax gradients.
 
-1. Weight vectors are highly correlated (Pearson r > 0.9)
-2. Test predictions have similar or better RMSE vs ground truth
-3. Trained models produce finite, reasonable predictions
-
-**Results**:
-
-- Weight correlation consistently > 0.9 (achieved: 0.91-0.95)
-- Our test RMSE is actually better than XGBoost's in some cases
-- Binary classification produces reasonable logits
-- Multiclass gradient computation deferred (needs softmax cross-entropy loss)
-
-**Key insight**: Our coordinate descent uses stale gradients (shotgun method)
-which produces different weights than XGBoost's sequential updates, but achieves
-similar or better prediction quality on held-out test sets.
+- [ ] 7.1 Update `compute_gradients` to handle multiclass properly
+- [ ] 7.2 Use `SoftmaxLoss::compute_multiclass_gradient()` for each sample
+- [ ] 7.3 Store gradients per (sample, class) pair
+- [ ] 7.4 Update each group's weights with group-specific gradients
+- [ ] 7.5 Enable `train_multiclass_classification` test
+- [ ] 7.6 Validate vs XGBoost multiclass
 
 ---
 
-## Story 6: Benchmarks & Optimization ✓
+### Story 8: Quantile Regression 🟡 MEDIUM
 
-**Goal**: Validate performance and optimize based on findings.
+**Goal**: Add quantile loss for uncertainty quantification.
 
-- [x] 6.1 Inference benchmark vs Python XGBoost
-- [x] 6.2 Training benchmark vs Python XGBoost
-- [x] 6.3 Compare CSC vs ColMajor vs RowMajor for training
-- [x] 6.4 Layout benchmark: measure impact of row/column access patterns
-- [x] 6.5 Evaluate zero-copy optimizations (determined: not needed, <10% overhead)
-- [x] 6.6 Document results and recommend defaults
+Pinball loss: `L = α(y-ŷ)⁺ + (1-α)(ŷ-y)⁺`
 
-**Results**: See [2025-11-29-matrix-layout-training.md](../../benchmarks/2025-11-29-matrix-layout-training.md)
+- [ ] 8.1 Implement `QuantileLoss` with configurable α
+- [ ] 8.2 Gradient: `grad = (1-α) if pred >= label else -α`
+- [ ] 8.3 Add Python test case generation for quantile regression
+- [ ] 8.4 Integration test vs XGBoost `reg:quantileerror`
+- [ ] 8.5 Document multi-quantile training (use num_groups = num_quantiles)
 
-**Key findings**:
+---
 
-- RowMajor input is 12-21% faster than ColMajor for training (better CSC conversion)
-- Parallel (shotgun) training is 61% faster than sequential
-- Direct slice access is 2.7× faster than DataMatrix trait for row iteration
-- Conversion overhead is <10% of training time — zero-copy not worth complexity
+### Story 9: Additional Loss Functions 🟢 LOW
+
+**Goal**: Add commonly used loss functions for feature parity.
+
+- [ ] 9.1 `HuberLoss` — robust regression (grad clipped for large residuals)
+- [ ] 9.2 `HingeLoss` — SVM-style binary classification
+- [ ] 9.3 `PseudoHuberLoss` — smooth approximation of Huber
+- [ ] 9.4 Integration tests for each
+
+---
+
+### Story 10: Additional Feature Selectors 🟢 LOW
+
+**Goal**: XGBoost-compatible feature selection strategies.
+
+- [ ] 10.1 `GreedySelector` — select feature with largest gradient magnitude
+- [ ] 10.2 `ThriftySelector` — approximate greedy (sort by magnitude, iterate)
+- [ ] 10.3 `RandomSelector` — with replacement
+- [ ] 10.4 Benchmark feature selector impact
+
+---
+
+## Feature Parity Checklist
+
+### Loss Functions
+
+| Objective | XGBoost | booste-rs | Story |
+|-----------|---------|-----------|-------|
+| `reg:squarederror` | ✅ | ✅ | Done |
+| `reg:quantileerror` | ✅ | ❌ | 8 |
+| `reg:pseudohubererror` | ✅ | ❌ | 9 |
+| `binary:logistic` | ✅ | ✅ | Done |
+| `binary:hinge` | ✅ | ❌ | 9 |
+| `multi:softmax` | ✅ | ⚠️ Broken | 7 |
+
+### Feature Selectors
+
+| Selector | XGBoost | booste-rs | Story |
+|----------|---------|-----------|-------|
+| Cyclic | ✅ | ✅ | Done |
+| Shuffle | ✅ | ✅ | Done |
+| Greedy | ✅ | ❌ | 10 |
+| Thrifty | ✅ | ❌ | 10 |
+| Random | ✅ | ❌ | 10 |
 
 ---
 
 ## Success Criteria
 
-1. Load XGBoost GBLinear JSON models and predict correctly
-2. Train models matching Python XGBoost quality (metrics within 5%)
-3. Training performance equal to or faster than XGBoost
-4. Training infrastructure (losses, metrics, callbacks) is reusable
-5. Early stopping and logging work correctly
-6. Trained model predictions correlate highly with XGBoost predictions
+1. ✅ Load XGBoost GBLinear JSON models and predict correctly
+2. ✅ Train models matching Python XGBoost quality (metrics within 5%)
+3. ✅ Training performance equal to or faster than XGBoost
+4. ✅ Training infrastructure (losses, metrics, callbacks) is reusable
+5. ✅ Early stopping and logging work correctly
+6. ✅ Trained model predictions correlate highly with XGBoost predictions
+7. ⬜ Multiclass classification works correctly
+8. ⬜ Quantile regression supported

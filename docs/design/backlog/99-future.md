@@ -63,37 +63,6 @@ Items here are parked until there's capacity or user demand.
 
 ---
 
-## Additional Loss Functions
-
-See [Feature Parity Analysis](../research/gblinear-feature-parity.md) for full comparison.
-
-### High Priority
-
-**Quantile Loss** — Pinball loss for quantile regression
-
-- Single quantile: `L = α(y-ŷ)⁺ + (1-α)(ŷ-y)⁺`
-- Multi-quantile: Train as multi-output with different α per group
-- Essential for uncertainty quantification and prediction intervals
-
-**Fix Multiclass Training** — Current implementation broken
-
-- All output groups receive identical gradients
-- Need per-group softmax gradient computation
-
-### Medium Priority
-
-- Huber Loss (robust regression)
-- Hinge Loss (SVM-style binary classification)
-- Greedy/Thrifty feature selectors
-
-### Lower Priority
-
-- Gamma/Tweedie deviance (insurance/count data)
-- Log error (`reg:squaredlogerror`)
-- Raw logit output (`binary:logitraw`)
-
----
-
 ## GBTree Training
 
 - Histogram-based split finding
