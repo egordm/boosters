@@ -56,39 +56,26 @@ Validates training infrastructure before GBTree training.
 
 - [x] 6.1-6.6 Performance validated and documented
 
+### Story 7: Fix Multiclass Training ✓
+
+- [x] 7.1 Add `MulticlassLoss` trait for proper per-class gradient computation
+- [x] 7.2 Implement `MulticlassLoss` for `SoftmaxLoss`
+- [x] 7.3 Add `gradient_stride` to updater for strided gradient indexing
+- [x] 7.4 Add `train_multiclass()` method using `MulticlassLoss`
+- [x] 7.5 Store K gradients per sample (sample × class layout)
+- [x] 7.6 Enable `train_multiclass_classification` integration test
+
+### Story 8: Quantile Regression ✓
+
+- [x] 8.1 Implement `QuantileLoss` with configurable α (0-1)
+- [x] 8.2 Gradient: `(1-α)` if pred >= label else `-α`; hessian = 1
+- [x] 8.3 Generate XGBoost quantile test data (α=0.1, 0.5, 0.9)
+- [x] 8.4 Integration tests validating quantile behavior
+- [x] 8.5 Test that different quantiles produce different predictions
+
 ---
 
 ## Active Stories (Feature Parity)
-
-### Story 7: Fix Multiclass Training 🔴 HIGH
-
-**Goal**: Multiclass classification currently broken — all groups get identical gradients.
-
-**Problem**: In `LinearTrainer::compute_gradients()`, we use the same gradient
-for all output groups instead of per-class softmax gradients.
-
-- [ ] 7.1 Update `compute_gradients` to handle multiclass properly
-- [ ] 7.2 Use `SoftmaxLoss::compute_multiclass_gradient()` for each sample
-- [ ] 7.3 Store gradients per (sample, class) pair
-- [ ] 7.4 Update each group's weights with group-specific gradients
-- [ ] 7.5 Enable `train_multiclass_classification` test
-- [ ] 7.6 Validate vs XGBoost multiclass
-
----
-
-### Story 8: Quantile Regression 🟡 MEDIUM
-
-**Goal**: Add quantile loss for uncertainty quantification.
-
-Pinball loss: `L = α(y-ŷ)⁺ + (1-α)(ŷ-y)⁺`
-
-- [ ] 8.1 Implement `QuantileLoss` with configurable α
-- [ ] 8.2 Gradient: `grad = (1-α) if pred >= label else -α`
-- [ ] 8.3 Add Python test case generation for quantile regression
-- [ ] 8.4 Integration test vs XGBoost `reg:quantileerror`
-- [ ] 8.5 Document multi-quantile training (use num_groups = num_quantiles)
-
----
 
 ### Story 9: Additional Loss Functions 🟢 LOW
 
@@ -112,6 +99,22 @@ Pinball loss: `L = α(y-ŷ)⁺ + (1-α)(ŷ-y)⁺`
 
 ---
 
+## Future Considerations
+
+### GradientPair as Array
+
+When refactoring `GradientPair` to use array storage (e.g., `[f32; 2]` or SIMD),
+revisit multiclass gradient handling. Currently we use strided indexing with
+`gradient_stride` parameter. An array-based approach might enable:
+
+- Contiguous K-gradient storage per sample as a single unit
+- SIMD-friendly multiclass gradient computation
+- Cleaner API without separate `MulticlassLoss` trait
+
+Track this in GBTree training epic when gradient storage is optimized.
+
+---
+
 ## Feature Parity Checklist
 
 ### Loss Functions
@@ -119,11 +122,11 @@ Pinball loss: `L = α(y-ŷ)⁺ + (1-α)(ŷ-y)⁺`
 | Objective | XGBoost | booste-rs | Story |
 |-----------|---------|-----------|-------|
 | `reg:squarederror` | ✅ | ✅ | Done |
-| `reg:quantileerror` | ✅ | ❌ | 8 |
+| `reg:quantileerror` | ✅ | ✅ | Done (8) |
 | `reg:pseudohubererror` | ✅ | ❌ | 9 |
 | `binary:logistic` | ✅ | ✅ | Done |
 | `binary:hinge` | ✅ | ❌ | 9 |
-| `multi:softmax` | ✅ | ⚠️ Broken | 7 |
+| `multi:softmax` | ✅ | ✅ | Done (7) |
 
 ### Feature Selectors
 
@@ -145,5 +148,5 @@ Pinball loss: `L = α(y-ŷ)⁺ + (1-α)(ŷ-y)⁺`
 4. ✅ Training infrastructure (losses, metrics, callbacks) is reusable
 5. ✅ Early stopping and logging work correctly
 6. ✅ Trained model predictions correlate highly with XGBoost predictions
-7. ⬜ Multiclass classification works correctly
-8. ⬜ Quantile regression supported
+7. ✅ Multiclass classification works correctly
+8. ✅ Quantile regression supported

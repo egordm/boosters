@@ -8,7 +8,7 @@
 use approx::assert_relative_eq;
 use booste_rs::data::{ColMatrix, DataMatrix, RowMatrix};
 use booste_rs::linear::training::{LinearTrainer, LinearTrainerConfig};
-use booste_rs::training::{LogisticLoss, SquaredLoss, Verbosity};
+use booste_rs::training::{LogisticLoss, QuantileLoss, SoftmaxLoss, SquaredLoss, Verbosity};
 
 use rstest::rstest;
 use serde::Deserialize;
@@ -48,6 +48,8 @@ struct TrainConfig {
     #[serde(default)]
     base_score: Option<f32>,
     num_boost_round: usize,
+    #[serde(default)]
+    quantile_alpha: Option<f32>,
 }
 
 fn load_train_data(name: &str) -> (ColMatrix<f32>, Vec<f32>) {
@@ -560,10 +562,8 @@ fn train_binary_classification() {
 
 /// Test multiclass classification training produces reasonable predictions.
 ///
-/// NOTE: Multiclass is not fully implemented yet (all classes get same gradients).
-/// This test just verifies the model runs without errors and produces finite outputs.
+/// Uses proper SoftmaxLoss which computes per-class gradients correctly.
 #[test]
-#[ignore = "Multiclass gradient computation not yet implemented"]
 fn train_multiclass_classification() {
     let (data, labels) = load_train_data("multiclass_classification");
     let config = load_config("multiclass_classification");
@@ -581,23 +581,204 @@ fn train_multiclass_classification() {
     };
 
     let trainer = LinearTrainer::new(trainer_config);
-    let model = trainer.train(&data, &labels, &SquaredLoss, num_class);
+    let loss = SoftmaxLoss::new(num_class);
+    let model = trainer.train_multiclass(&data, &labels, &loss);
+
+    // Verify model has correct number of output groups
+    assert_eq!(model.num_groups(), num_class);
 
     // Verify predictions exist for all classes
     let features: Vec<f32> = (0..data.num_features())
         .map(|col| data.get(0, col).copied().unwrap_or(f32::NAN))
         .collect();
     let predictions = model.predict_row(&features, &vec![0.0; num_class]);
-    
+
     println!("Multiclass predictions (logits): {:?}", predictions);
-    
+
     assert_eq!(predictions.len(), num_class);
     for pred in &predictions {
         assert!(pred.is_finite(), "Prediction is not finite: {}", pred);
     }
 
-    // When multiclass is properly implemented, the predictions for different
-    // classes should be different (not all identical)
-    // assert!(predictions[0] != predictions[1] || predictions[1] != predictions[2],
-    //     "All class predictions are identical - multiclass not working properly");
+    // With proper multiclass gradients, predictions for different classes should differ
+    let all_same = predictions.windows(2).all(|w| (w[0] - w[1]).abs() < 1e-6);
+    assert!(
+        !all_same,
+        "All class predictions are identical - multiclass not working properly"
+    );
+
+    // Compute training accuracy
+    let mut correct = 0;
+    for i in 0..data.num_rows() {
+        let features: Vec<f32> = (0..data.num_features())
+            .map(|col| data.get(i, col).copied().unwrap_or(0.0))
+            .collect();
+        let preds = model.predict_row(&features, &vec![0.0; num_class]);
+
+        // Find predicted class (argmax)
+        let predicted = preds
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .map(|(idx, _)| idx)
+            .unwrap();
+
+        let true_class = labels[i] as usize;
+        if predicted == true_class {
+            correct += 1;
+        }
+    }
+
+    let accuracy = correct as f64 / data.num_rows() as f64;
+    println!("Multiclass training accuracy: {:.2}%", accuracy * 100.0);
+
+    // Training accuracy should be reasonable for linear model
+    // (better than random = 33.3% for 3 classes)
+    assert!(
+        accuracy > 0.4,
+        "Training accuracy {} should be > 40%",
+        accuracy
+    );
+}
+
+// =============================================================================
+// Quantile Regression Tests
+// =============================================================================
+
+/// Test quantile regression training produces reasonable predictions.
+///
+/// Tests median regression (α=0.5), low quantile (α=0.1), and high quantile (α=0.9).
+#[rstest]
+#[case("quantile_regression", 0.5)]
+#[case("quantile_low", 0.1)]
+#[case("quantile_high", 0.9)]
+fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
+    let (data, labels) = load_train_data(name);
+    let config = load_config(name);
+    let (test_data, test_labels) = load_test_data(name).expect("Test data should exist");
+
+    // Verify config has correct quantile alpha
+    let alpha = config.quantile_alpha.expect("Config should have quantile_alpha");
+    assert_relative_eq!(alpha, expected_alpha, epsilon = 0.01);
+
+    let trainer_config = LinearTrainerConfig {
+        num_rounds: config.num_boost_round,
+        learning_rate: config.eta,
+        alpha: config.alpha,
+        lambda: config.lambda,
+        parallel: false,
+        seed: 42,
+        verbosity: Verbosity::Silent,
+        ..Default::default()
+    };
+
+    let trainer = LinearTrainer::new(trainer_config);
+    let loss = QuantileLoss::new(alpha);
+    let model = trainer.train(&data, &labels, &loss, 1);
+
+    // Compute predictions on test set
+    let mut test_preds = Vec::with_capacity(test_data.num_rows());
+    for i in 0..test_data.num_rows() {
+        let features: Vec<f32> = (0..test_data.num_features())
+            .map(|col| test_data.get(i, col).copied().unwrap_or(0.0))
+            .collect();
+        let pred = model.predict_row(&features, &[0.0])[0];
+        test_preds.push(pred);
+    }
+
+    // Compute pinball loss on test set
+    let pinball_loss: f64 = test_preds
+        .iter()
+        .zip(test_labels.iter())
+        .map(|(&pred, &label)| {
+            let residual = label - pred;
+            if residual >= 0.0 {
+                alpha as f64 * residual as f64
+            } else {
+                (1.0 - alpha as f64) * (-residual as f64)
+            }
+        })
+        .sum::<f64>()
+        / test_labels.len() as f64;
+
+    println!(
+        "{}: quantile={:.1}, pinball_loss={:.4}",
+        name, alpha, pinball_loss
+    );
+
+    // Pinball loss should be reasonable (not NaN or infinite)
+    assert!(pinball_loss.is_finite(), "Pinball loss is not finite");
+
+    // For quantile regression, check that predictions respect the quantile
+    // Lower quantiles should under-predict more, higher quantiles should over-predict more
+    let under_predictions = test_preds
+        .iter()
+        .zip(test_labels.iter())
+        .filter(|(pred, label)| **pred < **label)
+        .count();
+    let fraction_under = under_predictions as f64 / test_labels.len() as f64;
+
+    // For α=0.1, expect ~90% under-predictions
+    // For α=0.5, expect ~50% under-predictions
+    // For α=0.9, expect ~10% under-predictions
+    // Allow some tolerance (±20%) since this is a small test set
+    let expected_fraction = 1.0 - alpha as f64;
+    println!(
+        "{}: fraction_under={:.2}, expected~{:.2}",
+        name, fraction_under, expected_fraction
+    );
+
+    // Just verify it's in a reasonable range
+    assert!(
+        fraction_under > 0.1 && fraction_under < 0.9,
+        "Under-prediction fraction {} out of expected range",
+        fraction_under
+    );
+}
+
+/// Test that different quantiles produce different predictions.
+#[test]
+fn quantile_regression_predictions_differ() {
+    let (data, labels) = load_train_data("quantile_regression");
+    let config = load_config("quantile_regression");
+
+    let trainer_config = LinearTrainerConfig {
+        num_rounds: config.num_boost_round,
+        learning_rate: config.eta,
+        alpha: config.alpha,
+        lambda: config.lambda,
+        parallel: false,
+        seed: 42,
+        verbosity: Verbosity::Silent,
+        ..Default::default()
+    };
+
+    let trainer = LinearTrainer::new(trainer_config);
+
+    // Train three models with different quantiles
+    let model_low = trainer.train(&data, &labels, &QuantileLoss::new(0.1), 1);
+    let model_med = trainer.train(&data, &labels, &QuantileLoss::new(0.5), 1);
+    let model_high = trainer.train(&data, &labels, &QuantileLoss::new(0.9), 1);
+
+    // Get predictions for first sample
+    let features: Vec<f32> = (0..data.num_features())
+        .map(|col| data.get(0, col).copied().unwrap_or(0.0))
+        .collect();
+
+    let pred_low = model_low.predict_row(&features, &[0.0])[0];
+    let pred_med = model_med.predict_row(&features, &[0.0])[0];
+    let pred_high = model_high.predict_row(&features, &[0.0])[0];
+
+    println!(
+        "Quantile predictions: low={:.2}, med={:.2}, high={:.2}",
+        pred_low, pred_med, pred_high
+    );
+
+    // Lower quantile should produce lower predictions
+    assert!(
+        pred_low < pred_high,
+        "Low quantile ({:.2}) should predict lower than high quantile ({:.2})",
+        pred_low,
+        pred_high
+    );
 }

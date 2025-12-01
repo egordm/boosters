@@ -857,6 +857,104 @@ def generate_training_multiclass():
     save_training_case("multiclass_classification", X_train, y_train, booster, config, X_test, y_test)
 
 
+def generate_training_quantile():
+    """Quantile regression (median, α=0.5) with held-out test set."""
+    np.random.seed(42)
+    
+    # Generate data with heteroscedastic noise (variance depends on X)
+    # This makes quantile regression more interesting
+    X, y = make_regression(n_samples=150, n_features=5, noise=0.0, random_state=42)
+    X = X.astype(np.float32)
+    
+    # Add heteroscedastic noise: larger variance for larger X values
+    noise_scale = 1 + 0.5 * np.abs(X[:, 0])
+    y = y + np.random.normal(0, noise_scale * 5)
+    y = y.astype(np.float32)
+    
+    # Split into train/test
+    X_train, X_test = X[:120], X[120:]
+    y_train, y_test = y[:120], y[120:]
+    
+    dtrain = xgb.DMatrix(X_train, label=y_train)
+    
+    config = {
+        'objective': 'reg:quantileerror',
+        'quantile_alpha': 0.5,  # Median regression
+        'booster': 'gblinear',
+        'eta': 0.5,
+        'lambda': 1.0,
+        'alpha': 0.0,
+        'updater': 'coord_descent',
+        'feature_selector': 'cyclic',
+        'num_boost_round': 100,
+    }
+    
+    params = {k: v for k, v in config.items() if k != 'num_boost_round'}
+    booster = xgb.train(params, dtrain, num_boost_round=config['num_boost_round'])
+    
+    save_training_case("quantile_regression", X_train, y_train, booster, config, X_test, y_test)
+
+
+def generate_training_quantile_low():
+    """Quantile regression (10th percentile, α=0.1)."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=150, n_features=5, noise=10.0, random_state=42)
+    X = X.astype(np.float32)
+    y = y.astype(np.float32)
+    
+    X_train, X_test = X[:120], X[120:]
+    y_train, y_test = y[:120], y[120:]
+    
+    dtrain = xgb.DMatrix(X_train, label=y_train)
+    
+    config = {
+        'objective': 'reg:quantileerror',
+        'quantile_alpha': 0.1,  # 10th percentile
+        'booster': 'gblinear',
+        'eta': 0.5,
+        'lambda': 1.0,
+        'alpha': 0.0,
+        'updater': 'coord_descent',
+        'feature_selector': 'cyclic',
+        'num_boost_round': 100,
+    }
+    
+    params = {k: v for k, v in config.items() if k != 'num_boost_round'}
+    booster = xgb.train(params, dtrain, num_boost_round=config['num_boost_round'])
+    
+    save_training_case("quantile_low", X_train, y_train, booster, config, X_test, y_test)
+
+
+def generate_training_quantile_high():
+    """Quantile regression (90th percentile, α=0.9)."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=150, n_features=5, noise=10.0, random_state=42)
+    X = X.astype(np.float32)
+    y = y.astype(np.float32)
+    
+    X_train, X_test = X[:120], X[120:]
+    y_train, y_test = y[:120], y[120:]
+    
+    dtrain = xgb.DMatrix(X_train, label=y_train)
+    
+    config = {
+        'objective': 'reg:quantileerror',
+        'quantile_alpha': 0.9,  # 90th percentile
+        'booster': 'gblinear',
+        'eta': 0.5,
+        'lambda': 1.0,
+        'alpha': 0.0,
+        'updater': 'coord_descent',
+        'feature_selector': 'cyclic',
+        'num_boost_round': 100,
+    }
+    
+    params = {k: v for k, v in config.items() if k != 'num_boost_round'}
+    booster = xgb.train(params, dtrain, num_boost_round=config['num_boost_round'])
+    
+    save_training_case("quantile_high", X_train, y_train, booster, config, X_test, y_test)
+
+
 def generate_all_training():
     """Generate all training test cases."""
     print("\nGenerating training test cases...")
@@ -866,6 +964,9 @@ def generate_all_training():
     generate_training_regression_elastic_net()
     generate_training_binary()
     generate_training_multiclass()
+    generate_training_quantile()
+    generate_training_quantile_low()
+    generate_training_quantile_high()
 
 
 # =============================================================================
