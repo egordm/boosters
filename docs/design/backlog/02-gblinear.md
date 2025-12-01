@@ -1,6 +1,6 @@
 # Epic: GBLinear Support
 
-**Status**: 🔄 Active  
+**Status**: ✅ Complete  
 **Priority**: High  
 **RFCs**: [0008](../rfcs/0008-gblinear-inference.md), [0009](../rfcs/0009-gblinear-training.md)
 
