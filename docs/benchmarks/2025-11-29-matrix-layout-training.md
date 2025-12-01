@@ -86,8 +86,9 @@ The `ColumnAccess` trait provides unified column iteration for:
 
 ## Recommendations
 
-1. **For Dense Data**: Use `CSCMatrix` - surprisingly it's ~15% faster even for
-   dense data. Convert once from RowMajor at start of training.
+1. **For Dense Data**: Either `ColMatrix` or `CSCMatrix` work well. CSC shows
+   ~13% faster in benchmarks, but this appears to be a compiler optimization
+   artifact rather than a fundamental advantage. Both are valid choices.
 
 2. **For Sparse Data**: Use `CSCMatrix` directly - it will skip zeros and be
    much more efficient for high sparsity.
@@ -97,6 +98,65 @@ The `ColumnAccess` trait provides unified column iteration for:
 
 4. **Conversion**: Convert from RowMajor once at the start. Conversion overhead
    is small (~5-7% of training time for 50K samples).
+
+## Future Research Questions
+
+### 1. Gradient Storage Layout (SoA vs AoS)
+
+Currently we store gradients as `Vec<GradientPair>` (Array of Structs):
+
+```rust
+struct GradientPair { grad: f32, hess: f32 }
+gradients: Vec<GradientPair>  // [GradientPair; N]
+```
+
+Alternative: Structure of Arrays layout:
+
+```rust
+gradients: Vec<f32>  // [f32; N] - all gradients
+hessians: Vec<f32>   // [f32; N] - all hessians  
+```
+
+**Potential benefits of SoA**:
+
+- Better SIMD vectorization (contiguous f32 arrays)
+- More efficient memory access when only one component is needed
+- Cache line utilization when iterating one component
+
+**To investigate**: Benchmark SoA vs AoS for gradient computation and accumulation.
+
+### 2. SIMD Opportunities
+
+The core coordinate descent loop is:
+
+```rust
+for (row, value) in column {
+    sum_grad += gradients[row].grad() * value;
+    sum_hess += gradients[row].hess() * value * value;
+}
+```
+
+**Potential SIMD optimizations**:
+
+- With SoA layout: vectorize the multiply-accumulate across 4/8 elements
+- Use `std::simd` or `packed_simd` for portable SIMD
+- Exploit that dense columns are contiguous (predictable access pattern)
+
+**Challenges**:
+
+- Sparse matrices have indirect indexing (harder to vectorize)
+- Need to handle remainder elements
+- Cross-platform SIMD portability
+
+### 3. Why is CSC Faster?
+
+The ~13% CSC advantage in full training (but not in isolated benchmarks) remains
+unexplained. Possible causes to investigate:
+
+- LLVM monomorphization differences
+- Memory alignment effects  
+- Prefetching behavior with explicit row_indices array
+- Interaction with gradient array access patterns
 
 ## Environment
 
