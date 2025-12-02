@@ -28,6 +28,159 @@ use crate::data::ColumnAccess;
 use crate::linear::LinearModel;
 use crate::training::GradientBuffer;
 
+// =============================================================================
+// FeatureSelectorKind - Configuration enum
+// =============================================================================
+
+/// Feature selector configuration for training.
+///
+/// This enum specifies which feature selection strategy to use during
+/// coordinate descent training. It's used in [`LinearTrainerConfig`] to
+/// configure the trainer.
+///
+/// # Example
+///
+/// ```ignore
+/// use booste_rs::linear::training::{LinearTrainerConfig, FeatureSelectorKind};
+///
+/// let config = LinearTrainerConfig {
+///     feature_selector: FeatureSelectorKind::Thrifty { top_k: 10 },
+///     ..Default::default()
+/// };
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FeatureSelectorKind {
+    /// Cyclic: sequential order (0, 1, 2, ...).
+    Cyclic,
+    /// Shuffle: random permutation each round (default).
+    Shuffle,
+    /// Random: random selection with replacement.
+    Random,
+    /// Greedy: select features with largest gradient magnitude.
+    /// Uses `top_k` to limit selection (0 = all features).
+    Greedy { top_k: usize },
+    /// Thrifty: approximate greedy with one-time sorting.
+    /// Uses `top_k` to limit selection (0 = all features).
+    Thrifty { top_k: usize },
+}
+
+impl Default for FeatureSelectorKind {
+    fn default() -> Self {
+        Self::Shuffle
+    }
+}
+
+impl FeatureSelectorKind {
+    /// Check if this selector requires setup with gradient information.
+    pub fn requires_setup(&self) -> bool {
+        matches!(self, Self::Greedy { .. } | Self::Thrifty { .. })
+    }
+
+    /// Create a SelectorState from this configuration.
+    pub fn create_state(&self, seed: u64) -> SelectorState {
+        match self {
+            Self::Cyclic => SelectorState::Cyclic(CyclicSelector::new()),
+            Self::Shuffle => SelectorState::Shuffle(ShuffleSelector::new(seed)),
+            Self::Random => SelectorState::Random(RandomSelector::new(seed)),
+            Self::Greedy { top_k } => SelectorState::Greedy(GreedySelector::new(*top_k)),
+            Self::Thrifty { top_k } => SelectorState::Thrifty(ThriftySelector::new(*top_k)),
+        }
+    }
+}
+
+// =============================================================================
+// SelectorState - Runtime selector wrapper
+// =============================================================================
+
+/// Runtime selector state used by the trainer.
+///
+/// This enum wraps all selector types and provides a unified interface
+/// that handles the special setup requirements of Greedy/Thrifty selectors.
+pub enum SelectorState {
+    Cyclic(CyclicSelector),
+    Shuffle(ShuffleSelector),
+    Random(RandomSelector),
+    Greedy(GreedySelector),
+    Thrifty(ThriftySelector),
+}
+
+impl SelectorState {
+    /// Setup the selector for an update round.
+    ///
+    /// For Greedy/Thrifty, this computes gradient magnitudes for ranking.
+    /// For other selectors, this just resets the iteration state.
+    pub fn setup_round<C: ColumnAccess<Element = f32>>(
+        &mut self,
+        model: &LinearModel,
+        data: &C,
+        buffer: &GradientBuffer,
+        output: usize,
+        alpha: f32,
+        lambda: f32,
+    ) {
+        match self {
+            Self::Cyclic(s) => s.reset(model.num_features()),
+            Self::Shuffle(s) => s.reset(model.num_features()),
+            Self::Random(s) => s.reset(model.num_features()),
+            Self::Greedy(s) => {
+                s.setup(model, data, buffer, output, alpha, lambda);
+                s.reset(model.num_features());
+            }
+            Self::Thrifty(s) => {
+                s.setup(model, data, buffer, output, alpha, lambda);
+                s.reset(model.num_features());
+            }
+        }
+    }
+
+    /// Get all feature indices for parallel updates.
+    pub fn all_indices(&mut self) -> Vec<usize> {
+        match self {
+            Self::Cyclic(s) => s.all_indices(),
+            Self::Shuffle(s) => s.all_indices(),
+            Self::Random(s) => s.all_indices(),
+            Self::Greedy(s) => s.all_indices(),
+            Self::Thrifty(s) => s.all_indices(),
+        }
+    }
+}
+
+impl FeatureSelector for SelectorState {
+    fn reset(&mut self, num_features: usize) {
+        match self {
+            Self::Cyclic(s) => s.reset(num_features),
+            Self::Shuffle(s) => s.reset(num_features),
+            Self::Random(s) => s.reset(num_features),
+            Self::Greedy(s) => s.reset(num_features),
+            Self::Thrifty(s) => s.reset(num_features),
+        }
+    }
+
+    fn next(&mut self) -> Option<usize> {
+        match self {
+            Self::Cyclic(s) => s.next(),
+            Self::Shuffle(s) => s.next(),
+            Self::Random(s) => s.next(),
+            Self::Greedy(s) => s.next(),
+            Self::Thrifty(s) => s.next(),
+        }
+    }
+
+    fn all_indices(&mut self) -> Vec<usize> {
+        match self {
+            Self::Cyclic(s) => s.all_indices(),
+            Self::Shuffle(s) => s.all_indices(),
+            Self::Random(s) => s.all_indices(),
+            Self::Greedy(s) => s.all_indices(),
+            Self::Thrifty(s) => s.all_indices(),
+        }
+    }
+}
+
+// =============================================================================
+// FeatureSelector trait
+// =============================================================================
+
 /// Trait for selecting features during coordinate descent.
 pub trait FeatureSelector: Send + Sync {
     /// Reset the selector for a new round.
