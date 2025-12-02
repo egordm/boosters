@@ -66,7 +66,8 @@ impl EarlyStopping {
     ///
     /// Returns `true` if training should stop (no improvement for `patience` rounds).
     pub fn should_stop(&mut self, preds: &[f32], labels: &[f32]) -> bool {
-        let value = self.metric.compute(preds, labels);
+        // For early stopping we assume single-output (n_outputs=1)
+        let value = self.metric.evaluate(preds, labels, 1);
         self.update_with_value(value)
     }
 
@@ -112,7 +113,7 @@ impl EarlyStopping {
     }
 
     /// Get the metric name.
-    pub fn metric_name(&self) -> &'static str {
+    pub fn metric_name(&self) -> &str {
         self.metric.name()
     }
 
