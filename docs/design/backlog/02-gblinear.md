@@ -88,14 +88,29 @@ Validates training infrastructure before GBTree training.
 
 ---
 
-### Story 10: Additional Feature Selectors 🟢 LOW
+### Story 10: Additional Feature Selectors ✅ COMPLETE
 
 **Goal**: XGBoost-compatible feature selection strategies.
 
-- [ ] 10.1 `GreedySelector` — select feature with largest gradient magnitude
-- [ ] 10.2 `ThriftySelector` — approximate greedy (sort by magnitude, iterate)
-- [ ] 10.3 `RandomSelector` — with replacement
-- [ ] 10.4 Benchmark feature selector impact
+- [x] 10.1 `RandomSelector` — random with replacement
+- [x] 10.2 `GreedySelector` — select feature with largest gradient magnitude
+- [x] 10.3 `ThriftySelector` — approximate greedy (sort by magnitude, iterate)
+- [x] 10.4 All selectors support `top_k` parameter for limiting selection
+
+**Implementation**:
+- `RandomSelector::new(seed)` — samples uniformly with replacement
+- `GreedySelector::new(top_k)` — O(n²) exact greedy, requires `setup()` call
+- `ThriftySelector::new(top_k)` — O(n log n) approximate greedy, requires `setup()`
+
+**XGBoost Compatibility**:
+
+| XGBoost `feature_selector` | booste-rs |
+|---------------------------|-----------|
+| `cyclic` | `CyclicSelector` |
+| `shuffle` | `ShuffleSelector` |
+| `random` | `RandomSelector` |
+| `greedy` | `GreedySelector` |
+| `thrifty` | `ThriftySelector` |
 
 ---
 
@@ -212,9 +227,9 @@ See `docs/benchmarks/2025-11-29-gradient-soa.md` for detailed analysis.
 |----------|---------|-----------|-------|
 | Cyclic | ✅ | ✅ | Done |
 | Shuffle | ✅ | ✅ | Done |
-| Greedy | ✅ | ❌ | 10 |
-| Thrifty | ✅ | ❌ | 10 |
-| Random | ✅ | ❌ | 10 |
+| Greedy | ✅ | ✅ | Done (10) |
+| Thrifty | ✅ | ✅ | Done (10) |
+| Random | ✅ | ✅ | Done (10) |
 
 ---
 
