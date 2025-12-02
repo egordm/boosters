@@ -542,6 +542,42 @@ fn bench_multiclass_training(c: &mut Criterion) {
 }
 
 // =============================================================================
+/// Benchmark softmax gradient computation.
+fn bench_softmax_gradient(c: &mut Criterion) {
+    use booste_rs::training::{GradientBuffer, MulticlassLoss, SoftmaxLoss};
+
+    let mut group = c.benchmark_group("softmax_gradient");
+    group.sample_size(50);
+
+    let num_classes = 10;
+
+    for num_samples in [1_000, 10_000, 50_000] {
+        // Generate random predictions and labels
+        let mut rng = StdRng::seed_from_u64(42);
+        let preds: Vec<f32> = (0..num_samples * num_classes)
+            .map(|_| rng.r#gen::<f32>() * 4.0 - 2.0)
+            .collect();
+        let labels: Vec<f32> = (0..num_samples)
+            .map(|_| (rng.r#gen::<f32>() * num_classes as f32).floor())
+            .collect();
+
+        let softmax_loss = SoftmaxLoss::new(num_classes);
+        let mut buffer = GradientBuffer::new(num_samples, num_classes);
+
+        group.throughput(Throughput::Elements((num_samples * num_classes) as u64));
+
+        group.bench_function(BenchmarkId::new("softmax", num_samples), |b| {
+            b.iter(|| {
+                softmax_loss.compute_gradients(black_box(&preds), black_box(&labels), &mut buffer);
+                black_box(buffer.grads()[0])
+            });
+        });
+    }
+
+    group.finish();
+}
+
+// =============================================================================
 // Criterion Configuration
 // =============================================================================
 
@@ -555,6 +591,7 @@ criterion_group!(
     bench_column_access,
     bench_cd_core_operation,
     bench_multiclass_training,
+    bench_softmax_gradient,
 );
 
 criterion_main!(benches);
