@@ -126,20 +126,31 @@ was a natural extension of Story 8.
 
 ---
 
-### Story 12: Gradient Batch Optimization 🟢 MEDIUM
+### Story 12: Gradient Batch Optimization ✅ COMPLETE (No Change Needed)
 
 **Goal**: Vectorized gradient computation for SIMD potential.
 
-- [ ] 12.1 Add `gradient_batch(&preds, &labels, &mut out)` method to `Loss` trait
-- [ ] 12.2 Implement batch gradient for `SquaredLoss`, `LogisticLoss`, `QuantileLoss`
-- [ ] 12.3 Implement batch gradient for `MulticlassLoss` (K outputs per sample)
-- [ ] 12.4 Benchmark single vs batch gradient computation
-- [ ] 12.5 Explore SIMD intrinsics for batch exp/log operations
-- [ ] 12.6 Document performance findings in `docs/benchmarks/`
+- [x] 12.1 ~~Add `gradient_batch` method~~ — Not needed, see results
+- [x] 12.2 ~~Implement batch gradient~~ — Default impl already optimal
+- [x] 12.3 ~~Implement for `MulticlassLoss`~~ — Already implemented
+- [x] 12.4 Benchmark single vs batch gradient computation
+- [ ] 12.5 Explore SIMD intrinsics for exp/log (future, softmax-specific)
+- [x] 12.6 Document performance findings in `docs/benchmarks/`
 
-**Note**: Current per-sample gradient computation leaves performance on the table.
-Batch operations enable auto-vectorization and explicit SIMD. This is foundational
-for GBTree training where gradient computation is a larger fraction of time.
+**Results** (see [2025-11-29-gradient-batch.md](../benchmarks/2025-11-29-gradient-batch.md)):
+
+| Loss | Best Method | Throughput |
+|------|-------------|------------|
+| SquaredLoss | gradient_buffer (default) | 5.6 Gelem/s |
+| LogisticLoss | per_sample ≈ gradient_buffer | 422 Melem/s |
+| QuantileLoss | per_sample | 1.0 Gelem/s |
+| Softmax | All ~equal | 203 Melem/s |
+
+**Key Finding**: LLVM auto-vectorization makes explicit batch methods unnecessary.
+The current `Loss::compute_gradient` + default `gradient_buffer` is already optimal.
+
+**Hypothesis Rejected**: Explicit batch/vectorized methods are NOT faster.
+The compiler already does this well with `#[inline]` functions.
 
 ---
 

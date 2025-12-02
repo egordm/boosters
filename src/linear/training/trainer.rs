@@ -188,7 +188,7 @@ impl LinearTrainer {
             Self::compute_predictions_col(&model, train_data, &mut predictions);
 
             // Compute gradients using SoA buffer
-            loss.gradient_buffer(&predictions, train_labels, &mut gradients);
+            loss.compute_gradients(&predictions, train_labels, &mut gradients);
 
             // Update bias
             update_bias(&mut model, &gradients, 0, self.config.learning_rate);
@@ -329,7 +329,7 @@ impl LinearTrainer {
             Self::compute_predictions_col_multiclass(&model, train_data, &mut predictions);
 
             // Compute multiclass gradients using SoA buffer
-            loss.gradient_buffer(&predictions, train_labels, &mut gradients);
+            loss.compute_gradients(&predictions, train_labels, &mut gradients);
 
             // Update each output (class)
             for output in 0..num_outputs {
