@@ -15,6 +15,8 @@
 //! | [`GreedySelector`] | `greedy` | Largest gradient magnitude first |
 //! | [`ThriftySelector`] | `thrifty` | Approximate greedy (sort once) |
 //!
+//! Use [`FeatureSelectorKind`] to configure the selector in [`LinearTrainerConfig`].
+//!
 //! # Gradient Storage
 //!
 //! Gradients are stored in Structure-of-Arrays (SoA) layout via [`GradientBuffer`]:
@@ -28,8 +30,8 @@ mod trainer;
 mod updater;
 
 pub use selector::{
-    CyclicSelector, FeatureSelector, GreedySelector, RandomSelector, ShuffleSelector,
-    ThriftySelector,
+    CyclicSelector, FeatureSelector, FeatureSelectorKind, GreedySelector, RandomSelector,
+    SelectorState, ShuffleSelector, ThriftySelector,
 };
 pub use trainer::{LinearTrainer, LinearTrainerConfig};
 pub use updater::{update_bias, UpdateConfig, UpdaterKind};

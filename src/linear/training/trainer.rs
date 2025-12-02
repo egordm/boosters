@@ -22,7 +22,7 @@ use crate::data::ColumnAccess;
 use crate::linear::LinearModel;
 use crate::training::{GradientBuffer, Loss, MulticlassLoss, TrainingLogger, Verbosity};
 
-use super::selector::ShuffleSelector;
+use super::selector::FeatureSelectorKind;
 use super::updater::{update_bias, UpdateConfig, UpdaterKind};
 
 /// Configuration for linear model training.
@@ -40,6 +40,8 @@ pub struct LinearTrainerConfig {
     pub parallel: bool,
     /// Random seed for feature shuffling.
     pub seed: u64,
+    /// Feature selector strategy.
+    pub feature_selector: FeatureSelectorKind,
     /// Early stopping rounds (0 = disabled).
     pub early_stopping_rounds: usize,
     /// Verbosity level.
@@ -55,6 +57,7 @@ impl Default for LinearTrainerConfig {
             lambda: 1.0,
             parallel: true,
             seed: 42,
+            feature_selector: FeatureSelectorKind::Shuffle,
             early_stopping_rounds: 0,
             verbosity: Verbosity::Info,
         }
@@ -163,7 +166,8 @@ impl LinearTrainer {
             UpdaterKind::Sequential
         };
 
-        let mut selector = ShuffleSelector::new(self.config.seed);
+        // Create selector from config
+        let mut selector = self.config.feature_selector.create_state(self.config.seed);
 
         // Create update config
         let update_config = UpdateConfig {
@@ -192,6 +196,16 @@ impl LinearTrainer {
 
             // Update bias
             update_bias(&mut model, &gradients, 0, self.config.learning_rate);
+
+            // Setup selector (handles Greedy/Thrifty gradient-based ranking)
+            selector.setup_round(
+                &model,
+                train_data,
+                &gradients,
+                0,
+                self.config.alpha,
+                self.config.lambda,
+            );
 
             // Update feature weights
             updater.update_round(
@@ -304,7 +318,7 @@ impl LinearTrainer {
             UpdaterKind::Sequential
         };
 
-        let mut selector = ShuffleSelector::new(self.config.seed);
+        let mut selector = self.config.feature_selector.create_state(self.config.seed);
 
         // Create update config
         let update_config = UpdateConfig {
@@ -335,6 +349,16 @@ impl LinearTrainer {
             for output in 0..num_outputs {
                 // Update bias
                 update_bias(&mut model, &gradients, output, self.config.learning_rate);
+
+                // Setup selector for this round (handles Greedy/Thrifty gradient ranking)
+                selector.setup_round(
+                    &model,
+                    train_data,
+                    &gradients,
+                    output,
+                    self.config.alpha,
+                    self.config.lambda,
+                );
 
                 // Update feature weights
                 updater.update_round(
