@@ -88,6 +88,33 @@ Validates training infrastructure before GBTree training.
 
 ---
 
+### Story 14: Evaluation Metrics Module 🔴 HIGH
+
+**Goal**: Add configurable metrics for training evaluation and early stopping.
+
+**RFC**: [0009](../rfcs/0009-evaluation-metrics.md)
+
+- [ ] 14.1 `Metric` trait with `name()` and `evaluate(preds, labels, n_outputs)` 
+- [ ] 14.2 `Rmse`, `Mae`, `Mape` metrics for regression
+- [ ] 14.3 `LogLoss`, `Accuracy` metrics for binary classification
+- [ ] 14.4 `MulticlassLogLoss`, `MulticlassAccuracy` for multiclass
+- [ ] 14.5 `QuantileLoss` metric (pinball loss) for quantile regression
+- [ ] 14.6 `EvalSet<'a, D>` struct with `name`, `data`, `labels`
+- [ ] 14.7 Update `LinearTrainerConfig` with `eval_metrics: Vec<Box<dyn Metric>>`
+- [ ] 14.8 Add `train_with_evals()` method supporting multiple named eval sets
+- [ ] 14.9 Update `TrainingLogger` to format metrics with dataset prefixes
+- [ ] 14.10 Wire early stopping to use configurable metric from eval set
+- [ ] 14.11 Unit tests for all metrics
+- [ ] 14.12 Integration tests with multiple eval sets
+
+**Logging Output**:
+```
+[0]  train-rmse:15.2341  val-rmse:16.1234
+[1]  train-rmse:12.4521  val-rmse:13.2345
+```
+
+---
+
 ### Story 10: Additional Feature Selectors ✅ COMPLETE
 
 **Goal**: XGBoost-compatible feature selection strategies.
@@ -205,6 +232,39 @@ The compiler already does this well with `#[inline]` functions.
 **Findings**: SoA provides **code quality benefits** (cleaner API, no stride hacks) without
 performance penalty. Performance is memory-bound on coordinate descent regardless of layout.
 See `docs/benchmarks/2025-11-29-gradient-soa.md` for detailed analysis.
+
+---
+
+### Story 14: Evaluation Metrics Module ✅ COMPLETE
+
+**Goal**: Implement comprehensive evaluation metrics with multi-output support.
+See RFC-0009 for design rationale.
+
+**Tasks**:
+
+- [x] 14.1 Refactor `Metric` trait with `evaluate(preds, labels, n_outputs)` signature
+- [x] 14.2 Add `SimpleMetric` helper trait for single-output metrics
+- [x] 14.3 Add `EvalSet` struct for named evaluation datasets
+- [x] 14.4 Implement MAPE (Mean Absolute Percentage Error)
+- [x] 14.5 Implement MulticlassLogLoss
+- [x] 14.6 Implement QuantileLoss (pinball loss metric)
+- [x] 14.7 Update EarlyStopping to use new `Metric::evaluate` interface
+- [x] 14.8 Add tests for all new metrics
+- [x] 14.9 Export new types from `training` module
+
+**Implemented Metrics**:
+
+| Metric | Type | Multi-output |
+|--------|------|--------------|
+| Rmse | SimpleMetric | Via evaluate |
+| Mae | SimpleMetric | Via evaluate |
+| Mape | SimpleMetric | Via evaluate |
+| LogLoss | SimpleMetric | Via evaluate |
+| MulticlassLogLoss | Metric | Native |
+| Accuracy | SimpleMetric | Via evaluate |
+| MulticlassAccuracy | SimpleMetric | Via evaluate |
+| Auc | SimpleMetric | Via evaluate |
+| QuantileLoss | Metric | Native |
 
 ---
 

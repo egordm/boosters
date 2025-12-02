@@ -21,15 +21,24 @@
 //! - [`SquaredLoss`]: Squared error for regression
 //! - [`LogisticLoss`]: Binary cross-entropy for classification
 //! - [`SoftmaxLoss`]: Multiclass cross-entropy
-//! - [`QuantileLoss`]: Pinball loss for quantile regression (single or multiple quantiles)
+//! - [`QuantileLoss`][loss::QuantileLoss]: Pinball loss for quantile regression (single or multiple quantiles)
 //!
 //! ## Metrics
 //!
 //! - [`Rmse`]: Root mean squared error
 //! - [`Mae`]: Mean absolute error
+//! - [`Mape`]: Mean absolute percentage error
 //! - [`LogLoss`]: Binary cross-entropy
-//! - [`Accuracy`]: Classification accuracy
+//! - [`MulticlassLogLoss`]: Multiclass cross-entropy
+//! - [`Accuracy`]: Classification accuracy (binary)
+//! - [`MulticlassAccuracy`]: Multiclass accuracy
 //! - [`Auc`]: Area under ROC curve
+//! - [`QuantileLoss`][metric::QuantileLoss]: Pinball loss for quantile regression
+//!
+//! ## Evaluation Sets
+//!
+//! - [`EvalSet`]: Named dataset for evaluation during training
+//! - [`SimpleMetric`]: Helper trait for single-output metrics
 //!
 //! See RFC-0009 for design rationale.
 
@@ -43,4 +52,7 @@ pub use buffer::GradientBuffer;
 pub use callback::EarlyStopping;
 pub use logger::{TrainingLogger, Verbosity};
 pub use loss::{LogisticLoss, Loss, MulticlassLoss, QuantileLoss, SoftmaxLoss, SquaredLoss};
-pub use metric::{Accuracy, Auc, LogLoss, Mae, Metric, MulticlassAccuracy, Rmse};
+pub use metric::{
+    Accuracy, Auc, EvalSet, LogLoss, Mae, Mape, Metric, MulticlassAccuracy, MulticlassLogLoss,
+    QuantileLoss as QuantileMetric, Rmse, SimpleMetric,
+};
