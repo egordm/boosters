@@ -88,33 +88,6 @@ Validates training infrastructure before GBTree training.
 
 ---
 
-### Story 14: Evaluation Metrics Module 🔴 HIGH
-
-**Goal**: Add configurable metrics for training evaluation and early stopping.
-
-**RFC**: [0009](../rfcs/0009-evaluation-metrics.md)
-
-- [ ] 14.1 `Metric` trait with `name()` and `evaluate(preds, labels, n_outputs)` 
-- [ ] 14.2 `Rmse`, `Mae`, `Mape` metrics for regression
-- [ ] 14.3 `LogLoss`, `Accuracy` metrics for binary classification
-- [ ] 14.4 `MulticlassLogLoss`, `MulticlassAccuracy` for multiclass
-- [ ] 14.5 `QuantileLoss` metric (pinball loss) for quantile regression
-- [ ] 14.6 `EvalSet<'a, D>` struct with `name`, `data`, `labels`
-- [ ] 14.7 Update `LinearTrainerConfig` with `eval_metrics: Vec<Box<dyn Metric>>`
-- [ ] 14.8 Add `train_with_evals()` method supporting multiple named eval sets
-- [ ] 14.9 Update `TrainingLogger` to format metrics with dataset prefixes
-- [ ] 14.10 Wire early stopping to use configurable metric from eval set
-- [ ] 14.11 Unit tests for all metrics
-- [ ] 14.12 Integration tests with multiple eval sets
-
-**Logging Output**:
-```
-[0]  train-rmse:15.2341  val-rmse:16.1234
-[1]  train-rmse:12.4521  val-rmse:13.2345
-```
-
----
-
 ### Story 10: Additional Feature Selectors ✅ COMPLETE
 
 **Goal**: XGBoost-compatible feature selection strategies.
@@ -249,8 +222,14 @@ See RFC-0009 for design rationale.
 - [x] 14.5 Implement MulticlassLogLoss
 - [x] 14.6 Implement QuantileLoss (pinball loss metric)
 - [x] 14.7 Update EarlyStopping to use new `Metric::evaluate` interface
-- [x] 14.8 Add tests for all new metrics
-- [x] 14.9 Export new types from `training` module
+- [x] 14.8 Update `LinearTrainerConfig` with `early_stopping_eval_set` option
+- [x] 14.9 Add `train_with_evals()` method supporting multiple named eval sets
+- [x] 14.10 Add `train_multiclass_with_evals()` for multiclass with eval sets
+- [x] 14.11 Metrics formatted with dataset prefixes (e.g., `train-rmse`, `val-rmse`)
+- [x] 14.12 Early stopping uses configurable metric from specified eval set
+- [x] 14.13 Unit tests for all metrics
+- [x] 14.14 Integration tests with multiple eval sets
+- [x] 14.15 `EvalMetric` enum for type-safe metric configuration (no boxing)
 
 **Implemented Metrics**:
 
@@ -265,6 +244,27 @@ See RFC-0009 for design rationale.
 | MulticlassAccuracy | SimpleMetric | Via evaluate |
 | Auc | SimpleMetric | Via evaluate |
 | QuantileLoss | Metric | Native |
+
+**API Example**:
+
+```rust
+let eval_sets = vec![
+    EvalSet::new("train", &train_data, &train_labels),
+    EvalSet::new("val", &val_data, &val_labels),
+];
+let metrics: Vec<Box<dyn Metric>> = vec![Box::new(Rmse), Box::new(Mae)];
+
+let config = LinearTrainerConfig {
+    early_stopping_rounds: 10,
+    early_stopping_eval_set: Some(1), // Use validation set
+    ..Default::default()
+};
+
+let model = trainer.train_with_evals(
+    &train_data, &train_labels, &eval_sets, &metrics, &loss
+);
+// Logs: [0] train-rmse:15.23 train-mae:12.34 val-rmse:16.12 val-mae:13.45
+```
 
 ---
 

@@ -53,6 +53,6 @@ pub use callback::EarlyStopping;
 pub use logger::{TrainingLogger, Verbosity};
 pub use loss::{LogisticLoss, Loss, MulticlassLoss, QuantileLoss, SoftmaxLoss, SquaredLoss};
 pub use metric::{
-    Accuracy, Auc, EvalSet, LogLoss, Mae, Mape, Metric, MulticlassAccuracy, MulticlassLogLoss,
-    QuantileLoss as QuantileMetric, Rmse, SimpleMetric,
+    Accuracy, Auc, EvalMetric, EvalSet, LogLoss, Mae, Mape, Metric, MulticlassAccuracy,
+    MulticlassLogLoss, QuantileLoss as QuantileMetric, Rmse, SimpleMetric,
 };

@@ -15,12 +15,12 @@
 //!
 //! ```ignore
 //! let eval_sets = vec![
-//!     EvalSet { name: "train", data: &train_data, labels: &train_labels },
-//!     EvalSet { name: "val", data: &val_data, labels: &val_labels },
+//!     EvalSet::new("train", &train_data, &train_labels),
+//!     EvalSet::new("val", &val_data, &val_labels),
 //! ];
 //! ```
 
-use crate::data::DataMatrix;
+use crate::data::ColumnAccess;
 
 // =============================================================================
 // Evaluation Set
@@ -36,25 +36,159 @@ use crate::data::DataMatrix;
 ///
 /// ```ignore
 /// let eval_sets = vec![
-///     EvalSet { name: "train", data: &train_data, labels: &train_labels },
-///     EvalSet { name: "val", data: &val_data, labels: &val_labels },
+///     EvalSet::new("train", &train_data, &train_labels),
+///     EvalSet::new("val", &val_data, &val_labels),
 /// ];
 /// // Logs: [0] train-rmse:15.23  val-rmse:16.12
 /// ```
 pub struct EvalSet<'a, D> {
     /// Dataset name (appears in logs as prefix, e.g., "train", "val", "test").
     pub name: &'a str,
-    /// Feature matrix.
+    /// Feature matrix (must implement `ColumnAccess` for training).
     pub data: &'a D,
     /// Labels (length = n_samples for single-output, or n_samples for multi-output
     /// where labels are class indices or target values).
     pub labels: &'a [f32],
 }
 
-impl<'a, D: DataMatrix> EvalSet<'a, D> {
+impl<'a, D: ColumnAccess> EvalSet<'a, D> {
     /// Create a new evaluation set.
     pub fn new(name: &'a str, data: &'a D, labels: &'a [f32]) -> Self {
         Self { name, data, labels }
+    }
+}
+
+// =============================================================================
+// EvalMetric Enum
+// =============================================================================
+
+/// Evaluation metric for training and early stopping.
+///
+/// This enum provides a convenient way to specify which metric to use
+/// for evaluation during training. It implements the same interface as
+/// the [`Metric`] trait but without requiring boxing.
+///
+/// # Example
+///
+/// ```ignore
+/// use booste_rs::training::EvalMetric;
+///
+/// let metric = EvalMetric::Rmse;
+/// let value = metric.evaluate(&predictions, &labels, 1);
+/// println!("{}: {:.4}", metric.name(), value);
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub enum EvalMetric {
+    /// Root Mean Squared Error (default for regression).
+    Rmse,
+    /// Mean Absolute Error.
+    Mae,
+    /// Binary cross-entropy (log loss).
+    LogLoss,
+    /// Binary classification accuracy with configurable threshold.
+    Accuracy {
+        /// Threshold for converting probabilities to classes (default: 0.5).
+        threshold: f32,
+    },
+    /// Area Under the ROC Curve.
+    Auc,
+    /// Mean Absolute Percentage Error.
+    Mape,
+    /// Multiclass cross-entropy (log loss).
+    MulticlassLogLoss,
+    /// Multiclass accuracy (expects class indices).
+    MulticlassAccuracy,
+    /// Quantile loss (pinball loss) for quantile regression.
+    Quantile {
+        /// Quantile levels (e.g., `vec![0.1, 0.5, 0.9]`).
+        alphas: Vec<f32>,
+    },
+}
+
+impl Default for EvalMetric {
+    fn default() -> Self {
+        EvalMetric::Rmse
+    }
+}
+
+impl EvalMetric {
+    /// Create accuracy metric with default threshold (0.5).
+    pub fn accuracy() -> Self {
+        EvalMetric::Accuracy { threshold: 0.5 }
+    }
+
+    /// Create accuracy metric with custom threshold.
+    pub fn accuracy_with_threshold(threshold: f32) -> Self {
+        EvalMetric::Accuracy { threshold }
+    }
+
+    /// Create quantile metric for median (alpha = 0.5).
+    pub fn quantile_median() -> Self {
+        EvalMetric::Quantile { alphas: vec![0.5] }
+    }
+
+    /// Create quantile metric with custom alphas.
+    pub fn quantile(alphas: Vec<f32>) -> Self {
+        EvalMetric::Quantile { alphas }
+    }
+
+    /// Evaluate the metric on predictions and labels.
+    ///
+    /// # Arguments
+    ///
+    /// * `predictions` - Model predictions, shape `[n_samples, n_outputs]` flattened
+    /// * `labels` - Ground truth labels, shape `[n_samples]`
+    /// * `n_outputs` - Number of outputs per sample (1 for regression/binary, K for multiclass)
+    pub fn evaluate(&self, predictions: &[f32], labels: &[f32], n_outputs: usize) -> f64 {
+        match self {
+            EvalMetric::Rmse => Rmse.evaluate(predictions, labels, n_outputs),
+            EvalMetric::Mae => Mae.evaluate(predictions, labels, n_outputs),
+            EvalMetric::LogLoss => LogLoss.evaluate(predictions, labels, n_outputs),
+            EvalMetric::Accuracy { threshold } => {
+                Accuracy::with_threshold(*threshold).evaluate(predictions, labels, n_outputs)
+            }
+            EvalMetric::Auc => Auc.evaluate(predictions, labels, n_outputs),
+            EvalMetric::Mape => Mape.evaluate(predictions, labels, n_outputs),
+            EvalMetric::MulticlassLogLoss => {
+                MulticlassLogLoss.evaluate(predictions, labels, n_outputs)
+            }
+            EvalMetric::MulticlassAccuracy => {
+                MulticlassAccuracy.evaluate(predictions, labels, n_outputs)
+            }
+            EvalMetric::Quantile { alphas } => {
+                QuantileLoss::new(alphas.clone()).evaluate(predictions, labels, n_outputs)
+            }
+        }
+    }
+
+    /// Whether higher values indicate better performance.
+    pub fn higher_is_better(&self) -> bool {
+        match self {
+            EvalMetric::Rmse => false,
+            EvalMetric::Mae => false,
+            EvalMetric::LogLoss => false,
+            EvalMetric::Accuracy { .. } => true,
+            EvalMetric::Auc => true,
+            EvalMetric::Mape => false,
+            EvalMetric::MulticlassLogLoss => false,
+            EvalMetric::MulticlassAccuracy => true,
+            EvalMetric::Quantile { .. } => false,
+        }
+    }
+
+    /// Name of the metric (for logging).
+    pub fn name(&self) -> &str {
+        match self {
+            EvalMetric::Rmse => "rmse",
+            EvalMetric::Mae => "mae",
+            EvalMetric::LogLoss => "logloss",
+            EvalMetric::Accuracy { .. } => "accuracy",
+            EvalMetric::Auc => "auc",
+            EvalMetric::Mape => "mape",
+            EvalMetric::MulticlassLogLoss => "mlogloss",
+            EvalMetric::MulticlassAccuracy => "accuracy",
+            EvalMetric::Quantile { .. } => "quantile",
+        }
     }
 }
 

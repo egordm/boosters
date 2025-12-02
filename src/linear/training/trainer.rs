@@ -12,6 +12,24 @@
 //! - Shape `[n_samples, n_outputs]` for unified single/multi-output handling
 //! - Separate `grads[]` and `hess[]` arrays for cache efficiency
 //!
+//! # Evaluation Sets
+//!
+//! Use [`EvalSet`] to track metrics on multiple datasets during training.
+//! The evaluation metric is configured via [`LinearTrainerConfig::eval_metric`]:
+//!
+//! ```ignore
+//! let eval_sets = vec![
+//!     EvalSet::new("train", &train_data, &train_labels),
+//!     EvalSet::new("val", &val_data, &val_labels),
+//! ];
+//! let config = LinearTrainerConfig {
+//!     eval_metric: EvalMetric::Rmse,
+//!     ..Default::default()
+//! };
+//! let trainer = LinearTrainer::new(config);
+//! let model = trainer.train_with_evals(&train_data, &train_labels, &eval_sets, &loss);
+//! ```
+//!
 //! For row-major input, convert to column-major first:
 //! ```ignore
 //! let col_matrix: ColMatrix = row_matrix.to_layout();
@@ -20,7 +38,9 @@
 
 use crate::data::ColumnAccess;
 use crate::linear::LinearModel;
-use crate::training::{GradientBuffer, Loss, MulticlassLoss, TrainingLogger, Verbosity};
+use crate::training::{
+    EvalMetric, EvalSet, GradientBuffer, Loss, MulticlassLoss, TrainingLogger, Verbosity,
+};
 
 use super::selector::FeatureSelectorKind;
 use super::updater::{update_bias, UpdateConfig, UpdaterKind};
@@ -42,8 +62,15 @@ pub struct LinearTrainerConfig {
     pub seed: u64,
     /// Feature selector strategy.
     pub feature_selector: FeatureSelectorKind,
+    /// Evaluation metric for logging and early stopping.
+    /// Default: `EvalMetric::Rmse` for regression.
+    /// For multiclass, consider using `EvalMetric::MulticlassLogLoss`.
+    pub eval_metric: EvalMetric,
     /// Early stopping rounds (0 = disabled).
     pub early_stopping_rounds: usize,
+    /// Index of eval set to use for early stopping (default: last eval set).
+    /// Only used when `early_stopping_rounds > 0`.
+    pub early_stopping_eval_set: Option<usize>,
     /// Verbosity level.
     pub verbosity: Verbosity,
 }
@@ -58,7 +85,9 @@ impl Default for LinearTrainerConfig {
             parallel: true,
             seed: 42,
             feature_selector: FeatureSelectorKind::Shuffle,
+            eval_metric: EvalMetric::Rmse,
             early_stopping_rounds: 0,
+            early_stopping_eval_set: None,
             verbosity: Verbosity::Info,
         }
     }
@@ -121,29 +150,65 @@ impl LinearTrainer {
         C: ColumnAccess<Element = f32> + Sync,
         L: Loss,
     {
-        self.train_with_validation::<C, C, L>(train_data, train_labels, None, None, loss)
+        self.train_with_evals::<C, C, L>(train_data, train_labels, &[], loss)
     }
 
-    /// Train a linear model with validation data.
+    /// Train a linear model with multiple evaluation sets.
+    ///
+    /// This is the most flexible training method, supporting:
+    /// - Multiple named evaluation sets (train, val, test)
+    /// - Early stopping based on any eval set
+    ///
+    /// The evaluation metric is configured via [`LinearTrainerConfig::eval_metric`].
+    /// Defaults to RMSE if not specified.
     ///
     /// # Arguments
     ///
     /// * `train_data` - Training features (must implement `ColumnAccess`)
     /// * `train_labels` - Training labels
-    /// * `val_data` - Optional validation features (same type as train_data)
-    /// * `val_labels` - Optional validation labels
-    /// * `loss` - Loss function
-    pub fn train_with_validation<C, V, L>(
+    /// * `eval_sets` - Named datasets for evaluation (can include training set)
+    /// * `loss` - Loss function for gradient computation
+    ///
+    /// # Returns
+    ///
+    /// Trained `LinearModel`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use booste_rs::data::ColMatrix;
+    /// use booste_rs::linear::training::{EvalMetric, LinearTrainer, LinearTrainerConfig};
+    /// use booste_rs::training::{EvalSet, SquaredLoss};
+    ///
+    /// let eval_sets = vec![
+    ///     EvalSet::new("train", &train_data, &train_labels),
+    ///     EvalSet::new("val", &val_data, &val_labels),
+    /// ];
+    ///
+    /// let config = LinearTrainerConfig {
+    ///     early_stopping_rounds: 10,
+    ///     eval_metric: EvalMetric::Rmse,
+    ///     ..Default::default()
+    /// };
+    /// let trainer = LinearTrainer::new(config);
+    /// let model = trainer.train_with_evals(
+    ///     &train_data,
+    ///     &train_labels,
+    ///     &eval_sets,
+    ///     &SquaredLoss,
+    /// );
+    /// // Logs: [0] train-rmse:15.23 val-rmse:16.12
+    /// ```
+    pub fn train_with_evals<C, E, L>(
         &self,
         train_data: &C,
         train_labels: &[f32],
-        val_data: Option<&V>,
-        val_labels: Option<&[f32]>,
+        eval_sets: &[EvalSet<'_, E>],
         loss: &L,
     ) -> LinearModel
     where
         C: ColumnAccess<Element = f32> + Sync,
-        V: ColumnAccess<Element = f32>,
+        E: ColumnAccess<Element = f32>,
         L: Loss,
     {
         let num_features = train_data.num_columns();
@@ -179,8 +244,27 @@ impl LinearTrainer {
         // SoA gradient storage
         let mut gradients = GradientBuffer::new(num_samples, num_outputs);
 
-        // Predictions buffer
+        // Predictions buffer for training
         let mut predictions = vec![0.0f32; num_samples];
+
+        // Prediction buffers for each eval set
+        let mut eval_predictions: Vec<Vec<f32>> = eval_sets
+            .iter()
+            .map(|es| vec![0.0f32; es.data.num_rows()])
+            .collect();
+
+        // Early stopping state
+        let early_stopping_eval_idx = self
+            .config
+            .early_stopping_eval_set
+            .unwrap_or(eval_sets.len().saturating_sub(1));
+        let mut best_metric_value: Option<f64> = None;
+        let mut best_round = 0;
+        let mut rounds_without_improvement = 0;
+
+        // Get metric from config
+        let eval_metric = &self.config.eval_metric;
+        let higher_is_better = eval_metric.higher_is_better();
 
         // Logger
         let mut logger = TrainingLogger::new(self.config.verbosity);
@@ -188,7 +272,7 @@ impl LinearTrainer {
 
         // Training loop
         for round in 0..self.config.num_rounds {
-            // Compute predictions
+            // Compute predictions on training data
             Self::compute_predictions_col(&model, train_data, &mut predictions);
 
             // Compute gradients using SoA buffer
@@ -217,19 +301,64 @@ impl LinearTrainer {
                 &update_config,
             );
 
+            // Compute predictions and metrics for all eval sets
+            let mut round_metrics = Vec::new();
+            let mut early_stop_value: Option<f64> = None;
+
+            for (set_idx, eval_set) in eval_sets.iter().enumerate() {
+                // Compute predictions for this eval set
+                Self::compute_predictions_col(&model, eval_set.data, &mut eval_predictions[set_idx]);
+
+                // Compute the configured metric
+                let value = eval_metric.evaluate(
+                    &eval_predictions[set_idx],
+                    eval_set.labels,
+                    num_outputs,
+                );
+
+                let metric_display_name = format!("{}-{}", eval_set.name, eval_metric.name());
+                round_metrics.push((metric_display_name, value));
+
+                // Track early stopping metric value
+                if set_idx == early_stopping_eval_idx {
+                    early_stop_value = Some(value);
+                }
+            }
+
             // Logging
             if self.config.verbosity >= Verbosity::Info {
-                let train_loss = Self::compute_loss(&predictions, train_labels);
-                let mut metrics = vec![("train_loss".to_string(), train_loss)];
+                logger.log_round(round, &round_metrics);
+            }
 
-                if let (Some(vd), Some(vl)) = (val_data, val_labels) {
-                    let mut val_preds = vec![0.0f32; vd.num_rows()];
-                    Self::compute_predictions_col(&model, vd, &mut val_preds);
-                    let val_loss = Self::compute_loss(&val_preds, vl);
-                    metrics.push(("val_loss".to_string(), val_loss));
+            // Early stopping check
+            if self.config.early_stopping_rounds > 0 {
+                if let Some(current_value) = early_stop_value {
+                    let is_improvement = match best_metric_value {
+                        None => true,
+                        Some(best) => {
+                            if higher_is_better {
+                                current_value > best
+                            } else {
+                                current_value < best
+                            }
+                        }
+                    };
+
+                    if is_improvement {
+                        best_metric_value = Some(current_value);
+                        best_round = round;
+                        rounds_without_improvement = 0;
+                    } else {
+                        rounds_without_improvement += 1;
+                    }
+
+                    if rounds_without_improvement > self.config.early_stopping_rounds {
+                        if self.config.verbosity >= Verbosity::Info {
+                            logger.log_early_stopping(round, best_round, eval_metric.name());
+                        }
+                        break;
+                    }
                 }
-
-                logger.log_round(round, &metrics);
             }
         }
 
@@ -268,29 +397,59 @@ impl LinearTrainer {
         C: ColumnAccess<Element = f32> + Sync,
         L: MulticlassLoss,
     {
-        self.train_multiclass_with_validation::<C, C, L>(train_data, train_labels, None, None, loss)
+        self.train_multiclass_with_evals::<C, C, L>(train_data, train_labels, &[], loss)
     }
 
-    /// Train a multiclass linear model with validation data.
+    /// Train a multiclass linear model with multiple eval sets.
+    ///
+    /// This is the most flexible multiclass training method, supporting:
+    /// - Multiple named evaluation sets (train, val, test)
+    /// - Early stopping based on any eval set
+    ///
+    /// The evaluation metric is configured via [`LinearTrainerConfig::eval_metric`].
+    /// For multiclass, use `EvalMetric::MulticlassLogLoss`.
     ///
     /// # Arguments
     ///
     /// * `train_data` - Training features
     /// * `train_labels` - Class labels (0 to K-1)
-    /// * `val_data` - Optional validation features
-    /// * `val_labels` - Optional validation labels
+    /// * `eval_sets` - Named datasets for evaluation
     /// * `loss` - Multiclass loss function
-    pub fn train_multiclass_with_validation<C, V, L>(
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use booste_rs::linear::training::{EvalMetric, LinearTrainer, LinearTrainerConfig};
+    /// use booste_rs::training::{EvalSet, SoftmaxLoss};
+    ///
+    /// let eval_sets = vec![
+    ///     EvalSet::new("train", &train_data, &train_labels),
+    ///     EvalSet::new("val", &val_data, &val_labels),
+    /// ];
+    /// let loss = SoftmaxLoss::new(3);
+    ///
+    /// let config = LinearTrainerConfig {
+    ///     eval_metric: EvalMetric::MulticlassLogLoss,
+    ///     ..Default::default()
+    /// };
+    /// let trainer = LinearTrainer::new(config);
+    /// let model = trainer.train_multiclass_with_evals(
+    ///     &train_data,
+    ///     &train_labels,
+    ///     &eval_sets,
+    ///     &loss,
+    /// );
+    /// ```
+    pub fn train_multiclass_with_evals<C, E, L>(
         &self,
         train_data: &C,
         train_labels: &[f32],
-        val_data: Option<&V>,
-        val_labels: Option<&[f32]>,
+        eval_sets: &[EvalSet<'_, E>],
         loss: &L,
     ) -> LinearModel
     where
         C: ColumnAccess<Element = f32> + Sync,
-        V: ColumnAccess<Element = f32>,
+        E: ColumnAccess<Element = f32>,
         L: MulticlassLoss,
     {
         let num_features = train_data.num_columns();
@@ -330,8 +489,27 @@ impl LinearTrainer {
         // SoA gradient storage: K outputs per sample
         let mut gradients = GradientBuffer::new(num_samples, num_outputs);
 
-        // Predictions buffer: K predictions per sample
+        // Predictions buffer for training: K predictions per sample
         let mut predictions = vec![0.0f32; num_samples * num_outputs];
+
+        // Prediction buffers for each eval set
+        let mut eval_predictions: Vec<Vec<f32>> = eval_sets
+            .iter()
+            .map(|es| vec![0.0f32; es.data.num_rows() * num_outputs])
+            .collect();
+
+        // Early stopping state
+        let early_stopping_eval_idx = self
+            .config
+            .early_stopping_eval_set
+            .unwrap_or(eval_sets.len().saturating_sub(1));
+        let mut best_metric_value: Option<f64> = None;
+        let mut best_round = 0;
+        let mut rounds_without_improvement = 0;
+
+        // Get metric from config
+        let eval_metric = &self.config.eval_metric;
+        let higher_is_better = eval_metric.higher_is_better();
 
         // Logger
         let mut logger = TrainingLogger::new(self.config.verbosity);
@@ -339,7 +517,7 @@ impl LinearTrainer {
 
         // Training loop
         for round in 0..self.config.num_rounds {
-            // Compute predictions
+            // Compute predictions on training data
             Self::compute_predictions_col_multiclass(&model, train_data, &mut predictions);
 
             // Compute multiclass gradients using SoA buffer
@@ -371,20 +549,68 @@ impl LinearTrainer {
                 );
             }
 
+            // Compute predictions and metrics for all eval sets
+            let mut round_metrics = Vec::new();
+            let mut early_stop_value: Option<f64> = None;
+
+            for (set_idx, eval_set) in eval_sets.iter().enumerate() {
+                // Compute predictions for this eval set
+                Self::compute_predictions_col_multiclass(
+                    &model,
+                    eval_set.data,
+                    &mut eval_predictions[set_idx],
+                );
+
+                // Compute the configured metric
+                let value = eval_metric.evaluate(
+                    &eval_predictions[set_idx],
+                    eval_set.labels,
+                    num_outputs,
+                );
+
+                let metric_display_name = format!("{}-{}", eval_set.name, eval_metric.name());
+                round_metrics.push((metric_display_name, value));
+
+                // Track early stopping metric value
+                if set_idx == early_stopping_eval_idx {
+                    early_stop_value = Some(value);
+                }
+            }
+
             // Logging
             if self.config.verbosity >= Verbosity::Info {
-                let train_acc =
-                    Self::compute_multiclass_accuracy(&predictions, train_labels, num_outputs);
-                let mut metrics = vec![("train_acc".to_string(), train_acc)];
+                logger.log_round(round, &round_metrics);
+            }
 
-                if let (Some(vd), Some(vl)) = (val_data, val_labels) {
-                    let mut val_preds = vec![0.0f32; vd.num_rows() * num_outputs];
-                    Self::compute_predictions_col_multiclass(&model, vd, &mut val_preds);
-                    let val_acc = Self::compute_multiclass_accuracy(&val_preds, vl, num_outputs);
-                    metrics.push(("val_acc".to_string(), val_acc));
+            // Early stopping check
+            if self.config.early_stopping_rounds > 0 {
+                if let Some(current_value) = early_stop_value {
+                    let is_improvement = match best_metric_value {
+                        None => true,
+                        Some(best) => {
+                            if higher_is_better {
+                                current_value > best
+                            } else {
+                                current_value < best
+                            }
+                        }
+                    };
+
+                    if is_improvement {
+                        best_metric_value = Some(current_value);
+                        best_round = round;
+                        rounds_without_improvement = 0;
+                    } else {
+                        rounds_without_improvement += 1;
+                    }
+
+                    if rounds_without_improvement > self.config.early_stopping_rounds {
+                        if self.config.verbosity >= Verbosity::Info {
+                            logger.log_early_stopping(round, best_round, eval_metric.name());
+                        }
+                        break;
+                    }
                 }
-
-                logger.log_round(round, &metrics);
             }
         }
 
@@ -440,47 +666,6 @@ impl LinearTrainer {
                 }
             }
         }
-    }
-
-    /// Compute RMSE loss (single-output).
-    fn compute_loss(predictions: &[f32], labels: &[f32]) -> f64 {
-        let mse: f64 = predictions
-            .iter()
-            .zip(labels.iter())
-            .map(|(p, l)| {
-                let diff = (*p as f64) - (*l as f64);
-                diff * diff
-            })
-            .sum::<f64>()
-            / predictions.len() as f64;
-        mse.sqrt()
-    }
-
-    /// Compute multiclass accuracy.
-    fn compute_multiclass_accuracy(predictions: &[f32], labels: &[f32], num_groups: usize) -> f64 {
-        let num_samples = labels.len();
-        let mut correct = 0usize;
-
-        for i in 0..num_samples {
-            let preds_start = i * num_groups;
-            let preds_end = preds_start + num_groups;
-            let sample_preds = &predictions[preds_start..preds_end];
-
-            // Find predicted class (argmax)
-            let predicted_class = sample_preds
-                .iter()
-                .enumerate()
-                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-                .map(|(idx, _)| idx)
-                .unwrap_or(0);
-
-            let true_class = labels[i] as usize;
-            if predicted_class == true_class {
-                correct += 1;
-            }
-        }
-
-        correct as f64 / num_samples as f64
     }
 }
 
@@ -712,5 +897,105 @@ mod tests {
             "Training accuracy should be > 50%, got {}",
             accuracy
         );
+    }
+
+    #[test]
+    fn train_with_evals_multiple_eval_sets() {
+        use crate::training::EvalSet;
+
+        // y = 2*x + 1
+        let row_data = RowMatrix::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            6,
+            1,
+        );
+        let train_data: ColMatrix = row_data.to_layout();
+        let train_labels = vec![3.0, 5.0, 7.0, 9.0, 11.0, 13.0];
+
+        // Split into train (first 4) and val (last 2) for eval sets
+        let row_train = RowMatrix::from_vec(vec![1.0, 2.0, 3.0, 4.0], 4, 1);
+        let col_train: ColMatrix = row_train.to_layout();
+        let labels_train = vec![3.0, 5.0, 7.0, 9.0];
+
+        let row_val = RowMatrix::from_vec(vec![5.0, 6.0], 2, 1);
+        let col_val: ColMatrix = row_val.to_layout();
+        let labels_val = vec![11.0, 13.0];
+
+        let eval_sets = vec![
+            EvalSet::new("train", &col_train, &labels_train),
+            EvalSet::new("val", &col_val, &labels_val),
+        ];
+
+        let config = LinearTrainerConfig {
+            num_rounds: 100,
+            learning_rate: 0.5,
+            alpha: 0.0,
+            lambda: 0.0,
+            parallel: false,
+            verbosity: Verbosity::Silent,
+            eval_metric: EvalMetric::Rmse,
+            ..Default::default()
+        };
+
+        let trainer = LinearTrainer::new(config);
+        let model = trainer.train_with_evals(
+            &train_data,
+            &train_labels,
+            &eval_sets,
+            &SquaredLoss,
+        );
+
+        // Check predictions
+        let pred1 = model.predict_row(&[1.0], &[0.0])[0];
+        let pred2 = model.predict_row(&[2.0], &[0.0])[0];
+
+        // Should be close to true values
+        assert!((pred1 - 3.0).abs() < 0.5, "pred1={}", pred1);
+        assert!((pred2 - 5.0).abs() < 0.5, "pred2={}", pred2);
+    }
+
+    #[test]
+    fn train_with_evals_early_stopping() {
+        use crate::training::EvalSet;
+
+        // y = 2*x + 1
+        let row_data = RowMatrix::from_vec(vec![1.0, 2.0, 3.0, 4.0], 4, 1);
+        let train_data: ColMatrix = row_data.to_layout();
+        let train_labels = vec![3.0, 5.0, 7.0, 9.0];
+
+        // Validation set
+        let row_val = RowMatrix::from_vec(vec![5.0, 6.0], 2, 1);
+        let col_val: ColMatrix = row_val.to_layout();
+        let labels_val = vec![11.0, 13.0];
+
+        let eval_sets = vec![
+            EvalSet::new("train", &train_data, &train_labels),
+            EvalSet::new("val", &col_val, &labels_val),
+        ];
+
+        let config = LinearTrainerConfig {
+            num_rounds: 1000, // High number, but early stopping should kick in
+            learning_rate: 0.5,
+            alpha: 0.0,
+            lambda: 0.0,
+            parallel: false,
+            early_stopping_rounds: 10,
+            early_stopping_eval_set: Some(1), // Use validation set
+            eval_metric: EvalMetric::Rmse,
+            verbosity: Verbosity::Silent,
+            ..Default::default()
+        };
+
+        let trainer = LinearTrainer::new(config);
+        let model = trainer.train_with_evals(
+            &train_data,
+            &train_labels,
+            &eval_sets,
+            &SquaredLoss,
+        );
+
+        // Model should still work reasonably (training completed)
+        let pred = model.predict_row(&[2.0], &[0.0])[0];
+        assert!((pred - 5.0).abs() < 1.0, "pred={}", pred);
     }
 }
