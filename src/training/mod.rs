@@ -22,6 +22,8 @@
 //! - [`LogisticLoss`]: Binary cross-entropy for classification
 //! - [`SoftmaxLoss`]: Multiclass cross-entropy
 //! - [`QuantileLoss`][loss::QuantileLoss]: Pinball loss for quantile regression (single or multiple quantiles)
+//! - [`PseudoHuberLoss`]: Robust regression, smooth approximation of Huber loss
+//! - [`HingeLoss`]: SVM-style binary classification
 //!
 //! ## Metrics
 //!
@@ -51,7 +53,10 @@ mod metric;
 pub use buffer::GradientBuffer;
 pub use callback::EarlyStopping;
 pub use logger::{TrainingLogger, Verbosity};
-pub use loss::{LogisticLoss, Loss, MulticlassLoss, QuantileLoss, SoftmaxLoss, SquaredLoss};
+pub use loss::{
+    HingeLoss, LogisticLoss, Loss, MulticlassLoss, PseudoHuberLoss, QuantileLoss, SoftmaxLoss,
+    SquaredLoss,
+};
 pub use metric::{
     Accuracy, Auc, EvalMetric, EvalSet, LogLoss, Mae, Mape, Metric, MulticlassAccuracy,
     MulticlassLogLoss, QuantileLoss as QuantileMetric, Rmse, SimpleMetric,

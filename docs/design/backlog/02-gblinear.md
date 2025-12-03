@@ -77,14 +77,14 @@ Validates training infrastructure before GBTree training.
 
 ## Active Stories (Feature Parity)
 
-### Story 9: Additional Loss Functions 🟢 LOW
+### Story 9: Additional Loss Functions � IN PROGRESS
 
 **Goal**: Add commonly used loss functions for feature parity.
 
-- [ ] 9.1 `HuberLoss` — robust regression (grad clipped for large residuals)
-- [ ] 9.2 `HingeLoss` — SVM-style binary classification
-- [ ] 9.3 `PseudoHuberLoss` — smooth approximation of Huber
-- [ ] 9.4 Integration tests for each
+- [x] 9.1 `PseudoHuberLoss` — robust regression (smooth Huber, configurable slope)
+- [x] 9.2 `HingeLoss` — SVM-style binary classification
+- [ ] 9.3 Integration tests for each
+- [ ] 9.4 (Optional) `HuberLoss` — classic Huber with hard transition
 
 ---
 
@@ -276,9 +276,9 @@ let model = trainer.train_with_evals(
 |-----------|---------|-----------|-------|
 | `reg:squarederror` | ✅ | ✅ | Done |
 | `reg:quantileerror` | ✅ | ✅ | Done (8) |
-| `reg:pseudohubererror` | ✅ | ❌ | 9 |
+| `reg:pseudohubererror` | ✅ | ✅ | Done (9) |
 | `binary:logistic` | ✅ | ✅ | Done |
-| `binary:hinge` | ✅ | ❌ | 9 |
+| `binary:hinge` | ✅ | ✅ | Done (9) |
 | `multi:softmax` | ✅ | ✅ | Done (7) |
 
 ### Feature Selectors
