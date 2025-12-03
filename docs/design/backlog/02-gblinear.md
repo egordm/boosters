@@ -77,14 +77,21 @@ Validates training infrastructure before GBTree training.
 
 ## Active Stories (Feature Parity)
 
-### Story 9: Additional Loss Functions � IN PROGRESS
+### Story 9: Additional Loss Functions ✅ COMPLETE
 
 **Goal**: Add commonly used loss functions for feature parity.
 
 - [x] 9.1 `PseudoHuberLoss` — robust regression (smooth Huber, configurable slope)
 - [x] 9.2 `HingeLoss` — SVM-style binary classification
-- [ ] 9.3 Integration tests for each
+- [x] 9.3 Integration tests for each
 - [ ] 9.4 (Optional) `HuberLoss` — classic Huber with hard transition
+
+**Implementation Notes**:
+- PseudoHuberLoss: `slope` parameter (default 1.0) controls robustness
+  - Large slopes behave more like squared loss
+  - Small slopes clip gradients for outlier robustness
+- HingeLoss: SVM-style, labels {0,1} → {-1,1}
+- Both match XGBoost: `reg:pseudohubererror`, `binary:hinge`
 
 ---
 
