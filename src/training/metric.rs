@@ -77,9 +77,10 @@ impl<'a, D: ColumnAccess> EvalSet<'a, D> {
 /// let value = metric.evaluate(&predictions, &labels, 1);
 /// println!("{}: {:.4}", metric.name(), value);
 /// ```
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum EvalMetric {
     /// Root Mean Squared Error (default for regression).
+    #[default]
     Rmse,
     /// Mean Absolute Error.
     Mae,
@@ -103,12 +104,6 @@ pub enum EvalMetric {
         /// Quantile levels (e.g., `vec![0.1, 0.5, 0.9]`).
         alphas: Vec<f32>,
     },
-}
-
-impl Default for EvalMetric {
-    fn default() -> Self {
-        EvalMetric::Rmse
-    }
 }
 
 impl EvalMetric {

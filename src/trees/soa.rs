@@ -1,5 +1,8 @@
 //! Structure-of-Arrays tree storage implementation.
 
+// Allow many constructor arguments for creating trees with all their fields.
+#![allow(clippy::too_many_arguments)]
+
 use super::categories::{float_to_category, CategoriesStorage};
 use super::leaf::LeafValue;
 use super::node::SplitType;

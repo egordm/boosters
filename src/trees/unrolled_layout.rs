@@ -14,6 +14,9 @@
 //! - **Simple index math**: `left_child = 2*i + 1`, `right_child = 2*i + 2`
 //! - **SIMD-friendly**: Multiple rows can traverse the same level together
 //!
+
+// Allow many arguments for the builder function.
+#![allow(clippy::too_many_arguments)]
 //! # Array Layout
 //!
 //! ```text

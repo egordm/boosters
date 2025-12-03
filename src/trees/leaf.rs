@@ -49,7 +49,7 @@ mod tests {
 
     #[test]
     fn scalar_leaf_from_f32() {
-        let leaf: ScalarLeaf = 3.14.into();
-        assert_eq!(leaf.0, 3.14);
+        let leaf: ScalarLeaf = 2.5.into();
+        assert_eq!(leaf.0, 2.5);
     }
 }

@@ -14,6 +14,11 @@
 //!
 //! # Evaluation Sets
 //!
+
+// Allow nested ifs in early stopping checks for readability.
+// Also allow many arguments for internal utility functions.
+// Allow range loops with index when we need the index for multiple arrays.
+#![allow(clippy::collapsible_if, clippy::too_many_arguments, clippy::needless_range_loop)]
 //! Use [`EvalSet`] to track metrics on multiple datasets during training.
 //! The evaluation metric is configured via [`LinearTrainerConfig::eval_metric`]:
 //!
