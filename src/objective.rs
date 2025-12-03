@@ -12,10 +12,11 @@ use crate::predict::PredictionOutput;
 ///
 /// Determines how raw model output is transformed for final predictions.
 /// For example, binary classification uses sigmoid to convert logits to probabilities.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Objective {
     // --- Regression ---
     /// Squared error loss (no transformation).
+    #[default]
     SquaredError,
 
     /// Absolute error loss (no transformation).
@@ -61,12 +62,6 @@ pub enum Objective {
     // --- Other ---
     /// Custom/unknown objective (no transformation).
     Custom,
-}
-
-impl Default for Objective {
-    fn default() -> Self {
-        Objective::SquaredError
-    }
 }
 
 impl Objective {

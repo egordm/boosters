@@ -501,7 +501,7 @@ fn bench_multiclass_training(c: &mut Criterion) {
         let (features, mut labels) = generate_training_data(num_rows, num_features, 42);
         // Convert labels to class indices
         for label in &mut labels {
-            *label = (label.abs() * num_classes as f32) as f32 % num_classes as f32;
+            *label = (label.abs() * num_classes as f32) % num_classes as f32;
         }
 
         let row_matrix = RowMatrix::from_vec(features, num_rows, num_features);

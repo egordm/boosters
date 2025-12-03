@@ -14,6 +14,9 @@
 //! - Separate `grads[]` and `hess[]` arrays for cache efficiency
 //! - Shape `[n_samples, n_outputs]` with natural multi-output indexing
 //!
+
+// Allow range loops when we need indices to access multiple arrays.
+#![allow(clippy::needless_range_loop)]
 //! # Design Rationale
 //!
 //! The batch-oriented API (`compute_gradients`) is chosen over per-sample methods for:

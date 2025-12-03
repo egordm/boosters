@@ -191,7 +191,7 @@ impl TreeTraversal<ScalarLeaf> for StandardTraversal {
             };
         }
 
-        tree.leaf_value(idx).clone()
+        *tree.leaf_value(idx)
     }
 }
 
@@ -256,7 +256,7 @@ impl<D: UnrollDepth> TreeTraversal<ScalarLeaf> for UnrolledTraversal<D> {
         // Phase 2: Continue to leaf if not already there
         let leaf_idx = traverse_from_node(tree, node_idx, features);
 
-        tree.leaf_value(leaf_idx).clone()
+        *tree.leaf_value(leaf_idx)
     }
 
     /// Optimized block traversal using level-by-level processing.
@@ -313,6 +313,8 @@ pub type UnrolledTraversal8 = UnrolledTraversal<crate::trees::Depth8>;
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::let_unit_value)]
+
     use super::*;
     use crate::forest::SoAForest;
     use crate::trees::TreeBuilder;

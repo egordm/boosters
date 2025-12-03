@@ -48,11 +48,12 @@ use crate::training::GradientBuffer;
 ///     ..Default::default()
 /// };
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum FeatureSelectorKind {
     /// Cyclic: sequential order (0, 1, 2, ...).
     Cyclic,
     /// Shuffle: random permutation each round (default).
+    #[default]
     Shuffle,
     /// Random: random selection with replacement.
     Random,
@@ -62,12 +63,6 @@ pub enum FeatureSelectorKind {
     /// Thrifty: approximate greedy with one-time sorting.
     /// Uses `top_k` to limit selection (0 = all features).
     Thrifty { top_k: usize },
-}
-
-impl Default for FeatureSelectorKind {
-    fn default() -> Self {
-        Self::Shuffle
-    }
 }
 
 impl FeatureSelectorKind {
@@ -721,7 +716,7 @@ mod tests {
         let mut sel = ShuffleSelector::new(42);
         sel.reset(5);
 
-        let mut visited = vec![false; 5];
+        let mut visited = [false; 5];
         while let Some(idx) = sel.next() {
             visited[idx] = true;
         }

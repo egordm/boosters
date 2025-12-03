@@ -14,6 +14,11 @@
 //! // Simple predictor (no pre-computation)
 //! let predictor = Predictor::<StandardTraversal>::new(&forest);
 //!
+
+// Allow many arguments for internal prediction functions.
+// Allow range loops when we need indices to access multiple arrays.
+#![allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+//!
 //! // Unrolled predictor (pre-computes layouts for speed)
 //! let fast_predictor = Predictor::<UnrolledTraversal6>::new(&forest);
 //!
@@ -83,7 +88,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
     pub fn new(forest: &'f SoAForest<ScalarLeaf>) -> Self {
         let tree_states: Box<[_]> = forest
             .trees()
-            .map(|tree| T::build_tree_state(&tree.into_storage()))
+            .map(|tree| T::build_tree_state(tree.into_storage()))
             .collect();
 
         Self {

@@ -37,7 +37,7 @@ fn dart_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test-cases/xgboost/dart")
 }
 
-fn load_from_dir(dir: &PathBuf, name: &str) -> (XgbModel, TestInput, TestExpected) {
+fn load_from_dir(dir: &std::path::Path, name: &str) -> (XgbModel, TestInput, TestExpected) {
     let model: XgbModel = serde_json::from_reader(
         File::open(dir.join(format!("{name}.model.json"))).expect("model file"),
     )

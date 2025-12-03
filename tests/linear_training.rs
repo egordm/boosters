@@ -5,6 +5,9 @@
 //! - Held-out test set predictions (RMSE < threshold)
 //! - Metrics within tolerance of XGBoost
 
+// Allow needless range loops in test code where index clarity is preferred.
+#![allow(clippy::needless_range_loop)]
+
 use approx::assert_relative_eq;
 use booste_rs::data::{ColMatrix, DataMatrix, RowMatrix};
 use booste_rs::linear::training::{FeatureSelectorKind, LinearTrainer, LinearTrainerConfig};
@@ -956,7 +959,7 @@ fn multi_quantile_vs_separate_models() {
             .map(|col| data.get(i, col).copied().unwrap_or(0.0))
             .collect();
 
-        let multi_preds = multi_model.predict_row(&features, &vec![0.0; 3]);
+        let multi_preds = multi_model.predict_row(&features, &[0.0; 3]);
 
         println!("Sample {}: multi_model=[{:.2}, {:.2}, {:.2}]", 
             i, multi_preds[0], multi_preds[1], multi_preds[2]);
@@ -981,7 +984,7 @@ fn multi_quantile_vs_separate_models() {
                 .map(|col| data.get(i, col).copied().unwrap_or(0.0))
                 .collect();
 
-            multi_preds.push(multi_model.predict_row(&features, &vec![0.0; 3])[q]);
+            multi_preds.push(multi_model.predict_row(&features, &[0.0; 3])[q]);
             single_preds.push(single_model.predict_row(&features, &[0.0])[0]);
         }
 

@@ -14,6 +14,9 @@
 //!
 //! This implementation is preserved for experimentation and as a foundation
 //! for future optimizations (column-major layout, tree-parallel SIMD, etc.).
+
+// Allow range loops when we need indices to access multiple arrays.
+#![allow(clippy::needless_range_loop)]
 //!
 //! For production use, prefer [`UnrolledTraversal`] which provides 2.9x speedup.
 //!
@@ -105,7 +108,7 @@ impl<D: UnrollDepth> TreeTraversal<ScalarLeaf> for SimdTraversal<D> {
         let exit_idx = state.traverse_to_exit(features);
         let node_idx = state.exit_node_idx(exit_idx);
         let leaf_idx = traverse_from_node(tree, node_idx, features);
-        tree.leaf_value(leaf_idx).clone()
+        *tree.leaf_value(leaf_idx)
     }
 
     /// SIMD-optimized block traversal.
@@ -262,6 +265,8 @@ pub type SimdTraversal8 = SimdTraversal<crate::trees::Depth8>;
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::let_unit_value)]
+
     use super::*;
     use crate::forest::SoAForest;
     use crate::predict::traversal::{StandardTraversal, UnrolledTraversal6};

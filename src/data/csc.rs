@@ -108,9 +108,7 @@ impl<T: Copy> CSCMatrix<T> {
 
         // Second pass: fill values (column by column)
         let mut col_cursors = vec![0u32; num_cols];
-        for col in 0..num_cols {
-            col_cursors[col] = col_ptrs[col];
-        }
+        col_cursors.copy_from_slice(&col_ptrs[..num_cols]);
 
         for row in 0..num_rows {
             for col in 0..num_cols {
@@ -265,6 +263,7 @@ impl<T: Copy> CSCMatrix<T> {
     /// Get underlying data arrays (values, row_indices, col_ptrs).
     ///
     /// Useful for low-level operations or serialization.
+    #[allow(clippy::type_complexity)]
     pub fn into_raw_parts(self) -> (Box<[T]>, Box<[u32]>, Box<[u32]>, usize, usize) {
         (
             self.values,

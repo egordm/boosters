@@ -67,7 +67,7 @@ fn dart_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test-cases/xgboost/dart")
 }
 
-fn load_from_dir(dir: &PathBuf, name: &str) -> (XgbModel, TestInput, TestExpected) {
+fn load_from_dir(dir: &std::path::Path, name: &str) -> (XgbModel, TestInput, TestExpected) {
     let model: XgbModel = serde_json::from_reader(
         File::open(dir.join(format!("{name}.model.json"))).expect("model file"),
     )
@@ -280,7 +280,7 @@ fn model_predict_binary_sigmoid() {
     // Verify values are probabilities (0-1)
     for i in 0..output.num_rows() {
         let p = output.row(i)[0];
-        assert!(p >= 0.0 && p <= 1.0, "probability out of range: {p}");
+        assert!((0.0..=1.0).contains(&p), "probability out of range: {p}");
     }
 }
 
@@ -389,7 +389,7 @@ fn model_predict_binary_with_missing() {
     // Verify values are probabilities (0-1)
     for i in 0..output.num_rows() {
         let p = output.row(i)[0];
-        assert!(p >= 0.0 && p <= 1.0, "probability out of range: {p}");
+        assert!((0.0..=1.0).contains(&p), "probability out of range: {p}");
     }
 }
 
