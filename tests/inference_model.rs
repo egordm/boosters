@@ -1,13 +1,13 @@
-//! Model-level integration tests for XGBoost model loading and prediction.
+//! Model API inference tests: high-level prediction with transforms.
 //!
-//! These tests verify that `Model::predict()` produces correct transformed outputs
-//! (e.g., sigmoid for binary classification, softmax for multiclass) matching
-//! Python XGBoost predictions.
+//! These tests verify that the `Model` API produces correct transformed outputs:
+//! - `predict_raw()` - raw margin scores
+//! - `predict()` - transformed outputs (sigmoid, softmax, etc.)
 //!
-//! Test case structure (organized by booster type):
-//! - xgboost/gbtree/{name}.*    - GBTree models
-//! - xgboost/gblinear/{name}.*  - GBLinear models
-//! - xgboost/dart/{name}.*      - DART models
+//! Test cases organized by:
+//! - Regression, binary classification, multiclass
+//! - With/without missing values
+//! - GBTree and DART boosters
 
 #![cfg(feature = "xgboost-compat")]
 
