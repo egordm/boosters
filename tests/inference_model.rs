@@ -14,12 +14,14 @@
 use std::fs::File;
 use std::path::PathBuf;
 
+use approx::assert_abs_diff_eq;
 use serde::Deserialize;
 
 use booste_rs::compat::XgbModel;
 use booste_rs::data::RowMatrix;
 use booste_rs::model::{FeatureInfo, Model, ModelMeta, ModelSource};
 use booste_rs::objective::Objective;
+use booste_rs::predict::PredictionOutput;
 
 // =============================================================================
 // Test case structures
@@ -144,21 +146,19 @@ fn build_model(xgb: &XgbModel, objective: Objective) -> Model {
 
 const TOLERANCE: f64 = 1e-5;
 
-fn assert_predictions_match(actual: &[f32], expected: &[f64], tolerance: f64, context: &str) {
-    assert_eq!(
-        actual.len(),
-        expected.len(),
-        "{context}: prediction count mismatch: got {}, expected {}",
-        actual.len(),
-        expected.len()
-    );
-    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
-        let diff = (*a as f64 - *e).abs();
-        assert!(
-            diff < tolerance,
-            "{context}[{i}] mismatch: got {a}, expected {e}, diff {diff}"
-        );
-    }
+/// Create expected PredictionOutput from scalar JSON array (single-group output).
+fn expected_scalar_output(json: &serde_json::Value) -> PredictionOutput {
+    let preds: Vec<f64> = serde_json::from_value(json.clone()).unwrap();
+    let n = preds.len();
+    PredictionOutput::new(preds.into_iter().map(|x| x as f32).collect(), n, 1)
+}
+
+/// Create expected PredictionOutput from nested JSON array (multi-group output).
+fn expected_multigroup_output(json: &serde_json::Value, num_groups: usize) -> PredictionOutput {
+    let preds: Vec<Vec<f64>> = serde_json::from_value(json.clone()).unwrap();
+    let n = preds.len();
+    let flat: Vec<f32> = preds.into_iter().flatten().map(|x| x as f32).collect();
+    PredictionOutput::new(flat, n, num_groups)
 }
 
 // =============================================================================
@@ -175,16 +175,14 @@ fn model_predict_raw_regression() {
     let output = model.predict_raw(&features);
 
     let expected_preds: Vec<f64> = serde_json::from_value(expected.predictions).unwrap();
+    let expected_output = PredictionOutput::new(
+        expected_preds.iter().map(|&x| x as f32).collect(),
+        expected_preds.len(),
+        1,
+    );
 
-    assert_eq!(output.shape(), (input.num_rows, 1));
-    for (i, exp) in expected_preds.iter().enumerate() {
-        let actual = output.row(i)[0] as f64;
-        let diff = (actual - exp).abs();
-        assert!(
-            diff < TOLERANCE,
-            "row {i}: got {actual}, expected {exp}, diff {diff}"
-        );
-    }
+    assert_eq!(output.shape(), expected_output.shape());
+    assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 }
 
 #[test]
@@ -197,16 +195,14 @@ fn model_predict_raw_binary() {
     let output = model.predict_raw(&features);
 
     let expected_preds: Vec<f64> = serde_json::from_value(expected.predictions).unwrap();
+    let expected_output = PredictionOutput::new(
+        expected_preds.iter().map(|&x| x as f32).collect(),
+        expected_preds.len(),
+        1,
+    );
 
-    assert_eq!(output.shape(), (input.num_rows, 1));
-    for (i, exp) in expected_preds.iter().enumerate() {
-        let actual = output.row(i)[0] as f64;
-        let diff = (actual - exp).abs();
-        assert!(
-            diff < TOLERANCE,
-            "row {i}: got {actual}, expected {exp}, diff {diff}"
-        );
-    }
+    assert_eq!(output.shape(), expected_output.shape());
+    assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 }
 
 #[test]
@@ -218,12 +214,11 @@ fn model_predict_raw_multiclass() {
     let features = input.to_dense_matrix();
     let output = model.predict_raw(&features);
 
-    let expected_preds: Vec<Vec<f64>> = serde_json::from_value(expected.predictions).unwrap();
+    let expected_output =
+        expected_multigroup_output(&expected.predictions, expected.num_class as usize);
 
-    assert_eq!(output.shape(), (input.num_rows, expected.num_class as usize));
-    for (i, exp_row) in expected_preds.iter().enumerate() {
-        assert_predictions_match(output.row(i), exp_row, TOLERANCE, &format!("row {i}"));
-    }
+    assert_eq!(output.shape(), expected_output.shape());
+    assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 }
 
 // =============================================================================
@@ -240,18 +235,10 @@ fn model_predict_regression_transform() {
     let output = model.predict(&features);
 
     // For regression, transformed = raw (no transform)
-    let expected_preds: Vec<f64> =
-        serde_json::from_value(expected.predictions_transformed).unwrap();
+    let expected_output = expected_scalar_output(&expected.predictions_transformed);
 
-    assert_eq!(output.shape(), (input.num_rows, 1));
-    for (i, exp) in expected_preds.iter().enumerate() {
-        let actual = output.row(i)[0] as f64;
-        let diff = (actual - exp).abs();
-        assert!(
-            diff < TOLERANCE,
-            "row {i}: got {actual}, expected {exp}, diff {diff}"
-        );
-    }
+    assert_eq!(output.shape(), expected_output.shape());
+    assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 }
 
 #[test]
@@ -264,18 +251,10 @@ fn model_predict_binary_sigmoid() {
     let output = model.predict(&features);
 
     // Binary logistic should apply sigmoid
-    let expected_preds: Vec<f64> =
-        serde_json::from_value(expected.predictions_transformed).unwrap();
+    let expected_output = expected_scalar_output(&expected.predictions_transformed);
 
-    assert_eq!(output.shape(), (input.num_rows, 1));
-    for (i, exp) in expected_preds.iter().enumerate() {
-        let actual = output.row(i)[0] as f64;
-        let diff = (actual - exp).abs();
-        assert!(
-            diff < TOLERANCE,
-            "row {i}: got {actual}, expected {exp}, diff {diff}"
-        );
-    }
+    assert_eq!(output.shape(), expected_output.shape());
+    assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 
     // Verify values are probabilities (0-1)
     for i in 0..output.num_rows() {
@@ -297,19 +276,14 @@ fn model_predict_multiclass_softmax() {
     let output = model.predict(&features);
 
     // Multiclass softprob should apply softmax
-    let expected_preds: Vec<Vec<f64>> =
-        serde_json::from_value(expected.predictions_transformed).unwrap();
+    let expected_output =
+        expected_multigroup_output(&expected.predictions_transformed, expected.num_class as usize);
 
-    assert_eq!(output.shape(), (input.num_rows, expected.num_class as usize));
-    for (i, exp_row) in expected_preds.iter().enumerate() {
-        assert_predictions_match(
-            output.row(i),
-            exp_row,
-            TOLERANCE,
-            &format!("row {i} softmax"),
-        );
+    assert_eq!(output.shape(), expected_output.shape());
+    assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 
-        // Verify probabilities sum to 1
+    // Verify probabilities sum to 1 for each row
+    for i in 0..output.num_rows() {
         let sum: f32 = output.row(i).iter().sum();
         assert!(
             (sum - 1.0).abs() < 1e-5,
@@ -327,18 +301,10 @@ fn model_predict_with_missing_values() {
     let features = input.to_dense_matrix();
     let output = model.predict(&features);
 
-    let expected_preds: Vec<f64> =
-        serde_json::from_value(expected.predictions_transformed).unwrap();
+    let expected_output = expected_scalar_output(&expected.predictions_transformed);
 
-    assert_eq!(output.shape(), (input.num_rows, 1));
-    for (i, exp) in expected_preds.iter().enumerate() {
-        let actual = output.row(i)[0] as f64;
-        let diff = (actual - exp).abs();
-        assert!(
-            diff < TOLERANCE,
-            "row {i}: got {actual}, expected {exp}, diff {diff}"
-        );
-    }
+    assert_eq!(output.shape(), expected_output.shape());
+    assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 }
 
 // =============================================================================
@@ -373,18 +339,10 @@ fn model_predict_binary_with_missing() {
     let features = input.to_dense_matrix();
     let output = model.predict(&features);
 
-    let expected_preds: Vec<f64> =
-        serde_json::from_value(expected.predictions_transformed).unwrap();
+    let expected_output = expected_scalar_output(&expected.predictions_transformed);
 
-    assert_eq!(output.shape(), (input.num_rows, 1));
-    for (i, exp) in expected_preds.iter().enumerate() {
-        let actual = output.row(i)[0] as f64;
-        let diff = (actual - exp).abs();
-        assert!(
-            diff < TOLERANCE,
-            "row {i}: got {actual}, expected {exp}, diff {diff}"
-        );
-    }
+    assert_eq!(output.shape(), expected_output.shape());
+    assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 
     // Verify values are probabilities (0-1)
     for i in 0..output.num_rows() {
@@ -404,19 +362,14 @@ fn model_predict_multiclass_with_missing() {
     let features = input.to_dense_matrix();
     let output = model.predict(&features);
 
-    let expected_preds: Vec<Vec<f64>> =
-        serde_json::from_value(expected.predictions_transformed).unwrap();
+    let expected_output =
+        expected_multigroup_output(&expected.predictions_transformed, expected.num_class as usize);
 
-    assert_eq!(output.shape(), (input.num_rows, expected.num_class as usize));
-    for (i, exp_row) in expected_preds.iter().enumerate() {
-        assert_predictions_match(
-            output.row(i),
-            exp_row,
-            TOLERANCE,
-            &format!("row {i} multiclass_missing"),
-        );
+    assert_eq!(output.shape(), expected_output.shape());
+    assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 
-        // Verify probabilities sum to 1
+    // Verify probabilities sum to 1 for each row
+    for i in 0..output.num_rows() {
         let sum: f32 = output.row(i).iter().sum();
         assert!(
             (sum - 1.0).abs() < 1e-5,
@@ -434,18 +387,10 @@ fn model_predict_deep_trees() {
     let features = input.to_dense_matrix();
     let output = model.predict(&features);
 
-    let expected_preds: Vec<f64> =
-        serde_json::from_value(expected.predictions_transformed).unwrap();
+    let expected_output = expected_scalar_output(&expected.predictions_transformed);
 
-    assert_eq!(output.shape(), (input.num_rows, 1));
-    for (i, exp) in expected_preds.iter().enumerate() {
-        let actual = output.row(i)[0] as f64;
-        let diff = (actual - exp).abs();
-        assert!(
-            diff < TOLERANCE,
-            "deep_trees row {i}: got {actual}, expected {exp}, diff {diff}"
-        );
-    }
+    assert_eq!(output.shape(), expected_output.shape());
+    assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 }
 
 #[test]
@@ -457,20 +402,11 @@ fn model_predict_single_tree() {
     let features = input.to_dense_matrix();
     let output = model.predict(&features);
 
-    let expected_preds: Vec<f64> =
-        serde_json::from_value(expected.predictions_transformed).unwrap();
+    let expected_output = expected_scalar_output(&expected.predictions_transformed);
 
-    assert_eq!(output.shape(), (input.num_rows, 1));
+    assert_eq!(output.shape(), expected_output.shape());
     assert_eq!(model.booster.num_trees(), 1);
-    
-    for (i, exp) in expected_preds.iter().enumerate() {
-        let actual = output.row(i)[0] as f64;
-        let diff = (actual - exp).abs();
-        assert!(
-            diff < TOLERANCE,
-            "single_tree row {i}: got {actual}, expected {exp}, diff {diff}"
-        );
-    }
+    assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 }
 
 #[test]
@@ -482,20 +418,11 @@ fn model_predict_many_trees() {
     let features = input.to_dense_matrix();
     let output = model.predict(&features);
 
-    let expected_preds: Vec<f64> =
-        serde_json::from_value(expected.predictions_transformed).unwrap();
+    let expected_output = expected_scalar_output(&expected.predictions_transformed);
 
-    assert_eq!(output.shape(), (input.num_rows, 1));
+    assert_eq!(output.shape(), expected_output.shape());
     assert_eq!(model.booster.num_trees(), 50);
-    
-    for (i, exp) in expected_preds.iter().enumerate() {
-        let actual = output.row(i)[0] as f64;
-        let diff = (actual - exp).abs();
-        assert!(
-            diff < TOLERANCE,
-            "many_trees row {i}: got {actual}, expected {exp}, diff {diff}"
-        );
-    }
+    assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 }
 
 #[test]
@@ -509,18 +436,10 @@ fn model_predict_wide_features() {
     let features = input.to_dense_matrix();
     let output = model.predict(&features);
 
-    let expected_preds: Vec<f64> =
-        serde_json::from_value(expected.predictions_transformed).unwrap();
+    let expected_output = expected_scalar_output(&expected.predictions_transformed);
 
-    assert_eq!(output.shape(), (input.num_rows, 1));
-    for (i, exp) in expected_preds.iter().enumerate() {
-        let actual = output.row(i)[0] as f64;
-        let diff = (actual - exp).abs();
-        assert!(
-            diff < TOLERANCE,
-            "wide_features row {i}: got {actual}, expected {exp}, diff {diff}"
-        );
-    }
+    assert_eq!(output.shape(), expected_output.shape());
+    assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 }
 
 // =============================================================================
@@ -545,18 +464,10 @@ fn model_predict_dart_regression() {
     let features = input.to_dense_matrix();
     let output = model.predict(&features);
 
-    let expected_preds: Vec<f64> =
-        serde_json::from_value(expected.predictions_transformed).unwrap();
+    let expected_output = expected_scalar_output(&expected.predictions_transformed);
 
-    assert_eq!(output.shape(), (input.num_rows, 1));
-    for (i, exp) in expected_preds.iter().enumerate() {
-        let actual = output.row(i)[0] as f64;
-        let diff = (actual - exp).abs();
-        assert!(
-            diff < TOLERANCE,
-            "dart_regression row {i}: got {actual}, expected {exp}, diff {diff}"
-        );
-    }
+    assert_eq!(output.shape(), expected_output.shape());
+    assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 }
 
 #[test]
@@ -569,15 +480,8 @@ fn model_predict_dart_raw_matches_expected() {
     let output = model.predict_raw(&features);
 
     // For regression, raw and transformed should be the same
-    let expected_preds: Vec<f64> = serde_json::from_value(expected.predictions).unwrap();
+    let expected_output = expected_scalar_output(&expected.predictions);
 
-    assert_eq!(output.shape(), (input.num_rows, 1));
-    for (i, exp) in expected_preds.iter().enumerate() {
-        let actual = output.row(i)[0] as f64;
-        let diff = (actual - exp).abs();
-        assert!(
-            diff < TOLERANCE,
-            "dart_regression raw row {i}: got {actual}, expected {exp}, diff {diff}"
-        );
-    }
+    assert_eq!(output.shape(), expected_output.shape());
+    assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 }

@@ -526,6 +526,7 @@ pub type UnrolledPredictor8<'f> = Predictor<'f, UnrolledTraversal<Depth8>>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use approx::assert_abs_diff_eq;
     use crate::data::RowMatrix;
     use crate::forest::SoAForest;
     use crate::trees::{ScalarLeaf, TreeBuilder};
@@ -646,19 +647,11 @@ mod tests {
             let simple_output = simple.predict(&features);
             let unrolled_output = unrolled.predict(&features);
 
-            assert_eq!(simple_output.shape(), unrolled_output.shape());
-            for row_idx in 0..num_rows {
-                let s = simple_output.row(row_idx);
-                let u = unrolled_output.row(row_idx);
-                assert!(
-                    (s[0] - u[0]).abs() < 1e-6,
-                    "Mismatch at row {} with {} total rows: {:?} vs {:?}",
-                    row_idx,
-                    num_rows,
-                    s,
-                    u
-                );
-            }
+            assert_abs_diff_eq!(
+                simple_output,
+                unrolled_output,
+                epsilon = 1e-6,
+            );
         }
     }
 
@@ -709,17 +702,7 @@ mod tests {
         let simple_output = simple.predict_weighted(&features, weights);
         let unrolled_output = unrolled.predict_weighted(&features, weights);
 
-        for row_idx in 0..2 {
-            let s = simple_output.row(row_idx);
-            let u = unrolled_output.row(row_idx);
-            assert!(
-                (s[0] - u[0]).abs() < 1e-6,
-                "Mismatch at row {}: {:?} vs {:?}",
-                row_idx,
-                s,
-                u
-            );
-        }
+        assert_abs_diff_eq!(simple_output, unrolled_output, epsilon = 1e-6);
     }
 
     // =========================================================================
@@ -760,10 +743,8 @@ mod tests {
         let o64 = p64.predict(&features);
         let o128 = p128.predict(&features);
 
-        for row_idx in 0..200 {
-            assert_eq!(o16.row(row_idx), o64.row(row_idx));
-            assert_eq!(o64.row(row_idx), o128.row(row_idx));
-        }
+        assert_abs_diff_eq!(o16, o64, epsilon = 1e-6);
+        assert_abs_diff_eq!(o64, o128, epsilon = 1e-6);
     }
 
     // =========================================================================
@@ -835,33 +816,8 @@ mod tests {
             let seq_unrolled = unrolled.predict(&features);
             let par_unrolled = unrolled.par_predict(&features);
 
-            assert_eq!(seq_simple.shape(), par_simple.shape());
-            assert_eq!(seq_unrolled.shape(), par_unrolled.shape());
-
-            for row_idx in 0..num_rows {
-                let ss = seq_simple.row(row_idx);
-                let ps = par_simple.row(row_idx);
-                let su = seq_unrolled.row(row_idx);
-                let pu = par_unrolled.row(row_idx);
-
-                assert!(
-                    (ss[0] - ps[0]).abs() < 1e-6,
-                    "Simple: Mismatch at row {} with {} total rows: seq={:?} vs par={:?}",
-                    row_idx,
-                    num_rows,
-                    ss,
-                    ps
-                );
-
-                assert!(
-                    (su[0] - pu[0]).abs() < 1e-6,
-                    "Unrolled: Mismatch at row {} with {} total rows: seq={:?} vs par={:?}",
-                    row_idx,
-                    num_rows,
-                    su,
-                    pu
-                );
-            }
+            assert_abs_diff_eq!(seq_simple, par_simple, epsilon = 1e-6);
+            assert_abs_diff_eq!(seq_unrolled, par_unrolled, epsilon = 1e-6);
         }
     }
 
@@ -880,17 +836,7 @@ mod tests {
         let seq_output = predictor.predict_weighted(&features, weights);
         let par_output = predictor.par_predict_weighted(&features, weights);
 
-        for row_idx in 0..100 {
-            let s = seq_output.row(row_idx);
-            let p = par_output.row(row_idx);
-            assert!(
-                (s[0] - p[0]).abs() < 1e-6,
-                "Mismatch at row {}: {:?} vs {:?}",
-                row_idx,
-                s,
-                p
-            );
-        }
+        assert_abs_diff_eq!(seq_output, par_output, epsilon = 1e-6);
     }
 
     #[test]
@@ -907,16 +853,7 @@ mod tests {
         let seq_output = predictor.predict(&features);
         let par_output = predictor.par_predict(&features);
 
-        assert_eq!(seq_output.shape(), par_output.shape());
-        for row_idx in 0..4 {
-            for group_idx in 0..3 {
-                assert!(
-                    (seq_output.row(row_idx)[group_idx] - par_output.row(row_idx)[group_idx])
-                        .abs()
-                        < 1e-6
-                );
-            }
-        }
+        assert_abs_diff_eq!(seq_output, par_output, epsilon = 1e-6);
     }
 
     #[test]
