@@ -400,6 +400,159 @@ impl MulticlassLoss for QuantileLoss {
 }
 
 // =============================================================================
+// Pseudo-Huber Loss (Robust Regression)
+// =============================================================================
+
+/// Pseudo-Huber loss for robust regression.
+///
+/// A smooth approximation of Huber loss that is differentiable everywhere.
+/// Less sensitive to outliers than squared error.
+///
+/// For residual r = pred - label and slope δ:
+/// - L = δ² × (√(1 + (r/δ)²) - 1)
+///
+/// Derivatives:
+/// - grad = r / √(1 + r²/δ²)
+/// - hess = δ² / ((δ² + r²) × √(1 + r²/δ²))
+///
+/// # XGBoost Compatibility
+///
+/// This matches XGBoost's `reg:pseudohubererror` with `huber_slope` parameter.
+#[derive(Debug, Clone, Copy)]
+pub struct PseudoHuberLoss {
+    /// The slope (delta) parameter controlling the transition point.
+    /// Larger values make the loss behave more like squared error.
+    /// Smaller values make it more robust to outliers.
+    slope: f32,
+}
+
+impl PseudoHuberLoss {
+    /// Create a new Pseudo-Huber loss with the given slope (delta).
+    ///
+    /// # Arguments
+    ///
+    /// * `slope` - The delta parameter. Default in XGBoost is 1.0.
+    ///
+    /// # Panics
+    ///
+    /// Panics if slope is zero or negative.
+    pub fn new(slope: f32) -> Self {
+        assert!(slope > 0.0, "Pseudo-Huber slope must be positive, got {}", slope);
+        Self { slope }
+    }
+
+    /// Returns the slope (delta) parameter.
+    pub fn slope(&self) -> f32 {
+        self.slope
+    }
+}
+
+impl Default for PseudoHuberLoss {
+    fn default() -> Self {
+        Self::new(1.0)
+    }
+}
+
+impl Loss for PseudoHuberLoss {
+    /// Compute gradients for Pseudo-Huber loss.
+    ///
+    /// - grad = r / sqrt(1 + r²/δ²)
+    /// - hess = δ² / ((δ² + r²) × sqrt(1 + r²/δ²))
+    fn compute_gradients(&self, preds: &[f32], labels: &[f32], buffer: &mut GradientBuffer) {
+        debug_assert_eq!(preds.len(), labels.len());
+        debug_assert_eq!(preds.len(), buffer.n_samples());
+        debug_assert_eq!(buffer.n_outputs(), 1);
+
+        let slope = self.slope;
+        let slope_sq = slope * slope;
+
+        let (grads, hess) = buffer.as_mut_slices();
+
+        for i in 0..preds.len() {
+            let r = preds[i] - labels[i];
+            let r_sq = r * r;
+
+            // scale_sqrt = sqrt(1 + r²/δ²)
+            let scale_sqrt = (1.0 + r_sq / slope_sq).sqrt();
+
+            grads[i] = r / scale_sqrt;
+
+            // hess = δ² / ((δ² + r²) × scale_sqrt)
+            let scale = slope_sq + r_sq;
+            hess[i] = slope_sq / (scale * scale_sqrt);
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "pseudo_huber"
+    }
+}
+
+// =============================================================================
+// Hinge Loss (SVM-style Binary Classification)
+// =============================================================================
+
+/// Hinge loss for SVM-style binary classification.
+///
+/// Expects labels in {0, 1}. Internally converts to {-1, 1}.
+///
+/// For y = label * 2 - 1:
+/// - If pred × y < 1 (wrong side of margin): grad = -y, hess = 1
+/// - If pred × y >= 1 (correct side): grad = 0, hess = ε (small value)
+///
+/// # Notes
+///
+/// The hinge loss is not differentiable at the margin (pred × y = 1).
+/// This implementation uses a subgradient with hess = ε when on correct side.
+///
+/// # XGBoost Compatibility
+///
+/// This matches XGBoost's `binary:hinge` objective.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HingeLoss;
+
+impl HingeLoss {
+    /// Create a new hinge loss.
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Loss for HingeLoss {
+    /// Compute gradients for hinge loss.
+    ///
+    /// - If pred × y < 1: grad = -y, hess = 1
+    /// - If pred × y >= 1: grad = 0, hess = ε
+    fn compute_gradients(&self, preds: &[f32], labels: &[f32], buffer: &mut GradientBuffer) {
+        debug_assert_eq!(preds.len(), labels.len());
+        debug_assert_eq!(preds.len(), buffer.n_samples());
+        debug_assert_eq!(buffer.n_outputs(), 1);
+
+        let (grads, hess) = buffer.as_mut_slices();
+
+        for i in 0..preds.len() {
+            let p = preds[i];
+            // Convert label from {0, 1} to {-1, 1}
+            let y = labels[i] * 2.0 - 1.0;
+
+            if p * y < 1.0 {
+                // Wrong side of margin (or within margin)
+                grads[i] = -y;
+                hess[i] = 1.0;
+            } else {
+                // Correct side of margin
+                grads[i] = 0.0;
+                hess[i] = f32::MIN_POSITIVE; // Small positive value
+            }
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "hinge"
+    }
+}
+
+// =============================================================================
 // Softmax Loss (Multiclass Classification)
 // =============================================================================
 
@@ -615,6 +768,8 @@ mod tests {
         assert_eq!(Loss::name(&LogisticLoss), "logistic");
         assert_eq!(MulticlassLoss::name(&SoftmaxLoss::new(3)), "softmax");
         assert_eq!(Loss::name(&QuantileLoss::new(0.5)), "quantile");
+        assert_eq!(Loss::name(&PseudoHuberLoss::default()), "pseudo_huber");
+        assert_eq!(Loss::name(&HingeLoss), "hinge");
     }
 
     // =========================================================================
@@ -873,5 +1028,214 @@ mod tests {
         assert!((buffer.grad(0, 0) - (-0.1)).abs() < 1e-6);  // -0.1
         assert!((buffer.grad(0, 1) - (-0.5)).abs() < 1e-6);  // -0.5
         assert!((buffer.grad(0, 2) - (-0.9)).abs() < 1e-6);  // -0.9
+    }
+
+    // =========================================================================
+    // PseudoHuberLoss tests
+    // =========================================================================
+
+    #[test]
+    fn pseudo_huber_loss_gradient() {
+        let loss = PseudoHuberLoss::default(); // slope = 1.0
+        let preds = vec![1.0, 2.0, 3.0];
+        let labels = vec![1.0, 1.0, 1.0]; // residuals: 0, 1, 2
+        let mut buffer = GradientBuffer::new(3, 1);
+
+        loss.compute_gradients(&preds, &labels, &mut buffer);
+
+        // r=0: grad = 0 / sqrt(1 + 0) = 0
+        assert!(buffer.grad(0, 0).abs() < 1e-6);
+
+        // r=1, δ=1: grad = 1 / sqrt(1 + 1) = 1/√2 ≈ 0.707
+        let expected_grad_1 = 1.0 / 2.0_f32.sqrt();
+        assert!((buffer.grad(1, 0) - expected_grad_1).abs() < 1e-5);
+
+        // r=2, δ=1: grad = 2 / sqrt(1 + 4) = 2/√5 ≈ 0.894
+        let expected_grad_2 = 2.0 / 5.0_f32.sqrt();
+        assert!((buffer.grad(2, 0) - expected_grad_2).abs() < 1e-5);
+
+        // All hessians should be positive
+        for i in 0..3 {
+            assert!(buffer.hess(i, 0) > 0.0);
+        }
+    }
+
+    #[test]
+    fn pseudo_huber_loss_with_slope() {
+        let loss = PseudoHuberLoss::new(2.0); // slope = 2.0
+        let preds = vec![3.0]; // r = 3 - 1 = 2
+        let labels = vec![1.0];
+        let mut buffer = GradientBuffer::new(1, 1);
+
+        loss.compute_gradients(&preds, &labels, &mut buffer);
+
+        // r=2, δ=2: grad = 2 / sqrt(1 + 4/4) = 2/√2 ≈ 1.414
+        let expected_grad = 2.0 / 2.0_f32.sqrt();
+        assert!((buffer.grad(0, 0) - expected_grad).abs() < 1e-5);
+
+        // hess = δ² / ((δ² + r²) × sqrt(1 + r²/δ²))
+        // = 4 / ((4 + 4) × √2) = 4 / (8 × 1.414) ≈ 0.354
+        let scale_sqrt = 2.0_f32.sqrt();
+        let expected_hess = 4.0 / (8.0 * scale_sqrt);
+        assert!((buffer.hess(0, 0) - expected_hess).abs() < 1e-5);
+    }
+
+    #[test]
+    fn pseudo_huber_loss_negative_residual() {
+        let loss = PseudoHuberLoss::default();
+        let preds = vec![0.0]; // r = 0 - 2 = -2
+        let labels = vec![2.0];
+        let mut buffer = GradientBuffer::new(1, 1);
+
+        loss.compute_gradients(&preds, &labels, &mut buffer);
+
+        // r=-2, δ=1: grad = -2 / sqrt(1 + 4) = -2/√5 ≈ -0.894
+        let expected_grad = -2.0 / 5.0_f32.sqrt();
+        assert!((buffer.grad(0, 0) - expected_grad).abs() < 1e-5);
+    }
+
+    #[test]
+    fn pseudo_huber_loss_vs_squared_for_small_residuals() {
+        // For small residuals, Pseudo-Huber should behave like squared loss
+        let pseudo_huber = PseudoHuberLoss::new(10.0); // large slope → more like squared
+        let squared = SquaredLoss;
+
+        let preds = vec![1.0, 1.1, 0.9]; // small residuals
+        let labels = vec![1.0, 1.0, 1.0];
+
+        let mut buffer_ph = GradientBuffer::new(3, 1);
+        let mut buffer_sq = GradientBuffer::new(3, 1);
+
+        pseudo_huber.compute_gradients(&preds, &labels, &mut buffer_ph);
+        squared.compute_gradients(&preds, &labels, &mut buffer_sq);
+
+        // Gradients should be similar for small residuals
+        for i in 0..3 {
+            let diff = (buffer_ph.grad(i, 0) - buffer_sq.grad(i, 0)).abs();
+            assert!(diff < 0.01, "Sample {}: PH={}, SQ={}", i, buffer_ph.grad(i, 0), buffer_sq.grad(i, 0));
+        }
+    }
+
+    #[test]
+    fn pseudo_huber_loss_robustness_to_outliers() {
+        // For large residuals, gradient should be bounded
+        let loss = PseudoHuberLoss::default();
+
+        let preds = vec![100.0]; // huge outlier
+        let labels = vec![0.0];
+        let mut buffer = GradientBuffer::new(1, 1);
+
+        loss.compute_gradients(&preds, &labels, &mut buffer);
+
+        // r=100, δ=1: grad = 100 / sqrt(1 + 10000) ≈ 100/100 = 1
+        // Should be bounded, not 100 like squared loss would give
+        let grad = buffer.grad(0, 0);
+        assert!(grad < 2.0, "Gradient should be bounded, got {}", grad);
+        assert!(grad > 0.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Pseudo-Huber slope must be positive")]
+    fn pseudo_huber_loss_invalid_slope_zero() {
+        PseudoHuberLoss::new(0.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Pseudo-Huber slope must be positive")]
+    fn pseudo_huber_loss_invalid_slope_negative() {
+        PseudoHuberLoss::new(-1.0);
+    }
+
+    // =========================================================================
+    // HingeLoss tests
+    // =========================================================================
+
+    #[test]
+    fn hinge_loss_gradient_correct_side() {
+        let loss = HingeLoss;
+        // Label 1 (y=1), prediction > 1 → correct side of margin
+        let preds = vec![2.0];
+        let labels = vec![1.0];
+        let mut buffer = GradientBuffer::new(1, 1);
+
+        loss.compute_gradients(&preds, &labels, &mut buffer);
+
+        // p * y = 2 * 1 = 2 >= 1 → grad = 0
+        assert!(buffer.grad(0, 0).abs() < 1e-6);
+        // hess = ε (very small)
+        assert!(buffer.hess(0, 0) > 0.0);
+        assert!(buffer.hess(0, 0) < 1e-10);
+    }
+
+    #[test]
+    fn hinge_loss_gradient_wrong_side() {
+        let loss = HingeLoss;
+        // Label 1 (y=1), prediction < 1 → wrong side of margin
+        let preds = vec![0.5];
+        let labels = vec![1.0];
+        let mut buffer = GradientBuffer::new(1, 1);
+
+        loss.compute_gradients(&preds, &labels, &mut buffer);
+
+        // p * y = 0.5 * 1 = 0.5 < 1 → grad = -y = -1
+        assert!((buffer.grad(0, 0) - (-1.0)).abs() < 1e-6);
+        // hess = 1
+        assert!((buffer.hess(0, 0) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn hinge_loss_negative_class() {
+        let loss = HingeLoss;
+        // Label 0 (y=-1), prediction < -1 → correct side
+        let preds = vec![-2.0];
+        let labels = vec![0.0];
+        let mut buffer = GradientBuffer::new(1, 1);
+
+        loss.compute_gradients(&preds, &labels, &mut buffer);
+
+        // y = 0 * 2 - 1 = -1
+        // p * y = -2 * -1 = 2 >= 1 → grad = 0
+        assert!(buffer.grad(0, 0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn hinge_loss_batch() {
+        let loss = HingeLoss;
+        // Various cases:
+        // 1. label=1, pred=2 → correct (grad=0)
+        // 2. label=1, pred=0 → wrong (grad=-1)
+        // 3. label=0, pred=-2 → correct (grad=0)
+        // 4. label=0, pred=0 → wrong (grad=1)
+        let preds = vec![2.0, 0.0, -2.0, 0.0];
+        let labels = vec![1.0, 1.0, 0.0, 0.0];
+        let mut buffer = GradientBuffer::new(4, 1);
+
+        loss.compute_gradients(&preds, &labels, &mut buffer);
+
+        // Case 1: correct, grad=0
+        assert!(buffer.grad(0, 0).abs() < 1e-6);
+
+        // Case 2: wrong, y=1, grad=-1
+        assert!((buffer.grad(1, 0) - (-1.0)).abs() < 1e-6);
+
+        // Case 3: correct, grad=0
+        assert!(buffer.grad(2, 0).abs() < 1e-6);
+
+        // Case 4: wrong, y=-1, grad=1
+        assert!((buffer.grad(3, 0) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn hinge_loss_at_margin() {
+        let loss = HingeLoss;
+        // Exactly at margin: p * y = 1
+        let preds = vec![1.0];
+        let labels = vec![1.0];
+        let mut buffer = GradientBuffer::new(1, 1);
+
+        loss.compute_gradients(&preds, &labels, &mut buffer);
+
+        // p * y = 1 * 1 = 1, which is NOT < 1, so correct side
+        assert!(buffer.grad(0, 0).abs() < 1e-6);
     }
 }
