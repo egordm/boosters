@@ -12,20 +12,21 @@ We use a lightweight agile structure:
 
 | Level | Description | Location |
 |-------|-------------|----------|
-| **Epic** | Large feature area (e.g., "GBLinear Support") | `backlog/<epic>.md` |
+| **Epic** | Large feature area (e.g., "GBLinear Support") | `docs/backlog/<epic>.md` |
 | **Story** | Deliverable chunk within an epic | Numbered sections in epic file |
 | **Task** | Individual work item within a story | Checklist items (1.1, 1.2, etc.) |
 
 ### Backlog Structure
 
 ```text
-docs/design/
+docs/
 ├── ROADMAP.md              # High-level priorities & current focus
 ├── backlog/
-│   ├── gbtree-inference.md # Epic: GBTree Inference (complete)
-│   ├── gblinear.md         # Epic: GBLinear Support (active)
-│   └── future.md           # Backlog of future epics
-└── rfcs/                   # Design documents
+│   ├── 01-gbtree-inference.md # Epic: GBTree Inference (complete)
+│   ├── 02-gblinear.md         # Epic: GBLinear Support (active)
+│   └── 99-future.md           # Backlog of future epics
+└── design/
+    └── rfcs/               # Design documents
 ```
 
 **Key principle**: Each epic file uses relative numbering (Story 1, 2, 3...) so
@@ -260,13 +261,13 @@ Refs: RFC-0007
 
 | Content | Location |
 |---------|----------|
-| High-level roadmap | `design/ROADMAP.md` |
-| Epic details | `design/backlog/<epic>.md` |
-| RFCs (design docs) | `design/rfcs/0XXX-*.md` |
-| Research & deep dives | `design/research/` |
-| Scratch notes | `design/NOTES.md` |
-| This guide | `design/CONTRIBUTING.md` |
-| Benchmarks | `benchmarks/` |
+| High-level roadmap | `docs/ROADMAP.md` |
+| Epic details | `docs/backlog/<epic>.md` |
+| RFCs (design docs) | `docs/design/rfcs/0XXX-*.md` |
+| Research & deep dives | `docs/design/research/` |
+| Scratch notes | `docs/design/NOTES.md` |
+| This guide | `docs/design/CONTRIBUTING.md` |
+| Benchmarks | `docs/benchmarks/` |
 | Source code | `src/` |
 | Integration tests | `tests/` |
 | Test data | `tests/test-cases/` |

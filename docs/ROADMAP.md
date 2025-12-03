@@ -51,7 +51,7 @@ Current benchmark results (Apple M1 Pro, vs XGBoost C++):
 | Single-row latency | 1.24µs | 11.6µs | **9.4x** |
 | 10K batch (8 threads) | 1.58ms | 5.0ms | **3.2x** |
 
-See [benchmarks](../benchmarks/) for details.
+See [benchmarks](benchmarks/) for details.
 
 ---
 
@@ -59,14 +59,14 @@ See [benchmarks](../benchmarks/) for details.
 
 | RFC | Status | Topic |
 |-----|--------|-------|
-| [0001](rfcs/0001-forest-data-structures.md) | Implemented | Forest structures |
-| [0002](rfcs/0002-tree-data-structures.md) | Implemented | Tree structures |
-| [0003](rfcs/0003-visitor-and-traversal.md) | Implemented | Traversal & prediction |
-| [0004](rfcs/0004-dmatrix.md) | Implemented | Data input |
-| [0007](rfcs/0007-serialization.md) | Implemented | XGBoost loading |
-| [0008](rfcs/0008-gblinear-inference.md) | Implemented | Linear inference |
-| [0009](rfcs/0009-gblinear-training.md) | Implemented | Linear training |
-| [0010](rfcs/0010-matrix-layouts.md) | Implemented | Matrix layouts |
+| [0001](design/rfcs/0001-forest-data-structures.md) | Implemented | Forest structures |
+| [0002](design/rfcs/0002-tree-data-structures.md) | Implemented | Tree structures |
+| [0003](design/rfcs/0003-visitor-and-traversal.md) | Implemented | Traversal & prediction |
+| [0004](design/rfcs/0004-dmatrix.md) | Implemented | Data input |
+| [0007](design/rfcs/0007-serialization.md) | Implemented | XGBoost loading |
+| [0008](design/rfcs/0008-gblinear-inference.md) | Implemented | Linear inference |
+| [0009](design/rfcs/0009-gblinear-training.md) | Implemented | Linear training |
+| [0010](design/rfcs/0010-matrix-layouts.md) | Implemented | Matrix layouts |
 
 ---
 
