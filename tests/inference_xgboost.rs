@@ -85,6 +85,7 @@ fn prob_to_margin(base_score: f32, objective: &str) -> f32 {
 }
 
 /// Assert predictions match expected values within tolerance.
+/// Uses both absolute tolerance and relative tolerance for f32 precision issues.
 fn assert_preds_match(actual: &[f32], expected: &[f64], tolerance: f64, context: &str) {
     assert_eq!(
         actual.len(),
@@ -93,14 +94,31 @@ fn assert_preds_match(actual: &[f32], expected: &[f64], tolerance: f64, context:
         actual.len(),
         expected.len()
     );
-    for (i, (a, e)) in actual.iter().zip(expected.iter()).enumerate() {
-        let diff = (*a as f64 - *e).abs();
-        // Use both absolute and relative tolerance for f32 precision
-        let rel_tol = e.abs() * 1e-6;
-        assert!(
-            diff < tolerance || diff < rel_tol,
-            "{context}[{i}]: got {a}, expected {e}, diff {diff}"
-        );
+
+    let mismatches: Vec<_> = actual
+        .iter()
+        .zip(expected.iter())
+        .enumerate()
+        .filter_map(|(i, (&a, &e))| {
+            let diff = (a as f64 - e).abs();
+            let rel_tol = e.abs() * 1e-6;
+            if diff >= tolerance && diff >= rel_tol {
+                Some((i, a, e, diff))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if !mismatches.is_empty() {
+        let mut msg = format!("{context}: predictions mismatch\n");
+        for (i, a, e, diff) in mismatches.iter().take(10) {
+            msg.push_str(&format!("  [{i}]: got {a}, expected {e}, diff {diff}\n"));
+        }
+        if mismatches.len() > 10 {
+            msg.push_str(&format!("  ... and {} more mismatches\n", mismatches.len() - 10));
+        }
+        panic!("{msg}");
     }
 }
 
