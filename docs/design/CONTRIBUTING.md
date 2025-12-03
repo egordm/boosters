@@ -62,6 +62,8 @@ For each task in a story:
 
 RFCs are **living documents** but should remain **stable** after acceptance.
 
+When creating a new RFC, use the template at `docs/design/rfcs/TEMPLATE.md`.
+
 ### When to Update RFCs
 
 | Situation | Action |
@@ -139,19 +141,49 @@ pub struct SoATreeStorage<L: LeafValue> { /* ... */ }
 
 ## Testing Strategy
 
+### Test Utilities
+
+The `booste_rs::testing` module provides common assertion helpers:
+
+```rust
+use booste_rs::{assert_approx_eq, assert_approx_eq_f64};
+use booste_rs::testing::{
+    assert_slice_approx_eq, assert_predictions_eq,
+    DEFAULT_TOLERANCE, DEFAULT_TOLERANCE_F64,
+};
+
+#[test]
+fn example_test() {
+    // Use macros for simple float comparisons
+    assert_approx_eq!(1.0f32, 1.0001f32, 0.001);
+    assert_approx_eq_f64!(1.0f64, 1.0001f64, 0.001);
+    
+    // Use functions for slice/prediction comparisons
+    assert_slice_approx_eq(&actual, &expected, DEFAULT_TOLERANCE, "context");
+}
+```
+
+For integration tests, use `tests/common/mod.rs` which re-exports these utilities
+plus test case loading helpers.
+
 ### Test Organization
 
 ```text
 src/
+├── testing.rs          # Test utilities (assertion helpers, tolerances)
 ├── trees/
 │   ├── node.rs         # Contains #[cfg(test)] mod tests { } at bottom
 │   ├── storage.rs      # Same — unit tests inline
 │   └── mod.rs
 │
 tests/
-├── predict_xgboost.rs  # Integration: load model, predict, compare to Python
+├── common/mod.rs       # Integration test utilities (re-exports + loaders)
+├── inference/          # XGBoost inference tests
+│   └── *.rs
+├── training/           # Linear training tests
+│   └── *.rs
 └── test-cases/
-    └── xgboost-models/ # Reference models + expected outputs
+    └── xgboost/        # Reference models + expected outputs
 ```
 
 **Why inline unit tests?** This is the Rust idiom. Benefits:
@@ -215,6 +247,22 @@ design/research/
 
 ---
 
+## Benchmarking
+
+When documenting benchmark results, use the template at `docs/benchmarks/TEMPLATE.md`.
+
+Key sections to include:
+
+- **Goal**: What question are you answering?
+- **Environment**: CPU, RAM, OS, Rust version, git commit
+- **Results**: Tables with configurations, times, throughput
+- **Analysis**: Explain why results occurred
+- **Reproducing**: Commands to reproduce
+
+Store benchmark results in `docs/benchmarks/` with filenames like `YYYY-MM-DD-<topic>.md`.
+
+---
+
 ## Commit Message Convention
 
 ```text
@@ -264,11 +312,14 @@ Refs: RFC-0007
 | High-level roadmap | `docs/ROADMAP.md` |
 | Epic details | `docs/backlog/<epic>.md` |
 | RFCs (design docs) | `docs/design/rfcs/0XXX-*.md` |
+| RFC template | `docs/design/rfcs/TEMPLATE.md` |
 | Research & deep dives | `docs/design/research/` |
 | Scratch notes | `docs/design/NOTES.md` |
 | This guide | `docs/design/CONTRIBUTING.md` |
 | Benchmarks | `docs/benchmarks/` |
+| Benchmark template | `docs/benchmarks/TEMPLATE.md` |
 | Source code | `src/` |
+| Test utilities | `src/testing.rs` |
 | Integration tests | `tests/` |
 | Test data | `tests/test-cases/` |
 | Python data generation | `tools/data_generation/` |
