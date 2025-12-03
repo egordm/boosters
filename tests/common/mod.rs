@@ -11,14 +11,14 @@ use std::path::PathBuf;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 
-// Re-export from the main crate's testing module for convenience.
-// Note: Not all re-exports may be used by all test files.
+// Re-export testing utilities for convenience
 #[allow(unused_imports)]
 pub use booste_rs::testing::{
-    assert_batch_predictions_match, assert_predictions_eq, assert_predictions_eq_eps,
-    assert_predictions_match, assert_slice_approx_eq, assert_slice_approx_eq_f64,
-    DEFAULT_TOLERANCE, DEFAULT_TOLERANCE_F64,
+    assert_slices_approx_eq, assert_slices_approx_eq_f64, format_slice_diff,
+    format_slice_diff_f64, DEFAULT_TOLERANCE, DEFAULT_TOLERANCE_F64,
 };
+#[allow(unused_imports)]
+pub use booste_rs::{assert_approx_eq, assert_approx_eq_f64};
 
 // =============================================================================
 // Test Case Loading
