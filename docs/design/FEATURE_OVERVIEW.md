@@ -257,6 +257,19 @@ paintful refactors later:
 | **Feature Bundling (EFB)** | P2 | Data structures should allow bundled feature indices; histogram building should be bundle-aware |
 | **Linear Trees** | P2 | Leaf fitting should be pluggable (constant vs linear model) |
 
+## Additional Features
+
+| Feature | Priority | Notes |
+|---------|----------|-------|
+| **Sample Weights** | P1 | Support weighted samples in quantization, histogram building, and loss computation |
+
+Sample weight support flows through:
+- **Quantization**: Weighted quantile sketch uses sample weights for bin boundaries
+- **Histogram building**: Gradient sums weighted by sample weight
+- **Loss computation**: Sample weights multiply per-row loss
+
+---
+
 ## What We Will NOT Implement
 
 | Feature | Reason |
