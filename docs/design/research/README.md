@@ -7,12 +7,19 @@ our implementation. They inform RFCs but are not prescriptive.
 
 ## Contents
 
-### By Topic
+### By Library
 
 | Folder | Description |
 |--------|-------------|
-| [gblinear/](gblinear/) | XGBoost's linear booster (elastic net) |
 | [xgboost-gbtree/](xgboost-gbtree/) | XGBoost's tree booster and optimizations |
+| [xgboost-gblinear/](xgboost-gblinear/) | XGBoost's linear booster (elastic net) |
+| [lightgbm/](lightgbm/) | LightGBM's tree learner and optimizations |
+
+### Comparative
+
+| Document | Description |
+|----------|-------------|
+| [comparison.md](comparison.md) | XGBoost vs LightGBM feature comparison |
 
 ### General
 
