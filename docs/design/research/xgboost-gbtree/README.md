@@ -1,51 +1,97 @@
 # XGBoost GBTree Research
 
-Research on XGBoost's tree-based booster and related optimizations.
+Research on XGBoost's tree-based booster implementation.
 
 ## Contents
 
-### Inference
-
-- [xgboost-inference.md](xgboost-inference.md) — How XGBoost predicts with trees
-- [array_tree_layout.md](array_tree_layout.md) — Structure-of-Arrays tree storage
-- [block_based_traversal.md](block_based_traversal.md) — Block-based prediction for cache efficiency
-- [packed_vector_leaf.md](packed_vector_leaf.md) — Multi-output leaf value packing
-- [precompute_pack_grouping.md](precompute_pack_grouping.md) — Tree-to-group mapping optimization
-
 ### Training
 
-- [quantized_features.md](quantized_features.md) — Feature quantization for histogram building
-- [quantized_data_structures/](quantized_data_structures/) — Detailed data structure research
+Core algorithms and data structures for histogram-based tree building:
+
+| Document | Description |
+|----------|-------------|
+| [Training Overview](training/overview.md) | High-level training pipeline and components |
+| [Quantization & Sketching](training/quantization.md) | How continuous features become discrete bins |
+| [Histogram Building](training/histogram_building.md) | Aggregating gradients per bin |
+| [Split Finding](training/split_finding.md) | Evaluating and selecting best splits |
+| [Row Partitioning](training/row_partitioning.md) | Assigning rows to tree nodes |
+| [Tree Growing Strategies](training/tree_growing.md) | Depth-wise vs loss-guided growth |
+| [Optimizations](training/optimizations.md) | Key XGBoost optimizations for training |
+| [GPU Training](training/gpu_training.md) | CUDA-accelerated training |
+| [Implementation Challenges](training/challenges.md) | Challenges and design decisions for booste-rs |
+
+### Inference
+
+Optimizations for fast prediction:
+
+| Document | Description |
+|----------|-------------|
+| [Inference Pipeline](inference/xgboost-inference.md) | XGBoost prediction flow |
+| [Array Tree Layout](inference/array_tree_layout.md) | SoA tree storage |
+| [Block-based Traversal](inference/block_based_traversal.md) | Cache-efficient prediction |
+| [Packed Vector Leaf](inference/packed_vector_leaf.md) | Multi-output leaf packing |
+| [Precompute Pack Grouping](inference/precompute_pack_grouping.md) | Tree-to-group mapping |
+
+### Data Structures
+
+Shared data structures used in both training and inference:
+
+| Document | Description |
+|----------|-------------|
+| [HistogramCuts](data_structures/histogram_cuts.md) | Bin boundaries for quantization |
+| [Quantized Features](data_structures/quantized_features.md) | Feature quantization concepts |
+| [GHistIndexMatrix](data_structures/gradient_index.md) | Quantized feature matrix |
+| [QuantileDMatrix](data_structures/quantile_dmatrix.md) | Streaming quantization wrapper |
+| [Storage Layouts](data_structures/storage_layouts.md) | Memory layouts for quantized data |
 
 ## Key Concepts
 
-**GBTree** is XGBoost's default booster. It builds an ensemble of decision trees
-using gradient boosting — each tree corrects the errors of previous trees.
+### Training Pipeline
 
-### Optimization Stack (Inference)
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Raw Features (f32)                                                 │
+│       ↓                                                             │
+│  Quantile Sketch → HistogramCuts (bin boundaries per feature)       │
+│       ↓                                                             │
+│  GHistIndexMatrix (quantized bins, u8/u16/u32)                      │
+│       ↓                                                             │
+│  For each boosting round:                                           │
+│    1. Compute gradients (from objective)                            │
+│    2. Build histogram for root                                      │
+│    3. Find best split for root                                      │
+│    4. While candidates exist:                                       │
+│       a. Apply splits → partition rows                              │
+│       b. Build histograms for children                              │
+│          (use subtraction trick: child = parent - sibling)          │
+│       c. Find best splits for children                              │
+│       d. Add valid candidates to queue                              │
+│    5. Update predictions                                            │
+└─────────────────────────────────────────────────────────────────────┘
+```
 
-1. **Array Tree Layout** — Store node attributes in contiguous arrays (SoA) instead
-   of per-node structs (AoS). Better cache utilization, especially on GPU.
+### Optimization Stack
 
-2. **Block Processing** — Process rows in blocks (e.g., 64 rows) rather than one
-   at a time. Amortizes setup costs, improves cache reuse.
+**Training:**
+1. **Quantization** — Convert continuous features to discrete bins (0-255)
+2. **Histogram Building** — Aggregate gradients per bin instead of per row
+3. **Histogram Subtraction** — Derive sibling histogram from parent - built
+4. **Parallel Node Processing** — Process all nodes at same depth together
 
-3. **Unrolled Traversal** — Process all rows at the same tree level together.
-   All rows do the same "go left or right" decision, enabling vectorization.
+**Inference:**
+1. **Array Tree Layout** — SoA storage for cache efficiency
+2. **Block Processing** — Process rows in blocks (e.g., 64 rows)
+3. **Unrolled Traversal** — Process all rows at same tree level together
+4. **Thread Parallelism** — Parallelize across rows or blocks
 
-4. **Thread Parallelism** — Parallelize across rows (or blocks of rows).
-   Each prediction is independent.
+## Lessons for booste-rs
 
-### Optimization Stack (Training)
+Key takeaways from this research are documented in [Lessons Learned](lessons_learned.md):
 
-1. **Quantization** — Convert continuous features to discrete bins (0-255).
-   Enables histogram building with integer indexing.
+- Algorithmic optimizations (histogram, subtraction) provide the biggest gains
+- Separate training and inference tree representations
+- Use f32 gradients and u8 bin indices by default
+- Block-based parallelism with Rayon
+- Builder pattern for configuration
 
-2. **Histogram Building** — Aggregate gradients per bin instead of per row.
-   Reduces split-finding from O(n) to O(bins).
-
-3. **Histogram Subtraction** — For a binary split, child = parent - sibling.
-   Only build histogram for one child, derive the other for free.
-
-4. **Level-wise Growth** — Grow all nodes at the same depth simultaneously.
-   Better parallelization than leaf-wise.
+See the full document for detailed recommendations.
