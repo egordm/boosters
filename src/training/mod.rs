@@ -58,6 +58,7 @@ mod logger;
 mod loss;
 mod metric;
 pub mod quantize;
+pub mod split;
 
 pub use buffer::GradientBuffer;
 pub use callback::EarlyStopping;
@@ -74,3 +75,6 @@ pub use metric::{
     MulticlassLogLoss, QuantileLoss as QuantileMetric, Rmse, SimpleMetric,
 };
 pub use quantize::{BinCuts, BinIndex, QuantizedMatrix, Quantizer};
+pub use split::{
+    GainParams, GreedySplitFinder, SplitFinder, SplitInfo, leaf_objective, leaf_weight, split_gain,
+};
