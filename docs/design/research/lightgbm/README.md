@@ -37,23 +37,24 @@ Core algorithms and data structures for histogram-based tree building:
 |----------|-------------|
 | [Loss Functions](objectives.md) | Comparison of loss functions across XGBoost/LightGBM/booste-rs |
 
-### Data Structures
+### Inference
 
-Key data structures (to be documented):
+Prediction pipeline and optimizations:
+
+| Document | Description |
+|----------|-------------|
+| [Prediction](inference/prediction.md) | Inference pipeline, batch processing, early stopping |
+| [Data Structures](inference/data_structures.md) | Tree, BinMapper, Dataset structure comparison |
+
+### Data Structures (Training)
+
+Key data structures for training (to be documented):
 
 | Document | Description |
 |----------|-------------|
 | [BinMapper](data_structures/bin_mapper.md) | Feature binning and quantization |
 | [Dataset](data_structures/dataset.md) | Training data storage |
 | [Tree](data_structures/tree.md) | Tree structure |
-
-### Inference
-
-Prediction (to be documented):
-
-| Document | Description |
-|----------|-------------|
-| [Prediction](inference/prediction.md) | Inference pipeline |
 
 ## Key Concepts
 
