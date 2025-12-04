@@ -9,6 +9,13 @@
 //! - [`EarlyStopping`]: Callback for stopping training when validation metric plateaus
 //! - [`TrainingLogger`]: Structured logging with verbosity levels
 //!
+//! ## Quantization (RFC-0011)
+//!
+//! The [`quantize`] module provides histogram-based training infrastructure:
+//! - [`BinCuts`][quantize::BinCuts]: Bin boundaries for all features
+//! - [`QuantizedMatrix`][quantize::QuantizedMatrix]: Quantized feature storage
+//! - [`Quantizer`][quantize::Quantizer]: Transforms raw features to bins
+//!
 //! ## Gradient Storage
 //!
 //! Gradients are stored in Structure-of-Arrays (SoA) layout via [`GradientBuffer`]:
@@ -42,16 +49,21 @@
 //! - [`EvalSet`]: Named dataset for evaluation during training
 //! - [`SimpleMetric`]: Helper trait for single-output metrics
 //!
-//! See RFC-0009 for design rationale.
+//! See RFC-0009 for design rationale, RFC-0011 for quantization.
 
 mod buffer;
 mod callback;
+pub mod histogram;
 mod logger;
 mod loss;
 mod metric;
+pub mod quantize;
 
 pub use buffer::GradientBuffer;
 pub use callback::EarlyStopping;
+pub use histogram::{
+    ChildSide, FeatureHistogram, HistogramBuilder, HistogramSubtractor, NodeHistogram,
+};
 pub use logger::{TrainingLogger, Verbosity};
 pub use loss::{
     HingeLoss, LogisticLoss, Loss, MulticlassLoss, PseudoHuberLoss, QuantileLoss, SoftmaxLoss,
@@ -61,3 +73,4 @@ pub use metric::{
     Accuracy, Auc, EvalMetric, EvalSet, LogLoss, Mae, Mape, Metric, MulticlassAccuracy,
     MulticlassLogLoss, QuantileLoss as QuantileMetric, Rmse, SimpleMetric,
 };
+pub use quantize::{BinCuts, BinIndex, QuantizedMatrix, Quantizer};
