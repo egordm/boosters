@@ -57,6 +57,7 @@ pub mod histogram;
 mod logger;
 mod loss;
 mod metric;
+pub mod partition;
 pub mod quantize;
 pub mod split;
 
@@ -74,6 +75,7 @@ pub use metric::{
     Accuracy, Auc, EvalMetric, EvalSet, LogLoss, Mae, Mape, Metric, MulticlassAccuracy,
     MulticlassLogLoss, QuantileLoss as QuantileMetric, Rmse, SimpleMetric,
 };
+pub use partition::RowPartitioner;
 pub use quantize::{BinCuts, BinIndex, QuantizedMatrix, Quantizer};
 pub use split::{
     GainParams, GreedySplitFinder, SplitFinder, SplitInfo, leaf_objective, leaf_weight, split_gain,
