@@ -29,6 +29,13 @@ Core algorithms and data structures for histogram-based tree building:
 | [GOSS Sampling](training/goss.md) | Gradient-based one-side sampling |
 | [Histogram Building](training/histogram_building.md) | Gradient histogram construction |
 | [Categorical Features](training/categorical_features.md) | Native categorical handling |
+| [Linear Trees](training/linear_trees.md) | Linear models in leaves |
+
+### Objectives
+
+| Document | Description |
+|----------|-------------|
+| [Loss Functions](objectives.md) | Comparison of loss functions across XGBoost/LightGBM/booste-rs |
 
 ### Data Structures
 
