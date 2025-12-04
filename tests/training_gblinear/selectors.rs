@@ -7,61 +7,12 @@
 //! - Greedy (gradient-based)
 //! - Thrifty (cached greedy)
 
-use super::{load_test_data, load_train_data, ColMatrix};
+use super::{
+    compute_multiclass_accuracy, compute_test_rmse_default, load_test_data, load_train_data,
+};
 use booste_rs::data::DataMatrix;
 use booste_rs::linear::training::{FeatureSelectorKind, LinearTrainer, LinearTrainerConfig};
-use booste_rs::linear::LinearModel;
-use booste_rs::training::{
-    Metric, MulticlassAccuracy, Rmse, SoftmaxLoss, SquaredLoss, Verbosity,
-};
-
-// =============================================================================
-// Helper Functions for Model Evaluation
-// =============================================================================
-
-/// Get predictions from a model for all rows in the data.
-fn get_predictions(model: &LinearModel, data: &ColMatrix<f32>) -> Vec<f32> {
-    let num_groups = model.num_groups();
-    let num_features = model.num_features();
-    let base_score = vec![0.0f32; num_groups];
-    let mut predictions = Vec::with_capacity(data.num_rows() * num_groups);
-
-    for i in 0..data.num_rows() {
-        let row: Vec<f32> = (0..num_features)
-            .map(|j| *data.get(i, j).unwrap_or(&0.0))
-            .collect();
-        let preds = model.predict_row(&row, &base_score);
-        predictions.extend(preds);
-    }
-    predictions
-}
-
-/// Compute RMSE for a single-output model using the Rmse metric.
-fn compute_test_rmse(model: &LinearModel, data: &ColMatrix<f32>, labels: &[f32]) -> f32 {
-    let predictions = get_predictions(model, data);
-    Rmse.evaluate(&predictions, labels, 1) as f32
-}
-
-/// Compute multiclass accuracy using argmax.
-fn compute_test_accuracy(model: &LinearModel, data: &ColMatrix<f32>, labels: &[f32]) -> f32 {
-    let num_groups = model.num_groups();
-    let predictions = get_predictions(model, data);
-
-    // Convert to predicted class indices via argmax
-    let pred_classes: Vec<f32> = predictions
-        .chunks(num_groups)
-        .map(|preds| {
-            preds
-                .iter()
-                .enumerate()
-                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-                .map(|(idx, _)| idx as f32)
-                .unwrap_or(0.0)
-        })
-        .collect();
-
-    MulticlassAccuracy.evaluate(&pred_classes, labels, 1) as f32
-}
+use booste_rs::training::{SoftmaxLoss, SquaredLoss, Verbosity};
 
 // =============================================================================
 // Feature Selector Integration Tests
@@ -99,7 +50,7 @@ fn train_all_selectors_regression() {
         ..Default::default()
     };
     let shuffle_model = LinearTrainer::new(shuffle_config).train(&data, &labels, &SquaredLoss);
-    let shuffle_rmse = compute_test_rmse(&shuffle_model, &test_data, &test_labels);
+    let shuffle_rmse = compute_test_rmse_default(&shuffle_model, &test_data, &test_labels);
 
     println!("Shuffle RMSE: {:.4}", shuffle_rmse);
 
@@ -117,7 +68,7 @@ fn train_all_selectors_regression() {
         };
 
         let model = LinearTrainer::new(config).train(&data, &labels, &SquaredLoss);
-        let rmse = compute_test_rmse(&model, &test_data, &test_labels);
+        let rmse = compute_test_rmse_default(&model, &test_data, &test_labels);
 
         println!("{} RMSE: {:.4}", name, rmse);
 
@@ -168,7 +119,7 @@ fn train_all_selectors_multiclass() {
     let loss = SoftmaxLoss::new(num_classes);
     let shuffle_model =
         LinearTrainer::new(shuffle_config).train_multiclass(&data, &labels, &loss);
-    let shuffle_acc = compute_test_accuracy(&shuffle_model, &test_data, &test_labels);
+    let shuffle_acc = compute_multiclass_accuracy(&shuffle_model, &test_data, &test_labels);
 
     println!("Shuffle accuracy: {:.4}", shuffle_acc);
 
@@ -186,7 +137,7 @@ fn train_all_selectors_multiclass() {
         };
 
         let model = LinearTrainer::new(config).train_multiclass(&data, &labels, &loss);
-        let acc = compute_test_accuracy(&model, &test_data, &test_labels);
+        let acc = compute_multiclass_accuracy(&model, &test_data, &test_labels);
 
         println!("{} accuracy: {:.4}", name, acc);
 
@@ -281,7 +232,7 @@ fn train_thrifty_selector_convergence() {
     };
 
     let model = LinearTrainer::new(thrifty_config).train(&data, &labels, &SquaredLoss);
-    let rmse = compute_test_rmse(&model, &test_data, &test_labels);
+    let rmse = compute_test_rmse_default(&model, &test_data, &test_labels);
 
     println!("Thrifty RMSE: {:.4}", rmse);
 

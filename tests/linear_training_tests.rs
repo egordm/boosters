@@ -7,4 +7,4 @@
 //! - `selectors`: Feature selector tests
 //! - `loss_functions`: Alternative loss function tests
 
-mod linear_training;
+mod training_gblinear;
