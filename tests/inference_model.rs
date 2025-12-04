@@ -181,7 +181,6 @@ fn model_predict_raw_regression() {
         1,
     );
 
-    assert_eq!(output.shape(), expected_output.shape());
     assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 }
 
@@ -201,7 +200,6 @@ fn model_predict_raw_binary() {
         1,
     );
 
-    assert_eq!(output.shape(), expected_output.shape());
     assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 }
 
@@ -217,7 +215,6 @@ fn model_predict_raw_multiclass() {
     let expected_output =
         expected_multigroup_output(&expected.predictions, expected.num_class as usize);
 
-    assert_eq!(output.shape(), expected_output.shape());
     assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 }
 
@@ -237,7 +234,6 @@ fn model_predict_regression_transform() {
     // For regression, transformed = raw (no transform)
     let expected_output = expected_scalar_output(&expected.predictions_transformed);
 
-    assert_eq!(output.shape(), expected_output.shape());
     assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 }
 
@@ -253,7 +249,6 @@ fn model_predict_binary_sigmoid() {
     // Binary logistic should apply sigmoid
     let expected_output = expected_scalar_output(&expected.predictions_transformed);
 
-    assert_eq!(output.shape(), expected_output.shape());
     assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 
     // Verify values are probabilities (0-1)
@@ -279,7 +274,6 @@ fn model_predict_multiclass_softmax() {
     let expected_output =
         expected_multigroup_output(&expected.predictions_transformed, expected.num_class as usize);
 
-    assert_eq!(output.shape(), expected_output.shape());
     assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 
     // Verify probabilities sum to 1 for each row
@@ -303,7 +297,6 @@ fn model_predict_with_missing_values() {
 
     let expected_output = expected_scalar_output(&expected.predictions_transformed);
 
-    assert_eq!(output.shape(), expected_output.shape());
     assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 }
 
@@ -341,7 +334,6 @@ fn model_predict_binary_with_missing() {
 
     let expected_output = expected_scalar_output(&expected.predictions_transformed);
 
-    assert_eq!(output.shape(), expected_output.shape());
     assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 
     // Verify values are probabilities (0-1)
@@ -365,7 +357,6 @@ fn model_predict_multiclass_with_missing() {
     let expected_output =
         expected_multigroup_output(&expected.predictions_transformed, expected.num_class as usize);
 
-    assert_eq!(output.shape(), expected_output.shape());
     assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 
     // Verify probabilities sum to 1 for each row
@@ -389,7 +380,6 @@ fn model_predict_deep_trees() {
 
     let expected_output = expected_scalar_output(&expected.predictions_transformed);
 
-    assert_eq!(output.shape(), expected_output.shape());
     assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 }
 
@@ -404,7 +394,6 @@ fn model_predict_single_tree() {
 
     let expected_output = expected_scalar_output(&expected.predictions_transformed);
 
-    assert_eq!(output.shape(), expected_output.shape());
     assert_eq!(model.booster.num_trees(), 1);
     assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 }
@@ -420,7 +409,6 @@ fn model_predict_many_trees() {
 
     let expected_output = expected_scalar_output(&expected.predictions_transformed);
 
-    assert_eq!(output.shape(), expected_output.shape());
     assert_eq!(model.booster.num_trees(), 50);
     assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 }
@@ -438,7 +426,6 @@ fn model_predict_wide_features() {
 
     let expected_output = expected_scalar_output(&expected.predictions_transformed);
 
-    assert_eq!(output.shape(), expected_output.shape());
     assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 }
 
@@ -466,7 +453,6 @@ fn model_predict_dart_regression() {
 
     let expected_output = expected_scalar_output(&expected.predictions_transformed);
 
-    assert_eq!(output.shape(), expected_output.shape());
     assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 }
 
@@ -482,6 +468,5 @@ fn model_predict_dart_raw_matches_expected() {
     // For regression, raw and transformed should be the same
     let expected_output = expected_scalar_output(&expected.predictions);
 
-    assert_eq!(output.shape(), expected_output.shape());
     assert_abs_diff_eq!(output, expected_output, epsilon = TOLERANCE as f32);
 }

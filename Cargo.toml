@@ -41,10 +41,22 @@ simd = ["dep:wide"]
 bench-xgboost = ["dep:xgb", "xgboost-compat"]
 
 [[bench]]
-name = "prediction"
+name = "prediction_core"
 harness = false
 
 [[bench]]
-name = "linear_training"
+name = "prediction_strategies"
+harness = false
+
+[[bench]]
+name = "prediction_parallel"
+harness = false
+
+[[bench]]
+name = "training_core"
+harness = false
+
+[[bench]]
+name = "training_access_patterns"
 harness = false
 

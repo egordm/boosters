@@ -12,14 +12,14 @@
 
 #![cfg(feature = "xgboost-compat")]
 
-mod common;
+mod test_data;
 
 use std::fs::File;
 use std::path::PathBuf;
 
 use booste_rs::compat::XgbModel;
 
-use common::{TestExpected, TestInput, DEFAULT_TOLERANCE_F64};
+use test_data::{TestExpected, TestInput, DEFAULT_TOLERANCE_F64};
 
 // =============================================================================
 // Test Case Loading

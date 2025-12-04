@@ -4,50 +4,9 @@
 //! - PseudoHuberLoss (robust regression)
 //! - HingeLoss (SVM-style binary classification)
 
-use super::{load_test_data, load_train_data, ColMatrix};
+use super::{compute_binary_accuracy, compute_test_rmse_default, load_test_data, load_train_data};
 use booste_rs::linear::training::{LinearTrainer, LinearTrainerConfig};
-use booste_rs::linear::LinearModel;
-use booste_rs::training::{
-    Accuracy, HingeLoss, LogisticLoss, Metric, PseudoHuberLoss, Rmse, SquaredLoss, Verbosity,
-};
-
-// =============================================================================
-// Helper Functions for Model Evaluation
-// =============================================================================
-
-/// Get predictions from a model for all rows in the data.
-fn get_predictions(model: &LinearModel, data: &ColMatrix<f32>) -> Vec<f32> {
-    let num_groups = model.num_groups();
-    let num_features = model.num_features();
-    let base_score = vec![0.0f32; num_groups];
-    let mut predictions = Vec::with_capacity(data.num_rows() * num_groups);
-
-    for i in 0..data.num_rows() {
-        let row: Vec<f32> = (0..num_features)
-            .map(|j| *data.get(i, j).unwrap_or(&0.0))
-            .collect();
-        let preds = model.predict_row(&row, &base_score);
-        predictions.extend(preds);
-    }
-    predictions
-}
-
-/// Compute RMSE for a single-output model using the Rmse metric.
-fn compute_test_rmse(model: &LinearModel, data: &ColMatrix<f32>, labels: &[f32]) -> f32 {
-    let predictions = get_predictions(model, data);
-    Rmse.evaluate(&predictions, labels, 1) as f32
-}
-
-/// Compute binary classification accuracy with a threshold.
-fn compute_binary_accuracy(
-    model: &LinearModel,
-    data: &ColMatrix<f32>,
-    labels: &[f32],
-    threshold: f32,
-) -> f32 {
-    let predictions = get_predictions(model, data);
-    Accuracy::with_threshold(threshold).evaluate(&predictions, labels, 1) as f32
-}
+use booste_rs::training::{HingeLoss, LogisticLoss, PseudoHuberLoss, SquaredLoss, Verbosity};
 
 // =============================================================================
 // PseudoHuberLoss Integration Tests
@@ -93,8 +52,8 @@ fn train_pseudo_huber_regression() {
     let sq_model = LinearTrainer::new(config).train(&data, &labels, &SquaredLoss);
 
     // Compute RMSE on test set for both
-    let ph_rmse = compute_test_rmse(&model, &test_data, &test_labels);
-    let sq_rmse = compute_test_rmse(&sq_model, &test_data, &test_labels);
+    let ph_rmse = compute_test_rmse_default(&model, &test_data, &test_labels);
+    let sq_rmse = compute_test_rmse_default(&sq_model, &test_data, &test_labels);
 
     println!("PseudoHuber (slope=5.0) RMSE: {:.4}", ph_rmse);
     println!("SquaredLoss RMSE: {:.4}", sq_rmse);
@@ -145,9 +104,9 @@ fn train_pseudo_huber_with_slope() {
     // Train with squared for reference
     let sq_model = LinearTrainer::new(config).train(&data, &labels, &SquaredLoss);
 
-    let moderate_rmse = compute_test_rmse(&moderate_slope_model, &test_data, &test_labels);
-    let large_rmse = compute_test_rmse(&large_slope_model, &test_data, &test_labels);
-    let sq_rmse = compute_test_rmse(&sq_model, &test_data, &test_labels);
+    let moderate_rmse = compute_test_rmse_default(&moderate_slope_model, &test_data, &test_labels);
+    let large_rmse = compute_test_rmse_default(&large_slope_model, &test_data, &test_labels);
+    let sq_rmse = compute_test_rmse_default(&sq_model, &test_data, &test_labels);
 
     println!("Moderate slope (2.0) RMSE: {:.4}", moderate_rmse);
     println!("Large slope (10.0) RMSE: {:.4}", large_rmse);

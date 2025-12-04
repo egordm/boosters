@@ -163,8 +163,7 @@ fn example_test() {
 }
 ```
 
-For integration tests, use `tests/common/mod.rs` which re-exports these utilities
-plus test case loading helpers.
+For integration tests, use `tests/test_data.rs` for test case loading helpers.
 
 ### Test Organization
 
@@ -177,13 +176,13 @@ src/
 │   └── mod.rs
 │
 tests/
-├── common/mod.rs       # Integration test utilities (re-exports + loaders)
-├── inference/          # XGBoost inference tests
+├── inference_model.rs      # Forest/tree inference tests
+├── inference_xgboost.rs    # XGBoost compatibility tests
+├── training_gblinear/      # GBLinear training tests
 │   └── *.rs
-├── training/           # Linear training tests
-│   └── *.rs
+├── test_data.rs            # Test case loading utilities
 └── test-cases/
-    └── xgboost/        # Reference models + expected outputs
+    └── xgboost/            # Reference models + expected outputs
 ```
 
 **Why inline unit tests?** This is the Rust idiom. Benefits:
@@ -321,6 +320,7 @@ Refs: RFC-0007
 | Source code | `src/` |
 | Test utilities | `src/testing.rs` |
 | Integration tests | `tests/` |
+| Test data loader | `tests/test_data.rs` |
 | Test data | `tests/test-cases/` |
 | Python data generation | `tools/data_generation/` |
 
