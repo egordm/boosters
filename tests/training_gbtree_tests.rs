@@ -187,6 +187,7 @@ fn train_and_predict(tc: &TestCase) -> TrainResult {
         learning_rate: tc.config.eta,
         min_samples_split: 1,
         min_samples_leaf: 1,
+        ..Default::default()
     };
 
     let params = TrainerParams {
