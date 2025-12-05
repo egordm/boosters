@@ -31,16 +31,6 @@ Items here are parked until there's capacity or user demand.
 
 ---
 
-## LightGBM Support
-
-- Research LightGBM model format
-- JSON/binary loader
-- Linear trees (leaf contains linear model)
-
-**Note**: Research after GBTree training to understand abstraction needs.
-
----
-
 ## Python Bindings
 
 - `booste-rs-python` crate (PyO3)

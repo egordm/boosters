@@ -27,9 +27,14 @@
 │  Story 9: Test Data Generation          [x] COMPLETE            │
 │  Story 8, 10-12: Validation & Polish    [ ] PENDING             │
 │                                                                  │
+│  LightGBM Compatibility                 📋 PLANNED              │
+│  ════════════════════════════════════════════════               │
+│  Model loading, inference validation, training baselines        │
+│  (Complete before GBTree Training Phase 2)                      │
+│                                                                  │
 │  Future (backlog)                                                │
 │  ════════════════                                                │
-│  - Sparse data, LightGBM, Python bindings                       │
+│  - Sparse data, Python bindings                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -42,7 +47,8 @@
 | [GBTree Inference](backlog/01-gbtree-inference.md) | ✅ Complete | Tree inference, 3x faster than XGBoost C++ |
 | [GBLinear](backlog/02-gblinear.md) | ⏸️ Paused | Linear booster, core training complete |
 | [GBTree Training](backlog/03-gbtree-training.md) | 🔄 Active | Histogram-based tree training |
-| [Future](backlog/99-future.md) | 📋 Backlog | Sparse data, LightGBM, bindings, etc. |
+| [LightGBM Compat](backlog/04-lightgbm-compat.md) | 📋 Planned | Model loading, leaf-wise validation |
+| [Future](backlog/99-future.md) | 📋 Backlog | Sparse data, Python bindings, etc. |
 
 ---
 
