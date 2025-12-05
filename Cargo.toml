@@ -24,8 +24,9 @@ serde_json = { version = "1.0", optional = true }
 serde_with = { version = "3.16.0", features = ["json"], optional = true }
 
 # Optional: XGBoost C++ bindings for benchmark comparison
+# Fork with reset() method for accurate benchmarking (clears internal caches)
 # Requires: libclang-dev (Debian/Ubuntu), clang (Arch), or Xcode (macOS)
-xgb = { version = "3", optional = true }
+xgb = { git = "https://github.com/egordm/rust-xgboost-bindings.git", optional = true }
 
 [dev-dependencies]
 glob = "0.3.3"
@@ -58,5 +59,9 @@ harness = false
 
 [[bench]]
 name = "training_access_patterns"
+harness = false
+
+[[bench]]
+name = "training_gbtree"
 harness = false
 

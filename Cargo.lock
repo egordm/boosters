@@ -68,7 +68,7 @@ dependencies = [
  "bitflags",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -255,7 +255,7 @@ dependencies = [
  "clap",
  "criterion-plot",
  "is-terminal",
- "itertools 0.10.5",
+ "itertools",
  "num-traits",
  "once_cell",
  "oorandom",
@@ -276,7 +276,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6b50826342786a51a89e2da3a28f1c32b06e387201bc2d19791f622c673706b1"
 dependencies = [
  "cast",
- "itertools 0.10.5",
+ "itertools",
 ]
 
 [[package]]
@@ -1001,15 +1001,6 @@ name = "itertools"
 version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
 dependencies = [
  "either",
 ]
@@ -2476,8 +2467,7 @@ checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
 [[package]]
 name = "xgb"
 version = "3.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d693b95b99bc31a170746ffbe545230025efb76c322375b925c97e4f1bc8f666"
+source = "git+https://github.com/egordm/rust-xgboost-bindings.git#9e0afe80ee2cda6a87aa1a34e7cff315be4ef732"
 dependencies = [
  "derive_builder",
  "indexmap 2.12.0",
@@ -2490,8 +2480,7 @@ dependencies = [
 [[package]]
 name = "xgboost_lib-sys"
 version = "3.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8aa7895696b47dfeb6d3b493152f421fe5f79eb8daf4fb567bcdd70795eb5842"
+source = "git+https://github.com/egordm/rust-xgboost-bindings.git#9e0afe80ee2cda6a87aa1a34e7cff315be4ef732"
 dependencies = [
  "bindgen",
  "dunce",
