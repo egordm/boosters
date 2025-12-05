@@ -62,11 +62,11 @@ struct TestExpected {
 // =============================================================================
 
 fn gbtree_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test-cases/xgboost/gbtree")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test-cases/xgboost/gbtree/inference")
 }
 
 fn dart_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test-cases/xgboost/dart")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test-cases/xgboost/dart/inference")
 }
 
 fn load_from_dir(dir: &std::path::Path, name: &str) -> (XgbModel, TestInput, TestExpected) {

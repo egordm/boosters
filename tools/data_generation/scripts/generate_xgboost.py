@@ -22,16 +22,45 @@ import xgboost as xgb
 
 from .common import nan_to_null, save_test_input, save_test_expected, print_success
 
-# Output directories
+# =============================================================================
+# Output Directories
+# =============================================================================
+# Structure:
+#   xgboost/
+#   ├── gbtree/
+#   │   ├── inference/   # model + input + expected predictions
+#   │   └── training/    # train_data + labels + config + xgb_predictions
+#   ├── gblinear/
+#   │   ├── inference/
+#   │   └── training/
+#   └── dart/
+#       └── inference/
+
 BASE_DIR = Path(__file__).parents[3] / "tests" / "test-cases" / "xgboost"
-GBTREE_DIR = BASE_DIR / "gbtree"
-GBLINEAR_DIR = BASE_DIR / "gblinear"
-DART_DIR = BASE_DIR / "dart"
-TRAINING_DIR = BASE_DIR / "training"
+
+# Inference directories (model + input + expected)
+GBTREE_INFERENCE_DIR = BASE_DIR / "gbtree" / "inference"
+GBLINEAR_INFERENCE_DIR = BASE_DIR / "gblinear" / "inference"
+DART_INFERENCE_DIR = BASE_DIR / "dart" / "inference"
+
+# Training directories (train data + labels + config + xgb predictions)
+GBTREE_TRAINING_DIR = BASE_DIR / "gbtree" / "training"
+GBLINEAR_TRAINING_DIR = BASE_DIR / "gblinear" / "training"
+
+# Benchmark models
 BENCH_DIR = Path(__file__).parents[3] / "tests" / "test-cases" / "benchmark"
 
+# Legacy aliases for backward compatibility
+GBTREE_DIR = GBTREE_INFERENCE_DIR
+GBLINEAR_DIR = GBLINEAR_INFERENCE_DIR
+DART_DIR = DART_INFERENCE_DIR
+TRAINING_DIR = GBLINEAR_TRAINING_DIR  # Legacy: gblinear training
+
 # Ensure directories exist
-for d in [GBTREE_DIR, GBLINEAR_DIR, DART_DIR, TRAINING_DIR, BENCH_DIR]:
+for d in [
+    GBTREE_INFERENCE_DIR, GBLINEAR_INFERENCE_DIR, DART_INFERENCE_DIR,
+    GBTREE_TRAINING_DIR, GBLINEAR_TRAINING_DIR, BENCH_DIR
+]:
     d.mkdir(parents=True, exist_ok=True)
 
 
@@ -1084,9 +1113,353 @@ def generate_training_multi_quantile():
     print_success("training/multi_quantile", len(X_train))
 
 
+# =============================================================================
+# GBTree Training Test Cases
+# =============================================================================
+
+
+def save_gbtree_training_case(
+    name: str,
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    booster: xgb.Booster,
+    config: dict,
+    X_test: np.ndarray | None = None,
+    y_test: np.ndarray | None = None,
+    train_predictions: np.ndarray | None = None,
+):
+    """Save a complete GBTree training test case.
+    
+    Args:
+        name: Test case name
+        X_train: Training features
+        y_train: Training labels
+        booster: Trained XGBoost booster
+        config: Training configuration
+        X_test: Optional held-out test features
+        y_test: Optional held-out test labels
+        train_predictions: Optional training set predictions
+    """
+    output_dir = GBTREE_TRAINING_DIR
+    
+    # Save training data
+    train_data_path = output_dir / f"{name}.train_data.json"
+    with open(train_data_path, 'w') as f:
+        json.dump({
+            "num_rows": int(X_train.shape[0]),
+            "num_features": int(X_train.shape[1]),
+            "data": nan_to_null(X_train.flatten().tolist()),
+        }, f, indent=2)
+    
+    # Save labels
+    labels_path = output_dir / f"{name}.train_labels.json"
+    with open(labels_path, 'w') as f:
+        json.dump({
+            "labels": y_train.tolist(),
+        }, f, indent=2)
+    
+    # Save model
+    model_path = output_dir / f"{name}.model.json"
+    booster.save_model(str(model_path))
+    
+    # Save config
+    config_path = output_dir / f"{name}.config.json"
+    with open(config_path, 'w') as f:
+        json.dump(config, f, indent=2)
+    
+    # Get training predictions
+    dtrain = xgb.DMatrix(X_train, label=y_train)
+    train_preds = booster.predict(dtrain, output_margin=True)
+    
+    train_preds_path = output_dir / f"{name}.train_predictions.json"
+    with open(train_preds_path, 'w') as f:
+        json.dump({
+            "predictions": train_preds.tolist(),
+        }, f, indent=2)
+    
+    # Save held-out test data and predictions if provided
+    if X_test is not None and y_test is not None:
+        test_data_path = output_dir / f"{name}.test_data.json"
+        with open(test_data_path, 'w') as f:
+            json.dump({
+                "num_rows": int(X_test.shape[0]),
+                "num_features": int(X_test.shape[1]),
+                "data": nan_to_null(X_test.flatten().tolist()),
+            }, f, indent=2)
+        
+        test_labels_path = output_dir / f"{name}.test_labels.json"
+        with open(test_labels_path, 'w') as f:
+            json.dump({
+                "labels": y_test.tolist(),
+            }, f, indent=2)
+        
+        # Get XGBoost predictions on test data
+        dtest = xgb.DMatrix(X_test)
+        xgb_predictions = booster.predict(dtest, output_margin=True)
+        
+        predictions_path = output_dir / f"{name}.test_predictions.json"
+        with open(predictions_path, 'w') as f:
+            json.dump({
+                "predictions": xgb_predictions.tolist(),
+            }, f, indent=2)
+        
+        # Compute test metrics (handle multiclass case)
+        metrics = {"num_trees": int(booster.num_boosted_rounds())}
+        
+        if xgb_predictions.ndim == 1:
+            # Regression or binary: compute RMSE
+            test_rmse = np.sqrt(np.mean((xgb_predictions - y_test) ** 2))
+            metrics["test_rmse"] = float(test_rmse)
+        else:
+            # Multiclass: compute accuracy
+            pred_classes = np.argmax(xgb_predictions, axis=1)
+            accuracy = np.mean(pred_classes == y_test)
+            metrics["test_accuracy"] = float(accuracy)
+        
+        metrics_path = output_dir / f"{name}.metrics.json"
+        with open(metrics_path, 'w') as f:
+            json.dump(metrics, f, indent=2)
+    
+    print_success(f"training/gbtree/{name}", len(X_train))
+
+
+def generate_gbtree_training_regression_simple():
+    """Simple regression: 100 samples, 5 features, 20 trees, depth 3."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=100, n_features=5, noise=5.0, random_state=42)
+    X = X.astype(np.float32)
+    y = y.astype(np.float32)
+    
+    X_train, X_test = X[:80], X[80:]
+    y_train, y_test = y[:80], y[80:]
+    
+    dtrain = xgb.DMatrix(X_train, label=y_train)
+    
+    config = {
+        'objective': 'reg:squarederror',
+        'booster': 'gbtree',
+        'tree_method': 'hist',
+        'max_depth': 3,
+        'eta': 0.3,
+        'lambda': 1.0,
+        'alpha': 0.0,
+        'min_child_weight': 1.0,
+        'num_boost_round': 20,
+    }
+    
+    params = {k: v for k, v in config.items() if k != 'num_boost_round'}
+    booster = xgb.train(params, dtrain, num_boost_round=config['num_boost_round'])
+    
+    save_gbtree_training_case("regression_simple", X_train, y_train, booster, config, X_test, y_test)
+
+
+def generate_gbtree_training_regression_deep():
+    """Deeper trees: max_depth=6, 50 trees."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=200, n_features=10, noise=10.0, random_state=42)
+    X = X.astype(np.float32)
+    y = y.astype(np.float32)
+    
+    X_train, X_test = X[:160], X[160:]
+    y_train, y_test = y[:160], y[160:]
+    
+    dtrain = xgb.DMatrix(X_train, label=y_train)
+    
+    config = {
+        'objective': 'reg:squarederror',
+        'booster': 'gbtree',
+        'tree_method': 'hist',
+        'max_depth': 6,
+        'eta': 0.1,
+        'lambda': 1.0,
+        'alpha': 0.0,
+        'min_child_weight': 1.0,
+        'num_boost_round': 50,
+    }
+    
+    params = {k: v for k, v in config.items() if k != 'num_boost_round'}
+    booster = xgb.train(params, dtrain, num_boost_round=config['num_boost_round'])
+    
+    save_gbtree_training_case("regression_deep", X_train, y_train, booster, config, X_test, y_test)
+
+
+def generate_gbtree_training_regression_regularized():
+    """Regression with L1 + L2 regularization."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=200, n_features=20, noise=10.0, random_state=42)
+    X = X.astype(np.float32)
+    y = y.astype(np.float32)
+    
+    X_train, X_test = X[:160], X[160:]
+    y_train, y_test = y[:160], y[160:]
+    
+    dtrain = xgb.DMatrix(X_train, label=y_train)
+    
+    config = {
+        'objective': 'reg:squarederror',
+        'booster': 'gbtree',
+        'tree_method': 'hist',
+        'max_depth': 4,
+        'eta': 0.2,
+        'lambda': 5.0,  # Strong L2
+        'alpha': 2.0,   # Some L1
+        'min_child_weight': 5.0,
+        'gamma': 1.0,   # Min split gain
+        'num_boost_round': 50,
+    }
+    
+    params = {k: v for k, v in config.items() if k != 'num_boost_round'}
+    booster = xgb.train(params, dtrain, num_boost_round=config['num_boost_round'])
+    
+    save_gbtree_training_case("regression_regularized", X_train, y_train, booster, config, X_test, y_test)
+
+
+def generate_gbtree_training_binary():
+    """Binary logistic classification with trees."""
+    np.random.seed(42)
+    X, y = make_classification(
+        n_samples=200, n_features=10, n_informative=8,
+        n_redundant=0, n_repeated=0, random_state=42
+    )
+    X = X.astype(np.float32)
+    y = y.astype(np.float32)
+    
+    X_train, X_test = X[:160], X[160:]
+    y_train, y_test = y[:160], y[160:]
+    
+    dtrain = xgb.DMatrix(X_train, label=y_train)
+    
+    config = {
+        'objective': 'binary:logistic',
+        'booster': 'gbtree',
+        'tree_method': 'hist',
+        'max_depth': 4,
+        'eta': 0.2,
+        'lambda': 1.0,
+        'alpha': 0.0,
+        'min_child_weight': 1.0,
+        'num_boost_round': 30,
+    }
+    
+    params = {k: v for k, v in config.items() if k != 'num_boost_round'}
+    booster = xgb.train(params, dtrain, num_boost_round=config['num_boost_round'])
+    
+    save_gbtree_training_case("binary_classification", X_train, y_train, booster, config, X_test, y_test)
+
+
+def generate_gbtree_training_multiclass():
+    """Multiclass softmax classification."""
+    np.random.seed(42)
+    X, y = make_classification(
+        n_samples=300, n_features=10, n_informative=8,
+        n_redundant=0, n_repeated=0, n_classes=3,
+        n_clusters_per_class=1, random_state=42
+    )
+    X = X.astype(np.float32)
+    y = y.astype(np.float32)
+    
+    X_train, X_test = X[:240], X[240:]
+    y_train, y_test = y[:240], y[240:]
+    
+    dtrain = xgb.DMatrix(X_train, label=y_train)
+    
+    config = {
+        'objective': 'multi:softprob',
+        'num_class': 3,
+        'booster': 'gbtree',
+        'tree_method': 'hist',
+        'max_depth': 4,
+        'eta': 0.2,
+        'lambda': 1.0,
+        'alpha': 0.0,
+        'min_child_weight': 1.0,
+        'num_boost_round': 30,
+    }
+    
+    params = {k: v for k, v in config.items() if k != 'num_boost_round'}
+    booster = xgb.train(params, dtrain, num_boost_round=config['num_boost_round'])
+    
+    save_gbtree_training_case("multiclass", X_train, y_train, booster, config, X_test, y_test)
+
+
+def generate_gbtree_training_leaf_wise():
+    """Leaf-wise tree growth (grow_policy='lossguide')."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=200, n_features=10, noise=10.0, random_state=42)
+    X = X.astype(np.float32)
+    y = y.astype(np.float32)
+    
+    X_train, X_test = X[:160], X[160:]
+    y_train, y_test = y[:160], y[160:]
+    
+    dtrain = xgb.DMatrix(X_train, label=y_train)
+    
+    config = {
+        'objective': 'reg:squarederror',
+        'booster': 'gbtree',
+        'tree_method': 'hist',
+        'grow_policy': 'lossguide',  # Leaf-wise
+        'max_leaves': 16,
+        'max_depth': 0,  # No depth limit when using leaf-wise
+        'eta': 0.2,
+        'lambda': 1.0,
+        'alpha': 0.0,
+        'min_child_weight': 1.0,
+        'num_boost_round': 30,
+    }
+    
+    params = {k: v for k, v in config.items() if k != 'num_boost_round'}
+    booster = xgb.train(params, dtrain, num_boost_round=config['num_boost_round'])
+    
+    save_gbtree_training_case("leaf_wise", X_train, y_train, booster, config, X_test, y_test)
+
+
+def generate_gbtree_training_large():
+    """Larger dataset for performance validation."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=1000, n_features=20, noise=10.0, random_state=42)
+    X = X.astype(np.float32)
+    y = y.astype(np.float32)
+    
+    X_train, X_test = X[:800], X[800:]
+    y_train, y_test = y[:800], y[800:]
+    
+    dtrain = xgb.DMatrix(X_train, label=y_train)
+    
+    config = {
+        'objective': 'reg:squarederror',
+        'booster': 'gbtree',
+        'tree_method': 'hist',
+        'max_depth': 5,
+        'eta': 0.1,
+        'lambda': 1.0,
+        'alpha': 0.0,
+        'min_child_weight': 1.0,
+        'num_boost_round': 100,
+    }
+    
+    params = {k: v for k, v in config.items() if k != 'num_boost_round'}
+    booster = xgb.train(params, dtrain, num_boost_round=config['num_boost_round'])
+    
+    save_gbtree_training_case("large", X_train, y_train, booster, config, X_test, y_test)
+
+
+def generate_all_gbtree_training():
+    """Generate all GBTree training test cases."""
+    print("\nGenerating GBTree training test cases...")
+    generate_gbtree_training_regression_simple()
+    generate_gbtree_training_regression_deep()
+    generate_gbtree_training_regression_regularized()
+    generate_gbtree_training_binary()
+    generate_gbtree_training_multiclass()
+    generate_gbtree_training_leaf_wise()
+    generate_gbtree_training_large()
+
+
 def generate_all_training():
     """Generate all training test cases."""
     print("\nGenerating training test cases...")
+    # GBLinear training cases
     generate_training_regression_simple()
     generate_training_regression_multifeature()
     generate_training_regression_l2()
@@ -1097,6 +1470,8 @@ def generate_all_training():
     generate_training_quantile_low()
     generate_training_quantile_high()
     generate_training_multi_quantile()
+    # GBTree training cases
+    generate_all_gbtree_training()
 
 
 # =============================================================================

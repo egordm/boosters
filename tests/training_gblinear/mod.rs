@@ -27,7 +27,7 @@ use serde::Deserialize;
 use std::fs;
 use std::path::Path;
 
-pub const TEST_CASES_DIR: &str = "tests/test-cases/xgboost/training";
+pub const TEST_CASES_DIR: &str = "tests/test-cases/xgboost/gblinear/training";
 
 // =============================================================================
 // Shared Types

@@ -1,0 +1,11 @@
+{
+  "objective": "reg:squarederror",
+  "booster": "gbtree",
+  "tree_method": "hist",
+  "max_depth": 5,
+  "eta": 0.1,
+  "lambda": 1.0,
+  "alpha": 0.0,
+  "min_child_weight": 1.0,
+  "num_boost_round": 100
+}
