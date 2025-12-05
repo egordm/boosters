@@ -60,6 +60,7 @@ mod metric;
 pub mod partition;
 pub mod quantize;
 pub mod split;
+pub mod tree;
 
 pub use buffer::GradientBuffer;
 pub use callback::EarlyStopping;
@@ -79,4 +80,8 @@ pub use partition::RowPartitioner;
 pub use quantize::{BinCuts, BinIndex, QuantizedMatrix, Quantizer};
 pub use split::{
     GainParams, GreedySplitFinder, SplitFinder, SplitInfo, leaf_objective, leaf_weight, split_gain,
+};
+pub use tree::{
+    BuildingNode, BuildingTree, DepthWisePolicy, DepthWiseState, GrowthPolicy, GrowthState,
+    NodeCandidate, TreeBuilder, TreeParams,
 };

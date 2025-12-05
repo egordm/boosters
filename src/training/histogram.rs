@@ -168,6 +168,28 @@ impl FeatureHistogram {
         }
     }
 
+    /// Create a new histogram by subtracting another from self.
+    ///
+    /// Returns `self - other`.
+    pub fn subtract(&self, other: &Self) -> Self {
+        debug_assert_eq!(self.num_bins, other.num_bins);
+        let n = self.num_bins as usize;
+        let mut sum_grad = vec![0.0f32; n].into_boxed_slice();
+        let mut sum_hess = vec![0.0f32; n].into_boxed_slice();
+        let mut count = vec![0u32; n].into_boxed_slice();
+        for i in 0..n {
+            sum_grad[i] = self.sum_grad[i] - other.sum_grad[i];
+            sum_hess[i] = self.sum_hess[i] - other.sum_hess[i];
+            count[i] = self.count[i] - other.count[i];
+        }
+        Self {
+            sum_grad,
+            sum_hess,
+            count,
+            num_bins: self.num_bins,
+        }
+    }
+
     /// Copy from another histogram.
     ///
     /// Overwrites current contents with source.
@@ -371,6 +393,25 @@ impl NodeHistogram {
         self.total_grad = parent.total_grad - self.total_grad;
         self.total_hess = parent.total_hess - self.total_hess;
         self.total_count = parent.total_count - self.total_count;
+    }
+
+    /// Create a new histogram by subtracting another from self.
+    ///
+    /// Returns `self - other`. Useful for histogram subtraction optimization.
+    pub fn subtract(&self, other: &Self) -> Self {
+        debug_assert_eq!(self.features.len(), other.features.len());
+        let features: Box<[FeatureHistogram]> = self
+            .features
+            .iter()
+            .zip(other.features.iter())
+            .map(|(a, b)| a.subtract(b))
+            .collect();
+        Self {
+            features,
+            total_grad: self.total_grad - other.total_grad,
+            total_hess: self.total_hess - other.total_hess,
+            total_count: self.total_count - other.total_count,
+        }
     }
 
     /// Copy from another histogram.
