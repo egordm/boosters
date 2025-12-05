@@ -70,6 +70,40 @@ pub enum BaseScore {
 }
 
 // ============================================================================
+// QuantizedEvalSet
+// ============================================================================
+
+/// Evaluation set for GBTree training with quantized data.
+///
+/// This mirrors [`EvalSet`][super::metric::EvalSet] but is specific to quantized
+/// data used in GBTree training. Named sets appear in training logs.
+///
+/// # Example
+///
+/// ```ignore
+/// let eval_sets = vec![
+///     QuantizedEvalSet::new("train", &quantized_train, &train_labels),
+///     QuantizedEvalSet::new("val", &quantized_val, &val_labels),
+/// ];
+/// // Logs: [0] train-rmse:15.23  val-rmse:16.12
+/// ```
+pub struct QuantizedEvalSet<'a, B: BinIndex> {
+    /// Dataset name (appears in logs as prefix, e.g., "train", "val", "test").
+    pub name: &'a str,
+    /// Quantized feature matrix.
+    pub data: &'a QuantizedMatrix<B>,
+    /// Labels (length = n_samples).
+    pub labels: &'a [f32],
+}
+
+impl<'a, B: BinIndex> QuantizedEvalSet<'a, B> {
+    /// Create a new quantized evaluation set.
+    pub fn new(name: &'a str, data: &'a QuantizedMatrix<B>, labels: &'a [f32]) -> Self {
+        Self { name, data, labels }
+    }
+}
+
+// ============================================================================
 // GBTreeTrainer
 // ============================================================================
 
@@ -125,14 +159,26 @@ impl GBTreeTrainer {
     /// * `quantized` - Quantized feature matrix
     /// * `labels` - Target labels
     /// * `cuts` - Bin cuts for histogram building
-    /// * `eval_set` - Optional validation set for early stopping (quantized data, labels)
+    /// * `eval_sets` - Evaluation sets for metrics and early stopping
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use booste_rs::training::{GBTreeTrainer, QuantizedEvalSet, DepthWisePolicy};
+    ///
+    /// let eval_sets = vec![
+    ///     QuantizedEvalSet::new("train", &quantized, &labels),
+    ///     QuantizedEvalSet::new("val", &quantized_val, &val_labels),
+    /// ];
+    /// let forest = trainer.train(policy, &quantized, &labels, &cuts, &eval_sets);
+    /// ```
     pub fn train<G, B>(
         &mut self,
         policy: G,
         quantized: &QuantizedMatrix<B>,
         labels: &[f32],
         cuts: &BinCuts,
-        eval_set: Option<(&QuantizedMatrix<B>, &[f32])>,
+        eval_sets: &[QuantizedEvalSet<'_, B>],
     ) -> SoAForest<ScalarLeaf>
     where
         G: GrowthPolicy + Clone,
@@ -178,31 +224,52 @@ impl GBTreeTrainer {
             // Update predictions
             Self::update_predictions(&tree, quantized, &mut predictions);
 
-            // Log progress
+            // Compute metrics for all eval sets
+            let mut round_metrics: Vec<(String, f64)> = Vec::new();
+            let mut early_stop_triggered = false;
+
+            // Always log training metric
             if self.params.verbosity >= Verbosity::Info {
                 let train_metric = self.compute_train_metric(&predictions, labels);
-                let metrics = [("train".to_string(), train_metric as f64)];
-                self.logger.log_round(round as usize, &metrics);
+                round_metrics.push(("train".to_string(), train_metric));
             }
 
-            // Early stopping check
-            if let Some((eval_data, eval_labels)) = eval_set {
-                if let Some(early_stop) = &mut self.early_stopping {
-                    let eval_preds =
-                        Self::predict_with_trees(&trees, &tree, eval_data, base_score);
-                    if early_stop.should_stop(&eval_preds, eval_labels) {
-                        self.logger.info(&format!(
-                            "Early stopping at round {} (best: {})",
-                            round,
-                            early_stop.best_round()
-                        ));
-                        trees.push(tree);
-                        break;
+            // Process each eval set
+            for (idx, eval_set) in eval_sets.iter().enumerate() {
+                let eval_preds =
+                    Self::predict_with_trees(&trees, &tree, eval_set.data, base_score);
+
+                // Compute and log metric
+                if self.params.verbosity >= Verbosity::Info {
+                    let metric_value = self.compute_train_metric(&eval_preds, eval_set.labels);
+                    round_metrics.push((eval_set.name.to_string(), metric_value));
+                }
+
+                // Check early stopping on first eval set (or could be configurable)
+                if idx == 0 {
+                    if let Some(early_stop) = &mut self.early_stopping {
+                        if early_stop.should_stop(&eval_preds, eval_set.labels) {
+                            self.logger.info(&format!(
+                                "Early stopping at round {} (best: {})",
+                                round,
+                                early_stop.best_round()
+                            ));
+                            early_stop_triggered = true;
+                        }
                     }
                 }
             }
 
+            // Log progress
+            if self.params.verbosity >= Verbosity::Info && !round_metrics.is_empty() {
+                self.logger.log_round(round as usize, &round_metrics);
+            }
+
             trees.push(tree);
+
+            if early_stop_triggered {
+                break;
+            }
         }
 
         self.logger.info(&format!(
@@ -452,7 +519,7 @@ mod tests {
 
         let policy = DepthWisePolicy { max_depth: 3 };
         let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest = trainer.train(policy, &quantized, &labels, &cuts, None);
+        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
 
         assert_eq!(forest.num_trees(), 10);
         assert_eq!(forest.num_groups(), 1);
@@ -475,7 +542,7 @@ mod tests {
 
         let policy = LeafWisePolicy { max_leaves: 8 };
         let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest = trainer.train(policy, &quantized, &labels, &cuts, None);
+        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
 
         assert_eq!(forest.num_trees(), 10);
     }
@@ -498,7 +565,7 @@ mod tests {
 
         let policy = DepthWisePolicy { max_depth: 2 };
         let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest = trainer.train(policy, &quantized, &labels, &cuts, None);
+        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
 
         // Forest should be valid and produce predictions
         assert_eq!(forest.num_trees(), 1);
@@ -523,7 +590,7 @@ mod tests {
         let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
 
         // Train for a few rounds
-        let forest = trainer.train(policy, &quantized, &labels, &cuts, None);
+        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
 
         // Predict on training data (should fit reasonably well)
         // Since we're using the inference forest, we need to use raw features
@@ -576,7 +643,7 @@ mod tests {
 
         let policy = DepthWisePolicy { max_depth: 2 };
         let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let _forest = trainer.train(policy, &quantized, &labels, &cuts, None);
+        let _forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
 
         // For squared loss with predictions=0, gradients should be -labels
         // The tree should be built to reduce these gradients
@@ -614,10 +681,10 @@ mod tests {
         let policy = DepthWisePolicy { max_depth: 3 };
 
         let mut trainer_1 = GBTreeTrainer::new(Box::new(SquaredLoss), params_1);
-        let forest_1 = trainer_1.train(policy.clone(), &quantized, &labels, &cuts, None);
+        let forest_1 = trainer_1.train(policy.clone(), &quantized, &labels, &cuts, &[]);
 
         let mut trainer_10 = GBTreeTrainer::new(Box::new(SquaredLoss), params_10);
-        let forest_10 = trainer_10.train(policy, &quantized, &labels, &cuts, None);
+        let forest_10 = trainer_10.train(policy, &quantized, &labels, &cuts, &[]);
 
         assert_eq!(forest_1.num_trees(), 1);
         assert_eq!(forest_10.num_trees(), 10);
@@ -655,12 +722,13 @@ mod tests {
         let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params)
             .with_early_stopping(Box::new(Rmse), 3); // Patience of 3 rounds
 
+        let eval_set = QuantizedEvalSet::new("eval", &quantized, &eval_labels);
         let forest = trainer.train(
             policy,
             &quantized,
             &labels,
             &cuts,
-            Some((&quantized, &eval_labels)),
+            &[eval_set],
         );
 
         // With high learning rate, deep trees, and noisy eval data,
@@ -690,7 +758,7 @@ mod tests {
 
         let policy = DepthWisePolicy { max_depth: 4 };
         let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest = trainer.train(policy, &quantized, &labels, &cuts, None);
+        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
 
         // The forest should produce reasonable predictions
         assert_eq!(forest.num_trees(), 50);
@@ -729,10 +797,10 @@ mod tests {
         let leaf_policy = LeafWisePolicy { max_leaves: 16 };
 
         let mut trainer_d = GBTreeTrainer::new(Box::new(SquaredLoss), params.clone());
-        let forest_d = trainer_d.train(depth_policy, &quantized, &labels, &cuts, None);
+        let forest_d = trainer_d.train(depth_policy, &quantized, &labels, &cuts, &[]);
 
         let mut trainer_l = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest_l = trainer_l.train(leaf_policy, &quantized, &labels, &cuts, None);
+        let forest_l = trainer_l.train(leaf_policy, &quantized, &labels, &cuts, &[]);
 
         // Both should produce 20 trees
         assert_eq!(forest_d.num_trees(), 20);

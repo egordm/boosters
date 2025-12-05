@@ -46,7 +46,8 @@
 //!
 //! ## Evaluation Sets
 //!
-//! - [`EvalSet`]: Named dataset for evaluation during training
+//! - [`EvalSet`]: Named dataset for evaluation during training (for raw data)
+//! - [`QuantizedEvalSet`]: Named dataset for evaluation with quantized data (GBTree)
 //! - [`SimpleMetric`]: Helper trait for single-output metrics
 //!
 //! See RFC-0009 for design rationale, RFC-0011 for quantization.
@@ -82,7 +83,7 @@ pub use quantize::{BinCuts, BinIndex, QuantizedMatrix, Quantizer};
 pub use split::{
     GainParams, GreedySplitFinder, SplitFinder, SplitInfo, leaf_objective, leaf_weight, split_gain,
 };
-pub use trainer::{BaseScore, GBTreeTrainer, TrainerParams};
+pub use trainer::{BaseScore, GBTreeTrainer, QuantizedEvalSet, TrainerParams};
 pub use tree::{
     BuildingNode, BuildingTree, DepthWisePolicy, DepthWiseState, GrowthPolicy, GrowthState,
     GrowthStrategy, LeafWisePolicy, LeafWiseState, NodeCandidate, TreeGrower, TreeParams,
