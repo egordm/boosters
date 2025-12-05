@@ -322,7 +322,7 @@ mod tests {
 
     fn load_gbtree(name: &str) -> XgbModel {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/test-cases/xgboost/gbtree")
+            .join("tests/test-cases/xgboost/gbtree/inference")
             .join(format!("{name}.model.json"));
         let file = File::open(&path).expect("Failed to open test model");
         serde_json::from_reader(file).expect("Failed to parse test model")
@@ -330,7 +330,7 @@ mod tests {
 
     fn load_gblinear(name: &str) -> XgbModel {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/test-cases/xgboost/gblinear")
+            .join("tests/test-cases/xgboost/gblinear/inference")
             .join(format!("{name}.model.json"));
         let file = File::open(&path).expect("Failed to open test model");
         serde_json::from_reader(file).expect("Failed to parse test model")
@@ -338,7 +338,7 @@ mod tests {
 
     fn load_dart(name: &str) -> XgbModel {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/test-cases/xgboost/dart")
+            .join("tests/test-cases/xgboost/dart/inference")
             .join(format!("{name}.model.json"));
         let file = File::open(&path).expect("Failed to open test model");
         serde_json::from_reader(file).expect("Failed to parse test model")

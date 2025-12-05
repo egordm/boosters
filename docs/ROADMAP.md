@@ -23,9 +23,9 @@
 │  GBTree Training (Phase 1)              ◄── ACTIVE              │
 │  ════════════════════════════════════════════════               │
 │  Histogram-based tree training:                                  │
-│  Story 1-6: Core Infrastructure         [x] COMPLETE            │
-│  Story 7: Gradient Boosting Trainer     [x] COMPLETE            │
-│  Story 8-12: Validation & Polish        [ ] PENDING             │
+│  Story 1-7: Core Training               [x] COMPLETE            │
+│  Story 9: Test Data Generation          [x] COMPLETE            │
+│  Story 8, 10-12: Validation & Polish    [ ] PENDING             │
 │                                                                  │
 │  Future (backlog)                                                │
 │  ════════════════                                                │

@@ -6,9 +6,9 @@
 //! 3. Produce predictions matching Python XGBoost
 //!
 //! Test cases organized by booster type:
-//! - `xgboost/gbtree/{name}.*` - GBTree models
-//! - `xgboost/gblinear/{name}.*` - GBLinear models
-//! - `xgboost/dart/{name}.*` - DART models
+//! - `xgboost/gbtree/inference/{name}.*` - GBTree models
+//! - `xgboost/gblinear/inference/{name}.*` - GBLinear models
+//! - `xgboost/dart/inference/{name}.*` - DART models
 
 #![cfg(feature = "xgboost-compat")]
 
@@ -26,15 +26,15 @@ use test_data::{TestExpected, TestInput, DEFAULT_TOLERANCE_F64};
 // =============================================================================
 
 fn gbtree_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test-cases/xgboost/gbtree")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test-cases/xgboost/gbtree/inference")
 }
 
 fn gblinear_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test-cases/xgboost/gblinear")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test-cases/xgboost/gblinear/inference")
 }
 
 fn dart_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test-cases/xgboost/dart")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test-cases/xgboost/dart/inference")
 }
 
 fn load_from_dir(dir: &std::path::Path, name: &str) -> (XgbModel, TestInput, TestExpected) {

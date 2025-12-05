@@ -474,52 +474,56 @@ All times measured on Apple M1 Pro (10 cores, 16GB RAM).
 
 ---
 
-## Story 9: Test Data Generation
+## Story 9: Test Data Generation ✅
 
-**Goal**: Create reference datasets and XGBoost baselines for all tests.
+**Goal**: Create reference datasets and XGBoost baselines for training validation.
 
 ### Tasks
 
-- [ ] 9.1 Create `tools/data_generation/generate_gbtree_training_data.py` (XGBoost)
-- [ ] 9.2 Create `tools/data_generation/generate_lightgbm_training_data.py` (LightGBM)
-- [ ] 9.3 Generate synthetic regression datasets (linear, nonlinear)
-- [ ] 9.4 Generate synthetic classification datasets (binary, multiclass)
-- [ ] 9.5 Generate XGBoost trained models (depth-wise) for each dataset
-- [ ] 9.6 Generate LightGBM trained models (leaf-wise) for each dataset
-- [ ] 9.7 Export expected predictions, metrics, tree structures
-- [ ] 9.8 Store XGBoost baselines in `tests/test-cases/xgboost/gbtree/`
-- [ ] 9.9 Store LightGBM baselines in `tests/test-cases/lightgbm/gbtree/`
-- [ ] 9.10 Create Rust test case loader in `tests/test_data.rs`
-- [ ] 9.11 Document dataset generation process in `tests/test-cases/README.md`
+- [x] 9.1 Add GBTree training test generation to `generate_xgboost.py`
+- [x] 9.2 Generate synthetic regression datasets (linear, nonlinear)
+- [x] 9.3 Generate synthetic classification datasets (binary, multiclass)
+- [x] 9.4 Generate XGBoost trained models (depth-wise) for each dataset
+- [x] 9.5 Generate XGBoost leaf-wise baseline (grow_policy=lossguide)
+- [x] 9.6 Export expected predictions, metrics, tree structures
+- [x] 9.7 Store baselines in `tests/test-cases/xgboost/gbtree/training/`
+- [x] 9.8 Create integration tests in `tests/training_gbtree_tests.rs`
+- [x] 9.9 Reorganize test-cases structure (inference/ and training/ subdirs)
+- [ ] 9.10 Document dataset generation process in `tests/test-cases/README.md`
 
 ### Test Case Structure
 
-```text
-tests/test-cases/
-├── xgboost/gbtree/          # Depth-wise baselines
-│   ├── regression/
-│   │   ├── california_housing/
-│   │   │   ├── train_data.csv
-│   │   │   ├── test_data.csv
-│   │   │   ├── model.json
-│   │   │   ├── expected_predictions.csv
-│   │   │   └── expected_metrics.json
-│   │   └── synthetic_linear/
-│   ├── binary_classification/
-│   └── multiclass/
-│
-└── lightgbm/gbtree/         # Leaf-wise baselines
-    ├── regression/
-    │   ├── california_housing/
-    │   │   ├── train_data.csv
-    │   │   ├── test_data.csv
-    │   │   ├── model.txt
-    │   │   ├── expected_predictions.csv
-    │   │   └── expected_metrics.json
-    │   └── synthetic_linear/
-    ├── binary_classification/
-    └── multiclass/
 ```
+tests/test-cases/xgboost/
+├── gbtree/
+│   ├── inference/   # model + input + expected predictions
+│   └── training/    # train_data + labels + config + predictions
+├── gblinear/
+│   ├── inference/
+│   └── training/
+└── dart/
+    └── inference/
+```
+
+### Test Cases Generated
+
+| Name | Rows | Features | Trees | Depth | Type |
+|------|------|----------|-------|-------|------|
+| regression_simple | 80 | 5 | 20 | 3 | Depth-wise |
+| regression_deep | 160 | 10 | 50 | 6 | Depth-wise |
+| regression_regularized | 160 | 20 | 50 | 4 | Depth-wise |
+| binary_classification | 160 | 10 | 30 | 4 | Depth-wise |
+| multiclass | 240 | 10 | 30 | 4 | Depth-wise |
+| leaf_wise | 160 | 10 | 30 | - | Leaf-wise (16 leaves) |
+| large | 800 | 20 | 100 | 5 | Depth-wise |
+
+### Note on LightGBM
+
+LightGBM baselines are **not included** in this story because:
+1. We don't have LightGBM model parsing/compat yet (tracked in [99-future.md](99-future.md))
+2. XGBoost's `grow_policy='lossguide'` provides sufficient leaf-wise validation
+
+When LightGBM compat is added, add baselines alongside the compat implementation.
 
 ---
 
