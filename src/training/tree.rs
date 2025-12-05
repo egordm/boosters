@@ -592,6 +592,8 @@ pub struct TreeParams {
     pub min_samples_leaf: u32,
     /// Learning rate (shrinkage) applied to leaf weights
     pub learning_rate: f32,
+    /// Use parallel histogram building (beneficial for many features)
+    pub parallel_histograms: bool,
 }
 
 impl Default for TreeParams {
@@ -603,6 +605,7 @@ impl Default for TreeParams {
             min_samples_split: 2,
             min_samples_leaf: 1,
             learning_rate: 0.3,
+            parallel_histograms: false, // Sequential by default, parallel for many features
         }
     }
 }
@@ -794,7 +797,12 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
         grads: &GradientBuffer,
     ) -> NodeHistogram {
         let mut hist = NodeHistogram::new(self.cuts);
-        self.hist_builder.build(&mut hist, quantized, grads, rows);
+        if self.params.parallel_histograms {
+            self.hist_builder
+                .build_parallel(&mut hist, quantized, grads, rows);
+        } else {
+            self.hist_builder.build(&mut hist, quantized, grads, rows);
+        }
         hist
     }
 
