@@ -83,5 +83,5 @@ pub use split::{
 };
 pub use tree::{
     BuildingNode, BuildingTree, DepthWisePolicy, DepthWiseState, GrowthPolicy, GrowthState,
-    NodeCandidate, TreeBuilder, TreeParams,
+    NodeCandidate, TreeGrower, TreeParams,
 };

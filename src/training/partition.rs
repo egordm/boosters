@@ -212,7 +212,10 @@ fn partition_numerical<B: BinIndex>(
     let split_bin = split.split_bin;
     let default_left = split.default_left;
 
-    // Dutch national flag partition
+    // Dutch National Flag partition algorithm:
+    // - Maintains invariant: [0..left) are "left" rows, [right..len) are "right" rows
+    // - Scans from left, swapping "right" elements to the end
+    // - Terminates when left == right (all elements classified)
     let mut left = 0;
     let mut right = rows.len();
 
@@ -220,6 +223,7 @@ fn partition_numerical<B: BinIndex>(
         let row = rows[left];
         let bin = quantized.get(row, feature);
 
+        // Bin 0 = missing value (NaN was mapped to bin 0 during quantization)
         let goes_left = if bin.to_usize() == 0 {
             // Missing value - use learned default direction
             default_left
@@ -229,8 +233,10 @@ fn partition_numerical<B: BinIndex>(
         };
 
         if goes_left {
+            // Element belongs on left, advance left pointer
             left += 1;
         } else {
+            // Element belongs on right, swap to end and shrink right region
             right -= 1;
             rows.swap(left, right);
         }
@@ -253,17 +259,25 @@ fn partition_categorical<B: BinIndex>(
     let feature = split.feature;
     let default_left = split.default_left;
 
-    // Build inline bitset for O(1) category lookup
-    // Supports up to 256 categories (4 × 64 bits)
+    // Build inline bitset for O(1) category membership test.
+    // Uses 4 × 64-bit words = 256 bits, supporting up to 256 categories.
+    //
+    // For category `cat`:
+    //   - word index = cat / 64 (which 64-bit chunk)
+    //   - bit position = cat % 64 (which bit within that chunk)
+    //
+    // These divisions can be optimized to shifts: cat >> 6 and cat & 63
+    // but the compiler does this automatically for power-of-2 divisors.
     let mut left_cats = [0u64; 4];
     for &cat in &split.categories_left {
-        let word = (cat / 64) as usize;
-        let bit = cat % 64;
+        let word = (cat / 64) as usize; // Which 64-bit word (0-3)
+        let bit = cat % 64;             // Which bit within word (0-63)
         if word < 4 {
             left_cats[word] |= 1u64 << bit;
         }
     }
 
+    // Dutch National Flag partition (same as numerical, but using bitset lookup)
     let mut left = 0;
     let mut right = rows.len();
 
@@ -271,13 +285,15 @@ fn partition_categorical<B: BinIndex>(
         let row = rows[left];
         let bin = quantized.get(row, feature).to_usize();
 
+        // Bin 0 = missing value (NaN was mapped to bin 0 during quantization)
         let goes_left = if bin == 0 {
             // Missing value
             default_left
         } else {
-            // Check if category is in left set
-            let word = bin / 64;
-            let bit = bin % 64;
+            // Check if category is in left set using bitset lookup
+            let word = bin / 64;  // Which 64-bit word
+            let bit = bin % 64;   // Which bit position
+            // Extract single bit: shift right then mask with 1
             word < 4 && (left_cats[word] >> bit) & 1 == 1
         };
 
