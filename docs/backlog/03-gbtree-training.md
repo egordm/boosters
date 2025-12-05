@@ -376,7 +376,7 @@ See Story 8
 
 ---
 
-## Story 7: Gradient Boosting Trainer
+## Story 7: Gradient Boosting Trainer ✅
 
 **Goal**: Implement full boosting loop with multiple trees.
 
@@ -384,23 +384,23 @@ See Story 8
 
 ### Tasks
 
-- [ ] 7.1 Implement `TreeParams` — training hyperparameters
-- [ ] 7.2 Implement `GBTreeTrainer<G: GrowthPolicy>` struct
-- [ ] 7.3 Implement `GBTreeTrainer::train()` — main training loop
-- [ ] 7.4 Implement gradient computation using existing `Loss` traits
-- [ ] 7.5 Implement `update_predictions()` — add tree predictions
-- [ ] 7.6 Implement `predict_row()` — traverse building tree
-- [ ] 7.7 Integrate `EarlyStopping` callback
-- [ ] 7.8 Integrate `TrainingLogger` for progress output
-- [ ] 7.9 Implement `freeze_forest()` — convert to inference format
+- [x] 7.1 Implement `TreeParams` — training hyperparameters
+- [x] 7.2 Implement `GBTreeTrainer<G: GrowthPolicy>` struct
+- [x] 7.3 Implement `GBTreeTrainer::train()` — main training loop
+- [x] 7.4 Implement gradient computation using existing `Loss` traits
+- [x] 7.5 Implement `update_predictions()` — add tree predictions
+- [x] 7.6 Implement `predict_row()` — traverse building tree
+- [x] 7.7 Integrate `EarlyStopping` callback
+- [x] 7.8 Integrate `TrainingLogger` for progress output
+- [x] 7.9 Implement `freeze_forest()` — convert to inference format
 
 ### Unit Tests
 
-- [ ] 7.T1 Base score initialized correctly from labels
-- [ ] 7.T2 Gradients computed using `Loss` trait
-- [ ] 7.T3 Predictions updated after each tree
-- [ ] 7.T4 Early stopping triggers after patience exceeded
-- [ ] 7.T5 Logger called with correct metrics
+- [x] 7.T1 Base score initialized correctly from labels
+- [x] 7.T2 Gradients computed using `Loss` trait
+- [x] 7.T3 Predictions updated after each tree
+- [x] 7.T4 Early stopping triggers after patience exceeded
+- [x] 7.T5 Logger called with correct metrics (verified via verbosity)
 
 ### Integration Tests
 
