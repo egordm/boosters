@@ -519,11 +519,11 @@ tests/test-cases/xgboost/
 
 ### Note on LightGBM
 
-LightGBM baselines are **not included** in this story because:
-1. We don't have LightGBM model parsing/compat yet (tracked in [99-future.md](99-future.md))
-2. XGBoost's `grow_policy='lossguide'` provides sufficient leaf-wise validation
+LightGBM baselines are **not included** in this story because LightGBM compat
+is tracked separately in [04-lightgbm-compat.md](04-lightgbm-compat.md).
 
-When LightGBM compat is added, add baselines alongside the compat implementation.
+XGBoost's `grow_policy='lossguide'` provides sufficient leaf-wise validation for now.
+LightGBM training baselines will be added as part of the LightGBM compat epic (Story 6).
 
 ---
 
