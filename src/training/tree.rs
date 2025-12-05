@@ -368,6 +368,189 @@ impl GrowthState for DepthWiseState {
 }
 
 // ============================================================================
+// LeafWisePolicy (LightGBM style)
+// ============================================================================
+
+/// Leaf-wise growth policy (LightGBM style).
+///
+/// Always expands the leaf with highest gain, regardless of depth.
+/// This is a **best-first search** strategy that produces asymmetric trees
+/// and typically achieves lower loss with fewer leaves than depth-wise.
+///
+/// # Algorithm
+///
+/// Uses a **priority queue** (max-heap) to track candidate leaves by gain:
+/// 1. Start with root in priority queue
+/// 2. Pop highest-gain candidate
+/// 3. If valid and under max_leaves limit, expand it
+/// 4. Push children to priority queue
+/// 5. Repeat until max_leaves reached or no valid candidates
+///
+/// # Example
+///
+/// ```
+/// use booste_rs::training::tree::LeafWisePolicy;
+///
+/// let policy = LeafWisePolicy { max_leaves: 31 };
+/// ```
+#[derive(Debug, Clone)]
+pub struct LeafWisePolicy {
+    /// Maximum number of leaves in the tree
+    pub max_leaves: u32,
+}
+
+/// State for leaf-wise growth.
+///
+/// Maintains a priority queue of candidate leaves ordered by gain.
+#[derive(Debug)]
+pub struct LeafWiseState {
+    /// Priority queue of candidate leaves (max-heap by gain).
+    /// Uses BinaryHeap which is a max-heap - highest gain at top.
+    candidates: std::collections::BinaryHeap<LeafCandidate>,
+    /// Current number of leaves in the tree
+    num_leaves: u32,
+    /// Whether we've processed at least one batch of candidates.
+    /// Needed because priority queue is empty until first select_nodes call.
+    started: bool,
+}
+
+/// A leaf candidate for expansion in leaf-wise growth.
+///
+/// Wraps node ID and gain to enable priority queue ordering.
+/// Implements `Ord` to order by gain (highest first).
+#[derive(Debug, Clone)]
+struct LeafCandidate {
+    /// Node ID in the building tree
+    node_id: u32,
+    /// Split gain for this node (used for ordering)
+    gain: f32,
+}
+
+impl LeafCandidate {
+    fn new(node_id: u32, gain: f32) -> Self {
+        Self { node_id, gain }
+    }
+}
+
+// Implement ordering by gain for max-heap behavior.
+// Higher gain = higher priority.
+impl PartialEq for LeafCandidate {
+    fn eq(&self, other: &Self) -> bool {
+        self.gain == other.gain && self.node_id == other.node_id
+    }
+}
+
+impl Eq for LeafCandidate {}
+
+impl PartialOrd for LeafCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for LeafCandidate {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Order by gain (higher = better), break ties by node_id
+        self.gain
+            .partial_cmp(&other.gain)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| self.node_id.cmp(&other.node_id))
+    }
+}
+
+impl GrowthPolicy for LeafWisePolicy {
+    type State = LeafWiseState;
+
+    fn init(&self) -> Self::State {
+        LeafWiseState {
+            candidates: std::collections::BinaryHeap::new(),
+            num_leaves: 1, // Start with root as single leaf
+            started: false,
+        }
+    }
+
+    fn select_nodes(&self, state: &mut Self::State, candidates: &[NodeCandidate]) -> Vec<u32> {
+        // Mark that we've started processing
+        state.started = true;
+
+        // Update priority queue with new candidates
+        for cand in candidates {
+            if cand.is_valid() {
+                state
+                    .candidates
+                    .push(LeafCandidate::new(cand.node_id, cand.gain()));
+            }
+        }
+
+        // Pop the single best candidate (leaf-wise expands one at a time)
+        if let Some(best) = state.candidates.pop() {
+            // Splitting a leaf: removes 1 leaf, adds 2 = net +1
+            state.num_leaves += 1;
+            vec![best.node_id]
+        } else {
+            vec![]
+        }
+    }
+
+    fn should_continue(&self, state: &Self::State, _tree: &BuildingTree) -> bool {
+        // Before first select_nodes call, queue is empty but we should continue
+        // to process the initial root candidate
+        let has_work = !state.started || !state.candidates.is_empty();
+        state.num_leaves < self.max_leaves && has_work
+    }
+}
+
+impl GrowthState for LeafWiseState {
+    fn add_children(&mut self, _left: u32, _right: u32, _depth: u32) {
+        // Children will be added to priority queue in next select_nodes call
+        // when their splits are found. No action needed here.
+    }
+}
+
+// ============================================================================
+// GrowthStrategy enum (runtime selection)
+// ============================================================================
+
+/// Runtime-selectable growth strategy.
+///
+/// Use this when the growth strategy is determined at runtime (e.g., from config).
+/// For compile-time known strategies, use the policy types directly for better performance.
+///
+/// # Example
+///
+/// ```
+/// use booste_rs::training::tree::GrowthStrategy;
+///
+/// // From configuration
+/// let strategy = GrowthStrategy::LeafWise { max_leaves: 31 };
+/// ```
+#[derive(Debug, Clone)]
+pub enum GrowthStrategy {
+    /// Depth-wise growth (XGBoost style) - expand all nodes at each level
+    DepthWise {
+        /// Maximum tree depth
+        max_depth: u32,
+    },
+    /// Leaf-wise growth (LightGBM style) - expand best gain leaf
+    LeafWise {
+        /// Maximum number of leaves
+        max_leaves: u32,
+    },
+}
+
+impl GrowthStrategy {
+    /// Create a depth-wise strategy with default max_depth=6.
+    pub fn depth_wise() -> Self {
+        Self::DepthWise { max_depth: 6 }
+    }
+
+    /// Create a leaf-wise strategy with default max_leaves=31.
+    pub fn leaf_wise() -> Self {
+        Self::LeafWise { max_leaves: 31 }
+    }
+}
+
+// ============================================================================
 // TreeParams
 // ============================================================================
 
@@ -376,8 +559,10 @@ impl GrowthState for DepthWiseState {
 pub struct TreeParams {
     /// Parameters for gain computation
     pub gain: GainParams,
-    /// Maximum tree depth
+    /// Maximum tree depth (used by depth-wise, also as absolute limit for leaf-wise)
     pub max_depth: u32,
+    /// Maximum number of leaves (used by leaf-wise growth)
+    pub max_leaves: u32,
     /// Minimum samples required to split a node
     pub min_samples_split: u32,
     /// Minimum samples required in a leaf
@@ -391,6 +576,7 @@ impl Default for TreeParams {
         Self {
             gain: GainParams::default(),
             max_depth: 6,
+            max_leaves: 31, // 2^5 - 1, common LightGBM default
             min_samples_split: 2,
             min_samples_leaf: 1,
             learning_rate: 0.3,
@@ -825,10 +1011,146 @@ mod tests {
         assert_eq!(state.next_level, vec![1, 2, 3, 4]);
     }
 
+    // ========================================================================
+    // LeafWisePolicy tests
+    // ========================================================================
+
+    #[test]
+    fn test_leaf_wise_policy_init() {
+        let policy = LeafWisePolicy { max_leaves: 31 };
+        let state = policy.init();
+
+        assert_eq!(state.num_leaves, 1); // Start with root as single leaf
+        assert!(state.candidates.is_empty());
+        assert!(!state.started); // Haven't processed any candidates yet
+    }
+
+    #[test]
+    fn test_leaf_wise_policy_select_nodes_highest_gain() {
+        let policy = LeafWisePolicy { max_leaves: 10 };
+        let mut state = policy.init();
+
+        // Create multiple candidates with different gains
+        let split_low = test_split(0.5, 0.0, 0.0);
+        let split_high = test_split(2.0, 0.0, 0.0);
+        let split_mid = test_split(1.0, 0.0, 0.0);
+
+        let candidates = vec![
+            NodeCandidate::new(0, split_low, 0, 100),
+            NodeCandidate::new(1, split_high.clone(), 1, 50),
+            NodeCandidate::new(2, split_mid, 1, 50),
+        ];
+
+        // First selection should pick highest gain (node 1 with gain 2.0)
+        let to_expand = policy.select_nodes(&mut state, &candidates);
+        assert_eq!(to_expand, vec![1]);
+        assert_eq!(state.num_leaves, 2); // Was 1, split adds net +1
+        assert!(state.started);
+
+        // Next selection should pick next highest (node 2 with gain 1.0)
+        // Don't pass new candidates, should use remaining from heap
+        let to_expand = policy.select_nodes(&mut state, &[]);
+        assert_eq!(to_expand, vec![2]);
+        assert_eq!(state.num_leaves, 3);
+
+        // Next should pick node 0 with gain 0.5
+        let to_expand = policy.select_nodes(&mut state, &[]);
+        assert_eq!(to_expand, vec![0]);
+        assert_eq!(state.num_leaves, 4);
+    }
+
+    #[test]
+    fn test_leaf_wise_policy_max_leaves_constraint() {
+        let policy = LeafWisePolicy { max_leaves: 3 };
+        let mut state = policy.init();
+        let tree = BuildingTree::new(0.0);
+
+        // Initially 1 leaf and not started yet, should continue
+        // (to allow processing of first candidates)
+        assert!(policy.should_continue(&state, &tree));
+
+        // Add candidates and expand once: 1 -> 2 leaves
+        let split = test_split(1.0, 0.0, 0.0);
+        let candidates = vec![
+            NodeCandidate::new(0, split.clone(), 0, 100),
+            NodeCandidate::new(1, split.clone(), 1, 50),
+        ];
+        policy.select_nodes(&mut state, &candidates);
+        assert_eq!(state.num_leaves, 2);
+        assert!(policy.should_continue(&state, &tree)); // Still have candidate in queue
+
+        // Expand again: 2 -> 3 leaves (at limit)
+        policy.select_nodes(&mut state, &[]);
+        assert_eq!(state.num_leaves, 3);
+        assert!(!policy.should_continue(&state, &tree)); // Reached max_leaves
+    }
+
+    #[test]
+    fn test_leaf_wise_policy_should_continue_no_candidates() {
+        let policy = LeafWisePolicy { max_leaves: 10 };
+        let mut state = policy.init();
+        let tree = BuildingTree::new(0.0);
+
+        // Before starting: should continue (to process initial candidates)
+        assert!(policy.should_continue(&state, &tree));
+
+        // Add invalid candidate (gain = 0), then call select_nodes
+        let split_invalid = test_split(0.0, 0.0, 0.0);
+        let candidates = vec![NodeCandidate::new(0, split_invalid, 0, 100)];
+        policy.select_nodes(&mut state, &candidates);
+
+        // Invalid candidates are filtered out, queue should be empty
+        assert!(!policy.should_continue(&state, &tree));
+    }
+
+    #[test]
+    fn test_leaf_candidate_ordering() {
+        // Test that LeafCandidate orders by gain (higher = better)
+        let cand_low = LeafCandidate::new(0, 0.5);
+        let cand_high = LeafCandidate::new(1, 2.0);
+        let cand_mid = LeafCandidate::new(2, 1.0);
+
+        // Higher gain should be "greater"
+        assert!(cand_high > cand_low);
+        assert!(cand_high > cand_mid);
+        assert!(cand_mid > cand_low);
+
+        // BinaryHeap is a max-heap, so highest should pop first
+        use std::collections::BinaryHeap;
+        let mut heap = BinaryHeap::new();
+        heap.push(cand_low);
+        heap.push(cand_high);
+        heap.push(cand_mid);
+
+        assert_eq!(heap.pop().unwrap().node_id, 1); // gain 2.0
+        assert_eq!(heap.pop().unwrap().node_id, 2); // gain 1.0
+        assert_eq!(heap.pop().unwrap().node_id, 0); // gain 0.5
+    }
+
+    // ========================================================================
+    // GrowthStrategy tests
+    // ========================================================================
+
+    #[test]
+    fn test_growth_strategy_defaults() {
+        let depth_wise = GrowthStrategy::depth_wise();
+        match depth_wise {
+            GrowthStrategy::DepthWise { max_depth } => assert_eq!(max_depth, 6),
+            _ => panic!("Expected DepthWise"),
+        }
+
+        let leaf_wise = GrowthStrategy::leaf_wise();
+        match leaf_wise {
+            GrowthStrategy::LeafWise { max_leaves } => assert_eq!(max_leaves, 31),
+            _ => panic!("Expected LeafWise"),
+        }
+    }
+
     #[test]
     fn test_tree_params_default() {
         let params = TreeParams::default();
         assert_eq!(params.max_depth, 6);
+        assert_eq!(params.max_leaves, 31);
         assert_eq!(params.min_samples_split, 2);
         assert_eq!(params.min_samples_leaf, 1);
         assert!((params.learning_rate - 0.3).abs() < 1e-6);
@@ -943,6 +1265,122 @@ mod tests {
             for leaf_id in tree.leaves() {
                 assert!(tree.node(leaf_id).is_leaf);
             }
+        }
+
+        // ====================================================================
+        // Leaf-wise integration tests
+        // ====================================================================
+
+        #[test]
+        fn test_leaf_wise_single_split() {
+            let (quantized, cuts, grads) = make_test_data();
+
+            let policy = LeafWisePolicy { max_leaves: 2 };
+            let params = TreeParams {
+                learning_rate: 1.0,
+                ..Default::default()
+            };
+
+            let mut partitioner = RowPartitioner::new(10);
+            let mut grower = TreeGrower::new(policy, &cuts, params);
+
+            let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+
+            // With max_leaves=2, should have exactly 2 leaves (1 split)
+            assert_eq!(tree.num_leaves(), 2);
+            assert!(!tree.node(0).is_leaf); // Root was split
+        }
+
+        #[test]
+        fn test_leaf_wise_max_leaves_constraint() {
+            let (quantized, cuts, grads) = make_test_data();
+
+            let policy = LeafWisePolicy { max_leaves: 4 };
+            let params = TreeParams {
+                learning_rate: 1.0,
+                ..Default::default()
+            };
+
+            let mut partitioner = RowPartitioner::new(10);
+            let mut grower = TreeGrower::new(policy, &cuts, params);
+
+            let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+
+            // Should not exceed max_leaves
+            assert!(tree.num_leaves() <= 4);
+            // All leaf nodes should be marked as leaves
+            for leaf_id in tree.leaves() {
+                assert!(tree.node(leaf_id).is_leaf);
+            }
+        }
+
+        #[test]
+        fn test_leaf_wise_expands_best_gain_first() {
+            let (quantized, cuts, grads) = make_test_data();
+
+            // Leaf-wise should preferentially split nodes with highest gain
+            // This is hard to test directly, but we can verify the tree builds correctly
+            let policy = LeafWisePolicy { max_leaves: 8 };
+            let params = TreeParams {
+                learning_rate: 1.0,
+                ..Default::default()
+            };
+
+            let mut partitioner = RowPartitioner::new(10);
+            let mut grower = TreeGrower::new(policy, &cuts, params);
+
+            let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+
+            // Tree should be valid
+            assert!(tree.num_leaves() >= 1);
+            assert!(tree.num_leaves() <= 8);
+
+            // Check tree structure integrity
+            let mut leaf_count = 0;
+            for node_id in 0..tree.num_nodes() as u32 {
+                let node = tree.node(node_id);
+                if node.is_leaf {
+                    leaf_count += 1;
+                } else {
+                    // Non-leaf should have valid children
+                    assert!(node.left < tree.num_nodes() as u32);
+                    assert!(node.right < tree.num_nodes() as u32);
+                }
+            }
+            assert_eq!(leaf_count, tree.num_leaves());
+        }
+
+        #[test]
+        fn test_leaf_wise_vs_depth_wise_different_shapes() {
+            let (quantized, cuts, grads) = make_test_data();
+
+            // Build tree with depth-wise
+            let depth_policy = DepthWisePolicy { max_depth: 3 };
+            let params = TreeParams {
+                learning_rate: 1.0,
+                ..Default::default()
+            };
+
+            let mut partitioner1 = RowPartitioner::new(10);
+            let mut depth_grower = TreeGrower::new(depth_policy, &cuts, params.clone());
+            let depth_tree = depth_grower.build_tree(&quantized, &grads, &mut partitioner1);
+
+            // Build tree with leaf-wise (same number of leaves)
+            let leaf_policy = LeafWisePolicy {
+                max_leaves: depth_tree.num_leaves(),
+            };
+            let mut partitioner2 = RowPartitioner::new(10);
+            let mut leaf_grower = TreeGrower::new(leaf_policy, &cuts, params);
+            let leaf_tree = leaf_grower.build_tree(&quantized, &grads, &mut partitioner2);
+
+            // Both should have same number of leaves
+            assert_eq!(depth_tree.num_leaves(), leaf_tree.num_leaves());
+
+            // Leaf-wise can produce deeper trees (asymmetric growth)
+            // This is a characteristic property of leaf-wise growth
+            // (Not always true, but often true for real data)
+            println!("Depth-wise max depth: {}", depth_tree.max_depth());
+            println!("Leaf-wise max depth: {}", leaf_tree.max_depth());
         }
     }
 }

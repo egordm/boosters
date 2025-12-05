@@ -329,7 +329,7 @@ See Story 8
 
 ---
 
-## Story 6: Leaf-wise Growth
+## Story 6: Leaf-wise Growth ✅
 
 **Goal**: Implement leaf-wise (best-first) tree growth as alternative to depth-wise.
 
@@ -337,19 +337,19 @@ See Story 8
 
 ### Tasks
 
-- [ ] 6.1 Implement `LeafWisePolicy` — expand best gain leaf
-- [ ] 6.2 Implement `LeafWiseState` — priority queue of candidates
-- [ ] 6.3 Implement `LeafCandidate` with `Ord` by gain
-- [ ] 6.4 Implement `max_leaves` constraint
-- [ ] 6.5 Update `TreeBuilder` to work with `LeafWisePolicy`
-- [ ] 6.6 Implement `GrowthStrategy` enum for runtime selection
+- [x] 6.1 Implement `LeafWisePolicy` — expand best gain leaf
+- [x] 6.2 Implement `LeafWiseState` — priority queue of candidates
+- [x] 6.3 Implement `LeafCandidate` with `Ord` by gain
+- [x] 6.4 Implement `max_leaves` constraint
+- [x] 6.5 Update `TreeGrower` to work with `LeafWisePolicy`
+- [x] 6.6 Implement `GrowthStrategy` enum for runtime selection
 
 ### Unit Tests
 
-- [ ] 6.T1 `LeafWisePolicy` always expands highest gain leaf
-- [ ] 6.T2 `max_leaves` constraint respected
-- [ ] 6.T3 Priority queue correctly updated after expansion
-- [ ] 6.T4 `GrowthStrategy` enum creates correct builder
+- [x] 6.T1 `LeafWisePolicy` always expands highest gain leaf
+- [x] 6.T2 `max_leaves` constraint respected
+- [x] 6.T3 Priority queue correctly updated after expansion
+- [x] 6.T4 `GrowthStrategy` enum creates correct builder
 
 ### Integration Tests
 

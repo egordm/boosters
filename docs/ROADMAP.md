@@ -16,17 +16,21 @@
 │  ══════════════════════════════════════════════════             │
 │  Load XGBoost JSON models, predict with 3x+ speedup vs C++      │
 │                                                                  │
-│  GBLinear Support                       ◄── ACTIVE              │
+│  GBLinear Support                       ⏸️  PAUSED               │
 │  ════════════════════════════════════════════════               │
-│  Core training complete, working on feature parity:             │
-│  Story 7: Fix Multiclass Training       [ ] HIGH                │
-│  Story 8: Quantile Regression           [ ] MEDIUM              │
-│  Story 9: Additional Loss Functions     [ ] LOW                 │
-│  Story 10: Additional Feature Selectors [ ] LOW                 │
+│  Core training complete, feature parity stories pending         │
+│                                                                  │
+│  GBTree Training (Phase 1)              ◄── ACTIVE              │
+│  ════════════════════════════════════════════════               │
+│  Histogram-based tree training:                                  │
+│  Story 1-5: Core Infrastructure         [x] COMPLETE            │
+│  Story 6: Leaf-wise Growing             [x] COMPLETE            │
+│  Story 7: Gradient Boosting Trainer     [ ] IN PROGRESS         │
+│  Story 8-12: Validation & Polish        [ ] PENDING             │
 │                                                                  │
 │  Future (backlog)                                                │
 │  ════════════════                                                │
-│  - Sparse data, LightGBM, GBTree training, Python bindings      │
+│  - Sparse data, LightGBM, Python bindings                       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -37,7 +41,8 @@
 | Epic | Status | Summary |
 |------|--------|---------|
 | [GBTree Inference](backlog/01-gbtree-inference.md) | ✅ Complete | Tree inference, 3x faster than XGBoost C++ |
-| [GBLinear](backlog/02-gblinear.md) | 🔄 Active | Linear booster, working on feature parity |
+| [GBLinear](backlog/02-gblinear.md) | ⏸️ Paused | Linear booster, core training complete |
+| [GBTree Training](backlog/03-gbtree-training.md) | 🔄 Active | Histogram-based tree training |
 | [Future](backlog/99-future.md) | 📋 Backlog | Sparse data, LightGBM, bindings, etc. |
 
 ---
@@ -67,6 +72,11 @@ See [benchmarks](benchmarks/) for details.
 | [0008](design/rfcs/0008-gblinear-inference.md) | Implemented | Linear inference |
 | [0009](design/rfcs/0009-gblinear-training.md) | Implemented | Linear training |
 | [0010](design/rfcs/0010-matrix-layouts.md) | Implemented | Matrix layouts |
+| [0011](design/rfcs/0011-quantization-binning.md) | Implemented | Quantization & binning |
+| [0012](design/rfcs/0012-histogram-building.md) | Implemented | Histogram building |
+| [0013](design/rfcs/0013-split-finding.md) | Implemented | Split finding |
+| [0014](design/rfcs/0014-row-partitioning.md) | Implemented | Row partitioning |
+| [0015](design/rfcs/0015-tree-growing.md) | Implemented | Tree growing strategies |
 
 ---
 
