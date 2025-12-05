@@ -202,12 +202,12 @@ fn train_and_predict(tc: &TestCase) -> TrainResult {
         let policy = LeafWisePolicy {
             max_leaves: tc.config.max_leaves.unwrap_or(16),
         };
-        trainer.train(policy, &quantized, &tc.train_labels, &cuts, None)
+        trainer.train(policy, &quantized, &tc.train_labels, &cuts, &[])
     } else {
         let policy = DepthWisePolicy {
             max_depth: tc.config.max_depth.unwrap_or(6),
         };
-        trainer.train(policy, &quantized, &tc.train_labels, &cuts, None)
+        trainer.train(policy, &quantized, &tc.train_labels, &cuts, &[])
     };
 
     // Predict on train set using inference path
