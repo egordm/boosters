@@ -1,6 +1,6 @@
 # Epic: GBTree Training (Phase 1)
 
-**Status**: 📋 Planning  
+**Status**: � In Progress  
 **Priority**: High  
 **RFCs**: [0011](../design/rfcs/0011-quantization-binning.md), [0012](../design/rfcs/0012-histogram-building.md), [0013](../design/rfcs/0013-split-finding.md), [0014](../design/rfcs/0014-row-partitioning.md), [0015](../design/rfcs/0015-tree-growing.md)
 
@@ -94,7 +94,7 @@ If we beat these baselines, document the optimization that enabled it.
 
 ---
 
-## Story 1: Quantization & Binning
+## Story 1: Quantization & Binning ✅
 
 **Goal**: Implement RFC-0011 — discretize continuous features into bins.
 
@@ -102,24 +102,24 @@ If we beat these baselines, document the optimization that enabled it.
 
 ### Tasks
 
-- [ ] 1.1 Implement `BinCuts` struct with CSR-style storage
-- [ ] 1.2 Implement `BinCuts::feature_cuts()` and `num_bins()`
-- [ ] 1.3 Implement `BinCuts::bin_value()` with binary search
-- [ ] 1.4 Implement `QuantizedMatrix<B: BinIndex>` with column-major storage
-- [ ] 1.5 Implement `QuantizedMatrix::get()` and `feature_column()`
-- [ ] 1.6 Implement `BinIndex` trait for u8, u16, u32
-- [ ] 1.7 Implement `ExactQuantileCuts` — sort-based cut finding
-- [ ] 1.8 Implement `Quantizer` — transform raw features to quantized
-- [ ] 1.9 Handle missing values (NaN → bin 0)
-- [ ] 1.10 Parallel quantization per feature (Rayon)
+- [x] 1.1 Implement `BinCuts` struct with CSR-style storage
+- [x] 1.2 Implement `BinCuts::feature_cuts()` and `num_bins()`
+- [x] 1.3 Implement `BinCuts::bin_value()` with binary search
+- [x] 1.4 Implement `QuantizedMatrix<B: BinIndex>` with column-major storage
+- [x] 1.5 Implement `QuantizedMatrix::get()` and `feature_column()`
+- [x] 1.6 Implement `BinIndex` trait for u8, u16, u32
+- [x] 1.7 Implement `ExactQuantileCuts` — sort-based cut finding
+- [x] 1.8 Implement `Quantizer` — transform raw features to quantized
+- [x] 1.9 Handle missing values (NaN → bin 0)
+- [x] 1.10 Parallel quantization per feature (Rayon)
 
 ### Unit Tests
 
-- [ ] 1.T1 `BinCuts` correctly maps values to bins (edge cases: exact boundaries, below min, above max)
-- [ ] 1.T2 `QuantizedMatrix` column-major layout is correct
-- [ ] 1.T3 Missing values mapped to bin 0
-- [ ] 1.T4 Quantile cuts produce expected bin boundaries
-- [ ] 1.T5 Different `BinIndex` types work (u8, u16)
+- [x] 1.T1 `BinCuts` correctly maps values to bins (edge cases: exact boundaries, below min, above max)
+- [x] 1.T2 `QuantizedMatrix` column-major layout is correct
+- [x] 1.T3 Missing values mapped to bin 0
+- [x] 1.T4 Quantile cuts produce expected bin boundaries
+- [x] 1.T5 Different `BinIndex` types work (u8, u16)
 
 ### Integration Tests
 
@@ -138,7 +138,7 @@ If we beat these baselines, document the optimization that enabled it.
 
 ---
 
-## Story 2: Histogram Building
+## Story 2: Histogram Building ✅
 
 **Goal**: Implement RFC-0012 — aggregate gradients into per-bin histograms.
 
@@ -146,23 +146,23 @@ If we beat these baselines, document the optimization that enabled it.
 
 ### Tasks
 
-- [ ] 2.1 Implement `FeatureHistogram` with SoA layout (sum_grad, sum_hess, count)
-- [ ] 2.2 Implement `FeatureHistogram::add()`, `reset()`, `bin_stats()`
-- [ ] 2.3 Implement `FeatureHistogram::subtract_from()` for histogram subtraction
-- [ ] 2.4 Implement `NodeHistogram` — collection of feature histograms
-- [ ] 2.5 Implement `NodeHistogram::new(cuts)` with proper bin counts
-- [ ] 2.6 Implement `HistogramBuilder::build()` — core accumulation kernel
-- [ ] 2.7 Implement `HistogramBuilder::build_parallel()` — per-feature parallelism
-- [ ] 2.8 Implement `HistogramSubtractor::compute_sibling()`
-- [ ] 2.9 Implement `HistogramSubtractor::select_build_child()`
+- [x] 2.1 Implement `FeatureHistogram` with SoA layout (sum_grad, sum_hess, count)
+- [x] 2.2 Implement `FeatureHistogram::add()`, `reset()`, `bin_stats()`
+- [x] 2.3 Implement `FeatureHistogram::subtract_from()` for histogram subtraction
+- [x] 2.4 Implement `NodeHistogram` — collection of feature histograms
+- [x] 2.5 Implement `NodeHistogram::new(cuts)` with proper bin counts
+- [x] 2.6 Implement `HistogramBuilder::build()` — core accumulation kernel
+- [x] 2.7 Implement `HistogramBuilder::build_parallel()` — per-feature parallelism
+- [ ] 2.8 Implement `HistogramSubtractor::compute_sibling()` *(deferred to Story 10)*
+- [ ] 2.9 Implement `HistogramSubtractor::select_build_child()` *(deferred to Story 10)*
 
 ### Unit Tests
 
-- [ ] 2.T1 `FeatureHistogram::add()` correctly accumulates grad/hess/count
-- [ ] 2.T2 `subtract_from()` produces correct sibling histogram
-- [ ] 2.T3 Histogram totals match sum of bins
-- [ ] 2.T4 `build()` produces same result as manual accumulation
-- [ ] 2.T5 `build_parallel()` matches sequential `build()`
+- [x] 2.T1 `FeatureHistogram::add()` correctly accumulates grad/hess/count
+- [x] 2.T2 `subtract_from()` produces correct sibling histogram
+- [x] 2.T3 Histogram totals match sum of bins
+- [x] 2.T4 `build()` produces same result as manual accumulation
+- [x] 2.T5 `build_parallel()` matches sequential `build()`
 
 ### Integration Tests
 
@@ -183,7 +183,7 @@ N/A (histogram building is deterministic)
 
 ---
 
-## Story 3: Split Finding
+## Story 3: Split Finding ✅
 
 **Goal**: Implement RFC-0013 — find best splits from histograms.
 
@@ -191,25 +191,25 @@ N/A (histogram building is deterministic)
 
 ### Tasks
 
-- [ ] 3.1 Implement `GainParams` with L1/L2 regularization
-- [ ] 3.2 Implement `leaf_objective()` and `leaf_weight()` functions
-- [ ] 3.3 Implement `split_gain()` — XGBoost-compatible gain formula
-- [ ] 3.4 Implement `SplitInfo` struct with all split metadata
-- [ ] 3.5 Implement `SplitFinder` trait
-- [ ] 3.6 Implement `GreedySplitFinder::find_best_split()`
-- [ ] 3.7 Implement `find_best_split_for_feature()` — scan bins for best split
-- [ ] 3.8 Implement `choose_default_direction()` — learn missing value direction
-- [ ] 3.9 Implement `find_best_split_parallel()` — parallel over features
+- [x] 3.1 Implement `GainParams` with L1/L2 regularization
+- [x] 3.2 Implement `leaf_objective()` and `leaf_weight()` functions
+- [x] 3.3 Implement `split_gain()` — XGBoost-compatible gain formula
+- [x] 3.4 Implement `SplitInfo` struct with all split metadata
+- [x] 3.5 Implement `SplitFinder` trait
+- [x] 3.6 Implement `GreedySplitFinder::find_best_split()`
+- [x] 3.7 Implement `find_best_split_for_feature()` — scan bins for best split
+- [x] 3.8 Implement `choose_default_direction()` — learn missing value direction
+- [x] 3.9 Implement `find_best_split_parallel()` — parallel over features
 
 ### Unit Tests
 
-- [ ] 3.T1 `split_gain()` matches hand-computed examples
-- [ ] 3.T2 `leaf_weight()` with L2 regularization correct
-- [ ] 3.T3 `leaf_weight()` with L1 regularization (soft thresholding) correct
-- [ ] 3.T4 `min_child_weight` constraint filters invalid splits
-- [ ] 3.T5 Best split selected correctly from multiple features
-- [ ] 3.T6 Default direction chosen based on gain comparison
-- [ ] 3.T7 Parallel split finding matches sequential
+- [x] 3.T1 `split_gain()` matches hand-computed examples
+- [x] 3.T2 `leaf_weight()` with L2 regularization correct
+- [x] 3.T3 `leaf_weight()` with L1 regularization (soft thresholding) correct
+- [x] 3.T4 `min_child_weight` constraint filters invalid splits
+- [x] 3.T5 Best split selected correctly from multiple features
+- [x] 3.T6 Default direction chosen based on gain comparison
+- [x] 3.T7 Parallel split finding matches sequential
 
 ### Integration Tests
 
@@ -241,7 +241,7 @@ Our implementation must match this exactly (within floating-point tolerance).
 
 ---
 
-## Story 4: Row Partitioning
+## Story 4: Row Partitioning ✅
 
 **Goal**: Implement RFC-0014 — track and update row-to-node assignments.
 
@@ -249,23 +249,23 @@ Our implementation must match this exactly (within floating-point tolerance).
 
 ### Tasks
 
-- [ ] 4.1 Implement `RowPartitioner` with position list storage
-- [ ] 4.2 Implement `RowPartitioner::new()` — all rows in root
-- [ ] 4.3 Implement `node_rows()` — get row slice for a node
-- [ ] 4.4 Implement `node_size()` — count rows in node
-- [ ] 4.5 Implement `apply_split()` — partition rows into children
-- [ ] 4.6 Implement `partition_numerical()` — Dutch flag partition
-- [ ] 4.7 Implement `partition_categorical()` — bitset lookup
-- [ ] 4.8 Implement `find_threshold_bin()` — map threshold to bin
+- [x] 4.1 Implement `RowPartitioner` with position list storage
+- [x] 4.2 Implement `RowPartitioner::new()` — all rows in root
+- [x] 4.3 Implement `node_rows()` — get row slice for a node
+- [x] 4.4 Implement `node_size()` — count rows in node
+- [x] 4.5 Implement `apply_split()` — partition rows into children
+- [x] 4.6 Implement `partition_numerical()` — Dutch flag partition
+- [x] 4.7 Implement `partition_categorical()` — bitset lookup
+- [x] 4.8 Implement `find_threshold_bin()` — map threshold to bin
 
 ### Unit Tests
 
-- [ ] 4.T1 Initial partitioner has all rows in root
-- [ ] 4.T2 `apply_split()` correctly partitions rows
-- [ ] 4.T3 Missing values go to default direction
-- [ ] 4.T4 Categorical partition uses bitset correctly
-- [ ] 4.T5 Multiple splits maintain correct row assignments
-- [ ] 4.T6 No rows lost or duplicated after splits
+- [x] 4.T1 Initial partitioner has all rows in root
+- [x] 4.T2 `apply_split()` correctly partitions rows
+- [x] 4.T3 Missing values go to default direction
+- [x] 4.T4 Categorical partition uses bitset correctly
+- [x] 4.T5 Multiple splits maintain correct row assignments
+- [x] 4.T6 No rows lost or duplicated after splits
 
 ### Integration Tests
 
@@ -284,7 +284,7 @@ N/A (partitioning is deterministic)
 
 ---
 
-## Story 5: Tree Builder
+## Story 5: Tree Builder ✅
 
 **Goal**: Implement RFC-0015 — coordinate tree building with growth policies.
 
@@ -292,25 +292,25 @@ N/A (partitioning is deterministic)
 
 ### Tasks
 
-- [ ] 5.1 Implement `BuildingNode` and `BuildingTree` structures
-- [ ] 5.2 Implement `BuildingTree::new()` — create root node
-- [ ] 5.3 Implement `BuildingTree::expand()` — split a leaf
-- [ ] 5.4 Implement `BuildingTree::leaves()` — iterate current leaves
-- [ ] 5.5 Implement `NodeCandidate` for tracking expansion candidates
-- [ ] 5.6 Implement `GrowthPolicy` trait
-- [ ] 5.7 Implement `DepthWisePolicy` — level-by-level growth
-- [ ] 5.8 Implement `DepthWiseState` — track current level
-- [ ] 5.9 Implement `TreeBuilder<G: GrowthPolicy>` — main builder struct
-- [ ] 5.10 Implement `TreeBuilder::build_tree()` — core training loop
+- [x] 5.1 Implement `BuildingNode` and `BuildingTree` structures
+- [x] 5.2 Implement `BuildingTree::new()` — create root node
+- [x] 5.3 Implement `BuildingTree::expand()` — split a leaf
+- [x] 5.4 Implement `BuildingTree::leaves()` — iterate current leaves
+- [x] 5.5 Implement `NodeCandidate` for tracking expansion candidates
+- [x] 5.6 Implement `GrowthPolicy` trait
+- [x] 5.7 Implement `DepthWisePolicy` — level-by-level growth
+- [x] 5.8 Implement `DepthWiseState` — track current level
+- [x] 5.9 Implement `TreeBuilder<G: GrowthPolicy>` — main builder struct
+- [x] 5.10 Implement `TreeBuilder::build_tree()` — core training loop
 
 ### Unit Tests
 
-- [ ] 5.T1 `BuildingTree` starts with single root leaf
-- [ ] 5.T2 `expand()` creates correct child structure
-- [ ] 5.T3 `DepthWisePolicy` expands all nodes at level before going deeper
-- [ ] 5.T4 `max_depth` constraint respected
-- [ ] 5.T5 `min_samples_split` filters small nodes
-- [ ] 5.T6 Learning rate applied to leaf weights
+- [x] 5.T1 `BuildingTree` starts with single root leaf
+- [x] 5.T2 `expand()` creates correct child structure
+- [x] 5.T3 `DepthWisePolicy` expands all nodes at level before going deeper
+- [x] 5.T4 `max_depth` constraint respected
+- [x] 5.T5 `min_samples_split` filters small nodes
+- [x] 5.T6 Learning rate applied to leaf weights
 
 ### Integration Tests
 

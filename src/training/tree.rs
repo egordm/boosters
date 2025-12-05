@@ -18,13 +18,13 @@
 //! # Example
 //!
 //! ```ignore
-//! use booste_rs::training::tree::{TreeBuilder, DepthWisePolicy, TreeParams};
+//! use booste_rs::training::tree::{TreeGrower, DepthWisePolicy, TreeParams};
 //!
 //! let policy = DepthWisePolicy { max_depth: 6 };
 //! let params = TreeParams::default();
-//! let mut builder = TreeBuilder::new(policy, &cuts, params);
+//! let mut grower = TreeGrower::new(policy, &cuts, params);
 //!
-//! let tree = builder.build_tree(&quantized, &grads, &mut partitioner);
+//! let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
 //! ```
 //!
 //! See RFC-0015 for design rationale.
@@ -399,14 +399,19 @@ impl Default for TreeParams {
 }
 
 // ============================================================================
-// TreeBuilder
+// TreeGrower
 // ============================================================================
 
-/// Coordinates tree building with a growth policy.
+/// Coordinates tree growing with a growth policy.
 ///
 /// Brings together histogram building, split finding, and row partitioning
-/// to construct a tree according to the specified growth policy.
-pub struct TreeBuilder<'a, G: GrowthPolicy> {
+/// to grow a tree according to the specified growth policy.
+///
+/// # Naming Note
+///
+/// Named `TreeGrower` (not `TreeBuilder`) to avoid confusion with
+/// `trees::TreeBuilder` which is an inference-time builder pattern helper.
+pub struct TreeGrower<'a, G: GrowthPolicy> {
     /// Growth policy (depth-wise or leaf-wise)
     policy: G,
     /// Histogram builder
@@ -419,8 +424,8 @@ pub struct TreeBuilder<'a, G: GrowthPolicy> {
     params: TreeParams,
 }
 
-impl<'a, G: GrowthPolicy> TreeBuilder<'a, G> {
-    /// Create a new tree builder.
+impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
+    /// Create a new tree grower.
     pub fn new(policy: G, cuts: &'a BinCuts, params: TreeParams) -> Self {
         Self {
             policy,
@@ -882,9 +887,9 @@ mod tests {
             };
 
             let mut partitioner = RowPartitioner::new(10);
-            let mut builder = TreeBuilder::new(policy, &cuts, params);
+            let mut grower = TreeGrower::new(policy, &cuts, params);
 
-            let tree = builder.build_tree(&quantized, &grads, &mut partitioner);
+            let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
 
             // Should have root + 2 children
             assert!(tree.num_nodes() >= 1);
@@ -907,9 +912,9 @@ mod tests {
             };
 
             let mut partitioner = RowPartitioner::new(10);
-            let mut builder = TreeBuilder::new(policy, &cuts, params);
+            let mut grower = TreeGrower::new(policy, &cuts, params);
 
-            let tree = builder.build_tree(&quantized, &grads, &mut partitioner);
+            let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
 
             // With max_depth=0, should only have root (no splits)
             assert_eq!(tree.num_nodes(), 1);
@@ -928,9 +933,9 @@ mod tests {
             };
 
             let mut partitioner = RowPartitioner::new(10);
-            let mut builder = TreeBuilder::new(policy, &cuts, params);
+            let mut grower = TreeGrower::new(policy, &cuts, params);
 
-            let tree = builder.build_tree(&quantized, &grads, &mut partitioner);
+            let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
 
             // Should build multiple levels until no more gain or max depth
             assert!(tree.max_depth() <= 3);
