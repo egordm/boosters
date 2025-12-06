@@ -20,17 +20,20 @@
 │  ════════════════════════════════════════════════               │
 │  Core training complete, feature parity stories pending         │
 │                                                                  │
-│  GBTree Training (Phase 1)              ◄── ACTIVE              │
+│  GBTree Training (Phase 1)              ✅ COMPLETE              │
 │  ════════════════════════════════════════════════               │
-│  Histogram-based tree training:                                  │
-│  Story 1-7: Core Training               [x] COMPLETE            │
-│  Story 9: Test Data Generation          [x] COMPLETE            │
-│  Story 8, 10-12: Validation & Polish    [ ] PENDING             │
+│  Histogram-based tree training: 1.05x-1.57x of XGBoost          │
+│  See: docs/benchmarks/2024-11-30-gbtree-vs-xgboost.md           │
 │                                                                  │
-│  LightGBM Compatibility                 📋 PLANNED              │
+│  LightGBM Compatibility                 ◄── ACTIVE              │
 │  ════════════════════════════════════════════════               │
 │  Model loading, inference validation, training baselines        │
 │  (Complete before GBTree Training Phase 2)                      │
+│                                                                  │
+│  GBTree Training (Phase 2)              📋 PLANNED              │
+│  ════════════════════════════════════════════════               │
+│  Optimizations: histogram subtraction, SIMD, parallelism        │
+│  (Requires new RFCs)                                            │
 │                                                                  │
 │  Future (backlog)                                                │
 │  ════════════════                                                │
@@ -46,20 +49,29 @@
 |------|--------|---------|
 | [GBTree Inference](backlog/01-gbtree-inference.md) | ✅ Complete | Tree inference, 3x faster than XGBoost C++ |
 | [GBLinear](backlog/02-gblinear.md) | ⏸️ Paused | Linear booster, core training complete |
-| [GBTree Training](backlog/03-gbtree-training.md) | 🔄 Active | Histogram-based tree training |
-| [LightGBM Compat](backlog/04-lightgbm-compat.md) | 📋 Planned | Model loading, leaf-wise validation |
+| [GBTree Training Ph1](backlog/03-gbtree-training.md) | ✅ Complete | Histogram-based training, 1.05-1.57x of XGBoost |
+| [LightGBM Compat](backlog/04-lightgbm-compat.md) | 🔄 Active | Model loading, leaf-wise validation |
+| [GBTree Training Ph2](backlog/03-gbtree-training.md) | 📋 Planned | Optimizations (needs RFCs) |
 | [Future](backlog/99-future.md) | 📋 Backlog | Sparse data, Python bindings, etc. |
 
 ---
 
 ## Performance Summary
 
-Current benchmark results (Apple M1 Pro, vs XGBoost C++):
+### Inference (vs XGBoost C++)
 
 | Metric | booste-rs | XGBoost C++ | Speedup |
 |--------|-----------|-------------|---------|
 | Single-row latency | 1.24µs | 11.6µs | **9.4x** |
 | 10K batch (8 threads) | 1.58ms | 5.0ms | **3.2x** |
+
+### Training (vs XGBoost C++, single-threaded)
+
+| Dataset | booste-rs | XGBoost | Ratio |
+|---------|-----------|---------|-------|
+| small (1k×20, 100 trees) | 322ms | 308ms | 1.05x |
+| medium (5k×50, 100 trees) | 1.32s | 1.11s | 1.19x |
+| large (20k×100, 100 trees) | 5.12s | 3.27s | 1.57x |
 
 See [benchmarks](benchmarks/) for details.
 
