@@ -6,12 +6,15 @@
 //! - Row partitioning
 //! - Growth policy
 //! - Monotonic constraints
+//! - Interaction constraints
 
 use std::collections::HashMap;
 
 use super::building::{BuildingTree, NodeCandidate};
 use super::policy::{GrowthPolicy, GrowthState};
-use super::super::constraints::{MonotonicBounds, MonotonicChecker, MonotonicConstraint};
+use super::super::constraints::{
+    InteractionConstraints, MonotonicBounds, MonotonicChecker, MonotonicConstraint,
+};
 use super::super::histogram::{HistogramBuilder, NodeHistogram};
 use super::super::partition::RowPartitioner;
 use super::super::quantize::{BinCuts, BinIndex, QuantizedMatrix};
@@ -49,9 +52,18 @@ pub struct TreeParams {
     /// Column subsampling ratio per node (0, 1]. 1.0 means use all features.
     pub colsample_bynode: f32,
     /// Monotonic constraints per feature (-1: decreasing, 0: none, 1: increasing)
-    /// 
+    ///
     /// If shorter than number of features, remaining features are unconstrained.
     pub monotone_constraints: Vec<MonotonicConstraint>,
+    /// Interaction constraints as groups of features.
+    ///
+    /// Each group is a list of feature indices that can interact with each other.
+    /// Features in different groups cannot appear together in the same tree path.
+    /// Empty means no interaction constraints.
+    ///
+    /// Example: `[[0, 1, 2], [3, 4]]` means features 0,1,2 can interact,
+    /// and features 3,4 can interact, but 0 cannot interact with 3.
+    pub interaction_constraints: Vec<Vec<u32>>,
 }
 
 impl Default for TreeParams {
@@ -68,7 +80,8 @@ impl Default for TreeParams {
             colsample_bytree: 1.0,      // Use all features by default
             colsample_bylevel: 1.0,
             colsample_bynode: 1.0,
-            monotone_constraints: Vec::new(), // No constraints by default
+            monotone_constraints: Vec::new(),    // No constraints by default
+            interaction_constraints: Vec::new(), // No constraints by default
         }
     }
 }
@@ -101,6 +114,8 @@ pub struct TreeGrower<'a, G: GrowthPolicy> {
     col_sampler: ColumnSampler,
     /// Monotonic constraint checker
     mono_checker: MonotonicChecker,
+    /// Interaction constraints
+    interaction_constraints: InteractionConstraints,
 }
 
 impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
@@ -117,6 +132,10 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
             &params.monotone_constraints,
             num_features as usize,
         );
+        let interaction_constraints = InteractionConstraints::new(
+            &params.interaction_constraints,
+            num_features,
+        );
         Self {
             policy,
             hist_builder: HistogramBuilder::default(),
@@ -125,6 +144,7 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
             params,
             col_sampler,
             mono_checker,
+            interaction_constraints,
         }
     }
 
@@ -181,13 +201,18 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
         self.col_sampler.sample_tree(tree_seed);
         let col_sampling_enabled = self.col_sampler.is_enabled();
         let mono_enabled = self.mono_checker.is_enabled();
+        let interaction_enabled = self.interaction_constraints.is_enabled();
 
         // Histogram storage per node (reuse across iterations)
         let mut histograms: HashMap<u32, NodeHistogram> = HashMap::new();
-        
+
         // Monotonic bounds per node (node_id -> bounds)
         let mut node_bounds: HashMap<u32, MonotonicBounds> = HashMap::new();
         node_bounds.insert(0, MonotonicBounds::unbounded());
+
+        // Path features per node (node_id -> list of features used on path from root)
+        let mut node_path_features: HashMap<u32, Vec<u32>> = HashMap::new();
+        node_path_features.insert(0, Vec::new());
 
         // Build root histogram
         let root_rows = partitioner.node_rows(0);
@@ -195,16 +220,19 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
         histograms.insert(0, root_hist);
 
         // Find initial split for root (depth=0, node_id=0)
-        let root_features = if col_sampling_enabled {
-            Some(self.col_sampler.allowed_features_for_node(0, 0, tree_seed))
-        } else {
-            None
-        };
+        let root_features = self.get_allowed_features(
+            0,
+            0,
+            tree_seed,
+            &[],
+            col_sampling_enabled,
+            interaction_enabled,
+        );
         self.split_finder.feature_subset = root_features;
-        let mut root_split =
-            self.split_finder
-                .find_best_split(&histograms[&0], self.cuts, &self.params.gain);
-        
+        let mut root_split = self
+            .split_finder
+            .find_best_split(&histograms[&0], self.cuts, &self.params.gain);
+
         // Apply monotonic constraints to root split
         if mono_enabled && root_split.is_valid() {
             let root_bounds = node_bounds[&0];
@@ -251,7 +279,9 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
 
                 // Compute child bounds for monotonic constraints
                 let (left_bounds, right_bounds) = if mono_enabled {
-                    let parent_bounds = node_bounds.get(&node_id).copied()
+                    let parent_bounds = node_bounds
+                        .get(&node_id)
+                        .copied()
                         .unwrap_or_else(MonotonicBounds::unbounded);
                     let constraint = self.mono_checker.get(split.feature);
                     // Use midpoint of split weights as the bound pivot
@@ -269,6 +299,16 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
                 node_bounds.insert(left_id, left_bounds);
                 node_bounds.insert(right_id, right_bounds);
 
+                // Compute child path features (add split feature to parent's path)
+                let parent_path = node_path_features
+                    .get(&node_id)
+                    .cloned()
+                    .unwrap_or_default();
+                let mut child_path = parent_path.clone();
+                child_path.push(split.feature);
+                node_path_features.insert(left_id, child_path.clone());
+                node_path_features.insert(right_id, child_path);
+
                 // Register children with growth state
                 state.add_children(left_id, right_id, candidate.depth + 1);
 
@@ -283,36 +323,46 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
                     partitioner,
                 );
 
-                // Find splits for new nodes with column sampling
+                // Find splits for new nodes with column sampling and interaction constraints
                 let child_depth = candidate.depth + 1;
-                
+                let child_path_features = node_path_features
+                    .get(&left_id)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+
                 // Left child
-                let left_features = if col_sampling_enabled {
-                    Some(self.col_sampler.allowed_features_for_node(child_depth, left_id, tree_seed))
-                } else {
-                    None
-                };
+                let left_features = self.get_allowed_features(
+                    child_depth,
+                    left_id,
+                    tree_seed,
+                    child_path_features,
+                    col_sampling_enabled,
+                    interaction_enabled,
+                );
                 self.split_finder.feature_subset = left_features;
-                let mut left_split =
-                    self.split_finder
-                        .find_best_split(&left_hist, self.cuts, &self.params.gain);
-                
+                let mut left_split = self
+                    .split_finder
+                    .find_best_split(&left_hist, self.cuts, &self.params.gain);
+
                 // Apply monotonic constraints to left split
                 if mono_enabled && left_split.is_valid() {
                     self.apply_monotonic_constraints(&mut left_split, &left_bounds);
                 }
-                
+
                 // Right child
-                let right_features = if col_sampling_enabled {
-                    Some(self.col_sampler.allowed_features_for_node(child_depth, right_id, tree_seed))
-                } else {
-                    None
-                };
+                let right_features = self.get_allowed_features(
+                    child_depth,
+                    right_id,
+                    tree_seed,
+                    child_path_features,
+                    col_sampling_enabled,
+                    interaction_enabled,
+                );
                 self.split_finder.feature_subset = right_features;
-                let mut right_split =
-                    self.split_finder
-                        .find_best_split(&right_hist, self.cuts, &self.params.gain);
-                
+                let mut right_split = self
+                    .split_finder
+                    .find_best_split(&right_hist, self.cuts, &self.params.gain);
+
                 // Apply monotonic constraints to right split
                 if mono_enabled && right_split.is_valid() {
                     self.apply_monotonic_constraints(&mut right_split, &right_bounds);
@@ -355,6 +405,43 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
         tree.apply_learning_rate(self.params.learning_rate);
 
         tree
+    }
+
+    /// Get allowed features for a node, combining column sampling and interaction constraints.
+    fn get_allowed_features(
+        &self,
+        depth: u32,
+        node_id: u32,
+        tree_seed: u64,
+        path_features: &[u32],
+        col_sampling_enabled: bool,
+        interaction_enabled: bool,
+    ) -> Option<Vec<u32>> {
+        let mut allowed: Option<Vec<u32>> = None;
+
+        // Apply interaction constraints
+        if interaction_enabled {
+            let interaction_allowed = self.interaction_constraints.allowed_features(path_features);
+            allowed = Some(interaction_allowed);
+        }
+
+        // Apply column sampling
+        if col_sampling_enabled {
+            let sampled = self
+                .col_sampler
+                .allowed_features_for_node(depth, node_id, tree_seed);
+            match &mut allowed {
+                Some(features) => {
+                    // Intersect with sampled features
+                    features.retain(|f| sampled.contains(f));
+                }
+                None => {
+                    allowed = Some(sampled);
+                }
+            }
+        }
+
+        allowed
     }
 
     /// Apply monotonic constraints to a split, adjusting weights if needed.
@@ -810,5 +897,180 @@ mod tests {
             // Just verify it builds successfully
             assert!(tree.num_leaves() == 2);
         }
+    }
+
+    // ---- Interaction Constraint Tests ----
+
+    /// Create test data with 4 features for interaction constraint testing.
+    /// Features 0,1 should interact, Features 2,3 should interact, but not across groups.
+    fn make_interaction_test_data() -> (QuantizedMatrix<u8>, BinCuts, GradientBuffer) {
+        // 20 rows, 4 features - all features have the same value range
+        let num_rows = 20;
+        let num_features = 4;
+        
+        // Generate data with clear patterns per feature - all features have values 0-19
+        let mut data = Vec::with_capacity(num_rows * num_features);
+        for row in 0..num_rows {
+            // All features have the same range [0, 19]
+            data.push(row as f32);           // Feature 0: 0-19
+            data.push(row as f32);           // Feature 1: 0-19
+            data.push(row as f32);           // Feature 2: 0-19
+            data.push(row as f32);           // Feature 3: 0-19
+        }
+        let matrix = DenseMatrix::from_vec(data, num_rows, num_features);
+        
+        let cuts_finder = ExactQuantileCuts::new(num_features);
+        let cuts = cuts_finder.find_cuts(&matrix, 256);
+
+        let quantizer = Quantizer::new(cuts.clone());
+        let quantized = quantizer.quantize::<_, u8>(&matrix);
+
+        // Gradients: Create clear splits at midpoints
+        let mut grads = GradientBuffer::new(num_rows, 1);
+        for i in 0..num_rows {
+            if i < num_rows / 2 {
+                grads.set(i, 0, 2.0, 1.0);
+            } else {
+                grads.set(i, 0, -2.0, 1.0);
+            }
+        }
+
+        (quantized, cuts, grads)
+    }
+
+    #[test]
+    fn test_tree_grower_with_interaction_constraints() {
+        let (quantized, cuts, grads) = make_interaction_test_data();
+
+        // Features 0,1 can interact; features 2,3 can interact
+        let policy = DepthWisePolicy { max_depth: 3 };
+        let params = TreeParams {
+            learning_rate: 1.0,
+            interaction_constraints: vec![
+                vec![0, 1], // Group 1: features 0 and 1 can interact
+                vec![2, 3], // Group 2: features 2 and 3 can interact
+            ],
+            ..Default::default()
+        };
+
+        let mut partitioner = RowPartitioner::new(20);
+        let mut grower = TreeGrower::new(policy, &cuts, params);
+
+        let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+
+        // Verify that feature interactions are respected:
+        // If root splits on feature 0 or 1, then children can only split on 0 or 1
+        // If root splits on feature 2 or 3, then children can only split on 2 or 3
+        let root = tree.node(0);
+        if !root.is_leaf {
+            let root_feature = root.split.as_ref().unwrap().feature;
+            let group1_features = [0u32, 1];
+            let group2_features = [2u32, 3];
+            
+            let root_in_group1 = group1_features.contains(&root_feature);
+            let root_in_group2 = group2_features.contains(&root_feature);
+            
+            println!("Root splits on feature {}", root_feature);
+            
+            // Check children respect interaction constraints
+            fn check_subtree_features(
+                tree: &BuildingTree,
+                node_id: u32,
+                allowed: &[u32],
+                depth: usize,
+            ) {
+                let node = tree.node(node_id);
+                if node.is_leaf {
+                    return;
+                }
+                
+                let feature = node.split.as_ref().unwrap().feature;
+                println!("  {}Node {} splits on feature {}", "  ".repeat(depth), node_id, feature);
+                
+                // After the root, only the allowed features should be used
+                if depth > 0 {
+                    assert!(
+                        allowed.contains(&feature),
+                        "Feature {} used at depth {} but should only use {:?}",
+                        feature, depth, allowed
+                    );
+                }
+                
+                check_subtree_features(tree, node.left, allowed, depth + 1);
+                check_subtree_features(tree, node.right, allowed, depth + 1);
+            }
+            
+            if root_in_group1 {
+                check_subtree_features(&tree, 0, &group1_features, 0);
+            } else if root_in_group2 {
+                check_subtree_features(&tree, 0, &group2_features, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn test_tree_grower_no_interaction_constraints_allows_all() {
+        let (quantized, cuts, grads) = make_interaction_test_data();
+
+        // No interaction constraints - all features can interact
+        let policy = DepthWisePolicy { max_depth: 3 };
+        let params = TreeParams {
+            learning_rate: 1.0,
+            interaction_constraints: vec![], // No constraints
+            ..Default::default()
+        };
+
+        let mut partitioner = RowPartitioner::new(20);
+        let mut grower = TreeGrower::new(policy, &cuts, params);
+
+        let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+
+        // Just verify tree builds successfully - any feature can be used at any level
+        println!("Tree without interaction constraints has {} nodes", tree.num_nodes());
+        assert!(tree.num_nodes() > 0);
+    }
+
+    #[test]
+    fn test_tree_grower_single_feature_group() {
+        let (quantized, cuts, grads) = make_interaction_test_data();
+
+        // Only features 0 and 1 are allowed
+        let policy = DepthWisePolicy { max_depth: 3 };
+        let params = TreeParams {
+            learning_rate: 1.0,
+            interaction_constraints: vec![
+                vec![0, 1], // Only these features allowed
+            ],
+            ..Default::default()
+        };
+
+        let mut partitioner = RowPartitioner::new(20);
+        let mut grower = TreeGrower::new(policy, &cuts, params);
+
+        let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+
+        // All splits should only use features 0 or 1
+        fn check_features_only_from_group(
+            tree: &BuildingTree,
+            node_id: u32,
+            allowed: &[u32],
+        ) {
+            let node = tree.node(node_id);
+            if node.is_leaf {
+                return;
+            }
+            
+            let feature = node.split.as_ref().unwrap().feature;
+            assert!(
+                allowed.contains(&feature),
+                "Feature {} used but only {:?} allowed",
+                feature, allowed
+            );
+            
+            check_features_only_from_group(tree, node.left, allowed);
+            check_features_only_from_group(tree, node.right, allowed);
+        }
+        
+        check_features_only_from_group(&tree, 0, &[0, 1]);
     }
 }
