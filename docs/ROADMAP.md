@@ -25,10 +25,10 @@
 │  Histogram-based tree training: 1.05x-1.57x of XGBoost          │
 │  See: docs/benchmarks/2024-11-30-gbtree-vs-xgboost.md           │
 │                                                                  │
-│  LightGBM Compatibility                 ◄── ACTIVE              │
+│  LightGBM Compatibility                 ✅ INFERENCE COMPLETE    │
 │  ════════════════════════════════════════════════               │
-│  Model loading, inference validation, training baselines        │
-│  (Complete before GBTree Training Phase 2)                      │
+│  Model loading, inference validation (Stories 1-5 done)         │
+│  Training baselines pending (Stories 6-7)                       │
 │                                                                  │
 │  GBTree Training (Phase 2)              📋 PLANNED              │
 │  ════════════════════════════════════════════════               │
@@ -50,7 +50,7 @@
 | [GBTree Inference](backlog/01-gbtree-inference.md) | ✅ Complete | Tree inference, 3x faster than XGBoost C++ |
 | [GBLinear](backlog/02-gblinear.md) | ⏸️ Paused | Linear booster, core training complete |
 | [GBTree Training Ph1](backlog/03-gbtree-training.md) | ✅ Complete | Histogram-based training, 1.05-1.57x of XGBoost |
-| [LightGBM Compat](backlog/04-lightgbm-compat.md) | 🔄 Active | Model loading, leaf-wise validation |
+| [LightGBM Compat](backlog/04-lightgbm-compat.md) | ✅ Inference | Model loading complete, training baselines pending |
 | [GBTree Training Ph2](backlog/03-gbtree-training.md) | 📋 Planned | Optimizations (needs RFCs) |
 | [Future](backlog/99-future.md) | 📋 Backlog | Sparse data, Python bindings, etc. |
 
