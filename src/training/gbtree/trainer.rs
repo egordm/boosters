@@ -1353,4 +1353,146 @@ mod tests {
         // Should still produce valid trees
         assert_eq!(forest.num_trees(), 5);
     }
+
+    // ---- Monotonic Constraint Tests ----
+    
+    #[test]
+    fn test_train_with_monotonic_constraints() {
+        // 7.T1: Train with monotonic constraints enabled
+        use crate::training::gbtree::MonotonicConstraint;
+        
+        let (quantized, cuts, labels) = make_regression_data();
+
+        let params = TrainerParams {
+            num_rounds: 10,
+            tree_params: TreeParams {
+                max_depth: 3,
+                learning_rate: 0.3,
+                // Increasing constraint on feature 0, no constraint on others
+                monotone_constraints: vec![MonotonicConstraint::Increasing],
+                ..Default::default()
+            },
+            verbosity: Verbosity::Silent,
+            seed: 42,
+            ..Default::default()
+        };
+
+        let policy = DepthWisePolicy { max_depth: 3 };
+        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
+        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
+
+        // Should produce valid trees
+        assert_eq!(forest.num_trees(), 10);
+    }
+
+    #[test]
+    fn test_monotonic_constraint_enforced_in_predictions() {
+        // 7.T2: Verify monotonic constraint produces monotonic predictions
+        use crate::training::gbtree::MonotonicConstraint;
+        use crate::data::DenseMatrix;
+        
+        // Create data with a clear monotonic pattern
+        // Feature 0: 0, 1, 2, ..., 19
+        // Labels: linear relationship with noise
+        let n_rows = 20;
+        let n_features = 1;
+        let data: Vec<f32> = (0..n_rows).map(|x| x as f32).collect();
+        let matrix = DenseMatrix::from_vec(data, n_rows, n_features);
+        
+        // Labels are roughly linearly increasing with some noise
+        let labels: Vec<f32> = (0..n_rows).map(|x| x as f32 + 0.5).collect();
+
+        let cuts_finder = ExactQuantileCuts::new(1);
+        let quantizer = Quantizer::from_data(&matrix, &cuts_finder, 256);
+        let quantized = quantizer.quantize_u8(&matrix);
+        let cuts = (*quantizer.cuts()).clone();
+
+        let params = TrainerParams {
+            num_rounds: 10,
+            tree_params: TreeParams {
+                max_depth: 3,
+                learning_rate: 0.5,
+                monotone_constraints: vec![MonotonicConstraint::Increasing],
+                ..Default::default()
+            },
+            verbosity: Verbosity::Silent,
+            seed: 42,
+            ..Default::default()
+        };
+
+        let policy = DepthWisePolicy { max_depth: 3 };
+        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
+        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
+
+        // Get predictions for each row
+        let mut predictions: Vec<f32> = Vec::new();
+        for i in 0..n_rows {
+            let row: Vec<f32> = vec![i as f32];
+            let pred = forest.predict_row(&row);
+            predictions.push(pred[0]); // Single output regression
+        }
+
+        // Verify monotonicity: predictions should be non-decreasing
+        for i in 1..predictions.len() {
+            assert!(
+                predictions[i] >= predictions[i - 1] - 0.001, // Small epsilon for float comparison
+                "Monotonicity violated: pred[{}]={:.4} < pred[{}]={:.4}",
+                i, predictions[i], i - 1, predictions[i - 1]
+            );
+        }
+    }
+
+    #[test]
+    fn test_decreasing_constraint_enforced() {
+        // 7.T3: Verify decreasing constraint produces decreasing predictions
+        use crate::training::gbtree::MonotonicConstraint;
+        use crate::data::DenseMatrix;
+        
+        let n_rows = 20;
+        let n_features = 1;
+        let data: Vec<f32> = (0..n_rows).map(|x| x as f32).collect();
+        let matrix = DenseMatrix::from_vec(data, n_rows, n_features);
+        
+        // Labels are decreasing: higher feature values -> lower labels
+        let labels: Vec<f32> = (0..n_rows).map(|x| (n_rows - x) as f32 + 0.5).collect();
+
+        let cuts_finder = ExactQuantileCuts::new(1);
+        let quantizer = Quantizer::from_data(&matrix, &cuts_finder, 256);
+        let quantized = quantizer.quantize_u8(&matrix);
+        let cuts = (*quantizer.cuts()).clone();
+
+        let params = TrainerParams {
+            num_rounds: 10,
+            tree_params: TreeParams {
+                max_depth: 3,
+                learning_rate: 0.5,
+                monotone_constraints: vec![MonotonicConstraint::Decreasing],
+                ..Default::default()
+            },
+            verbosity: Verbosity::Silent,
+            seed: 42,
+            ..Default::default()
+        };
+
+        let policy = DepthWisePolicy { max_depth: 3 };
+        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
+        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
+
+        // Get predictions for each row
+        let mut predictions: Vec<f32> = Vec::new();
+        for i in 0..n_rows {
+            let row: Vec<f32> = vec![i as f32];
+            let pred = forest.predict_row(&row);
+            predictions.push(pred[0]); // Single output regression
+        }
+
+        // Verify monotonicity: predictions should be non-increasing
+        for i in 1..predictions.len() {
+            assert!(
+                predictions[i] <= predictions[i - 1] + 0.001,
+                "Decreasing constraint violated: pred[{}]={:.4} > pred[{}]={:.4}",
+                i, predictions[i], i - 1, predictions[i - 1]
+            );
+        }
+    }
 }

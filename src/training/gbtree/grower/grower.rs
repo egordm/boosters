@@ -5,16 +5,18 @@
 //! - Split finding
 //! - Row partitioning
 //! - Growth policy
+//! - Monotonic constraints
 
 use std::collections::HashMap;
 
 use super::building::{BuildingTree, NodeCandidate};
 use super::policy::{GrowthPolicy, GrowthState};
+use super::super::constraints::{MonotonicBounds, MonotonicChecker, MonotonicConstraint};
 use super::super::histogram::{HistogramBuilder, NodeHistogram};
 use super::super::partition::RowPartitioner;
 use super::super::quantize::{BinCuts, BinIndex, QuantizedMatrix};
 use super::super::sampling::ColumnSampler;
-use super::super::split::{GainParams, GreedySplitFinder, SplitFinder};
+use super::super::split::{GainParams, GreedySplitFinder, SplitFinder, SplitInfo};
 use crate::training::buffer::GradientBuffer;
 
 // ============================================================================
@@ -46,6 +48,10 @@ pub struct TreeParams {
     pub colsample_bylevel: f32,
     /// Column subsampling ratio per node (0, 1]. 1.0 means use all features.
     pub colsample_bynode: f32,
+    /// Monotonic constraints per feature (-1: decreasing, 0: none, 1: increasing)
+    /// 
+    /// If shorter than number of features, remaining features are unconstrained.
+    pub monotone_constraints: Vec<MonotonicConstraint>,
 }
 
 impl Default for TreeParams {
@@ -62,6 +68,7 @@ impl Default for TreeParams {
             colsample_bytree: 1.0,      // Use all features by default
             colsample_bylevel: 1.0,
             colsample_bynode: 1.0,
+            monotone_constraints: Vec::new(), // No constraints by default
         }
     }
 }
@@ -92,6 +99,8 @@ pub struct TreeGrower<'a, G: GrowthPolicy> {
     params: TreeParams,
     /// Column sampler for feature sampling
     col_sampler: ColumnSampler,
+    /// Monotonic constraint checker
+    mono_checker: MonotonicChecker,
 }
 
 impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
@@ -104,6 +113,10 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
             params.colsample_bylevel,
             params.colsample_bynode,
         );
+        let mono_checker = MonotonicChecker::new(
+            &params.monotone_constraints,
+            num_features as usize,
+        );
         Self {
             policy,
             hist_builder: HistogramBuilder::default(),
@@ -111,6 +124,7 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
             cuts,
             params,
             col_sampler,
+            mono_checker,
         }
     }
 
@@ -166,9 +180,14 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
         // Initialize column sampling for this tree
         self.col_sampler.sample_tree(tree_seed);
         let col_sampling_enabled = self.col_sampler.is_enabled();
+        let mono_enabled = self.mono_checker.is_enabled();
 
         // Histogram storage per node (reuse across iterations)
         let mut histograms: HashMap<u32, NodeHistogram> = HashMap::new();
+        
+        // Monotonic bounds per node (node_id -> bounds)
+        let mut node_bounds: HashMap<u32, MonotonicBounds> = HashMap::new();
+        node_bounds.insert(0, MonotonicBounds::unbounded());
 
         // Build root histogram
         let root_rows = partitioner.node_rows(0);
@@ -182,9 +201,15 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
             None
         };
         self.split_finder.feature_subset = root_features;
-        let root_split =
+        let mut root_split =
             self.split_finder
                 .find_best_split(&histograms[&0], self.cuts, &self.params.gain);
+        
+        // Apply monotonic constraints to root split
+        if mono_enabled && root_split.is_valid() {
+            let root_bounds = node_bounds[&0];
+            self.apply_monotonic_constraints(&mut root_split, &root_bounds);
+        }
 
         // Update root weight
         tree.node_mut(0).weight = root_split.weight_left; // Will be updated by split
@@ -224,9 +249,25 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
                 let (left_partition, right_partition) =
                     partitioner.apply_split(partition_id, &split, quantized);
 
+                // Compute child bounds for monotonic constraints
+                let (left_bounds, right_bounds) = if mono_enabled {
+                    let parent_bounds = node_bounds.get(&node_id).copied()
+                        .unwrap_or_else(MonotonicBounds::unbounded);
+                    let constraint = self.mono_checker.get(split.feature);
+                    // Use midpoint of split weights as the bound pivot
+                    let pivot = (split.weight_left + split.weight_right) / 2.0;
+                    parent_bounds.child_bounds(constraint, pivot)
+                } else {
+                    (MonotonicBounds::unbounded(), MonotonicBounds::unbounded())
+                };
+
                 // Expand tree node
                 let (left_id, right_id) =
                     tree.expand(node_id, split.clone(), left_partition, right_partition);
+
+                // Store child bounds
+                node_bounds.insert(left_id, left_bounds);
+                node_bounds.insert(right_id, right_bounds);
 
                 // Register children with growth state
                 state.add_children(left_id, right_id, candidate.depth + 1);
@@ -252,9 +293,14 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
                     None
                 };
                 self.split_finder.feature_subset = left_features;
-                let left_split =
+                let mut left_split =
                     self.split_finder
                         .find_best_split(&left_hist, self.cuts, &self.params.gain);
+                
+                // Apply monotonic constraints to left split
+                if mono_enabled && left_split.is_valid() {
+                    self.apply_monotonic_constraints(&mut left_split, &left_bounds);
+                }
                 
                 // Right child
                 let right_features = if col_sampling_enabled {
@@ -263,9 +309,14 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
                     None
                 };
                 self.split_finder.feature_subset = right_features;
-                let right_split =
+                let mut right_split =
                     self.split_finder
                         .find_best_split(&right_hist, self.cuts, &self.params.gain);
+                
+                // Apply monotonic constraints to right split
+                if mono_enabled && right_split.is_valid() {
+                    self.apply_monotonic_constraints(&mut right_split, &right_bounds);
+                }
 
                 histograms.insert(left_id, left_hist);
                 histograms.insert(right_id, right_hist);
@@ -295,10 +346,37 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
             self.policy.advance(&mut state);
         }
 
+        // Clamp final leaf weights to monotonic bounds
+        if mono_enabled {
+            self.clamp_leaf_weights(&mut tree, &node_bounds);
+        }
+
         // Apply learning rate to leaf weights
         tree.apply_learning_rate(self.params.learning_rate);
 
         tree
+    }
+
+    /// Apply monotonic constraints to a split, adjusting weights if needed.
+    fn apply_monotonic_constraints(&self, split: &mut SplitInfo, bounds: &MonotonicBounds) {
+        let (new_left, new_right, _is_valid) = self.mono_checker.check_and_fix(
+            split.feature,
+            split.weight_left,
+            split.weight_right,
+            bounds,
+        );
+        split.weight_left = new_left;
+        split.weight_right = new_right;
+    }
+
+    /// Clamp all leaf weights to their monotonic bounds.
+    fn clamp_leaf_weights(&self, tree: &mut BuildingTree, bounds: &HashMap<u32, MonotonicBounds>) {
+        for leaf_id in tree.leaves().collect::<Vec<_>>() {
+            if let Some(node_bounds) = bounds.get(&leaf_id) {
+                let node = tree.node_mut(leaf_id);
+                node.weight = node_bounds.clamp(node.weight);
+            }
+        }
     }
 
     /// Check if a candidate should be split.
@@ -535,5 +613,202 @@ mod tests {
         // This is a characteristic property of leaf-wise growth
         println!("Depth-wise max depth: {}", depth_tree.max_depth());
         println!("Leaf-wise max depth: {}", leaf_tree.max_depth());
+    }
+
+    // ---- Monotonic Constraint Tests ----
+
+    /// Create test data where feature 0 has a clear monotonic relationship.
+    /// Higher feature values should have lower predictions (negative gradient relationship).
+    fn make_monotonic_test_data() -> (QuantizedMatrix<u8>, BinCuts, GradientBuffer) {
+        // 20 rows, 1 feature
+        // Feature 0: values 0..19
+        // Gradients: linear relationship where higher feature -> higher gradient
+        // This means optimal weights decrease as feature increases
+        let data: Vec<f32> = (0..20).map(|x| x as f32).collect();
+        let matrix = DenseMatrix::from_vec(data, 20, 1);
+        
+        let cuts_finder = ExactQuantileCuts::new(1);
+        let cuts = cuts_finder.find_cuts(&matrix, 256);
+
+        let quantizer = Quantizer::new(cuts.clone());
+        let quantized = quantizer.quantize::<_, u8>(&matrix);
+
+        // Gradients: first half positive (want to decrease weight), second half negative
+        // This creates a natural split with left=positive weight, right=negative weight
+        let mut grads = GradientBuffer::new(20, 1);
+        for i in 0..10 {
+            // Positive gradient -> negative optimal weight (w* = -G/H)
+            grads.set(i, 0, 2.0, 1.0);
+        }
+        for i in 10..20 {
+            // Negative gradient -> positive optimal weight
+            grads.set(i, 0, -2.0, 1.0);
+        }
+
+        (quantized, cuts, grads)
+    }
+
+    #[test]
+    fn test_tree_grower_with_increasing_constraint() {
+        let (quantized, cuts, grads) = make_monotonic_test_data();
+
+        let policy = DepthWisePolicy { max_depth: 2 };
+        let params = TreeParams {
+            learning_rate: 1.0,
+            monotone_constraints: vec![MonotonicConstraint::Increasing],
+            ..Default::default()
+        };
+
+        let mut partitioner = RowPartitioner::new(20);
+        let mut grower = TreeGrower::new(policy, &cuts, params);
+
+        let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+
+        // Verify monotonicity: for increasing constraint, traverse left to right
+        // and verify weights are non-decreasing
+        if !tree.node(0).is_leaf {
+            // Collect leaf weights from left to right by feature 0 order
+            let mut leaf_weights: Vec<(f32, f32)> = Vec::new(); // (feature_position, weight)
+            
+            // Simple collection of leaves
+            for leaf_id in tree.leaves() {
+                let leaf = tree.node(leaf_id);
+                // Get approximate position by looking at parent splits
+                // For this test, just verify left child <= right child at each split
+                leaf_weights.push((leaf_id as f32, leaf.weight));
+            }
+            
+            // Verify at each split level that left <= right (for increasing)
+            let root = tree.node(0);
+            if !root.is_leaf {
+                let left = tree.node(root.left);
+                let right = tree.node(root.right);
+                
+                // For increasing constraint on feature 0:
+                // Left child (lower feature values) should have lower or equal weight
+                assert!(
+                    left.weight <= right.weight + 0.001, // Small epsilon for float comparison
+                    "Increasing constraint violated: left={:.4} > right={:.4}",
+                    left.weight, right.weight
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_tree_grower_with_decreasing_constraint() {
+        let (quantized, cuts, grads) = make_monotonic_test_data();
+
+        let policy = DepthWisePolicy { max_depth: 2 };
+        let params = TreeParams {
+            learning_rate: 1.0,
+            monotone_constraints: vec![MonotonicConstraint::Decreasing],
+            ..Default::default()
+        };
+
+        let mut partitioner = RowPartitioner::new(20);
+        let mut grower = TreeGrower::new(policy, &cuts, params);
+
+        let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+
+        // Verify monotonicity: for decreasing constraint
+        if !tree.node(0).is_leaf {
+            let root = tree.node(0);
+            let left = tree.node(root.left);
+            let right = tree.node(root.right);
+            
+            // For decreasing constraint on feature 0:
+            // Left child (lower feature values) should have higher or equal weight
+            assert!(
+                left.weight >= right.weight - 0.001,
+                "Decreasing constraint violated: left={:.4} < right={:.4}",
+                left.weight, right.weight
+            );
+        }
+    }
+
+    #[test]
+    fn test_tree_grower_monotonic_constraint_clamps_weights() {
+        // Create data that would naturally violate monotonicity
+        // Feature increases, but optimal weights would oscillate
+        let data: Vec<f32> = (0..10).map(|x| x as f32).collect();
+        let matrix = DenseMatrix::from_vec(data, 10, 1);
+        
+        let cuts_finder = ExactQuantileCuts::new(1);
+        let cuts = cuts_finder.find_cuts(&matrix, 256);
+        let quantizer = Quantizer::new(cuts.clone());
+        let quantized = quantizer.quantize::<_, u8>(&matrix);
+
+        // Gradients that would create violating splits without constraints
+        // Row 0-4: positive gradient, row 5-9: negative gradient
+        // But we want increasing constraint
+        let mut grads = GradientBuffer::new(10, 1);
+        for i in 0..5 {
+            grads.set(i, 0, 2.0, 1.0); // optimal weight = -2
+        }
+        for i in 5..10 {
+            grads.set(i, 0, -2.0, 1.0); // optimal weight = +2
+        }
+
+        // Without constraint: left would be -2, right would be +2
+        // With increasing constraint: both should be clamped to same value (midpoint=0)
+        // because left > right violates increasing
+
+        let policy = DepthWisePolicy { max_depth: 1 };
+        let params = TreeParams {
+            learning_rate: 1.0,
+            monotone_constraints: vec![MonotonicConstraint::Increasing],
+            ..Default::default()
+        };
+
+        let mut partitioner = RowPartitioner::new(10);
+        let mut grower = TreeGrower::new(policy, &cuts, params);
+
+        let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+
+        if !tree.node(0).is_leaf {
+            let root = tree.node(0);
+            let left = tree.node(root.left);
+            let right = tree.node(root.right);
+            
+            // Should be clamped to midpoint or satisfy constraint
+            assert!(
+                left.weight <= right.weight + 0.001,
+                "Increasing constraint should clamp: left={:.4} <= right={:.4}",
+                left.weight, right.weight
+            );
+        }
+    }
+
+    #[test]
+    fn test_tree_grower_no_constraint_allows_any_order() {
+        let (quantized, cuts, grads) = make_monotonic_test_data();
+
+        let policy = DepthWisePolicy { max_depth: 1 };
+        let params = TreeParams {
+            learning_rate: 1.0,
+            monotone_constraints: vec![], // No constraints
+            ..Default::default()
+        };
+
+        let mut partitioner = RowPartitioner::new(20);
+        let mut grower = TreeGrower::new(policy, &cuts, params);
+
+        let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+
+        // Without constraints, the natural split should occur
+        // The data has positive gradients in first half -> negative weights
+        // Negative gradients in second half -> positive weights
+        if !tree.node(0).is_leaf {
+            let root = tree.node(0);
+            let left = tree.node(root.left);
+            let right = tree.node(root.right);
+            
+            // Without constraints, left should be negative, right should be positive
+            // (based on our gradient setup)
+            println!("No constraint: left={:.4}, right={:.4}", left.weight, right.weight);
+            // Just verify it builds successfully
+            assert!(tree.num_leaves() == 2);
+        }
     }
 }
