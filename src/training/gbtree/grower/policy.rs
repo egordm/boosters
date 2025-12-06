@@ -23,7 +23,7 @@
 //! let strategy = GrowthStrategy::LeafWise { max_leaves: 31 };
 //! ```
 
-use super::tree::{BuildingTree, NodeCandidate};
+use super::building::{BuildingTree, NodeCandidate};
 
 // ============================================================================
 // GrowthPolicy trait

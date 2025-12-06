@@ -22,10 +22,9 @@ use crate::forest::SoAForest;
 use crate::training::{EarlyStopping, GradientBuffer, Loss, Metric, TrainingLogger, Verbosity};
 use crate::trees::{ScalarLeaf, SoATreeStorage, TreeBuilder as SoATreeBuilder};
 
+use super::grower::{BuildingTree, GrowthPolicy, TreeGrower, TreeParams};
 use super::partition::RowPartitioner;
-use super::policy::GrowthPolicy;
 use super::quantize::{BinCuts, BinIndex, QuantizedMatrix};
-use super::tree::{BuildingTree, TreeGrower, TreeParams};
 
 // ============================================================================
 // TrainerParams
