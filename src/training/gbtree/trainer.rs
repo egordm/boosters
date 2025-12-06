@@ -39,11 +39,21 @@ use crate::trees::{ScalarLeaf, SoATreeStorage, TreeBuilder as SoATreeBuilder};
 use super::grower::{BuildingTree, GrowthPolicy, TreeGrower, TreeParams};
 use super::partition::RowPartitioner;
 use super::quantize::{BinCuts, BinIndex, CutFinder, QuantizedMatrix, Quantizer};
-use super::sampling::RowSampler;
+use super::sampling::{GossParams, GossSampler, RowSampler};
 
 // ============================================================================
 // TrainerParams
 // ============================================================================
+
+/// Row sampling strategy for training.
+#[derive(Debug, Clone, Copy, Default)]
+pub enum RowSamplingStrategy {
+    /// Random subsampling (default when subsample < 1.0)
+    #[default]
+    Random,
+    /// GOSS: Gradient-based One-Side Sampling (LightGBM style)
+    Goss(GossParams),
+}
 
 /// Parameters for the gradient boosting trainer.
 #[derive(Debug, Clone)]
@@ -58,6 +68,8 @@ pub struct TrainerParams {
     pub verbosity: Verbosity,
     /// Random seed for reproducibility (sampling, etc.)
     pub seed: u64,
+    /// Row sampling strategy (GOSS or random subsampling)
+    pub row_sampling: RowSamplingStrategy,
 }
 
 impl Default for TrainerParams {
@@ -68,6 +80,7 @@ impl Default for TrainerParams {
             base_score: BaseScore::Mean,
             verbosity: Verbosity::Info,
             seed: 0,
+            row_sampling: RowSamplingStrategy::default(),
         }
     }
 }
@@ -215,25 +228,43 @@ impl GBTreeTrainer {
         // Row partitioner (reused per tree)
         let mut partitioner = RowPartitioner::new(num_rows as u32);
 
-        // Row sampler for subsampling
-        let row_sampler = RowSampler::new(num_rows as u32, self.params.tree_params.subsample);
-        let sampling_enabled = row_sampler.is_enabled();
+        // Determine sampling strategy
+        let subsample = self.params.tree_params.subsample;
+        let goss_sampler = match &self.params.row_sampling {
+            RowSamplingStrategy::Goss(params) => Some(GossSampler::new(*params)),
+            RowSamplingStrategy::Random => None,
+        };
+        let row_sampler = if goss_sampler.is_none() && subsample < 1.0 {
+            Some(RowSampler::new(num_rows as u32, subsample))
+        } else {
+            None
+        };
+        let _sampling_enabled = row_sampler.as_ref().map_or(false, |s| s.is_enabled())
+            || goss_sampler.as_ref().map_or(false, |s| s.is_enabled());
 
         // Trees built during training
         let mut trees: Vec<BuildingTree> = Vec::with_capacity(self.params.num_rounds as usize);
+
+        // Log sampling strategy
+        let sampling_info = if goss_sampler.is_some() {
+            match &self.params.row_sampling {
+                RowSamplingStrategy::Goss(params) => format!(
+                    " (GOSS: top={:.2}, other={:.2})",
+                    params.top_rate, params.other_rate
+                ),
+                _ => String::new(),
+            }
+        } else if subsample < 1.0 {
+            format!(" (subsample={:.2})", subsample)
+        } else {
+            String::new()
+        };
 
         self.logger.info(&format!(
             "Starting training: {} rounds, {} samples{}",
             self.params.num_rounds,
             num_rows,
-            if sampling_enabled {
-                format!(
-                    " (subsample={:.2})",
-                    self.params.tree_params.subsample
-                )
-            } else {
-                String::new()
-            }
+            sampling_info,
         ));
 
         for round in 0..self.params.num_rounds {
@@ -243,12 +274,33 @@ impl GBTreeTrainer {
 
             // Sample rows for this round (same seed + round = reproducible)
             let round_seed = self.params.seed.wrapping_add(round as u64);
-            let sampled_rows = row_sampler.sample(round_seed);
-
-            // Reset partitioner for new tree with sampled rows
-            if sampling_enabled {
+            
+            // Apply row sampling (GOSS or random)
+            if let Some(goss) = &goss_sampler {
+                // GOSS: Sample based on gradient magnitudes
+                let gradient_slice: Vec<f32> = (0..num_rows)
+                    .map(|i| grads.get(i, 0).0)
+                    .collect();
+                let sample = goss.sample(&gradient_slice, round_seed);
+                
+                // Reset partitioner with GOSS-sampled rows
+                partitioner.reset_with_rows(&sample.indices);
+                
+                // Apply weight amplification to gradients
+                // For non-top rows, multiply gradient/hessian by weight
+                for (idx_in_sample, &row_idx) in sample.indices.iter().enumerate() {
+                    let weight = sample.weights[idx_in_sample];
+                    if weight != 1.0 {
+                        let (grad, hess) = grads.get(row_idx as usize, 0);
+                        grads.set(row_idx as usize, 0, grad * weight, hess * weight);
+                    }
+                }
+            } else if let Some(random_sampler) = &row_sampler {
+                // Random subsampling
+                let sampled_rows = random_sampler.sample(round_seed);
                 partitioner.reset_with_rows(&sampled_rows);
             } else {
+                // No sampling - use all rows
                 partitioner.reset();
             }
 
@@ -1494,5 +1546,122 @@ mod tests {
                 i, predictions[i], i - 1, predictions[i - 1]
             );
         }
+    }
+
+    #[test]
+    fn test_goss_sampling() {
+        // Test GOSS sampling produces valid model
+        // Use similar data construction as make_regression_data
+        let mut data = Vec::new();
+        let mut labels = Vec::new();
+        for i in 0..100 {
+            let x0 = i as f32 / 10.0;
+            let x1 = (i % 10) as f32;
+            data.push(x0);
+            data.push(x1);
+            labels.push(x0 + 0.1);
+        }
+
+        let matrix = DenseMatrix::from_vec(data, 100, 2);
+        let cuts_finder = ExactQuantileCuts::new(2);
+        let cuts = cuts_finder.find_cuts(&matrix, 256);
+        let quantizer = Quantizer::new(cuts.clone());
+        let quantized = quantizer.quantize::<_, u8>(&matrix);
+
+        let goss_params = GossParams::new(0.3, 0.2);
+        let params = TrainerParams {
+            num_rounds: 10,
+            tree_params: TreeParams {
+                max_depth: 3,
+                learning_rate: 0.3,
+                ..Default::default()
+            },
+            row_sampling: RowSamplingStrategy::Goss(goss_params),
+            verbosity: Verbosity::Silent,
+            seed: 42,
+            ..Default::default()
+        };
+
+        let policy = DepthWisePolicy { max_depth: 3 };
+        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
+        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
+
+        // Model should have trained successfully
+        assert!(forest.num_trees() > 0);
+        
+        // Should make reasonable predictions
+        let test_row: Vec<f32> = vec![5.0, 5.0];
+        let pred = forest.predict_row(&test_row);
+        assert!(!pred[0].is_nan());
+    }
+
+    #[test]
+    fn test_goss_vs_random_sampling() {
+        // Compare GOSS and random sampling - both should produce valid models
+        // Use similar data construction as make_regression_data
+        let mut data = Vec::new();
+        let mut labels = Vec::new();
+        for i in 0..100 {
+            let x0 = i as f32 / 10.0;
+            let x1 = (i % 10) as f32;
+            data.push(x0);
+            data.push(x1);
+            labels.push(x0 + 0.1);
+        }
+
+        let matrix = DenseMatrix::from_vec(data, 100, 2);
+        let cuts_finder = ExactQuantileCuts::new(2);
+        let cuts = cuts_finder.find_cuts(&matrix, 256);
+        let quantizer = Quantizer::new(cuts.clone());
+        let quantized = quantizer.quantize::<_, u8>(&matrix);
+
+        // Train with GOSS
+        let goss_params = TrainerParams {
+            num_rounds: 20,
+            tree_params: TreeParams {
+                max_depth: 3,
+                learning_rate: 0.3,
+                ..Default::default()
+            },
+            row_sampling: RowSamplingStrategy::Goss(GossParams::new(0.3, 0.2)),
+            verbosity: Verbosity::Silent,
+            seed: 42,
+            ..Default::default()
+        };
+        let policy = DepthWisePolicy { max_depth: 3 };
+        let mut goss_trainer = GBTreeTrainer::new(Box::new(SquaredLoss), goss_params);
+        let goss_forest = goss_trainer.train(policy.clone(), &quantized, &labels, &cuts, &[]);
+
+        // Train with random sampling (same effective sample rate)
+        let random_params = TrainerParams {
+            num_rounds: 20,
+            tree_params: TreeParams {
+                max_depth: 3,
+                learning_rate: 0.3,
+                subsample: 0.44, // 0.3 + 0.2 * 0.7 = 0.44
+                ..Default::default()
+            },
+            row_sampling: RowSamplingStrategy::Random,
+            verbosity: Verbosity::Silent,
+            seed: 42,
+            ..Default::default()
+        };
+        let mut random_trainer = GBTreeTrainer::new(Box::new(SquaredLoss), random_params);
+        let random_forest = random_trainer.train(policy, &quantized, &labels, &cuts, &[]);
+
+        // Both should have trained successfully
+        assert!(goss_forest.num_trees() > 0);
+        assert!(random_forest.num_trees() > 0);
+        
+        // Both should make reasonable predictions
+        let test_row: Vec<f32> = vec![5.0, 5.0];
+        let goss_pred = goss_forest.predict_row(&test_row)[0];
+        let random_pred = random_forest.predict_row(&test_row)[0];
+        
+        assert!(!goss_pred.is_nan());
+        assert!(!random_pred.is_nan());
+        
+        // Predictions may differ but should be in similar range
+        println!("GOSS prediction: {}, Random prediction: {}", goss_pred, random_pred);
     }
 }

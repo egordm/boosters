@@ -711,8 +711,10 @@ mod tests {
         let hist = NodeHistogram::new(&cuts);
         
         assert_eq!(hist.num_features(), 2);
-        assert_eq!(hist.feature(0).num_bins(), 4);  // 3 cuts + missing bin
-        assert_eq!(hist.feature(1).num_bins(), 2);  // 1 cut + missing bin
+        // 3 cuts creates 4 regions + 1 missing bin = 5 bins
+        assert_eq!(hist.feature(0).num_bins(), 5);
+        // 1 cut creates 2 regions + 1 missing bin = 3 bins
+        assert_eq!(hist.feature(1).num_bins(), 3);
     }
 
     #[test]

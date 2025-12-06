@@ -60,8 +60,8 @@ pub use partition::RowPartitioner;
 pub use quantize::{
     BinCuts, BinIndex, CategoricalInfo, CutFinder, ExactQuantileCuts, QuantizedMatrix, Quantizer,
 };
-pub use sampling::{ColumnSampler, RowSampler};
+pub use sampling::{ColumnSampler, GossParams, GossSample, GossSampler, RowSampler};
 pub use split::{
     GainParams, GreedySplitFinder, SplitFinder, SplitInfo, leaf_objective, leaf_weight, split_gain,
 };
-pub use trainer::{BaseScore, GBTreeTrainer, QuantizedEvalSet, TrainerParams};
+pub use trainer::{BaseScore, GBTreeTrainer, QuantizedEvalSet, RowSamplingStrategy, TrainerParams};
