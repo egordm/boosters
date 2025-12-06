@@ -278,16 +278,23 @@ impl BinCuts {
     ///
     /// For numerical features: number of cuts + 1 (for bin 0 which handles missing/below-min).
     /// For categorical features: num_categories + 1 (for bin 0 which handles missing).
+    ///
+    /// For numerical features with N cuts, there are N+2 bins:
+    /// - Bin 0: missing values (NaN)
+    /// - Bins 1..=N: regions (-∞, cut[0]], (cut[0], cut[1]], ..., (cut[N-2], cut[N-1]]
+    /// - Bin N+1: region (cut[N-1], +∞)
     #[inline]
     pub fn num_bins(&self, feature: u32) -> usize {
         if self.is_categorical[feature as usize] {
             // Categorical: bins are 0 (missing) + categories
             self.num_categories[feature as usize] as usize + 1
         } else {
-            // Numerical: bins are 0 (missing) + cut regions
+            // Numerical: bins are 0 (missing) + (N+1 regions for N cuts)
             let start = self.cut_ptrs[feature as usize];
             let end = self.cut_ptrs[feature as usize + 1];
-            (end - start) as usize + 1
+            let num_cuts = (end - start) as usize;
+            // N cuts create N+1 regions, plus bin 0 for missing = N+2 bins total
+            num_cuts + 2
         }
     }
 
@@ -843,8 +850,8 @@ mod tests {
         assert_eq!(cuts.num_features(), 2);
         assert_eq!(cuts.feature_cuts(0), &[0.5, 1.5, 2.5]);
         assert_eq!(cuts.feature_cuts(1), &[10.0]);
-        assert_eq!(cuts.num_bins(0), 4); // 3 cuts + 1 for missing
-        assert_eq!(cuts.num_bins(1), 2); // 1 cut + 1 for missing
+        assert_eq!(cuts.num_bins(0), 5); // 3 cuts -> 4 regions + 1 missing = 5 bins
+        assert_eq!(cuts.num_bins(1), 3); // 1 cut -> 2 regions + 1 missing = 3 bins
     }
 
     #[test]
@@ -867,16 +874,16 @@ mod tests {
 
     #[test]
     fn test_bin_value_edge_cases() {
-        // Empty cuts (single bin for non-missing)
+        // Empty cuts (bin 0 for missing, bin 1 for all values)
         let cuts = make_cuts(&[&[]]);
-        assert_eq!(cuts.num_bins(0), 1);
+        assert_eq!(cuts.num_bins(0), 2); // 0 cuts -> 1 region + 1 missing = 2 bins
         assert_eq!(cuts.bin_value(0, f32::NAN), 0);
         assert_eq!(cuts.bin_value(0, 0.0), 1);
         assert_eq!(cuts.bin_value(0, 100.0), 1);
 
         // Single cut
         let cuts = make_cuts(&[&[5.0]]);
-        assert_eq!(cuts.num_bins(0), 2);
+        assert_eq!(cuts.num_bins(0), 3); // 1 cut -> 2 regions + 1 missing = 3 bins
         assert_eq!(cuts.bin_value(0, f32::NAN), 0);
         assert_eq!(cuts.bin_value(0, 4.0), 1);
         assert_eq!(cuts.bin_value(0, 5.0), 1);
@@ -1102,8 +1109,8 @@ mod tests {
                 assert_eq!(bin, 0, "All NaN column should all be bin 0");
             }
 
-            // Should have 1 bin (just the missing bin, no cuts)
-            assert_eq!(quantizer.cuts().num_bins(0), 1);
+            // With 0 cuts: bin 0 (missing) + bin 1 (single region) = 2 bins
+            assert_eq!(quantizer.cuts().num_bins(0), 2);
         }
 
         #[test]

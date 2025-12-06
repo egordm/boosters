@@ -232,6 +232,187 @@ impl ColumnSampler {
 }
 
 // ============================================================================
+// GOSSSampler (Gradient-based One-Side Sampling)
+// ============================================================================
+
+/// Parameters for GOSS sampling.
+#[derive(Debug, Clone, Copy)]
+pub struct GossParams {
+    /// Fraction of rows to keep by top gradient magnitude.
+    /// These rows always contribute to training.
+    pub top_rate: f32,
+    /// Fraction of remaining rows to randomly sample.
+    /// These rows get weight amplification.
+    pub other_rate: f32,
+}
+
+impl Default for GossParams {
+    fn default() -> Self {
+        Self {
+            top_rate: 0.2,
+            other_rate: 0.1,
+        }
+    }
+}
+
+impl GossParams {
+    /// Create new GOSS parameters.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `top_rate` or `other_rate` is not in (0, 1].
+    pub fn new(top_rate: f32, other_rate: f32) -> Self {
+        assert!(
+            top_rate > 0.0 && top_rate <= 1.0,
+            "top_rate must be in (0, 1], got {}",
+            top_rate
+        );
+        assert!(
+            other_rate > 0.0 && other_rate <= 1.0,
+            "other_rate must be in (0, 1], got {}",
+            other_rate
+        );
+        Self { top_rate, other_rate }
+    }
+
+    /// Returns true if GOSS would sample (i.e., not all rows are kept).
+    #[inline]
+    pub fn is_enabled(&self) -> bool {
+        // If top_rate + other_rate * (1 - top_rate) < 1.0, GOSS filters rows
+        self.top_rate + self.other_rate * (1.0 - self.top_rate) < 1.0
+    }
+
+    /// Compute the weight amplification factor for sampled (non-top) rows.
+    ///
+    /// Formula: (1 - top_rate) / other_rate
+    /// This compensates for undersampling the small-gradient rows.
+    #[inline]
+    pub fn weight_amplification(&self) -> f32 {
+        (1.0 - self.top_rate) / self.other_rate
+    }
+}
+
+/// Result of GOSS sampling containing selected rows and their weights.
+#[derive(Debug, Clone)]
+pub struct GossSample {
+    /// Indices of selected rows (sorted for cache efficiency).
+    pub indices: Vec<u32>,
+    /// Weight for each selected row (1.0 for top rows, amplified for sampled rows).
+    /// Length matches `indices`.
+    pub weights: Vec<f32>,
+}
+
+impl GossSample {
+    /// Create a sample that includes all rows with uniform weight.
+    pub fn all_rows(num_rows: u32) -> Self {
+        Self {
+            indices: (0..num_rows).collect(),
+            weights: vec![1.0; num_rows as usize],
+        }
+    }
+}
+
+/// Gradient-based One-Side Sampling (GOSS).
+///
+/// GOSS selects rows based on gradient magnitude:
+/// 1. Keep top `top_rate` fraction by |gradient| (always included)
+/// 2. Randomly sample `other_rate` fraction of remaining rows
+/// 3. Apply weight amplification to sampled rows to compensate for bias
+///
+/// This focuses training on informative samples (large gradients) while
+/// maintaining dataset distribution through weighted sampling.
+#[derive(Debug, Clone)]
+pub struct GossSampler {
+    /// GOSS parameters
+    params: GossParams,
+}
+
+impl GossSampler {
+    /// Create a new GOSS sampler with the given parameters.
+    pub fn new(params: GossParams) -> Self {
+        Self { params }
+    }
+
+    /// Returns true if GOSS sampling is enabled.
+    #[inline]
+    pub fn is_enabled(&self) -> bool {
+        self.params.is_enabled()
+    }
+
+    /// Sample rows based on gradient magnitudes.
+    ///
+    /// # Arguments
+    ///
+    /// * `gradients` - Gradient values for each row (can be negative)
+    /// * `seed` - Random seed for reproducibility
+    ///
+    /// # Returns
+    ///
+    /// A `GossSample` containing selected row indices and their weights.
+    pub fn sample(&self, gradients: &[f32], seed: u64) -> GossSample {
+        let num_rows = gradients.len();
+        
+        if !self.is_enabled() || num_rows == 0 {
+            return GossSample::all_rows(num_rows as u32);
+        }
+
+        // 1. Compute absolute gradient magnitudes with indices
+        let mut indexed_grads: Vec<(u32, f32)> = gradients
+            .iter()
+            .enumerate()
+            .map(|(i, &g)| (i as u32, g.abs()))
+            .collect();
+
+        // 2. Sort by gradient magnitude (descending) to find top rows
+        indexed_grads.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // 3. Calculate how many top rows to keep
+        let top_count = ((num_rows as f32 * self.params.top_rate).ceil() as usize).max(1);
+        let top_count = top_count.min(num_rows);
+
+        // 4. Top rows (always included with weight 1.0)
+        let mut result_indices: Vec<u32> = indexed_grads[..top_count]
+            .iter()
+            .map(|(i, _)| *i)
+            .collect();
+        let mut result_weights: Vec<f32> = vec![1.0; top_count];
+
+        // 5. Remaining rows to sample from
+        let remaining_count = num_rows - top_count;
+        if remaining_count > 0 {
+            let sample_count = ((remaining_count as f32 * self.params.other_rate).ceil() as usize).max(1);
+            let sample_count = sample_count.min(remaining_count);
+
+            // Sample from remaining rows
+            let remaining_indices: Vec<u32> = indexed_grads[top_count..]
+                .iter()
+                .map(|(i, _)| *i)
+                .collect();
+
+            let sampled = sample_from_slice(&remaining_indices, sample_count, seed);
+            let weight = self.params.weight_amplification();
+
+            for idx in sampled {
+                result_indices.push(idx);
+                result_weights.push(weight);
+            }
+        }
+
+        // 6. Sort indices for cache-friendly access (reorder weights to match)
+        let mut pairs: Vec<(u32, f32)> = result_indices
+            .into_iter()
+            .zip(result_weights)
+            .collect();
+        pairs.sort_by_key(|(i, _)| *i);
+
+        GossSample {
+            indices: pairs.iter().map(|(i, _)| *i).collect(),
+            weights: pairs.iter().map(|(_, w)| *w).collect(),
+        }
+    }
+}
+
+// ============================================================================
 // Helper Functions
 // ============================================================================
 
@@ -432,5 +613,157 @@ mod tests {
     #[should_panic(expected = "colsample_bytree must be in (0, 1]")]
     fn test_column_sampler_invalid() {
         ColumnSampler::new(10, 0.0, 1.0, 1.0);
+    }
+
+    // ---- GOSS Sampler Tests ----
+
+    #[test]
+    fn test_goss_params_default() {
+        let params = GossParams::default();
+        assert_eq!(params.top_rate, 0.2);
+        assert_eq!(params.other_rate, 0.1);
+        assert!(params.is_enabled());
+    }
+
+    #[test]
+    fn test_goss_params_not_enabled() {
+        // When top_rate + other_rate * (1 - top_rate) >= 1.0, all rows are kept
+        let params = GossParams::new(0.5, 1.0); // 0.5 + 1.0 * 0.5 = 1.0
+        assert!(!params.is_enabled());
+    }
+
+    #[test]
+    fn test_goss_params_weight_amplification() {
+        let params = GossParams::new(0.2, 0.1);
+        // Weight = (1 - 0.2) / 0.1 = 0.8 / 0.1 = 8.0
+        assert!((params.weight_amplification() - 8.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_goss_sample_all_rows() {
+        let params = GossParams::new(0.5, 1.0);
+        let sampler = GossSampler::new(params);
+        
+        let gradients: Vec<f32> = (0..10).map(|i| i as f32).collect();
+        let sample = sampler.sample(&gradients, 42);
+        
+        // Should include all rows
+        assert_eq!(sample.indices.len(), 10);
+        assert_eq!(sample.indices, (0..10).collect::<Vec<_>>());
+        // All weights should be 1.0
+        assert!(sample.weights.iter().all(|&w| w == 1.0));
+    }
+
+    #[test]
+    fn test_goss_sample_basic() {
+        let params = GossParams::new(0.3, 0.2);
+        let sampler = GossSampler::new(params);
+        
+        // 10 rows with varying gradients
+        // Large gradients: indices 9, 8, 7 (top 3 = 30%)
+        let gradients: Vec<f32> = (0..10).map(|i| i as f32).collect();
+        let sample = sampler.sample(&gradients, 42);
+        
+        // Should have top 3 (30%) + some from remaining 7 (20% of 7 = 2)
+        // Top 3 are indices 9, 8, 7 (highest absolute gradients)
+        let top_rows = vec![7u32, 8, 9];
+        for &top in &top_rows {
+            assert!(sample.indices.contains(&top), "Top row {} missing", top);
+        }
+        
+        // Total: 3 top + 2 sampled = 5 rows
+        assert_eq!(sample.indices.len(), 5);
+        
+        // Check weights
+        for (i, &idx) in sample.indices.iter().enumerate() {
+            if top_rows.contains(&idx) {
+                assert_eq!(sample.weights[i], 1.0, "Top row should have weight 1.0");
+            } else {
+                // Sampled row should have amplified weight
+                let expected_weight = params.weight_amplification();
+                assert!(
+                    (sample.weights[i] - expected_weight).abs() < 1e-6,
+                    "Sampled row should have weight {}, got {}",
+                    expected_weight,
+                    sample.weights[i]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_goss_sample_sorted_indices() {
+        let params = GossParams::new(0.2, 0.3);
+        let sampler = GossSampler::new(params);
+        
+        let gradients: Vec<f32> = (0..100).map(|i| (i as f32).sin()).collect();
+        let sample = sampler.sample(&gradients, 42);
+        
+        // Indices should be sorted for cache efficiency
+        for i in 1..sample.indices.len() {
+            assert!(
+                sample.indices[i] > sample.indices[i - 1],
+                "Indices should be sorted"
+            );
+        }
+    }
+
+    #[test]
+    fn test_goss_sample_reproducible() {
+        let params = GossParams::new(0.2, 0.1);
+        let sampler = GossSampler::new(params);
+        
+        let gradients: Vec<f32> = (0..50).map(|i| (i as f32).sin()).collect();
+        
+        let sample1 = sampler.sample(&gradients, 42);
+        let sample2 = sampler.sample(&gradients, 42);
+        
+        assert_eq!(sample1.indices, sample2.indices);
+        assert_eq!(sample1.weights, sample2.weights);
+    }
+
+    #[test]
+    fn test_goss_sample_different_seeds() {
+        let params = GossParams::new(0.2, 0.1);
+        let sampler = GossSampler::new(params);
+        
+        let gradients: Vec<f32> = (0..50).map(|i| (i as f32).sin()).collect();
+        
+        let sample1 = sampler.sample(&gradients, 42);
+        let sample2 = sampler.sample(&gradients, 123);
+        
+        // Top rows should be the same (deterministic based on gradients)
+        // But sampled rows may differ
+        // Just check they're not completely identical
+        // (very unlikely to be identical with different seeds)
+        assert_ne!(sample1.indices, sample2.indices);
+    }
+
+    #[test]
+    fn test_goss_sample_negative_gradients() {
+        let params = GossParams::new(0.3, 0.2);
+        let sampler = GossSampler::new(params);
+        
+        // Mix of positive and negative gradients
+        // Highest absolute values: -9, 8, -7
+        let gradients: Vec<f32> = vec![-9.0, 1.0, -2.0, 3.0, -4.0, 5.0, -6.0, -7.0, 8.0, 0.5];
+        let sample = sampler.sample(&gradients, 42);
+        
+        // Top 3 by absolute value: indices 0 (|-9|), 8 (|8|), 7 (|-7|)
+        assert!(sample.indices.contains(&0), "Index 0 (grad=-9) should be top");
+        assert!(sample.indices.contains(&8), "Index 8 (grad=8) should be top");
+        assert!(sample.indices.contains(&7), "Index 7 (grad=-7) should be top");
+    }
+
+    #[test]
+    #[should_panic(expected = "top_rate must be in (0, 1]")]
+    fn test_goss_params_invalid_top_rate() {
+        GossParams::new(0.0, 0.1);
+    }
+
+    #[test]
+    #[should_panic(expected = "other_rate must be in (0, 1]")]
+    fn test_goss_params_invalid_other_rate() {
+        GossParams::new(0.2, 0.0);
     }
 }
