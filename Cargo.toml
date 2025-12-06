@@ -12,8 +12,9 @@ approx = "0.5"
 # Parallel processing
 rayon = "1.10"
 
-# Random number generation (for shuffle selector)
+# Random number generation (for shuffle selector and sampling)
 rand = "0.8"
+rand_xoshiro = "0.6"
 
 # Optional: SIMD acceleration
 wide = { version = "0.7", optional = true }
