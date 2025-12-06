@@ -19,13 +19,9 @@
 //! See RFC-0015 for design rationale.
 
 use crate::forest::SoAForest;
+use crate::training::{EarlyStopping, GradientBuffer, Loss, Metric, TrainingLogger, Verbosity};
 use crate::trees::{ScalarLeaf, SoATreeStorage, TreeBuilder as SoATreeBuilder};
 
-use super::buffer::GradientBuffer;
-use super::callback::EarlyStopping;
-use super::logger::{TrainingLogger, Verbosity};
-use super::loss::Loss;
-use super::metric::Metric;
 use super::partition::RowPartitioner;
 use super::quantize::{BinCuts, BinIndex, QuantizedMatrix};
 use super::tree::{BuildingTree, GrowthPolicy, TreeGrower, TreeParams};
@@ -447,7 +443,7 @@ fn categories_to_bitset(categories: &[u32]) -> Vec<u32> {
 mod tests {
     use super::*;
     use crate::data::DenseMatrix;
-    use crate::training::quantize::{CutFinder, ExactQuantileCuts, Quantizer};
+    use crate::training::gbtree::quantize::{CutFinder, ExactQuantileCuts, Quantizer};
     use crate::training::{DepthWisePolicy, LeafWisePolicy, SquaredLoss};
 
     fn make_regression_data() -> (QuantizedMatrix<u8>, BinCuts, Vec<f32>) {

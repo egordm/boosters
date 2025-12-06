@@ -8,7 +8,7 @@
 use super::{load_config, load_test_data, load_train_data, pearson_correlation, TEST_CASES_DIR};
 use approx::assert_relative_eq;
 use booste_rs::data::DataMatrix;
-use booste_rs::linear::training::{LinearTrainer, LinearTrainerConfig};
+use booste_rs::training::linear::{LinearTrainer, LinearTrainerConfig};
 use booste_rs::training::{QuantileLoss, Verbosity};
 use rstest::rstest;
 use serde::Deserialize;

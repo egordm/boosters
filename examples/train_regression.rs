@@ -9,7 +9,7 @@
 
 use booste_rs::data::{ColMatrix, RowMatrix};
 use booste_rs::predict::{Predictor, StandardTraversal};
-use booste_rs::training::quantize::ExactQuantileCuts;
+use booste_rs::training::gbtree::ExactQuantileCuts;
 use booste_rs::training::{
     DepthWisePolicy, GBTreeTrainer, Quantizer, SquaredLoss, TrainerParams, TreeParams, Verbosity,
 };

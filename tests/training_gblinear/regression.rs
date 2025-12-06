@@ -10,7 +10,7 @@
 use super::{load_config, load_train_data, load_xgb_weights};
 use approx::assert_relative_eq;
 use booste_rs::data::{ColMatrix, DataMatrix, RowMatrix};
-use booste_rs::linear::training::{LinearTrainer, LinearTrainerConfig};
+use booste_rs::training::linear::{LinearTrainer, LinearTrainerConfig};
 use booste_rs::training::{SquaredLoss, Verbosity};
 use rstest::rstest;
 

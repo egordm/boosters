@@ -26,7 +26,7 @@ use booste_rs::training::{
     DepthWisePolicy, GBTreeTrainer, GainParams, LeafWisePolicy, Rmse, SimpleMetric, SquaredLoss,
     TrainerParams, TreeParams,
 };
-use booste_rs::training::quantize::{CutFinder, ExactQuantileCuts, Quantizer};
+use booste_rs::training::gbtree::{CutFinder, ExactQuantileCuts, Quantizer};
 use serde::Deserialize;
 
 // =============================================================================

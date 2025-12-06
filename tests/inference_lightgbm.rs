@@ -15,6 +15,7 @@
 use std::fs::File;
 use std::path::PathBuf;
 
+use booste_rs::assert_slices_approx_eq_f64;
 use booste_rs::compat::lightgbm::LgbModel;
 use serde::Deserialize;
 
@@ -111,45 +112,6 @@ fn load_test_case(subdir: &str) -> (LgbModel, TestInput, TestExpected) {
     (model, input, expected)
 }
 
-/// Assert that predictions match expected values within tolerance.
-fn assert_preds_match(actual: &[f32], expected: &[f64], tolerance: f64, context: &str) {
-    assert_eq!(
-        actual.len(),
-        expected.len(),
-        "{context}: length mismatch - got {}, expected {}",
-        actual.len(),
-        expected.len()
-    );
-
-    let mismatches: Vec<_> = actual
-        .iter()
-        .zip(expected.iter())
-        .enumerate()
-        .filter(|(_, (a, e))| {
-            let diff = (**a as f64 - **e).abs();
-            let rel = if e.abs() > 1e-10 {
-                diff / e.abs()
-            } else {
-                diff
-            };
-            diff > tolerance && rel > tolerance
-        })
-        .collect();
-
-    if !mismatches.is_empty() {
-        let samples: Vec<_> = mismatches
-            .iter()
-            .take(5)
-            .map(|(i, (a, e))| format!("  [{i}]: got {a:.6}, expected {e:.6}"))
-            .collect();
-        panic!(
-            "{context}: {} mismatches (tolerance={tolerance}):\n{}",
-            mismatches.len(),
-            samples.join("\n")
-        );
-    }
-}
-
 // =============================================================================
 // Regression Tests
 // =============================================================================
@@ -183,7 +145,7 @@ mod regression {
             })
             .collect();
 
-        assert_preds_match(&predictions, expected_raw, TOLERANCE, "regression");
+        assert_slices_approx_eq_f64!(&predictions, expected_raw, TOLERANCE, "regression");
     }
 
     #[test]
@@ -227,7 +189,7 @@ mod binary_classification {
             })
             .collect();
 
-        assert_preds_match(&predictions, expected_raw, TOLERANCE, "binary raw");
+        assert_slices_approx_eq_f64!(&predictions, expected_raw, TOLERANCE, "binary raw");
     }
 
     #[test]
@@ -251,7 +213,7 @@ mod binary_classification {
             })
             .collect();
 
-        assert_preds_match(&predictions, expected_proba, TOLERANCE, "binary proba");
+        assert_slices_approx_eq_f64!(&predictions, expected_proba, TOLERANCE, "binary proba");
     }
 }
 
@@ -282,7 +244,7 @@ mod multiclass {
             let pred = forest.predict_row(&row_f32);
 
             assert_eq!(pred.len(), 3, "Row {i}: expected 3 outputs");
-            assert_preds_match(&pred, &expected_raw[i], TOLERANCE, &format!("multiclass row {i}"));
+            assert_slices_approx_eq_f64!(&pred, &expected_raw[i], TOLERANCE, "multiclass row {}", i);
         }
     }
 
@@ -306,7 +268,7 @@ mod multiclass {
             let exp_sum: f32 = raw.iter().map(|&x| (x - max_val).exp()).sum();
             let proba: Vec<f32> = raw.iter().map(|&x| (x - max_val).exp() / exp_sum).collect();
 
-            assert_preds_match(&proba, &expected_proba[i], TOLERANCE, &format!("multiclass proba row {i}"));
+            assert_slices_approx_eq_f64!(&proba, &expected_proba[i], TOLERANCE, "multiclass proba row {}", i);
         }
     }
 
@@ -348,7 +310,7 @@ mod missing_values {
             })
             .collect();
 
-        assert_preds_match(&predictions, expected_raw, TOLERANCE, "regression_missing");
+        assert_slices_approx_eq_f64!(&predictions, expected_raw, TOLERANCE, "regression_missing");
     }
 
     #[test]

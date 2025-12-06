@@ -7,9 +7,10 @@
 //! output[g] = base_score + bias[g] + Σ(feature[i] × weight[i, g])
 //! ```
 //!
+//! Training is in [`crate::training::linear`].
+//!
 //! See RFC-0008 for design rationale.
 
 mod model;
-pub mod training;
 
 pub use model::LinearModel;

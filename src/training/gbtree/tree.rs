@@ -309,7 +309,7 @@ pub trait GrowthState {
 /// # Example
 ///
 /// ```
-/// use booste_rs::training::tree::DepthWisePolicy;
+/// use booste_rs::training::DepthWisePolicy;
 ///
 /// let policy = DepthWisePolicy { max_depth: 6 };
 /// ```
@@ -400,7 +400,7 @@ impl GrowthState for DepthWiseState {
 /// # Example
 ///
 /// ```
-/// use booste_rs::training::tree::LeafWisePolicy;
+/// use booste_rs::training::LeafWisePolicy;
 ///
 /// let policy = LeafWisePolicy { max_leaves: 31 };
 /// ```
@@ -542,7 +542,7 @@ impl GrowthState for LeafWiseState {
 /// # Example
 ///
 /// ```
-/// use booste_rs::training::tree::GrowthStrategy;
+/// use booste_rs::training::GrowthStrategy;
 ///
 /// // From configuration
 /// let strategy = GrowthStrategy::LeafWise { max_leaves: 31 };
@@ -1207,7 +1207,7 @@ mod tests {
         use super::*;
         use crate::data::DenseMatrix;
         use crate::training::buffer::GradientBuffer;
-        use crate::training::quantize::{CutFinder, ExactQuantileCuts, Quantizer};
+        use crate::training::gbtree::quantize::{CutFinder, ExactQuantileCuts, Quantizer};
 
         fn make_test_data() -> (QuantizedMatrix<u8>, BinCuts, GradientBuffer) {
             // 10 rows, 2 features (row-major)

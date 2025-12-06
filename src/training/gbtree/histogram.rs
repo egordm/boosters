@@ -40,8 +40,9 @@
 
 use rayon::prelude::*;
 
+use crate::training::GradientBuffer;
+
 use super::quantize::{BinCuts, BinIndex, QuantizedMatrix};
-use super::GradientBuffer;
 
 // ============================================================================
 // FeatureHistogram
@@ -752,7 +753,7 @@ mod tests {
     mod integration {
         use super::*;
         use crate::data::ColMatrix;
-        use crate::training::quantize::{ExactQuantileCuts, Quantizer};
+        use crate::training::gbtree::quantize::{ExactQuantileCuts, Quantizer};
 
         fn make_test_data() -> (QuantizedMatrix<u8>, GradientBuffer) {
             // Create simple data: 10 rows, 2 features
