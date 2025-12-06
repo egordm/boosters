@@ -12,8 +12,8 @@ use booste_rs::data::{ColMatrix, RowMatrix};
 use booste_rs::predict::{Predictor, StandardTraversal};
 use booste_rs::training::gbtree::ExactQuantileCuts;
 use booste_rs::training::{
-    DepthWisePolicy, GBTreeTrainer, LeafWisePolicy, LogisticLoss, Quantizer, TrainerParams,
-    TreeParams, Verbosity,
+    DepthWisePolicy, GBTreeTrainer, LeafWisePolicy, LogisticLoss, TrainerParams, TreeParams,
+    Verbosity,
 };
 
 fn main() {
@@ -47,12 +47,6 @@ fn main() {
     let row_matrix = RowMatrix::from_vec(features, n_samples, n_features);
     let col_matrix: ColMatrix<f32> = row_matrix.to_layout();
 
-    // Quantize
-    let cut_finder = ExactQuantileCuts::default();
-    let quantizer = Quantizer::from_data(&col_matrix, &cut_finder, 256);
-    let cuts = quantizer.cuts().clone();
-    let quantized = quantizer.quantize::<_, u8>(&col_matrix);
-
     // Configure training - shallow trees for classification
     let tree_params = TreeParams {
         max_depth: 3,
@@ -74,7 +68,15 @@ fn main() {
     // Demonstrate depth-wise growth strategy
     println!("=== Depth-wise Growth (XGBoost style) ===\n");
     let depth_policy = DepthWisePolicy { max_depth: 3 };
-    let forest_depth = trainer.train(depth_policy, &quantized, &labels, &cuts, &[]);
+    let cut_finder = ExactQuantileCuts::default();
+    let forest_depth = trainer.train_with_data(
+        depth_policy,
+        &col_matrix,
+        &labels,
+        &cut_finder,
+        256,
+        &[],
+    );
 
     // Evaluate depth-wise
     let predictor_depth = Predictor::<StandardTraversal>::new(&forest_depth);
@@ -103,7 +105,14 @@ fn main() {
 
     println!("\n=== Leaf-wise Growth (LightGBM style) ===\n");
     let leaf_policy = LeafWisePolicy { max_leaves: 8 };
-    let forest_leaf = trainer_leaf.train(leaf_policy, &quantized, &labels, &cuts, &[]);
+    let forest_leaf = trainer_leaf.train_with_data(
+        leaf_policy,
+        &col_matrix,
+        &labels,
+        &cut_finder,
+        256,
+        &[],
+    );
 
     // Evaluate leaf-wise
     let predictor_leaf = Predictor::<StandardTraversal>::new(&forest_leaf);

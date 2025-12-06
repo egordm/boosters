@@ -11,7 +11,7 @@ use booste_rs::data::{ColMatrix, RowMatrix};
 use booste_rs::predict::{Predictor, StandardTraversal};
 use booste_rs::training::gbtree::ExactQuantileCuts;
 use booste_rs::training::{
-    DepthWisePolicy, GBTreeTrainer, Quantizer, SquaredLoss, TrainerParams, TreeParams, Verbosity,
+    DepthWisePolicy, GBTreeTrainer, SquaredLoss, TrainerParams, TreeParams, Verbosity,
 };
 
 fn main() {
@@ -47,12 +47,6 @@ fn main() {
     // Convert to column-major for training (required by quantization)
     let col_matrix: ColMatrix<f32> = row_matrix.to_layout();
 
-    // Quantize features (required for histogram-based training)
-    let cut_finder = ExactQuantileCuts::default();
-    let quantizer = Quantizer::from_data(&col_matrix, &cut_finder, 256);
-    let cuts = quantizer.cuts().clone();
-    let quantized = quantizer.quantize::<_, u8>(&col_matrix);
-
     // Configure training parameters
     let tree_params = TreeParams {
         max_depth: 4,
@@ -73,9 +67,17 @@ fn main() {
     // Use depth-wise growth strategy (like XGBoost default)
     let policy = DepthWisePolicy { max_depth: 4 };
 
-    // Train!
+    // Train using simplified API - quantization is handled internally!
     println!("Training GBTree regression model...\n");
-    let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
+    let cut_finder = ExactQuantileCuts::default();
+    let forest = trainer.train_with_data(
+        policy,
+        &col_matrix,
+        &labels,
+        &cut_finder,
+        256, // max bins
+        &[], // no eval sets
+    );
 
     // Create predictor from trained forest
     let predictor = Predictor::<StandardTraversal>::new(&forest);
