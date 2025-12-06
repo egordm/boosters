@@ -57,7 +57,9 @@ pub use histogram::{
     ChildSide, FeatureHistogram, HistogramBuilder, HistogramSubtractor, NodeHistogram,
 };
 pub use partition::RowPartitioner;
-pub use quantize::{BinCuts, BinIndex, CutFinder, ExactQuantileCuts, QuantizedMatrix, Quantizer};
+pub use quantize::{
+    BinCuts, BinIndex, CategoricalInfo, CutFinder, ExactQuantileCuts, QuantizedMatrix, Quantizer,
+};
 pub use sampling::{ColumnSampler, RowSampler};
 pub use split::{
     GainParams, GreedySplitFinder, SplitFinder, SplitInfo, leaf_objective, leaf_weight, split_gain,

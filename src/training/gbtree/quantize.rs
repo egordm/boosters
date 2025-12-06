@@ -129,6 +129,17 @@ impl BinIndex for u32 {
 /// A value `v` for feature `f` maps to bin `b` where `cuts[b] <= v < cuts[b+1]`.
 /// Bin 0 is reserved for missing values (NaN).
 ///
+/// # Categorical Features
+///
+/// For categorical features, bins represent category indices directly:
+/// - Bin 0: missing values (NaN)
+/// - Bin 1: category 0
+/// - Bin 2: category 1
+/// - ...
+///
+/// Categorical features have no cut values (cuts are empty), and `is_categorical[f]`
+/// is set to true. The number of bins equals the cardinality + 1 (for missing).
+///
 /// # Memory Layout
 ///
 /// ```text
@@ -141,6 +152,7 @@ impl BinIndex for u32 {
 pub struct BinCuts {
     /// All cut values concatenated, sorted per feature.
     /// These are the upper bounds of each bin (exclusive).
+    /// For categorical features, this is empty (no cuts needed).
     cut_values: Box<[f32]>,
 
     /// Offsets into cut_values: cut_ptrs[f] is start of feature f's cuts.
@@ -149,6 +161,14 @@ pub struct BinCuts {
 
     /// Number of features.
     num_features: u32,
+
+    /// Per-feature categorical flag.
+    /// If `is_categorical[f]` is true, feature f is treated as categorical.
+    is_categorical: Box<[bool]>,
+
+    /// Per-feature number of categories (only meaningful for categorical features).
+    /// For numerical features, this is 0.
+    num_categories: Box<[u32]>,
 }
 
 impl BinCuts {
@@ -176,6 +196,50 @@ impl BinCuts {
             cut_values: cut_values.into_boxed_slice(),
             cut_ptrs: cut_ptrs.into_boxed_slice(),
             num_features,
+            is_categorical: vec![false; num_features as usize].into_boxed_slice(),
+            num_categories: vec![0; num_features as usize].into_boxed_slice(),
+        }
+    }
+
+    /// Create bin cuts with categorical feature support.
+    ///
+    /// # Arguments
+    ///
+    /// * `cut_values` - All cut values concatenated (for numerical features)
+    /// * `cut_ptrs` - Offsets into cut_values for each feature
+    /// * `is_categorical` - Per-feature categorical flag
+    /// * `num_categories` - Per-feature category count (0 for numerical)
+    pub fn with_categorical(
+        cut_values: Vec<f32>,
+        cut_ptrs: Vec<u32>,
+        is_categorical: Vec<bool>,
+        num_categories: Vec<u32>,
+    ) -> Self {
+        assert!(!cut_ptrs.is_empty(), "cut_ptrs must not be empty");
+        assert_eq!(
+            *cut_ptrs.last().unwrap() as usize,
+            cut_values.len(),
+            "Last cut_ptr must equal cut_values.len()"
+        );
+
+        let num_features = (cut_ptrs.len() - 1) as u32;
+        assert_eq!(
+            is_categorical.len(),
+            num_features as usize,
+            "is_categorical length must match num_features"
+        );
+        assert_eq!(
+            num_categories.len(),
+            num_features as usize,
+            "num_categories length must match num_features"
+        );
+
+        Self {
+            cut_values: cut_values.into_boxed_slice(),
+            cut_ptrs: cut_ptrs.into_boxed_slice(),
+            num_features,
+            is_categorical: is_categorical.into_boxed_slice(),
+            num_categories: num_categories.into_boxed_slice(),
         }
     }
 
@@ -185,9 +249,24 @@ impl BinCuts {
         self.num_features
     }
 
+    /// Check if a feature is categorical.
+    #[inline]
+    pub fn is_categorical(&self, feature: u32) -> bool {
+        self.is_categorical[feature as usize]
+    }
+
+    /// Get the number of categories for a categorical feature.
+    ///
+    /// Returns 0 for numerical features.
+    #[inline]
+    pub fn num_categories(&self, feature: u32) -> u32 {
+        self.num_categories[feature as usize]
+    }
+
     /// Get bin boundaries for a specific feature.
     ///
     /// Returns a slice of cut values (bin upper bounds).
+    /// For categorical features, this returns an empty slice.
     #[inline]
     pub fn feature_cuts(&self, feature: u32) -> &[f32] {
         let start = self.cut_ptrs[feature as usize] as usize;
@@ -197,12 +276,19 @@ impl BinCuts {
 
     /// Number of bins for a feature.
     ///
-    /// This is the number of cuts + 1 (for bin 0 which handles missing/below-min).
+    /// For numerical features: number of cuts + 1 (for bin 0 which handles missing/below-min).
+    /// For categorical features: num_categories + 1 (for bin 0 which handles missing).
     #[inline]
     pub fn num_bins(&self, feature: u32) -> usize {
-        let start = self.cut_ptrs[feature as usize];
-        let end = self.cut_ptrs[feature as usize + 1];
-        (end - start) as usize + 1 // +1 for bin 0 (missing values)
+        if self.is_categorical[feature as usize] {
+            // Categorical: bins are 0 (missing) + categories
+            self.num_categories[feature as usize] as usize + 1
+        } else {
+            // Numerical: bins are 0 (missing) + cut regions
+            let start = self.cut_ptrs[feature as usize];
+            let end = self.cut_ptrs[feature as usize + 1];
+            (end - start) as usize + 1
+        }
     }
 
     /// Total bins across all features.
@@ -214,11 +300,17 @@ impl BinCuts {
 
     /// Map a single value to its bin index.
     ///
+    /// For numerical features:
     /// - NaN values map to bin 0
     /// - Values below min cut map to bin 1
     /// - Values >= max cut map to max bin
     ///
-    /// Uses binary search: O(log num_bins).
+    /// For categorical features:
+    /// - NaN values map to bin 0
+    /// - Category i maps to bin i + 1 (0-indexed categories)
+    ///
+    /// Uses binary search for numerical: O(log num_bins).
+    /// Direct mapping for categorical: O(1).
     #[inline]
     pub fn bin_value(&self, feature: u32, value: f32) -> usize {
         // Missing values go to bin 0
@@ -226,17 +318,31 @@ impl BinCuts {
             return 0;
         }
 
-        let cuts = self.feature_cuts(feature);
-        if cuts.is_empty() {
-            return 1; // Single bin for all non-missing values
-        }
+        if self.is_categorical[feature as usize] {
+            // Categorical: direct mapping, category i -> bin i+1
+            // Value should be a non-negative integer
+            let cat = value.round() as usize;
+            let max_cat = self.num_categories[feature as usize] as usize;
+            if cat >= max_cat {
+                // Unknown category treated as missing (bin 0)
+                0
+            } else {
+                cat + 1
+            }
+        } else {
+            // Numerical: binary search
+            let cuts = self.feature_cuts(feature);
+            if cuts.is_empty() {
+                return 1; // Single bin for all non-missing values
+            }
 
-        // Binary search for the bin
-        // We want the first cut that is > value, then bin = that index + 1
-        // (because bin 0 is reserved for missing)
-        match cuts.binary_search_by(|c| c.partial_cmp(&value).unwrap()) {
-            Ok(idx) => idx + 1, // Exact match: value equals cut[idx], goes to bin idx+1
-            Err(idx) => idx + 1, // Insert position: value < cuts[idx], goes to bin idx+1
+            // Binary search for the bin
+            // We want the first cut that is > value, then bin = that index + 1
+            // (because bin 0 is reserved for missing)
+            match cuts.binary_search_by(|c| c.partial_cmp(&value).unwrap()) {
+                Ok(idx) => idx + 1, // Exact match: value equals cut[idx], goes to bin idx+1
+                Err(idx) => idx + 1, // Insert position: value < cuts[idx], goes to bin idx+1
+            }
         }
     }
 
@@ -364,6 +470,50 @@ impl<B: BinIndex> QuantizedMatrix<B> {
 // CutFinder trait
 // ============================================================================
 
+/// Information about which features are categorical and their cardinality.
+#[derive(Debug, Clone, Default)]
+pub struct CategoricalInfo {
+    /// For each feature: Some(num_categories) if categorical, None if numerical.
+    pub feature_types: Vec<Option<u32>>,
+}
+
+impl CategoricalInfo {
+    /// Create with no categorical features.
+    pub fn all_numerical(num_features: usize) -> Self {
+        Self {
+            feature_types: vec![None; num_features],
+        }
+    }
+
+    /// Create from a list specifying categorical features.
+    ///
+    /// # Arguments
+    /// * `num_features` - Total number of features
+    /// * `categorical` - List of (feature_index, num_categories) pairs
+    pub fn with_categorical(num_features: usize, categorical: &[(usize, u32)]) -> Self {
+        let mut feature_types = vec![None; num_features];
+        for &(feat, num_cats) in categorical {
+            if feat < num_features {
+                feature_types[feat] = Some(num_cats);
+            }
+        }
+        Self { feature_types }
+    }
+
+    /// Check if a feature is categorical.
+    pub fn is_categorical(&self, feature: usize) -> bool {
+        self.feature_types
+            .get(feature)
+            .map(|t| t.is_some())
+            .unwrap_or(false)
+    }
+
+    /// Get the number of categories for a feature, or None if numerical.
+    pub fn num_categories(&self, feature: usize) -> Option<u32> {
+        self.feature_types.get(feature).copied().flatten()
+    }
+}
+
 /// Strategy for computing bin boundaries.
 pub trait CutFinder {
     /// Compute bin cuts from feature data.
@@ -375,6 +525,24 @@ pub trait CutFinder {
     fn find_cuts<D>(&self, data: &D, max_bins: usize) -> BinCuts
     where
         D: ColumnAccess<Element = f32> + Sync;
+
+    /// Compute bin cuts with categorical feature information.
+    ///
+    /// For categorical features, bins represent categories directly.
+    /// For numerical features, standard quantile-based cuts are used.
+    fn find_cuts_with_categorical<D>(
+        &self,
+        data: &D,
+        max_bins: usize,
+        cat_info: &CategoricalInfo,
+    ) -> BinCuts
+    where
+        D: ColumnAccess<Element = f32> + Sync,
+    {
+        // Default implementation: ignore categorical info
+        let _ = cat_info;
+        self.find_cuts(data, max_bins)
+    }
 }
 
 // ============================================================================
@@ -476,6 +644,88 @@ impl CutFinder for ExactQuantileCuts {
 
         BinCuts::new(cut_values, cut_ptrs)
     }
+
+    fn find_cuts_with_categorical<D>(
+        &self,
+        data: &D,
+        max_bins: usize,
+        cat_info: &CategoricalInfo,
+    ) -> BinCuts
+    where
+        D: ColumnAccess<Element = f32> + Sync,
+    {
+        let num_features = data.num_columns();
+        let num_rows = data.num_rows();
+
+        // Track which features are categorical and their cardinality
+        let mut is_categorical = vec![false; num_features];
+        let mut num_categories = vec![0u32; num_features];
+
+        // Collect cuts for all features in parallel
+        let feature_cuts: Vec<Vec<f32>> = (0..num_features)
+            .into_par_iter()
+            .map(|feat| {
+                // Check if this feature is categorical
+                if cat_info.is_categorical(feat) {
+                    // Categorical: no cuts needed, bins are direct category indices
+                    // Return empty cuts; num_bins will be num_categories + 1 (for missing)
+                    return vec![];
+                }
+
+                // Numerical: standard quantile cuts
+                let mut values: Vec<f32> = data
+                    .column(feat)
+                    .filter_map(|(_, v)| if v.is_nan() { None } else { Some(v) })
+                    .collect();
+
+                if values.is_empty() {
+                    return vec![];
+                }
+
+                values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                values.dedup();
+
+                if values.is_empty() {
+                    return vec![];
+                }
+
+                let max_cuts = max_bins.saturating_sub(1);
+                let min_bins_by_samples = num_rows / self.min_samples_per_bin.max(1);
+                let num_cuts = max_cuts.min(values.len()).min(min_bins_by_samples);
+
+                if num_cuts == 0 {
+                    return vec![];
+                }
+
+                let mut cuts = Vec::with_capacity(num_cuts);
+                for i in 1..=num_cuts {
+                    let idx = (i * values.len() / (num_cuts + 1)).min(values.len() - 1);
+                    cuts.push(values[idx]);
+                }
+                cuts.dedup();
+                cuts
+            })
+            .collect();
+
+        // Set categorical flags (sequential, after parallel work)
+        for feat in 0..num_features {
+            if let Some(n_cats) = cat_info.num_categories(feat) {
+                is_categorical[feat] = true;
+                num_categories[feat] = n_cats;
+            }
+        }
+
+        // Build CSR-style storage
+        let mut cut_values = Vec::new();
+        let mut cut_ptrs = vec![0u32];
+
+        for cuts in feature_cuts {
+            cut_values.extend(cuts);
+            cut_ptrs.push(cut_values.len() as u32);
+        }
+
+        BinCuts::with_categorical(cut_values, cut_ptrs, is_categorical, num_categories)
+    }
 }
 
 // ============================================================================
@@ -506,6 +756,21 @@ impl Quantizer {
         C: CutFinder,
     {
         let cuts = cut_finder.find_cuts(data, max_bins);
+        Self::new(cuts)
+    }
+
+    /// Create by computing cuts from data with categorical feature support.
+    pub fn from_data_with_categorical<D, C>(
+        data: &D,
+        cut_finder: &C,
+        max_bins: usize,
+        cat_info: &CategoricalInfo,
+    ) -> Self
+    where
+        D: ColumnAccess<Element = f32> + Sync,
+        C: CutFinder,
+    {
+        let cuts = cut_finder.find_cuts_with_categorical(data, max_bins, cat_info);
         Self::new(cuts)
     }
 
@@ -919,6 +1184,138 @@ mod tests {
             for &cut in quantizer.cuts().feature_cuts(1) {
                 assert!(cut >= 0.0 && cut <= 1000.0, "Feature 1 cut {} out of range [0, 1000]", cut);
             }
+        }
+
+        #[test]
+        fn test_categorical_feature_binning() {
+            use super::CategoricalInfo;
+
+            // 6 rows, 1 categorical feature with 3 categories
+            let data: Vec<f32> = vec![0.0, 1.0, 2.0, 0.0, 1.0, 2.0];
+            let matrix = ColMatrix::from_vec(data.clone(), 6, 1);
+
+            let cat_info = CategoricalInfo::with_categorical(1, &[(0, 3)]);
+            let cut_finder = ExactQuantileCuts::default();
+            let quantizer =
+                Quantizer::from_data_with_categorical(&matrix, &cut_finder, 256, &cat_info);
+            let quantized: QuantizedMatrix<u8> = quantizer.quantize(&matrix);
+
+            let cuts = quantizer.cuts();
+
+            // Verify categorical metadata
+            assert!(cuts.is_categorical(0));
+            assert_eq!(cuts.num_categories(0), 3);
+            assert_eq!(cuts.num_bins(0), 4); // 3 categories + missing bin
+
+            // Verify binning: category i -> bin i+1
+            let col = quantized.feature_column(0);
+            assert_eq!(col[0], 1); // Category 0 -> bin 1
+            assert_eq!(col[1], 2); // Category 1 -> bin 2
+            assert_eq!(col[2], 3); // Category 2 -> bin 3
+            assert_eq!(col[3], 1); // Category 0 -> bin 1
+            assert_eq!(col[4], 2); // Category 1 -> bin 2
+            assert_eq!(col[5], 3); // Category 2 -> bin 3
+        }
+
+        #[test]
+        fn test_categorical_with_missing() {
+            use super::CategoricalInfo;
+
+            // Categorical feature with some missing values
+            let data: Vec<f32> = vec![0.0, f32::NAN, 1.0, f32::NAN, 2.0];
+            let matrix = ColMatrix::from_vec(data, 5, 1);
+
+            let cat_info = CategoricalInfo::with_categorical(1, &[(0, 3)]);
+            let quantizer = Quantizer::from_data_with_categorical(
+                &matrix,
+                &ExactQuantileCuts::default(),
+                256,
+                &cat_info,
+            );
+            let quantized: QuantizedMatrix<u8> = quantizer.quantize(&matrix);
+
+            let col = quantized.feature_column(0);
+            assert_eq!(col[0], 1); // Category 0 -> bin 1
+            assert_eq!(col[1], 0); // Missing -> bin 0
+            assert_eq!(col[2], 2); // Category 1 -> bin 2
+            assert_eq!(col[3], 0); // Missing -> bin 0
+            assert_eq!(col[4], 3); // Category 2 -> bin 3
+        }
+
+        #[test]
+        fn test_categorical_unknown_category() {
+            use super::CategoricalInfo;
+
+            // Categorical feature with value outside declared range
+            let data: Vec<f32> = vec![0.0, 1.0, 5.0]; // 5 is > num_categories (3)
+            let matrix = ColMatrix::from_vec(data, 3, 1);
+
+            let cat_info = CategoricalInfo::with_categorical(1, &[(0, 3)]);
+            let quantizer = Quantizer::from_data_with_categorical(
+                &matrix,
+                &ExactQuantileCuts::default(),
+                256,
+                &cat_info,
+            );
+            let quantized: QuantizedMatrix<u8> = quantizer.quantize(&matrix);
+
+            let col = quantized.feature_column(0);
+            assert_eq!(col[0], 1); // Category 0 -> bin 1
+            assert_eq!(col[1], 2); // Category 1 -> bin 2
+            assert_eq!(col[2], 0); // Unknown category 5 -> bin 0 (treated as missing)
+        }
+
+        #[test]
+        fn test_mixed_numerical_categorical() {
+            use super::CategoricalInfo;
+
+            // 2 features: numerical and categorical
+            let data: Vec<f32> = vec![
+                // Feature 0 (numerical)
+                0.0, 1.0, 2.0, 3.0, 4.0,
+                // Feature 1 (categorical, 3 categories)
+                0.0, 1.0, 2.0, 0.0, 1.0,
+            ];
+            let matrix = ColMatrix::from_vec(data, 5, 2);
+
+            let cat_info = CategoricalInfo::with_categorical(2, &[(1, 3)]);
+            let quantizer = Quantizer::from_data_with_categorical(
+                &matrix,
+                &ExactQuantileCuts::default(),
+                256,
+                &cat_info,
+            );
+            let cuts = quantizer.cuts();
+
+            // Feature 0 is numerical
+            assert!(!cuts.is_categorical(0));
+            assert_eq!(cuts.num_categories(0), 0);
+            assert!(!cuts.feature_cuts(0).is_empty()); // Should have cuts
+
+            // Feature 1 is categorical
+            assert!(cuts.is_categorical(1));
+            assert_eq!(cuts.num_categories(1), 3);
+            assert!(cuts.feature_cuts(1).is_empty()); // Categorical has no cuts
+            assert_eq!(cuts.num_bins(1), 4); // 3 categories + missing
+        }
+
+        #[test]
+        fn test_categorical_info() {
+            use super::CategoricalInfo;
+
+            let info = CategoricalInfo::all_numerical(5);
+            assert!(!info.is_categorical(0));
+            assert!(!info.is_categorical(4));
+            assert_eq!(info.num_categories(0), None);
+
+            let info = CategoricalInfo::with_categorical(5, &[(1, 10), (3, 5)]);
+            assert!(!info.is_categorical(0));
+            assert!(info.is_categorical(1));
+            assert!(!info.is_categorical(2));
+            assert!(info.is_categorical(3));
+            assert!(!info.is_categorical(4));
+            assert_eq!(info.num_categories(1), Some(10));
+            assert_eq!(info.num_categories(3), Some(5));
         }
     }
 }

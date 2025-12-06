@@ -561,6 +561,142 @@ impl GreedySplitFinder {
         (gain_left, gain_right)
     }
 
+    /// Find best categorical split for a feature using gradient-sorted partition.
+    ///
+    /// This implements the LightGBM-style gradient-sorted categorical split:
+    /// 1. For each non-empty category, compute grad/hess ratio
+    /// 2. Sort categories by ratio
+    /// 3. Scan sorted order to find optimal binary partition
+    /// 4. Return SplitInfo with categories_left populated
+    ///
+    /// # Complexity
+    /// O(k log k) where k is the number of categories
+    fn find_best_categorical_split(
+        &self,
+        feature: u32,
+        hist: &super::histogram::FeatureHistogram,
+        num_categories: u32,
+        parent_grad: f32,
+        parent_hess: f32,
+        params: &GainParams,
+    ) -> SplitInfo {
+        let mut best = SplitInfo::none();
+        best.feature = feature;
+
+        let num_bins = hist.num_bins() as usize;
+        if num_bins <= 1 {
+            return best;
+        }
+
+        // Get missing value stats (bin 0)
+        let (missing_grad, missing_hess, _missing_count) = hist.bin_stats(0);
+
+        // Collect non-empty categories with their gradient stats
+        // Category i is stored in bin i+1 (bin 0 is missing)
+        let mut categories: Vec<(u32, f32, f32)> = Vec::with_capacity(num_categories as usize);
+        for cat in 0..num_categories {
+            let bin = (cat + 1) as usize;
+            if bin < num_bins {
+                let (g, h, count) = hist.bin_stats(bin);
+                if count > 0 && h > 0.0 {
+                    categories.push((cat, g, h));
+                }
+            }
+        }
+
+        if categories.len() < 2 {
+            return best; // Need at least 2 categories to split
+        }
+
+        // Sort categories by gradient/hessian ratio (ascending)
+        // This groups similar categories together
+        categories.sort_by(|a, b| {
+            let ratio_a = a.1 / a.2;
+            let ratio_b = b.1 / b.2;
+            ratio_a.partial_cmp(&ratio_b).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        // Scan sorted categories to find best split point
+        // At each position, categories before go left, after go right
+        let mut grad_left = 0.0f32;
+        let mut hess_left = 0.0f32;
+
+        // Total gradient/hessian for non-missing categories
+        let total_grad_cats: f32 = categories.iter().map(|(_, g, _)| g).sum();
+        let total_hess_cats: f32 = categories.iter().map(|(_, _, h)| h).sum();
+
+        for i in 0..categories.len() - 1 {
+            let (_, g, h) = categories[i];
+            grad_left += g;
+            hess_left += h;
+
+            let grad_right = total_grad_cats - grad_left;
+            let hess_right = total_hess_cats - hess_left;
+
+            // Check min_child_weight
+            if hess_left < params.min_child_weight || hess_right < params.min_child_weight {
+                continue;
+            }
+
+            // Compute gain for missing going left vs right
+            let (gain_missing_left, gain_missing_right) = self.compute_gains_for_missing(
+                grad_left,
+                hess_left,
+                grad_right,
+                hess_right,
+                missing_grad,
+                missing_hess,
+                parent_grad,
+                parent_hess,
+                params,
+            );
+
+            let (gain, default_left) = if gain_missing_left >= gain_missing_right {
+                (gain_missing_left, true)
+            } else {
+                (gain_missing_right, false)
+            };
+
+            if gain > best.gain {
+                // Compute final stats including missing
+                let (final_grad_left, final_hess_left, final_grad_right, final_hess_right) =
+                    if default_left {
+                        (
+                            grad_left + missing_grad,
+                            hess_left + missing_hess,
+                            grad_right,
+                            hess_right,
+                        )
+                    } else {
+                        (
+                            grad_left,
+                            hess_left,
+                            grad_right + missing_grad,
+                            hess_right + missing_hess,
+                        )
+                    };
+
+                // Collect categories that go left (first i+1 in sorted order)
+                let cats_left: Vec<u32> = categories[0..=i].iter().map(|(c, _, _)| *c).collect();
+
+                best.gain = gain;
+                best.split_bin = 0; // Not used for categorical
+                best.threshold = f32::NAN; // Not used for categorical
+                best.grad_left = final_grad_left;
+                best.hess_left = final_hess_left;
+                best.grad_right = final_grad_right;
+                best.hess_right = final_hess_right;
+                best.weight_left = leaf_weight(final_grad_left, final_hess_left, params);
+                best.weight_right = leaf_weight(final_grad_right, final_hess_right, params);
+                best.default_left = default_left;
+                best.is_categorical = true;
+                best.categories_left = cats_left;
+            }
+        }
+
+        best
+    }
+
     /// Find best split with parallel feature evaluation.
     ///
     /// Uses Rayon to evaluate features in parallel. Recommended for
@@ -587,15 +723,26 @@ impl GreedySplitFinder {
             .par_iter()
             .map(|&feat| {
                 let feat_hist = histogram.feature(feat as usize);
-                let feat_cuts = cuts.feature_cuts(feat);
-                self.find_best_split_for_feature(
-                    feat,
-                    feat_hist,
-                    feat_cuts,
-                    parent_grad,
-                    parent_hess,
-                    params,
-                )
+                if cuts.is_categorical(feat) {
+                    self.find_best_categorical_split(
+                        feat,
+                        feat_hist,
+                        cuts.num_categories(feat),
+                        parent_grad,
+                        parent_hess,
+                        params,
+                    )
+                } else {
+                    let feat_cuts = cuts.feature_cuts(feat);
+                    self.find_best_split_for_feature(
+                        feat,
+                        feat_hist,
+                        feat_cuts,
+                        parent_grad,
+                        parent_hess,
+                        params,
+                    )
+                }
             })
             .reduce(SplitInfo::none, |best, split| {
                 if split.gain > best.gain {
@@ -629,15 +776,26 @@ impl SplitFinder for GreedySplitFinder {
 
         for feat in features {
             let feat_hist = histogram.feature(feat as usize);
-            let feat_cuts = cuts.feature_cuts(feat);
-            let split = self.find_best_split_for_feature(
-                feat,
-                feat_hist,
-                feat_cuts,
-                parent_grad,
-                parent_hess,
-                params,
-            );
+            let split = if cuts.is_categorical(feat) {
+                self.find_best_categorical_split(
+                    feat,
+                    feat_hist,
+                    cuts.num_categories(feat),
+                    parent_grad,
+                    parent_hess,
+                    params,
+                )
+            } else {
+                let feat_cuts = cuts.feature_cuts(feat);
+                self.find_best_split_for_feature(
+                    feat,
+                    feat_hist,
+                    feat_cuts,
+                    parent_grad,
+                    parent_hess,
+                    params,
+                )
+            };
 
             if split.gain > best.gain {
                 best = split;
@@ -954,6 +1112,163 @@ mod tests {
                 // The actual value depends on the data distribution
                 assert!(split.default_left || !split.default_left); // Just check it's set
             }
+        }
+
+        #[test]
+        fn test_categorical_split_basic() {
+            use crate::training::gbtree::quantize::CategoricalInfo;
+
+            // Create categorical data: 12 rows, 1 categorical feature with 3 categories
+            // Category 0 (rows 0-3): grad = 2.0 each (total 8.0)
+            // Category 1 (rows 4-7): grad = -1.0 each (total -4.0)
+            // Category 2 (rows 8-11): grad = 0.5 each (total 2.0)
+            let data: Vec<f32> = vec![
+                0.0, 0.0, 0.0, 0.0, // Category 0
+                1.0, 1.0, 1.0, 1.0, // Category 1
+                2.0, 2.0, 2.0, 2.0, // Category 2
+            ];
+            let matrix = ColMatrix::from_vec(data, 12, 1);
+
+            // Create categorical cuts
+            let cat_info = CategoricalInfo::with_categorical(1, &[(0, 3)]);
+            let cut_finder = ExactQuantileCuts::default();
+            let quantizer =
+                Quantizer::from_data_with_categorical(&matrix, &cut_finder, 256, &cat_info);
+            let quantized = quantizer.quantize_u8(&matrix);
+            let cuts = (*quantizer.cuts()).clone();
+
+            // Verify it's categorical
+            assert!(cuts.is_categorical(0));
+            assert_eq!(cuts.num_categories(0), 3);
+            assert_eq!(cuts.num_bins(0), 4); // 3 categories + 1 missing bin
+
+            // Gradients
+            let mut grads = GradientBuffer::new(12, 1);
+            for i in 0..4 {
+                grads.set(i, 0, 2.0, 1.0); // Category 0: positive
+            }
+            for i in 4..8 {
+                grads.set(i, 0, -1.0, 1.0); // Category 1: negative
+            }
+            for i in 8..12 {
+                grads.set(i, 0, 0.5, 1.0); // Category 2: small positive
+            }
+
+            let rows: Vec<u32> = (0..12).collect();
+            let mut hist = NodeHistogram::new(&cuts);
+            HistogramBuilder.build(&mut hist, &quantized, &grads, &rows);
+
+            let params = GainParams::no_regularization().with_min_child_weight(1.0);
+            let finder = GreedySplitFinder::new();
+            let split = finder.find_best_split(&hist, &cuts, &params);
+
+            // Should find a valid categorical split
+            assert!(split.is_valid(), "Should find valid categorical split");
+            assert!(split.is_categorical, "Split should be marked as categorical");
+            assert!(!split.categories_left.is_empty(), "Should have categories going left");
+
+            // Gradient-sorted order should be: cat 1 (-1.0/1.0 = -1.0), cat 2 (0.5/1.0 = 0.5), cat 0 (2.0/1.0 = 2.0)
+            // Best split should separate cat 1 from {cat 2, cat 0}
+            // So categories_left should contain cat 1
+            assert!(
+                split.categories_left.contains(&1),
+                "Category 1 should go left (most negative gradient ratio)"
+            );
+        }
+
+        #[test]
+        fn test_categorical_split_with_missing() {
+            use crate::training::gbtree::quantize::CategoricalInfo;
+
+            // Create categorical data with some missing values
+            let data: Vec<f32> = vec![
+                f32::NAN, // Missing
+                0.0,
+                0.0, // Category 0
+                1.0,
+                1.0, // Category 1
+                f32::NAN, // Missing
+            ];
+            let matrix = ColMatrix::from_vec(data, 6, 1);
+
+            let cat_info = CategoricalInfo::with_categorical(1, &[(0, 2)]);
+            let cut_finder = ExactQuantileCuts::default();
+            let quantizer =
+                Quantizer::from_data_with_categorical(&matrix, &cut_finder, 256, &cat_info);
+            let quantized = quantizer.quantize_u8(&matrix);
+            let cuts = (*quantizer.cuts()).clone();
+
+            // Gradients: category 0 positive, category 1 negative, missing neutral
+            let mut grads = GradientBuffer::new(6, 1);
+            grads.set(0, 0, 0.0, 1.0); // Missing
+            grads.set(1, 0, 2.0, 1.0); // Cat 0
+            grads.set(2, 0, 2.0, 1.0); // Cat 0
+            grads.set(3, 0, -2.0, 1.0); // Cat 1
+            grads.set(4, 0, -2.0, 1.0); // Cat 1
+            grads.set(5, 0, 0.0, 1.0); // Missing
+
+            let rows: Vec<u32> = (0..6).collect();
+            let mut hist = NodeHistogram::new(&cuts);
+            HistogramBuilder.build(&mut hist, &quantized, &grads, &rows);
+
+            let params = GainParams::no_regularization().with_min_child_weight(1.0);
+            let finder = GreedySplitFinder::new();
+            let split = finder.find_best_split(&hist, &cuts, &params);
+
+            assert!(split.is_valid());
+            assert!(split.is_categorical);
+            // default_left should be learned based on which gives better gain
+        }
+
+        #[test]
+        fn test_mixed_categorical_numerical_features() {
+            use crate::training::gbtree::quantize::CategoricalInfo;
+
+            // 2 features: feature 0 is numerical, feature 1 is categorical
+            let data: Vec<f32> = vec![
+                // Feature 0 (numerical): 0-9
+                0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0,
+                // Feature 1 (categorical): alternating 0 and 1
+                0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0,
+            ];
+            let matrix = ColMatrix::from_vec(data, 10, 2);
+
+            // Only feature 1 is categorical
+            let cat_info = CategoricalInfo::with_categorical(2, &[(1, 2)]);
+            let cut_finder = ExactQuantileCuts::default();
+            let quantizer =
+                Quantizer::from_data_with_categorical(&matrix, &cut_finder, 256, &cat_info);
+            let quantized = quantizer.quantize_u8(&matrix);
+            let cuts = (*quantizer.cuts()).clone();
+
+            assert!(!cuts.is_categorical(0), "Feature 0 should be numerical");
+            assert!(cuts.is_categorical(1), "Feature 1 should be categorical");
+
+            // Gradients: first 5 positive, last 5 negative
+            let mut grads = GradientBuffer::new(10, 1);
+            for i in 0..5 {
+                grads.set(i, 0, 1.0, 1.0);
+            }
+            for i in 5..10 {
+                grads.set(i, 0, -1.0, 1.0);
+            }
+
+            let rows: Vec<u32> = (0..10).collect();
+            let mut hist = NodeHistogram::new(&cuts);
+            HistogramBuilder.build(&mut hist, &quantized, &grads, &rows);
+
+            let params = GainParams::default().with_min_child_weight(1.0);
+            let finder = GreedySplitFinder::new();
+            let split = finder.find_best_split(&hist, &cuts, &params);
+
+            // Should find a valid split (either numerical or categorical)
+            assert!(split.is_valid());
+
+            // Numerical feature 0 has a clear split at row 5
+            // Categorical feature 1 has mixed gradients per category
+            // So we expect the numerical split to win
+            assert_eq!(split.feature, 0, "Should prefer numerical split");
+            assert!(!split.is_categorical, "Best split should be numerical");
         }
     }
 }
