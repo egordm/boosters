@@ -28,6 +28,11 @@ serde_with = { version = "3.16.0", features = ["json"], optional = true }
 # Requires: libclang-dev (Debian/Ubuntu), clang (Arch), or Xcode (macOS)
 xgb = { git = "https://github.com/egordm/rust-xgboost-bindings.git", optional = true }
 
+# Optional: LightGBM C++ bindings for benchmark comparison
+# Compiles LightGBM from source for fair native performance comparison
+# Requires: cmake, libclang-dev (Debian/Ubuntu), clang (Arch), or Xcode (macOS)
+lightgbm3 = { version = "1.0", optional = true }
+
 [dev-dependencies]
 glob = "0.3.3"
 rstest = "0.21"
@@ -41,6 +46,7 @@ xgboost-compat = ["dep:serde", "dep:serde_json", "dep:serde_with"]
 lightgbm-compat = ["dep:serde", "dep:serde_json"]
 simd = ["dep:wide"]
 bench-xgboost = ["dep:xgb", "xgboost-compat"]
+bench-lightgbm = ["dep:lightgbm3", "lightgbm-compat"]
 
 [[bench]]
 name = "prediction_core"
@@ -65,4 +71,9 @@ harness = false
 [[bench]]
 name = "training_gbtree"
 harness = false
+
+[[bench]]
+name = "prediction_lightgbm"
+harness = false
+required-features = ["bench-lightgbm"]
 

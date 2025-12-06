@@ -216,6 +216,89 @@ def generate_small_tree_test():
     save_test_case("small_tree", model, test_X, test_y, raw_preds)
 
 
+# =============================================================================
+# Benchmark Models
+# =============================================================================
+
+BENCHMARK_DIR = Path(__file__).parent.parent.parent / "tests" / "test-cases" / "benchmark"
+
+
+def save_benchmark_model(name: str, model: lgb.Booster, num_features: int):
+    """Save benchmark model in text format."""
+    output_path = BENCHMARK_DIR / f"{name}.lgb.txt"
+    BENCHMARK_DIR.mkdir(parents=True, exist_ok=True)
+    model.save_model(str(output_path))
+    print(f"Saved benchmark model: {name}")
+    print(f"  - File: {output_path}")
+    print(f"  - Features: {num_features}")
+    print(f"  - Trees: {model.num_trees()}")
+
+
+def generate_bench_small():
+    """Small benchmark model: 20 trees, 5 features, num_leaves=8.
+    
+    Comparable to XGBoost bench_small: 20 trees, 5 features, max_depth=3.
+    """
+    np.random.seed(42)
+    X, y = make_regression(n_samples=500, n_features=5, n_informative=4, noise=5.0, random_state=42)
+    
+    params = {
+        "objective": "regression",
+        "num_leaves": 8,  # ~equivalent to max_depth=3
+        "learning_rate": 0.1,
+        "feature_fraction": 1.0,
+        "verbose": -1,
+        "seed": 42,
+    }
+    train_data = lgb.Dataset(X, label=y)
+    model = lgb.train(params, train_data, num_boost_round=20)
+    save_benchmark_model("bench_small", model, num_features=5)
+
+
+def generate_bench_medium():
+    """Medium benchmark model: 100 trees, 50 features, num_leaves=16.
+    
+    Comparable to XGBoost bench_medium: 100 trees, 50 features, max_depth=4.
+    """
+    np.random.seed(42)
+    X, y = make_regression(n_samples=2000, n_features=50, n_informative=30, noise=10.0, random_state=42)
+    
+    params = {
+        "objective": "regression",
+        "num_leaves": 16,  # ~equivalent to max_depth=4
+        "learning_rate": 0.05,
+        "feature_fraction": 0.8,
+        "verbose": -1,
+        "seed": 42,
+    }
+    train_data = lgb.Dataset(X, label=y)
+    model = lgb.train(params, train_data, num_boost_round=100)
+    save_benchmark_model("bench_medium", model, num_features=50)
+
+
+def generate_bench_large():
+    """Large benchmark model: 500 trees, 100 features, num_leaves=32.
+    
+    Comparable to XGBoost bench_large: 500 trees, 100 features, max_depth=5.
+    """
+    np.random.seed(42)
+    X, y = make_regression(n_samples=5000, n_features=100, n_informative=50, noise=10.0, random_state=42)
+    
+    params = {
+        "objective": "regression",
+        "num_leaves": 32,  # ~equivalent to max_depth=5
+        "learning_rate": 0.02,
+        "feature_fraction": 0.7,
+        "bagging_fraction": 0.8,
+        "bagging_freq": 1,
+        "verbose": -1,
+        "seed": 42,
+    }
+    train_data = lgb.Dataset(X, label=y)
+    model = lgb.train(params, train_data, num_boost_round=500)
+    save_benchmark_model("bench_large", model, num_features=100)
+
+
 def main():
     """Generate all test cases."""
     print(f"Output directory: {OUTPUT_DIR}")
@@ -228,6 +311,12 @@ def main():
     generate_binary_classification_test()
     generate_multiclass_test()
     generate_missing_values_test()
+    
+    print("\n=== Generating LightGBM Benchmark Models ===\n")
+    
+    generate_bench_small()
+    generate_bench_medium()
+    generate_bench_large()
     
     print("\n=== Done ===")
 
