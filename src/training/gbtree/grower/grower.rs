@@ -1,0 +1,460 @@
+//! Tree grower implementation.
+//!
+//! The [`TreeGrower`] coordinates tree building by bringing together:
+//! - Histogram building
+//! - Split finding
+//! - Row partitioning
+//! - Growth policy
+
+use std::collections::HashMap;
+
+use super::building::{BuildingTree, NodeCandidate};
+use super::policy::{GrowthPolicy, GrowthState};
+use super::super::histogram::{HistogramBuilder, NodeHistogram};
+use super::super::partition::RowPartitioner;
+use super::super::quantize::{BinCuts, BinIndex, QuantizedMatrix};
+use super::super::split::{GainParams, GreedySplitFinder, SplitFinder};
+use crate::training::buffer::GradientBuffer;
+
+// ============================================================================
+// TreeParams
+// ============================================================================
+
+/// Parameters for tree building.
+#[derive(Debug, Clone)]
+pub struct TreeParams {
+    /// Parameters for gain computation
+    pub gain: GainParams,
+    /// Maximum tree depth (used by depth-wise, also as absolute limit for leaf-wise)
+    pub max_depth: u32,
+    /// Maximum number of leaves (used by leaf-wise growth)
+    pub max_leaves: u32,
+    /// Minimum samples required to split a node
+    pub min_samples_split: u32,
+    /// Minimum samples required in a leaf
+    pub min_samples_leaf: u32,
+    /// Learning rate (shrinkage) applied to leaf weights
+    pub learning_rate: f32,
+    /// Use parallel histogram building (beneficial for many features)
+    pub parallel_histograms: bool,
+}
+
+impl Default for TreeParams {
+    fn default() -> Self {
+        Self {
+            gain: GainParams::default(),
+            max_depth: 6,
+            max_leaves: 31, // 2^5 - 1, common LightGBM default
+            min_samples_split: 2,
+            min_samples_leaf: 1,
+            learning_rate: 0.3,
+            parallel_histograms: false, // Sequential by default, parallel for many features
+        }
+    }
+}
+
+// ============================================================================
+// TreeGrower
+// ============================================================================
+
+/// Coordinates tree growing with a growth policy.
+///
+/// Brings together histogram building, split finding, and row partitioning
+/// to grow a tree according to the specified growth policy.
+///
+/// # Naming Note
+///
+/// Named `TreeGrower` (not `TreeBuilder`) to avoid confusion with
+/// `trees::TreeBuilder` which is an inference-time builder pattern helper.
+pub struct TreeGrower<'a, G: GrowthPolicy> {
+    /// Growth policy (depth-wise or leaf-wise)
+    policy: G,
+    /// Histogram builder
+    hist_builder: HistogramBuilder,
+    /// Split finder
+    split_finder: GreedySplitFinder,
+    /// Bin cuts for histograms
+    cuts: &'a BinCuts,
+    /// Training parameters
+    params: TreeParams,
+}
+
+impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
+    /// Create a new tree grower.
+    pub fn new(policy: G, cuts: &'a BinCuts, params: TreeParams) -> Self {
+        Self {
+            policy,
+            hist_builder: HistogramBuilder::default(),
+            split_finder: GreedySplitFinder::new(),
+            cuts,
+            params,
+        }
+    }
+
+    /// Build a single tree.
+    ///
+    /// # Arguments
+    ///
+    /// * `quantized` - Quantized feature matrix
+    /// * `grads` - Gradient buffer with (grad, hess) for each row
+    /// * `partitioner` - Row partitioner (will be modified during building)
+    ///
+    /// # Returns
+    ///
+    /// The built tree structure.
+    pub fn build_tree<B: BinIndex>(
+        &mut self,
+        quantized: &QuantizedMatrix<B>,
+        grads: &GradientBuffer,
+        partitioner: &mut RowPartitioner,
+    ) -> BuildingTree {
+        let mut tree = BuildingTree::new(0.0);
+        let mut state = self.policy.init();
+
+        // Histogram storage per node (reuse across iterations)
+        let mut histograms: HashMap<u32, NodeHistogram> = HashMap::new();
+
+        // Build root histogram
+        let root_rows = partitioner.node_rows(0);
+        let root_hist = self.build_histogram(root_rows, quantized, grads);
+        histograms.insert(0, root_hist);
+
+        // Find initial split for root
+        let root_split =
+            self.split_finder
+                .find_best_split(&histograms[&0], self.cuts, &self.params.gain);
+
+        // Update root weight
+        tree.node_mut(0).weight = root_split.weight_left; // Will be updated by split
+
+        // Use HashMap for candidates so leaf-wise can find candidates from previous iterations
+        let mut candidates: HashMap<u32, NodeCandidate> = HashMap::new();
+        candidates.insert(
+            0,
+            NodeCandidate::new(0, root_split, 0, partitioner.node_size(0)),
+        );
+
+        // Main growth loop
+        while self.policy.should_continue(&state, &tree) {
+            let candidate_vec: Vec<_> = candidates.values().cloned().collect();
+            let nodes_to_expand = self.policy.select_nodes(&mut state, &candidate_vec);
+
+            if nodes_to_expand.is_empty() {
+                break;
+            }
+
+            // Expand selected nodes
+            for &node_id in &nodes_to_expand {
+                let candidate = match candidates.remove(&node_id) {
+                    Some(c) => c,
+                    None => continue, // Already processed or removed
+                };
+
+                if !self.should_split(&candidate) {
+                    continue;
+                }
+
+                // Get partition node for this tree node
+                let partition_id = tree.node(node_id).partition_id;
+
+                // Apply split to partitioner
+                let split = candidate.split.clone();
+                let (left_partition, right_partition) =
+                    partitioner.apply_split(partition_id, &split, quantized);
+
+                // Expand tree node
+                let (left_id, right_id) =
+                    tree.expand(node_id, split.clone(), left_partition, right_partition);
+
+                // Register children with growth state
+                state.add_children(left_id, right_id, candidate.depth + 1);
+
+                // Build histograms for children (use subtraction optimization)
+                let parent_hist = &histograms[&node_id];
+                let (left_hist, right_hist) = self.build_child_histograms(
+                    parent_hist,
+                    left_partition,
+                    right_partition,
+                    quantized,
+                    grads,
+                    partitioner,
+                );
+
+                // Find splits for new nodes
+                let left_split =
+                    self.split_finder
+                        .find_best_split(&left_hist, self.cuts, &self.params.gain);
+                let right_split =
+                    self.split_finder
+                        .find_best_split(&right_hist, self.cuts, &self.params.gain);
+
+                histograms.insert(left_id, left_hist);
+                histograms.insert(right_id, right_hist);
+
+                // Add new candidates to the map
+                candidates.insert(
+                    left_id,
+                    NodeCandidate::new(
+                        left_id,
+                        left_split,
+                        candidate.depth + 1,
+                        partitioner.node_size(left_partition),
+                    ),
+                );
+                candidates.insert(
+                    right_id,
+                    NodeCandidate::new(
+                        right_id,
+                        right_split,
+                        candidate.depth + 1,
+                        partitioner.node_size(right_partition),
+                    ),
+                );
+            }
+
+            // Advance to next iteration (swap level buffers for depth-wise)
+            self.policy.advance(&mut state);
+        }
+
+        // Apply learning rate to leaf weights
+        tree.apply_learning_rate(self.params.learning_rate);
+
+        tree
+    }
+
+    /// Check if a candidate should be split.
+    fn should_split(&self, candidate: &NodeCandidate) -> bool {
+        // max_depth of 0 means no limit (XGBoost convention)
+        let depth_ok = self.params.max_depth == 0 || candidate.depth < self.params.max_depth;
+        candidate.is_valid()
+            && depth_ok
+            && candidate.num_samples >= self.params.min_samples_split
+    }
+
+    /// Build histogram for a set of rows.
+    fn build_histogram<B: BinIndex>(
+        &mut self,
+        rows: &[u32],
+        quantized: &QuantizedMatrix<B>,
+        grads: &GradientBuffer,
+    ) -> NodeHistogram {
+        let mut hist = NodeHistogram::new(self.cuts);
+        if self.params.parallel_histograms {
+            self.hist_builder
+                .build_parallel(&mut hist, quantized, grads, rows);
+        } else {
+            self.hist_builder.build(&mut hist, quantized, grads, rows);
+        }
+        hist
+    }
+
+    /// Build histograms for child nodes using subtraction optimization.
+    fn build_child_histograms<B: BinIndex>(
+        &mut self,
+        parent_hist: &NodeHistogram,
+        left_partition: u32,
+        right_partition: u32,
+        quantized: &QuantizedMatrix<B>,
+        grads: &GradientBuffer,
+        partitioner: &RowPartitioner,
+    ) -> (NodeHistogram, NodeHistogram) {
+        let left_rows = partitioner.node_rows(left_partition);
+        let right_rows = partitioner.node_rows(right_partition);
+
+        let left_size = left_rows.len();
+        let right_size = right_rows.len();
+
+        // Build smaller child directly, derive larger via subtraction
+        if left_size <= right_size {
+            let left_hist = self.build_histogram(left_rows, quantized, grads);
+            let right_hist = parent_hist.subtract(&left_hist);
+            (left_hist, right_hist)
+        } else {
+            let right_hist = self.build_histogram(right_rows, quantized, grads);
+            let left_hist = parent_hist.subtract(&right_hist);
+            (left_hist, right_hist)
+        }
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::policy::{DepthWisePolicy, LeafWisePolicy};
+    use crate::data::DenseMatrix;
+    use crate::training::gbtree::quantize::{CutFinder, ExactQuantileCuts, Quantizer};
+
+    fn make_test_data() -> (QuantizedMatrix<u8>, BinCuts, GradientBuffer) {
+        // 10 rows, 2 features (row-major)
+        // Feature 0: values 0..9
+        // Feature 1: first 5 rows = 0, last 5 rows = 1
+        let data: Vec<f32> = vec![
+            0.0, 0.0, // row 0
+            1.0, 0.0, // row 1
+            2.0, 0.0, // row 2
+            3.0, 0.0, // row 3
+            4.0, 0.0, // row 4
+            5.0, 1.0, // row 5
+            6.0, 1.0, // row 6
+            7.0, 1.0, // row 7
+            8.0, 1.0, // row 8
+            9.0, 1.0, // row 9
+        ];
+        let matrix = DenseMatrix::from_vec(data, 10, 2);
+        // Use min_samples_per_bin=1 for small test data
+        let cuts_finder = ExactQuantileCuts::new(1);
+        let cuts = cuts_finder.find_cuts(&matrix, 256);
+
+        let quantizer = Quantizer::new(cuts.clone());
+        let quantized = quantizer.quantize::<_, u8>(&matrix);
+
+        // Simple gradients: positive for first group, negative for second
+        let mut grads = GradientBuffer::new(10, 1);
+        for i in 0..5 {
+            grads.set(i, 0, 1.0, 1.0);
+        }
+        for i in 5..10 {
+            grads.set(i, 0, -1.0, 1.0);
+        }
+
+        (quantized, cuts, grads)
+    }
+
+    #[test]
+    fn test_tree_params_default() {
+        let params = TreeParams::default();
+        assert_eq!(params.max_depth, 6);
+        assert_eq!(params.max_leaves, 31);
+        assert_eq!(params.min_samples_split, 2);
+        assert_eq!(params.min_samples_leaf, 1);
+        assert!((params.learning_rate - 0.3).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_tree_grower_single_split() {
+        let (quantized, cuts, grads) = make_test_data();
+
+        let policy = DepthWisePolicy { max_depth: 1 };
+        let params = TreeParams {
+            learning_rate: 1.0, // No shrinkage for testing
+            max_depth: 1,       // Must match policy.max_depth
+            ..Default::default()
+        };
+
+        let mut partitioner = RowPartitioner::new(10);
+        let mut grower = TreeGrower::new(policy, &cuts, params);
+
+        let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+
+        // Should have root + 2 children
+        assert!(tree.num_nodes() >= 1);
+        // Root should be split (if gain was found)
+        let root = tree.node(0);
+        if !root.is_leaf {
+            assert_eq!(tree.num_leaves(), 2);
+            assert_eq!(tree.max_depth(), 1);
+        }
+    }
+
+    #[test]
+    fn test_tree_grower_multiple_levels() {
+        let (quantized, cuts, grads) = make_test_data();
+
+        let policy = DepthWisePolicy { max_depth: 3 };
+        let params = TreeParams {
+            learning_rate: 1.0,
+            ..Default::default()
+        };
+
+        let mut partitioner = RowPartitioner::new(10);
+        let mut grower = TreeGrower::new(policy, &cuts, params);
+
+        let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+
+        // Should build multiple levels until no more gain or max depth
+        assert!(tree.max_depth() <= 3);
+        // All leaves should be marked as leaves
+        for leaf_id in tree.leaves() {
+            assert!(tree.node(leaf_id).is_leaf);
+        }
+    }
+
+    #[test]
+    fn test_leaf_wise_single_split() {
+        let (quantized, cuts, grads) = make_test_data();
+
+        let policy = LeafWisePolicy { max_leaves: 2 };
+        let params = TreeParams {
+            learning_rate: 1.0,
+            ..Default::default()
+        };
+
+        let mut partitioner = RowPartitioner::new(10);
+        let mut grower = TreeGrower::new(policy, &cuts, params);
+
+        let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+
+        // With max_leaves=2, should have exactly 2 leaves (1 split)
+        assert_eq!(tree.num_leaves(), 2);
+        assert!(!tree.node(0).is_leaf); // Root was split
+    }
+
+    #[test]
+    fn test_leaf_wise_max_leaves_constraint() {
+        let (quantized, cuts, grads) = make_test_data();
+
+        let policy = LeafWisePolicy { max_leaves: 4 };
+        let params = TreeParams {
+            learning_rate: 1.0,
+            ..Default::default()
+        };
+
+        let mut partitioner = RowPartitioner::new(10);
+        let mut grower = TreeGrower::new(policy, &cuts, params);
+
+        let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+
+        // Should not exceed max_leaves
+        assert!(tree.num_leaves() <= 4);
+        // All leaf nodes should be marked as leaves
+        for leaf_id in tree.leaves() {
+            assert!(tree.node(leaf_id).is_leaf);
+        }
+    }
+
+    #[test]
+    fn test_leaf_wise_vs_depth_wise_different_shapes() {
+        let (quantized, cuts, grads) = make_test_data();
+
+        // Build tree with depth-wise
+        let depth_policy = DepthWisePolicy { max_depth: 3 };
+        let params = TreeParams {
+            learning_rate: 1.0,
+            ..Default::default()
+        };
+
+        let mut partitioner1 = RowPartitioner::new(10);
+        let mut depth_grower = TreeGrower::new(depth_policy, &cuts, params.clone());
+        let depth_tree = depth_grower.build_tree(&quantized, &grads, &mut partitioner1);
+
+        // Build tree with leaf-wise (same number of leaves)
+        let leaf_policy = LeafWisePolicy {
+            max_leaves: depth_tree.num_leaves(),
+        };
+        let mut partitioner2 = RowPartitioner::new(10);
+        let mut leaf_grower = TreeGrower::new(leaf_policy, &cuts, params);
+        let leaf_tree = leaf_grower.build_tree(&quantized, &grads, &mut partitioner2);
+
+        // Both should have same number of leaves
+        assert_eq!(depth_tree.num_leaves(), leaf_tree.num_leaves());
+
+        // Leaf-wise can produce deeper trees (asymmetric growth)
+        // This is a characteristic property of leaf-wise growth
+        println!("Depth-wise max depth: {}", depth_tree.max_depth());
+        println!("Leaf-wise max depth: {}", leaf_tree.max_depth());
+    }
+}
