@@ -35,6 +35,7 @@ mod grower;
 mod histogram;
 mod partition;
 mod quantize;
+mod sampling;
 mod split;
 mod trainer;
 
@@ -48,6 +49,7 @@ pub use histogram::{
 };
 pub use partition::RowPartitioner;
 pub use quantize::{BinCuts, BinIndex, CutFinder, ExactQuantileCuts, QuantizedMatrix, Quantizer};
+pub use sampling::{ColumnSampler, RowSampler};
 pub use split::{
     GainParams, GreedySplitFinder, SplitFinder, SplitInfo, leaf_objective, leaf_weight, split_gain,
 };

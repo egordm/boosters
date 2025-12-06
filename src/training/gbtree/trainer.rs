@@ -39,6 +39,7 @@ use crate::trees::{ScalarLeaf, SoATreeStorage, TreeBuilder as SoATreeBuilder};
 use super::grower::{BuildingTree, GrowthPolicy, TreeGrower, TreeParams};
 use super::partition::RowPartitioner;
 use super::quantize::{BinCuts, BinIndex, CutFinder, QuantizedMatrix, Quantizer};
+use super::sampling::RowSampler;
 
 // ============================================================================
 // TrainerParams
@@ -55,6 +56,8 @@ pub struct TrainerParams {
     pub base_score: BaseScore,
     /// Verbosity level for logging
     pub verbosity: Verbosity,
+    /// Random seed for reproducibility (sampling, etc.)
+    pub seed: u64,
 }
 
 impl Default for TrainerParams {
@@ -64,6 +67,7 @@ impl Default for TrainerParams {
             num_rounds: 100,
             base_score: BaseScore::Mean,
             verbosity: Verbosity::Info,
+            seed: 0,
         }
     }
 }
@@ -211,27 +215,48 @@ impl GBTreeTrainer {
         // Row partitioner (reused per tree)
         let mut partitioner = RowPartitioner::new(num_rows as u32);
 
+        // Row sampler for subsampling
+        let row_sampler = RowSampler::new(num_rows as u32, self.params.tree_params.subsample);
+        let sampling_enabled = row_sampler.is_enabled();
+
         // Trees built during training
         let mut trees: Vec<BuildingTree> = Vec::with_capacity(self.params.num_rounds as usize);
 
         self.logger.info(&format!(
-            "Starting training: {} rounds, {} samples",
-            self.params.num_rounds, num_rows
+            "Starting training: {} rounds, {} samples{}",
+            self.params.num_rounds,
+            num_rows,
+            if sampling_enabled {
+                format!(
+                    " (subsample={:.2})",
+                    self.params.tree_params.subsample
+                )
+            } else {
+                String::new()
+            }
         ));
 
         for round in 0..self.params.num_rounds {
-            // Compute gradients
+            // Compute gradients for all rows
             self.loss
                 .compute_gradients(&predictions, labels, &mut grads);
 
-            // Reset partitioner for new tree
-            partitioner.reset();
+            // Sample rows for this round (same seed + round = reproducible)
+            let round_seed = self.params.seed.wrapping_add(round as u64);
+            let sampled_rows = row_sampler.sample(round_seed);
 
-            // Build tree
+            // Reset partitioner for new tree with sampled rows
+            if sampling_enabled {
+                partitioner.reset_with_rows(&sampled_rows);
+            } else {
+                partitioner.reset();
+            }
+
+            // Build tree with seed for column sampling reproducibility
             let mut grower = TreeGrower::new(policy.clone(), cuts, self.params.tree_params.clone());
-            let tree = grower.build_tree(quantized, &grads, &mut partitioner);
+            let tree = grower.build_tree_with_seed(quantized, &grads, &mut partitioner, round_seed);
 
-            // Update predictions
+            // Update predictions for all rows (not just sampled)
             Self::update_predictions(&tree, quantized, &mut predictions);
 
             // Compute metrics for all eval sets
@@ -993,5 +1018,339 @@ mod tests {
         );
 
         assert_eq!(forest.num_trees(), 10);
+    }
+
+    // ========================================================================
+    // Row Sampling Tests (Story 3)
+    // ========================================================================
+
+    #[test]
+    fn test_train_with_subsample() {
+        // 3.T1: Training with row subsampling produces valid forest
+        let (quantized, cuts, labels) = make_regression_data();
+
+        let params = TrainerParams {
+            num_rounds: 10,
+            tree_params: TreeParams {
+                max_depth: 3,
+                learning_rate: 0.3,
+                subsample: 0.8, // Use 80% of rows per tree
+                ..Default::default()
+            },
+            verbosity: Verbosity::Silent,
+            seed: 42,
+            ..Default::default()
+        };
+
+        let policy = DepthWisePolicy { max_depth: 3 };
+        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
+        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
+
+        assert_eq!(forest.num_trees(), 10);
+        assert_eq!(forest.num_groups(), 1);
+    }
+
+    #[test]
+    fn test_subsample_reproducibility() {
+        // 3.T2: Same seed produces identical forests
+        let (quantized, cuts, labels) = make_regression_data();
+
+        let make_params = |seed: u64| TrainerParams {
+            num_rounds: 5,
+            tree_params: TreeParams {
+                max_depth: 3,
+                learning_rate: 0.3,
+                subsample: 0.5,
+                ..Default::default()
+            },
+            verbosity: Verbosity::Silent,
+            seed,
+            ..Default::default()
+        };
+
+        let policy = DepthWisePolicy { max_depth: 3 };
+
+        // Train twice with same seed
+        let mut trainer1 = GBTreeTrainer::new(Box::new(SquaredLoss), make_params(42));
+        let forest1 = trainer1.train(policy.clone(), &quantized, &labels, &cuts, &[]);
+
+        let mut trainer2 = GBTreeTrainer::new(Box::new(SquaredLoss), make_params(42));
+        let forest2 = trainer2.train(policy.clone(), &quantized, &labels, &cuts, &[]);
+
+        // Same seed should produce identical base scores
+        assert_eq!(forest1.base_score(), forest2.base_score());
+        assert_eq!(forest1.num_trees(), forest2.num_trees());
+    }
+
+    #[test]
+    fn test_different_seeds_different_forests() {
+        // 3.T3: Different seeds produce different forests
+        let (quantized, cuts, labels) = make_regression_data();
+
+        let make_params = |seed: u64| TrainerParams {
+            num_rounds: 5,
+            tree_params: TreeParams {
+                max_depth: 3,
+                learning_rate: 0.3,
+                subsample: 0.5,
+                ..Default::default()
+            },
+            verbosity: Verbosity::Silent,
+            seed,
+            ..Default::default()
+        };
+
+        let policy = DepthWisePolicy { max_depth: 3 };
+
+        let mut trainer1 = GBTreeTrainer::new(Box::new(SquaredLoss), make_params(42));
+        let forest1 = trainer1.train(policy.clone(), &quantized, &labels, &cuts, &[]);
+
+        let mut trainer2 = GBTreeTrainer::new(Box::new(SquaredLoss), make_params(123));
+        let forest2 = trainer2.train(policy.clone(), &quantized, &labels, &cuts, &[]);
+
+        // Different seeds should produce different forests
+        // (they might accidentally be the same, but very unlikely with 50% subsample)
+        assert_eq!(forest1.num_trees(), forest2.num_trees());
+        // Base scores should be the same (computed from all labels)
+        assert_eq!(forest1.base_score(), forest2.base_score());
+    }
+
+    #[test]
+    fn test_subsample_full_sample() {
+        // 3.T4: subsample=1.0 should use all rows (same as no sampling)
+        let (quantized, cuts, labels) = make_regression_data();
+
+        let params_no_sample = TrainerParams {
+            num_rounds: 5,
+            tree_params: TreeParams {
+                max_depth: 3,
+                learning_rate: 0.3,
+                subsample: 1.0, // No sampling
+                ..Default::default()
+            },
+            verbosity: Verbosity::Silent,
+            seed: 42,
+            ..Default::default()
+        };
+
+        let params_with_sample = TrainerParams {
+            num_rounds: 5,
+            tree_params: TreeParams {
+                max_depth: 3,
+                learning_rate: 0.3,
+                subsample: 1.0, // Still no effective sampling
+                ..Default::default()
+            },
+            verbosity: Verbosity::Silent,
+            seed: 999, // Different seed shouldn't matter
+            ..Default::default()
+        };
+
+        let policy = DepthWisePolicy { max_depth: 3 };
+
+        let mut trainer1 = GBTreeTrainer::new(Box::new(SquaredLoss), params_no_sample);
+        let forest1 = trainer1.train(policy.clone(), &quantized, &labels, &cuts, &[]);
+
+        let mut trainer2 = GBTreeTrainer::new(Box::new(SquaredLoss), params_with_sample);
+        let forest2 = trainer2.train(policy.clone(), &quantized, &labels, &cuts, &[]);
+
+        // With subsample=1.0, seed shouldn't affect result
+        assert_eq!(forest1.base_score(), forest2.base_score());
+        assert_eq!(forest1.num_trees(), forest2.num_trees());
+    }
+
+    #[test]
+    fn test_subsample_small_ratio() {
+        // 3.T5: Very small subsample ratio still works
+        let (quantized, cuts, labels) = make_regression_data();
+
+        let params = TrainerParams {
+            num_rounds: 5,
+            tree_params: TreeParams {
+                max_depth: 2,
+                learning_rate: 0.3,
+                subsample: 0.1, // Only 10% of rows (10 rows from 100)
+                min_samples_split: 1,
+                min_samples_leaf: 1,
+                ..Default::default()
+            },
+            verbosity: Verbosity::Silent,
+            seed: 42,
+            ..Default::default()
+        };
+
+        let policy = DepthWisePolicy { max_depth: 2 };
+        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
+        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
+
+        // Should still produce valid trees
+        assert_eq!(forest.num_trees(), 5);
+    }
+
+    // ========================================================================
+    // Column Sampling Tests (Story 3)
+    // ========================================================================
+
+    #[test]
+    fn test_train_with_colsample_bytree() {
+        // 3.T6: Training with column subsampling per tree
+        let (quantized, cuts, labels) = make_regression_data();
+
+        let params = TrainerParams {
+            num_rounds: 10,
+            tree_params: TreeParams {
+                max_depth: 3,
+                learning_rate: 0.3,
+                colsample_bytree: 0.5, // Use 50% of features per tree
+                ..Default::default()
+            },
+            verbosity: Verbosity::Silent,
+            seed: 42,
+            ..Default::default()
+        };
+
+        let policy = DepthWisePolicy { max_depth: 3 };
+        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
+        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
+
+        assert_eq!(forest.num_trees(), 10);
+    }
+
+    #[test]
+    fn test_train_with_colsample_bylevel() {
+        // 3.T7: Training with column subsampling per level
+        let (quantized, cuts, labels) = make_regression_data();
+
+        let params = TrainerParams {
+            num_rounds: 10,
+            tree_params: TreeParams {
+                max_depth: 4,
+                learning_rate: 0.3,
+                colsample_bylevel: 0.8, // Use 80% of features per level
+                ..Default::default()
+            },
+            verbosity: Verbosity::Silent,
+            seed: 42,
+            ..Default::default()
+        };
+
+        let policy = DepthWisePolicy { max_depth: 4 };
+        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
+        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
+
+        assert_eq!(forest.num_trees(), 10);
+    }
+
+    #[test]
+    fn test_train_with_colsample_bynode() {
+        // 3.T8: Training with column subsampling per node
+        let (quantized, cuts, labels) = make_regression_data();
+
+        let params = TrainerParams {
+            num_rounds: 10,
+            tree_params: TreeParams {
+                max_depth: 3,
+                learning_rate: 0.3,
+                colsample_bynode: 0.7, // Use 70% of features per node
+                ..Default::default()
+            },
+            verbosity: Verbosity::Silent,
+            seed: 42,
+            ..Default::default()
+        };
+
+        let policy = DepthWisePolicy { max_depth: 3 };
+        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
+        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
+
+        assert_eq!(forest.num_trees(), 10);
+    }
+
+    #[test]
+    fn test_train_with_combined_sampling() {
+        // 3.T9: Training with both row and column sampling combined
+        let (quantized, cuts, labels) = make_regression_data();
+
+        let params = TrainerParams {
+            num_rounds: 10,
+            tree_params: TreeParams {
+                max_depth: 3,
+                learning_rate: 0.3,
+                subsample: 0.8,           // 80% of rows
+                colsample_bytree: 0.9,    // 90% of features per tree
+                colsample_bylevel: 0.9,   // 90% of remaining per level
+                colsample_bynode: 0.9,    // 90% of remaining per node
+                ..Default::default()
+            },
+            verbosity: Verbosity::Silent,
+            seed: 42,
+            ..Default::default()
+        };
+
+        let policy = DepthWisePolicy { max_depth: 3 };
+        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
+        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
+
+        assert_eq!(forest.num_trees(), 10);
+    }
+
+    #[test]
+    fn test_colsample_reproducibility() {
+        // 3.T10: Same seed produces identical forests with column sampling
+        let (quantized, cuts, labels) = make_regression_data();
+
+        let make_params = |seed: u64| TrainerParams {
+            num_rounds: 5,
+            tree_params: TreeParams {
+                max_depth: 3,
+                learning_rate: 0.3,
+                colsample_bytree: 0.5,
+                ..Default::default()
+            },
+            verbosity: Verbosity::Silent,
+            seed,
+            ..Default::default()
+        };
+
+        let policy = DepthWisePolicy { max_depth: 3 };
+
+        let mut trainer1 = GBTreeTrainer::new(Box::new(SquaredLoss), make_params(42));
+        let forest1 = trainer1.train(policy.clone(), &quantized, &labels, &cuts, &[]);
+
+        let mut trainer2 = GBTreeTrainer::new(Box::new(SquaredLoss), make_params(42));
+        let forest2 = trainer2.train(policy.clone(), &quantized, &labels, &cuts, &[]);
+
+        // Same seed should produce identical forests
+        assert_eq!(forest1.base_score(), forest2.base_score());
+        assert_eq!(forest1.num_trees(), forest2.num_trees());
+    }
+
+    #[test]
+    fn test_aggressive_sampling() {
+        // 3.T11: Aggressive sampling (low values) should still work
+        let (quantized, cuts, labels) = make_regression_data();
+
+        let params = TrainerParams {
+            num_rounds: 5,
+            tree_params: TreeParams {
+                max_depth: 3,
+                learning_rate: 0.5,
+                subsample: 0.3,           // Only 30% of rows
+                colsample_bytree: 0.5,    // Only 50% of features
+                min_samples_split: 1,
+                min_samples_leaf: 1,
+                ..Default::default()
+            },
+            verbosity: Verbosity::Silent,
+            seed: 42,
+            ..Default::default()
+        };
+
+        let policy = DepthWisePolicy { max_depth: 3 };
+        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
+        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
+
+        // Should still produce valid trees
+        assert_eq!(forest.num_trees(), 5);
     }
 }

@@ -13,6 +13,7 @@ use super::policy::{GrowthPolicy, GrowthState};
 use super::super::histogram::{HistogramBuilder, NodeHistogram};
 use super::super::partition::RowPartitioner;
 use super::super::quantize::{BinCuts, BinIndex, QuantizedMatrix};
+use super::super::sampling::ColumnSampler;
 use super::super::split::{GainParams, GreedySplitFinder, SplitFinder};
 use crate::training::buffer::GradientBuffer;
 
@@ -37,6 +38,14 @@ pub struct TreeParams {
     pub learning_rate: f32,
     /// Use parallel histogram building (beneficial for many features)
     pub parallel_histograms: bool,
+    /// Row subsampling ratio per tree (0, 1]. 1.0 means use all rows.
+    pub subsample: f32,
+    /// Column subsampling ratio per tree (0, 1]. 1.0 means use all features.
+    pub colsample_bytree: f32,
+    /// Column subsampling ratio per level (0, 1]. 1.0 means use all features.
+    pub colsample_bylevel: f32,
+    /// Column subsampling ratio per node (0, 1]. 1.0 means use all features.
+    pub colsample_bynode: f32,
 }
 
 impl Default for TreeParams {
@@ -49,6 +58,10 @@ impl Default for TreeParams {
             min_samples_leaf: 1,
             learning_rate: 0.3,
             parallel_histograms: false, // Sequential by default, parallel for many features
+            subsample: 1.0,             // Use all rows by default
+            colsample_bytree: 1.0,      // Use all features by default
+            colsample_bylevel: 1.0,
+            colsample_bynode: 1.0,
         }
     }
 }
@@ -77,18 +90,35 @@ pub struct TreeGrower<'a, G: GrowthPolicy> {
     cuts: &'a BinCuts,
     /// Training parameters
     params: TreeParams,
+    /// Column sampler for feature sampling
+    col_sampler: ColumnSampler,
 }
 
 impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
     /// Create a new tree grower.
     pub fn new(policy: G, cuts: &'a BinCuts, params: TreeParams) -> Self {
+        let num_features = cuts.num_features() as u32;
+        let col_sampler = ColumnSampler::new(
+            num_features,
+            params.colsample_bytree,
+            params.colsample_bylevel,
+            params.colsample_bynode,
+        );
         Self {
             policy,
             hist_builder: HistogramBuilder::default(),
             split_finder: GreedySplitFinder::new(),
             cuts,
             params,
+            col_sampler,
         }
+    }
+
+    /// Create a new tree grower with a specific seed for column sampling.
+    pub fn with_seed(policy: G, cuts: &'a BinCuts, params: TreeParams, seed: u64) -> Self {
+        let mut grower = Self::new(policy, cuts, params);
+        grower.col_sampler.sample_tree(seed);
+        grower
     }
 
     /// Build a single tree.
@@ -108,8 +138,34 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
         grads: &GradientBuffer,
         partitioner: &mut RowPartitioner,
     ) -> BuildingTree {
+        self.build_tree_with_seed(quantized, grads, partitioner, 0)
+    }
+
+    /// Build a single tree with a specific seed for column sampling.
+    ///
+    /// # Arguments
+    ///
+    /// * `quantized` - Quantized feature matrix
+    /// * `grads` - Gradient buffer with (grad, hess) for each row
+    /// * `partitioner` - Row partitioner (will be modified during building)
+    /// * `tree_seed` - Seed for column sampling reproducibility
+    ///
+    /// # Returns
+    ///
+    /// The built tree structure.
+    pub fn build_tree_with_seed<B: BinIndex>(
+        &mut self,
+        quantized: &QuantizedMatrix<B>,
+        grads: &GradientBuffer,
+        partitioner: &mut RowPartitioner,
+        tree_seed: u64,
+    ) -> BuildingTree {
         let mut tree = BuildingTree::new(0.0);
         let mut state = self.policy.init();
+
+        // Initialize column sampling for this tree
+        self.col_sampler.sample_tree(tree_seed);
+        let col_sampling_enabled = self.col_sampler.is_enabled();
 
         // Histogram storage per node (reuse across iterations)
         let mut histograms: HashMap<u32, NodeHistogram> = HashMap::new();
@@ -119,7 +175,13 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
         let root_hist = self.build_histogram(root_rows, quantized, grads);
         histograms.insert(0, root_hist);
 
-        // Find initial split for root
+        // Find initial split for root (depth=0, node_id=0)
+        let root_features = if col_sampling_enabled {
+            Some(self.col_sampler.allowed_features_for_node(0, 0, tree_seed))
+        } else {
+            None
+        };
+        self.split_finder.feature_subset = root_features;
         let root_split =
             self.split_finder
                 .find_best_split(&histograms[&0], self.cuts, &self.params.gain);
@@ -180,10 +242,27 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
                     partitioner,
                 );
 
-                // Find splits for new nodes
+                // Find splits for new nodes with column sampling
+                let child_depth = candidate.depth + 1;
+                
+                // Left child
+                let left_features = if col_sampling_enabled {
+                    Some(self.col_sampler.allowed_features_for_node(child_depth, left_id, tree_seed))
+                } else {
+                    None
+                };
+                self.split_finder.feature_subset = left_features;
                 let left_split =
                     self.split_finder
                         .find_best_split(&left_hist, self.cuts, &self.params.gain);
+                
+                // Right child
+                let right_features = if col_sampling_enabled {
+                    Some(self.col_sampler.allowed_features_for_node(child_depth, right_id, tree_seed))
+                } else {
+                    None
+                };
+                self.split_finder.feature_subset = right_features;
                 let right_split =
                     self.split_finder
                         .find_best_split(&right_hist, self.cuts, &self.params.gain);

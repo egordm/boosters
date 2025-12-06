@@ -275,5 +275,3 @@ Stories 1-8 are independent and can be worked in any order.
 | 6. Feature Bundling | Large | Graph algorithms + decoding |
 | 7. Monotonic | Medium | Bounds tracking/propagation |
 | 8. Interaction | Medium | Path tracking + filtering |
-
-Total: ~4-6 weeks

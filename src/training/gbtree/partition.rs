@@ -191,6 +191,23 @@ impl RowPartitioner {
         self.node_bounds = vec![(0, num_rows)];
         self.num_nodes = 1;
     }
+
+    /// Reset with a specific subset of rows.
+    ///
+    /// This is used for row sampling where we want to train on a subset.
+    /// The subset is copied into the positions buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `rows` - The row indices to use (must be sorted for cache efficiency)
+    pub fn reset_with_rows(&mut self, rows: &[u32]) {
+        let num_rows = rows.len() as u32;
+        self.positions.clear();
+        self.positions.extend_from_slice(rows);
+        self.node_bounds.clear();
+        self.node_bounds.push((0, num_rows));
+        self.num_nodes = 1;
+    }
 }
 
 // ============================================================================
