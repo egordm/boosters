@@ -33,7 +33,9 @@
 use crate::data::ColumnAccess;
 use crate::forest::SoAForest;
 use crate::training::metric::EvalSet;
-use crate::training::{EarlyStopping, GradientBuffer, Loss, Metric, TrainingLogger, Verbosity};
+use crate::training::{
+    EarlyStopping, GradientBuffer, Loss, Metric, MulticlassLoss, TrainingLogger, Verbosity,
+};
 use crate::trees::{ScalarLeaf, SoATreeStorage, TreeBuilder as SoATreeBuilder};
 
 use super::grower::{BuildingTree, GrowthPolicy, TreeGrower, TreeParams};
@@ -562,6 +564,271 @@ impl GBTreeTrainer {
                 let split = node.split.as_ref().expect("Non-leaf must have split");
                 if split.is_categorical {
                     // Convert categories_left to bitset format
+                    let bitset = categories_to_bitset(&split.categories_left);
+                    builder.add_categorical_split(
+                        split.feature,
+                        bitset,
+                        split.default_left,
+                        node.left,
+                        node.right,
+                    );
+                } else {
+                    builder.add_split(
+                        split.feature,
+                        split.threshold,
+                        split.default_left,
+                        node.left,
+                        node.right,
+                    );
+                }
+            }
+        }
+
+        builder.build()
+    }
+}
+
+// ============================================================================
+// MulticlassTrainer
+// ============================================================================
+
+/// Multi-strategy selection for multi-output training.
+///
+/// Determines how to handle multiple outputs (classes) during training.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub enum MultiStrategy {
+    /// Build K trees per iteration (one per output/class).
+    /// This is XGBoost's default multi-class strategy.
+    /// Each tree is trained on the gradients for its specific class.
+    #[default]
+    OneOutputPerTree,
+    // Future: MultiOutputTree - single tree with vector leaves
+}
+
+/// Gradient boosting trainer for multiclass classification.
+///
+/// Trains K forests (one per class) using the "one output per tree" strategy.
+/// For K classes and N rounds, this produces K × N trees total.
+///
+/// # Example
+///
+/// ```ignore
+/// use booste_rs::training::{MulticlassTrainer, TrainerParams, SoftmaxLoss, DepthWisePolicy};
+///
+/// let loss = SoftmaxLoss::new(3); // 3 classes
+/// let params = TrainerParams::default();
+/// let mut trainer = MulticlassTrainer::new(loss, params);
+///
+/// let forest = trainer.train(
+///     DepthWisePolicy { max_depth: 6 },
+///     &quantized,
+///     &labels, // class indices: 0, 1, or 2
+///     &cuts,
+///     &[],
+/// );
+/// ```
+pub struct MulticlassTrainer {
+    /// Loss function for gradient computation
+    loss: Box<dyn MulticlassLoss>,
+    /// Training parameters
+    params: TrainerParams,
+    /// Training logger
+    logger: TrainingLogger,
+}
+
+impl MulticlassTrainer {
+    /// Create a new multiclass trainer.
+    pub fn new<L: MulticlassLoss + 'static>(loss: L, params: TrainerParams) -> Self {
+        let logger = TrainingLogger::new(params.verbosity);
+        Self {
+            loss: Box::new(loss),
+            params,
+            logger,
+        }
+    }
+
+    /// Train a multiclass gradient boosted forest.
+    ///
+    /// Uses the "one output per tree" strategy: for each boosting round,
+    /// trains K trees (one per class) on the class-specific gradients.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `G` - Growth policy (DepthWisePolicy or LeafWisePolicy)
+    /// * `B` - Bin index type (u8 or u16)
+    ///
+    /// # Arguments
+    ///
+    /// * `policy` - Growth policy for tree building
+    /// * `quantized` - Quantized feature matrix
+    /// * `labels` - Class labels (0, 1, ..., K-1)
+    /// * `cuts` - Bin cuts for histogram building
+    /// * `eval_sets` - Evaluation sets (currently unused for multiclass)
+    ///
+    /// # Returns
+    ///
+    /// A forest with K trees per round. Tree groups correspond to classes.
+    pub fn train<G, B>(
+        &mut self,
+        policy: G,
+        quantized: &QuantizedMatrix<B>,
+        labels: &[f32],
+        cuts: &BinCuts,
+        _eval_sets: &[QuantizedEvalSet<'_, B>],
+    ) -> SoAForest<ScalarLeaf>
+    where
+        G: GrowthPolicy + Clone,
+        B: BinIndex,
+    {
+        let num_rows = quantized.num_rows() as usize;
+        let num_classes = self.loss.num_classes();
+
+        assert_eq!(labels.len(), num_rows, "labels length must match data rows");
+
+        // Validate labels are valid class indices
+        for &label in labels {
+            let class = label as usize;
+            assert!(
+                class < num_classes,
+                "Label {} >= num_classes {}",
+                class,
+                num_classes
+            );
+        }
+
+        // Initialize base scores (zero for multiclass softmax)
+        let base_scores: Vec<f32> = vec![0.0; num_classes];
+
+        // Initialize predictions: [num_rows × num_classes]
+        let mut predictions: Vec<f32> = vec![0.0; num_rows * num_classes];
+
+        // Gradient buffer (K outputs per sample)
+        let mut grads = GradientBuffer::new(num_rows, num_classes);
+
+        // Row partitioners (one per class, reused per round)
+        let mut partitioners: Vec<RowPartitioner> =
+            (0..num_classes).map(|_| RowPartitioner::new(num_rows as u32)).collect();
+
+        // Trees per class: trees[class][round]
+        let mut trees_per_class: Vec<Vec<BuildingTree>> =
+            (0..num_classes).map(|_| Vec::with_capacity(self.params.num_rounds as usize)).collect();
+
+        self.logger.info(&format!(
+            "Starting multiclass training: {} rounds, {} samples, {} classes",
+            self.params.num_rounds, num_rows, num_classes
+        ));
+
+        for round in 0..self.params.num_rounds {
+            // Compute gradients for all samples and classes
+            self.loss.compute_gradients(&predictions, labels, &mut grads);
+
+            let round_seed = self.params.seed.wrapping_add(round as u64);
+
+            // Train one tree per class
+            for class_idx in 0..num_classes {
+                // Create a single-output gradient view for this class
+                let mut class_grads = GradientBuffer::new(num_rows, 1);
+                for row in 0..num_rows {
+                    let (grad, hess) = grads.get(row, class_idx);
+                    class_grads.set(row, 0, grad, hess);
+                }
+
+                // Reset partitioner
+                partitioners[class_idx].reset();
+
+                // Build tree for this class
+                let class_seed = round_seed.wrapping_add(class_idx as u64 * 1000);
+                let mut grower = TreeGrower::new(policy.clone(), cuts, self.params.tree_params.clone());
+                let tree = grower.build_tree_with_seed(
+                    quantized,
+                    &class_grads,
+                    &mut partitioners[class_idx],
+                    class_seed,
+                );
+
+                // Update predictions for this class
+                for row in 0..num_rows {
+                    let pred = Self::predict_row(&tree, quantized, row as u32);
+                    predictions[row * num_classes + class_idx] += pred;
+                }
+
+                trees_per_class[class_idx].push(tree);
+            }
+
+            // Log progress
+            if (round + 1) % 10 == 0 || round == 0 {
+                self.logger.info(&format!(
+                    "Round {} complete, {} trees per class",
+                    round + 1,
+                    trees_per_class[0].len()
+                ));
+            }
+        }
+
+        // Convert to inference forest
+        self.freeze_multiclass_forest(trees_per_class, base_scores)
+    }
+
+    /// Predict a single row with a tree.
+    fn predict_row<B: BinIndex>(tree: &BuildingTree, data: &QuantizedMatrix<B>, row: u32) -> f32 {
+        let mut node_id = 0u32;
+
+        loop {
+            let node = tree.node(node_id);
+            if node.is_leaf {
+                return node.weight;
+            }
+
+            let split = node.split.as_ref().expect("Non-leaf must have split");
+            let bin = data.get(row, split.feature).to_usize();
+
+            let goes_left = if bin == 0 {
+                // Missing value (bin 0) - use default direction
+                split.default_left
+            } else if split.is_categorical {
+                // Categorical: check if bin is in left set
+                split.categories_left.contains(&(bin as u32))
+            } else {
+                // Numerical: bin <= split_bin goes left
+                bin <= split.split_bin as usize
+            };
+
+            node_id = if goes_left { node.left } else { node.right };
+        }
+    }
+
+    /// Convert trees to inference-optimized SoAForest for multiclass.
+    fn freeze_multiclass_forest(
+        &self,
+        trees_per_class: Vec<Vec<BuildingTree>>,
+        base_scores: Vec<f32>,
+    ) -> SoAForest<ScalarLeaf> {
+        let num_classes = trees_per_class.len();
+        let mut forest = SoAForest::new(num_classes as u32).with_base_score(base_scores);
+
+        // Add trees: each class's trees go to its own group
+        for (class_idx, class_trees) in trees_per_class.into_iter().enumerate() {
+            for tree in class_trees {
+                let soa_tree = self.convert_tree(&tree);
+                forest.push_tree(soa_tree, class_idx as u32);
+            }
+        }
+
+        forest
+    }
+
+    /// Convert a BuildingTree to SoATreeStorage.
+    fn convert_tree(&self, building: &BuildingTree) -> SoATreeStorage<ScalarLeaf> {
+        let mut builder = SoATreeBuilder::<ScalarLeaf>::new();
+
+        for node_id in 0..building.num_nodes() as u32 {
+            let node = building.node(node_id);
+
+            if node.is_leaf {
+                builder.add_leaf(ScalarLeaf(node.weight));
+            } else {
+                let split = node.split.as_ref().expect("Non-leaf must have split");
+                if split.is_categorical {
                     let bitset = categories_to_bitset(&split.categories_left);
                     builder.add_categorical_split(
                         split.feature,
@@ -1663,5 +1930,129 @@ mod tests {
         
         // Predictions may differ but should be in similar range
         println!("GOSS prediction: {}, Random prediction: {}", goss_pred, random_pred);
+    }
+
+    // ====================================================================
+    // Multiclass trainer tests
+    // ====================================================================
+
+    use crate::training::SoftmaxLoss;
+
+    fn make_multiclass_data() -> (QuantizedMatrix<u8>, BinCuts, Vec<f32>) {
+        // Simple 3-class problem with more samples:
+        // Class 0: x0 in [0, 3)
+        // Class 1: x0 in [3, 6)
+        // Class 2: x0 in [6, 9)
+        let mut data = Vec::new();
+        let mut labels = Vec::new();
+        
+        for i in 0..90 {
+            let x0 = (i % 9) as f32; // Values 0-8
+            let x1 = (i / 9) as f32;  // Different rows for each value
+            data.push(x0);
+            data.push(x1);
+            
+            // Assign class based on x0 value
+            let class = if x0 < 3.0 {
+                0.0
+            } else if x0 < 6.0 {
+                1.0
+            } else {
+                2.0
+            };
+            labels.push(class);
+        }
+
+        let matrix = DenseMatrix::from_vec(data, 90, 2);
+        // Use more samples per quantile to get better cuts
+        let cuts_finder = ExactQuantileCuts::new(1);
+        let cuts = cuts_finder.find_cuts(&matrix, 256);
+        let quantizer = Quantizer::new(cuts.clone());
+        let quantized = quantizer.quantize::<_, u8>(&matrix);
+
+        (quantized, cuts, labels)
+    }
+
+    #[test]
+    fn test_multiclass_trainer_basic() {
+        let (quantized, cuts, labels) = make_multiclass_data();
+
+        let params = TrainerParams {
+            num_rounds: 5,
+            tree_params: TreeParams {
+                max_depth: 3,
+                learning_rate: 0.3,
+                ..Default::default()
+            },
+            verbosity: Verbosity::Silent,
+            ..Default::default()
+        };
+
+        let loss = SoftmaxLoss::new(3);
+        let policy = DepthWisePolicy { max_depth: 3 };
+        let mut trainer = MulticlassTrainer::new(loss, params);
+        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
+
+        // Should have 3 groups (classes) × 5 rounds = 15 total trees
+        assert_eq!(forest.num_trees(), 15);
+        assert_eq!(forest.num_groups(), 3);
+    }
+
+    #[test]
+    fn test_multiclass_predictions() {
+        // Create simple 1-feature data for clear class boundaries
+        // 30 samples: bins 1-3 = class 0, bins 4-6 = class 1, bins 7-9 = class 2
+        let mut data = Vec::new();
+        let mut labels = Vec::new();
+        
+        for i in 0..30 {
+            let x0 = (i % 9) as f32; // Values 0-8 (class boundary)
+            data.push(x0);
+            
+            // Assign class based on x0 value
+            let class = if x0 < 3.0 {
+                0.0
+            } else if x0 < 6.0 {
+                1.0
+            } else {
+                2.0
+            };
+            labels.push(class);
+        }
+        
+        let matrix = DenseMatrix::from_vec(data, 30, 1);
+        let cuts_finder = ExactQuantileCuts::new(1);
+        let cuts = cuts_finder.find_cuts(&matrix, 256);
+        let quantizer = Quantizer::new(cuts.clone());
+        let quantized = quantizer.quantize::<_, u8>(&matrix);
+
+        let params = TrainerParams {
+            num_rounds: 1,
+            tree_params: TreeParams {
+                max_depth: 3,
+                learning_rate: 1.0,
+                ..Default::default()
+            },
+            verbosity: Verbosity::Silent,
+            ..Default::default()
+        };
+
+        let loss = SoftmaxLoss::new(3);
+        let policy = DepthWisePolicy { max_depth: 3 };
+        let mut trainer = MulticlassTrainer::new(loss, params);
+        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
+        
+        // Test predictions for each class region
+        // Class 0: x0 < 3
+        let pred0 = forest.predict_row(&[1.0]);
+        assert_eq!(pred0.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).map(|(i, _)| i), Some(0));
+        
+        // Class 1: 3 <= x0 < 6
+        let pred1 = forest.predict_row(&[4.0]);
+        assert_eq!(pred1.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).map(|(i, _)| i), Some(1));
+        
+        // Class 2: x0 >= 6
+        let pred2 = forest.predict_row(&[7.0]);
+        assert_eq!(pred2.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).map(|(i, _)| i), Some(2));
     }
 }

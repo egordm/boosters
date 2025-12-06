@@ -24,9 +24,10 @@ use booste_rs::predict::{Predictor, StandardTraversal};
 use booste_rs::testing::pearson_correlation;
 use booste_rs::training::{
     DepthWisePolicy, GBTreeTrainer, GainParams, LeafWisePolicy, Rmse, SimpleMetric, SquaredLoss,
+    SoftmaxLoss,
     TrainerParams, TreeParams,
 };
-use booste_rs::training::gbtree::{CutFinder, ExactQuantileCuts, Quantizer};
+use booste_rs::training::gbtree::{CutFinder, ExactQuantileCuts, Quantizer, MulticlassTrainer};
 use serde::Deserialize;
 
 // =============================================================================
@@ -422,5 +423,261 @@ mod smoke_tests {
         let result = train_and_predict(&tc);
         assert!(result.forest.num_trees() > 0);
         assert!(!result.train_preds.is_empty());
+    }
+}
+
+// =============================================================================
+// Multiclass Classification Tests (Story 4 Validation)
+// =============================================================================
+
+mod multiclass_tests {
+    #![allow(dead_code)]
+    use super::*;
+
+    /// Load multiclass config with num_class field.
+    #[derive(Deserialize)]
+    struct MulticlassConfig {
+        objective: String,
+        num_class: usize,
+        max_depth: Option<u32>,
+        eta: f32,
+        lambda: f32,
+        #[serde(default)]
+        alpha: f32,
+        #[serde(default)]
+        min_child_weight: f32,
+        #[serde(default)]
+        gamma: f32,
+        num_boost_round: u32,
+    }
+
+    #[derive(Deserialize)]
+    struct MulticlassMetrics {
+        num_trees: usize,
+        #[serde(default)]
+        test_accuracy: Option<f64>,
+    }
+
+    /// Multiclass predictions are 2D: [[class0, class1, class2], ...]
+    #[derive(Deserialize)]
+    struct MulticlassPredictions {
+        predictions: Vec<Vec<f32>>,
+    }
+
+    struct MulticlassTestCase {
+        train_matrix: ColMatrix<f32>,
+        train_labels: Vec<f32>,
+        test_matrix: RowMatrix<f32>,
+        test_labels: Vec<f32>,
+        xgb_train_preds: Vec<Vec<f32>>,
+        xgb_test_preds: Vec<Vec<f32>>,
+        config: MulticlassConfig,
+        metrics: MulticlassMetrics,
+    }
+
+    impl MulticlassTestCase {
+        fn load(name: &str) -> Self {
+            let dir = gbtree_training_dir();
+
+            let train_data: TrainData = load_json(&dir.join(format!("{name}.train_data.json")));
+            let train_labels: Labels = load_json(&dir.join(format!("{name}.train_labels.json")));
+            let test_data: TrainData = load_json(&dir.join(format!("{name}.test_data.json")));
+            let test_labels: Labels = load_json(&dir.join(format!("{name}.test_labels.json")));
+            let xgb_train_preds: MulticlassPredictions =
+                load_json(&dir.join(format!("{name}.train_predictions.json")));
+            let xgb_test_preds: MulticlassPredictions =
+                load_json(&dir.join(format!("{name}.test_predictions.json")));
+            let config: MulticlassConfig = load_json(&dir.join(format!("{name}.config.json")));
+            let metrics: MulticlassMetrics = load_json(&dir.join(format!("{name}.metrics.json")));
+
+            MulticlassTestCase {
+                train_matrix: load_col_matrix(&train_data),
+                train_labels: train_labels.labels,
+                test_matrix: load_row_matrix(&test_data),
+                test_labels: test_labels.labels,
+                xgb_train_preds: xgb_train_preds.predictions,
+                xgb_test_preds: xgb_test_preds.predictions,
+                config,
+                metrics,
+            }
+        }
+    }
+
+    fn train_multiclass(tc: &MulticlassTestCase) -> (booste_rs::forest::SoAForest<booste_rs::trees::ScalarLeaf>, Vec<Vec<f32>>, Vec<Vec<f32>>) {
+        let num_classes = tc.config.num_class;
+
+        // Quantize training data
+        let cut_finder = ExactQuantileCuts::new(1);
+        let cuts = cut_finder.find_cuts(&tc.train_matrix, 256);
+        let quantizer = Quantizer::new(cuts.clone());
+        let quantized = quantizer.quantize::<_, u8>(&tc.train_matrix);
+
+        // Build gain params with regularization from config
+        let gain_params = GainParams {
+            lambda: tc.config.lambda,
+            alpha: tc.config.alpha,
+            min_split_gain: tc.config.gamma,
+            min_child_weight: tc.config.min_child_weight,
+        };
+
+        // Build tree params
+        let tree_params = TreeParams {
+            gain: gain_params,
+            max_depth: tc.config.max_depth.unwrap_or(6),
+            learning_rate: tc.config.eta,
+            min_samples_split: 1,
+            min_samples_leaf: 1,
+            ..Default::default()
+        };
+
+        let params = TrainerParams {
+            num_rounds: tc.config.num_boost_round,
+            tree_params,
+            ..Default::default()
+        };
+
+        // Train multiclass model
+        let loss = SoftmaxLoss::new(num_classes);
+        let policy = DepthWisePolicy {
+            max_depth: tc.config.max_depth.unwrap_or(6),
+        };
+        let mut trainer = MulticlassTrainer::new(loss, params);
+        let forest = trainer.train(policy, &quantized, &tc.train_labels, &cuts, &[]);
+
+        // Predict on train set - get K scores per row
+        let train_row_matrix: RowMatrix<f32> = tc.train_matrix.to_layout();
+        let mut train_preds = Vec::with_capacity(train_row_matrix.num_rows());
+        for row_idx in 0..train_row_matrix.num_rows() {
+            let features: Vec<f32> = (0..train_row_matrix.num_cols())
+                .map(|c| *train_row_matrix.get(row_idx, c).unwrap())
+                .collect();
+            let pred = forest.predict_row(&features);
+            train_preds.push(pred);
+        }
+
+        // Predict on test set
+        let mut test_preds = Vec::with_capacity(tc.test_matrix.num_rows());
+        for row_idx in 0..tc.test_matrix.num_rows() {
+            let features: Vec<f32> = (0..tc.test_matrix.num_cols())
+                .map(|c| *tc.test_matrix.get(row_idx, c).unwrap())
+                .collect();
+            let pred = forest.predict_row(&features);
+            test_preds.push(pred);
+        }
+
+        (forest, train_preds, test_preds)
+    }
+
+    fn argmax(preds: &[f32]) -> usize {
+        preds
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .map(|(idx, _)| idx)
+            .unwrap_or(0)
+    }
+
+    fn compute_accuracy(preds: &[Vec<f32>], labels: &[f32]) -> f64 {
+        let correct: usize = preds
+            .iter()
+            .zip(labels.iter())
+            .filter(|(pred, label)| argmax(pred) == **label as usize)
+            .count();
+        correct as f64 / labels.len() as f64
+    }
+
+    /// Story 4.6: Validation against XGBoost multi:softmax.
+    ///
+    /// Validates that:
+    /// - Tree count matches XGBoost (num_rounds * num_classes)
+    /// - Predictions correlate highly with XGBoost per class
+    /// - Test accuracy is reasonable
+    #[test]
+    fn multiclass_training_quality() {
+        let tc = MulticlassTestCase::load("multiclass");
+        let num_classes = tc.config.num_class;
+        let (forest, train_preds, test_preds) = train_multiclass(&tc);
+
+        // Check tree count: num_rounds × num_classes
+        let expected_trees = tc.config.num_boost_round as usize * num_classes;
+        assert_eq!(
+            forest.num_trees(),
+            expected_trees,
+            "Expected {} trees ({}×{}), got {}",
+            expected_trees,
+            tc.config.num_boost_round,
+            num_classes,
+            forest.num_trees()
+        );
+
+        // Check group count
+        assert_eq!(
+            forest.num_groups() as usize,
+            num_classes,
+            "Expected {} groups, got {}",
+            num_classes,
+            forest.num_groups()
+        );
+
+        // Compute per-class correlations with XGBoost predictions
+        for class_idx in 0..num_classes {
+            let our_class_preds: Vec<f32> = train_preds.iter().map(|p| p[class_idx]).collect();
+            let xgb_class_preds: Vec<f32> = tc.xgb_train_preds.iter().map(|p| p[class_idx]).collect();
+
+            let corr = pearson_correlation(&our_class_preds, &xgb_class_preds);
+            println!(
+                "Class {} training correlation: {:.4}",
+                class_idx, corr
+            );
+
+            // Require high correlation with XGBoost
+            assert!(
+                corr >= 0.90,
+                "Class {} training correlation {:.4} < 0.90 minimum",
+                class_idx,
+                corr
+            );
+        }
+
+        // Compute test accuracy
+        let test_accuracy = compute_accuracy(&test_preds, &tc.test_labels);
+        let xgb_accuracy = tc.metrics.test_accuracy.unwrap_or(0.0);
+
+        println!(
+            "Test accuracy: ours={:.4}, xgb={:.4}",
+            test_accuracy, xgb_accuracy
+        );
+
+        // Our accuracy should be reasonable (allow some tolerance)
+        assert!(
+            test_accuracy >= 0.60,
+            "Test accuracy {:.4} too low (minimum 0.60)",
+            test_accuracy
+        );
+
+        // Warn if significantly worse than XGBoost
+        if xgb_accuracy > 0.0 && test_accuracy < xgb_accuracy - 0.15 {
+            eprintln!(
+                "WARNING: Test accuracy {:.4} is significantly worse than XGBoost {:.4}",
+                test_accuracy, xgb_accuracy
+            );
+        }
+    }
+
+    /// Smoke test: multiclass training produces valid predictions.
+    #[test]
+    fn multiclass_smoke() {
+        let tc = MulticlassTestCase::load("multiclass");
+        let (forest, train_preds, _test_preds) = train_multiclass(&tc);
+
+        // Should have trees
+        assert!(forest.num_trees() > 0);
+
+        // Predictions should be finite
+        for pred in &train_preds {
+            for &v in pred {
+                assert!(v.is_finite(), "Non-finite prediction: {}", v);
+            }
+        }
     }
 }
