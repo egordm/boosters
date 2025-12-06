@@ -29,8 +29,14 @@
 //! - [`NodeHistogram`]: Per-feature histograms for a node
 //! - [`HistogramSubtractor`]: Parent-child histogram trick
 //!
+//! # Training Constraints (RFC-0023)
+//!
+//! - [`MonotonicConstraint`]: Force predictions to increase/decrease with feature values
+//! - [`InteractionConstraints`]: Limit which features can appear together in trees
+//!
 //! See RFC-0015 for tree growing design, RFC-0011 for quantization.
 
+mod constraints;
 mod grower;
 mod histogram;
 mod partition;
@@ -39,6 +45,9 @@ mod sampling;
 mod split;
 mod trainer;
 
+pub use constraints::{
+    InteractionConstraints, MonotonicBounds, MonotonicChecker, MonotonicConstraint,
+};
 pub use grower::{
     BuildingNode, BuildingTree, DepthWisePolicy, DepthWiseState, GrowthPolicy, GrowthState,
     GrowthStrategy, LeafCandidate, LeafWisePolicy, LeafWiseState, NodeCandidate, TreeGrower,
