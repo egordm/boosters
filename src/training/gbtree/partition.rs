@@ -384,10 +384,10 @@ mod tests {
     mod integration {
         use super::*;
         use crate::data::ColMatrix;
-        use crate::training::quantize::{ExactQuantileCuts, Quantizer};
-        use crate::training::split::SplitInfo;
+        use crate::training::gbtree::quantize::{ExactQuantileCuts, Quantizer, BinCuts};
+        use crate::training::gbtree::split::SplitInfo;
 
-        fn make_test_quantized() -> (QuantizedMatrix<u8>, crate::training::quantize::BinCuts) {
+        fn make_test_quantized() -> (QuantizedMatrix<u8>, BinCuts) {
             // 10 rows, 2 features
             // Feature 0: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
             // Feature 1: 5, 5, 5, 5, 5, 0, 0, 0, 0, 0 (two groups)

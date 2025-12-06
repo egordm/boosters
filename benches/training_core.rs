@@ -12,7 +12,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 
 use bench_utils::generate_training_data;
 use booste_rs::data::{CSCMatrix, ColMatrix, RowMatrix};
-use booste_rs::linear::training::{LinearTrainer, LinearTrainerConfig};
+use booste_rs::training::linear::{LinearTrainer, LinearTrainerConfig};
 use booste_rs::training::{SoftmaxLoss, SquaredLoss, Verbosity};
 
 // =============================================================================

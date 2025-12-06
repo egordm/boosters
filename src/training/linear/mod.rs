@@ -1,4 +1,4 @@
-//! Linear model training via coordinate descent.
+//! GBLinear training via coordinate descent.
 //!
 //! This module provides training for linear models using coordinate descent
 //! optimization with elastic net regularization (L1 + L2).
@@ -19,7 +19,7 @@
 //!
 //! # Gradient Storage
 //!
-//! Gradients are stored in Structure-of-Arrays (SoA) layout via [`GradientBuffer`]:
+//! Gradients are stored in Structure-of-Arrays (SoA) layout via [`GradientBuffer`][crate::training::GradientBuffer]:
 //! - Shape `[n_samples, n_outputs]` for unified single/multi-output handling
 //! - Separate `grads[]` and `hess[]` arrays for cache efficiency
 //!

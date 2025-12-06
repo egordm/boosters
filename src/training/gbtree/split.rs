@@ -780,14 +780,14 @@ mod tests {
     mod integration {
         use super::*;
         use crate::data::ColMatrix;
-        use crate::training::histogram::{HistogramBuilder, NodeHistogram};
-        use crate::training::quantize::{ExactQuantileCuts, Quantizer};
+        use crate::training::gbtree::histogram::{HistogramBuilder, NodeHistogram};
+        use crate::training::gbtree::quantize::{BinCuts, ExactQuantileCuts, QuantizedMatrix, Quantizer};
         use crate::training::GradientBuffer;
 
         fn make_test_data() -> (
-            crate::training::quantize::QuantizedMatrix<u8>,
+            QuantizedMatrix<u8>,
             GradientBuffer,
-            crate::training::quantize::BinCuts,
+            BinCuts,
         ) {
             // Create data: 20 rows, 2 features
             // Feature 0: 0..20 (linear, good for splitting)

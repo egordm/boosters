@@ -23,7 +23,7 @@ use booste_rs::training::{
     BaseScore, DepthWisePolicy, GBTreeTrainer, GainParams, Quantizer, SquaredLoss, TrainerParams,
     TreeParams, Verbosity,
 };
-use booste_rs::training::quantize::{CutFinder, ExactQuantileCuts};
+use booste_rs::training::gbtree::{CutFinder, ExactQuantileCuts};
 
 // =============================================================================
 // Configuration

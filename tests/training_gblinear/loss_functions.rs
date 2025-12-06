@@ -5,7 +5,7 @@
 //! - HingeLoss (SVM-style binary classification)
 
 use super::{compute_binary_accuracy, compute_test_rmse_default, load_test_data, load_train_data};
-use booste_rs::linear::training::{LinearTrainer, LinearTrainerConfig};
+use booste_rs::training::linear::{LinearTrainer, LinearTrainerConfig};
 use booste_rs::training::{HingeLoss, LogisticLoss, PseudoHuberLoss, SquaredLoss, Verbosity};
 
 // =============================================================================

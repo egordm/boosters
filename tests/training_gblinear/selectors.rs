@@ -11,7 +11,7 @@ use super::{
     compute_multiclass_accuracy, compute_test_rmse_default, load_test_data, load_train_data,
 };
 use booste_rs::data::DataMatrix;
-use booste_rs::linear::training::{FeatureSelectorKind, LinearTrainer, LinearTrainerConfig};
+use booste_rs::training::linear::{FeatureSelectorKind, LinearTrainer, LinearTrainerConfig};
 use booste_rs::training::{SoftmaxLoss, SquaredLoss, Verbosity};
 
 // =============================================================================

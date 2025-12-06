@@ -7,7 +7,7 @@
 use super::load_train_data;
 use super::load_config;
 use booste_rs::data::DataMatrix;
-use booste_rs::linear::training::{LinearTrainer, LinearTrainerConfig};
+use booste_rs::training::linear::{LinearTrainer, LinearTrainerConfig};
 use booste_rs::training::{LogisticLoss, SoftmaxLoss, Verbosity};
 
 /// Test binary classification training produces reasonable predictions.
