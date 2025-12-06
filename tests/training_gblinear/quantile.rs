@@ -48,7 +48,7 @@ fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
 
     let trainer = LinearTrainer::new(trainer_config);
     let loss = QuantileLoss::new(alpha);
-    let model = trainer.train(&data, &labels, &loss);
+    let model = trainer.train(&data, &labels, &[], &loss);
 
     // Compute predictions on test set
     let mut test_preds = Vec::with_capacity(test_data.num_rows());
@@ -130,9 +130,9 @@ fn quantile_regression_predictions_differ() {
     let trainer = LinearTrainer::new(trainer_config);
 
     // Train three models with different quantiles
-    let model_low = trainer.train(&data, &labels, &QuantileLoss::new(0.1));
-    let model_med = trainer.train(&data, &labels, &QuantileLoss::new(0.5));
-    let model_high = trainer.train(&data, &labels, &QuantileLoss::new(0.9));
+    let model_low = trainer.train(&data, &labels, &[], &QuantileLoss::new(0.1));
+    let model_med = trainer.train(&data, &labels, &[], &QuantileLoss::new(0.5));
+    let model_high = trainer.train(&data, &labels, &[], &QuantileLoss::new(0.9));
 
     // Get predictions for first sample
     let features: Vec<f32> = (0..data.num_features())
@@ -229,7 +229,7 @@ fn train_multi_quantile_regression() {
     // Train single multi-quantile model
     let trainer = LinearTrainer::new(trainer_config.clone());
     let loss = QuantileLoss::multi(quantile_alphas);
-    let model = trainer.train_multiclass(&data, &labels, &loss);
+    let model = trainer.train_multiclass(&data, &labels, &[], &loss);
 
     // Verify model has correct number of output groups
     assert_eq!(model.num_groups(), num_quantiles);
@@ -312,12 +312,12 @@ fn multi_quantile_vs_separate_models() {
 
     // Train single multi-quantile model
     let multi_loss = QuantileLoss::multi(quantile_alphas);
-    let multi_model = trainer.train_multiclass(&data, &labels, &multi_loss);
+    let multi_model = trainer.train_multiclass(&data, &labels, &[], &multi_loss);
 
     // Train 3 separate single-quantile models
     let single_models: Vec<_> = quantile_alphas
         .iter()
-        .map(|&alpha| trainer.train(&data, &labels, &QuantileLoss::new(alpha)))
+        .map(|&alpha| trainer.train(&data, &labels, &[], &QuantileLoss::new(alpha)))
         .collect();
 
     // Compare predictions on training set

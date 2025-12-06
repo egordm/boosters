@@ -37,7 +37,7 @@ fn train_regression_matches_xgboost(#[case] name: &str) {
     };
 
     let trainer = LinearTrainer::new(trainer_config);
-    let model = trainer.train(&data, &labels, &SquaredLoss);
+    let model = trainer.train(&data, &labels, &[], &SquaredLoss);
 
     // Compare weights
     // XGBoost stores weights as [w0, w1, ..., wn-1, bias]
@@ -80,7 +80,7 @@ fn train_l2_regularization_shrinks_weights() {
         verbosity: Verbosity::Silent,
         ..Default::default()
     };
-    let no_reg_model = LinearTrainer::new(no_reg_config).train(&data, &labels, &SquaredLoss);
+    let no_reg_model = LinearTrainer::new(no_reg_config).train(&data, &labels, &[], &SquaredLoss);
 
     // Train with L2 regularization
     let l2_config = LinearTrainerConfig {
@@ -92,7 +92,7 @@ fn train_l2_regularization_shrinks_weights() {
         verbosity: Verbosity::Silent,
         ..Default::default()
     };
-    let l2_model = LinearTrainer::new(l2_config).train(&data, &labels, &SquaredLoss);
+    let l2_model = LinearTrainer::new(l2_config).train(&data, &labels, &[], &SquaredLoss);
 
     // L2 should produce smaller weights on average
     let no_reg_l2_norm: f32 = (0..data.num_features())
@@ -129,7 +129,7 @@ fn train_elastic_net_produces_sparse_weights() {
     };
 
     let trainer = LinearTrainer::new(trainer_config);
-    let model = trainer.train(&data, &labels, &SquaredLoss);
+    let model = trainer.train(&data, &labels, &[], &SquaredLoss);
 
     // Count near-zero weights in both
     let xgb_near_zero = xgb_weights
@@ -169,7 +169,7 @@ fn trained_model_predictions_reasonable() {
     };
 
     let trainer = LinearTrainer::new(config);
-    let model = trainer.train(&data, &labels, &SquaredLoss);
+    let model = trainer.train(&data, &labels, &[], &SquaredLoss);
 
     // Predictions should be close to actual values
     for i in 0..5 {
@@ -203,7 +203,7 @@ fn parallel_vs_sequential_similar() {
         verbosity: Verbosity::Silent,
         ..Default::default()
     };
-    let seq_model = LinearTrainer::new(seq_config).train(&data, &labels, &SquaredLoss);
+    let seq_model = LinearTrainer::new(seq_config).train(&data, &labels, &[], &SquaredLoss);
 
     let par_config = LinearTrainerConfig {
         num_rounds: 50,
@@ -212,7 +212,7 @@ fn parallel_vs_sequential_similar() {
         verbosity: Verbosity::Silent,
         ..Default::default()
     };
-    let par_model = LinearTrainer::new(par_config).train(&data, &labels, &SquaredLoss);
+    let par_model = LinearTrainer::new(par_config).train(&data, &labels, &[], &SquaredLoss);
 
     // Predictions should be similar
     let seq_pred = seq_model.predict_row(&[2.0, 2.0], &[0.0])[0];
@@ -247,7 +247,7 @@ fn weight_correlation_with_xgboost(#[case] name: &str) {
         ..Default::default()
     };
 
-    let model = LinearTrainer::new(trainer_config).train(&data, &labels, &SquaredLoss);
+    let model = LinearTrainer::new(trainer_config).train(&data, &labels, &[], &SquaredLoss);
 
     // Collect our weights (excluding bias)
     let our_weights: Vec<f32> = (0..xgb_weights.num_features)
@@ -294,7 +294,7 @@ fn test_set_prediction_quality(#[case] name: &str) {
         ..Default::default()
     };
 
-    let model = LinearTrainer::new(trainer_config).train(&train_data, &train_labels, &SquaredLoss);
+    let model = LinearTrainer::new(trainer_config).train(&train_data, &train_labels, &[], &SquaredLoss);
     let base_scores = vec![0.0f32];
 
     let our_rmse = compute_test_rmse(&model, &test_data, &test_labels, &base_scores);

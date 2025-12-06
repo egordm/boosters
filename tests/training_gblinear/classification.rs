@@ -28,7 +28,7 @@ fn train_binary_classification() {
     };
 
     let trainer = LinearTrainer::new(trainer_config);
-    let model = trainer.train(&data, &labels, &LogisticLoss);
+    let model = trainer.train(&data, &labels, &[], &LogisticLoss);
 
     // Verify predictions are in reasonable range for logits
     let mut predictions = Vec::new();
@@ -74,7 +74,7 @@ fn train_multiclass_classification() {
 
     let trainer = LinearTrainer::new(trainer_config);
     let loss = SoftmaxLoss::new(num_class);
-    let model = trainer.train_multiclass(&data, &labels, &loss);
+    let model = trainer.train_multiclass(&data, &labels, &[], &loss);
 
     // Verify model has correct number of output groups
     assert_eq!(model.num_groups(), num_class);

@@ -23,8 +23,9 @@ use crate::training::{EarlyStopping, GradientBuffer, Loss, Metric, TrainingLogge
 use crate::trees::{ScalarLeaf, SoATreeStorage, TreeBuilder as SoATreeBuilder};
 
 use super::partition::RowPartitioner;
+use super::policy::GrowthPolicy;
 use super::quantize::{BinCuts, BinIndex, QuantizedMatrix};
-use super::tree::{BuildingTree, GrowthPolicy, TreeGrower, TreeParams};
+use super::tree::{BuildingTree, TreeGrower, TreeParams};
 
 // ============================================================================
 // TrainerParams
