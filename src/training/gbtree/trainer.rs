@@ -5,26 +5,40 @@
 //!
 //! # Example
 //!
+//! The easiest way to train is with `train_with_data`, which handles quantization
+//! automatically:
+//!
 //! ```ignore
 //! use booste_rs::training::{GBTreeTrainer, TrainerParams, DepthWisePolicy};
-//! use booste_rs::training::{SquaredLoss, Rmse};
+//! use booste_rs::training::{SquaredLoss, ExactQuantileCuts};
 //!
-//! let loss = Box::new(SquaredLoss);
 //! let params = TrainerParams::default();
+//! let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
 //!
-//! let mut trainer = GBTreeTrainer::new(loss, params);
-//! let forest = trainer.train(&quantized, &labels, &cuts);
+//! let cut_finder = ExactQuantileCuts::default();
+//! let forest = trainer.train_with_data(
+//!     DepthWisePolicy { max_depth: 6 },
+//!     &data,
+//!     &labels,
+//!     &cut_finder,
+//!     256,
+//!     &[],
+//! );
 //! ```
+//!
+//! For advanced usage where you need to control quantization, use [`train`] directly.
 //!
 //! See RFC-0015 for design rationale.
 
+use crate::data::ColumnAccess;
 use crate::forest::SoAForest;
+use crate::training::metric::EvalSet;
 use crate::training::{EarlyStopping, GradientBuffer, Loss, Metric, TrainingLogger, Verbosity};
 use crate::trees::{ScalarLeaf, SoATreeStorage, TreeBuilder as SoATreeBuilder};
 
 use super::grower::{BuildingTree, GrowthPolicy, TreeGrower, TreeParams};
 use super::partition::RowPartitioner;
-use super::quantize::{BinCuts, BinIndex, QuantizedMatrix};
+use super::quantize::{BinCuts, BinIndex, CutFinder, QuantizedMatrix, Quantizer};
 
 // ============================================================================
 // TrainerParams
@@ -275,6 +289,85 @@ impl GBTreeTrainer {
 
         // Convert to inference format
         self.freeze_forest(trees, base_score)
+    }
+
+    /// Train a gradient boosted forest from raw (unquantized) data.
+    ///
+    /// This is the simplified API that handles quantization automatically.
+    /// For advanced use cases where you need to control quantization, use [`train`]
+    /// instead.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `G` - Growth policy (DepthWisePolicy or LeafWisePolicy)
+    /// * `D` - Data matrix type (must implement ColumnAccess)
+    /// * `C` - Cut finder strategy (e.g., ExactQuantileCuts)
+    ///
+    /// # Arguments
+    ///
+    /// * `policy` - Growth policy for tree building
+    /// * `data` - Raw feature matrix
+    /// * `labels` - Target labels
+    /// * `cut_finder` - Strategy for computing bin boundaries
+    /// * `max_bins` - Maximum number of bins per feature (256 is typical)
+    /// * `eval_sets` - Evaluation sets for metrics and early stopping
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use booste_rs::training::{GBTreeTrainer, EvalSet, DepthWisePolicy, ExactQuantileCuts};
+    ///
+    /// let cut_finder = ExactQuantileCuts::default();
+    /// let eval_sets = vec![
+    ///     EvalSet::new("val", &val_data, &val_labels),
+    /// ];
+    /// let forest = trainer.train_with_data(
+    ///     DepthWisePolicy { max_depth: 6 },
+    ///     &data,
+    ///     &labels,
+    ///     &cut_finder,
+    ///     256,
+    ///     &eval_sets,
+    /// );
+    /// ```
+    pub fn train_with_data<G, D, C>(
+        &mut self,
+        policy: G,
+        data: &D,
+        labels: &[f32],
+        cut_finder: &C,
+        max_bins: usize,
+        eval_sets: &[EvalSet<'_, D>],
+    ) -> SoAForest<ScalarLeaf>
+    where
+        G: GrowthPolicy + Clone,
+        D: ColumnAccess<Element = f32> + Sync,
+        C: CutFinder,
+    {
+        // Compute bin cuts from training data
+        self.logger.info("Computing bin cuts...");
+        let quantizer = Quantizer::from_data(data, cut_finder, max_bins);
+        let cuts = quantizer.cuts().clone();
+
+        // Quantize training data
+        self.logger.info("Quantizing training data...");
+        let quantized: QuantizedMatrix<u8> = quantizer.quantize(data);
+
+        // Quantize evaluation sets
+        let quantized_eval_sets: Vec<QuantizedMatrix<u8>> = eval_sets
+            .iter()
+            .map(|es| quantizer.quantize(es.data))
+            .collect();
+
+        // Create QuantizedEvalSet references
+        let quantized_refs: Vec<QuantizedEvalSet<'_, u8>> = eval_sets
+            .iter()
+            .zip(quantized_eval_sets.iter())
+            .map(|(es, q)| QuantizedEvalSet::new(es.name, q, es.labels))
+            .collect();
+
+        // Delegate to the main train method
+        self.train(policy, &quantized, labels, &cuts, &quantized_refs)
     }
 
     /// Compute base score from labels.
@@ -801,5 +894,104 @@ mod tests {
         // Both should produce 20 trees
         assert_eq!(forest_d.num_trees(), 20);
         assert_eq!(forest_l.num_trees(), 20);
+    }
+
+    #[test]
+    fn test_train_with_data() {
+        // Test the simplified API that handles quantization internally
+        let mut data = Vec::new();
+        let mut labels = Vec::new();
+        for i in 0..100 {
+            let x0 = i as f32 / 10.0;
+            let x1 = (i % 10) as f32;
+            data.push(x0);
+            data.push(x1);
+            labels.push(x0 + 0.1); // y ≈ x0
+        }
+
+        let matrix = DenseMatrix::from_vec(data, 100, 2);
+
+        let params = TrainerParams {
+            num_rounds: 10,
+            tree_params: TreeParams {
+                max_depth: 3,
+                learning_rate: 0.3,
+                ..Default::default()
+            },
+            verbosity: Verbosity::Silent,
+            ..Default::default()
+        };
+
+        let policy = DepthWisePolicy { max_depth: 3 };
+        let cut_finder = ExactQuantileCuts::default();
+        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
+
+        let forest = trainer.train_with_data(
+            policy,
+            &matrix,
+            &labels,
+            &cut_finder,
+            256,
+            &[], // no eval sets
+        );
+
+        assert_eq!(forest.num_trees(), 10);
+        assert_eq!(forest.num_groups(), 1);
+    }
+
+    #[test]
+    fn test_train_with_data_eval_sets() {
+        // Test with evaluation sets
+        let mut data = Vec::new();
+        let mut labels = Vec::new();
+        for i in 0..100 {
+            let x0 = i as f32 / 10.0;
+            let x1 = (i % 10) as f32;
+            data.push(x0);
+            data.push(x1);
+            labels.push(x0 + 0.1);
+        }
+
+        let matrix = DenseMatrix::from_vec(data, 100, 2);
+
+        // Create a small validation set
+        let mut val_data = Vec::new();
+        let mut val_labels = Vec::new();
+        for i in 0..20 {
+            let x0 = i as f32 / 10.0 + 0.5;
+            let x1 = (i % 10) as f32;
+            val_data.push(x0);
+            val_data.push(x1);
+            val_labels.push(x0 + 0.1);
+        }
+        let val_matrix = DenseMatrix::from_vec(val_data, 20, 2);
+
+        let params = TrainerParams {
+            num_rounds: 10,
+            tree_params: TreeParams {
+                max_depth: 3,
+                learning_rate: 0.3,
+                ..Default::default()
+            },
+            verbosity: Verbosity::Silent,
+            ..Default::default()
+        };
+
+        let policy = DepthWisePolicy { max_depth: 3 };
+        let cut_finder = ExactQuantileCuts::default();
+        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
+
+        let eval_sets = vec![EvalSet::new("val", &val_matrix, &val_labels)];
+
+        let forest = trainer.train_with_data(
+            policy,
+            &matrix,
+            &labels,
+            &cut_finder,
+            256,
+            &eval_sets,
+        );
+
+        assert_eq!(forest.num_trees(), 10);
     }
 }
