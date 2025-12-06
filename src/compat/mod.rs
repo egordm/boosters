@@ -10,3 +10,9 @@ pub mod xgboost;
 
 #[cfg(feature = "xgboost-compat")]
 pub use xgboost::{ConversionError, XgbModel};
+
+#[cfg(feature = "lightgbm-compat")]
+pub mod lightgbm;
+
+#[cfg(feature = "lightgbm-compat")]
+pub use lightgbm::{ConversionError as LgbConversionError, LgbModel};
