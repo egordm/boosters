@@ -46,10 +46,10 @@ fn train_pseudo_huber_regression() {
     };
 
     let model =
-        LinearTrainer::new(config.clone()).train(&data, &labels, &PseudoHuberLoss::new(5.0)); // Larger slope
+        LinearTrainer::new(config.clone()).train(&data, &labels, &[], &PseudoHuberLoss::new(5.0)); // Larger slope
 
     // Also train with squared loss for comparison
-    let sq_model = LinearTrainer::new(config).train(&data, &labels, &SquaredLoss);
+    let sq_model = LinearTrainer::new(config).train(&data, &labels, &[], &SquaredLoss);
 
     // Compute RMSE on test set for both
     let ph_rmse = compute_test_rmse_default(&model, &test_data, &test_labels);
@@ -95,14 +95,14 @@ fn train_pseudo_huber_with_slope() {
 
     // Train with moderate slope
     let moderate_slope_model =
-        LinearTrainer::new(config.clone()).train(&data, &labels, &PseudoHuberLoss::new(2.0));
+        LinearTrainer::new(config.clone()).train(&data, &labels, &[], &PseudoHuberLoss::new(2.0));
 
     // Train with large slope (more like squared)
     let large_slope_model =
-        LinearTrainer::new(config.clone()).train(&data, &labels, &PseudoHuberLoss::new(10.0));
+        LinearTrainer::new(config.clone()).train(&data, &labels, &[], &PseudoHuberLoss::new(10.0));
 
     // Train with squared for reference
-    let sq_model = LinearTrainer::new(config).train(&data, &labels, &SquaredLoss);
+    let sq_model = LinearTrainer::new(config).train(&data, &labels, &[], &SquaredLoss);
 
     let moderate_rmse = compute_test_rmse_default(&moderate_slope_model, &test_data, &test_labels);
     let large_rmse = compute_test_rmse_default(&large_slope_model, &test_data, &test_labels);
@@ -169,10 +169,10 @@ fn train_hinge_binary_classification() {
         ..Default::default()
     };
 
-    let hinge_model = LinearTrainer::new(hinge_config.clone()).train(&data, &labels, &HingeLoss);
+    let hinge_model = LinearTrainer::new(hinge_config.clone()).train(&data, &labels, &[], &HingeLoss);
 
     // Also train with logistic for comparison
-    let logistic_model = LinearTrainer::new(hinge_config).train(&data, &labels, &LogisticLoss);
+    let logistic_model = LinearTrainer::new(hinge_config).train(&data, &labels, &[], &LogisticLoss);
 
     // Compute accuracy (predictions > 0 → class 1, else class 0)
     let hinge_acc = compute_binary_accuracy(&hinge_model, &test_data, &test_labels, 0.0);

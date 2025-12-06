@@ -32,13 +32,13 @@
 //!     ..Default::default()
 //! };
 //! let trainer = LinearTrainer::new(config);
-//! let model = trainer.train_with_evals(&train_data, &train_labels, &eval_sets, &loss);
+//! let model = trainer.train(&train_data, &train_labels, &eval_sets, &loss);
 //! ```
 //!
 //! For row-major input, convert to column-major first:
 //! ```ignore
 //! let col_matrix: ColMatrix = row_matrix.to_layout();
-//! trainer.train(&col_matrix, labels, loss);
+//! trainer.train(&col_matrix, &labels, &[], &loss);
 //! ```
 
 use crate::data::ColumnAccess;
@@ -109,15 +109,9 @@ impl LinearTrainer {
         Self { config }
     }
 
-    /// Create a trainer with default configuration.
-    pub fn default_config() -> Self {
-        Self::new(LinearTrainerConfig::default())
-    }
-
     /// Train a linear model on column-accessible data.
     ///
-    /// This is the primary training method. It accepts any data type implementing
-    /// [`ColumnAccess`], including:
+    /// Accepts any data type implementing [`ColumnAccess`]:
     /// - [`ColMatrix`](crate::data::ColMatrix): Best for dense data
     /// - [`CSCMatrix`](crate::data::CSCMatrix): Best for sparse data
     ///
@@ -125,95 +119,36 @@ impl LinearTrainer {
     ///
     /// * `train_data` - Training features (must implement `ColumnAccess`)
     /// * `train_labels` - Training labels
+    /// * `eval_sets` - Named datasets for evaluation (pass `&[]` for none)
     /// * `loss` - Loss function for gradient computation
-    ///
-    /// # Returns
-    ///
-    /// Trained `LinearModel`.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use booste_rs::data::{ColMatrix, RowMatrix};
-    /// use booste_rs::linear::training::LinearTrainer;
-    /// use booste_rs::training::SquaredLoss;
-    ///
-    /// // Convert row-major to column-major for training
-    /// let row_data = RowMatrix::from_vec(data, num_rows, num_features);
-    /// let col_data: ColMatrix = row_data.to_layout();
-    ///
-    /// let trainer = LinearTrainer::default_config();
-    /// let model = trainer.train(&col_data, &labels, &SquaredLoss);
-    /// ```
-    pub fn train<C, L>(
-        &self,
-        train_data: &C,
-        train_labels: &[f32],
-        loss: &L,
-    ) -> LinearModel
-    where
-        C: ColumnAccess<Element = f32> + Sync,
-        L: Loss,
-    {
-        self.train_with_evals::<C, C, L>(train_data, train_labels, &[], loss)
-    }
-
-    /// Train a linear model with multiple evaluation sets.
-    ///
-    /// This is the most flexible training method, supporting:
-    /// - Multiple named evaluation sets (train, val, test)
-    /// - Early stopping based on any eval set
-    ///
-    /// The evaluation metric is configured via [`LinearTrainerConfig::eval_metric`].
-    /// Defaults to RMSE if not specified.
-    ///
-    /// # Arguments
-    ///
-    /// * `train_data` - Training features (must implement `ColumnAccess`)
-    /// * `train_labels` - Training labels
-    /// * `eval_sets` - Named datasets for evaluation (can include training set)
-    /// * `loss` - Loss function for gradient computation
-    ///
-    /// # Returns
-    ///
-    /// Trained `LinearModel`.
     ///
     /// # Example
     ///
     /// ```ignore
     /// use booste_rs::data::ColMatrix;
-    /// use booste_rs::linear::training::{EvalMetric, LinearTrainer, LinearTrainerConfig};
-    /// use booste_rs::training::{EvalSet, SquaredLoss};
+    /// use booste_rs::training::{LinearTrainer, LinearTrainerConfig, EvalSet, SquaredLoss};
     ///
+    /// let trainer = LinearTrainer::new(LinearTrainerConfig::default());
+    ///
+    /// // Without eval sets
+    /// let model = trainer.train(&data, &labels, &[], &SquaredLoss);
+    ///
+    /// // With eval sets
     /// let eval_sets = vec![
     ///     EvalSet::new("train", &train_data, &train_labels),
     ///     EvalSet::new("val", &val_data, &val_labels),
     /// ];
-    ///
-    /// let config = LinearTrainerConfig {
-    ///     early_stopping_rounds: 10,
-    ///     eval_metric: EvalMetric::Rmse,
-    ///     ..Default::default()
-    /// };
-    /// let trainer = LinearTrainer::new(config);
-    /// let model = trainer.train_with_evals(
-    ///     &train_data,
-    ///     &train_labels,
-    ///     &eval_sets,
-    ///     &SquaredLoss,
-    /// );
-    /// // Logs: [0] train-rmse:15.23 val-rmse:16.12
+    /// let model = trainer.train(&data, &labels, &eval_sets, &SquaredLoss);
     /// ```
-    pub fn train_with_evals<C, E, L>(
+    pub fn train<C, L>(
         &self,
         train_data: &C,
         train_labels: &[f32],
-        eval_sets: &[EvalSet<'_, E>],
+        eval_sets: &[EvalSet<'_, C>],
         loss: &L,
     ) -> LinearModel
     where
         C: ColumnAccess<Element = f32> + Sync,
-        E: ColumnAccess<Element = f32>,
         L: Loss,
     {
         let num_features = train_data.num_columns();
@@ -371,90 +306,45 @@ impl LinearTrainer {
         model
     }
 
-    /// Train a multiclass linear model.
+    /// Train a multiclass linear model (K >= 2 classes).
     ///
-    /// This method is specifically for multiclass classification with K > 2 classes.
-    /// It uses the [`MulticlassLoss`] trait which computes proper per-class gradients
-    /// using the full prediction vector (e.g., softmax needs all class logits).
+    /// Uses [`MulticlassLoss`] which computes per-class gradients using the full
+    /// prediction vector (e.g., softmax needs all class logits).
     ///
     /// # Arguments
     ///
     /// * `train_data` - Training features
     /// * `train_labels` - Class labels (0 to K-1)
+    /// * `eval_sets` - Named datasets for evaluation (pass `&[]` for none)
     /// * `loss` - Multiclass loss function (e.g., `SoftmaxLoss`)
     ///
     /// # Example
     ///
     /// ```ignore
-    /// use booste_rs::linear::training::LinearTrainer;
-    /// use booste_rs::training::SoftmaxLoss;
+    /// use booste_rs::training::{LinearTrainer, LinearTrainerConfig, EvalSet, SoftmaxLoss};
     ///
-    /// let loss = SoftmaxLoss::new(3); // 3 classes
-    /// let model = trainer.train_multiclass(&data, &labels, &loss);
+    /// let loss = SoftmaxLoss::new(3);
+    /// let trainer = LinearTrainer::new(LinearTrainerConfig::default());
+    ///
+    /// // Without eval sets
+    /// let model = trainer.train_multiclass(&data, &labels, &[], &loss);
+    ///
+    /// // With eval sets
+    /// let eval_sets = vec![
+    ///     EvalSet::new("train", &train_data, &train_labels),
+    ///     EvalSet::new("val", &val_data, &val_labels),
+    /// ];
+    /// let model = trainer.train_multiclass(&data, &labels, &eval_sets, &loss);
     /// ```
     pub fn train_multiclass<C, L>(
         &self,
         train_data: &C,
         train_labels: &[f32],
+        eval_sets: &[EvalSet<'_, C>],
         loss: &L,
     ) -> LinearModel
     where
         C: ColumnAccess<Element = f32> + Sync,
-        L: MulticlassLoss,
-    {
-        self.train_multiclass_with_evals::<C, C, L>(train_data, train_labels, &[], loss)
-    }
-
-    /// Train a multiclass linear model with multiple eval sets.
-    ///
-    /// This is the most flexible multiclass training method, supporting:
-    /// - Multiple named evaluation sets (train, val, test)
-    /// - Early stopping based on any eval set
-    ///
-    /// The evaluation metric is configured via [`LinearTrainerConfig::eval_metric`].
-    /// For multiclass, use `EvalMetric::MulticlassLogLoss`.
-    ///
-    /// # Arguments
-    ///
-    /// * `train_data` - Training features
-    /// * `train_labels` - Class labels (0 to K-1)
-    /// * `eval_sets` - Named datasets for evaluation
-    /// * `loss` - Multiclass loss function
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use booste_rs::linear::training::{EvalMetric, LinearTrainer, LinearTrainerConfig};
-    /// use booste_rs::training::{EvalSet, SoftmaxLoss};
-    ///
-    /// let eval_sets = vec![
-    ///     EvalSet::new("train", &train_data, &train_labels),
-    ///     EvalSet::new("val", &val_data, &val_labels),
-    /// ];
-    /// let loss = SoftmaxLoss::new(3);
-    ///
-    /// let config = LinearTrainerConfig {
-    ///     eval_metric: EvalMetric::MulticlassLogLoss,
-    ///     ..Default::default()
-    /// };
-    /// let trainer = LinearTrainer::new(config);
-    /// let model = trainer.train_multiclass_with_evals(
-    ///     &train_data,
-    ///     &train_labels,
-    ///     &eval_sets,
-    ///     &loss,
-    /// );
-    /// ```
-    pub fn train_multiclass_with_evals<C, E, L>(
-        &self,
-        train_data: &C,
-        train_labels: &[f32],
-        eval_sets: &[EvalSet<'_, E>],
-        loss: &L,
-    ) -> LinearModel
-    where
-        C: ColumnAccess<Element = f32> + Sync,
-        E: ColumnAccess<Element = f32>,
         L: MulticlassLoss,
     {
         let num_features = train_data.num_columns();
@@ -707,7 +597,7 @@ mod tests {
         };
 
         let trainer = LinearTrainer::new(config);
-        let model = trainer.train(&train_data, &train_labels, &SquaredLoss);
+        let model = trainer.train(&train_data, &train_labels, &[], &SquaredLoss);
 
         // Check predictions
         let pred1 = model.predict_row(&[1.0], &[0.0])[0];
@@ -737,6 +627,7 @@ mod tests {
         let model_no_reg = LinearTrainer::new(config_no_reg).train(
             &train_data,
             &train_labels,
+            &[],
             &SquaredLoss,
         );
 
@@ -751,7 +642,7 @@ mod tests {
             ..Default::default()
         };
         let model_l2 =
-            LinearTrainer::new(config_l2).train(&train_data, &train_labels, &SquaredLoss);
+            LinearTrainer::new(config_l2).train(&train_data, &train_labels, &[], &SquaredLoss);
 
         // L2 should produce smaller weights
         let w_no_reg = model_no_reg.weight(0, 0).abs();
@@ -786,7 +677,7 @@ mod tests {
         };
 
         let trainer = LinearTrainer::new(config);
-        let model = trainer.train(&train_data, &train_labels, &SquaredLoss);
+        let model = trainer.train(&train_data, &train_labels, &[], &SquaredLoss);
 
         // Check weights are roughly correct
         let w0 = model.weight(0, 0);
@@ -810,7 +701,7 @@ mod tests {
             ..Default::default()
         };
         let model_seq =
-            LinearTrainer::new(config_seq).train(&train_data, &train_labels, &SquaredLoss);
+            LinearTrainer::new(config_seq).train(&train_data, &train_labels, &[], &SquaredLoss);
 
         let config_par = LinearTrainerConfig {
             num_rounds: 50,
@@ -819,7 +710,7 @@ mod tests {
             ..Default::default()
         };
         let model_par =
-            LinearTrainer::new(config_par).train(&train_data, &train_labels, &SquaredLoss);
+            LinearTrainer::new(config_par).train(&train_data, &train_labels, &[], &SquaredLoss);
 
         // Results should be similar (not identical due to race conditions in shotgun)
         let pred_seq = model_seq.predict_row(&[2.5], &[0.0])[0];
@@ -860,7 +751,7 @@ mod tests {
 
         let trainer = LinearTrainer::new(config);
         let loss = SoftmaxLoss::new(3);
-        let model = trainer.train_multiclass(&train_data, &train_labels, &loss);
+        let model = trainer.train_multiclass(&train_data, &train_labels, &[], &loss);
 
         // Model should have 3 output groups
         assert_eq!(model.num_groups(), 3);
@@ -905,7 +796,7 @@ mod tests {
     }
 
     #[test]
-    fn train_with_evals_multiple_eval_sets() {
+    fn train_multiple_eval_sets() {
         use crate::training::EvalSet;
 
         // y = 2*x + 1
@@ -943,7 +834,7 @@ mod tests {
         };
 
         let trainer = LinearTrainer::new(config);
-        let model = trainer.train_with_evals(
+        let model = trainer.train(
             &train_data,
             &train_labels,
             &eval_sets,
@@ -960,7 +851,7 @@ mod tests {
     }
 
     #[test]
-    fn train_with_evals_early_stopping() {
+    fn train_early_stopping() {
         use crate::training::EvalSet;
 
         // y = 2*x + 1
@@ -992,7 +883,7 @@ mod tests {
         };
 
         let trainer = LinearTrainer::new(config);
-        let model = trainer.train_with_evals(
+        let model = trainer.train(
             &train_data,
             &train_labels,
             &eval_sets,

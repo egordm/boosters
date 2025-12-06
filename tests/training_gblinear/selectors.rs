@@ -49,7 +49,7 @@ fn train_all_selectors_regression() {
         verbosity: Verbosity::Silent,
         ..Default::default()
     };
-    let shuffle_model = LinearTrainer::new(shuffle_config).train(&data, &labels, &SquaredLoss);
+    let shuffle_model = LinearTrainer::new(shuffle_config).train(&data, &labels, &[], &SquaredLoss);
     let shuffle_rmse = compute_test_rmse_default(&shuffle_model, &test_data, &test_labels);
 
     println!("Shuffle RMSE: {:.4}", shuffle_rmse);
@@ -67,7 +67,7 @@ fn train_all_selectors_regression() {
             ..Default::default()
         };
 
-        let model = LinearTrainer::new(config).train(&data, &labels, &SquaredLoss);
+        let model = LinearTrainer::new(config).train(&data, &labels, &[], &SquaredLoss);
         let rmse = compute_test_rmse_default(&model, &test_data, &test_labels);
 
         println!("{} RMSE: {:.4}", name, rmse);
@@ -118,7 +118,7 @@ fn train_all_selectors_multiclass() {
     };
     let loss = SoftmaxLoss::new(num_classes);
     let shuffle_model =
-        LinearTrainer::new(shuffle_config).train_multiclass(&data, &labels, &loss);
+        LinearTrainer::new(shuffle_config).train_multiclass(&data, &labels, &[], &loss);
     let shuffle_acc = compute_multiclass_accuracy(&shuffle_model, &test_data, &test_labels);
 
     println!("Shuffle accuracy: {:.4}", shuffle_acc);
@@ -136,7 +136,7 @@ fn train_all_selectors_multiclass() {
             ..Default::default()
         };
 
-        let model = LinearTrainer::new(config).train_multiclass(&data, &labels, &loss);
+        let model = LinearTrainer::new(config).train_multiclass(&data, &labels, &[], &loss);
         let acc = compute_multiclass_accuracy(&model, &test_data, &test_labels);
 
         println!("{} accuracy: {:.4}", name, acc);
@@ -184,8 +184,8 @@ fn train_greedy_selector_feature_priority() {
         ..Default::default()
     };
 
-    let greedy_model = LinearTrainer::new(greedy_config).train(&data, &labels, &SquaredLoss);
-    let cyclic_model = LinearTrainer::new(cyclic_config).train(&data, &labels, &SquaredLoss);
+    let greedy_model = LinearTrainer::new(greedy_config).train(&data, &labels, &[], &SquaredLoss);
+    let cyclic_model = LinearTrainer::new(cyclic_config).train(&data, &labels, &[], &SquaredLoss);
 
     // Both should produce valid models (non-zero weights somewhere)
     let greedy_has_weights: bool = (0..data.num_features())
@@ -231,7 +231,7 @@ fn train_thrifty_selector_convergence() {
         ..Default::default()
     };
 
-    let model = LinearTrainer::new(thrifty_config).train(&data, &labels, &SquaredLoss);
+    let model = LinearTrainer::new(thrifty_config).train(&data, &labels, &[], &SquaredLoss);
     let rmse = compute_test_rmse_default(&model, &test_data, &test_labels);
 
     println!("Thrifty RMSE: {:.4}", rmse);

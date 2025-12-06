@@ -33,6 +33,7 @@
 
 mod histogram;
 mod partition;
+mod policy;
 mod quantize;
 mod split;
 mod trainer;
@@ -42,10 +43,11 @@ pub use histogram::{
     ChildSide, FeatureHistogram, HistogramBuilder, HistogramSubtractor, NodeHistogram,
 };
 pub use partition::RowPartitioner;
+pub use policy::{
+    DepthWisePolicy, DepthWiseState, GrowthPolicy, GrowthState, GrowthStrategy, LeafWisePolicy,
+    LeafWiseState,
+};
 pub use quantize::{BinCuts, BinIndex, CutFinder, ExactQuantileCuts, QuantizedMatrix, Quantizer};
 pub use split::{GainParams, GreedySplitFinder, SplitFinder, SplitInfo, leaf_objective, leaf_weight, split_gain};
 pub use trainer::{BaseScore, GBTreeTrainer, QuantizedEvalSet, TrainerParams};
-pub use tree::{
-    BuildingNode, BuildingTree, DepthWisePolicy, DepthWiseState, GrowthPolicy, GrowthState,
-    GrowthStrategy, LeafWisePolicy, LeafWiseState, NodeCandidate, TreeGrower, TreeParams,
-};
+pub use tree::{BuildingNode, BuildingTree, NodeCandidate, TreeGrower, TreeParams};

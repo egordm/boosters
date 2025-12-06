@@ -59,7 +59,7 @@ fn bench_gblinear_matrix_formats(c: &mut Criterion) {
             |b, (matrix, labels)| {
                 let trainer = LinearTrainer::new(config.clone());
                 b.iter(|| {
-                    let model = trainer.train(black_box(*matrix), black_box(*labels), &SquaredLoss);
+                    let model = trainer.train(black_box(*matrix), black_box(*labels), &[], &SquaredLoss);
                     black_box(model)
                 });
             },
@@ -72,7 +72,7 @@ fn bench_gblinear_matrix_formats(c: &mut Criterion) {
             |b, (matrix, labels)| {
                 let trainer = LinearTrainer::new(config.clone());
                 b.iter(|| {
-                    let model = trainer.train(black_box(*matrix), black_box(*labels), &SquaredLoss);
+                    let model = trainer.train(black_box(*matrix), black_box(*labels), &[], &SquaredLoss);
                     black_box(model)
                 });
             },
@@ -158,7 +158,7 @@ fn bench_gblinear_updater(c: &mut Criterion) {
         |b, (matrix, labels)| {
             let trainer = LinearTrainer::new(seq_config.clone());
             b.iter(|| {
-                let model = trainer.train(black_box(*matrix), black_box(*labels), &SquaredLoss);
+                let model = trainer.train(black_box(*matrix), black_box(*labels), &[], &SquaredLoss);
                 black_box(model)
             });
         },
@@ -172,7 +172,7 @@ fn bench_gblinear_updater(c: &mut Criterion) {
         |b, (matrix, labels)| {
             let trainer = LinearTrainer::new(par_config.clone());
             b.iter(|| {
-                let model = trainer.train(black_box(*matrix), black_box(*labels), &SquaredLoss);
+                let model = trainer.train(black_box(*matrix), black_box(*labels), &[], &SquaredLoss);
                 black_box(model)
             });
         },
@@ -205,7 +205,7 @@ fn bench_gblinear_feature_scaling(c: &mut Criterion) {
             |b, (matrix, labels)| {
                 let trainer = LinearTrainer::new(config.clone());
                 b.iter(|| {
-                    let model = trainer.train(black_box(*matrix), black_box(*labels), &SquaredLoss);
+                    let model = trainer.train(black_box(*matrix), black_box(*labels), &[], &SquaredLoss);
                     black_box(model)
                 });
             },
@@ -246,7 +246,7 @@ fn bench_gblinear_multiclass(c: &mut Criterion) {
                 let trainer = LinearTrainer::new(config.clone());
                 b.iter(|| {
                     let model =
-                        trainer.train_multiclass(black_box(*matrix), black_box(*labels), &loss);
+                        trainer.train_multiclass(black_box(*matrix), black_box(*labels), &[], &loss);
                     black_box(model)
                 });
             },
@@ -260,7 +260,7 @@ fn bench_gblinear_multiclass(c: &mut Criterion) {
                 let trainer = LinearTrainer::new(config_par.clone());
                 b.iter(|| {
                     let model =
-                        trainer.train_multiclass(black_box(*matrix), black_box(*labels), &loss);
+                        trainer.train_multiclass(black_box(*matrix), black_box(*labels), &[], &loss);
                     black_box(model)
                 });
             },
