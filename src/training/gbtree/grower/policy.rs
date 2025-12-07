@@ -316,7 +316,7 @@ impl GrowthState for LeafWiseState {
 /// // From configuration
 /// let strategy = GrowthStrategy::LeafWise { max_leaves: 31 };
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum GrowthStrategy {
     /// Depth-wise growth (XGBoost style) - expand all nodes at each level
     DepthWise {
