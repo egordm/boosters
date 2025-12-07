@@ -648,7 +648,7 @@ mod multiclass_tests {
     /// Test GOSS sampling with multi-output classification.
     #[test]
     fn multiclass_with_goss() {
-        use booste_rs::training::gbtree::GossParams;
+        use booste_rs::training::gbtree::RowSampling;
 
         let tc = MulticlassTestCase::load("multiclass");
         let num_classes = tc.config.num_class;
@@ -658,7 +658,7 @@ mod multiclass_tests {
             .num_rounds(tc.config.num_boost_round)
             .max_depth(tc.config.max_depth.unwrap_or(6))
             .learning_rate(tc.config.eta)
-            .goss(GossParams::new(0.2, 0.1)) // Enable GOSS
+            .row_sampling(RowSampling::Goss { top_rate: 0.2, other_rate: 0.1 }) // Enable GOSS
             .verbosity(Verbosity::Silent)
             .build()
             .unwrap();
@@ -691,6 +691,8 @@ mod multiclass_tests {
     /// Test subsampling with multi-output classification.
     #[test]
     fn multiclass_with_subsample() {
+        use booste_rs::training::gbtree::RowSampling;
+
         let tc = MulticlassTestCase::load("multiclass");
         let num_classes = tc.config.num_class;
 
@@ -699,7 +701,7 @@ mod multiclass_tests {
             .num_rounds(tc.config.num_boost_round)
             .max_depth(tc.config.max_depth.unwrap_or(6))
             .learning_rate(tc.config.eta)
-            .subsample(0.8) // Enable subsampling
+            .row_sampling(RowSampling::Random { rate: 0.8 }) // Enable subsampling
             .verbosity(Verbosity::Silent)
             .build()
             .unwrap();

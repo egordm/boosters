@@ -123,11 +123,11 @@ From `src/boosting/goss.hpp`:
 
 ```rust
 use booste_rs::training::{GBTreeTrainer, LossFunction};
-use booste_rs::training::gbtree::GossParams;
+use booste_rs::training::gbtree::RowSampling;
 
 let trainer = GBTreeTrainer::builder()
     .loss(LossFunction::Softmax { num_classes: 3 })
-    .goss(GossParams::new(0.2, 0.1))  // top_rate=0.2, other_rate=0.1
+    .row_sampling(RowSampling::Goss { top_rate: 0.2, other_rate: 0.1 })
     .build()
     .unwrap();
 ```

@@ -60,7 +60,9 @@ pub use partition::RowPartitioner;
 pub use quantize::{
     BinCuts, BinIndex, CategoricalInfo, CutFinder, ExactQuantileCuts, QuantizedMatrix, Quantizer,
 };
-pub use sampling::{ColumnSampler, GossParams, GossSample, GossSampler, RowSampler};
+pub use sampling::{
+    ColumnSampler, GossSampler, NoSampler, RandomSampler, RowSample, RowSampler, RowSampling,
+};
 pub use split::{
     GainParams, GreedySplitFinder, SplitFinder, SplitInfo, leaf_objective, leaf_weight,
     split_gain,

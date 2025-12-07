@@ -43,8 +43,6 @@ pub struct TreeParams {
     pub learning_rate: f32,
     /// Use parallel histogram building (beneficial for many features)
     pub parallel_histograms: bool,
-    /// Row subsampling ratio per tree (0, 1]. 1.0 means use all rows.
-    pub subsample: f32,
     /// Column subsampling ratio per tree (0, 1]. 1.0 means use all features.
     pub colsample_bytree: f32,
     /// Column subsampling ratio per level (0, 1]. 1.0 means use all features.
@@ -76,7 +74,6 @@ impl Default for TreeParams {
             min_samples_leaf: 1,
             learning_rate: 0.3,
             parallel_histograms: false, // Sequential by default, parallel for many features
-            subsample: 1.0,             // Use all rows by default
             colsample_bytree: 1.0,      // Use all features by default
             colsample_bylevel: 1.0,
             colsample_bynode: 1.0,

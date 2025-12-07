@@ -58,7 +58,7 @@ use super::constraints::MonotonicConstraint;
 use super::grower::{BuildingTree, GrowthStrategy, TreeGrower, TreeParams};
 use super::partition::RowPartitioner;
 use super::quantize::{BinCuts, BinIndex, ExactQuantileCuts, QuantizedMatrix, Quantizer};
-use super::sampling::{GossParams, GossSampler, RowSampler};
+use super::sampling::{RowSampler, RowSampling};
 use super::split::GainParams;
 
 // ============================================================================
@@ -193,9 +193,14 @@ pub struct GBTreeTrainer {
     // ========================================================================
     // Sampling
     // ========================================================================
-    /// Row subsampling ratio per tree (0, 1].
-    #[builder(default = "1.0")]
-    pub subsample: f32,
+    /// Row sampling strategy.
+    ///
+    /// Options:
+    /// - `RowSampling::None` (default): Use all rows
+    /// - `RowSampling::Random { rate: 0.8 }`: Random 80% subsample
+    /// - `RowSampling::Goss { top_rate, other_rate }`: Gradient-based one-side sampling
+    #[builder(default)]
+    pub row_sampling: RowSampling,
 
     /// Column subsampling ratio per tree (0, 1].
     #[builder(default = "1.0")]
@@ -208,11 +213,6 @@ pub struct GBTreeTrainer {
     /// Column subsampling ratio per node (0, 1].
     #[builder(default = "1.0")]
     pub colsample_bynode: f32,
-
-    /// GOSS sampling parameters (None = disabled).
-    /// When enabled, uses gradient-based one-side sampling instead of random.
-    #[builder(default)]
-    pub goss: Option<GossParams>,
 
     // ========================================================================
     // Constraints
@@ -266,11 +266,10 @@ impl Default for GBTreeTrainer {
             reg_alpha: 0.0,
             min_split_gain: 0.0,
             min_child_weight: 1.0,
-            subsample: 1.0,
+            row_sampling: RowSampling::None,
             colsample_bytree: 1.0,
             colsample_bylevel: 1.0,
             colsample_bynode: 1.0,
-            goss: None,
             monotone_constraints: Vec::new(),
             interaction_constraints: Vec::new(),
             verbosity: Verbosity::default(),
@@ -317,7 +316,6 @@ impl GBTreeTrainer {
             min_samples_leaf: self.min_samples_leaf,
             learning_rate: self.learning_rate,
             parallel_histograms: self.parallel_histograms,
-            subsample: self.subsample,
             colsample_bytree: self.colsample_bytree,
             colsample_bylevel: self.colsample_bylevel,
             colsample_bynode: self.colsample_bynode,
@@ -465,14 +463,6 @@ impl GBTreeTrainer {
         // Row partitioner (reused per tree within a round)
         let mut partitioner = RowPartitioner::new(num_rows as u32);
 
-        // Sampling setup (works for both single and multi-output)
-        let goss_sampler = self.goss.map(GossSampler::new);
-        let row_sampler = if goss_sampler.is_none() && self.subsample < 1.0 {
-            Some(RowSampler::new(num_rows as u32, self.subsample))
-        } else {
-            None
-        };
-
         // Early stopping
         let mut early_stopping = if self.early_stopping_rounds > 0 && !eval_sets.is_empty() {
             Some(EarlyStopping::new(
@@ -489,10 +479,8 @@ impl GBTreeTrainer {
             .collect();
 
         // Log training start
-        let sampling_info = if let Some(ref goss) = self.goss {
-            format!(" (GOSS: top={:.2}, other={:.2})", goss.top_rate, goss.other_rate)
-        } else if self.subsample < 1.0 {
-            format!(" (subsample={:.2})", self.subsample)
+        let sampling_info = if self.row_sampling.is_enabled() {
+            format!(" ({})", self.row_sampling)
         } else {
             String::new()
         };
@@ -507,9 +495,11 @@ impl GBTreeTrainer {
             "Starting training: {} rounds, {} samples{}{}",
             self.num_rounds, num_rows, outputs_info, sampling_info,
         ));
-        if num_outputs == 1 {
-            logger.info(&format!("Base score: {:.6}", base_scores[0]));
-        }
+        
+        let base_scores_str: Vec<String> = base_scores.iter()
+            .map(|s| format!("{:.6}", s))
+            .collect();
+        logger.info(&format!("Base scores: [{}]", base_scores_str.join(", ")));
 
         // Main training loop
         for round in 0..self.num_rounds {
@@ -519,32 +509,29 @@ impl GBTreeTrainer {
             let round_seed = self.seed.wrapping_add(round as u64);
 
             // Apply row sampling (same sample for all outputs in this round)
-            // For GOSS with multi-output, we use L2 norm of gradient vectors
-            let goss_sample = if let Some(ref goss) = goss_sampler {
-                let sample = goss.sample_multioutput(&grads, round_seed);
+            // For GOSS with multi-output, uses L2 norm of gradient vectors
+            let row_sample = if self.row_sampling.is_enabled() {
+                let sample = self.row_sampling.sample_multioutput(&grads, round_seed);
                 partitioner.reset_with_rows(&sample.indices);
+
+                // Apply GOSS weights if present
+                if let Some(ref weights) = sample.weights {
+                    for (idx_in_sample, &row_idx) in sample.indices.iter().enumerate() {
+                        let weight = weights[idx_in_sample];
+                        if weight != 1.0 {
+                            for output_idx in 0..num_outputs {
+                                let (grad, hess) = grads.get(row_idx as usize, output_idx);
+                                grads.set(row_idx as usize, output_idx, grad * weight, hess * weight);
+                            }
+                        }
+                    }
+                }
                 Some(sample)
-            } else if let Some(ref random_sampler) = row_sampler {
-                let sampled_rows = random_sampler.sample(round_seed);
-                partitioner.reset_with_rows(&sampled_rows);
-                None
             } else {
                 partitioner.reset();
                 None
             };
-
-            // Apply GOSS weights to all outputs (same weight per row across outputs)
-            if let Some(ref sample) = goss_sample {
-                for (idx_in_sample, &row_idx) in sample.indices.iter().enumerate() {
-                    let weight = sample.weights[idx_in_sample];
-                    if weight != 1.0 {
-                        for output_idx in 0..num_outputs {
-                            let (grad, hess) = grads.get(row_idx as usize, output_idx);
-                            grads.set(row_idx as usize, output_idx, grad * weight, hess * weight);
-                        }
-                    }
-                }
-            }
+            let _ = row_sample; // Silence unused warning
 
             // Build one tree per output
             for output_idx in 0..num_outputs {
