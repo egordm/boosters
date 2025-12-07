@@ -50,8 +50,8 @@ pub use constraints::{
 };
 pub use grower::{
     BuildingNode, BuildingTree, DepthWisePolicy, DepthWiseState, GrowthPolicy, GrowthState,
-    GrowthStrategy, LeafCandidate, LeafWisePolicy, LeafWiseState, NodeCandidate, TreeGrower,
-    TreeParams,
+    GrowthStrategy, LeafCandidate, LeafWisePolicy, LeafWiseState, NodeCandidate, TreeBuildParams,
+    TreeGrower,
 };
 pub use histogram::{
     ChildSide, FeatureHistogram, HistogramBuilder, HistogramSubtractor, NodeHistogram,

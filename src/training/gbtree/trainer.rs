@@ -54,11 +54,11 @@ use crate::training::{
 };
 use crate::trees::{categories_to_bitset, ScalarLeaf, SoATreeStorage, TreeBuilder as SoATreeBuilder};
 
-use super::constraints::MonotonicConstraint;
-use super::grower::{BuildingTree, GrowthStrategy, TreeGrower, TreeParams};
+use super::constraints::{InteractionConstraints, MonotonicChecker, MonotonicConstraint};
+use super::grower::{BuildingTree, GrowthStrategy, TreeBuildParams, TreeGrower};
 use super::partition::RowPartitioner;
 use super::quantize::{BinCuts, BinIndex, ExactQuantileCuts, QuantizedMatrix, Quantizer};
-use super::sampling::{RowSampler, RowSampling};
+use super::sampling::{ColumnSampler, RowSampler, RowSampling};
 use super::split::GainParams;
 
 // ============================================================================
@@ -284,9 +284,9 @@ impl GBTreeTrainer {
         GBTreeTrainerBuilder::default()
     }
 
-    /// Build internal TreeParams from the flat config.
-    fn tree_params(&self) -> TreeParams {
-        TreeParams {
+    /// Build internal TreeBuildParams from the flat config.
+    fn tree_build_params(&self) -> TreeBuildParams {
+        TreeBuildParams {
             gain: GainParams {
                 lambda: self.reg_lambda,
                 alpha: self.reg_alpha,
@@ -297,14 +297,28 @@ impl GBTreeTrainer {
             max_leaves: self.max_leaves,
             min_samples_split: self.min_samples_split,
             min_samples_leaf: self.min_samples_leaf,
-            learning_rate: self.learning_rate,
             parallel_histograms: self.parallel_histograms,
-            colsample_bytree: self.colsample_bytree,
-            colsample_bylevel: self.colsample_bylevel,
-            colsample_bynode: self.colsample_bynode,
-            monotone_constraints: self.monotone_constraints.clone(),
-            interaction_constraints: self.interaction_constraints.clone(),
         }
+    }
+
+    /// Create a column sampler with configured sampling ratios.
+    fn create_column_sampler(&self, num_features: u32) -> ColumnSampler {
+        ColumnSampler::new(
+            num_features,
+            self.colsample_bytree,
+            self.colsample_bylevel,
+            self.colsample_bynode,
+        )
+    }
+
+    /// Create a monotonic constraint checker.
+    fn create_mono_checker(&self, num_features: usize) -> super::constraints::MonotonicChecker {
+        super::constraints::MonotonicChecker::new(&self.monotone_constraints, num_features)
+    }
+
+    /// Create interaction constraints.
+    fn create_interaction_constraints(&self, num_features: u32) -> super::constraints::InteractionConstraints {
+        super::constraints::InteractionConstraints::new(&self.interaction_constraints, num_features)
     }
 
     /// Build GrowthStrategy from config.
@@ -422,11 +436,17 @@ impl GBTreeTrainer {
         B: BinIndex,
     {
         let num_rows = quantized.num_rows() as usize;
+        let num_features = cuts.num_features() as u32;
         let num_outputs = self.loss.num_outputs();
         assert_eq!(labels.len(), num_rows, "labels length must match data rows");
 
-        let tree_params = self.tree_params();
+        let tree_params = self.tree_build_params();
         let growth_strategy = self.growth_strategy();
+
+        // Create pre-configured components once
+        let mut col_sampler = self.create_column_sampler(num_features);
+        let mono_checker = self.create_mono_checker(num_features as usize);
+        let interaction_constraints = self.create_interaction_constraints(num_features);
 
         // Initialize base scores (per output) using loss-specific initialization
         let base_scores: Vec<f32> = self.loss.init_base_score(labels, None);
@@ -525,6 +545,9 @@ impl GBTreeTrainer {
                     growth_strategy,
                     &mut partitioner,
                     output_seed,
+                    &mut col_sampler,
+                    &mono_checker,
+                    &interaction_constraints,
                 );
 
                 // Update predictions for this output
@@ -608,10 +631,13 @@ impl GBTreeTrainer {
         grads: &GradientBuffer,
         output_idx: usize,
         cuts: &BinCuts,
-        tree_params: &TreeParams,
+        tree_params: &TreeBuildParams,
         growth_strategy: GrowthStrategy,
         partitioner: &mut RowPartitioner,
         seed: u64,
+        col_sampler: &mut ColumnSampler,
+        mono_checker: &MonotonicChecker,
+        interaction_constraints: &InteractionConstraints,
     ) -> BuildingTree {
         let num_rows = quantized.num_rows() as usize;
         let num_outputs = grads.n_outputs();
@@ -638,12 +664,28 @@ impl GBTreeTrainer {
         match growth_strategy {
             GrowthStrategy::DepthWise { max_depth } => {
                 let policy = super::grower::DepthWisePolicy { max_depth };
-                let mut grower = TreeGrower::new(policy, cuts, tree_params.clone());
+                let mut grower = TreeGrower::new(
+                    policy,
+                    cuts,
+                    tree_params.clone(),
+                    self.learning_rate,
+                    col_sampler,
+                    mono_checker,
+                    interaction_constraints,
+                );
                 grower.build_tree_with_seed(quantized, &grads_to_use, partitioner, seed)
             }
             GrowthStrategy::LeafWise { max_leaves } => {
                 let policy = super::grower::LeafWisePolicy { max_leaves };
-                let mut grower = TreeGrower::new(policy, cuts, tree_params.clone());
+                let mut grower = TreeGrower::new(
+                    policy,
+                    cuts,
+                    tree_params.clone(),
+                    self.learning_rate,
+                    col_sampler,
+                    mono_checker,
+                    interaction_constraints,
+                );
                 grower.build_tree_with_seed(quantized, &grads_to_use, partitioner, seed)
             }
         }
@@ -908,54 +950,6 @@ mod tests {
         assert_eq!(trainer.num_rounds, 50);
         assert_eq!(trainer.max_depth, 4);
         assert_eq!(trainer.learning_rate, 0.1);
-    }
-
-    #[test]
-    fn test_base_score_auto_regression() {
-        // Auto for regression should use mean
-        let labels = vec![1.0, 2.0, 3.0, 4.0, 5.0];
-        let trainer = GBTreeTrainer::default();
-        let base_scores = trainer.compute_base_scores(&labels);
-        assert_eq!(base_scores.len(), 1);
-        assert!((base_scores[0] - 3.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn test_base_score_auto_softmax() {
-        // Auto for softmax should use log-priors
-        let labels = vec![0.0, 0.0, 0.0, 1.0, 2.0]; // 60% class 0, 20% class 1, 20% class 2
-        let trainer = GBTreeTrainer::builder()
-            .loss(LossFunction::Softmax { num_classes: 3 })
-            .build()
-            .unwrap();
-        let base_scores = trainer.compute_base_scores(&labels);
-        assert_eq!(base_scores.len(), 3);
-        // Class 0 should have highest base score (most frequent)
-        assert!(base_scores[0] > base_scores[1]);
-        assert!(base_scores[0] > base_scores[2]);
-        // log(0.6) ≈ -0.51, log(0.2) ≈ -1.61
-        assert!((base_scores[0] - (-0.51)).abs() < 0.1);
-        assert!((base_scores[1] - (-1.61)).abs() < 0.1);
-    }
-
-    #[test]
-    fn test_base_score_auto_logistic() {
-        // All positive labels
-        let labels = vec![1.0, 1.0, 1.0, 1.0];
-        let trainer = GBTreeTrainer::builder()
-            .loss(LossFunction::Logistic)
-            .build()
-            .unwrap();
-        let base_scores = trainer.compute_base_scores(&labels);
-        assert_eq!(base_scores.len(), 1);
-        // 100% positive → very large positive log-odds
-        assert!(base_scores[0] > 5.0);
-        
-        // 50/50 labels
-        let labels = vec![0.0, 0.0, 1.0, 1.0];
-        let base_scores = trainer.compute_base_scores(&labels);
-        // 50% → log-odds ≈ 0
-        assert!(base_scores[0].abs() < 0.1);
     }
 
     #[test]

@@ -30,7 +30,7 @@ mod grower;
 mod policy;
 
 pub use building::{BuildingNode, BuildingTree, NodeCandidate};
-pub use grower::{TreeGrower, TreeParams};
+pub use grower::{TreeBuildParams, TreeGrower};
 pub use policy::{
     DepthWisePolicy, DepthWiseState, GrowthPolicy, GrowthState, GrowthStrategy, LeafCandidate,
     LeafWisePolicy, LeafWiseState,
