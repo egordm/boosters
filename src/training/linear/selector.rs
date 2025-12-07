@@ -35,18 +35,18 @@ use crate::training::GradientBuffer;
 /// Feature selector configuration for training.
 ///
 /// This enum specifies which feature selection strategy to use during
-/// coordinate descent training. It's used in [`LinearTrainerConfig`] to
+/// coordinate descent training. It's used in [`GBLinearTrainer`] to
 /// configure the trainer.
 ///
 /// # Example
 ///
 /// ```ignore
-/// use booste_rs::linear::training::{LinearTrainerConfig, FeatureSelectorKind};
+/// use booste_rs::training::{GBLinearTrainer, FeatureSelectorKind};
 ///
-/// let config = LinearTrainerConfig {
-///     feature_selector: FeatureSelectorKind::Thrifty { top_k: 10 },
-///     ..Default::default()
-/// };
+/// let trainer = GBLinearTrainer::builder()
+///     .feature_selector(FeatureSelectorKind::Thrifty { top_k: 10 })
+///     .build()
+///     .unwrap();
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum FeatureSelectorKind {

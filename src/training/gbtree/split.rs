@@ -467,8 +467,12 @@ impl GreedySplitFinder {
 
             if gain > best.gain {
                 // Get threshold from cuts
-                // bin=1 means values <= cuts[0], bin=2 means values <= cuts[1], etc.
-                // So split after bin `b` uses threshold cuts[b-1]
+                // With XGBoost-compatible binning:
+                // - bin 1: values < cuts[0]
+                // - bin i+1: values in [cuts[i-1], cuts[i]) for i > 0
+                // When splitting at bin b, bins 1..=b go left:
+                // - bins 1..=b contain values < cuts[b-1] (for b >= 1)
+                // So threshold = cuts[b-1] works with `value < threshold`
                 let threshold = if bin > 0 && bin - 1 < cuts.len() {
                     cuts[bin - 1]
                 } else {

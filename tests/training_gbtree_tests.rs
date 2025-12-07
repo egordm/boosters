@@ -23,11 +23,8 @@ use booste_rs::data::{ColMatrix, RowMatrix};
 use booste_rs::predict::{Predictor, StandardTraversal};
 use booste_rs::testing::pearson_correlation;
 use booste_rs::training::{
-    DepthWisePolicy, GBTreeTrainer, GainParams, LeafWisePolicy, Rmse, SimpleMetric, SquaredLoss,
-    SoftmaxLoss,
-    TrainerParams, TreeParams,
+    GBTreeTrainer, GrowthMode, LossFunction, Rmse, SimpleMetric, Verbosity,
 };
-use booste_rs::training::gbtree::{CutFinder, ExactQuantileCuts, Quantizer};
 use serde::Deserialize;
 
 // =============================================================================
@@ -166,51 +163,39 @@ struct TrainResult {
 }
 
 fn train_and_predict(tc: &TestCase) -> TrainResult {
-    // Quantize training data
-    let cut_finder = ExactQuantileCuts::new(1);
-    let cuts = cut_finder.find_cuts(&tc.train_matrix, 256);
-    let quantizer = Quantizer::new(cuts.clone());
-    let quantized = quantizer.quantize::<_, u8>(&tc.train_matrix);
-
-    // Build gain params with regularization from config
-    let gain_params = GainParams {
-        lambda: tc.config.lambda,
-        alpha: tc.config.alpha,
-        min_split_gain: tc.config.gamma,
-        min_child_weight: tc.config.min_child_weight,
-    };
-
-    // Build tree params
-    let tree_params = TreeParams {
-        gain: gain_params,
-        max_depth: tc.config.max_depth.unwrap_or(6),
-        max_leaves: tc.config.max_leaves.unwrap_or(0),
-        learning_rate: tc.config.eta,
-        min_samples_split: 1,
-        min_samples_leaf: 1,
-        ..Default::default()
-    };
-
-    let params = TrainerParams {
-        num_rounds: tc.config.num_boost_round,
-        tree_params,
-        ..Default::default()
+    // Build trainer with config from test case
+    let trainer = if tc.is_leaf_wise() {
+        GBTreeTrainer::builder()
+            .loss(LossFunction::SquaredError)
+            .num_rounds(tc.config.num_boost_round)
+            .growth_mode(GrowthMode::LeafWise)
+            .max_leaves(tc.config.max_leaves.unwrap_or(16))
+            .learning_rate(tc.config.eta)
+            .reg_lambda(tc.config.lambda)
+            .reg_alpha(tc.config.alpha)
+            .min_split_gain(tc.config.gamma)
+            .min_child_weight(tc.config.min_child_weight)
+            .verbosity(Verbosity::Silent)
+            .build()
+            .unwrap()
+    } else {
+        GBTreeTrainer::builder()
+            .loss(LossFunction::SquaredError)
+            .num_rounds(tc.config.num_boost_round)
+            .growth_mode(GrowthMode::DepthWise)
+            .max_depth(tc.config.max_depth.unwrap_or(6))
+            .learning_rate(tc.config.eta)
+            .reg_lambda(tc.config.lambda)
+            .reg_alpha(tc.config.alpha)
+            .min_split_gain(tc.config.gamma)
+            .min_child_weight(tc.config.min_child_weight)
+            .verbosity(Verbosity::Silent)
+            .build()
+            .unwrap()
     };
 
     // Train
-    let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-
-    let forest = if tc.is_leaf_wise() {
-        let policy = LeafWisePolicy {
-            max_leaves: tc.config.max_leaves.unwrap_or(16),
-        };
-        trainer.train(policy, &quantized, &tc.train_labels, &cuts, &[])
-    } else {
-        let policy = DepthWisePolicy {
-            max_depth: tc.config.max_depth.unwrap_or(6),
-        };
-        trainer.train(policy, &quantized, &tc.train_labels, &cuts, &[])
-    };
+    let forest = trainer.train(&tc.train_matrix, &tc.train_labels, &[]);
 
     // Predict on train set using inference path
     let predictor = Predictor::<StandardTraversal>::new(&forest);
@@ -503,46 +488,25 @@ mod multiclass_tests {
         }
     }
 
-    fn train_multiclass(tc: &MulticlassTestCase) -> (booste_rs::forest::SoAForest<booste_rs::trees::ScalarLeaf>, Vec<Vec<f32>>, Vec<Vec<f32>>) {
+    fn train_multioutput(tc: &MulticlassTestCase) -> (booste_rs::forest::SoAForest<booste_rs::trees::ScalarLeaf>, Vec<Vec<f32>>, Vec<Vec<f32>>) {
         let num_classes = tc.config.num_class;
 
-        // Quantize training data
-        let cut_finder = ExactQuantileCuts::new(1);
-        let cuts = cut_finder.find_cuts(&tc.train_matrix, 256);
-        let quantizer = Quantizer::new(cuts.clone());
-        let quantized = quantizer.quantize::<_, u8>(&tc.train_matrix);
-
-        // Build gain params with regularization from config
-        let gain_params = GainParams {
-            lambda: tc.config.lambda,
-            alpha: tc.config.alpha,
-            min_split_gain: tc.config.gamma,
-            min_child_weight: tc.config.min_child_weight,
-        };
-
-        // Build tree params
-        let tree_params = TreeParams {
-            gain: gain_params,
-            max_depth: tc.config.max_depth.unwrap_or(6),
-            learning_rate: tc.config.eta,
-            min_samples_split: 1,
-            min_samples_leaf: 1,
-            ..Default::default()
-        };
-
-        let params = TrainerParams {
-            num_rounds: tc.config.num_boost_round,
-            tree_params,
-            ..Default::default()
-        };
+        // Build trainer with config from test case
+        let trainer = GBTreeTrainer::builder()
+            .loss(LossFunction::Softmax { num_classes })
+            .num_rounds(tc.config.num_boost_round)
+            .max_depth(tc.config.max_depth.unwrap_or(6))
+            .learning_rate(tc.config.eta)
+            .reg_lambda(tc.config.lambda)
+            .reg_alpha(tc.config.alpha)
+            .min_split_gain(tc.config.gamma)
+            .min_child_weight(tc.config.min_child_weight)
+            .verbosity(Verbosity::Silent)
+            .build()
+            .unwrap();
 
         // Train multiclass model
-        let loss = SoftmaxLoss::new(num_classes);
-        let policy = DepthWisePolicy {
-            max_depth: tc.config.max_depth.unwrap_or(6),
-        };
-        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest = trainer.train_multiclass(&loss, policy, &quantized, &tc.train_labels, &cuts, &[]);
+        let forest = trainer.train(&tc.train_matrix, &tc.train_labels, &[]);
 
         // Predict on train set - get K scores per row
         let train_row_matrix: RowMatrix<f32> = tc.train_matrix.to_layout();
@@ -596,7 +560,7 @@ mod multiclass_tests {
     fn multiclass_training_quality() {
         let tc = MulticlassTestCase::load("multiclass");
         let num_classes = tc.config.num_class;
-        let (forest, train_preds, test_preds) = train_multiclass(&tc);
+        let (forest, train_preds, test_preds) = train_multioutput(&tc);
 
         // Check tree count: num_rounds × num_classes
         let expected_trees = tc.config.num_boost_round as usize * num_classes;
@@ -668,7 +632,7 @@ mod multiclass_tests {
     #[test]
     fn multiclass_smoke() {
         let tc = MulticlassTestCase::load("multiclass");
-        let (forest, train_preds, _test_preds) = train_multiclass(&tc);
+        let (forest, train_preds, _test_preds) = train_multioutput(&tc);
 
         // Should have trees
         assert!(forest.num_trees() > 0);

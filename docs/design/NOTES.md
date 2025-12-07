@@ -135,6 +135,44 @@ Useful resources discovered during implementation.
 
 Brief notes from implementation sessions (optional).
 
+### 2024-12-02: Refactoring Analysis
+
+**File Size Analysis** - Files > 600 lines:
+
+| File | Lines | Assessment |
+|------|-------|------------|
+| `trainer.rs` (gbtree) | 1960 | Split tests + params |
+| `quantize.rs` | 1328 | Split into cuts/matrix modules |
+| `split.rs` | 1261 | Keep: cohesive |
+| `grower.rs` | 1076 | Already modular |
+| `dense.rs` | 1067 | Split iterators |
+| `metric.rs` | 958 | Split by metric type |
+| `trainer.rs` (linear) | 897 | Split tests |
+
+**Trainer API Analysis:**
+
+Current:
+- `train(quantized, ...)` - requires pre-processing
+- `train_with_data(data, ...)` - handles quantization
+- `train_multiclass(...)` - separate method
+
+Proposed:
+- `train(data, labels)` - simple default API
+- `train_quantized(...)` - advanced with pre-processed data
+- Keep `multiclass` terminology (standard in ML)
+
+**Deduplication Strategy:**
+
+Create `train_internal<M: TrainMode>()` that handles both single/multi-output
+via an enum, with thin public wrappers.
+
+Key differences to parameterize:
+- `num_outputs`: 1 vs K
+- Trees per round: 1 vs K  
+- Gradient view: direct vs strided
+
+**Dead Code Check:** Run `cargo +nightly udeps` and `cargo clippy --all-targets`
+
 ### YYYY-MM-DD
 
 <!-- What you worked on, what you learned, what's next -->

@@ -3,10 +3,12 @@
 //! Each loss function computes gradient-hessian pairs for optimization.
 //! These are used by both GBLinear and GBTree training.
 //!
-//! # Loss Types
+//! # Loss Trait
 //!
-//! - [`Loss`]: Single-output losses (regression, binary classification)
-//! - [`MulticlassLoss`]: Multi-output losses requiring all class predictions
+//! All losses implement the unified [`Loss`] trait which provides:
+//! - `num_outputs()`: Number of outputs per sample (1 for regression/binary, K for multiclass)
+//! - `compute_gradients()`: Batch gradient computation
+//! - `name()`: Loss name for logging
 //!
 //! # Gradient Storage
 //!
@@ -25,15 +27,15 @@
 //!
 //! # Available Losses
 //!
-//! ## Regression
+//! ## Regression (num_outputs = 1)
 //! - [`SquaredLoss`]: Standard squared error (L2 loss)
 //! - [`PseudoHuberLoss`]: Robust regression, smooth approximation of Huber loss
-//! - [`QuantileLoss`]: Quantile regression (pinball loss)
+//! - [`QuantileLoss`]: Quantile regression - supports single or multi-quantile
 //!
-//! ## Classification  
-//! - [`LogisticLoss`]: Binary classification (log loss)
-//! - [`HingeLoss`]: SVM-style binary classification
-//! - [`SoftmaxLoss`]: Multiclass classification (cross-entropy)
+//! ## Classification
+//! - [`LogisticLoss`]: Binary classification (log loss) - num_outputs = 1
+//! - [`HingeLoss`]: SVM-style binary classification - num_outputs = 1
+//! - [`SoftmaxLoss`]: Multiclass classification - num_outputs = K classes
 
 mod classification;
 mod regression;
@@ -44,20 +46,160 @@ pub use regression::{PseudoHuberLoss, QuantileLoss, SquaredLoss};
 use super::GradientBuffer;
 
 // =============================================================================
-// Loss Traits
+// LossFunction Enum (Unified)
 // =============================================================================
 
-/// A loss function for single-output models (regression, binary classification).
+/// Unified loss function enum for all training scenarios.
 ///
-/// For losses where each sample has one prediction and one gradient.
-/// Examples: squared error, logistic loss, quantile loss.
+/// This enum provides a convenient way to specify loss functions without
+/// using trait objects. For custom losses, use the [`Loss`] trait directly.
+///
+/// # Single-Output Losses (num_outputs = 1)
+///
+/// - `SquaredError`: Regression (L2 loss)
+/// - `Logistic`: Binary classification
+/// - `Hinge`: SVM-style binary classification
+/// - `PseudoHuber`: Robust regression
+/// - `Quantile`: Single quantile regression
+///
+/// # Multi-Output Losses (num_outputs = K)
+///
+/// - `Softmax`: Multiclass classification (K classes)
+/// - `MultiQuantile`: Multi-quantile regression (K quantiles)
+///
+/// # Example
+///
+/// ```ignore
+/// use booste_rs::training::LossFunction;
+///
+/// // Regression (default)
+/// let loss = LossFunction::SquaredError;
+///
+/// // Binary classification
+/// let loss = LossFunction::Logistic;
+///
+/// // Multiclass classification (3 classes)
+/// let loss = LossFunction::Softmax { num_classes: 3 };
+///
+/// // Multi-quantile regression
+/// let loss = LossFunction::MultiQuantile { alphas: vec![0.1, 0.5, 0.9] };
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub enum LossFunction {
+    // ========================================================================
+    // Single-output losses (num_outputs = 1)
+    // ========================================================================
+    /// Squared error loss for regression (L2 loss).
+    SquaredError,
+    /// Logistic loss for binary classification.
+    Logistic,
+    /// Hinge loss for SVM-style binary classification.
+    Hinge,
+    /// Pseudo-Huber loss for robust regression.
+    PseudoHuber {
+        /// Slope parameter controlling outlier sensitivity (default: 1.0).
+        slope: f32,
+    },
+    /// Quantile loss for single quantile regression.
+    Quantile {
+        /// Quantile level in (0, 1). Use 0.5 for median regression.
+        alpha: f32,
+    },
+
+    // ========================================================================
+    // Multi-output losses (num_outputs = K)
+    // ========================================================================
+    /// Softmax cross-entropy for multiclass classification.
+    Softmax {
+        /// Number of classes (must be >= 2).
+        num_classes: usize,
+    },
+    /// Multi-quantile loss for predicting multiple quantiles simultaneously.
+    MultiQuantile {
+        /// Quantile levels, each in (0, 1).
+        alphas: Vec<f32>,
+    },
+}
+
+impl Default for LossFunction {
+    fn default() -> Self {
+        Self::SquaredError
+    }
+}
+
+impl Loss for LossFunction {
+    fn num_outputs(&self) -> usize {
+        match self {
+            // Single-output
+            LossFunction::SquaredError => 1,
+            LossFunction::Logistic => 1,
+            LossFunction::Hinge => 1,
+            LossFunction::PseudoHuber { .. } => 1,
+            LossFunction::Quantile { .. } => 1,
+            // Multi-output
+            LossFunction::Softmax { num_classes } => *num_classes,
+            LossFunction::MultiQuantile { alphas } => alphas.len(),
+        }
+    }
+
+    fn compute_gradients(&self, preds: &[f32], labels: &[f32], buffer: &mut GradientBuffer) {
+        match self {
+            LossFunction::SquaredError => SquaredLoss.compute_gradients(preds, labels, buffer),
+            LossFunction::Logistic => LogisticLoss.compute_gradients(preds, labels, buffer),
+            LossFunction::Hinge => HingeLoss.compute_gradients(preds, labels, buffer),
+            LossFunction::PseudoHuber { slope } => {
+                PseudoHuberLoss::new(*slope).compute_gradients(preds, labels, buffer)
+            }
+            LossFunction::Quantile { alpha } => {
+                QuantileLoss::new(*alpha).compute_gradients(preds, labels, buffer)
+            }
+            LossFunction::Softmax { num_classes } => {
+                SoftmaxLoss::new(*num_classes).compute_gradients(preds, labels, buffer)
+            }
+            LossFunction::MultiQuantile { alphas } => {
+                QuantileLoss::multi(alphas).compute_gradients(preds, labels, buffer)
+            }
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        match self {
+            LossFunction::SquaredError => "squared_error",
+            LossFunction::Logistic => "logistic",
+            LossFunction::Hinge => "hinge",
+            LossFunction::PseudoHuber { .. } => "pseudo_huber",
+            LossFunction::Quantile { .. } => "quantile",
+            LossFunction::Softmax { .. } => "softmax",
+            LossFunction::MultiQuantile { .. } => "multi_quantile",
+        }
+    }
+}
+
+// =============================================================================
+// Loss Trait (Unified)
+// =============================================================================
+
+/// A loss function for gradient boosting training.
+///
+/// This unified trait supports both single-output (regression, binary classification)
+/// and multi-output (multiclass, multi-quantile) losses through the `num_outputs()` method.
+///
+/// # Single vs Multi-Output
+///
+/// - Single-output losses (e.g., `SquaredLoss`, `LogisticLoss`): `num_outputs() = 1`
+/// - Multi-output losses (e.g., `SoftmaxLoss`, multi-quantile): `num_outputs() = K`
+///
+/// # Gradient Layout
+///
+/// For N samples and K outputs, gradients are stored in the buffer as:
+/// `buffer.grads[sample_idx * num_outputs + output_idx]`
 ///
 /// # Implementing Custom Losses
 ///
-/// Implement `compute_gradients` to write gradients/hessians for all samples:
-///
 /// ```ignore
 /// impl Loss for MyLoss {
+///     fn num_outputs(&self) -> usize { 1 } // or K for multi-output
+///
 ///     fn compute_gradients(&self, preds: &[f32], labels: &[f32], buffer: &mut GradientBuffer) {
 ///         let (grads, hess) = buffer.as_mut_slices();
 ///         for i in 0..preds.len() {
@@ -65,10 +207,17 @@ use super::GradientBuffer;
 ///             hess[i] = /* your hessian */;
 ///         }
 ///     }
+///
 ///     fn name(&self) -> &'static str { "my_loss" }
 /// }
 /// ```
 pub trait Loss: Send + Sync {
+    /// Number of outputs per sample.
+    ///
+    /// - Returns 1 for single-output losses (regression, binary classification)
+    /// - Returns K for multi-output losses (K classes or K quantiles)
+    fn num_outputs(&self) -> usize;
+
     /// Compute gradients and hessians for a batch of samples.
     ///
     /// This is the primary method for training. Implementations should write
@@ -76,52 +225,13 @@ pub trait Loss: Send + Sync {
     ///
     /// # Arguments
     ///
-    /// * `preds` - Predictions, length = n_samples
+    /// * `preds` - Predictions, length = n_samples × num_outputs
     /// * `labels` - Labels, length = n_samples
-    /// * `buffer` - Output buffer with `n_samples` samples and `n_outputs == 1`
+    /// * `buffer` - Output buffer with `n_samples` samples and `n_outputs == num_outputs()`
     ///
     /// # Panics
     ///
     /// Panics if buffer dimensions don't match input lengths.
-    fn compute_gradients(&self, preds: &[f32], labels: &[f32], buffer: &mut GradientBuffer);
-
-    /// Name of the loss function (for logging).
-    fn name(&self) -> &'static str;
-}
-
-/// A loss function for multi-output models (multiclass, multi-quantile).
-///
-/// Unlike [`Loss`], this handles multiple outputs per sample. Each sample
-/// produces K gradients where K = `num_outputs()`.
-///
-/// # Gradient Layout
-///
-/// For N samples and K outputs, gradients are stored in SoA buffer as:
-/// `buffer.grads[sample_idx * num_outputs + output_idx]`
-///
-/// This layout matches XGBoost and allows efficient per-group weight updates.
-///
-/// # Examples
-///
-/// - **Softmax**: K classes, each with its own gradient
-/// - **Multi-quantile**: K quantiles, each predicting a different percentile
-pub trait MulticlassLoss: Send + Sync {
-    /// Number of outputs per sample.
-    fn num_classes(&self) -> usize;
-
-    /// Compute gradients and hessians for a batch of samples.
-    ///
-    /// This is the primary method for training.
-    ///
-    /// # Arguments
-    ///
-    /// * `preds` - Predictions, layout: `preds[sample * num_outputs + output]`
-    /// * `labels` - Labels (interpretation depends on loss type)
-    /// * `buffer` - Output buffer with `n_samples` samples and `n_outputs == num_classes()`
-    ///
-    /// # Panics
-    ///
-    /// Panics if buffer dimensions don't match.
     fn compute_gradients(&self, preds: &[f32], labels: &[f32], buffer: &mut GradientBuffer);
 
     /// Name of the loss function (for logging).

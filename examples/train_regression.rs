@@ -9,10 +9,7 @@
 
 use booste_rs::data::{ColMatrix, RowMatrix};
 use booste_rs::predict::{Predictor, StandardTraversal};
-use booste_rs::training::gbtree::ExactQuantileCuts;
-use booste_rs::training::{
-    DepthWisePolicy, GBTreeTrainer, SquaredLoss, TrainerParams, TreeParams, Verbosity,
-};
+use booste_rs::training::{GBTreeTrainer, LossFunction, Verbosity};
 
 fn main() {
     // Generate synthetic regression data
@@ -47,37 +44,19 @@ fn main() {
     // Convert to column-major for training (required by quantization)
     let col_matrix: ColMatrix<f32> = row_matrix.to_layout();
 
-    // Configure training parameters
-    let tree_params = TreeParams {
-        max_depth: 4,
-        learning_rate: 0.1,
-        ..Default::default()
-    };
-
-    let params = TrainerParams {
-        num_rounds: 50,
-        tree_params,
-        verbosity: Verbosity::Info, // Show training progress
-        ..Default::default()
-    };
-
-    // Create trainer with squared loss (regression)
-    let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-
-    // Use depth-wise growth strategy (like XGBoost default)
-    let policy = DepthWisePolicy { max_depth: 4 };
+    // Create trainer using the builder pattern
+    let trainer = GBTreeTrainer::builder()
+        .loss(LossFunction::SquaredError)
+        .num_rounds(50u32)
+        .max_depth(4u32)
+        .learning_rate(0.1f32)
+        .verbosity(Verbosity::Info)
+        .build()
+        .unwrap();
 
     // Train using simplified API - quantization is handled internally!
     println!("Training GBTree regression model...\n");
-    let cut_finder = ExactQuantileCuts::default();
-    let forest = trainer.train_with_data(
-        policy,
-        &col_matrix,
-        &labels,
-        &cut_finder,
-        256, // max bins
-        &[], // no eval sets
-    );
+    let forest = trainer.train(&col_matrix, &labels, &[]);
 
     // Create predictor from trained forest
     let predictor = Predictor::<StandardTraversal>::new(&forest);

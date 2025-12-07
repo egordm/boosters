@@ -4,11 +4,10 @@
 //! - Binary classification with logistic loss
 //! - Multiclass classification with softmax loss
 
-use super::load_train_data;
 use super::load_config;
+use super::load_train_data;
 use booste_rs::data::DataMatrix;
-use booste_rs::training::linear::{LinearTrainer, LinearTrainerConfig};
-use booste_rs::training::{LogisticLoss, SoftmaxLoss, Verbosity};
+use booste_rs::training::{GBLinearTrainer, LossFunction, Verbosity};
 
 /// Test binary classification training produces reasonable predictions.
 #[test]
@@ -16,19 +15,19 @@ fn train_binary_classification() {
     let (data, labels) = load_train_data("binary_classification");
     let config = load_config("binary_classification");
 
-    let trainer_config = LinearTrainerConfig {
-        num_rounds: config.num_boost_round,
-        learning_rate: config.eta,
-        alpha: config.alpha,
-        lambda: config.lambda,
-        parallel: false,
-        seed: 42,
-        verbosity: Verbosity::Silent,
-        ..Default::default()
-    };
+    let trainer = GBLinearTrainer::builder()
+        .loss(LossFunction::Logistic)
+        .num_rounds(config.num_boost_round)
+        .learning_rate(config.eta)
+        .alpha(config.alpha)
+        .lambda(config.lambda)
+        .parallel(false)
+        .seed(42u64)
+        .verbosity(Verbosity::Silent)
+        .build()
+        .unwrap();
 
-    let trainer = LinearTrainer::new(trainer_config);
-    let model = trainer.train(&data, &labels, &[], &LogisticLoss);
+    let model = trainer.train(&data, &labels, &[]);
 
     // Verify predictions are in reasonable range for logits
     let mut predictions = Vec::new();
@@ -56,25 +55,24 @@ fn train_binary_classification() {
 ///
 /// Uses proper SoftmaxLoss which computes per-class gradients correctly.
 #[test]
-fn train_multiclass_classification() {
+fn train_multioutput_classification() {
     let (data, labels) = load_train_data("multiclass_classification");
     let config = load_config("multiclass_classification");
     let num_class = 3;
 
-    let trainer_config = LinearTrainerConfig {
-        num_rounds: config.num_boost_round,
-        learning_rate: config.eta,
-        alpha: config.alpha,
-        lambda: config.lambda,
-        parallel: false,
-        seed: 42,
-        verbosity: Verbosity::Silent,
-        ..Default::default()
-    };
+    let trainer = GBLinearTrainer::builder()
+        .loss(LossFunction::Softmax { num_classes: num_class })
+        .num_rounds(config.num_boost_round)
+        .learning_rate(config.eta)
+        .alpha(config.alpha)
+        .lambda(config.lambda)
+        .parallel(false)
+        .seed(42u64)
+        .verbosity(Verbosity::Silent)
+        .build()
+        .unwrap();
 
-    let trainer = LinearTrainer::new(trainer_config);
-    let loss = SoftmaxLoss::new(num_class);
-    let model = trainer.train_multiclass(&data, &labels, &[], &loss);
+    let model = trainer.train(&data, &labels, &[]);
 
     // Verify model has correct number of output groups
     assert_eq!(model.num_groups(), num_class);

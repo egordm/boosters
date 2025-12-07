@@ -12,25 +12,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 
 use bench_utils::generate_training_data;
 use booste_rs::data::{CSCMatrix, ColMatrix, RowMatrix};
-use booste_rs::training::linear::{LinearTrainer, LinearTrainerConfig};
-use booste_rs::training::{SoftmaxLoss, SquaredLoss, Verbosity};
-
-// =============================================================================
-// Configuration
-// =============================================================================
-
-/// Create a standard trainer config for benchmarks.
-fn bench_trainer_config(parallel: bool) -> LinearTrainerConfig {
-    LinearTrainerConfig {
-        num_rounds: 10,
-        learning_rate: 0.5,
-        alpha: 0.0,
-        lambda: 1.0,
-        parallel,
-        verbosity: Verbosity::Silent,
-        ..Default::default()
-    }
-}
+use booste_rs::training::{GBLinearTrainer, LossFunction, Verbosity};
 
 // =============================================================================
 // Matrix Format Benchmarks
@@ -39,7 +21,18 @@ fn bench_trainer_config(parallel: bool) -> LinearTrainerConfig {
 /// Benchmark GBLinear training with different matrix formats.
 fn bench_gblinear_matrix_formats(c: &mut Criterion) {
     let num_features = 100;
-    let config = bench_trainer_config(false);
+
+    // Build trainer once and reuse
+    let trainer = GBLinearTrainer::builder()
+        .loss(LossFunction::SquaredError)
+        .num_rounds(10usize)
+        .learning_rate(0.5f32)
+        .alpha(0.0f32)
+        .lambda(1.0f32)
+        .parallel(false)
+        .verbosity(Verbosity::Silent)
+        .build()
+        .unwrap();
 
     let mut group = c.benchmark_group("gblinear/matrix_format");
 
@@ -57,9 +50,8 @@ fn bench_gblinear_matrix_formats(c: &mut Criterion) {
             BenchmarkId::new("col_major", num_rows),
             &(&col_matrix, &labels),
             |b, (matrix, labels)| {
-                let trainer = LinearTrainer::new(config.clone());
                 b.iter(|| {
-                    let model = trainer.train(black_box(*matrix), black_box(*labels), &[], &SquaredLoss);
+                    let model = trainer.train(black_box(*matrix), black_box(*labels), &[]);
                     black_box(model)
                 });
             },
@@ -70,9 +62,8 @@ fn bench_gblinear_matrix_formats(c: &mut Criterion) {
             BenchmarkId::new("csc", num_rows),
             &(&csc_matrix, &labels),
             |b, (matrix, labels)| {
-                let trainer = LinearTrainer::new(config.clone());
                 b.iter(|| {
-                    let model = trainer.train(black_box(*matrix), black_box(*labels), &[], &SquaredLoss);
+                    let model = trainer.train(black_box(*matrix), black_box(*labels), &[]);
                     black_box(model)
                 });
             },
@@ -151,28 +142,46 @@ fn bench_gblinear_updater(c: &mut Criterion) {
     group.throughput(Throughput::Elements((num_rows * num_features) as u64));
 
     // Sequential
-    let seq_config = bench_trainer_config(false);
+    let trainer_seq = GBLinearTrainer::builder()
+        .loss(LossFunction::SquaredError)
+        .num_rounds(10usize)
+        .learning_rate(0.5f32)
+        .alpha(0.0f32)
+        .lambda(1.0f32)
+        .parallel(false)
+        .verbosity(Verbosity::Silent)
+        .build()
+        .unwrap();
+
     group.bench_with_input(
         BenchmarkId::new("sequential", num_rows),
         &(&col_matrix, &labels),
         |b, (matrix, labels)| {
-            let trainer = LinearTrainer::new(seq_config.clone());
             b.iter(|| {
-                let model = trainer.train(black_box(*matrix), black_box(*labels), &[], &SquaredLoss);
+                let model = trainer_seq.train(black_box(*matrix), black_box(*labels), &[]);
                 black_box(model)
             });
         },
     );
 
     // Parallel
-    let par_config = bench_trainer_config(true);
+    let trainer_par = GBLinearTrainer::builder()
+        .loss(LossFunction::SquaredError)
+        .num_rounds(10usize)
+        .learning_rate(0.5f32)
+        .alpha(0.0f32)
+        .lambda(1.0f32)
+        .parallel(true)
+        .verbosity(Verbosity::Silent)
+        .build()
+        .unwrap();
+
     group.bench_with_input(
         BenchmarkId::new("parallel", num_rows),
         &(&col_matrix, &labels),
         |b, (matrix, labels)| {
-            let trainer = LinearTrainer::new(par_config.clone());
             b.iter(|| {
-                let model = trainer.train(black_box(*matrix), black_box(*labels), &[], &SquaredLoss);
+                let model = trainer_par.train(black_box(*matrix), black_box(*labels), &[]);
                 black_box(model)
             });
         },
@@ -188,7 +197,17 @@ fn bench_gblinear_updater(c: &mut Criterion) {
 /// Benchmark how GBLinear training time scales with feature count.
 fn bench_gblinear_feature_scaling(c: &mut Criterion) {
     let num_rows = 10_000;
-    let config = bench_trainer_config(true);
+
+    let trainer = GBLinearTrainer::builder()
+        .loss(LossFunction::SquaredError)
+        .num_rounds(10usize)
+        .learning_rate(0.5f32)
+        .alpha(0.0f32)
+        .lambda(1.0f32)
+        .parallel(true)
+        .verbosity(Verbosity::Silent)
+        .build()
+        .unwrap();
 
     let mut group = c.benchmark_group("gblinear/feature_scaling");
 
@@ -203,9 +222,8 @@ fn bench_gblinear_feature_scaling(c: &mut Criterion) {
             BenchmarkId::new("features", num_features),
             &(&col_matrix, &labels),
             |b, (matrix, labels)| {
-                let trainer = LinearTrainer::new(config.clone());
                 b.iter(|| {
-                    let model = trainer.train(black_box(*matrix), black_box(*labels), &[], &SquaredLoss);
+                    let model = trainer.train(black_box(*matrix), black_box(*labels), &[]);
                     black_box(model)
                 });
             },
@@ -234,33 +252,51 @@ fn bench_gblinear_multiclass(c: &mut Criterion) {
 
         let row_matrix = RowMatrix::from_vec(features, num_rows, num_features);
         let col_matrix: ColMatrix = row_matrix.to_layout();
-        let loss = SoftmaxLoss::new(num_classes);
+        let loss = LossFunction::Softmax { num_classes };
 
         group.throughput(Throughput::Elements((num_rows * num_features) as u64));
 
-        let config = bench_trainer_config(false);
+        // Sequential
+        let trainer_seq = GBLinearTrainer::builder()
+            .loss(loss.clone())
+            .num_rounds(10usize)
+            .learning_rate(0.5f32)
+            .alpha(0.0f32)
+            .lambda(1.0f32)
+            .parallel(false)
+            .verbosity(Verbosity::Silent)
+            .build()
+            .unwrap();
+
         group.bench_with_input(
             BenchmarkId::new("sequential", num_rows),
             &(&col_matrix, &labels),
             |b, (matrix, labels)| {
-                let trainer = LinearTrainer::new(config.clone());
                 b.iter(|| {
-                    let model =
-                        trainer.train_multiclass(black_box(*matrix), black_box(*labels), &[], &loss);
+                    let model = trainer_seq.train(black_box(*matrix), black_box(*labels), &[]);
                     black_box(model)
                 });
             },
         );
 
-        let config_par = bench_trainer_config(true);
+        // Parallel
+        let trainer_par = GBLinearTrainer::builder()
+            .loss(loss.clone())
+            .num_rounds(10usize)
+            .learning_rate(0.5f32)
+            .alpha(0.0f32)
+            .lambda(1.0f32)
+            .parallel(true)
+            .verbosity(Verbosity::Silent)
+            .build()
+            .unwrap();
+
         group.bench_with_input(
             BenchmarkId::new("parallel", num_rows),
             &(&col_matrix, &labels),
             |b, (matrix, labels)| {
-                let trainer = LinearTrainer::new(config_par.clone());
                 b.iter(|| {
-                    let model =
-                        trainer.train_multiclass(black_box(*matrix), black_box(*labels), &[], &loss);
+                    let model = trainer_par.train(black_box(*matrix), black_box(*labels), &[]);
                     black_box(model)
                 });
             },

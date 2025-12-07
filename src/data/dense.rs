@@ -1064,4 +1064,73 @@ mod tests {
 
         assert_eq!(original.as_slice(), back.as_slice());
     }
+
+    // =========================================================================
+    // ColumnAccess tests
+    // =========================================================================
+    
+    #[test]
+    fn column_access_colmajor() {
+        use crate::data::ColumnAccess;
+        
+        // Row-major conceptual data: row0=[0, 1], row1=[2, 3], row2=[4, 5]
+        // As ColMajor storage: col0=[0, 2, 4], col1=[1, 3, 5]
+        let col_data = vec![0.0_f32, 2.0, 4.0, 1.0, 3.0, 5.0];
+        let cm: DenseMatrix<f32, ColMajor> = DenseMatrix::from_vec(col_data, 3, 2);
+        
+        // Column 0 should yield (0, 0.0), (1, 2.0), (2, 4.0)
+        let col0: Vec<_> = cm.column(0).collect();
+        assert_eq!(col0, vec![(0, 0.0), (1, 2.0), (2, 4.0)], "ColMajor column 0 incorrect");
+        
+        // Column 1 should yield (0, 1.0), (1, 3.0), (2, 5.0)
+        let col1: Vec<_> = cm.column(1).collect();
+        assert_eq!(col1, vec![(0, 1.0), (1, 3.0), (2, 5.0)], "ColMajor column 1 incorrect");
+    }
+    
+    #[test]
+    fn rowmajor_to_colmajor_column_access() {
+        use crate::data::ColumnAccess;
+        
+        // Data stored in row-major order: row0=[0, 1], row1=[2, 3], row2=[4, 5]
+        let row_data = vec![0.0_f32, 1.0, 2.0, 3.0, 4.0, 5.0];
+        let rm = RowMatrix::from_vec(row_data.clone(), 3, 2);
+        
+        // Convert to ColMajor to use ColumnAccess
+        let cm: DenseMatrix<f32, ColMajor> = (&rm).into();
+        
+        // Column 0 should be [0, 2, 4] (first column)
+        let col0: Vec<_> = cm.column(0).collect();
+        assert_eq!(col0, vec![(0, 0.0), (1, 2.0), (2, 4.0)], "Column 0 after conversion incorrect");
+        
+        // Column 1 should be [1, 3, 5] (second column)
+        let col1: Vec<_> = cm.column(1).collect();
+        assert_eq!(col1, vec![(0, 1.0), (1, 3.0), (2, 5.0)], "Column 1 after conversion incorrect");
+    }
+    
+    /// Demonstrates that raw data layout matters: if you create a ColMajor matrix
+    /// with row-major ordered data (without conversion), the columns will be wrong.
+    /// This test documents the expected (incorrect) behavior to prevent confusion.
+    #[test]
+    fn colmajor_with_rowmajor_data_gives_wrong_columns() {
+        // Row-major data: row0=[0, 1], row1=[2, 3], row2=[4, 5] -> [0, 1, 2, 3, 4, 5]
+        // If this data is used directly as ColMajor storage:
+        //   col0=[0, 1, 2], col1=[3, 4, 5]  <- This is what ColMajor sees
+        // But conceptually the data represents:
+        //   col0=[0, 2, 4], col1=[1, 3, 5]  <- What we actually want
+        //
+        // The fix is to use layout conversion: (&row_matrix).into() or .to_layout()
+        
+        let row_data = vec![0.0_f32, 1.0, 2.0, 3.0, 4.0, 5.0];
+        
+        // Create ColMajor matrix directly from row-major ordered data (no conversion)
+        let wrong_cm = DenseMatrix::<f32, ColMajor>::new(row_data.into_boxed_slice(), 3, 2);
+        
+        use crate::data::ColumnAccess;
+        let col0: Vec<_> = wrong_cm.column(0).collect();
+        let col1: Vec<_> = wrong_cm.column(1).collect();
+        
+        // ColMajor interprets contiguous chunks as columns, so we get wrong values
+        assert_eq!(col0, vec![(0, 0.0), (1, 1.0), (2, 2.0)]);
+        assert_eq!(col1, vec![(0, 3.0), (1, 4.0), (2, 5.0)]);
+    }
 }

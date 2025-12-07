@@ -7,6 +7,21 @@ This document describes conventions and best practices for implementing booste-r
 
 ---
 
+## API Stability
+
+**This library has no users yet.** Breaking API changes are allowed and encouraged
+when they improve the design. Do not hesitate to:
+
+- Rename types, functions, or modules for clarity
+- Change function signatures to be more ergonomic
+- Remove deprecated code immediately (no deprecation period needed)
+- Restructure modules when it makes the codebase cleaner
+
+When the library reaches 1.0 or gains external users, we'll adopt semantic versioning
+and be more careful about breaking changes.
+
+---
+
 ## Project Organization
 
 ### Epics, Stories, and Tasks

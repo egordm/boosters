@@ -12,7 +12,7 @@ use rand::prelude::*;
 
 use bench_utils::generate_training_data;
 use booste_rs::data::{CSCMatrix, ColMatrix, ColumnAccess, DataMatrix, RowMatrix, RowView};
-use booste_rs::training::{GradientBuffer, MulticlassLoss, SoftmaxLoss};
+use booste_rs::training::{GradientBuffer, Loss, SoftmaxLoss};
 
 // =============================================================================
 // Row Access Pattern Benchmarks

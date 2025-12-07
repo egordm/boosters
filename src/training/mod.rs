@@ -5,7 +5,7 @@
 //! ## Shared Infrastructure
 //!
 //! - [`GradientBuffer`]: Structure-of-Arrays gradient storage
-//! - [`Loss`], [`MulticlassLoss`]: Traits for computing gradients
+//! - [`Loss`]: Trait for computing gradients (supports single and multi-output)
 //! - [`Metric`], [`EvalSet`]: Evaluation during training
 //! - [`EarlyStopping`]: Callback for stopping when validation metric plateaus
 //! - [`TrainingLogger`], [`Verbosity`]: Structured logging
@@ -49,7 +49,7 @@ pub use buffer::GradientBuffer;
 pub use callback::EarlyStopping;
 pub use logger::{TrainingLogger, Verbosity};
 pub use loss::{
-    HingeLoss, LogisticLoss, Loss, MulticlassLoss, PseudoHuberLoss, QuantileLoss, SoftmaxLoss,
+    HingeLoss, LogisticLoss, Loss, LossFunction, PseudoHuberLoss, QuantileLoss, SoftmaxLoss,
     SquaredLoss,
 };
 pub use metric::{
@@ -61,15 +61,15 @@ pub use metric::{
 pub use gbtree::{
     BaseScore, BinCuts, BinIndex, BuildingNode, BuildingTree, ChildSide, CutFinder,
     DepthWisePolicy, DepthWiseState, ExactQuantileCuts, FeatureHistogram, GBTreeTrainer,
-    GainParams, GreedySplitFinder, GrowthPolicy, GrowthState, GrowthStrategy, HistogramBuilder,
-    HistogramSubtractor, LeafWisePolicy, LeafWiseState, NodeCandidate, NodeHistogram,
-    QuantizedEvalSet, QuantizedMatrix, Quantizer, RowPartitioner, SplitFinder, SplitInfo,
-    TrainerParams, TreeGrower, TreeParams, leaf_objective, leaf_weight, split_gain,
+    GBTreeTrainerBuilder, GainParams, GreedySplitFinder, GrowthMode, GrowthPolicy, GrowthState,
+    GrowthStrategy, HistogramBuilder, HistogramSubtractor, LeafWisePolicy, LeafWiseState,
+    NodeCandidate, NodeHistogram, QuantizedEvalSet, QuantizedMatrix, Quantizer, RowPartitioner,
+    SplitFinder, SplitInfo, TreeGrower, TreeParams, leaf_objective, leaf_weight, split_gain,
 };
 
 // Re-export linear types for convenience
 pub use linear::{
-    CyclicSelector, FeatureSelector, FeatureSelectorKind, GreedySelector, LinearTrainer,
-    LinearTrainerConfig, RandomSelector, SelectorState, ShuffleSelector, ThriftySelector,
-    UpdateConfig, UpdaterKind, update_bias,
+    CyclicSelector, FeatureSelector, FeatureSelectorKind, GBLinearTrainer, GBLinearTrainerBuilder,
+    GreedySelector, RandomSelector, SelectorState, ShuffleSelector, ThriftySelector, UpdateConfig,
+    UpdaterKind, update_bias,
 };

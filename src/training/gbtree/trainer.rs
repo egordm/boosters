@@ -5,431 +5,387 @@
 //!
 //! # Example
 //!
-//! The easiest way to train is with `train_with_data`, which handles quantization
-//! automatically:
+//! The simplest way to train:
 //!
 //! ```ignore
-//! use booste_rs::training::{GBTreeTrainer, TrainerParams, DepthWisePolicy};
-//! use booste_rs::training::{SquaredLoss, ExactQuantileCuts};
+//! use booste_rs::training::GBTreeTrainer;
 //!
-//! let params = TrainerParams::default();
-//! let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-//!
-//! let cut_finder = ExactQuantileCuts::default();
-//! let forest = trainer.train_with_data(
-//!     DepthWisePolicy { max_depth: 6 },
-//!     &data,
-//!     &labels,
-//!     &cut_finder,
-//!     256,
-//!     &[],
-//! );
+//! let trainer = GBTreeTrainer::default();
+//! let forest = trainer.train(&data, &labels, &[]);
 //! ```
 //!
-//! For advanced usage where you need to control quantization, use [`train`] directly.
+//! For more control, use the builder:
+//!
+//! ```ignore
+//! use booste_rs::training::{GBTreeTrainer, LossFunction};
+//!
+//! let trainer = GBTreeTrainer::builder()
+//!     .loss(LossFunction::SquaredError)
+//!     .num_rounds(100)
+//!     .max_depth(6)
+//!     .learning_rate(0.1)
+//!     .build()
+//!     .unwrap();
+//!
+//! let forest = trainer.train(&data, &labels, &[]);
+//! ```
+//!
+//! For multiclass/multi-output training, use `LossFunction::Softmax`:
+//!
+//! ```ignore
+//! use booste_rs::training::{GBTreeTrainer, LossFunction};
+//!
+//! let trainer = GBTreeTrainer::builder()
+//!     .loss(LossFunction::Softmax { num_classes: 3 })
+//!     .build()
+//!     .unwrap();
+//! let forest = trainer.train(&data, &labels, &[]);
+//! ```
 //!
 //! See RFC-0015 for design rationale.
+
+use derive_builder::Builder;
 
 use crate::data::ColumnAccess;
 use crate::forest::SoAForest;
 use crate::training::metric::EvalSet;
 use crate::training::{
-    EarlyStopping, GradientBuffer, Loss, Metric, MulticlassLoss, TrainingLogger, Verbosity,
+    EarlyStopping, EvalMetric, GradientBuffer, Loss, LossFunction, TrainingLogger, Verbosity,
 };
-use crate::trees::{ScalarLeaf, SoATreeStorage, TreeBuilder as SoATreeBuilder};
+use crate::trees::{categories_to_bitset, ScalarLeaf, SoATreeStorage, TreeBuilder as SoATreeBuilder};
 
-use super::grower::{BuildingTree, GrowthPolicy, TreeGrower, TreeParams};
+use super::constraints::MonotonicConstraint;
+use super::grower::{BuildingTree, GrowthStrategy, TreeGrower, TreeParams};
 use super::partition::RowPartitioner;
-use super::quantize::{BinCuts, BinIndex, CutFinder, QuantizedMatrix, Quantizer};
+use super::quantize::{BinCuts, BinIndex, ExactQuantileCuts, QuantizedMatrix, Quantizer};
 use super::sampling::{GossParams, GossSampler, RowSampler};
-
-// ============================================================================
-// TrainerParams
-// ============================================================================
-
-/// Row sampling strategy for training.
-#[derive(Debug, Clone, Copy, Default)]
-pub enum RowSamplingStrategy {
-    /// Random subsampling (default when subsample < 1.0)
-    #[default]
-    Random,
-    /// GOSS: Gradient-based One-Side Sampling (LightGBM style)
-    Goss(GossParams),
-}
-
-/// Parameters for the gradient boosting trainer.
-#[derive(Debug, Clone)]
-pub struct TrainerParams {
-    /// Parameters for individual tree building
-    pub tree_params: TreeParams,
-    /// Number of boosting rounds (trees to build)
-    pub num_rounds: u32,
-    /// Base score initialization strategy
-    pub base_score: BaseScore,
-    /// Verbosity level for logging
-    pub verbosity: Verbosity,
-    /// Random seed for reproducibility (sampling, etc.)
-    pub seed: u64,
-    /// Row sampling strategy (GOSS or random subsampling)
-    pub row_sampling: RowSamplingStrategy,
-}
-
-impl Default for TrainerParams {
-    fn default() -> Self {
-        Self {
-            tree_params: TreeParams::default(),
-            num_rounds: 100,
-            base_score: BaseScore::Mean,
-            verbosity: Verbosity::Info,
-            seed: 0,
-            row_sampling: RowSamplingStrategy::default(),
-        }
-    }
-}
-
-/// Strategy for initializing base score.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum BaseScore {
-    /// Use mean of labels (good for regression)
-    Mean,
-    /// Use a fixed value
-    Fixed(f32),
-    /// Use zero (raw model starts from 0)
-    Zero,
-}
-
-// ============================================================================
-// QuantizedEvalSet
-// ============================================================================
-
-/// Evaluation set for GBTree training with quantized data.
-///
-/// This mirrors [`EvalSet`][super::metric::EvalSet] but is specific to quantized
-/// data used in GBTree training. Named sets appear in training logs.
-///
-/// # Example
-///
-/// ```ignore
-/// let eval_sets = vec![
-///     QuantizedEvalSet::new("train", &quantized_train, &train_labels),
-///     QuantizedEvalSet::new("val", &quantized_val, &val_labels),
-/// ];
-/// // Logs: [0] train-rmse:15.23  val-rmse:16.12
-/// ```
-pub struct QuantizedEvalSet<'a, B: BinIndex> {
-    /// Dataset name (appears in logs as prefix, e.g., "train", "val", "test").
-    pub name: &'a str,
-    /// Quantized feature matrix.
-    pub data: &'a QuantizedMatrix<B>,
-    /// Labels (length = n_samples).
-    pub labels: &'a [f32],
-}
-
-impl<'a, B: BinIndex> QuantizedEvalSet<'a, B> {
-    /// Create a new quantized evaluation set.
-    pub fn new(name: &'a str, data: &'a QuantizedMatrix<B>, labels: &'a [f32]) -> Self {
-        Self { name, data, labels }
-    }
-}
+use super::split::GainParams;
 
 // ============================================================================
 // GBTreeTrainer
 // ============================================================================
 
-/// Gradient boosting trainer for tree ensembles.
+/// Strategy for initializing base score.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum BaseScore {
+    /// Use mean of labels (good for regression).
+    #[default]
+    Mean,
+    /// Use a fixed value.
+    Fixed(f32),
+    /// Use zero (raw model starts from 0).
+    Zero,
+}
+
+/// Growth strategy for tree building.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GrowthMode {
+    /// Depth-wise growth (XGBoost style): expand all nodes at each depth level.
+    DepthWise,
+    /// Leaf-wise growth (LightGBM style): always expand the best-gain leaf.
+    LeafWise,
+}
+
+impl Default for GrowthMode {
+    fn default() -> Self {
+        Self::DepthWise
+    }
+}
+
+/// Gradient boosted tree trainer with all parameters inlined.
 ///
-/// Coordinates the full boosting loop:
-/// 1. Initialize predictions with base score
-/// 2. For each round:
-///    - Compute gradients from loss
-///    - Build a tree using TreeGrower
-///    - Update predictions with tree output
-///    - Optionally check early stopping
-/// 3. Convert trees to inference format
+/// Use [`GBTreeTrainer::builder()`] for a fluent configuration API,
+/// or [`GBTreeTrainer::default()`] for sensible defaults.
+///
+/// # Example
+///
+/// ```ignore
+/// use booste_rs::training::{GBTreeTrainer, LossFunction};
+///
+/// // Simple usage with defaults
+/// let trainer = GBTreeTrainer::default();
+/// let forest = trainer.train(&data, &labels);
+///
+/// // Configured via builder
+/// let trainer = GBTreeTrainer::builder()
+///     .loss(LossFunction::Logistic)
+///     .num_rounds(50)
+///     .max_depth(4)
+///     .learning_rate(0.1)
+///     .build()
+///     .unwrap();
+/// ```
+#[derive(Debug, Clone, Builder)]
+#[builder(setter(into), default)]
 pub struct GBTreeTrainer {
-    /// Loss function for gradient computation
-    loss: Box<dyn Loss>,
-    /// Training parameters
-    params: TrainerParams,
-    /// Training logger
-    logger: TrainingLogger,
-    /// Early stopping callback (optional)
-    early_stopping: Option<EarlyStopping>,
+    // ========================================================================
+    // Loss function
+    // ========================================================================
+    /// Loss function for gradient computation.
+    #[builder(default)]
+    pub loss: LossFunction,
+
+    // ========================================================================
+    // Training parameters
+    // ========================================================================
+    /// Number of boosting rounds (trees to build).
+    #[builder(default = "100")]
+    pub num_rounds: u32,
+
+    /// Learning rate (shrinkage) applied to leaf weights.
+    #[builder(default = "0.3")]
+    pub learning_rate: f32,
+
+    /// Base score initialization strategy.
+    #[builder(default)]
+    pub base_score: BaseScore,
+
+    /// Maximum number of histogram bins per feature.
+    #[builder(default = "256")]
+    pub max_bins: usize,
+
+    /// Random seed for reproducibility.
+    #[builder(default = "0")]
+    pub seed: u64,
+
+    // ========================================================================
+    // Tree structure
+    // ========================================================================
+    /// Growth strategy: depth-wise (XGBoost) or leaf-wise (LightGBM).
+    #[builder(default)]
+    pub growth_mode: GrowthMode,
+
+    /// Maximum tree depth (used by depth-wise growth, also as limit for leaf-wise).
+    #[builder(default = "6")]
+    pub max_depth: u32,
+
+    /// Maximum number of leaves (used by leaf-wise growth).
+    #[builder(default = "31")]
+    pub max_leaves: u32,
+
+    /// Minimum samples required to split a node.
+    #[builder(default = "2")]
+    pub min_samples_split: u32,
+
+    /// Minimum samples required in a leaf.
+    #[builder(default = "1")]
+    pub min_samples_leaf: u32,
+
+    // ========================================================================
+    // Regularization
+    // ========================================================================
+    /// L2 regularization on leaf weights (XGBoost's `lambda`).
+    #[builder(default = "1.0")]
+    pub reg_lambda: f32,
+
+    /// L1 regularization on leaf weights (XGBoost's `alpha`).
+    #[builder(default = "0.0")]
+    pub reg_alpha: f32,
+
+    /// Minimum loss reduction to make a split (XGBoost's `gamma`).
+    #[builder(default = "0.0")]
+    pub min_split_gain: f32,
+
+    /// Minimum sum of hessians in a child.
+    #[builder(default = "1.0")]
+    pub min_child_weight: f32,
+
+    // ========================================================================
+    // Sampling
+    // ========================================================================
+    /// Row subsampling ratio per tree (0, 1].
+    #[builder(default = "1.0")]
+    pub subsample: f32,
+
+    /// Column subsampling ratio per tree (0, 1].
+    #[builder(default = "1.0")]
+    pub colsample_bytree: f32,
+
+    /// Column subsampling ratio per level (0, 1].
+    #[builder(default = "1.0")]
+    pub colsample_bylevel: f32,
+
+    /// Column subsampling ratio per node (0, 1].
+    #[builder(default = "1.0")]
+    pub colsample_bynode: f32,
+
+    /// GOSS sampling parameters (None = disabled).
+    /// When enabled, uses gradient-based one-side sampling instead of random.
+    #[builder(default)]
+    pub goss: Option<GossParams>,
+
+    // ========================================================================
+    // Constraints
+    // ========================================================================
+    /// Monotonic constraints per feature (-1: decreasing, 0: none, 1: increasing).
+    #[builder(default)]
+    pub monotone_constraints: Vec<MonotonicConstraint>,
+
+    /// Interaction constraints as groups of features.
+    #[builder(default)]
+    pub interaction_constraints: Vec<Vec<u32>>,
+
+    // ========================================================================
+    // Logging and callbacks
+    // ========================================================================
+    /// Verbosity level for logging.
+    #[builder(default)]
+    pub verbosity: Verbosity,
+
+    /// Evaluation metric for logging (used when eval sets provided).
+    #[builder(default)]
+    pub eval_metric: EvalMetric,
+
+    /// Early stopping patience (0 = disabled).
+    #[builder(default = "0")]
+    pub early_stopping_rounds: usize,
+
+    // ========================================================================
+    // Internal / advanced
+    // ========================================================================
+    /// Use parallel histogram building.
+    #[builder(default = "false")]
+    pub parallel_histograms: bool,
+}
+
+impl Default for GBTreeTrainer {
+    fn default() -> Self {
+        Self {
+            loss: LossFunction::default(),
+            num_rounds: 100,
+            learning_rate: 0.3,
+            base_score: BaseScore::default(),
+            max_bins: 256,
+            seed: 0,
+            growth_mode: GrowthMode::default(),
+            max_depth: 6,
+            max_leaves: 31,
+            min_samples_split: 2,
+            min_samples_leaf: 1,
+            reg_lambda: 1.0,
+            reg_alpha: 0.0,
+            min_split_gain: 0.0,
+            min_child_weight: 1.0,
+            subsample: 1.0,
+            colsample_bytree: 1.0,
+            colsample_bylevel: 1.0,
+            colsample_bynode: 1.0,
+            goss: None,
+            monotone_constraints: Vec::new(),
+            interaction_constraints: Vec::new(),
+            verbosity: Verbosity::default(),
+            eval_metric: EvalMetric::default(),
+            early_stopping_rounds: 0,
+            parallel_histograms: false,
+        }
+    }
 }
 
 impl GBTreeTrainer {
-    /// Create a new trainer.
-    pub fn new(loss: Box<dyn Loss>, params: TrainerParams) -> Self {
-        let logger = TrainingLogger::new(params.verbosity);
-        Self {
-            loss,
-            params,
-            logger,
-            early_stopping: None,
-        }
+    /// Create a new trainer with default parameters.
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    /// Enable early stopping with the given metric and patience.
-    pub fn with_early_stopping(mut self, metric: Box<dyn Metric>, patience: usize) -> Self {
-        self.early_stopping = Some(EarlyStopping::new(metric, patience));
-        self
-    }
-
-    /// Train a gradient boosted forest.
-    ///
-    /// # Type Parameters
-    ///
-    /// * `G` - Growth policy (DepthWisePolicy or LeafWisePolicy)
-    /// * `B` - Bin index type (u8 or u16)
-    ///
-    /// # Arguments
-    ///
-    /// * `policy` - Growth policy for tree building
-    /// * `quantized` - Quantized feature matrix
-    /// * `labels` - Target labels
-    /// * `cuts` - Bin cuts for histogram building
-    /// * `eval_sets` - Evaluation sets for metrics and early stopping
+    /// Create a builder for configuring the trainer.
     ///
     /// # Example
     ///
     /// ```ignore
-    /// use booste_rs::training::{GBTreeTrainer, QuantizedEvalSet, DepthWisePolicy};
-    ///
-    /// let eval_sets = vec![
-    ///     QuantizedEvalSet::new("train", &quantized, &labels),
-    ///     QuantizedEvalSet::new("val", &quantized_val, &val_labels),
-    /// ];
-    /// let forest = trainer.train(policy, &quantized, &labels, &cuts, &eval_sets);
+    /// let trainer = GBTreeTrainer::builder()
+    ///     .num_rounds(100)
+    ///     .max_depth(6)
+    ///     .build()
+    ///     .unwrap();
     /// ```
-    pub fn train<G, B>(
-        &mut self,
-        policy: G,
-        quantized: &QuantizedMatrix<B>,
-        labels: &[f32],
-        cuts: &BinCuts,
-        eval_sets: &[QuantizedEvalSet<'_, B>],
-    ) -> SoAForest<ScalarLeaf>
-    where
-        G: GrowthPolicy + Clone,
-        B: BinIndex,
-    {
-        let num_rows = quantized.num_rows() as usize;
-        assert_eq!(labels.len(), num_rows, "labels length must match data rows");
+    pub fn builder() -> GBTreeTrainerBuilder {
+        GBTreeTrainerBuilder::default()
+    }
 
-        // Initialize base score
-        let base_score = self.compute_base_score(labels);
-        self.logger
-            .info(&format!("Base score: {:.6}", base_score));
-
-        // Initialize predictions
-        let mut predictions = vec![base_score; num_rows];
-
-        // Gradient buffer (single output for regression/binary)
-        let mut grads = GradientBuffer::new(num_rows, 1);
-
-        // Row partitioner (reused per tree)
-        let mut partitioner = RowPartitioner::new(num_rows as u32);
-
-        // Determine sampling strategy
-        let subsample = self.params.tree_params.subsample;
-        let goss_sampler = match &self.params.row_sampling {
-            RowSamplingStrategy::Goss(params) => Some(GossSampler::new(*params)),
-            RowSamplingStrategy::Random => None,
-        };
-        let row_sampler = if goss_sampler.is_none() && subsample < 1.0 {
-            Some(RowSampler::new(num_rows as u32, subsample))
-        } else {
-            None
-        };
-        let _sampling_enabled = row_sampler.as_ref().map_or(false, |s| s.is_enabled())
-            || goss_sampler.as_ref().map_or(false, |s| s.is_enabled());
-
-        // Trees built during training
-        let mut trees: Vec<BuildingTree> = Vec::with_capacity(self.params.num_rounds as usize);
-
-        // Log sampling strategy
-        let sampling_info = if goss_sampler.is_some() {
-            match &self.params.row_sampling {
-                RowSamplingStrategy::Goss(params) => format!(
-                    " (GOSS: top={:.2}, other={:.2})",
-                    params.top_rate, params.other_rate
-                ),
-                _ => String::new(),
-            }
-        } else if subsample < 1.0 {
-            format!(" (subsample={:.2})", subsample)
-        } else {
-            String::new()
-        };
-
-        self.logger.info(&format!(
-            "Starting training: {} rounds, {} samples{}",
-            self.params.num_rounds,
-            num_rows,
-            sampling_info,
-        ));
-
-        for round in 0..self.params.num_rounds {
-            // Compute gradients for all rows
-            self.loss
-                .compute_gradients(&predictions, labels, &mut grads);
-
-            // Sample rows for this round (same seed + round = reproducible)
-            let round_seed = self.params.seed.wrapping_add(round as u64);
-            
-            // Apply row sampling (GOSS or random)
-            if let Some(goss) = &goss_sampler {
-                // GOSS: Sample based on gradient magnitudes
-                let gradient_slice: Vec<f32> = (0..num_rows)
-                    .map(|i| grads.get(i, 0).0)
-                    .collect();
-                let sample = goss.sample(&gradient_slice, round_seed);
-                
-                // Reset partitioner with GOSS-sampled rows
-                partitioner.reset_with_rows(&sample.indices);
-                
-                // Apply weight amplification to gradients
-                // For non-top rows, multiply gradient/hessian by weight
-                for (idx_in_sample, &row_idx) in sample.indices.iter().enumerate() {
-                    let weight = sample.weights[idx_in_sample];
-                    if weight != 1.0 {
-                        let (grad, hess) = grads.get(row_idx as usize, 0);
-                        grads.set(row_idx as usize, 0, grad * weight, hess * weight);
-                    }
-                }
-            } else if let Some(random_sampler) = &row_sampler {
-                // Random subsampling
-                let sampled_rows = random_sampler.sample(round_seed);
-                partitioner.reset_with_rows(&sampled_rows);
-            } else {
-                // No sampling - use all rows
-                partitioner.reset();
-            }
-
-            // Build tree with seed for column sampling reproducibility
-            let mut grower = TreeGrower::new(policy.clone(), cuts, self.params.tree_params.clone());
-            let tree = grower.build_tree_with_seed(quantized, &grads, &mut partitioner, round_seed);
-
-            // Update predictions for all rows (not just sampled)
-            Self::update_predictions(&tree, quantized, &mut predictions);
-
-            // Compute metrics for all eval sets
-            let mut round_metrics: Vec<(String, f64)> = Vec::new();
-            let mut early_stop_triggered = false;
-
-            // Always log training metric
-            if self.params.verbosity >= Verbosity::Info {
-                let train_metric = self.compute_train_metric(&predictions, labels);
-                round_metrics.push(("train".to_string(), train_metric));
-            }
-
-            // Process each eval set
-            for (idx, eval_set) in eval_sets.iter().enumerate() {
-                let eval_preds =
-                    Self::predict_with_trees(&trees, &tree, eval_set.data, base_score);
-
-                // Compute and log metric
-                if self.params.verbosity >= Verbosity::Info {
-                    let metric_value = self.compute_train_metric(&eval_preds, eval_set.labels);
-                    round_metrics.push((eval_set.name.to_string(), metric_value));
-                }
-
-                // Check early stopping on first eval set (or could be configurable)
-                if idx == 0 {
-                    if let Some(early_stop) = &mut self.early_stopping {
-                        if early_stop.should_stop(&eval_preds, eval_set.labels) {
-                            self.logger.info(&format!(
-                                "Early stopping at round {} (best: {})",
-                                round,
-                                early_stop.best_round()
-                            ));
-                            early_stop_triggered = true;
-                        }
-                    }
-                }
-            }
-
-            // Log progress
-            if self.params.verbosity >= Verbosity::Info && !round_metrics.is_empty() {
-                self.logger.log_round(round as usize, &round_metrics);
-            }
-
-            trees.push(tree);
-
-            if early_stop_triggered {
-                break;
-            }
+    /// Build internal TreeParams from the flat config.
+    fn tree_params(&self) -> TreeParams {
+        TreeParams {
+            gain: GainParams {
+                lambda: self.reg_lambda,
+                alpha: self.reg_alpha,
+                min_split_gain: self.min_split_gain,
+                min_child_weight: self.min_child_weight,
+            },
+            max_depth: self.max_depth,
+            max_leaves: self.max_leaves,
+            min_samples_split: self.min_samples_split,
+            min_samples_leaf: self.min_samples_leaf,
+            learning_rate: self.learning_rate,
+            parallel_histograms: self.parallel_histograms,
+            subsample: self.subsample,
+            colsample_bytree: self.colsample_bytree,
+            colsample_bylevel: self.colsample_bylevel,
+            colsample_bynode: self.colsample_bynode,
+            monotone_constraints: self.monotone_constraints.clone(),
+            interaction_constraints: self.interaction_constraints.clone(),
         }
+    }
 
-        self.logger.info(&format!(
-            "Training complete: {} trees built",
-            trees.len()
-        ));
-
-        // Convert to inference format
-        self.freeze_forest(trees, base_score)
+    /// Build GrowthStrategy from config.
+    fn growth_strategy(&self) -> GrowthStrategy {
+        match self.growth_mode {
+            GrowthMode::DepthWise => GrowthStrategy::DepthWise {
+                max_depth: self.max_depth,
+            },
+            GrowthMode::LeafWise => GrowthStrategy::LeafWise {
+                max_leaves: self.max_leaves,
+            },
+        }
     }
 
     /// Train a gradient boosted forest from raw (unquantized) data.
     ///
-    /// This is the simplified API that handles quantization automatically.
-    /// For advanced use cases where you need to control quantization, use [`train`]
-    /// instead.
-    ///
-    /// # Type Parameters
-    ///
-    /// * `G` - Growth policy (DepthWisePolicy or LeafWisePolicy)
-    /// * `D` - Data matrix type (must implement ColumnAccess)
-    /// * `C` - Cut finder strategy (e.g., ExactQuantileCuts)
+    /// This is the primary training API. It handles quantization automatically.
+    /// The loss function determines whether single-output or multi-output training is used:
+    /// - Single-output losses (`SquaredError`, `Logistic`, etc.): one tree per round
+    /// - Multi-output losses (`Softmax`, `MultiQuantile`): K trees per round
     ///
     /// # Arguments
     ///
-    /// * `policy` - Growth policy for tree building
-    /// * `data` - Raw feature matrix
+    /// * `data` - Raw feature matrix (any type implementing `ColumnAccess`)
     /// * `labels` - Target labels
-    /// * `cut_finder` - Strategy for computing bin boundaries
-    /// * `max_bins` - Maximum number of bins per feature (256 is typical)
-    /// * `eval_sets` - Evaluation sets for metrics and early stopping
+    /// * `eval_sets` - Evaluation sets for monitoring (pass `&[]` if not needed)
     ///
     /// # Example
     ///
     /// ```ignore
-    /// use booste_rs::training::{GBTreeTrainer, EvalSet, DepthWisePolicy, ExactQuantileCuts};
+    /// use booste_rs::training::{GBTreeTrainer, LossFunction};
     ///
-    /// let cut_finder = ExactQuantileCuts::default();
-    /// let eval_sets = vec![
-    ///     EvalSet::new("val", &val_data, &val_labels),
-    /// ];
-    /// let forest = trainer.train_with_data(
-    ///     DepthWisePolicy { max_depth: 6 },
-    ///     &data,
-    ///     &labels,
-    ///     &cut_finder,
-    ///     256,
-    ///     &eval_sets,
-    /// );
+    /// // Regression
+    /// let trainer = GBTreeTrainer::default();
+    /// let forest = trainer.train(&data, &labels, &[]);
+    ///
+    /// // Multiclass (3 classes)
+    /// let trainer = GBTreeTrainer::builder()
+    ///     .loss(LossFunction::Softmax { num_classes: 3 })
+    ///     .build()
+    ///     .unwrap();
+    /// let forest = trainer.train(&data, &labels, &[]);
     /// ```
-    pub fn train_with_data<G, D, C>(
-        &mut self,
-        policy: G,
+    pub fn train<D>(
+        &self,
         data: &D,
         labels: &[f32],
-        cut_finder: &C,
-        max_bins: usize,
         eval_sets: &[EvalSet<'_, D>],
     ) -> SoAForest<ScalarLeaf>
     where
-        G: GrowthPolicy + Clone,
         D: ColumnAccess<Element = f32> + Sync,
-        C: CutFinder,
     {
+        let mut logger = TrainingLogger::new(self.verbosity);
+
         // Compute bin cuts from training data
-        self.logger.info("Computing bin cuts...");
-        let quantizer = Quantizer::from_data(data, cut_finder, max_bins);
+        logger.info("Computing bin cuts...");
+        let cut_finder = ExactQuantileCuts::default();
+        let quantizer = Quantizer::from_data(data, &cut_finder, self.max_bins);
         let cuts = quantizer.cuts().clone();
 
         // Quantize training data
-        self.logger.info("Quantizing training data...");
+        logger.info("Quantizing training data...");
         let quantized: QuantizedMatrix<u8> = quantizer.quantize(data);
 
         // Quantize evaluation sets
@@ -445,13 +401,302 @@ impl GBTreeTrainer {
             .map(|(es, q)| QuantizedEvalSet::new(es.name, q, es.labels))
             .collect();
 
-        // Delegate to the main train method
-        self.train(policy, &quantized, labels, &cuts, &quantized_refs)
+        // Dispatch based on number of outputs
+        if self.loss.num_outputs() == 1 {
+            self.train_quantized_internal(&quantized, labels, &cuts, &quantized_refs, &mut logger)
+        } else {
+            self.train_multioutput_quantized(&quantized, labels, &cuts, &mut logger)
+        }
     }
 
-    /// Compute base score from labels.
+    /// Train on pre-quantized data (advanced API).
+    pub fn train_quantized<B>(
+        &self,
+        quantized: &QuantizedMatrix<B>,
+        labels: &[f32],
+        cuts: &BinCuts,
+        eval_sets: &[QuantizedEvalSet<'_, B>],
+    ) -> SoAForest<ScalarLeaf>
+    where
+        B: BinIndex,
+    {
+        let mut logger = TrainingLogger::new(self.verbosity);
+        if self.loss.num_outputs() == 1 {
+            self.train_quantized_internal(quantized, labels, cuts, eval_sets, &mut logger)
+        } else {
+            self.train_multioutput_quantized(quantized, labels, cuts, &mut logger)
+        }
+    }
+
+    /// Internal training implementation for single-output losses.
+    fn train_quantized_internal<B>(
+        &self,
+        quantized: &QuantizedMatrix<B>,
+        labels: &[f32],
+        cuts: &BinCuts,
+        eval_sets: &[QuantizedEvalSet<'_, B>],
+        logger: &mut TrainingLogger,
+    ) -> SoAForest<ScalarLeaf>
+    where
+        B: BinIndex,
+    {
+        let num_rows = quantized.num_rows() as usize;
+        assert_eq!(labels.len(), num_rows, "labels length must match data rows");
+
+        let tree_params = self.tree_params();
+        let growth_strategy = self.growth_strategy();
+
+        // Initialize base score
+        let base_score_value = self.compute_base_score(labels);
+        logger.info(&format!("Base score: {:.6}", base_score_value));
+
+        // Initialize predictions
+        let mut predictions = vec![base_score_value; num_rows];
+
+        // Gradient buffer (single output for regression/binary)
+        let mut grads = GradientBuffer::new(num_rows, 1);
+
+        // Row partitioner (reused per tree)
+        let mut partitioner = RowPartitioner::new(num_rows as u32);
+
+        // Sampling setup
+        let goss_sampler = self.goss.map(GossSampler::new);
+        let row_sampler = if goss_sampler.is_none() && self.subsample < 1.0 {
+            Some(RowSampler::new(num_rows as u32, self.subsample))
+        } else {
+            None
+        };
+
+        // Early stopping
+        let mut early_stopping = if self.early_stopping_rounds > 0 && !eval_sets.is_empty() {
+            Some(EarlyStopping::new(
+                Box::new(self.eval_metric.clone()),
+                self.early_stopping_rounds,
+            ))
+        } else {
+            None
+        };
+
+        // Trees built during training
+        let mut trees: Vec<BuildingTree> = Vec::with_capacity(self.num_rounds as usize);
+
+        // Log sampling strategy
+        let sampling_info = if let Some(ref goss) = self.goss {
+            format!(" (GOSS: top={:.2}, other={:.2})", goss.top_rate, goss.other_rate)
+        } else if self.subsample < 1.0 {
+            format!(" (subsample={:.2})", self.subsample)
+        } else {
+            String::new()
+        };
+
+        logger.info(&format!(
+            "Starting training: {} rounds, {} samples{}",
+            self.num_rounds, num_rows, sampling_info,
+        ));
+
+        for round in 0..self.num_rounds {
+            // Compute gradients
+            self.loss.compute_gradients(&predictions, labels, &mut grads);
+
+            // Sample rows for this round
+            let round_seed = self.seed.wrapping_add(round as u64);
+
+            // Apply row sampling
+            if let Some(ref goss) = goss_sampler {
+                let gradient_slice: Vec<f32> = (0..num_rows)
+                    .map(|i| grads.get(i, 0).0)
+                    .collect();
+                let sample = goss.sample(&gradient_slice, round_seed);
+                partitioner.reset_with_rows(&sample.indices);
+
+                // Apply GOSS weights
+                for (idx_in_sample, &row_idx) in sample.indices.iter().enumerate() {
+                    let weight = sample.weights[idx_in_sample];
+                    if weight != 1.0 {
+                        let (grad, hess) = grads.get(row_idx as usize, 0);
+                        grads.set(row_idx as usize, 0, grad * weight, hess * weight);
+                    }
+                }
+            } else if let Some(ref random_sampler) = row_sampler {
+                let sampled_rows = random_sampler.sample(round_seed);
+                partitioner.reset_with_rows(&sampled_rows);
+            } else {
+                partitioner.reset();
+            }
+
+            // Build tree using appropriate policy
+            let tree = match growth_strategy {
+                GrowthStrategy::DepthWise { max_depth } => {
+                    let policy = super::grower::DepthWisePolicy { max_depth };
+                    let mut grower = TreeGrower::new(policy, cuts, tree_params.clone());
+                    grower.build_tree_with_seed(quantized, &grads, &mut partitioner, round_seed)
+                }
+                GrowthStrategy::LeafWise { max_leaves } => {
+                    let policy = super::grower::LeafWisePolicy { max_leaves };
+                    let mut grower = TreeGrower::new(policy, cuts, tree_params.clone());
+                    grower.build_tree_with_seed(quantized, &grads, &mut partitioner, round_seed)
+                }
+            };
+
+            // Update predictions
+            Self::update_predictions(&tree, quantized, &mut predictions);
+
+            // Compute metrics and check early stopping
+            let mut round_metrics: Vec<(String, f64)> = Vec::new();
+            let mut early_stop_triggered = false;
+
+            if self.verbosity >= Verbosity::Info {
+                let train_metric = self.compute_train_metric(&predictions, labels);
+                round_metrics.push(("train".to_string(), train_metric));
+            }
+
+            for (idx, eval_set) in eval_sets.iter().enumerate() {
+                let eval_preds = Self::predict_with_trees(&trees, &tree, eval_set.data, base_score_value);
+
+                if self.verbosity >= Verbosity::Info {
+                    let metric_value = self.compute_train_metric(&eval_preds, eval_set.labels);
+                    round_metrics.push((eval_set.name.to_string(), metric_value));
+                }
+
+                if idx == 0 {
+                    if let Some(ref mut es) = early_stopping {
+                        if es.should_stop(&eval_preds, eval_set.labels) {
+                            logger.info(&format!(
+                                "Early stopping at round {} (best: {})",
+                                round,
+                                es.best_round()
+                            ));
+                            early_stop_triggered = true;
+                        }
+                    }
+                }
+            }
+
+            if self.verbosity >= Verbosity::Info && !round_metrics.is_empty() {
+                logger.log_round(round as usize, &round_metrics);
+            }
+
+            trees.push(tree);
+
+            if early_stop_triggered {
+                break;
+            }
+        }
+
+        logger.info(&format!("Training complete: {} trees built", trees.len()));
+
+        self.freeze_forest(trees, base_score_value)
+    }
+
+    /// Internal training implementation for multi-output losses.
+    fn train_multioutput_quantized<B>(
+        &self,
+        quantized: &QuantizedMatrix<B>,
+        labels: &[f32],
+        cuts: &BinCuts,
+        logger: &mut TrainingLogger,
+    ) -> SoAForest<ScalarLeaf>
+    where
+        B: BinIndex,
+    {
+        let num_rows = quantized.num_rows() as usize;
+        let num_outputs = self.loss.num_outputs();
+        let tree_params = self.tree_params();
+        let growth_strategy = self.growth_strategy();
+
+        assert_eq!(labels.len(), num_rows, "labels length must match data rows");
+
+        // Initialize predictions
+        let base_scores: Vec<f32> = vec![0.0; num_outputs];
+        let mut predictions: Vec<f32> = vec![0.0; num_rows * num_outputs];
+
+        // Gradient buffer (K outputs per sample)
+        let mut grads = GradientBuffer::new(num_rows, num_outputs);
+
+        // Partitioners (one per output)
+        let mut partitioners: Vec<RowPartitioner> = (0..num_outputs)
+            .map(|_| RowPartitioner::new(num_rows as u32))
+            .collect();
+
+        // Trees per output
+        let mut trees_per_output: Vec<Vec<BuildingTree>> = (0..num_outputs)
+            .map(|_| Vec::with_capacity(self.num_rounds as usize))
+            .collect();
+
+        logger.info(&format!(
+            "Starting multioutput training: {} rounds, {} samples, {} outputs",
+            self.num_rounds, num_rows, num_outputs
+        ));
+
+        for round in 0..self.num_rounds {
+            // Compute gradients for all samples and outputs
+            self.loss.compute_gradients(&predictions, labels, &mut grads);
+
+            let round_seed = self.seed.wrapping_add(round as u64);
+
+            // Train one tree per output
+            for output_idx in 0..num_outputs {
+                // Extract gradients for this output
+                let mut output_grads = GradientBuffer::new(num_rows, 1);
+                for row in 0..num_rows {
+                    let (grad, hess) = grads.get(row, output_idx);
+                    output_grads.set(row, 0, grad, hess);
+                }
+
+                partitioners[output_idx].reset();
+
+                // Build tree
+                let output_seed = round_seed.wrapping_add(output_idx as u64 * 1000);
+                let tree = match growth_strategy {
+                    GrowthStrategy::DepthWise { max_depth } => {
+                        let policy = super::grower::DepthWisePolicy { max_depth };
+                        let mut grower = TreeGrower::new(policy, cuts, tree_params.clone());
+                        grower.build_tree_with_seed(
+                            quantized,
+                            &output_grads,
+                            &mut partitioners[output_idx],
+                            output_seed,
+                        )
+                    }
+                    GrowthStrategy::LeafWise { max_leaves } => {
+                        let policy = super::grower::LeafWisePolicy { max_leaves };
+                        let mut grower = TreeGrower::new(policy, cuts, tree_params.clone());
+                        grower.build_tree_with_seed(
+                            quantized,
+                            &output_grads,
+                            &mut partitioners[output_idx],
+                            output_seed,
+                        )
+                    }
+                };
+
+                // Update predictions for this output
+                for row in 0..num_rows {
+                    let pred = Self::predict_row(&tree, quantized, row as u32);
+                    predictions[row * num_outputs + output_idx] += pred;
+                }
+
+                trees_per_output[output_idx].push(tree);
+            }
+
+            if (round + 1) % 10 == 0 || round == 0 {
+                logger.info(&format!(
+                    "Round {} complete, {} trees per output",
+                    round + 1,
+                    trees_per_output[0].len()
+                ));
+            }
+        }
+
+        self.freeze_multioutput_forest(trees_per_output, base_scores)
+    }
+
+    // ========================================================================
+    // Helper methods
+    // ========================================================================
+
     fn compute_base_score(&self, labels: &[f32]) -> f32 {
-        match self.params.base_score {
+        match self.base_score {
             BaseScore::Mean => {
                 let sum: f32 = labels.iter().sum();
                 sum / labels.len() as f32
@@ -461,7 +706,6 @@ impl GBTreeTrainer {
         }
     }
 
-    /// Update predictions by adding tree outputs.
     fn update_predictions<B: BinIndex>(
         tree: &BuildingTree,
         quantized: &QuantizedMatrix<B>,
@@ -473,9 +717,6 @@ impl GBTreeTrainer {
         }
     }
 
-    /// Traverse a BuildingTree for a single row.
-    ///
-    /// This is used during training to update predictions.
     fn predict_row<B: BinIndex>(tree: &BuildingTree, quantized: &QuantizedMatrix<B>, row: u32) -> f32 {
         let mut node_id = 0u32;
 
@@ -489,13 +730,10 @@ impl GBTreeTrainer {
             let bin = quantized.get(row, split.feature).to_usize();
 
             let goes_left = if bin == 0 {
-                // Missing value (bin 0) - use default direction
                 split.default_left
             } else if split.is_categorical {
-                // Categorical: check if bin is in left set
                 split.categories_left.contains(&(bin as u32))
             } else {
-                // Numerical: bin <= split_bin goes left
                 bin <= split.split_bin as usize
             };
 
@@ -503,7 +741,6 @@ impl GBTreeTrainer {
         }
     }
 
-    /// Predict with all trees so far plus the new tree.
     fn predict_with_trees<B: BinIndex>(
         trees: &[BuildingTree],
         new_tree: &BuildingTree,
@@ -513,14 +750,12 @@ impl GBTreeTrainer {
         let num_rows = data.num_rows() as usize;
         let mut predictions = vec![base_score; num_rows];
 
-        // Add predictions from existing trees
         for tree in trees {
             for row in 0..num_rows {
                 predictions[row] += Self::predict_row(tree, data, row as u32);
             }
         }
 
-        // Add predictions from new tree
         for row in 0..num_rows {
             predictions[row] += Self::predict_row(new_tree, data, row as u32);
         }
@@ -528,7 +763,6 @@ impl GBTreeTrainer {
         predictions
     }
 
-    /// Compute training metric (simple squared error for now).
     fn compute_train_metric(&self, predictions: &[f32], labels: &[f32]) -> f64 {
         let sum_sq_err: f64 = predictions
             .iter()
@@ -538,23 +772,38 @@ impl GBTreeTrainer {
         (sum_sq_err / predictions.len() as f64).sqrt()
     }
 
-    /// Convert BuildingTrees to inference-optimized SoAForest.
     fn freeze_forest(&self, trees: Vec<BuildingTree>, base_score: f32) -> SoAForest<ScalarLeaf> {
         let mut forest = SoAForest::for_regression().with_base_score(vec![base_score]);
 
         for building_tree in trees {
             let soa_tree = self.convert_tree(&building_tree);
-            forest.push_tree(soa_tree, 0); // All trees in group 0 for regression
+            forest.push_tree(soa_tree, 0);
         }
 
         forest
     }
 
-    /// Convert a BuildingTree to SoATreeStorage.
+    fn freeze_multioutput_forest(
+        &self,
+        trees_per_output: Vec<Vec<BuildingTree>>,
+        base_scores: Vec<f32>,
+    ) -> SoAForest<ScalarLeaf> {
+        let num_outputs = trees_per_output.len();
+        let mut forest = SoAForest::new(num_outputs as u32).with_base_score(base_scores);
+
+        for (output_idx, output_trees) in trees_per_output.into_iter().enumerate() {
+            for tree in output_trees {
+                let soa_tree = self.convert_tree(&tree);
+                forest.push_tree(soa_tree, output_idx as u32);
+            }
+        }
+
+        forest
+    }
+
     fn convert_tree(&self, building: &BuildingTree) -> SoATreeStorage<ScalarLeaf> {
         let mut builder = SoATreeBuilder::<ScalarLeaf>::new();
 
-        // Process nodes in order (BFS or just iterate since nodes are already numbered)
         for node_id in 0..building.num_nodes() as u32 {
             let node = building.node(node_id);
 
@@ -563,7 +812,6 @@ impl GBTreeTrainer {
             } else {
                 let split = node.split.as_ref().expect("Non-leaf must have split");
                 if split.is_categorical {
-                    // Convert categories_left to bitset format
                     let bitset = categories_to_bitset(&split.categories_left);
                     builder.add_categorical_split(
                         split.feature,
@@ -588,190 +836,25 @@ impl GBTreeTrainer {
     }
 }
 
-impl GBTreeTrainer {
-    /// Train a multiclass gradient boosted forest.
-    ///
-    /// Uses the "one output per tree" strategy: for each boosting round,
-    /// trains K trees (one per class) on the class-specific gradients.
-    /// For K classes and N rounds, this produces K × N trees total.
-    ///
-    /// # Type Parameters
-    ///
-    /// * `G` - Growth policy (DepthWisePolicy or LeafWisePolicy)
-    /// * `B` - Bin index type (u8 or u16)
-    ///
-    /// # Arguments
-    ///
-    /// * `loss` - Multiclass loss function (e.g., `SoftmaxLoss`)
-    /// * `policy` - Growth policy for tree building
-    /// * `quantized` - Quantized feature matrix
-    /// * `labels` - Class labels (0, 1, ..., K-1)
-    /// * `cuts` - Bin cuts for histogram building
-    /// * `eval_sets` - Evaluation sets (currently unused for multiclass)
-    ///
-    /// # Returns
-    ///
-    /// A forest with K trees per round. Tree groups correspond to classes.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use booste_rs::training::{GBTreeTrainer, TrainerParams, SoftmaxLoss, DepthWisePolicy};
-    ///
-    /// let loss = SoftmaxLoss::new(3); // 3 classes
-    /// let params = TrainerParams::default();
-    /// let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-    ///
-    /// let forest = trainer.train_multiclass(
-    ///     &loss,
-    ///     DepthWisePolicy { max_depth: 6 },
-    ///     &quantized,
-    ///     &labels, // class indices: 0, 1, or 2
-    ///     &cuts,
-    ///     &[],
-    /// );
-    /// ```
-    pub fn train_multiclass<G, B, L>(
-        &mut self,
-        loss: &L,
-        policy: G,
-        quantized: &QuantizedMatrix<B>,
-        labels: &[f32],
-        cuts: &BinCuts,
-        _eval_sets: &[QuantizedEvalSet<'_, B>],
-    ) -> SoAForest<ScalarLeaf>
-    where
-        G: GrowthPolicy + Clone,
-        B: BinIndex,
-        L: MulticlassLoss,
-    {
-        let num_rows = quantized.num_rows() as usize;
-        let num_classes = loss.num_classes();
+// ============================================================================
+// QuantizedEvalSet
+// ============================================================================
 
-        assert_eq!(labels.len(), num_rows, "labels length must match data rows");
-
-        // Validate labels are valid class indices
-        for &label in labels {
-            let class = label as usize;
-            assert!(
-                class < num_classes,
-                "Label {} >= num_classes {}",
-                class,
-                num_classes
-            );
-        }
-
-        // Initialize base scores (zero for multiclass softmax)
-        let base_scores: Vec<f32> = vec![0.0; num_classes];
-
-        // Initialize predictions: [num_rows × num_classes]
-        let mut predictions: Vec<f32> = vec![0.0; num_rows * num_classes];
-
-        // Gradient buffer (K outputs per sample)
-        let mut grads = GradientBuffer::new(num_rows, num_classes);
-
-        // Row partitioners (one per class, reused per round)
-        let mut partitioners: Vec<RowPartitioner> =
-            (0..num_classes).map(|_| RowPartitioner::new(num_rows as u32)).collect();
-
-        // Trees per class: trees[class][round]
-        let mut trees_per_class: Vec<Vec<BuildingTree>> =
-            (0..num_classes).map(|_| Vec::with_capacity(self.params.num_rounds as usize)).collect();
-
-        self.logger.info(&format!(
-            "Starting multiclass training: {} rounds, {} samples, {} classes",
-            self.params.num_rounds, num_rows, num_classes
-        ));
-
-        for round in 0..self.params.num_rounds {
-            // Compute gradients for all samples and classes
-            loss.compute_gradients(&predictions, labels, &mut grads);
-
-            let round_seed = self.params.seed.wrapping_add(round as u64);
-
-            // Train one tree per class
-            for class_idx in 0..num_classes {
-                // Create a single-output gradient view for this class
-                let mut class_grads = GradientBuffer::new(num_rows, 1);
-                for row in 0..num_rows {
-                    let (grad, hess) = grads.get(row, class_idx);
-                    class_grads.set(row, 0, grad, hess);
-                }
-
-                // Reset partitioner
-                partitioners[class_idx].reset();
-
-                // Build tree for this class
-                let class_seed = round_seed.wrapping_add(class_idx as u64 * 1000);
-                let mut grower = TreeGrower::new(policy.clone(), cuts, self.params.tree_params.clone());
-                let tree = grower.build_tree_with_seed(
-                    quantized,
-                    &class_grads,
-                    &mut partitioners[class_idx],
-                    class_seed,
-                );
-
-                // Update predictions for this class
-                for row in 0..num_rows {
-                    let pred = Self::predict_row(&tree, quantized, row as u32);
-                    predictions[row * num_classes + class_idx] += pred;
-                }
-
-                trees_per_class[class_idx].push(tree);
-            }
-
-            // Log progress
-            if (round + 1) % 10 == 0 || round == 0 {
-                self.logger.info(&format!(
-                    "Round {} complete, {} trees per class",
-                    round + 1,
-                    trees_per_class[0].len()
-                ));
-            }
-        }
-
-        // Convert to inference forest
-        self.freeze_multiclass_forest(trees_per_class, base_scores)
-    }
-
-    /// Convert trees to inference-optimized SoAForest for multiclass.
-    fn freeze_multiclass_forest(
-        &self,
-        trees_per_class: Vec<Vec<BuildingTree>>,
-        base_scores: Vec<f32>,
-    ) -> SoAForest<ScalarLeaf> {
-        let num_classes = trees_per_class.len();
-        let mut forest = SoAForest::new(num_classes as u32).with_base_score(base_scores);
-
-        // Add trees: each class's trees go to its own group
-        for (class_idx, class_trees) in trees_per_class.into_iter().enumerate() {
-            for tree in class_trees {
-                let soa_tree = self.convert_tree(&tree);
-                forest.push_tree(soa_tree, class_idx as u32);
-            }
-        }
-
-        forest
-    }
+/// Evaluation set for GBTree training with quantized data.
+pub struct QuantizedEvalSet<'a, B: BinIndex> {
+    /// Dataset name (appears in logs).
+    pub name: &'a str,
+    /// Quantized feature matrix.
+    pub data: &'a QuantizedMatrix<B>,
+    /// Labels (length = n_samples).
+    pub labels: &'a [f32],
 }
 
-/// Convert category list to bitset format (u32 words).
-fn categories_to_bitset(categories: &[u32]) -> Vec<u32> {
-    if categories.is_empty() {
-        return vec![];
+impl<'a, B: BinIndex> QuantizedEvalSet<'a, B> {
+    /// Create a new quantized evaluation set.
+    pub fn new(name: &'a str, data: &'a QuantizedMatrix<B>, labels: &'a [f32]) -> Self {
+        Self { name, data, labels }
     }
-
-    let max_cat = *categories.iter().max().unwrap_or(&0);
-    let num_words = (max_cat / 32 + 1) as usize;
-    let mut bitset = vec![0u32; num_words];
-
-    for &cat in categories {
-        let word = (cat / 32) as usize;
-        let bit = cat % 32;
-        bitset[word] |= 1u32 << bit;
-    }
-
-    bitset
 }
 
 // ============================================================================
@@ -781,12 +864,10 @@ fn categories_to_bitset(categories: &[u32]) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::DenseMatrix;
+    use crate::data::{RowMatrix, ColMatrix};
     use crate::training::gbtree::quantize::{CutFinder, ExactQuantileCuts, Quantizer};
-    use crate::training::{DepthWisePolicy, LeafWisePolicy, SquaredLoss};
 
     fn make_regression_data() -> (QuantizedMatrix<u8>, BinCuts, Vec<f32>) {
-        // Simple linear relationship: y = x0 + noise
         let mut data = Vec::new();
         let mut labels = Vec::new();
         for i in 0..100 {
@@ -794,10 +875,13 @@ mod tests {
             let x1 = (i % 10) as f32;
             data.push(x0);
             data.push(x1);
-            labels.push(x0 + 0.1); // y ≈ x0
+            labels.push(x0 + 0.1);
         }
 
-        let matrix = DenseMatrix::from_vec(data, 100, 2);
+        // Create data in row-major format, then convert to col-major for ColumnAccess
+        let row_matrix = RowMatrix::from_vec(data, 100, 2);
+        let matrix: ColMatrix<f32> = (&row_matrix).into();
+        
         let cuts_finder = ExactQuantileCuts::new(1);
         let cuts = cuts_finder.find_cuts(&matrix, 256);
         let quantizer = Quantizer::new(cuts.clone());
@@ -807,20 +891,31 @@ mod tests {
     }
 
     #[test]
-    fn test_trainer_params_default() {
-        let params = TrainerParams::default();
-        assert_eq!(params.num_rounds, 100);
-        assert_eq!(params.base_score, BaseScore::Mean);
+    fn test_default_trainer() {
+        let trainer = GBTreeTrainer::default();
+        assert_eq!(trainer.num_rounds, 100);
+        assert_eq!(trainer.max_depth, 6);
+        assert_eq!(trainer.learning_rate, 0.3);
+    }
+
+    #[test]
+    fn test_builder() {
+        let trainer = GBTreeTrainer::builder()
+            .num_rounds(50u32)
+            .max_depth(4u32)
+            .learning_rate(0.1)
+            .build()
+            .unwrap();
+
+        assert_eq!(trainer.num_rounds, 50);
+        assert_eq!(trainer.max_depth, 4);
+        assert_eq!(trainer.learning_rate, 0.1);
     }
 
     #[test]
     fn test_base_score_mean() {
         let labels = vec![1.0, 2.0, 3.0, 4.0, 5.0];
-        let params = TrainerParams {
-            base_score: BaseScore::Mean,
-            ..Default::default()
-        };
-        let trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
+        let trainer = GBTreeTrainer::default();
         let base = trainer.compute_base_score(&labels);
         assert!((base - 3.0).abs() < 1e-6);
     }
@@ -828,1133 +923,95 @@ mod tests {
     #[test]
     fn test_base_score_fixed() {
         let labels = vec![1.0, 2.0, 3.0];
-        let params = TrainerParams {
-            base_score: BaseScore::Fixed(0.5),
-            ..Default::default()
-        };
-        let trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
+        let trainer = GBTreeTrainer::builder()
+            .base_score(BaseScore::Fixed(0.5))
+            .build()
+            .unwrap();
         let base = trainer.compute_base_score(&labels);
         assert_eq!(base, 0.5);
     }
 
     #[test]
-    fn test_train_depth_wise() {
+    fn test_train_simple() {
         let (quantized, cuts, labels) = make_regression_data();
+        
+        let trainer = GBTreeTrainer::builder()
+            .num_rounds(10u32)
+            .max_depth(3u32)
+            .verbosity(Verbosity::Silent)
+            .build()
+            .unwrap();
 
-        let params = TrainerParams {
-            num_rounds: 10,
-            tree_params: TreeParams {
-                max_depth: 3,
-                learning_rate: 0.3,
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 3 };
-        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
-
-        assert_eq!(forest.num_trees(), 10);
-        assert_eq!(forest.num_groups(), 1);
-    }
-
-    #[test]
-    fn test_train_leaf_wise() {
-        let (quantized, cuts, labels) = make_regression_data();
-
-        let params = TrainerParams {
-            num_rounds: 10,
-            tree_params: TreeParams {
-                max_leaves: 8,
-                learning_rate: 0.3,
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            ..Default::default()
-        };
-
-        let policy = LeafWisePolicy { max_leaves: 8 };
-        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
-
+        let forest = trainer.train_quantized(&quantized, &labels, &cuts, &[]);
         assert_eq!(forest.num_trees(), 10);
     }
 
     #[test]
-    fn test_predict_row() {
-        // Build a simple tree manually and verify prediction
+    fn test_train_reduces_error() {
         let (quantized, cuts, labels) = make_regression_data();
+        
+        let trainer = GBTreeTrainer::builder()
+            .num_rounds(20u32)
+            .max_depth(4u32)
+            .learning_rate(0.3)
+            .verbosity(Verbosity::Silent)
+            .build()
+            .unwrap();
 
-        let params = TrainerParams {
-            num_rounds: 1,
-            tree_params: TreeParams {
-                max_depth: 2,
-                learning_rate: 1.0,
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 2 };
-        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
-
-        // Forest should be valid and produce predictions
-        assert_eq!(forest.num_trees(), 1);
-    }
-
-    #[test]
-    fn test_predictions_improve() {
-        let (quantized, cuts, labels) = make_regression_data();
-
-        let params = TrainerParams {
-            num_rounds: 20,
-            tree_params: TreeParams {
-                max_depth: 4,
-                learning_rate: 0.3,
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 4 };
-        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-
-        // Train for a few rounds
-        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
-
-        // Predict on training data (should fit reasonably well)
-        // Since we're using the inference forest, we need to use raw features
-        // For now just verify we got trees
-        assert!(forest.num_trees() > 0);
-    }
-
-    #[test]
-    fn test_categories_to_bitset() {
-        let cats = vec![0, 1, 5, 32, 33];
-        let bitset = categories_to_bitset(&cats);
-
-        assert_eq!(bitset.len(), 2); // Need 2 words for cat 33
-
-        // Check bits
-        assert!(bitset[0] & (1 << 0) != 0); // cat 0
-        assert!(bitset[0] & (1 << 1) != 0); // cat 1
-        assert!(bitset[0] & (1 << 5) != 0); // cat 5
-        assert!(bitset[1] & (1 << 0) != 0); // cat 32
-        assert!(bitset[1] & (1 << 1) != 0); // cat 33
-    }
-
-    #[test]
-    fn test_empty_categories_bitset() {
-        let cats: Vec<u32> = vec![];
-        let bitset = categories_to_bitset(&cats);
-        assert!(bitset.is_empty());
-    }
-
-    // ========================================================================
-    // Story 7 Test Cases
-    // ========================================================================
-
-    #[test]
-    fn test_gradients_computed_correctly() {
-        // 7.T2: Verify gradients computed using Loss trait
-        let (quantized, cuts, labels) = make_regression_data();
-
-        let params = TrainerParams {
-            num_rounds: 1,
-            tree_params: TreeParams {
-                max_depth: 2,
-                learning_rate: 1.0,
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            base_score: BaseScore::Zero, // Start from 0 for predictable gradients
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 2 };
-        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let _forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
-
-        // For squared loss with predictions=0, gradients should be -labels
-        // The tree should be built to reduce these gradients
-        // We can verify the forest was built (training worked)
-    }
-
-    #[test]
-    fn test_predictions_updated_after_tree() {
-        // 7.T3: Predictions updated after each tree
-        let (quantized, cuts, labels) = make_regression_data();
-
-        // Train multiple rounds and check that more trees = better fit
-        let params_1 = TrainerParams {
-            num_rounds: 1,
-            tree_params: TreeParams {
-                max_depth: 3,
-                learning_rate: 0.5,
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            ..Default::default()
-        };
-
-        let params_10 = TrainerParams {
-            num_rounds: 10,
-            tree_params: TreeParams {
-                max_depth: 3,
-                learning_rate: 0.5,
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 3 };
-
-        let mut trainer_1 = GBTreeTrainer::new(Box::new(SquaredLoss), params_1);
-        let forest_1 = trainer_1.train(policy.clone(), &quantized, &labels, &cuts, &[]);
-
-        let mut trainer_10 = GBTreeTrainer::new(Box::new(SquaredLoss), params_10);
-        let forest_10 = trainer_10.train(policy, &quantized, &labels, &cuts, &[]);
-
-        assert_eq!(forest_1.num_trees(), 1);
-        assert_eq!(forest_10.num_trees(), 10);
-    }
-
-    #[test]
-    fn test_early_stopping_triggers() {
-        // 7.T4: Early stopping triggers after patience exceeded
-        use crate::training::Rmse;
-
-        let (quantized, cuts, labels) = make_regression_data();
-
-        // Create separate eval set with different labels to simulate overfitting
-        // This ensures the eval loss will stop improving while train loss continues
-        let mut eval_labels = labels.clone();
-        // Add noise to eval labels - model will overfit to training data
-        for (i, l) in eval_labels.iter_mut().enumerate() {
-            *l += ((i % 7) as f32 - 3.0) * 2.0; // Systematic noise
-        }
-
-        let params = TrainerParams {
-            num_rounds: 100, // Many rounds - early stopping should kick in
-            tree_params: TreeParams {
-                max_depth: 6, // Deep trees to overfit
-                learning_rate: 0.8, // High learning rate to overfit quickly
-                min_samples_split: 1,
-                min_samples_leaf: 1,
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 6 };
-        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params)
-            .with_early_stopping(Box::new(Rmse), 3); // Patience of 3 rounds
-
-        let eval_set = QuantizedEvalSet::new("eval", &quantized, &eval_labels);
-        let forest = trainer.train(
-            policy,
-            &quantized,
-            &labels,
-            &cuts,
-            &[eval_set],
-        );
-
-        // With high learning rate, deep trees, and noisy eval data,
-        // should stop when overfitting starts (eval loss increases)
-        assert!(
-            forest.num_trees() < 100,
-            "Expected early stopping, got {} trees",
-            forest.num_trees()
-        );
-    }
-
-    #[test]
-    fn test_forest_prediction_quality() {
-        // Integration-level test: verify trained forest can predict
-        let (quantized, cuts, labels) = make_regression_data();
-
-        let params = TrainerParams {
-            num_rounds: 50,
-            tree_params: TreeParams {
-                max_depth: 4,
-                learning_rate: 0.2,
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 4 };
-        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
-
-        // The forest should produce reasonable predictions
-        assert_eq!(forest.num_trees(), 50);
-        assert_eq!(forest.num_groups(), 1);
-        // Base score should be mean of labels (around 5.0 for our data)
-        let base_scores = forest.base_score();
-        assert!(base_scores.len() == 1);
-        let bs = base_scores[0];
-        // Mean of y = x0 + 0.1 where x0 in [0, 10) with step 0.1
-        // Mean should be around (0 + 9.9) / 2 + 0.1 = 5.05
-        assert!(
-            (bs - 5.0).abs() < 1.0,
-            "Base score {} far from expected ~5.0",
-            bs
-        );
-    }
-
-    #[test]
-    fn test_leaf_wise_vs_depth_wise() {
-        // Compare leaf-wise and depth-wise on same data
-        let (quantized, cuts, labels) = make_regression_data();
-
-        let params = TrainerParams {
-            num_rounds: 20,
-            tree_params: TreeParams {
-                max_depth: 4,
-                max_leaves: 16,
-                learning_rate: 0.3,
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            ..Default::default()
-        };
-
-        let depth_policy = DepthWisePolicy { max_depth: 4 };
-        let leaf_policy = LeafWisePolicy { max_leaves: 16 };
-
-        let mut trainer_d = GBTreeTrainer::new(Box::new(SquaredLoss), params.clone());
-        let forest_d = trainer_d.train(depth_policy, &quantized, &labels, &cuts, &[]);
-
-        let mut trainer_l = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest_l = trainer_l.train(leaf_policy, &quantized, &labels, &cuts, &[]);
-
-        // Both should produce 20 trees
-        assert_eq!(forest_d.num_trees(), 20);
-        assert_eq!(forest_l.num_trees(), 20);
-    }
-
-    #[test]
-    fn test_train_with_data() {
-        // Test the simplified API that handles quantization internally
+        let forest = trainer.train_quantized(&quantized, &labels, &cuts, &[]);
+        
+        // Compute final predictions
+        use crate::predict::{Predictor, StandardTraversal};
+        use crate::data::RowMatrix;
+        
         let mut data = Vec::new();
-        let mut labels = Vec::new();
         for i in 0..100 {
             let x0 = i as f32 / 10.0;
             let x1 = (i % 10) as f32;
             data.push(x0);
             data.push(x1);
-            labels.push(x0 + 0.1); // y ≈ x0
         }
+        let row_matrix = RowMatrix::from_vec(data, 100, 2);
+        let predictor = Predictor::<StandardTraversal>::new(&forest);
+        let predictions = predictor.predict(&row_matrix).into_vec();
 
-        let matrix = DenseMatrix::from_vec(data, 100, 2);
+        // Check RMSE is reasonable
+        let rmse: f64 = predictions
+            .iter()
+            .zip(labels.iter())
+            .map(|(p, l)| (p - l).powi(2) as f64)
+            .sum::<f64>()
+            / labels.len() as f64;
+        let rmse = rmse.sqrt();
 
-        let params = TrainerParams {
-            num_rounds: 10,
-            tree_params: TreeParams {
-                max_depth: 3,
-                learning_rate: 0.3,
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 3 };
-        let cut_finder = ExactQuantileCuts::default();
-        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-
-        let forest = trainer.train_with_data(
-            policy,
-            &matrix,
-            &labels,
-            &cut_finder,
-            256,
-            &[], // no eval sets
-        );
-
-        assert_eq!(forest.num_trees(), 10);
-        assert_eq!(forest.num_groups(), 1);
+        assert!(rmse < 1.0, "RMSE should be < 1.0, got {}", rmse);
     }
 
     #[test]
-    fn test_train_with_data_eval_sets() {
-        // Test with evaluation sets
-        let mut data = Vec::new();
-        let mut labels = Vec::new();
-        for i in 0..100 {
-            let x0 = i as f32 / 10.0;
-            let x1 = (i % 10) as f32;
-            data.push(x0);
-            data.push(x1);
-            labels.push(x0 + 0.1);
-        }
-
-        let matrix = DenseMatrix::from_vec(data, 100, 2);
-
-        // Create a small validation set
-        let mut val_data = Vec::new();
-        let mut val_labels = Vec::new();
-        for i in 0..20 {
-            let x0 = i as f32 / 10.0 + 0.5;
-            let x1 = (i % 10) as f32;
-            val_data.push(x0);
-            val_data.push(x1);
-            val_labels.push(x0 + 0.1);
-        }
-        let val_matrix = DenseMatrix::from_vec(val_data, 20, 2);
-
-        let params = TrainerParams {
-            num_rounds: 10,
-            tree_params: TreeParams {
-                max_depth: 3,
-                learning_rate: 0.3,
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 3 };
-        let cut_finder = ExactQuantileCuts::default();
-        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-
-        let eval_sets = vec![EvalSet::new("val", &val_matrix, &val_labels)];
-
-        let forest = trainer.train_with_data(
-            policy,
-            &matrix,
-            &labels,
-            &cut_finder,
-            256,
-            &eval_sets,
-        );
-
-        assert_eq!(forest.num_trees(), 10);
-    }
-
-    // ========================================================================
-    // Row Sampling Tests (Story 3)
-    // ========================================================================
-
-    #[test]
-    fn test_train_with_subsample() {
-        // 3.T1: Training with row subsampling produces valid forest
+    fn test_leaf_wise_growth() {
         let (quantized, cuts, labels) = make_regression_data();
+        
+        let trainer = GBTreeTrainer::builder()
+            .num_rounds(10u32)
+            .growth_mode(GrowthMode::LeafWise)
+            .max_leaves(8u32)
+            .verbosity(Verbosity::Silent)
+            .build()
+            .unwrap();
 
-        let params = TrainerParams {
-            num_rounds: 10,
-            tree_params: TreeParams {
-                max_depth: 3,
-                learning_rate: 0.3,
-                subsample: 0.8, // Use 80% of rows per tree
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            seed: 42,
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 3 };
-        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
-
-        assert_eq!(forest.num_trees(), 10);
-        assert_eq!(forest.num_groups(), 1);
-    }
-
-    #[test]
-    fn test_subsample_reproducibility() {
-        // 3.T2: Same seed produces identical forests
-        let (quantized, cuts, labels) = make_regression_data();
-
-        let make_params = |seed: u64| TrainerParams {
-            num_rounds: 5,
-            tree_params: TreeParams {
-                max_depth: 3,
-                learning_rate: 0.3,
-                subsample: 0.5,
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            seed,
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 3 };
-
-        // Train twice with same seed
-        let mut trainer1 = GBTreeTrainer::new(Box::new(SquaredLoss), make_params(42));
-        let forest1 = trainer1.train(policy.clone(), &quantized, &labels, &cuts, &[]);
-
-        let mut trainer2 = GBTreeTrainer::new(Box::new(SquaredLoss), make_params(42));
-        let forest2 = trainer2.train(policy.clone(), &quantized, &labels, &cuts, &[]);
-
-        // Same seed should produce identical base scores
-        assert_eq!(forest1.base_score(), forest2.base_score());
-        assert_eq!(forest1.num_trees(), forest2.num_trees());
-    }
-
-    #[test]
-    fn test_different_seeds_different_forests() {
-        // 3.T3: Different seeds produce different forests
-        let (quantized, cuts, labels) = make_regression_data();
-
-        let make_params = |seed: u64| TrainerParams {
-            num_rounds: 5,
-            tree_params: TreeParams {
-                max_depth: 3,
-                learning_rate: 0.3,
-                subsample: 0.5,
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            seed,
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 3 };
-
-        let mut trainer1 = GBTreeTrainer::new(Box::new(SquaredLoss), make_params(42));
-        let forest1 = trainer1.train(policy.clone(), &quantized, &labels, &cuts, &[]);
-
-        let mut trainer2 = GBTreeTrainer::new(Box::new(SquaredLoss), make_params(123));
-        let forest2 = trainer2.train(policy.clone(), &quantized, &labels, &cuts, &[]);
-
-        // Different seeds should produce different forests
-        // (they might accidentally be the same, but very unlikely with 50% subsample)
-        assert_eq!(forest1.num_trees(), forest2.num_trees());
-        // Base scores should be the same (computed from all labels)
-        assert_eq!(forest1.base_score(), forest2.base_score());
-    }
-
-    #[test]
-    fn test_subsample_full_sample() {
-        // 3.T4: subsample=1.0 should use all rows (same as no sampling)
-        let (quantized, cuts, labels) = make_regression_data();
-
-        let params_no_sample = TrainerParams {
-            num_rounds: 5,
-            tree_params: TreeParams {
-                max_depth: 3,
-                learning_rate: 0.3,
-                subsample: 1.0, // No sampling
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            seed: 42,
-            ..Default::default()
-        };
-
-        let params_with_sample = TrainerParams {
-            num_rounds: 5,
-            tree_params: TreeParams {
-                max_depth: 3,
-                learning_rate: 0.3,
-                subsample: 1.0, // Still no effective sampling
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            seed: 999, // Different seed shouldn't matter
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 3 };
-
-        let mut trainer1 = GBTreeTrainer::new(Box::new(SquaredLoss), params_no_sample);
-        let forest1 = trainer1.train(policy.clone(), &quantized, &labels, &cuts, &[]);
-
-        let mut trainer2 = GBTreeTrainer::new(Box::new(SquaredLoss), params_with_sample);
-        let forest2 = trainer2.train(policy.clone(), &quantized, &labels, &cuts, &[]);
-
-        // With subsample=1.0, seed shouldn't affect result
-        assert_eq!(forest1.base_score(), forest2.base_score());
-        assert_eq!(forest1.num_trees(), forest2.num_trees());
-    }
-
-    #[test]
-    fn test_subsample_small_ratio() {
-        // 3.T5: Very small subsample ratio still works
-        let (quantized, cuts, labels) = make_regression_data();
-
-        let params = TrainerParams {
-            num_rounds: 5,
-            tree_params: TreeParams {
-                max_depth: 2,
-                learning_rate: 0.3,
-                subsample: 0.1, // Only 10% of rows (10 rows from 100)
-                min_samples_split: 1,
-                min_samples_leaf: 1,
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            seed: 42,
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 2 };
-        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
-
-        // Should still produce valid trees
-        assert_eq!(forest.num_trees(), 5);
-    }
-
-    // ========================================================================
-    // Column Sampling Tests (Story 3)
-    // ========================================================================
-
-    #[test]
-    fn test_train_with_colsample_bytree() {
-        // 3.T6: Training with column subsampling per tree
-        let (quantized, cuts, labels) = make_regression_data();
-
-        let params = TrainerParams {
-            num_rounds: 10,
-            tree_params: TreeParams {
-                max_depth: 3,
-                learning_rate: 0.3,
-                colsample_bytree: 0.5, // Use 50% of features per tree
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            seed: 42,
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 3 };
-        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
-
+        let forest = trainer.train_quantized(&quantized, &labels, &cuts, &[]);
         assert_eq!(forest.num_trees(), 10);
     }
 
     #[test]
-    fn test_train_with_colsample_bylevel() {
-        // 3.T7: Training with column subsampling per level
-        let (quantized, cuts, labels) = make_regression_data();
+    fn test_loss_logistic() {
+        let trainer = GBTreeTrainer::builder()
+            .loss(LossFunction::Logistic)
+            .num_rounds(5u32)
+            .verbosity(Verbosity::Silent)
+            .build()
+            .unwrap();
 
-        let params = TrainerParams {
-            num_rounds: 10,
-            tree_params: TreeParams {
-                max_depth: 4,
-                learning_rate: 0.3,
-                colsample_bylevel: 0.8, // Use 80% of features per level
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            seed: 42,
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 4 };
-        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
-
-        assert_eq!(forest.num_trees(), 10);
-    }
-
-    #[test]
-    fn test_train_with_colsample_bynode() {
-        // 3.T8: Training with column subsampling per node
-        let (quantized, cuts, labels) = make_regression_data();
-
-        let params = TrainerParams {
-            num_rounds: 10,
-            tree_params: TreeParams {
-                max_depth: 3,
-                learning_rate: 0.3,
-                colsample_bynode: 0.7, // Use 70% of features per node
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            seed: 42,
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 3 };
-        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
-
-        assert_eq!(forest.num_trees(), 10);
-    }
-
-    #[test]
-    fn test_train_with_combined_sampling() {
-        // 3.T9: Training with both row and column sampling combined
-        let (quantized, cuts, labels) = make_regression_data();
-
-        let params = TrainerParams {
-            num_rounds: 10,
-            tree_params: TreeParams {
-                max_depth: 3,
-                learning_rate: 0.3,
-                subsample: 0.8,           // 80% of rows
-                colsample_bytree: 0.9,    // 90% of features per tree
-                colsample_bylevel: 0.9,   // 90% of remaining per level
-                colsample_bynode: 0.9,    // 90% of remaining per node
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            seed: 42,
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 3 };
-        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
-
-        assert_eq!(forest.num_trees(), 10);
-    }
-
-    #[test]
-    fn test_colsample_reproducibility() {
-        // 3.T10: Same seed produces identical forests with column sampling
-        let (quantized, cuts, labels) = make_regression_data();
-
-        let make_params = |seed: u64| TrainerParams {
-            num_rounds: 5,
-            tree_params: TreeParams {
-                max_depth: 3,
-                learning_rate: 0.3,
-                colsample_bytree: 0.5,
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            seed,
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 3 };
-
-        let mut trainer1 = GBTreeTrainer::new(Box::new(SquaredLoss), make_params(42));
-        let forest1 = trainer1.train(policy.clone(), &quantized, &labels, &cuts, &[]);
-
-        let mut trainer2 = GBTreeTrainer::new(Box::new(SquaredLoss), make_params(42));
-        let forest2 = trainer2.train(policy.clone(), &quantized, &labels, &cuts, &[]);
-
-        // Same seed should produce identical forests
-        assert_eq!(forest1.base_score(), forest2.base_score());
-        assert_eq!(forest1.num_trees(), forest2.num_trees());
-    }
-
-    #[test]
-    fn test_aggressive_sampling() {
-        // 3.T11: Aggressive sampling (low values) should still work
-        let (quantized, cuts, labels) = make_regression_data();
-
-        let params = TrainerParams {
-            num_rounds: 5,
-            tree_params: TreeParams {
-                max_depth: 3,
-                learning_rate: 0.5,
-                subsample: 0.3,           // Only 30% of rows
-                colsample_bytree: 0.5,    // Only 50% of features
-                min_samples_split: 1,
-                min_samples_leaf: 1,
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            seed: 42,
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 3 };
-        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
-
-        // Should still produce valid trees
-        assert_eq!(forest.num_trees(), 5);
-    }
-
-    // ---- Monotonic Constraint Tests ----
-    
-    #[test]
-    fn test_train_with_monotonic_constraints() {
-        // 7.T1: Train with monotonic constraints enabled
-        use crate::training::gbtree::MonotonicConstraint;
-        
-        let (quantized, cuts, labels) = make_regression_data();
-
-        let params = TrainerParams {
-            num_rounds: 10,
-            tree_params: TreeParams {
-                max_depth: 3,
-                learning_rate: 0.3,
-                // Increasing constraint on feature 0, no constraint on others
-                monotone_constraints: vec![MonotonicConstraint::Increasing],
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            seed: 42,
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 3 };
-        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
-
-        // Should produce valid trees
-        assert_eq!(forest.num_trees(), 10);
-    }
-
-    #[test]
-    fn test_monotonic_constraint_enforced_in_predictions() {
-        // 7.T2: Verify monotonic constraint produces monotonic predictions
-        use crate::training::gbtree::MonotonicConstraint;
-        use crate::data::DenseMatrix;
-        
-        // Create data with a clear monotonic pattern
-        // Feature 0: 0, 1, 2, ..., 19
-        // Labels: linear relationship with noise
-        let n_rows = 20;
-        let n_features = 1;
-        let data: Vec<f32> = (0..n_rows).map(|x| x as f32).collect();
-        let matrix = DenseMatrix::from_vec(data, n_rows, n_features);
-        
-        // Labels are roughly linearly increasing with some noise
-        let labels: Vec<f32> = (0..n_rows).map(|x| x as f32 + 0.5).collect();
-
-        let cuts_finder = ExactQuantileCuts::new(1);
-        let quantizer = Quantizer::from_data(&matrix, &cuts_finder, 256);
-        let quantized = quantizer.quantize_u8(&matrix);
-        let cuts = (*quantizer.cuts()).clone();
-
-        let params = TrainerParams {
-            num_rounds: 10,
-            tree_params: TreeParams {
-                max_depth: 3,
-                learning_rate: 0.5,
-                monotone_constraints: vec![MonotonicConstraint::Increasing],
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            seed: 42,
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 3 };
-        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
-
-        // Get predictions for each row
-        let mut predictions: Vec<f32> = Vec::new();
-        for i in 0..n_rows {
-            let row: Vec<f32> = vec![i as f32];
-            let pred = forest.predict_row(&row);
-            predictions.push(pred[0]); // Single output regression
-        }
-
-        // Verify monotonicity: predictions should be non-decreasing
-        for i in 1..predictions.len() {
-            assert!(
-                predictions[i] >= predictions[i - 1] - 0.001, // Small epsilon for float comparison
-                "Monotonicity violated: pred[{}]={:.4} < pred[{}]={:.4}",
-                i, predictions[i], i - 1, predictions[i - 1]
-            );
-        }
-    }
-
-    #[test]
-    fn test_decreasing_constraint_enforced() {
-        // 7.T3: Verify decreasing constraint produces decreasing predictions
-        use crate::training::gbtree::MonotonicConstraint;
-        use crate::data::DenseMatrix;
-        
-        let n_rows = 20;
-        let n_features = 1;
-        let data: Vec<f32> = (0..n_rows).map(|x| x as f32).collect();
-        let matrix = DenseMatrix::from_vec(data, n_rows, n_features);
-        
-        // Labels are decreasing: higher feature values -> lower labels
-        let labels: Vec<f32> = (0..n_rows).map(|x| (n_rows - x) as f32 + 0.5).collect();
-
-        let cuts_finder = ExactQuantileCuts::new(1);
-        let quantizer = Quantizer::from_data(&matrix, &cuts_finder, 256);
-        let quantized = quantizer.quantize_u8(&matrix);
-        let cuts = (*quantizer.cuts()).clone();
-
-        let params = TrainerParams {
-            num_rounds: 10,
-            tree_params: TreeParams {
-                max_depth: 3,
-                learning_rate: 0.5,
-                monotone_constraints: vec![MonotonicConstraint::Decreasing],
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            seed: 42,
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 3 };
-        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
-
-        // Get predictions for each row
-        let mut predictions: Vec<f32> = Vec::new();
-        for i in 0..n_rows {
-            let row: Vec<f32> = vec![i as f32];
-            let pred = forest.predict_row(&row);
-            predictions.push(pred[0]); // Single output regression
-        }
-
-        // Verify monotonicity: predictions should be non-increasing
-        for i in 1..predictions.len() {
-            assert!(
-                predictions[i] <= predictions[i - 1] + 0.001,
-                "Decreasing constraint violated: pred[{}]={:.4} > pred[{}]={:.4}",
-                i, predictions[i], i - 1, predictions[i - 1]
-            );
-        }
-    }
-
-    #[test]
-    fn test_goss_sampling() {
-        // Test GOSS sampling produces valid model
-        // Use similar data construction as make_regression_data
-        let mut data = Vec::new();
-        let mut labels = Vec::new();
-        for i in 0..100 {
-            let x0 = i as f32 / 10.0;
-            let x1 = (i % 10) as f32;
-            data.push(x0);
-            data.push(x1);
-            labels.push(x0 + 0.1);
-        }
-
-        let matrix = DenseMatrix::from_vec(data, 100, 2);
-        let cuts_finder = ExactQuantileCuts::new(2);
-        let cuts = cuts_finder.find_cuts(&matrix, 256);
-        let quantizer = Quantizer::new(cuts.clone());
-        let quantized = quantizer.quantize::<_, u8>(&matrix);
-
-        let goss_params = GossParams::new(0.3, 0.2);
-        let params = TrainerParams {
-            num_rounds: 10,
-            tree_params: TreeParams {
-                max_depth: 3,
-                learning_rate: 0.3,
-                ..Default::default()
-            },
-            row_sampling: RowSamplingStrategy::Goss(goss_params),
-            verbosity: Verbosity::Silent,
-            seed: 42,
-            ..Default::default()
-        };
-
-        let policy = DepthWisePolicy { max_depth: 3 };
-        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest = trainer.train(policy, &quantized, &labels, &cuts, &[]);
-
-        // Model should have trained successfully
-        assert!(forest.num_trees() > 0);
-        
-        // Should make reasonable predictions
-        let test_row: Vec<f32> = vec![5.0, 5.0];
-        let pred = forest.predict_row(&test_row);
-        assert!(!pred[0].is_nan());
-    }
-
-    #[test]
-    fn test_goss_vs_random_sampling() {
-        // Compare GOSS and random sampling - both should produce valid models
-        // Use similar data construction as make_regression_data
-        let mut data = Vec::new();
-        let mut labels = Vec::new();
-        for i in 0..100 {
-            let x0 = i as f32 / 10.0;
-            let x1 = (i % 10) as f32;
-            data.push(x0);
-            data.push(x1);
-            labels.push(x0 + 0.1);
-        }
-
-        let matrix = DenseMatrix::from_vec(data, 100, 2);
-        let cuts_finder = ExactQuantileCuts::new(2);
-        let cuts = cuts_finder.find_cuts(&matrix, 256);
-        let quantizer = Quantizer::new(cuts.clone());
-        let quantized = quantizer.quantize::<_, u8>(&matrix);
-
-        // Train with GOSS
-        let goss_params = TrainerParams {
-            num_rounds: 20,
-            tree_params: TreeParams {
-                max_depth: 3,
-                learning_rate: 0.3,
-                ..Default::default()
-            },
-            row_sampling: RowSamplingStrategy::Goss(GossParams::new(0.3, 0.2)),
-            verbosity: Verbosity::Silent,
-            seed: 42,
-            ..Default::default()
-        };
-        let policy = DepthWisePolicy { max_depth: 3 };
-        let mut goss_trainer = GBTreeTrainer::new(Box::new(SquaredLoss), goss_params);
-        let goss_forest = goss_trainer.train(policy.clone(), &quantized, &labels, &cuts, &[]);
-
-        // Train with random sampling (same effective sample rate)
-        let random_params = TrainerParams {
-            num_rounds: 20,
-            tree_params: TreeParams {
-                max_depth: 3,
-                learning_rate: 0.3,
-                subsample: 0.44, // 0.3 + 0.2 * 0.7 = 0.44
-                ..Default::default()
-            },
-            row_sampling: RowSamplingStrategy::Random,
-            verbosity: Verbosity::Silent,
-            seed: 42,
-            ..Default::default()
-        };
-        let mut random_trainer = GBTreeTrainer::new(Box::new(SquaredLoss), random_params);
-        let random_forest = random_trainer.train(policy, &quantized, &labels, &cuts, &[]);
-
-        // Both should have trained successfully
-        assert!(goss_forest.num_trees() > 0);
-        assert!(random_forest.num_trees() > 0);
-        
-        // Both should make reasonable predictions
-        let test_row: Vec<f32> = vec![5.0, 5.0];
-        let goss_pred = goss_forest.predict_row(&test_row)[0];
-        let random_pred = random_forest.predict_row(&test_row)[0];
-        
-        assert!(!goss_pred.is_nan());
-        assert!(!random_pred.is_nan());
-        
-        // Predictions may differ but should be in similar range
-        println!("GOSS prediction: {}, Random prediction: {}", goss_pred, random_pred);
-    }
-
-    // ====================================================================
-    // Multiclass trainer tests
-    // ====================================================================
-
-    use crate::training::SoftmaxLoss;
-
-    fn make_multiclass_data() -> (QuantizedMatrix<u8>, BinCuts, Vec<f32>) {
-        // Simple 3-class problem with more samples:
-        // Class 0: x0 in [0, 3)
-        // Class 1: x0 in [3, 6)
-        // Class 2: x0 in [6, 9)
-        let mut data = Vec::new();
-        let mut labels = Vec::new();
-        
-        for i in 0..90 {
-            let x0 = (i % 9) as f32; // Values 0-8
-            let x1 = (i / 9) as f32;  // Different rows for each value
-            data.push(x0);
-            data.push(x1);
-            
-            // Assign class based on x0 value
-            let class = if x0 < 3.0 {
-                0.0
-            } else if x0 < 6.0 {
-                1.0
-            } else {
-                2.0
-            };
-            labels.push(class);
-        }
-
-        let matrix = DenseMatrix::from_vec(data, 90, 2);
-        // Use more samples per quantile to get better cuts
-        let cuts_finder = ExactQuantileCuts::new(1);
-        let cuts = cuts_finder.find_cuts(&matrix, 256);
-        let quantizer = Quantizer::new(cuts.clone());
-        let quantized = quantizer.quantize::<_, u8>(&matrix);
-
-        (quantized, cuts, labels)
-    }
-
-    #[test]
-    fn test_multiclass_trainer_basic() {
-        let (quantized, cuts, labels) = make_multiclass_data();
-
-        let params = TrainerParams {
-            num_rounds: 5,
-            tree_params: TreeParams {
-                max_depth: 3,
-                learning_rate: 0.3,
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            ..Default::default()
-        };
-
-        let loss = SoftmaxLoss::new(3);
-        let policy = DepthWisePolicy { max_depth: 3 };
-        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest = trainer.train_multiclass(&loss, policy, &quantized, &labels, &cuts, &[]);
-
-        // Should have 3 groups (classes) × 5 rounds = 15 total trees
-        assert_eq!(forest.num_trees(), 15);
-        assert_eq!(forest.num_groups(), 3);
-    }
-
-    #[test]
-    fn test_multiclass_predictions() {
-        // Create simple 1-feature data for clear class boundaries
-        // 30 samples: bins 1-3 = class 0, bins 4-6 = class 1, bins 7-9 = class 2
-        let mut data = Vec::new();
-        let mut labels = Vec::new();
-        
-        for i in 0..30 {
-            let x0 = (i % 9) as f32; // Values 0-8 (class boundary)
-            data.push(x0);
-            
-            // Assign class based on x0 value
-            let class = if x0 < 3.0 {
-                0.0
-            } else if x0 < 6.0 {
-                1.0
-            } else {
-                2.0
-            };
-            labels.push(class);
-        }
-        
-        let matrix = DenseMatrix::from_vec(data, 30, 1);
-        let cuts_finder = ExactQuantileCuts::new(1);
-        let cuts = cuts_finder.find_cuts(&matrix, 256);
-        let quantizer = Quantizer::new(cuts.clone());
-        let quantized = quantizer.quantize::<_, u8>(&matrix);
-
-        let params = TrainerParams {
-            num_rounds: 1,
-            tree_params: TreeParams {
-                max_depth: 3,
-                learning_rate: 1.0,
-                ..Default::default()
-            },
-            verbosity: Verbosity::Silent,
-            ..Default::default()
-        };
-
-        let loss = SoftmaxLoss::new(3);
-        let policy = DepthWisePolicy { max_depth: 3 };
-        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
-        let forest = trainer.train_multiclass(&loss, policy, &quantized, &labels, &cuts, &[]);
-        
-        // Test predictions for each class region
-        // Class 0: x0 < 3
-        let pred0 = forest.predict_row(&[1.0]);
-        assert_eq!(pred0.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).map(|(i, _)| i), Some(0));
-        
-        // Class 1: 3 <= x0 < 6
-        let pred1 = forest.predict_row(&[4.0]);
-        assert_eq!(pred1.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).map(|(i, _)| i), Some(1));
-        
-        // Class 2: x0 >= 6
-        let pred2 = forest.predict_row(&[7.0]);
-        assert_eq!(pred2.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).map(|(i, _)| i), Some(2));
+        assert_eq!(trainer.loss, LossFunction::Logistic);
     }
 }

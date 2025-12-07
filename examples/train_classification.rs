@@ -10,11 +10,7 @@
 
 use booste_rs::data::{ColMatrix, RowMatrix};
 use booste_rs::predict::{Predictor, StandardTraversal};
-use booste_rs::training::gbtree::ExactQuantileCuts;
-use booste_rs::training::{
-    DepthWisePolicy, GBTreeTrainer, LeafWisePolicy, LogisticLoss, TrainerParams, TreeParams,
-    Verbosity,
-};
+use booste_rs::training::{GBTreeTrainer, GrowthMode, LossFunction, Verbosity};
 
 fn main() {
     // Generate synthetic binary classification data
@@ -47,36 +43,19 @@ fn main() {
     let row_matrix = RowMatrix::from_vec(features, n_samples, n_features);
     let col_matrix: ColMatrix<f32> = row_matrix.to_layout();
 
-    // Configure training - shallow trees for classification
-    let tree_params = TreeParams {
-        max_depth: 3,
-        max_leaves: 8,
-        learning_rate: 0.1,
-        ..Default::default()
-    };
-
-    let params = TrainerParams {
-        num_rounds: 30,
-        tree_params,
-        verbosity: Verbosity::Info,
-        ..Default::default()
-    };
-
-    // Train with logistic loss (binary classification)
-    let mut trainer = GBTreeTrainer::new(Box::new(LogisticLoss), params);
-
-    // Demonstrate depth-wise growth strategy
+    // Train with depth-wise growth (XGBoost style)
     println!("=== Depth-wise Growth (XGBoost style) ===\n");
-    let depth_policy = DepthWisePolicy { max_depth: 3 };
-    let cut_finder = ExactQuantileCuts::default();
-    let forest_depth = trainer.train_with_data(
-        depth_policy,
-        &col_matrix,
-        &labels,
-        &cut_finder,
-        256,
-        &[],
-    );
+
+    let trainer_depth = GBTreeTrainer::builder()
+        .loss(LossFunction::Logistic)
+        .num_rounds(30u32)
+        .max_depth(3u8)
+        .learning_rate(0.1f32)
+        .verbosity(Verbosity::Info)
+        .build()
+        .unwrap();
+
+    let forest_depth = trainer_depth.train(&col_matrix, &labels, &[]);
 
     // Evaluate depth-wise
     let predictor_depth = Predictor::<StandardTraversal>::new(&forest_depth);
@@ -86,33 +65,20 @@ fn main() {
     println!("\nDepth-wise: {} trees", forest_depth.num_trees());
     println!("Accuracy: {:.2}%", acc_depth * 100.0);
 
-    // Train with leaf-wise growth
-    let tree_params_leaf = TreeParams {
-        max_depth: 0, // No depth limit for leaf-wise
-        max_leaves: 8,
-        learning_rate: 0.1,
-        ..Default::default()
-    };
-
-    let params_leaf = TrainerParams {
-        num_rounds: 30,
-        tree_params: tree_params_leaf,
-        verbosity: Verbosity::Info,
-        ..Default::default()
-    };
-
-    let mut trainer_leaf = GBTreeTrainer::new(Box::new(LogisticLoss), params_leaf);
-
+    // Train with leaf-wise growth (LightGBM style)
     println!("\n=== Leaf-wise Growth (LightGBM style) ===\n");
-    let leaf_policy = LeafWisePolicy { max_leaves: 8 };
-    let forest_leaf = trainer_leaf.train_with_data(
-        leaf_policy,
-        &col_matrix,
-        &labels,
-        &cut_finder,
-        256,
-        &[],
-    );
+
+    let trainer_leaf = GBTreeTrainer::builder()
+        .loss(LossFunction::Logistic)
+        .num_rounds(30u32)
+        .growth_mode(GrowthMode::LeafWise) // Leaf-wise growth (LightGBM style)
+        .max_leaves(8u32)
+        .learning_rate(0.1f32)
+        .verbosity(Verbosity::Info)
+        .build()
+        .unwrap();
+
+    let forest_leaf = trainer_leaf.train(&col_matrix, &labels, &[]);
 
     // Evaluate leaf-wise
     let predictor_leaf = Predictor::<StandardTraversal>::new(&forest_leaf);
