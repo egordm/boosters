@@ -64,7 +64,7 @@ pub use gbtree::{
     GBTreeTrainerBuilder, GainParams, GreedySplitFinder, GrowthMode, GrowthPolicy, GrowthState,
     GrowthStrategy, HistogramBuilder, HistogramSubtractor, LeafWisePolicy, LeafWiseState,
     NodeCandidate, NodeHistogram, QuantizedEvalSet, QuantizedMatrix, Quantizer, RowPartitioner,
-    SplitFinder, SplitInfo, TreeGrower, TreeParams, leaf_objective, leaf_weight, split_gain,
+    SplitFinder, SplitInfo, TreeBuildParams, TreeGrower, leaf_objective, leaf_weight, split_gain,
 };
 
 // Re-export linear types for convenience

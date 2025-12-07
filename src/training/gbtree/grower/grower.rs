@@ -7,13 +7,19 @@
 //! - Growth policy
 //! - Monotonic constraints
 //! - Interaction constraints
+//!
+//! # Design
+//!
+//! `TreeGrower` receives pre-configured components (samplers, constraint checkers)
+//! rather than constructing them from raw parameters. This keeps the grower focused
+//! on tree building while the trainer handles configuration.
 
 use std::collections::HashMap;
 
 use super::building::{BuildingTree, NodeCandidate};
 use super::policy::{GrowthPolicy, GrowthState};
 use super::super::constraints::{
-    InteractionConstraints, MonotonicBounds, MonotonicChecker, MonotonicConstraint,
+    InteractionConstraints, MonotonicBounds, MonotonicChecker,
 };
 use super::super::histogram::{HistogramBuilder, NodeHistogram};
 use super::super::partition::RowPartitioner;
@@ -23,13 +29,16 @@ use super::super::split::{GainParams, GreedySplitFinder, SplitFinder, SplitInfo}
 use crate::training::buffer::GradientBuffer;
 
 // ============================================================================
-// TreeParams
+// TreeBuildParams
 // ============================================================================
 
-/// Parameters for tree building.
+/// Core parameters for tree building.
+///
+/// This struct contains only the essential tree-building parameters.
+/// Sampling and constraint components are passed separately to `TreeGrower`.
 #[derive(Debug, Clone)]
-pub struct TreeParams {
-    /// Parameters for gain computation
+pub struct TreeBuildParams {
+    /// Parameters for gain computation (regularization, min child weight, etc.)
     pub gain: GainParams,
     /// Maximum tree depth (used by depth-wise, also as absolute limit for leaf-wise)
     pub max_depth: u32,
@@ -39,32 +48,11 @@ pub struct TreeParams {
     pub min_samples_split: u32,
     /// Minimum samples required in a leaf
     pub min_samples_leaf: u32,
-    /// Learning rate (shrinkage) applied to leaf weights
-    pub learning_rate: f32,
     /// Use parallel histogram building (beneficial for many features)
     pub parallel_histograms: bool,
-    /// Column subsampling ratio per tree (0, 1]. 1.0 means use all features.
-    pub colsample_bytree: f32,
-    /// Column subsampling ratio per level (0, 1]. 1.0 means use all features.
-    pub colsample_bylevel: f32,
-    /// Column subsampling ratio per node (0, 1]. 1.0 means use all features.
-    pub colsample_bynode: f32,
-    /// Monotonic constraints per feature (-1: decreasing, 0: none, 1: increasing)
-    ///
-    /// If shorter than number of features, remaining features are unconstrained.
-    pub monotone_constraints: Vec<MonotonicConstraint>,
-    /// Interaction constraints as groups of features.
-    ///
-    /// Each group is a list of feature indices that can interact with each other.
-    /// Features in different groups cannot appear together in the same tree path.
-    /// Empty means no interaction constraints.
-    ///
-    /// Example: `[[0, 1, 2], [3, 4]]` means features 0,1,2 can interact,
-    /// and features 3,4 can interact, but 0 cannot interact with 3.
-    pub interaction_constraints: Vec<Vec<u32>>,
 }
 
-impl Default for TreeParams {
+impl Default for TreeBuildParams {
     fn default() -> Self {
         Self {
             gain: GainParams::default(),
@@ -72,13 +60,7 @@ impl Default for TreeParams {
             max_leaves: 31, // 2^5 - 1, common LightGBM default
             min_samples_split: 2,
             min_samples_leaf: 1,
-            learning_rate: 0.3,
             parallel_histograms: false, // Sequential by default, parallel for many features
-            colsample_bytree: 1.0,      // Use all features by default
-            colsample_bylevel: 1.0,
-            colsample_bynode: 1.0,
-            monotone_constraints: Vec::new(),    // No constraints by default
-            interaction_constraints: Vec::new(), // No constraints by default
         }
     }
 }
@@ -91,6 +73,17 @@ impl Default for TreeParams {
 ///
 /// Brings together histogram building, split finding, and row partitioning
 /// to grow a tree according to the specified growth policy.
+///
+/// # Design
+///
+/// `TreeGrower` receives pre-configured components rather than constructing
+/// them from raw parameters:
+/// - `ColumnSampler`: Pre-configured with sampling ratios
+/// - `MonotonicChecker`: Pre-configured with per-feature constraints
+/// - `InteractionConstraints`: Pre-configured with feature groups
+///
+/// This keeps the grower focused on tree building while the trainer handles
+/// component configuration.
 ///
 /// # Naming Note
 ///
@@ -105,51 +98,50 @@ pub struct TreeGrower<'a, G: GrowthPolicy> {
     split_finder: GreedySplitFinder,
     /// Bin cuts for histograms
     cuts: &'a BinCuts,
-    /// Training parameters
-    params: TreeParams,
-    /// Column sampler for feature sampling
-    col_sampler: ColumnSampler,
-    /// Monotonic constraint checker
-    mono_checker: MonotonicChecker,
-    /// Interaction constraints
-    interaction_constraints: InteractionConstraints,
+    /// Tree building parameters
+    params: TreeBuildParams,
+    /// Learning rate (shrinkage) applied to leaf weights
+    learning_rate: f32,
+    /// Column sampler for feature sampling (pre-configured)
+    col_sampler: &'a ColumnSampler,
+    /// Monotonic constraint checker (pre-configured)
+    mono_checker: &'a MonotonicChecker,
+    /// Interaction constraints (pre-configured)
+    interaction_constraints: &'a InteractionConstraints,
 }
 
 impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
-    /// Create a new tree grower.
-    pub fn new(policy: G, cuts: &'a BinCuts, params: TreeParams) -> Self {
-        let num_features = cuts.num_features() as u32;
-        let col_sampler = ColumnSampler::new(
-            num_features,
-            params.colsample_bytree,
-            params.colsample_bylevel,
-            params.colsample_bynode,
-        );
-        let mono_checker = MonotonicChecker::new(
-            &params.monotone_constraints,
-            num_features as usize,
-        );
-        let interaction_constraints = InteractionConstraints::new(
-            &params.interaction_constraints,
-            num_features,
-        );
+    /// Create a new tree grower with pre-configured components.
+    ///
+    /// # Arguments
+    ///
+    /// * `policy` - Growth policy (depth-wise or leaf-wise)
+    /// * `cuts` - Bin cuts for histogram building
+    /// * `params` - Core tree building parameters
+    /// * `learning_rate` - Shrinkage applied to leaf weights
+    /// * `col_sampler` - Pre-configured column sampler
+    /// * `mono_checker` - Pre-configured monotonic constraint checker
+    /// * `interaction_constraints` - Pre-configured interaction constraints
+    pub fn new(
+        policy: G,
+        cuts: &'a BinCuts,
+        params: TreeBuildParams,
+        learning_rate: f32,
+        col_sampler: &'a ColumnSampler,
+        mono_checker: &'a MonotonicChecker,
+        interaction_constraints: &'a InteractionConstraints,
+    ) -> Self {
         Self {
             policy,
             hist_builder: HistogramBuilder::default(),
             split_finder: GreedySplitFinder::new(),
             cuts,
             params,
+            learning_rate,
             col_sampler,
             mono_checker,
             interaction_constraints,
         }
-    }
-
-    /// Create a new tree grower with a specific seed for column sampling.
-    pub fn with_seed(policy: G, cuts: &'a BinCuts, params: TreeParams, seed: u64) -> Self {
-        let mut grower = Self::new(policy, cuts, params);
-        grower.col_sampler.sample_tree(seed);
-        grower
     }
 
     /// Build a single tree.
@@ -194,8 +186,7 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
         let mut tree = BuildingTree::new(0.0);
         let mut state = self.policy.init();
 
-        // Initialize column sampling for this tree
-        self.col_sampler.sample_tree(tree_seed);
+        // Check if components are enabled
         let col_sampling_enabled = self.col_sampler.is_enabled();
         let mono_enabled = self.mono_checker.is_enabled();
         let interaction_enabled = self.interaction_constraints.is_enabled();
@@ -399,7 +390,7 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
         }
 
         // Apply learning rate to leaf weights
-        tree.apply_learning_rate(self.params.learning_rate);
+        tree.apply_learning_rate(self.learning_rate);
 
         tree
     }
@@ -526,8 +517,17 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
 mod tests {
     use super::*;
     use super::super::policy::{DepthWisePolicy, LeafWisePolicy};
+    use super::super::super::constraints::MonotonicConstraint;
     use crate::data::DenseMatrix;
     use crate::training::gbtree::quantize::{CutFinder, ExactQuantileCuts, Quantizer};
+
+    /// Helper to create default (disabled) components for tests that don't need them.
+    fn make_default_components(num_features: u32) -> (ColumnSampler, MonotonicChecker, InteractionConstraints) {
+        let col_sampler = ColumnSampler::new(num_features, 1.0, 1.0, 1.0);
+        let mono_checker = MonotonicChecker::new(&[], num_features as usize);
+        let interaction_constraints = InteractionConstraints::new(&[], num_features);
+        (col_sampler, mono_checker, interaction_constraints)
+    }
 
     fn make_test_data() -> (QuantizedMatrix<u8>, BinCuts, GradientBuffer) {
         // 10 rows, 2 features (row-major)
@@ -566,28 +566,34 @@ mod tests {
     }
 
     #[test]
-    fn test_tree_params_default() {
-        let params = TreeParams::default();
+    fn test_tree_build_params_default() {
+        let params = TreeBuildParams::default();
         assert_eq!(params.max_depth, 6);
         assert_eq!(params.max_leaves, 31);
         assert_eq!(params.min_samples_split, 2);
         assert_eq!(params.min_samples_leaf, 1);
-        assert!((params.learning_rate - 0.3).abs() < 1e-6);
     }
 
     #[test]
     fn test_tree_grower_single_split() {
         let (quantized, cuts, grads) = make_test_data();
+        let num_features = cuts.num_features() as u32;
 
         let policy = DepthWisePolicy { max_depth: 1 };
-        let params = TreeParams {
-            learning_rate: 1.0, // No shrinkage for testing
-            max_depth: 1,       // Must match policy.max_depth
+        let params = TreeBuildParams {
+            max_depth: 1,
             ..Default::default()
         };
+        let learning_rate = 1.0;
+
+        let (mut col_sampler, mono_checker, interaction_constraints) = make_default_components(num_features);
+        col_sampler.sample_tree(0);
 
         let mut partitioner = RowPartitioner::new(10);
-        let mut grower = TreeGrower::new(policy, &cuts, params);
+        let mut grower = TreeGrower::new(
+            policy, &cuts, params, learning_rate,
+            &col_sampler, &mono_checker, &interaction_constraints,
+        );
 
         let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
 
@@ -604,15 +610,20 @@ mod tests {
     #[test]
     fn test_tree_grower_multiple_levels() {
         let (quantized, cuts, grads) = make_test_data();
+        let num_features = cuts.num_features() as u32;
 
         let policy = DepthWisePolicy { max_depth: 3 };
-        let params = TreeParams {
-            learning_rate: 1.0,
-            ..Default::default()
-        };
+        let params = TreeBuildParams::default();
+        let learning_rate = 1.0;
+
+        let (mut col_sampler, mono_checker, interaction_constraints) = make_default_components(num_features);
+        col_sampler.sample_tree(0);
 
         let mut partitioner = RowPartitioner::new(10);
-        let mut grower = TreeGrower::new(policy, &cuts, params);
+        let mut grower = TreeGrower::new(
+            policy, &cuts, params, learning_rate,
+            &col_sampler, &mono_checker, &interaction_constraints,
+        );
 
         let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
 
@@ -627,15 +638,20 @@ mod tests {
     #[test]
     fn test_leaf_wise_single_split() {
         let (quantized, cuts, grads) = make_test_data();
+        let num_features = cuts.num_features() as u32;
 
         let policy = LeafWisePolicy { max_leaves: 2 };
-        let params = TreeParams {
-            learning_rate: 1.0,
-            ..Default::default()
-        };
+        let params = TreeBuildParams::default();
+        let learning_rate = 1.0;
+
+        let (mut col_sampler, mono_checker, interaction_constraints) = make_default_components(num_features);
+        col_sampler.sample_tree(0);
 
         let mut partitioner = RowPartitioner::new(10);
-        let mut grower = TreeGrower::new(policy, &cuts, params);
+        let mut grower = TreeGrower::new(
+            policy, &cuts, params, learning_rate,
+            &col_sampler, &mono_checker, &interaction_constraints,
+        );
 
         let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
 
@@ -647,15 +663,20 @@ mod tests {
     #[test]
     fn test_leaf_wise_max_leaves_constraint() {
         let (quantized, cuts, grads) = make_test_data();
+        let num_features = cuts.num_features() as u32;
 
         let policy = LeafWisePolicy { max_leaves: 4 };
-        let params = TreeParams {
-            learning_rate: 1.0,
-            ..Default::default()
-        };
+        let params = TreeBuildParams::default();
+        let learning_rate = 1.0;
+
+        let (mut col_sampler, mono_checker, interaction_constraints) = make_default_components(num_features);
+        col_sampler.sample_tree(0);
 
         let mut partitioner = RowPartitioner::new(10);
-        let mut grower = TreeGrower::new(policy, &cuts, params);
+        let mut grower = TreeGrower::new(
+            policy, &cuts, params, learning_rate,
+            &col_sampler, &mono_checker, &interaction_constraints,
+        );
 
         let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
 
@@ -670,16 +691,21 @@ mod tests {
     #[test]
     fn test_leaf_wise_vs_depth_wise_different_shapes() {
         let (quantized, cuts, grads) = make_test_data();
+        let num_features = cuts.num_features() as u32;
 
         // Build tree with depth-wise
         let depth_policy = DepthWisePolicy { max_depth: 3 };
-        let params = TreeParams {
-            learning_rate: 1.0,
-            ..Default::default()
-        };
+        let params = TreeBuildParams::default();
+        let learning_rate = 1.0;
+
+        let (mut col_sampler, mono_checker, interaction_constraints) = make_default_components(num_features);
+        col_sampler.sample_tree(0);
 
         let mut partitioner1 = RowPartitioner::new(10);
-        let mut depth_grower = TreeGrower::new(depth_policy, &cuts, params.clone());
+        let mut depth_grower = TreeGrower::new(
+            depth_policy, &cuts, params.clone(), learning_rate,
+            &col_sampler, &mono_checker, &interaction_constraints,
+        );
         let depth_tree = depth_grower.build_tree(&quantized, &grads, &mut partitioner1);
 
         // Build tree with leaf-wise (same number of leaves)
@@ -687,7 +713,10 @@ mod tests {
             max_leaves: depth_tree.num_leaves(),
         };
         let mut partitioner2 = RowPartitioner::new(10);
-        let mut leaf_grower = TreeGrower::new(leaf_policy, &cuts, params);
+        let mut leaf_grower = TreeGrower::new(
+            leaf_policy, &cuts, params, learning_rate,
+            &col_sampler, &mono_checker, &interaction_constraints,
+        );
         let leaf_tree = leaf_grower.build_tree(&quantized, &grads, &mut partitioner2);
 
         // Both should have same number of leaves
@@ -735,33 +764,31 @@ mod tests {
     #[test]
     fn test_tree_grower_with_increasing_constraint() {
         let (quantized, cuts, grads) = make_monotonic_test_data();
+        let num_features = cuts.num_features() as u32;
 
         let policy = DepthWisePolicy { max_depth: 2 };
-        let params = TreeParams {
-            learning_rate: 1.0,
-            monotone_constraints: vec![MonotonicConstraint::Increasing],
-            ..Default::default()
-        };
+        let params = TreeBuildParams::default();
+        let learning_rate = 1.0;
+
+        let mut col_sampler = ColumnSampler::new(num_features, 1.0, 1.0, 1.0);
+        col_sampler.sample_tree(0);
+        let mono_checker = MonotonicChecker::new(
+            &[MonotonicConstraint::Increasing],
+            num_features as usize,
+        );
+        let interaction_constraints = InteractionConstraints::new(&[], num_features);
 
         let mut partitioner = RowPartitioner::new(20);
-        let mut grower = TreeGrower::new(policy, &cuts, params);
+        let mut grower = TreeGrower::new(
+            policy, &cuts, params, learning_rate,
+            &col_sampler, &mono_checker, &interaction_constraints,
+        );
 
         let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
 
         // Verify monotonicity: for increasing constraint, traverse left to right
         // and verify weights are non-decreasing
         if !tree.node(0).is_leaf {
-            // Collect leaf weights from left to right by feature 0 order
-            let mut leaf_weights: Vec<(f32, f32)> = Vec::new(); // (feature_position, weight)
-            
-            // Simple collection of leaves
-            for leaf_id in tree.leaves() {
-                let leaf = tree.node(leaf_id);
-                // Get approximate position by looking at parent splits
-                // For this test, just verify left child <= right child at each split
-                leaf_weights.push((leaf_id as f32, leaf.weight));
-            }
-            
             // Verify at each split level that left <= right (for increasing)
             let root = tree.node(0);
             if !root.is_leaf {
@@ -782,16 +809,25 @@ mod tests {
     #[test]
     fn test_tree_grower_with_decreasing_constraint() {
         let (quantized, cuts, grads) = make_monotonic_test_data();
+        let num_features = cuts.num_features() as u32;
 
         let policy = DepthWisePolicy { max_depth: 2 };
-        let params = TreeParams {
-            learning_rate: 1.0,
-            monotone_constraints: vec![MonotonicConstraint::Decreasing],
-            ..Default::default()
-        };
+        let params = TreeBuildParams::default();
+        let learning_rate = 1.0;
+
+        let mut col_sampler = ColumnSampler::new(num_features, 1.0, 1.0, 1.0);
+        col_sampler.sample_tree(0);
+        let mono_checker = MonotonicChecker::new(
+            &[MonotonicConstraint::Decreasing],
+            num_features as usize,
+        );
+        let interaction_constraints = InteractionConstraints::new(&[], num_features);
 
         let mut partitioner = RowPartitioner::new(20);
-        let mut grower = TreeGrower::new(policy, &cuts, params);
+        let mut grower = TreeGrower::new(
+            policy, &cuts, params, learning_rate,
+            &col_sampler, &mono_checker, &interaction_constraints,
+        );
 
         let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
 
@@ -822,6 +858,7 @@ mod tests {
         let cuts = cuts_finder.find_cuts(&matrix, 256);
         let quantizer = Quantizer::new(cuts.clone());
         let quantized = quantizer.quantize::<_, u8>(&matrix);
+        let num_features = cuts.num_features() as u32;
 
         // Gradients that would create violating splits without constraints
         // Row 0-4: positive gradient, row 5-9: negative gradient
@@ -839,14 +876,22 @@ mod tests {
         // because left > right violates increasing
 
         let policy = DepthWisePolicy { max_depth: 1 };
-        let params = TreeParams {
-            learning_rate: 1.0,
-            monotone_constraints: vec![MonotonicConstraint::Increasing],
-            ..Default::default()
-        };
+        let params = TreeBuildParams::default();
+        let learning_rate = 1.0;
+
+        let mut col_sampler = ColumnSampler::new(num_features, 1.0, 1.0, 1.0);
+        col_sampler.sample_tree(0);
+        let mono_checker = MonotonicChecker::new(
+            &[MonotonicConstraint::Increasing],
+            num_features as usize,
+        );
+        let interaction_constraints = InteractionConstraints::new(&[], num_features);
 
         let mut partitioner = RowPartitioner::new(10);
-        let mut grower = TreeGrower::new(policy, &cuts, params);
+        let mut grower = TreeGrower::new(
+            policy, &cuts, params, learning_rate,
+            &col_sampler, &mono_checker, &interaction_constraints,
+        );
 
         let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
 
@@ -867,16 +912,20 @@ mod tests {
     #[test]
     fn test_tree_grower_no_constraint_allows_any_order() {
         let (quantized, cuts, grads) = make_monotonic_test_data();
+        let num_features = cuts.num_features() as u32;
 
         let policy = DepthWisePolicy { max_depth: 1 };
-        let params = TreeParams {
-            learning_rate: 1.0,
-            monotone_constraints: vec![], // No constraints
-            ..Default::default()
-        };
+        let params = TreeBuildParams::default();
+        let learning_rate = 1.0;
+
+        let (mut col_sampler, mono_checker, interaction_constraints) = make_default_components(num_features);
+        col_sampler.sample_tree(0);
 
         let mut partitioner = RowPartitioner::new(20);
-        let mut grower = TreeGrower::new(policy, &cuts, params);
+        let mut grower = TreeGrower::new(
+            policy, &cuts, params, learning_rate,
+            &col_sampler, &mono_checker, &interaction_constraints,
+        );
 
         let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
 
@@ -938,20 +987,26 @@ mod tests {
     #[test]
     fn test_tree_grower_with_interaction_constraints() {
         let (quantized, cuts, grads) = make_interaction_test_data();
+        let num_features = cuts.num_features() as u32;
 
         // Features 0,1 can interact; features 2,3 can interact
         let policy = DepthWisePolicy { max_depth: 3 };
-        let params = TreeParams {
-            learning_rate: 1.0,
-            interaction_constraints: vec![
-                vec![0, 1], // Group 1: features 0 and 1 can interact
-                vec![2, 3], // Group 2: features 2 and 3 can interact
-            ],
-            ..Default::default()
-        };
+        let params = TreeBuildParams::default();
+        let learning_rate = 1.0;
+
+        let mut col_sampler = ColumnSampler::new(num_features, 1.0, 1.0, 1.0);
+        col_sampler.sample_tree(0);
+        let mono_checker = MonotonicChecker::new(&[], num_features as usize);
+        let interaction_constraints = InteractionConstraints::new(
+            &[vec![0, 1], vec![2, 3]],
+            num_features,
+        );
 
         let mut partitioner = RowPartitioner::new(20);
-        let mut grower = TreeGrower::new(policy, &cuts, params);
+        let mut grower = TreeGrower::new(
+            policy, &cuts, params, learning_rate,
+            &col_sampler, &mono_checker, &interaction_constraints,
+        );
 
         let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
 
@@ -1008,17 +1063,21 @@ mod tests {
     #[test]
     fn test_tree_grower_no_interaction_constraints_allows_all() {
         let (quantized, cuts, grads) = make_interaction_test_data();
+        let num_features = cuts.num_features() as u32;
 
         // No interaction constraints - all features can interact
         let policy = DepthWisePolicy { max_depth: 3 };
-        let params = TreeParams {
-            learning_rate: 1.0,
-            interaction_constraints: vec![], // No constraints
-            ..Default::default()
-        };
+        let params = TreeBuildParams::default();
+        let learning_rate = 1.0;
+
+        let (mut col_sampler, mono_checker, interaction_constraints) = make_default_components(num_features);
+        col_sampler.sample_tree(0);
 
         let mut partitioner = RowPartitioner::new(20);
-        let mut grower = TreeGrower::new(policy, &cuts, params);
+        let mut grower = TreeGrower::new(
+            policy, &cuts, params, learning_rate,
+            &col_sampler, &mono_checker, &interaction_constraints,
+        );
 
         let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
 
@@ -1030,19 +1089,26 @@ mod tests {
     #[test]
     fn test_tree_grower_single_feature_group() {
         let (quantized, cuts, grads) = make_interaction_test_data();
+        let num_features = cuts.num_features() as u32;
 
         // Only features 0 and 1 are allowed
         let policy = DepthWisePolicy { max_depth: 3 };
-        let params = TreeParams {
-            learning_rate: 1.0,
-            interaction_constraints: vec![
-                vec![0, 1], // Only these features allowed
-            ],
-            ..Default::default()
-        };
+        let params = TreeBuildParams::default();
+        let learning_rate = 1.0;
+
+        let mut col_sampler = ColumnSampler::new(num_features, 1.0, 1.0, 1.0);
+        col_sampler.sample_tree(0);
+        let mono_checker = MonotonicChecker::new(&[], num_features as usize);
+        let interaction_constraints = InteractionConstraints::new(
+            &[vec![0, 1]],
+            num_features,
+        );
 
         let mut partitioner = RowPartitioner::new(20);
-        let mut grower = TreeGrower::new(policy, &cuts, params);
+        let mut grower = TreeGrower::new(
+            policy, &cuts, params, learning_rate,
+            &col_sampler, &mono_checker, &interaction_constraints,
+        );
 
         let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
 
