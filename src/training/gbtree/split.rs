@@ -233,29 +233,6 @@ pub fn split_gain(
     gain.max(0.0)
 }
 
-/// Simplified gain computation without parent term.
-///
-/// When we only care about comparing splits within the same node,
-/// the parent term is constant and can be omitted:
-/// ```text
-/// gain_score = 0.5 * [G_L²/(H_L+λ) + G_R²/(H_R+λ)]
-/// ```
-///
-/// Faster than `split_gain` when comparing many splits for one node.
-#[inline]
-pub fn split_gain_score(
-    grad_left: f32,
-    hess_left: f32,
-    grad_right: f32,
-    hess_right: f32,
-    params: &GainParams,
-) -> f32 {
-    // Note: negative objectives, so we negate to get positive scores
-    let obj_left = -leaf_objective(grad_left, hess_left, params);
-    let obj_right = -leaf_objective(grad_right, hess_right, params);
-    obj_left + obj_right
-}
-
 // ============================================================================
 // SplitInfo
 // ============================================================================
@@ -266,6 +243,15 @@ pub fn split_gain_score(
 /// - Apply the split (feature, threshold, default direction)
 /// - Create child nodes (grad/hess sums, weights)
 /// - Evaluate split quality (gain)
+///
+/// # Example
+///
+/// ```ignore
+/// let split = SplitInfo::none();
+/// if split.is_valid() {
+///     println!("Split on feature {} at {}", split.feature, split.threshold);
+/// }
+/// ```
 #[derive(Clone, Debug)]
 pub struct SplitInfo {
     /// Feature index to split on
@@ -285,9 +271,9 @@ pub struct SplitInfo {
     pub grad_right: f32,
     /// Sum of hessians in right child
     pub hess_right: f32,
-    /// Optimal weight for left leaf (if not split further)
+    /// Optimal weight for left leaf
     pub weight_left: f32,
-    /// Optimal weight for right leaf (if not split further)
+    /// Optimal weight for right leaf
     pub weight_right: f32,
     /// Default direction for missing values (true = left)
     pub default_left: bool,
@@ -333,13 +319,13 @@ impl SplitInfo {
         self.gain > 0.0 && self.feature != u32::MAX
     }
 
-    /// Count of samples in left child (sum of hessians).
+    /// Count of samples in left child (hessian sum).
     #[inline]
     pub fn count_left(&self) -> f32 {
         self.hess_left
     }
 
-    /// Count of samples in right child (sum of hessians).
+    /// Count of samples in right child (hessian sum).
     #[inline]
     pub fn count_right(&self) -> f32 {
         self.hess_right
@@ -413,6 +399,7 @@ impl GreedySplitFinder {
     /// Find best split for a single feature.
     ///
     /// Scans bins from left to right, computing gain at each boundary.
+    /// This is the single-output implementation.
     fn find_best_split_for_feature(
         &self,
         feature: u32,

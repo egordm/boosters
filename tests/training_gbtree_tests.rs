@@ -27,7 +27,7 @@ use booste_rs::training::{
     SoftmaxLoss,
     TrainerParams, TreeParams,
 };
-use booste_rs::training::gbtree::{CutFinder, ExactQuantileCuts, Quantizer, MulticlassTrainer};
+use booste_rs::training::gbtree::{CutFinder, ExactQuantileCuts, Quantizer};
 use serde::Deserialize;
 
 // =============================================================================
@@ -541,8 +541,8 @@ mod multiclass_tests {
         let policy = DepthWisePolicy {
             max_depth: tc.config.max_depth.unwrap_or(6),
         };
-        let mut trainer = MulticlassTrainer::new(loss, params);
-        let forest = trainer.train(policy, &quantized, &tc.train_labels, &cuts, &[]);
+        let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params);
+        let forest = trainer.train_multiclass(&loss, policy, &quantized, &tc.train_labels, &cuts, &[]);
 
         // Predict on train set - get K scores per row
         let train_row_matrix: RowMatrix<f32> = tc.train_matrix.to_layout();

@@ -39,7 +39,6 @@
 mod constraints;
 mod grower;
 mod histogram;
-mod multi_output;
 mod partition;
 mod quantize;
 mod sampling;
@@ -57,21 +56,16 @@ pub use grower::{
 pub use histogram::{
     ChildSide, FeatureHistogram, HistogramBuilder, HistogramSubtractor, NodeHistogram,
 };
-pub use multi_output::{
-    MultiOutputBuildingNode, MultiOutputBuildingTree, MultiOutputFeatureHistogram,
-    MultiOutputGrowthStrategy, MultiOutputHistogramBuilder, MultiOutputNodeHistogram,
-    MultiOutputSplitFinder, MultiOutputSplitInfo, MultiOutputTreeGrower,
-    multi_output_leaf_weight, multi_output_split_gain,
-};
 pub use partition::RowPartitioner;
 pub use quantize::{
     BinCuts, BinIndex, CategoricalInfo, CutFinder, ExactQuantileCuts, QuantizedMatrix, Quantizer,
 };
 pub use sampling::{ColumnSampler, GossParams, GossSample, GossSampler, RowSampler};
 pub use split::{
-    GainParams, GreedySplitFinder, SplitFinder, SplitInfo, leaf_objective, leaf_weight, split_gain,
+    GainParams, GreedySplitFinder, SplitFinder, SplitInfo, leaf_objective, leaf_weight,
+    split_gain,
 };
 pub use trainer::{
-    BaseScore, GBTreeTrainer, MultiStrategy, MulticlassTrainer, QuantizedEvalSet,
+    BaseScore, GBTreeTrainer, QuantizedEvalSet,
     RowSamplingStrategy, TrainerParams,
 };

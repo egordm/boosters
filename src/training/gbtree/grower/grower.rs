@@ -239,8 +239,8 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
             self.apply_monotonic_constraints(&mut root_split, &root_bounds);
         }
 
-        // Update root weight
-        tree.node_mut(0).weight = root_split.weight_left; // Will be updated by split
+        // Update root weight (K-dimensional)
+        tree.node_mut(0).weight = root_split.weight_left.clone();
 
         // Use HashMap for candidates so leaf-wise can find candidates from previous iterations
         let mut candidates: HashMap<u32, NodeCandidate> = HashMap::new();
