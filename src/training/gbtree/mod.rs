@@ -7,7 +7,7 @@
 //!
 //! Training workflow:
 //! 1. Quantize features into bins using [`Quantizer`]
-//! 2. Build trees using [`GBTreeTrainer`] with a [`GrowthPolicy`]
+//! 2. Build trees using [`GBTreeTrainer`] with a [`GrowthStrategy`]
 //! 3. Convert to inference format ([`SoAForest`][crate::forest::SoAForest])
 //!
 //! # Quantization (RFC-0011)
@@ -19,9 +19,7 @@
 //! # Tree Growing
 //!
 //! - [`TreeGrower`]: Builds a single tree from gradients
-//! - [`GrowthPolicy`]: Strategy for expanding nodes
-//! - [`DepthWisePolicy`]: XGBoost-style level-by-level growth
-//! - [`LeafWisePolicy`]: LightGBM-style best-leaf-first growth
+//! - [`GrowthStrategy`]: Enum for depth-wise or leaf-wise growth
 //!
 //! # Histogram Building
 //!
@@ -49,9 +47,7 @@ pub use constraints::{
     InteractionConstraints, MonotonicBounds, MonotonicChecker, MonotonicConstraint,
 };
 pub use grower::{
-    BuildingNode, BuildingTree, DepthWisePolicy, DepthWiseState, GrowthPolicy, GrowthState,
-    GrowthStrategy, LeafCandidate, LeafWisePolicy, LeafWiseState, NodeCandidate, TreeBuildParams,
-    TreeGrower,
+    BuildingNode, BuildingTree, GrowthStrategy, NodeCandidate, TreeBuildParams, TreeGrower,
 };
 pub use histogram::{
     ChildSide, FeatureHistogram, HistogramBuilder, HistogramSubtractor, NodeHistogram,

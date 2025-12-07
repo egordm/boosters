@@ -4,21 +4,21 @@
 //!
 //! - [`BuildingTree`]: Mutable tree structure during construction
 //! - [`TreeGrower`]: Orchestrates histogram building, split finding, and node expansion
-//! - [`GrowthPolicy`]: Strategy for selecting nodes to expand
+//! - [`GrowthStrategy`]: Enum for selecting depth-wise or leaf-wise growth
 //!
 //! # Growth Strategies
 //!
-//! - **Depth-wise** ([`DepthWisePolicy`]): XGBoost style, expand all nodes at each level
-//! - **Leaf-wise** ([`LeafWisePolicy`]): LightGBM style, always expand best-gain leaf
+//! - **Depth-wise**: XGBoost style, expand all nodes at each level
+//! - **Leaf-wise**: LightGBM style, always expand best-gain leaf
 //!
 //! # Example
 //!
 //! ```ignore
-//! use booste_rs::training::{TreeGrower, DepthWisePolicy, TreeParams};
+//! use booste_rs::training::{TreeGrower, GrowthStrategy, TreeBuildParams};
 //!
-//! let policy = DepthWisePolicy { max_depth: 6 };
-//! let params = TreeParams::default();
-//! let mut grower = TreeGrower::new(policy, &cuts, params);
+//! let strategy = GrowthStrategy::DepthWise { max_depth: 6 };
+//! let params = TreeBuildParams::default();
+//! let mut grower = TreeGrower::new(strategy, &cuts, params, learning_rate, ...);
 //!
 //! let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
 //! ```
@@ -31,7 +31,4 @@ mod policy;
 
 pub use building::{BuildingNode, BuildingTree, NodeCandidate};
 pub use grower::{TreeBuildParams, TreeGrower};
-pub use policy::{
-    DepthWisePolicy, DepthWiseState, GrowthPolicy, GrowthState, GrowthStrategy, LeafCandidate,
-    LeafWisePolicy, LeafWiseState,
-};
+pub use policy::GrowthStrategy;
