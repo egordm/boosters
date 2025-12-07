@@ -39,6 +39,7 @@
 mod constraints;
 mod grower;
 mod histogram;
+mod multi_output;
 mod partition;
 mod quantize;
 mod sampling;
@@ -55,6 +56,10 @@ pub use grower::{
 };
 pub use histogram::{
     ChildSide, FeatureHistogram, HistogramBuilder, HistogramSubtractor, NodeHistogram,
+};
+pub use multi_output::{
+    MultiOutputFeatureHistogram, MultiOutputHistogramBuilder, MultiOutputNodeHistogram,
+    multi_output_leaf_weight, multi_output_split_gain,
 };
 pub use partition::RowPartitioner;
 pub use quantize::{
