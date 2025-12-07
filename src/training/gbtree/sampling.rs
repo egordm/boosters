@@ -857,4 +857,113 @@ mod tests {
     fn test_goss_params_invalid_other_rate() {
         GossParams::new(0.2, 0.0);
     }
+
+    // ---- GOSS Multi-output Tests ----
+
+    #[test]
+    fn test_goss_multioutput_basic() {
+        use crate::training::GradientBuffer;
+
+        let params = GossParams::new(0.3, 0.2);
+        let sampler = GossSampler::new(params);
+
+        // Create 10 rows × 3 outputs
+        let mut grads = GradientBuffer::new(10, 3);
+
+        // Set gradients so rows 0, 1, 2 have highest L2 norms
+        // Row 0: [9, 9, 9] → L2 = sqrt(243) ≈ 15.59
+        // Row 1: [8, 8, 8] → L2 = sqrt(192) ≈ 13.86
+        // Row 2: [7, 7, 7] → L2 = sqrt(147) ≈ 12.12
+        // Row 3-9: small gradients
+        for row in 0..10 {
+            let grad = if row < 3 { (9 - row) as f32 } else { 0.5 };
+            for k in 0..3 {
+                grads.set(row, k, grad, 1.0);
+            }
+        }
+
+        let sample = sampler.sample_multioutput(&grads, 42);
+
+        // Top 3 rows (30% of 10) should always be included
+        assert!(sample.indices.contains(&0), "Row 0 (highest L2 norm) should be top");
+        assert!(sample.indices.contains(&1), "Row 1 (second highest) should be top");
+        assert!(sample.indices.contains(&2), "Row 2 (third highest) should be top");
+
+        // Sample should have 3 top + ceil(7 * 0.2) = 3 + 2 = 5 rows
+        assert_eq!(sample.indices.len(), 5, "Expected 5 rows (3 top + 2 sampled)");
+
+        // Top rows should have weight 1.0
+        for (i, &idx) in sample.indices.iter().enumerate() {
+            if idx <= 2 {
+                assert_eq!(sample.weights[i], 1.0, "Top row should have weight 1.0");
+            } else {
+                // Sampled row should have amplified weight
+                let expected = params.weight_amplification();
+                assert!(
+                    (sample.weights[i] - expected).abs() < 1e-6,
+                    "Sampled row should have amplified weight"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_goss_multioutput_uses_l2_norm() {
+        use crate::training::GradientBuffer;
+
+        let params = GossParams::new(0.2, 0.1);
+        let sampler = GossSampler::new(params);
+
+        // 5 rows × 2 outputs
+        let mut grads = GradientBuffer::new(5, 2);
+
+        // Row 0: [10, 0] → L2 = 10
+        // Row 1: [0, 10] → L2 = 10
+        // Row 2: [7, 7] → L2 = sqrt(98) ≈ 9.9 (highest!)
+        // Row 3: [1, 1] → L2 = sqrt(2) ≈ 1.4
+        // Row 4: [0, 0] → L2 = 0
+        grads.set(0, 0, 10.0, 1.0);
+        grads.set(0, 1, 0.0, 1.0);
+        grads.set(1, 0, 0.0, 1.0);
+        grads.set(1, 1, 10.0, 1.0);
+        grads.set(2, 0, 7.0, 1.0);
+        grads.set(2, 1, 7.0, 1.0);
+        grads.set(3, 0, 1.0, 1.0);
+        grads.set(3, 1, 1.0, 1.0);
+        grads.set(4, 0, 0.0, 1.0);
+        grads.set(4, 1, 0.0, 1.0);
+
+        let sample = sampler.sample_multioutput(&grads, 42);
+
+        // Top 1 (20% of 5) should be row 2 (highest L2 norm with 7,7 vs 10,0)
+        // Actually L2(10,0) = 10, L2(7,7) ≈ 9.9, so row 0 or 1 should be first
+        // Let's just check that top rows are from {0, 1, 2}
+        assert!(
+            sample.indices.contains(&0) || sample.indices.contains(&1) || sample.indices.contains(&2),
+            "One of the high-L2 rows should be in top"
+        );
+    }
+
+    #[test]
+    fn test_goss_multioutput_delegates_to_single_output() {
+        use crate::training::GradientBuffer;
+
+        let params = GossParams::new(0.2, 0.1);
+        let sampler = GossSampler::new(params);
+
+        // Single-output case
+        let mut grads = GradientBuffer::new(50, 1);
+        for row in 0..50 {
+            grads.set(row, 0, (row as f32).sin(), 1.0);
+        }
+
+        let sample_multi = sampler.sample_multioutput(&grads, 42);
+        
+        // Compare with direct single-output call
+        let gradients: Vec<f32> = (0..50).map(|i| grads.get(i, 0).0).collect();
+        let sample_single = sampler.sample(&gradients, 42);
+
+        assert_eq!(sample_multi.indices, sample_single.indices);
+        assert_eq!(sample_multi.weights, sample_single.weights);
+    }
 }

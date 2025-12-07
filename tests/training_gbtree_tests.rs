@@ -644,4 +644,88 @@ mod multiclass_tests {
             }
         }
     }
+
+    /// Test GOSS sampling with multi-output classification.
+    #[test]
+    fn multiclass_with_goss() {
+        use booste_rs::training::gbtree::GossParams;
+
+        let tc = MulticlassTestCase::load("multiclass");
+        let num_classes = tc.config.num_class;
+
+        let trainer = GBTreeTrainer::builder()
+            .loss(LossFunction::Softmax { num_classes })
+            .num_rounds(tc.config.num_boost_round)
+            .max_depth(tc.config.max_depth.unwrap_or(6))
+            .learning_rate(tc.config.eta)
+            .goss(GossParams::new(0.2, 0.1)) // Enable GOSS
+            .verbosity(Verbosity::Silent)
+            .build()
+            .unwrap();
+
+        let forest = trainer.train(&tc.train_matrix, &tc.train_labels, &[]);
+
+        // Should produce correct tree structure
+        let expected_trees = tc.config.num_boost_round as usize * num_classes;
+        assert_eq!(
+            forest.num_trees(),
+            expected_trees,
+            "Expected {} trees with GOSS, got {}",
+            expected_trees,
+            forest.num_trees()
+        );
+
+        // Predictions should be finite
+        let train_row_matrix: RowMatrix<f32> = tc.train_matrix.to_layout();
+        for row_idx in 0..train_row_matrix.num_rows() {
+            let features: Vec<f32> = (0..train_row_matrix.num_cols())
+                .map(|c| *train_row_matrix.get(row_idx, c).unwrap())
+                .collect();
+            let preds = forest.predict_row(&features);
+            for &v in &preds {
+                assert!(v.is_finite(), "Non-finite prediction with GOSS: {}", v);
+            }
+        }
+    }
+
+    /// Test subsampling with multi-output classification.
+    #[test]
+    fn multiclass_with_subsample() {
+        let tc = MulticlassTestCase::load("multiclass");
+        let num_classes = tc.config.num_class;
+
+        let trainer = GBTreeTrainer::builder()
+            .loss(LossFunction::Softmax { num_classes })
+            .num_rounds(tc.config.num_boost_round)
+            .max_depth(tc.config.max_depth.unwrap_or(6))
+            .learning_rate(tc.config.eta)
+            .subsample(0.8) // Enable subsampling
+            .verbosity(Verbosity::Silent)
+            .build()
+            .unwrap();
+
+        let forest = trainer.train(&tc.train_matrix, &tc.train_labels, &[]);
+
+        // Should produce correct tree structure
+        let expected_trees = tc.config.num_boost_round as usize * num_classes;
+        assert_eq!(
+            forest.num_trees(),
+            expected_trees,
+            "Expected {} trees with subsample, got {}",
+            expected_trees,
+            forest.num_trees()
+        );
+
+        // Predictions should be finite
+        let train_row_matrix: RowMatrix<f32> = tc.train_matrix.to_layout();
+        for row_idx in 0..train_row_matrix.num_rows() {
+            let features: Vec<f32> = (0..train_row_matrix.num_cols())
+                .map(|c| *train_row_matrix.get(row_idx, c).unwrap())
+                .collect();
+            let preds = forest.predict_row(&features);
+            for &v in &preds {
+                assert!(v.is_finite(), "Non-finite prediction with subsample: {}", v);
+            }
+        }
+    }
 }

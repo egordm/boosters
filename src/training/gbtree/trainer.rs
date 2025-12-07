@@ -454,10 +454,6 @@ impl GBTreeTrainer {
             vec![0.0; num_outputs]
         };
 
-        if num_outputs == 1 {
-            logger.info(&format!("Base score: {:.6}", base_scores[0]));
-        }
-
         // Initialize predictions: [num_rows * num_outputs] in row-major order
         let mut predictions: Vec<f32> = (0..num_rows)
             .flat_map(|_| base_scores.iter().copied())
@@ -469,23 +465,16 @@ impl GBTreeTrainer {
         // Row partitioner (reused per tree within a round)
         let mut partitioner = RowPartitioner::new(num_rows as u32);
 
-        // Sampling setup (only used for single-output currently)
-        let goss_sampler = if num_outputs == 1 {
-            self.goss.map(GossSampler::new)
-        } else {
-            None
-        };
-        let row_sampler = if goss_sampler.is_none() && self.subsample < 1.0 && num_outputs == 1 {
+        // Sampling setup (works for both single and multi-output)
+        let goss_sampler = self.goss.map(GossSampler::new);
+        let row_sampler = if goss_sampler.is_none() && self.subsample < 1.0 {
             Some(RowSampler::new(num_rows as u32, self.subsample))
         } else {
             None
         };
 
-        // Early stopping (only for single-output with eval sets currently)
-        let mut early_stopping = if self.early_stopping_rounds > 0
-            && !eval_sets.is_empty()
-            && num_outputs == 1
-        {
+        // Early stopping
+        let mut early_stopping = if self.early_stopping_rounds > 0 && !eval_sets.is_empty() {
             Some(EarlyStopping::new(
                 Box::new(self.eval_metric.clone()),
                 self.early_stopping_rounds,
@@ -502,22 +491,24 @@ impl GBTreeTrainer {
         // Log training start
         let sampling_info = if let Some(ref goss) = self.goss {
             format!(" (GOSS: top={:.2}, other={:.2})", goss.top_rate, goss.other_rate)
-        } else if self.subsample < 1.0 && num_outputs == 1 {
+        } else if self.subsample < 1.0 {
             format!(" (subsample={:.2})", self.subsample)
         } else {
             String::new()
         };
 
-        if num_outputs == 1 {
-            logger.info(&format!(
-                "Starting training: {} rounds, {} samples{}",
-                self.num_rounds, num_rows, sampling_info,
-            ));
+        let outputs_info = if num_outputs > 1 {
+            format!(", {} outputs", num_outputs)
         } else {
-            logger.info(&format!(
-                "Starting training: {} rounds, {} samples, {} outputs",
-                self.num_rounds, num_rows, num_outputs
-            ));
+            String::new()
+        };
+
+        logger.info(&format!(
+            "Starting training: {} rounds, {} samples{}{}",
+            self.num_rounds, num_rows, outputs_info, sampling_info,
+        ));
+        if num_outputs == 1 {
+            logger.info(&format!("Base score: {:.6}", base_scores[0]));
         }
 
         // Main training loop
@@ -527,50 +518,41 @@ impl GBTreeTrainer {
 
             let round_seed = self.seed.wrapping_add(round as u64);
 
+            // Apply row sampling (same sample for all outputs in this round)
+            // For GOSS with multi-output, we use L2 norm of gradient vectors
+            let goss_sample = if let Some(ref goss) = goss_sampler {
+                let sample = goss.sample_multioutput(&grads, round_seed);
+                partitioner.reset_with_rows(&sample.indices);
+                Some(sample)
+            } else if let Some(ref random_sampler) = row_sampler {
+                let sampled_rows = random_sampler.sample(round_seed);
+                partitioner.reset_with_rows(&sampled_rows);
+                None
+            } else {
+                partitioner.reset();
+                None
+            };
+
+            // Apply GOSS weights to all outputs (same weight per row across outputs)
+            if let Some(ref sample) = goss_sample {
+                for (idx_in_sample, &row_idx) in sample.indices.iter().enumerate() {
+                    let weight = sample.weights[idx_in_sample];
+                    if weight != 1.0 {
+                        for output_idx in 0..num_outputs {
+                            let (grad, hess) = grads.get(row_idx as usize, output_idx);
+                            grads.set(row_idx as usize, output_idx, grad * weight, hess * weight);
+                        }
+                    }
+                }
+            }
+
             // Build one tree per output
             for output_idx in 0..num_outputs {
-                // Apply row sampling (single-output only for now)
-                if num_outputs == 1 {
-                    if let Some(ref goss) = goss_sampler {
-                        let gradient_slice: Vec<f32> =
-                            (0..num_rows).map(|i| grads.get(i, 0).0).collect();
-                        let sample = goss.sample(&gradient_slice, round_seed);
-                        partitioner.reset_with_rows(&sample.indices);
-
-                        // Apply GOSS weights
-                        for (idx_in_sample, &row_idx) in sample.indices.iter().enumerate() {
-                            let weight = sample.weights[idx_in_sample];
-                            if weight != 1.0 {
-                                let (grad, hess) = grads.get(row_idx as usize, 0);
-                                grads.set(row_idx as usize, 0, grad * weight, hess * weight);
-                            }
-                        }
-                    } else if let Some(ref random_sampler) = row_sampler {
-                        let sampled_rows = random_sampler.sample(round_seed);
-                        partitioner.reset_with_rows(&sampled_rows);
-                    } else {
-                        partitioner.reset();
-                    }
-                } else {
-                    partitioner.reset();
-                }
-
-                // Extract gradients for this output into a single-output buffer for tree building
-                let output_grads = if num_outputs == 1 {
-                    // Can use grads directly (it's already single-output)
-                    &grads
-                } else {
-                    // Need to extract this output's gradients
-                    // We'll build a temporary buffer - this is a minor inefficiency but keeps code simple
-                    // Future optimization: make TreeGrower accept output_idx parameter
-                    &grads
-                };
-
                 // Build tree
                 let output_seed = round_seed.wrapping_add(output_idx as u64 * 1000);
                 let tree = self.build_tree(
                     quantized,
-                    output_grads,
+                    &grads,
                     output_idx,
                     cuts,
                     &tree_params,
@@ -591,58 +573,59 @@ impl GBTreeTrainer {
                 trees_per_output[output_idx].push(tree);
             }
 
-            // Evaluation and early stopping (single-output only for now)
-            if num_outputs == 1 {
-                let mut round_metrics: Vec<(String, f64)> = Vec::new();
-                let mut early_stop_triggered = false;
+            // Evaluation and early stopping
+            let mut round_metrics: Vec<(String, f64)> = Vec::new();
+            let mut early_stop_triggered = false;
+
+            if self.verbosity >= Verbosity::Info {
+                let train_metric = self.compute_train_metric_multioutput(
+                    &predictions, labels, num_outputs,
+                );
+                round_metrics.push(("train".to_string(), train_metric));
+            }
+
+            for (idx, eval_set) in eval_sets.iter().enumerate() {
+                let eval_preds = Self::predict_with_trees_multioutput(
+                    &trees_per_output,
+                    eval_set.data,
+                    &base_scores,
+                );
 
                 if self.verbosity >= Verbosity::Info {
-                    let train_metric = self.compute_train_metric(&predictions, labels);
-                    round_metrics.push(("train".to_string(), train_metric));
+                    let metric_value = self.compute_train_metric_multioutput(
+                        &eval_preds, eval_set.labels, num_outputs,
+                    );
+                    round_metrics.push((eval_set.name.to_string(), metric_value));
                 }
 
-                for (idx, eval_set) in eval_sets.iter().enumerate() {
-                    let eval_preds = Self::predict_with_trees_single_output(
-                        &trees_per_output[0],
-                        eval_set.data,
-                        base_scores[0],
-                    );
-
-                    if self.verbosity >= Verbosity::Info {
-                        let metric_value = self.compute_train_metric(&eval_preds, eval_set.labels);
-                        round_metrics.push((eval_set.name.to_string(), metric_value));
-                    }
-
-                    if idx == 0 {
-                        if let Some(ref mut es) = early_stopping {
-                            if es.should_stop(&eval_preds, eval_set.labels) {
-                                logger.info(&format!(
-                                    "Early stopping at round {} (best: {})",
-                                    round,
-                                    es.best_round()
-                                ));
-                                early_stop_triggered = true;
-                            }
+                // Early stopping on first eval set
+                if idx == 0 {
+                    if let Some(ref mut es) = early_stopping {
+                        // For multi-output, use averaged predictions for early stopping
+                        let eval_for_es = if num_outputs == 1 {
+                            eval_preds.clone()
+                        } else {
+                            // Average predictions across outputs for early stopping metric
+                            Self::average_predictions(&eval_preds, num_outputs)
+                        };
+                        if es.should_stop(&eval_for_es, eval_set.labels) {
+                            logger.info(&format!(
+                                "Early stopping at round {} (best: {})",
+                                round,
+                                es.best_round()
+                            ));
+                            early_stop_triggered = true;
                         }
                     }
                 }
+            }
 
-                if self.verbosity >= Verbosity::Info && !round_metrics.is_empty() {
-                    logger.log_round(round as usize, &round_metrics);
-                }
+            if self.verbosity >= Verbosity::Info && !round_metrics.is_empty() {
+                logger.log_round(round as usize, &round_metrics);
+            }
 
-                if early_stop_triggered {
-                    break;
-                }
-            } else {
-                // Multi-output progress logging
-                if (round + 1) % 10 == 0 || round == 0 {
-                    logger.info(&format!(
-                        "Round {} complete, {} trees per output",
-                        round + 1,
-                        trees_per_output[0].len()
-                    ));
-                }
+            if early_stop_triggered {
+                break;
             }
         }
 
@@ -733,22 +716,45 @@ impl GBTreeTrainer {
         forest
     }
 
-    /// Predict with all trees for single-output (used for eval sets).
-    fn predict_with_trees_single_output<B: BinIndex>(
-        trees: &[BuildingTree],
+    /// Predict with all trees for multi-output (used for eval sets).
+    /// Returns predictions in row-major order: [row0_out0, row0_out1, ..., row1_out0, ...]
+    fn predict_with_trees_multioutput<B: BinIndex>(
+        trees_per_output: &[Vec<BuildingTree>],
         data: &QuantizedMatrix<B>,
-        base_score: f32,
+        base_scores: &[f32],
     ) -> Vec<f32> {
         let num_rows = data.num_rows() as usize;
-        let mut predictions = vec![base_score; num_rows];
+        let num_outputs = trees_per_output.len();
 
-        for tree in trees {
-            for row in 0..num_rows {
-                predictions[row] += Self::predict_row(tree, data, row as u32);
+        // Initialize with base scores
+        let mut predictions: Vec<f32> = (0..num_rows)
+            .flat_map(|_| base_scores.iter().copied())
+            .collect();
+
+        // Add tree predictions for each output
+        for (output_idx, trees) in trees_per_output.iter().enumerate() {
+            for tree in trees {
+                for row in 0..num_rows {
+                    let pred = Self::predict_row(tree, data, row as u32);
+                    predictions[row * num_outputs + output_idx] += pred;
+                }
             }
         }
 
         predictions
+    }
+
+    /// Average predictions across outputs (for early stopping with multi-output).
+    fn average_predictions(predictions: &[f32], num_outputs: usize) -> Vec<f32> {
+        let num_rows = predictions.len() / num_outputs;
+        (0..num_rows)
+            .map(|row| {
+                let sum: f32 = (0..num_outputs)
+                    .map(|k| predictions[row * num_outputs + k])
+                    .sum();
+                sum / num_outputs as f32
+            })
+            .collect()
     }
 
     // ========================================================================
@@ -797,6 +803,45 @@ impl GBTreeTrainer {
             .map(|(p, l)| (p - l).powi(2) as f64)
             .sum();
         (sum_sq_err / predictions.len() as f64).sqrt()
+    }
+
+    /// Compute training metric for multi-output.
+    /// For single-output, uses standard RMSE.
+    /// For multi-output, computes RMSE averaged across outputs.
+    fn compute_train_metric_multioutput(
+        &self,
+        predictions: &[f32],
+        labels: &[f32],
+        num_outputs: usize,
+    ) -> f64 {
+        if num_outputs == 1 {
+            return self.compute_train_metric(predictions, labels);
+        }
+
+        // For multi-output: average RMSE across outputs
+        // predictions: [row0_out0, row0_out1, ..., row1_out0, ...]
+        // labels: [row0_label, row1_label, ...]
+        let num_rows = labels.len();
+
+        // Compute per-output MSE and average
+        let mut total_mse = 0.0f64;
+        for output_idx in 0..num_outputs {
+            let mse: f64 = (0..num_rows)
+                .map(|row| {
+                    let pred = predictions[row * num_outputs + output_idx] as f64;
+                    // For classification outputs, we compare raw scores
+                    // For quantile outputs, we compare predictions to label
+                    // In both cases, lower error is better
+                    let label = labels[row] as f64;
+                    (pred - label).powi(2)
+                })
+                .sum::<f64>()
+                / num_rows as f64;
+            total_mse += mse;
+        }
+
+        // Return average RMSE
+        (total_mse / num_outputs as f64).sqrt()
     }
 
     fn convert_tree(&self, building: &BuildingTree) -> SoATreeStorage<ScalarLeaf> {
