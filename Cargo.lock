@@ -91,6 +91,7 @@ version = "0.1.0"
 dependencies = [
  "approx",
  "criterion",
+ "derive_builder",
  "glob",
  "lightgbm3",
  "rand",

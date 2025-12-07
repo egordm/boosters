@@ -410,6 +410,97 @@ impl GossSampler {
             weights: pairs.iter().map(|(_, w)| *w).collect(),
         }
     }
+
+    /// Sample rows based on multi-output gradient magnitudes.
+    ///
+    /// For multi-output (K outputs per row), computes row importance as
+    /// the L2 norm of the gradient vector: `sqrt(sum(grad_k^2))`.
+    ///
+    /// # Arguments
+    ///
+    /// * `grads` - Gradient buffer with shape `[n_samples, n_outputs]`
+    /// * `seed` - Random seed for reproducibility
+    ///
+    /// # Returns
+    ///
+    /// A `GossSample` containing selected row indices and their weights.
+    pub fn sample_multioutput(
+        &self,
+        grads: &crate::training::GradientBuffer,
+        seed: u64,
+    ) -> GossSample {
+        let num_rows = grads.n_samples();
+        let num_outputs = grads.n_outputs();
+
+        if !self.is_enabled() || num_rows == 0 {
+            return GossSample::all_rows(num_rows as u32);
+        }
+
+        // For single output, delegate to the simple version
+        if num_outputs == 1 {
+            let gradients: Vec<f32> = (0..num_rows).map(|i| grads.get(i, 0).0).collect();
+            return self.sample(&gradients, seed);
+        }
+
+        // Compute L2 norm of gradient vector for each row
+        let mut indexed_mags: Vec<(u32, f32)> = (0..num_rows)
+            .map(|row| {
+                let mut sum_sq = 0.0f32;
+                for k in 0..num_outputs {
+                    let (grad, _) = grads.get(row, k);
+                    sum_sq += grad * grad;
+                }
+                (row as u32, sum_sq.sqrt())
+            })
+            .collect();
+
+        // Sort by magnitude (descending)
+        indexed_mags.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Calculate top row count
+        let top_count = ((num_rows as f32 * self.params.top_rate).ceil() as usize).max(1);
+        let top_count = top_count.min(num_rows);
+
+        // Top rows with weight 1.0
+        let mut result_indices: Vec<u32> = indexed_mags[..top_count]
+            .iter()
+            .map(|(i, _)| *i)
+            .collect();
+        let mut result_weights: Vec<f32> = vec![1.0; top_count];
+
+        // Sample from remaining rows
+        let remaining_count = num_rows - top_count;
+        if remaining_count > 0 {
+            let sample_count =
+                ((remaining_count as f32 * self.params.other_rate).ceil() as usize).max(1);
+            let sample_count = sample_count.min(remaining_count);
+
+            let remaining_indices: Vec<u32> = indexed_mags[top_count..]
+                .iter()
+                .map(|(i, _)| *i)
+                .collect();
+
+            let sampled = sample_from_slice(&remaining_indices, sample_count, seed);
+            let weight = self.params.weight_amplification();
+
+            for idx in sampled {
+                result_indices.push(idx);
+                result_weights.push(weight);
+            }
+        }
+
+        // Sort for cache-friendly access
+        let mut pairs: Vec<(u32, f32)> = result_indices
+            .into_iter()
+            .zip(result_weights)
+            .collect();
+        pairs.sort_by_key(|(i, _)| *i);
+
+        GossSample {
+            indices: pairs.iter().map(|(i, _)| *i).collect(),
+            weights: pairs.iter().map(|(_, w)| *w).collect(),
+        }
+    }
 }
 
 // ============================================================================

@@ -9,7 +9,7 @@
 // Allow range loops when we need indices to access multiple arrays.
 #![allow(clippy::needless_range_loop)]
 
-use super::{GradientBuffer, Loss, MulticlassLoss};
+use super::{GradientBuffer, Loss};
 
 // =============================================================================
 // Squared Error Loss
@@ -26,6 +26,10 @@ use super::{GradientBuffer, Loss, MulticlassLoss};
 pub struct SquaredLoss;
 
 impl Loss for SquaredLoss {
+    fn num_outputs(&self) -> usize {
+        1
+    }
+
     /// Compute gradients for squared error loss.
     ///
     /// - grad = pred - label
@@ -185,76 +189,55 @@ impl QuantileLoss {
 }
 
 impl Loss for QuantileLoss {
-    /// Compute gradients for single-quantile loss.
-    ///
-    /// - grad = (1 - α) if pred >= label (over-prediction)
-    /// - grad = -α if pred < label (under-prediction)
-    /// - hess = 1 (constant for pinball loss)
-    fn compute_gradients(&self, preds: &[f32], labels: &[f32], buffer: &mut GradientBuffer) {
-        debug_assert_eq!(preds.len(), labels.len());
-        debug_assert_eq!(preds.len(), buffer.n_samples());
-        debug_assert_eq!(buffer.n_outputs(), 1);
-
-        let alpha = self.alphas[0];
-        let grad_over = 1.0 - alpha; // Precompute for over-prediction
-        let grad_under = -alpha; // Precompute for under-prediction
-
-        let (grads, hess) = buffer.as_mut_slices();
-
-        // Vectorizable loop with precomputed constants
-        for i in 0..preds.len() {
-            grads[i] = if preds[i] >= labels[i] {
-                grad_over
-            } else {
-                grad_under
-            };
-        }
-
-        // Fill hessians with constant
-        hess.fill(1.0);
-    }
-
-    fn name(&self) -> &'static str {
-        "quantile"
-    }
-}
-
-impl MulticlassLoss for QuantileLoss {
-    fn num_classes(&self) -> usize {
-        // "classes" here means "outputs" — one per quantile
+    fn num_outputs(&self) -> usize {
         self.alphas.len()
     }
 
-    /// Compute gradients for all samples and all quantiles.
+    /// Compute gradients for quantile loss (single or multi-quantile).
     ///
-    /// # Arguments
+    /// For single quantile (num_outputs = 1):
+    /// - grad = (1 - α) if pred >= label (over-prediction)
+    /// - grad = -α if pred < label (under-prediction)
+    /// - hess = 1 (constant for pinball loss)
     ///
-    /// * `preds` - Predictions, layout: `preds[sample * num_quantiles + quantile]`
-    /// * `labels` - Continuous target values (NOT class indices)
-    /// * `buffer` - Output buffer with `n_samples` samples and `n_outputs == num_quantiles`
+    /// For multi-quantile (num_outputs = K):
+    /// - Each output gets its own gradient based on its alpha
     fn compute_gradients(&self, preds: &[f32], labels: &[f32], buffer: &mut GradientBuffer) {
         let num_quantiles = self.alphas.len();
         let num_samples = labels.len();
+
         debug_assert_eq!(preds.len(), num_samples * num_quantiles);
         debug_assert_eq!(buffer.n_samples(), num_samples);
         debug_assert_eq!(buffer.n_outputs(), num_quantiles);
 
         let (grads, hess) = buffer.as_mut_slices();
 
-        for i in 0..num_samples {
-            let label = labels[i];
-            for q in 0..num_quantiles {
-                let idx = i * num_quantiles + q;
-                let pred = preds[idx];
-                let alpha = self.alphas[q];
+        if num_quantiles == 1 {
+            // Optimized path for single quantile
+            let alpha = self.alphas[0];
+            let grad_over = 1.0 - alpha;
+            let grad_under = -alpha;
 
-                // Pinball loss gradient:
-                // - If pred >= label (over-prediction): grad = 1 - alpha
-                // - If pred < label (under-prediction): grad = -alpha
-                grads[idx] = if pred >= label { 1.0 - alpha } else { -alpha };
+            for i in 0..num_samples {
+                grads[i] = if preds[i] >= labels[i] {
+                    grad_over
+                } else {
+                    grad_under
+                };
+            }
+            hess.fill(1.0);
+        } else {
+            // Multi-quantile path
+            for i in 0..num_samples {
+                let label = labels[i];
+                for q in 0..num_quantiles {
+                    let idx = i * num_quantiles + q;
+                    let pred = preds[idx];
+                    let alpha = self.alphas[q];
 
-                // Hessian is 1 for pinball loss
-                hess[idx] = 1.0;
+                    grads[idx] = if pred >= label { 1.0 - alpha } else { -alpha };
+                    hess[idx] = 1.0;
+                }
             }
         }
     }
@@ -323,6 +306,10 @@ impl Default for PseudoHuberLoss {
 }
 
 impl Loss for PseudoHuberLoss {
+    fn num_outputs(&self) -> usize {
+        1
+    }
+
     /// Compute gradients for Pseudo-Huber loss.
     ///
     /// - grad = r / sqrt(1 + r²/δ²)
@@ -471,7 +458,7 @@ mod tests {
     }
 
     // =========================================================================
-    // Multi-Quantile Loss tests (using QuantileLoss::multi via MulticlassLoss)
+    // Multi-Quantile Loss tests (using QuantileLoss::multi)
     // =========================================================================
 
     #[test]
@@ -479,8 +466,8 @@ mod tests {
         let loss = QuantileLoss::multi(&[0.1, 0.5, 0.9]);
         assert_eq!(loss.num_quantiles(), 3);
         assert_eq!(loss.alphas(), &[0.1, 0.5, 0.9]);
-        assert_eq!(loss.num_classes(), 3); // MulticlassLoss trait
-        assert_eq!(MulticlassLoss::name(&loss), "quantile");
+        assert_eq!(loss.num_outputs(), 3);
+        assert_eq!(loss.name(), "quantile");
     }
 
     #[test]
@@ -517,7 +504,7 @@ mod tests {
         let labels = vec![2.0, 2.0];
         let mut buffer = GradientBuffer::new(2, num_quantiles);
 
-        MulticlassLoss::compute_gradients(&loss, &preds, &labels, &mut buffer);
+        loss.compute_gradients(&preds, &labels, &mut buffer);
 
         // Sample 0
         assert!((buffer.grad(0, 0) - (-0.1)).abs() < 1e-6); // under, α=0.1
@@ -549,8 +536,8 @@ mod tests {
         let mut buffer_multi = GradientBuffer::new(3, 1);
         let mut buffer_single = GradientBuffer::new(3, 1);
 
-        MulticlassLoss::compute_gradients(&multi_loss, &preds, &labels, &mut buffer_multi);
-        Loss::compute_gradients(&single_loss, &preds, &labels, &mut buffer_single);
+        multi_loss.compute_gradients(&preds, &labels, &mut buffer_multi);
+        single_loss.compute_gradients(&preds, &labels, &mut buffer_single);
 
         // Results should be identical
         for i in 0..3 {
@@ -573,7 +560,7 @@ mod tests {
         let labels = vec![0.0];
         let mut buffer = GradientBuffer::new(1, 3);
 
-        MulticlassLoss::compute_gradients(&loss, &preds, &labels, &mut buffer);
+        loss.compute_gradients(&preds, &labels, &mut buffer);
 
         // All over-predictions
         assert!((buffer.grad(0, 0) - 0.9).abs() < 1e-6); // 1 - 0.1
@@ -582,7 +569,7 @@ mod tests {
 
         // All predictions well below label
         let preds = vec![-10.0, -10.0, -10.0]; // label = 0.0
-        MulticlassLoss::compute_gradients(&loss, &preds, &labels, &mut buffer);
+        loss.compute_gradients(&preds, &labels, &mut buffer);
 
         // All under-predictions
         assert!((buffer.grad(0, 0) - (-0.1)).abs() < 1e-6); // -0.1

@@ -66,6 +66,5 @@ pub use split::{
     split_gain,
 };
 pub use trainer::{
-    BaseScore, GBTreeTrainer, QuantizedEvalSet,
-    RowSamplingStrategy, TrainerParams,
+    BaseScore, GBTreeTrainer, GBTreeTrainerBuilder, GrowthMode, QuantizedEvalSet,
 };

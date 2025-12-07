@@ -15,7 +15,7 @@
 //! | [`GreedySelector`] | `greedy` | Largest gradient magnitude first |
 //! | [`ThriftySelector`] | `thrifty` | Approximate greedy (sort once) |
 //!
-//! Use [`FeatureSelectorKind`] to configure the selector in [`LinearTrainerConfig`].
+//! Use [`FeatureSelectorKind`] to configure the selector in [`GBLinearTrainer`].
 //!
 //! # Gradient Storage
 //!
@@ -33,5 +33,5 @@ pub use selector::{
     CyclicSelector, FeatureSelector, FeatureSelectorKind, GreedySelector, RandomSelector,
     SelectorState, ShuffleSelector, ThriftySelector,
 };
-pub use trainer::{LinearTrainer, LinearTrainerConfig};
+pub use trainer::{GBLinearTrainer, GBLinearTrainerBuilder};
 pub use updater::{update_bias, UpdateConfig, UpdaterKind};

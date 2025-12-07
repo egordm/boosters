@@ -337,7 +337,7 @@ impl BinCuts {
                 cat + 1
             }
         } else {
-            // Numerical: binary search
+            // Numerical: binary search for correct bin
             let cuts = self.feature_cuts(feature);
             if cuts.is_empty() {
                 return 1; // Single bin for all non-missing values
@@ -346,9 +346,16 @@ impl BinCuts {
             // Binary search for the bin
             // We want the first cut that is > value, then bin = that index + 1
             // (because bin 0 is reserved for missing)
+            //
+            // Bin layout for cuts [c0, c1, c2]:
+            // - bin 0: missing (NaN)
+            // - bin 1: value <= c0
+            // - bin 2: c0 < value <= c1
+            // - bin 3: c1 < value <= c2
+            // - bin 4: value > c2
             match cuts.binary_search_by(|c| c.partial_cmp(&value).unwrap()) {
-                Ok(idx) => idx + 1, // Exact match: value equals cut[idx], goes to bin idx+1
-                Err(idx) => idx + 1, // Insert position: value < cuts[idx], goes to bin idx+1
+                Ok(idx) => idx + 1,  // Exact match: value == cuts[idx], goes to bin idx+1
+                Err(idx) => idx + 1, // Insert position: cuts[idx-1] < value < cuts[idx]
             }
         }
     }

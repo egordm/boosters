@@ -9,7 +9,7 @@
 // Allow range loops when we need indices to access multiple arrays.
 #![allow(clippy::needless_range_loop)]
 
-use super::{GradientBuffer, Loss, MulticlassLoss};
+use super::{GradientBuffer, Loss};
 
 // =============================================================================
 // Logistic Loss (Binary Classification)
@@ -26,6 +26,10 @@ use super::{GradientBuffer, Loss, MulticlassLoss};
 pub struct LogisticLoss;
 
 impl Loss for LogisticLoss {
+    fn num_outputs(&self) -> usize {
+        1
+    }
+
     /// Compute gradients for logistic loss.
     ///
     /// - grad = sigmoid(pred) - label
@@ -82,6 +86,10 @@ impl HingeLoss {
 }
 
 impl Loss for HingeLoss {
+    fn num_outputs(&self) -> usize {
+        1
+    }
+
     /// Compute gradients for hinge loss.
     ///
     /// - If pred × y < 1: grad = -y, hess = 1
@@ -126,7 +134,7 @@ impl Loss for HingeLoss {
 /// - grad_k = softmax_k - 1{k == y}
 /// - hess_k = softmax_k * (1 - softmax_k)
 ///
-/// Implements [`MulticlassLoss`] for proper multiclass gradient handling.
+/// This is a multi-output loss with `num_outputs() = num_classes`.
 #[derive(Debug, Clone, Copy)]
 pub struct SoftmaxLoss {
     /// Number of classes.
@@ -141,8 +149,8 @@ impl SoftmaxLoss {
     }
 }
 
-impl MulticlassLoss for SoftmaxLoss {
-    fn num_classes(&self) -> usize {
+impl Loss for SoftmaxLoss {
+    fn num_outputs(&self) -> usize {
         self.num_classes
     }
 
@@ -473,6 +481,12 @@ mod tests {
 
     #[test]
     fn softmax_loss_name() {
-        assert_eq!(MulticlassLoss::name(&SoftmaxLoss::new(3)), "softmax");
+        assert_eq!(SoftmaxLoss::new(3).name(), "softmax");
+    }
+
+    #[test]
+    fn softmax_loss_num_outputs() {
+        assert_eq!(SoftmaxLoss::new(3).num_outputs(), 3);
+        assert_eq!(SoftmaxLoss::new(10).num_outputs(), 10);
     }
 }

@@ -106,35 +106,8 @@ pub enum EvalMetric {
     },
 }
 
-impl EvalMetric {
-    /// Create accuracy metric with default threshold (0.5).
-    pub fn accuracy() -> Self {
-        EvalMetric::Accuracy { threshold: 0.5 }
-    }
-
-    /// Create accuracy metric with custom threshold.
-    pub fn accuracy_with_threshold(threshold: f32) -> Self {
-        EvalMetric::Accuracy { threshold }
-    }
-
-    /// Create quantile metric for median (alpha = 0.5).
-    pub fn quantile_median() -> Self {
-        EvalMetric::Quantile { alphas: vec![0.5] }
-    }
-
-    /// Create quantile metric with custom alphas.
-    pub fn quantile(alphas: Vec<f32>) -> Self {
-        EvalMetric::Quantile { alphas }
-    }
-
-    /// Evaluate the metric on predictions and labels.
-    ///
-    /// # Arguments
-    ///
-    /// * `predictions` - Model predictions, shape `[n_samples, n_outputs]` flattened
-    /// * `labels` - Ground truth labels, shape `[n_samples]`
-    /// * `n_outputs` - Number of outputs per sample (1 for regression/binary, K for multiclass)
-    pub fn evaluate(&self, predictions: &[f32], labels: &[f32], n_outputs: usize) -> f64 {
+impl Metric for EvalMetric {
+    fn evaluate(&self, predictions: &[f32], labels: &[f32], n_outputs: usize) -> f64 {
         match self {
             EvalMetric::Rmse => Rmse.evaluate(predictions, labels, n_outputs),
             EvalMetric::Mae => Mae.evaluate(predictions, labels, n_outputs),
@@ -156,8 +129,7 @@ impl EvalMetric {
         }
     }
 
-    /// Whether higher values indicate better performance.
-    pub fn higher_is_better(&self) -> bool {
+    fn higher_is_better(&self) -> bool {
         match self {
             EvalMetric::Rmse => false,
             EvalMetric::Mae => false,
@@ -171,8 +143,7 @@ impl EvalMetric {
         }
     }
 
-    /// Name of the metric (for logging).
-    pub fn name(&self) -> &str {
+    fn name(&self) -> &str {
         match self {
             EvalMetric::Rmse => "rmse",
             EvalMetric::Mae => "mae",

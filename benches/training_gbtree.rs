@@ -19,38 +19,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 
 use bench_utils::generate_training_data;
 use booste_rs::data::{ColMatrix, RowMatrix};
-use booste_rs::training::{
-    BaseScore, DepthWisePolicy, GBTreeTrainer, GainParams, Quantizer, SquaredLoss, TrainerParams,
-    TreeParams, Verbosity,
-};
-use booste_rs::training::gbtree::{CutFinder, ExactQuantileCuts};
-
-// =============================================================================
-// Configuration
-// =============================================================================
-
-/// Create trainer params matching XGBoost defaults for fair comparison.
-fn bench_trainer_params(n_trees: u32, max_depth: u32) -> TrainerParams {
-    TrainerParams {
-        num_rounds: n_trees,
-        verbosity: Verbosity::Silent,
-        base_score: BaseScore::Mean,
-        tree_params: TreeParams {
-            max_depth,
-            max_leaves: 256,
-            min_samples_split: 2,
-            min_samples_leaf: 1,
-            learning_rate: 0.3,
-            gain: GainParams {
-                lambda: 1.0,
-                alpha: 0.0,
-                min_split_gain: 0.0,
-                min_child_weight: 1.0,
-            },
-            parallel_histograms: false,
-        },
-    }
-}
+use booste_rs::training::{GBTreeTrainer, LossFunction, Verbosity};
 
 // =============================================================================
 // Regression Benchmarks - booste-rs vs XGBoost
@@ -60,7 +29,7 @@ fn bench_gbtree_regression(c: &mut Criterion) {
     let mut group = c.benchmark_group("gbtree/regression");
     group.sample_size(10); // Fewer samples for slower benchmarks
 
-    let configs: [(_, usize, usize, u32, u32); 3] = [
+    let configs: [(_, usize, usize, u32, u8); 3] = [
         ("small", 1000, 20, 100, 6),
         ("medium", 5000, 50, 100, 6),
         ("large", 20000, 100, 100, 6),
@@ -71,29 +40,27 @@ fn bench_gbtree_regression(c: &mut Criterion) {
         let row_matrix = RowMatrix::from_vec(features.clone(), n_samples, n_features);
         let col_matrix: ColMatrix<f32> = row_matrix.to_layout();
 
-        // Quantize once (not timed) - match XGBoost settings
-        let cut_finder = ExactQuantileCuts::default();
-        let cuts = cut_finder.find_cuts(&col_matrix, 256);
-        let quantizer = Quantizer::new(cuts.clone());
-        let quantized = quantizer.quantize::<_, u8>(&col_matrix);
-
-        let params = bench_trainer_params(n_trees, max_depth);
-        let policy = DepthWisePolicy { max_depth };
+        // Build trainer with benchmark params
+        let trainer = GBTreeTrainer::builder()
+            .loss(LossFunction::SquaredError)
+            .num_rounds(n_trees)
+            .max_depth(max_depth)
+            .learning_rate(0.3f32)
+            .reg_lambda(1.0f32)
+            .reg_alpha(0.0f32)
+            .min_split_gain(0.0f32)
+            .min_child_weight(1.0f32)
+            .verbosity(Verbosity::Silent)
+            .build()
+            .unwrap();
 
         // booste-rs benchmark
         group.bench_with_input(
             BenchmarkId::new("boosters", name),
-            &(&quantized, &labels, &cuts),
-            |b, (quantized, labels, cuts)| {
+            &(&col_matrix, &labels),
+            |b, (col_matrix, labels)| {
                 b.iter(|| {
-                    let mut trainer = GBTreeTrainer::new(Box::new(SquaredLoss), params.clone());
-                    let forest = trainer.train(
-                        policy.clone(),
-                        black_box(*quantized),
-                        black_box(*labels),
-                        black_box(*cuts),
-                        &[],
-                    );
+                    let forest = trainer.train(black_box(*col_matrix), black_box(*labels), &[]);
                     black_box(forest)
                 });
             },
@@ -113,7 +80,7 @@ fn bench_gbtree_regression(c: &mut Criterion) {
 
             let tree_params = TreeBoosterParametersBuilder::default()
                 .eta(0.3)
-                .max_depth(max_depth)
+                .max_depth(max_depth as u32)
                 .lambda(1.0)
                 .alpha(0.0)
                 .gamma(0.0)
@@ -165,12 +132,10 @@ fn bench_gbtree_regression(c: &mut Criterion) {
 // =============================================================================
 
 fn bench_gbtree_classification(c: &mut Criterion) {
-    use booste_rs::training::LogisticLoss;
-
     let mut group = c.benchmark_group("gbtree/classification");
     group.sample_size(10);
 
-    let configs: [(_, usize, usize, u32, u32); 2] = [
+    let configs: [(_, usize, usize, u32, u8); 2] = [
         ("small", 1000, 20, 100, 6),
         ("medium", 5000, 50, 100, 6),
     ];
@@ -186,28 +151,27 @@ fn bench_gbtree_classification(c: &mut Criterion) {
         let row_matrix = RowMatrix::from_vec(features.clone(), n_samples, n_features);
         let col_matrix: ColMatrix<f32> = row_matrix.to_layout();
 
-        let cut_finder = ExactQuantileCuts::default();
-        let cuts = cut_finder.find_cuts(&col_matrix, 256);
-        let quantizer = Quantizer::new(cuts.clone());
-        let quantized = quantizer.quantize::<_, u8>(&col_matrix);
-
-        let params = bench_trainer_params(n_trees, max_depth);
-        let policy = DepthWisePolicy { max_depth };
+        // Build trainer with benchmark params
+        let trainer = GBTreeTrainer::builder()
+            .loss(LossFunction::Logistic)
+            .num_rounds(n_trees)
+            .max_depth(max_depth)
+            .learning_rate(0.3f32)
+            .reg_lambda(1.0f32)
+            .reg_alpha(0.0f32)
+            .min_split_gain(0.0f32)
+            .min_child_weight(1.0f32)
+            .verbosity(Verbosity::Silent)
+            .build()
+            .unwrap();
 
         // booste-rs benchmark
         group.bench_with_input(
             BenchmarkId::new("boosters", name),
-            &(&quantized, &labels, &cuts),
-            |b, (quantized, labels, cuts)| {
+            &(&col_matrix, &labels),
+            |b, (col_matrix, labels)| {
                 b.iter(|| {
-                    let mut trainer = GBTreeTrainer::new(Box::new(LogisticLoss), params.clone());
-                    let forest = trainer.train(
-                        policy.clone(),
-                        black_box(*quantized),
-                        black_box(*labels),
-                        black_box(*cuts),
-                        &[],
-                    );
+                    let forest = trainer.train(black_box(*col_matrix), black_box(*labels), &[]);
                     black_box(forest)
                 });
             },
@@ -230,7 +194,7 @@ fn bench_gbtree_classification(c: &mut Criterion) {
 
             let tree_params = TreeBoosterParametersBuilder::default()
                 .eta(0.3)
-                .max_depth(max_depth)
+                .max_depth(max_depth as u32)
                 .lambda(1.0)
                 .alpha(0.0)
                 .gamma(0.0)

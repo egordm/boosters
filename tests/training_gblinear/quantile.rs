@@ -8,8 +8,7 @@
 use super::{load_config, load_test_data, load_train_data, pearson_correlation, TEST_CASES_DIR};
 use approx::assert_relative_eq;
 use booste_rs::data::DataMatrix;
-use booste_rs::training::linear::{LinearTrainer, LinearTrainerConfig};
-use booste_rs::training::{QuantileLoss, Verbosity};
+use booste_rs::training::{GBLinearTrainer, LossFunction, Verbosity};
 use rstest::rstest;
 use serde::Deserialize;
 use std::fs;
@@ -35,20 +34,19 @@ fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
     let alpha = config.quantile_alpha.expect("Config should have quantile_alpha");
     assert_relative_eq!(alpha, expected_alpha, epsilon = 0.01);
 
-    let trainer_config = LinearTrainerConfig {
-        num_rounds: config.num_boost_round,
-        learning_rate: config.eta,
-        alpha: config.alpha,
-        lambda: config.lambda,
-        parallel: false,
-        seed: 42,
-        verbosity: Verbosity::Silent,
-        ..Default::default()
-    };
+    let trainer = GBLinearTrainer::builder()
+        .loss(LossFunction::Quantile { alpha })
+        .num_rounds(config.num_boost_round)
+        .learning_rate(config.eta)
+        .alpha(config.alpha)
+        .lambda(config.lambda)
+        .parallel(false)
+        .seed(42u64)
+        .verbosity(Verbosity::Silent)
+        .build()
+        .unwrap();
 
-    let trainer = LinearTrainer::new(trainer_config);
-    let loss = QuantileLoss::new(alpha);
-    let model = trainer.train(&data, &labels, &[], &loss);
+    let model = trainer.train(&data, &labels, &[]);
 
     // Compute predictions on test set
     let mut test_preds = Vec::with_capacity(test_data.num_rows());
@@ -116,23 +114,46 @@ fn quantile_regression_predictions_differ() {
     let (data, labels) = load_train_data("quantile_regression");
     let config = load_config("quantile_regression");
 
-    let trainer_config = LinearTrainerConfig {
-        num_rounds: config.num_boost_round,
-        learning_rate: config.eta,
-        alpha: config.alpha,
-        lambda: config.lambda,
-        parallel: false,
-        seed: 42,
-        verbosity: Verbosity::Silent,
-        ..Default::default()
-    };
-
-    let trainer = LinearTrainer::new(trainer_config);
-
     // Train three models with different quantiles
-    let model_low = trainer.train(&data, &labels, &[], &QuantileLoss::new(0.1));
-    let model_med = trainer.train(&data, &labels, &[], &QuantileLoss::new(0.5));
-    let model_high = trainer.train(&data, &labels, &[], &QuantileLoss::new(0.9));
+    let trainer_low = GBLinearTrainer::builder()
+        .loss(LossFunction::Quantile { alpha: 0.1 })
+        .num_rounds(config.num_boost_round)
+        .learning_rate(config.eta)
+        .alpha(config.alpha)
+        .lambda(config.lambda)
+        .parallel(false)
+        .seed(42u64)
+        .verbosity(Verbosity::Silent)
+        .build()
+        .unwrap();
+
+    let trainer_med = GBLinearTrainer::builder()
+        .loss(LossFunction::Quantile { alpha: 0.5 })
+        .num_rounds(config.num_boost_round)
+        .learning_rate(config.eta)
+        .alpha(config.alpha)
+        .lambda(config.lambda)
+        .parallel(false)
+        .seed(42u64)
+        .verbosity(Verbosity::Silent)
+        .build()
+        .unwrap();
+
+    let trainer_high = GBLinearTrainer::builder()
+        .loss(LossFunction::Quantile { alpha: 0.9 })
+        .num_rounds(config.num_boost_round)
+        .learning_rate(config.eta)
+        .alpha(config.alpha)
+        .lambda(config.lambda)
+        .parallel(false)
+        .seed(42u64)
+        .verbosity(Verbosity::Silent)
+        .build()
+        .unwrap();
+
+    let model_low = trainer_low.train(&data, &labels, &[]);
+    let model_med = trainer_med.train(&data, &labels, &[]);
+    let model_high = trainer_high.train(&data, &labels, &[]);
 
     // Get predictions for first sample
     let features: Vec<f32> = (0..data.num_features())
@@ -211,25 +232,24 @@ fn train_multi_quantile_regression() {
     let config = load_multi_quantile_config();
     let xgb_preds = load_multi_quantile_xgb_predictions();
 
-    let quantile_alphas = &config.quantile_alpha;
+    let quantile_alphas = config.quantile_alpha.clone();
     let num_quantiles = quantile_alphas.len();
     assert_eq!(num_quantiles, 3);
 
-    let trainer_config = LinearTrainerConfig {
-        num_rounds: config.num_boost_round,
-        learning_rate: config.eta,
-        alpha: config.alpha,
-        lambda: config.lambda,
-        parallel: false,
-        seed: 42,
-        verbosity: Verbosity::Silent,
-        ..Default::default()
-    };
-
     // Train single multi-quantile model
-    let trainer = LinearTrainer::new(trainer_config.clone());
-    let loss = QuantileLoss::multi(quantile_alphas);
-    let model = trainer.train_multiclass(&data, &labels, &[], &loss);
+    let trainer = GBLinearTrainer::builder()
+        .loss(LossFunction::MultiQuantile { alphas: quantile_alphas.clone() })
+        .num_rounds(config.num_boost_round)
+        .learning_rate(config.eta)
+        .alpha(config.alpha)
+        .lambda(config.lambda)
+        .parallel(false)
+        .seed(42u64)
+        .verbosity(Verbosity::Silent)
+        .build()
+        .unwrap();
+
+    let model = trainer.train(&data, &labels, &[]);
 
     // Verify model has correct number of output groups
     assert_eq!(model.num_groups(), num_quantiles);
@@ -295,29 +315,40 @@ fn train_multi_quantile_regression() {
 fn multi_quantile_vs_separate_models() {
     let (data, labels) = load_train_data("multi_quantile");
     let config = load_multi_quantile_config();
-    let quantile_alphas = &config.quantile_alpha;
-
-    let trainer_config = LinearTrainerConfig {
-        num_rounds: config.num_boost_round,
-        learning_rate: config.eta,
-        alpha: config.alpha,
-        lambda: config.lambda,
-        parallel: false,
-        seed: 42,
-        verbosity: Verbosity::Silent,
-        ..Default::default()
-    };
-
-    let trainer = LinearTrainer::new(trainer_config.clone());
+    let quantile_alphas = config.quantile_alpha.clone();
 
     // Train single multi-quantile model
-    let multi_loss = QuantileLoss::multi(quantile_alphas);
-    let multi_model = trainer.train_multiclass(&data, &labels, &[], &multi_loss);
+    let multi_trainer = GBLinearTrainer::builder()
+        .loss(LossFunction::MultiQuantile { alphas: quantile_alphas.clone() })
+        .num_rounds(config.num_boost_round)
+        .learning_rate(config.eta)
+        .alpha(config.alpha)
+        .lambda(config.lambda)
+        .parallel(false)
+        .seed(42u64)
+        .verbosity(Verbosity::Silent)
+        .build()
+        .unwrap();
+
+    let multi_model = multi_trainer.train(&data, &labels, &[]);
 
     // Train 3 separate single-quantile models
     let single_models: Vec<_> = quantile_alphas
         .iter()
-        .map(|&alpha| trainer.train(&data, &labels, &[], &QuantileLoss::new(alpha)))
+        .map(|&alpha| {
+            let trainer = GBLinearTrainer::builder()
+                .loss(LossFunction::Quantile { alpha })
+                .num_rounds(config.num_boost_round)
+                .learning_rate(config.eta)
+                .alpha(config.alpha)
+                .lambda(config.lambda)
+                .parallel(false)
+                .seed(42u64)
+                .verbosity(Verbosity::Silent)
+                .build()
+                .unwrap();
+            trainer.train(&data, &labels, &[])
+        })
         .collect();
 
     // Compare predictions on training set
