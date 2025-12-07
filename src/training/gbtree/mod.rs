@@ -59,8 +59,9 @@ pub use histogram::{
 };
 pub use multi_output::{
     MultiOutputBuildingNode, MultiOutputBuildingTree, MultiOutputFeatureHistogram,
-    MultiOutputHistogramBuilder, MultiOutputNodeHistogram, MultiOutputSplitFinder,
-    MultiOutputSplitInfo, MultiOutputTreeGrower, multi_output_leaf_weight, multi_output_split_gain,
+    MultiOutputGrowthStrategy, MultiOutputHistogramBuilder, MultiOutputNodeHistogram,
+    MultiOutputSplitFinder, MultiOutputSplitInfo, MultiOutputTreeGrower,
+    multi_output_leaf_weight, multi_output_split_gain,
 };
 pub use partition::RowPartitioner;
 pub use quantize::{
