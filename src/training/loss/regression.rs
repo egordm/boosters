@@ -50,6 +50,11 @@ impl Loss for SquaredLoss {
         hess.fill(1.0);
     }
 
+    /// Base score = weighted mean of labels.
+    fn init_base_score(&self, labels: &[f32], weights: Option<&[f32]>) -> Vec<f32> {
+        vec![weighted_mean(labels, weights)]
+    }
+
     fn name(&self) -> &'static str {
         "squared_error"
     }
@@ -242,6 +247,16 @@ impl Loss for QuantileLoss {
         }
     }
 
+    /// Base score = weighted mean of labels (same for all quantiles).
+    ///
+    /// Using mean is a reasonable approximation that works across all quantiles.
+    /// The true optimal would be the weighted quantile, but mean provides
+    /// good convergence in practice.
+    fn init_base_score(&self, labels: &[f32], weights: Option<&[f32]>) -> Vec<f32> {
+        let mean = weighted_mean(labels, weights);
+        vec![mean; self.alphas.len()]
+    }
+
     fn name(&self) -> &'static str {
         "quantile"
     }
@@ -339,8 +354,43 @@ impl Loss for PseudoHuberLoss {
         }
     }
 
+    /// Base score = weighted mean (same as squared error).
+    fn init_base_score(&self, labels: &[f32], weights: Option<&[f32]>) -> Vec<f32> {
+        vec![weighted_mean(labels, weights)]
+    }
+
     fn name(&self) -> &'static str {
         "pseudo_huber"
+    }
+}
+
+// =============================================================================
+// Helper functions
+// =============================================================================
+
+/// Compute weighted mean (or simple mean if no weights).
+fn weighted_mean(values: &[f32], weights: Option<&[f32]>) -> f32 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    match weights {
+        Some(w) => {
+            let (sum, weight_sum) = values
+                .iter()
+                .zip(w.iter())
+                .fold((0.0f64, 0.0f64), |(s, ws), (&v, &wt)| {
+                    (s + v as f64 * wt as f64, ws + wt as f64)
+                });
+            if weight_sum > 0.0 {
+                (sum / weight_sum) as f32
+            } else {
+                0.0
+            }
+        }
+        None => {
+            let sum: f64 = values.iter().map(|&v| v as f64).sum();
+            (sum / values.len() as f64) as f32
+        }
     }
 }
 

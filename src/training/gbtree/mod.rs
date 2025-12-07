@@ -67,6 +67,4 @@ pub use split::{
     GainParams, GreedySplitFinder, SplitFinder, SplitInfo, leaf_objective, leaf_weight,
     split_gain,
 };
-pub use trainer::{
-    BaseScore, GBTreeTrainer, GBTreeTrainerBuilder, GrowthMode, QuantizedEvalSet,
-};
+pub use trainer::{GBTreeTrainer, GBTreeTrainerBuilder, GrowthMode, QuantizedEvalSet};

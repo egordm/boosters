@@ -65,18 +65,6 @@ use super::split::GainParams;
 // GBTreeTrainer
 // ============================================================================
 
-/// Strategy for initializing base score.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub enum BaseScore {
-    /// Use mean of labels (good for regression).
-    #[default]
-    Mean,
-    /// Use a fixed value.
-    Fixed(f32),
-    /// Use zero (raw model starts from 0).
-    Zero,
-}
-
 /// Growth strategy for tree building.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum GrowthMode {
@@ -135,10 +123,6 @@ pub struct GBTreeTrainer {
     /// Learning rate (shrinkage) applied to leaf weights.
     #[builder(default = "0.3")]
     pub learning_rate: f32,
-
-    /// Base score initialization strategy.
-    #[builder(default)]
-    pub base_score: BaseScore,
 
     /// Maximum number of histogram bins per feature.
     #[builder(default = "256")]
@@ -254,7 +238,6 @@ impl Default for GBTreeTrainer {
             loss: LossFunction::default(),
             num_rounds: 100,
             learning_rate: 0.3,
-            base_score: BaseScore::default(),
             max_bins: 256,
             seed: 0,
             growth_mode: GrowthMode::default(),
@@ -445,12 +428,8 @@ impl GBTreeTrainer {
         let tree_params = self.tree_params();
         let growth_strategy = self.growth_strategy();
 
-        // Initialize base scores (per output)
-        let base_scores: Vec<f32> = if num_outputs == 1 {
-            vec![self.compute_base_score(labels)]
-        } else {
-            vec![0.0; num_outputs]
-        };
+        // Initialize base scores (per output) using loss-specific initialization
+        let base_scores: Vec<f32> = self.loss.init_base_score(labels, None);
 
         // Initialize predictions: [num_rows * num_outputs] in row-major order
         let mut predictions: Vec<f32> = (0..num_rows)
@@ -748,17 +727,6 @@ impl GBTreeTrainer {
     // Helper methods
     // ========================================================================
 
-    fn compute_base_score(&self, labels: &[f32]) -> f32 {
-        match self.base_score {
-            BaseScore::Mean => {
-                let sum: f32 = labels.iter().sum();
-                sum / labels.len() as f32
-            }
-            BaseScore::Fixed(v) => v,
-            BaseScore::Zero => 0.0,
-        }
-    }
-
     fn predict_row<B: BinIndex>(tree: &BuildingTree, quantized: &QuantizedMatrix<B>, row: u32) -> f32 {
         let mut node_id = 0u32;
 
@@ -943,22 +911,51 @@ mod tests {
     }
 
     #[test]
-    fn test_base_score_mean() {
+    fn test_base_score_auto_regression() {
+        // Auto for regression should use mean
         let labels = vec![1.0, 2.0, 3.0, 4.0, 5.0];
         let trainer = GBTreeTrainer::default();
-        let base = trainer.compute_base_score(&labels);
-        assert!((base - 3.0).abs() < 1e-6);
+        let base_scores = trainer.compute_base_scores(&labels);
+        assert_eq!(base_scores.len(), 1);
+        assert!((base_scores[0] - 3.0).abs() < 1e-6);
     }
 
     #[test]
-    fn test_base_score_fixed() {
-        let labels = vec![1.0, 2.0, 3.0];
+    fn test_base_score_auto_softmax() {
+        // Auto for softmax should use log-priors
+        let labels = vec![0.0, 0.0, 0.0, 1.0, 2.0]; // 60% class 0, 20% class 1, 20% class 2
         let trainer = GBTreeTrainer::builder()
-            .base_score(BaseScore::Fixed(0.5))
+            .loss(LossFunction::Softmax { num_classes: 3 })
             .build()
             .unwrap();
-        let base = trainer.compute_base_score(&labels);
-        assert_eq!(base, 0.5);
+        let base_scores = trainer.compute_base_scores(&labels);
+        assert_eq!(base_scores.len(), 3);
+        // Class 0 should have highest base score (most frequent)
+        assert!(base_scores[0] > base_scores[1]);
+        assert!(base_scores[0] > base_scores[2]);
+        // log(0.6) ≈ -0.51, log(0.2) ≈ -1.61
+        assert!((base_scores[0] - (-0.51)).abs() < 0.1);
+        assert!((base_scores[1] - (-1.61)).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_base_score_auto_logistic() {
+        // All positive labels
+        let labels = vec![1.0, 1.0, 1.0, 1.0];
+        let trainer = GBTreeTrainer::builder()
+            .loss(LossFunction::Logistic)
+            .build()
+            .unwrap();
+        let base_scores = trainer.compute_base_scores(&labels);
+        assert_eq!(base_scores.len(), 1);
+        // 100% positive → very large positive log-odds
+        assert!(base_scores[0] > 5.0);
+        
+        // 50/50 labels
+        let labels = vec![0.0, 0.0, 1.0, 1.0];
+        let base_scores = trainer.compute_base_scores(&labels);
+        // 50% → log-odds ≈ 0
+        assert!(base_scores[0].abs() < 0.1);
     }
 
     #[test]
