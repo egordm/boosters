@@ -764,9 +764,25 @@ impl MultiOutputBuildingTree {
 // MultiOutputTreeGrower
 // =============================================================================
 
+/// Growth strategy for multi-output trees.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MultiOutputGrowthStrategy {
+    /// Depth-wise: expand all nodes at each level (XGBoost style)
+    DepthWise,
+    /// Leaf-wise: expand best-gain leaf first (LightGBM style)
+    LeafWise,
+}
+
+impl Default for MultiOutputGrowthStrategy {
+    fn default() -> Self {
+        Self::DepthWise
+    }
+}
+
 /// Tree grower for multi-output trees.
 ///
-/// Grows a single tree with K-dimensional leaf values using depth-wise expansion.
+/// Grows a single tree with K-dimensional leaf values.
+/// Supports both depth-wise (XGBoost) and leaf-wise (LightGBM) growth strategies.
 pub struct MultiOutputTreeGrower<'a> {
     /// Histogram builder
     hist_builder: MultiOutputHistogramBuilder,
@@ -778,11 +794,23 @@ pub struct MultiOutputTreeGrower<'a> {
     params: TreeParams,
     /// Number of outputs
     n_outputs: usize,
+    /// Growth strategy
+    strategy: MultiOutputGrowthStrategy,
 }
 
 impl<'a> MultiOutputTreeGrower<'a> {
-    /// Create a new multi-output tree grower.
+    /// Create a new multi-output tree grower with depth-wise strategy.
     pub fn new(cuts: &'a BinCuts, params: TreeParams, n_outputs: usize) -> Self {
+        Self::with_strategy(cuts, params, n_outputs, MultiOutputGrowthStrategy::DepthWise)
+    }
+
+    /// Create a new multi-output tree grower with specified strategy.
+    pub fn with_strategy(
+        cuts: &'a BinCuts,
+        params: TreeParams,
+        n_outputs: usize,
+        strategy: MultiOutputGrowthStrategy,
+    ) -> Self {
         let hist_builder = MultiOutputHistogramBuilder::new(cuts, n_outputs as u16);
         Self {
             hist_builder,
@@ -790,11 +818,29 @@ impl<'a> MultiOutputTreeGrower<'a> {
             cuts,
             params,
             n_outputs,
+            strategy,
         }
     }
 
     /// Build a multi-output tree.
     pub fn build_tree<B: BinIndex>(
+        &mut self,
+        quantized: &QuantizedMatrix<B>,
+        grads: &GradientBuffer,
+        partitioner: &mut RowPartitioner,
+    ) -> MultiOutputBuildingTree {
+        match self.strategy {
+            MultiOutputGrowthStrategy::DepthWise => {
+                self.build_tree_depth_wise(quantized, grads, partitioner)
+            }
+            MultiOutputGrowthStrategy::LeafWise => {
+                self.build_tree_leaf_wise(quantized, grads, partitioner)
+            }
+        }
+    }
+
+    /// Build tree using depth-wise expansion (XGBoost style).
+    fn build_tree_depth_wise<B: BinIndex>(
         &mut self,
         quantized: &QuantizedMatrix<B>,
         grads: &GradientBuffer,
@@ -828,7 +874,6 @@ impl<'a> MultiOutputTreeGrower<'a> {
             candidates.insert(0, (root_split, 0));
         }
 
-        let mut num_leaves = 1u32;
         let max_depth = if self.params.max_depth == 0 { u32::MAX } else { self.params.max_depth };
 
         // Main growth loop - depth-wise expansion
@@ -848,64 +893,240 @@ impl<'a> MultiOutputTreeGrower<'a> {
 
             for node_id in nodes_to_expand {
                 let (split, depth) = candidates.remove(&node_id).unwrap();
-
-                // Get partition for this node
-                let partition_id = tree.node(node_id).partition_id;
-
-                // Apply split to partitioner
-                let scalar_split = self.to_scalar_split(&split);
-                let (left_partition, right_partition) =
-                    partitioner.apply_split(partition_id, &scalar_split, quantized);
-
-                // Expand tree
-                let (left_id, right_id) = tree.expand(node_id, split, left_partition, right_partition);
-                num_leaves += 1; // Net +1 leaf (remove 1, add 2)
-
-                // Build child histograms using histogram subtraction
-                let parent_hist = histograms.get(&node_id).unwrap();
-                
-                let left_size = partitioner.node_size(left_partition);
-                let right_size = partitioner.node_size(right_partition);
-                
-                let (left_hist, right_hist) = if left_size <= right_size {
-                    let mut left = self.hist_builder.create_node_histogram();
-                    let left_rows = partitioner.node_rows(left_partition);
-                    self.hist_builder.build(&mut left, quantized, grads, left_rows);
-                    
-                    let right = self.subtract_histogram(parent_hist, &left);
-                    (left, right)
-                } else {
-                    let mut right = self.hist_builder.create_node_histogram();
-                    let right_rows = partitioner.node_rows(right_partition);
-                    self.hist_builder.build(&mut right, quantized, grads, right_rows);
-                    
-                    let left = self.subtract_histogram(parent_hist, &right);
-                    (left, right)
-                };
-
-                // Find splits for children
-                let left_split = self.split_finder.find_best_split(&left_hist, self.cuts, &self.params.gain);
-                let right_split = self.split_finder.find_best_split(&right_hist, self.cuts, &self.params.gain);
-
-                histograms.insert(left_id, left_hist);
-                histograms.insert(right_id, right_hist);
-
-                if left_split.is_valid() {
-                    candidates.insert(left_id, (left_split, depth + 1));
-                }
-                if right_split.is_valid() {
-                    candidates.insert(right_id, (right_split, depth + 1));
-                }
+                self.expand_node(
+                    &mut tree,
+                    &mut histograms,
+                    &mut candidates,
+                    node_id,
+                    split,
+                    depth,
+                    quantized,
+                    grads,
+                    partitioner,
+                );
             }
         }
 
         // Apply learning rate
         tree.apply_learning_rate(self.params.learning_rate);
 
-        // Suppress unused warning
-        let _ = num_leaves;
+        tree
+    }
+
+    /// Build tree using leaf-wise expansion (LightGBM style).
+    ///
+    /// Always expands the leaf with highest gain until max_leaves is reached.
+    fn build_tree_leaf_wise<B: BinIndex>(
+        &mut self,
+        quantized: &QuantizedMatrix<B>,
+        grads: &GradientBuffer,
+        partitioner: &mut RowPartitioner,
+    ) -> MultiOutputBuildingTree {
+        use std::collections::BinaryHeap;
+        use std::cmp::Ordering;
+
+        // Priority queue entry: (gain, node_id, depth)
+        #[derive(Debug, Clone)]
+        struct LeafCandidate {
+            gain: f32,
+            node_id: u32,
+            depth: u32,
+        }
+
+        impl PartialEq for LeafCandidate {
+            fn eq(&self, other: &Self) -> bool {
+                self.gain == other.gain && self.node_id == other.node_id
+            }
+        }
+        impl Eq for LeafCandidate {}
+
+        impl PartialOrd for LeafCandidate {
+            fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+        impl Ord for LeafCandidate {
+            fn cmp(&self, other: &Self) -> Ordering {
+                // Max-heap by gain
+                self.gain.partial_cmp(&other.gain)
+                    .unwrap_or(Ordering::Equal)
+                    .then_with(|| self.node_id.cmp(&other.node_id))
+            }
+        }
+
+        let mut tree = MultiOutputBuildingTree::new(self.n_outputs);
+
+        // Histogram storage per node
+        let mut histograms: HashMap<u32, MultiOutputNodeHistogram> = HashMap::new();
+        // Split storage per node
+        let mut splits: HashMap<u32, MultiOutputSplitInfo> = HashMap::new();
+
+        // Build root histogram
+        let root_rows = partitioner.node_rows(0);
+        let mut root_hist = self.hist_builder.create_node_histogram();
+        self.hist_builder.build(&mut root_hist, quantized, grads, root_rows);
+        
+        // Compute root weights
+        let root_weights = multi_output_leaf_weight(
+            root_hist.total_grad(),
+            root_hist.total_hess(),
+            self.params.gain.lambda,
+        );
+        tree.node_mut(0).weights = root_weights;
+
+        // Find initial split for root
+        let root_split = self.split_finder.find_best_split(&root_hist, self.cuts, &self.params.gain);
+        histograms.insert(0, root_hist);
+
+        // Priority queue of candidates
+        let mut pq: BinaryHeap<LeafCandidate> = BinaryHeap::new();
+        if root_split.is_valid() {
+            pq.push(LeafCandidate {
+                gain: root_split.gain,
+                node_id: 0,
+                depth: 0,
+            });
+            splits.insert(0, root_split);
+        }
+
+        let max_depth = if self.params.max_depth == 0 { u32::MAX } else { self.params.max_depth };
+        let max_leaves = self.params.max_leaves.max(2); // At least 2 leaves
+        let mut num_leaves = 1u32;
+
+        // Main growth loop - leaf-wise: always expand best-gain candidate
+        while let Some(candidate) = pq.pop() {
+            // Check stopping conditions
+            if num_leaves >= max_leaves {
+                break;
+            }
+            if candidate.depth >= max_depth {
+                continue; // Skip this candidate but try others
+            }
+
+            let node_id = candidate.node_id;
+            let split = match splits.remove(&node_id) {
+                Some(s) => s,
+                None => continue,
+            };
+
+            // Expand this node
+            let partition_id = tree.node(node_id).partition_id;
+            let scalar_split = self.to_scalar_split(&split);
+            let (left_partition, right_partition) =
+                partitioner.apply_split(partition_id, &scalar_split, quantized);
+
+            let (left_id, right_id) = tree.expand(node_id, split, left_partition, right_partition);
+            num_leaves += 1; // Net +1 (remove 1 leaf, add 2)
+
+            // Build child histograms
+            let parent_hist = histograms.get(&node_id).unwrap();
+            let left_size = partitioner.node_size(left_partition);
+            let right_size = partitioner.node_size(right_partition);
+
+            let (left_hist, right_hist) = if left_size <= right_size {
+                let mut left = self.hist_builder.create_node_histogram();
+                let left_rows = partitioner.node_rows(left_partition);
+                self.hist_builder.build(&mut left, quantized, grads, left_rows);
+                let right = self.subtract_histogram(parent_hist, &left);
+                (left, right)
+            } else {
+                let mut right = self.hist_builder.create_node_histogram();
+                let right_rows = partitioner.node_rows(right_partition);
+                self.hist_builder.build(&mut right, quantized, grads, right_rows);
+                let left = self.subtract_histogram(parent_hist, &right);
+                (left, right)
+            };
+
+            // Find splits for children and add to priority queue
+            let left_split = self.split_finder.find_best_split(&left_hist, self.cuts, &self.params.gain);
+            let right_split = self.split_finder.find_best_split(&right_hist, self.cuts, &self.params.gain);
+
+            histograms.insert(left_id, left_hist);
+            histograms.insert(right_id, right_hist);
+
+            if left_split.is_valid() {
+                pq.push(LeafCandidate {
+                    gain: left_split.gain,
+                    node_id: left_id,
+                    depth: candidate.depth + 1,
+                });
+                splits.insert(left_id, left_split);
+            }
+            if right_split.is_valid() {
+                pq.push(LeafCandidate {
+                    gain: right_split.gain,
+                    node_id: right_id,
+                    depth: candidate.depth + 1,
+                });
+                splits.insert(right_id, right_split);
+            }
+        }
+
+        // Apply learning rate
+        tree.apply_learning_rate(self.params.learning_rate);
 
         tree
+    }
+
+    /// Expand a single node (helper for depth-wise).
+    #[allow(clippy::too_many_arguments)]
+    fn expand_node<B: BinIndex>(
+        &mut self,
+        tree: &mut MultiOutputBuildingTree,
+        histograms: &mut HashMap<u32, MultiOutputNodeHistogram>,
+        candidates: &mut HashMap<u32, (MultiOutputSplitInfo, u32)>,
+        node_id: u32,
+        split: MultiOutputSplitInfo,
+        depth: u32,
+        quantized: &QuantizedMatrix<B>,
+        grads: &GradientBuffer,
+        partitioner: &mut RowPartitioner,
+    ) {
+        let partition_id = tree.node(node_id).partition_id;
+
+        // Apply split to partitioner
+        let scalar_split = self.to_scalar_split(&split);
+        let (left_partition, right_partition) =
+            partitioner.apply_split(partition_id, &scalar_split, quantized);
+
+        // Expand tree
+        let (left_id, right_id) = tree.expand(node_id, split, left_partition, right_partition);
+
+        // Build child histograms using histogram subtraction
+        let parent_hist = histograms.get(&node_id).unwrap();
+        
+        let left_size = partitioner.node_size(left_partition);
+        let right_size = partitioner.node_size(right_partition);
+        
+        let (left_hist, right_hist) = if left_size <= right_size {
+            let mut left = self.hist_builder.create_node_histogram();
+            let left_rows = partitioner.node_rows(left_partition);
+            self.hist_builder.build(&mut left, quantized, grads, left_rows);
+            
+            let right = self.subtract_histogram(parent_hist, &left);
+            (left, right)
+        } else {
+            let mut right = self.hist_builder.create_node_histogram();
+            let right_rows = partitioner.node_rows(right_partition);
+            self.hist_builder.build(&mut right, quantized, grads, right_rows);
+            
+            let left = self.subtract_histogram(parent_hist, &right);
+            (left, right)
+        };
+
+        // Find splits for children
+        let left_split = self.split_finder.find_best_split(&left_hist, self.cuts, &self.params.gain);
+        let right_split = self.split_finder.find_best_split(&right_hist, self.cuts, &self.params.gain);
+
+        histograms.insert(left_id, left_hist);
+        histograms.insert(right_id, right_hist);
+
+        if left_split.is_valid() {
+            candidates.insert(left_id, (left_split, depth + 1));
+        }
+        if right_split.is_valid() {
+            candidates.insert(right_id, (right_split, depth + 1));
+        }
     }
 
     /// Subtract child histogram from parent to get sibling histogram.
@@ -1120,6 +1341,81 @@ mod tests {
 
         // Should have more than just root
         assert!(tree.num_nodes() >= 3, "Tree should have at least root + 2 children, got {}", tree.num_nodes());
+
+        // Check leaf weights have correct dimension
+        for leaf_id in tree.leaves() {
+            let node = tree.node(leaf_id);
+            assert_eq!(node.weights.len(), n_outputs);
+        }
+    }
+
+    #[test]
+    fn test_multi_output_tree_grower_leaf_wise() {
+        use crate::training::gbtree::{BinCuts, TreeParams, RowPartitioner, QuantizedMatrix};
+        use crate::training::GradientBuffer;
+        use std::sync::Arc;
+        
+        // 2-output problem (binary classification)
+        let n_outputs = 2;
+        let n_samples = 100usize;
+
+        // Generate simple data: x < 0.5 -> class 0, x >= 0.5 -> class 1
+        let mut features = vec![0.0f32; n_samples];
+        let mut targets: Vec<usize> = vec![0; n_samples];
+
+        for i in 0..n_samples {
+            features[i] = i as f32 / n_samples as f32;
+            targets[i] = if features[i] < 0.5 { 0 } else { 1 };
+        }
+
+        // Create simple cuts: 10 equal bins for one feature
+        let cut_values: Vec<f32> = (1..=10).map(|i| i as f32 * 0.1).collect();
+        let cut_ptrs = vec![0u32, cut_values.len() as u32];
+        let cuts = BinCuts::new(cut_values, cut_ptrs);
+        let cuts_arc = Arc::new(cuts);
+        
+        // Manual quantization
+        let mut index = vec![0u8; n_samples];
+        for i in 0..n_samples {
+            let v = features[i];
+            let bin = if v.is_nan() {
+                0u8
+            } else {
+                let b = ((v * 10.0) as usize).min(10);
+                (b + 1) as u8
+            };
+            index[i] = bin;
+        }
+        let quantized = QuantizedMatrix::<u8>::new(index, n_samples as u32, 1, cuts_arc.clone());
+
+        // Initial predictions and gradients
+        let preds = vec![0.5f32; n_samples * n_outputs];
+        let mut grads = GradientBuffer::new(n_samples, n_outputs);
+        for i in 0..n_samples {
+            for k in 0..n_outputs {
+                let p = preds[i * n_outputs + k];
+                let y = if targets[i] == k { 1.0 } else { 0.0 };
+                grads.set(i, k, p - y, (p * (1.0 - p)).max(0.0001));
+            }
+        }
+
+        // Build tree with leaf-wise strategy and max_leaves limit
+        let mut params = TreeParams::default();
+        params.max_leaves = 8; // Limit to 8 leaves
+        params.max_depth = 10; // High depth to let leaf-wise decide
+
+        let mut partitioner = RowPartitioner::new(n_samples as u32);
+        let mut grower = MultiOutputTreeGrower::with_strategy(
+            &cuts_arc, params, n_outputs, MultiOutputGrowthStrategy::LeafWise
+        );
+        let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+
+        // Should have expanded (at least root + 2 children)
+        assert!(tree.num_nodes() >= 3, "Tree should have at least 3 nodes, got {}", tree.num_nodes());
+
+        // Count leaves - should be <= max_leaves
+        let num_leaves: usize = tree.leaves().count();
+        assert!(num_leaves <= 8, "Should have at most 8 leaves, got {}", num_leaves);
 
         // Check leaf weights have correct dimension
         for leaf_id in tree.leaves() {
