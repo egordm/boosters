@@ -640,26 +640,14 @@ impl GBTreeTrainer {
         interaction_constraints: &InteractionConstraints,
     ) -> BuildingTree {
         let num_rows = quantized.num_rows() as usize;
-        let num_outputs = grads.n_outputs();
 
-        // For multi-output, extract gradients for this output into a temporary buffer
-        let grads_to_use = if num_outputs > 1 {
-            // Copy gradients for this output
-            let mut temp = GradientBuffer::new(num_rows, 1);
-            for row in 0..num_rows {
-                let (grad, hess) = grads.get(row, output_idx);
-                temp.set(row, 0, grad, hess);
-            }
-            temp
-        } else {
-            // Single-output: copy to new buffer (TreeGrower expects owned)
-            let mut temp = GradientBuffer::new(num_rows, 1);
-            for row in 0..num_rows {
-                let (grad, hess) = grads.get(row, 0);
-                temp.set(row, 0, grad, hess);
-            }
-            temp
-        };
+        // Extract gradients for this output into a single-output buffer
+        // (TreeGrower always works with single-output gradients)
+        let mut grads_to_use = GradientBuffer::new(num_rows, 1);
+        for row in 0..num_rows {
+            let (grad, hess) = grads.get(row, output_idx);
+            grads_to_use.set(row, 0, grad, hess);
+        }
 
         let mut grower = TreeGrower::new(
             growth_strategy,
@@ -670,7 +658,7 @@ impl GBTreeTrainer {
             mono_checker,
             interaction_constraints,
         );
-        grower.build_tree_with_seed(quantized, &grads_to_use, partitioner, seed)
+        grower.build_tree(quantized, &grads_to_use, partitioner, seed)
     }
 
     /// Update predictions for a specific output after building a tree.
