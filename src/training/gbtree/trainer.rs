@@ -466,7 +466,7 @@ impl GBTreeTrainer {
         // Early stopping
         let mut early_stopping = if self.early_stopping_rounds > 0 && !eval_sets.is_empty() {
             Some(EarlyStopping::new(
-                Box::new(self.eval_metric.clone()),
+                self.eval_metric.clone(),
                 self.early_stopping_rounds,
             ))
         } else {

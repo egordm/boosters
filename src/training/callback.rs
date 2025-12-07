@@ -3,7 +3,7 @@
 //! Monitors a validation metric and stops training when no improvement is seen
 //! for a specified number of rounds.
 
-use super::Metric;
+use super::{EvalMetric, Metric};
 
 /// Early stopping configuration and state.
 ///
@@ -13,9 +13,9 @@ use super::Metric;
 /// # Example
 ///
 /// ```
-/// use booste_rs::training::{EarlyStopping, Rmse};
+/// use booste_rs::training::{EarlyStopping, EvalMetric};
 ///
-/// let mut early_stop = EarlyStopping::new(Box::new(Rmse), 5);
+/// let mut early_stop = EarlyStopping::new(EvalMetric::Rmse, 5);
 ///
 /// // Simulated training loop
 /// for round in 0..100 {
@@ -30,7 +30,7 @@ use super::Metric;
 /// ```
 pub struct EarlyStopping {
     /// Metric to monitor.
-    metric: Box<dyn Metric>,
+    metric: EvalMetric,
     /// Number of rounds without improvement before stopping.
     patience: usize,
     /// Best metric value seen so far.
@@ -50,7 +50,7 @@ impl EarlyStopping {
     ///
     /// * `metric` - The metric to monitor
     /// * `patience` - Number of rounds without improvement before stopping
-    pub fn new(metric: Box<dyn Metric>, patience: usize) -> Self {
+    pub fn new(metric: EvalMetric, patience: usize) -> Self {
         let higher_is_better = metric.higher_is_better();
         Self {
             metric,
@@ -128,11 +128,10 @@ impl EarlyStopping {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::training::Rmse;
 
     #[test]
     fn early_stopping_no_stop_while_improving() {
-        let mut early_stop = EarlyStopping::new(Box::new(Rmse), 3);
+        let mut early_stop = EarlyStopping::new(EvalMetric::Rmse, 3);
 
         // Simulated improving metrics (RMSE decreasing)
         assert!(!early_stop.update_with_value(1.0));
@@ -147,7 +146,7 @@ mod tests {
 
     #[test]
     fn early_stopping_stops_after_patience() {
-        let mut early_stop = EarlyStopping::new(Box::new(Rmse), 3);
+        let mut early_stop = EarlyStopping::new(EvalMetric::Rmse, 3);
 
         // Best at round 0, then no improvement
         // After update: current_round increments, then check current_round - best_round > patience
@@ -162,7 +161,7 @@ mod tests {
 
     #[test]
     fn early_stopping_resets_on_improvement() {
-        let mut early_stop = EarlyStopping::new(Box::new(Rmse), 3);
+        let mut early_stop = EarlyStopping::new(EvalMetric::Rmse, 3);
 
         // Initial improvement
         assert!(!early_stop.update_with_value(1.0)); // current=1, best=0
@@ -180,9 +179,7 @@ mod tests {
 
     #[test]
     fn early_stopping_higher_is_better() {
-        use crate::training::Accuracy;
-
-        let mut early_stop = EarlyStopping::new(Box::new(Accuracy::default()), 2);
+        let mut early_stop = EarlyStopping::new(EvalMetric::Accuracy { threshold: 0.5 }, 2);
 
         // Accuracy is higher-is-better
         assert!(!early_stop.update_with_value(0.8)); // current=1, best=0
@@ -196,7 +193,7 @@ mod tests {
 
     #[test]
     fn early_stopping_reset() {
-        let mut early_stop = EarlyStopping::new(Box::new(Rmse), 3);
+        let mut early_stop = EarlyStopping::new(EvalMetric::Rmse, 3);
 
         early_stop.update_with_value(0.5);
         early_stop.update_with_value(0.6);
@@ -214,7 +211,7 @@ mod tests {
 
     #[test]
     fn early_stopping_should_stop_with_data() {
-        let mut early_stop = EarlyStopping::new(Box::new(Rmse), 2);
+        let mut early_stop = EarlyStopping::new(EvalMetric::Rmse, 2);
 
         let labels = vec![0.0, 1.0, 2.0];
 
@@ -230,7 +227,7 @@ mod tests {
 
     #[test]
     fn early_stopping_metric_name() {
-        let early_stop = EarlyStopping::new(Box::new(Rmse), 3);
+        let early_stop = EarlyStopping::new(EvalMetric::Rmse, 3);
         assert_eq!(early_stop.metric_name(), "rmse");
     }
 }
