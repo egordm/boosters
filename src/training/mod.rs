@@ -59,7 +59,7 @@ pub use metric::{
 
 // Re-export gbtree types for convenience (commonly used)
 pub use gbtree::{
-    BaseScore, BinCuts, BinIndex, BuildingNode, BuildingTree, ChildSide, CutFinder,
+    BinCuts, BinIndex, BuildingNode, BuildingTree, ChildSide, CutFinder,
     DepthWisePolicy, DepthWiseState, ExactQuantileCuts, FeatureHistogram, GBTreeTrainer,
     GBTreeTrainerBuilder, GainParams, GreedySplitFinder, GrowthMode, GrowthPolicy, GrowthState,
     GrowthStrategy, HistogramBuilder, HistogramSubtractor, LeafWisePolicy, LeafWiseState,

@@ -50,6 +50,37 @@ impl Loss for LogisticLoss {
         }
     }
 
+    /// Base score = log-odds of positive class.
+    ///
+    /// Computes `log(p / (1-p))` where p = weighted proportion of positive labels.
+    fn init_base_score(&self, labels: &[f32], weights: Option<&[f32]>) -> Vec<f32> {
+        if labels.is_empty() {
+            return vec![0.0];
+        }
+
+        let (pos_weight, total_weight) = match weights {
+            Some(w) => labels
+                .iter()
+                .zip(w.iter())
+                .fold((0.0f64, 0.0f64), |(pos, total), (&l, &wt)| {
+                    let wt = wt as f64;
+                    (pos + if l > 0.5 { wt } else { 0.0 }, total + wt)
+                }),
+            None => {
+                let pos = labels.iter().filter(|&&l| l > 0.5).count() as f64;
+                (pos, labels.len() as f64)
+            }
+        };
+
+        if total_weight == 0.0 {
+            return vec![0.0];
+        }
+
+        // Clamp to avoid log(0) or log(inf)
+        let p = (pos_weight / total_weight).clamp(1e-7, 1.0 - 1e-7);
+        vec![(p / (1.0 - p)).ln() as f32]
+    }
+
     fn name(&self) -> &'static str {
         "logistic"
     }
@@ -116,6 +147,11 @@ impl Loss for HingeLoss {
                 hess[i] = f32::MIN_POSITIVE; // Small positive value
             }
         }
+    }
+
+    fn init_base_score(&self, _labels: &[f32], _weights: Option<&[f32]>) -> Vec<f32> {
+        // Hinge loss: start from 0 (no clear optimal base score)
+        vec![0.0]
     }
 
     fn name(&self) -> &'static str {
@@ -194,6 +230,55 @@ impl Loss for SoftmaxLoss {
                 sample_hess[k] = (prob * (1.0 - prob)).max(1e-16);
             }
         }
+    }
+
+    /// Base score = log(class_proportion) for each class.
+    ///
+    /// Returns log-priors in margin space (before softmax).
+    /// For balanced classes, this returns log(1/K) for all classes.
+    fn init_base_score(&self, labels: &[f32], weights: Option<&[f32]>) -> Vec<f32> {
+        let num_classes = self.num_classes;
+        if labels.is_empty() {
+            return vec![0.0; num_classes];
+        }
+
+        // Count weighted class frequencies
+        let mut class_weights = vec![0.0f64; num_classes];
+        let mut total_weight = 0.0f64;
+
+        match weights {
+            Some(w) => {
+                for (&label, &wt) in labels.iter().zip(w.iter()) {
+                    let class_idx = label.round() as usize;
+                    if class_idx < num_classes {
+                        class_weights[class_idx] += wt as f64;
+                        total_weight += wt as f64;
+                    }
+                }
+            }
+            None => {
+                for &label in labels {
+                    let class_idx = label.round() as usize;
+                    if class_idx < num_classes {
+                        class_weights[class_idx] += 1.0;
+                        total_weight += 1.0;
+                    }
+                }
+            }
+        }
+
+        if total_weight == 0.0 {
+            return vec![0.0; num_classes];
+        }
+
+        // Convert to log-probabilities
+        class_weights
+            .iter()
+            .map(|&count| {
+                let prob = (count / total_weight).max(1e-7);
+                prob.ln() as f32
+            })
+            .collect()
     }
 
     fn name(&self) -> &'static str {

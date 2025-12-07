@@ -162,6 +162,26 @@ impl Loss for LossFunction {
         }
     }
 
+    fn init_base_score(&self, labels: &[f32], weights: Option<&[f32]>) -> Vec<f32> {
+        match self {
+            LossFunction::SquaredError => SquaredLoss.init_base_score(labels, weights),
+            LossFunction::Logistic => LogisticLoss.init_base_score(labels, weights),
+            LossFunction::Hinge => HingeLoss.init_base_score(labels, weights),
+            LossFunction::PseudoHuber { slope } => {
+                PseudoHuberLoss::new(*slope).init_base_score(labels, weights)
+            }
+            LossFunction::Quantile { alpha } => {
+                QuantileLoss::new(*alpha).init_base_score(labels, weights)
+            }
+            LossFunction::Softmax { num_classes } => {
+                SoftmaxLoss::new(*num_classes).init_base_score(labels, weights)
+            }
+            LossFunction::MultiQuantile { alphas } => {
+                QuantileLoss::multi(alphas).init_base_score(labels, weights)
+            }
+        }
+    }
+
     fn name(&self) -> &'static str {
         match self {
             LossFunction::SquaredError => "squared_error",
@@ -233,6 +253,17 @@ pub trait Loss: Send + Sync {
     ///
     /// Panics if buffer dimensions don't match input lengths.
     fn compute_gradients(&self, preds: &[f32], labels: &[f32], buffer: &mut GradientBuffer);
+
+    /// Compute initial base scores for this objective.
+    ///
+    /// Base scores are the starting predictions before any trees are added.
+    /// Proper initialization improves convergence, especially for imbalanced data.
+    ///
+    /// # Returns
+    ///
+    /// One score per output. For multi-output models (softmax, multi-quantile),
+    /// returns `num_outputs()` values.
+    fn init_base_score(&self, labels: &[f32], weights: Option<&[f32]>) -> Vec<f32>;
 
     /// Name of the loss function (for logging).
     fn name(&self) -> &'static str;
