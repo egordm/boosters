@@ -144,13 +144,14 @@ impl<'a> TreeGrower<'a> {
         }
     }
 
-    /// Build a single tree.
+    /// Build a single tree with a specific seed for column sampling.
     ///
     /// # Arguments
     ///
     /// * `quantized` - Quantized feature matrix
     /// * `grads` - Gradient buffer with (grad, hess) for each row
     /// * `partitioner` - Row partitioner (will be modified during building)
+    /// * `seed` - Seed for column sampling reproducibility
     ///
     /// # Returns
     ///
@@ -160,28 +161,7 @@ impl<'a> TreeGrower<'a> {
         quantized: &QuantizedMatrix<B>,
         grads: &GradientBuffer,
         partitioner: &mut RowPartitioner,
-    ) -> BuildingTree {
-        self.build_tree_with_seed(quantized, grads, partitioner, 0)
-    }
-
-    /// Build a single tree with a specific seed for column sampling.
-    ///
-    /// # Arguments
-    ///
-    /// * `quantized` - Quantized feature matrix
-    /// * `grads` - Gradient buffer with (grad, hess) for each row
-    /// * `partitioner` - Row partitioner (will be modified during building)
-    /// * `tree_seed` - Seed for column sampling reproducibility
-    ///
-    /// # Returns
-    ///
-    /// The built tree structure.
-    pub fn build_tree_with_seed<B: BinIndex>(
-        &mut self,
-        quantized: &QuantizedMatrix<B>,
-        grads: &GradientBuffer,
-        partitioner: &mut RowPartitioner,
-        tree_seed: u64,
+        seed: u64,
     ) -> BuildingTree {
         let mut tree = BuildingTree::new(0.0);
         let mut state = self.strategy.init();
@@ -211,7 +191,7 @@ impl<'a> TreeGrower<'a> {
         let root_features = self.get_allowed_features(
             0,
             0,
-            tree_seed,
+            seed,
             &[],
             col_sampling_enabled,
             interaction_enabled,
@@ -322,7 +302,7 @@ impl<'a> TreeGrower<'a> {
                 let left_features = self.get_allowed_features(
                     child_depth,
                     left_id,
-                    tree_seed,
+                    seed,
                     child_path_features,
                     col_sampling_enabled,
                     interaction_enabled,
@@ -341,7 +321,7 @@ impl<'a> TreeGrower<'a> {
                 let right_features = self.get_allowed_features(
                     child_depth,
                     right_id,
-                    tree_seed,
+                    seed,
                     child_path_features,
                     col_sampling_enabled,
                     interaction_enabled,
@@ -594,7 +574,7 @@ mod tests {
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
-        let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+        let tree = grower.build_tree(&quantized, &grads, &mut partitioner, 0);
 
         // Should have root + 2 children
         assert!(tree.num_nodes() >= 1);
@@ -624,7 +604,7 @@ mod tests {
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
-        let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+        let tree = grower.build_tree(&quantized, &grads, &mut partitioner, 0);
 
         // Should build multiple levels until no more gain or max depth
         assert!(tree.max_depth() <= 3);
@@ -652,7 +632,7 @@ mod tests {
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
-        let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+        let tree = grower.build_tree(&quantized, &grads, &mut partitioner, 0);
 
         // With max_leaves=2, should have exactly 2 leaves (1 split)
         assert_eq!(tree.num_leaves(), 2);
@@ -677,7 +657,7 @@ mod tests {
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
-        let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+        let tree = grower.build_tree(&quantized, &grads, &mut partitioner, 0);
 
         // Should not exceed max_leaves
         assert!(tree.num_leaves() <= 4);
@@ -705,7 +685,7 @@ mod tests {
             depth_strategy, &cuts, params.clone(), learning_rate,
             &col_sampler, &mono_checker, &interaction_constraints,
         );
-        let depth_tree = depth_grower.build_tree(&quantized, &grads, &mut partitioner1);
+        let depth_tree = depth_grower.build_tree(&quantized, &grads, &mut partitioner1, 0);
 
         // Build tree with leaf-wise (same number of leaves)
         let leaf_strategy = GrowthStrategy::LeafWise {
@@ -716,7 +696,7 @@ mod tests {
             leaf_strategy, &cuts, params, learning_rate,
             &col_sampler, &mono_checker, &interaction_constraints,
         );
-        let leaf_tree = leaf_grower.build_tree(&quantized, &grads, &mut partitioner2);
+        let leaf_tree = leaf_grower.build_tree(&quantized, &grads, &mut partitioner2, 0);
 
         // Both should have same number of leaves
         assert_eq!(depth_tree.num_leaves(), leaf_tree.num_leaves());
@@ -783,7 +763,7 @@ mod tests {
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
-        let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+        let tree = grower.build_tree(&quantized, &grads, &mut partitioner, 0);
 
         // Verify monotonicity: for increasing constraint, traverse left to right
         // and verify weights are non-decreasing
@@ -828,7 +808,7 @@ mod tests {
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
-        let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+        let tree = grower.build_tree(&quantized, &grads, &mut partitioner, 0);
 
         // Verify monotonicity: for decreasing constraint
         if !tree.node(0).is_leaf {
@@ -892,7 +872,7 @@ mod tests {
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
-        let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+        let tree = grower.build_tree(&quantized, &grads, &mut partitioner, 0);
 
         if !tree.node(0).is_leaf {
             let root = tree.node(0);
@@ -926,7 +906,7 @@ mod tests {
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
-        let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+        let tree = grower.build_tree(&quantized, &grads, &mut partitioner, 0);
 
         // Without constraints, the natural split should occur
         // The data has positive gradients in first half -> negative weights
@@ -1007,7 +987,7 @@ mod tests {
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
-        let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+        let tree = grower.build_tree(&quantized, &grads, &mut partitioner, 0);
 
         // Verify that feature interactions are respected:
         // If root splits on feature 0 or 1, then children can only split on 0 or 1
@@ -1078,7 +1058,7 @@ mod tests {
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
-        let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+        let tree = grower.build_tree(&quantized, &grads, &mut partitioner, 0);
 
         // Just verify tree builds successfully - any feature can be used at any level
         println!("Tree without interaction constraints has {} nodes", tree.num_nodes());
@@ -1109,7 +1089,7 @@ mod tests {
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
-        let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+        let tree = grower.build_tree(&quantized, &grads, &mut partitioner, 0);
 
         // All splits should only use features 0 or 1
         fn check_features_only_from_group(

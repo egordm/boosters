@@ -20,7 +20,7 @@
 //! let params = TreeBuildParams::default();
 //! let mut grower = TreeGrower::new(strategy, &cuts, params, learning_rate, ...);
 //!
-//! let tree = grower.build_tree(&quantized, &grads, &mut partitioner);
+//! let tree = grower.build_tree(&quantized, &grads, &mut partitioner, seed);
 //! ```
 //!
 //! See RFC-0015 for design rationale.
