@@ -50,11 +50,7 @@ use super::quantize::{BinCuts, BinIndex, QuantizedMatrix};
 
 /// Gradient histogram for a single feature.
 ///
-/// Each bin stores the sum of gradients, hessians, and sample count.
-/// Uses Structure-of-Arrays (SoA) layout for cache-friendly operations:
-/// - Subtraction operates on grad, hess, count independently
-/// - SIMD can process multiple values without gather
-/// - Better cache line utilization when reading only grads
+/// Each bin stores sum of gradients, sum of hessians, and sample count.
 ///
 /// # Memory Layout
 ///
@@ -65,11 +61,11 @@ use super::quantize::{BinCuts, BinIndex, QuantizedMatrix};
 /// - Total: ~3 KB per feature
 #[derive(Debug, Clone)]
 pub struct FeatureHistogram {
-    /// Sum of gradients per bin
+    /// Sum of gradients per bin: [num_bins]
     sum_grad: Box<[f32]>,
-    /// Sum of hessians per bin
+    /// Sum of hessians per bin: [num_bins]
     sum_hess: Box<[f32]>,
-    /// Count of samples per bin
+    /// Count of samples per bin: [num_bins]
     count: Box<[u32]>,
     /// Number of bins (including bin 0 for missing)
     num_bins: u16,
@@ -161,10 +157,12 @@ impl FeatureHistogram {
     /// derive larger child via `parent - smaller = larger`.
     pub fn subtract_from(&mut self, parent: &Self) {
         debug_assert_eq!(self.num_bins, parent.num_bins);
-        let n = self.num_bins as usize;
-        for i in 0..n {
+        
+        for i in 0..self.sum_grad.len() {
             self.sum_grad[i] = parent.sum_grad[i] - self.sum_grad[i];
             self.sum_hess[i] = parent.sum_hess[i] - self.sum_hess[i];
+        }
+        for i in 0..self.count.len() {
             self.count[i] = parent.count[i] - self.count[i];
         }
     }
@@ -174,15 +172,19 @@ impl FeatureHistogram {
     /// Returns `self - other`.
     pub fn subtract(&self, other: &Self) -> Self {
         debug_assert_eq!(self.num_bins, other.num_bins);
+        
         let n = self.num_bins as usize;
+        
         let mut sum_grad = vec![0.0f32; n].into_boxed_slice();
         let mut sum_hess = vec![0.0f32; n].into_boxed_slice();
         let mut count = vec![0u32; n].into_boxed_slice();
+        
         for i in 0..n {
             sum_grad[i] = self.sum_grad[i] - other.sum_grad[i];
             sum_hess[i] = self.sum_hess[i] - other.sum_hess[i];
             count[i] = self.count[i] - other.count[i];
         }
+        
         Self {
             sum_grad,
             sum_hess,
@@ -201,19 +203,19 @@ impl FeatureHistogram {
         self.count.copy_from_slice(&src.count);
     }
 
-    /// Get slice of gradient sums.
+    /// Get slice of gradient sums (all bins).
     #[inline]
     pub fn grads(&self) -> &[f32] {
         &self.sum_grad
     }
 
-    /// Get slice of hessian sums.
+    /// Get slice of hessian sums (all bins).
     #[inline]
     pub fn hesses(&self) -> &[f32] {
         &self.sum_hess
     }
 
-    /// Get slice of counts.
+    /// Get slice of counts (per bin).
     #[inline]
     pub fn counts(&self) -> &[u32] {
         &self.count
@@ -242,7 +244,6 @@ impl FeatureHistogram {
 /// Histograms for all features at a single tree node.
 ///
 /// Contains one [`FeatureHistogram`] per feature, plus cached totals.
-/// The number of bins per feature may vary (from [`BinCuts`]).
 ///
 /// # Memory Usage
 ///
@@ -254,7 +255,6 @@ impl FeatureHistogram {
 /// ```ignore
 /// let mut hist = NodeHistogram::new(&cuts);
 /// HistogramBuilder.build(&mut hist, &quantized, &gradients, &rows);
-/// let (grad, hess, cnt) = hist.feature(0).bin_stats(5);
 /// ```
 #[derive(Debug, Clone)]
 pub struct NodeHistogram {
@@ -351,14 +351,17 @@ impl NodeHistogram {
     /// Should be called after building histograms.
     /// Totals are computed from feature 0 (all features should have same totals).
     pub fn update_totals(&mut self) {
-        if let Some(first) = self.features.first() {
-            self.total_grad = first.total_grad();
-            self.total_hess = first.total_hess();
-            self.total_count = first.total_count();
+        if self.features.is_empty() {
+            return;
         }
+
+        let first = &self.features[0];
+        self.total_grad = first.total_grad();
+        self.total_hess = first.total_hess();
+        self.total_count = first.total_count();
     }
 
-    /// Set totals directly (e.g., from gradient buffer sums).
+    /// Set totals directly.
     pub fn set_totals(&mut self, grad: f32, hess: f32, count: u32) {
         self.total_grad = grad;
         self.total_hess = hess;
@@ -388,6 +391,7 @@ impl NodeHistogram {
     /// After calling, `self` contains `parent - self`.
     pub fn subtract_from(&mut self, parent: &Self) {
         debug_assert_eq!(self.features.len(), parent.features.len());
+        
         for (child, par) in self.features.iter_mut().zip(parent.features.iter()) {
             child.subtract_from(par);
         }
@@ -401,12 +405,14 @@ impl NodeHistogram {
     /// Returns `self - other`. Useful for histogram subtraction optimization.
     pub fn subtract(&self, other: &Self) -> Self {
         debug_assert_eq!(self.features.len(), other.features.len());
+        
         let features: Box<[FeatureHistogram]> = self
             .features
             .iter()
             .zip(other.features.iter())
             .map(|(a, b)| a.subtract(b))
             .collect();
+        
         Self {
             features,
             total_grad: self.total_grad - other.total_grad,
@@ -418,6 +424,7 @@ impl NodeHistogram {
     /// Copy from another histogram.
     pub fn copy_from(&mut self, src: &Self) {
         debug_assert_eq!(self.features.len(), src.features.len());
+        
         for (dst, src) in self.features.iter_mut().zip(src.features.iter()) {
             dst.copy_from(src);
         }
@@ -476,15 +483,12 @@ impl HistogramBuilder {
         rows: &[u32],
     ) {
         hist.reset();
-
         let num_features = hist.num_features();
 
-        // For each row in the node
         for &row in rows {
             let row_idx = row as usize;
             let (grad, hess) = grads.get(row_idx, 0);
 
-            // For each feature, add to the appropriate bin
             for feat in 0..num_features {
                 let bin = index.get(row, feat as u32).to_usize();
                 hist.features[feat].add(bin, grad, hess);
@@ -509,14 +513,12 @@ impl HistogramBuilder {
         grads: &GradientBuffer,
         rows: &[u32],
     ) {
-        // Reset and build in parallel per feature
         hist.features
             .par_iter_mut()
             .enumerate()
             .for_each(|(feat, feat_hist)| {
                 feat_hist.reset();
-                
-                // Use iter_rows_for_feature for cache-friendly access
+
                 for (row, bin) in rows.iter().zip(index.iter_rows_for_feature(feat as u32, rows)) {
                     let row_idx = *row as usize;
                     let (grad, hess) = grads.get(row_idx, 0);
@@ -539,14 +541,11 @@ impl HistogramBuilder {
         rows: &[u32],
     ) {
         hist.reset();
-
         let num_features = hist.num_features();
 
-        // Process one feature at a time
         for feat in 0..num_features {
             let feat_hist = &mut hist.features[feat];
-            
-            // Use iter_rows_for_feature which accesses column-major data efficiently
+
             for (&row, bin) in rows.iter().zip(index.iter_rows_for_feature(feat as u32, rows)) {
                 let (grad, hess) = grads.get(row as usize, 0);
                 feat_hist.add(bin.to_usize(), grad, hess);

@@ -40,7 +40,7 @@
 //!
 //! See RFC-0014 for design rationale.
 
-use super::quantize::{BinCuts, BinIndex, QuantizedMatrix};
+use super::quantize::{BinIndex, QuantizedMatrix};
 use super::split::SplitInfo;
 
 // ============================================================================
@@ -325,25 +325,7 @@ fn partition_categorical<B: BinIndex>(
     left
 }
 
-// ============================================================================
-// Utility functions
-// ============================================================================
 
-/// Find the bin index corresponding to a threshold value.
-///
-/// Uses binary search on the bin cuts.
-/// Returns the bin index where `value <= threshold` would be true.
-pub fn find_threshold_bin(cuts: &BinCuts, feature: u32, threshold: f32) -> u32 {
-    let feature_cuts = cuts.feature_cuts(feature);
-
-    // Binary search for threshold position
-    match feature_cuts.binary_search_by(|cut| {
-        cut.partial_cmp(&threshold).unwrap_or(std::cmp::Ordering::Equal)
-    }) {
-        Ok(idx) => idx as u32 + 1, // Exact match: values up to and including this bin go left
-        Err(idx) => idx as u32,    // Not found: idx is where it would be inserted
-    }
-}
 
 // ============================================================================
 // Tests
@@ -611,28 +593,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_find_threshold_bin() {
-        use super::super::quantize::BinCuts;
-
-        // Cuts at [0.5, 1.5, 2.5] for feature 0
-        let cut_values = vec![0.5, 1.5, 2.5];
-        let cut_ptrs = vec![0, 3];
-        let cuts = BinCuts::new(cut_values, cut_ptrs);
-
-        // Threshold 0.0 -> bin 0 (below all cuts)
-        assert_eq!(find_threshold_bin(&cuts, 0, 0.0), 0);
-
-        // Threshold 0.5 -> bin 1 (at first cut)
-        assert_eq!(find_threshold_bin(&cuts, 0, 0.5), 1);
-
-        // Threshold 1.0 -> bin 1 (between cuts 0 and 1)
-        assert_eq!(find_threshold_bin(&cuts, 0, 1.0), 1);
-
-        // Threshold 1.5 -> bin 2
-        assert_eq!(find_threshold_bin(&cuts, 0, 1.5), 2);
-
-        // Threshold 3.0 -> bin 3 (above all cuts)
-        assert_eq!(find_threshold_bin(&cuts, 0, 3.0), 3);
-    }
 }

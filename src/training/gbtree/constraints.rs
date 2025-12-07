@@ -302,7 +302,9 @@ impl MonotonicChecker {
 /// Tracks which features can interact based on user-specified groups.
 #[derive(Debug, Clone)]
 pub struct InteractionConstraints {
-    /// Groups of features that can interact (feature indices)
+    /// Groups of features that can interact (feature indices).
+    /// Kept for serialization and debugging; lookups use `feature_to_groups`.
+    #[allow(dead_code)]
     groups: Vec<Vec<u32>>,
     /// Mapping from feature to its groups (a feature can be in multiple groups)
     feature_to_groups: Vec<HashSet<usize>>,

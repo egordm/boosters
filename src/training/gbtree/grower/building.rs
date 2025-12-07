@@ -146,15 +146,15 @@ impl BuildingTree {
         let left_id = self.nodes.len() as u32;
         let right_id = left_id + 1;
 
-        // Create left and right children
+        // Create left and right children with K-dimensional weights
         self.nodes.push(BuildingNode::new_leaf(
-            split.weight_left,
+            split.weight_left.clone(),
             node_id,
             depth + 1,
             left_partition,
         ));
         self.nodes.push(BuildingNode::new_leaf(
-            split.weight_right,
+            split.weight_right.clone(),
             node_id,
             depth + 1,
             right_partition,

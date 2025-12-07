@@ -31,8 +31,9 @@ impl From<ScalarLeaf> for f32 {
 
 /// Vector leaf value for multi-output trees (K f32 values).
 ///
-/// Used when training trees with `MultiStrategy::MultiOutputTree`.
-/// Each leaf produces K outputs simultaneously.
+/// Used when a single tree produces K outputs simultaneously,
+/// rather than the one-output-per-tree strategy where K separate
+/// trees each produce scalar outputs.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct VectorLeaf {
     /// K output values
