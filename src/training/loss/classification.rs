@@ -202,32 +202,46 @@ impl Loss for SoftmaxLoss {
         debug_assert_eq!(buffer.n_samples(), num_samples);
         debug_assert_eq!(buffer.n_outputs(), num_classes);
 
-        let (grads, hess) = buffer.as_mut_slices();
+        // Two-phase approach for better cache locality:
+        // Phase 1: Compute all softmax probabilities (store in temp buffer)
+        // Phase 2: Write to gradient buffer in column-major order (class-first)
 
+        // Temporary storage for probabilities - row-major [sample, class]
+        let mut all_probs = vec![0.0f32; num_samples * num_classes];
+
+        // Phase 1: Compute softmax for each sample (reading row-major predictions)
         for i in 0..num_samples {
-            let start = i * num_classes;
-            let end = start + num_classes;
-            let label = labels[i] as usize;
-            let sample_preds = &preds[start..end];
-            let sample_grads = &mut grads[start..end];
-            let sample_hess = &mut hess[start..end];
+            let pred_start = i * num_classes;
+            let sample_preds = &preds[pred_start..pred_start + num_classes];
+            let prob_start = i * num_classes;
+            let sample_probs = &mut all_probs[prob_start..prob_start + num_classes];
 
             debug_assert!(
-                label < num_classes,
+                (labels[i] as usize) < num_classes,
                 "Label {} >= num_classes {}",
-                label,
+                labels[i],
                 num_classes
             );
 
-            // Compute softmax probabilities directly into grads (reuse as temp)
-            softmax(sample_preds, sample_grads);
+            softmax(sample_preds, sample_probs);
+        }
 
-            // Convert softmax probs to gradients
-            for k in 0..num_classes {
-                let prob = sample_grads[k];
-                let is_true_class = if k == label { 1.0 } else { 0.0 };
-                sample_grads[k] = prob - is_true_class;
-                sample_hess[k] = (prob * (1.0 - prob)).max(1e-16);
+        // Phase 2: Write gradients in column-major order (contiguous per class)
+        for k in 0..num_classes {
+            let grads_k = buffer.output_grads_mut(k);
+            for i in 0..num_samples {
+                let prob = all_probs[i * num_classes + k];
+                let is_true_class = if k == labels[i] as usize { 1.0 } else { 0.0 };
+                grads_k[i] = prob - is_true_class;
+            }
+        }
+
+        // Phase 3: Write hessians in column-major order (separate pass to avoid borrow issues)
+        for k in 0..num_classes {
+            let hess_k = buffer.output_hess_mut(k);
+            for i in 0..num_samples {
+                let prob = all_probs[i * num_classes + k];
+                hess_k[i] = (prob * (1.0 - prob)).max(1e-16);
             }
         }
     }

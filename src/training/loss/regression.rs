@@ -200,13 +200,13 @@ impl Loss for QuantileLoss {
 
     /// Compute gradients for quantile loss (single or multi-quantile).
     ///
-    /// For single quantile (num_outputs = 1):
+    /// For each quantile q with level α_q:
     /// - grad = (1 - α) if pred >= label (over-prediction)
     /// - grad = -α if pred < label (under-prediction)
     /// - hess = 1 (constant for pinball loss)
     ///
-    /// For multi-quantile (num_outputs = K):
-    /// - Each output gets its own gradient based on its alpha
+    /// The gradient buffer is column-major, so we iterate quantiles first
+    /// for better cache locality when writing.
     fn compute_gradients(&self, preds: &[f32], labels: &[f32], buffer: &mut GradientBuffer) {
         let num_quantiles = self.alphas.len();
         let num_samples = labels.len();
@@ -215,34 +215,20 @@ impl Loss for QuantileLoss {
         debug_assert_eq!(buffer.n_samples(), num_samples);
         debug_assert_eq!(buffer.n_outputs(), num_quantiles);
 
-        let (grads, hess) = buffer.as_mut_slices();
+        // Hessian is always 1.0 for quantile loss - fill once
+        buffer.hess_mut().fill(1.0);
 
-        if num_quantiles == 1 {
-            // Optimized path for single quantile
-            let alpha = self.alphas[0];
+        // Loop over quantiles first for contiguous gradient writes (column-major)
+        // Predictions are row-major: pred[i * num_quantiles + q]
+        for q in 0..num_quantiles {
+            let alpha = self.alphas[q];
             let grad_over = 1.0 - alpha;
             let grad_under = -alpha;
+            let grads = buffer.output_grads_mut(q);
 
             for i in 0..num_samples {
-                grads[i] = if preds[i] >= labels[i] {
-                    grad_over
-                } else {
-                    grad_under
-                };
-            }
-            hess.fill(1.0);
-        } else {
-            // Multi-quantile path
-            for i in 0..num_samples {
-                let label = labels[i];
-                for q in 0..num_quantiles {
-                    let idx = i * num_quantiles + q;
-                    let pred = preds[idx];
-                    let alpha = self.alphas[q];
-
-                    grads[idx] = if pred >= label { 1.0 - alpha } else { -alpha };
-                    hess[idx] = 1.0;
-                }
+                let pred = preds[i * num_quantiles + q];
+                grads[i] = if pred >= labels[i] { grad_over } else { grad_under };
             }
         }
     }

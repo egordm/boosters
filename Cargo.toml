@@ -79,3 +79,6 @@ name = "prediction_lightgbm"
 harness = false
 required-features = ["bench-lightgbm"]
 
+[[bench]]
+name = "gradient_buffer_layout"
+harness = false

@@ -407,9 +407,9 @@ impl GreedySelector {
         lambda: f32,
     ) {
         let num_features = model.num_features();
-        let n_outputs = buffer.n_outputs();
-        let grads = buffer.grads();
-        let hess = buffer.hess_slice();
+        // Column-major: use output-specific slices for direct indexing by row
+        let grads = buffer.output_grads(output);
+        let hess = buffer.output_hess(output);
 
         // Compute update magnitude for each feature
         self.update_magnitudes.clear();
@@ -423,9 +423,8 @@ impl GreedySelector {
             let mut sum_hess = 0.0f32;
 
             for (row, value) in data.column(feature) {
-                let idx = row * n_outputs + output;
-                sum_grad += grads[idx] * value;
-                sum_hess += hess[idx] * value * value;
+                sum_grad += grads[row] * value;
+                sum_hess += hess[row] * value * value;
             }
 
             // Compute coordinate descent update with elastic net
@@ -560,9 +559,9 @@ impl ThriftySelector {
         lambda: f32,
     ) {
         let num_features = model.num_features();
-        let n_outputs = buffer.n_outputs();
-        let grads = buffer.grads();
-        let hess = buffer.hess_slice();
+        // Column-major: use output-specific slices for direct indexing by row
+        let grads = buffer.output_grads(output);
+        let hess = buffer.output_hess(output);
 
         // Compute update magnitude for each feature
         let mut magnitudes: Vec<(usize, f32)> = (0..num_features)
@@ -573,9 +572,8 @@ impl ThriftySelector {
                 let mut sum_hess = 0.0f32;
 
                 for (row, value) in data.column(feature) {
-                    let idx = row * n_outputs + output;
-                    sum_grad += grads[idx] * value;
-                    sum_hess += hess[idx] * value * value;
+                    sum_grad += grads[row] * value;
+                    sum_hess += hess[row] * value * value;
                 }
 
                 let magnitude = coordinate_delta_magnitude(

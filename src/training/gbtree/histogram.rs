@@ -40,8 +40,6 @@
 
 use rayon::prelude::*;
 
-use crate::training::GradientBuffer;
-
 use super::quantize::{BinCuts, BinIndex, QuantizedMatrix};
 
 // ============================================================================
@@ -469,7 +467,8 @@ impl HistogramBuilder {
     ///
     /// * `hist` - Histogram to fill (will be reset first)
     /// * `index` - Quantized feature matrix
-    /// * `grads` - Gradient buffer (grad/hess for each row)
+    /// * `grads` - Gradient slice for all rows (length = n_samples)
+    /// * `hess` - Hessian slice for all rows (length = n_samples)
     /// * `rows` - Row indices belonging to this node
     ///
     /// # Panics
@@ -479,19 +478,22 @@ impl HistogramBuilder {
         &self,
         hist: &mut NodeHistogram,
         index: &QuantizedMatrix<B>,
-        grads: &GradientBuffer,
+        grads: &[f32],
+        hess: &[f32],
         rows: &[u32],
     ) {
+        debug_assert_eq!(grads.len(), hess.len());
         hist.reset();
         let num_features = hist.num_features();
 
         for &row in rows {
             let row_idx = row as usize;
-            let (grad, hess) = grads.get(row_idx, 0);
+            let grad = grads[row_idx];
+            let hess_val = hess[row_idx];
 
             for feat in 0..num_features {
                 let bin = index.get(row, feat as u32).to_usize();
-                hist.features[feat].add(bin, grad, hess);
+                hist.features[feat].add(bin, grad, hess_val);
             }
         }
 
@@ -510,9 +512,11 @@ impl HistogramBuilder {
         &self,
         hist: &mut NodeHistogram,
         index: &QuantizedMatrix<B>,
-        grads: &GradientBuffer,
+        grads: &[f32],
+        hess: &[f32],
         rows: &[u32],
     ) {
+        debug_assert_eq!(grads.len(), hess.len());
         hist.features
             .par_iter_mut()
             .enumerate()
@@ -521,8 +525,7 @@ impl HistogramBuilder {
 
                 for (row, bin) in rows.iter().zip(index.iter_rows_for_feature(feat as u32, rows)) {
                     let row_idx = *row as usize;
-                    let (grad, hess) = grads.get(row_idx, 0);
-                    feat_hist.add(bin.to_usize(), grad, hess);
+                    feat_hist.add(bin.to_usize(), grads[row_idx], hess[row_idx]);
                 }
             });
 
@@ -537,9 +540,11 @@ impl HistogramBuilder {
         &self,
         hist: &mut NodeHistogram,
         index: &QuantizedMatrix<B>,
-        grads: &GradientBuffer,
+        grads: &[f32],
+        hess: &[f32],
         rows: &[u32],
     ) {
+        debug_assert_eq!(grads.len(), hess.len());
         hist.reset();
         let num_features = hist.num_features();
 
@@ -547,8 +552,8 @@ impl HistogramBuilder {
             let feat_hist = &mut hist.features[feat];
 
             for (&row, bin) in rows.iter().zip(index.iter_rows_for_feature(feat as u32, rows)) {
-                let (grad, hess) = grads.get(row as usize, 0);
-                feat_hist.add(bin.to_usize(), grad, hess);
+                let row_idx = row as usize;
+                feat_hist.add(bin.to_usize(), grads[row_idx], hess[row_idx]);
             }
         }
 
@@ -756,7 +761,7 @@ mod tests {
         use crate::data::ColMatrix;
         use crate::training::gbtree::quantize::{ExactQuantileCuts, Quantizer};
 
-        fn make_test_data() -> (QuantizedMatrix<u8>, GradientBuffer) {
+        fn make_test_data() -> (QuantizedMatrix<u8>, Vec<f32>, Vec<f32>) {
             // Create simple data: 10 rows, 2 features
             let data: Vec<f32> = vec![
                 // Feature 0: 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
@@ -771,21 +776,19 @@ mod tests {
             let quantized: QuantizedMatrix<u8> = quantizer.quantize(&matrix);
             
             // Create gradients: grad = row_id, hess = 1.0
-            let mut grads = GradientBuffer::new(10, 1);
-            for i in 0..10 {
-                grads.set(i, 0, i as f32, 1.0);
-            }
+            let grads: Vec<f32> = (0..10).map(|i| i as f32).collect();
+            let hess: Vec<f32> = vec![1.0; 10];
             
-            (quantized, grads)
+            (quantized, grads, hess)
         }
 
         #[test]
         fn test_histogram_builder_basic() {
-            let (quantized, grads) = make_test_data();
+            let (quantized, grads, hess) = make_test_data();
             let rows: Vec<u32> = (0..10).collect();
             
             let mut hist = NodeHistogram::new(quantized.cuts());
-            HistogramBuilder.build(&mut hist, &quantized, &grads, &rows);
+            HistogramBuilder.build(&mut hist, &quantized, &grads, &hess, &rows);
             
             // Total grad should be 0+1+2+...+9 = 45
             // Total hess should be 10 (each row contributes 1.0)
@@ -796,13 +799,13 @@ mod tests {
 
         #[test]
         fn test_histogram_builder_subset() {
-            let (quantized, grads) = make_test_data();
+            let (quantized, grads, hess) = make_test_data();
             
             // Build histogram for subset of rows
             let rows: Vec<u32> = vec![0, 2, 4, 6, 8];  // Even rows
             
             let mut hist = NodeHistogram::new(quantized.cuts());
-            HistogramBuilder.build(&mut hist, &quantized, &grads, &rows);
+            HistogramBuilder.build(&mut hist, &quantized, &grads, &hess, &rows);
             
             // Grad sum: 0+2+4+6+8 = 20, hess: 5
             assert_eq!(hist.total_count(), 5);
@@ -812,14 +815,14 @@ mod tests {
 
         #[test]
         fn test_histogram_builder_parallel_matches_sequential() {
-            let (quantized, grads) = make_test_data();
+            let (quantized, grads, hess) = make_test_data();
             let rows: Vec<u32> = (0..10).collect();
             
             let mut hist_seq = NodeHistogram::new(quantized.cuts());
-            HistogramBuilder.build(&mut hist_seq, &quantized, &grads, &rows);
+            HistogramBuilder.build(&mut hist_seq, &quantized, &grads, &hess, &rows);
             
             let mut hist_par = NodeHistogram::new(quantized.cuts());
-            HistogramBuilder.build_parallel(&mut hist_par, &quantized, &grads, &rows);
+            HistogramBuilder.build_parallel(&mut hist_par, &quantized, &grads, &hess, &rows);
             
             // Compare totals
             assert_eq!(hist_seq.total_count(), hist_par.total_count());
@@ -842,22 +845,22 @@ mod tests {
 
         #[test]
         fn test_histogram_subtraction_correctness() {
-            let (quantized, grads) = make_test_data();
+            let (quantized, grads, hess) = make_test_data();
             
             // Build parent histogram (all rows)
             let all_rows: Vec<u32> = (0..10).collect();
             let mut parent = NodeHistogram::new(quantized.cuts());
-            HistogramBuilder.build(&mut parent, &quantized, &grads, &all_rows);
+            HistogramBuilder.build(&mut parent, &quantized, &grads, &hess, &all_rows);
             
             // Build left child histogram (first 6 rows)
             let left_rows: Vec<u32> = vec![0, 1, 2, 3, 4, 5];
             let mut left = NodeHistogram::new(quantized.cuts());
-            HistogramBuilder.build(&mut left, &quantized, &grads, &left_rows);
+            HistogramBuilder.build(&mut left, &quantized, &grads, &hess, &left_rows);
             
             // Build right child directly for comparison
             let right_rows: Vec<u32> = vec![6, 7, 8, 9];
             let mut right_direct = NodeHistogram::new(quantized.cuts());
-            HistogramBuilder.build(&mut right_direct, &quantized, &grads, &right_rows);
+            HistogramBuilder.build(&mut right_direct, &quantized, &grads, &hess, &right_rows);
             
             // Compute right via subtraction
             let mut right_subtracted = NodeHistogram::new(quantized.cuts());
@@ -876,14 +879,14 @@ mod tests {
 
         #[test]
         fn test_column_wise_matches_row_wise() {
-            let (quantized, grads) = make_test_data();
+            let (quantized, grads, hess) = make_test_data();
             let rows: Vec<u32> = (0..10).collect();
             
             let mut hist_row = NodeHistogram::new(quantized.cuts());
-            HistogramBuilder.build(&mut hist_row, &quantized, &grads, &rows);
+            HistogramBuilder.build(&mut hist_row, &quantized, &grads, &hess, &rows);
             
             let mut hist_col = NodeHistogram::new(quantized.cuts());
-            HistogramBuilder.build_column_wise(&mut hist_col, &quantized, &grads, &rows);
+            HistogramBuilder.build_column_wise(&mut hist_col, &quantized, &grads, &hess, &rows);
             
             // Compare totals
             assert_eq!(hist_row.total_count(), hist_col.total_count());
