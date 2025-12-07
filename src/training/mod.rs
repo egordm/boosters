@@ -60,9 +60,8 @@ pub use metric::{
 // Re-export gbtree types for convenience (commonly used)
 pub use gbtree::{
     BinCuts, BinIndex, BuildingNode, BuildingTree, ChildSide, CutFinder,
-    DepthWisePolicy, DepthWiseState, ExactQuantileCuts, FeatureHistogram, GBTreeTrainer,
-    GBTreeTrainerBuilder, GainParams, GreedySplitFinder, GrowthMode, GrowthPolicy, GrowthState,
-    GrowthStrategy, HistogramBuilder, HistogramSubtractor, LeafWisePolicy, LeafWiseState,
+    ExactQuantileCuts, FeatureHistogram, GBTreeTrainer, GBTreeTrainerBuilder, GainParams,
+    GreedySplitFinder, GrowthMode, GrowthStrategy, HistogramBuilder, HistogramSubtractor,
     NodeCandidate, NodeHistogram, QuantizedEvalSet, QuantizedMatrix, Quantizer, RowPartitioner,
     SplitFinder, SplitInfo, TreeBuildParams, TreeGrower, leaf_objective, leaf_weight, split_gain,
 };

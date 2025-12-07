@@ -661,34 +661,16 @@ impl GBTreeTrainer {
             temp
         };
 
-        match growth_strategy {
-            GrowthStrategy::DepthWise { max_depth } => {
-                let policy = super::grower::DepthWisePolicy { max_depth };
-                let mut grower = TreeGrower::new(
-                    policy,
-                    cuts,
-                    tree_params.clone(),
-                    self.learning_rate,
-                    col_sampler,
-                    mono_checker,
-                    interaction_constraints,
-                );
-                grower.build_tree_with_seed(quantized, &grads_to_use, partitioner, seed)
-            }
-            GrowthStrategy::LeafWise { max_leaves } => {
-                let policy = super::grower::LeafWisePolicy { max_leaves };
-                let mut grower = TreeGrower::new(
-                    policy,
-                    cuts,
-                    tree_params.clone(),
-                    self.learning_rate,
-                    col_sampler,
-                    mono_checker,
-                    interaction_constraints,
-                );
-                grower.build_tree_with_seed(quantized, &grads_to_use, partitioner, seed)
-            }
-        }
+        let mut grower = TreeGrower::new(
+            growth_strategy,
+            cuts,
+            tree_params.clone(),
+            self.learning_rate,
+            col_sampler,
+            mono_checker,
+            interaction_constraints,
+        );
+        grower.build_tree_with_seed(quantized, &grads_to_use, partitioner, seed)
     }
 
     /// Update predictions for a specific output after building a tree.

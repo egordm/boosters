@@ -4,7 +4,7 @@
 //! - Histogram building
 //! - Split finding
 //! - Row partitioning
-//! - Growth policy
+//! - Growth strategy (depth-wise or leaf-wise)
 //! - Monotonic constraints
 //! - Interaction constraints
 //!
@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 
 use super::building::{BuildingTree, NodeCandidate};
-use super::policy::{GrowthPolicy, GrowthState};
+use super::policy::GrowthStrategy;
 use super::super::constraints::{
     InteractionConstraints, MonotonicBounds, MonotonicChecker,
 };
@@ -69,10 +69,10 @@ impl Default for TreeBuildParams {
 // TreeGrower
 // ============================================================================
 
-/// Coordinates tree growing with a growth policy.
+/// Coordinates tree growing with a growth strategy.
 ///
 /// Brings together histogram building, split finding, and row partitioning
-/// to grow a tree according to the specified growth policy.
+/// to grow a tree according to the specified growth strategy.
 ///
 /// # Design
 ///
@@ -89,9 +89,9 @@ impl Default for TreeBuildParams {
 ///
 /// Named `TreeGrower` (not `TreeBuilder`) to avoid confusion with
 /// `trees::TreeBuilder` which is an inference-time builder pattern helper.
-pub struct TreeGrower<'a, G: GrowthPolicy> {
-    /// Growth policy (depth-wise or leaf-wise)
-    policy: G,
+pub struct TreeGrower<'a> {
+    /// Growth strategy (depth-wise or leaf-wise)
+    strategy: GrowthStrategy,
     /// Histogram builder
     hist_builder: HistogramBuilder,
     /// Split finder
@@ -110,12 +110,12 @@ pub struct TreeGrower<'a, G: GrowthPolicy> {
     interaction_constraints: &'a InteractionConstraints,
 }
 
-impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
+impl<'a> TreeGrower<'a> {
     /// Create a new tree grower with pre-configured components.
     ///
     /// # Arguments
     ///
-    /// * `policy` - Growth policy (depth-wise or leaf-wise)
+    /// * `strategy` - Growth strategy (depth-wise or leaf-wise)
     /// * `cuts` - Bin cuts for histogram building
     /// * `params` - Core tree building parameters
     /// * `learning_rate` - Shrinkage applied to leaf weights
@@ -123,7 +123,7 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
     /// * `mono_checker` - Pre-configured monotonic constraint checker
     /// * `interaction_constraints` - Pre-configured interaction constraints
     pub fn new(
-        policy: G,
+        strategy: GrowthStrategy,
         cuts: &'a BinCuts,
         params: TreeBuildParams,
         learning_rate: f32,
@@ -132,7 +132,7 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
         interaction_constraints: &'a InteractionConstraints,
     ) -> Self {
         Self {
-            policy,
+            strategy,
             hist_builder: HistogramBuilder::default(),
             split_finder: GreedySplitFinder::new(),
             cuts,
@@ -184,7 +184,7 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
         tree_seed: u64,
     ) -> BuildingTree {
         let mut tree = BuildingTree::new(0.0);
-        let mut state = self.policy.init();
+        let mut state = self.strategy.init();
 
         // Check if components are enabled
         let col_sampling_enabled = self.col_sampler.is_enabled();
@@ -238,9 +238,9 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
         );
 
         // Main growth loop
-        while self.policy.should_continue(&state, &tree) {
+        while self.strategy.should_continue(&state) {
             let candidate_vec: Vec<_> = candidates.values().cloned().collect();
-            let nodes_to_expand = self.policy.select_nodes(&mut state, &candidate_vec);
+            let nodes_to_expand = self.strategy.select_nodes(&mut state, &candidate_vec);
 
             if nodes_to_expand.is_empty() {
                 break;
@@ -381,7 +381,7 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
             }
 
             // Advance to next iteration (swap level buffers for depth-wise)
-            self.policy.advance(&mut state);
+            self.strategy.advance(&mut state);
         }
 
         // Clamp final leaf weights to monotonic bounds
@@ -516,7 +516,6 @@ impl<'a, G: GrowthPolicy> TreeGrower<'a, G> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::policy::{DepthWisePolicy, LeafWisePolicy};
     use super::super::super::constraints::MonotonicConstraint;
     use crate::data::DenseMatrix;
     use crate::training::gbtree::quantize::{CutFinder, ExactQuantileCuts, Quantizer};
@@ -579,7 +578,7 @@ mod tests {
         let (quantized, cuts, grads) = make_test_data();
         let num_features = cuts.num_features() as u32;
 
-        let policy = DepthWisePolicy { max_depth: 1 };
+        let strategy = GrowthStrategy::DepthWise { max_depth: 1 };
         let params = TreeBuildParams {
             max_depth: 1,
             ..Default::default()
@@ -591,7 +590,7 @@ mod tests {
 
         let mut partitioner = RowPartitioner::new(10);
         let mut grower = TreeGrower::new(
-            policy, &cuts, params, learning_rate,
+            strategy, &cuts, params, learning_rate,
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
@@ -612,7 +611,7 @@ mod tests {
         let (quantized, cuts, grads) = make_test_data();
         let num_features = cuts.num_features() as u32;
 
-        let policy = DepthWisePolicy { max_depth: 3 };
+        let strategy = GrowthStrategy::DepthWise { max_depth: 3 };
         let params = TreeBuildParams::default();
         let learning_rate = 1.0;
 
@@ -621,7 +620,7 @@ mod tests {
 
         let mut partitioner = RowPartitioner::new(10);
         let mut grower = TreeGrower::new(
-            policy, &cuts, params, learning_rate,
+            strategy, &cuts, params, learning_rate,
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
@@ -640,7 +639,7 @@ mod tests {
         let (quantized, cuts, grads) = make_test_data();
         let num_features = cuts.num_features() as u32;
 
-        let policy = LeafWisePolicy { max_leaves: 2 };
+        let strategy = GrowthStrategy::LeafWise { max_leaves: 2 };
         let params = TreeBuildParams::default();
         let learning_rate = 1.0;
 
@@ -649,7 +648,7 @@ mod tests {
 
         let mut partitioner = RowPartitioner::new(10);
         let mut grower = TreeGrower::new(
-            policy, &cuts, params, learning_rate,
+            strategy, &cuts, params, learning_rate,
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
@@ -665,7 +664,7 @@ mod tests {
         let (quantized, cuts, grads) = make_test_data();
         let num_features = cuts.num_features() as u32;
 
-        let policy = LeafWisePolicy { max_leaves: 4 };
+        let strategy = GrowthStrategy::LeafWise { max_leaves: 4 };
         let params = TreeBuildParams::default();
         let learning_rate = 1.0;
 
@@ -674,7 +673,7 @@ mod tests {
 
         let mut partitioner = RowPartitioner::new(10);
         let mut grower = TreeGrower::new(
-            policy, &cuts, params, learning_rate,
+            strategy, &cuts, params, learning_rate,
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
@@ -694,7 +693,7 @@ mod tests {
         let num_features = cuts.num_features() as u32;
 
         // Build tree with depth-wise
-        let depth_policy = DepthWisePolicy { max_depth: 3 };
+        let depth_strategy = GrowthStrategy::DepthWise { max_depth: 3 };
         let params = TreeBuildParams::default();
         let learning_rate = 1.0;
 
@@ -703,18 +702,18 @@ mod tests {
 
         let mut partitioner1 = RowPartitioner::new(10);
         let mut depth_grower = TreeGrower::new(
-            depth_policy, &cuts, params.clone(), learning_rate,
+            depth_strategy, &cuts, params.clone(), learning_rate,
             &col_sampler, &mono_checker, &interaction_constraints,
         );
         let depth_tree = depth_grower.build_tree(&quantized, &grads, &mut partitioner1);
 
         // Build tree with leaf-wise (same number of leaves)
-        let leaf_policy = LeafWisePolicy {
+        let leaf_strategy = GrowthStrategy::LeafWise {
             max_leaves: depth_tree.num_leaves(),
         };
         let mut partitioner2 = RowPartitioner::new(10);
         let mut leaf_grower = TreeGrower::new(
-            leaf_policy, &cuts, params, learning_rate,
+            leaf_strategy, &cuts, params, learning_rate,
             &col_sampler, &mono_checker, &interaction_constraints,
         );
         let leaf_tree = leaf_grower.build_tree(&quantized, &grads, &mut partitioner2);
@@ -766,7 +765,7 @@ mod tests {
         let (quantized, cuts, grads) = make_monotonic_test_data();
         let num_features = cuts.num_features() as u32;
 
-        let policy = DepthWisePolicy { max_depth: 2 };
+        let strategy = GrowthStrategy::DepthWise { max_depth: 2 };
         let params = TreeBuildParams::default();
         let learning_rate = 1.0;
 
@@ -780,7 +779,7 @@ mod tests {
 
         let mut partitioner = RowPartitioner::new(20);
         let mut grower = TreeGrower::new(
-            policy, &cuts, params, learning_rate,
+            strategy, &cuts, params, learning_rate,
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
@@ -811,7 +810,7 @@ mod tests {
         let (quantized, cuts, grads) = make_monotonic_test_data();
         let num_features = cuts.num_features() as u32;
 
-        let policy = DepthWisePolicy { max_depth: 2 };
+        let strategy = GrowthStrategy::DepthWise { max_depth: 2 };
         let params = TreeBuildParams::default();
         let learning_rate = 1.0;
 
@@ -825,7 +824,7 @@ mod tests {
 
         let mut partitioner = RowPartitioner::new(20);
         let mut grower = TreeGrower::new(
-            policy, &cuts, params, learning_rate,
+            strategy, &cuts, params, learning_rate,
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
@@ -875,7 +874,7 @@ mod tests {
         // With increasing constraint: both should be clamped to same value (midpoint=0)
         // because left > right violates increasing
 
-        let policy = DepthWisePolicy { max_depth: 1 };
+        let strategy = GrowthStrategy::DepthWise { max_depth: 1 };
         let params = TreeBuildParams::default();
         let learning_rate = 1.0;
 
@@ -889,7 +888,7 @@ mod tests {
 
         let mut partitioner = RowPartitioner::new(10);
         let mut grower = TreeGrower::new(
-            policy, &cuts, params, learning_rate,
+            strategy, &cuts, params, learning_rate,
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
@@ -914,7 +913,7 @@ mod tests {
         let (quantized, cuts, grads) = make_monotonic_test_data();
         let num_features = cuts.num_features() as u32;
 
-        let policy = DepthWisePolicy { max_depth: 1 };
+        let strategy = GrowthStrategy::DepthWise { max_depth: 1 };
         let params = TreeBuildParams::default();
         let learning_rate = 1.0;
 
@@ -923,7 +922,7 @@ mod tests {
 
         let mut partitioner = RowPartitioner::new(20);
         let mut grower = TreeGrower::new(
-            policy, &cuts, params, learning_rate,
+            strategy, &cuts, params, learning_rate,
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
@@ -990,7 +989,7 @@ mod tests {
         let num_features = cuts.num_features() as u32;
 
         // Features 0,1 can interact; features 2,3 can interact
-        let policy = DepthWisePolicy { max_depth: 3 };
+        let strategy = GrowthStrategy::DepthWise { max_depth: 3 };
         let params = TreeBuildParams::default();
         let learning_rate = 1.0;
 
@@ -1004,7 +1003,7 @@ mod tests {
 
         let mut partitioner = RowPartitioner::new(20);
         let mut grower = TreeGrower::new(
-            policy, &cuts, params, learning_rate,
+            strategy, &cuts, params, learning_rate,
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
@@ -1066,7 +1065,7 @@ mod tests {
         let num_features = cuts.num_features() as u32;
 
         // No interaction constraints - all features can interact
-        let policy = DepthWisePolicy { max_depth: 3 };
+        let strategy = GrowthStrategy::DepthWise { max_depth: 3 };
         let params = TreeBuildParams::default();
         let learning_rate = 1.0;
 
@@ -1075,7 +1074,7 @@ mod tests {
 
         let mut partitioner = RowPartitioner::new(20);
         let mut grower = TreeGrower::new(
-            policy, &cuts, params, learning_rate,
+            strategy, &cuts, params, learning_rate,
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
@@ -1092,7 +1091,7 @@ mod tests {
         let num_features = cuts.num_features() as u32;
 
         // Only features 0 and 1 are allowed
-        let policy = DepthWisePolicy { max_depth: 3 };
+        let strategy = GrowthStrategy::DepthWise { max_depth: 3 };
         let params = TreeBuildParams::default();
         let learning_rate = 1.0;
 
@@ -1106,7 +1105,7 @@ mod tests {
 
         let mut partitioner = RowPartitioner::new(20);
         let mut grower = TreeGrower::new(
-            policy, &cuts, params, learning_rate,
+            strategy, &cuts, params, learning_rate,
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
