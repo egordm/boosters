@@ -29,6 +29,57 @@ impl From<ScalarLeaf> for f32 {
     }
 }
 
+/// Vector leaf value for multi-output trees (K f32 values).
+///
+/// Used when training trees with `MultiStrategy::MultiOutputTree`.
+/// Each leaf produces K outputs simultaneously.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct VectorLeaf {
+    /// K output values
+    pub values: Vec<f32>,
+}
+
+impl VectorLeaf {
+    /// Create a new vector leaf with the given values.
+    pub fn new(values: Vec<f32>) -> Self {
+        Self { values }
+    }
+
+    /// Number of outputs (K).
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    /// Check if the leaf has no outputs.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    /// Get output value at index k.
+    #[inline]
+    pub fn get(&self, k: usize) -> f32 {
+        self.values[k]
+    }
+}
+
+impl LeafValue for VectorLeaf {
+    #[inline]
+    fn accumulate(&mut self, other: &Self) {
+        debug_assert_eq!(self.values.len(), other.values.len());
+        for (a, b) in self.values.iter_mut().zip(other.values.iter()) {
+            *a += *b;
+        }
+    }
+}
+
+impl From<Vec<f32>> for VectorLeaf {
+    fn from(values: Vec<f32>) -> Self {
+        Self { values }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -51,5 +102,26 @@ mod tests {
     fn scalar_leaf_from_f32() {
         let leaf: ScalarLeaf = 2.5.into();
         assert_eq!(leaf.0, 2.5);
+    }
+
+    #[test]
+    fn vector_leaf_accumulates() {
+        let mut acc = VectorLeaf::new(vec![0.0, 0.0, 0.0]);
+        acc.accumulate(&VectorLeaf::new(vec![1.0, 2.0, 3.0]));
+        acc.accumulate(&VectorLeaf::new(vec![0.5, 0.5, 0.5]));
+        assert_eq!(acc.values, vec![1.5, 2.5, 3.5]);
+    }
+
+    #[test]
+    fn vector_leaf_default_is_empty() {
+        let leaf = VectorLeaf::default();
+        assert!(leaf.is_empty());
+    }
+
+    #[test]
+    fn vector_leaf_from_vec() {
+        let leaf: VectorLeaf = vec![1.0, 2.0, 3.0].into();
+        assert_eq!(leaf.len(), 3);
+        assert_eq!(leaf.get(1), 2.0);
     }
 }
