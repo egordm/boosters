@@ -26,7 +26,6 @@ use super::super::partition::RowPartitioner;
 use super::super::quantize::{BinCuts, BinIndex, QuantizedMatrix};
 use super::super::sampling::ColumnSampler;
 use super::super::split::{GainParams, GreedySplitFinder, SplitFinder, SplitInfo};
-use crate::training::buffer::GradientBuffer;
 
 // ============================================================================
 // TreeBuildParams
@@ -149,7 +148,8 @@ impl<'a> TreeGrower<'a> {
     /// # Arguments
     ///
     /// * `quantized` - Quantized feature matrix
-    /// * `grads` - Gradient buffer with (grad, hess) for each row
+    /// * `grads` - Gradient slice for all rows (length = n_samples)
+    /// * `hess` - Hessian slice for all rows (length = n_samples)
     /// * `partitioner` - Row partitioner (will be modified during building)
     /// * `seed` - Seed for column sampling reproducibility
     ///
@@ -159,10 +159,12 @@ impl<'a> TreeGrower<'a> {
     pub fn build_tree<B: BinIndex>(
         &mut self,
         quantized: &QuantizedMatrix<B>,
-        grads: &GradientBuffer,
+        grads: &[f32],
+        hess: &[f32],
         partitioner: &mut RowPartitioner,
         seed: u64,
     ) -> BuildingTree {
+        debug_assert_eq!(grads.len(), hess.len());
         let mut tree = BuildingTree::new(0.0);
         let mut state = self.strategy.init();
 
@@ -184,7 +186,7 @@ impl<'a> TreeGrower<'a> {
 
         // Build root histogram
         let root_rows = partitioner.node_rows(0);
-        let root_hist = self.build_histogram(root_rows, quantized, grads);
+        let root_hist = self.build_histogram(root_rows, quantized, grads, hess);
         histograms.insert(0, root_hist);
 
         // Find initial split for root (depth=0, node_id=0)
@@ -288,6 +290,7 @@ impl<'a> TreeGrower<'a> {
                     right_partition,
                     quantized,
                     grads,
+                    hess,
                     partitioner,
                 );
 
@@ -448,14 +451,15 @@ impl<'a> TreeGrower<'a> {
         &mut self,
         rows: &[u32],
         quantized: &QuantizedMatrix<B>,
-        grads: &GradientBuffer,
+        grads: &[f32],
+        hess: &[f32],
     ) -> NodeHistogram {
         let mut hist = NodeHistogram::new(self.cuts);
         if self.params.parallel_histograms {
             self.hist_builder
-                .build_parallel(&mut hist, quantized, grads, rows);
+                .build_parallel(&mut hist, quantized, grads, hess, rows);
         } else {
-            self.hist_builder.build(&mut hist, quantized, grads, rows);
+            self.hist_builder.build(&mut hist, quantized, grads, hess, rows);
         }
         hist
     }
@@ -467,7 +471,8 @@ impl<'a> TreeGrower<'a> {
         left_partition: u32,
         right_partition: u32,
         quantized: &QuantizedMatrix<B>,
-        grads: &GradientBuffer,
+        grads: &[f32],
+        hess: &[f32],
         partitioner: &RowPartitioner,
     ) -> (NodeHistogram, NodeHistogram) {
         let left_rows = partitioner.node_rows(left_partition);
@@ -478,11 +483,11 @@ impl<'a> TreeGrower<'a> {
 
         // Build smaller child directly, derive larger via subtraction
         if left_size <= right_size {
-            let left_hist = self.build_histogram(left_rows, quantized, grads);
+            let left_hist = self.build_histogram(left_rows, quantized, grads, hess);
             let right_hist = parent_hist.subtract(&left_hist);
             (left_hist, right_hist)
         } else {
-            let right_hist = self.build_histogram(right_rows, quantized, grads);
+            let right_hist = self.build_histogram(right_rows, quantized, grads, hess);
             let left_hist = parent_hist.subtract(&right_hist);
             (left_hist, right_hist)
         }
@@ -508,7 +513,8 @@ mod tests {
         (col_sampler, mono_checker, interaction_constraints)
     }
 
-    fn make_test_data() -> (QuantizedMatrix<u8>, BinCuts, GradientBuffer) {
+    /// Test data with gradient and hessian slices (not GradientBuffer).
+    fn make_test_data() -> (QuantizedMatrix<u8>, BinCuts, Vec<f32>, Vec<f32>) {
         // 10 rows, 2 features (row-major)
         // Feature 0: values 0..9
         // Feature 1: first 5 rows = 0, last 5 rows = 1
@@ -533,15 +539,16 @@ mod tests {
         let quantized = quantizer.quantize::<_, u8>(&matrix);
 
         // Simple gradients: positive for first group, negative for second
-        let mut grads = GradientBuffer::new(10, 1);
+        let mut grads = vec![0.0f32; 10];
+        let hess = vec![1.0f32; 10];
         for i in 0..5 {
-            grads.set(i, 0, 1.0, 1.0);
+            grads[i] = 1.0;
         }
         for i in 5..10 {
-            grads.set(i, 0, -1.0, 1.0);
+            grads[i] = -1.0;
         }
 
-        (quantized, cuts, grads)
+        (quantized, cuts, grads, hess)
     }
 
     #[test]
@@ -555,7 +562,7 @@ mod tests {
 
     #[test]
     fn test_tree_grower_single_split() {
-        let (quantized, cuts, grads) = make_test_data();
+        let (quantized, cuts, grads, hess) = make_test_data();
         let num_features = cuts.num_features() as u32;
 
         let strategy = GrowthStrategy::DepthWise { max_depth: 1 };
@@ -574,7 +581,7 @@ mod tests {
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
-        let tree = grower.build_tree(&quantized, &grads, &mut partitioner, 0);
+        let tree = grower.build_tree(&quantized, &grads, &hess, &mut partitioner, 0);
 
         // Should have root + 2 children
         assert!(tree.num_nodes() >= 1);
@@ -588,7 +595,7 @@ mod tests {
 
     #[test]
     fn test_tree_grower_multiple_levels() {
-        let (quantized, cuts, grads) = make_test_data();
+        let (quantized, cuts, grads, hess) = make_test_data();
         let num_features = cuts.num_features() as u32;
 
         let strategy = GrowthStrategy::DepthWise { max_depth: 3 };
@@ -604,7 +611,7 @@ mod tests {
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
-        let tree = grower.build_tree(&quantized, &grads, &mut partitioner, 0);
+        let tree = grower.build_tree(&quantized, &grads, &hess, &mut partitioner, 0);
 
         // Should build multiple levels until no more gain or max depth
         assert!(tree.max_depth() <= 3);
@@ -616,7 +623,7 @@ mod tests {
 
     #[test]
     fn test_leaf_wise_single_split() {
-        let (quantized, cuts, grads) = make_test_data();
+        let (quantized, cuts, grads, hess) = make_test_data();
         let num_features = cuts.num_features() as u32;
 
         let strategy = GrowthStrategy::LeafWise { max_leaves: 2 };
@@ -632,7 +639,7 @@ mod tests {
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
-        let tree = grower.build_tree(&quantized, &grads, &mut partitioner, 0);
+        let tree = grower.build_tree(&quantized, &grads, &hess, &mut partitioner, 0);
 
         // With max_leaves=2, should have exactly 2 leaves (1 split)
         assert_eq!(tree.num_leaves(), 2);
@@ -641,7 +648,7 @@ mod tests {
 
     #[test]
     fn test_leaf_wise_max_leaves_constraint() {
-        let (quantized, cuts, grads) = make_test_data();
+        let (quantized, cuts, grads, hess) = make_test_data();
         let num_features = cuts.num_features() as u32;
 
         let strategy = GrowthStrategy::LeafWise { max_leaves: 4 };
@@ -657,7 +664,7 @@ mod tests {
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
-        let tree = grower.build_tree(&quantized, &grads, &mut partitioner, 0);
+        let tree = grower.build_tree(&quantized, &grads, &hess, &mut partitioner, 0);
 
         // Should not exceed max_leaves
         assert!(tree.num_leaves() <= 4);
@@ -669,7 +676,7 @@ mod tests {
 
     #[test]
     fn test_leaf_wise_vs_depth_wise_different_shapes() {
-        let (quantized, cuts, grads) = make_test_data();
+        let (quantized, cuts, grads, hess) = make_test_data();
         let num_features = cuts.num_features() as u32;
 
         // Build tree with depth-wise
@@ -685,7 +692,7 @@ mod tests {
             depth_strategy, &cuts, params.clone(), learning_rate,
             &col_sampler, &mono_checker, &interaction_constraints,
         );
-        let depth_tree = depth_grower.build_tree(&quantized, &grads, &mut partitioner1, 0);
+        let depth_tree = depth_grower.build_tree(&quantized, &grads, &hess, &mut partitioner1, 0);
 
         // Build tree with leaf-wise (same number of leaves)
         let leaf_strategy = GrowthStrategy::LeafWise {
@@ -696,7 +703,7 @@ mod tests {
             leaf_strategy, &cuts, params, learning_rate,
             &col_sampler, &mono_checker, &interaction_constraints,
         );
-        let leaf_tree = leaf_grower.build_tree(&quantized, &grads, &mut partitioner2, 0);
+        let leaf_tree = leaf_grower.build_tree(&quantized, &grads, &hess, &mut partitioner2, 0);
 
         // Both should have same number of leaves
         assert_eq!(depth_tree.num_leaves(), leaf_tree.num_leaves());
@@ -711,7 +718,7 @@ mod tests {
 
     /// Create test data where feature 0 has a clear monotonic relationship.
     /// Higher feature values should have lower predictions (negative gradient relationship).
-    fn make_monotonic_test_data() -> (QuantizedMatrix<u8>, BinCuts, GradientBuffer) {
+    fn make_monotonic_test_data() -> (QuantizedMatrix<u8>, BinCuts, Vec<f32>, Vec<f32>) {
         // 20 rows, 1 feature
         // Feature 0: values 0..19
         // Gradients: linear relationship where higher feature -> higher gradient
@@ -727,22 +734,23 @@ mod tests {
 
         // Gradients: first half positive (want to decrease weight), second half negative
         // This creates a natural split with left=positive weight, right=negative weight
-        let mut grads = GradientBuffer::new(20, 1);
+        let mut grads = vec![0.0f32; 20];
+        let hess = vec![1.0f32; 20];
         for i in 0..10 {
             // Positive gradient -> negative optimal weight (w* = -G/H)
-            grads.set(i, 0, 2.0, 1.0);
+            grads[i] = 2.0;
         }
         for i in 10..20 {
             // Negative gradient -> positive optimal weight
-            grads.set(i, 0, -2.0, 1.0);
+            grads[i] = -2.0;
         }
 
-        (quantized, cuts, grads)
+        (quantized, cuts, grads, hess)
     }
 
     #[test]
     fn test_tree_grower_with_increasing_constraint() {
-        let (quantized, cuts, grads) = make_monotonic_test_data();
+        let (quantized, cuts, grads, hess) = make_monotonic_test_data();
         let num_features = cuts.num_features() as u32;
 
         let strategy = GrowthStrategy::DepthWise { max_depth: 2 };
@@ -763,7 +771,7 @@ mod tests {
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
-        let tree = grower.build_tree(&quantized, &grads, &mut partitioner, 0);
+        let tree = grower.build_tree(&quantized, &grads, &hess, &mut partitioner, 0);
 
         // Verify monotonicity: for increasing constraint, traverse left to right
         // and verify weights are non-decreasing
@@ -787,7 +795,7 @@ mod tests {
 
     #[test]
     fn test_tree_grower_with_decreasing_constraint() {
-        let (quantized, cuts, grads) = make_monotonic_test_data();
+        let (quantized, cuts, grads, hess) = make_monotonic_test_data();
         let num_features = cuts.num_features() as u32;
 
         let strategy = GrowthStrategy::DepthWise { max_depth: 2 };
@@ -808,7 +816,7 @@ mod tests {
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
-        let tree = grower.build_tree(&quantized, &grads, &mut partitioner, 0);
+        let tree = grower.build_tree(&quantized, &grads, &hess, &mut partitioner, 0);
 
         // Verify monotonicity: for decreasing constraint
         if !tree.node(0).is_leaf {
@@ -842,12 +850,13 @@ mod tests {
         // Gradients that would create violating splits without constraints
         // Row 0-4: positive gradient, row 5-9: negative gradient
         // But we want increasing constraint
-        let mut grads = GradientBuffer::new(10, 1);
+        let mut grads = vec![0.0f32; 10];
+        let hess = vec![1.0f32; 10];
         for i in 0..5 {
-            grads.set(i, 0, 2.0, 1.0); // optimal weight = -2
+            grads[i] = 2.0; // optimal weight = -2
         }
         for i in 5..10 {
-            grads.set(i, 0, -2.0, 1.0); // optimal weight = +2
+            grads[i] = -2.0; // optimal weight = +2
         }
 
         // Without constraint: left would be -2, right would be +2
@@ -872,7 +881,7 @@ mod tests {
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
-        let tree = grower.build_tree(&quantized, &grads, &mut partitioner, 0);
+        let tree = grower.build_tree(&quantized, &grads, &hess, &mut partitioner, 0);
 
         if !tree.node(0).is_leaf {
             let root = tree.node(0);
@@ -890,7 +899,7 @@ mod tests {
 
     #[test]
     fn test_tree_grower_no_constraint_allows_any_order() {
-        let (quantized, cuts, grads) = make_monotonic_test_data();
+        let (quantized, cuts, grads, hess) = make_monotonic_test_data();
         let num_features = cuts.num_features() as u32;
 
         let strategy = GrowthStrategy::DepthWise { max_depth: 1 };
@@ -906,7 +915,7 @@ mod tests {
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
-        let tree = grower.build_tree(&quantized, &grads, &mut partitioner, 0);
+        let tree = grower.build_tree(&quantized, &grads, &hess, &mut partitioner, 0);
 
         // Without constraints, the natural split should occur
         // The data has positive gradients in first half -> negative weights
@@ -928,7 +937,7 @@ mod tests {
 
     /// Create test data with 4 features for interaction constraint testing.
     /// Features 0,1 should interact, Features 2,3 should interact, but not across groups.
-    fn make_interaction_test_data() -> (QuantizedMatrix<u8>, BinCuts, GradientBuffer) {
+    fn make_interaction_test_data() -> (QuantizedMatrix<u8>, BinCuts, Vec<f32>, Vec<f32>) {
         // 20 rows, 4 features - all features have the same value range
         let num_rows = 20;
         let num_features = 4;
@@ -951,21 +960,22 @@ mod tests {
         let quantized = quantizer.quantize::<_, u8>(&matrix);
 
         // Gradients: Create clear splits at midpoints
-        let mut grads = GradientBuffer::new(num_rows, 1);
+        let mut grads = vec![0.0f32; num_rows];
+        let hess = vec![1.0f32; num_rows];
         for i in 0..num_rows {
             if i < num_rows / 2 {
-                grads.set(i, 0, 2.0, 1.0);
+                grads[i] = 2.0;
             } else {
-                grads.set(i, 0, -2.0, 1.0);
+                grads[i] = -2.0;
             }
         }
 
-        (quantized, cuts, grads)
+        (quantized, cuts, grads, hess)
     }
 
     #[test]
     fn test_tree_grower_with_interaction_constraints() {
-        let (quantized, cuts, grads) = make_interaction_test_data();
+        let (quantized, cuts, grads, hess) = make_interaction_test_data();
         let num_features = cuts.num_features() as u32;
 
         // Features 0,1 can interact; features 2,3 can interact
@@ -987,7 +997,7 @@ mod tests {
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
-        let tree = grower.build_tree(&quantized, &grads, &mut partitioner, 0);
+        let tree = grower.build_tree(&quantized, &grads, &hess, &mut partitioner, 0);
 
         // Verify that feature interactions are respected:
         // If root splits on feature 0 or 1, then children can only split on 0 or 1
@@ -1041,7 +1051,7 @@ mod tests {
 
     #[test]
     fn test_tree_grower_no_interaction_constraints_allows_all() {
-        let (quantized, cuts, grads) = make_interaction_test_data();
+        let (quantized, cuts, grads, hess) = make_interaction_test_data();
         let num_features = cuts.num_features() as u32;
 
         // No interaction constraints - all features can interact
@@ -1058,7 +1068,7 @@ mod tests {
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
-        let tree = grower.build_tree(&quantized, &grads, &mut partitioner, 0);
+        let tree = grower.build_tree(&quantized, &grads, &hess, &mut partitioner, 0);
 
         // Just verify tree builds successfully - any feature can be used at any level
         println!("Tree without interaction constraints has {} nodes", tree.num_nodes());
@@ -1067,7 +1077,7 @@ mod tests {
 
     #[test]
     fn test_tree_grower_single_feature_group() {
-        let (quantized, cuts, grads) = make_interaction_test_data();
+        let (quantized, cuts, grads, hess) = make_interaction_test_data();
         let num_features = cuts.num_features() as u32;
 
         // Only features 0 and 1 are allowed
@@ -1089,7 +1099,7 @@ mod tests {
             &col_sampler, &mono_checker, &interaction_constraints,
         );
 
-        let tree = grower.build_tree(&quantized, &grads, &mut partitioner, 0);
+        let tree = grower.build_tree(&quantized, &grads, &hess, &mut partitioner, 0);
 
         // All splits should only use features 0 or 1
         fn check_features_only_from_group(

@@ -639,15 +639,9 @@ impl GBTreeTrainer {
         mono_checker: &MonotonicChecker,
         interaction_constraints: &InteractionConstraints,
     ) -> BuildingTree {
-        let num_rows = quantized.num_rows() as usize;
-
-        // Extract gradients for this output into a single-output buffer
-        // (TreeGrower always works with single-output gradients)
-        let mut grads_to_use = GradientBuffer::new(num_rows, 1);
-        for row in 0..num_rows {
-            let (grad, hess) = grads.get(row, output_idx);
-            grads_to_use.set(row, 0, grad, hess);
-        }
+        // Column-major layout: direct slice access for this output's gradients
+        let output_grads = grads.output_grads(output_idx);
+        let output_hess = grads.output_hess(output_idx);
 
         let mut grower = TreeGrower::new(
             growth_strategy,
@@ -658,7 +652,7 @@ impl GBTreeTrainer {
             mono_checker,
             interaction_constraints,
         );
-        grower.build_tree(quantized, &grads_to_use, partitioner, seed)
+        grower.build_tree(quantized, output_grads, output_hess, partitioner, seed)
     }
 
     /// Update predictions for a specific output after building a tree.

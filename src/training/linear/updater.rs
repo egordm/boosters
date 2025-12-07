@@ -174,21 +174,18 @@ fn compute_weight_update<C: ColumnAccess<Element = f32>>(
     config: &UpdateConfig,
 ) -> f32 {
     let current_weight = model.weight(feature, output);
-    let n_outputs = buffer.n_outputs();
 
-    // Get raw slices for better cache access
-    let grads = buffer.grads();
-    let hess = buffer.hess_slice();
+    // Column-major: use output-specific slices for direct indexing by row
+    let grads = buffer.output_grads(output);
+    let hess = buffer.output_hess(output);
 
     // Accumulate gradient and hessian for this feature
     let mut sum_grad = 0.0f32;
     let mut sum_hess = 0.0f32;
 
     for (row, value) in data.column(feature) {
-        // SoA index: grads[row * n_outputs + output]
-        let idx = row * n_outputs + output;
-        sum_grad += grads[idx] * value;
-        sum_hess += hess[idx] * value * value;
+        sum_grad += grads[row] * value;
+        sum_hess += hess[row] * value * value;
     }
 
     // Add L2 regularization

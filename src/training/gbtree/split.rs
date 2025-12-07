@@ -931,11 +931,11 @@ mod tests {
         use crate::data::ColMatrix;
         use crate::training::gbtree::histogram::{HistogramBuilder, NodeHistogram};
         use crate::training::gbtree::quantize::{BinCuts, ExactQuantileCuts, QuantizedMatrix, Quantizer};
-        use crate::training::GradientBuffer;
 
         fn make_test_data() -> (
             QuantizedMatrix<u8>,
-            GradientBuffer,
+            Vec<f32>,
+            Vec<f32>,
             BinCuts,
         ) {
             // Create data: 20 rows, 2 features
@@ -959,25 +959,26 @@ mod tests {
 
             // Create gradients: first 10 rows have grad=1, last 10 have grad=-1
             // This creates a clear split point at row 10
-            let mut grads = GradientBuffer::new(20, 1);
+            let mut grads = vec![0.0f32; 20];
+            let hess = vec![1.0f32; 20];
             for i in 0..10 {
-                grads.set(i, 0, 1.0, 1.0);
+                grads[i] = 1.0;
             }
             for i in 10..20 {
-                grads.set(i, 0, -1.0, 1.0);
+                grads[i] = -1.0;
             }
 
-            (quantized, grads, cuts)
+            (quantized, grads, hess, cuts)
         }
 
         #[test]
         fn test_split_finder_basic() {
-            let (quantized, grads, cuts) = make_test_data();
+            let (quantized, grads, hess, cuts) = make_test_data();
             let rows: Vec<u32> = (0..20).collect();
 
             // Build histogram
             let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder.build(&mut hist, &quantized, &grads, &rows);
+            HistogramBuilder.build(&mut hist, &quantized, &grads, &hess, &rows);
 
             // Find split
             let params = GainParams::default().with_min_child_weight(1.0);
@@ -1000,11 +1001,11 @@ mod tests {
 
         #[test]
         fn test_split_finder_min_child_weight() {
-            let (quantized, grads, cuts) = make_test_data();
+            let (quantized, grads, hess, cuts) = make_test_data();
             let rows: Vec<u32> = (0..20).collect();
 
             let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder.build(&mut hist, &quantized, &grads, &rows);
+            HistogramBuilder.build(&mut hist, &quantized, &grads, &hess, &rows);
 
             // With very high min_child_weight, no split should be found
             let params = GainParams::default().with_min_child_weight(100.0);
@@ -1019,11 +1020,11 @@ mod tests {
 
         #[test]
         fn test_split_finder_parallel_matches_sequential() {
-            let (quantized, grads, cuts) = make_test_data();
+            let (quantized, grads, hess, cuts) = make_test_data();
             let rows: Vec<u32> = (0..20).collect();
 
             let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder.build(&mut hist, &quantized, &grads, &rows);
+            HistogramBuilder.build(&mut hist, &quantized, &grads, &hess, &rows);
 
             let params = GainParams::default();
             let finder = GreedySplitFinder::new();
@@ -1038,11 +1039,11 @@ mod tests {
 
         #[test]
         fn test_split_finder_feature_subset() {
-            let (quantized, grads, cuts) = make_test_data();
+            let (quantized, grads, hess, cuts) = make_test_data();
             let rows: Vec<u32> = (0..20).collect();
 
             let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder.build(&mut hist, &quantized, &grads, &rows);
+            HistogramBuilder.build(&mut hist, &quantized, &grads, &hess, &rows);
 
             let params = GainParams::default();
 
@@ -1081,17 +1082,18 @@ mod tests {
             let cuts = (*quantizer.cuts()).clone();
 
             // Gradients: positive for low values, negative for high
-            let mut grads = GradientBuffer::new(10, 1);
+            let mut grads = vec![0.0f32; 10];
+            let hess = vec![1.0f32; 10];
             for i in 0..5 {
-                grads.set(i, 0, 1.0, 1.0);
+                grads[i] = 1.0;
             }
             for i in 5..10 {
-                grads.set(i, 0, -1.0, 1.0);
+                grads[i] = -1.0;
             }
 
             let rows: Vec<u32> = (0..10).collect();
             let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder.build(&mut hist, &quantized, &grads, &rows);
+            HistogramBuilder.build(&mut hist, &quantized, &grads, &hess, &rows);
 
             let params = GainParams::default().with_min_child_weight(0.5);
             let finder = GreedySplitFinder::new();
@@ -1134,20 +1136,21 @@ mod tests {
             assert_eq!(cuts.num_bins(0), 4); // 3 categories + 1 missing bin
 
             // Gradients
-            let mut grads = GradientBuffer::new(12, 1);
+            let mut grads = vec![0.0f32; 12];
+            let hess = vec![1.0f32; 12];
             for i in 0..4 {
-                grads.set(i, 0, 2.0, 1.0); // Category 0: positive
+                grads[i] = 2.0; // Category 0: positive
             }
             for i in 4..8 {
-                grads.set(i, 0, -1.0, 1.0); // Category 1: negative
+                grads[i] = -1.0; // Category 1: negative
             }
             for i in 8..12 {
-                grads.set(i, 0, 0.5, 1.0); // Category 2: small positive
+                grads[i] = 0.5; // Category 2: small positive
             }
 
             let rows: Vec<u32> = (0..12).collect();
             let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder.build(&mut hist, &quantized, &grads, &rows);
+            HistogramBuilder.build(&mut hist, &quantized, &grads, &hess, &rows);
 
             let params = GainParams::no_regularization().with_min_child_weight(1.0);
             let finder = GreedySplitFinder::new();
@@ -1190,17 +1193,12 @@ mod tests {
             let cuts = (*quantizer.cuts()).clone();
 
             // Gradients: category 0 positive, category 1 negative, missing neutral
-            let mut grads = GradientBuffer::new(6, 1);
-            grads.set(0, 0, 0.0, 1.0); // Missing
-            grads.set(1, 0, 2.0, 1.0); // Cat 0
-            grads.set(2, 0, 2.0, 1.0); // Cat 0
-            grads.set(3, 0, -2.0, 1.0); // Cat 1
-            grads.set(4, 0, -2.0, 1.0); // Cat 1
-            grads.set(5, 0, 0.0, 1.0); // Missing
+            let grads = vec![0.0, 2.0, 2.0, -2.0, -2.0, 0.0];
+            let hess = vec![1.0f32; 6];
 
             let rows: Vec<u32> = (0..6).collect();
             let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder.build(&mut hist, &quantized, &grads, &rows);
+            HistogramBuilder.build(&mut hist, &quantized, &grads, &hess, &rows);
 
             let params = GainParams::no_regularization().with_min_child_weight(1.0);
             let finder = GreedySplitFinder::new();
@@ -1236,17 +1234,18 @@ mod tests {
             assert!(cuts.is_categorical(1), "Feature 1 should be categorical");
 
             // Gradients: first 5 positive, last 5 negative
-            let mut grads = GradientBuffer::new(10, 1);
+            let mut grads = vec![0.0f32; 10];
+            let hess = vec![1.0f32; 10];
             for i in 0..5 {
-                grads.set(i, 0, 1.0, 1.0);
+                grads[i] = 1.0;
             }
             for i in 5..10 {
-                grads.set(i, 0, -1.0, 1.0);
+                grads[i] = -1.0;
             }
 
             let rows: Vec<u32> = (0..10).collect();
             let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder.build(&mut hist, &quantized, &grads, &rows);
+            HistogramBuilder.build(&mut hist, &quantized, &grads, &hess, &rows);
 
             let params = GainParams::default().with_min_child_weight(1.0);
             let finder = GreedySplitFinder::new();
