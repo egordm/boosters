@@ -60,7 +60,7 @@ fn bench_gbtree_regression(c: &mut Criterion) {
             &(&col_matrix, &labels),
             |b, (col_matrix, labels)| {
                 b.iter(|| {
-                    let forest = trainer.train(black_box(*col_matrix), black_box(*labels), &[]);
+                    let forest = trainer.train(black_box(*col_matrix), black_box(*labels), None, &[]);
                     black_box(forest)
                 });
             },
@@ -171,7 +171,7 @@ fn bench_gbtree_classification(c: &mut Criterion) {
             &(&col_matrix, &labels),
             |b, (col_matrix, labels)| {
                 b.iter(|| {
-                    let forest = trainer.train(black_box(*col_matrix), black_box(*labels), &[]);
+                    let forest = trainer.train(black_box(*col_matrix), black_box(*labels), None, &[]);
                     black_box(forest)
                 });
             },

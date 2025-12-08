@@ -23,7 +23,7 @@ use booste_rs::data::{ColMatrix, RowMatrix};
 use booste_rs::predict::{Predictor, StandardTraversal};
 use booste_rs::testing::pearson_correlation;
 use booste_rs::training::{
-    GBTreeTrainer, GrowthMode, LossFunction, Rmse, SimpleMetric, Verbosity,
+    GBTreeTrainer, GrowthMode, LossFunction, Metric, Rmse, Verbosity,
 };
 use serde::Deserialize;
 
@@ -195,7 +195,7 @@ fn train_and_predict(tc: &TestCase) -> TrainResult {
     };
 
     // Train
-    let forest = trainer.train(&tc.train_matrix, &tc.train_labels, &[]);
+    let forest = trainer.train(&tc.train_matrix, &tc.train_labels, None, &[]);
 
     // Predict on train set using inference path
     let predictor = Predictor::<StandardTraversal>::new(&forest);
@@ -259,7 +259,7 @@ mod quality_tests {
         );
 
         // Compute our RMSE on test set (using library metric)
-        let our_rmse = Rmse.compute(&result.test_preds, &tc.test_labels);
+        let our_rmse = Rmse.evaluate(&result.test_preds, &tc.test_labels, None, 1);
         let xgb_rmse = tc.metrics.test_rmse.unwrap_or(0.0);
 
         // Allow 20% tolerance vs XGBoost RMSE
@@ -506,7 +506,7 @@ mod multiclass_tests {
             .unwrap();
 
         // Train multiclass model
-        let forest = trainer.train(&tc.train_matrix, &tc.train_labels, &[]);
+        let forest = trainer.train(&tc.train_matrix, &tc.train_labels, None, &[]);
 
         // Predict on train set - get K scores per row
         let train_row_matrix: RowMatrix<f32> = tc.train_matrix.to_layout();
@@ -663,7 +663,7 @@ mod multiclass_tests {
             .build()
             .unwrap();
 
-        let forest = trainer.train(&tc.train_matrix, &tc.train_labels, &[]);
+        let forest = trainer.train(&tc.train_matrix, &tc.train_labels, None, &[]);
 
         // Should produce correct tree structure
         let expected_trees = tc.config.num_boost_round as usize * num_classes;
@@ -706,7 +706,7 @@ mod multiclass_tests {
             .build()
             .unwrap();
 
-        let forest = trainer.train(&tc.train_matrix, &tc.train_labels, &[]);
+        let forest = trainer.train(&tc.train_matrix, &tc.train_labels, None, &[]);
 
         // Should produce correct tree structure
         let expected_trees = tc.config.num_boost_round as usize * num_classes;

@@ -11,7 +11,7 @@
 //! use booste_rs::training::GBTreeTrainer;
 //!
 //! let trainer = GBTreeTrainer::default();
-//! let forest = trainer.train(&data, &labels, &[]);
+//! let forest = trainer.train(&data, &labels, None, &[]);
 //! ```
 //!
 //! For more control, use the builder:
@@ -27,7 +27,7 @@
 //!     .build()
 //!     .unwrap();
 //!
-//! let forest = trainer.train(&data, &labels, &[]);
+//! let forest = trainer.train(&data, &labels, None, &[]);
 //! ```
 //!
 //! For multiclass/multi-output training, use `LossFunction::Softmax`:
@@ -39,7 +39,7 @@
 //!     .loss(LossFunction::Softmax { num_classes: 3 })
 //!     .build()
 //!     .unwrap();
-//! let forest = trainer.train(&data, &labels, &[]);
+//! let forest = trainer.train(&data, &labels, None, &[]);
 //! ```
 //!
 //! See RFC-0015 for design rationale.
@@ -92,7 +92,7 @@ impl Default for GrowthMode {
 ///
 /// // Simple usage with defaults
 /// let trainer = GBTreeTrainer::default();
-/// let forest = trainer.train(&data, &labels);
+/// let forest = trainer.train(&data, &labels, None, &[]);
 ///
 /// // Configured via builder
 /// let trainer = GBTreeTrainer::builder()
@@ -353,25 +353,37 @@ impl GBTreeTrainer {
     ///
     /// // Regression
     /// let trainer = GBTreeTrainer::default();
-    /// let forest = trainer.train(&data, &labels, &[]);
+    /// let forest = trainer.train(&data, &labels, None, &[]);
     ///
     /// // Multiclass (3 classes)
     /// let trainer = GBTreeTrainer::builder()
     ///     .loss(LossFunction::Softmax { num_classes: 3 })
     ///     .build()
     ///     .unwrap();
-    /// let forest = trainer.train(&data, &labels, &[]);
+    /// let forest = trainer.train(&data, &labels, None, &[]);
     /// ```
     pub fn train<D>(
         &self,
         data: &D,
         labels: &[f32],
+        weights: Option<&[f32]>,
         eval_sets: &[EvalSet<'_, D>],
     ) -> SoAForest<ScalarLeaf>
     where
         D: ColumnAccess<Element = f32> + Sync,
     {
         let mut logger = TrainingLogger::new(self.verbosity);
+
+        // Validate weights length
+        if let Some(w) = weights {
+            assert_eq!(
+                w.len(),
+                labels.len(),
+                "weights length ({}) must match labels length ({})",
+                w.len(),
+                labels.len()
+            );
+        }
 
         // Compute bin cuts from training data
         logger.info("Computing bin cuts...");
@@ -396,22 +408,42 @@ impl GBTreeTrainer {
             .map(|(es, q)| QuantizedEvalSet::new(es.name, q, es.labels))
             .collect();
 
-        self.train_internal(&quantized, labels, &cuts, &quantized_refs, &mut logger)
+        self.train_internal(&quantized, labels, weights, &cuts, &quantized_refs, &mut logger)
     }
 
     /// Train on pre-quantized data (advanced API).
+    ///
+    /// # Arguments
+    ///
+    /// * `quantized` - Pre-quantized feature matrix
+    /// * `labels` - Target labels
+    /// * `weights` - Optional sample weights (must match labels length)
+    /// * `cuts` - Bin boundaries used for quantization
+    /// * `eval_sets` - Evaluation sets for monitoring
     pub fn train_quantized<B>(
         &self,
         quantized: &QuantizedMatrix<B>,
         labels: &[f32],
+        weights: Option<&[f32]>,
         cuts: &BinCuts,
         eval_sets: &[QuantizedEvalSet<'_, B>],
     ) -> SoAForest<ScalarLeaf>
     where
         B: BinIndex,
     {
+        // Validate weights length
+        if let Some(w) = weights {
+            assert_eq!(
+                w.len(),
+                labels.len(),
+                "weights length ({}) must match labels length ({})",
+                w.len(),
+                labels.len()
+            );
+        }
+
         let mut logger = TrainingLogger::new(self.verbosity);
-        self.train_internal(quantized, labels, cuts, eval_sets, &mut logger)
+        self.train_internal(quantized, labels, weights, cuts, eval_sets, &mut logger)
     }
 
     // ========================================================================
@@ -428,6 +460,7 @@ impl GBTreeTrainer {
         &self,
         quantized: &QuantizedMatrix<B>,
         labels: &[f32],
+        weights: Option<&[f32]>,
         cuts: &BinCuts,
         eval_sets: &[QuantizedEvalSet<'_, B>],
         logger: &mut TrainingLogger,
@@ -449,7 +482,8 @@ impl GBTreeTrainer {
         let interaction_constraints = self.create_interaction_constraints(num_features);
 
         // Initialize base scores (per output) using loss-specific initialization
-        let base_scores: Vec<f32> = self.loss.init_base_score(labels, None);
+        // RFC-0024: init_base_score supports weights for proper initialization
+        let base_scores: Vec<f32> = self.loss.init_base_score(labels, weights);
 
         // Initialize predictions: [num_rows * num_outputs] in column-major order
         // Layout: [output0_sample0, output0_sample1, ..., output1_sample0, ...]
@@ -506,7 +540,8 @@ impl GBTreeTrainer {
         // Main training loop
         for round in 0..self.num_rounds {
             // Compute gradients for all samples and outputs
-            self.loss.compute_gradients(&predictions, labels, &mut grads);
+            // RFC-0026: Pass weights to compute_gradients for weighted training
+            self.loss.compute_gradients(&predictions, labels, weights, &mut grads);
 
             let round_seed = self.seed.wrapping_add(round as u64);
 
@@ -600,7 +635,8 @@ impl GBTreeTrainer {
                             // Average predictions across outputs for early stopping metric
                             Self::average_predictions(&eval_preds, num_outputs)
                         };
-                        if es.should_stop(&eval_for_es, eval_set.labels) {
+                        // Pass weights from EvalSet if available
+                        if es.should_stop(&eval_for_es, eval_set.labels, eval_set.weights, num_outputs) {
                             logger.info(&format!(
                                 "Early stopping at round {} (best: {})",
                                 round,
@@ -861,12 +897,34 @@ pub struct QuantizedEvalSet<'a, B: BinIndex> {
     pub data: &'a QuantizedMatrix<B>,
     /// Labels (length = n_samples).
     pub labels: &'a [f32],
+    /// Optional sample weights for weighted metric computation.
+    pub weights: Option<&'a [f32]>,
 }
 
 impl<'a, B: BinIndex> QuantizedEvalSet<'a, B> {
-    /// Create a new quantized evaluation set.
+    /// Create a new quantized evaluation set without sample weights.
     pub fn new(name: &'a str, data: &'a QuantizedMatrix<B>, labels: &'a [f32]) -> Self {
-        Self { name, data, labels }
+        Self {
+            name,
+            data,
+            labels,
+            weights: None,
+        }
+    }
+
+    /// Create a new quantized evaluation set with sample weights.
+    pub fn with_weights(
+        name: &'a str,
+        data: &'a QuantizedMatrix<B>,
+        labels: &'a [f32],
+        weights: &'a [f32],
+    ) -> Self {
+        Self {
+            name,
+            data,
+            labels,
+            weights: Some(weights),
+        }
     }
 }
 
@@ -936,7 +994,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let forest = trainer.train_quantized(&quantized, &labels, &cuts, &[]);
+        let forest = trainer.train_quantized(&quantized, &labels, None, &cuts, &[]);
         assert_eq!(forest.num_trees(), 10);
     }
 
@@ -952,7 +1010,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let forest = trainer.train_quantized(&quantized, &labels, &cuts, &[]);
+        let forest = trainer.train_quantized(&quantized, &labels, None, &cuts, &[]);
         
         // Compute final predictions
         use crate::predict::{Predictor, StandardTraversal};
@@ -993,7 +1051,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let forest = trainer.train_quantized(&quantized, &labels, &cuts, &[]);
+        let forest = trainer.train_quantized(&quantized, &labels, None, &cuts, &[]);
         assert_eq!(forest.num_trees(), 10);
     }
 
@@ -1007,5 +1065,64 @@ mod tests {
             .unwrap();
 
         assert_eq!(trainer.loss, LossFunction::Logistic);
+    }
+
+    #[test]
+    fn test_train_with_weights() {
+        let (quantized, cuts, labels) = make_regression_data();
+
+        // Create weights: emphasize first half of samples
+        let mut weights = vec![2.0; labels.len() / 2];
+        weights.extend(vec![0.5; labels.len() - labels.len() / 2]);
+
+        let trainer = GBTreeTrainer::builder()
+            .num_rounds(10u32)
+            .max_depth(3u32)
+            .verbosity(Verbosity::Silent)
+            .build()
+            .unwrap();
+
+        let forest = trainer.train_quantized(&quantized, &labels, Some(&weights), &cuts, &[]);
+        assert_eq!(forest.num_trees(), 10);
+    }
+
+    #[test]
+    fn test_train_uniform_weights_matches_unweighted() {
+        let (quantized, cuts, labels) = make_regression_data();
+
+        let trainer = GBTreeTrainer::builder()
+            .num_rounds(10u32)
+            .max_depth(3u32)
+            .seed(42u64)
+            .verbosity(Verbosity::Silent)
+            .build()
+            .unwrap();
+
+        // Train without weights
+        let forest_unweighted =
+            trainer.train_quantized(&quantized, &labels, None, &cuts, &[]);
+
+        // Train with uniform weights
+        let uniform_weights = vec![1.0; labels.len()];
+        let forest_weighted =
+            trainer.train_quantized(&quantized, &labels, Some(&uniform_weights), &cuts, &[]);
+
+        // Both forests should have the same number of trees
+        assert_eq!(forest_unweighted.num_trees(), forest_weighted.num_trees());
+    }
+
+    #[test]
+    #[should_panic(expected = "weights length")]
+    fn test_train_weights_length_mismatch() {
+        let (quantized, cuts, labels) = make_regression_data();
+
+        let trainer = GBTreeTrainer::builder()
+            .num_rounds(5u32)
+            .verbosity(Verbosity::Silent)
+            .build()
+            .unwrap();
+
+        let bad_weights = vec![1.0; labels.len() / 2]; // Wrong length
+        let _forest = trainer.train_quantized(&quantized, &labels, Some(&bad_weights), &cuts, &[]);
     }
 }

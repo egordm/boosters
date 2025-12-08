@@ -54,7 +54,7 @@ pub use loss::{
 };
 pub use metric::{
     Accuracy, Auc, EvalMetric, EvalSet, LogLoss, Mae, Mape, Metric, MulticlassAccuracy,
-    MulticlassLogLoss, QuantileLoss as QuantileMetric, Rmse, SimpleMetric,
+    MulticlassLogLoss, QuantileMetric, Rmse,
 };
 
 // Re-export gbtree types for convenience (commonly used)

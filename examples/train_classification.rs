@@ -55,7 +55,7 @@ fn main() {
         .build()
         .unwrap();
 
-    let forest_depth = trainer_depth.train(&col_matrix, &labels, &[]);
+    let forest_depth = trainer_depth.train(&col_matrix, &labels, None, &[]);
 
     // Evaluate depth-wise
     let predictor_depth = Predictor::<StandardTraversal>::new(&forest_depth);
@@ -78,7 +78,7 @@ fn main() {
         .build()
         .unwrap();
 
-    let forest_leaf = trainer_leaf.train(&col_matrix, &labels, &[]);
+    let forest_leaf = trainer_leaf.train(&col_matrix, &labels, None, &[]);
 
     // Evaluate leaf-wise
     let predictor_leaf = Predictor::<StandardTraversal>::new(&forest_leaf);
