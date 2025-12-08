@@ -25,19 +25,28 @@
 │  Histogram-based tree training: 1.05x-1.57x of XGBoost          │
 │  See: docs/benchmarks/2024-11-30-gbtree-vs-xgboost.md           │
 │                                                                  │
+│  GBTree Training (Phase 2)              ✅ COMPLETE              │
+│  ════════════════════════════════════════════════               │
+│  Categorical, GOSS, sampling, monotonic/interaction constraints │
+│                                                                  │
 │  LightGBM Compatibility                 ✅ INFERENCE COMPLETE    │
 │  ════════════════════════════════════════════════               │
 │  Model loading, inference validation (Stories 1-5 done)         │
 │  Training baselines pending (Stories 6-7)                       │
 │                                                                  │
-│  GBTree Training (Phase 2)              📋 PLANNED              │
+│  Sample Weighting                       ✅ COMPLETE              │
 │  ════════════════════════════════════════════════               │
-│  Optimizations: histogram subtraction, SIMD, parallelism        │
-│  (Requires new RFCs)                                            │
+│  Weighted training, class imbalance handling (RFC-0026)         │
+│                                                                  │
+│  API Refactoring                        ✅ COMPLETE              │
+│  ════════════════════════════════════════════════               │
+│  Builder pattern API, unified train methods                     │
 │                                                                  │
 │  Future (backlog)                                                │
 │  ════════════════                                                │
 │  - Sparse data, Python bindings                                 │
+│  - Row-parallel histograms (RFC-0025)                           │
+│  - Gradient quantization (RFC-0027)                             │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -51,7 +60,9 @@
 | [GBLinear](backlog/02-gblinear.md) | ⏸️ Paused | Linear booster, core training complete |
 | [GBTree Training Ph1](backlog/03-gbtree-training.md) | ✅ Complete | Histogram-based training, 1.05-1.57x of XGBoost |
 | [LightGBM Compat](backlog/04-lightgbm-compat.md) | ✅ Inference | Model loading complete, training baselines pending |
-| [GBTree Training Ph2](backlog/03-gbtree-training.md) | 📋 Planned | Optimizations (needs RFCs) |
+| [GBTree Training Ph2](backlog/05-gbtree-training-phase2.md) | ✅ Complete | Categorical, GOSS, sampling, constraints |
+| [Sample Weighting](backlog/06-sample-weighting.md) | ✅ Complete | Weighted training, class imbalance handling |
+| [API Refactoring](backlog/07-api-refactoring.md) | ✅ Complete | Builder pattern API |
 | [Future](backlog/99-future.md) | 📋 Backlog | Sparse data, Python bindings, etc. |
 
 ---
@@ -95,7 +106,7 @@ See [benchmarks](benchmarks/) for details.
 | [0014](design/rfcs/0014-row-partitioning.md) | Implemented | Row partitioning |
 | [0015](design/rfcs/0015-tree-growing.md) | Implemented | Tree growing strategies |
 | [0025](design/rfcs/0025-row-parallel-histograms.md) | Draft | Row-parallel histograms + pooling |
-| [0026](design/rfcs/0026-sample-weighting.md) | Draft | Sample weighting |
+| [0026](design/rfcs/0026-sample-weighting.md) | Implemented | Sample weighting |
 | [0027](design/rfcs/0027-gradient-quantization.md) | Draft | Gradient quantization (16-bit) |
 
 ---
