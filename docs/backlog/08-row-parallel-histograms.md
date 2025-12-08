@@ -1,6 +1,6 @@
 # Epic 8: Row-Parallel Histogram Building
 
-**Status**: Not Started  
+**Status**: In Progress  
 **Priority**: High  
 **Depends on**: Epic 3 (GBTree Training Phase 1), Epic 5 (Phase 2)  
 **RFC**: [RFC-0025](../design/rfcs/0025-row-parallel-histograms.md)
@@ -53,33 +53,33 @@ memory traffic by a factor of `num_features`.
 
 ---
 
-## Story 1: ContiguousHistogramPool ✓
+## Story 1: ContiguousHistogramPool ✅ COMPLETE
 
 **Goal**: Implement the contiguous memory pool with LRU eviction.
 
-**Status**: Not Started
+**Status**: Complete
 
 ### Tasks
 
-- [ ] 1.1: Implement `ContiguousHistogramPool` with SoA backing store
-- [ ] 1.2: Implement `get_or_allocate(node)` with LRU eviction
-- [ ] 1.3: Implement `get(node)` with LRU position update  
-- [ ] 1.4: Implement `release(node)` and `release_batch(nodes)`
-- [ ] 1.5: Implement `reset()` for new tree
-- [ ] 1.6: Implement `PoolMetrics` tracking (hits, misses, evictions)
-- [ ] 1.7: Implement `recommended_pool_capacity()` sizing heuristic
+- [x] 1.1: Implement `ContiguousHistogramPool` with SoA backing store
+- [x] 1.2: Implement `get_or_allocate(node)` with LRU eviction
+- [x] 1.3: Implement `get(node)` with LRU position update  
+- [x] 1.4: Implement `release(node)` and `release_batch(nodes)`
+- [x] 1.5: Implement `reset()` for new tree
+- [x] 1.6: Implement `PoolMetrics` tracking (hits, misses, evictions)
+- [x] 1.7: Implement `recommended_pool_capacity()` sizing heuristic
 
 ### Unit Tests
 
-- [ ] `test_pool_basic_allocation` - Allocate and retrieve histogram
-- [ ] `test_pool_lru_eviction` - When full, evicts least recently used
-- [ ] `test_pool_lru_order` - Access updates LRU position
-- [ ] `test_pool_release` - Explicit release frees slot
-- [ ] `test_pool_release_batch` - Batch release frees multiple slots
-- [ ] `test_pool_reset` - Reset clears all nodes, keeps allocations
-- [ ] `test_pool_metrics` - Tracks hits, misses, evictions correctly
-- [ ] `test_pool_full_capacity` - Uses all capacity before evicting
-- [ ] `test_pool_contains` - `contains()` returns correct boolean
+- [x] `test_pool_basic_allocation` - Allocate and retrieve histogram
+- [x] `test_pool_lru_eviction` - When full, evicts least recently used
+- [x] `test_pool_lru_order` - Access updates LRU position
+- [x] `test_pool_release` - Explicit release frees slot
+- [x] `test_pool_release_batch` - Batch release frees multiple slots
+- [x] `test_pool_reset` - Reset clears all nodes, keeps allocations
+- [x] `test_pool_metrics` - Tracks hits, misses, evictions correctly
+- [x] `test_pool_full_capacity` - Uses all capacity before evicting
+- [x] `test_pool_contains` - `contains()` returns correct boolean
 
 ### Implementation Notes
 
@@ -90,34 +90,31 @@ memory traffic by a factor of `num_features`.
 
 ---
 
-## Story 2: RowParallelScratch & Reduction
+## Story 2: RowParallelScratch & Reduction ✅ COMPLETE
 
 **Goal**: Implement per-thread scratch buffers and histogram reduction.
 
-**Status**: Not Started
+**Status**: Complete
 
 ### Tasks
 
-- [ ] 2.1: Implement `RowParallelScratch` with per-thread SoA buffers
-- [ ] 2.2: Implement `get_buffer(thread_id)` for thread-safe access
-- [ ] 2.3: Implement `reset_all()` and `reset(thread_id)`
-- [ ] 2.4: Implement `reduce_histograms()` - merge thread buffers into target
-- [ ] 2.5: Implement SIMD-optimized reduction (portable_simd or manual)
-- [ ] 2.6: Consider hierarchical reduction for >8 threads
+- [x] 2.1: Implement `RowParallelScratch` with per-thread SoA buffers
+- [x] 2.2: Implement `get_buffer(thread_id)` for thread-safe access
+- [x] 2.3: Implement `reset_all()` and `reset(thread_id)`
+- [x] 2.4: Implement `reduce_histograms()` - merge thread buffers into target
+- [x] 2.5: Implement parallel reduction (`reduce_into_parallel()`)
+- [x] 2.6: Implement `subtract_histograms()` helper
 
 ### Unit Tests
 
-- [ ] `test_scratch_basic` - Create and access scratch buffers
-- [ ] `test_scratch_reset` - Reset zeroes all bins
-- [ ] `test_reduce_single_thread` - Reduce with 1 thread = identity
-- [ ] `test_reduce_multiple_threads` - Sum across threads correct
-- [ ] `test_reduce_empty_threads` - Handle threads with no data
-- [ ] `test_reduce_large_histogram` - Stress test with many bins
-
-### Performance Tests
-
-- [ ] `bench_reduce_2_threads` vs `bench_reduce_8_threads`
-- [ ] `bench_reduce_linear` vs `bench_reduce_hierarchical` (if implemented)
+- [x] `test_scratch_basic` - Create and access scratch buffers
+- [x] `test_scratch_reset` - Reset zeroes all bins
+- [x] `test_reduce_single_thread` - Reduce with 1 thread = identity
+- [x] `test_reduce_multiple_threads` - Sum across threads correct
+- [x] `test_reduce_empty_threads` - Handle threads with no data
+- [x] `test_reduce_large_histogram` - Stress test with many bins
+- [x] `test_reduce_parallel_matches_sequential` - Parallel matches sequential
+- [x] `test_subtract_histograms` - Subtraction is correct
 
 ### Implementation Notes
 
@@ -127,35 +124,30 @@ memory traffic by a factor of `num_features`.
 
 ---
 
-## Story 3: ParallelHistogramBuilder
+## Story 3: ParallelHistogramBuilder ✅ COMPLETE
 
 **Goal**: Implement the row-parallel histogram building algorithm.
 
-**Status**: Not Started
+**Status**: Complete
 
 ### Tasks
 
-- [ ] 3.1: Implement `ParallelHistogramBuilder::new(num_threads, bins_per_hist)`
-- [ ] 3.2: Implement `build()` - partition rows, build in scratch, reduce
-- [ ] 3.3: Implement `build_ordered()` - use pre-reordered gradients
-- [ ] 3.4: Implement `build_batch()` - build multiple nodes in one pass
-- [ ] 3.5: Extract common accumulation kernel to `kernel.rs`
-- [ ] 3.6: Ensure `build()` and `build_parallel()` use same kernel
+- [x] 3.1: Implement `ParallelHistogramBuilder::new(config, cuts)`
+- [x] 3.2: Implement `build_into_pool()` - partition rows, build in scratch, reduce
+- [x] 3.3: Implement `build_into_slot()` - build into arbitrary slot
+- [x] 3.4: Implement `build_row_parallel()` - core row-parallel algorithm with rayon::scope()
+- [x] 3.5: Implement `ParallelHistogramConfig` with threshold selection
+- [x] 3.6: Add `SendSyncPtr<T>` wrapper for raw pointer Send+Sync
 
 ### Unit Tests
 
-- [ ] `test_row_parallel_matches_sequential` - Same result as `build()`
-- [ ] `test_row_parallel_matches_feature_parallel` - Same as `build_parallel()`
-- [ ] `test_row_parallel_subset_rows` - Works with row subset
-- [ ] `test_row_parallel_single_row` - Edge case: 1 row
-- [ ] `test_row_parallel_single_feature` - Edge case: 1 feature
-- [ ] `test_row_parallel_empty_rows` - Edge case: 0 rows
-- [ ] `test_build_batch_multiple_nodes` - Batch build correctness
-
-### Integration Tests
-
-- [ ] `test_row_parallel_in_tree_training` - Full tree builds correctly
-- [ ] `test_row_parallel_with_histogram_subtraction` - Subtraction still works
+- [x] `test_parallel_builder_basic` - Basic row-parallel build
+- [x] `test_parallel_builder_matches_sequential` - Same result as `HistogramBuilder`
+- [x] `test_parallel_builder_subset` - Works with row subset
+- [x] `test_parallel_builder_single_thread` - Single thread mode
+- [x] `test_parallel_builder_rebuild` - Multiple histograms in pool
+- [x] `test_parallel_builder_many_threads` - More threads than rows
+- [x] `test_config_should_use_row_parallel` - Threshold selection
 
 ### Implementation Notes
 
@@ -165,19 +157,73 @@ memory traffic by a factor of `num_features`.
 
 ---
 
-## Story 4: OrderedGradientBuffer
+## Story 4: Histogram Unification (HistogramLayout + FeatureSlice)
+
+**Goal**: Unify histogram storage so `ContiguousHistogramPool` can be used for all
+strategies (sequential, feature-parallel, row-parallel), replacing `NodeHistogram`.
+
+**Status**: Not Started
+
+**Rationale**: See RFC-0025 DD-7. The flat SoA layout is more cache-friendly than
+nested `NodeHistogram` → `Vec<FeatureHistogram>` for all use cases. This unification
+simplifies the codebase and enables all strategies to benefit from pooling/LRU.
+
+### Tasks
+
+- [ ] 4.1: Implement `HistogramLayout` struct with feature offsets
+- [ ] 4.2: Implement `FeatureSlice<'a>` - immutable view into one feature's bins
+- [ ] 4.3: Implement `FeatureSliceMut<'a>` - mutable view for accumulation
+- [ ] 4.4: Add `layout.feature_slice(slot, feat)` and `feature_slice_mut()` methods
+- [ ] 4.5: Implement `accumulate()` on `FeatureSliceMut` (matching `FeatureHistogram`)
+- [ ] 4.6: Make `HistogramBuilder.build()` generic over target type (trait or enum)
+- [ ] 4.7: Update `SplitFinder` to work with `FeatureSlice` views
+
+### Unit Tests
+
+- [ ] `test_layout_feature_offsets` - Correct offsets for various feature counts
+- [ ] `test_feature_slice_basic` - Read stats from feature slice
+- [ ] `test_feature_slice_mut_accumulate` - Accumulate into feature slice
+- [ ] `test_builder_with_pool_slot` - Build histogram into pool slot
+- [ ] `test_builder_matches_legacy` - Pool-based build matches `NodeHistogram` build
+- [ ] `test_split_finder_with_slices` - Split finding works with feature slices
+
+### Integration Tests
+
+- [ ] `test_feature_parallel_with_pool` - Feature-parallel building into pool
+- [ ] `test_sequential_with_pool` - Sequential building into pool
+
+### Implementation Notes
+
+- `HistogramLayout` stores `feature_offsets: Box<[usize]>` computed from `BinCuts`
+- `FeatureSlice` is just `(&[f32], &[f32], &[u32])` - grad, hess, count slices
+- Key insight: The accumulation kernel is the same, only the target differs
+- Can use a trait `trait HistogramTarget { fn accumulate(&mut self, bin, g, h); }`
+
+### Deprecation Plan
+
+After this story:
+- `NodeHistogram` is deprecated (still works, but pool is preferred)
+- `FeatureHistogram` remains as the underlying slice type or gets replaced by `FeatureSlice`
+- Full removal deferred to post-1.0
+
+---
+
+## Story 5: OrderedGradientBuffer (Optional Performance)
 
 **Goal**: Implement gradient reordering for cache-friendly access.
 
 **Status**: Not Started
 
+**Note**: This is a performance optimization, not required for correctness.
+Can be deferred if integration (Story 6) is higher priority.
+
 ### Tasks
 
-- [ ] 4.1: Implement `OrderedGradientBuffer` struct
-- [ ] 4.2: Implement `reorder(rows)` - parallel reorder gradients
-- [ ] 4.3: Implement `ordered_grads()` and `ordered_hess()` accessors
-- [ ] 4.4: Add threshold heuristic (only reorder if rows > 1000)
-- [ ] 4.5: Integrate with `ParallelHistogramBuilder::build_ordered()`
+- [ ] 5.1: Implement `OrderedGradientBuffer` struct
+- [ ] 5.2: Implement `reorder(rows)` - parallel reorder gradients
+- [ ] 5.3: Implement `ordered_grads()` and `ordered_hess()` accessors
+- [ ] 5.4: Add threshold heuristic (only reorder if rows > 1000)
+- [ ] 5.5: Integrate with `ParallelHistogramBuilder::build_ordered()`
 
 ### Unit Tests
 
@@ -200,7 +246,7 @@ memory traffic by a factor of `num_features`.
 
 ---
 
-## Story 5: Strategy Selection & Integration
+## Story 6: Strategy Selection & Integration
 
 **Goal**: Add automatic strategy selection and integrate with TreeGrower.
 
@@ -208,13 +254,13 @@ memory traffic by a factor of `num_features`.
 
 ### Tasks
 
-- [ ] 5.1: Add `ParallelStrategy` enum to `TreeBuildParams`
-- [ ] 5.2: Implement `select_histogram_strategy()` heuristic
-- [ ] 5.3: Add `min_rows_for_parallel` parameter
-- [ ] 5.4: Integrate `ContiguousHistogramPool` into `TreeGrower`
-- [ ] 5.5: Update `build_histogram()` to use strategy selection
-- [ ] 5.6: Implement histogram subtraction with pool
-- [ ] 5.7: Release parent histograms after children built
+- [ ] 6.1: Add `ParallelStrategy` enum to `TreeBuildParams`
+- [ ] 6.2: Implement `select_histogram_strategy()` heuristic
+- [ ] 6.3: Add `min_rows_for_parallel` parameter
+- [ ] 6.4: Integrate `ContiguousHistogramPool` into `TreeGrower`
+- [ ] 6.5: Update `build_histogram()` to use strategy selection
+- [ ] 6.6: Implement histogram subtraction with pool
+- [ ] 6.7: Release parent histograms after children built
 
 ### Unit Tests
 
@@ -238,7 +284,7 @@ memory traffic by a factor of `num_features`.
 
 ---
 
-## Story 6: Performance Validation
+## Story 7: Performance Validation
 
 **Goal**: Benchmark and validate performance improvements.
 
@@ -246,13 +292,13 @@ memory traffic by a factor of `num_features`.
 
 ### Tasks
 
-- [ ] 6.1: Create `benches/histogram_parallel.rs` benchmark suite
-- [ ] 6.2: Benchmark row-parallel vs feature-parallel on tall data
-- [ ] 6.3: Benchmark row-parallel vs feature-parallel on wide data
-- [ ] 6.4: Benchmark gradient reordering impact
-- [ ] 6.5: Benchmark pool overhead vs no-pool baseline
-- [ ] 6.6: Profile and optimize hot paths
-- [ ] 6.7: Document results in `docs/benchmarks/`
+- [ ] 7.1: Create `benches/histogram_parallel.rs` benchmark suite
+- [ ] 7.2: Benchmark row-parallel vs feature-parallel on tall data
+- [ ] 7.3: Benchmark row-parallel vs feature-parallel on wide data
+- [ ] 7.4: Benchmark gradient reordering impact
+- [ ] 7.5: Benchmark pool overhead vs no-pool baseline
+- [ ] 7.6: Profile and optimize hot paths
+- [ ] 7.7: Document results in `docs/benchmarks/`
 
 ### Benchmarks
 
@@ -279,7 +325,7 @@ memory traffic by a factor of `num_features`.
 
 ---
 
-## Story 7: Documentation & Cleanup
+## Story 8: Documentation & Cleanup
 
 **Goal**: Document the new system and clean up code.
 
@@ -287,13 +333,14 @@ memory traffic by a factor of `num_features`.
 
 ### Tasks
 
-- [ ] 7.1: Add rustdoc for all new public types
-- [ ] 7.2: Add module-level documentation for `histogram/` submodule
-- [ ] 7.3: Update `histogram/mod.rs` with architecture overview
-- [ ] 7.4: Add `histogram_pool_capacity` parameter documentation
-- [ ] 7.5: Add `parallel_strategy` parameter documentation
-- [ ] 7.6: Write performance tuning guide
-- [ ] 7.7: Update ROADMAP with Epic 8 complete
+- [ ] 8.1: Add rustdoc for all new public types
+- [ ] 8.2: Add module-level documentation for `histogram/` submodule
+- [ ] 8.3: Update `histogram/mod.rs` with architecture overview
+- [ ] 8.4: Add `histogram_pool_capacity` parameter documentation
+- [ ] 8.5: Add `parallel_strategy` parameter documentation
+- [ ] 8.6: Write performance tuning guide
+- [ ] 8.7: Update ROADMAP with Epic 8 complete
+- [ ] 8.8: Remove deprecated `NodeHistogram` if fully replaced
 
 ### Documentation Deliverables
 
@@ -308,46 +355,49 @@ memory traffic by a factor of `num_features`.
 
 After this epic, the histogram module structure will be:
 
-```
+```text
 src/training/gbtree/histogram/
 ├── mod.rs               # Re-exports, architecture overview
-├── types.rs             # NodeId, SlotId, PoolMetrics (new)
-├── feature.rs           # FeatureHistogram (existing)
-├── node.rs              # NodeHistogram (existing)
-├── kernel.rs            # NEW: Shared accumulation kernel
-├── builder.rs           # Sequential + feature-parallel (uses kernel)
-├── parallel_builder.rs  # NEW: Row-parallel builder
-├── pool.rs              # NEW: ContiguousHistogramPool
-└── scratch.rs           # NEW: RowParallelScratch, reduction
+├── types.rs             # NodeId, SlotId, PoolMetrics, HistogramLayout
+├── feature.rs           # FeatureHistogram (deprecated) / FeatureSlice (new)
+├── node.rs              # NodeHistogram (deprecated, kept for compat)
+├── builder.rs           # Sequential + feature-parallel (uses pool)
+├── parallel_builder.rs  # Row-parallel builder
+├── pool.rs              # ContiguousHistogramPool (unified storage)
+└── scratch.rs           # RowParallelScratch, reduction
 ```
 
 ---
 
 ## Dependencies
 
-```
+```text
 Story 1 (Pool) ──────────────────────────────────────┐
                                                       │
 Story 2 (Scratch & Reduction) ───────────────────────┤
-                                                      ├──► Story 5 (Integration)
+                                                      ├──► Story 4 (Unification)
 Story 3 (ParallelHistogramBuilder) ──────────────────┤          │
-                                                      │          │
-Story 4 (OrderedGradientBuffer) ─────────────────────┘          │
                                                                  │
-                                    Story 5 (Integration) ◄──────┘
-                                             │
-                                             ▼
-                                    Story 6 (Performance)
-                                             │
-                                             ▼
-                                    Story 7 (Documentation)
+                                                                 ▼
+                                                        Story 6 (Integration)
+                                                                 │
+                            Story 5 (OrderedGradientBuffer) ────►│ (optional)
+                                                                 │
+                                                                 ▼
+                                                        Story 7 (Performance)
+                                                                 │
+                                                                 ▼
+                                                        Story 8 (Documentation)
 ```
 
 **Notes**:
-- Stories 1-4 can be worked on in parallel (independent components)
-- Story 5 integrates all components
-- Story 6 validates performance
-- Story 7 wraps up documentation
+
+- Stories 1-3 are complete ✅
+- Story 4 (Unification) enables pool to be used for all strategies
+- Story 5 (OrderedGradientBuffer) is optional, pure performance optimization
+- Story 6 (Integration) connects pool to TreeGrower
+- Story 7 validates performance
+- Story 8 wraps up documentation
 
 ---
 

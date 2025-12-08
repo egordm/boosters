@@ -684,6 +684,43 @@ XGBoost uses "clear all when exceeded", LightGBM uses LRU.
 - **Cache efficiency**: When only summing gradients, no cache pollution from hessians
 - Packed (16-bit) is a P2 optimization, orthogonal to layout choice
 
+### DD-7: Unified Histogram Storage [DECIDED]
+
+**Context**: After implementing `ContiguousHistogramPool`, we realize the flat SoA
+layout is actually superior to the current `NodeHistogram` → `Vec<FeatureHistogram>`
+nested structure for all use cases, not just row-parallel.
+
+**Options considered**:
+
+1. **Keep both**: `NodeHistogram` for sequential/feature-parallel, pool for row-parallel
+2. **Unify on pool**: Use `ContiguousHistogramPool` as the single histogram storage
+3. **Hybrid**: Keep `FeatureHistogram` as a view type, but use flat storage
+
+**Decision**: Unify on pool storage with `FeatureSlice` view types.
+
+**Rationale**:
+
+- **Cache locality**: Flat `[feat0_bins | feat1_bins | ...]` is more cache-friendly
+  than nested `Vec<Vec<...>>` during split finding
+- **Single allocation**: One allocation per histogram vs O(features) allocations
+- **Strategy-agnostic**: Same storage works for sequential, feature-parallel, row-parallel
+- **Simpler integration**: `TreeGrower` uses one histogram type, not switching between two
+- **LRU benefit**: All strategies can benefit from LRU eviction and pooling
+
+**Implementation approach**:
+
+1. Add `HistogramLayout` to track feature offsets within flat histogram
+2. Add `FeatureSlice<'a>` / `FeatureSliceMut<'a>` as views into flat storage
+3. Make `HistogramBuilder` generic over target (pool slot or legacy `FeatureHistogram`)
+4. Migrate `TreeGrower` to use pool exclusively
+5. Deprecate `NodeHistogram` and eventually remove
+
+**Migration path**: The transition can be incremental:
+- Phase 1: Add `HistogramLayout` + `FeatureSlice` (non-breaking)
+- Phase 2: Make builders work with both (non-breaking)
+- Phase 3: Migrate `TreeGrower` to pool (internal change)
+- Phase 4: Deprecate `NodeHistogram` (breaking, can wait for 1.0)
+
 ## Performance Expectations
 
 Based on XGBoost/LightGBM benchmarks and our analysis:
@@ -1038,3 +1075,4 @@ From **LightGBM**:
 - 2024-12-02: Fixed naming conventions: `PerFeature` → `FeatureParallel`, `build_per_feature` → `build_feature_parallel` for consistency
 - 2024-12-02: Renamed `ThreadLocalScratch` → `RowParallelScratch` for clarity (thread-local buffers that merge into NodeHistogram)
 - 2024-12-03: Status → Approved
+- 2024-12-03: DD-7 added — Unified histogram storage decision after implementation experience showed flat pool layout is superior for all strategies

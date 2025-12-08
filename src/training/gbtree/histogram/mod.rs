@@ -1,7 +1,7 @@
 //! Histogram-based gradient aggregation for tree building.
 //!
 //! This module provides the histogram infrastructure for histogram-based
-//! gradient boosting (RFC-0011).
+//! gradient boosting (RFC-0011, RFC-0025).
 //!
 //! # Overview
 //!
@@ -14,9 +14,18 @@
 //!
 //! # Key Types
 //!
+//! ## Per-Node Histograms
 //! - [`FeatureHistogram`]: Per-feature gradient/hessian histogram
 //! - [`NodeHistogram`]: Collection of feature histograms for a tree node
+//!
+//! ## Sequential Building
 //! - [`HistogramBuilder`]: Builds histograms from quantized data
+//!
+//! ## Parallel Building (RFC-0025)
+//! - [`ContiguousHistogramPool`]: LRU-cached contiguous histogram storage
+//! - [`RowParallelScratch`]: Per-thread scratch buffers for row-parallel building
+//! - [`NodeId`], [`SlotId`]: Type-safe identifiers for pool management
+//! - [`PoolMetrics`]: Statistics for monitoring pool behavior
 //!
 //! # Histogram Subtraction
 //!
@@ -39,12 +48,20 @@
 //! let sibling = &parent - &child;
 //! ```
 //!
-//! See RFC-0011 for design rationale.
+//! See RFC-0011 and RFC-0025 for design rationale.
 
 mod builder;
 mod feature;
 mod node;
+pub mod parallel_builder;
+pub mod pool;
+pub mod scratch;
+pub mod types;
 
 pub use builder::HistogramBuilder;
 pub use feature::FeatureHistogram;
 pub use node::NodeHistogram;
+pub use parallel_builder::{ParallelHistogramBuilder, ParallelHistogramConfig};
+pub use pool::{ContiguousHistogramPool, HistogramSlot, HistogramSlotMut};
+pub use scratch::{subtract_histograms, RowParallelScratch, ScratchSlotMut};
+pub use types::{recommended_pool_capacity, NodeId, PoolMetrics};
