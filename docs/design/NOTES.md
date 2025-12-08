@@ -176,3 +176,213 @@ Key differences to parameterize:
 ### YYYY-MM-DD
 
 <!-- What you worked on, what you learned, what's next -->
+
+---
+
+## RFC Prioritization Analysis (2024-12-02)
+
+### Context
+
+After completing RFC-0025 (Row-Parallel Histograms), we need to prioritize the next RFCs:
+- Gradient Quantization (would be RFC-0026)
+- Linear Trees (would be RFC-0027)
+- GPU Support (would be RFC-0028)
+- Sample Weighting (would be RFC-0029)
+
+### Dependency Graph
+
+```text
+┌────────────────────────────────────────────────────────────────────┐
+│                     RFC Dependencies                                │
+│                                                                     │
+│  RFC-0025 Row-Parallel Histograms ──────────┐                      │
+│           │                                  │                      │
+│           ▼                                  ▼                      │
+│  RFC-0026 Gradient Quantization     RFC-0028 GPU Support           │
+│  (16-bit packed gradients)          (CUDA histogram building)       │
+│           │                                  │                      │
+│           └──────────────────────────────────┘                      │
+│                                                                     │
+│  RFC-0029 Sample Weighting ─────────────────────► (Independent)    │
+│  (instance weights in loss)                                        │
+│                                                                     │
+│  RFC-0027 Linear Trees ─────────────────────────► (Independent)    │
+│  (linear models in leaves)                                         │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+### Analysis by RFC
+
+#### RFC-0026: Gradient Quantization (16-bit Packed)
+
+**What**: LightGBM's optimization — pack (gradient, hessian) into 16-bit integers
+instead of (f32, f32). Reduces memory bandwidth during histogram building by 4x.
+
+**Dependencies**:
+- Builds on RFC-0025 (SoA layout already supports this)
+- Orthogonal to row-parallel vs feature-parallel
+
+**Value**:
+- 📊 High impact on memory-bound workloads
+- 🔄 Required for LightGBM training parity
+- ⚡ 2-4x speedup on histogram building (memory bandwidth limited)
+
+**Complexity**: Medium
+- Quantization mapping for gradients
+- Modified accumulate kernel (SIMD pack/unpack)
+- Loss of precision (generally acceptable for GBDT)
+
+**When to implement**: After RFC-0025, before GPU
+
+---
+
+#### RFC-0027: Linear Trees
+
+**What**: Instead of constant leaf values, fit a linear model in each leaf.
+Captures local trends within regions, improving accuracy on smooth functions.
+
+**Dependencies**:
+- Requires changes to `LeafValue` trait (currently `ScalarLeaf`)
+- New split evaluation with linear fit consideration
+- New leaf fitting algorithm (mini OLS in each leaf)
+
+**Value**:
+- 📊 Medium impact — improves accuracy on specific problems
+- 🔬 Research feature (not in XGBoost, limited LightGBM support)
+- 🎯 Niche use case
+
+**Complexity**: High
+- New `LinearLeaf` type with coefficients
+- Modified split finding (include linear fit residual)
+- Regularization for leaf coefficients
+- Prediction path changes
+
+**When to implement**: Post-1.0, based on user demand
+
+---
+
+#### RFC-0028: GPU Support (CUDA)
+
+**What**: GPU-accelerated histogram building and split finding.
+This is the biggest performance win for large datasets.
+
+**Dependencies**:
+- RFC-0025 (contiguous histogram pool is GPU-friendly)
+- RFC-0026 (quantized gradients reduce GPU memory bandwidth)
+- Requires `cuda` or `wgpu` infrastructure
+
+**Value**:
+- 📊 Very high impact on large datasets
+- ⚡ 10-100x speedup potential
+- 🏆 Competitive with GPU-accelerated XGBoost/LightGBM
+
+**Complexity**: Very High
+- New `cuda` feature flag and crate
+- GPU memory management for histograms, quantized data
+- Kernel implementation (histogram building, reduction)
+- CPU↔GPU synchronization
+- Testing across GPU architectures
+
+**When to implement**: After CPU path is optimized (RFC-0025, RFC-0026)
+
+---
+
+#### RFC-0029: Sample Weighting
+
+**What**: Per-instance weights that affect the loss function.
+Common for: class imbalance, importance sampling, survey data.
+
+**Dependencies**:
+- Modifies gradient computation (multiply by weight)
+- Affects histogram accumulation (weighted counts)
+- Independent of parallelism strategy
+
+**Value**:
+- 📊 High practical value — common real-world need
+- ✅ Required for XGBoost/LightGBM parity
+- 🎯 Users expect this feature
+
+**Complexity**: Low-Medium
+- `DataMatrix` gains optional `weights: Vec<f32>`
+- Objective functions multiply gradients by weight
+- Histogram counts become weighted
+- Evaluation metrics use weighted averages
+
+**When to implement**: Soon — low complexity, high value
+
+---
+
+### Recommended Priority Order
+
+```text
+Priority 1: Sample Weighting (RFC-0026)
+════════════════════════════════════════
+Rationale:
+- Low complexity, high user value
+- Unblocks real-world use cases
+- Independent, can be done anytime
+- Estimated: 1-2 weeks
+
+Priority 1.5: Row-Parallel Histograms (RFC-0025)
+════════════════════════════════════════════════
+Rationale:
+- Medium complexity, high performance value
+- Already designed, ready to implement
+- Foundation for other optimizations
+- Estimated: 2-3 weeks
+
+Priority 2: Gradient Quantization (RFC-0027)
+════════════════════════════════════════════
+Rationale:
+- Medium complexity, high performance value
+- Natural extension of RFC-0025 work
+- Required for LightGBM parity
+- Prerequisite for efficient GPU support
+- Estimated: 2-3 weeks
+
+Priority 3: GPU Support (RFC-0028)
+════════════════════════════════════
+Rationale:
+- Very high complexity, very high value
+- Requires RFC-0025 + RFC-0027 first
+- Major competitive differentiator
+- Estimated: 1-2 months
+
+Priority 4: Linear Trees (RFC-0029)
+════════════════════════════════════
+Rationale:
+- High complexity, valuable for smooth functions
+- Not niche, but requires solid GBTree foundation first
+- Defer until core GBTree training is mature
+- Estimated: 2-3 weeks
+```
+
+### Alternative Ordering Considerations
+
+**If targeting LightGBM training parity first**:
+1. Sample Weighting (required)
+2. Gradient Quantization (LightGBM's key optimization)
+3. RFC-0016 Categorical Training (already drafted)
+4. GPU later
+
+**If targeting XGBoost training parity first**:
+1. Sample Weighting (required)
+2. RFC-0023 Constraints (monotonic, interaction)
+3. RFC-0025 Row-Parallel Histograms (done)
+4. GPU later
+
+**If targeting maximum performance first**:
+1. RFC-0025 Row-Parallel Histograms (done)
+2. Gradient Quantization
+3. GPU Support
+4. Sample weighting and features later
+
+### Summary Table
+
+| RFC | Complexity | User Value | Perf Impact | Dependencies | Priority |
+|-----|------------|------------|-------------|--------------|----------|
+| Sample Weighting | Low | ⭐⭐⭐⭐⭐ | Low | None | **P1** |
+| Row-Parallel Histograms | Medium | ⭐⭐⭐ | ⭐⭐⭐⭐ | None | **P1.5** |
+| Gradient Quantization | Medium | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | RFC-0025 | **P2** |
+| GPU Support | Very High | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ | RFC-0025, RFC-0027 | **P3** |
+| Linear Trees | High | ⭐⭐⭐⭐ | ⭐⭐⭐ | Mature GBTree | **P4** |

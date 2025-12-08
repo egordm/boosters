@@ -1,5 +1,7 @@
 //! Per-node gradient histogram collection.
 
+use std::ops::{Sub, SubAssign};
+
 use super::feature::FeatureHistogram;
 use crate::training::gbtree::quantize::BinCuts;
 
@@ -146,41 +148,6 @@ impl NodeHistogram {
         self.total_count
     }
 
-    /// Compute sibling histograms via subtraction.
-    ///
-    /// After calling, `self` contains `parent - self`.
-    pub fn subtract_from(&mut self, parent: &Self) {
-        debug_assert_eq!(self.features.len(), parent.features.len());
-
-        for (child, par) in self.features.iter_mut().zip(parent.features.iter()) {
-            child.subtract_from(par);
-        }
-        self.total_grad = parent.total_grad - self.total_grad;
-        self.total_hess = parent.total_hess - self.total_hess;
-        self.total_count = parent.total_count - self.total_count;
-    }
-
-    /// Create a new histogram by subtracting another from self.
-    ///
-    /// Returns `self - other`. Useful for histogram subtraction optimization.
-    pub fn subtract(&self, other: &Self) -> Self {
-        debug_assert_eq!(self.features.len(), other.features.len());
-
-        let features: Box<[FeatureHistogram]> = self
-            .features
-            .iter()
-            .zip(other.features.iter())
-            .map(|(a, b)| a.subtract(b))
-            .collect();
-
-        Self {
-            features,
-            total_grad: self.total_grad - other.total_grad,
-            total_hess: self.total_hess - other.total_hess,
-            total_count: self.total_count - other.total_count,
-        }
-    }
-
     /// Copy from another histogram.
     pub fn copy_from(&mut self, src: &Self) {
         debug_assert_eq!(self.features.len(), src.features.len());
@@ -191,6 +158,63 @@ impl NodeHistogram {
         self.total_grad = src.total_grad;
         self.total_hess = src.total_hess;
         self.total_count = src.total_count;
+    }
+}
+
+/// Subtract two node histograms: `&self - &rhs` (allocating).
+///
+/// Used for histogram subtraction optimization:
+/// `parent - smaller_child = larger_child`.
+impl Sub<&NodeHistogram> for &NodeHistogram {
+    type Output = NodeHistogram;
+
+    fn sub(self, rhs: &NodeHistogram) -> NodeHistogram {
+        debug_assert_eq!(self.features.len(), rhs.features.len());
+
+        let features: Box<[FeatureHistogram]> = self
+            .features
+            .iter()
+            .zip(rhs.features.iter())
+            .map(|(a, b)| a - b)
+            .collect();
+
+        NodeHistogram {
+            features,
+            total_grad: self.total_grad - rhs.total_grad,
+            total_hess: self.total_hess - rhs.total_hess,
+            total_count: self.total_count - rhs.total_count,
+        }
+    }
+}
+
+/// Subtract in place: `self -= &rhs`.
+///
+/// More efficient than allocating when you can mutate the left operand.
+impl SubAssign<&NodeHistogram> for NodeHistogram {
+    #[inline]
+    fn sub_assign(&mut self, rhs: &NodeHistogram) {
+        debug_assert_eq!(self.features.len(), rhs.features.len());
+
+        for (dst, src) in self.features.iter_mut().zip(rhs.features.iter()) {
+            *dst -= src;
+        }
+        self.total_grad -= rhs.total_grad;
+        self.total_hess -= rhs.total_hess;
+        self.total_count -= rhs.total_count;
+    }
+}
+
+/// Consuming subtract: `self - &rhs` (reuses self's memory).
+///
+/// Most efficient when you own the left operand and don't need it afterward.
+/// Avoids allocation by reusing self's storage for the result.
+impl Sub<&NodeHistogram> for NodeHistogram {
+    type Output = NodeHistogram;
+
+    #[inline]
+    fn sub(mut self, rhs: &NodeHistogram) -> NodeHistogram {
+        self -= rhs;
+        self
     }
 }
 
@@ -231,14 +255,65 @@ mod tests {
         child.feature_mut(1).add(1, 4.0, 2.0);
         child.set_totals(9.0, 4.5, 2);
 
-        // Subtract
-        child.subtract_from(&parent);
+        // Subtract: sibling = parent - child
+        let sibling = &parent - &child;
 
         // Check sibling
-        assert_eq!(child.feature(0).bin_stats(0), (5.0, 2.5, 1));
-        assert_eq!(child.feature(1).bin_stats(1), (4.0, 2.0, 1));
-        assert_eq!(child.total_grad(), 9.0);
-        assert_eq!(child.total_hess(), 4.5);
-        assert_eq!(child.total_count(), 2);
+        assert_eq!(sibling.feature(0).bin_stats(0), (5.0, 2.5, 1));
+        assert_eq!(sibling.feature(1).bin_stats(1), (4.0, 2.0, 1));
+        assert_eq!(sibling.total_grad(), 9.0);
+        assert_eq!(sibling.total_hess(), 4.5);
+        assert_eq!(sibling.total_count(), 2);
+    }
+
+    #[test]
+    fn test_node_histogram_sub_assign() {
+        let mut parent = NodeHistogram::from_bin_counts(&[4, 4]);
+        let mut child = NodeHistogram::from_bin_counts(&[4, 4]);
+
+        parent.feature_mut(0).add(0, 5.0, 2.5);
+        parent.feature_mut(0).add(0, 5.0, 2.5);
+        parent.feature_mut(1).add(1, 4.0, 2.0);
+        parent.feature_mut(1).add(1, 4.0, 2.0);
+        parent.set_totals(18.0, 9.0, 4);
+
+        child.feature_mut(0).add(0, 5.0, 2.5);
+        child.feature_mut(1).add(1, 4.0, 2.0);
+        child.set_totals(9.0, 4.5, 2);
+
+        // In-place subtraction
+        parent -= &child;
+
+        // parent now contains sibling values
+        assert_eq!(parent.feature(0).bin_stats(0), (5.0, 2.5, 1));
+        assert_eq!(parent.feature(1).bin_stats(1), (4.0, 2.0, 1));
+        assert_eq!(parent.total_grad(), 9.0);
+        assert_eq!(parent.total_hess(), 4.5);
+        assert_eq!(parent.total_count(), 2);
+    }
+
+    #[test]
+    fn test_node_histogram_consuming_sub() {
+        let mut parent = NodeHistogram::from_bin_counts(&[4, 4]);
+        let mut child = NodeHistogram::from_bin_counts(&[4, 4]);
+
+        parent.feature_mut(0).add(0, 5.0, 2.5);
+        parent.feature_mut(0).add(0, 5.0, 2.5);
+        parent.feature_mut(1).add(1, 4.0, 2.0);
+        parent.feature_mut(1).add(1, 4.0, 2.0);
+        parent.set_totals(18.0, 9.0, 4);
+
+        child.feature_mut(0).add(0, 5.0, 2.5);
+        child.feature_mut(1).add(1, 4.0, 2.0);
+        child.set_totals(9.0, 4.5, 2);
+
+        // Consuming subtraction (reuses parent's memory)
+        let sibling = parent - &child;
+
+        assert_eq!(sibling.feature(0).bin_stats(0), (5.0, 2.5, 1));
+        assert_eq!(sibling.feature(1).bin_stats(1), (4.0, 2.0, 1));
+        assert_eq!(sibling.total_grad(), 9.0);
+        assert_eq!(sibling.total_hess(), 4.5);
+        assert_eq!(sibling.total_count(), 2);
     }
 }

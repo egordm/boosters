@@ -136,86 +136,11 @@ impl HistogramBuilder {
     }
 }
 
-/// Which child to build directly (the other derived via subtraction).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChildSide {
-    /// Build left child, derive right via subtraction
-    Left,
-    /// Build right child, derive left via subtraction
-    Right,
-}
-
-/// Utilities for histogram subtraction optimization.
-///
-/// When splitting a node, we build the histogram for the smaller child
-/// and derive the larger child via `parent - smaller = larger`.
-/// This nearly halves histogram building cost since:
-/// - Building: O(rows × features)
-/// - Subtraction: O(bins × features)
-pub struct HistogramSubtractor;
-
-impl HistogramSubtractor {
-    /// Determine which child to build directly.
-    ///
-    /// Prefers building the smaller child (fewer rows to iterate).
-    pub fn select_build_child(left_count: u32, right_count: u32) -> ChildSide {
-        if left_count <= right_count {
-            ChildSide::Left
-        } else {
-            ChildSide::Right
-        }
-    }
-
-    /// Compute sibling histogram via subtraction.
-    ///
-    /// Given parent histogram and one child's histogram, computes the
-    /// other child's histogram: `sibling = parent - child`.
-    ///
-    /// # Arguments
-    ///
-    /// * `parent` - Parent node's histogram
-    /// * `child` - Built child's histogram
-    /// * `sibling` - Output: will contain parent - child
-    pub fn compute_sibling(
-        parent: &NodeHistogram,
-        child: &NodeHistogram,
-        sibling: &mut NodeHistogram,
-    ) {
-        // Copy child to sibling, then subtract from parent
-        sibling.copy_from(child);
-        sibling.subtract_from(parent);
-    }
-
-    /// In-place sibling computation.
-    ///
-    /// Transforms `child` into the sibling histogram.
-    /// Original child data is lost.
-    pub fn compute_sibling_inplace(parent: &NodeHistogram, child: &mut NodeHistogram) {
-        child.subtract_from(parent);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::data::ColMatrix;
     use crate::training::gbtree::quantize::{ExactQuantileCuts, Quantizer};
-
-    #[test]
-    fn test_select_build_child() {
-        assert_eq!(
-            HistogramSubtractor::select_build_child(10, 20),
-            ChildSide::Left
-        );
-        assert_eq!(
-            HistogramSubtractor::select_build_child(20, 10),
-            ChildSide::Right
-        );
-        assert_eq!(
-            HistogramSubtractor::select_build_child(10, 10),
-            ChildSide::Left
-        );
-    }
 
     fn make_test_data() -> (QuantizedMatrix<u8>, Vec<f32>, Vec<f32>) {
         // Create simple data: 10 rows, 2 features
@@ -328,9 +253,8 @@ mod tests {
         let mut right_direct = NodeHistogram::new(quantized.cuts());
         HistogramBuilder.build(&mut right_direct, &quantized, &grads, &hess, &right_rows);
 
-        // Compute right via subtraction
-        let mut right_subtracted = NodeHistogram::new(quantized.cuts());
-        HistogramSubtractor::compute_sibling(&parent, &left, &mut right_subtracted);
+        // Compute right via subtraction: parent - left = right
+        let right_subtracted = &parent - &left;
 
         // Compare
         assert_eq!(right_direct.total_count(), right_subtracted.total_count());

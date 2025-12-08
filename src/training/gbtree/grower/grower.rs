@@ -283,7 +283,10 @@ impl<'a> TreeGrower<'a> {
                 state.add_children(left_id, right_id, candidate.depth + 1);
 
                 // Build histograms for children (use subtraction optimization)
-                let parent_hist = &histograms[&node_id];
+                // Remove parent histogram since it won't be needed after this split
+                let parent_hist = histograms
+                    .remove(&node_id)
+                    .expect("parent histogram should exist");
                 let (left_hist, right_hist) = self.build_child_histograms(
                     parent_hist,
                     left_partition,
@@ -465,9 +468,12 @@ impl<'a> TreeGrower<'a> {
     }
 
     /// Build histograms for child nodes using subtraction optimization.
+    ///
+    /// Takes ownership of `parent_hist` since it won't be needed after the split.
+    /// The parent's memory is reused for the larger child (consuming Sub).
     fn build_child_histograms<B: BinIndex>(
         &mut self,
-        parent_hist: &NodeHistogram,
+        parent_hist: NodeHistogram,
         left_partition: u32,
         right_partition: u32,
         quantized: &QuantizedMatrix<B>,
@@ -481,14 +487,15 @@ impl<'a> TreeGrower<'a> {
         let left_size = left_rows.len();
         let right_size = right_rows.len();
 
-        // Build smaller child directly, derive larger via subtraction
+        // Build smaller child directly, derive larger via consuming subtraction.
+        // The consuming Sub (T - &T -> T) reuses parent_hist's memory for the result.
         if left_size <= right_size {
             let left_hist = self.build_histogram(left_rows, quantized, grads, hess);
-            let right_hist = parent_hist.subtract(&left_hist);
+            let right_hist = parent_hist - &left_hist; // Consumes parent, reuses its memory
             (left_hist, right_hist)
         } else {
             let right_hist = self.build_histogram(right_rows, quantized, grads, hess);
-            let left_hist = parent_hist.subtract(&right_hist);
+            let left_hist = parent_hist - &right_hist; // Consumes parent, reuses its memory
             (left_hist, right_hist)
         }
     }

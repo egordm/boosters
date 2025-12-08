@@ -1,5 +1,7 @@
 //! Per-feature gradient histogram.
 
+use std::ops::{Sub, SubAssign};
+
 /// Gradient histogram for a single feature.
 ///
 /// Each bin stores sum of gradients, sum of hessians, and sample count.
@@ -107,49 +109,6 @@ impl FeatureHistogram {
         self.count.fill(0);
     }
 
-    /// Compute sibling histogram via subtraction.
-    ///
-    /// After calling this, `self` contains `parent - self` (the sibling).
-    /// This is the histogram subtraction trick: build smaller child,
-    /// derive larger child via `parent - smaller = larger`.
-    pub fn subtract_from(&mut self, parent: &Self) {
-        debug_assert_eq!(self.num_bins, parent.num_bins);
-
-        for i in 0..self.sum_grad.len() {
-            self.sum_grad[i] = parent.sum_grad[i] - self.sum_grad[i];
-            self.sum_hess[i] = parent.sum_hess[i] - self.sum_hess[i];
-        }
-        for i in 0..self.count.len() {
-            self.count[i] = parent.count[i] - self.count[i];
-        }
-    }
-
-    /// Create a new histogram by subtracting another from self.
-    ///
-    /// Returns `self - other`.
-    pub fn subtract(&self, other: &Self) -> Self {
-        debug_assert_eq!(self.num_bins, other.num_bins);
-
-        let n = self.num_bins as usize;
-
-        let mut sum_grad = vec![0.0f32; n].into_boxed_slice();
-        let mut sum_hess = vec![0.0f32; n].into_boxed_slice();
-        let mut count = vec![0u32; n].into_boxed_slice();
-
-        for i in 0..n {
-            sum_grad[i] = self.sum_grad[i] - other.sum_grad[i];
-            sum_hess[i] = self.sum_hess[i] - other.sum_hess[i];
-            count[i] = self.count[i] - other.count[i];
-        }
-
-        Self {
-            sum_grad,
-            sum_hess,
-            count,
-            num_bins: self.num_bins,
-        }
-    }
-
     /// Copy from another histogram.
     ///
     /// Overwrites current contents with source.
@@ -191,6 +150,69 @@ impl FeatureHistogram {
     /// Compute total count across all bins.
     pub fn total_count(&self) -> u32 {
         self.count.iter().sum()
+    }
+}
+
+/// Subtract two histograms: `&self - &rhs` (allocating).
+///
+/// Used for histogram subtraction optimization:
+/// `parent - smaller_child = larger_child`.
+impl Sub<&FeatureHistogram> for &FeatureHistogram {
+    type Output = FeatureHistogram;
+
+    fn sub(self, rhs: &FeatureHistogram) -> FeatureHistogram {
+        debug_assert_eq!(self.num_bins, rhs.num_bins);
+
+        let n = self.num_bins as usize;
+
+        let mut sum_grad = vec![0.0f32; n].into_boxed_slice();
+        let mut sum_hess = vec![0.0f32; n].into_boxed_slice();
+        let mut count = vec![0u32; n].into_boxed_slice();
+
+        for i in 0..n {
+            sum_grad[i] = self.sum_grad[i] - rhs.sum_grad[i];
+            sum_hess[i] = self.sum_hess[i] - rhs.sum_hess[i];
+            count[i] = self.count[i] - rhs.count[i];
+        }
+
+        FeatureHistogram {
+            sum_grad,
+            sum_hess,
+            count,
+            num_bins: self.num_bins,
+        }
+    }
+}
+
+/// Subtract in place: `self -= &rhs`.
+///
+/// More efficient than allocating when you can mutate the left operand.
+impl SubAssign<&FeatureHistogram> for FeatureHistogram {
+    #[inline]
+    fn sub_assign(&mut self, rhs: &FeatureHistogram) {
+        debug_assert_eq!(self.num_bins, rhs.num_bins);
+
+        for i in 0..self.sum_grad.len() {
+            self.sum_grad[i] -= rhs.sum_grad[i];
+            self.sum_hess[i] -= rhs.sum_hess[i];
+        }
+        for i in 0..self.count.len() {
+            self.count[i] -= rhs.count[i];
+        }
+    }
+}
+
+/// Consuming subtract: `self - &rhs` (reuses self's memory).
+///
+/// Most efficient when you own the left operand and don't need it afterward.
+/// Avoids allocation by reusing self's storage for the result.
+impl Sub<&FeatureHistogram> for FeatureHistogram {
+    type Output = FeatureHistogram;
+
+    #[inline]
+    fn sub(mut self, rhs: &FeatureHistogram) -> FeatureHistogram {
+        self -= rhs;
+        self
     }
 }
 
@@ -262,12 +284,57 @@ mod tests {
         child.add(0, 10.0, 5.0); // bin 0: 1 sample
         child.add(1, 6.0, 3.0); // bin 1: 1 sample
 
-        // Compute sibling via subtraction
-        child.subtract_from(&parent);
+        // Compute sibling via subtraction: parent - child = sibling
+        let sibling = &parent - &child;
 
         // Sibling should have: bin 0: 1 sample, bin 2: 1 sample
-        assert_eq!(child.bin_stats(0), (10.0, 5.0, 1)); // 20-10=10
-        assert_eq!(child.bin_stats(1), (0.0, 0.0, 0)); // 6-6=0
-        assert_eq!(child.bin_stats(2), (4.0, 2.0, 1)); // 4-0=4
+        assert_eq!(sibling.bin_stats(0), (10.0, 5.0, 1)); // 20-10=10
+        assert_eq!(sibling.bin_stats(1), (0.0, 0.0, 0)); // 6-6=0
+        assert_eq!(sibling.bin_stats(2), (4.0, 2.0, 1)); // 4-0=4
+    }
+
+    #[test]
+    fn test_feature_histogram_sub_assign() {
+        // Parent histogram
+        let mut parent = FeatureHistogram::new(4);
+        parent.add(0, 10.0, 5.0);
+        parent.add(0, 10.0, 5.0);
+        parent.add(1, 6.0, 3.0);
+        parent.add(2, 4.0, 2.0);
+
+        // Child histogram
+        let mut child = FeatureHistogram::new(4);
+        child.add(0, 10.0, 5.0);
+        child.add(1, 6.0, 3.0);
+
+        // In-place subtraction: parent -= child
+        parent -= &child;
+
+        // parent now contains sibling values
+        assert_eq!(parent.bin_stats(0), (10.0, 5.0, 1));
+        assert_eq!(parent.bin_stats(1), (0.0, 0.0, 0));
+        assert_eq!(parent.bin_stats(2), (4.0, 2.0, 1));
+    }
+
+    #[test]
+    fn test_feature_histogram_consuming_sub() {
+        // Parent histogram (will be consumed)
+        let mut parent = FeatureHistogram::new(4);
+        parent.add(0, 10.0, 5.0);
+        parent.add(0, 10.0, 5.0);
+        parent.add(1, 6.0, 3.0);
+        parent.add(2, 4.0, 2.0);
+
+        // Child histogram
+        let mut child = FeatureHistogram::new(4);
+        child.add(0, 10.0, 5.0);
+        child.add(1, 6.0, 3.0);
+
+        // Consuming subtraction: parent - &child (reuses parent's memory)
+        let sibling = parent - &child;
+
+        assert_eq!(sibling.bin_stats(0), (10.0, 5.0, 1));
+        assert_eq!(sibling.bin_stats(1), (0.0, 0.0, 0));
+        assert_eq!(sibling.bin_stats(2), (4.0, 2.0, 1));
     }
 }

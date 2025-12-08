@@ -25,7 +25,8 @@
 //!
 //! - [`HistogramBuilder`]: Accumulates gradient/hessian histograms
 //! - [`NodeHistogram`]: Per-feature histograms for a node
-//! - [`HistogramSubtractor`]: Parent-child histogram trick
+//!
+//! Histograms implement `Sub<&Self>` for efficient sibling derivation.
 //!
 //! # Training Constraints (RFC-0023)
 //!
@@ -49,9 +50,7 @@ pub use constraints::{
 pub use grower::{
     BuildingNode, BuildingTree, GrowthStrategy, NodeCandidate, TreeBuildParams, TreeGrower,
 };
-pub use histogram::{
-    ChildSide, FeatureHistogram, HistogramBuilder, HistogramSubtractor, NodeHistogram,
-};
+pub use histogram::{FeatureHistogram, HistogramBuilder, NodeHistogram};
 pub use partition::RowPartitioner;
 pub use quantize::{
     BinCuts, BinIndex, CategoricalInfo, CutFinder, ExactQuantileCuts, QuantizedMatrix, Quantizer,
