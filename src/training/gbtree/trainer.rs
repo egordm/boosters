@@ -451,9 +451,12 @@ impl GBTreeTrainer {
         // Initialize base scores (per output) using loss-specific initialization
         let base_scores: Vec<f32> = self.loss.init_base_score(labels, None);
 
-        // Initialize predictions: [num_rows * num_outputs] in row-major order
-        let mut predictions: Vec<f32> = (0..num_rows)
-            .flat_map(|_| base_scores.iter().copied())
+        // Initialize predictions: [num_rows * num_outputs] in column-major order
+        // Layout: [output0_sample0, output0_sample1, ..., output1_sample0, ...]
+        // Index: output * num_rows + sample
+        let mut predictions: Vec<f32> = base_scores
+            .iter()
+            .flat_map(|&base| std::iter::repeat(base).take(num_rows))
             .collect();
 
         // Gradient buffer
@@ -550,12 +553,12 @@ impl GBTreeTrainer {
                     &interaction_constraints,
                 );
 
-                // Update predictions for this output
+                // Update predictions for this output (column-major)
                 Self::update_predictions_for_output(
                     &tree,
                     quantized,
                     &mut predictions,
-                    num_outputs,
+                    num_rows,
                     output_idx,
                 );
 
@@ -656,16 +659,18 @@ impl GBTreeTrainer {
     }
 
     /// Update predictions for a specific output after building a tree.
+    /// Predictions are column-major: index = output_idx * num_rows + row
     fn update_predictions_for_output<B: BinIndex>(
         tree: &BuildingTree,
         quantized: &QuantizedMatrix<B>,
         predictions: &mut [f32],
-        num_outputs: usize,
+        num_rows: usize,
         output_idx: usize,
     ) {
-        for row in 0..quantized.num_rows() as usize {
+        let output_start = output_idx * num_rows;
+        for row in 0..num_rows {
             let leaf_value = Self::predict_row(tree, quantized, row as u32);
-            predictions[row * num_outputs + output_idx] += leaf_value;
+            predictions[output_start + row] += leaf_value;
         }
     }
 
@@ -689,26 +694,27 @@ impl GBTreeTrainer {
     }
 
     /// Predict with all trees for multi-output (used for eval sets).
-    /// Returns predictions in row-major order: [row0_out0, row0_out1, ..., row1_out0, ...]
+    /// Returns predictions in column-major order: [output0_row0, output0_row1, ..., output1_row0, ...]
     fn predict_with_trees_multioutput<B: BinIndex>(
         trees_per_output: &[Vec<BuildingTree>],
         data: &QuantizedMatrix<B>,
         base_scores: &[f32],
     ) -> Vec<f32> {
         let num_rows = data.num_rows() as usize;
-        let num_outputs = trees_per_output.len();
 
-        // Initialize with base scores
-        let mut predictions: Vec<f32> = (0..num_rows)
-            .flat_map(|_| base_scores.iter().copied())
+        // Initialize with base scores (column-major)
+        let mut predictions: Vec<f32> = base_scores
+            .iter()
+            .flat_map(|&base| std::iter::repeat(base).take(num_rows))
             .collect();
 
-        // Add tree predictions for each output
+        // Add tree predictions for each output (column-major: contiguous per output)
         for (output_idx, trees) in trees_per_output.iter().enumerate() {
+            let output_start = output_idx * num_rows;
             for tree in trees {
                 for row in 0..num_rows {
                     let pred = Self::predict_row(tree, data, row as u32);
-                    predictions[row * num_outputs + output_idx] += pred;
+                    predictions[output_start + row] += pred;
                 }
             }
         }
@@ -717,12 +723,13 @@ impl GBTreeTrainer {
     }
 
     /// Average predictions across outputs (for early stopping with multi-output).
+    /// Predictions are column-major: index = output * num_rows + row
     fn average_predictions(predictions: &[f32], num_outputs: usize) -> Vec<f32> {
         let num_rows = predictions.len() / num_outputs;
         (0..num_rows)
             .map(|row| {
                 let sum: f32 = (0..num_outputs)
-                    .map(|k| predictions[row * num_outputs + k])
+                    .map(|k| predictions[k * num_rows + row])
                     .sum();
                 sum / num_outputs as f32
             })
@@ -769,6 +776,7 @@ impl GBTreeTrainer {
     /// Compute training metric for multi-output.
     /// For single-output, uses standard RMSE.
     /// For multi-output, computes RMSE averaged across outputs.
+    /// Predictions are column-major: index = output * num_rows + row
     fn compute_train_metric_multioutput(
         &self,
         predictions: &[f32],
@@ -780,16 +788,17 @@ impl GBTreeTrainer {
         }
 
         // For multi-output: average RMSE across outputs
-        // predictions: [row0_out0, row0_out1, ..., row1_out0, ...]
+        // predictions: [out0_row0, out0_row1, ..., out1_row0, ...] (column-major)
         // labels: [row0_label, row1_label, ...]
         let num_rows = labels.len();
 
         // Compute per-output MSE and average
         let mut total_mse = 0.0f64;
         for output_idx in 0..num_outputs {
+            let output_start = output_idx * num_rows;
             let mse: f64 = (0..num_rows)
                 .map(|row| {
-                    let pred = predictions[row * num_outputs + output_idx] as f64;
+                    let pred = predictions[output_start + row] as f64;
                     // For classification outputs, we compare raw scores
                     // For quantile outputs, we compare predictions to label
                     // In both cases, lower error is better

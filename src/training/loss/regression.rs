@@ -207,6 +207,7 @@ impl Loss for QuantileLoss {
     ///
     /// The gradient buffer is column-major, so we iterate quantiles first
     /// for better cache locality when writing.
+    /// Predictions are also column-major: index = q * num_samples + i
     fn compute_gradients(&self, preds: &[f32], labels: &[f32], buffer: &mut GradientBuffer) {
         let num_quantiles = self.alphas.len();
         let num_samples = labels.len();
@@ -218,17 +219,17 @@ impl Loss for QuantileLoss {
         // Hessian is always 1.0 for quantile loss - fill once
         buffer.hess_mut().fill(1.0);
 
-        // Loop over quantiles first for contiguous gradient writes (column-major)
-        // Predictions are row-major: pred[i * num_quantiles + q]
+        // Perfect access pattern: both preds and grads are column-major
         for q in 0..num_quantiles {
             let alpha = self.alphas[q];
             let grad_over = 1.0 - alpha;
             let grad_under = -alpha;
+
+            let preds_q = &preds[q * num_samples..(q + 1) * num_samples];
             let grads = buffer.output_grads_mut(q);
 
             for i in 0..num_samples {
-                let pred = preds[i * num_quantiles + q];
-                grads[i] = if pred >= labels[i] { grad_over } else { grad_under };
+                grads[i] = if preds_q[i] >= labels[i] { grad_over } else { grad_under };
             }
         }
     }
