@@ -363,6 +363,7 @@ impl GBLinearTrainer {
     /// Compute predictions for all samples.
     ///
     /// Handles both single-output and multi-output models.
+    /// Output is column-major: index = group * num_rows + row_idx
     fn compute_predictions<C: ColumnAccess<Element = f32>>(
         model: &LinearModel,
         data: &C,
@@ -372,18 +373,19 @@ impl GBLinearTrainer {
         let num_groups = model.num_groups();
         let num_features = model.num_features();
 
-        // Initialize with bias
-        for row_idx in 0..num_rows {
-            for group in 0..num_groups {
-                output[row_idx * num_groups + group] = model.bias(group);
+        // Initialize with bias (column-major: group-first)
+        for group in 0..num_groups {
+            let group_start = group * num_rows;
+            for row_idx in 0..num_rows {
+                output[group_start + row_idx] = model.bias(group);
             }
         }
 
-        // Add weighted features
+        // Add weighted features (iterate by group for column-major writes)
         for feat_idx in 0..num_features {
             for (row_idx, value) in data.column(feat_idx) {
                 for group in 0..num_groups {
-                    output[row_idx * num_groups + group] += value * model.weight(feat_idx, group);
+                    output[group * num_rows + row_idx] += value * model.weight(feat_idx, group);
                 }
             }
         }

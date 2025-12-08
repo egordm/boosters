@@ -560,8 +560,8 @@ impl SimpleMetric for Mape {
 /// Multiclass cross-entropy: -mean(sum_k y_k * log(p_k))
 ///
 /// Lower is better. Used for multiclass classification.
-/// Expects predictions to be probabilities with shape `[n_samples, n_classes]`
-/// in row-major order, and labels to be class indices in `0..n_classes`.
+/// Expects predictions to be probabilities with shape `[n_classes, n_samples]`
+/// in column-major order, and labels to be class indices in `0..n_classes`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MulticlassLogLoss;
 
@@ -583,8 +583,8 @@ impl Metric for MulticlassLogLoss {
                 let class_idx = label.round() as usize;
                 debug_assert!(class_idx < n_outputs, "label out of bounds");
 
-                // Get predicted probability for the true class
-                let prob = predictions[i * n_outputs + class_idx] as f64;
+                // Column-major: index = class * n_samples + sample
+                let prob = predictions[class_idx * n_samples + i] as f64;
                 let prob = prob.clamp(eps, 1.0 - eps);
                 -prob.ln()
             })
@@ -647,12 +647,13 @@ impl Metric for QuantileLoss {
         let n_quantiles = self.alphas.len().max(n_outputs);
         debug_assert_eq!(predictions.len(), n_samples * n_quantiles);
 
-        let total_loss: f64 = labels
+        // Column-major: predictions[q * n_samples + i]
+        let total_loss: f64 = self.alphas
             .iter()
             .enumerate()
-            .flat_map(|(i, &label)| {
-                self.alphas.iter().enumerate().map(move |(q, &alpha)| {
-                    let pred = predictions[i * n_quantiles + q] as f64;
+            .flat_map(|(q, &alpha)| {
+                labels.iter().enumerate().map(move |(i, &label)| {
+                    let pred = predictions[q * n_samples + i] as f64;
                     let y = label as f64;
                     let residual = y - pred;
 
@@ -855,12 +856,13 @@ mod tests {
 
     #[test]
     fn mlogloss_perfect() {
-        // 3-class classification, predictions are probabilities
+        // 3-class classification, predictions are probabilities (column-major layout)
         // Sample 0: true class 0, predictions [0.99, 0.005, 0.005]
         // Sample 1: true class 1, predictions [0.005, 0.99, 0.005]
         let preds = vec![
-            0.99, 0.005, 0.005, // sample 0
-            0.005, 0.99, 0.005, // sample 1
+            0.99, 0.005, // class 0: sample 0, sample 1
+            0.005, 0.99, // class 1: sample 0, sample 1
+            0.005, 0.005, // class 2: sample 0, sample 1
         ];
         let labels = vec![0.0, 1.0];
         let mlogloss = MulticlassLogLoss.evaluate(&preds, &labels, 3);
@@ -869,11 +871,11 @@ mod tests {
 
     #[test]
     fn mlogloss_uniform() {
-        // Uniform predictions for 3 classes: -log(1/3) ≈ 1.099
+        // Uniform predictions for 3 classes: -log(1/3) ≈ 1.099 (column-major layout)
         let preds = vec![
-            0.333, 0.333, 0.334, // sample 0
-            0.333, 0.333, 0.334, // sample 1
-            0.333, 0.333, 0.334, // sample 2
+            0.333, 0.333, 0.333, // class 0: samples 0, 1, 2
+            0.333, 0.333, 0.333, // class 1: samples 0, 1, 2
+            0.334, 0.334, 0.334, // class 2: samples 0, 1, 2
         ];
         let labels = vec![0.0, 1.0, 2.0];
         let mlogloss = MulticlassLogLoss.evaluate(&preds, &labels, 3);

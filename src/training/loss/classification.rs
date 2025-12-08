@@ -195,6 +195,8 @@ impl Loss for SoftmaxLoss {
     /// For each sample and class k:
     /// - grad_k = softmax_k - 1{k == y}
     /// - hess_k = softmax_k * (1 - softmax_k)
+    ///
+    /// Predictions are column-major: index = class * num_samples + sample
     fn compute_gradients(&self, preds: &[f32], labels: &[f32], buffer: &mut GradientBuffer) {
         let num_classes = self.num_classes;
         let num_samples = labels.len();
@@ -202,46 +204,44 @@ impl Loss for SoftmaxLoss {
         debug_assert_eq!(buffer.n_samples(), num_samples);
         debug_assert_eq!(buffer.n_outputs(), num_classes);
 
-        // Two-phase approach for better cache locality:
-        // Phase 1: Compute all softmax probabilities (store in temp buffer)
-        // Phase 2: Write to gradient buffer in column-major order (class-first)
-
-        // Temporary storage for probabilities - row-major [sample, class]
-        let mut all_probs = vec![0.0f32; num_samples * num_classes];
-
-        // Phase 1: Compute softmax for each sample (reading row-major predictions)
-        for i in 0..num_samples {
-            let pred_start = i * num_classes;
-            let sample_preds = &preds[pred_start..pred_start + num_classes];
-            let prob_start = i * num_classes;
-            let sample_probs = &mut all_probs[prob_start..prob_start + num_classes];
-
-            debug_assert!(
-                (labels[i] as usize) < num_classes,
-                "Label {} >= num_classes {}",
-                labels[i],
-                num_classes
-            );
-
-            softmax(sample_preds, sample_probs);
-        }
-
-        // Phase 2: Write gradients in column-major order (contiguous per class)
+        // Column-major predictions: perfect access pattern for multi-pass softmax
+        // Pass 1: Find max per sample (for numerical stability)
+        let mut max_per_sample = vec![f32::NEG_INFINITY; num_samples];
         for k in 0..num_classes {
-            let grads_k = buffer.output_grads_mut(k);
+            let preds_k = &preds[k * num_samples..(k + 1) * num_samples];
             for i in 0..num_samples {
-                let prob = all_probs[i * num_classes + k];
-                let is_true_class = if k == labels[i] as usize { 1.0 } else { 0.0 };
-                grads_k[i] = prob - is_true_class;
+                max_per_sample[i] = max_per_sample[i].max(preds_k[i]);
             }
         }
 
-        // Phase 3: Write hessians in column-major order (separate pass to avoid borrow issues)
+        // Pass 2: Compute exp, store in hess (as temp), accumulate sum
+        let mut sum_exp = vec![0.0f32; num_samples];
         for k in 0..num_classes {
+            let preds_k = &preds[k * num_samples..(k + 1) * num_samples];
             let hess_k = buffer.output_hess_mut(k);
             for i in 0..num_samples {
-                let prob = all_probs[i * num_classes + k];
-                hess_k[i] = (prob * (1.0 - prob)).max(1e-16);
+                debug_assert!(
+                    (labels[i] as usize) < num_classes,
+                    "Label {} >= num_classes {}",
+                    labels[i],
+                    num_classes
+                );
+                let exp_val = (preds_k[i] - max_per_sample[i]).exp();
+                hess_k[i] = exp_val;
+                sum_exp[i] += exp_val;
+            }
+        }
+
+        // Pass 3: Normalize (hess contains exp), compute grad and final hess
+        // Use as_mut_slices to avoid borrow checker issues
+        let (grads, hess) = buffer.as_mut_slices();
+        for k in 0..num_classes {
+            let start = k * num_samples;
+            for i in 0..num_samples {
+                let prob = hess[start + i] / sum_exp[i];
+                let is_true_class = if k == labels[i] as usize { 1.0 } else { 0.0 };
+                grads[start + i] = prob - is_true_class;
+                hess[start + i] = (prob * (1.0 - prob)).max(1e-16);
             }
         }
     }
@@ -305,6 +305,7 @@ impl Loss for SoftmaxLoss {
 // =============================================================================
 
 /// Softmax function (numerically stable).
+#[allow(dead_code)]
 fn softmax(input: &[f32], output: &mut [f32]) {
     debug_assert_eq!(input.len(), output.len());
 
@@ -547,10 +548,11 @@ mod tests {
     #[test]
     fn softmax_loss_batch() {
         let loss = SoftmaxLoss::new(3);
-        // 2 samples, 3 classes each
+        // 2 samples, 3 classes each (column-major: predictions grouped by class)
         let preds = vec![
-            1.0, 2.0, 3.0, // sample 0
-            0.0, 0.0, 0.0, // sample 1 (uniform)
+            1.0, 0.0, // class 0: sample 0, sample 1
+            2.0, 0.0, // class 1: sample 0, sample 1
+            3.0, 0.0, // class 2: sample 0, sample 1 (uniform for sample 1)
         ];
         let labels = vec![2.0, 1.0]; // true classes
         let mut buffer = GradientBuffer::new(2, 3);
