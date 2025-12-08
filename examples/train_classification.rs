@@ -3,6 +3,15 @@
 //! This example demonstrates training a gradient boosted tree model for
 //! binary classification using logistic loss.
 //!
+//! ## Features Shown
+//!
+//! - Binary classification with `LossFunction::Logistic`
+//! - Depth-wise vs Leaf-wise tree growth strategies
+//! - Sample weighting for imbalanced data
+//!
+//! For a more detailed example of handling class imbalance, see
+//! `train_imbalanced.rs`.
+//!
 //! Run with:
 //! ```bash
 //! cargo run --example train_classification
@@ -38,6 +47,9 @@ fn main() {
 
         labels.push(class);
     }
+
+    // Keep a copy of features for weight computation (before moving into matrix)
+    let features_for_weights = features.clone();
 
     // Create matrix
     let row_matrix = RowMatrix::from_vec(features, n_samples, n_features);
@@ -87,6 +99,39 @@ fn main() {
 
     println!("\nLeaf-wise: {} trees", forest_leaf.num_trees());
     println!("Accuracy: {:.2}%", acc_leaf * 100.0);
+
+    // =========================================================================
+    // Sample Weighting Example
+    // =========================================================================
+
+    println!("\n=== Training with Sample Weights ===\n");
+
+    // Example: Give higher weights to samples near decision boundary
+    // This can improve accuracy in the challenging region
+    let weights: Vec<f32> = features_for_weights
+        .chunks(n_features)
+        .map(|row| {
+            // Distance from center (5, 5)
+            let dx = row[0] - 5.0;
+            let dy = row[1] - 5.0;
+            let dist = (dx * dx + dy * dy).sqrt();
+            // Higher weight for samples near decision boundary (dist ~2-4)
+            if dist >= 2.0 && dist <= 4.0 {
+                3.0 // Emphasize boundary samples
+            } else {
+                1.0
+            }
+        })
+        .collect();
+
+    let forest_weighted = trainer_depth.train(&col_matrix, &labels, Some(&weights), &[]);
+    let predictor_weighted = Predictor::<StandardTraversal>::new(&forest_weighted);
+    let preds_weighted = predictor_weighted.predict(&row_matrix).into_vec();
+    let acc_weighted = accuracy(&preds_weighted, &labels);
+
+    println!("Weighted training: {} trees", forest_weighted.num_trees());
+    println!("Accuracy: {:.2}%", acc_weighted * 100.0);
+    println!("\nNote: See train_imbalanced.rs for class imbalance handling.");
 }
 
 /// Compute classification accuracy.

@@ -1488,5 +1488,370 @@ def generate_all():
     print("\nDone!")
 
 
+# =============================================================================
+# Weighted Training Test Cases
+# =============================================================================
+
+WEIGHTED_TRAINING_DIR = GBTREE_TRAINING_DIR / "weighted"
+WEIGHTED_TRAINING_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def save_weighted_training_case(
+    name: str,
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    weights: np.ndarray,
+    booster: xgb.Booster,
+    config: dict,
+    X_test: np.ndarray | None = None,
+    y_test: np.ndarray | None = None,
+    test_weights: np.ndarray | None = None,
+):
+    """Save a complete weighted training test case.
+    
+    Args:
+        name: Test case name
+        X_train: Training features
+        y_train: Training labels
+        weights: Sample weights for training
+        booster: Trained XGBoost booster
+        config: Training configuration
+        X_test: Optional held-out test features
+        y_test: Optional held-out test labels
+        test_weights: Optional test set weights (for weighted metrics)
+    """
+    output_dir = WEIGHTED_TRAINING_DIR
+    
+    # Save training data
+    train_data_path = output_dir / f"{name}.train_data.json"
+    with open(train_data_path, 'w') as f:
+        json.dump({
+            "num_rows": int(X_train.shape[0]),
+            "num_features": int(X_train.shape[1]),
+            "data": nan_to_null(X_train.flatten().tolist()),
+        }, f, indent=2)
+    
+    # Save labels
+    labels_path = output_dir / f"{name}.train_labels.json"
+    with open(labels_path, 'w') as f:
+        json.dump({
+            "labels": y_train.tolist(),
+        }, f, indent=2)
+    
+    # Save weights
+    weights_path = output_dir / f"{name}.train_weights.json"
+    with open(weights_path, 'w') as f:
+        json.dump({
+            "weights": weights.tolist(),
+        }, f, indent=2)
+    
+    # Save model
+    model_path = output_dir / f"{name}.model.json"
+    booster.save_model(str(model_path))
+    
+    # Save config
+    config_path = output_dir / f"{name}.config.json"
+    with open(config_path, 'w') as f:
+        json.dump(config, f, indent=2)
+    
+    # Get training predictions
+    dtrain = xgb.DMatrix(X_train, label=y_train, weight=weights)
+    train_preds = booster.predict(dtrain, output_margin=True)
+    
+    train_preds_path = output_dir / f"{name}.train_predictions.json"
+    with open(train_preds_path, 'w') as f:
+        json.dump({
+            "predictions": train_preds.tolist(),
+        }, f, indent=2)
+    
+    # Save held-out test data and predictions if provided
+    if X_test is not None and y_test is not None:
+        test_data_path = output_dir / f"{name}.test_data.json"
+        with open(test_data_path, 'w') as f:
+            json.dump({
+                "num_rows": int(X_test.shape[0]),
+                "num_features": int(X_test.shape[1]),
+                "data": nan_to_null(X_test.flatten().tolist()),
+            }, f, indent=2)
+        
+        test_labels_path = output_dir / f"{name}.test_labels.json"
+        with open(test_labels_path, 'w') as f:
+            json.dump({
+                "labels": y_test.tolist(),
+            }, f, indent=2)
+        
+        if test_weights is not None:
+            test_weights_path = output_dir / f"{name}.test_weights.json"
+            with open(test_weights_path, 'w') as f:
+                json.dump({
+                    "weights": test_weights.tolist(),
+                }, f, indent=2)
+        
+        # Get XGBoost predictions on test data
+        dtest = xgb.DMatrix(X_test)
+        xgb_predictions = booster.predict(dtest, output_margin=True)
+        
+        predictions_path = output_dir / f"{name}.test_predictions.json"
+        with open(predictions_path, 'w') as f:
+            json.dump({
+                "predictions": xgb_predictions.tolist(),
+            }, f, indent=2)
+        
+        # Compute test metrics
+        metrics = {"num_trees": int(booster.num_boosted_rounds())}
+        
+        if xgb_predictions.ndim == 1:
+            # Regression or binary: compute RMSE
+            test_rmse = np.sqrt(np.mean((xgb_predictions - y_test) ** 2))
+            metrics["test_rmse"] = float(test_rmse)
+        else:
+            # Multiclass: compute accuracy
+            pred_classes = np.argmax(xgb_predictions, axis=1)
+            accuracy = np.mean(pred_classes == y_test)
+            metrics["test_accuracy"] = float(accuracy)
+        
+        metrics_path = output_dir / f"{name}.metrics.json"
+        with open(metrics_path, 'w') as f:
+            json.dump(metrics, f, indent=2)
+    
+    print_success(f"training/gbtree/weighted/{name}", len(X_train))
+
+
+def generate_weighted_regression():
+    """Weighted regression: random weights in [0.5, 2.0]."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=1000, n_features=5, noise=5.0, random_state=42)
+    X = X.astype(np.float32)
+    y = y.astype(np.float32)
+    
+    # Random weights
+    weights = np.random.uniform(0.5, 2.0, size=len(y)).astype(np.float32)
+    
+    X_train, X_test = X[:800], X[800:]
+    y_train, y_test = y[:800], y[800:]
+    w_train, w_test = weights[:800], weights[800:]
+    
+    dtrain = xgb.DMatrix(X_train, label=y_train, weight=w_train)
+    
+    config = {
+        'objective': 'reg:squarederror',
+        'booster': 'gbtree',
+        'tree_method': 'hist',
+        'max_depth': 4,
+        'eta': 0.1,
+        'lambda': 1.0,
+        'alpha': 0.0,
+        'min_child_weight': 1.0,
+        'num_boost_round': 30,
+    }
+    
+    params = {k: v for k, v in config.items() if k != 'num_boost_round'}
+    booster = xgb.train(params, dtrain, num_boost_round=config['num_boost_round'])
+    
+    save_weighted_training_case("weighted_regression", X_train, y_train, w_train,
+                                booster, config, X_test, y_test, w_test)
+
+
+def generate_weighted_binary():
+    """Weighted binary classification: random weights in [0.5, 2.0]."""
+    np.random.seed(42)
+    X, y = make_classification(
+        n_samples=1000, n_features=10, n_informative=6,
+        n_redundant=2, n_repeated=0, random_state=42
+    )
+    X = X.astype(np.float32)
+    y = y.astype(np.float32)
+    
+    # Random weights
+    weights = np.random.uniform(0.5, 2.0, size=len(y)).astype(np.float32)
+    
+    X_train, X_test = X[:800], X[800:]
+    y_train, y_test = y[:800], y[800:]
+    w_train, w_test = weights[:800], weights[800:]
+    
+    dtrain = xgb.DMatrix(X_train, label=y_train, weight=w_train)
+    
+    config = {
+        'objective': 'binary:logistic',
+        'booster': 'gbtree',
+        'tree_method': 'hist',
+        'max_depth': 4,
+        'eta': 0.1,
+        'lambda': 1.0,
+        'alpha': 0.0,
+        'min_child_weight': 1.0,
+        'num_boost_round': 30,
+    }
+    
+    params = {k: v for k, v in config.items() if k != 'num_boost_round'}
+    booster = xgb.train(params, dtrain, num_boost_round=config['num_boost_round'])
+    
+    save_weighted_training_case("weighted_binary", X_train, y_train, w_train,
+                                booster, config, X_test, y_test, w_test)
+
+
+def generate_weighted_multiclass():
+    """Weighted multiclass classification: 3 classes with random weights."""
+    np.random.seed(42)
+    X, y = make_classification(
+        n_samples=1200, n_features=10, n_informative=6,
+        n_redundant=2, n_classes=3, n_clusters_per_class=1, random_state=42
+    )
+    X = X.astype(np.float32)
+    y = y.astype(np.float32)
+    
+    # Random weights
+    weights = np.random.uniform(0.5, 2.0, size=len(y)).astype(np.float32)
+    
+    X_train, X_test = X[:1000], X[1000:]
+    y_train, y_test = y[:1000], y[1000:]
+    w_train, w_test = weights[:1000], weights[1000:]
+    
+    dtrain = xgb.DMatrix(X_train, label=y_train, weight=w_train)
+    
+    config = {
+        'objective': 'multi:softmax',
+        'num_class': 3,
+        'booster': 'gbtree',
+        'tree_method': 'hist',
+        'max_depth': 4,
+        'eta': 0.1,
+        'lambda': 1.0,
+        'alpha': 0.0,
+        'min_child_weight': 1.0,
+        'num_boost_round': 30,
+    }
+    
+    params = {k: v for k, v in config.items() if k != 'num_boost_round'}
+    booster = xgb.train(params, dtrain, num_boost_round=config['num_boost_round'])
+    
+    save_weighted_training_case("weighted_multiclass", X_train, y_train, w_train,
+                                booster, config, X_test, y_test, w_test)
+
+
+def generate_class_imbalance():
+    """Imbalanced binary classification with 10:1 ratio, minority class weighted 10x."""
+    np.random.seed(42)
+    # Generate imbalanced data: 90% class 0, 10% class 1
+    n_samples = 1000
+    n_minority = 100
+    n_majority = n_samples - n_minority
+    
+    X_majority, y_majority = make_classification(
+        n_samples=n_majority, n_features=10, n_informative=6,
+        n_redundant=2, n_classes=2, weights=[1.0, 0.0], random_state=42,
+        flip_y=0
+    )
+    # Flip labels to ensure class 0
+    y_majority = np.zeros(n_majority)
+    
+    X_minority, _ = make_classification(
+        n_samples=n_minority, n_features=10, n_informative=6,
+        n_redundant=2, n_classes=2, random_state=43,
+        flip_y=0
+    )
+    y_minority = np.ones(n_minority)
+    
+    X = np.vstack([X_majority, X_minority]).astype(np.float32)
+    y = np.concatenate([y_majority, y_minority]).astype(np.float32)
+    
+    # Shuffle
+    indices = np.random.permutation(len(y))
+    X = X[indices]
+    y = y[indices]
+    
+    # Weight minority class 10x
+    weights = np.where(y == 1, 10.0, 1.0).astype(np.float32)
+    
+    X_train, X_test = X[:800], X[800:]
+    y_train, y_test = y[:800], y[800:]
+    w_train, w_test = weights[:800], weights[800:]
+    
+    dtrain = xgb.DMatrix(X_train, label=y_train, weight=w_train)
+    
+    config = {
+        'objective': 'binary:logistic',
+        'booster': 'gbtree',
+        'tree_method': 'hist',
+        'max_depth': 4,
+        'eta': 0.1,
+        'lambda': 1.0,
+        'alpha': 0.0,
+        'min_child_weight': 1.0,
+        'num_boost_round': 50,
+    }
+    
+    params = {k: v for k, v in config.items() if k != 'num_boost_round'}
+    booster = xgb.train(params, dtrain, num_boost_round=config['num_boost_round'])
+    
+    # Also train unweighted version for comparison
+    dtrain_unweighted = xgb.DMatrix(X_train, label=y_train)
+    booster_unweighted = xgb.train(params, dtrain_unweighted, num_boost_round=config['num_boost_round'])
+    
+    # Save weighted version
+    save_weighted_training_case("class_imbalance_weighted", X_train, y_train, w_train,
+                                booster, config, X_test, y_test, w_test)
+    
+    # Save unweighted version for comparison
+    output_dir = WEIGHTED_TRAINING_DIR
+    unweighted_model_path = output_dir / "class_imbalance_unweighted.model.json"
+    booster_unweighted.save_model(str(unweighted_model_path))
+    
+    dtest = xgb.DMatrix(X_test)
+    unweighted_preds = booster_unweighted.predict(dtest, output_margin=True)
+    unweighted_preds_path = output_dir / "class_imbalance_unweighted.test_predictions.json"
+    with open(unweighted_preds_path, 'w') as f:
+        json.dump({"predictions": unweighted_preds.tolist()}, f, indent=2)
+    
+    print_success(f"training/gbtree/weighted/class_imbalance_unweighted", len(X_train))
+
+
+def generate_zero_weights():
+    """Regression with 10% zero-weight samples (should be ignored)."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=1000, n_features=5, noise=5.0, random_state=42)
+    X = X.astype(np.float32)
+    y = y.astype(np.float32)
+    
+    # 10% zeros, rest random [0.5, 2.0]
+    weights = np.random.uniform(0.5, 2.0, size=len(y)).astype(np.float32)
+    zero_mask = np.random.choice(len(y), size=int(len(y) * 0.1), replace=False)
+    weights[zero_mask] = 0.0
+    
+    X_train, X_test = X[:800], X[800:]
+    y_train, y_test = y[:800], y[800:]
+    w_train, w_test = weights[:800], weights[800:]
+    
+    dtrain = xgb.DMatrix(X_train, label=y_train, weight=w_train)
+    
+    config = {
+        'objective': 'reg:squarederror',
+        'booster': 'gbtree',
+        'tree_method': 'hist',
+        'max_depth': 4,
+        'eta': 0.1,
+        'lambda': 1.0,
+        'alpha': 0.0,
+        'min_child_weight': 1.0,
+        'num_boost_round': 30,
+    }
+    
+    params = {k: v for k, v in config.items() if k != 'num_boost_round'}
+    booster = xgb.train(params, dtrain, num_boost_round=config['num_boost_round'])
+    
+    save_weighted_training_case("zero_weights", X_train, y_train, w_train,
+                                booster, config, X_test, y_test, w_test)
+
+
+def generate_all_weighted_training():
+    """Generate all weighted training test cases."""
+    print("\nGenerating weighted training test cases...")
+    generate_weighted_regression()
+    generate_weighted_binary()
+    generate_weighted_multiclass()
+    generate_class_imbalance()
+    generate_zero_weights()
+
+
 if __name__ == "__main__":
     generate_all()

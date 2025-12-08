@@ -1,6 +1,6 @@
 # Epic 6: Sample Weighting
 
-**Status**: In Progress  
+**Status**: Complete ✅  
 **Priority**: Medium  
 **Depends on**: Epic 3 (GBTree Training Phase 1)  
 **RFC**: [RFC-0026](../design/rfcs/0026-sample-weighting.md)
@@ -216,18 +216,20 @@ Integration tests use pre-computed outputs from XGBoost:
 
 ---
 
-## Story 7: Documentation & Examples
+## Story 7: Documentation & Examples ✅
 
 **Goal**: Document weighted training API and provide examples.
 
+**Status**: Complete
+
 ### Tasks
 
-- [ ] 7.1: Add rustdoc for `weights` parameter in trainer
-- [ ] 7.2: Add rustdoc for `weights` parameter in loss functions
-- [ ] 7.3: Add rustdoc for weighted metrics
-- [ ] 7.4: Update `examples/train_classification.rs` with weighted example
-- [ ] 7.5: Create `examples/train_imbalanced.rs` showing class weights
-- [ ] 7.6: Document weight normalization behavior (none, match XGBoost)
+- [x] 7.1: Add rustdoc for `weights` parameter in trainer
+- [x] 7.2: Add rustdoc for `weights` parameter in loss functions
+- [x] 7.3: Add rustdoc for weighted metrics
+- [x] 7.4: Update `examples/train_classification.rs` with weighted example
+- [x] 7.5: Create `examples/train_imbalanced.rs` showing class weights
+- [x] 7.6: Document weight normalization behavior (none, match XGBoost)
 
 ---
 
@@ -253,14 +255,14 @@ Story 7 (Documentation) ◄─────────────────�
 
 ## Definition of Done
 
-- [ ] All unit tests passing
-- [ ] All integration tests passing (correlation > 0.99 with XGBoost)
-- [ ] Quality tests show expected improvements for imbalanced data
-- [ ] No performance regression for unweighted training (< 1%)
-- [ ] Rustdoc complete for public APIs
-- [ ] Example code working
-- [ ] No compiler warnings
-- [ ] `cargo clippy` clean
+- [x] All unit tests passing
+- [x] All integration tests passing (correlation > 0.99 with XGBoost)
+- [x] Quality tests show expected improvements for imbalanced data
+- [x] No performance regression for unweighted training (< 1%)
+- [x] Rustdoc complete for public APIs
+- [x] Example code working
+- [x] No compiler warnings
+- [x] `cargo clippy` clean
 
 ---
 
