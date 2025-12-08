@@ -301,37 +301,6 @@ impl Loss for SoftmaxLoss {
 }
 
 // =============================================================================
-// Helper functions
-// =============================================================================
-
-/// Softmax function (numerically stable).
-#[allow(dead_code)]
-fn softmax(input: &[f32], output: &mut [f32]) {
-    debug_assert_eq!(input.len(), output.len());
-
-    if input.is_empty() {
-        return;
-    }
-
-    // Find max for numerical stability
-    let max_val = input.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-
-    // Compute exp(x - max) and sum
-    let mut sum = 0.0f32;
-    for (inp, out) in input.iter().zip(output.iter_mut()) {
-        *out = (*inp - max_val).exp();
-        sum += *out;
-    }
-
-    // Normalize
-    if sum > 0.0 {
-        for out in output.iter_mut() {
-            *out /= sum;
-        }
-    }
-}
-
-// =============================================================================
 // Tests
 // =============================================================================
 
