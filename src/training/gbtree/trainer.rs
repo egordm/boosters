@@ -344,24 +344,49 @@ impl GBTreeTrainer {
     ///
     /// * `data` - Raw feature matrix (any type implementing `ColumnAccess`)
     /// * `labels` - Target labels
+    /// * `weights` - Optional per-sample weights. When provided, each sample's
+    ///   contribution to the loss function is scaled by its weight. Pass `None`
+    ///   for uniform weighting (equivalent to all weights = 1.0).
     /// * `eval_sets` - Evaluation sets for monitoring (pass `&[]` if not needed)
+    ///
+    /// # Sample Weights
+    ///
+    /// Weights allow you to control how much each training sample influences the
+    /// model. Common use cases include:
+    ///
+    /// - **Class imbalance**: Give higher weights to minority class samples
+    /// - **Importance sampling**: Emphasize certain samples over others
+    /// - **Sample exclusion**: Set weight to 0.0 to exclude samples without
+    ///   removing them from the dataset
+    ///
+    /// Weights must be non-negative. They are **not normalized** internally -
+    /// the sum of weights affects regularization strength. To match XGBoost
+    /// behavior, use unnormalized weights (this is XGBoost's default).
     ///
     /// # Example
     ///
     /// ```ignore
     /// use booste_rs::training::{GBTreeTrainer, LossFunction};
     ///
-    /// // Regression
+    /// // Regression (unweighted)
     /// let trainer = GBTreeTrainer::default();
     /// let forest = trainer.train(&data, &labels, None, &[]);
     ///
-    /// // Multiclass (3 classes)
+    /// // Classification with class imbalance handling
+    /// // Give 10x weight to minority class (label=1)
+    /// let weights: Vec<f32> = labels.iter()
+    ///     .map(|&label| if label > 0.5 { 10.0 } else { 1.0 })
+    ///     .collect();
     /// let trainer = GBTreeTrainer::builder()
-    ///     .loss(LossFunction::Softmax { num_classes: 3 })
+    ///     .loss(LossFunction::Logistic)
     ///     .build()
     ///     .unwrap();
-    /// let forest = trainer.train(&data, &labels, None, &[]);
+    /// let forest = trainer.train(&data, &labels, Some(&weights), &[]);
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `weights.len() != labels.len()` when weights are provided.
     pub fn train<D>(
         &self,
         data: &D,
