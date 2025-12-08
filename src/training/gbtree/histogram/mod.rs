@@ -17,7 +17,11 @@
 //! - [`FeatureHistogram`]: Per-feature gradient/hessian histogram
 //! - [`NodeHistogram`]: Collection of feature histograms for a tree node
 //! - [`HistogramBuilder`]: Builds histograms from quantized data
-//! - [`HistogramSubtractor`]: Histogram subtraction optimization utilities
+//!
+//! # Histogram Subtraction
+//!
+//! Both [`FeatureHistogram`] and [`NodeHistogram`] implement `Sub<&Self>`
+//! for efficient sibling derivation: `parent - smaller_child = larger_child`.
 //!
 //! # Example
 //!
@@ -30,6 +34,9 @@
 //! // Access per-feature histograms
 //! let feat_hist = hist.feature(0);
 //! let (grad, hess, count) = feat_hist.bin_stats(bin_idx);
+//!
+//! // Compute sibling via subtraction
+//! let sibling = &parent - &child;
 //! ```
 //!
 //! See RFC-0011 for design rationale.
@@ -38,6 +45,6 @@ mod builder;
 mod feature;
 mod node;
 
-pub use builder::{ChildSide, HistogramBuilder, HistogramSubtractor};
+pub use builder::HistogramBuilder;
 pub use feature::FeatureHistogram;
 pub use node::NodeHistogram;
