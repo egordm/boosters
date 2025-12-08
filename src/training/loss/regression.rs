@@ -32,22 +32,38 @@ impl Loss for SquaredLoss {
 
     /// Compute gradients for squared error loss.
     ///
-    /// - grad = pred - label
-    /// - hess = 1 (constant)
-    fn compute_gradients(&self, preds: &[f32], labels: &[f32], buffer: &mut GradientBuffer) {
+    /// - grad = pred - label (or weight * (pred - label) if weighted)
+    /// - hess = 1 (or weight if weighted)
+    fn compute_gradients(
+        &self,
+        preds: &[f32],
+        labels: &[f32],
+        weights: Option<&[f32]>,
+        buffer: &mut GradientBuffer,
+    ) {
         debug_assert_eq!(preds.len(), labels.len());
         debug_assert_eq!(preds.len(), buffer.n_samples());
         debug_assert_eq!(buffer.n_outputs(), 1);
 
         let (grads, hess) = buffer.as_mut_slices();
 
-        // Vectorizable loop: grad = pred - label
-        for i in 0..preds.len() {
-            grads[i] = preds[i] - labels[i];
+        match weights {
+            Some(w) => {
+                debug_assert_eq!(w.len(), preds.len());
+                for i in 0..preds.len() {
+                    grads[i] = w[i] * (preds[i] - labels[i]);
+                    hess[i] = w[i];
+                }
+            }
+            None => {
+                // Vectorizable loop: grad = pred - label
+                for i in 0..preds.len() {
+                    grads[i] = preds[i] - labels[i];
+                }
+                // Fill hessians with constant (may use memset internally)
+                hess.fill(1.0);
+            }
         }
-
-        // Fill hessians with constant (may use memset internally)
-        hess.fill(1.0);
     }
 
     /// Base score = weighted mean of labels.
@@ -208,7 +224,13 @@ impl Loss for QuantileLoss {
     /// The gradient buffer is column-major, so we iterate quantiles first
     /// for better cache locality when writing.
     /// Predictions are also column-major: index = q * num_samples + i
-    fn compute_gradients(&self, preds: &[f32], labels: &[f32], buffer: &mut GradientBuffer) {
+    fn compute_gradients(
+        &self,
+        preds: &[f32],
+        labels: &[f32],
+        weights: Option<&[f32]>,
+        buffer: &mut GradientBuffer,
+    ) {
         let num_quantiles = self.alphas.len();
         let num_samples = labels.len();
 
@@ -216,20 +238,44 @@ impl Loss for QuantileLoss {
         debug_assert_eq!(buffer.n_samples(), num_samples);
         debug_assert_eq!(buffer.n_outputs(), num_quantiles);
 
-        // Hessian is always 1.0 for quantile loss - fill once
-        buffer.hess_mut().fill(1.0);
+        match weights {
+            Some(w) => {
+                debug_assert_eq!(w.len(), num_samples);
+                // Weighted path: use as_mut_slices to avoid borrow issues
+                let (grads, hess) = buffer.as_mut_slices();
 
-        // Perfect access pattern: both preds and grads are column-major
-        for q in 0..num_quantiles {
-            let alpha = self.alphas[q];
-            let grad_over = 1.0 - alpha;
-            let grad_under = -alpha;
+                for q in 0..num_quantiles {
+                    let alpha = self.alphas[q];
+                    let grad_over = 1.0 - alpha;
+                    let grad_under = -alpha;
 
-            let preds_q = &preds[q * num_samples..(q + 1) * num_samples];
-            let grads = buffer.output_grads_mut(q);
+                    let preds_q = &preds[q * num_samples..(q + 1) * num_samples];
+                    let start = q * num_samples;
 
-            for i in 0..num_samples {
-                grads[i] = if preds_q[i] >= labels[i] { grad_over } else { grad_under };
+                    for i in 0..num_samples {
+                        let base_grad = if preds_q[i] >= labels[i] { grad_over } else { grad_under };
+                        grads[start + i] = w[i] * base_grad;
+                        hess[start + i] = w[i];
+                    }
+                }
+            }
+            None => {
+                // Hessian is always 1.0 for quantile loss - fill once
+                buffer.hess_mut().fill(1.0);
+
+                // Perfect access pattern: both preds and grads are column-major
+                for q in 0..num_quantiles {
+                    let alpha = self.alphas[q];
+                    let grad_over = 1.0 - alpha;
+                    let grad_under = -alpha;
+
+                    let preds_q = &preds[q * num_samples..(q + 1) * num_samples];
+                    let grads = buffer.output_grads_mut(q);
+
+                    for i in 0..num_samples {
+                        grads[i] = if preds_q[i] >= labels[i] { grad_over } else { grad_under };
+                    }
+                }
             }
         }
     }
@@ -316,7 +362,13 @@ impl Loss for PseudoHuberLoss {
     ///
     /// - grad = r / sqrt(1 + r²/δ²)
     /// - hess = δ² / ((δ² + r²) × sqrt(1 + r²/δ²))
-    fn compute_gradients(&self, preds: &[f32], labels: &[f32], buffer: &mut GradientBuffer) {
+    fn compute_gradients(
+        &self,
+        preds: &[f32],
+        labels: &[f32],
+        weights: Option<&[f32]>,
+        buffer: &mut GradientBuffer,
+    ) {
         debug_assert_eq!(preds.len(), labels.len());
         debug_assert_eq!(preds.len(), buffer.n_samples());
         debug_assert_eq!(buffer.n_outputs(), 1);
@@ -326,18 +378,41 @@ impl Loss for PseudoHuberLoss {
 
         let (grads, hess) = buffer.as_mut_slices();
 
-        for i in 0..preds.len() {
-            let r = preds[i] - labels[i];
-            let r_sq = r * r;
+        match weights {
+            Some(w) => {
+                debug_assert_eq!(w.len(), preds.len());
+                for i in 0..preds.len() {
+                    let r = preds[i] - labels[i];
+                    let r_sq = r * r;
 
-            // scale_sqrt = sqrt(1 + r²/δ²)
-            let scale_sqrt = (1.0 + r_sq / slope_sq).sqrt();
+                    // scale_sqrt = sqrt(1 + r²/δ²)
+                    let scale_sqrt = (1.0 + r_sq / slope_sq).sqrt();
 
-            grads[i] = r / scale_sqrt;
+                    let base_grad = r / scale_sqrt;
 
-            // hess = δ² / ((δ² + r²) × scale_sqrt)
-            let scale = slope_sq + r_sq;
-            hess[i] = slope_sq / (scale * scale_sqrt);
+                    // hess = δ² / ((δ² + r²) × scale_sqrt)
+                    let scale = slope_sq + r_sq;
+                    let base_hess = slope_sq / (scale * scale_sqrt);
+
+                    grads[i] = w[i] * base_grad;
+                    hess[i] = w[i] * base_hess;
+                }
+            }
+            None => {
+                for i in 0..preds.len() {
+                    let r = preds[i] - labels[i];
+                    let r_sq = r * r;
+
+                    // scale_sqrt = sqrt(1 + r²/δ²)
+                    let scale_sqrt = (1.0 + r_sq / slope_sq).sqrt();
+
+                    grads[i] = r / scale_sqrt;
+
+                    // hess = δ² / ((δ² + r²) × scale_sqrt)
+                    let scale = slope_sq + r_sq;
+                    hess[i] = slope_sq / (scale * scale_sqrt);
+                }
+            }
         }
     }
 
@@ -400,7 +475,7 @@ mod tests {
         let labels = vec![0.5, 2.0];
         let mut buffer = GradientBuffer::new(2, 1);
 
-        loss.compute_gradients(&preds, &labels, &mut buffer);
+        loss.compute_gradients(&preds, &labels, None, &mut buffer);
 
         // pred=1.0, label=0.5 → grad = 0.5, hess = 1.0
         assert!((buffer.grad(0, 0) - 0.5).abs() < 1e-6);
@@ -417,7 +492,7 @@ mod tests {
         let labels = vec![0.5, 2.0, 2.5];
         let mut buffer = GradientBuffer::new(3, 1);
 
-        loss.compute_gradients(&preds, &labels, &mut buffer);
+        loss.compute_gradients(&preds, &labels, None, &mut buffer);
 
         // Check gradients match expected values
         assert!((buffer.grad(0, 0) - 0.5).abs() < 1e-6); // 1.0 - 0.5
@@ -446,7 +521,7 @@ mod tests {
         let labels = vec![2.0, 2.0, 2.0];
         let mut buffer = GradientBuffer::new(3, 1);
 
-        Loss::compute_gradients(&loss, &preds, &labels, &mut buffer);
+        Loss::compute_gradients(&loss, &preds, &labels, None, &mut buffer);
 
         // Under-prediction: grad = -0.5
         assert!((buffer.grad(0, 0) - (-0.5)).abs() < 1e-6);
@@ -469,7 +544,7 @@ mod tests {
         let labels = vec![2.0, 2.0];
         let mut buffer = GradientBuffer::new(2, 1);
 
-        Loss::compute_gradients(&loss, &preds, &labels, &mut buffer);
+        Loss::compute_gradients(&loss, &preds, &labels, None, &mut buffer);
 
         // Under-prediction: grad = -α = -0.1
         assert!((buffer.grad(0, 0) - (-0.1)).abs() < 1e-6);
@@ -541,7 +616,7 @@ mod tests {
         let labels = vec![2.0, 2.0];
         let mut buffer = GradientBuffer::new(2, num_quantiles);
 
-        loss.compute_gradients(&preds, &labels, &mut buffer);
+        loss.compute_gradients(&preds, &labels, None, &mut buffer);
 
         // Sample 0
         assert!((buffer.grad(0, 0) - (-0.1)).abs() < 1e-6); // under, α=0.1
@@ -573,8 +648,8 @@ mod tests {
         let mut buffer_multi = GradientBuffer::new(3, 1);
         let mut buffer_single = GradientBuffer::new(3, 1);
 
-        multi_loss.compute_gradients(&preds, &labels, &mut buffer_multi);
-        single_loss.compute_gradients(&preds, &labels, &mut buffer_single);
+        multi_loss.compute_gradients(&preds, &labels, None, &mut buffer_multi);
+        single_loss.compute_gradients(&preds, &labels, None, &mut buffer_single);
 
         // Results should be identical
         for i in 0..3 {
@@ -597,7 +672,7 @@ mod tests {
         let labels = vec![0.0];
         let mut buffer = GradientBuffer::new(1, 3);
 
-        loss.compute_gradients(&preds, &labels, &mut buffer);
+        loss.compute_gradients(&preds, &labels, None, &mut buffer);
 
         // All over-predictions
         assert!((buffer.grad(0, 0) - 0.9).abs() < 1e-6); // 1 - 0.1
@@ -606,7 +681,7 @@ mod tests {
 
         // All predictions well below label
         let preds = vec![-10.0, -10.0, -10.0]; // label = 0.0
-        loss.compute_gradients(&preds, &labels, &mut buffer);
+        loss.compute_gradients(&preds, &labels, None, &mut buffer);
 
         // All under-predictions
         assert!((buffer.grad(0, 0) - (-0.1)).abs() < 1e-6); // -0.1
@@ -625,7 +700,7 @@ mod tests {
         let labels = vec![1.0, 1.0, 1.0]; // residuals: 0, 1, 2
         let mut buffer = GradientBuffer::new(3, 1);
 
-        loss.compute_gradients(&preds, &labels, &mut buffer);
+        loss.compute_gradients(&preds, &labels, None, &mut buffer);
 
         // r=0: grad = 0 / sqrt(1 + 0) = 0
         assert!(buffer.grad(0, 0).abs() < 1e-6);
@@ -651,7 +726,7 @@ mod tests {
         let labels = vec![1.0];
         let mut buffer = GradientBuffer::new(1, 1);
 
-        loss.compute_gradients(&preds, &labels, &mut buffer);
+        loss.compute_gradients(&preds, &labels, None, &mut buffer);
 
         // r=2, δ=2: grad = 2 / sqrt(1 + 4/4) = 2/√2 ≈ 1.414
         let expected_grad = 2.0 / 2.0_f32.sqrt();
@@ -671,7 +746,7 @@ mod tests {
         let labels = vec![2.0];
         let mut buffer = GradientBuffer::new(1, 1);
 
-        loss.compute_gradients(&preds, &labels, &mut buffer);
+        loss.compute_gradients(&preds, &labels, None, &mut buffer);
 
         // r=-2, δ=1: grad = -2 / sqrt(1 + 4) = -2/√5 ≈ -0.894
         let expected_grad = -2.0 / 5.0_f32.sqrt();
@@ -690,8 +765,8 @@ mod tests {
         let mut buffer_ph = GradientBuffer::new(3, 1);
         let mut buffer_sq = GradientBuffer::new(3, 1);
 
-        pseudo_huber.compute_gradients(&preds, &labels, &mut buffer_ph);
-        squared.compute_gradients(&preds, &labels, &mut buffer_sq);
+        pseudo_huber.compute_gradients(&preds, &labels, None, &mut buffer_ph);
+        squared.compute_gradients(&preds, &labels, None, &mut buffer_sq);
 
         // Gradients should be similar for small residuals
         for i in 0..3 {
@@ -715,7 +790,7 @@ mod tests {
         let labels = vec![0.0];
         let mut buffer = GradientBuffer::new(1, 1);
 
-        loss.compute_gradients(&preds, &labels, &mut buffer);
+        loss.compute_gradients(&preds, &labels, None, &mut buffer);
 
         // r=100, δ=1: grad = 100 / sqrt(1 + 10000) ≈ 100/100 = 1
         // Should be bounded, not 100 like squared loss would give
@@ -739,5 +814,163 @@ mod tests {
     #[test]
     fn pseudo_huber_loss_name() {
         assert_eq!(Loss::name(&PseudoHuberLoss::default()), "pseudo_huber");
+    }
+
+    // =========================================================================
+    // Weighted gradient tests
+    // =========================================================================
+
+    #[test]
+    fn squared_loss_weighted_gradients() {
+        let loss = SquaredLoss;
+        let preds = vec![1.0, 2.0, 3.0];
+        let labels = vec![0.0, 0.0, 0.0];
+        let weights = vec![0.5, 1.0, 2.0];
+        let mut buffer = GradientBuffer::new(3, 1);
+
+        loss.compute_gradients(&preds, &labels, Some(&weights), &mut buffer);
+
+        // grad[i] = weight[i] * (pred - label)
+        // hess[i] = weight[i] * 1.0
+        assert!((buffer.grad(0, 0) - 0.5 * 1.0).abs() < 1e-6); // 0.5 * (1 - 0)
+        assert!((buffer.grad(1, 0) - 1.0 * 2.0).abs() < 1e-6); // 1.0 * (2 - 0)
+        assert!((buffer.grad(2, 0) - 2.0 * 3.0).abs() < 1e-6); // 2.0 * (3 - 0)
+
+        assert!((buffer.hess(0, 0) - 0.5).abs() < 1e-6);
+        assert!((buffer.hess(1, 0) - 1.0).abs() < 1e-6);
+        assert!((buffer.hess(2, 0) - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn squared_loss_uniform_weights_matches_unweighted() {
+        let loss = SquaredLoss;
+        let preds = vec![1.5, -0.5, 2.0, 0.0];
+        let labels = vec![1.0, 0.0, 1.0, -1.0];
+        let uniform_weights = vec![1.0; 4];
+
+        let mut buffer_unweighted = GradientBuffer::new(4, 1);
+        let mut buffer_weighted = GradientBuffer::new(4, 1);
+
+        loss.compute_gradients(&preds, &labels, None, &mut buffer_unweighted);
+        loss.compute_gradients(&preds, &labels, Some(&uniform_weights), &mut buffer_weighted);
+
+        for i in 0..4 {
+            assert!(
+                (buffer_weighted.grad(i, 0) - buffer_unweighted.grad(i, 0)).abs() < 1e-6,
+                "grad mismatch at {}: weighted={}, unweighted={}",
+                i,
+                buffer_weighted.grad(i, 0),
+                buffer_unweighted.grad(i, 0)
+            );
+            assert!(
+                (buffer_weighted.hess(i, 0) - buffer_unweighted.hess(i, 0)).abs() < 1e-6,
+                "hess mismatch at {}: weighted={}, unweighted={}",
+                i,
+                buffer_weighted.hess(i, 0),
+                buffer_unweighted.hess(i, 0)
+            );
+        }
+    }
+
+    #[test]
+    fn squared_loss_zero_weight_produces_zero_gradient() {
+        let loss = SquaredLoss;
+        let preds = vec![100.0]; // Large value that would produce large gradient
+        let labels = vec![0.0];
+        let weights = vec![0.0];
+        let mut buffer = GradientBuffer::new(1, 1);
+
+        loss.compute_gradients(&preds, &labels, Some(&weights), &mut buffer);
+
+        assert!(buffer.grad(0, 0).abs() < 1e-10);
+        assert!(buffer.hess(0, 0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn quantile_loss_weighted_gradients() {
+        let loss = QuantileLoss::new(0.5); // median
+        let preds = vec![1.0, -1.0, 0.0];
+        let labels = vec![0.0, 0.0, 0.0];
+        let weights = vec![2.0, 0.5, 1.0];
+        let mut buffer = GradientBuffer::new(3, 1);
+
+        loss.compute_gradients(&preds, &labels, Some(&weights), &mut buffer);
+
+        // For median (α=0.5):
+        // - pred >= label: grad = (1 - 0.5) = 0.5
+        // - pred < label: grad = -0.5
+        // Sample 0: pred=1 >= label=0, grad = 0.5, weighted = 2.0 * 0.5 = 1.0
+        // Sample 1: pred=-1 < label=0, grad = -0.5, weighted = 0.5 * -0.5 = -0.25
+        // Sample 2: pred=0 >= label=0, grad = 0.5, weighted = 1.0 * 0.5 = 0.5
+        assert!((buffer.grad(0, 0) - 1.0).abs() < 1e-6);
+        assert!((buffer.grad(1, 0) - (-0.25)).abs() < 1e-6);
+        assert!((buffer.grad(2, 0) - 0.5).abs() < 1e-6);
+
+        // Hessians = weight (constant hessian=1 * weight)
+        assert!((buffer.hess(0, 0) - 2.0).abs() < 1e-6);
+        assert!((buffer.hess(1, 0) - 0.5).abs() < 1e-6);
+        assert!((buffer.hess(2, 0) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn pseudo_huber_loss_weighted_gradients() {
+        let loss = PseudoHuberLoss::default(); // slope = 1.0
+
+        let preds = vec![2.0, 0.0];
+        let labels = vec![0.0, 0.0];
+        let weights = vec![0.5, 2.0];
+        let mut buffer = GradientBuffer::new(2, 1);
+
+        loss.compute_gradients(&preds, &labels, Some(&weights), &mut buffer);
+
+        // For r=2, δ=1: grad = 2 / sqrt(1 + 4) = 2/√5 ≈ 0.894
+        let expected_unweighted_grad = 2.0 / 5.0_f32.sqrt();
+        assert!((buffer.grad(0, 0) - 0.5 * expected_unweighted_grad).abs() < 1e-5);
+        assert!(buffer.grad(1, 0).abs() < 1e-6); // r=0
+
+        // Hessians weighted
+        let expected_unweighted_hess = 1.0 / 5.0_f32.powf(1.5);
+        assert!((buffer.hess(0, 0) - 0.5 * expected_unweighted_hess).abs() < 1e-5);
+        assert!((buffer.hess(1, 0) - 2.0 * 1.0).abs() < 1e-6); // r=0 → hess = δ^2 / δ^3 = 1
+    }
+
+    // =========================================================================
+    // Weighted base score tests (RFC-0024)
+    // =========================================================================
+
+    #[test]
+    fn squared_loss_weighted_base_score() {
+        let loss = SquaredLoss;
+        // Labels: [1, 2, 3], Weights: [1, 2, 1]
+        // Weighted mean = (1*1 + 2*2 + 3*1) / (1 + 2 + 1) = 8 / 4 = 2.0
+        let labels = vec![1.0, 2.0, 3.0];
+        let weights = vec![1.0, 2.0, 1.0];
+
+        let base_score = loss.init_base_score(&labels, Some(&weights));
+        assert_eq!(base_score.len(), 1);
+        assert!((base_score[0] - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn squared_loss_unweighted_base_score() {
+        let loss = SquaredLoss;
+        // Unweighted mean = (1 + 2 + 3) / 3 = 2.0
+        let labels = vec![1.0, 2.0, 3.0];
+
+        let base_score = loss.init_base_score(&labels, None);
+        assert_eq!(base_score.len(), 1);
+        assert!((base_score[0] - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn squared_loss_uniform_weights_base_score_matches_unweighted() {
+        let loss = SquaredLoss;
+        let labels = vec![1.0, 5.0, 3.0, 7.0];
+        let uniform_weights = vec![1.0; 4];
+
+        let unweighted = loss.init_base_score(&labels, None);
+        let weighted = loss.init_base_score(&labels, Some(&uniform_weights));
+
+        assert!((unweighted[0] - weighted[0]).abs() < 1e-6);
     }
 }

@@ -22,7 +22,8 @@ use super::{EvalMetric, Metric};
 ///     let val_preds = vec![0.1, 0.2, 0.3];
 ///     let val_labels = vec![0.0, 0.1, 0.2];
 ///
-///     if early_stop.should_stop(&val_preds, &val_labels) {
+///     // n_outputs=1 for regression, weights=None for unweighted
+///     if early_stop.should_stop(&val_preds, &val_labels, None, 1) {
 ///         println!("Early stopping at round {}", round);
 ///         break;
 ///     }
@@ -64,10 +65,22 @@ impl EarlyStopping {
 
     /// Update with new predictions and check if training should stop.
     ///
+    /// # Arguments
+    ///
+    /// * `preds` - Model predictions
+    /// * `labels` - Ground truth labels
+    /// * `weights` - Optional sample weights for weighted metric computation
+    /// * `n_outputs` - Number of outputs per sample (1 for regression/binary, K for multiclass)
+    ///
     /// Returns `true` if training should stop (no improvement for `patience` rounds).
-    pub fn should_stop(&mut self, preds: &[f32], labels: &[f32]) -> bool {
-        // For early stopping we assume single-output (n_outputs=1)
-        let value = self.metric.evaluate(preds, labels, 1);
+    pub fn should_stop(
+        &mut self,
+        preds: &[f32],
+        labels: &[f32],
+        weights: Option<&[f32]>,
+        n_outputs: usize,
+    ) -> bool {
+        let value = self.metric.evaluate(preds, labels, weights, n_outputs);
         self.update_with_value(value)
     }
 
@@ -216,13 +229,13 @@ mod tests {
         let labels = vec![0.0, 1.0, 2.0];
 
         // Good predictions (RMSE ≈ 0)
-        assert!(!early_stop.should_stop(&[0.0, 1.0, 2.0], &labels)); // current=1, best=0
+        assert!(!early_stop.should_stop(&[0.0, 1.0, 2.0], &labels, None, 1)); // current=1, best=0
 
         // Bad predictions (RMSE > 0)
-        assert!(!early_stop.should_stop(&[1.0, 2.0, 3.0], &labels)); // current=2, best=0, 2-0=2 > 2? NO
+        assert!(!early_stop.should_stop(&[1.0, 2.0, 3.0], &labels, None, 1)); // current=2, best=0, 2-0=2 > 2? NO
 
         // Should stop now (3-0=3 > 2)
-        assert!(early_stop.should_stop(&[2.0, 3.0, 4.0], &labels)); // current=3, best=0, 3-0=3 > 2? YES!
+        assert!(early_stop.should_stop(&[2.0, 3.0, 4.0], &labels, None, 1)); // current=3, best=0, 3-0=3 > 2? YES!
     }
 
     #[test]

@@ -34,19 +34,37 @@ impl Loss for LogisticLoss {
     ///
     /// - grad = sigmoid(pred) - label
     /// - hess = p * (1 - p) where p = sigmoid(pred)
-    fn compute_gradients(&self, preds: &[f32], labels: &[f32], buffer: &mut GradientBuffer) {
+    fn compute_gradients(
+        &self,
+        preds: &[f32],
+        labels: &[f32],
+        weights: Option<&[f32]>,
+        buffer: &mut GradientBuffer,
+    ) {
         debug_assert_eq!(preds.len(), labels.len());
         debug_assert_eq!(preds.len(), buffer.n_samples());
         debug_assert_eq!(buffer.n_outputs(), 1);
 
         let (grads, hess) = buffer.as_mut_slices();
 
-        // Single pass: compute sigmoid, grad, and hess together
-        // This keeps p in register for both grad and hess computation
-        for i in 0..preds.len() {
-            let p = 1.0 / (1.0 + (-preds[i]).exp());
-            grads[i] = p - labels[i];
-            hess[i] = (p * (1.0 - p)).max(1e-16);
+        match weights {
+            Some(w) => {
+                debug_assert_eq!(w.len(), preds.len());
+                for i in 0..preds.len() {
+                    let p = 1.0 / (1.0 + (-preds[i]).exp());
+                    grads[i] = w[i] * (p - labels[i]);
+                    hess[i] = w[i] * (p * (1.0 - p)).max(1e-16);
+                }
+            }
+            None => {
+                // Single pass: compute sigmoid, grad, and hess together
+                // This keeps p in register for both grad and hess computation
+                for i in 0..preds.len() {
+                    let p = 1.0 / (1.0 + (-preds[i]).exp());
+                    grads[i] = p - labels[i];
+                    hess[i] = (p * (1.0 - p)).max(1e-16);
+                }
+            }
         }
     }
 
@@ -125,26 +143,54 @@ impl Loss for HingeLoss {
     ///
     /// - If pred × y < 1: grad = -y, hess = 1
     /// - If pred × y >= 1: grad = 0, hess = ε
-    fn compute_gradients(&self, preds: &[f32], labels: &[f32], buffer: &mut GradientBuffer) {
+    fn compute_gradients(
+        &self,
+        preds: &[f32],
+        labels: &[f32],
+        weights: Option<&[f32]>,
+        buffer: &mut GradientBuffer,
+    ) {
         debug_assert_eq!(preds.len(), labels.len());
         debug_assert_eq!(preds.len(), buffer.n_samples());
         debug_assert_eq!(buffer.n_outputs(), 1);
 
         let (grads, hess) = buffer.as_mut_slices();
 
-        for i in 0..preds.len() {
-            let p = preds[i];
-            // Convert label from {0, 1} to {-1, 1}
-            let y = labels[i] * 2.0 - 1.0;
+        match weights {
+            Some(w) => {
+                debug_assert_eq!(w.len(), preds.len());
+                for i in 0..preds.len() {
+                    let p = preds[i];
+                    // Convert label from {0, 1} to {-1, 1}
+                    let y = labels[i] * 2.0 - 1.0;
 
-            if p * y < 1.0 {
-                // Wrong side of margin (or within margin)
-                grads[i] = -y;
-                hess[i] = 1.0;
-            } else {
-                // Correct side of margin
-                grads[i] = 0.0;
-                hess[i] = f32::MIN_POSITIVE; // Small positive value
+                    if p * y < 1.0 {
+                        // Wrong side of margin (or within margin)
+                        grads[i] = w[i] * (-y);
+                        hess[i] = w[i];
+                    } else {
+                        // Correct side of margin
+                        grads[i] = 0.0;
+                        hess[i] = w[i] * f32::MIN_POSITIVE; // Small positive value
+                    }
+                }
+            }
+            None => {
+                for i in 0..preds.len() {
+                    let p = preds[i];
+                    // Convert label from {0, 1} to {-1, 1}
+                    let y = labels[i] * 2.0 - 1.0;
+
+                    if p * y < 1.0 {
+                        // Wrong side of margin (or within margin)
+                        grads[i] = -y;
+                        hess[i] = 1.0;
+                    } else {
+                        // Correct side of margin
+                        grads[i] = 0.0;
+                        hess[i] = f32::MIN_POSITIVE; // Small positive value
+                    }
+                }
             }
         }
     }
@@ -197,7 +243,13 @@ impl Loss for SoftmaxLoss {
     /// - hess_k = softmax_k * (1 - softmax_k)
     ///
     /// Predictions are column-major: index = class * num_samples + sample
-    fn compute_gradients(&self, preds: &[f32], labels: &[f32], buffer: &mut GradientBuffer) {
+    fn compute_gradients(
+        &self,
+        preds: &[f32],
+        labels: &[f32],
+        weights: Option<&[f32]>,
+        buffer: &mut GradientBuffer,
+    ) {
         let num_classes = self.num_classes;
         let num_samples = labels.len();
         debug_assert_eq!(preds.len(), num_samples * num_classes);
@@ -235,13 +287,30 @@ impl Loss for SoftmaxLoss {
         // Pass 3: Normalize (hess contains exp), compute grad and final hess
         // Use as_mut_slices to avoid borrow checker issues
         let (grads, hess) = buffer.as_mut_slices();
-        for k in 0..num_classes {
-            let start = k * num_samples;
-            for i in 0..num_samples {
-                let prob = hess[start + i] / sum_exp[i];
-                let is_true_class = if k == labels[i] as usize { 1.0 } else { 0.0 };
-                grads[start + i] = prob - is_true_class;
-                hess[start + i] = (prob * (1.0 - prob)).max(1e-16);
+
+        match weights {
+            Some(w) => {
+                debug_assert_eq!(w.len(), num_samples);
+                for k in 0..num_classes {
+                    let start = k * num_samples;
+                    for i in 0..num_samples {
+                        let prob = hess[start + i] / sum_exp[i];
+                        let is_true_class = if k == labels[i] as usize { 1.0 } else { 0.0 };
+                        grads[start + i] = w[i] * (prob - is_true_class);
+                        hess[start + i] = w[i] * (prob * (1.0 - prob)).max(1e-16);
+                    }
+                }
+            }
+            None => {
+                for k in 0..num_classes {
+                    let start = k * num_samples;
+                    for i in 0..num_samples {
+                        let prob = hess[start + i] / sum_exp[i];
+                        let is_true_class = if k == labels[i] as usize { 1.0 } else { 0.0 };
+                        grads[start + i] = prob - is_true_class;
+                        hess[start + i] = (prob * (1.0 - prob)).max(1e-16);
+                    }
+                }
             }
         }
     }
@@ -319,7 +388,7 @@ mod tests {
         let labels = vec![0.0, 1.0];
         let mut buffer = GradientBuffer::new(2, 1);
 
-        loss.compute_gradients(&preds, &labels, &mut buffer);
+        loss.compute_gradients(&preds, &labels, None, &mut buffer);
 
         // pred=0.0, label=0: grad = 0.5 - 0 = 0.5, hess = 0.25
         assert!((buffer.grad(0, 0) - 0.5).abs() < 1e-6);
@@ -336,7 +405,7 @@ mod tests {
         let labels = vec![1.0, 0.0];
         let mut buffer = GradientBuffer::new(2, 1);
 
-        loss.compute_gradients(&preds, &labels, &mut buffer);
+        loss.compute_gradients(&preds, &labels, None, &mut buffer);
 
         // Large positive pred → p ≈ 1.0, grad ≈ 0 when label=1
         assert!(buffer.grad(0, 0).abs() < 0.01);
@@ -354,7 +423,7 @@ mod tests {
         let labels = vec![0.0, 1.0];
         let mut buffer = GradientBuffer::new(2, 1);
 
-        loss.compute_gradients(&preds, &labels, &mut buffer);
+        loss.compute_gradients(&preds, &labels, None, &mut buffer);
 
         // label=0: grad = 0.5 - 0 = 0.5
         assert!((buffer.grad(0, 0) - 0.5).abs() < 1e-6);
@@ -382,7 +451,7 @@ mod tests {
         let labels = vec![1.0];
         let mut buffer = GradientBuffer::new(1, 1);
 
-        loss.compute_gradients(&preds, &labels, &mut buffer);
+        loss.compute_gradients(&preds, &labels, None, &mut buffer);
 
         // p * y = 2 * 1 = 2 >= 1 → grad = 0
         assert!(buffer.grad(0, 0).abs() < 1e-6);
@@ -399,7 +468,7 @@ mod tests {
         let labels = vec![1.0];
         let mut buffer = GradientBuffer::new(1, 1);
 
-        loss.compute_gradients(&preds, &labels, &mut buffer);
+        loss.compute_gradients(&preds, &labels, None, &mut buffer);
 
         // p * y = 0.5 * 1 = 0.5 < 1 → grad = -y = -1
         assert!((buffer.grad(0, 0) - (-1.0)).abs() < 1e-6);
@@ -415,7 +484,7 @@ mod tests {
         let labels = vec![0.0];
         let mut buffer = GradientBuffer::new(1, 1);
 
-        loss.compute_gradients(&preds, &labels, &mut buffer);
+        loss.compute_gradients(&preds, &labels, None, &mut buffer);
 
         // y = 0 * 2 - 1 = -1
         // p * y = -2 * -1 = 2 >= 1 → grad = 0
@@ -434,7 +503,7 @@ mod tests {
         let labels = vec![1.0, 1.0, 0.0, 0.0];
         let mut buffer = GradientBuffer::new(4, 1);
 
-        loss.compute_gradients(&preds, &labels, &mut buffer);
+        loss.compute_gradients(&preds, &labels, None, &mut buffer);
 
         // Case 1: correct, grad=0
         assert!(buffer.grad(0, 0).abs() < 1e-6);
@@ -457,7 +526,7 @@ mod tests {
         let labels = vec![1.0];
         let mut buffer = GradientBuffer::new(1, 1);
 
-        loss.compute_gradients(&preds, &labels, &mut buffer);
+        loss.compute_gradients(&preds, &labels, None, &mut buffer);
 
         // p * y = 1 * 1 = 1, which is NOT < 1, so correct side
         assert!(buffer.grad(0, 0).abs() < 1e-6);
@@ -479,7 +548,7 @@ mod tests {
         let labels = vec![2.0]; // true class is 2
         let mut buffer = GradientBuffer::new(1, 3);
 
-        loss.compute_gradients(&preds, &labels, &mut buffer);
+        loss.compute_gradients(&preds, &labels, None, &mut buffer);
 
         // Class 2 should have negative gradient (we want to increase it)
         assert!(buffer.grad(0, 2) < 0.0);
@@ -504,7 +573,7 @@ mod tests {
         let labels = vec![1.0]; // true class is 1
         let mut buffer = GradientBuffer::new(1, 3);
 
-        loss.compute_gradients(&preds, &labels, &mut buffer);
+        loss.compute_gradients(&preds, &labels, None, &mut buffer);
 
         // With uniform preds, p = 1/3 for all
         // True class (1): grad = 1/3 - 1 = -2/3
@@ -526,7 +595,7 @@ mod tests {
         let labels = vec![2.0, 1.0]; // true classes
         let mut buffer = GradientBuffer::new(2, 3);
 
-        loss.compute_gradients(&preds, &labels, &mut buffer);
+        loss.compute_gradients(&preds, &labels, None, &mut buffer);
 
         // Sample 0: true class is 2, should have negative gradient
         assert!(buffer.grad(0, 2) < 0.0);
@@ -558,5 +627,237 @@ mod tests {
     fn softmax_loss_num_outputs() {
         assert_eq!(SoftmaxLoss::new(3).num_outputs(), 3);
         assert_eq!(SoftmaxLoss::new(10).num_outputs(), 10);
+    }
+
+    // =========================================================================
+    // Weighted gradient tests
+    // =========================================================================
+
+    #[test]
+    fn logistic_loss_weighted_gradients() {
+        let loss = LogisticLoss;
+        let preds = vec![0.0, 0.0]; // sigmoid(0) = 0.5
+        let labels = vec![1.0, 0.0];
+        let weights = vec![2.0, 0.5];
+        let mut buffer = GradientBuffer::new(2, 1);
+
+        loss.compute_gradients(&preds, &labels, Some(&weights), &mut buffer);
+
+        // Unweighted: grad = sigmoid(pred) - label = 0.5 - label
+        // Sample 0: label=1, grad = 0.5 - 1 = -0.5
+        // Sample 1: label=0, grad = 0.5 - 0 = 0.5
+        assert!((buffer.grad(0, 0) - 2.0 * (-0.5)).abs() < 1e-6);
+        assert!((buffer.grad(1, 0) - 0.5 * 0.5).abs() < 1e-6);
+
+        // Hessians: hess = sigmoid(pred) * (1 - sigmoid(pred)) = 0.5 * 0.5 = 0.25
+        assert!((buffer.hess(0, 0) - 2.0 * 0.25).abs() < 1e-6);
+        assert!((buffer.hess(1, 0) - 0.5 * 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn logistic_loss_uniform_weights_matches_unweighted() {
+        let loss = LogisticLoss;
+        let preds = vec![1.0, -1.0, 0.0, 2.0];
+        let labels = vec![1.0, 0.0, 1.0, 0.0];
+        let uniform_weights = vec![1.0; 4];
+
+        let mut buffer_unweighted = GradientBuffer::new(4, 1);
+        let mut buffer_weighted = GradientBuffer::new(4, 1);
+
+        loss.compute_gradients(&preds, &labels, None, &mut buffer_unweighted);
+        loss.compute_gradients(&preds, &labels, Some(&uniform_weights), &mut buffer_weighted);
+
+        for i in 0..4 {
+            assert!(
+                (buffer_weighted.grad(i, 0) - buffer_unweighted.grad(i, 0)).abs() < 1e-6,
+                "grad mismatch at {}: weighted={}, unweighted={}",
+                i,
+                buffer_weighted.grad(i, 0),
+                buffer_unweighted.grad(i, 0)
+            );
+            assert!(
+                (buffer_weighted.hess(i, 0) - buffer_unweighted.hess(i, 0)).abs() < 1e-6,
+                "hess mismatch at {}: weighted={}, unweighted={}",
+                i,
+                buffer_weighted.hess(i, 0),
+                buffer_unweighted.hess(i, 0)
+            );
+        }
+    }
+
+    #[test]
+    fn logistic_loss_zero_weight_produces_zero_gradient() {
+        let loss = LogisticLoss;
+        let preds = vec![10.0]; // Large value
+        let labels = vec![0.0];
+        let weights = vec![0.0];
+        let mut buffer = GradientBuffer::new(1, 1);
+
+        loss.compute_gradients(&preds, &labels, Some(&weights), &mut buffer);
+
+        assert!(buffer.grad(0, 0).abs() < 1e-10);
+        assert!(buffer.hess(0, 0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn hinge_loss_weighted_gradients() {
+        let loss = HingeLoss;
+        // Labels are in {0, 1} format, internally converted to {-1, 1}
+        // Sample 0: label=1 → y=1, pred=0.5, margin = 1*0.5 = 0.5 < 1, grad = -1
+        // Sample 1: label=0 → y=-1, pred=-0.5, margin = -1*-0.5 = 0.5 < 1, grad = 1
+        // Sample 2: label=1 → y=1, pred=2.0, margin = 1*2 = 2 >= 1, grad = 0
+        let preds = vec![0.5, -0.5, 2.0];
+        let labels = vec![1.0, 0.0, 1.0];
+        let weights = vec![2.0, 0.5, 1.0];
+        let mut buffer = GradientBuffer::new(3, 1);
+
+        loss.compute_gradients(&preds, &labels, Some(&weights), &mut buffer);
+
+        // Sample 0: grad = w * -y = 2.0 * -1 = -2.0
+        // Sample 1: grad = w * -y = 0.5 * -(-1) = 0.5
+        // Sample 2: grad = 0 (margin >= 1)
+        assert!((buffer.grad(0, 0) - (-2.0)).abs() < 1e-6);
+        assert!((buffer.grad(1, 0) - 0.5).abs() < 1e-6);
+        assert!(buffer.grad(2, 0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn softmax_loss_weighted_gradients() {
+        let loss = SoftmaxLoss::new(3);
+        // Use uniform predictions for simplicity
+        let preds = vec![0.0, 0.0, 0.0]; // softmax = [1/3, 1/3, 1/3]
+        let labels = vec![1.0]; // true class is 1
+        let weights = vec![2.0];
+        let mut buffer = GradientBuffer::new(1, 3);
+
+        loss.compute_gradients(&preds, &labels, Some(&weights), &mut buffer);
+
+        // Unweighted: grad[c] = softmax[c] - (c == label ? 1 : 0)
+        // For class 0: grad = 1/3 - 0 = 1/3
+        // For class 1: grad = 1/3 - 1 = -2/3
+        // For class 2: grad = 1/3 - 0 = 1/3
+        assert!((buffer.grad(0, 0) - 2.0 * (1.0 / 3.0)).abs() < 1e-5);
+        assert!((buffer.grad(0, 1) - 2.0 * (-2.0 / 3.0)).abs() < 1e-5);
+        assert!((buffer.grad(0, 2) - 2.0 * (1.0 / 3.0)).abs() < 1e-5);
+
+        // Hessians: hess[c] = softmax[c] * (1 - softmax[c])
+        // = (1/3) * (2/3) = 2/9
+        let expected_hess = 2.0 * (1.0 / 3.0) * (2.0 / 3.0);
+        assert!((buffer.hess(0, 0) - expected_hess).abs() < 1e-5);
+        assert!((buffer.hess(0, 1) - expected_hess).abs() < 1e-5);
+        assert!((buffer.hess(0, 2) - expected_hess).abs() < 1e-5);
+    }
+
+    #[test]
+    fn softmax_loss_uniform_weights_matches_unweighted() {
+        let loss = SoftmaxLoss::new(3);
+        let preds = vec![1.0, 0.0, -1.0, 0.0, 1.0, 0.0]; // 2 samples, 3 classes each
+        let labels = vec![0.0, 2.0];
+        let uniform_weights = vec![1.0, 1.0];
+
+        let mut buffer_unweighted = GradientBuffer::new(2, 3);
+        let mut buffer_weighted = GradientBuffer::new(2, 3);
+
+        loss.compute_gradients(&preds, &labels, None, &mut buffer_unweighted);
+        loss.compute_gradients(&preds, &labels, Some(&uniform_weights), &mut buffer_weighted);
+
+        for sample in 0..2 {
+            for class in 0..3 {
+                assert!(
+                    (buffer_weighted.grad(sample, class) - buffer_unweighted.grad(sample, class))
+                        .abs()
+                        < 1e-6,
+                    "grad mismatch at ({}, {})",
+                    sample,
+                    class
+                );
+                assert!(
+                    (buffer_weighted.hess(sample, class) - buffer_unweighted.hess(sample, class))
+                        .abs()
+                        < 1e-6,
+                    "hess mismatch at ({}, {})",
+                    sample,
+                    class
+                );
+            }
+        }
+    }
+
+    // =========================================================================
+    // Weighted base score tests (RFC-0024)
+    // =========================================================================
+
+    #[test]
+    fn logistic_loss_weighted_base_score() {
+        let loss = LogisticLoss;
+        // Labels: [1, 0, 1, 0], Weights: [2, 1, 1, 1]
+        // Weighted positive rate = (2 + 1) / (2 + 1 + 1 + 1) = 3/5 = 0.6
+        // Base score = log(0.6 / 0.4) = log(1.5) ≈ 0.405
+        let labels = vec![1.0, 0.0, 1.0, 0.0];
+        let weights = vec![2.0, 1.0, 1.0, 1.0];
+
+        let base_score = loss.init_base_score(&labels, Some(&weights));
+        assert_eq!(base_score.len(), 1);
+        let expected = (0.6_f32 / 0.4).ln();
+        assert!(
+            (base_score[0] - expected).abs() < 1e-5,
+            "expected {}, got {}",
+            expected,
+            base_score[0]
+        );
+    }
+
+    #[test]
+    fn logistic_loss_unweighted_base_score() {
+        let loss = LogisticLoss;
+        // Labels: [1, 0, 1, 1] → 3/4 positive
+        // Base score = log(0.75 / 0.25) = log(3) ≈ 1.099
+        let labels = vec![1.0, 0.0, 1.0, 1.0];
+
+        let base_score = loss.init_base_score(&labels, None);
+        assert_eq!(base_score.len(), 1);
+        let expected = (0.75_f32 / 0.25).ln();
+        assert!(
+            (base_score[0] - expected).abs() < 1e-5,
+            "expected {}, got {}",
+            expected,
+            base_score[0]
+        );
+    }
+
+    #[test]
+    fn softmax_loss_weighted_base_score() {
+        let loss = SoftmaxLoss::new(3);
+        // Labels: [0, 1, 2, 0], Weights: [2, 1, 1, 1]
+        // Weighted class counts: [2+1, 1, 1] = [3, 1, 1], total = 5
+        // Class probs: [0.6, 0.2, 0.2]
+        let labels = vec![0.0, 1.0, 2.0, 0.0];
+        let weights = vec![2.0, 1.0, 1.0, 1.0];
+
+        let base_scores = loss.init_base_score(&labels, Some(&weights));
+        assert_eq!(base_scores.len(), 3);
+
+        // Base scores are log-probabilities
+        let expected_0 = 0.6_f32.ln();
+        let expected_1 = 0.2_f32.ln();
+        let expected_2 = 0.2_f32.ln();
+
+        assert!((base_scores[0] - expected_0).abs() < 1e-5);
+        assert!((base_scores[1] - expected_1).abs() < 1e-5);
+        assert!((base_scores[2] - expected_2).abs() < 1e-5);
+    }
+
+    #[test]
+    fn softmax_loss_uniform_weights_base_score_matches_unweighted() {
+        let loss = SoftmaxLoss::new(4);
+        let labels = vec![0.0, 1.0, 2.0, 3.0, 0.0, 1.0];
+        let uniform_weights = vec![1.0; 6];
+
+        let unweighted = loss.init_base_score(&labels, None);
+        let weighted = loss.init_base_score(&labels, Some(&uniform_weights));
+
+        for (u, w) in unweighted.iter().zip(weighted.iter()) {
+            assert!((u - w).abs() < 1e-6);
+        }
     }
 }

@@ -166,7 +166,7 @@ pub use booste_rs::testing::pearson_correlation;
 /// Root mean squared error - uses library Rmse metric.
 pub fn rmse(predictions: &[f32], labels: &[f32]) -> f64 {
     use booste_rs::training::Metric;
-    Rmse.evaluate(predictions, labels, 1)
+    Rmse.evaluate(predictions, labels, None, 1)
 }
 
 // =============================================================================
@@ -208,13 +208,13 @@ pub fn compute_test_rmse(
     base_scores: &[f32],
 ) -> f64 {
     let preds = get_predictions(model, data, base_scores);
-    Rmse.evaluate(&preds, labels, 1)
+    Rmse.evaluate(&preds, labels, None, 1)
 }
 
 /// Compute RMSE with default base_score of 0.
 pub fn compute_test_rmse_default(model: &LinearModel, data: &ColMatrix<f32>, labels: &[f32]) -> f32 {
     let preds = get_predictions_default(model, data);
-    Rmse.evaluate(&preds, labels, 1) as f32
+    Rmse.evaluate(&preds, labels, None, 1) as f32
 }
 
 /// Compute multiclass accuracy using argmax.
@@ -237,7 +237,7 @@ pub fn compute_multiclass_accuracy(model: &LinearModel, data: &ColMatrix<f32>, l
         })
         .collect();
 
-    MulticlassAccuracy.evaluate(&pred_classes, labels, 1) as f32
+    MulticlassAccuracy.evaluate(&pred_classes, labels, None, 1) as f32
 }
 
 /// Compute binary accuracy with given threshold.
@@ -250,5 +250,5 @@ pub fn compute_binary_accuracy(
     use booste_rs::training::Accuracy;
     
     let predictions = get_predictions_default(model, data);
-    Accuracy::with_threshold(threshold).evaluate(&predictions, labels, 1) as f32
+    Accuracy::with_threshold(threshold).evaluate(&predictions, labels, None, 1) as f32
 }

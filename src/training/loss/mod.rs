@@ -142,22 +142,28 @@ impl Loss for LossFunction {
         }
     }
 
-    fn compute_gradients(&self, preds: &[f32], labels: &[f32], buffer: &mut GradientBuffer) {
+    fn compute_gradients(
+        &self,
+        preds: &[f32],
+        labels: &[f32],
+        weights: Option<&[f32]>,
+        buffer: &mut GradientBuffer,
+    ) {
         match self {
-            LossFunction::SquaredError => SquaredLoss.compute_gradients(preds, labels, buffer),
-            LossFunction::Logistic => LogisticLoss.compute_gradients(preds, labels, buffer),
-            LossFunction::Hinge => HingeLoss.compute_gradients(preds, labels, buffer),
+            LossFunction::SquaredError => SquaredLoss.compute_gradients(preds, labels, weights, buffer),
+            LossFunction::Logistic => LogisticLoss.compute_gradients(preds, labels, weights, buffer),
+            LossFunction::Hinge => HingeLoss.compute_gradients(preds, labels, weights, buffer),
             LossFunction::PseudoHuber { slope } => {
-                PseudoHuberLoss::new(*slope).compute_gradients(preds, labels, buffer)
+                PseudoHuberLoss::new(*slope).compute_gradients(preds, labels, weights, buffer)
             }
             LossFunction::Quantile { alpha } => {
-                QuantileLoss::new(*alpha).compute_gradients(preds, labels, buffer)
+                QuantileLoss::new(*alpha).compute_gradients(preds, labels, weights, buffer)
             }
             LossFunction::Softmax { num_classes } => {
-                SoftmaxLoss::new(*num_classes).compute_gradients(preds, labels, buffer)
+                SoftmaxLoss::new(*num_classes).compute_gradients(preds, labels, weights, buffer)
             }
             LossFunction::MultiQuantile { alphas } => {
-                QuantileLoss::multi(alphas).compute_gradients(preds, labels, buffer)
+                QuantileLoss::multi(alphas).compute_gradients(preds, labels, weights, buffer)
             }
         }
     }
@@ -247,12 +253,21 @@ pub trait Loss: Send + Sync {
     ///
     /// * `preds` - Predictions, length = n_samples × num_outputs
     /// * `labels` - Labels, length = n_samples
+    /// * `weights` - Optional per-sample weights. If provided, gradients and hessians
+    ///   are multiplied by the weight: `grad[i] *= weight[i]`, `hess[i] *= weight[i]`.
+    ///   Length must equal n_samples.
     /// * `buffer` - Output buffer with `n_samples` samples and `n_outputs == num_outputs()`
     ///
     /// # Panics
     ///
     /// Panics if buffer dimensions don't match input lengths.
-    fn compute_gradients(&self, preds: &[f32], labels: &[f32], buffer: &mut GradientBuffer);
+    fn compute_gradients(
+        &self,
+        preds: &[f32],
+        labels: &[f32],
+        weights: Option<&[f32]>,
+        buffer: &mut GradientBuffer,
+    );
 
     /// Compute initial base scores for this objective.
     ///

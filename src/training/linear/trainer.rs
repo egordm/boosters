@@ -300,7 +300,7 @@ impl GBLinearTrainer {
             Self::compute_predictions(&model, train_data, &mut predictions);
 
             // Compute gradients
-            loss.compute_gradients(&predictions, train_labels, &mut gradients);
+            loss.compute_gradients(&predictions, train_labels, None, &mut gradients);
 
             // Update each output
             for output in 0..num_outputs {
@@ -405,9 +405,11 @@ impl GBLinearTrainer {
         for (set_idx, eval_set) in eval_sets.iter().enumerate() {
             Self::compute_predictions(model, eval_set.data, &mut eval_predictions[set_idx]);
 
+            // TODO: Pass weights from eval_set when EvalSet supports weights
             let value = self.eval_metric.evaluate(
                 &eval_predictions[set_idx],
                 eval_set.labels,
+                None, // No weights support yet in linear trainer eval
                 num_outputs,
             );
 

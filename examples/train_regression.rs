@@ -56,7 +56,7 @@ fn main() {
 
     // Train using simplified API - quantization is handled internally!
     println!("Training GBTree regression model...\n");
-    let forest = trainer.train(&col_matrix, &labels, &[]);
+    let forest = trainer.train(&col_matrix, &labels, None, &[]);
 
     // Create predictor from trained forest
     let predictor = Predictor::<StandardTraversal>::new(&forest);
