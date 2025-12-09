@@ -71,6 +71,7 @@ pub struct RowParallelScratch {
 
 /// Mutable view into a thread's scratch buffer.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct ScratchSlotMut<'a> {
     /// Sum of gradients per bin.
     pub sum_grad: &'a mut [f32],
@@ -80,6 +81,7 @@ pub struct ScratchSlotMut<'a> {
     pub count: &'a mut [u32],
 }
 
+#[allow(dead_code)]
 impl ScratchSlotMut<'_> {
     /// Reset this buffer to zero.
     #[inline]
@@ -107,6 +109,7 @@ impl ScratchSlotMut<'_> {
     }
 }
 
+#[allow(dead_code)]
 impl RowParallelScratch {
     /// Create scratch space for the given number of threads.
     ///
@@ -173,7 +176,6 @@ impl RowParallelScratch {
     /// Caller must ensure no data races. Unsafe operations within use
     /// raw pointer arithmetic.
     #[inline]
-    #[allow(dead_code)]
     pub(crate) unsafe fn buffer_ptrs(&self, thread_id: usize) -> (*mut f32, *mut f32, *mut u32) {
         let start = thread_id * self.bins_per_hist;
         unsafe {
@@ -414,6 +416,7 @@ fn reduce_histograms_parallel(
 ///
 /// Used for histogram subtraction optimization.
 #[inline]
+#[allow(dead_code)]
 pub fn subtract_histograms(
     target_grad: &mut [f32],
     target_hess: &mut [f32],
@@ -458,7 +461,7 @@ mod tests {
         // Verify via getting buffer again
         // Note: We need to drop the first borrow
         drop(buf);
-        let buf = scratch.get_buffer(0);
+        let _buf = scratch.get_buffer(0);
         // Can't read directly from ScratchSlotMut, but we can test via reduce
     }
 

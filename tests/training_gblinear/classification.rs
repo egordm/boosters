@@ -27,7 +27,7 @@ fn train_binary_classification() {
         .build()
         .unwrap();
 
-    let model = trainer.train(&data, &labels, &[]);
+    let model = trainer.train(&data, &labels, None, &[]);
 
     // Verify predictions are in reasonable range for logits
     let mut predictions = Vec::new();
@@ -72,7 +72,7 @@ fn train_multioutput_classification() {
         .build()
         .unwrap();
 
-    let model = trainer.train(&data, &labels, &[]);
+    let model = trainer.train(&data, &labels, None, &[]);
 
     // Verify model has correct number of output groups
     assert_eq!(model.num_groups(), num_class);

@@ -21,10 +21,10 @@
 //! - [`TreeGrower`]: Builds a single tree from gradients
 //! - [`GrowthStrategy`]: Enum for depth-wise or leaf-wise growth
 //!
-//! # Histogram Building
+//! # Histogram Building (RFC-0025)
 //!
 //! - [`HistogramBuilder`]: Accumulates gradient/hessian histograms
-//! - [`NodeHistogram`]: Per-feature histograms for a node
+//! - Pool-based storage with LRU cache for memory efficiency
 //!
 //! Histograms implement `Sub<&Self>` for efficient sibling derivation.
 //!
@@ -45,12 +45,12 @@ mod split;
 mod trainer;
 
 pub use constraints::{
-    InteractionConstraints, MonotonicBounds, MonotonicChecker, MonotonicConstraint,
+    InteractionConstraints, MonotonicBounds, MonotonicConstraints, MonotonicConstraint,
 };
 pub use grower::{
     BuildingNode, BuildingTree, GrowthStrategy, NodeCandidate, TreeBuildParams, TreeGrower,
 };
-pub use histogram::{FeatureHistogram, HistogramBuilder, NodeHistogram};
+pub use histogram::HistogramBuilder;
 pub use partition::RowPartitioner;
 pub use quantize::{
     BinCuts, BinIndex, CategoricalInfo, CutFinder, ExactQuantileCuts, QuantizedMatrix, Quantizer,
@@ -58,8 +58,5 @@ pub use quantize::{
 pub use sampling::{
     ColumnSampler, GossSampler, NoSampler, RandomSampler, RowSample, RowSampler, RowSampling,
 };
-pub use split::{
-    GainParams, GreedySplitFinder, SplitFinder, SplitInfo, leaf_objective, leaf_weight,
-    split_gain,
-};
-pub use trainer::{GBTreeTrainer, GBTreeTrainerBuilder, GrowthMode, QuantizedEvalSet};
+pub use split::{GainParams, GreedySplitFinder, SplitFinder, SplitInfo, leaf_objective, leaf_weight, split_gain};
+pub use trainer::{GBTreeTrainer, GBTreeTrainerBuilder, QuantizedEvalSet};

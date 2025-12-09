@@ -19,7 +19,7 @@
 
 use booste_rs::data::{ColMatrix, RowMatrix};
 use booste_rs::predict::{Predictor, StandardTraversal};
-use booste_rs::training::{GBTreeTrainer, GrowthMode, LossFunction, Verbosity};
+use booste_rs::training::{GBTreeTrainer, GrowthStrategy, LossFunction, Verbosity};
 
 fn main() {
     // Generate synthetic binary classification data
@@ -61,7 +61,7 @@ fn main() {
     let trainer_depth = GBTreeTrainer::builder()
         .loss(LossFunction::Logistic)
         .num_rounds(30u32)
-        .max_depth(3u8)
+        .growth_strategy(GrowthStrategy::DepthWise { max_depth: 3 })
         .learning_rate(0.1f32)
         .verbosity(Verbosity::Info)
         .build()
@@ -83,8 +83,7 @@ fn main() {
     let trainer_leaf = GBTreeTrainer::builder()
         .loss(LossFunction::Logistic)
         .num_rounds(30u32)
-        .growth_mode(GrowthMode::LeafWise) // Leaf-wise growth (LightGBM style)
-        .max_leaves(8u32)
+        .growth_strategy(GrowthStrategy::LeafWise { max_leaves: 8 })
         .learning_rate(0.1f32)
         .verbosity(Verbosity::Info)
         .build()

@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use booste_rs::data::{ColMatrix, RowMatrix};
 use booste_rs::predict::{Predictor, StandardTraversal};
 use booste_rs::testing::pearson_correlation;
-use booste_rs::training::{GBTreeTrainer, GrowthMode, LossFunction, Verbosity};
+use booste_rs::training::{GBTreeTrainer, GrowthStrategy, LossFunction, Verbosity};
 use serde::Deserialize;
 
 // =============================================================================
@@ -185,8 +185,7 @@ fn train_and_predict(tc: &WeightedTestCase) -> TrainResult {
     let trainer = GBTreeTrainer::builder()
         .loss(tc.loss_function())
         .num_rounds(tc.config.num_boost_round)
-        .growth_mode(GrowthMode::DepthWise)
-        .max_depth(tc.config.max_depth.unwrap_or(6))
+        .growth_strategy(GrowthStrategy::DepthWise { max_depth: tc.config.max_depth.unwrap_or(6) })
         .learning_rate(tc.config.eta)
         .reg_lambda(tc.config.lambda)
         .reg_alpha(tc.config.alpha)
@@ -322,8 +321,7 @@ mod weighted_compatibility_tests {
         let trainer = GBTreeTrainer::builder()
             .loss(LossFunction::Softmax { num_classes })
             .num_rounds(config.num_boost_round)
-            .growth_mode(GrowthMode::DepthWise)
-            .max_depth(config.max_depth.unwrap_or(6))
+            .growth_strategy(GrowthStrategy::DepthWise { max_depth: config.max_depth.unwrap_or(6) })
             .learning_rate(config.eta)
             .reg_lambda(config.lambda)
             .reg_alpha(config.alpha)
@@ -527,8 +525,7 @@ mod quality_validation {
         let trainer = GBTreeTrainer::builder()
             .loss(tc.loss_function())
             .num_rounds(tc.config.num_boost_round)
-            .growth_mode(GrowthMode::DepthWise)
-            .max_depth(tc.config.max_depth.unwrap_or(6))
+            .growth_strategy(GrowthStrategy::DepthWise { max_depth: tc.config.max_depth.unwrap_or(6) })
             .learning_rate(tc.config.eta)
             .reg_lambda(tc.config.lambda)
             .reg_alpha(tc.config.alpha)

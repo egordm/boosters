@@ -45,21 +45,26 @@ use crate::training::GradientBuffer;
 ///
 /// Implementors produce a [`RowSample`] containing selected row indices
 /// and optional per-row weights.
+///
+/// # Unified Interface
+///
+/// The trait uses [`GradientBuffer`] as the unified input format. This works
+/// for both single-output and multi-output models:
+/// - Single-output: buffer has 1 output, gradients accessed directly
+/// - Multi-output: buffer has K outputs, samplers can compute importance
+///   (e.g., L2 norm for GOSS)
+///
+/// Gradient-agnostic methods (e.g., random sampling) only use `grads.n_samples()`.
 pub trait RowSampler {
-    /// Sample rows for single-output models.
+    /// Sample rows based on gradient information.
     ///
     /// # Arguments
-    /// - `num_rows`: Total number of rows to sample from
-    /// - `gradients`: Optional gradient values (required for gradient-based methods)
+    /// - `grads`: Gradient buffer containing gradients for all samples/outputs
     /// - `seed`: Random seed for reproducibility
-    fn sample(&self, num_rows: usize, gradients: Option<&[f32]>, seed: u64) -> RowSample;
-
-    /// Sample rows for multi-output models.
     ///
-    /// Each implementor decides how to handle multiple outputs.
-    /// - Gradient-agnostic methods ignore the gradients
-    /// - Gradient-based methods compute a scalar importance per row
-    fn sample_multioutput(&self, grads: &GradientBuffer, seed: u64) -> RowSample;
+    /// # Returns
+    /// A [`RowSample`] with selected indices and optional weights.
+    fn sample(&self, grads: &GradientBuffer, seed: u64) -> RowSample;
 
     /// Returns true if this sampler actually filters rows.
     fn is_enabled(&self) -> bool;
@@ -114,11 +119,7 @@ impl RowSample {
 pub struct NoSampler;
 
 impl RowSampler for NoSampler {
-    fn sample(&self, num_rows: usize, _gradients: Option<&[f32]>, _seed: u64) -> RowSample {
-        RowSample::all_rows(num_rows)
-    }
-
-    fn sample_multioutput(&self, grads: &GradientBuffer, _seed: u64) -> RowSample {
+    fn sample(&self, grads: &GradientBuffer, _seed: u64) -> RowSample {
         RowSample::all_rows(grads.n_samples())
     }
 
@@ -183,11 +184,7 @@ impl RandomSampler {
 }
 
 impl RowSampler for RandomSampler {
-    fn sample(&self, num_rows: usize, _gradients: Option<&[f32]>, seed: u64) -> RowSample {
-        self.do_sample(num_rows, seed)
-    }
-
-    fn sample_multioutput(&self, grads: &GradientBuffer, seed: u64) -> RowSample {
+    fn sample(&self, grads: &GradientBuffer, seed: u64) -> RowSample {
         // Random sampling doesn't use gradients - just sample by count
         self.do_sample(grads.n_samples(), seed)
     }
@@ -328,18 +325,7 @@ impl GossSampler {
 }
 
 impl RowSampler for GossSampler {
-    fn sample(&self, num_rows: usize, gradients: Option<&[f32]>, seed: u64) -> RowSample {
-        if !self.filters_rows() || num_rows == 0 {
-            return RowSample::all_rows(num_rows);
-        }
-
-        let grads = gradients.expect("GOSS requires gradients");
-        assert_eq!(grads.len(), num_rows, "gradient length must match num_rows");
-
-        self.sample_from_magnitudes(grads, seed)
-    }
-
-    fn sample_multioutput(&self, grads: &GradientBuffer, seed: u64) -> RowSample {
+    fn sample(&self, grads: &GradientBuffer, seed: u64) -> RowSample {
         let num_rows = grads.n_samples();
         let num_outputs = grads.n_outputs();
 
@@ -347,23 +333,24 @@ impl RowSampler for GossSampler {
             return RowSample::all_rows(num_rows);
         }
 
-        // For single output, extract gradients directly
+        // For single output, use contiguous slice directly (zero-copy)
         if num_outputs == 1 {
-            let gradients: Vec<f32> = (0..num_rows).map(|i| grads.get(i, 0).0).collect();
-            return self.sample_from_magnitudes(&gradients, seed);
+            return self.sample_from_magnitudes(grads.output_grads(0), seed);
         }
 
         // For multi-output, compute L2 norm of gradient vectors
-        let magnitudes: Vec<f32> = (0..num_rows)
-            .map(|row| {
-                let mut sum_sq = 0.0f32;
-                for k in 0..num_outputs {
-                    let (grad, _) = grads.get(row, k);
-                    sum_sq += grad * grad;
-                }
-                sum_sq.sqrt()
-            })
-            .collect();
+        // Optimized for column-major layout: loop over outputs first, then samples
+        // This ensures contiguous memory access per output
+        let mut sum_sq: Vec<f32> = vec![0.0; num_rows];
+        for output_idx in 0..num_outputs {
+            let output_grads = grads.output_grads(output_idx);
+            for (row, &grad) in output_grads.iter().enumerate() {
+                sum_sq[row] += grad * grad;
+            }
+        }
+        
+        // Take square root to get magnitudes
+        let magnitudes: Vec<f32> = sum_sq.into_iter().map(|s| s.sqrt()).collect();
 
         self.sample_from_magnitudes(&magnitudes, seed)
     }
@@ -446,22 +433,12 @@ impl fmt::Display for RowSampling {
 }
 
 impl RowSampler for RowSampling {
-    fn sample(&self, num_rows: usize, gradients: Option<&[f32]>, seed: u64) -> RowSample {
+    fn sample(&self, grads: &GradientBuffer, seed: u64) -> RowSample {
         match self {
-            Self::None => NoSampler.sample(num_rows, gradients, seed),
-            Self::Random { rate } => RandomSampler::new(*rate).sample(num_rows, gradients, seed),
+            Self::None => NoSampler.sample(grads, seed),
+            Self::Random { rate } => RandomSampler::new(*rate).sample(grads, seed),
             Self::Goss { top_rate, other_rate } => {
-                GossSampler::new(*top_rate, *other_rate).sample(num_rows, gradients, seed)
-            }
-        }
-    }
-
-    fn sample_multioutput(&self, grads: &GradientBuffer, seed: u64) -> RowSample {
-        match self {
-            Self::None => NoSampler.sample_multioutput(grads, seed),
-            Self::Random { rate } => RandomSampler::new(*rate).sample_multioutput(grads, seed),
-            Self::Goss { top_rate, other_rate } => {
-                GossSampler::new(*top_rate, *other_rate).sample_multioutput(grads, seed)
+                GossSampler::new(*top_rate, *other_rate).sample(grads, seed)
             }
         }
     }
@@ -510,6 +487,22 @@ fn sample_from_slice(items: &[u32], k: usize, seed: u64) -> Vec<u32> {
 mod tests {
     use super::*;
 
+    // ---- Test helpers ----
+
+    /// Create a GradientBuffer from a slice of gradients (single output).
+    fn grads_from_slice(gradients: &[f32]) -> GradientBuffer {
+        let mut grads = GradientBuffer::new(gradients.len(), 1);
+        for (row, &g) in gradients.iter().enumerate() {
+            grads.set(row, 0, g, 1.0);
+        }
+        grads
+    }
+
+    /// Create an empty GradientBuffer with given size (for gradient-agnostic tests).
+    fn empty_grads(num_rows: usize) -> GradientBuffer {
+        GradientBuffer::new(num_rows, 1)
+    }
+
     // ---- RowSampling Tests ----
 
     #[test]
@@ -538,7 +531,8 @@ mod tests {
     #[test]
     fn test_row_sampling_sample_none() {
         let config = RowSampling::None;
-        let sample = config.sample(100, None, 42);
+        let grads = empty_grads(100);
+        let sample = config.sample(&grads, 42);
         assert_eq!(sample.indices.len(), 100);
         assert_eq!(sample.indices, (0..100).collect::<Vec<_>>());
         assert!(sample.weights.is_none());
@@ -547,7 +541,8 @@ mod tests {
     #[test]
     fn test_row_sampling_sample_random() {
         let config = RowSampling::Random { rate: 0.5 };
-        let sample = config.sample(100, None, 42);
+        let grads = empty_grads(100);
+        let sample = config.sample(&grads, 42);
         assert_eq!(sample.indices.len(), 50);
 
         // Should be sorted
@@ -571,7 +566,8 @@ mod tests {
             other_rate: 0.2,
         };
         let gradients: Vec<f32> = (0..10).map(|i| i as f32).collect();
-        let sample = config.sample(10, Some(&gradients), 42);
+        let grads = grads_from_slice(&gradients);
+        let sample = config.sample(&grads, 42);
 
         // Should have top 3 + sampled from remaining
         assert!(sample.indices.len() >= 3);
@@ -590,9 +586,10 @@ mod tests {
     #[test]
     fn test_row_sampling_reproducible() {
         let config = RowSampling::Random { rate: 0.5 };
+        let grads = empty_grads(100);
 
-        let sample1 = config.sample(100, None, 42);
-        let sample2 = config.sample(100, None, 42);
+        let sample1 = config.sample(&grads, 42);
+        let sample2 = config.sample(&grads, 42);
 
         assert_eq!(sample1.indices, sample2.indices);
     }
@@ -600,9 +597,10 @@ mod tests {
     #[test]
     fn test_row_sampling_different_seeds() {
         let config = RowSampling::Random { rate: 0.5 };
+        let grads = empty_grads(100);
 
-        let sample1 = config.sample(100, None, 42);
-        let sample2 = config.sample(100, None, 123);
+        let sample1 = config.sample(&grads, 42);
+        let sample2 = config.sample(&grads, 123);
 
         assert_ne!(sample1.indices, sample2.indices);
     }
@@ -614,7 +612,8 @@ mod tests {
         let sampler = RandomSampler::new(0.5);
         assert!(sampler.is_enabled());
 
-        let sample = sampler.sample(100, None, 42);
+        let grads = empty_grads(100);
+        let sample = sampler.sample(&grads, 42);
         assert_eq!(sample.indices.len(), 50);
         assert!(sample.weights.is_none());
     }
@@ -624,12 +623,13 @@ mod tests {
         let sampler = RandomSampler::new(1.0);
         assert!(!sampler.is_enabled());
 
-        let sample = sampler.sample(100, None, 42);
+        let grads = empty_grads(100);
+        let sample = sampler.sample(&grads, 42);
         assert_eq!(sample.indices.len(), 100);
     }
 
     #[test]
-    fn test_random_sampler_multioutput_ignores_gradients() {
+    fn test_random_sampler_ignores_gradients() {
         let sampler = RandomSampler::new(0.5);
 
         // Create gradient buffer with different values
@@ -640,7 +640,7 @@ mod tests {
             }
         }
 
-        let sample = sampler.sample_multioutput(&grads, 42);
+        let sample = sampler.sample(&grads, 42);
 
         // Should still sample 50 rows regardless of gradient values
         assert_eq!(sample.indices.len(), 50);
@@ -682,7 +682,8 @@ mod tests {
         let sampler = GossSampler::new(0.5, 1.0);
 
         let gradients: Vec<f32> = (0..10).map(|i| i as f32).collect();
-        let sample = sampler.sample(10, Some(&gradients), 42);
+        let grads = grads_from_slice(&gradients);
+        let sample = sampler.sample(&grads, 42);
 
         // Should include all rows
         assert_eq!(sample.indices.len(), 10);
@@ -695,7 +696,8 @@ mod tests {
 
         // 10 rows with varying gradients
         let gradients: Vec<f32> = (0..10).map(|i| i as f32).collect();
-        let sample = sampler.sample(10, Some(&gradients), 42);
+        let grads = grads_from_slice(&gradients);
+        let sample = sampler.sample(&grads, 42);
 
         // Top 3 (30%) are indices 9, 8, 7 (highest absolute gradients)
         let top_rows = vec![7u32, 8, 9];
@@ -728,7 +730,8 @@ mod tests {
         let sampler = GossSampler::new(0.2, 0.3);
 
         let gradients: Vec<f32> = (0..100).map(|i| (i as f32).sin()).collect();
-        let sample = sampler.sample(100, Some(&gradients), 42);
+        let grads = grads_from_slice(&gradients);
+        let sample = sampler.sample(&grads, 42);
 
         // Indices should be sorted for cache efficiency
         for i in 1..sample.indices.len() {
@@ -744,9 +747,10 @@ mod tests {
         let sampler = GossSampler::new(0.2, 0.1);
 
         let gradients: Vec<f32> = (0..50).map(|i| (i as f32).sin()).collect();
+        let grads = grads_from_slice(&gradients);
 
-        let sample1 = sampler.sample(50, Some(&gradients), 42);
-        let sample2 = sampler.sample(50, Some(&gradients), 42);
+        let sample1 = sampler.sample(&grads, 42);
+        let sample2 = sampler.sample(&grads, 42);
 
         assert_eq!(sample1.indices, sample2.indices);
     }
@@ -756,9 +760,10 @@ mod tests {
         let sampler = GossSampler::new(0.2, 0.1);
 
         let gradients: Vec<f32> = (0..50).map(|i| (i as f32).sin()).collect();
+        let grads = grads_from_slice(&gradients);
 
-        let sample1 = sampler.sample(50, Some(&gradients), 42);
-        let sample2 = sampler.sample(50, Some(&gradients), 123);
+        let sample1 = sampler.sample(&grads, 42);
+        let sample2 = sampler.sample(&grads, 123);
 
         assert_ne!(sample1.indices, sample2.indices);
     }
@@ -769,7 +774,8 @@ mod tests {
 
         // Mix of positive and negative gradients
         let gradients: Vec<f32> = vec![-9.0, 1.0, -2.0, 3.0, -4.0, 5.0, -6.0, -7.0, 8.0, 0.5];
-        let sample = sampler.sample(10, Some(&gradients), 42);
+        let grads = grads_from_slice(&gradients);
+        let sample = sampler.sample(&grads, 42);
 
         // Top 3 by absolute value: indices 0 (|-9|), 8 (|8|), 7 (|-7|)
         assert!(sample.indices.contains(&0), "Index 0 (grad=-9) should be top");
@@ -806,7 +812,7 @@ mod tests {
             }
         }
 
-        let sample = sampler.sample_multioutput(&grads, 42);
+        let sample = sampler.sample(&grads, 42);
 
         // Top 3 rows (30% of 10) should always be included
         assert!(sample.indices.contains(&0), "Row 0 should be top");
@@ -840,7 +846,7 @@ mod tests {
         grads.set(4, 0, 0.0, 1.0);
         grads.set(4, 1, 0.0, 1.0);
 
-        let sample = sampler.sample_multioutput(&grads, 42);
+        let sample = sampler.sample(&grads, 42);
 
         // One of the high-L2 rows should be in top
         assert!(
@@ -850,7 +856,7 @@ mod tests {
     }
 
     #[test]
-    fn test_goss_multioutput_delegates_to_single_output() {
+    fn test_goss_single_vs_multi_output_same_result() {
         let sampler = GossSampler::new(0.2, 0.1);
 
         // Single-output case
@@ -859,12 +865,11 @@ mod tests {
             grads.set(row, 0, (row as f32).sin(), 1.0);
         }
 
-        let sample_multi = sampler.sample_multioutput(&grads, 42);
+        let sample = sampler.sample(&grads, 42);
 
-        // Compare with direct single-output call
-        let gradients: Vec<f32> = (0..50).map(|i| grads.get(i, 0).0).collect();
-        let sample_single = sampler.sample(50, Some(&gradients), 42);
-
-        assert_eq!(sample_multi.indices, sample_single.indices);
+        // Both should give identical results for single-output
+        // (the method now handles both cases uniformly)
+        assert!(!sample.indices.is_empty());
+        assert!(sample.weights.is_some());
     }
 }

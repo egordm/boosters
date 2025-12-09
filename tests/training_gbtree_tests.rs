@@ -23,7 +23,7 @@ use booste_rs::data::{ColMatrix, RowMatrix};
 use booste_rs::predict::{Predictor, StandardTraversal};
 use booste_rs::testing::pearson_correlation;
 use booste_rs::training::{
-    GBTreeTrainer, GrowthMode, LossFunction, Metric, Rmse, Verbosity,
+    GBTreeTrainer, GrowthStrategy, LossFunction, Metric, Rmse, Verbosity,
 };
 use serde::Deserialize;
 
@@ -168,8 +168,7 @@ fn train_and_predict(tc: &TestCase) -> TrainResult {
         GBTreeTrainer::builder()
             .loss(LossFunction::SquaredError)
             .num_rounds(tc.config.num_boost_round)
-            .growth_mode(GrowthMode::LeafWise)
-            .max_leaves(tc.config.max_leaves.unwrap_or(16))
+            .growth_strategy(GrowthStrategy::LeafWise { max_leaves: tc.config.max_leaves.unwrap_or(16) })
             .learning_rate(tc.config.eta)
             .reg_lambda(tc.config.lambda)
             .reg_alpha(tc.config.alpha)
@@ -182,8 +181,7 @@ fn train_and_predict(tc: &TestCase) -> TrainResult {
         GBTreeTrainer::builder()
             .loss(LossFunction::SquaredError)
             .num_rounds(tc.config.num_boost_round)
-            .growth_mode(GrowthMode::DepthWise)
-            .max_depth(tc.config.max_depth.unwrap_or(6))
+            .growth_strategy(GrowthStrategy::DepthWise { max_depth: tc.config.max_depth.unwrap_or(6) })
             .learning_rate(tc.config.eta)
             .reg_lambda(tc.config.lambda)
             .reg_alpha(tc.config.alpha)
@@ -495,7 +493,7 @@ mod multiclass_tests {
         let trainer = GBTreeTrainer::builder()
             .loss(LossFunction::Softmax { num_classes })
             .num_rounds(tc.config.num_boost_round)
-            .max_depth(tc.config.max_depth.unwrap_or(6))
+            .growth_strategy(GrowthStrategy::DepthWise { max_depth: tc.config.max_depth.unwrap_or(6) })
             .learning_rate(tc.config.eta)
             .reg_lambda(tc.config.lambda)
             .reg_alpha(tc.config.alpha)
@@ -656,7 +654,7 @@ mod multiclass_tests {
         let trainer = GBTreeTrainer::builder()
             .loss(LossFunction::Softmax { num_classes })
             .num_rounds(tc.config.num_boost_round)
-            .max_depth(tc.config.max_depth.unwrap_or(6))
+            .growth_strategy(GrowthStrategy::DepthWise { max_depth: tc.config.max_depth.unwrap_or(6) })
             .learning_rate(tc.config.eta)
             .row_sampling(RowSampling::Goss { top_rate: 0.2, other_rate: 0.1 }) // Enable GOSS
             .verbosity(Verbosity::Silent)
@@ -699,7 +697,7 @@ mod multiclass_tests {
         let trainer = GBTreeTrainer::builder()
             .loss(LossFunction::Softmax { num_classes })
             .num_rounds(tc.config.num_boost_round)
-            .max_depth(tc.config.max_depth.unwrap_or(6))
+            .growth_strategy(GrowthStrategy::DepthWise { max_depth: tc.config.max_depth.unwrap_or(6) })
             .learning_rate(tc.config.eta)
             .row_sampling(RowSampling::Random { rate: 0.8 }) // Enable subsampling
             .verbosity(Verbosity::Silent)

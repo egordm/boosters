@@ -45,7 +45,7 @@ fn train_pseudo_huber_regression() {
         .build()
         .unwrap();
 
-    let model = trainer_ph.train(&data, &labels, &[]);
+    let model = trainer_ph.train(&data, &labels, None, &[]);
 
     // Also train with squared loss for comparison
     let trainer_sq = GBLinearTrainer::builder()
@@ -60,7 +60,7 @@ fn train_pseudo_huber_regression() {
         .build()
         .unwrap();
 
-    let sq_model = trainer_sq.train(&data, &labels, &[]);
+    let sq_model = trainer_sq.train(&data, &labels, None, &[]);
 
     // Compute RMSE on test set for both
     let ph_rmse = compute_test_rmse_default(&model, &test_data, &test_labels);
@@ -132,9 +132,9 @@ fn train_pseudo_huber_with_slope() {
         .build()
         .unwrap();
 
-    let moderate_slope_model = trainer_moderate.train(&data, &labels, &[]);
-    let large_slope_model = trainer_large.train(&data, &labels, &[]);
-    let sq_model = trainer_sq.train(&data, &labels, &[]);
+    let moderate_slope_model = trainer_moderate.train(&data, &labels, None, &[]);
+    let large_slope_model = trainer_large.train(&data, &labels, None, &[]);
+    let sq_model = trainer_sq.train(&data, &labels, None, &[]);
 
     let moderate_rmse = compute_test_rmse_default(&moderate_slope_model, &test_data, &test_labels);
     let large_rmse = compute_test_rmse_default(&large_slope_model, &test_data, &test_labels);
@@ -202,7 +202,7 @@ fn train_hinge_binary_classification() {
         .build()
         .unwrap();
 
-    let hinge_model = trainer_hinge.train(&data, &labels, &[]);
+    let hinge_model = trainer_hinge.train(&data, &labels, None, &[]);
 
     // Also train with logistic for comparison
     let trainer_logistic = GBLinearTrainer::builder()
@@ -217,7 +217,7 @@ fn train_hinge_binary_classification() {
         .build()
         .unwrap();
 
-    let logistic_model = trainer_logistic.train(&data, &labels, &[]);
+    let logistic_model = trainer_logistic.train(&data, &labels, None, &[]);
 
     // Compute accuracy (predictions > 0 → class 1, else class 0)
     let hinge_acc = compute_binary_accuracy(&hinge_model, &test_data, &test_labels, 0.0);

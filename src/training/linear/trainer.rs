@@ -12,7 +12,7 @@
 //! use booste_rs::training::GBLinearTrainer;
 //!
 //! let trainer = GBLinearTrainer::default();
-//! let model = trainer.train(&data, &labels, &[]);
+//! let model = trainer.train(&data, &labels, None, &[]);
 //! ```
 //!
 //! For more control, use the builder:
@@ -28,7 +28,7 @@
 //!     .build()
 //!     .unwrap();
 //!
-//! let model = trainer.train(&data, &labels, &[]);
+//! let model = trainer.train(&data, &labels, None, &[]);
 //! ```
 //!
 //! For multiclass training:
@@ -42,7 +42,7 @@
 //!     .build()
 //!     .unwrap();
 //!
-//! let model = trainer.train(&data, &labels, &[]);
+//! let model = trainer.train(&data, &labels, None, &[]);
 //! ```
 
 use derive_builder::Builder;
@@ -50,7 +50,7 @@ use derive_builder::Builder;
 use crate::data::ColumnAccess;
 use crate::linear::LinearModel;
 use crate::training::{
-    EvalMetric, EvalSet, GradientBuffer, Loss, LossFunction, Metric, TrainingLogger, Verbosity,
+    EarlyStopping, EvalMetric, EvalSet, GradientBuffer, Loss, LossFunction, Metric, TrainingLogger, Verbosity,
 };
 
 use super::selector::FeatureSelectorKind;
@@ -72,7 +72,7 @@ use super::updater::{update_bias, UpdateConfig, UpdaterKind};
 ///
 /// // Simple usage with defaults
 /// let trainer = GBLinearTrainer::default();
-/// let model = trainer.train(&data, &labels, &[]);
+/// let model = trainer.train(&data, &labels, None, &[]);
 ///
 /// // Configured via builder
 /// let trainer = GBLinearTrainer::builder()
@@ -147,9 +147,9 @@ pub struct GBLinearTrainer {
     #[builder(default = "0")]
     pub early_stopping_rounds: usize,
 
-    /// Index of eval set to use for early stopping (default: last eval set).
-    #[builder(default)]
-    pub early_stopping_eval_set: Option<usize>,
+    /// Index of eval set to use for early stopping (default: first eval set).
+    #[builder(default = "0")]
+    pub early_stopping_eval_set: usize,
 
     // ========================================================================
     // Logging
@@ -172,7 +172,7 @@ impl Default for GBLinearTrainer {
             seed: 42,
             eval_metric: EvalMetric::default(),
             early_stopping_rounds: 0,
-            early_stopping_eval_set: None,
+            early_stopping_eval_set: 0,
             verbosity: Verbosity::default(),
         }
     }
@@ -203,47 +203,37 @@ impl GBLinearTrainer {
     /// use booste_rs::data::ColMatrix;
     /// use booste_rs::training::{GBLinearTrainer, LossFunction};
     ///
-    /// // Regression
+    /// // Regression (unweighted)
     /// let trainer = GBLinearTrainer::default();
-    /// let model = trainer.train(&data, &labels, &[]);
+    /// let model = trainer.train(&data, &labels, None, &[]);
     ///
-    /// // Multiclass
+    /// // Multiclass with sample weights
     /// let trainer = GBLinearTrainer::builder()
     ///     .loss(LossFunction::Softmax { num_classes: 3 })
     ///     .build()
     ///     .unwrap();
-    /// let model = trainer.train(&data, &labels, &[]);
+    /// let weights: Vec<f32> = labels.iter()
+    ///     .map(|&label| if label > 0.5 { 10.0 } else { 1.0 })
+    ///     .collect();
+    /// let model = trainer.train(&data, &labels, Some(&weights), &[]);
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `weights.len() != labels.len()` when weights are provided.
     pub fn train<C>(
         &self,
         train_data: &C,
         train_labels: &[f32],
+        weights: Option<&[f32]>,
         eval_sets: &[EvalSet<'_, C>],
     ) -> LinearModel
     where
         C: ColumnAccess<Element = f32> + Sync,
-    {
-        self.train_internal(train_data, train_labels, eval_sets, &self.loss)
-    }
-
-    // ========================================================================
-    // Internal training implementation (unified for single and multi-output)
-    // ========================================================================
-
-    fn train_internal<C, L>(
-        &self,
-        train_data: &C,
-        train_labels: &[f32],
-        eval_sets: &[EvalSet<'_, C>],
-        loss: &L,
-    ) -> LinearModel
-    where
-        C: ColumnAccess<Element = f32> + Sync,
-        L: Loss + ?Sized,
     {
         let num_features = train_data.num_columns();
         let num_samples = train_data.num_rows();
-        let num_outputs = loss.num_outputs();
+        let num_outputs = self.loss.num_outputs();
 
         assert!(
             num_outputs >= 1,
@@ -255,6 +245,15 @@ impl GBLinearTrainer {
             num_samples,
             "Labels length must match number of samples"
         );
+        if let Some(w) = weights {
+            assert_eq!(
+                w.len(),
+                num_samples,
+                "weights length ({}) must match labels length ({})",
+                w.len(),
+                num_samples
+            );
+        }
 
         // Initialize model
         let mut model = LinearModel::zeros(num_features, num_outputs);
@@ -282,13 +281,14 @@ impl GBLinearTrainer {
             .collect();
 
         // Early stopping state
-        let early_stopping_eval_idx = self
-            .early_stopping_eval_set
-            .unwrap_or(eval_sets.len().saturating_sub(1));
-        let mut best_metric_value: Option<f64> = None;
-        let mut best_round = 0;
-        let mut rounds_without_improvement = 0;
-        let higher_is_better = self.eval_metric.higher_is_better();
+        let mut early_stopping = if self.early_stopping_rounds > 0 && !eval_sets.is_empty() {
+            Some(EarlyStopping::new(
+                self.early_stopping_rounds,
+                self.eval_metric.higher_is_better(),
+            ))
+        } else {
+            None
+        };
 
         // Logger
         let mut logger = TrainingLogger::new(self.verbosity);
@@ -300,7 +300,7 @@ impl GBLinearTrainer {
             Self::compute_predictions(&model, train_data, &mut predictions);
 
             // Compute gradients
-            loss.compute_gradients(&predictions, train_labels, None, &mut gradients);
+            self.loss.compute_gradients(&predictions, train_labels, weights, &mut gradients);
 
             // Update each output
             for output in 0..num_outputs {
@@ -328,10 +328,13 @@ impl GBLinearTrainer {
             // Evaluation
             let (round_metrics, early_stop_value) = self.evaluate_round(
                 &model,
+                train_labels,
+                weights,
+                &predictions,
                 eval_sets,
                 &mut eval_predictions,
                 num_outputs,
-                early_stopping_eval_idx,
+                self.early_stopping_eval_set,
             );
 
             if self.verbosity >= Verbosity::Info {
@@ -339,16 +342,15 @@ impl GBLinearTrainer {
             }
 
             // Early stopping check
-            if self.check_early_stopping(
-                early_stop_value,
-                higher_is_better,
-                &mut best_metric_value,
-                &mut best_round,
-                &mut rounds_without_improvement,
-                round,
-                &mut logger,
-            ) {
-                break;
+            if let Some(ref mut es) = early_stopping {
+                if let Some(value) = early_stop_value {
+                    if es.should_stop(value) {
+                        if self.verbosity >= Verbosity::Info {
+                            logger.log_early_stopping(round, es.best_round(), self.eval_metric.name());
+                        }
+                        break;
+                    }
+                }
             }
         }
 
@@ -394,6 +396,9 @@ impl GBLinearTrainer {
     fn evaluate_round<C: ColumnAccess<Element = f32>>(
         &self,
         model: &LinearModel,
+        train_labels: &[f32],
+        train_weights: Option<&[f32]>,
+        train_predictions: &[f32],
         eval_sets: &[EvalSet<'_, C>],
         eval_predictions: &mut [Vec<f32>],
         num_outputs: usize,
@@ -402,14 +407,21 @@ impl GBLinearTrainer {
         let mut round_metrics = Vec::new();
         let mut early_stop_value = None;
 
+        // Training set metric
+        if self.verbosity >= Verbosity::Info {
+            let train_metric =
+                self.eval_metric
+                    .evaluate(train_predictions, train_labels, train_weights, num_outputs);
+            round_metrics.push(("train".to_string(), train_metric));
+        }
+
         for (set_idx, eval_set) in eval_sets.iter().enumerate() {
             Self::compute_predictions(model, eval_set.data, &mut eval_predictions[set_idx]);
 
-            // TODO: Pass weights from eval_set when EvalSet supports weights
             let value = self.eval_metric.evaluate(
                 &eval_predictions[set_idx],
                 eval_set.labels,
-                None, // No weights support yet in linear trainer eval
+                eval_set.weights,
                 num_outputs,
             );
 
@@ -421,52 +433,6 @@ impl GBLinearTrainer {
         }
 
         (round_metrics, early_stop_value)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn check_early_stopping(
-        &self,
-        early_stop_value: Option<f64>,
-        higher_is_better: bool,
-        best_metric_value: &mut Option<f64>,
-        best_round: &mut usize,
-        rounds_without_improvement: &mut usize,
-        round: usize,
-        logger: &mut TrainingLogger,
-    ) -> bool {
-        if self.early_stopping_rounds == 0 {
-            return false;
-        }
-
-        if let Some(current_value) = early_stop_value {
-            let is_improvement = match *best_metric_value {
-                None => true,
-                Some(best) => {
-                    if higher_is_better {
-                        current_value > best
-                    } else {
-                        current_value < best
-                    }
-                }
-            };
-
-            if is_improvement {
-                *best_metric_value = Some(current_value);
-                *best_round = round;
-                *rounds_without_improvement = 0;
-            } else {
-                *rounds_without_improvement += 1;
-            }
-
-            if *rounds_without_improvement > self.early_stopping_rounds {
-                if self.verbosity >= Verbosity::Info {
-                    logger.log_early_stopping(round, *best_round, self.eval_metric.name());
-                }
-                return true;
-            }
-        }
-
-        false
     }
 }
 
@@ -520,7 +486,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let model = trainer.train(&train_data, &train_labels, &[]);
+        let model = trainer.train(&train_data, &train_labels, None, &[]);
 
         // Check predictions
         let pred1 = model.predict_row(&[1.0], &[0.0])[0];
@@ -544,7 +510,7 @@ mod tests {
             .verbosity(Verbosity::Silent)
             .build()
             .unwrap();
-        let model_no_reg = trainer_no_reg.train(&train_data, &train_labels, &[]);
+        let model_no_reg = trainer_no_reg.train(&train_data, &train_labels, None, &[]);
 
         // Train with L2 regularization
         let trainer_l2 = GBLinearTrainer::builder()
@@ -554,7 +520,7 @@ mod tests {
             .verbosity(Verbosity::Silent)
             .build()
             .unwrap();
-        let model_l2 = trainer_l2.train(&train_data, &train_labels, &[]);
+        let model_l2 = trainer_l2.train(&train_data, &train_labels, None, &[]);
 
         // L2 should produce smaller weights
         let w_no_reg = model_no_reg.weight(0, 0).abs();
@@ -587,7 +553,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let model = trainer.train(&train_data, &train_labels, &[]);
+        let model = trainer.train(&train_data, &train_labels, None, &[]);
 
         let w0 = model.weight(0, 0);
         let w1 = model.weight(1, 0);
@@ -625,7 +591,7 @@ mod tests {
             .build()
             .unwrap();
 
-        let model = trainer.train(&train_data, &train_labels, &[]);
+        let model = trainer.train(&train_data, &train_labels, None, &[]);
 
         // Model should have 3 output groups
         assert_eq!(model.num_groups(), 3);
