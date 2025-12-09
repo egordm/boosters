@@ -43,7 +43,7 @@
 
 use rayon::prelude::*;
 
-use super::histogram::NodeHistogram;
+use super::histogram::{HistogramBins, NodeHistogram};
 use super::quantize::BinCuts;
 
 // ============================================================================
@@ -400,10 +400,17 @@ impl GreedySplitFinder {
     ///
     /// Scans bins from left to right, computing gain at each boundary.
     /// This is the single-output implementation.
-    fn find_best_split_for_feature(
+    ///
+    /// The function is generic over [`HistogramBins`] to support both
+    /// owned [`FeatureHistogram`] and borrowed [`FeatureSlice`] views.
+    ///
+    /// [`HistogramBins`]: super::histogram::HistogramBins
+    /// [`FeatureHistogram`]: super::histogram::FeatureHistogram
+    /// [`FeatureSlice`]: super::histogram::FeatureSlice
+    fn find_best_split_for_feature<H: HistogramBins>(
         &self,
         feature: u32,
-        hist: &super::histogram::FeatureHistogram,
+        hist: &H,
         cuts: &[f32],
         parent_grad: f32,
         parent_hess: f32,
@@ -562,10 +569,10 @@ impl GreedySplitFinder {
     ///
     /// # Complexity
     /// O(k log k) where k is the number of categories
-    fn find_best_categorical_split(
+    fn find_best_categorical_split<H: HistogramBins>(
         &self,
         feature: u32,
-        hist: &super::histogram::FeatureHistogram,
+        hist: &H,
         num_categories: u32,
         parent_grad: f32,
         parent_hess: f32,

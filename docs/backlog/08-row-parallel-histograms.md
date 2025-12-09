@@ -162,7 +162,7 @@ memory traffic by a factor of `num_features`.
 **Goal**: Unify histogram storage so `ContiguousHistogramPool` can be used for all
 strategies (sequential, feature-parallel, row-parallel), replacing `NodeHistogram`.
 
-**Status**: Not Started
+**Status**: In Progress
 
 **Rationale**: See RFC-0025 DD-7. The flat SoA layout is more cache-friendly than
 nested `NodeHistogram` → `Vec<FeatureHistogram>` for all use cases. This unification
@@ -170,41 +170,52 @@ simplifies the codebase and enables all strategies to benefit from pooling/LRU.
 
 ### Tasks
 
-- [ ] 4.1: Implement `HistogramLayout` struct with feature offsets
-- [ ] 4.2: Implement `FeatureSlice<'a>` - immutable view into one feature's bins
-- [ ] 4.3: Implement `FeatureSliceMut<'a>` - mutable view for accumulation
-- [ ] 4.4: Add `layout.feature_slice(slot, feat)` and `feature_slice_mut()` methods
-- [ ] 4.5: Implement `accumulate()` on `FeatureSliceMut` (matching `FeatureHistogram`)
-- [ ] 4.6: Make `HistogramBuilder.build()` generic over target type (trait or enum)
-- [ ] 4.7: Update `SplitFinder` to work with `FeatureSlice` views
+- [x] 4.1: Implement `HistogramLayout` struct with feature offsets
+- [x] 4.2: Implement `FeatureSlice<'a>` - immutable view into one feature's bins
+- [x] 4.3: Implement `FeatureSliceMut<'a>` - mutable view for accumulation
+- [x] 4.4: Add `layout.feature_slice(slot, feat)` and `feature_slice_mut()` methods
+- [x] 4.5: Implement `add()` on `FeatureSliceMut` (matching `FeatureHistogram`)
+- [x] 4.6: Implement `HistogramBins` trait for generic split finding
+- [x] 4.7: Update `SplitFinder` to work with `HistogramBins` trait
 
 ### Unit Tests
 
-- [ ] `test_layout_feature_offsets` - Correct offsets for various feature counts
-- [ ] `test_feature_slice_basic` - Read stats from feature slice
-- [ ] `test_feature_slice_mut_accumulate` - Accumulate into feature slice
-- [ ] `test_builder_with_pool_slot` - Build histogram into pool slot
-- [ ] `test_builder_matches_legacy` - Pool-based build matches `NodeHistogram` build
-- [ ] `test_split_finder_with_slices` - Split finding works with feature slices
+- [x] `test_histogram_layout_uniform` - Correct offsets for uniform bins
+- [x] `test_histogram_layout_offsets` - Correct offsets for various bin counts
+- [x] `test_feature_slice_basic` - Read stats from feature slice
+- [x] `test_feature_slice_totals` - Total grad/hess/count computation
+- [x] `test_feature_slice_mut_add` - Accumulate into feature slice
+- [x] `test_feature_slice_mut_reset` - Reset zeroes all bins
+- [x] `test_feature_slice_mut_as_immut` - Convert mutable to immutable
+- [x] `test_histogram_bins_trait` - Trait works with generic functions
 
-### Integration Tests
+### Remaining Work
 
-- [ ] `test_feature_parallel_with_pool` - Feature-parallel building into pool
-- [ ] `test_sequential_with_pool` - Sequential building into pool
+- [ ] 4.8: Merge `ParallelHistogramBuilder` into unified `HistogramBuilder`
+  - Add `build_sequential()` method (current behavior)
+  - Add `build_feature_parallel()` method
+  - Add `build_row_parallel()` method (from ParallelHistogramBuilder)
+  - Add `build()` auto-select method based on heuristics
+  - Remove separate `ParallelHistogramBuilder` struct
+- [ ] 4.9: Remove `NodeHistogram` - pool replaces it entirely
+- [ ] 4.10: Integration tests: builder with pool slot, split finder with slices
 
 ### Implementation Notes
 
 - `HistogramLayout` stores `feature_offsets: Box<[usize]>` computed from `BinCuts`
 - `FeatureSlice` is just `(&[f32], &[f32], &[u32])` - grad, hess, count slices
-- Key insight: The accumulation kernel is the same, only the target differs
-- Can use a trait `trait HistogramTarget { fn accumulate(&mut self, bin, g, h); }`
+- `HistogramBins` trait provides `num_bins()` and `bin_stats()` for split finding
+- Both `FeatureHistogram` and `FeatureSlice` implement `HistogramBins`
+- Key insight: Split finding is now generic over histogram storage type
 
-### Deprecation Plan
+### Type Decisions
 
-After this story:
-- `NodeHistogram` is deprecated (still works, but pool is preferred)
-- `FeatureHistogram` remains as the underlying slice type or gets replaced by `FeatureSlice`
-- Full removal deferred to post-1.0
+| Type | Decision | Reasoning |
+|------|----------|-----------|
+| `FeatureHistogram` | **Keep** | Useful as owned, standalone histogram. `FeatureSlice` is borrowed; sometimes ownership is needed (tests, standalone use). Both implement `HistogramBins`. |
+| `NodeHistogram` | **Remove** | Only groups `Vec<FeatureHistogram>` with cached totals. Pool + `HistogramLayout` replaces this entirely. Keeping it creates confusion about which to use. |
+| `FeatureSlice` | **Keep** | Borrowed view into flat pool storage. Zero-cost abstraction over raw slices. |
+| `HistogramBuilder` | **Refactor** | Should build into pool slots. Single code path, no dual storage formats. |
 
 ---
 
@@ -359,13 +370,15 @@ After this epic, the histogram module structure will be:
 src/training/gbtree/histogram/
 ├── mod.rs               # Re-exports, architecture overview
 ├── types.rs             # NodeId, SlotId, PoolMetrics, HistogramLayout
-├── feature.rs           # FeatureHistogram (deprecated) / FeatureSlice (new)
-├── node.rs              # NodeHistogram (deprecated, kept for compat)
-├── builder.rs           # Sequential + feature-parallel (uses pool)
+├── feature.rs           # FeatureHistogram (owned single-feature histogram)
+├── slice.rs             # FeatureSlice, FeatureSliceMut (borrowed views)
+├── builder.rs           # Sequential + feature-parallel (builds into pool)
 ├── parallel_builder.rs  # Row-parallel builder
 ├── pool.rs              # ContiguousHistogramPool (unified storage)
 └── scratch.rs           # RowParallelScratch, reduction
 ```
+
+**Removed**: `node.rs` (`NodeHistogram`) - replaced by pool + layout
 
 ---
 

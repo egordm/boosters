@@ -938,64 +938,82 @@ The inner loop is identical — just the outer parallelization differs.
 
 ```text
 src/training/gbtree/histogram/
-├── mod.rs               # Re-exports, HistogramBuilder facade
-├── types.rs             # FeatureHistogram, NodeHistogram, etc.
-├── kernel.rs            # NEW: Core accumulate_row_range() function
-├── builder.rs           # Sequential + per-feature parallel (uses kernel)
-├── parallel_builder.rs  # NEW: Row-parallel builder (uses same kernel)
-├── pool.rs              # NEW: ContiguousHistogramPool
-└── scratch.rs           # NEW: RowParallelScratch, reduction
+├── mod.rs               # Re-exports, architecture overview
+├── types.rs             # NodeId, SlotId, PoolMetrics, HistogramLayout
+├── feature.rs           # FeatureHistogram (owned, single feature)
+├── slice.rs             # FeatureSlice/Mut (borrowed views), HistogramBins trait
+├── builder.rs           # HistogramBuilder with all strategies:
+│                        #   - build_sequential()
+│                        #   - build_feature_parallel()
+│                        #   - build_row_parallel()
+│                        #   - build() (auto-selects)
+├── pool.rs              # ContiguousHistogramPool (unified storage)
+└── scratch.rs           # RowParallelScratch (for row-parallel strategy)
 ```
 
 ### Unified Builder Interface
 
+There is **one `HistogramBuilder`** type that provides all strategies. This avoids
+code duplication since the inner accumulation kernel is identical across strategies —
+only the parallelization approach differs.
+
 ```rust
-/// Unified histogram builder that selects strategy automatically
+/// Unified histogram builder with multiple parallelization strategies.
+///
+/// All strategies share the same inner accumulation kernel. The difference is:
+/// - Sequential: single-threaded, no overhead
+/// - Feature-parallel: each thread handles a subset of features (all rows)
+/// - Row-parallel: each thread handles a subset of rows (all features), then merge
+///
+/// Strategy selection can be automatic (based on data shape) or explicit.
 pub struct HistogramBuilder {
-    cuts: Arc<BinCuts>,
-    params: HistogramBuildParams,
+    /// Layout for feature indexing within flat histograms
+    layout: HistogramLayout,
     
-    // Strategy-specific state (lazily initialized)
+    /// Strategy-specific state (lazily initialized)
     scratch: Option<RowParallelScratch>,
+    
+    /// Configuration for strategy selection
+    config: HistogramBuildConfig,
 }
 
 impl HistogramBuilder {
-    /// Build histogram, automatically selecting best strategy
+    /// Build histogram with automatic strategy selection.
+    ///
+    /// Selects strategy based on data shape:
+    /// - Small nodes (< min_rows_for_parallel): Sequential
+    /// - Many features, few rows per feature: Feature-parallel  
+    /// - Few features or many rows: Row-parallel
     pub fn build<B: BinIndex>(
         &mut self,
-        hist: &mut NodeHistogram,
+        target: HistogramSlotMut<'_>,
         quantized: &QuantizedMatrix<B>,
         grads: &[f32],
         hess: &[f32],
         rows: &[u32],
     ) {
-        match self.select_strategy(rows.len()) {
-            Strategy::Sequential => self.build_sequential(hist, quantized, grads, hess, rows),
-            Strategy::FeatureParallel => self.build_feature_parallel(hist, quantized, grads, hess, rows),
-            Strategy::RowParallel => self.build_row_parallel(hist, quantized, grads, hess, rows),
+        match self.select_strategy(rows.len(), quantized.num_features()) {
+            Strategy::Sequential => self.build_sequential(target, quantized, grads, hess, rows),
+            Strategy::FeatureParallel => self.build_feature_parallel(target, quantized, grads, hess, rows),
+            Strategy::RowParallel => self.build_row_parallel(target, quantized, grads, hess, rows),
         }
     }
     
-    // Private methods share kernel::accumulate_row_range
-    fn build_sequential(...) { 
-        kernel::accumulate_row_range(hist, quantized, grads, hess, rows);
-    }
+    /// Build with no parallelism. Best for small nodes.
+    pub fn build_sequential<B: BinIndex>(...) { ... }
     
-    fn build_feature_parallel(...) {
-        hist.features.par_iter_mut().for_each(|feat_hist| {
-            kernel::accumulate_feature(feat_hist, quantized, grads, hess, rows, feat_idx);
-        });
-    }
+    /// Build with feature-level parallelism. Best for wide data.
+    pub fn build_feature_parallel<B: BinIndex>(...) { ... }
     
-    fn build_row_parallel(...) {
-        let scratch = self.get_or_init_scratch();
-        rows.par_chunks(ROWS_PER_THREAD).enumerate().for_each(|(tid, chunk)| {
-            kernel::accumulate_row_range(&mut scratch[tid], quantized, grads, hess, chunk);
-        });
-        scratch.reduce_into(hist);
-    }
+    /// Build with row-level parallelism. Best for tall data.
+    /// Uses thread-local scratch buffers and merges at the end.
+    pub fn build_row_parallel<B: BinIndex>(...) { ... }
 }
 ```
+
+**Key design point:** We do NOT have separate `SerialHistogramBuilder` and 
+`ParallelHistogramBuilder` types. One unified `HistogramBuilder` provides all 
+strategies, making it easy to switch and benchmark.
 
 ## Future Work
 

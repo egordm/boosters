@@ -15,8 +15,12 @@
 //! # Key Types
 //!
 //! ## Per-Node Histograms
-//! - [`FeatureHistogram`]: Per-feature gradient/hessian histogram
-//! - [`NodeHistogram`]: Collection of feature histograms for a tree node
+//! - [`FeatureHistogram`]: Per-feature gradient/hessian histogram (legacy, owned)
+//! - [`NodeHistogram`]: Collection of feature histograms for a tree node (legacy)
+//! - [`FeatureSlice`], [`FeatureSliceMut`]: Views into flat histogram storage
+//!
+//! ## Histogram Layout
+//! - [`HistogramLayout`]: Maps features to bin ranges in flat histograms
 //!
 //! ## Sequential Building
 //! - [`HistogramBuilder`]: Builds histograms from quantized data
@@ -56,6 +60,7 @@ mod node;
 pub mod parallel_builder;
 pub mod pool;
 pub mod scratch;
+mod slice;
 pub mod types;
 
 pub use builder::HistogramBuilder;
@@ -64,4 +69,5 @@ pub use node::NodeHistogram;
 pub use parallel_builder::{ParallelHistogramBuilder, ParallelHistogramConfig};
 pub use pool::{ContiguousHistogramPool, HistogramSlot, HistogramSlotMut};
 pub use scratch::{subtract_histograms, RowParallelScratch, ScratchSlotMut};
-pub use types::{recommended_pool_capacity, NodeId, PoolMetrics};
+pub use slice::{FeatureSlice, FeatureSliceMut, HistogramBins};
+pub use types::{recommended_pool_capacity, HistogramLayout, NodeId, PoolMetrics};
