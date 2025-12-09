@@ -46,7 +46,6 @@
 
 use derive_builder::Builder;
 
-use super::constraints::{InteractionConstraints, MonotonicConstraints};
 use crate::data::ColumnAccess;
 use crate::forest::SoAForest;
 use crate::training::metric::EvalSet;
@@ -58,7 +57,6 @@ use crate::trees::{
     ScalarLeaf, SoATreeStorage, TreeBuilder as SoATreeBuilder, categories_to_bitset,
 };
 
-use super::constraints::MonotonicConstraint;
 use super::grower::{BuildingTree, GrowthStrategy, ParallelStrategy, TreeBuildParams, TreeGrower};
 use super::partition::RowPartitioner;
 use super::quantize::{BinCuts, BinIndex, ExactQuantileCuts, QuantizedMatrix, Quantizer};
@@ -183,17 +181,6 @@ pub struct GBTreeTrainer {
     pub colsample_bynode: f32,
 
     // ========================================================================
-    // Constraints
-    // ========================================================================
-    /// Monotonic constraints per feature (-1: decreasing, 0: none, 1: increasing).
-    #[builder(default)]
-    pub monotone_constraints: Vec<MonotonicConstraint>,
-
-    /// Interaction constraints as groups of features.
-    #[builder(default)]
-    pub interaction_constraints: Vec<Vec<u32>>,
-
-    // ========================================================================
     // Logging and callbacks
     // ========================================================================
     /// Verbosity level for logging.
@@ -239,8 +226,6 @@ impl Default for GBTreeTrainer {
             colsample_bytree: 1.0,
             colsample_bylevel: 1.0,
             colsample_bynode: 1.0,
-            monotone_constraints: Vec::new(),
-            interaction_constraints: Vec::new(),
             verbosity: Verbosity::default(),
             eval_metric: EvalMetric::default(),
             early_stopping_rounds: 0,
@@ -442,20 +427,15 @@ impl GBTreeTrainer {
             self.colsample_bylevel,
             self.colsample_bynode,
         );
-        let mono_constraints = MonotonicConstraints::new(&self.monotone_constraints, num_features as usize);
-        let interaction_constraints =
-            InteractionConstraints::new(&self.interaction_constraints, num_features);
         let tree_params = self.tree_build_params();
 
-        // Create tree grower once (owns col_sampler, constraints - reused across all trees)
+        // Create tree grower once (owns col_sampler - reused across all trees)
         let mut grower = TreeGrower::new(
             self.growth_strategy,
             cuts,
             tree_params,
             self.learning_rate,
             col_sampler,
-            mono_constraints,
-            interaction_constraints,
         );
 
         // Initialize base scores (per output) using loss-specific initialization

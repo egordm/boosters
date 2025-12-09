@@ -11,7 +11,7 @@ Phase 2 extended the GBTree training implementation with advanced features:
 - ✅ Categorical feature handling (LightGBM-style gradient-sorted splits)
 - ✅ Sampling strategies (GOSS, row subsampling, column subsampling)
 - ✅ Multi-output support (one-tree-per-output strategy)
-- ✅ Monotonic and interaction constraints
+- ⏸️ Monotonic and interaction constraints (delayed for proper implementation)
 - ❌ Exclusive feature bundling (deferred — low priority for dense data)
 - ❌ Multi-output trees with vector leaves (removed — see RFC-0024)
 
@@ -37,7 +37,7 @@ Testing was a core part of Phase 2 development. Each story included:
 | RFC-0017 | Sampling Strategies | Implemented |
 | RFC-0024 | Unified Multi-Output Training | Accepted (one-tree-per-output only) |
 | RFC-0019 | Exclusive Feature Bundling | Deferred |
-| RFC-0023 | Training Constraints | Implemented |
+| RFC-0023 | Training Constraints | Delayed |
 
 ---
 
@@ -174,58 +174,48 @@ See `docs/design/research/xgboost-gbtree/training/multi_output.md` for full anal
 
 ---
 
-## Story 7: Monotonic Constraints ✅
+## Story 7: Monotonic Constraints ⏸️
+
+**Status**: Delayed — implementation removed for clean API, to be reimplemented properly in future epic.
 
 **Goal**: Enforce monotonic relationships
 
 **RFCs**: RFC-0023
 
-### Tasks
+### Monotonic Tasks (Delayed)
 
-- [x] 7.1: Add `monotone_constraints` to `TreeParams`
-- [x] 7.2: Implement `MonotonicBounds` for bound tracking
-- [x] 7.3: Implement `MonotonicChecker` for split validation
-- [x] 7.4: Implement bounds propagation in `BuildingNode.compute_child_bounds()`
-- [x] 7.5: Implement leaf value clamping via `clamp_leaf_weight()`
-- [x] 7.6: Tests: `test_train_with_monotonic_constraints`, `test_monotonic_constraint_enforced_in_predictions`
-- [x] 7.7: Tests verify predictions are actually monotonic
-
-### Implementation Notes
-
-- Located in `src/training/gbtree/constraints.rs`
-- `MonotonicConstraint` enum: `Increasing`, `Decreasing`, `None`
-- Bounds propagate down tree: left/right children get tightened bounds based on split
-- Leaf weights clamped to `[lower_bound, upper_bound]`
+- [ ] 7.1: Add `monotone_constraints` to `TreeParams`
+- [ ] 7.2: Implement `MonotonicBounds` for bound tracking
+- [ ] 7.3: Implement `MonotonicChecker` for split validation
+- [ ] 7.4: Implement bounds propagation in `BuildingNode.compute_child_bounds()`
+- [ ] 7.5: Implement leaf value clamping via `clamp_leaf_weight()`
+- [ ] 7.6: Tests: `test_train_with_monotonic_constraints`, `test_monotonic_constraint_enforced_in_predictions`
+- [ ] 7.7: Tests verify predictions are actually monotonic
 
 ---
 
-## Story 8: Interaction Constraints ✅
+## Story 8: Interaction Constraints ⏸️
+
+**Status**: Delayed — implementation removed for clean API, to be reimplemented properly in future epic.
 
 **Goal**: Limit feature interactions
 
 **RFCs**: RFC-0023
 
-### Tasks
+### Interaction Tasks (Delayed)
 
-- [x] 8.1: Add `interaction_constraints` to `TreeParams`
-- [x] 8.2: Implement `InteractionConstraints` structure
-- [x] 8.3: Track allowed features per node via `allowed_features` in `BuildingNode`
-- [x] 8.4: Filter candidate features in split finder
-- [x] 8.5: Tests verifying interaction limits enforced
-- [x] 8.6: Integration with `TreeGrower`
-
-### Implementation Notes
-
-- Located in `src/training/gbtree/constraints.rs`
-- Constraint groups: `[[0, 1], [2, 3]]` means features 0,1 can interact, 2,3 can interact
-- After splitting on feature in group G, only features in G remain allowed
-- Empty constraints = all features allowed
+- [ ] 8.1: Add `interaction_constraints` to `TreeParams`
+- [ ] 8.2: Implement `InteractionConstraints` structure
+- [ ] 8.3: Track allowed features per node via `allowed_features` in `BuildingNode`
+- [ ] 8.4: Filter candidate features in split finder
+- [ ] 8.5: Tests verifying interaction limits enforced
+- [ ] 8.6: Integration with `TreeGrower`
 
 ---
 
 ## Dependencies
 
-```
+```text
 Story 1 (Categorical) ──────────────────────── ✅ ─┐
 Story 2 (GOSS) ─────────────────────────────── ✅ ─┤
 Story 3 (Row/Col Sampling) ─────────────────── ✅ ─┤
@@ -233,8 +223,8 @@ Story 3 (Row/Col Sampling) ─────────────────�
 Story 4 (Multi-output Per Tree) ────────────── ✅ ─┤
 Story 5 (Multi-output Tree) ────────────────── ❌ ─┤ (removed)
 Story 6 (Feature Bundling) ─────────────────── ⏸️ ─┤ (deferred)
-Story 7 (Monotonic) ────────────────────────── ✅ ─┤
-Story 8 (Interaction) ──────────────────────── ✅ ─┘
+Story 7 (Monotonic) ────────────────────────── ⏸️ ─┤ (delayed)
+Story 8 (Interaction) ──────────────────────── ⏸️ ─┘ (delayed)
 ```
 
 ## Summary
@@ -247,5 +237,5 @@ Story 8 (Interaction) ───────────────────�
 | 4. Multi-output Per Tree | ✅ Complete | `train_multiclass()` |
 | 5. Multi-output Tree | ❌ Removed | See RFC-0024 |
 | 6. Feature Bundling | ⏸️ Deferred | Low priority |
-| 7. Monotonic | ✅ Complete | Bounds propagation + clamping |
-| 8. Interaction | ✅ Complete | Group-based filtering |
+| 7. Monotonic | ⏸️ Delayed | To be reimplemented properly |
+| 8. Interaction | ⏸️ Delayed | To be reimplemented properly |

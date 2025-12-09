@@ -51,7 +51,7 @@ fn bench_gblinear_matrix_formats(c: &mut Criterion) {
             &(&col_matrix, &labels),
             |b, (matrix, labels)| {
                 b.iter(|| {
-                    let model = trainer.train(black_box(*matrix), black_box(*labels), &[]);
+                    let model = trainer.train(black_box(*matrix), black_box(*labels), None, &[]);
                     black_box(model)
                 });
             },
@@ -63,7 +63,7 @@ fn bench_gblinear_matrix_formats(c: &mut Criterion) {
             &(&csc_matrix, &labels),
             |b, (matrix, labels)| {
                 b.iter(|| {
-                    let model = trainer.train(black_box(*matrix), black_box(*labels), &[]);
+                    let model = trainer.train(black_box(*matrix), black_box(*labels), None, &[]);
                     black_box(model)
                 });
             },
@@ -158,7 +158,7 @@ fn bench_gblinear_updater(c: &mut Criterion) {
         &(&col_matrix, &labels),
         |b, (matrix, labels)| {
             b.iter(|| {
-                let model = trainer_seq.train(black_box(*matrix), black_box(*labels), &[]);
+                let model = trainer_seq.train(black_box(*matrix), black_box(*labels), None, &[]);
                 black_box(model)
             });
         },
@@ -181,7 +181,7 @@ fn bench_gblinear_updater(c: &mut Criterion) {
         &(&col_matrix, &labels),
         |b, (matrix, labels)| {
             b.iter(|| {
-                let model = trainer_par.train(black_box(*matrix), black_box(*labels), &[]);
+                let model = trainer_par.train(black_box(*matrix), black_box(*labels), None, &[]);
                 black_box(model)
             });
         },
@@ -223,7 +223,7 @@ fn bench_gblinear_feature_scaling(c: &mut Criterion) {
             &(&col_matrix, &labels),
             |b, (matrix, labels)| {
                 b.iter(|| {
-                    let model = trainer.train(black_box(*matrix), black_box(*labels), &[]);
+                    let model = trainer.train(black_box(*matrix), black_box(*labels), None, &[]);
                     black_box(model)
                 });
             },
@@ -273,7 +273,7 @@ fn bench_gblinear_multiclass(c: &mut Criterion) {
             &(&col_matrix, &labels),
             |b, (matrix, labels)| {
                 b.iter(|| {
-                    let model = trainer_seq.train(black_box(*matrix), black_box(*labels), &[]);
+                    let model = trainer_seq.train(black_box(*matrix), black_box(*labels), None, &[]);
                     black_box(model)
                 });
             },
@@ -296,7 +296,7 @@ fn bench_gblinear_multiclass(c: &mut Criterion) {
             &(&col_matrix, &labels),
             |b, (matrix, labels)| {
                 b.iter(|| {
-                    let model = trainer_par.train(black_box(*matrix), black_box(*labels), &[]);
+                    let model = trainer_par.train(black_box(*matrix), black_box(*labels), None, &[]);
                     black_box(model)
                 });
             },

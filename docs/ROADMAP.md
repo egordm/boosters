@@ -27,7 +27,8 @@
 │                                                                  │
 │  GBTree Training (Phase 2)              ✅ COMPLETE              │
 │  ════════════════════════════════════════════════               │
-│  Categorical, GOSS, sampling, monotonic/interaction constraints │
+│  Categorical, GOSS, row/column sampling complete                │
+│  Monotonic/interaction constraints delayed (RFC-0023)           │
 │                                                                  │
 │  LightGBM Compatibility                 ✅ INFERENCE COMPLETE    │
 │  ════════════════════════════════════════════════               │
@@ -105,6 +106,7 @@ See [benchmarks](benchmarks/) for details.
 | [0013](design/rfcs/0013-split-finding.md) | Implemented | Split finding |
 | [0014](design/rfcs/0014-row-partitioning.md) | Implemented | Row partitioning |
 | [0015](design/rfcs/0015-tree-growing.md) | Implemented | Tree growing strategies |
+| [0023](design/rfcs/0023-constraints.md) | Delayed | Monotonic/interaction constraints |
 | [0025](design/rfcs/0025-row-parallel-histograms.md) | Draft | Row-parallel histograms + pooling |
 | [0026](design/rfcs/0026-sample-weighting.md) | Implemented | Sample weighting |
 | [0027](design/rfcs/0027-gradient-quantization.md) | Draft | Gradient quantization (16-bit) |

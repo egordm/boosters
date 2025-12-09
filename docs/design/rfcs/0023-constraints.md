@@ -1,10 +1,14 @@
 # RFC-0023: Training Constraints
 
-- **Status**: Draft
+- **Status**: Delayed
 - **Created**: 2024-12-01
 - **Updated**: 2024-12-01
 - **Depends on**: RFC-0011 (GBTree Core), RFC-0014 (Split Finding)
 - **Scope**: Monotonic and interaction constraints during training
+
+> **Note**: This feature has been delayed for proper implementation in a future epic.
+> Initial implementation was removed to simplify the codebase and ensure a clean API.
+> See backlog for future work on constraints.
 
 ## Summary
 
