@@ -284,6 +284,62 @@ impl HistogramLayout {
     pub fn offsets(&self) -> &[usize] {
         &self.feature_offsets
     }
+
+    /// Extract a feature slice from raw histogram arrays.
+    ///
+    /// # Arguments
+    ///
+    /// * `feature` - Feature index
+    /// * `sum_grad` - Full gradient array for the histogram
+    /// * `sum_hess` - Full hessian array for the histogram
+    /// * `count` - Full count array for the histogram
+    ///
+    /// # Returns
+    ///
+    /// [`FeatureSlice`] for the specified feature.
+    #[inline]
+    pub fn feature_slice<'a>(
+        &self,
+        feature: u32,
+        sum_grad: &'a [f32],
+        sum_hess: &'a [f32],
+        count: &'a [u32],
+    ) -> super::slice::FeatureSlice<'a> {
+        let (start, end) = self.feature_range(feature);
+        super::slice::FeatureSlice::new(
+            &sum_grad[start..end],
+            &sum_hess[start..end],
+            &count[start..end],
+        )
+    }
+
+    /// Extract a mutable feature slice from raw histogram arrays.
+    ///
+    /// # Arguments
+    ///
+    /// * `feature` - Feature index
+    /// * `sum_grad` - Full gradient array for the histogram
+    /// * `sum_hess` - Full hessian array for the histogram
+    /// * `count` - Full count array for the histogram
+    ///
+    /// # Returns
+    ///
+    /// [`FeatureSliceMut`] for the specified feature.
+    #[inline]
+    pub fn feature_slice_mut<'a>(
+        &self,
+        feature: u32,
+        sum_grad: &'a mut [f32],
+        sum_hess: &'a mut [f32],
+        count: &'a mut [u32],
+    ) -> super::slice::FeatureSliceMut<'a> {
+        let (start, end) = self.feature_range(feature);
+        super::slice::FeatureSliceMut::new(
+            &mut sum_grad[start..end],
+            &mut sum_hess[start..end],
+            &mut count[start..end],
+        )
+    }
 }
 
 #[cfg(test)]
@@ -369,4 +425,48 @@ mod tests {
 
         let offsets = layout.offsets();
         assert_eq!(offsets, &[0, 8, 16, 24, 32]);
-    }}
+    }
+
+    #[test]
+    fn test_layout_feature_slice() {
+        let layout = HistogramLayout::uniform(2, 4);
+
+        // Create some test data
+        let sum_grad = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let sum_hess = vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8];
+        let count = vec![1u32, 2, 3, 4, 5, 6, 7, 8];
+
+        // Get slice for feature 0
+        let slice0 = layout.feature_slice(0, &sum_grad, &sum_hess, &count);
+        assert_eq!(slice0.num_bins(), 4);
+        assert_eq!(slice0.bin_stats(0), (1.0, 0.1, 1));
+        assert_eq!(slice0.bin_stats(3), (4.0, 0.4, 4));
+
+        // Get slice for feature 1
+        let slice1 = layout.feature_slice(1, &sum_grad, &sum_hess, &count);
+        assert_eq!(slice1.num_bins(), 4);
+        assert_eq!(slice1.bin_stats(0), (5.0, 0.5, 5));
+        assert_eq!(slice1.bin_stats(3), (8.0, 0.8, 8));
+    }
+
+    #[test]
+    fn test_layout_feature_slice_mut() {
+        let layout = HistogramLayout::uniform(2, 4);
+
+        let mut sum_grad = vec![0.0f32; 8];
+        let mut sum_hess = vec![0.0f32; 8];
+        let mut count = vec![0u32; 8];
+
+        // Modify feature 1's slice
+        {
+            let mut slice = layout.feature_slice_mut(1, &mut sum_grad, &mut sum_hess, &mut count);
+            slice.add(0, 1.0, 0.5);
+            slice.add(2, 3.0, 1.5);
+        }
+
+        // Verify modification
+        assert_eq!(sum_grad, vec![0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 3.0, 0.0]);
+        assert_eq!(sum_hess, vec![0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 1.5, 0.0]);
+        assert_eq!(count, vec![0, 0, 0, 0, 1, 0, 1, 0]);
+    }
+}

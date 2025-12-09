@@ -493,4 +493,148 @@ mod tests {
         let total = compute_total_grad(&slice);
         assert!((total - 6.0).abs() < 1e-6);
     }
+
+    // ========================================================================
+    // Integration tests: Pool -> Layout -> Slice
+    // ========================================================================
+
+    /// Integration test demonstrating the full path:
+    /// 1. Build histogram using row-parallel into pool
+    /// 2. Access histogram via layout + slices
+    /// 3. Verify data is correct
+    #[test]
+    fn test_integration_pool_layout_slice() {
+        use crate::data::ColMatrix;
+        use crate::training::gbtree::histogram::{
+            ContiguousHistogramPool, HistogramBuilder, HistogramConfig, HistogramLayout, NodeId,
+        };
+        use crate::training::gbtree::quantize::{ExactQuantileCuts, Quantizer};
+
+        // Create test data with a clear pattern
+        // Feature 0: values 0..20 (will have varying gradients)
+        // Feature 1: constant (no good split)
+        let n_rows = 20;
+        let n_features = 2;
+        let mut data = Vec::with_capacity(n_rows * n_features);
+        for row in 0..n_rows {
+            data.push(row as f32); // Feature 0: 0..19
+        }
+        for _ in 0..n_rows {
+            data.push(5.0); // Feature 1: constant
+        }
+        let matrix = ColMatrix::from_vec(data, n_rows, n_features);
+
+        // Quantize
+        let quantizer = Quantizer::from_data(&matrix, &ExactQuantileCuts::default(), 16);
+        let quantized = quantizer.quantize_u8(&matrix);
+        let cuts = quantized.cuts().clone();
+
+        // Create gradients: first half positive, second half negative
+        // This creates a clear split point at row 10
+        let grads: Vec<f32> = (0..n_rows)
+            .map(|i| if i < 10 { 1.0 } else { -1.0 })
+            .collect();
+        let hess: Vec<f32> = vec![1.0; n_rows];
+        let rows: Vec<u32> = (0..n_rows as u32).collect();
+
+        // Create histogram layout from cuts
+        let layout = HistogramLayout::from_cuts(&cuts);
+        assert_eq!(layout.num_features(), 2);
+
+        // Create pool and builder with row-parallel support
+        let mut pool = ContiguousHistogramPool::new(2, layout.total_bins());
+        let config = HistogramConfig {
+            num_threads: 2,
+            ..Default::default()
+        };
+        let mut builder = HistogramBuilder::with_config(config, &cuts);
+
+        // Build histogram using row-parallel into pool
+        let node_id = NodeId(0);
+        builder.build_row_parallel(&mut pool, node_id, &quantized, &grads, &hess, &rows);
+
+        // Get the histogram slot
+        let slot = pool.get(node_id).expect("histogram should exist");
+
+        // Use layout to get FeatureSlice for each feature
+        let feat0_slice = layout.feature_slice(0, slot.sum_grad, slot.sum_hess, slot.count);
+        let feat1_slice = layout.feature_slice(1, slot.sum_grad, slot.sum_hess, slot.count);
+
+        // Verify slice totals for feature 0
+        // Total grad: 10 * 1.0 + 10 * (-1.0) = 0.0
+        assert!(
+            (feat0_slice.total_grad() - 0.0).abs() < 1e-5,
+            "feat0 total_grad mismatch: {}",
+            feat0_slice.total_grad()
+        );
+        assert!(
+            (feat0_slice.total_hess() - 20.0).abs() < 1e-5,
+            "feat0 total_hess mismatch: {}",
+            feat0_slice.total_hess()
+        );
+        assert_eq!(feat0_slice.total_count(), 20);
+
+        // Feature 1 should have same totals (same data)
+        assert!(
+            (feat1_slice.total_grad() - 0.0).abs() < 1e-5,
+            "feat1 total_grad mismatch"
+        );
+        assert!((feat1_slice.total_hess() - 20.0).abs() < 1e-5);
+        assert_eq!(feat1_slice.total_count(), 20);
+
+        // Verify HistogramBins trait works with the slices
+        fn count_bins<H: HistogramBins>(h: &H) -> u32 {
+            (0..h.num_bins() as usize)
+                .map(|b| h.bin_stats(b).2)
+                .sum()
+        }
+
+        assert_eq!(count_bins(&feat0_slice), 20);
+        assert_eq!(count_bins(&feat1_slice), 20);
+    }
+
+    /// Test that building the same node twice resets properly
+    #[test]
+    fn test_integration_pool_rebuild() {
+        use crate::data::ColMatrix;
+        use crate::training::gbtree::histogram::{
+            ContiguousHistogramPool, HistogramBuilder, HistogramConfig, HistogramLayout, NodeId,
+        };
+        use crate::training::gbtree::quantize::{ExactQuantileCuts, Quantizer};
+
+        let n_rows = 10;
+        let matrix = ColMatrix::from_vec((0..n_rows).map(|i| i as f32).collect(), n_rows, 1);
+        let quantizer = Quantizer::from_data(&matrix, &ExactQuantileCuts::default(), 8);
+        let quantized = quantizer.quantize_u8(&matrix);
+        let cuts = quantized.cuts().clone();
+
+        let layout = HistogramLayout::from_cuts(&cuts);
+        let mut pool = ContiguousHistogramPool::new(1, layout.total_bins());
+        let config = HistogramConfig::default();
+        let mut builder = HistogramBuilder::with_config(config, &cuts);
+
+        let node_id = NodeId(0);
+
+        // Build with positive grads
+        let grads1: Vec<f32> = vec![1.0; n_rows];
+        let hess1: Vec<f32> = vec![1.0; n_rows];
+        let rows: Vec<u32> = (0..n_rows as u32).collect();
+        builder.build_row_parallel(&mut pool, node_id, &quantized, &grads1, &hess1, &rows);
+
+        let slot = pool.get(node_id).unwrap();
+        let slice = layout.feature_slice(0, slot.sum_grad, slot.sum_hess, slot.count);
+        assert!((slice.total_grad() - 10.0).abs() < 1e-5);
+
+        // Rebuild with negative grads
+        let grads2: Vec<f32> = vec![-2.0; n_rows];
+        builder.build_row_parallel(&mut pool, node_id, &quantized, &grads2, &hess1, &rows);
+
+        let slot = pool.get(node_id).unwrap();
+        let slice = layout.feature_slice(0, slot.sum_grad, slot.sum_hess, slot.count);
+        assert!(
+            (slice.total_grad() - (-20.0)).abs() < 1e-5,
+            "Rebuild should reset: got {}",
+            slice.total_grad()
+        );
+    }
 }

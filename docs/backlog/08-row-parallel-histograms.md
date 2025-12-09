@@ -162,7 +162,7 @@ memory traffic by a factor of `num_features`.
 **Goal**: Unify histogram storage so `ContiguousHistogramPool` can be used for all
 strategies (sequential, feature-parallel, row-parallel), replacing `NodeHistogram`.
 
-**Status**: In Progress
+**Status**: COMPLETE (4.9 deferred to Story 6)
 
 **Rationale**: See RFC-0025 DD-7. The flat SoA layout is more cache-friendly than
 nested `NodeHistogram` → `Vec<FeatureHistogram>` for all use cases. This unification
@@ -197,8 +197,17 @@ simplifies the codebase and enables all strategies to benefit from pooling/LRU.
   - Add `build_row_parallel()` method (from ParallelHistogramBuilder)
   - ~~Add `build()` auto-select method based on heuristics~~ (deferred - not needed yet)
   - Remove separate `ParallelHistogramBuilder` struct
-- [ ] 4.9: Remove `NodeHistogram` - pool replaces it entirely
-- [ ] 4.10: Integration tests: builder with pool slot, split finder with slices
+- [ ] ~~4.9: Remove `NodeHistogram`~~ - Deferred to Story 6 (requires grower refactor)
+- [x] 4.10: Integration tests: builder with pool slot, split finder with slices
+  - `test_integration_pool_layout_slice` - Full path from builder to slices
+  - `test_integration_pool_rebuild` - Verify rebuild resets properly
+  - `test_layout_feature_slice` / `test_layout_feature_slice_mut` - Layout helpers
+
+**Note**: Task 4.9 is deferred because `NodeHistogram` is deeply integrated into
+the tree grower. Removing it requires replacing `HashMap<u32, NodeHistogram>` with
+`ContiguousHistogramPool`, which is Story 6's scope.
+
+**Story 4 Status**: COMPLETE (4.9 deferred to Story 6)
 
 ### Implementation Notes
 
