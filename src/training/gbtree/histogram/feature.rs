@@ -2,6 +2,8 @@
 
 use std::ops::{Sub, SubAssign};
 
+use super::slice::HistogramBins;
+
 /// Gradient histogram for a single feature.
 ///
 /// Each bin stores sum of gradients, sum of hessians, and sample count.
@@ -213,6 +215,37 @@ impl Sub<&FeatureHistogram> for FeatureHistogram {
     fn sub(mut self, rhs: &FeatureHistogram) -> FeatureHistogram {
         self -= rhs;
         self
+    }
+}
+
+impl HistogramBins for FeatureHistogram {
+    #[inline]
+    fn num_bins(&self) -> u16 {
+        self.num_bins
+    }
+
+    #[inline]
+    fn bin_stats(&self, bin: usize) -> (f32, f32, u32) {
+        debug_assert!(bin < self.num_bins as usize);
+        unsafe {
+            (
+                *self.sum_grad.get_unchecked(bin),
+                *self.sum_hess.get_unchecked(bin),
+                *self.count.get_unchecked(bin),
+            )
+        }
+    }
+}
+
+impl<H: HistogramBins + ?Sized> HistogramBins for &H {
+    #[inline]
+    fn num_bins(&self) -> u16 {
+        (*self).num_bins()
+    }
+
+    #[inline]
+    fn bin_stats(&self, bin: usize) -> (f32, f32, u32) {
+        (*self).bin_stats(bin)
     }
 }
 

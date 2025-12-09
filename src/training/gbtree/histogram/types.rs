@@ -2,8 +2,17 @@
 //!
 //! This module defines the fundamental types used by the histogram pooling
 //! and row-parallel building systems (RFC-0025).
+//!
+//! # Key Types
+//!
+//! - [`NodeId`]: Identifies a tree node for histogram caching
+//! - [`SlotId`]: Internal slot identifier within the pool
+//! - [`PoolMetrics`]: Statistics for pool usage monitoring
+//! - [`HistogramLayout`]: Describes feature-to-bin mapping for flat histograms
 
 use std::fmt;
+
+use crate::training::gbtree::quantize::BinCuts;
 
 /// Identifies a tree node for histogram caching.
 ///
@@ -151,6 +160,132 @@ pub fn recommended_pool_capacity(
     with_buffer.max(8).min(memory_cap)
 }
 
+// ============================================================================
+// HistogramLayout
+// ============================================================================
+
+/// Describes the layout of features within a flat histogram.
+///
+/// A flat histogram stores all features' bins contiguously:
+/// ```text
+/// [feat0_bins | feat1_bins | feat2_bins | ...]
+/// ```
+///
+/// `HistogramLayout` tracks where each feature's bins start and end,
+/// enabling efficient slicing into per-feature views.
+///
+/// # Example
+///
+/// ```ignore
+/// let layout = HistogramLayout::from_cuts(&cuts);
+///
+/// // Get feature 2's bin range
+/// let (start, end) = layout.feature_range(2);
+/// let feat2_grads = &all_grads[start..end];
+/// ```
+#[derive(Debug, Clone)]
+pub struct HistogramLayout {
+    /// Offset of each feature's first bin.
+    /// `feature_offsets[f]` = starting bin index for feature f.
+    /// Length = num_features + 1 (last entry = total_bins for easy slicing).
+    feature_offsets: Box<[usize]>,
+
+    /// Number of features.
+    num_features: u32,
+
+    /// Total bins across all features.
+    total_bins: usize,
+}
+
+impl HistogramLayout {
+    /// Create a layout from bin cuts.
+    ///
+    /// Computes feature offsets from the cuts' per-feature bin counts.
+    pub fn from_cuts(cuts: &BinCuts) -> Self {
+        let num_features = cuts.num_features();
+        let mut feature_offsets = Vec::with_capacity(num_features as usize + 1);
+
+        let mut offset = 0usize;
+        for f in 0..num_features {
+            feature_offsets.push(offset);
+            offset += cuts.num_bins(f);
+        }
+        feature_offsets.push(offset); // Sentinel for easy slicing
+
+        Self {
+            feature_offsets: feature_offsets.into_boxed_slice(),
+            num_features,
+            total_bins: offset,
+        }
+    }
+
+    /// Create a layout with uniform bins per feature.
+    ///
+    /// Useful for testing or when all features have the same bin count.
+    pub fn uniform(num_features: u32, bins_per_feature: usize) -> Self {
+        let mut feature_offsets = Vec::with_capacity(num_features as usize + 1);
+
+        for f in 0..=num_features {
+            feature_offsets.push(f as usize * bins_per_feature);
+        }
+
+        Self {
+            feature_offsets: feature_offsets.into_boxed_slice(),
+            num_features,
+            total_bins: num_features as usize * bins_per_feature,
+        }
+    }
+
+    /// Number of features.
+    #[inline]
+    pub fn num_features(&self) -> u32 {
+        self.num_features
+    }
+
+    /// Total bins across all features.
+    #[inline]
+    pub fn total_bins(&self) -> usize {
+        self.total_bins
+    }
+
+    /// Get the bin range for a feature.
+    ///
+    /// Returns `(start, end)` where `start..end` is the range of bins.
+    #[inline]
+    pub fn feature_range(&self, feature: u32) -> (usize, usize) {
+        debug_assert!(
+            (feature as usize) < self.feature_offsets.len() - 1,
+            "feature {} out of range",
+            feature
+        );
+        unsafe {
+            let start = *self.feature_offsets.get_unchecked(feature as usize);
+            let end = *self.feature_offsets.get_unchecked(feature as usize + 1);
+            (start, end)
+        }
+    }
+
+    /// Number of bins for a feature.
+    #[inline]
+    pub fn num_bins(&self, feature: u32) -> usize {
+        let (start, end) = self.feature_range(feature);
+        end - start
+    }
+
+    /// Get the starting offset for a feature.
+    #[inline]
+    pub fn feature_offset(&self, feature: u32) -> usize {
+        debug_assert!((feature as usize) < self.feature_offsets.len());
+        unsafe { *self.feature_offsets.get_unchecked(feature as usize) }
+    }
+
+    /// Slice the feature offsets array.
+    #[inline]
+    pub fn offsets(&self) -> &[usize] {
+        &self.feature_offsets
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,4 +339,34 @@ mod tests {
         let cap = recommended_pool_capacity(2, Some(1), 1000, 1_000_000);
         assert!(cap >= 8);
     }
-}
+
+    #[test]
+    fn test_histogram_layout_uniform() {
+        let layout = HistogramLayout::uniform(3, 10);
+
+        assert_eq!(layout.num_features(), 3);
+        assert_eq!(layout.total_bins(), 30);
+
+        // Feature ranges
+        assert_eq!(layout.feature_range(0), (0, 10));
+        assert_eq!(layout.feature_range(1), (10, 20));
+        assert_eq!(layout.feature_range(2), (20, 30));
+
+        // Bin counts
+        assert_eq!(layout.num_bins(0), 10);
+        assert_eq!(layout.num_bins(1), 10);
+        assert_eq!(layout.num_bins(2), 10);
+
+        // Offsets
+        assert_eq!(layout.feature_offset(0), 0);
+        assert_eq!(layout.feature_offset(1), 10);
+        assert_eq!(layout.feature_offset(2), 20);
+    }
+
+    #[test]
+    fn test_histogram_layout_offsets() {
+        let layout = HistogramLayout::uniform(4, 8);
+
+        let offsets = layout.offsets();
+        assert_eq!(offsets, &[0, 8, 16, 24, 32]);
+    }}
