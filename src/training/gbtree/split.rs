@@ -985,7 +985,7 @@ mod tests {
 
             // Build histogram
             let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder.build(&mut hist, &quantized, &grads, &hess, &rows);
+            HistogramBuilder::default().build_sequential(&mut hist, &quantized, &grads, &hess, &rows);
 
             // Find split
             let params = GainParams::default().with_min_child_weight(1.0);
@@ -1012,7 +1012,7 @@ mod tests {
             let rows: Vec<u32> = (0..20).collect();
 
             let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder.build(&mut hist, &quantized, &grads, &hess, &rows);
+            HistogramBuilder::default().build_sequential(&mut hist, &quantized, &grads, &hess, &rows);
 
             // With very high min_child_weight, no split should be found
             let params = GainParams::default().with_min_child_weight(100.0);
@@ -1031,7 +1031,7 @@ mod tests {
             let rows: Vec<u32> = (0..20).collect();
 
             let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder.build(&mut hist, &quantized, &grads, &hess, &rows);
+            HistogramBuilder::default().build_sequential(&mut hist, &quantized, &grads, &hess, &rows);
 
             let params = GainParams::default();
             let finder = GreedySplitFinder::new();
@@ -1050,7 +1050,7 @@ mod tests {
             let rows: Vec<u32> = (0..20).collect();
 
             let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder.build(&mut hist, &quantized, &grads, &hess, &rows);
+            HistogramBuilder::default().build_sequential(&mut hist, &quantized, &grads, &hess, &rows);
 
             let params = GainParams::default();
 
@@ -1100,7 +1100,7 @@ mod tests {
 
             let rows: Vec<u32> = (0..10).collect();
             let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder.build(&mut hist, &quantized, &grads, &hess, &rows);
+            HistogramBuilder::default().build_sequential(&mut hist, &quantized, &grads, &hess, &rows);
 
             let params = GainParams::default().with_min_child_weight(0.5);
             let finder = GreedySplitFinder::new();
@@ -1157,7 +1157,7 @@ mod tests {
 
             let rows: Vec<u32> = (0..12).collect();
             let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder.build(&mut hist, &quantized, &grads, &hess, &rows);
+            HistogramBuilder::default().build_sequential(&mut hist, &quantized, &grads, &hess, &rows);
 
             let params = GainParams::no_regularization().with_min_child_weight(1.0);
             let finder = GreedySplitFinder::new();
@@ -1205,7 +1205,7 @@ mod tests {
 
             let rows: Vec<u32> = (0..6).collect();
             let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder.build(&mut hist, &quantized, &grads, &hess, &rows);
+            HistogramBuilder::default().build_sequential(&mut hist, &quantized, &grads, &hess, &rows);
 
             let params = GainParams::no_regularization().with_min_child_weight(1.0);
             let finder = GreedySplitFinder::new();
@@ -1252,7 +1252,7 @@ mod tests {
 
             let rows: Vec<u32> = (0..10).collect();
             let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder.build(&mut hist, &quantized, &grads, &hess, &rows);
+            HistogramBuilder::default().build_sequential(&mut hist, &quantized, &grads, &hess, &rows);
 
             let params = GainParams::default().with_min_child_weight(1.0);
             let finder = GreedySplitFinder::new();

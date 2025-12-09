@@ -15,21 +15,24 @@
 //! # Key Types
 //!
 //! ## Per-Node Histograms
-//! - [`FeatureHistogram`]: Per-feature gradient/hessian histogram (legacy, owned)
-//! - [`NodeHistogram`]: Collection of feature histograms for a tree node (legacy)
-//! - [`FeatureSlice`], [`FeatureSliceMut`]: Views into flat histogram storage
+//! - [`FeatureHistogram`]: Per-feature gradient/hessian histogram (owned)
+//! - [`NodeHistogram`]: Collection of feature histograms for a tree node
+//! - [`FeatureSlice`], [`FeatureSliceMut`]: Borrowed views into flat storage
 //!
 //! ## Histogram Layout
 //! - [`HistogramLayout`]: Maps features to bin ranges in flat histograms
 //!
-//! ## Sequential Building
-//! - [`HistogramBuilder`]: Builds histograms from quantized data
+//! ## Building (RFC-0025)
+//! - [`HistogramBuilder`]: Unified builder with multiple strategies:
+//!   - `build_sequential()` - single-threaded
+//!   - `build_feature_parallel()` - parallelizes across features
+//!   - `build_row_parallel()` - parallelizes across rows
+//! - [`HistogramConfig`]: Configuration for builder strategies
 //!
-//! ## Parallel Building (RFC-0025)
+//! ## Pool & Scratch
 //! - [`ContiguousHistogramPool`]: LRU-cached contiguous histogram storage
-//! - [`RowParallelScratch`]: Per-thread scratch buffers for row-parallel building
+//! - [`RowParallelScratch`]: Per-thread scratch buffers for row-parallel
 //! - [`NodeId`], [`SlotId`]: Type-safe identifiers for pool management
-//! - [`PoolMetrics`]: Statistics for monitoring pool behavior
 //!
 //! # Histogram Subtraction
 //!
@@ -41,8 +44,9 @@
 //! ```ignore
 //! use booste_rs::training::histogram::{HistogramBuilder, NodeHistogram};
 //!
+//! let builder = HistogramBuilder::default();
 //! let mut hist = NodeHistogram::new(&cuts);
-//! HistogramBuilder.build(&mut hist, &quantized, &grads, &hess, &rows);
+//! builder.build_sequential(&mut hist, &quantized, &grads, &hess, &rows);
 //!
 //! // Access per-feature histograms
 //! let feat_hist = hist.feature(0);
@@ -57,16 +61,14 @@
 mod builder;
 mod feature;
 mod node;
-pub mod parallel_builder;
 pub mod pool;
 pub mod scratch;
 mod slice;
 pub mod types;
 
-pub use builder::HistogramBuilder;
+pub use builder::{HistogramBuilder, HistogramConfig};
 pub use feature::FeatureHistogram;
 pub use node::NodeHistogram;
-pub use parallel_builder::{ParallelHistogramBuilder, ParallelHistogramConfig};
 pub use pool::{ContiguousHistogramPool, HistogramSlot, HistogramSlotMut};
 pub use scratch::{subtract_histograms, RowParallelScratch, ScratchSlotMut};
 pub use slice::{FeatureSlice, FeatureSliceMut, HistogramBins};

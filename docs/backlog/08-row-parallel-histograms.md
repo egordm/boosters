@@ -191,11 +191,11 @@ simplifies the codebase and enables all strategies to benefit from pooling/LRU.
 
 ### Remaining Work
 
-- [ ] 4.8: Merge `ParallelHistogramBuilder` into unified `HistogramBuilder`
+- [x] 4.8: Merge `ParallelHistogramBuilder` into unified `HistogramBuilder`
   - Add `build_sequential()` method (current behavior)
   - Add `build_feature_parallel()` method
   - Add `build_row_parallel()` method (from ParallelHistogramBuilder)
-  - Add `build()` auto-select method based on heuristics
+  - ~~Add `build()` auto-select method based on heuristics~~ (deferred - not needed yet)
   - Remove separate `ParallelHistogramBuilder` struct
 - [ ] 4.9: Remove `NodeHistogram` - pool replaces it entirely
 - [ ] 4.10: Integration tests: builder with pool slot, split finder with slices
