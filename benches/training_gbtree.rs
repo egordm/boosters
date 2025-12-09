@@ -19,7 +19,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 
 use bench_utils::generate_training_data;
 use booste_rs::data::{ColMatrix, RowMatrix};
-use booste_rs::training::{GBTreeTrainer, LossFunction, Verbosity};
+use booste_rs::training::{GBTreeTrainer, GrowthStrategy, LossFunction, Verbosity};
 
 // =============================================================================
 // Regression Benchmarks - booste-rs vs XGBoost
@@ -44,7 +44,7 @@ fn bench_gbtree_regression(c: &mut Criterion) {
         let trainer = GBTreeTrainer::builder()
             .loss(LossFunction::SquaredError)
             .num_rounds(n_trees)
-            .max_depth(max_depth)
+            .growth_strategy(GrowthStrategy::DepthWise { max_depth: max_depth as u32 })
             .learning_rate(0.3f32)
             .reg_lambda(1.0f32)
             .reg_alpha(0.0f32)
@@ -155,7 +155,7 @@ fn bench_gbtree_classification(c: &mut Criterion) {
         let trainer = GBTreeTrainer::builder()
             .loss(LossFunction::Logistic)
             .num_rounds(n_trees)
-            .max_depth(max_depth)
+            .growth_strategy(GrowthStrategy::DepthWise { max_depth: max_depth as u32 })
             .learning_rate(0.3f32)
             .reg_lambda(1.0f32)
             .reg_alpha(0.0f32)

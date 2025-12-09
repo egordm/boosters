@@ -251,6 +251,7 @@ fn bench_gblinear_softmax_gradient(c: &mut Criterion) {
                     softmax_loss.compute_gradients(
                         black_box(&preds),
                         black_box(&labels),
+                        None,
                         &mut buffer,
                     );
                     black_box(buffer.grads()[0])
