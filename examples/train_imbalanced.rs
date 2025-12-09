@@ -21,7 +21,7 @@
 
 use booste_rs::data::{ColMatrix, RowMatrix};
 use booste_rs::predict::{Predictor, StandardTraversal};
-use booste_rs::training::{GBTreeTrainer, LossFunction, Verbosity};
+use booste_rs::training::{GBTreeTrainer, GrowthStrategy, LossFunction, Verbosity};
 
 fn main() {
     // =========================================================================
@@ -98,7 +98,7 @@ fn main() {
     let trainer = GBTreeTrainer::builder()
         .loss(LossFunction::Logistic)
         .num_rounds(30u32)
-        .max_depth(4u8)
+        .growth_strategy(GrowthStrategy::DepthWise { max_depth: 4 })
         .learning_rate(0.1f32)
         .verbosity(Verbosity::Silent)
         .build()

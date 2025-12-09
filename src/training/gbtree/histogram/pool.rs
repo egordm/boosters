@@ -403,6 +403,72 @@ impl ContiguousHistogramPool {
         self.bins_per_hist
     }
 
+    /// Subtract one histogram from another: target = parent - child.
+    ///
+    /// This method handles the borrow checker complexity of accessing three
+    /// different slots from the same pool. All three nodes must be in the pool.
+    ///
+    /// # Arguments
+    ///
+    /// * `target_node` - Node to write the result into
+    /// * `parent_node` - Parent histogram to subtract from
+    /// * `child_node` - Child histogram to subtract
+    ///
+    /// # Panics
+    ///
+    /// Panics if any node is not in the pool, or if any two node IDs are the same.
+    pub fn subtract_into(
+        &mut self,
+        target_node: NodeId,
+        parent_node: NodeId,
+        child_node: NodeId,
+    ) {
+        // Verify all nodes are different
+        assert!(
+            target_node != parent_node && target_node != child_node && parent_node != child_node,
+            "subtract_into: all three nodes must be different"
+        );
+
+        // Get slot indices (validates nodes are in pool)
+        let target_slot = self.node_to_slot.get(&target_node)
+            .copied()
+            .expect("target_node not in pool");
+        let parent_slot = self.node_to_slot.get(&parent_node)
+            .copied()
+            .expect("parent_node not in pool");
+        let child_slot = self.node_to_slot.get(&child_node)
+            .copied()
+            .expect("child_node not in pool");
+
+        // Compute byte ranges (non-overlapping because slots are different)
+        let target_start = target_slot.index() * self.bins_per_hist;
+        let parent_start = parent_slot.index() * self.bins_per_hist;
+        let child_start = child_slot.index() * self.bins_per_hist;
+        let nbins = self.bins_per_hist;
+
+        // Perform subtraction using unsafe to allow multiple references
+        // SAFETY: Slot indices are different, so ranges don't overlap
+        unsafe {
+            let target_grad = self.sum_grads.as_mut_ptr().add(target_start);
+            let target_hess = self.sum_hess.as_mut_ptr().add(target_start);
+            let target_count = self.counts.as_mut_ptr().add(target_start);
+
+            let parent_grad = self.sum_grads.as_ptr().add(parent_start);
+            let parent_hess = self.sum_hess.as_ptr().add(parent_start);
+            let parent_count = self.counts.as_ptr().add(parent_start);
+
+            let child_grad = self.sum_grads.as_ptr().add(child_start);
+            let child_hess = self.sum_hess.as_ptr().add(child_start);
+            let child_count = self.counts.as_ptr().add(child_start);
+
+            for i in 0..nbins {
+                *target_grad.add(i) = *parent_grad.add(i) - *child_grad.add(i);
+                *target_hess.add(i) = *parent_hess.add(i) - *child_hess.add(i);
+                *target_count.add(i) = *parent_count.add(i) - *child_count.add(i);
+            }
+        }
+    }
+
     // ========================================================================
     // Private helpers
     // ========================================================================

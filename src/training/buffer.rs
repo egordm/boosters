@@ -289,6 +289,18 @@ impl GradientBuffer {
         &mut self.hess[start..start + self.n_samples]
     }
 
+    /// Get both mutable gradient and hessian slices for a specific output.
+    ///
+    /// This allows simultaneous mutable access to both arrays for one output,
+    /// which is useful for weight application.
+    #[inline]
+    pub fn output_grads_hess_mut(&mut self, output: usize) -> (&mut [f32], &mut [f32]) {
+        debug_assert!(output < self.n_outputs);
+        let start = output * self.n_samples;
+        let end = start + self.n_samples;
+        (&mut self.grads[start..end], &mut self.hess[start..end])
+    }
+
     /// Iterator over (sample_idx, grad, hess) for a specific output.
     ///
     /// This is the key access pattern for coordinate descent: iterating

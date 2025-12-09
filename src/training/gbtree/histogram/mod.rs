@@ -14,46 +14,33 @@
 //!
 //! # Key Types
 //!
-//! ## Per-Node Histograms
-//! - [`FeatureHistogram`]: Per-feature gradient/hessian histogram (owned)
-//! - [`NodeHistogram`]: Collection of feature histograms for a tree node
-//! - [`FeatureSlice`], [`FeatureSliceMut`]: Borrowed views into flat storage
+//! ## Pool-Based Histograms
+//! - [`ContiguousHistogramPool`]: LRU-cached contiguous histogram storage
+//! - [`HistogramSlot`], [`HistogramSlotMut`]: Borrowed views into pool storage
+//! - [`FeatureSlice`]: Borrowed view into a single feature's bins
 //!
-//! ## Histogram Layout
+//! ## Layout
 //! - [`HistogramLayout`]: Maps features to bin ranges in flat histograms
 //!
 //! ## Building (RFC-0025)
-//! - [`HistogramBuilder`]: Unified builder with multiple strategies:
-//!   - `build_sequential()` - single-threaded
-//!   - `build_feature_parallel()` - parallelizes across features
-//!   - `build_row_parallel()` - parallelizes across rows
+//! - [`HistogramBuilder`]: Unified builder with multiple strategies
 //! - [`HistogramConfig`]: Configuration for builder strategies
-//!
-//! ## Pool & Scratch
-//! - [`ContiguousHistogramPool`]: LRU-cached contiguous histogram storage
-//! - [`RowParallelScratch`]: Per-thread scratch buffers for row-parallel
-//! - [`NodeId`], [`SlotId`]: Type-safe identifiers for pool management
-//!
-//! # Histogram Subtraction
-//!
-//! Both [`FeatureHistogram`] and [`NodeHistogram`] implement `Sub<&Self>`
-//! for efficient sibling derivation: `parent - smaller_child = larger_child`.
 //!
 //! # Example
 //!
 //! ```ignore
-//! use booste_rs::training::histogram::{HistogramBuilder, NodeHistogram};
+//! use booste_rs::training::gbtree::histogram::{
+//!     HistogramBuilder, HistogramConfig, ContiguousHistogramPool, HistogramLayout,
+//! };
 //!
-//! let builder = HistogramBuilder::default();
-//! let mut hist = NodeHistogram::new(&cuts);
-//! builder.build_sequential(&mut hist, &quantized, &grads, &hess, &rows);
+//! // Create builder with row-parallel support
+//! let builder = HistogramBuilder::new(&cuts, HistogramConfig::default());
+//! let layout = HistogramLayout::new(&cuts);
+//! let mut pool = ContiguousHistogramPool::new(16, layout.total_bins());
 //!
-//! // Access per-feature histograms
-//! let feat_hist = hist.feature(0);
-//! let (grad, hess, count) = feat_hist.bin_stats(bin_idx);
-//!
-//! // Compute sibling via subtraction
-//! let sibling = &parent - &child;
+//! // Build into pool slot
+//! let mut slot = pool.get_or_allocate(node_id);
+//! builder.build(&mut slot, &layout, strategy, &quantized, &grads, &hess, &rows);
 //! ```
 //!
 //! See RFC-0011 and RFC-0025 for design rationale.
@@ -66,10 +53,20 @@ pub mod scratch;
 mod slice;
 pub mod types;
 
+// Core building API
 pub use builder::{HistogramBuilder, HistogramConfig};
-pub use feature::FeatureHistogram;
-pub use node::NodeHistogram;
+
+// Pool-based storage
+#[allow(unused_imports)]
 pub use pool::{ContiguousHistogramPool, HistogramSlot, HistogramSlotMut};
-pub use scratch::{subtract_histograms, RowParallelScratch, ScratchSlotMut};
-pub use slice::{FeatureSlice, FeatureSliceMut, HistogramBins};
-pub use types::{recommended_pool_capacity, HistogramLayout, NodeId, PoolMetrics};
+
+// Feature access
+pub use slice::{FeatureSlice, HistogramBins};
+
+// Layout
+#[allow(unused_imports)]
+pub use types::{HistogramLayout, NodeId};
+
+// Row-parallel internals (exposed for advanced use)
+#[allow(unused_imports)]
+pub use scratch::RowParallelScratch;

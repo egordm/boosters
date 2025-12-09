@@ -36,7 +36,7 @@ fn train_regression_matches_xgboost(#[case] name: &str) {
         .build()
         .unwrap();
 
-    let model = trainer.train(&data, &labels, &[]);
+    let model = trainer.train(&data, &labels, None, &[]);
 
     // Compare weights
     // XGBoost stores weights as [w0, w1, ..., wn-1, bias]
@@ -79,7 +79,7 @@ fn train_l2_regularization_shrinks_weights() {
         .verbosity(Verbosity::Silent)
         .build()
         .unwrap();
-    let no_reg_model = trainer_no_reg.train(&data, &labels, &[]);
+    let no_reg_model = trainer_no_reg.train(&data, &labels, None, &[]);
 
     // Train with L2 regularization
     let trainer_l2 = GBLinearTrainer::builder()
@@ -91,7 +91,7 @@ fn train_l2_regularization_shrinks_weights() {
         .verbosity(Verbosity::Silent)
         .build()
         .unwrap();
-    let l2_model = trainer_l2.train(&data, &labels, &[]);
+    let l2_model = trainer_l2.train(&data, &labels, None, &[]);
 
     // L2 should produce smaller weights on average
     let no_reg_l2_norm: f32 = (0..data.num_features())
@@ -127,7 +127,7 @@ fn train_elastic_net_produces_sparse_weights() {
         .build()
         .unwrap();
 
-    let model = trainer.train(&data, &labels, &[]);
+    let model = trainer.train(&data, &labels, None, &[]);
 
     // Count near-zero weights in both
     let xgb_near_zero = xgb_weights
@@ -166,7 +166,7 @@ fn trained_model_predictions_reasonable() {
         .build()
         .unwrap();
 
-    let model = trainer.train(&data, &labels, &[]);
+    let model = trainer.train(&data, &labels, None, &[]);
 
     // Predictions should be close to actual values
     for i in 0..5 {
@@ -200,7 +200,7 @@ fn parallel_vs_sequential_similar() {
         .verbosity(Verbosity::Silent)
         .build()
         .unwrap();
-    let seq_model = trainer_seq.train(&data, &labels, &[]);
+    let seq_model = trainer_seq.train(&data, &labels, None, &[]);
 
     let trainer_par = GBLinearTrainer::builder()
         .num_rounds(50usize)
@@ -209,7 +209,7 @@ fn parallel_vs_sequential_similar() {
         .verbosity(Verbosity::Silent)
         .build()
         .unwrap();
-    let par_model = trainer_par.train(&data, &labels, &[]);
+    let par_model = trainer_par.train(&data, &labels, None, &[]);
 
     // Predictions should be similar
     let seq_pred = seq_model.predict_row(&[2.0, 2.0], &[0.0])[0];
@@ -244,7 +244,7 @@ fn weight_correlation_with_xgboost(#[case] name: &str) {
         .build()
         .unwrap();
 
-    let model = trainer.train(&data, &labels, &[]);
+    let model = trainer.train(&data, &labels, None, &[]);
 
     // Collect our weights (excluding bias)
     let our_weights: Vec<f32> = (0..xgb_weights.num_features)
@@ -291,7 +291,7 @@ fn test_set_prediction_quality(#[case] name: &str) {
         .build()
         .unwrap();
 
-    let model = trainer.train(&train_data, &train_labels, &[]);
+    let model = trainer.train(&train_data, &train_labels, None, &[]);
     let base_scores = vec![0.0f32];
 
     let our_rmse = compute_test_rmse(&model, &test_data, &test_labels, &base_scores);

@@ -30,5 +30,5 @@ mod grower;
 mod policy;
 
 pub use building::{BuildingNode, BuildingTree, NodeCandidate};
-pub use grower::{TreeBuildParams, TreeGrower};
+pub use grower::{ParallelStrategy, TreeBuildParams, TreeGrower};
 pub use policy::GrowthStrategy;

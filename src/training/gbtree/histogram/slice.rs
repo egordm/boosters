@@ -505,6 +505,7 @@ mod tests {
     #[test]
     fn test_integration_pool_layout_slice() {
         use crate::data::ColMatrix;
+        use crate::training::gbtree::grower::ParallelStrategy;
         use crate::training::gbtree::histogram::{
             ContiguousHistogramPool, HistogramBuilder, HistogramConfig, HistogramLayout, NodeId,
         };
@@ -547,11 +548,20 @@ mod tests {
             num_threads: 2,
             ..Default::default()
         };
-        let mut builder = HistogramBuilder::with_config(config, &cuts);
+        let mut builder = HistogramBuilder::new(&cuts, config);
 
         // Build histogram using row-parallel into pool
         let node_id = NodeId(0);
-        builder.build_row_parallel(&mut pool, node_id, &quantized, &grads, &hess, &rows);
+        builder.build_into_pool(
+            &mut pool,
+            node_id,
+            &layout,
+            ParallelStrategy::RowParallel,
+            &quantized,
+            &grads,
+            &hess,
+            &rows,
+        );
 
         // Get the histogram slot
         let slot = pool.get(node_id).expect("histogram should exist");
@@ -597,6 +607,7 @@ mod tests {
     #[test]
     fn test_integration_pool_rebuild() {
         use crate::data::ColMatrix;
+        use crate::training::gbtree::grower::ParallelStrategy;
         use crate::training::gbtree::histogram::{
             ContiguousHistogramPool, HistogramBuilder, HistogramConfig, HistogramLayout, NodeId,
         };
@@ -610,8 +621,7 @@ mod tests {
 
         let layout = HistogramLayout::from_cuts(&cuts);
         let mut pool = ContiguousHistogramPool::new(1, layout.total_bins());
-        let config = HistogramConfig::default();
-        let mut builder = HistogramBuilder::with_config(config, &cuts);
+        let mut builder = HistogramBuilder::new(&cuts, HistogramConfig::default());
 
         let node_id = NodeId(0);
 
@@ -619,7 +629,16 @@ mod tests {
         let grads1: Vec<f32> = vec![1.0; n_rows];
         let hess1: Vec<f32> = vec![1.0; n_rows];
         let rows: Vec<u32> = (0..n_rows as u32).collect();
-        builder.build_row_parallel(&mut pool, node_id, &quantized, &grads1, &hess1, &rows);
+        builder.build_into_pool(
+            &mut pool,
+            node_id,
+            &layout,
+            ParallelStrategy::RowParallel,
+            &quantized,
+            &grads1,
+            &hess1,
+            &rows,
+        );
 
         let slot = pool.get(node_id).unwrap();
         let slice = layout.feature_slice(0, slot.sum_grad, slot.sum_hess, slot.count);
@@ -627,7 +646,16 @@ mod tests {
 
         // Rebuild with negative grads
         let grads2: Vec<f32> = vec![-2.0; n_rows];
-        builder.build_row_parallel(&mut pool, node_id, &quantized, &grads2, &hess1, &rows);
+        builder.build_into_pool(
+            &mut pool,
+            node_id,
+            &layout,
+            ParallelStrategy::RowParallel,
+            &quantized,
+            &grads2,
+            &hess1,
+            &rows,
+        );
 
         let slot = pool.get(node_id).unwrap();
         let slice = layout.feature_slice(0, slot.sum_grad, slot.sum_hess, slot.count);

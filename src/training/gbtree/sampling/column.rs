@@ -21,10 +21,10 @@
 //! let mut sampler = ColumnSampler::new(100, 0.8, 0.9, 1.0);
 //!
 //! // Start a new tree
-//! sampler.sample_tree(seed);
+//! sampler.sample_for_tree(seed);
 //!
 //! // Get features for a specific node
-//! let features = sampler.allowed_features_for_node(depth, node_id, seed);
+//! let features = sampler.sample_for_node(depth, node_id, seed);
 //! ```
 
 use rand::prelude::*;
@@ -110,7 +110,7 @@ impl ColumnSampler {
     /// Sample features for a new tree.
     ///
     /// Must be called at the start of each tree building.
-    pub fn sample_tree(&mut self, seed: u64) {
+    pub fn sample_for_tree(&mut self, seed: u64) {
         if self.colsample_bytree >= 1.0 {
             // Use all features
             self.tree_features = (0..self.num_features).collect();
@@ -135,7 +135,7 @@ impl ColumnSampler {
     /// * `depth` - Current node depth (0 = root)
     /// * `node_id` - Node identifier (used for node-level seed)
     /// * `tree_seed` - Base seed for this tree
-    pub fn allowed_features_for_node(&self, depth: u32, node_id: u32, tree_seed: u64) -> Vec<u32> {
+    pub fn sample_for_node(&self, depth: u32, node_id: u32, tree_seed: u64) -> Vec<u32> {
         let mut features = self.tree_features.clone();
 
         // Apply level sampling
@@ -216,10 +216,10 @@ mod tests {
         let mut sampler = ColumnSampler::new(10, 1.0, 1.0, 1.0);
         assert!(!sampler.is_enabled());
 
-        sampler.sample_tree(42);
+        sampler.sample_for_tree(42);
         assert_eq!(sampler.tree_features(), (0..10).collect::<Vec<_>>());
 
-        let node_features = sampler.allowed_features_for_node(0, 0, 42);
+        let node_features = sampler.sample_for_node(0, 0, 42);
         assert_eq!(node_features, (0..10).collect::<Vec<_>>());
     }
 
@@ -228,7 +228,7 @@ mod tests {
         let mut sampler = ColumnSampler::new(10, 0.5, 1.0, 1.0);
         assert!(sampler.is_enabled());
 
-        sampler.sample_tree(42);
+        sampler.sample_for_tree(42);
         assert_eq!(sampler.tree_features().len(), 5);
 
         for &f in sampler.tree_features() {
@@ -239,10 +239,10 @@ mod tests {
     #[test]
     fn test_column_sampler_bylevel() {
         let mut sampler = ColumnSampler::new(10, 1.0, 0.5, 1.0);
-        sampler.sample_tree(42);
+        sampler.sample_for_tree(42);
 
-        let features_depth0 = sampler.allowed_features_for_node(0, 0, 42);
-        let features_depth1 = sampler.allowed_features_for_node(1, 0, 42);
+        let features_depth0 = sampler.sample_for_node(0, 0, 42);
+        let features_depth1 = sampler.sample_for_node(1, 0, 42);
 
         assert_eq!(features_depth0.len(), 5);
         assert_eq!(features_depth1.len(), 5);
@@ -251,10 +251,10 @@ mod tests {
     #[test]
     fn test_column_sampler_bynode() {
         let mut sampler = ColumnSampler::new(10, 1.0, 1.0, 0.5);
-        sampler.sample_tree(42);
+        sampler.sample_for_tree(42);
 
-        let features_node0 = sampler.allowed_features_for_node(0, 0, 42);
-        let features_node1 = sampler.allowed_features_for_node(0, 1, 42);
+        let features_node0 = sampler.sample_for_node(0, 0, 42);
+        let features_node1 = sampler.sample_for_node(0, 1, 42);
 
         assert_eq!(features_node0.len(), 5);
         assert_eq!(features_node1.len(), 5);
@@ -263,11 +263,11 @@ mod tests {
     #[test]
     fn test_column_sampler_cascading() {
         let mut sampler = ColumnSampler::new(10, 0.5, 0.5, 0.5);
-        sampler.sample_tree(42);
+        sampler.sample_for_tree(42);
 
         assert_eq!(sampler.tree_features().len(), 5);
 
-        let node_features = sampler.allowed_features_for_node(0, 0, 42);
+        let node_features = sampler.sample_for_node(0, 0, 42);
         // 5 * 0.5 = 2.5 → ceil = 3 at level, then 3 * 0.5 = 1.5 → ceil = 2 at node
         assert_eq!(node_features.len(), 2);
     }
@@ -277,13 +277,13 @@ mod tests {
         let mut sampler1 = ColumnSampler::new(10, 0.5, 0.5, 0.5);
         let mut sampler2 = ColumnSampler::new(10, 0.5, 0.5, 0.5);
 
-        sampler1.sample_tree(42);
-        sampler2.sample_tree(42);
+        sampler1.sample_for_tree(42);
+        sampler2.sample_for_tree(42);
 
         assert_eq!(sampler1.tree_features(), sampler2.tree_features());
 
-        let f1 = sampler1.allowed_features_for_node(1, 3, 42);
-        let f2 = sampler2.allowed_features_for_node(1, 3, 42);
+        let f1 = sampler1.sample_for_node(1, 3, 42);
+        let f2 = sampler2.sample_for_node(1, 3, 42);
         assert_eq!(f1, f2);
     }
 
@@ -292,8 +292,8 @@ mod tests {
         let mut sampler1 = ColumnSampler::new(10, 0.5, 1.0, 1.0);
         let mut sampler2 = ColumnSampler::new(10, 0.5, 1.0, 1.0);
 
-        sampler1.sample_tree(42);
-        sampler2.sample_tree(123);
+        sampler1.sample_for_tree(42);
+        sampler2.sample_for_tree(123);
 
         // Different seeds should (very likely) produce different features
         // Could be same by chance but extremely unlikely with 10 features

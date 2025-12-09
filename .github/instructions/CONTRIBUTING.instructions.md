@@ -16,6 +16,7 @@ when they improve the design. Do not hesitate to:
 - Change function signatures to be more ergonomic
 - Remove deprecated code immediately (no deprecation period needed)
 - Restructure modules when it makes the codebase cleaner
+- Refactor tests to use a different method because a convenience method has been removed to favor clean code.
 
 When the library reaches 1.0 or gains external users, we'll adopt semantic versioning
 and be more careful about breaking changes.

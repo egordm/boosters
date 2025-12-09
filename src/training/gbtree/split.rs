@@ -32,7 +32,7 @@
 //!
 //! let params = GainParams::default();
 //! let finder = GreedySplitFinder::default();
-//! let split = finder.find_best_split(&histogram, &cuts, &params);
+//! let split = finder.find_best_split(&slot, &layout, &cuts, &params);
 //!
 //! if split.is_valid() {
 //!     println!("Split on feature {} at {}", split.feature, split.threshold);
@@ -41,9 +41,7 @@
 //!
 //! See RFC-0013 for design rationale.
 
-use rayon::prelude::*;
-
-use super::histogram::{HistogramBins, NodeHistogram};
+use super::histogram::{FeatureSlice, HistogramBins, HistogramLayout, HistogramSlot};
 use super::quantize::BinCuts;
 
 // ============================================================================
@@ -338,16 +336,33 @@ impl SplitInfo {
 
 /// Strategy for finding the best split for a node.
 ///
-/// Different implementations may use different algorithms:
-/// - [`GreedySplitFinder`]: Standard exhaustive search
+/// This trait abstracts over different split-finding algorithms, allowing
+/// for future extensions like approximate split finders or histogram sampling.
+///
+/// The trait operates on pool-based histogram storage ([`HistogramSlot`]) which
+/// is the primary histogram representation used during training.
+///
+/// # Implementations
+///
+/// - [`GreedySplitFinder`]: Standard exhaustive search over all bin boundaries
 /// - Future: Approximate split finder, histogram sampling, etc.
 pub trait SplitFinder: Send + Sync {
-    /// Find the best split for a node given its histogram.
+    /// Find the best split for a node given its histogram slot.
     ///
-    /// Returns `SplitInfo::none()` if no valid split is found.
+    /// # Arguments
+    ///
+    /// * `slot` - Histogram slot containing gradient/hessian bins
+    /// * `layout` - Layout describing feature offsets in the slot
+    /// * `cuts` - Bin cut thresholds for all features
+    /// * `params` - Gain computation parameters (regularization, constraints)
+    ///
+    /// # Returns
+    ///
+    /// The best split found, or `SplitInfo::none()` if no valid split exists.
     fn find_best_split(
         &self,
-        histogram: &NodeHistogram,
+        slot: &HistogramSlot<'_>,
+        layout: &HistogramLayout,
         cuts: &BinCuts,
         params: &GainParams,
     ) -> SplitInfo;
@@ -381,6 +396,8 @@ pub struct GreedySplitFinder {
     pub feature_subset: Option<Vec<u32>>,
 }
 
+// ---- Constructors ----
+
 impl GreedySplitFinder {
     /// Create a finder that considers all features.
     pub fn new() -> Self {
@@ -395,11 +412,73 @@ impl GreedySplitFinder {
             feature_subset: Some(features),
         }
     }
+}
 
-    /// Find best split for a single feature.
+// ---- SplitFinder trait implementation ----
+
+impl SplitFinder for GreedySplitFinder {
+    fn find_best_split(
+        &self,
+        slot: &HistogramSlot<'_>,
+        layout: &HistogramLayout,
+        cuts: &BinCuts,
+        params: &GainParams,
+    ) -> SplitInfo {
+        // Compute parent totals from first feature (all features have same totals)
+        let first_bins = layout.num_bins(0);
+        let parent_grad = slot.total_grad_first_feature(first_bins);
+        let parent_hess = slot.total_hess_first_feature(first_bins);
+        let num_features = layout.num_features();
+
+        let mut best = SplitInfo::none();
+
+        // Determine which features to evaluate
+        let features: Vec<u32> = self
+            .feature_subset
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| (0..num_features).collect());
+
+        for feat in features {
+            // Get feature slice from the pool slot
+            let feat_slice = FeatureSlice::from_slot(layout, slot, feat);
+
+            let split = if cuts.is_categorical(feat) {
+                self.find_best_categorical_split(
+                    feat,
+                    &feat_slice,
+                    cuts.num_categories(feat),
+                    parent_grad,
+                    parent_hess,
+                    params,
+                )
+            } else {
+                let feat_cuts = cuts.feature_cuts(feat);
+                self.find_best_numerical_split(
+                    feat,
+                    &feat_slice,
+                    feat_cuts,
+                    parent_grad,
+                    parent_hess,
+                    params,
+                )
+            };
+
+            if split.gain > best.gain {
+                best = split;
+            }
+        }
+
+        best
+    }
+}
+
+// ---- Private helper methods ----
+
+impl GreedySplitFinder {
+    /// Find best numerical split for a feature.
     ///
     /// Scans bins from left to right, computing gain at each boundary.
-    /// This is the single-output implementation.
     ///
     /// The function is generic over [`HistogramBins`] to support both
     /// owned [`FeatureHistogram`] and borrowed [`FeatureSlice`] views.
@@ -407,7 +486,7 @@ impl GreedySplitFinder {
     /// [`HistogramBins`]: super::histogram::HistogramBins
     /// [`FeatureHistogram`]: super::histogram::FeatureHistogram
     /// [`FeatureSlice`]: super::histogram::FeatureSlice
-    fn find_best_split_for_feature<H: HistogramBins>(
+    fn find_best_numerical_split<H: HistogramBins>(
         &self,
         feature: u32,
         hist: &H,
@@ -694,114 +773,6 @@ impl GreedySplitFinder {
 
         best
     }
-
-    /// Find best split with parallel feature evaluation.
-    ///
-    /// Uses Rayon to evaluate features in parallel. Recommended for
-    /// datasets with many features.
-    pub fn find_best_split_parallel(
-        &self,
-        histogram: &NodeHistogram,
-        cuts: &BinCuts,
-        params: &GainParams,
-    ) -> SplitInfo {
-        let parent_grad = histogram.total_grad();
-        let parent_hess = histogram.total_hess();
-        let num_features = histogram.num_features();
-
-        // Determine which features to evaluate
-        let features: Vec<u32> = self
-            .feature_subset
-            .as_ref()
-            .cloned()
-            .unwrap_or_else(|| (0..num_features as u32).collect());
-
-        // Parallel map-reduce over features
-        features
-            .par_iter()
-            .map(|&feat| {
-                let feat_hist = histogram.feature(feat as usize);
-                if cuts.is_categorical(feat) {
-                    self.find_best_categorical_split(
-                        feat,
-                        feat_hist,
-                        cuts.num_categories(feat),
-                        parent_grad,
-                        parent_hess,
-                        params,
-                    )
-                } else {
-                    let feat_cuts = cuts.feature_cuts(feat);
-                    self.find_best_split_for_feature(
-                        feat,
-                        feat_hist,
-                        feat_cuts,
-                        parent_grad,
-                        parent_hess,
-                        params,
-                    )
-                }
-            })
-            .reduce(SplitInfo::none, |best, split| {
-                if split.gain > best.gain {
-                    split
-                } else {
-                    best
-                }
-            })
-    }
-}
-
-impl SplitFinder for GreedySplitFinder {
-    fn find_best_split(
-        &self,
-        histogram: &NodeHistogram,
-        cuts: &BinCuts,
-        params: &GainParams,
-    ) -> SplitInfo {
-        let parent_grad = histogram.total_grad();
-        let parent_hess = histogram.total_hess();
-        let num_features = histogram.num_features();
-
-        let mut best = SplitInfo::none();
-
-        // Determine which features to evaluate
-        let features: Vec<u32> = self
-            .feature_subset
-            .as_ref()
-            .cloned()
-            .unwrap_or_else(|| (0..num_features as u32).collect());
-
-        for feat in features {
-            let feat_hist = histogram.feature(feat as usize);
-            let split = if cuts.is_categorical(feat) {
-                self.find_best_categorical_split(
-                    feat,
-                    feat_hist,
-                    cuts.num_categories(feat),
-                    parent_grad,
-                    parent_hess,
-                    params,
-                )
-            } else {
-                let feat_cuts = cuts.feature_cuts(feat);
-                self.find_best_split_for_feature(
-                    feat,
-                    feat_hist,
-                    feat_cuts,
-                    parent_grad,
-                    parent_hess,
-                    params,
-                )
-            };
-
-            if split.gain > best.gain {
-                best = split;
-            }
-        }
-
-        best
-    }
 }
 
 // ============================================================================
@@ -936,15 +907,48 @@ mod tests {
     mod integration {
         use super::*;
         use crate::data::ColMatrix;
-        use crate::training::gbtree::histogram::{HistogramBuilder, NodeHistogram};
+        use crate::training::gbtree::grower::ParallelStrategy;
+        use crate::training::gbtree::histogram::{
+            ContiguousHistogramPool, HistogramBuilder, HistogramConfig, HistogramLayout, NodeId,
+        };
         use crate::training::gbtree::quantize::{BinCuts, ExactQuantileCuts, QuantizedMatrix, Quantizer};
 
-        fn make_test_data() -> (
-            QuantizedMatrix<u8>,
-            Vec<f32>,
-            Vec<f32>,
-            BinCuts,
-        ) {
+        /// Helper struct to hold test histogram data
+        struct TestHistogram {
+            pool: ContiguousHistogramPool,
+            layout: HistogramLayout,
+            cuts: BinCuts,
+        }
+
+        impl TestHistogram {
+            /// Build histogram from quantized data
+            fn build<B: crate::training::gbtree::quantize::BinIndex>(
+                quantized: &QuantizedMatrix<B>,
+                grads: &[f32],
+                hess: &[f32],
+                rows: &[u32],
+            ) -> Self {
+                let cuts = quantized.cuts().clone();
+                let layout = HistogramLayout::from_cuts(&cuts);
+                let mut pool = ContiguousHistogramPool::new(1, layout.total_bins());
+                let mut builder = HistogramBuilder::new(&cuts, HistogramConfig::default());
+
+                builder.build_into_pool(
+                    &mut pool,
+                    NodeId(0),
+                    &layout,
+                    ParallelStrategy::Sequential,
+                    quantized,
+                    grads,
+                    hess,
+                    rows,
+                );
+
+                Self { pool, layout, cuts }
+            }
+        }
+
+        fn make_test_data() -> (QuantizedMatrix<u8>, Vec<f32>, Vec<f32>, BinCuts) {
             // Create data: 20 rows, 2 features
             // Feature 0: 0..20 (linear, good for splitting)
             // Feature 1: all same value (no split possible)
@@ -980,17 +984,17 @@ mod tests {
 
         #[test]
         fn test_split_finder_basic() {
-            let (quantized, grads, hess, cuts) = make_test_data();
+            let (quantized, grads, hess, _) = make_test_data();
             let rows: Vec<u32> = (0..20).collect();
 
             // Build histogram
-            let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder::default().build_sequential(&mut hist, &quantized, &grads, &hess, &rows);
+            let mut hist = TestHistogram::build(&quantized, &grads, &hess, &rows);
+            let slot = hist.pool.get(NodeId(0)).unwrap();
 
             // Find split
             let params = GainParams::default().with_min_child_weight(1.0);
             let finder = GreedySplitFinder::new();
-            let split = finder.find_best_split(&hist, &cuts, &params);
+            let split = finder.find_best_split(&slot, &hist.layout, &hist.cuts, &params);
 
             // Should find a valid split
             assert!(split.is_valid(), "Should find a valid split");
@@ -1008,16 +1012,16 @@ mod tests {
 
         #[test]
         fn test_split_finder_min_child_weight() {
-            let (quantized, grads, hess, cuts) = make_test_data();
+            let (quantized, grads, hess, _) = make_test_data();
             let rows: Vec<u32> = (0..20).collect();
 
-            let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder::default().build_sequential(&mut hist, &quantized, &grads, &hess, &rows);
+            let mut hist = TestHistogram::build(&quantized, &grads, &hess, &rows);
+            let slot = hist.pool.get(NodeId(0)).unwrap();
 
             // With very high min_child_weight, no split should be found
             let params = GainParams::default().with_min_child_weight(100.0);
             let finder = GreedySplitFinder::new();
-            let split = finder.find_best_split(&hist, &cuts, &params);
+            let split = finder.find_best_split(&slot, &hist.layout, &hist.cuts, &params);
 
             assert!(
                 !split.is_valid(),
@@ -1026,37 +1030,38 @@ mod tests {
         }
 
         #[test]
-        fn test_split_finder_parallel_matches_sequential() {
-            let (quantized, grads, hess, cuts) = make_test_data();
+        fn test_split_finder_deterministic() {
+            let (quantized, grads, hess, _) = make_test_data();
             let rows: Vec<u32> = (0..20).collect();
 
-            let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder::default().build_sequential(&mut hist, &quantized, &grads, &hess, &rows);
+            let mut hist = TestHistogram::build(&quantized, &grads, &hess, &rows);
+            let slot = hist.pool.get(NodeId(0)).unwrap();
 
             let params = GainParams::default();
             let finder = GreedySplitFinder::new();
 
-            let split_seq = finder.find_best_split(&hist, &cuts, &params);
-            let split_par = finder.find_best_split_parallel(&hist, &cuts, &params);
+            // Run twice to verify determinism
+            let split1 = finder.find_best_split(&slot, &hist.layout, &hist.cuts, &params);
+            let split2 = finder.find_best_split(&slot, &hist.layout, &hist.cuts, &params);
 
-            assert_eq!(split_seq.feature, split_par.feature);
-            assert!((split_seq.gain - split_par.gain).abs() < 1e-5);
-            assert!((split_seq.threshold - split_par.threshold).abs() < 1e-5);
+            assert_eq!(split1.feature, split2.feature);
+            assert!((split1.gain - split2.gain).abs() < 1e-5);
+            assert!((split1.threshold - split2.threshold).abs() < 1e-5);
         }
 
         #[test]
         fn test_split_finder_feature_subset() {
-            let (quantized, grads, hess, cuts) = make_test_data();
+            let (quantized, grads, hess, _) = make_test_data();
             let rows: Vec<u32> = (0..20).collect();
 
-            let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder::default().build_sequential(&mut hist, &quantized, &grads, &hess, &rows);
+            let mut hist = TestHistogram::build(&quantized, &grads, &hess, &rows);
+            let slot = hist.pool.get(NodeId(0)).unwrap();
 
             let params = GainParams::default();
 
             // Only consider feature 1 (the constant one)
             let finder = GreedySplitFinder::with_features(vec![1]);
-            let split = finder.find_best_split(&hist, &cuts, &params);
+            let split = finder.find_best_split(&slot, &hist.layout, &hist.cuts, &params);
 
             // Feature 1 is constant, so no valid split should be found
             // (or if found, it should be on feature 1)
@@ -1086,7 +1091,6 @@ mod tests {
             let cut_finder = ExactQuantileCuts::default();
             let quantizer = Quantizer::from_data(&matrix, &cut_finder, 256);
             let quantized = quantizer.quantize_u8(&matrix);
-            let cuts = (*quantizer.cuts()).clone();
 
             // Gradients: positive for low values, negative for high
             let mut grads = vec![0.0f32; 10];
@@ -1099,12 +1103,12 @@ mod tests {
             }
 
             let rows: Vec<u32> = (0..10).collect();
-            let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder::default().build_sequential(&mut hist, &quantized, &grads, &hess, &rows);
+            let mut hist = TestHistogram::build(&quantized, &grads, &hess, &rows);
+            let slot = hist.pool.get(NodeId(0)).unwrap();
 
             let params = GainParams::default().with_min_child_weight(0.5);
             let finder = GreedySplitFinder::new();
-            let split = finder.find_best_split(&hist, &cuts, &params);
+            let split = finder.find_best_split(&slot, &hist.layout, &hist.cuts, &params);
 
             // Should learn a default direction for missing values
             if split.is_valid() {
@@ -1156,12 +1160,12 @@ mod tests {
             }
 
             let rows: Vec<u32> = (0..12).collect();
-            let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder::default().build_sequential(&mut hist, &quantized, &grads, &hess, &rows);
+            let mut hist = TestHistogram::build(&quantized, &grads, &hess, &rows);
+            let slot = hist.pool.get(NodeId(0)).unwrap();
 
             let params = GainParams::no_regularization().with_min_child_weight(1.0);
             let finder = GreedySplitFinder::new();
-            let split = finder.find_best_split(&hist, &cuts, &params);
+            let split = finder.find_best_split(&slot, &hist.layout, &hist.cuts, &params);
 
             // Should find a valid categorical split
             assert!(split.is_valid(), "Should find valid categorical split");
@@ -1197,19 +1201,18 @@ mod tests {
             let quantizer =
                 Quantizer::from_data_with_categorical(&matrix, &cut_finder, 256, &cat_info);
             let quantized = quantizer.quantize_u8(&matrix);
-            let cuts = (*quantizer.cuts()).clone();
 
             // Gradients: category 0 positive, category 1 negative, missing neutral
             let grads = vec![0.0, 2.0, 2.0, -2.0, -2.0, 0.0];
             let hess = vec![1.0f32; 6];
 
             let rows: Vec<u32> = (0..6).collect();
-            let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder::default().build_sequential(&mut hist, &quantized, &grads, &hess, &rows);
+            let mut hist = TestHistogram::build(&quantized, &grads, &hess, &rows);
+            let slot = hist.pool.get(NodeId(0)).unwrap();
 
             let params = GainParams::no_regularization().with_min_child_weight(1.0);
             let finder = GreedySplitFinder::new();
-            let split = finder.find_best_split(&hist, &cuts, &params);
+            let split = finder.find_best_split(&slot, &hist.layout, &hist.cuts, &params);
 
             assert!(split.is_valid());
             assert!(split.is_categorical);
@@ -1251,12 +1254,12 @@ mod tests {
             }
 
             let rows: Vec<u32> = (0..10).collect();
-            let mut hist = NodeHistogram::new(&cuts);
-            HistogramBuilder::default().build_sequential(&mut hist, &quantized, &grads, &hess, &rows);
+            let mut hist = TestHistogram::build(&quantized, &grads, &hess, &rows);
+            let slot = hist.pool.get(NodeId(0)).unwrap();
 
             let params = GainParams::default().with_min_child_weight(1.0);
             let finder = GreedySplitFinder::new();
-            let split = finder.find_best_split(&hist, &cuts, &params);
+            let split = finder.find_best_split(&slot, &hist.layout, &hist.cuts, &params);
 
             // Should find a valid split (either numerical or categorical)
             assert!(split.is_valid());

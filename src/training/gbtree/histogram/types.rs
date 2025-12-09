@@ -131,6 +131,7 @@ impl fmt::Display for PoolMetrics {
 /// # Returns
 ///
 /// Recommended number of histogram slots for the pool.
+#[allow(dead_code)]
 pub fn recommended_pool_capacity(
     max_leaves: usize,
     max_depth: Option<usize>,

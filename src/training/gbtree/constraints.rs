@@ -37,6 +37,8 @@
 
 use std::collections::HashSet;
 
+use super::split::SplitInfo;
+
 // ============================================================================
 // MonotonicConstraint
 // ============================================================================
@@ -179,18 +181,18 @@ impl MonotonicBounds {
 }
 
 // ============================================================================
-// MonotonicChecker
+// MonotonicConstraints
 // ============================================================================
 
 /// Helper for checking and enforcing monotonic constraints during split finding.
-pub struct MonotonicChecker {
+pub struct MonotonicConstraints {
     /// Constraints per feature (indexed by feature ID)
     constraints: Vec<MonotonicConstraint>,
     /// Whether any feature has a constraint
     has_constraints: bool,
 }
 
-impl MonotonicChecker {
+impl MonotonicConstraints {
     /// Create a checker from a list of constraints.
     ///
     /// # Arguments
@@ -231,6 +233,51 @@ impl MonotonicChecker {
             .get(feature as usize)
             .copied()
             .unwrap_or(MonotonicConstraint::None)
+    }
+
+    /// Apply monotonic constraints to a split, adjusting weights if needed.
+    ///
+    /// For a split with constraint:
+    /// - `Increasing`: weight_left must be <= weight_right
+    /// - `Decreasing`: weight_left must be >= weight_right
+    ///
+    /// If violated, both weights are clamped to midpoint.
+    /// Final weights are also clamped to the node's bounds.
+    ///
+    /// # Arguments
+    ///
+    /// * `split` - Split to adjust (weight_left and weight_right are modified in place)
+    /// * `bounds` - Current node's monotonic bounds
+    pub fn apply(&self, split: &mut SplitInfo, bounds: &MonotonicBounds) {
+        let constraint = self.get(split.feature);
+
+        let (adjusted_left, adjusted_right) = match constraint {
+            MonotonicConstraint::None => (split.weight_left, split.weight_right),
+            MonotonicConstraint::Increasing => {
+                // Left (lower values) should have lower or equal weight
+                if split.weight_left <= split.weight_right {
+                    (split.weight_left, split.weight_right)
+                } else {
+                    // Violation: clamp to midpoint
+                    let mid = (split.weight_left + split.weight_right) / 2.0;
+                    (mid, mid)
+                }
+            }
+            MonotonicConstraint::Decreasing => {
+                // Left (lower values) should have higher or equal weight
+                if split.weight_left >= split.weight_right {
+                    (split.weight_left, split.weight_right)
+                } else {
+                    // Violation: clamp to midpoint
+                    let mid = (split.weight_left + split.weight_right) / 2.0;
+                    (mid, mid)
+                }
+            }
+        };
+
+        // Clamp to bounds and update split
+        split.weight_left = bounds.clamp(adjusted_left);
+        split.weight_right = bounds.clamp(adjusted_right);
     }
 
     /// Check if a split satisfies monotonic constraints and optionally fix it.
@@ -580,11 +627,11 @@ mod tests {
         assert_eq!(right.upper, 2.0); // Inherited
     }
 
-    // ---- MonotonicChecker tests ----
+    // ---- MonotonicConstraints tests ----
 
     #[test]
     fn test_checker_no_constraints() {
-        let checker = MonotonicChecker::new(&[], 5);
+        let checker = MonotonicConstraints::new(&[], 5);
         assert!(!checker.is_enabled());
         assert_eq!(checker.get(0), MonotonicConstraint::None);
     }
@@ -596,7 +643,7 @@ mod tests {
             MonotonicConstraint::None,
             MonotonicConstraint::Decreasing,
         ];
-        let checker = MonotonicChecker::new(&constraints, 5);
+        let checker = MonotonicConstraints::new(&constraints, 5);
 
         assert!(checker.is_enabled());
         assert_eq!(checker.get(0), MonotonicConstraint::Increasing);
@@ -608,7 +655,7 @@ mod tests {
 
     #[test]
     fn test_checker_from_ints() {
-        let checker = MonotonicChecker::from_ints(&[1, 0, -1], 3);
+        let checker = MonotonicConstraints::from_ints(&[1, 0, -1], 3);
         assert_eq!(checker.get(0), MonotonicConstraint::Increasing);
         assert_eq!(checker.get(1), MonotonicConstraint::None);
         assert_eq!(checker.get(2), MonotonicConstraint::Decreasing);
@@ -616,7 +663,7 @@ mod tests {
 
     #[test]
     fn test_check_and_fix_no_constraint() {
-        let checker = MonotonicChecker::new(&[], 5);
+        let checker = MonotonicConstraints::new(&[], 5);
         let bounds = MonotonicBounds::unbounded();
 
         let (left, right, valid) = checker.check_and_fix(0, -1.0, 1.0, &bounds);
@@ -628,7 +675,7 @@ mod tests {
     #[test]
     fn test_check_and_fix_increasing_valid() {
         let constraints = vec![MonotonicConstraint::Increasing];
-        let checker = MonotonicChecker::new(&constraints, 1);
+        let checker = MonotonicConstraints::new(&constraints, 1);
         let bounds = MonotonicBounds::unbounded();
 
         // Left <= Right: valid for increasing
@@ -641,7 +688,7 @@ mod tests {
     #[test]
     fn test_check_and_fix_increasing_violated() {
         let constraints = vec![MonotonicConstraint::Increasing];
-        let checker = MonotonicChecker::new(&constraints, 1);
+        let checker = MonotonicConstraints::new(&constraints, 1);
         let bounds = MonotonicBounds::unbounded();
 
         // Left > Right: violated for increasing, should clamp to midpoint
@@ -654,7 +701,7 @@ mod tests {
     #[test]
     fn test_check_and_fix_decreasing_valid() {
         let constraints = vec![MonotonicConstraint::Decreasing];
-        let checker = MonotonicChecker::new(&constraints, 1);
+        let checker = MonotonicConstraints::new(&constraints, 1);
         let bounds = MonotonicBounds::unbounded();
 
         // Left >= Right: valid for decreasing
@@ -667,7 +714,7 @@ mod tests {
     #[test]
     fn test_check_and_fix_decreasing_violated() {
         let constraints = vec![MonotonicConstraint::Decreasing];
-        let checker = MonotonicChecker::new(&constraints, 1);
+        let checker = MonotonicConstraints::new(&constraints, 1);
         let bounds = MonotonicBounds::unbounded();
 
         // Left < Right: violated for decreasing
@@ -680,7 +727,7 @@ mod tests {
     #[test]
     fn test_check_and_fix_with_bounds_clamping() {
         let constraints = vec![MonotonicConstraint::None];
-        let checker = MonotonicChecker::new(&constraints, 1);
+        let checker = MonotonicConstraints::new(&constraints, 1);
         let bounds = MonotonicBounds {
             lower: -0.5,
             upper: 0.5,

@@ -46,7 +46,7 @@ fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
         .build()
         .unwrap();
 
-    let model = trainer.train(&data, &labels, &[]);
+    let model = trainer.train(&data, &labels, None, &[]);
 
     // Compute predictions on test set
     let mut test_preds = Vec::with_capacity(test_data.num_rows());
@@ -151,9 +151,9 @@ fn quantile_regression_predictions_differ() {
         .build()
         .unwrap();
 
-    let model_low = trainer_low.train(&data, &labels, &[]);
-    let model_med = trainer_med.train(&data, &labels, &[]);
-    let model_high = trainer_high.train(&data, &labels, &[]);
+    let model_low = trainer_low.train(&data, &labels, None, &[]);
+    let model_med = trainer_med.train(&data, &labels, None, &[]);
+    let model_high = trainer_high.train(&data, &labels, None, &[]);
 
     // Get predictions for first sample
     let features: Vec<f32> = (0..data.num_features())
@@ -249,7 +249,7 @@ fn train_multi_quantile_regression() {
         .build()
         .unwrap();
 
-    let model = trainer.train(&data, &labels, &[]);
+    let model = trainer.train(&data, &labels, None, &[]);
 
     // Verify model has correct number of output groups
     assert_eq!(model.num_groups(), num_quantiles);
@@ -330,7 +330,7 @@ fn multi_quantile_vs_separate_models() {
         .build()
         .unwrap();
 
-    let multi_model = multi_trainer.train(&data, &labels, &[]);
+    let multi_model = multi_trainer.train(&data, &labels, None, &[]);
 
     // Train 3 separate single-quantile models
     let single_models: Vec<_> = quantile_alphas
@@ -347,7 +347,7 @@ fn multi_quantile_vs_separate_models() {
                 .verbosity(Verbosity::Silent)
                 .build()
                 .unwrap();
-            trainer.train(&data, &labels, &[])
+            trainer.train(&data, &labels, None, &[])
         })
         .collect();
 

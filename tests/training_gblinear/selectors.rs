@@ -49,7 +49,7 @@ fn train_all_selectors_regression() {
         .verbosity(Verbosity::Silent)
         .build()
         .unwrap();
-    let shuffle_model = shuffle_trainer.train(&data, &labels, &[]);
+    let shuffle_model = shuffle_trainer.train(&data, &labels, None, &[]);
     let shuffle_rmse = compute_test_rmse_default(&shuffle_model, &test_data, &test_labels);
 
     println!("Shuffle RMSE: {:.4}", shuffle_rmse);
@@ -67,7 +67,7 @@ fn train_all_selectors_regression() {
             .build()
             .unwrap();
 
-        let model = trainer.train(&data, &labels, &[]);
+        let model = trainer.train(&data, &labels, None, &[]);
         let rmse = compute_test_rmse_default(&model, &test_data, &test_labels);
 
         println!("{} RMSE: {:.4}", name, rmse);
@@ -117,7 +117,7 @@ fn train_all_selectors_multiclass() {
         .verbosity(Verbosity::Silent)
         .build()
         .unwrap();
-    let shuffle_model = shuffle_trainer.train(&data, &labels, &[]);
+    let shuffle_model = shuffle_trainer.train(&data, &labels, None, &[]);
     let shuffle_acc = compute_multiclass_accuracy(&shuffle_model, &test_data, &test_labels);
 
     println!("Shuffle accuracy: {:.4}", shuffle_acc);
@@ -136,7 +136,7 @@ fn train_all_selectors_multiclass() {
             .build()
             .unwrap();
 
-        let model = trainer.train(&data, &labels, &[]);
+        let model = trainer.train(&data, &labels, None, &[]);
         let acc = compute_multiclass_accuracy(&model, &test_data, &test_labels);
 
         println!("{} accuracy: {:.4}", name, acc);
@@ -184,8 +184,8 @@ fn train_greedy_selector_feature_priority() {
         .build()
         .unwrap();
 
-    let greedy_model = greedy_trainer.train(&data, &labels, &[]);
-    let cyclic_model = cyclic_trainer.train(&data, &labels, &[]);
+    let greedy_model = greedy_trainer.train(&data, &labels, None, &[]);
+    let cyclic_model = cyclic_trainer.train(&data, &labels, None, &[]);
 
     // Both should produce valid models (non-zero weights somewhere)
     let greedy_has_weights: bool = (0..data.num_features())
@@ -231,7 +231,7 @@ fn train_thrifty_selector_convergence() {
         .build()
         .unwrap();
 
-    let model = trainer.train(&data, &labels, &[]);
+    let model = trainer.train(&data, &labels, None, &[]);
     let rmse = compute_test_rmse_default(&model, &test_data, &test_labels);
 
     println!("Thrifty RMSE: {:.4}", rmse);
