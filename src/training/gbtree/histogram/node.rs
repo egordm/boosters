@@ -18,7 +18,7 @@ use crate::training::gbtree::quantize::BinCuts;
 ///
 /// ```ignore
 /// let mut hist = NodeHistogram::new(&cuts);
-/// HistogramBuilder.build(&mut hist, &quantized, &gradients, &rows);
+/// HistogramBuilder::default().build_sequential(&mut hist, &quantized, &gradients, &rows);
 /// ```
 #[derive(Debug, Clone)]
 pub struct NodeHistogram {

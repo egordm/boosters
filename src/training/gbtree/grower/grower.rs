@@ -460,9 +460,10 @@ impl<'a> TreeGrower<'a> {
         let mut hist = NodeHistogram::new(self.cuts);
         if self.params.parallel_histograms {
             self.hist_builder
-                .build_parallel(&mut hist, quantized, grads, hess, rows);
+                .build_feature_parallel(&mut hist, quantized, grads, hess, rows);
         } else {
-            self.hist_builder.build(&mut hist, quantized, grads, hess, rows);
+            self.hist_builder
+                .build_sequential(&mut hist, quantized, grads, hess, rows);
         }
         hist
     }
