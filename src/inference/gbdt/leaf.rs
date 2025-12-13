@@ -4,6 +4,9 @@
 pub trait LeafValue: Clone + Default + Send + Sync {
     /// Accumulate another leaf value (for prediction summation)
     fn accumulate(&mut self, other: &Self);
+
+    /// Scale the leaf value by a factor (for learning rate application)
+    fn scale(&mut self, factor: f32);
 }
 
 /// Scalar leaf value (single f32).
@@ -14,6 +17,11 @@ impl LeafValue for ScalarLeaf {
     #[inline]
     fn accumulate(&mut self, other: &Self) {
         self.0 += other.0;
+    }
+
+    #[inline]
+    fn scale(&mut self, factor: f32) {
+        self.0 *= factor;
     }
 }
 
@@ -71,6 +79,13 @@ impl LeafValue for VectorLeaf {
         debug_assert_eq!(self.values.len(), other.values.len());
         for (a, b) in self.values.iter_mut().zip(other.values.iter()) {
             *a += *b;
+        }
+    }
+
+    #[inline]
+    fn scale(&mut self, factor: f32) {
+        for v in &mut self.values {
+            *v *= factor;
         }
     }
 }

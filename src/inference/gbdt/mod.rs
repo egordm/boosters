@@ -45,7 +45,7 @@ mod unrolled;
 mod simd;
 
 // Re-export tree storage types
-pub use tree::{TreeStorage, TreeBuilder};
+pub use tree::{TreeStorage, TreeBuilder, MutableTreeBuilder};
 pub use forest::{Forest, TreeView};
 pub use node::{Node, SplitCondition, SplitType};
 pub use leaf::{LeafValue, ScalarLeaf, VectorLeaf};
