@@ -116,10 +116,24 @@ pub fn traverse_from_node(tree: &Tree<ScalarLeaf>, start_node: u32, features: &[
             } else {
                 tree.right_child(idx)
             }
-        } else if fvalue < tree.split_threshold(idx) {
-            tree.left_child(idx)
         } else {
-            tree.right_child(idx)
+            match tree.split_type(idx) {
+                SplitType::Numeric => {
+                    if fvalue < tree.split_threshold(idx) {
+                        tree.left_child(idx)
+                    } else {
+                        tree.right_child(idx)
+                    }
+                }
+                SplitType::Categorical => {
+                    let category = float_to_category(fvalue);
+                    if tree.categories().category_goes_right(idx, category) {
+                        tree.right_child(idx)
+                    } else {
+                        tree.left_child(idx)
+                    }
+                }
+            }
         };
     }
 
@@ -329,6 +343,34 @@ mod tests {
         }
     }
 
+    fn build_simple_tree_default_right(
+        left_val: f32,
+        right_val: f32,
+        threshold: f32,
+    ) -> Tree<ScalarLeaf> {
+        crate::scalar_tree! {
+            0 => num(0, threshold, R) -> 1, 2,
+            1 => leaf(left_val),
+            2 => leaf(right_val),
+        }
+    }
+
+    fn build_categorical_root_tree(default_missing_left: bool) -> Tree<ScalarLeaf> {
+        if default_missing_left {
+            crate::scalar_tree! {
+                0 => cat(0, [1, 3], L) -> 1, 2,
+                1 => leaf(10.0),
+                2 => leaf(20.0),
+            }
+        } else {
+            crate::scalar_tree! {
+                0 => cat(0, [1, 3], R) -> 1, 2,
+                1 => leaf(10.0),
+                2 => leaf(20.0),
+            }
+        }
+    }
+
     #[test]
     fn standard_traversal_left() {
         let tree_storage = build_simple_tree(1.0, 2.0, 0.5);
@@ -370,6 +412,53 @@ mod tests {
     }
 
     #[test]
+    fn standard_traversal_threshold_equality_goes_right() {
+        let tree_storage = build_simple_tree(1.0, 2.0, 0.5);
+        let state = StandardTraversal::build_tree_state(&tree_storage);
+        let result = StandardTraversal::traverse_tree(&tree_storage, &state, &[0.5]);
+
+        // Spec: numeric split goes left iff value < threshold; equality goes right.
+        assert_eq!(result.0, 2.0);
+    }
+
+    #[test]
+    fn standard_traversal_missing_default_right() {
+        let tree_storage = build_simple_tree_default_right(1.0, 2.0, 0.5);
+        let state = StandardTraversal::build_tree_state(&tree_storage);
+        let result = StandardTraversal::traverse_tree(&tree_storage, &state, &[f32::NAN]);
+
+        assert_eq!(result.0, 2.0);
+    }
+
+    #[test]
+    fn standard_traversal_categorical_membership_and_unknown_go_left() {
+        let tree_storage = build_categorical_root_tree(true);
+        let state = StandardTraversal::build_tree_state(&tree_storage);
+
+        // In-set categories go RIGHT.
+        let in_set = StandardTraversal::traverse_tree(&tree_storage, &state, &[1.0]);
+        assert_eq!(in_set.0, 20.0);
+
+        // Not-in-set goes LEFT.
+        let not_in_set = StandardTraversal::traverse_tree(&tree_storage, &state, &[2.0]);
+        assert_eq!(not_in_set.0, 10.0);
+
+        // Beyond stored bitset defaults to not-in-set => LEFT.
+        let unknown = StandardTraversal::traverse_tree(&tree_storage, &state, &[64.0]);
+        assert_eq!(unknown.0, 10.0);
+    }
+
+    #[test]
+    fn standard_traversal_categorical_missing_uses_default_direction() {
+        let tree_storage = build_categorical_root_tree(false);
+        let state = StandardTraversal::build_tree_state(&tree_storage);
+        let result = StandardTraversal::traverse_tree(&tree_storage, &state, &[f32::NAN]);
+
+        // default_left=false, so missing goes right.
+        assert_eq!(result.0, 20.0);
+    }
+
+    #[test]
     fn unrolled_traversal_matches_standard() {
         let tree_storage = build_simple_tree(1.0, 2.0, 0.5);
         let mut forest = Forest::for_regression();
@@ -394,6 +483,56 @@ mod tests {
                 fval
             );
         }
+    }
+
+    #[test]
+    fn unrolled_traversal_handles_categorical_below_unroll_section() {
+        // Build a deeper tree where the node at depth 4 is categorical.
+        // This specifically exercises the "continue from exit node" path.
+        let tree_storage: Tree<ScalarLeaf> = crate::scalar_tree! {
+            0 => num(0, 0.5, L) -> 1, 2,
+            2 => leaf(200.0),
+
+            1 => num(0, 0.5, L) -> 3, 4,
+            4 => leaf(150.0),
+
+            3 => num(0, 0.5, L) -> 7, 8,
+            8 => leaf(120.0),
+
+            7 => num(0, 0.5, L) -> 15, 16,
+            16 => leaf(110.0),
+
+            // Depth 4 node (along the left-most path): categorical split on feature 1.
+            15 => cat(1, [1], L) -> 31, 32,
+            31 => leaf(10.0),
+            32 => leaf(20.0),
+        };
+
+        let std_state = StandardTraversal::build_tree_state(&tree_storage);
+        let unrolled_state = UnrolledTraversal4::build_tree_state(&tree_storage);
+
+        // Reach node 15 by taking left at all numeric splits (feature 0 < 0.5),
+        // then resolve categorical split by feature 1.
+        let left_cat_left = [0.1, 2.0];
+        let left_cat_right = [0.1, 1.0];
+
+        let std_left = StandardTraversal::traverse_tree(&tree_storage, &std_state, &left_cat_left);
+        let unrolled_left = <UnrolledTraversal4 as TreeTraversal<ScalarLeaf>>::traverse_tree(
+            &tree_storage,
+            &unrolled_state,
+            &left_cat_left,
+        );
+        assert_eq!(std_left.0, 10.0);
+        assert_eq!(std_left.0, unrolled_left.0);
+
+        let std_right = StandardTraversal::traverse_tree(&tree_storage, &std_state, &left_cat_right);
+        let unrolled_right = <UnrolledTraversal4 as TreeTraversal<ScalarLeaf>>::traverse_tree(
+            &tree_storage,
+            &unrolled_state,
+            &left_cat_right,
+        );
+        assert_eq!(std_right.0, 20.0);
+        assert_eq!(std_right.0, unrolled_right.0);
     }
 
     #[test]

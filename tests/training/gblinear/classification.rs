@@ -7,6 +7,7 @@
 use super::load_config;
 use super::load_train_data;
 use booste_rs::data::Dataset;
+use booste_rs::inference::common::PredictionOutput;
 use booste_rs::training::{
     GBLinearParams, GBLinearTrainer, LogLoss, LogisticLoss, MulticlassLogLoss, SoftmaxLoss,
     Verbosity,
@@ -33,20 +34,13 @@ fn train_binary_classification() {
     let trainer = GBLinearTrainer::new(LogisticLoss, LogLoss, params);
     let model = trainer.train(&train, &[]).unwrap();
 
-    // Verify predictions are in reasonable range for logits
-    let mut predictions = Vec::new();
-    for row in 0..data.num_rows().min(10) {
-        let features: Vec<f32> = (0..data.num_columns())
-            .map(|col| data.get(row, col).copied().unwrap_or(f32::NAN))
-            .collect();
-        let pred = model.predict_row(&features, &[0.0])[0];
-        predictions.push(pred);
-    }
-
-    println!(
-        "Binary classification predictions (logits): {:?}",
-        predictions
-    );
+    // Verify predictions are in reasonable range for logits.
+    let output: PredictionOutput = model.predict_batch(&data, &[0.0]);
+    let predictions: Vec<f32> = output
+        .rows()
+        .take(10)
+        .map(|row| row[0])
+        .collect();
 
     // Logits should be finite and not too extreme
     for pred in &predictions {
@@ -83,15 +77,11 @@ fn train_multioutput_classification() {
     assert_eq!(model.num_groups(), num_class);
 
     // Verify predictions exist for all classes
-    let features: Vec<f32> = (0..data.num_columns())
-        .map(|col| data.get(0, col).copied().unwrap_or(f32::NAN))
-        .collect();
-    let predictions = model.predict_row(&features, &vec![0.0; num_class]);
-
-    println!("Multiclass predictions (logits): {:?}", predictions);
+    let output: PredictionOutput = model.predict_batch(&data, &vec![0.0; num_class]);
+    let predictions = output.row(0);
 
     assert_eq!(predictions.len(), num_class);
-    for pred in &predictions {
+    for pred in predictions {
         assert!(pred.is_finite(), "Prediction is not finite: {}", pred);
     }
 
@@ -102,36 +92,29 @@ fn train_multioutput_classification() {
         "All class predictions are identical - multiclass not working properly"
     );
 
-    // Compute training accuracy
-    let mut correct = 0;
-    for i in 0..data.num_rows() {
-        let features: Vec<f32> = (0..data.num_columns())
-            .map(|col| data.get(i, col).copied().unwrap_or(0.0))
-            .collect();
-        let preds = model.predict_row(&features, &vec![0.0; num_class]);
+    // Compute training accuracy (argmax over logits).
+    use booste_rs::training::{Metric, MulticlassAccuracy};
 
-        // Find predicted class (argmax)
-        let predicted = preds
-            .iter()
-            .enumerate()
-            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-            .map(|(idx, _)| idx)
-            .unwrap();
+    let output = model.predict_batch(&data, &vec![0.0; num_class]);
+    let n_rows = output.num_rows();
+    let pred_classes: Vec<f32> = (0..n_rows)
+        .map(|row| {
+            let row_preds = output.row(row);
+            let mut best_idx = 0usize;
+            let mut best_val = f32::NEG_INFINITY;
+            for (idx, &v) in row_preds.iter().enumerate() {
+                if v > best_val {
+                    best_val = v;
+                    best_idx = idx;
+                }
+            }
+            best_idx as f32
+        })
+        .collect();
 
-        let true_class = labels[i] as usize;
-        if predicted == true_class {
-            correct += 1;
-        }
-    }
-
-    let accuracy = correct as f64 / data.num_rows() as f64;
-    println!("Multiclass training accuracy: {:.2}%", accuracy * 100.0);
+    let accuracy = MulticlassAccuracy.compute(n_rows, 1, &pred_classes, &labels, &[]);
 
     // Training accuracy should be reasonable for linear model
     // (better than random = 33.3% for 3 classes)
-    assert!(
-        accuracy > 0.4,
-        "Training accuracy {} should be > 40%",
-        accuracy
-    );
+    assert!(accuracy > 0.4, "Training accuracy {} should be > 40%", accuracy);
 }

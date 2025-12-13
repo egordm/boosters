@@ -67,3 +67,61 @@ impl<D: UnrollDepth> TreeTraversal<ScalarLeaf> for SimdTraversal<D> {
         *tree.leaf_value(leaf_idx)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::inference::gbdt::traversal::{StandardTraversal, UnrolledTraversal4};
+
+    fn categorical_under_unroll() -> Tree<ScalarLeaf> {
+        crate::scalar_tree! {
+            0 => num(0, 0.5, L) -> 1, 2,
+            2 => leaf(200.0),
+
+            1 => num(0, 0.5, L) -> 3, 4,
+            4 => leaf(150.0),
+
+            3 => num(0, 0.5, L) -> 7, 8,
+            8 => leaf(120.0),
+
+            7 => num(0, 0.5, L) -> 15, 16,
+            16 => leaf(110.0),
+
+            15 => cat(1, [1], L) -> 31, 32,
+            31 => leaf(10.0),
+            32 => leaf(20.0),
+        }
+    }
+
+    #[test]
+    fn simd_traversal_matches_standard_and_unrolled() {
+        let tree = categorical_under_unroll();
+        let std_state = StandardTraversal::build_tree_state(&tree);
+        let unrolled_state = UnrolledTraversal4::build_tree_state(&tree);
+        let simd_state = SimdTraversal4::build_tree_state(&tree);
+
+        let cases: Vec<Vec<f32>> = vec![
+            vec![0.1, 2.0],
+            vec![0.1, 1.0],
+            vec![0.9, 1.0],
+            vec![f32::NAN, 1.0],
+        ];
+
+        for features in cases {
+            let std = StandardTraversal::traverse_tree(&tree, &std_state, &features);
+            let unrolled = <UnrolledTraversal4 as TreeTraversal<ScalarLeaf>>::traverse_tree(
+                &tree,
+                &unrolled_state,
+                &features,
+            );
+            let simd = <SimdTraversal4 as TreeTraversal<ScalarLeaf>>::traverse_tree(
+                &tree,
+                &simd_state,
+                &features,
+            );
+
+            assert_eq!(std.0, unrolled.0, "unrolled mismatch for {features:?}");
+            assert_eq!(std.0, simd.0, "simd mismatch for {features:?}");
+        }
+    }
+}

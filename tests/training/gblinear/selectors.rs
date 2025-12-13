@@ -7,11 +7,9 @@
 //! - Greedy (gradient-based)
 //! - Thrifty (cached greedy)
 
-use super::{
-    compute_multiclass_accuracy, compute_test_rmse_default, load_test_data, load_train_data,
-};
-use booste_rs::training::gblinear::FeatureSelectorKind;
+use super::{load_test_data, load_train_data};
 use booste_rs::data::Dataset;
+use booste_rs::training::gblinear::FeatureSelectorKind;
 use booste_rs::training::{
     GBLinearParams, GBLinearTrainer, MulticlassLogLoss, Rmse, SoftmaxLoss, SquaredLoss, Verbosity,
 };
@@ -54,9 +52,9 @@ fn train_all_selectors_regression() {
     };
     let shuffle_trainer = GBLinearTrainer::new(SquaredLoss, Rmse, shuffle_params);
     let shuffle_model = shuffle_trainer.train(&train, &[]).unwrap();
-    let shuffle_rmse = compute_test_rmse_default(&shuffle_model, &test_data, &test_labels);
-
-    println!("Shuffle RMSE: {:.4}", shuffle_rmse);
+    use booste_rs::training::Metric;
+    let shuffle_output = shuffle_model.predict_batch(&test_data, &[]);
+    let shuffle_rmse = Rmse.compute(test_labels.len(), 1, shuffle_output.as_slice(), &test_labels, &[]);
 
     for (name, selector) in selectors {
         let params = GBLinearParams {
@@ -73,9 +71,8 @@ fn train_all_selectors_regression() {
 
         let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
         let model = trainer.train(&train, &[]).unwrap();
-        let rmse = compute_test_rmse_default(&model, &test_data, &test_labels);
-
-        println!("{} RMSE: {:.4}", name, rmse);
+        let output = model.predict_batch(&test_data, &[]);
+        let rmse = Rmse.compute(test_labels.len(), 1, output.as_slice(), &test_labels, &[]);
 
         // All selectors should produce reasonable models
         // (within 2x of shuffle baseline)
@@ -125,9 +122,26 @@ fn train_all_selectors_multiclass() {
     let shuffle_trainer =
         GBLinearTrainer::new(SoftmaxLoss::new(num_classes), MulticlassLogLoss, shuffle_params);
     let shuffle_model = shuffle_trainer.train(&train, &[]).unwrap();
-    let shuffle_acc = compute_multiclass_accuracy(&shuffle_model, &test_data, &test_labels);
-
-    println!("Shuffle accuracy: {:.4}", shuffle_acc);
+    use booste_rs::training::{Metric, MulticlassAccuracy};
+    let shuffle_output = shuffle_model.predict_batch(&test_data, &[]);
+    let n_rows = shuffle_output.num_rows();
+    let shuffle_pred_classes: Vec<f32> = (0..n_rows)
+        .map(|row| {
+            let row_preds = shuffle_output.row(row);
+            let mut best_idx = 0usize;
+            let mut best_val = f32::NEG_INFINITY;
+            for (idx, &v) in row_preds.iter().enumerate() {
+                if v > best_val {
+                    best_val = v;
+                    best_idx = idx;
+                }
+            }
+            best_idx as f32
+        })
+        .collect();
+    let shuffle_acc = MulticlassAccuracy
+        .compute(n_rows, 1, &shuffle_pred_classes, &test_labels, &[])
+        as f32;
 
     for (name, selector) in selectors {
         let params = GBLinearParams {
@@ -145,9 +159,25 @@ fn train_all_selectors_multiclass() {
         let trainer =
             GBLinearTrainer::new(SoftmaxLoss::new(num_classes), MulticlassLogLoss, params);
         let model = trainer.train(&train, &[]).unwrap();
-        let acc = compute_multiclass_accuracy(&model, &test_data, &test_labels);
-
-        println!("{} accuracy: {:.4}", name, acc);
+        let output = model.predict_batch(&test_data, &[]);
+        let n_rows = output.num_rows();
+        let pred_classes: Vec<f32> = (0..n_rows)
+            .map(|row| {
+                let row_preds = output.row(row);
+                let mut best_idx = 0usize;
+                let mut best_val = f32::NEG_INFINITY;
+                for (idx, &v) in row_preds.iter().enumerate() {
+                    if v > best_val {
+                        best_val = v;
+                        best_idx = idx;
+                    }
+                }
+                best_idx as f32
+            })
+            .collect();
+        let acc = MulticlassAccuracy
+            .compute(n_rows, 1, &pred_classes, &test_labels, &[])
+            as f32;
 
         // All selectors should achieve reasonable accuracy
         // (at least 50% of shuffle baseline accuracy)
@@ -213,8 +243,6 @@ fn train_greedy_selector_feature_priority() {
         "Cyclic model should have non-zero weights"
     );
 
-    println!("Greedy model trained successfully with top_k=2");
-    println!("Cyclic model trained successfully");
 }
 
 /// Test Thrifty selector convergence with caching.
@@ -245,9 +273,9 @@ fn train_thrifty_selector_convergence() {
 
     let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
     let model = trainer.train(&train, &[]).unwrap();
-    let rmse = compute_test_rmse_default(&model, &test_data, &test_labels);
-
-    println!("Thrifty RMSE: {:.4}", rmse);
+    use booste_rs::training::Metric;
+    let output = model.predict_batch(&test_data, &[]);
+    let rmse = Rmse.compute(test_labels.len(), 1, output.as_slice(), &test_labels, &[]);
 
     // Thrifty should converge to a reasonable model
     assert!(rmse < 100.0, "Thrifty should converge: RMSE = {}", rmse);

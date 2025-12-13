@@ -44,8 +44,35 @@
 mod classification;
 mod regression;
 
-pub use classification::{Accuracy, Auc, LogLoss, MulticlassAccuracy, MulticlassLogLoss};
+pub use classification::{Accuracy, Auc, LogLoss, MarginAccuracy, MulticlassAccuracy, MulticlassLogLoss};
 pub use regression::{HuberMetric, Mae, Mape, PoissonDeviance, QuantileMetric, Rmse};
+
+use crate::inference::common::PredictionKind;
+
+// =============================================================================
+// MetricKind (for defaults / configuration)
+// =============================================================================
+
+/// Metric identifier used for configuration and objective defaults.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum MetricKind {
+    // Regression
+    Rmse,
+    Mae,
+    Mape,
+    Huber,
+    PoissonDeviance,
+    Quantile,
+
+    // Classification
+    LogLoss,
+    Accuracy,
+    MarginAccuracy,
+    Auc,
+    MulticlassLogLoss,
+    MulticlassAccuracy,
+}
 
 // =============================================================================
 // Metric Trait
@@ -74,7 +101,7 @@ pub use regression::{HuberMetric, Mae, Mape, PoissonDeviance, QuantileMetric, Rm
 pub trait Metric: Send + Sync {
     /// Compute metric value.
     ///
-    /// Predictions are expected in column-major layout: `[output0_row0..output0_rowN, output1_row0..]`.
+    /// Predictions are expected in **row-major** layout with shape `(n_rows, n_outputs)`.
     ///
     /// Pass an empty `weights` slice for unweighted computation.
     fn compute(
@@ -85,6 +112,9 @@ pub trait Metric: Send + Sync {
         targets: &[f32],
         weights: &[f32],
     ) -> f64;
+
+    /// What prediction space does this metric expect?
+    fn expected_prediction_kind(&self) -> PredictionKind;
 
     /// Whether higher values indicate better performance.
     ///

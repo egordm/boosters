@@ -21,13 +21,28 @@ What’s weak / risky:
 
 - Some unit tests are essentially “does Default stay the same” or “n_trees equals X” and don’t validate semantics.
 - Some training tests check only “reasonable-ish” outcomes (thresholds like RMSE < 1.0, accuracy > 0.4). These can become flaky across changes in optimization, SIMD, or platform math.
-- SIMD parity is not obviously enforced by tests (if `simd` is enabled, you want explicit checks that SIMD and scalar paths agree).
 
 What’s missing (most important gaps):
 
 - Tight, explicit spec tests for traversal semantics: NaNs, threshold equality, default direction, categorical split membership, and out-of-range category/bin behavior.
 - Conversion invariants (LightGBM/XGBoost → canonical repr): domain consistency (bin/category index semantics), group/tree indexing invariants, and “shape” validation.
 - Negative tests for malformed models / malformed test-case data (ensure errors are returned, not panics).
+
+## Status update (as of 2025-12-13)
+
+This audit was originally written as “gaps to address”. Since then, several recommendations have been implemented.
+
+Applied:
+
+- Traversal semantics spec coverage was strengthened (threshold equality, missing/default direction, categorical membership/unknown category, categorical below-unroll regression).
+- SIMD parity is enforced when `feature = simd` is enabled (SIMD traversal output matches standard/unrolled for representative cases).
+- Conversion invariants are now checked via `Tree::validate()` / `Forest::validate()` and are called from compat conversion/integration tests.
+- Integration tests were regrouped to reduce `tests/` root clutter and avoid duplicated compilation.
+
+Still open / partially addressed:
+
+- Negative tests for malformed full models are still light (there are some negative parser tests, but the “bad model returns structured error, never panics” surface can be expanded).
+- Some GBLinear training integration tests still assert “reasonable-ish” thresholds and print debug output; they’re useful anchors but can be somewhat noisy/flaky.
 
 ## Current layout (high-level)
 
@@ -102,18 +117,21 @@ Audit guidance: keep traversal-specific data layouts in `inference` (e.g. unroll
 
 ```text
 tests/
-├── inference_lightgbm.rs          # Feature-gated: lightgbm-compat
-├── inference_xgboost.rs           # Feature-gated: xgboost-compat
-├── test_data.rs                   # Shared structs/helpers for JSON fixtures
-├── training_gbdt_tests.rs         # Smoke/integration tests for training pipeline
-├── linear_training_tests.rs       # Module root for GBLinear training tests
-├── training_gblinear/
-│   ├── classification.rs
-│   ├── loss_functions.rs
-│   ├── quantile.rs
-│   ├── regression.rs
-│   ├── selectors.rs
-│   └── mod.rs
+├── compat.rs                      # Feature-gated compat suite entrypoint
+├── compat/
+│   ├── lightgbm.rs
+│   ├── xgboost.rs
+│   └── test_data.rs
+├── training.rs                    # Training suite entrypoint
+├── training/
+│   ├── gbdt.rs
+│   └── gblinear/
+│       ├── classification.rs
+│       ├── loss_functions.rs
+│       ├── quantile.rs
+│       ├── regression.rs
+│       ├── selectors.rs
+│       └── mod.rs
 └── test-cases/                    # Golden fixtures from Python (LightGBM/XGBoost)
 ```
 
@@ -211,15 +229,15 @@ Mitigations:
 
 ## Test structure and grouping
 
-Current grouping is mostly good:
+Current grouping is good:
 
 - Integration tests are segregated under `tests/` and feature-gated for compat.
 - Larger “domains” are grouped (GBLinear training tests are in a folder module).
 
 Potential improvements:
 
-- Consider grouping `tests/inference_{lightgbm,xgboost}.rs` into a `tests/compat/` folder module once the suite grows further.
-- Consider splitting “parsing/shape tests” vs “prediction golden tests” to keep intent clear and runtime manageable.
+- Expand malformed-model negative tests (conversion should return structured errors for invalid JSON/text, never panic).
+- Consider gradually reducing “hard thresholds” in training integration tests by preferring parity checks (e.g. compare against a stable reference) where possible.
 
 ## Machine-readable inventory
 

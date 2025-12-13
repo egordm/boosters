@@ -1,6 +1,8 @@
 //! Classification objective functions.
 
-use super::{validate_objective_inputs, weight_iter, Objective};
+use super::{validate_objective_inputs, weight_iter, Objective, TargetSchema, TaskKind};
+use crate::inference::common::{sigmoid_inplace, softmax_rows, PredictionKind, PredictionOutput};
+use crate::training::metrics::MetricKind;
 
 // =============================================================================
 // Logistic Loss
@@ -102,6 +104,23 @@ impl Objective for LogisticLoss {
     fn name(&self) -> &'static str {
         "logistic"
     }
+
+    fn task_kind(&self) -> TaskKind {
+        TaskKind::BinaryClassification
+    }
+
+    fn target_schema(&self) -> TargetSchema {
+        TargetSchema::Binary01
+    }
+
+    fn default_metric(&self) -> MetricKind {
+        MetricKind::LogLoss
+    }
+
+    fn transform_prediction_inplace(&self, raw: &mut PredictionOutput) -> PredictionKind {
+        sigmoid_inplace(raw.as_mut_slice());
+        PredictionKind::Probability
+    }
 }
 
 // =============================================================================
@@ -179,6 +198,23 @@ impl Objective for HingeLoss {
 
     fn name(&self) -> &'static str {
         "hinge"
+    }
+
+    fn task_kind(&self) -> TaskKind {
+        TaskKind::BinaryClassification
+    }
+
+    fn target_schema(&self) -> TargetSchema {
+        TargetSchema::BinarySigned
+    }
+
+    fn default_metric(&self) -> MetricKind {
+        MetricKind::MarginAccuracy
+    }
+
+    fn transform_prediction_inplace(&self, _raw: &mut PredictionOutput) -> PredictionKind {
+        // Hinge is naturally evaluated in margin space.
+        PredictionKind::Margin
     }
 }
 
@@ -316,6 +352,23 @@ impl Objective for SoftmaxLoss {
 
     fn name(&self) -> &'static str {
         "softmax"
+    }
+
+    fn task_kind(&self) -> TaskKind {
+        TaskKind::MulticlassClassification
+    }
+
+    fn target_schema(&self) -> TargetSchema {
+        TargetSchema::MulticlassIndex
+    }
+
+    fn default_metric(&self) -> MetricKind {
+        MetricKind::MulticlassLogLoss
+    }
+
+    fn transform_prediction_inplace(&self, raw: &mut PredictionOutput) -> PredictionKind {
+        softmax_rows(raw);
+        PredictionKind::Probability
     }
 }
 
@@ -522,6 +575,25 @@ impl Objective for LambdaRankLoss {
 
     fn name(&self) -> &'static str {
         "lambdarank"
+    }
+
+    fn task_kind(&self) -> TaskKind {
+        TaskKind::Ranking
+    }
+
+    fn target_schema(&self) -> TargetSchema {
+        // LambdaRank supports graded relevance labels.
+        TargetSchema::Continuous
+    }
+
+    fn default_metric(&self) -> MetricKind {
+        // TODO: add NDCG metric; AUC is a placeholder.
+        MetricKind::Auc
+    }
+
+    fn transform_prediction_inplace(&self, _raw: &mut PredictionOutput) -> PredictionKind {
+        // Ranking objectives typically expose a score.
+        PredictionKind::RankScore
     }
 }
 

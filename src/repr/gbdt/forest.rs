@@ -1,6 +1,15 @@
 //! Canonical forest representation (collection of trees).
 
-use super::{LeafValue, ScalarLeaf, Tree};
+use super::{tree::TreeValidationError, LeafValue, ScalarLeaf, Tree};
+
+/// Structural validation errors for [`Forest`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForestValidationError {
+    BaseScoreLenMismatch { n_groups: u32, len: usize },
+    TreeGroupsLenMismatch { n_trees: usize, len: usize },
+    TreeGroupOutOfRange { tree_idx: usize, group: u32, n_groups: u32 },
+    InvalidTree { tree_idx: usize, error: TreeValidationError },
+}
 
 /// Forest of decision trees.
 ///
@@ -84,6 +93,41 @@ impl<L: LeafValue> Forest<L> {
             .iter()
             .zip(self.tree_groups.iter())
             .map(|(t, &g)| (t, g))
+    }
+
+    /// Validate structural invariants for this forest (trees, group assignments, base score).
+    ///
+    /// Intended for debug checks and tests (e.g., model conversion invariants).
+    pub fn validate(&self) -> Result<(), ForestValidationError> {
+        if self.base_score.len() != self.n_groups as usize {
+            return Err(ForestValidationError::BaseScoreLenMismatch {
+                n_groups: self.n_groups,
+                len: self.base_score.len(),
+            });
+        }
+        if self.tree_groups.len() != self.trees.len() {
+            return Err(ForestValidationError::TreeGroupsLenMismatch {
+                n_trees: self.trees.len(),
+                len: self.tree_groups.len(),
+            });
+        }
+
+        for (i, &g) in self.tree_groups.iter().enumerate() {
+            if g >= self.n_groups {
+                return Err(ForestValidationError::TreeGroupOutOfRange {
+                    tree_idx: i,
+                    group: g,
+                    n_groups: self.n_groups,
+                });
+            }
+        }
+
+        for (i, tree) in self.trees.iter().enumerate() {
+            tree.validate()
+                .map_err(|e| ForestValidationError::InvalidTree { tree_idx: i, error: e })?;
+        }
+
+        Ok(())
     }
 }
 

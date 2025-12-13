@@ -157,7 +157,7 @@ pub fn load_xgb_predictions(name: &str) -> Option<Vec<f32>> {
 }
 
 // =============================================================================
-// Statistical Utilities  
+// Statistical Utilities
 // =============================================================================
 
 // Re-export from library
@@ -167,96 +167,4 @@ pub use booste_rs::testing::pearson_correlation;
 pub fn rmse(predictions: &[f32], labels: &[f32]) -> f64 {
     use booste_rs::training::Metric;
     Rmse.compute(labels.len(), 1, predictions, labels, &[])
-}
-
-// =============================================================================
-// Prediction Utilities
-// =============================================================================
-
-use booste_rs::inference::gblinear::LinearModel;
-use booste_rs::training::Metric;
-
-/// Get predictions from a model for all rows in the data.
-/// Returns column-major predictions: `[group][row]`.
-pub fn get_predictions(model: &LinearModel, data: &ColMatrix<f32>, base_scores: &[f32]) -> Vec<f32> {
-    let num_rows = data.num_rows();
-    let num_features = model.num_features();
-    let num_groups = model.num_groups();
-    let mut predictions = vec![0.0f32; num_rows * num_groups];
-
-    for row_idx in 0..num_rows {
-        let features: Vec<f32> = (0..num_features)
-            .map(|col| data.get(row_idx, col).copied().unwrap_or(0.0))
-            .collect();
-        let preds = model.predict_row(&features, base_scores);
-        for (group, &p) in preds.iter().enumerate() {
-            predictions[group * num_rows + row_idx] = p;
-        }
-    }
-    predictions
-}
-
-/// Get predictions with default base_score of 0.
-pub fn get_predictions_default(model: &LinearModel, data: &ColMatrix<f32>) -> Vec<f32> {
-    let base_score = vec![0.0f32; model.num_groups()];
-    get_predictions(model, data, &base_score)
-}
-
-/// Compute RMSE on test set.
-pub fn compute_test_rmse(
-    model: &LinearModel,
-    data: &ColMatrix<f32>,
-    labels: &[f32],
-    base_scores: &[f32],
-) -> f64 {
-    let preds = get_predictions(model, data, base_scores);
-    Rmse.compute(labels.len(), 1, &preds, labels, &[])
-}
-
-/// Compute RMSE with default base_score of 0.
-pub fn compute_test_rmse_default(model: &LinearModel, data: &ColMatrix<f32>, labels: &[f32]) -> f32 {
-    let preds = get_predictions_default(model, data);
-    Rmse.compute(labels.len(), 1, &preds, labels, &[]) as f32
-}
-
-/// Compute multiclass accuracy using argmax.
-pub fn compute_multiclass_accuracy(model: &LinearModel, data: &ColMatrix<f32>, labels: &[f32]) -> f32 {
-    use booste_rs::training::MulticlassAccuracy;
-    
-    let num_groups = model.num_groups();
-    let predictions = get_predictions_default(model, data);
-    let n_rows = labels.len();
-
-    // Convert to predicted class indices via argmax
-    let pred_classes: Vec<f32> = (0..n_rows)
-        .map(|row| {
-            let mut best_idx = 0usize;
-            let mut best_val = f32::NEG_INFINITY;
-            for group in 0..num_groups {
-                let p = predictions[group * n_rows + row];
-                if p > best_val {
-                    best_val = p;
-                    best_idx = group;
-                }
-            }
-            best_idx as f32
-        })
-        .collect();
-
-    use booste_rs::training::Metric;
-    MulticlassAccuracy.compute(n_rows, 1, &pred_classes, labels, &[]) as f32
-}
-
-/// Compute binary accuracy with given threshold.
-pub fn compute_binary_accuracy(
-    model: &LinearModel,
-    data: &ColMatrix<f32>,
-    labels: &[f32],
-    threshold: f32,
-) -> f32 {
-    use booste_rs::training::Accuracy;
-    
-    let predictions = get_predictions_default(model, data);
-    use booste_rs::training::Metric;
-    Accuracy::with_threshold(threshold).compute(labels.len(), 1, &predictions, labels, &[]) as f32
 }

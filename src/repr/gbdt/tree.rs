@@ -8,6 +8,33 @@ use super::leaf::LeafValue;
 use super::node::SplitType;
 use super::NodeId;
 
+/// Structural validation errors for [`Tree`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TreeValidationError {
+    /// Tree has no nodes.
+    EmptyTree,
+    /// A child pointer references an out-of-bounds node.
+    ChildOutOfBounds {
+        node: NodeId,
+        side: &'static str,
+        child: NodeId,
+        n_nodes: usize,
+    },
+    /// A node references itself as a child.
+    SelfLoop { node: NodeId },
+    /// A node was reached by more than one path (DAG) or due to a cycle.
+    DuplicateVisit { node: NodeId },
+    /// A cycle was detected during traversal.
+    CycleDetected { node: NodeId },
+    /// A node exists in storage but is unreachable from the root.
+    UnreachableNode { node: NodeId },
+    /// Tree contains categorical splits but the category segments array is not sized to nodes.
+    CategoricalSegmentsLenMismatch {
+        segments_len: usize,
+        n_nodes: usize,
+    },
+}
+
 /// Structure-of-Arrays tree storage for efficient traversal.
 ///
 /// Stores tree nodes in flat arrays for cache-friendly traversal.
@@ -198,6 +225,106 @@ impl<L: LeafValue> Tree<L> {
         }
 
         self.leaf_value(idx)
+    }
+
+    /// Validate basic structural invariants for this tree.
+    ///
+    /// Intended for debug checks and tests (e.g., model conversion invariants).
+    pub fn validate(&self) -> Result<(), TreeValidationError> {
+        let n_nodes = self.n_nodes();
+        if n_nodes == 0 {
+            return Err(TreeValidationError::EmptyTree);
+        }
+
+        // If categorical splits exist, segments must be indexed by node.
+        let has_cat_split = self
+            .split_types
+            .iter()
+            .any(|t| matches!(t, SplitType::Categorical));
+        if has_cat_split {
+            let segments_len = self.categories.segments().len();
+            if segments_len != n_nodes {
+                return Err(TreeValidationError::CategoricalSegmentsLenMismatch {
+                    segments_len,
+                    n_nodes,
+                });
+            }
+        }
+
+        // Iterative DFS with color marking.
+        // 0 = unvisited, 1 = visiting, 2 = done
+        let mut color = vec![0u8; n_nodes];
+        let mut stack: Vec<(NodeId, u8)> = vec![(0, 0)];
+
+        while let Some((node, phase)) = stack.pop() {
+            let node_usize = node as usize;
+            if node_usize >= n_nodes {
+                return Err(TreeValidationError::ChildOutOfBounds {
+                    node,
+                    side: "root",
+                    child: node,
+                    n_nodes,
+                });
+            }
+
+            match phase {
+                0 => {
+                    match color[node_usize] {
+                        0 => {}
+                        1 => return Err(TreeValidationError::CycleDetected { node }),
+                        2 => return Err(TreeValidationError::DuplicateVisit { node }),
+                        _ => unreachable!(),
+                    }
+
+                    color[node_usize] = 1;
+                    stack.push((node, 1));
+
+                    if !self.is_leaf(node) {
+                        let left = self.left_child(node);
+                        let right = self.right_child(node);
+
+                        if left == node || right == node {
+                            return Err(TreeValidationError::SelfLoop { node });
+                        }
+
+                        let left_usize = left as usize;
+                        if left_usize >= n_nodes {
+                            return Err(TreeValidationError::ChildOutOfBounds {
+                                node,
+                                side: "left",
+                                child: left,
+                                n_nodes,
+                            });
+                        }
+                        let right_usize = right as usize;
+                        if right_usize >= n_nodes {
+                            return Err(TreeValidationError::ChildOutOfBounds {
+                                node,
+                                side: "right",
+                                child: right,
+                                n_nodes,
+                            });
+                        }
+
+                        // Visit children
+                        stack.push((right, 0));
+                        stack.push((left, 0));
+                    }
+                }
+                1 => {
+                    color[node_usize] = 2;
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        for (i, &c) in color.iter().enumerate() {
+            if c == 0 {
+                return Err(TreeValidationError::UnreachableNode { node: i as u32 });
+            }
+        }
+
+        Ok(())
     }
 
     /// Traverse the tree to find the leaf for a binned row.

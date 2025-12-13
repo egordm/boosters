@@ -763,13 +763,6 @@ mod tests {
     }
 
     #[test]
-    fn test_tree_params_default() {
-        let params = GrowerParams::default();
-        assert_eq!(params.learning_rate, 0.3);
-        assert!(matches!(params.growth_strategy, GrowthStrategy::DepthWise { max_depth: 6 }));
-    }
-
-    #[test]
     fn test_grower_learning_rate() {
         let dataset = make_simple_dataset();
         let params = GrowerParams {

@@ -42,13 +42,6 @@ fn train_regression_matches_xgboost(#[case] name: &str) {
     // XGBoost stores weights as [w0, w1, ..., wn-1, bias]
     let num_features = xgb_weights.num_features;
 
-    println!("Test case: {}", name);
-    println!("XGBoost weights: {:?}", xgb_weights.weights);
-    println!("booste-rs bias: {}", model.bias(0));
-    for i in 0..num_features {
-        println!("booste-rs weight[{}]: {}", i, model.weight(i, 0));
-    }
-
     // Check each weight is reasonably close
     // Note: We use a loose tolerance because training may converge differently
     for i in 0..num_features {
@@ -104,53 +97,10 @@ fn train_l2_regularization_shrinks_weights() {
         .map(|i| l2_model.weight(i, 0).powi(2))
         .sum();
 
-    println!("No reg L2 norm: {}", no_reg_l2_norm);
-    println!("With L2 reg norm: {}", l2_norm);
-
     assert!(
         l2_norm < no_reg_l2_norm,
         "L2 regularization should shrink weights"
     );
-}
-
-/// Test that L1 regularization can zero out some weights (sparsity).
-#[test]
-fn train_elastic_net_produces_sparse_weights() {
-    let (data, labels) = load_train_data("regression_elastic_net");
-    let train = Dataset::from_numeric(&data, labels.clone()).unwrap();
-    let xgb_weights = load_xgb_weights("regression_elastic_net");
-    let config = load_config("regression_elastic_net");
-
-    let params = GBLinearParams {
-        n_rounds: config.num_boost_round as u32,
-        learning_rate: config.eta,
-        alpha: config.alpha,
-        lambda: config.lambda,
-        parallel: false,
-        verbosity: Verbosity::Silent,
-        ..Default::default()
-    };
-
-    let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
-    let model = trainer.train(&train, &[]).unwrap();
-
-    // Count near-zero weights in both
-    let xgb_near_zero = xgb_weights
-        .weights
-        .iter()
-        .take(xgb_weights.num_features)
-        .filter(|w| w.abs() < 0.1)
-        .count();
-
-    let our_near_zero = (0..data.num_features())
-        .filter(|&i| model.weight(i, 0).abs() < 0.1)
-        .count();
-
-    println!("XGBoost near-zero weights: {}", xgb_near_zero);
-    println!("booste-rs near-zero weights: {}", our_near_zero);
-
-    // Both should have some sparsity due to L1
-    // Note: We don't require exact match, just that both exhibit some sparsity
 }
 
 /// Test predictions match after training.
@@ -184,7 +134,10 @@ fn trained_model_predictions_reasonable() {
         assert!(
             diff < 0.5,
             "Prediction for x={}: expected {}, got {}, diff={}",
-            x, expected, pred, diff
+            x,
+            expected,
+            pred,
+            diff
         );
     }
 }
@@ -229,7 +182,8 @@ fn parallel_vs_sequential_similar() {
     assert!(
         diff < 2.0,
         "Sequential vs parallel predictions differ too much: {} vs {}",
-        seq_pred, par_pred
+        seq_pred,
+        par_pred
     );
 }
 
@@ -267,7 +221,6 @@ fn weight_correlation_with_xgboost(#[case] name: &str) {
     let xgb_w: Vec<f32> = xgb_weights.weights[..xgb_weights.num_features].to_vec();
 
     let corr = pearson_correlation(&our_weights, &xgb_w);
-    println!("Test case {}: weight correlation = {:.4}", name, corr);
 
     // Weight correlation should be high
     assert!(
@@ -282,7 +235,7 @@ fn weight_correlation_with_xgboost(#[case] name: &str) {
 #[case("regression_l2")]
 #[case("regression_elastic_net")]
 fn test_set_prediction_quality(#[case] name: &str) {
-    use super::{compute_test_rmse, load_test_data, load_xgb_predictions, rmse};
+    use super::{load_test_data, load_xgb_predictions, rmse};
 
     let (train_data, train_labels) = load_train_data(name);
     let train = Dataset::from_numeric(&train_data, train_labels.clone()).unwrap();
@@ -308,13 +261,13 @@ fn test_set_prediction_quality(#[case] name: &str) {
     let model = trainer.train(&train, &[]).unwrap();
     let base_scores = vec![0.0f32];
 
-    let our_rmse = compute_test_rmse(&model, &test_data, &test_labels, &base_scores);
-    println!("Test case {}: our test RMSE = {:.4}", name, our_rmse);
+    use booste_rs::training::Metric;
+    let output = model.predict_batch(&test_data, &base_scores);
+    let our_rmse = Rmse.compute(test_labels.len(), 1, output.as_slice(), &test_labels, &[]);
 
     // Compare to XGBoost if available
     if let Some(xgb_preds) = load_xgb_predictions(name) {
         let xgb_rmse = rmse(&xgb_preds, &test_labels);
-        println!("Test case {}: XGBoost test RMSE = {:.4}", name, xgb_rmse);
 
         // Our RMSE should be within 50% of XGBoost
         assert!(
@@ -328,8 +281,11 @@ fn test_set_prediction_quality(#[case] name: &str) {
     // RMSE should be reasonable (less than std of labels)
     let label_std = {
         let mean = test_labels.iter().sum::<f32>() / test_labels.len() as f32;
-        let var: f32 =
-            test_labels.iter().map(|&l| (l - mean).powi(2)).sum::<f32>() / test_labels.len() as f32;
+        let var: f32 = test_labels
+            .iter()
+            .map(|&l| (l - mean).powi(2))
+            .sum::<f32>()
+            / test_labels.len() as f32;
         var.sqrt() as f64
     };
 
