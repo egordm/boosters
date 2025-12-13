@@ -256,9 +256,10 @@ impl<L: LeafValue> TreeStorage<L> {
                             }
                         }
                         SplitType::Categorical => {
-                            // Convert bin to category and check membership
-                            let mapper = dataset.bin_mapper(feat_idx);
-                            let category = mapper.bin_to_value(bin) as u32;
+                            // Categorical bins are treated as canonical category indices (0..K-1).
+                            // Using `bin_to_value()` here would map to the original raw category
+                            // value, which may be large and would not match the model's bitset domain.
+                            let category = bin;
                             if self.categories.category_goes_right(idx, category) {
                                 self.right_child(idx)
                             } else {

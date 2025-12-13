@@ -392,6 +392,9 @@ impl TreeGrower {
     /// - Training: categories in `left_cats` go LEFT
     /// - Inference: categories in bitset go RIGHT
     /// - We swap children and invert default_left to preserve semantics
+    ///
+    /// Important: categorical split categories are treated as **category indices** (0..K-1),
+    /// i.e. the same domain as categorical bin indices in `BinnedDataset`.
     fn apply_split_to_builder(
         builder: &mut MutableTreeBuilder<ScalarLeaf>,
         node: u32,
@@ -414,12 +417,12 @@ impl TreeGrower {
                 // Inference: categories in bitset go RIGHT
                 // We swap children at the inference level by storing left_cats in the bitset
                 // and swapping left/right children when applying the split.
-                let mut categories = Vec::new();
-                for bin in left_cats.iter() {
-                    let cat_val = mapper.bin_to_value(bin);
-                    let cat_u32 = cat_val as u32;
-                    categories.push(cat_u32);
-                }
+                //
+                // Note: `left_cats` already contains categorical **bin indices**, which we
+                // treat as canonical category indices (0..K-1). Do NOT convert via
+                // `bin_to_value()` here: categorical bin mappers store original category
+                // values, which may be large and would explode bitset size.
+                let mut categories: Vec<u32> = left_cats.iter().map(|c| c as u32).collect();
                 categories.sort_unstable();
                 categories.dedup();
                 let bitset = categories_to_bitset(&categories);
@@ -542,6 +545,107 @@ mod tests {
             .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
             .build()
             .unwrap()
+    }
+
+    fn make_numeric_boundary_dataset() -> BinnedDataset {
+        // 2 samples, 1 feature, 2 bins.
+        // Bin 0 upper bound is 0.5, bin 1 upper bound is 1.5.
+        let bins = vec![0, 1];
+        let mapper = BinMapper::numerical(
+            vec![0.5, 1.5],
+            MissingType::None,
+            0,
+            0,
+            0.0,
+            0.0,
+            1.0,
+        );
+        BinnedDatasetBuilder::new()
+            .add_binned(bins, mapper)
+            .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
+            .build()
+            .unwrap()
+    }
+
+    fn make_categorical_domain_dataset() -> BinnedDataset {
+        // 4 samples, 1 categorical feature with 4 categories.
+        // The raw category values are intentionally large to catch accidental use of
+        // raw values as bitset indices.
+        let bins = vec![0, 1, 2, 3];
+        let mapper = BinMapper::categorical(
+            vec![1000, 2000, 3000, 4000],
+            MissingType::None,
+            0,
+            0,
+            0.0,
+        );
+        BinnedDatasetBuilder::new()
+            .add_binned(bins, mapper)
+            .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn phase4_numeric_threshold_translation_preserves_boundary() {
+        let dataset = make_numeric_boundary_dataset();
+
+        let mut builder = MutableTreeBuilder::<ScalarLeaf>::with_capacity(3);
+        let root = builder.init_root();
+
+        // Training semantics: bin <= 0 goes left.
+        let split = SplitInfo::numerical(0, 0, 1.0, true);
+        let (left, right) = TreeGrower::apply_split_to_builder(&mut builder, root, &split, &dataset);
+        builder.make_leaf(left, ScalarLeaf(10.0));
+        builder.make_leaf(right, ScalarLeaf(20.0));
+        let tree = builder.finish();
+
+        let upper = dataset.bin_mapper(0).bin_to_value(0) as f32;
+        let threshold = tree.split_threshold(0);
+
+        assert!(threshold > upper);
+        // Value exactly on the bin boundary should still go LEFT.
+        assert_eq!(tree.predict_row(&[upper]).0, 10.0);
+        // Value exactly equal to the stored threshold should go RIGHT.
+        assert_eq!(tree.predict_row(&[threshold]).0, 20.0);
+
+        // And the binned path must match training semantics.
+        let row0 = dataset.row_view(0).unwrap();
+        let row1 = dataset.row_view(1).unwrap();
+        assert_eq!(tree.predict_binned(&row0, &dataset).0, 10.0);
+        assert_eq!(tree.predict_binned(&row1, &dataset).0, 20.0);
+    }
+
+    #[test]
+    fn phase5_categorical_domain_is_bin_indices_and_semantics_match() {
+        let dataset = make_categorical_domain_dataset();
+
+        let mut builder = MutableTreeBuilder::<ScalarLeaf>::with_capacity(3);
+        let root = builder.init_root();
+
+        // Training semantics: categories {1, 3} go LEFT.
+        let mut left_cats = crate::training::gbdt::categorical::CatBitset::empty();
+        left_cats.insert(1);
+        left_cats.insert(3);
+        let split = SplitInfo::categorical(0, left_cats, 1.0, false);
+        let (left, right) = TreeGrower::apply_split_to_builder(&mut builder, root, &split, &dataset);
+        builder.make_leaf(left, ScalarLeaf(10.0));
+        builder.make_leaf(right, ScalarLeaf(20.0));
+        let tree = builder.finish();
+
+        // Category indices are in 0..=3, so the stored bitset should fit in one word.
+        assert!(tree.has_categorical());
+        assert_eq!(tree.categories().bitset_for_node(0).len(), 1);
+
+        // Inference path expects category *indices* in f32 form.
+        assert_eq!(tree.predict_row(&[1.0]).0, 10.0);
+        assert_eq!(tree.predict_row(&[2.0]).0, 20.0);
+
+        // Binned path should match too (bins are the category indices).
+        let row1 = dataset.row_view(1).unwrap(); // bin 1
+        let row2 = dataset.row_view(2).unwrap(); // bin 2
+        assert_eq!(tree.predict_binned(&row1, &dataset).0, 10.0);
+        assert_eq!(tree.predict_binned(&row2, &dataset).0, 20.0);
     }
 
     #[test]
