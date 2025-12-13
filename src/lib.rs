@@ -38,6 +38,7 @@ pub use approx;
 pub mod compat;
 pub mod data;
 pub mod inference;
+pub mod repr;
 pub mod testing;
 pub mod training;
 pub mod utils;

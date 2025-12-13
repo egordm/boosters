@@ -42,7 +42,7 @@
 
 use super::LeafValue;
 use super::SplitType;
-use super::tree::TreeStorage;
+use super::Tree;
 
 /// Maximum number of levels to unroll (matches XGBoost).
 /// 6 levels = 63 nodes, 8 levels = 255 nodes.
@@ -188,8 +188,8 @@ pub struct UnrolledTreeLayout<D: UnrollDepth = Depth6> {
 }
 
 impl<D: UnrollDepth> UnrolledTreeLayout<D> {
-    /// Create an unrolled layout from a TreeStorage.
-    pub fn from_tree<L: LeafValue>(tree: &TreeStorage<L>) -> Self {
+    /// Create an unrolled layout from a Tree.
+    pub fn from_tree<L: LeafValue>(tree: &Tree<L>) -> Self {
         // Initialize arrays with fill values
         let mut split_indices = D::node_array_fill(0u32);
         let mut split_thresholds = D::node_array_fill(f32::NAN);
@@ -408,7 +408,7 @@ pub type UnrolledTreeLayout8 = UnrolledTreeLayout<Depth8>;
 
 /// Recursively populate the array layout from the original tree.
 fn populate_recursive<L: LeafValue>(
-    tree: &TreeStorage<L>,
+    tree: &Tree<L>,
     tree_nidx: u32,
     array_nidx: usize,
     level: usize,
@@ -512,42 +512,43 @@ fn populate_recursive<L: LeafValue>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::{ScalarLeaf, TreeBuilder};
+    use super::super::{MutableTree, ScalarLeaf, Tree};
 
-    fn build_complete_tree(depth: usize) -> TreeStorage<ScalarLeaf> {
-        let mut builder = TreeBuilder::new();
-        let num_nodes = nodes_at_depth(depth + 1);
+    fn build_complete_tree(depth: usize) -> Tree<ScalarLeaf> {
+        let mut builder = MutableTree::with_capacity(nodes_at_depth(depth + 1));
+        let root = builder.init_root();
 
-        fn add_node(
-            builder: &mut TreeBuilder<ScalarLeaf>,
+        fn grow(
+            builder: &mut MutableTree<ScalarLeaf>,
+            node: u32,
             current_depth: usize,
             max_depth: usize,
             leaf_counter: &mut f32,
-        ) -> u32 {
+        ) {
             if current_depth == max_depth {
                 let val = *leaf_counter;
                 *leaf_counter += 1.0;
-                builder.add_leaf(ScalarLeaf(val))
+                builder.make_leaf(node, ScalarLeaf(val));
             } else {
-                let left = add_node(builder, current_depth + 1, max_depth, leaf_counter);
-                let right = add_node(builder, current_depth + 1, max_depth, leaf_counter);
-                builder.add_split(0, 0.5, true, left, right)
+                let (left, right) = builder.apply_numeric_split(node, 0, 0.5, true);
+                grow(builder, left, current_depth + 1, max_depth, leaf_counter);
+                grow(builder, right, current_depth + 1, max_depth, leaf_counter);
             }
         }
 
-        let _ = num_nodes;
         let mut leaf_counter = 0.0;
-        add_node(&mut builder, 0, depth, &mut leaf_counter);
-        builder.build()
+        grow(&mut builder, root, 0, depth, &mut leaf_counter);
+        builder.freeze()
     }
 
     #[test]
     fn unrolled_layout_basic() {
-        let mut builder = TreeBuilder::new();
-        builder.add_split(0, 0.5, true, 1, 2);
-        builder.add_leaf(ScalarLeaf(1.0));
-        builder.add_leaf(ScalarLeaf(2.0));
-        let tree = builder.build();
+        let mut builder = MutableTree::with_capacity(3);
+        let root = builder.init_root();
+        let (l, r) = builder.apply_numeric_split(root, 0, 0.5, true);
+        builder.make_leaf(l, ScalarLeaf(1.0));
+        builder.make_leaf(r, ScalarLeaf(2.0));
+        let tree = builder.freeze();
 
         let layout = UnrolledTreeLayout4::from_tree(&tree);
 
@@ -560,11 +561,12 @@ mod tests {
 
     #[test]
     fn unrolled_layout_traverse() {
-        let mut builder = TreeBuilder::new();
-        builder.add_split(0, 0.5, true, 1, 2);
-        builder.add_leaf(ScalarLeaf(1.0));
-        builder.add_leaf(ScalarLeaf(2.0));
-        let tree = builder.build();
+        let mut builder = MutableTree::with_capacity(3);
+        let root = builder.init_root();
+        let (l, r) = builder.apply_numeric_split(root, 0, 0.5, true);
+        builder.make_leaf(l, ScalarLeaf(1.0));
+        builder.make_leaf(r, ScalarLeaf(2.0));
+        let tree = builder.freeze();
 
         let layout = UnrolledTreeLayout4::from_tree(&tree);
 
@@ -592,11 +594,12 @@ mod tests {
 
     #[test]
     fn unrolled_layout_block_processing() {
-        let mut builder = TreeBuilder::new();
-        builder.add_split(0, 0.5, true, 1, 2);
-        builder.add_leaf(ScalarLeaf(1.0));
-        builder.add_leaf(ScalarLeaf(2.0));
-        let tree = builder.build();
+        let mut builder = MutableTree::with_capacity(3);
+        let root = builder.init_root();
+        let (l, r) = builder.apply_numeric_split(root, 0, 0.5, true);
+        builder.make_leaf(l, ScalarLeaf(1.0));
+        builder.make_leaf(r, ScalarLeaf(2.0));
+        let tree = builder.freeze();
 
         let layout = UnrolledTreeLayout4::from_tree(&tree);
 
@@ -621,11 +624,12 @@ mod tests {
 
     #[test]
     fn unrolled_layout_missing_values() {
-        let mut builder = TreeBuilder::new();
-        builder.add_split(0, 0.5, true, 1, 2);
-        builder.add_leaf(ScalarLeaf(1.0));
-        builder.add_leaf(ScalarLeaf(2.0));
-        let tree = builder.build();
+        let mut builder = MutableTree::with_capacity(3);
+        let root = builder.init_root();
+        let (l, r) = builder.apply_numeric_split(root, 0, 0.5, true);
+        builder.make_leaf(l, ScalarLeaf(1.0));
+        builder.make_leaf(r, ScalarLeaf(2.0));
+        let tree = builder.freeze();
 
         let layout = UnrolledTreeLayout4::from_tree(&tree);
 

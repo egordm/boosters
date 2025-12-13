@@ -7,7 +7,7 @@ This report is a follow-up to the `src/` inventory in `docs/analysis/src_audit.m
 ### 1) Full `src/` tree + symbol inventory
 
 - See: `docs/analysis/src_audit.md` (human-readable)
-- See: `docs/analysis/src_items.json` (machine-readable)
+- See: `docs/analysis/src_items.json` (machine-readable file list)
 
 ### 2) “Warnings are errors” health (dead-code / unused items)
 

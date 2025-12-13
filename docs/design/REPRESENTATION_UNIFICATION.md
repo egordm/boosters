@@ -1,11 +1,15 @@
 # Unifying training + inference representations
 
-## Problem
+Status: implemented (2025-12-13)
 
-Today the repo effectively contains two separate GBDT “model libraries”:
+## Problem (historical)
+
+Historically the repo contained two separate GBDT “model libraries”:
 
 - Inference model representation in `src/inference/gbdt/*` (`TreeStorage`, `Forest`, `Predictor`, traversal strategies).
 - Training-side tree/forest representation in `src/training/gbdt/tree/*` (`TreeNode`, `Tree`, `TreeBuilder`, `Forest`) used during training and also for some prediction in binned space.
+
+That training-side representation has since been removed; training now writes directly into the canonical inference representation.
 
 This duplication increases maintenance cost and makes feature parity harder:
 
@@ -25,6 +29,16 @@ Have **one canonical GBDT model representation** that:
 ## Recommendation (canonical model)
 
 Make `inference::gbdt::{TreeStorage, Forest}` the canonical trained-model representation.
+
+## Current state (2025-12-13)
+
+- Training produces `inference::gbdt::Forest<ScalarLeaf>` and builds `TreeStorage` directly (no post-hoc conversion).
+- The training-side tree module (`src/training/gbdt/tree/*`) has been deleted.
+- Split semantics are aligned at the numeric boundary and categorical domain:
+  - Numeric: thresholds are translated as `next_up(bin_upper_bound)` so training “bin <= threshold_bin goes left” matches inference “value < threshold_value goes left” at exact boundaries.
+  - Categorical: the canonical categorical domain is **category indices** (`0..K-1`), i.e. categorical bin indices.
+
+The main invariants are protected by regression tests in `src/training/gbdt/grower.rs`.
 
 Rationale:
 
@@ -49,6 +63,8 @@ That translation happens once per split, not per sample.
 
 ### Phase 1 (low risk): unify the public return type
 
+Status: done.
+
 Change `training::GBDTTrainer::train` to return `inference::gbdt::Forest<ScalarLeaf>`.
 
 Implementation detail:
@@ -69,6 +85,8 @@ Performance impact:
 
 ### Phase 2 (medium risk): build canonical trees directly
 
+Status: done.
+
 Remove the conversion by making training build `TreeStorage` directly.
 
 How:
@@ -79,16 +97,20 @@ How:
   - `make_leaf(node, value)`
   - `finish() -> TreeStorage`
 
-This allows replacing `training/gbdt/tree/TreeBuilder` without changing the tree growth logic.
+This allows replacing the former training-side `TreeBuilder` without changing the tree growth logic.
 
 The training-side `TreeNode` / `Tree` / `Forest` types become unnecessary.
 
 ### Phase 3 (cleanup): delete or internalize training tree module
 
-- Delete `src/training/gbdt/tree/*` or move it under a clearly internal module name (only if something still depends on it).
+Status: done (module deleted).
+
+- Delete `src/training/gbdt/tree/*` or move it under a clearly internal module name (only if something still depends on it). (Done: module deleted.)
 - Ensure `training::gbdt` code only exposes training APIs and returns canonical inference forests.
 
 ### Phase 4 (semantic alignment): make split semantics explicit and consistent
+
+Status: done.
 
 There is a subtle but important semantic mismatch today:
 
@@ -105,6 +127,8 @@ This ensures values exactly equal to the bin boundary still go left.
 
 ### Phase 5 (categorical compatibility): decide on one categorical domain
 
+Status: done (Option A).
+
 Inference categorical splits currently assume XGBoost-style encoding:
 
 - categorical feature values are non-negative integers (stored as `f32` but representing `u32` indices)
@@ -114,13 +138,13 @@ Training categorical splits currently operate on **bin indices**.
 
 To unify without slowing inference, pick one of these options:
 
-**Option A (recommended): canonicalize training categorical mapping to `0..K-1`**
+#### Option A (recommended): canonicalize training categorical mapping to `0..K-1`
 
 - Ensure the categorical bin mapper produces category indices starting at 0.
 - Treat “bin index” == “category index”.
 - Then training categorical sets can be converted to inference categorical bitsets losslessly.
 
-**Option B: store per-feature categorical mapping in the trained model**
+#### Option B: store per-feature categorical mapping in the trained model
 
 - Put categorical mappers into a small `ModelMeta` stored alongside the forest.
 - Add a fast preprocessing step in prediction to map raw category values -> internal index.

@@ -88,7 +88,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
     pub fn new(forest: &'f Forest<ScalarLeaf>) -> Self {
         let tree_states: Box<[_]> = forest
             .trees()
-            .map(|tree| T::build_tree_state(tree.into_storage()))
+            .map(|tree| T::build_tree_state(tree))
             .collect();
 
         Self {
@@ -528,30 +528,30 @@ mod tests {
     use super::*;
     use approx::assert_abs_diff_eq;
     use crate::data::RowMatrix;
-    use crate::inference::gbdt::{Forest, TreeStorage, TreeBuilder, ScalarLeaf};
+    use crate::inference::gbdt::{Forest, ScalarLeaf, Tree};
 
     fn build_simple_tree(
         left_val: f32,
         right_val: f32,
         threshold: f32,
-    ) -> TreeStorage<ScalarLeaf> {
-        let mut builder = TreeBuilder::new();
-        builder.add_split(0, threshold, true, 1, 2);
-        builder.add_leaf(ScalarLeaf(left_val));
-        builder.add_leaf(ScalarLeaf(right_val));
-        builder.build()
+    ) -> Tree<ScalarLeaf> {
+        crate::scalar_tree! {
+            0 => num(0, threshold, L) -> 1, 2,
+            1 => leaf(left_val),
+            2 => leaf(right_val),
+        }
     }
 
-    fn build_deeper_tree() -> TreeStorage<ScalarLeaf> {
-        let mut builder = TreeBuilder::new();
-        builder.add_split(0, 0.5, true, 1, 2);
-        builder.add_split(1, 0.3, true, 3, 4);
-        builder.add_split(1, 0.7, true, 5, 6);
-        builder.add_leaf(ScalarLeaf(1.0));
-        builder.add_leaf(ScalarLeaf(2.0));
-        builder.add_leaf(ScalarLeaf(3.0));
-        builder.add_leaf(ScalarLeaf(4.0));
-        builder.build()
+    fn build_deeper_tree() -> Tree<ScalarLeaf> {
+        crate::scalar_tree! {
+            0 => num(0, 0.5, L) -> 1, 2,
+            1 => num(1, 0.3, L) -> 3, 4,
+            2 => num(1, 0.7, L) -> 5, 6,
+            3 => leaf(1.0),
+            4 => leaf(2.0),
+            5 => leaf(3.0),
+            6 => leaf(4.0),
+        }
     }
 
     // =========================================================================

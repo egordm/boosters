@@ -248,7 +248,7 @@ impl<O: Objective> GBDTTrainer<O> {
                 let (grads, hess) = gradients.output_grads_hess_mut(output);
                 let sampled = row_sampler.sample(round as usize, grads, hess);
 
-                // Grow tree for this output (returns inference-ready TreeStorage)
+                // Grow tree for this output (returns inference-ready Tree)
                 let tree = grower.grow(dataset, &gradients, output, sampled.as_deref());
 
                 // Update predictions for this output (column-major layout)

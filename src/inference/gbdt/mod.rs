@@ -2,7 +2,7 @@
 //!
 //! This module provides tree ensemble storage and prediction:
 //!
-//! - [`TreeStorage`]: Structure-of-Arrays storage for a single tree
+//! - [`Tree`]: Structure-of-Arrays storage for a single tree
 //! - [`Forest`]: Collection of trees with group assignments
 //! - [`Predictor`]: High-performance batch prediction
 //!
@@ -32,24 +32,19 @@
 //!
 //! For large batches (100+ rows), unrolled traversal is 2-3x faster.
 
-mod categories;
-mod forest;
-mod leaf;
-mod node;
 mod predictor;
-mod tree;
 mod traversal;
 mod unrolled;
 
 #[cfg(feature = "simd")]
 mod simd;
 
-// Re-export tree storage types
-pub use tree::{TreeStorage, TreeBuilder, MutableTreeBuilder};
-pub use forest::{Forest, TreeView};
-pub use node::{Node, SplitCondition, SplitType};
-pub use leaf::{LeafValue, ScalarLeaf, VectorLeaf};
-pub use categories::{CategoriesStorage, categories_to_bitset, float_to_category};
+// Re-export canonical representation types from `repr`.
+pub use crate::repr::gbdt::{
+    categories_to_bitset, float_to_category,
+    CategoriesStorage, Forest, LeafValue, MutableTree, Node, ScalarLeaf, SplitCondition,
+    SplitType, Tree, VectorLeaf,
+};
 pub use unrolled::{
     UnrolledTreeLayout, UnrolledTreeLayout4, UnrolledTreeLayout6, UnrolledTreeLayout8,
     UnrollDepth, Depth4, Depth6, Depth8,

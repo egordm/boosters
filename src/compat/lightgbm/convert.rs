@@ -1,6 +1,6 @@
 //! Conversion from LightGBM parsed types to native booste-rs types.
 
-use crate::inference::gbdt::{Forest, ScalarLeaf, TreeBuilder, TreeStorage};
+use crate::repr::gbdt::{Forest, MutableTree, ScalarLeaf, Tree};
 
 use super::text::{DecisionType, LgbModel, LgbTree};
 
@@ -65,20 +65,18 @@ impl LgbModel {
     }
 }
 
-/// Convert a single LightGBM tree to native [`TreeStorage`].
+/// Convert a single LightGBM tree to canonical [`Tree`].
 fn convert_tree(
     lgb_tree: &LgbTree,
     _tree_idx: usize,
-) -> Result<TreeStorage<ScalarLeaf>, ConversionError> {
-    let mut builder = TreeBuilder::new();
-
+) -> Result<Tree<ScalarLeaf>, ConversionError> {
     // Special case: single-leaf tree
     if lgb_tree.num_leaves == 1 {
-        // Note: leaf_value already has shrinkage applied during training
-        // (see LightGBM Tree::Shrinkage which multiplies leaf_value_ by rate)
-        let leaf_value = lgb_tree.leaf_value.first().copied().unwrap_or(0.0);
-        builder.add_leaf(ScalarLeaf(leaf_value as f32));
-        return Ok(builder.build());
+        let leaf_value = lgb_tree.leaf_value.first().copied().unwrap_or(0.0) as f32;
+        let mut t = MutableTree::<ScalarLeaf>::with_capacity(1);
+        let root = t.init_root_with_num_nodes(1);
+        t.make_leaf(root, ScalarLeaf(leaf_value));
+        return Ok(t.freeze());
     }
 
     // LightGBM tree structure:
@@ -90,47 +88,10 @@ fn convert_tree(
     // laid out in traversal order.
 
     let num_internal = lgb_tree.num_leaves - 1;
+    let total_nodes = num_internal + lgb_tree.num_leaves;
 
-    // Build node map: for each internal node, determine its layout index
-    // and whether it's been processed
-    let mut processed = vec![false; num_internal];
-    let mut node_queue = vec![0usize]; // Start with root
-    let mut output_order = Vec::with_capacity(lgb_tree.num_leaves * 2 - 1);
-
-    // BFS to determine output order
-    while let Some(node_idx) = node_queue.pop() {
-        if processed[node_idx] {
-            continue;
-        }
-        processed[node_idx] = true;
-
-        let left = lgb_tree.left_child[node_idx];
-        let right = lgb_tree.right_child[node_idx];
-
-        output_order.push(NodeOrLeaf::Internal(node_idx));
-
-        // Queue children (internal nodes only)
-        // We process in reverse order so left is processed before right
-        if right >= 0 {
-            node_queue.push(right as usize);
-        }
-        if left >= 0 {
-            node_queue.push(left as usize);
-        }
-    }
-
-    // Now build the tree in BFS order
-    // We need to remap child indices to the new layout
-    // This is complex because the output layout depends on the BFS order
-
-    // Simpler approach: just convert in LightGBM's native order
-    // and let the TreeBuilder handle the layout
-
-    // Actually, let's use a direct conversion approach:
-    // 1. First pass: add all internal nodes
-    // 2. Track which leaves we've seen and their output indices
-
-    // Even simpler: use the TreeBuilder's support for explicit child indices
+    let mut tree = MutableTree::<ScalarLeaf>::with_capacity(total_nodes);
+    tree.init_root_with_num_nodes(total_nodes);
 
     for node_idx in 0..num_internal {
         let left = lgb_tree.left_child[node_idx];
@@ -150,7 +111,8 @@ fn convert_tree(
             // Categorical split
             let cat_idx = lgb_tree.threshold[node_idx] as usize;
             let bitset = extract_categorical_bitset(lgb_tree, cat_idx);
-            builder.add_categorical_split(
+            tree.set_categorical_split(
+                node_idx as u32,
                 feature_index,
                 bitset,
                 dt.default_left,
@@ -159,10 +121,17 @@ fn convert_tree(
             );
         } else {
             // Numerical split
-            // Note: LightGBM uses <= for left, XGBoost uses <
-            // Our internal format also uses <=, so no conversion needed
-            let threshold = lgb_tree.threshold[node_idx] as f32;
-            builder.add_split(feature_index, threshold, dt.default_left, left_child, right_child);
+            // LightGBM uses `<=` for left; our traversal uses `<`.
+            // Store `next_up(threshold)` so boundary decisions match.
+            let threshold = next_up_f32(lgb_tree.threshold[node_idx] as f32);
+            tree.set_numeric_split(
+                node_idx as u32,
+                feature_index,
+                threshold,
+                dt.default_left,
+                left_child,
+                right_child,
+            );
         }
     }
 
@@ -170,11 +139,11 @@ fn convert_tree(
     // Note: leaf_value already has shrinkage applied during training
     // The shrinkage field in the model is just for informational purposes
     for leaf_idx in 0..lgb_tree.num_leaves {
-        let leaf_value = lgb_tree.leaf_value[leaf_idx];
-        builder.add_leaf(ScalarLeaf(leaf_value as f32));
+        let node_idx = num_internal + leaf_idx;
+        tree.make_leaf(node_idx as u32, ScalarLeaf(lgb_tree.leaf_value[leaf_idx] as f32));
     }
 
-    Ok(builder.build())
+    Ok(tree.freeze())
 }
 
 /// Node or leaf in the conversion process.
@@ -196,6 +165,28 @@ fn convert_child_ref(child: i32, num_internal: usize) -> Result<u32, ConversionE
     } else {
         // Internal node: keep index
         Ok(child as u32)
+    }
+}
+
+#[inline]
+fn next_up_f32(x: f32) -> f32 {
+    if x.is_nan() {
+        return x;
+    }
+
+    if x == f32::INFINITY {
+        return x;
+    }
+
+    if x == -0.0 {
+        return 0.0f32.min_positive_value();
+    }
+
+    let bits = x.to_bits();
+    if x >= 0.0 {
+        f32::from_bits(bits + 1)
+    } else {
+        f32::from_bits(bits - 1)
     }
 }
 

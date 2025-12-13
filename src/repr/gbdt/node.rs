@@ -1,6 +1,7 @@
 //! Tree node types.
 
 use super::leaf::LeafValue;
+use super::NodeId;
 
 /// Type of split in a decision tree node.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -69,8 +70,8 @@ pub enum Node<L: LeafValue> {
     /// Internal split node
     Split {
         condition: SplitCondition,
-        left: u32,
-        right: u32,
+        left: NodeId,
+        right: NodeId,
     },
     /// Leaf node with a value
     Leaf(L),
@@ -78,7 +79,7 @@ pub enum Node<L: LeafValue> {
 
 impl<L: LeafValue> Node<L> {
     /// Create a new split node.
-    pub fn split(condition: SplitCondition, left: u32, right: u32) -> Self {
+    pub fn split(condition: SplitCondition, left: NodeId, right: NodeId) -> Self {
         Self::Split {
             condition,
             left,
@@ -117,7 +118,7 @@ impl<L: LeafValue> Node<L> {
 
     /// Get child indices, if this is a split node.
     #[inline]
-    pub fn children(&self) -> Option<(u32, u32)> {
+    pub fn children(&self) -> Option<(NodeId, NodeId)> {
         match self {
             Self::Split { left, right, .. } => Some((*left, *right)),
             Self::Leaf(_) => None,
@@ -128,7 +129,7 @@ impl<L: LeafValue> Node<L> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inference::gbdt::leaf::ScalarLeaf;
+    use crate::repr::gbdt::ScalarLeaf;
 
     #[test]
     fn split_condition_numeric() {

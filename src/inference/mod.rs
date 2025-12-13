@@ -6,7 +6,7 @@
 //! # Module Structure
 //!
 //! - [`common`]: Shared types (`PredictionOutput`, output transforms)
-//! - [`gbdt`]: Tree ensemble inference (`Forest`, `TreeStorage`, predictors)
+//! - [`gbdt`]: Tree ensemble inference (`Forest`, `Tree`, predictors)
 //! - [`gblinear`]: Linear model inference
 //!
 //! # Quick Start
@@ -32,7 +32,7 @@ pub mod gblinear;
 // Re-export commonly used types
 pub use common::PredictionOutput;
 pub use gbdt::{
-    Forest, TreeStorage, TreeView, TreeBuilder,
+    Forest, Tree, MutableTree,
     Node, SplitCondition, SplitType,
     LeafValue, ScalarLeaf, VectorLeaf,
     CategoriesStorage,

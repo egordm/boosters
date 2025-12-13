@@ -8,10 +8,9 @@
 //! - [`StandardTraversal`]: Direct node-by-node traversal (simple, good for single rows)
 //! - [`UnrolledTraversal`]: Uses [`UnrolledTreeLayout`] for cache-friendly batch traversal
 
-use super::TreeView;
 use super::SplitType;
 use super::{
-    float_to_category, Depth6, LeafValue, ScalarLeaf, TreeStorage, UnrollDepth,
+    float_to_category, Depth6, LeafValue, ScalarLeaf, Tree, UnrollDepth,
     UnrolledTreeLayout,
 };
 
@@ -43,10 +42,10 @@ pub trait TreeTraversal<L: LeafValue>: Clone {
     /// Build traversal state for a tree.
     ///
     /// Called once per tree when creating a predictor.
-    fn build_tree_state(tree: &TreeStorage<L>) -> Self::TreeState;
+    fn build_tree_state(tree: &Tree<L>) -> Self::TreeState;
 
     /// Traverse a tree with given features, returning the leaf value.
-    fn traverse_tree(tree: &TreeView<'_, L>, state: &Self::TreeState, features: &[f32]) -> L;
+    fn traverse_tree(tree: &Tree<L>, state: &Self::TreeState, features: &[f32]) -> L;
 
     /// Traverse a tree for a block of rows, accumulating results.
     ///
@@ -64,7 +63,7 @@ pub trait TreeTraversal<L: LeafValue>: Clone {
     /// - `weight`: Optional weight to multiply leaf values by
     #[inline]
     fn traverse_block(
-        tree: &TreeView<'_, L>,
+        tree: &Tree<L>,
         state: &Self::TreeState,
         feature_buffer: &[f32],
         num_features: usize,
@@ -103,7 +102,7 @@ pub trait TreeTraversal<L: LeafValue>: Clone {
 ///
 /// The leaf node index reached.
 #[inline]
-pub fn traverse_from_node(tree: &TreeView<'_, ScalarLeaf>, start_node: u32, features: &[f32]) -> u32 {
+pub fn traverse_from_node(tree: &Tree<ScalarLeaf>, start_node: u32, features: &[f32]) -> u32 {
     let mut idx = start_node;
 
     while !tree.is_leaf(idx) {
@@ -147,13 +146,13 @@ impl TreeTraversal<ScalarLeaf> for StandardTraversal {
     type TreeState = ();
 
     #[inline]
-    fn build_tree_state(_tree: &TreeStorage<ScalarLeaf>) -> Self::TreeState {
+    fn build_tree_state(_tree: &Tree<ScalarLeaf>) -> Self::TreeState {
         // No pre-computation needed
     }
 
     #[inline]
     fn traverse_tree(
-        tree: &TreeView<'_, ScalarLeaf>,
+        tree: &Tree<ScalarLeaf>,
         _state: &Self::TreeState,
         features: &[f32],
     ) -> ScalarLeaf {
@@ -239,13 +238,13 @@ impl<D: UnrollDepth> TreeTraversal<ScalarLeaf> for UnrolledTraversal<D> {
     const USES_BLOCK_OPTIMIZATION: bool = true;
 
     #[inline]
-    fn build_tree_state(tree: &TreeStorage<ScalarLeaf>) -> Self::TreeState {
+    fn build_tree_state(tree: &Tree<ScalarLeaf>) -> Self::TreeState {
         UnrolledTreeLayout::from_tree(tree)
     }
 
     #[inline]
     fn traverse_tree(
-        tree: &TreeView<'_, ScalarLeaf>,
+        tree: &Tree<ScalarLeaf>,
         state: &Self::TreeState,
         features: &[f32],
     ) -> ScalarLeaf {
@@ -264,7 +263,7 @@ impl<D: UnrollDepth> TreeTraversal<ScalarLeaf> for UnrolledTraversal<D> {
     /// All rows traverse the same tree level together, keeping level data in cache.
     #[inline]
     fn traverse_block(
-        tree: &TreeView<'_, ScalarLeaf>,
+        tree: &Tree<ScalarLeaf>,
         state: &Self::TreeState,
         feature_buffer: &[f32],
         num_features: usize,
@@ -316,18 +315,18 @@ mod tests {
     #![allow(clippy::let_unit_value)]
 
     use super::*;
-    use crate::inference::gbdt::{Forest, TreeBuilder};
+    use crate::inference::gbdt::Forest;
 
     fn build_simple_tree(
         left_val: f32,
         right_val: f32,
         threshold: f32,
-    ) -> TreeStorage<ScalarLeaf> {
-        let mut builder = TreeBuilder::new();
-        builder.add_split(0, threshold, true, 1, 2);
-        builder.add_leaf(ScalarLeaf(left_val));
-        builder.add_leaf(ScalarLeaf(right_val));
-        builder.build()
+    ) -> Tree<ScalarLeaf> {
+        crate::scalar_tree! {
+            0 => num(0, threshold, L) -> 1, 2,
+            1 => leaf(left_val),
+            2 => leaf(right_val),
+        }
     }
 
     #[test]
