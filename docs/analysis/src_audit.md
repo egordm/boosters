@@ -1,8 +1,8 @@
 # src/ and tests/ critical audit
 
-Generated: 2025-12-13
+Generated: 2025-12-13 (updated post-RFC-0028)
 
-This is a **critical audit** of the crate layout and the test suite: what’s valuable, what’s superficial, what’s missing, and where the current test strategy is robust vs fragile.
+This is a **critical audit** of the crate layout and the test suite: what's valuable, what's superficial, what's missing, and where the current test strategy is robust vs fragile.
 
 Scope:
 
@@ -11,38 +11,48 @@ Scope:
 
 ## Executive summary
 
-What’s strong:
+What's strong:
 
 - The split between *representation* (`src/repr`) and *execution* (`src/inference`) is the right architectural move.
+- **RFC 0028 implemented**: Objectives now own prediction transforms and declare semantic metadata (`TaskKind`, `TargetSchema`, `default_metric`). This eliminates ad-hoc `sigmoid_inplace` calls in tests and downstream code.
 - Compat integration tests with fixture models (`tests/test-cases/*`) provide high-value regression protection against semantic drift (especially around missing values and categorical handling).
-- Several algorithmic “core” units (e.g. unrolled traversal layout) have direct behavioral tests, not just constructor checks.
+- Metrics now declare `expected_prediction_kind()`, enabling trainers to validate metric/transform compatibility.
+- GBLinear evaluation applies objective transforms automatically based on metric expectations.
 
-What’s weak / risky:
+What's weak / risky:
 
-- Some unit tests are essentially “does Default stay the same” or “n_trees equals X” and don’t validate semantics.
-- Some training tests check only “reasonable-ish” outcomes (thresholds like RMSE < 1.0, accuracy > 0.4). These can become flaky across changes in optimization, SIMD, or platform math.
+- Some unit tests are essentially "does Default stay the same" or "n_trees equals X" and don't validate semantics.
+- Some training tests check only "reasonable-ish" outcomes (thresholds like RMSE < 1.0, accuracy > 0.4). These can become flaky across changes in optimization, SIMD, or platform math.
+- Training-set metric reporting was disabled in GBLinear evaluation (training `ColMatrix` is not passed to `evaluate_round`). Consider restoring if needed.
 
-What’s missing (most important gaps):
+What's missing (most important gaps):
 
-- Tight, explicit spec tests for traversal semantics: NaNs, threshold equality, default direction, categorical split membership, and out-of-range category/bin behavior.
-- Conversion invariants (LightGBM/XGBoost → canonical repr): domain consistency (bin/category index semantics), group/tree indexing invariants, and “shape” validation.
 - Negative tests for malformed models / malformed test-case data (ensure errors are returned, not panics).
+- Full GBDT trainer integration with objective transforms (GBDT trainer currently doesn't call `transform_prediction_inplace` during eval; GBLinear does).
+- Multi-output metric validation: verify metrics handle multiclass row-major properly.
 
 ## Status update (as of 2025-12-13)
 
-This audit was originally written as “gaps to address”. Since then, several recommendations have been implemented.
+This audit was originally written as "gaps to address". Since then, several recommendations have been implemented.
 
 Applied:
 
+- **RFC 0028 objective-owned transforms**: Objectives now implement `transform_prediction_inplace` and `transform_prediction`. Classification objectives apply sigmoid/softmax; Poisson applies exp; regression/hinge/ranking stay identity/margin.
+- **Objective metadata**: `TaskKind`, `TargetSchema`, and `default_metric()` are declared on every objective. `ObjectiveFunction` enum delegates to the underlying implementations.
+- **Metric introspection**: Metrics implement `expected_prediction_kind()` so trainers/tests can verify prediction-space alignment.
+- **GBLinear evaluation transform plumbing**: `GBLinearTrainer::evaluate_round` converts column-major predictions to row-major `PredictionOutput`, applies `objective.transform_prediction_inplace` when the metric expects non-Margin predictions, then computes the metric.
+- **MarginAccuracy** is now public and used for margin-space binary classification (HingeLoss).
 - Traversal semantics spec coverage was strengthened (threshold equality, missing/default direction, categorical membership/unknown category, categorical below-unroll regression).
-- SIMD parity is enforced when `feature = simd` is enabled (SIMD traversal output matches standard/unrolled for representative cases).
-- Conversion invariants are now checked via `Tree::validate()` / `Forest::validate()` and are called from compat conversion/integration tests.
-- Integration tests were regrouped to reduce `tests/` root clutter and avoid duplicated compilation.
+- SIMD parity is enforced when `feature = simd` is enabled.
+- Conversion invariants are now checked via `Tree::validate()` / `Forest::validate()`.
+- Integration tests were regrouped to reduce `tests/` root clutter.
+- Tests no longer manually call `sigmoid_inplace`; they use objective transforms or margin metrics.
 
 Still open / partially addressed:
 
-- Negative tests for malformed full models are still light (there are some negative parser tests, but the “bad model returns structured error, never panics” surface can be expanded).
-- Some GBLinear training integration tests still assert “reasonable-ish” thresholds and print debug output; they’re useful anchors but can be somewhat noisy/flaky.
+- Negative tests for malformed full models are still light.
+- GBDT trainer doesn't yet wire objective transforms into evaluation (it uses objectives only for gradient computation).
+- Training-set metric logging in GBLinear was removed because training data isn't passed to `evaluate_round`. Could be restored by passing the train ColMatrix.
 
 ## Current layout (high-level)
 
@@ -51,9 +61,12 @@ src/
 ├── compat/         # Loading/parsing models (LightGBM/XGBoost), converting into repr
 ├── data/           # Matrices, datasets, binning
 ├── inference/      # Prediction APIs + traversal implementations
+│   └── common/     # PredictionOutput, PredictionKind, Predictions, sigmoid/softmax
 ├── repr/           # Canonical internal representations (GBDT, GBLinear)
 ├── testing/        # Test utilities (macros, assert helpers, fixture helpers)
 ├── training/       # Training implementations (GBDT + GBLinear)
+│   ├── metrics/    # Metric trait + implementations (Rmse, LogLoss, MarginAccuracy, etc.)
+│   └── objectives/ # Objective trait + implementations (RFC 0028 metadata + transforms)
 ├── lib.rs
 ├── main.rs
 └── utils.rs
@@ -61,9 +74,9 @@ src/
 
 Notable changes vs older audits:
 
-- Canonical GBDT representation is now under `src/repr/gbdt/*`.
-- `src/testing.rs` is gone; test utilities live under `src/testing/`.
-- `src/inference/gbdt/` now focuses on traversal/predictor concerns (repr lives in `src/repr/gbdt`).
+- **`src/inference/common/predictions.rs`**: Adds `PredictionKind` and `Predictions` wrapper (semantic output type).
+- **Objective trait extensions**: `task_kind()`, `target_schema()`, `default_metric()`, `transform_prediction_inplace()`, `transform_prediction()`.
+- `src/training/metrics/mod.rs`: Exports `MetricKind` and `MarginAccuracy`.
 
 ### Detailed file tree (trimmed to the meaningful seams)
 
@@ -80,7 +93,7 @@ src/
 │   ├── traits.rs
 │   └── mod.rs
 ├── inference/
-│   ├── common/ (mod.rs, output.rs)
+│   ├── common/ (mod.rs, output.rs, predictions.rs)  # <-- RFC 0028 additions
 │   ├── gbdt/   (predictor.rs, traversal.rs, unrolled.rs, simd.rs, mod.rs)
 │   ├── gblinear/ (model.rs, mod.rs)
 │   └── mod.rs
@@ -92,8 +105,8 @@ src/
 └── training/
     ├── gbdt/ (categorical.rs, expansion.rs, grower.rs, optimization.rs, partition.rs, trainer.rs, mod.rs)
     ├── gblinear/ (selector.rs, trainer.rs, updater.rs, mod.rs)
-    ├── metrics/ (classification.rs, regression.rs, mod.rs)
-    ├── objectives/ (classification.rs, regression.rs, mod.rs)
+    ├── metrics/ (classification.rs, regression.rs, mod.rs)  # <-- MetricKind, MarginAccuracy
+    ├── objectives/ (classification.rs, regression.rs, mod.rs)  # <-- TaskKind, TargetSchema, transforms
     ├── sampling/ (row.rs, column.rs, mod.rs)
     ├── callback.rs
     ├── eval.rs
@@ -102,14 +115,64 @@ src/
     └── mod.rs
 ```
 
-## Canonical representation vs execution
+## RFC 0028 implementation details
 
-This separation is the most important architectural boundary:
+### Objective metadata
 
-- `repr::*` should define *what the model is* (trees/forests, nodes, categorical storage, leaf values).
-- `inference::*` should define *how the model is executed* (predictors, traversal strategies, SIMD/unrolled kernels).
+Every objective now declares:
 
-Audit guidance: keep traversal-specific data layouts in `inference` (e.g. unrolled layouts), but keep “semantic model truth” in `repr`.
+| Method | Purpose |
+|--------|---------|
+| `task_kind()` | Returns `TaskKind::{Regression, BinaryClassification, MulticlassClassification, Ranking}` |
+| `target_schema()` | Returns `TargetSchema::{Continuous, Binary01, BinarySigned, MulticlassIndex, CountNonNegative}` |
+| `default_metric()` | Returns `MetricKind` (e.g., `Rmse`, `LogLoss`, `MulticlassLogLoss`) |
+
+### Objective transforms
+
+| Method | Behavior |
+|--------|----------|
+| `transform_prediction_inplace(&self, raw: &mut PredictionOutput) -> PredictionKind` | Applies in-place transform (sigmoid, softmax, exp, or identity) and returns the resulting semantic kind. |
+| `transform_prediction(&self, raw: PredictionOutput) -> Predictions` | Consumes the output, calls `transform_prediction_inplace`, and wraps in a semantic `Predictions` struct. |
+
+Objective-specific transforms:
+
+| Objective | Transform | Output `PredictionKind` |
+|-----------|-----------|-------------------------|
+| `SquaredLoss`, `AbsoluteLoss`, `PinballLoss`, `PseudoHuberLoss` | identity | `Value` |
+| `LogisticLoss` | sigmoid | `Probability` |
+| `SoftmaxLoss` | softmax (per-row) | `Probability` |
+| `HingeLoss` | identity | `Margin` |
+| `PoissonLoss` | exp | `Value` |
+| `LambdaRankLoss` | identity | `RankScore` |
+
+### Metric introspection
+
+Metrics declare:
+
+```rust
+fn expected_prediction_kind(&self) -> PredictionKind;
+```
+
+Examples:
+
+| Metric | `expected_prediction_kind()` |
+|--------|------------------------------|
+| `Rmse`, `Mae`, `Mape`, `QuantileMetric` | `Value` |
+| `LogLoss`, `Accuracy` | `Probability` |
+| `MarginAccuracy` | `Margin` |
+| `MulticlassLogLoss`, `MulticlassAccuracy` | `Probability` |
+| `Auc` | `Probability` |
+
+### Trainer integration (GBLinear)
+
+`GBLinearTrainer::evaluate_round`:
+
+1. Computes raw predictions in column-major buffer.
+2. Converts column-major → row-major `PredictionOutput`.
+3. If `metric.expected_prediction_kind() != Margin`, calls `objective.transform_prediction_inplace`.
+4. Computes metric on the (possibly transformed) row-major slice.
+
+This ensures metrics always see the expected prediction space without manual intervention.
 
 ## Test suite inventory
 
@@ -127,7 +190,7 @@ tests/
 │   ├── gbdt.rs
 │   └── gblinear/
 │       ├── classification.rs
-│       ├── loss_functions.rs
+│       ├── loss_functions.rs      # Uses MarginAccuracy and objective transforms
 │       ├── quantile.rs
 │       ├── regression.rs
 │       ├── selectors.rs
@@ -137,107 +200,78 @@ tests/
 
 ### Unit tests (`src/`)
 
-There are extensive `#[cfg(test)]` unit tests scattered throughout `src/`, especially in:
+Extensive `#[cfg(test)]` unit tests throughout `src/`, especially in:
 
 - `src/inference/gbdt/unrolled.rs` (layout/traversal behavior)
 - `src/compat/lightgbm/text.rs` and `src/compat/xgboost/json.rs` (parser behavior)
 - `src/data/binned/*` (builder/storage invariants)
 - `src/training/*` (gain, split finding, histogram ops, etc.)
+- `src/training/objectives/*.rs` (gradient/base-score unit tests)
 
 ## Are we doing the right tests?
 
 ### Meaningful tests (high value)
 
-- **Golden compat tests**:
-  - `tests/inference_lightgbm.rs` and `tests/inference_xgboost.rs` compare predictions against Python-generated expected outputs.
-  - These are “semantic regression” tests: if you break missing-value semantics, default-direction routing, or categorical handling, they should catch it.
-- **Algorithmic unit tests**:
-  - Example: unrolled traversal layout tests validate behavior (exit routing, missing-value behavior, block processing).
-  - These are good because they test *outcomes*, not just sizes.
-- **Training behavior tests with external references**:
-  - GBLinear tests that compare weights/predictions against XGBoost are valuable “compatibility anchors”.
+- **Golden compat tests**: Compare predictions against Python-generated expected outputs. Catch semantic regressions.
+- **Algorithmic unit tests**: Validate behavior (exit routing, missing-value handling, block processing).
+- **Training behavior tests with external references**: GBLinear tests comparing weights/predictions against XGBoost are valuable compatibility anchors.
+- **RFC 0028 transform tests**: Integration tests now use objective transforms or margin metrics, validating the new API.
 
-### Trivial / low-value tests (still sometimes OK, but watch the ratio)
+### Trivial / low-value tests (still sometimes OK)
 
-- “Default equals X” tests (e.g., `ScalarLeaf::default()` is zero, basic `Default` params checks).
-  - These primarily lock down public API defaults. That’s acceptable, but they do not validate correctness.
-- “Shape-only” tests (e.g., `forest.n_trees() == N` after training) without checking any semantic metric.
-  - These catch almost no real regressions besides catastrophic failures.
-
-Recommendation: keep a few “defaults are stable” checks, but prioritize semantic tests around traversal + conversion.
+- "Default equals X" tests: Lock down public API defaults but don't validate correctness.
+- "Shape-only" tests: Catch almost no real regressions beyond catastrophic failures.
 
 ## Missing critical tests (most impactful additions)
 
-### 1) Traversal semantics spec tests
+### 1) GBDT trainer transform integration
 
-Add tests that explicitly define the semantics of:
+GBDT trainer should also apply objective transforms during evaluation. Currently it only uses objectives for gradients.
 
-- Numeric splits at threshold equality (`x == threshold`): go left or right?
-- `NaN` routing: what does `default_left` mean in numeric and categorical contexts?
-- Categorical membership: which side is “match”, and what happens for unknown category ids?
+### 2) Negative tests (errors, not panics)
 
-These tests should be small, deterministic, and ideally share a single “reference traversal” helper.
-
-### 2) SIMD parity tests
-
-If `feature = simd` is enabled, add tests that run the *same model + inputs* through:
-
-- scalar traversal
-- SIMD traversal
-- unrolled traversal (if used)
-
-and assert identical (or tightly bounded) outputs.
-
-### 3) Conversion invariants tests
-
-Compat conversion (`compat::{lightgbm,xgboost}::* -> repr::*`) needs invariant checks beyond “it parses”:
-
-- node counts match declared sizes
-- child indices are in-bounds
-- all leaves reachable
-- group count vs tree-per-iteration consistent (multiclass)
-- categorical domain is canonicalized (bin/category index semantics match internal expectations)
-
-### 4) Negative tests (errors, not panics)
-
-Add malformed fixture tests that verify the library returns structured errors:
+Add malformed fixture tests that verify structured errors for:
 
 - missing required JSON fields
 - invalid decision type codes
 - inconsistent array lengths
 - invalid feature indices
 
-Goal: avoid panics for user-supplied models.
+### 3) Multi-output metric tests
+
+Verify metrics correctly handle multiclass predictions in row-major layout (especially after softmax transform).
+
+### 4) Training-set metric restoration
+
+Consider restoring training-set metric logging in GBLinear by passing the train `ColMatrix` to `evaluate_round`.
 
 ## Robustness vs fragility
 
 ### Robust patterns
 
-- Fixture-driven golden tests are robust against refactors, and focus on public behavior.
-- Deterministic unit tests that build tiny trees and assert exact leaf routing are robust.
+- Fixture-driven golden tests are robust against refactors.
+- Deterministic unit tests that build tiny trees and assert exact leaf routing.
+- RFC 0028 transform tests that use objective APIs instead of manual sigmoid calls.
 
 ### Fragile patterns
 
-- Tests that assert a loose training metric threshold (e.g., “accuracy > 0.4”) can become flaky as training hyperparameters or numeric details change.
-- Tests that compare floats without clearly defined tolerance strategy (absolute + relative) can break on platform differences.
+- Tests that assert loose training metric thresholds can become flaky.
+- Tests comparing floats without a defined tolerance strategy can break on platform differences.
 
 Mitigations:
 
-- Prefer comparing *against a reference implementation* (e.g., scalar vs SIMD) over “RMSE < X”.
-- For training, prefer monotonic/qualitative invariants (loss decreases, predictions improve over base score) over absolute thresholds.
-- Keep printing in tests minimal (CI logs stay readable).
+- Prefer comparing against a reference implementation over "RMSE < X".
+- For training, prefer monotonic invariants (loss decreases) over absolute thresholds.
 
-## Test structure and grouping
+## Summary of RFC 0028 changes
 
-Current grouping is good:
-
-- Integration tests are segregated under `tests/` and feature-gated for compat.
-- Larger “domains” are grouped (GBLinear training tests are in a folder module).
-
-Potential improvements:
-
-- Expand malformed-model negative tests (conversion should return structured errors for invalid JSON/text, never panic).
-- Consider gradually reducing “hard thresholds” in training integration tests by preferring parity checks (e.g. compare against a stable reference) where possible.
+| Component | Before | After |
+|-----------|--------|-------|
+| Objectives | Training-only (gradients, base score) | Full metadata + prediction transforms |
+| Metrics | Implicit prediction-space assumptions | Explicit `expected_prediction_kind()` |
+| GBLinear eval | Raw column-major predictions passed to metrics | Row-major + automatic transform based on metric expectations |
+| Tests | Manual `sigmoid_inplace` calls | Use `objective.transform_prediction_inplace` or `MarginAccuracy` |
+| Public API | `Accuracy` only | `Accuracy` + `MarginAccuracy` + `MetricKind` + `TaskKind` + `TargetSchema` |
 
 ## Machine-readable inventory
 
