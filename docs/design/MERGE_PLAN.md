@@ -24,6 +24,8 @@ This document outlines the plan for merging training infrastructure from `booste
 src/
 ├── lib.rs
 ├── utils.rs
+├── testing.rs
+├── main.rs
 │
 ├── data/
 │   ├── mod.rs
@@ -42,8 +44,7 @@ src/
 │   │
 │   ├── common/                       # Shared inference utilities
 │   │   ├── mod.rs
-│   │   ├── output.rs                 # PredictionOutput
-│   │   └── transform.rs              # Output transforms (sigmoid, softmax)
+│   │   └── output.rs                 # PredictionOutput
 │   │
 │   ├── gbdt/                         # GBDT inference
 │   │   ├── mod.rs
@@ -53,15 +54,13 @@ src/
 │   │   ├── forest.rs                 # Forest
 │   │   ├── categories.rs             # CategoriesStorage
 │   │   ├── unrolled.rs               # UnrolledTreeLayout
-│   │   ├── predictor.rs              # GBDTPredictor
+│   │   ├── predictor.rs              # Predictor
+│   │   ├── simd.rs                   # Optional SIMD traversal (feature = simd)
 │   │   └── traversal.rs              # TreeTraversal strategies
 │   │
 │   ├── gblinear/                     # GBLinear inference
 │   │   ├── mod.rs
-│   │   ├── model.rs                  # LinearModel
-│   │   └── predictor.rs              # GBLinearPredictor
-│   │
-│   └── model.rs                      # Model wrapper, Booster enum
+│   │   └── model.rs                  # LinearModel
 │
 ├── compat/                           # External model loading
 │   ├── mod.rs
@@ -111,12 +110,6 @@ src/
     │   │   ├── gain.rs               # GainParams
     │   │   └── find.rs               # GreedySplitter
     │   │
-    │   └── tree/                     # Training-time tree structures
-    │       ├── mod.rs
-    │       ├── node.rs               # TreeNode
-    │       ├── builder.rs            # TreeBuilder
-    │       └── forest.rs             # TrainingForest
-    │
     └── gblinear/                     # GBLinear training
         ├── mod.rs
         ├── trainer.rs                # GBLinearTrainer, GBLinearParams

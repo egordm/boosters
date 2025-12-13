@@ -4,7 +4,7 @@
 //! and the subtraction trick to reduce computation.
 
 use crate::data::BinnedDataset;
-use crate::inference::gbdt::{categories_to_bitset, MutableTreeBuilder, ScalarLeaf, TreeStorage};
+use crate::repr::gbdt::{categories_to_bitset, MutableTree, ScalarLeaf, Tree};
 use crate::training::Gradients;
 use crate::training::sampling::{ColSampler, ColSamplingParams};
 
@@ -65,8 +65,8 @@ pub struct TreeGrower {
     histogram_pool: HistogramPool,
     /// Row partitioner.
     partitioner: RowPartitioner,
-    /// Tree builder (builds inference-ready TreeStorage directly).
-    tree_builder: MutableTreeBuilder<ScalarLeaf>,
+    /// Tree builder (builds inference-ready Tree directly).
+    tree_builder: MutableTree<ScalarLeaf>,
     /// Feature types (true = categorical).
     feature_types: Vec<bool>,
     /// Feature metadata for histogram building.
@@ -129,7 +129,7 @@ impl TreeGrower {
             params,
             histogram_pool,
             partitioner,
-            tree_builder: MutableTreeBuilder::with_capacity(max_nodes),
+            tree_builder: MutableTree::with_capacity(max_nodes),
             feature_types,
             feature_metas,
             split_strategy,
@@ -153,7 +153,7 @@ impl TreeGrower {
         gradients: &Gradients,
         output: usize,
         sampled_rows: Option<&[u32]>,
-    ) -> TreeStorage<ScalarLeaf> {
+    ) -> Tree<ScalarLeaf> {
         let n_samples = dataset.n_rows();
         assert_eq!(gradients.n_samples(), n_samples);
 
@@ -213,7 +213,7 @@ impl TreeGrower {
         // Apply learning rate and finish
         self.tree_builder
             .apply_learning_rate(self.params.learning_rate);
-        std::mem::take(&mut self.tree_builder).finish()
+        std::mem::take(&mut self.tree_builder).freeze()
     }
 
     /// Process a single candidate node.
@@ -396,7 +396,7 @@ impl TreeGrower {
     /// Important: categorical split categories are treated as **category indices** (0..K-1),
     /// i.e. the same domain as categorical bin indices in `BinnedDataset`.
     fn apply_split_to_builder(
-        builder: &mut MutableTreeBuilder<ScalarLeaf>,
+        builder: &mut MutableTree<ScalarLeaf>,
         node: u32,
         split: &SplitInfo,
         dataset: &BinnedDataset,
@@ -506,8 +506,8 @@ mod tests {
     use super::*;
     use crate::data::{BinMapper, BinnedDataset, BinnedDatasetBuilder, GroupLayout, GroupStrategy, MissingType};
 
-    /// Helper to count leaves in a TreeStorage.
-    fn count_leaves<L: crate::inference::gbdt::LeafValue>(tree: &TreeStorage<L>) -> usize {
+    /// Helper to count leaves in a Tree.
+    fn count_leaves<L: crate::repr::gbdt::LeafValue>(tree: &Tree<L>) -> usize {
         (0..tree.n_nodes() as u32).filter(|&i| tree.is_leaf(i)).count()
     }
 
@@ -590,7 +590,7 @@ mod tests {
     fn phase4_numeric_threshold_translation_preserves_boundary() {
         let dataset = make_numeric_boundary_dataset();
 
-        let mut builder = MutableTreeBuilder::<ScalarLeaf>::with_capacity(3);
+        let mut builder = MutableTree::<ScalarLeaf>::with_capacity(3);
         let root = builder.init_root();
 
         // Training semantics: bin <= 0 goes left.
@@ -598,7 +598,7 @@ mod tests {
         let (left, right) = TreeGrower::apply_split_to_builder(&mut builder, root, &split, &dataset);
         builder.make_leaf(left, ScalarLeaf(10.0));
         builder.make_leaf(right, ScalarLeaf(20.0));
-        let tree = builder.finish();
+        let tree = builder.freeze();
 
         let upper = dataset.bin_mapper(0).bin_to_value(0) as f32;
         let threshold = tree.split_threshold(0);
@@ -620,7 +620,7 @@ mod tests {
     fn phase5_categorical_domain_is_bin_indices_and_semantics_match() {
         let dataset = make_categorical_domain_dataset();
 
-        let mut builder = MutableTreeBuilder::<ScalarLeaf>::with_capacity(3);
+        let mut builder = MutableTree::<ScalarLeaf>::with_capacity(3);
         let root = builder.init_root();
 
         // Training semantics: categories {1, 3} go LEFT.
@@ -631,7 +631,7 @@ mod tests {
         let (left, right) = TreeGrower::apply_split_to_builder(&mut builder, root, &split, &dataset);
         builder.make_leaf(left, ScalarLeaf(10.0));
         builder.make_leaf(right, ScalarLeaf(20.0));
-        let tree = builder.finish();
+        let tree = builder.freeze();
 
         // Category indices are in 0..=3, so the stored bitset should fit in one word.
         assert!(tree.has_categorical());

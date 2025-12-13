@@ -8,7 +8,7 @@
 //! the `simd` feature functional and provide stable public type names.
 
 use super::{
-    Depth4, Depth6, Depth8, ScalarLeaf, TreeStorage, TreeView, UnrollDepth, UnrolledTreeLayout,
+    Depth4, Depth6, Depth8, ScalarLeaf, Tree, UnrollDepth, UnrolledTreeLayout,
 };
 use crate::inference::gbdt::traversal::{traverse_from_node, TreeTraversal};
 
@@ -51,12 +51,12 @@ impl<D: UnrollDepth> TreeTraversal<ScalarLeaf> for SimdTraversal<D> {
     const USES_BLOCK_OPTIMIZATION: bool = true;
 
     #[inline]
-    fn build_tree_state(tree: &TreeStorage<ScalarLeaf>) -> Self::TreeState {
+    fn build_tree_state(tree: &Tree<ScalarLeaf>) -> Self::TreeState {
         UnrolledTreeLayout::from_tree(tree)
     }
 
     #[inline]
-    fn traverse_tree(tree: &TreeView<'_, ScalarLeaf>, state: &Self::TreeState, features: &[f32]) -> ScalarLeaf {
+    fn traverse_tree(tree: &Tree<ScalarLeaf>, state: &Self::TreeState, features: &[f32]) -> ScalarLeaf {
         // Phase 1: Traverse unrolled levels
         let exit_idx = state.traverse_to_exit(features);
         let node_idx = state.exit_node_idx(exit_idx);

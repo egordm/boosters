@@ -2,10 +2,9 @@
 
 use crate::inference::gbdt::Forest;
 use crate::inference::gblinear::LinearModel;
+use crate::repr::gbdt::{categories_to_bitset, MutableTree, ScalarLeaf, Tree};
 
-use crate::inference::gbdt::{ScalarLeaf, TreeBuilder};
-
-use super::json::{GradientBooster, ModelTrees, Tree, XgbModel};
+use super::json::{GradientBooster, ModelTrees, Tree as XgbTree, XgbModel};
 
 /// A booster model converted from XGBoost.
 ///
@@ -187,11 +186,8 @@ impl XgbModel {
     }
 }
 
-/// Convert a single XGBoost tree to native TreeStorage.
-fn convert_tree(
-    xgb_tree: &Tree,
-    tree_idx: usize,
-) -> Result<crate::inference::gbdt::TreeStorage<ScalarLeaf>, ConversionError> {
+/// Convert a single XGBoost tree to native `Tree`.
+fn convert_tree(xgb_tree: &XgbTree, tree_idx: usize) -> Result<Tree<ScalarLeaf>, ConversionError> {
     let num_nodes = xgb_tree.tree_param.num_nodes as usize;
     if num_nodes == 0 {
         return Err(ConversionError::EmptyTree(tree_idx));
@@ -205,7 +201,8 @@ fn convert_tree(
     // - categories: flat array of bitset words
     let categorical_map = build_categorical_map(xgb_tree);
 
-    let mut builder = TreeBuilder::new();
+    let mut tree = MutableTree::<ScalarLeaf>::with_capacity(num_nodes);
+    tree.init_root_with_num_nodes(num_nodes);
 
     // XGBoost stores nodes in BFS order, which matches our expected layout.
     // We need to iterate and add nodes in order.
@@ -214,12 +211,12 @@ fn convert_tree(
         let right_child = xgb_tree.right_children[node_idx];
 
         // A node is a leaf if left_child == -1 (XGBoost convention)
-        let is_leaf = left_child == -1;
+        let node_is_leaf = left_child == -1;
 
-        if is_leaf {
+        if node_is_leaf {
             // Leaf node: base_weights contains the leaf value
             let leaf_value = xgb_tree.base_weights[node_idx];
-            builder.add_leaf(ScalarLeaf(leaf_value));
+            tree.make_leaf(node_idx as u32, ScalarLeaf(leaf_value));
         } else {
             // Split node
             // Validate child indices
@@ -241,34 +238,30 @@ fn convert_tree(
             }
 
             let feature_index = xgb_tree.split_indices[node_idx] as u32;
-            let default_left = xgb_tree.default_left[node_idx] != 0;
+            let node_default_left = xgb_tree.default_left[node_idx] != 0;
 
             // Check if this is a categorical split
             // XGBoost split_type: 0 = numeric, 1 = categorical
             let is_categorical = xgb_tree.split_type.get(node_idx).copied().unwrap_or(0) == 1;
 
             if is_categorical {
-                // Get the category bitset for this node
-                let bitset = categorical_map
-                    .get(&node_idx)
-                    .cloned()
-                    .unwrap_or_default();
-
-                builder.add_categorical_split(
+                let bitset = categorical_map.get(&node_idx).cloned().unwrap_or_default();
+                tree.set_categorical_split(
+                    node_idx as u32,
                     feature_index,
                     bitset,
-                    default_left,
+                    node_default_left,
                     left_child as u32,
                     right_child as u32,
                 );
             } else {
                 // Numeric split
                 let threshold = xgb_tree.split_conditions[node_idx];
-
-                builder.add_split(
+                tree.set_numeric_split(
+                    node_idx as u32,
                     feature_index,
                     threshold,
-                    default_left,
+                    node_default_left,
                     left_child as u32,
                     right_child as u32,
                 );
@@ -276,7 +269,7 @@ fn convert_tree(
         }
     }
 
-    Ok(builder.build())
+    Ok(tree.freeze())
 }
 
 /// Build a map from node index to category bitset.
@@ -290,7 +283,7 @@ fn convert_tree(
 /// - categories_segments: start index into categories array for each node
 /// - categories_sizes: number of category VALUES for each node
 /// - categories: flat array of category INTEGER VALUES (not bitset words)
-fn build_categorical_map(xgb_tree: &Tree) -> std::collections::HashMap<usize, Vec<u32>> {
+fn build_categorical_map(xgb_tree: &XgbTree) -> std::collections::HashMap<usize, Vec<u32>> {
     let mut map = std::collections::HashMap::new();
 
     for i in 0..xgb_tree.categories_nodes.len() {
@@ -304,18 +297,7 @@ fn build_categorical_map(xgb_tree: &Tree) -> std::collections::HashMap<usize, Ve
             .map(|&x| x as u32)
             .collect();
 
-        // Convert category values to a packed bitset
-        // Find max category to determine bitset size
-        let max_cat = category_values.iter().copied().max().unwrap_or(0);
-        let num_words = (max_cat / 32 + 1) as usize;
-        let mut bitset = vec![0u32; num_words];
-
-        // Set bits for each category that goes right
-        for cat in category_values {
-            let word_idx = (cat / 32) as usize;
-            let bit_idx = cat % 32;
-            bitset[word_idx] |= 1u32 << bit_idx;
-        }
+        let bitset = categories_to_bitset(&category_values);
 
         map.insert(node_idx, bitset);
     }

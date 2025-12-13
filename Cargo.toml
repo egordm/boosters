@@ -38,6 +38,7 @@ derive_builder = "0.20.2"
 [dev-dependencies]
 glob = "0.3.3"
 rstest = "0.21"
+serde = { version = "1.0", features = ["derive"] } # Needed by integration tests under --no-default-features
 serde_json = "1.0"  # Always available in tests
 criterion = { version = "0.5", features = ["html_reports"] }
 rand = "0.8"  # For generating random benchmark inputs
