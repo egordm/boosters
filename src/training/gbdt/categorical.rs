@@ -82,6 +82,58 @@ impl CatBitset {
     pub fn is_empty(&self) -> bool {
         self.bits == 0 && self.overflow.as_ref().map_or(true, |o| o.iter().all(|&w| w == 0))
     }
+
+    /// Iterate over all categories contained in the set.
+    ///
+    /// Categories are returned in ascending order.
+    pub fn iter(&self) -> CatBitsetIter<'_> {
+        CatBitsetIter {
+            inline_remaining: self.bits,
+            overflow: self.overflow.as_deref().unwrap_or(&[]),
+            overflow_word_idx: 0,
+            overflow_word_remaining: 0,
+        }
+    }
+}
+
+/// Iterator over categories contained in a [`CatBitset`].
+#[derive(Clone, Debug)]
+pub struct CatBitsetIter<'a> {
+    inline_remaining: u64,
+    overflow: &'a [u64],
+    overflow_word_idx: usize,
+    overflow_word_remaining: u64,
+}
+
+impl<'a> Iterator for CatBitsetIter<'a> {
+    type Item = u32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.inline_remaining != 0 {
+            let tz = self.inline_remaining.trailing_zeros();
+            let cat = tz as u32;
+            self.inline_remaining &= self.inline_remaining - 1;
+            return Some(cat);
+        }
+
+        loop {
+            if self.overflow_word_remaining != 0 {
+                let tz = self.overflow_word_remaining.trailing_zeros();
+                // overflow_word_idx was already incremented AFTER loading this word,
+                // so subtract 1 for the category calculation.
+                let cat = 64u32 + (self.overflow_word_idx as u32 - 1) * 64u32 + tz as u32;
+                self.overflow_word_remaining &= self.overflow_word_remaining - 1;
+                return Some(cat);
+            }
+
+            if self.overflow_word_idx >= self.overflow.len() {
+                return None;
+            }
+
+            self.overflow_word_remaining = self.overflow[self.overflow_word_idx];
+            self.overflow_word_idx += 1;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -125,5 +177,18 @@ mod tests {
         assert!(bs.contains(42));
         assert!(!bs.contains(0));
         assert_eq!(bs.count(), 1);
+    }
+
+    #[test]
+    fn iter_yields_categories_in_order() {
+        let mut bs = CatBitset::empty();
+        bs.insert(5);
+        bs.insert(0);
+        bs.insert(63);
+        bs.insert(64);
+        bs.insert(130);
+
+        let cats: Vec<u32> = bs.iter().collect();
+        assert_eq!(cats, vec![0, 5, 63, 64, 130]);
     }
 }

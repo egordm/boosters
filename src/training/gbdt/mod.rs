@@ -22,6 +22,8 @@ pub mod split;
 pub mod trainer;
 pub mod tree;
 
+mod convert;
+
 // Re-export main types
 pub use categorical::CatBitset;
 pub use expansion::{GrowthState, GrowthStrategy, NodeCandidate};

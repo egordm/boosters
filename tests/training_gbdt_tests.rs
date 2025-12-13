@@ -44,7 +44,7 @@ fn test_gbdt_train_single_tree() {
     let forest = trainer.train(&dataset, &targets, &[]).unwrap();
 
     assert_eq!(forest.n_trees(), 1);
-    assert_eq!(forest.n_outputs(), 1);
+    assert_eq!(forest.n_groups(), 1);
 }
 
 #[test]
@@ -180,7 +180,7 @@ fn test_gbdt_predictions_reasonable() {
     let features: Vec<f32> = (0..n_samples).map(|i| i as f32 / 10.0).collect();
     let targets: Vec<f32> = features.iter().map(|&x| x + 0.5).collect();
 
-    let col_matrix = ColMatrix::from_vec(features, n_samples, 1);
+    let col_matrix = ColMatrix::from_vec(features.clone(), n_samples, 1);
     let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 64)
         .build()
         .expect("Failed to build binned dataset");
@@ -195,14 +195,12 @@ fn test_gbdt_predictions_reasonable() {
     let trainer = GBDTTrainer::new(SquaredLoss, params);
     let forest = trainer.train(&dataset, &targets, &[]).unwrap();
 
-    // Predict on training data using the training forest
+    // Predict on training data using the inference forest
     let mut predictions = Vec::with_capacity(n_samples);
-    for row in 0..dataset.n_rows() {
-        if let Some(view) = dataset.row_view(row) {
-            let base = forest.base_scores()[0];
-            let pred: f32 = forest.trees().iter().map(|t| t.predict(&view)).sum::<f32>() + base;
-            predictions.push(pred);
-        }
+    for row in 0..n_samples {
+        let x = col_matrix.col_slice(0)[row];
+        let pred = forest.predict_row(&[x])[0];
+        predictions.push(pred);
     }
 
     // Compute RMSE - should be reasonably low for this simple problem
@@ -264,20 +262,22 @@ fn test_gbdt_larger_dataset() {
     assert_eq!(forest.n_trees(), 5);
 
     // Verify predictions improve over base score
-    let base = forest.base_scores()[0];
+    let base = forest.base_score()[0];
 
     let mut base_error_sum = 0.0f32;
     let mut pred_error_sum = 0.0f32;
 
-    for row in 0..dataset.n_rows() {
-        if let Some(view) = dataset.row_view(row) {
-            let tree_pred: f32 = forest.trees().iter().map(|t| t.predict(&view)).sum();
-            let pred = base + tree_pred;
-
-            let target = targets[row];
-            base_error_sum += (base - target).powi(2);
-            pred_error_sum += (pred - target).powi(2);
+    for row in 0..n_samples {
+        let mut row_features = Vec::with_capacity(n_features);
+        for f in 0..n_features {
+            row_features.push(col_matrix.col_slice(f)[row]);
         }
+
+        let pred = forest.predict_row(&row_features)[0];
+        let target = targets[row];
+
+        base_error_sum += (base - target).powi(2);
+        pred_error_sum += (pred - target).powi(2);
     }
 
     // Model predictions should be better than just using base score

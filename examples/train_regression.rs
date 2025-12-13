@@ -9,11 +9,12 @@
 
 use booste_rs::data::binned::BinnedDatasetBuilder;
 use booste_rs::data::{ColMatrix, DenseMatrix, RowMajor};
-use booste_rs::training::{GBDTParams, GBDTTrainer, GrowthStrategy, SquaredLoss};
+use booste_rs::training::{GBDTParams, GBDTTrainer, GrowthStrategy, Metric, Rmse, SquaredLoss};
 
 fn main() {
-    // Generate synthetic regression data
-    // y = x0 + 0.5*x1 + 0.25*x2 + noise
+    // =========================================================================
+    // Generate synthetic regression data: y = x0 + 0.5*x1 + 0.25*x2 + noise
+    // =========================================================================
     let n_samples = 500;
     let n_features = 5;
 
@@ -33,23 +34,21 @@ fn main() {
         features.push(x3);
         features.push(x4);
 
-        // Target with some noise
         let noise = ((i * 31) % 100) as f32 / 500.0 - 0.1;
-        let y = x0 + 0.5 * x1 + 0.25 * x2 + noise;
-        labels.push(y);
+        labels.push(x0 + 0.5 * x1 + 0.25 * x2 + noise);
     }
 
-    // Create row-major matrix and convert to column-major for training
+    // Create binned dataset for training
     let row_matrix: DenseMatrix<f32, RowMajor> =
-        DenseMatrix::from_vec(features, n_samples, n_features);
+        DenseMatrix::from_vec(features.clone(), n_samples, n_features);
     let col_matrix: ColMatrix<f32> = row_matrix.to_layout();
-
-    // Create binned dataset from column matrix
     let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 256)
         .build()
         .expect("Failed to build binned dataset");
 
-    // Configure training parameters
+    // =========================================================================
+    // Train
+    // =========================================================================
     let params = GBDTParams {
         n_trees: 50,
         learning_rate: 0.1,
@@ -58,7 +57,6 @@ fn main() {
         ..Default::default()
     };
 
-    // Train using the new struct-based API
     println!("Training GBTree regression model...");
     println!("  Trees: {}", params.n_trees);
     println!("  Learning rate: {}", params.learning_rate);
@@ -67,32 +65,18 @@ fn main() {
     let trainer = GBDTTrainer::new(SquaredLoss, params);
     let forest = trainer.train(&dataset, &labels, &[]).unwrap();
 
-    // Evaluate on training set using binned data
-    let base = forest.base_scores()[0];
-    let mut predictions = Vec::with_capacity(n_samples);
+    // =========================================================================
+    // Evaluate
+    // =========================================================================
+    let predictions: Vec<f32> = features
+        .chunks(n_features)
+        .map(|row| forest.predict_row(row)[0])
+        .collect();
 
-    for row_idx in 0..dataset.n_rows() {
-        if let Some(row_view) = dataset.row_view(row_idx) {
-            let tree_sum: f32 = forest.trees().iter().map(|t| t.predict(&row_view)).sum();
-            predictions.push(base + tree_sum);
-        }
-    }
-
-    let train_rmse = compute_rmse(&predictions, &labels);
+    let rmse = Rmse.compute(n_samples, 1, &predictions, &labels, &[]);
 
     println!("=== Results ===");
     println!("Trees: {}", forest.n_trees());
-    println!("Train RMSE: {:.4}", train_rmse);
+    println!("Train RMSE: {:.4}", rmse);
     println!("\nNote: For production, split data into train/validation/test sets!");
-}
-
-/// Compute Root Mean Squared Error.
-fn compute_rmse(predictions: &[f32], labels: &[f32]) -> f32 {
-    let mse: f32 = predictions
-        .iter()
-        .zip(labels.iter())
-        .map(|(&p, &l)| (p - l).powi(2))
-        .sum::<f32>()
-        / predictions.len() as f32;
-    mse.sqrt()
 }

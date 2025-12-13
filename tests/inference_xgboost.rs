@@ -171,7 +171,7 @@ fn parse_single_tree_model() {
     let (model, input, _) = load_gbtree("gbtree_single_tree");
     assert_eq!(input.num_features, 3);
     let forest = model.to_forest().expect("conversion failed");
-    assert_eq!(forest.num_trees(), 1);
+    assert_eq!(forest.n_trees(), 1);
 }
 
 #[test]
@@ -179,7 +179,7 @@ fn parse_many_trees_model() {
     let (model, input, _) = load_gbtree("gbtree_many_trees");
     assert_eq!(input.num_features, 5);
     let forest = model.to_forest().expect("conversion failed");
-    assert_eq!(forest.num_trees(), 50);
+    assert_eq!(forest.n_trees(), 50);
 }
 
 #[test]
@@ -197,22 +197,22 @@ fn parse_wide_features_model() {
 fn convert_regression_model() {
     let (model, _, _) = load_gbtree("gbtree_regression");
     let forest = model.to_forest().expect("conversion failed");
-    assert_eq!(forest.num_groups(), 1);
-    assert!(forest.num_trees() > 0);
+    assert_eq!(forest.n_groups(), 1);
+    assert!(forest.n_trees() > 0);
 }
 
 #[test]
 fn convert_binary_logistic_model() {
     let (model, _, _) = load_gbtree("gbtree_binary_logistic");
     let forest = model.to_forest().expect("conversion failed");
-    assert_eq!(forest.num_groups(), 1);
+    assert_eq!(forest.n_groups(), 1);
 }
 
 #[test]
 fn convert_multiclass_model() {
     let (model, _, _) = load_gbtree("gbtree_multiclass");
     let forest = model.to_forest().expect("conversion failed");
-    assert_eq!(forest.num_groups(), 3);
+    assert_eq!(forest.n_groups(), 3);
 }
 
 // =============================================================================
@@ -355,11 +355,11 @@ fn convert_categorical_model() {
     let (model, _, _) = load_gbtree("gbtree_categorical");
     let forest = model.to_forest().expect("conversion failed");
 
-    assert_eq!(forest.num_groups(), 1);
-    assert!(forest.num_trees() > 0);
+    assert_eq!(forest.n_groups(), 1);
+    assert!(forest.n_trees() > 0);
 
     // Check that at least one tree has categorical splits
-    let has_categorical = (0..forest.num_trees()).any(|i| forest.tree(i).has_categorical());
+    let has_categorical = (0..forest.n_trees()).any(|i| forest.tree(i).has_categorical());
     assert!(has_categorical, "Expected at least one tree with categorical splits");
 }
 
@@ -417,7 +417,7 @@ fn parse_dart_model() {
 fn convert_dart_model() {
     let (model, _, _) = load_dart("dart_regression");
     let forest = model.to_forest().expect("conversion failed");
-    assert_eq!(forest.num_groups(), 1);
+    assert_eq!(forest.n_groups(), 1);
 }
 
 #[test]

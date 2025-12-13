@@ -122,8 +122,8 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
 
     /// Number of output groups.
     #[inline]
-    pub fn num_groups(&self) -> usize {
-        self.forest.num_groups() as usize
+    pub fn n_groups(&self) -> usize {
+        self.forest.n_groups() as usize
     }
 
     /// Predict for a batch of features.
@@ -141,7 +141,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
     ///
     /// # Panics
     ///
-    /// Panics if `weights.len() != forest.num_trees()`.
+    /// Panics if `weights.len() != forest.n_trees()`.
     #[inline]
     pub fn predict_weighted<M: DataMatrix<Element = f32>>(
         &self,
@@ -150,7 +150,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
     ) -> PredictionOutput {
         assert_eq!(
             weights.len(),
-            self.forest.num_trees(),
+            self.forest.n_trees(),
             "weights length must match number of trees"
         );
         self.predict_internal(features, Some(weights))
@@ -182,7 +182,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
     ///
     /// # Panics
     ///
-    /// Panics if `weights.len() != forest.num_trees()`.
+    /// Panics if `weights.len() != forest.n_trees()`.
     #[inline]
     pub fn par_predict_weighted<M: DataMatrix<Element = f32> + Sync>(
         &self,
@@ -191,7 +191,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
     ) -> PredictionOutput {
         assert_eq!(
             weights.len(),
-            self.forest.num_trees(),
+            self.forest.n_trees(),
             "weights length must match number of trees"
         );
         self.par_predict_internal(features, Some(weights))
@@ -204,7 +204,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
         weights: Option<&[f32]>,
     ) -> PredictionOutput {
         let num_rows = features.num_rows();
-        let num_groups = self.num_groups();
+        let num_groups = self.n_groups();
         let num_features = features.num_features();
 
         if num_rows == 0 {
@@ -333,7 +333,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
         weights: Option<&[f32]>,
     ) -> PredictionOutput {
         let num_rows = features.num_rows();
-        let num_groups = self.num_groups();
+        let num_groups = self.n_groups();
         let num_features = features.num_features();
 
         let mut output = PredictionOutput::zeros(num_rows, num_groups);
@@ -397,7 +397,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
         weights: Option<&[f32]>,
     ) -> PredictionOutput {
         let num_rows = features.num_rows();
-        let num_groups = self.num_groups();
+        let num_groups = self.n_groups();
         let num_features = features.num_features();
 
         let mut output = PredictionOutput::zeros(num_rows, num_groups);
@@ -481,12 +481,12 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
     ///
     /// # Panics
     ///
-    /// Panics if `weights.len() != forest.num_trees()`.
+    /// Panics if `weights.len() != forest.n_trees()`.
     #[inline]
     pub fn predict_row_weighted(&self, features: &[f32], weights: &[f32]) -> Vec<f32> {
         assert_eq!(
             weights.len(),
-            self.forest.num_trees(),
+            self.forest.n_trees(),
             "weights length must match number of trees"
         );
 

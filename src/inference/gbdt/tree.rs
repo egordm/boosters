@@ -110,7 +110,7 @@ impl<L: LeafValue> TreeStorage<L> {
 
     /// Number of nodes in this tree.
     #[inline]
-    pub fn num_nodes(&self) -> usize {
+    pub fn n_nodes(&self) -> usize {
         self.is_leaf.len()
     }
 
@@ -376,7 +376,7 @@ mod tests {
     fn tree_structure() {
         let tree = build_test_tree();
 
-        assert_eq!(tree.num_nodes(), 5);
+        assert_eq!(tree.n_nodes(), 5);
 
         // Root is a split
         assert!(!tree.is_leaf(0));
@@ -481,7 +481,7 @@ mod tests {
     fn categorical_tree_structure() {
         let tree = build_categorical_tree();
 
-        assert_eq!(tree.num_nodes(), 3);
+        assert_eq!(tree.n_nodes(), 3);
         assert!(!tree.is_leaf(0));
         assert_eq!(tree.split_type(0), SplitType::Categorical);
         assert!(tree.has_categorical());
