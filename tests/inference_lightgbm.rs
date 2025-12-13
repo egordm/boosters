@@ -125,7 +125,7 @@ mod regression {
         let forest = model.to_forest().expect("Failed to convert model");
 
         // Verify structure
-        assert_eq!(forest.num_groups(), 1);
+        assert_eq!(forest.n_groups(), 1);
         assert_eq!(input.num_samples, 20);
         assert_eq!(input.num_features, 10);
 
@@ -153,8 +153,8 @@ mod regression {
         let (model, _, _) = load_test_case("small_tree");
         let forest = model.to_forest().expect("Failed to convert model");
 
-        assert_eq!(forest.num_groups(), 1);
-        assert_eq!(forest.num_trees(), 3);
+        assert_eq!(forest.n_groups(), 1);
+        assert_eq!(forest.n_trees(), 3);
     }
 }
 
@@ -171,7 +171,7 @@ mod binary_classification {
         let forest = model.to_forest().expect("Failed to convert model");
 
         // Binary classification uses single output (raw logit)
-        assert_eq!(forest.num_groups(), 1);
+        assert_eq!(forest.n_groups(), 1);
         assert_eq!(input.num_samples, 20);
 
         let expected_raw = match &expected.raw {
@@ -230,7 +230,7 @@ mod multiclass {
         let forest = model.to_forest().expect("Failed to convert model");
 
         // 3-class classification uses 3 output groups
-        assert_eq!(forest.num_groups(), 3);
+        assert_eq!(forest.n_groups(), 3);
         assert_eq!(input.num_samples, 20);
 
         let expected_raw = match &expected.raw {
@@ -293,7 +293,7 @@ mod missing_values {
         let (model, input, expected) = load_test_case("regression_missing");
         let forest = model.to_forest().expect("Failed to convert model");
 
-        assert_eq!(forest.num_groups(), 1);
+        assert_eq!(forest.n_groups(), 1);
 
         let expected_raw = match &expected.raw {
             RawPredictions::Flat(v) => v,

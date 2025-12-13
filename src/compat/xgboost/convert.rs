@@ -366,8 +366,8 @@ mod tests {
         let model = load_gbtree("gbtree_regression");
         let forest = model.to_forest().expect("Conversion failed");
 
-        assert_eq!(forest.num_groups(), 1);
-        assert!(forest.num_trees() > 0);
+        assert_eq!(forest.n_groups(), 1);
+        assert!(forest.n_trees() > 0);
     }
 
     #[test]
@@ -375,8 +375,8 @@ mod tests {
         let model = load_gbtree("gbtree_binary_logistic");
         let forest = model.to_forest().expect("Conversion failed");
 
-        assert_eq!(forest.num_groups(), 1); // Binary uses single output
-        assert!(forest.num_trees() > 0);
+        assert_eq!(forest.n_groups(), 1); // Binary uses single output
+        assert!(forest.n_trees() > 0);
     }
 
     #[test]
@@ -384,8 +384,8 @@ mod tests {
         let model = load_gbtree("gbtree_multiclass");
         let forest = model.to_forest().expect("Conversion failed");
 
-        assert_eq!(forest.num_groups(), 3); // 3-class
-        assert!(forest.num_trees() > 0);
+        assert_eq!(forest.n_groups(), 3); // 3-class
+        assert!(forest.n_trees() > 0);
     }
 
     #[test]
@@ -393,8 +393,8 @@ mod tests {
         let model = load_dart("dart_regression");
         let forest = model.to_forest().expect("Conversion failed");
 
-        assert_eq!(forest.num_groups(), 1);
-        assert!(forest.num_trees() > 0);
+        assert_eq!(forest.n_groups(), 1);
+        assert!(forest.n_trees() > 0);
     }
 
     #[test]
@@ -418,8 +418,8 @@ mod tests {
         assert!(model.is_dart());
         match booster {
             Booster::Dart { forest, weights } => {
-                assert!(forest.num_trees() > 0);
-                assert_eq!(weights.len(), forest.num_trees());
+                assert!(forest.n_trees() > 0);
+                assert_eq!(weights.len(), forest.n_trees());
             }
             Booster::Tree(_) => panic!("Expected Booster::Dart"),
             Booster::Linear(_) => panic!("Expected Booster::Dart"),

@@ -253,8 +253,8 @@ mod tests {
         let model = load_model("small_tree");
         let forest = model.to_forest().expect("Conversion failed");
 
-        assert_eq!(forest.num_groups(), 1);
-        assert_eq!(forest.num_trees(), 3);
+        assert_eq!(forest.n_groups(), 1);
+        assert_eq!(forest.n_trees(), 3);
     }
 
     #[test]
@@ -280,8 +280,8 @@ mod tests {
         let model = load_model("regression");
         let forest = model.to_forest().expect("Conversion failed");
 
-        assert_eq!(forest.num_groups(), 1);
-        assert!(forest.num_trees() > 0);
+        assert_eq!(forest.n_groups(), 1);
+        assert!(forest.n_trees() > 0);
     }
 
     #[test]
@@ -307,8 +307,8 @@ mod tests {
         let model = load_model("binary_classification");
         let forest = model.to_forest().expect("Conversion failed");
 
-        assert_eq!(forest.num_groups(), 1); // Binary uses single output
-        assert!(forest.num_trees() > 0);
+        assert_eq!(forest.n_groups(), 1); // Binary uses single output
+        assert!(forest.n_trees() > 0);
     }
 
     #[test]
@@ -334,8 +334,8 @@ mod tests {
         let model = load_model("multiclass");
         let forest = model.to_forest().expect("Conversion failed");
 
-        assert_eq!(forest.num_groups(), 3);
-        assert!(forest.num_trees() > 0);
+        assert_eq!(forest.n_groups(), 3);
+        assert!(forest.n_trees() > 0);
     }
 
     #[test]

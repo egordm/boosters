@@ -30,7 +30,9 @@ use super::expansion::GrowthStrategy;
 use super::grower::{GrowerParams, TreeGrower};
 use super::optimization::OptimizationProfile;
 use super::split::GainParams;
-use super::tree::Forest;
+use super::tree::Forest as TrainingForest;
+
+use crate::inference::gbdt::{Forest as InferenceForest, ScalarLeaf};
 
 // =============================================================================
 // GBDTParams
@@ -168,7 +170,7 @@ impl<O: Objective> GBDTTrainer<O> {
         dataset: &BinnedDataset,
         targets: &[f32],
         weights: &[f32],
-    ) -> Option<Forest> {
+    ) -> Option<InferenceForest<ScalarLeaf>> {
         // If n_threads == 0, use rayon's global thread pool.
         // Otherwise, scope all rayon work for this training run to a dedicated pool.
         if self.params.n_threads == 0 {
@@ -189,7 +191,7 @@ impl<O: Objective> GBDTTrainer<O> {
         dataset: &BinnedDataset,
         targets: &[f32],
         weights: &[f32],
-    ) -> Option<Forest> {
+    ) -> Option<InferenceForest<ScalarLeaf>> {
         let n_rows = dataset.n_rows();
         let n_outputs = self.objective.n_outputs();
 
@@ -222,7 +224,7 @@ impl<O: Objective> GBDTTrainer<O> {
             predictions.extend(std::iter::repeat(base_scores[output]).take(n_rows));
         }
 
-        let mut forest = Forest::new(n_outputs, base_scores);
+        let mut forest = TrainingForest::new(n_outputs, base_scores);
 
         for round in 0..self.params.n_trees {
             // Compute gradients for all outputs
@@ -260,7 +262,7 @@ impl<O: Objective> GBDTTrainer<O> {
             }
         }
 
-        Some(forest)
+        super::convert::forest_to_inference(&forest, dataset)
     }
 }
 
@@ -346,7 +348,7 @@ mod tests {
         let forest = trainer.train(&dataset, &targets, &[]).unwrap();
 
         assert_eq!(forest.n_trees(), 1);
-        assert_eq!(forest.n_outputs(), 1);
+        assert_eq!(forest.n_groups(), 1);
     }
 
     #[test]

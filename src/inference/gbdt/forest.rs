@@ -12,19 +12,19 @@ pub struct Forest<L: LeafValue = ScalarLeaf> {
     /// Which output group each tree belongs to (for multi-class)
     tree_groups: Vec<u32>,
     /// Number of output groups (1 for regression, K for K-class)
-    num_groups: u32,
+    n_groups: u32,
     /// Base score per group (added to predictions)
     base_score: Vec<f32>,
 }
 
 impl<L: LeafValue> Forest<L> {
     /// Create a new forest with the given number of groups.
-    pub fn new(num_groups: u32) -> Self {
+    pub fn new(n_groups: u32) -> Self {
         Self {
             trees: Vec::new(),
             tree_groups: Vec::new(),
-            num_groups,
-            base_score: vec![0.0; num_groups as usize],
+            n_groups,
+            base_score: vec![0.0; n_groups as usize],
         }
     }
 
@@ -35,28 +35,28 @@ impl<L: LeafValue> Forest<L> {
 
     /// Set the base score for all groups.
     pub fn with_base_score(mut self, base_score: Vec<f32>) -> Self {
-        debug_assert_eq!(base_score.len(), self.num_groups as usize);
+        debug_assert_eq!(base_score.len(), self.n_groups as usize);
         self.base_score = base_score;
         self
     }
 
     /// Add a tree to the forest.
     pub fn push_tree(&mut self, tree: TreeStorage<L>, group: u32) {
-        debug_assert!(group < self.num_groups, "group out of range");
+        debug_assert!(group < self.n_groups, "group out of range");
         self.trees.push(tree);
         self.tree_groups.push(group);
     }
 
     /// Number of trees in the forest.
     #[inline]
-    pub fn num_trees(&self) -> usize {
+    pub fn n_trees(&self) -> usize {
         self.trees.len()
     }
 
     /// Number of output groups.
     #[inline]
-    pub fn num_groups(&self) -> u32 {
-        self.num_groups
+    pub fn n_groups(&self) -> u32 {
+        self.n_groups
     }
 
     /// Get the base score for each group.
@@ -111,7 +111,7 @@ impl Forest<ScalarLeaf> {
 
     /// Predict for a batch of rows.
     ///
-    /// Returns `[num_rows][num_groups]` predictions.
+    /// Returns `[n_rows][n_groups]` predictions.
     pub fn predict_batch(&self, features: &[&[f32]]) -> Vec<Vec<f32>> {
         features.iter().map(|row| self.predict_row(row)).collect()
     }
@@ -128,8 +128,8 @@ pub struct TreeView<'a, L: LeafValue> {
 impl<'a, L: LeafValue> TreeView<'a, L> {
     /// Number of nodes in this tree.
     #[inline]
-    pub fn num_nodes(&self) -> usize {
-        self.storage.num_nodes()
+    pub fn n_nodes(&self) -> usize {
+        self.storage.n_nodes()
     }
 
     /// Check if a node is a leaf.
@@ -301,7 +301,7 @@ mod tests {
         };
 
         let view = forest.tree(0);
-        assert_eq!(view.num_nodes(), 3);
+        assert_eq!(view.n_nodes(), 3);
         assert!(!view.is_leaf(0));
         assert!(view.is_leaf(1));
         assert!(view.is_leaf(2));
