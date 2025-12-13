@@ -4,7 +4,9 @@
 //! node IDs to physical storage slots using an LRU eviction policy.
 
 use super::ops::{clear_histogram, subtract_histogram, HistogramBin};
-use crate::training::gbdt::tree::NodeId;
+
+/// Type alias for tree node indices.
+pub type NodeId = u32;
 
 /// Physical slot index in the histogram cache.
 pub type SlotId = u32;
