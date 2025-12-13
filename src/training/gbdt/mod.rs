@@ -10,7 +10,6 @@
 //! - [`partition`] - Row index partitioning for tree nodes
 //! - [`split`] - Split types, gain computation, and finding algorithms
 //! - [`trainer`] - GBDT training loop
-//! - [`tree`] - Tree structures and construction
 
 pub mod categorical;
 pub mod expansion;
@@ -20,9 +19,6 @@ pub mod optimization;
 pub mod partition;
 pub mod split;
 pub mod trainer;
-pub mod tree;
-
-mod convert;
 
 // Re-export main types
 pub use categorical::CatBitset;
@@ -37,4 +33,6 @@ pub use optimization::OptimizationProfile;
 pub use partition::{LeafId, RowPartitioner};
 pub use split::{GainParams, GreedySplitter, SplitInfo, SplitStrategy, SplitType, DEFAULT_MAX_ONEHOT_CATS};
 pub use trainer::{GBDTParams, GBDTTrainer};
-pub use tree::{Forest, NodeId, Tree, TreeBuilder, TreeNode};
+
+// Re-export NodeId from expansion (was previously in tree module)
+pub use expansion::NodeId;
