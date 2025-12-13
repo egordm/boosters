@@ -40,6 +40,37 @@ mod regression;
 pub use classification::{HingeLoss, LambdaRankLoss, LogisticLoss, SoftmaxLoss};
 pub use regression::{AbsoluteLoss, PinballLoss, PoissonLoss, PseudoHuberLoss, SquaredLoss};
 
+use crate::inference::common::{PredictionKind, PredictionOutput, Predictions};
+use crate::training::metrics::MetricKind;
+
+// =============================================================================
+// RFC 0028: Task + Target Semantics
+// =============================================================================
+
+/// High-level task kind implied by an objective.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskKind {
+    Regression,
+    BinaryClassification,
+    MulticlassClassification,
+    Ranking,
+}
+
+/// Target encoding/schema expected by an objective.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetSchema {
+    /// Continuous real-valued targets.
+    Continuous,
+    /// Binary targets encoded as {0, 1}.
+    Binary01,
+    /// Binary targets encoded as {-1, +1} (or convertible from {0, 1}).
+    BinarySigned,
+    /// Multiclass targets encoded as a single class index in [0, K).
+    MulticlassIndex,
+    /// Non-negative counts (Poisson-style).
+    CountNonNegative,
+}
+
 // =============================================================================
 // Helpers
 // =============================================================================
@@ -171,6 +202,42 @@ pub trait Objective: Send + Sync {
         weights: &[f32],
         outputs: &mut [f32],
     );
+
+    // =========================================================================
+    // RFC 0028: Semantics + Prediction Transforms
+    // =========================================================================
+
+    /// High-level task kind implied by this objective.
+    fn task_kind(&self) -> TaskKind {
+        TaskKind::Regression
+    }
+
+    /// Target encoding/schema expected by this objective.
+    fn target_schema(&self) -> TargetSchema {
+        TargetSchema::Continuous
+    }
+
+    /// Default metric suggested by this objective.
+    fn default_metric(&self) -> MetricKind {
+        MetricKind::Rmse
+    }
+
+    /// Transform raw model outputs (margins/logits) **in-place**.
+    ///
+    /// Returns the semantic kind of the resulting values.
+    ///
+    /// Trainers can use this to avoid allocations.
+    fn transform_prediction_inplace(&self, _raw: &mut PredictionOutput) -> PredictionKind {
+        PredictionKind::Value
+    }
+
+    /// Transform raw model outputs (margins/logits) into semantic predictions.
+    ///
+    /// This consumes `raw` and returns an explicitly-labeled prediction output.
+    fn transform_prediction(&self, mut raw: PredictionOutput) -> Predictions {
+        let kind = self.transform_prediction_inplace(&mut raw);
+        Predictions { kind, output: raw }
+    }
 
     /// Name of the objective (for logging).
     fn name(&self) -> &'static str;
@@ -381,6 +448,62 @@ impl Objective for ObjectiveFunction {
             Self::MultiQuantile { .. } => "multi_quantile",
             Self::PseudoHuber { .. } => "pseudo_huber",
             Self::Poisson => "poisson",
+        }
+    }
+
+    fn task_kind(&self) -> TaskKind {
+        match self {
+            Self::SquaredError => SquaredLoss.task_kind(),
+            Self::AbsoluteError => AbsoluteLoss.task_kind(),
+            Self::Logistic => LogisticLoss.task_kind(),
+            Self::Hinge => HingeLoss.task_kind(),
+            Self::Softmax { num_classes } => SoftmaxLoss::new(*num_classes).task_kind(),
+            Self::Quantile { alpha } => PinballLoss::new(*alpha).task_kind(),
+            Self::MultiQuantile { alphas } => PinballLoss::with_quantiles(alphas.clone()).task_kind(),
+            Self::PseudoHuber { delta } => PseudoHuberLoss::new(*delta).task_kind(),
+            Self::Poisson => PoissonLoss.task_kind(),
+        }
+    }
+
+    fn target_schema(&self) -> TargetSchema {
+        match self {
+            Self::SquaredError => SquaredLoss.target_schema(),
+            Self::AbsoluteError => AbsoluteLoss.target_schema(),
+            Self::Logistic => LogisticLoss.target_schema(),
+            Self::Hinge => HingeLoss.target_schema(),
+            Self::Softmax { num_classes } => SoftmaxLoss::new(*num_classes).target_schema(),
+            Self::Quantile { alpha } => PinballLoss::new(*alpha).target_schema(),
+            Self::MultiQuantile { alphas } => PinballLoss::with_quantiles(alphas.clone()).target_schema(),
+            Self::PseudoHuber { delta } => PseudoHuberLoss::new(*delta).target_schema(),
+            Self::Poisson => PoissonLoss.target_schema(),
+        }
+    }
+
+    fn default_metric(&self) -> MetricKind {
+        match self {
+            Self::SquaredError => SquaredLoss.default_metric(),
+            Self::AbsoluteError => AbsoluteLoss.default_metric(),
+            Self::Logistic => LogisticLoss.default_metric(),
+            Self::Hinge => HingeLoss.default_metric(),
+            Self::Softmax { num_classes } => SoftmaxLoss::new(*num_classes).default_metric(),
+            Self::Quantile { alpha } => PinballLoss::new(*alpha).default_metric(),
+            Self::MultiQuantile { alphas } => PinballLoss::with_quantiles(alphas.clone()).default_metric(),
+            Self::PseudoHuber { delta } => PseudoHuberLoss::new(*delta).default_metric(),
+            Self::Poisson => PoissonLoss.default_metric(),
+        }
+    }
+
+    fn transform_prediction_inplace(&self, raw: &mut PredictionOutput) -> PredictionKind {
+        match self {
+            Self::SquaredError => SquaredLoss.transform_prediction_inplace(raw),
+            Self::AbsoluteError => AbsoluteLoss.transform_prediction_inplace(raw),
+            Self::Logistic => LogisticLoss.transform_prediction_inplace(raw),
+            Self::Hinge => HingeLoss.transform_prediction_inplace(raw),
+            Self::Softmax { num_classes } => SoftmaxLoss::new(*num_classes).transform_prediction_inplace(raw),
+            Self::Quantile { alpha } => PinballLoss::new(*alpha).transform_prediction_inplace(raw),
+            Self::MultiQuantile { alphas } => PinballLoss::with_quantiles(alphas.clone()).transform_prediction_inplace(raw),
+            Self::PseudoHuber { delta } => PseudoHuberLoss::new(*delta).transform_prediction_inplace(raw),
+            Self::Poisson => PoissonLoss.transform_prediction_inplace(raw),
         }
     }
 }

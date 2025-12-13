@@ -37,6 +37,7 @@
 use rayon::ThreadPoolBuilder;
 
 use crate::data::{ColMatrix, Dataset};
+use crate::inference::common::{PredictionKind, PredictionOutput};
 use crate::inference::gblinear::LinearModel;
 use crate::training::{
     EarlyStopping, EvalSet, Gradients, Metric, Objective, ObjectiveExt, TrainingLogger, Verbosity,
@@ -395,9 +396,9 @@ impl<O: Objective, M: Metric> GBLinearTrainer<O, M> {
     fn evaluate_round(
         &self,
         model: &LinearModel,
-        train_labels: &[f32],
-        train_weights: Option<&[f32]>,
-        train_predictions: &[f32],
+        _train_labels: &[f32],
+        _train_weights: Option<&[f32]>,
+        _train_predictions: &[f32],
         eval_sets: &[EvalSet<'_>],
         eval_data: &[ColMatrix<f32>],
         eval_predictions: &mut [Vec<f32>],
@@ -407,23 +408,30 @@ impl<O: Objective, M: Metric> GBLinearTrainer<O, M> {
         let mut round_metrics = Vec::new();
         let mut early_stop_value = None;
 
-        // Training set metric
-        if self.params.verbosity >= Verbosity::Info {
-            let w = train_weights.unwrap_or(&[]);
-            let train_metric = self
-                .metric
-                .compute(train_labels.len(), num_outputs, train_predictions, train_labels, w);
-            round_metrics.push(("train".to_string(), train_metric));
-        }
+        // Determine if we need to transform predictions for this metric
+        let metric_kind = self.metric.expected_prediction_kind();
+        let needs_transform = metric_kind != PredictionKind::Margin;
+
+        // Training set metric is not computed here because the training ColMatrix
+        // is not passed to this method. Eval-set metrics suffice for monitoring.
 
         for (set_idx, eval_set) in eval_sets.iter().enumerate() {
+            // Compute raw predictions in column-major buffer
             Self::compute_predictions(model, &eval_data[set_idx], &mut eval_predictions[set_idx]);
+
+            let n_rows = eval_data[set_idx].num_rows();
+
+            // Convert column-major → row-major PredictionOutput and optionally transform
+            let mut output = Self::col_major_to_row_major(&eval_predictions[set_idx], n_rows, num_outputs);
+            if needs_transform {
+                self.objective.transform_prediction_inplace(&mut output);
+            }
 
             let targets = eval_set.dataset.targets();
             let w = eval_set.dataset.weights().unwrap_or(&[]);
             let value = self
                 .metric
-                .compute(targets.len(), num_outputs, &eval_predictions[set_idx], targets, w);
+                .compute(n_rows, num_outputs, output.as_slice(), targets, w);
 
             round_metrics.push((format!("{}-{}", eval_set.name, self.metric.name()), value));
 
@@ -433,6 +441,17 @@ impl<O: Objective, M: Metric> GBLinearTrainer<O, M> {
         }
 
         (round_metrics, early_stop_value)
+    }
+
+    /// Convert column-major predictions to row-major `PredictionOutput`.
+    fn col_major_to_row_major(col_major: &[f32], n_rows: usize, n_outputs: usize) -> PredictionOutput {
+        let mut row_major = vec![0.0f32; n_rows * n_outputs];
+        for out in 0..n_outputs {
+            for row in 0..n_rows {
+                row_major[row * n_outputs + out] = col_major[out * n_rows + row];
+            }
+        }
+        PredictionOutput::new(row_major, n_rows, n_outputs)
     }
 }
 

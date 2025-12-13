@@ -3,6 +3,7 @@
 //! Metrics for evaluating classification model quality.
 
 use super::Metric;
+use crate::inference::common::PredictionKind;
 
 // =============================================================================
 // LogLoss (Binary Cross-Entropy)
@@ -78,6 +79,10 @@ impl Metric for LogLoss {
 
     fn higher_is_better(&self) -> bool {
         false
+    }
+
+    fn expected_prediction_kind(&self) -> PredictionKind {
+        PredictionKind::Probability
     }
 
     fn name(&self) -> &'static str {
@@ -177,8 +182,103 @@ impl Metric for Accuracy {
         true
     }
 
+    fn expected_prediction_kind(&self) -> PredictionKind {
+        PredictionKind::Probability
+    }
+
     fn name(&self) -> &'static str {
         "accuracy"
+    }
+}
+
+// =============================================================================
+// Margin Accuracy
+// =============================================================================
+
+/// Binary classification accuracy for **margin** predictions.
+///
+/// Higher is better. Uses a configurable threshold in margin space (default: 0.0).
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
+pub struct MarginAccuracy {
+    /// Threshold for margin classification (default: 0.0).
+    pub threshold: f32,
+}
+
+impl Default for MarginAccuracy {
+    fn default() -> Self {
+        Self { threshold: 0.0 }
+    }
+}
+
+impl MarginAccuracy {
+    #[allow(dead_code)]
+    pub fn with_threshold(threshold: f32) -> Self {
+        Self { threshold }
+    }
+}
+
+impl Metric for MarginAccuracy {
+    fn compute(
+        &self,
+        n_rows: usize,
+        n_outputs: usize,
+        predictions: &[f32],
+        targets: &[f32],
+        weights: &[f32],
+    ) -> f64 {
+        debug_assert_eq!(n_outputs, 1);
+        if n_rows == 0 {
+            return 0.0;
+        }
+
+        let predictions = &predictions[..n_rows];
+        let labels = &targets[..n_rows];
+        debug_assert_eq!(predictions.len(), labels.len());
+
+        if weights.is_empty() {
+            let correct = predictions
+                .iter()
+                .zip(labels.iter())
+                .filter(|(p, l)| {
+                    let pred_class = if **p >= self.threshold { 1.0 } else { 0.0 };
+                    (pred_class - **l).abs() < 0.5
+                })
+                .count();
+
+            correct as f64 / predictions.len() as f64
+        } else {
+            debug_assert_eq!(predictions.len(), weights.len());
+
+            let (weighted_correct, weight_sum) = predictions
+                .iter()
+                .zip(labels.iter())
+                .zip(weights.iter())
+                .fold((0.0f64, 0.0f64), |(acc_correct, acc_w), ((p, l), wt)| {
+                    let wt = *wt as f64;
+                    let pred_class = if *p >= self.threshold { 1.0 } else { 0.0 };
+                    let is_correct = if (pred_class - *l).abs() < 0.5 { 1.0 } else { 0.0 };
+                    (acc_correct + wt * is_correct, acc_w + wt)
+                });
+
+            if weight_sum == 0.0 {
+                return 0.0;
+            }
+
+            weighted_correct / weight_sum
+        }
+    }
+
+    fn higher_is_better(&self) -> bool {
+        true
+    }
+
+    fn expected_prediction_kind(&self) -> PredictionKind {
+        PredictionKind::Margin
+    }
+
+    fn name(&self) -> &'static str {
+        "margin_accuracy"
     }
 }
 
@@ -186,7 +286,10 @@ impl Metric for Accuracy {
 // Multiclass Accuracy
 // =============================================================================
 
-/// Multiclass accuracy: expects predictions as class indices.
+/// Multiclass accuracy.
+///
+/// Expects predictions as per-class scores (probabilities or logits) with shape
+/// `(n_rows, n_classes)` in row-major order.
 ///
 /// Higher is better.
 ///
@@ -208,47 +311,105 @@ impl Metric for MulticlassAccuracy {
         targets: &[f32],
         weights: &[f32],
     ) -> f64 {
-        debug_assert_eq!(n_outputs, 1);
         if n_rows == 0 {
             return 0.0;
         }
 
-        let predictions = &predictions[..n_rows];
         let labels = &targets[..n_rows];
-        debug_assert_eq!(predictions.len(), labels.len());
 
-        if weights.is_empty() {
+        // Backward-compatible mode: predictions are class indices with shape (n_rows, 1).
+        if n_outputs == 1 {
+            let predictions = &predictions[..n_rows];
+
+            if weights.is_empty() {
                 let correct = predictions
                     .iter()
                     .zip(labels.iter())
-                    .filter(|(p, l)| (p.round() - l.round()).abs() < 0.5)
+                    .filter(|(p, l)| ((*p).round() - **l).abs() < 0.5)
                     .count();
 
-                correct as f64 / predictions.len() as f64
-        } else {
-                debug_assert_eq!(predictions.len(), weights.len());
+                return correct as f64 / n_rows as f64;
+            }
 
-                let (weighted_correct, weight_sum) = predictions
-                    .iter()
-                    .zip(labels.iter())
-                    .zip(weights.iter())
-                    .fold((0.0f64, 0.0f64), |(acc_correct, acc_w), ((p, l), wt)| {
-                        let wt = *wt as f64;
-                        let is_correct =
-                            if (p.round() - l.round()).abs() < 0.5 { 1.0 } else { 0.0 };
-                        (acc_correct + wt * is_correct, acc_w + wt)
-                    });
-
-                if weight_sum == 0.0 {
-                    return 0.0;
+            debug_assert_eq!(weights.len(), n_rows);
+            let mut weighted_correct = 0.0f64;
+            let mut weight_sum = 0.0f64;
+            for row in 0..n_rows {
+                let wt = weights[row] as f64;
+                weight_sum += wt;
+                if (predictions[row].round() - labels[row]).abs() < 0.5 {
+                    weighted_correct += wt;
                 }
+            }
 
-                weighted_correct / weight_sum
+            if weight_sum == 0.0 {
+                return 0.0;
+            }
+
+            return weighted_correct / weight_sum;
+        }
+
+        debug_assert!(n_outputs >= 2, "multiclass requires n_outputs >= 2");
+
+        let required = n_rows * n_outputs;
+        let predictions = &predictions[..required];
+
+        if weights.is_empty() {
+            let mut correct = 0usize;
+            for row in 0..n_rows {
+                let start = row * n_outputs;
+                let row_scores = &predictions[start..start + n_outputs];
+
+                let pred_class = row_scores
+                    .iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
+                    .map(|(i, _)| i)
+                    .unwrap_or(0) as f32;
+
+                if (pred_class - labels[row]).abs() < 0.5 {
+                    correct += 1;
+                }
+            }
+
+            correct as f64 / n_rows as f64
+        } else {
+            debug_assert_eq!(weights.len(), n_rows);
+
+            let mut weighted_correct = 0.0f64;
+            let mut weight_sum = 0.0f64;
+            for row in 0..n_rows {
+                let start = row * n_outputs;
+                let row_scores = &predictions[start..start + n_outputs];
+
+                let pred_class = row_scores
+                    .iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
+                    .map(|(i, _)| i)
+                    .unwrap_or(0) as f32;
+
+                let wt = weights[row] as f64;
+                weight_sum += wt;
+                if (pred_class - labels[row]).abs() < 0.5 {
+                    weighted_correct += wt;
+                }
+            }
+
+            if weight_sum == 0.0 {
+                return 0.0;
+            }
+
+            weighted_correct / weight_sum
         }
     }
 
     fn higher_is_better(&self) -> bool {
         true
+    }
+
+    fn expected_prediction_kind(&self) -> PredictionKind {
+        PredictionKind::Probability
     }
 
     fn name(&self) -> &'static str {
@@ -311,6 +472,12 @@ impl Metric for Auc {
 
     fn higher_is_better(&self) -> bool {
         true
+    }
+
+    fn expected_prediction_kind(&self) -> PredictionKind {
+        // AUC is invariant under any monotonic transform, but by convention
+        // we treat it as probability-based for binary classification.
+        PredictionKind::Probability
     }
 
     fn name(&self) -> &'static str {
@@ -460,8 +627,8 @@ fn compute_auc_weighted(predictions: &[f32], labels: &[f32], weights: &[f32]) ->
 /// Multiclass cross-entropy: -mean(sum_k y_k * log(p_k))
 ///
 /// Lower is better. Used for multiclass classification.
-/// Expects predictions to be probabilities with shape `[n_classes, n_samples]`
-/// in column-major order, and labels to be class indices in `0..n_classes`.
+/// Expects predictions to be probabilities with shape `(n_rows, n_classes)`
+/// in row-major order, and labels to be class indices in `0..n_classes`.
 ///
 /// # Weighted Computation
 ///
@@ -500,8 +667,8 @@ impl Metric for MulticlassLogLoss {
                         let class_idx = label.round() as usize;
                         debug_assert!(class_idx < n_outputs, "label out of bounds");
 
-                        // Column-major: index = class * n_samples + sample
-                        let prob = predictions[class_idx * n_samples + i] as f64;
+                        // Row-major: index = sample * n_outputs + class
+                        let prob = predictions[i * n_outputs + class_idx] as f64;
                         let prob = prob.clamp(eps, 1.0 - eps);
                         -prob.ln()
                     })
@@ -518,8 +685,8 @@ impl Metric for MulticlassLogLoss {
                         let class_idx = label.round() as usize;
                         debug_assert!(class_idx < n_outputs, "label out of bounds");
 
-                        // Column-major: index = class * n_samples + sample
-                        let prob = predictions[class_idx * n_samples + i] as f64;
+                        // Row-major: index = sample * n_outputs + class
+                        let prob = predictions[i * n_outputs + class_idx] as f64;
                         let prob = prob.clamp(eps, 1.0 - eps);
                         let loss = -prob.ln();
                         let wt = weights[i] as f64;
@@ -537,6 +704,10 @@ impl Metric for MulticlassLogLoss {
 
     fn higher_is_better(&self) -> bool {
         false
+    }
+
+    fn expected_prediction_kind(&self) -> PredictionKind {
+        PredictionKind::Probability
     }
 
     fn name(&self) -> &'static str {
@@ -667,24 +838,37 @@ mod tests {
 
     #[test]
     fn multiclass_accuracy() {
-        let preds = vec![0.0, 1.0, 2.0, 1.0]; // Predicted classes
+        // 4 samples, 3 classes. Predictions are per-class scores in row-major order.
+        // Intended predicted classes by argmax: [0, 1, 2, 1]
+        let preds = vec![
+            3.0, 1.0, 0.0, // sample 0 -> class 0
+            0.0, 3.0, 1.0, // sample 1 -> class 1
+            1.0, 0.0, 3.0, // sample 2 -> class 2
+            0.0, 3.0, 1.0, // sample 3 -> class 1
+        ];
         let labels = vec![0.0, 1.0, 2.0, 0.0]; // True classes
-        let acc = MulticlassAccuracy.compute(4, 1, &preds, &labels, &[]);
+        let acc = MulticlassAccuracy.compute(4, 3, &preds, &labels, &[]);
         assert!((acc - 0.75).abs() < 1e-10); // 3/4 correct
     }
 
     #[test]
     fn weighted_multiclass_accuracy() {
         // 4 samples, 3/4 correct unweighted
-        let preds = vec![0.0, 1.0, 2.0, 1.0]; // Predicted classes
+        // Intended predicted classes by argmax: [0, 1, 2, 1]
+        let preds = vec![
+            3.0, 1.0, 0.0, // sample 0 -> class 0
+            0.0, 3.0, 1.0, // sample 1 -> class 1
+            1.0, 0.0, 3.0, // sample 2 -> class 2
+            0.0, 3.0, 1.0, // sample 3 -> class 1
+        ];
         let labels = vec![0.0, 1.0, 2.0, 0.0]; // True classes (last one wrong)
 
-        let unweighted = MulticlassAccuracy.compute(4, 1, &preds, &labels, &[]);
+        let unweighted = MulticlassAccuracy.compute(4, 3, &preds, &labels, &[]);
         assert!((unweighted - 0.75).abs() < 1e-10);
 
         // High weight on the wrong sample: accuracy drops
         let weights = vec![1.0, 1.0, 1.0, 10.0];
-        let weighted = MulticlassAccuracy.compute(4, 1, &preds, &labels, &weights);
+        let weighted = MulticlassAccuracy.compute(4, 3, &preds, &labels, &weights);
         // (1+1+1+0) / (1+1+1+10) = 3/13
         assert!(
             (weighted - 3.0 / 13.0).abs() < 1e-10,
@@ -793,13 +977,12 @@ mod tests {
 
     #[test]
     fn mlogloss_perfect() {
-        // 3-class classification, predictions are probabilities (column-major layout)
+        // 3-class classification, predictions are probabilities (row-major layout)
         // Sample 0: true class 0, predictions [0.99, 0.005, 0.005]
         // Sample 1: true class 1, predictions [0.005, 0.99, 0.005]
         let preds = vec![
-            0.99, 0.005, // class 0: sample 0, sample 1
-            0.005, 0.99, // class 1: sample 0, sample 1
-            0.005, 0.005, // class 2: sample 0, sample 1
+            0.99, 0.005, 0.005, // sample 0
+            0.005, 0.99, 0.005, // sample 1
         ];
         let labels = vec![0.0, 1.0];
         let mlogloss = MulticlassLogLoss.compute(2, 3, &preds, &labels, &[]);
@@ -808,11 +991,11 @@ mod tests {
 
     #[test]
     fn mlogloss_uniform() {
-        // Uniform predictions for 3 classes: -log(1/3) ≈ 1.099 (column-major layout)
+        // Uniform predictions for 3 classes: -log(1/3) ≈ 1.099 (row-major layout)
         let preds = vec![
-            0.333, 0.333, 0.333, // class 0: samples 0, 1, 2
-            0.333, 0.333, 0.333, // class 1: samples 0, 1, 2
-            0.334, 0.334, 0.334, // class 2: samples 0, 1, 2
+            0.333, 0.333, 0.334, // sample 0
+            0.333, 0.333, 0.334, // sample 1
+            0.333, 0.333, 0.334, // sample 2
         ];
         let labels = vec![0.0, 1.0, 2.0];
         let mlogloss = MulticlassLogLoss.compute(3, 3, &preds, &labels, &[]);
@@ -821,13 +1004,12 @@ mod tests {
 
     #[test]
     fn weighted_mlogloss() {
-        // 2 samples, 3 classes (column-major layout)
+        // 2 samples, 3 classes (row-major layout)
         // Sample 0: true class 0, pred=[0.9, 0.05, 0.05] → loss = -log(0.9)
         // Sample 1: true class 1, pred=[0.1, 0.8, 0.1] → loss = -log(0.8)
         let preds = vec![
-            0.9, 0.1, // class 0: sample 0, sample 1
-            0.05, 0.8, // class 1: sample 0, sample 1
-            0.05, 0.1, // class 2: sample 0, sample 1
+            0.9, 0.05, 0.05, // sample 0
+            0.1, 0.8, 0.1, // sample 1
         ];
         let labels = vec![0.0, 1.0];
 

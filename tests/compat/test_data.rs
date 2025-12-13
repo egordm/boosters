@@ -1,10 +1,8 @@
-//! Test data loading utilities.
+//! Test data loading utilities for compatibility test cases.
 //!
-//! This module provides helpers for loading XGBoost test cases from JSON files.
-//! Test input/expected structures are in `booste_rs::testing`.
+//! Currently used by the XGBoost compat integration tests.
 
 #![allow(dead_code)]
-#![cfg(feature = "xgboost-compat")]
 
 use std::fs::File;
 use std::path::PathBuf;
@@ -13,10 +11,6 @@ use serde::de::DeserializeOwned;
 
 // Re-export test data structures from library
 pub use booste_rs::testing::{TestExpected, TestInput, DEFAULT_TOLERANCE_F64};
-
-// =============================================================================
-// Test Case Loading
-// =============================================================================
 
 /// Base directory for test cases.
 pub fn test_cases_dir() -> PathBuf {

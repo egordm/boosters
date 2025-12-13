@@ -109,15 +109,10 @@ mod tests {
     }
 
     #[test]
-    fn scalar_leaf_default_is_zero() {
-        let leaf = ScalarLeaf::default();
-        assert_eq!(leaf.0, 0.0);
-    }
-
-    #[test]
-    fn scalar_leaf_from_f32() {
-        let leaf: ScalarLeaf = 2.5.into();
-        assert_eq!(leaf.0, 2.5);
+    fn scalar_leaf_scales() {
+        let mut leaf = ScalarLeaf(2.0);
+        leaf.scale(0.5);
+        assert_eq!(leaf.0, 1.0);
     }
 
     #[test]
@@ -129,15 +124,9 @@ mod tests {
     }
 
     #[test]
-    fn vector_leaf_default_is_empty() {
-        let leaf = VectorLeaf::default();
-        assert!(leaf.is_empty());
-    }
-
-    #[test]
-    fn vector_leaf_from_vec() {
-        let leaf: VectorLeaf = vec![1.0, 2.0, 3.0].into();
-        assert_eq!(leaf.len(), 3);
-        assert_eq!(leaf.get(1), 2.0);
+    fn vector_leaf_scales() {
+        let mut leaf = VectorLeaf::new(vec![1.0, -2.0, 3.0]);
+        leaf.scale(2.0);
+        assert_eq!(leaf.values, vec![2.0, -4.0, 6.0]);
     }
 }

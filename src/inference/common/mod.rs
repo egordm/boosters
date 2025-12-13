@@ -5,8 +5,10 @@
 //! - Output transforms (sigmoid, softmax)
 
 mod output;
+mod predictions;
 
 pub use output::PredictionOutput;
+pub use predictions::{PredictionKind, Predictions};
 
 // =============================================================================
 // Output Transforms

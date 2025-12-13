@@ -3,6 +3,7 @@
 //! Metrics for evaluating regression model quality.
 
 use super::Metric;
+use crate::inference::common::PredictionKind;
 
 // =============================================================================
 // RMSE (Root Mean Squared Error)
@@ -76,6 +77,10 @@ impl Metric for Rmse {
         false
     }
 
+    fn expected_prediction_kind(&self) -> PredictionKind {
+        PredictionKind::Value
+    }
+
     fn name(&self) -> &'static str {
         "rmse"
     }
@@ -147,6 +152,10 @@ impl Metric for Mae {
 
     fn higher_is_better(&self) -> bool {
         false
+    }
+
+    fn expected_prediction_kind(&self) -> PredictionKind {
+        PredictionKind::Value
     }
 
     fn name(&self) -> &'static str {
@@ -232,6 +241,10 @@ impl Metric for Mape {
         false
     }
 
+    fn expected_prediction_kind(&self) -> PredictionKind {
+        PredictionKind::Value
+    }
+
     fn name(&self) -> &'static str {
         "mape"
     }
@@ -300,14 +313,13 @@ impl Metric for QuantileMetric {
         debug_assert_eq!(predictions.len(), n_samples * n_quantiles);
 
         if weights.is_empty() {
-                // Column-major: predictions[q * n_samples + i]
-                let total_loss: f64 = self
-                    .alphas
+                // Row-major: predictions[i * n_quantiles + q]
+                let total_loss: f64 = labels
                     .iter()
                     .enumerate()
-                    .flat_map(|(q, &alpha)| {
-                        labels.iter().enumerate().map(move |(i, &label)| {
-                            let pred = predictions[q * n_samples + i] as f64;
+                    .flat_map(|(i, &label)| {
+                        self.alphas.iter().enumerate().map(move |(q, &alpha)| {
+                            let pred = predictions[i * n_quantiles + q] as f64;
                             let y = label as f64;
                             let residual = y - pred;
 
@@ -334,7 +346,7 @@ impl Metric for QuantileMetric {
                             .iter()
                             .enumerate()
                             .fold((0.0f64, 0.0f64), |(acc_loss, acc_w), (i, &label)| {
-                                let pred = predictions[q * n_samples + i] as f64;
+                                let pred = predictions[i * n_quantiles + q] as f64;
                                 let y = label as f64;
                                 let residual = y - pred;
                                 let wt = weights[i] as f64;
@@ -360,6 +372,10 @@ impl Metric for QuantileMetric {
 
     fn higher_is_better(&self) -> bool {
         false
+    }
+
+    fn expected_prediction_kind(&self) -> PredictionKind {
+        PredictionKind::Value
     }
 
     fn name(&self) -> &'static str {
@@ -457,6 +473,10 @@ impl Metric for PoissonDeviance {
 
     fn higher_is_better(&self) -> bool {
         false
+    }
+
+    fn expected_prediction_kind(&self) -> PredictionKind {
+        PredictionKind::Value
     }
 
     fn name(&self) -> &'static str {
@@ -561,6 +581,10 @@ impl Metric for HuberMetric {
 
     fn higher_is_better(&self) -> bool {
         false
+    }
+
+    fn expected_prediction_kind(&self) -> PredictionKind {
+        PredictionKind::Value
     }
 
     fn name(&self) -> &'static str {

@@ -1,6 +1,8 @@
 //! Regression objective functions.
 
-use super::{validate_objective_inputs, weight_iter, Objective};
+use super::{validate_objective_inputs, weight_iter, Objective, TargetSchema, TaskKind};
+use crate::inference::common::{PredictionKind, PredictionOutput};
+use crate::training::metrics::MetricKind;
 
 // =============================================================================
 // Squared Loss
@@ -96,6 +98,22 @@ impl Objective for SquaredLoss {
 
     fn name(&self) -> &'static str {
         "squared"
+    }
+
+    fn task_kind(&self) -> TaskKind {
+        TaskKind::Regression
+    }
+
+    fn target_schema(&self) -> TargetSchema {
+        TargetSchema::Continuous
+    }
+
+    fn default_metric(&self) -> MetricKind {
+        MetricKind::Rmse
+    }
+
+    fn transform_prediction_inplace(&self, _raw: &mut PredictionOutput) -> PredictionKind {
+        PredictionKind::Value
     }
 }
 
@@ -261,6 +279,22 @@ impl Objective for PinballLoss {
         }
     }
 
+    fn task_kind(&self) -> TaskKind {
+        TaskKind::Regression
+    }
+
+    fn target_schema(&self) -> TargetSchema {
+        TargetSchema::Continuous
+    }
+
+    fn default_metric(&self) -> MetricKind {
+        MetricKind::Quantile
+    }
+
+    fn transform_prediction_inplace(&self, _raw: &mut PredictionOutput) -> PredictionKind {
+        PredictionKind::Value
+    }
+
     fn name(&self) -> &'static str {
         "pinball"
     }
@@ -393,6 +427,22 @@ impl Objective for PseudoHuberLoss {
     fn name(&self) -> &'static str {
         "pseudo_huber"
     }
+
+    fn task_kind(&self) -> TaskKind {
+        TaskKind::Regression
+    }
+
+    fn target_schema(&self) -> TargetSchema {
+        TargetSchema::Continuous
+    }
+
+    fn default_metric(&self) -> MetricKind {
+        MetricKind::Huber
+    }
+
+    fn transform_prediction_inplace(&self, _raw: &mut PredictionOutput) -> PredictionKind {
+        PredictionKind::Value
+    }
 }
 
 // =============================================================================
@@ -493,6 +543,22 @@ impl Objective for AbsoluteLoss {
 
     fn name(&self) -> &'static str {
         "absolute"
+    }
+
+    fn task_kind(&self) -> TaskKind {
+        TaskKind::Regression
+    }
+
+    fn target_schema(&self) -> TargetSchema {
+        TargetSchema::Continuous
+    }
+
+    fn default_metric(&self) -> MetricKind {
+        MetricKind::Mae
+    }
+
+    fn transform_prediction_inplace(&self, _raw: &mut PredictionOutput) -> PredictionKind {
+        PredictionKind::Value
     }
 }
 
@@ -598,6 +664,26 @@ impl Objective for PoissonLoss {
 
     fn name(&self) -> &'static str {
         "poisson"
+    }
+
+    fn task_kind(&self) -> TaskKind {
+        TaskKind::Regression
+    }
+
+    fn target_schema(&self) -> TargetSchema {
+        TargetSchema::CountNonNegative
+    }
+
+    fn default_metric(&self) -> MetricKind {
+        MetricKind::PoissonDeviance
+    }
+
+    fn transform_prediction_inplace(&self, raw: &mut PredictionOutput) -> PredictionKind {
+        // Poisson mean parameter is exp(margin).
+        for v in raw.as_mut_slice().iter_mut() {
+            *v = (*v).exp();
+        }
+        PredictionKind::Value
     }
 }
 

@@ -50,14 +50,8 @@ fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
     let model = trainer.train(&train, &[]).unwrap();
 
     // Compute predictions on test set
-    let mut test_preds = Vec::with_capacity(test_data.num_rows());
-    for i in 0..test_data.num_rows() {
-        let features: Vec<f32> = (0..test_data.num_columns())
-            .map(|col| test_data.get(i, col).copied().unwrap_or(0.0))
-            .collect();
-        let pred = model.predict_row(&features, &[0.0])[0];
-        test_preds.push(pred);
-    }
+    let output = model.predict_batch(&test_data, &[0.0]);
+    let test_preds: Vec<f32> = output.rows().map(|row| row[0]).collect();
 
     // Compute pinball loss on test set
     let pinball_loss: f64 = test_preds
@@ -74,11 +68,6 @@ fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
         .sum::<f64>()
         / test_labels.len() as f64;
 
-    println!(
-        "{}: quantile={:.1}, pinball_loss={:.4}",
-        name, alpha, pinball_loss
-    );
-
     // Pinball loss should be reasonable (not NaN or infinite)
     assert!(pinball_loss.is_finite(), "Pinball loss is not finite");
 
@@ -91,10 +80,6 @@ fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
     let fraction_under = under_predictions as f64 / test_labels.len() as f64;
 
     let expected_fraction = 1.0 - alpha as f64;
-    println!(
-        "{}: fraction_under={:.2}, expected~{:.2}",
-        name, fraction_under, expected_fraction
-    );
 
     // Verify predictions are in a reasonable range around the expected quantile
     // For α=0.1: expected_fraction ≈ 0.9, for α=0.5: ≈ 0.5, for α=0.9: ≈ 0.1
@@ -103,7 +88,9 @@ fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
     assert!(
         (fraction_under - expected_fraction).abs() < tolerance,
         "Under-prediction fraction {} differs from expected {} by more than {}",
-        fraction_under, expected_fraction, tolerance
+        fraction_under,
+        expected_fraction,
+        tolerance
     );
 }
 
@@ -135,24 +122,21 @@ fn quantile_regression_predictions_differ() {
     let model_high = trainer_high.train(&train, &[]).unwrap();
 
     // Get predictions for first sample
-    let features: Vec<f32> = (0..data.num_columns())
-        .map(|col| data.get(0, col).copied().unwrap_or(0.0))
-        .collect();
+    let pred_low = model_low.predict_batch(&data, &[0.0]).row(0)[0];
+    let pred_med = model_med.predict_batch(&data, &[0.0]).row(0)[0];
+    let pred_high = model_high.predict_batch(&data, &[0.0]).row(0)[0];
 
-    let pred_low = model_low.predict_row(&features, &[0.0])[0];
-    let pred_med = model_med.predict_row(&features, &[0.0])[0];
-    let pred_high = model_high.predict_row(&features, &[0.0])[0];
-
-    println!(
-        "Quantile predictions: low={:.2}, med={:.2}, high={:.2}",
-        pred_low, pred_med, pred_high
-    );
-
-    // Lower quantile should produce lower predictions
+    // Lower quantile should produce lower predictions.
     assert!(
-        pred_low < pred_high,
-        "Low quantile ({:.2}) should predict lower than high quantile ({:.2})",
+        pred_low <= pred_med,
+        "Low quantile ({:.2}) should be <= median ({:.2})",
         pred_low,
+        pred_med
+    );
+    assert!(
+        pred_med <= pred_high,
+        "Median ({:.2}) should be <= high quantile ({:.2})",
+        pred_med,
         pred_high
     );
 }
@@ -219,21 +203,20 @@ fn train_multi_quantile_regression() {
         ..Default::default()
     };
 
-    let trainer = GBLinearTrainer::new(PinballLoss::with_quantiles(quantile_alphas.clone()), Rmse, params);
+    let trainer =
+        GBLinearTrainer::new(PinballLoss::with_quantiles(quantile_alphas.clone()), Rmse, params);
     let model = trainer.train(&train, &[]).unwrap();
 
     // Verify model has correct number of output groups
     assert_eq!(model.num_groups(), num_quantiles);
 
     // Get predictions on test set
-    let mut our_predictions: Vec<Vec<f32>> = vec![Vec::new(); num_quantiles];
+    let output = model.predict_batch(&test_data, &vec![0.0; num_quantiles]);
+    let mut our_predictions: Vec<Vec<f32>> = vec![vec![0.0; test_data.num_rows()]; num_quantiles];
     for i in 0..test_data.num_rows() {
-        let features: Vec<f32> = (0..test_data.num_columns())
-            .map(|col| test_data.get(i, col).copied().unwrap_or(0.0))
-            .collect();
-        let preds = model.predict_row(&features, &vec![0.0; num_quantiles]);
-        for (q, pred) in preds.iter().enumerate() {
-            our_predictions[q].push(*pred);
+        let row = output.row(i);
+        for q in 0..num_quantiles {
+            our_predictions[q][i] = row[q];
         }
     }
 
@@ -244,10 +227,6 @@ fn train_multi_quantile_regression() {
         let xgb_preds_q = &xgb_preds.predictions[q];
 
         let correlation = pearson_correlation(our_preds, xgb_preds_q);
-        println!(
-            "Quantile {:.1}: correlation with XGBoost = {:.4}",
-            alpha, correlation
-        );
 
         assert!(
             correlation > 0.7,
@@ -268,7 +247,6 @@ fn train_multi_quantile_regression() {
         }
     }
     let ordered_fraction = ordered_count as f64 / test_data.num_rows() as f64;
-    println!("Fraction with ordered quantiles: {:.2}", ordered_fraction);
     assert!(
         ordered_fraction > 0.7,
         "Quantile predictions should be ordered for most samples (got {:.2})",
@@ -312,47 +290,21 @@ fn multi_quantile_vs_separate_models() {
         })
         .collect();
 
-    // Compare predictions on training set
-    for i in 0..data.num_rows().min(10) {
-        let features: Vec<f32> = (0..data.num_columns())
-            .map(|col| data.get(i, col).copied().unwrap_or(0.0))
-            .collect();
-
-        let multi_preds = multi_model.predict_row(&features, &[0.0; 3]);
-
-        println!(
-            "Sample {}: multi_model=[{:.2}, {:.2}, {:.2}]",
-            i, multi_preds[0], multi_preds[1], multi_preds[2]
-        );
-
-        for (q, single_model) in single_models.iter().enumerate() {
-            let single_pred = single_model.predict_row(&features, &[0.0])[0];
-            println!(
-                "  q={:.1}: multi={:.2}, single={:.2}",
-                quantile_alphas[q], multi_preds[q], single_pred
-            );
-        }
-    }
+    // Compare predictions on training set (used later for correlation checks)
 
     // Predictions should be correlated
     for (q, single_model) in single_models.iter().enumerate() {
-        let mut multi_preds = Vec::new();
-        let mut single_preds = Vec::new();
+        let multi_output = multi_model.predict_batch(&data, &[0.0; 3]);
+        let single_output = single_model.predict_batch(&data, &[0.0]);
 
+        let mut multi_preds = Vec::with_capacity(data.num_rows());
+        let mut single_preds = Vec::with_capacity(data.num_rows());
         for i in 0..data.num_rows() {
-            let features: Vec<f32> = (0..data.num_columns())
-                .map(|col| data.get(i, col).copied().unwrap_or(0.0))
-                .collect();
-
-            multi_preds.push(multi_model.predict_row(&features, &[0.0; 3])[q]);
-            single_preds.push(single_model.predict_row(&features, &[0.0])[0]);
+            multi_preds.push(multi_output.row(i)[q]);
+            single_preds.push(single_output.row(i)[0]);
         }
 
         let correlation = pearson_correlation(&multi_preds, &single_preds);
-        println!(
-            "Quantile {:.1}: multi vs single correlation = {:.4}",
-            quantile_alphas[q], correlation
-        );
 
         assert!(
             correlation > 0.5,

@@ -57,12 +57,13 @@ pub use eval::EvalSet;
 pub use gradients::Gradients;
 pub use logger::{TrainingLogger, Verbosity};
 pub use metrics::{
-    Accuracy, Auc, HuberMetric, LogLoss, Mae, Mape, Metric, MulticlassAccuracy,
-    MulticlassLogLoss, PoissonDeviance, QuantileMetric, Rmse,
+    Accuracy, Auc, HuberMetric, LogLoss, Mae, Mape, MarginAccuracy, Metric, MetricKind,
+    MulticlassAccuracy, MulticlassLogLoss, PoissonDeviance, QuantileMetric, Rmse,
 };
 pub use objectives::{
     AbsoluteLoss, HingeLoss, LambdaRankLoss, LogisticLoss, Objective, ObjectiveExt,
     ObjectiveFunction, PinballLoss, PoissonLoss, PseudoHuberLoss, SoftmaxLoss, SquaredLoss,
+    TargetSchema, TaskKind,
 };
 
 // Re-export gbdt trainer and params

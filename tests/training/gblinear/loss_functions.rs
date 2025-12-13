@@ -4,11 +4,11 @@
 //! - PseudoHuberLoss (robust regression)
 //! - HingeLoss (SVM-style binary classification)
 
-use super::{compute_binary_accuracy, compute_test_rmse_default, load_test_data, load_train_data};
+use super::{load_test_data, load_train_data};
 use booste_rs::data::Dataset;
 use booste_rs::training::{
-    Accuracy, GBLinearParams, GBLinearTrainer, HingeLoss, LogLoss, LogisticLoss, PseudoHuberLoss,
-    Rmse, SquaredLoss, Verbosity,
+    Accuracy, GBLinearParams, GBLinearTrainer, HingeLoss, LogLoss, LogisticLoss, MarginAccuracy,
+    Objective, PseudoHuberLoss, Rmse, SquaredLoss, Verbosity,
 };
 
 // =============================================================================
@@ -67,11 +67,13 @@ fn train_pseudo_huber_regression() {
     let sq_model = trainer_sq.train(&train, &[]).unwrap();
 
     // Compute RMSE on test set for both
-    let ph_rmse = compute_test_rmse_default(&model, &test_data, &test_labels);
-    let sq_rmse = compute_test_rmse_default(&sq_model, &test_data, &test_labels);
+    use booste_rs::training::Metric;
 
-    println!("PseudoHuber (delta=5.0) RMSE: {:.4}", ph_rmse);
-    println!("SquaredLoss RMSE: {:.4}", sq_rmse);
+    let ph_output = model.predict_batch(&test_data, &[]);
+    let sq_output = sq_model.predict_batch(&test_data, &[]);
+
+    let ph_rmse = Rmse.compute(test_labels.len(), 1, ph_output.as_slice(), &test_labels, &[]);
+    let sq_rmse = Rmse.compute(test_labels.len(), 1, sq_output.as_slice(), &test_labels, &[]);
 
     // Both should have reasonable RMSE
     assert!(ph_rmse < 20.0, "PseudoHuber RMSE too high: {}", ph_rmse);
@@ -107,24 +109,28 @@ fn train_pseudo_huber_with_delta() {
     };
 
     // Train with moderate delta
-    let trainer_moderate = GBLinearTrainer::new(PseudoHuberLoss::new(2.0), Rmse, base_params.clone());
+    let trainer_moderate =
+        GBLinearTrainer::new(PseudoHuberLoss::new(2.0), Rmse, base_params.clone());
     let moderate_model = trainer_moderate.train(&train, &[]).unwrap();
 
     // Train with large delta (more like squared)
-    let trainer_large = GBLinearTrainer::new(PseudoHuberLoss::new(10.0), Rmse, base_params.clone());
+    let trainer_large =
+        GBLinearTrainer::new(PseudoHuberLoss::new(10.0), Rmse, base_params.clone());
     let large_model = trainer_large.train(&train, &[]).unwrap();
 
     // Train with squared for reference
     let trainer_sq = GBLinearTrainer::new(SquaredLoss, Rmse, base_params);
     let sq_model = trainer_sq.train(&train, &[]).unwrap();
 
-    let moderate_rmse = compute_test_rmse_default(&moderate_model, &test_data, &test_labels);
-    let large_rmse = compute_test_rmse_default(&large_model, &test_data, &test_labels);
-    let sq_rmse = compute_test_rmse_default(&sq_model, &test_data, &test_labels);
+    use booste_rs::training::Metric;
 
-    println!("Moderate delta (2.0) RMSE: {:.4}", moderate_rmse);
-    println!("Large delta (10.0) RMSE: {:.4}", large_rmse);
-    println!("Squared loss RMSE: {:.4}", sq_rmse);
+    let moderate_output = moderate_model.predict_batch(&test_data, &[]);
+    let large_output = large_model.predict_batch(&test_data, &[]);
+    let sq_output = sq_model.predict_batch(&test_data, &[]);
+
+    let moderate_rmse = Rmse.compute(test_labels.len(), 1, moderate_output.as_slice(), &test_labels, &[]);
+    let large_rmse = Rmse.compute(test_labels.len(), 1, large_output.as_slice(), &test_labels, &[]);
+    let sq_rmse = Rmse.compute(test_labels.len(), 1, sq_output.as_slice(), &test_labels, &[]);
 
     // All should produce reasonable models
     assert!(
@@ -132,15 +138,10 @@ fn train_pseudo_huber_with_delta() {
         "Moderate delta RMSE too high: {}",
         moderate_rmse
     );
-    assert!(
-        large_rmse < 20.0,
-        "Large delta RMSE too high: {}",
-        large_rmse
-    );
+    assert!(large_rmse < 20.0, "Large delta RMSE too high: {}", large_rmse);
 
     // Large delta should be closer to squared loss
     let large_diff = (large_rmse - sq_rmse).abs();
-    println!("Large delta diff from squared: {:.4}", large_diff);
 
     // Large delta should be very close to squared
     assert!(
@@ -183,20 +184,35 @@ fn train_hinge_binary_classification() {
         ..Default::default()
     };
 
-    // Train with hinge loss
-    let trainer_hinge = GBLinearTrainer::new(HingeLoss, Accuracy::with_threshold(0.0), base_params.clone());
+    // Train with hinge loss — evaluate with MarginAccuracy (threshold=0)
+    let trainer_hinge =
+        GBLinearTrainer::new(HingeLoss, MarginAccuracy::default(), base_params.clone());
     let hinge_model = trainer_hinge.train(&train, &[]).unwrap();
 
     // Also train with logistic for comparison
     let trainer_logistic = GBLinearTrainer::new(LogisticLoss, LogLoss, base_params);
     let logistic_model = trainer_logistic.train(&train, &[]).unwrap();
 
-    // Compute accuracy (predictions > 0 → class 1, else class 0)
-    let hinge_acc = compute_binary_accuracy(&hinge_model, &test_data, &test_labels, 0.0);
-    let logistic_acc = compute_binary_accuracy(&logistic_model, &test_data, &test_labels, 0.5);
+    // Compute accuracy.
+    // - Hinge: MarginAccuracy (threshold on margins at 0.0).
+    // - Logistic: transform logits to probabilities via objective transform, then threshold at 0.5.
+    use booste_rs::training::Metric;
 
-    println!("Hinge accuracy: {:.2}%", hinge_acc * 100.0);
-    println!("Logistic accuracy: {:.2}%", logistic_acc * 100.0);
+    let hinge_output = hinge_model.predict_batch(&test_data, &[]);
+    let hinge_acc = MarginAccuracy::default()
+        .compute(test_labels.len(), 1, hinge_output.as_slice(), &test_labels, &[])
+        as f32;
+
+    let mut logistic_output = logistic_model.predict_batch(&test_data, &[]);
+    LogisticLoss.transform_prediction_inplace(&mut logistic_output);
+    let logistic_acc = Accuracy::with_threshold(0.5)
+        .compute(
+            test_labels.len(),
+            1,
+            logistic_output.as_slice(),
+            &test_labels,
+            &[],
+        ) as f32;
 
     // Both should achieve reasonable accuracy (better than random = 50%)
     assert!(
@@ -210,7 +226,6 @@ fn train_hinge_binary_classification() {
         logistic_acc
     );
 
-    // Both should be in similar range
-    let acc_diff = (hinge_acc - logistic_acc).abs();
-    println!("Accuracy difference: {:.2}%", acc_diff * 100.0);
+    // Both should be in similar range.
+    let _acc_diff = (hinge_acc - logistic_acc).abs();
 }

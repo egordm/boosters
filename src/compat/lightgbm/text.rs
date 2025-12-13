@@ -707,4 +707,16 @@ mod tests {
         // Should have trees % 3 == 0 for multiclass
         assert_eq!(model.num_trees() % 3, 0);
     }
+
+    #[test]
+    fn parse_float_array_rejects_invalid_values() {
+        let err = parse_float_array("1.0 2.0 nope 3.0").unwrap_err();
+        assert!(matches!(err, ParseError::InvalidValue { field: "array", .. }));
+    }
+
+    #[test]
+    fn validate_array_size_reports_mismatch() {
+        let err = validate_array_size("test", &[1u32, 2u32], 3).unwrap_err();
+        assert!(matches!(err, ParseError::ArraySizeMismatch { field: "test", expected: 3, actual: 2 }));
+    }
 }
