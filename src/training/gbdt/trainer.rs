@@ -30,7 +30,6 @@ use super::expansion::GrowthStrategy;
 use super::grower::{GrowerParams, TreeGrower};
 use super::optimization::OptimizationProfile;
 use super::split::GainParams;
-use super::tree::Forest as TrainingForest;
 
 use crate::inference::gbdt::{Forest as InferenceForest, ScalarLeaf};
 
@@ -224,7 +223,9 @@ impl<O: Objective> GBDTTrainer<O> {
             predictions.extend(std::iter::repeat(base_scores[output]).take(n_rows));
         }
 
-        let mut forest = TrainingForest::new(n_outputs, base_scores);
+        // Create inference forest directly (Phase 2: no conversion needed)
+        let mut forest = InferenceForest::<ScalarLeaf>::new(n_outputs as u32)
+            .with_base_score(base_scores);
 
         for round in 0..self.params.n_trees {
             // Compute gradients for all outputs
@@ -247,22 +248,22 @@ impl<O: Objective> GBDTTrainer<O> {
                 let (grads, hess) = gradients.output_grads_hess_mut(output);
                 let sampled = row_sampler.sample(round as usize, grads, hess);
 
-                // Grow tree for this output
+                // Grow tree for this output (returns inference-ready TreeStorage)
                 let tree = grower.grow(dataset, &gradients, output, sampled.as_deref());
 
                 // Update predictions for this output (column-major layout)
                 let pred_offset = output * n_rows;
                 for row in 0..n_rows {
                     if let Some(view) = dataset.row_view(row) {
-                        predictions[pred_offset + row] += tree.predict(&view);
+                        predictions[pred_offset + row] += tree.predict_binned(&view, dataset).0;
                     }
                 }
 
-                forest.add_tree(tree, output);
+                forest.push_tree(tree, output as u32);
             }
         }
 
-        super::convert::forest_to_inference(&forest, dataset)
+        Some(forest)
     }
 }
 

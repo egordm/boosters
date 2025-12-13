@@ -214,6 +214,64 @@ impl<L: LeafValue> TreeStorage<L> {
 
         self.leaf_value(idx)
     }
+
+    /// Traverse the tree to find the leaf for a binned row.
+    ///
+    /// This is used during training when we have binned data. The bin values
+    /// are converted to float values using the bin mappers before comparison.
+    ///
+    /// # Arguments
+    /// * `row` - Row view from a BinnedDataset
+    /// * `dataset` - BinnedDataset containing bin mappers for each feature
+    pub fn predict_binned(
+        &self,
+        row: &crate::data::binned::RowView<'_>,
+        dataset: &crate::data::BinnedDataset,
+    ) -> &L {
+        let mut idx = 0u32;
+
+        while !self.is_leaf(idx) {
+            let feat_idx = self.split_index(idx) as usize;
+            let bin_opt = row.get_bin(feat_idx);
+
+            idx = match bin_opt {
+                None => {
+                    // Missing value: use default direction
+                    if self.default_left(idx) {
+                        self.left_child(idx)
+                    } else {
+                        self.right_child(idx)
+                    }
+                }
+                Some(bin) => {
+                    match self.split_type(idx) {
+                        SplitType::Numeric => {
+                            // Convert bin to float value for comparison
+                            let mapper = dataset.bin_mapper(feat_idx);
+                            let fvalue = mapper.bin_to_value(bin) as f32;
+                            if fvalue < self.split_threshold(idx) {
+                                self.left_child(idx)
+                            } else {
+                                self.right_child(idx)
+                            }
+                        }
+                        SplitType::Categorical => {
+                            // Convert bin to category and check membership
+                            let mapper = dataset.bin_mapper(feat_idx);
+                            let category = mapper.bin_to_value(bin) as u32;
+                            if self.categories.category_goes_right(idx, category) {
+                                self.right_child(idx)
+                            } else {
+                                self.left_child(idx)
+                            }
+                        }
+                    }
+                }
+            };
+        }
+
+        self.leaf_value(idx)
+    }
 }
 
 /// Builder for constructing TreeStorage from individual nodes.
@@ -340,6 +398,245 @@ impl<L: LeafValue> TreeBuilder<L> {
             split_types,
             categories,
         )
+    }
+}
+
+// =============================================================================
+// Mutable Tree Builder (for training-time construction)
+// =============================================================================
+
+/// Mutable tree builder for use during training.
+///
+/// Unlike [`TreeBuilder`] which appends nodes sequentially with known children,
+/// this builder supports the training pattern where nodes are allocated first
+/// (as placeholders) and filled in later when splits are determined.
+///
+/// # Usage Pattern
+///
+/// ```ignore
+/// let mut builder = MutableTreeBuilder::new();
+/// let root = builder.init_root();
+///
+/// // When a split is found:
+/// let (left, right) = builder.apply_split(root, feature, threshold, default_left);
+///
+/// // When a node should be a leaf:
+/// builder.make_leaf(left, value);
+/// builder.make_leaf(right, value);
+///
+/// // Optionally apply learning rate to all leaves:
+/// builder.apply_learning_rate(0.1);
+///
+/// let tree = builder.finish();
+/// ```
+#[derive(Debug, Clone)]
+pub struct MutableTreeBuilder<L: LeafValue> {
+    split_indices: Vec<u32>,
+    split_thresholds: Vec<f32>,
+    left_children: Vec<u32>,
+    right_children: Vec<u32>,
+    default_left: Vec<bool>,
+    is_leaf: Vec<bool>,
+    leaf_values: Vec<L>,
+    split_types: Vec<SplitType>,
+    /// Categorical data: (node_idx, category_bitset)
+    categorical_nodes: Vec<(u32, Vec<u32>)>,
+    /// Next node ID to allocate.
+    next_id: u32,
+}
+
+impl<L: LeafValue> Default for MutableTreeBuilder<L> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<L: LeafValue> MutableTreeBuilder<L> {
+    /// Create a new mutable tree builder.
+    pub fn new() -> Self {
+        Self {
+            split_indices: Vec::with_capacity(64),
+            split_thresholds: Vec::with_capacity(64),
+            left_children: Vec::with_capacity(64),
+            right_children: Vec::with_capacity(64),
+            default_left: Vec::with_capacity(64),
+            is_leaf: Vec::with_capacity(64),
+            leaf_values: Vec::with_capacity(64),
+            split_types: Vec::with_capacity(64),
+            categorical_nodes: Vec::new(),
+            next_id: 0,
+        }
+    }
+
+    /// Create a builder with capacity hint.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            split_indices: Vec::with_capacity(capacity),
+            split_thresholds: Vec::with_capacity(capacity),
+            left_children: Vec::with_capacity(capacity),
+            right_children: Vec::with_capacity(capacity),
+            default_left: Vec::with_capacity(capacity),
+            is_leaf: Vec::with_capacity(capacity),
+            leaf_values: Vec::with_capacity(capacity),
+            split_types: Vec::with_capacity(capacity),
+            categorical_nodes: Vec::new(),
+            next_id: 0,
+        }
+    }
+
+    /// Initialize the root node as a placeholder.
+    ///
+    /// Returns the root node ID (always 0).
+    pub fn init_root(&mut self) -> u32 {
+        self.reset();
+        self.allocate_node();
+        0
+    }
+
+    /// Apply a numeric split to a node, allocating child nodes.
+    ///
+    /// Returns (left_id, right_id).
+    pub fn apply_numeric_split(
+        &mut self,
+        node: u32,
+        feature: u32,
+        threshold: f32,
+        default_left: bool,
+    ) -> (u32, u32) {
+        let left_id = self.allocate_node();
+        let right_id = self.allocate_node();
+
+        let idx = node as usize;
+        self.split_indices[idx] = feature;
+        self.split_thresholds[idx] = threshold;
+        self.left_children[idx] = left_id;
+        self.right_children[idx] = right_id;
+        self.default_left[idx] = default_left;
+        self.is_leaf[idx] = false;
+        self.split_types[idx] = SplitType::Numeric;
+
+        (left_id, right_id)
+    }
+
+    /// Apply a categorical split to a node, allocating child nodes.
+    ///
+    /// The `category_bitset` contains the packed u32 words for the category bitset.
+    /// Categories in this bitset go RIGHT, categories not in the set go LEFT.
+    ///
+    /// Returns (left_id, right_id).
+    pub fn apply_categorical_split(
+        &mut self,
+        node: u32,
+        feature: u32,
+        category_bitset: Vec<u32>,
+        default_left: bool,
+    ) -> (u32, u32) {
+        let left_id = self.allocate_node();
+        let right_id = self.allocate_node();
+
+        let idx = node as usize;
+        self.split_indices[idx] = feature;
+        self.split_thresholds[idx] = 0.0; // Not used for categorical
+        self.left_children[idx] = left_id;
+        self.right_children[idx] = right_id;
+        self.default_left[idx] = default_left;
+        self.is_leaf[idx] = false;
+        self.split_types[idx] = SplitType::Categorical;
+        self.categorical_nodes.push((node, category_bitset));
+
+        (left_id, right_id)
+    }
+
+    /// Set a node as a leaf with the given value.
+    pub fn make_leaf(&mut self, node: u32, value: L) {
+        let idx = node as usize;
+        self.is_leaf[idx] = true;
+        self.leaf_values[idx] = value;
+    }
+
+    /// Apply learning rate to all leaf values.
+    pub fn apply_learning_rate(&mut self, learning_rate: f32) {
+        for (is_leaf, value) in self.is_leaf.iter().zip(self.leaf_values.iter_mut()) {
+            if *is_leaf {
+                value.scale(learning_rate);
+            }
+        }
+    }
+
+    /// Get current number of nodes.
+    #[inline]
+    pub fn n_nodes(&self) -> usize {
+        self.split_indices.len()
+    }
+
+    /// Reset the builder for reuse.
+    pub fn reset(&mut self) {
+        self.split_indices.clear();
+        self.split_thresholds.clear();
+        self.left_children.clear();
+        self.right_children.clear();
+        self.default_left.clear();
+        self.is_leaf.clear();
+        self.leaf_values.clear();
+        self.split_types.clear();
+        self.categorical_nodes.clear();
+        self.next_id = 0;
+    }
+
+    /// Finalize the tree and return immutable storage.
+    ///
+    /// Consumes the builder.
+    pub fn finish(self) -> TreeStorage<L> {
+        // Build categories storage from categorical nodes
+        let categories = if self.categorical_nodes.is_empty() {
+            CategoriesStorage::empty()
+        } else {
+            let mut cat_nodes = self.categorical_nodes;
+            cat_nodes.sort_by_key(|(idx, _)| *idx);
+
+            let num_nodes = self.split_indices.len();
+            let mut segments = vec![(0u32, 0u32); num_nodes];
+            let mut bitsets = Vec::new();
+
+            for (node_idx, bitset) in cat_nodes {
+                let start = bitsets.len() as u32;
+                let size = bitset.len() as u32;
+                segments[node_idx as usize] = (start, size);
+                bitsets.extend(bitset);
+            }
+
+            CategoriesStorage::new(bitsets, segments)
+        };
+
+        TreeStorage::with_categories(
+            self.split_indices,
+            self.split_thresholds,
+            self.left_children,
+            self.right_children,
+            self.default_left,
+            self.is_leaf,
+            self.leaf_values,
+            self.split_types,
+            categories,
+        )
+    }
+
+    /// Allocate a new placeholder node.
+    fn allocate_node(&mut self) -> u32 {
+        let id = self.next_id;
+        self.next_id += 1;
+
+        // Extend vectors with defaults
+        self.split_indices.push(0);
+        self.split_thresholds.push(0.0);
+        self.left_children.push(0);
+        self.right_children.push(0);
+        self.default_left.push(false);
+        self.is_leaf.push(false); // Will be set by make_leaf if needed
+        self.leaf_values.push(L::default());
+        self.split_types.push(SplitType::Numeric);
+
+        id
     }
 }
 
@@ -610,5 +907,139 @@ mod tests {
 
         // feat0=0.7 >= 0.5 → right → leaf=3.0
         assert_eq!(tree.predict_row(&[0.7, 0.0]).0, 3.0);
+    }
+
+    // ==========================================================================
+    // MutableTreeBuilder tests
+    // ==========================================================================
+
+    #[test]
+    fn mutable_builder_single_leaf() {
+        let mut builder = MutableTreeBuilder::<ScalarLeaf>::new();
+        let root = builder.init_root();
+        builder.make_leaf(root, ScalarLeaf(1.5));
+
+        let tree = builder.finish();
+
+        assert_eq!(tree.n_nodes(), 1);
+        assert!(tree.is_leaf(0));
+        assert_eq!(tree.leaf_value(0).0, 1.5);
+    }
+
+    #[test]
+    fn mutable_builder_numeric_split() {
+        let mut builder = MutableTreeBuilder::<ScalarLeaf>::new();
+        let root = builder.init_root();
+
+        let (left, right) = builder.apply_numeric_split(root, 0, 0.5, true);
+        builder.make_leaf(left, ScalarLeaf(-1.0));
+        builder.make_leaf(right, ScalarLeaf(1.0));
+
+        let tree = builder.finish();
+
+        assert_eq!(tree.n_nodes(), 3);
+        assert!(!tree.is_leaf(0));
+        assert_eq!(tree.split_index(0), 0);
+        assert_eq!(tree.split_threshold(0), 0.5);
+        assert!(tree.default_left(0));
+        assert_eq!(tree.left_child(0), 1);
+        assert_eq!(tree.right_child(0), 2);
+
+        assert!(tree.is_leaf(1));
+        assert_eq!(tree.leaf_value(1).0, -1.0);
+        assert!(tree.is_leaf(2));
+        assert_eq!(tree.leaf_value(2).0, 1.0);
+    }
+
+    #[test]
+    fn mutable_builder_deep_tree() {
+        let mut builder = MutableTreeBuilder::<ScalarLeaf>::new();
+        let root = builder.init_root();
+
+        // Root split
+        let (left, right) = builder.apply_numeric_split(root, 0, 0.5, true);
+
+        // Left child: split further
+        let (ll, lr) = builder.apply_numeric_split(left, 1, 0.3, false);
+        builder.make_leaf(ll, ScalarLeaf(1.0));
+        builder.make_leaf(lr, ScalarLeaf(2.0));
+
+        // Right child: leaf
+        builder.make_leaf(right, ScalarLeaf(3.0));
+
+        let tree = builder.finish();
+
+        assert_eq!(tree.n_nodes(), 5);
+
+        // Test predictions
+        // feat0=0.3 < 0.5, feat1=0.2 < 0.3 → leaf 1.0
+        assert_eq!(tree.predict_row(&[0.3, 0.2]).0, 1.0);
+        // feat0=0.3 < 0.5, feat1=0.5 >= 0.3 → leaf 2.0
+        assert_eq!(tree.predict_row(&[0.3, 0.5]).0, 2.0);
+        // feat0=0.7 >= 0.5 → leaf 3.0
+        assert_eq!(tree.predict_row(&[0.7, 0.0]).0, 3.0);
+    }
+
+    #[test]
+    fn mutable_builder_learning_rate() {
+        let mut builder = MutableTreeBuilder::<ScalarLeaf>::new();
+        let root = builder.init_root();
+
+        let (left, right) = builder.apply_numeric_split(root, 0, 0.5, true);
+        builder.make_leaf(left, ScalarLeaf(-10.0));
+        builder.make_leaf(right, ScalarLeaf(10.0));
+
+        builder.apply_learning_rate(0.1);
+
+        let tree = builder.finish();
+
+        assert!((tree.leaf_value(1).0 - -1.0).abs() < 1e-6);
+        assert!((tree.leaf_value(2).0 - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn mutable_builder_categorical_split() {
+        let mut builder = MutableTreeBuilder::<ScalarLeaf>::new();
+        let root = builder.init_root();
+
+        // Categories {1, 3} go right (bitset 0b1010)
+        let (left, right) = builder.apply_categorical_split(root, 0, vec![0b1010], true);
+        builder.make_leaf(left, ScalarLeaf(-1.0));
+        builder.make_leaf(right, ScalarLeaf(1.0));
+
+        let tree = builder.finish();
+
+        assert!(tree.has_categorical());
+        assert_eq!(tree.split_type(0), SplitType::Categorical);
+
+        // Category 1 in set → right
+        assert_eq!(tree.predict_row(&[1.0]).0, 1.0);
+        // Category 3 in set → right
+        assert_eq!(tree.predict_row(&[3.0]).0, 1.0);
+        // Category 0 NOT in set → left
+        assert_eq!(tree.predict_row(&[0.0]).0, -1.0);
+        // Category 2 NOT in set → left
+        assert_eq!(tree.predict_row(&[2.0]).0, -1.0);
+    }
+
+    #[test]
+    fn mutable_builder_reset() {
+        let mut builder = MutableTreeBuilder::<ScalarLeaf>::new();
+
+        // Build first tree
+        let root = builder.init_root();
+        builder.make_leaf(root, ScalarLeaf(1.0));
+        let tree1 = builder.finish();
+
+        // Rebuild second tree with same builder after reset
+        let mut builder = MutableTreeBuilder::<ScalarLeaf>::new();
+        let root = builder.init_root();
+        let (left, right) = builder.apply_numeric_split(root, 0, 0.5, true);
+        builder.make_leaf(left, ScalarLeaf(2.0));
+        builder.make_leaf(right, ScalarLeaf(3.0));
+        let tree2 = builder.finish();
+
+        assert_eq!(tree1.n_nodes(), 1);
+        assert_eq!(tree2.n_nodes(), 3);
     }
 }
