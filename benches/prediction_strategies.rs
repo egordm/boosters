@@ -13,10 +13,10 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 
 use bench_utils::{generate_random_input, load_boosters_model};
 use booste_rs::data::RowMatrix;
-use booste_rs::predict::{Predictor, StandardTraversal, UnrolledTraversal6};
+use booste_rs::inference::gbdt::{Predictor, StandardTraversal, UnrolledTraversal6};
 
 #[cfg(feature = "simd")]
-use booste_rs::predict::SimdTraversal6;
+use booste_rs::inference::gbdt::SimdTraversal6;
 
 // =============================================================================
 // Strategy Comparison Benchmarks
@@ -30,11 +30,8 @@ use booste_rs::predict::SimdTraversal6;
 /// - SIMD traversal: no-block, block-64 (when simd feature enabled)
 fn bench_gbtree_traversal_strategies(c: &mut Criterion) {
     let model = load_boosters_model("bench_medium");
-    let forest = model
-        .booster
-        .forest()
-        .expect("Benchmark model must be tree-based");
-    let num_features = model.num_features();
+    let forest = &model.forest;
+    let num_features = model.num_features;
 
     // Standard traversal combinations
     let std_no_block = Predictor::<StandardTraversal>::new(forest).with_block_size(100_000);

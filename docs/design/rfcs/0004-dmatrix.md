@@ -114,16 +114,12 @@ pub struct DenseMatrix<T = f32, S: AsRef<[T]> = Box<[T]>> {
 
 Missing values represented as `f32::NAN`.
 
-### Sparse Matrix — Use Existing Crate?
+### Sparse Matrix — Delayed
 
-**Question**: Use `sprs` crate or implement our own CSR?
-
-| Option | Pros | Cons |
-|--------|------|------|
-| `sprs` | Mature, tested | Extra dependency |
-| Custom | Full control | More code to maintain |
-
-**Recommendation**: Start with `sprs`, wrap to implement `DataMatrix`.
+**Update (2024-12-04)**: Sparse matrix support has been delayed. The current
+implementation uses dense matrices with row-major (RowMatrix) for inference
+and column-major (ColMatrix) for training. Sparse data support will be added
+when there's demand.
 
 ### Arrow Integration
 
@@ -201,11 +197,11 @@ pub struct Dataset<M: DataMatrix> {
 
 ## Design Decisions
 
-### DD-1: Use Existing Sparse Matrix Crate **[OPEN]**
+### DD-1: Sparse Matrix Support **[DELAYED]**
 
-**Options**: A) `sprs` — mature, less code. B) Custom — full control.
-
-Leaning toward A unless `sprs` API proves problematic.
+**Update (2024-12-04)**: Sparse matrix support has been delayed. Current
+implementation uses dense matrices (RowMatrix, ColMatrix). Sparse support
+will be added when there's demand.
 
 ### DD-2: Quantization is a Transform **[DECIDED]**
 

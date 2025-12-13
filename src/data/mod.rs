@@ -12,7 +12,7 @@
 //! # Storage Types
 //!
 //! - [`DenseMatrix`]: Dense storage with configurable layout (row-major or column-major)
-//! - [`CSCMatrix`]: Column-sparse storage, optimal for column-based access (training)
+//! - [`binned::BinnedDataset`]: Quantized feature data for GBDT training
 //!
 //! # Layouts
 //!
@@ -27,15 +27,21 @@
 //!
 //! See RFC-0004 for design rationale, RFC-0010 for layout abstraction.
 
-mod csc;
-mod dense;
-mod layout;
+pub mod binned;
+mod dataset;
+mod matrix;
 mod traits;
 
-pub use csc::{CSCMatrix, ColumnIter};
-pub use dense::DenseMatrix;
-pub use layout::{ColMajor, Layout, RowMajor, StridedIter};
-pub use traits::{ColumnAccess, DataMatrix, RowView};
+pub use matrix::{ColMajor, DenseColumnIter, DenseMatrix, Layout, RowMajor, StridedIter};
+pub use dataset::{Dataset, DatasetError, FeatureColumn};
+pub use traits::{DataMatrix, RowView};
+
+// Re-export binned types for convenience
+pub use binned::{
+    BinMapper, BinStorage, BinType, BinnedDataset, BinnedDatasetBuilder, BuildError,
+    FeatureGroup, FeatureMeta, FeatureType, FeatureView, GroupLayout, GroupSpec,
+    GroupStrategy, MissingType, RowView as BinnedRowView,
+};
 
 /// Type alias for row-major dense matrix (the common case).
 ///

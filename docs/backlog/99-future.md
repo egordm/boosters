@@ -9,10 +9,14 @@ Items here are parked until there's capacity or user demand.
 
 ## Sparse Data Support
 
-- `SparseMatrix` (CSR format)
+- `SparseMatrix` (CSR format for row access)
+- `CSCMatrix` (CSC format for column access, training)
 - `DataMatrix` impl for sparse
 - Sparse-aware traversal
 - Benchmark sparse vs dense
+
+**Note (2024-12-04)**: CSCMatrix was originally implemented but removed to
+simplify the API. Re-add when sparse training data is needed.
 
 ---
 

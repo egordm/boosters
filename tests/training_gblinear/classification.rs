@@ -6,33 +6,37 @@
 
 use super::load_config;
 use super::load_train_data;
-use booste_rs::data::DataMatrix;
-use booste_rs::training::{GBLinearTrainer, LossFunction, Verbosity};
+use booste_rs::data::Dataset;
+use booste_rs::training::{
+    GBLinearParams, GBLinearTrainer, LogLoss, LogisticLoss, MulticlassLogLoss, SoftmaxLoss,
+    Verbosity,
+};
 
 /// Test binary classification training produces reasonable predictions.
 #[test]
 fn train_binary_classification() {
     let (data, labels) = load_train_data("binary_classification");
     let config = load_config("binary_classification");
+    let train = Dataset::from_numeric(&data, labels.clone()).unwrap();
 
-    let trainer = GBLinearTrainer::builder()
-        .loss(LossFunction::Logistic)
-        .num_rounds(config.num_boost_round)
-        .learning_rate(config.eta)
-        .alpha(config.alpha)
-        .lambda(config.lambda)
-        .parallel(false)
-        .seed(42u64)
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
+    let params = GBLinearParams {
+        n_rounds: config.num_boost_round as u32,
+        learning_rate: config.eta,
+        alpha: config.alpha,
+        lambda: config.lambda,
+        parallel: false,
+        seed: 42,
+        verbosity: Verbosity::Silent,
+        ..Default::default()
+    };
 
-    let model = trainer.train(&data, &labels, None, &[]);
+    let trainer = GBLinearTrainer::new(LogisticLoss, LogLoss, params);
+    let model = trainer.train(&train, &[]).unwrap();
 
     // Verify predictions are in reasonable range for logits
     let mut predictions = Vec::new();
     for row in 0..data.num_rows().min(10) {
-        let features: Vec<f32> = (0..data.num_features())
+        let features: Vec<f32> = (0..data.num_columns())
             .map(|col| data.get(row, col).copied().unwrap_or(f32::NAN))
             .collect();
         let pred = model.predict_row(&features, &[0.0])[0];
@@ -59,26 +63,27 @@ fn train_multioutput_classification() {
     let (data, labels) = load_train_data("multiclass_classification");
     let config = load_config("multiclass_classification");
     let num_class = 3;
+    let train = Dataset::from_numeric(&data, labels.clone()).unwrap();
 
-    let trainer = GBLinearTrainer::builder()
-        .loss(LossFunction::Softmax { num_classes: num_class })
-        .num_rounds(config.num_boost_round)
-        .learning_rate(config.eta)
-        .alpha(config.alpha)
-        .lambda(config.lambda)
-        .parallel(false)
-        .seed(42u64)
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
+    let params = GBLinearParams {
+        n_rounds: config.num_boost_round as u32,
+        learning_rate: config.eta,
+        alpha: config.alpha,
+        lambda: config.lambda,
+        parallel: false,
+        seed: 42,
+        verbosity: Verbosity::Silent,
+        ..Default::default()
+    };
 
-    let model = trainer.train(&data, &labels, None, &[]);
+    let trainer = GBLinearTrainer::new(SoftmaxLoss::new(num_class), MulticlassLogLoss, params);
+    let model = trainer.train(&train, &[]).unwrap();
 
     // Verify model has correct number of output groups
     assert_eq!(model.num_groups(), num_class);
 
     // Verify predictions exist for all classes
-    let features: Vec<f32> = (0..data.num_features())
+    let features: Vec<f32> = (0..data.num_columns())
         .map(|col| data.get(0, col).copied().unwrap_or(f32::NAN))
         .collect();
     let predictions = model.predict_row(&features, &vec![0.0; num_class]);
@@ -100,7 +105,7 @@ fn train_multioutput_classification() {
     // Compute training accuracy
     let mut correct = 0;
     for i in 0..data.num_rows() {
-        let features: Vec<f32> = (0..data.num_features())
+        let features: Vec<f32> = (0..data.num_columns())
             .map(|col| data.get(i, col).copied().unwrap_or(0.0))
             .collect();
         let preds = model.predict_row(&features, &vec![0.0; num_class]);

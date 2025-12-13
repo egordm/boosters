@@ -111,38 +111,4 @@ pub trait RowView {
     fn iter(&self) -> Self::Iter<'_>;
 }
 
-/// Trait for column-wise access to matrix data.
-///
-/// This is the key trait for coordinate descent training, where we need to
-/// iterate over all values in a column (feature) efficiently.
-///
-/// # Performance
-///
-/// For dense data, column-major (`ColMatrix`) provides the best performance
-/// since columns are contiguous in memory. Row-major matrices require strided
-/// access. CSC format is optimal for sparse data.
-///
-/// # Implementations
-///
-/// - `ColMatrix`: Contiguous columns, optimal for dense training data
-/// - `CSCMatrix`: Sparse column storage, optimal for sparse data
-pub trait ColumnAccess {
-    /// Element type.
-    type Element: Copy;
 
-    /// Iterator over (row_index, value) pairs in a column.
-    type ColumnIter<'a>: Iterator<Item = (usize, Self::Element)>
-    where
-        Self: 'a;
-
-    /// Number of rows.
-    fn num_rows(&self) -> usize;
-
-    /// Number of columns (features).
-    fn num_columns(&self) -> usize;
-
-    /// Iterate over (row_index, value) pairs in the given column.
-    ///
-    /// For dense matrices, yields all rows. For sparse, yields only stored values.
-    fn column(&self, col: usize) -> Self::ColumnIter<'_>;
-}

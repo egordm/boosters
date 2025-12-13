@@ -14,7 +14,7 @@
 | **Inference** | ✅ Complete | 3-9x faster than XGBoost C++ |
 | **Tree Storage** | ✅ Complete | SoATreeStorage, UnrolledTreeLayout |
 | **Forest Storage** | ✅ Complete | SoAForest with multi-group support |
-| **Data Input** | ✅ Complete | RowMatrix, ColMatrix, CSCMatrix |
+| **Data Input** | ✅ Complete | RowMatrix, ColMatrix |
 | **XGBoost Loading** | ✅ Complete | JSON format with categoricals |
 | **GBLinear Training** | ✅ Complete | Coordinate descent with elastic net |
 | **Loss Functions** | ✅ Complete | Squared, Logistic, Softmax, Quantile, Huber, Hinge |

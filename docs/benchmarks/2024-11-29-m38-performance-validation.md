@@ -158,7 +158,7 @@ Likely causes:
 ### Configuration Examples
 
 ```rust
-use booste_rs::predict::{Predictor, StandardTraversal, UnrolledTraversal6};
+use booste_rs::inference::{Predictor, StandardTraversal, UnrolledTraversal6};
 
 // Single-row / small batch (lowest latency)
 let predictor = Predictor::<StandardTraversal>::new(&forest);

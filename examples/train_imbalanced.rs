@@ -19,9 +19,9 @@
 //! cargo run --example train_imbalanced
 //! ```
 
-use booste_rs::data::{ColMatrix, RowMatrix};
-use booste_rs::predict::{Predictor, StandardTraversal};
-use booste_rs::training::{GBTreeTrainer, GrowthStrategy, LossFunction, Verbosity};
+use booste_rs::data::binned::BinnedDatasetBuilder;
+use booste_rs::data::{ColMatrix, DenseMatrix, RowMajor};
+use booste_rs::training::{GBDTParams, GBDTTrainer, GrowthStrategy, LogisticLoss};
 
 fn main() {
     // =========================================================================
@@ -59,8 +59,14 @@ fn main() {
     }
 
     // Create matrices
-    let row_matrix = RowMatrix::from_vec(features, n_samples, n_features);
+    let row_matrix: DenseMatrix<f32, RowMajor> =
+        DenseMatrix::from_vec(features, n_samples, n_features);
     let col_matrix: ColMatrix<f32> = row_matrix.to_layout();
+
+    // Create binned dataset
+    let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 256)
+        .build()
+        .expect("Failed to build binned dataset");
 
     // =========================================================================
     // Compute Class Weights
@@ -86,30 +92,33 @@ fn main() {
     println!("Dataset:");
     println!("  Majority class (0): {} samples", n_majority);
     println!("  Minority class (1): {} samples", n_minority);
-    println!("  Imbalance ratio: {:.0}:1\n", n_majority as f32 / n_minority as f32);
+    println!(
+        "  Imbalance ratio: {:.0}:1\n",
+        n_majority as f32 / n_minority as f32
+    );
     println!("Weights:");
     println!("  Majority class weight: {:.2}", weight_class_0);
     println!("  Minority class weight: {:.2}\n", weight_class_1);
+
+    // Configure trainer params
+    let params = GBDTParams {
+        n_trees: 30,
+        learning_rate: 0.1,
+        growth_strategy: GrowthStrategy::DepthWise { max_depth: 4 },
+        cache_size: 32,
+        ..Default::default()
+    };
+
+    let trainer = GBDTTrainer::new(LogisticLoss, params);
 
     // =========================================================================
     // Train Without Weights (Baseline)
     // =========================================================================
 
-    let trainer = GBTreeTrainer::builder()
-        .loss(LossFunction::Logistic)
-        .num_rounds(30u32)
-        .growth_strategy(GrowthStrategy::DepthWise { max_depth: 4 })
-        .learning_rate(0.1f32)
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
-
     println!("--- Training WITHOUT weights ---");
-    let forest_unweighted = trainer.train(&col_matrix, &labels, None, &[]);
+    let forest_unweighted = trainer.train(&dataset, &labels, &[]).unwrap();
 
-    let predictor_unweighted = Predictor::<StandardTraversal>::new(&forest_unweighted);
-    let preds_unweighted = predictor_unweighted.predict(&row_matrix).into_vec();
-
+    let preds_unweighted = predict_all(&dataset, &forest_unweighted);
     let (acc_uw, recall_0_uw, recall_1_uw) = compute_metrics(&preds_unweighted, &labels);
     println!("  Accuracy:       {:.1}%", acc_uw * 100.0);
     println!("  Recall class 0: {:.1}%", recall_0_uw * 100.0);
@@ -120,11 +129,11 @@ fn main() {
     // =========================================================================
 
     println!("--- Training WITH class weights ---");
-    let forest_weighted = trainer.train(&col_matrix, &labels, Some(&weights), &[]);
+    let forest_weighted = trainer
+        .train(&dataset, &labels, &weights)
+        .unwrap();
 
-    let predictor_weighted = Predictor::<StandardTraversal>::new(&forest_weighted);
-    let preds_weighted = predictor_weighted.predict(&row_matrix).into_vec();
-
+    let preds_weighted = predict_all(&dataset, &forest_weighted);
     let (acc_w, recall_0_w, recall_1_w) = compute_metrics(&preds_weighted, &labels);
     println!("  Accuracy:       {:.1}%", acc_w * 100.0);
     println!("  Recall class 0: {:.1}%", recall_0_w * 100.0);
@@ -135,8 +144,10 @@ fn main() {
     // =========================================================================
 
     println!("=== Summary ===\n");
-    println!("Minority class recall improvement: {:.1}%",
-        (recall_1_w - recall_1_uw) * 100.0);
+    println!(
+        "Minority class recall improvement: {:.1}%",
+        (recall_1_w - recall_1_uw) * 100.0
+    );
 
     if recall_1_w > recall_1_uw {
         println!("\n✓ Weighted training improved minority class recall!");
@@ -145,6 +156,23 @@ fn main() {
     } else {
         println!("\n✗ Unweighted model had better minority recall (unusual).");
     }
+}
+
+/// Predict for all rows using binned data.
+fn predict_all(
+    dataset: &booste_rs::data::binned::BinnedDataset,
+    forest: &booste_rs::training::gbdt::tree::Forest,
+) -> Vec<f32> {
+    let base = forest.base_scores()[0];
+    let mut preds = Vec::with_capacity(dataset.n_rows());
+
+    for row_idx in 0..dataset.n_rows() {
+        if let Some(row_view) = dataset.row_view(row_idx) {
+            let tree_sum: f32 = forest.trees().iter().map(|t| t.predict(&row_view)).sum();
+            preds.push(base + tree_sum);
+        }
+    }
+    preds
 }
 
 /// Compute accuracy and per-class recall.

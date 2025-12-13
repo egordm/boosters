@@ -5,7 +5,7 @@
 //!
 //! ## Features Shown
 //!
-//! - Binary classification with `LossFunction::Logistic`
+//! - Binary classification with `LogisticLoss`
 //! - Depth-wise vs Leaf-wise tree growth strategies
 //! - Sample weighting for imbalanced data
 //!
@@ -17,9 +17,9 @@
 //! cargo run --example train_classification
 //! ```
 
-use booste_rs::data::{ColMatrix, RowMatrix};
-use booste_rs::predict::{Predictor, StandardTraversal};
-use booste_rs::training::{GBTreeTrainer, GrowthStrategy, LossFunction, Verbosity};
+use booste_rs::data::binned::BinnedDatasetBuilder;
+use booste_rs::data::{ColMatrix, DenseMatrix, RowMajor};
+use booste_rs::training::{GBDTParams, GBDTTrainer, GrowthStrategy, LogisticLoss};
 
 fn main() {
     // Generate synthetic binary classification data
@@ -48,65 +48,71 @@ fn main() {
         labels.push(class);
     }
 
-    // Keep a copy of features for weight computation (before moving into matrix)
+    // Keep a copy of features for weight computation
     let features_for_weights = features.clone();
 
-    // Create matrix
-    let row_matrix = RowMatrix::from_vec(features, n_samples, n_features);
+    // Create row-major matrix and convert to column-major for training
+    let row_matrix: DenseMatrix<f32, RowMajor> =
+        DenseMatrix::from_vec(features, n_samples, n_features);
     let col_matrix: ColMatrix<f32> = row_matrix.to_layout();
 
+    // Create binned dataset
+    let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 256)
+        .build()
+        .expect("Failed to build binned dataset");
+
+    // =========================================================================
     // Train with depth-wise growth (XGBoost style)
+    // =========================================================================
     println!("=== Depth-wise Growth (XGBoost style) ===\n");
 
-    let trainer_depth = GBTreeTrainer::builder()
-        .loss(LossFunction::Logistic)
-        .num_rounds(30u32)
-        .growth_strategy(GrowthStrategy::DepthWise { max_depth: 3 })
-        .learning_rate(0.1f32)
-        .verbosity(Verbosity::Info)
-        .build()
-        .unwrap();
+    let params_depth = GBDTParams {
+        n_trees: 30,
+        learning_rate: 0.1,
+        growth_strategy: GrowthStrategy::DepthWise { max_depth: 3 },
+        cache_size: 32,
+        ..Default::default()
+    };
 
-    let forest_depth = trainer_depth.train(&col_matrix, &labels, None, &[]);
+    let trainer_depth = GBDTTrainer::new(LogisticLoss, params_depth);
+    let forest_depth = trainer_depth.train(&dataset, &labels, &[]).unwrap();
 
     // Evaluate depth-wise
-    let predictor_depth = Predictor::<StandardTraversal>::new(&forest_depth);
-    let preds_depth = predictor_depth.predict(&row_matrix).into_vec();
+    let preds_depth = predict_all(&dataset, &forest_depth);
     let acc_depth = accuracy(&preds_depth, &labels);
 
-    println!("\nDepth-wise: {} trees", forest_depth.num_trees());
+    println!("Depth-wise: {} trees", forest_depth.n_trees());
     println!("Accuracy: {:.2}%", acc_depth * 100.0);
 
+    // =========================================================================
     // Train with leaf-wise growth (LightGBM style)
+    // =========================================================================
     println!("\n=== Leaf-wise Growth (LightGBM style) ===\n");
 
-    let trainer_leaf = GBTreeTrainer::builder()
-        .loss(LossFunction::Logistic)
-        .num_rounds(30u32)
-        .growth_strategy(GrowthStrategy::LeafWise { max_leaves: 8 })
-        .learning_rate(0.1f32)
-        .verbosity(Verbosity::Info)
-        .build()
-        .unwrap();
+    let params_leaf = GBDTParams {
+        n_trees: 30,
+        learning_rate: 0.1,
+        growth_strategy: GrowthStrategy::LeafWise { max_leaves: 8 },
+        cache_size: 32,
+        ..Default::default()
+    };
 
-    let forest_leaf = trainer_leaf.train(&col_matrix, &labels, None, &[]);
+    let trainer_leaf = GBDTTrainer::new(LogisticLoss, params_leaf);
+    let forest_leaf = trainer_leaf.train(&dataset, &labels, &[]).unwrap();
 
     // Evaluate leaf-wise
-    let predictor_leaf = Predictor::<StandardTraversal>::new(&forest_leaf);
-    let preds_leaf = predictor_leaf.predict(&row_matrix).into_vec();
+    let preds_leaf = predict_all(&dataset, &forest_leaf);
     let acc_leaf = accuracy(&preds_leaf, &labels);
 
-    println!("\nLeaf-wise: {} trees", forest_leaf.num_trees());
+    println!("Leaf-wise: {} trees", forest_leaf.n_trees());
     println!("Accuracy: {:.2}%", acc_leaf * 100.0);
 
     // =========================================================================
     // Sample Weighting Example
     // =========================================================================
-
     println!("\n=== Training with Sample Weights ===\n");
 
     // Example: Give higher weights to samples near decision boundary
-    // This can improve accuracy in the challenging region
     let weights: Vec<f32> = features_for_weights
         .chunks(n_features)
         .map(|row| {
@@ -123,14 +129,32 @@ fn main() {
         })
         .collect();
 
-    let forest_weighted = trainer_depth.train(&col_matrix, &labels, Some(&weights), &[]);
-    let predictor_weighted = Predictor::<StandardTraversal>::new(&forest_weighted);
-    let preds_weighted = predictor_weighted.predict(&row_matrix).into_vec();
+    let forest_weighted = trainer_depth
+        .train(&dataset, &labels, &weights)
+        .unwrap();
+    let preds_weighted = predict_all(&dataset, &forest_weighted);
     let acc_weighted = accuracy(&preds_weighted, &labels);
 
-    println!("Weighted training: {} trees", forest_weighted.num_trees());
+    println!("Weighted training: {} trees", forest_weighted.n_trees());
     println!("Accuracy: {:.2}%", acc_weighted * 100.0);
     println!("\nNote: See train_imbalanced.rs for class imbalance handling.");
+}
+
+/// Predict for all rows using binned data.
+fn predict_all(
+    dataset: &booste_rs::data::binned::BinnedDataset,
+    forest: &booste_rs::training::gbdt::tree::Forest,
+) -> Vec<f32> {
+    let base = forest.base_scores()[0];
+    let mut preds = Vec::with_capacity(dataset.n_rows());
+
+    for row_idx in 0..dataset.n_rows() {
+        if let Some(row_view) = dataset.row_view(row_idx) {
+            let tree_sum: f32 = forest.trees().iter().map(|t| t.predict(&row_view)).sum();
+            preds.push(base + tree_sum);
+        }
+    }
+    preds
 }
 
 /// Compute classification accuracy.

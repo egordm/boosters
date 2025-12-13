@@ -39,7 +39,7 @@ pub enum Verbosity {
 /// }
 /// logger.finish_training();
 /// ```
-pub struct TrainingLogger {
+pub struct TrainingLogger<W: Write + Send = io::Stdout> {
     /// Verbosity level.
     verbosity: Verbosity,
     /// Training start time.
@@ -47,23 +47,23 @@ pub struct TrainingLogger {
     /// Total number of rounds (if known).
     total_rounds: Option<usize>,
     /// Writer for output (default: stdout).
-    writer: Box<dyn Write + Send>,
+    writer: W,
 }
 
-impl Default for TrainingLogger {
+impl Default for TrainingLogger<io::Stdout> {
     fn default() -> Self {
         Self::new(Verbosity::Info)
     }
 }
 
-impl TrainingLogger {
+impl TrainingLogger<io::Stdout> {
     /// Create a new logger with the specified verbosity.
     pub fn new(verbosity: Verbosity) -> Self {
         Self {
             verbosity,
             start_time: None,
             total_rounds: None,
-            writer: Box::new(io::stdout()),
+            writer: io::stdout(),
         }
     }
 
@@ -73,10 +73,17 @@ impl TrainingLogger {
     }
 
     /// Set a custom writer (e.g., for testing or file output).
-    pub fn with_writer<W: Write + Send + 'static>(mut self, writer: W) -> Self {
-        self.writer = Box::new(writer);
-        self
+    pub fn with_writer<W2: Write + Send>(self, writer: W2) -> TrainingLogger<W2> {
+        TrainingLogger {
+            verbosity: self.verbosity,
+            start_time: self.start_time,
+            total_rounds: self.total_rounds,
+            writer,
+        }
     }
+}
+
+impl<W: Write + Send> TrainingLogger<W> {
 
     /// Get the current verbosity level.
     pub fn verbosity(&self) -> Verbosity {
@@ -231,7 +238,7 @@ mod tests {
         }
     }
 
-    fn create_logger(verbosity: Verbosity) -> (TrainingLogger, TestBuffer) {
+    fn create_logger(verbosity: Verbosity) -> (TrainingLogger<TestBuffer>, TestBuffer) {
         let buffer = TestBuffer::new();
         let logger = TrainingLogger::new(verbosity).with_writer(buffer.clone());
         (logger, buffer)

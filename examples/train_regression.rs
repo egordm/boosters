@@ -7,9 +7,9 @@
 //! cargo run --example train_regression
 //! ```
 
-use booste_rs::data::{ColMatrix, RowMatrix};
-use booste_rs::predict::{Predictor, StandardTraversal};
-use booste_rs::training::{GBTreeTrainer, GrowthStrategy, LossFunction, Verbosity};
+use booste_rs::data::binned::BinnedDatasetBuilder;
+use booste_rs::data::{ColMatrix, DenseMatrix, RowMajor};
+use booste_rs::training::{GBDTParams, GBDTTrainer, GrowthStrategy, SquaredLoss};
 
 fn main() {
     // Generate synthetic regression data
@@ -39,34 +39,49 @@ fn main() {
         labels.push(y);
     }
 
-    // Create matrix (row-major input)
-    let row_matrix = RowMatrix::from_vec(features, n_samples, n_features);
-    // Convert to column-major for training (required by quantization)
+    // Create row-major matrix and convert to column-major for training
+    let row_matrix: DenseMatrix<f32, RowMajor> =
+        DenseMatrix::from_vec(features, n_samples, n_features);
     let col_matrix: ColMatrix<f32> = row_matrix.to_layout();
 
-    // Create trainer using the builder pattern
-    let trainer = GBTreeTrainer::builder()
-        .loss(LossFunction::SquaredError)
-        .num_rounds(50u32)
-        .growth_strategy(GrowthStrategy::DepthWise { max_depth: 4 })
-        .learning_rate(0.1f32)
-        .verbosity(Verbosity::Info)
+    // Create binned dataset from column matrix
+    let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 256)
         .build()
-        .unwrap();
+        .expect("Failed to build binned dataset");
 
-    // Train using simplified API - quantization is handled internally!
-    println!("Training GBTree regression model...\n");
-    let forest = trainer.train(&col_matrix, &labels, None, &[]);
+    // Configure training parameters
+    let params = GBDTParams {
+        n_trees: 50,
+        learning_rate: 0.1,
+        growth_strategy: GrowthStrategy::DepthWise { max_depth: 4 },
+        cache_size: 64,
+        ..Default::default()
+    };
 
-    // Create predictor from trained forest
-    let predictor = Predictor::<StandardTraversal>::new(&forest);
+    // Train using the new struct-based API
+    println!("Training GBTree regression model...");
+    println!("  Trees: {}", params.n_trees);
+    println!("  Learning rate: {}", params.learning_rate);
+    println!("  Growth: {:?}\n", params.growth_strategy);
 
-    // Evaluate on training set
-    let train_preds = predictor.predict(&row_matrix).into_vec();
-    let train_rmse = compute_rmse(&train_preds, &labels);
+    let trainer = GBDTTrainer::new(SquaredLoss, params);
+    let forest = trainer.train(&dataset, &labels, &[]).unwrap();
 
-    println!("\n=== Results ===");
-    println!("Trees: {}", forest.num_trees());
+    // Evaluate on training set using binned data
+    let base = forest.base_scores()[0];
+    let mut predictions = Vec::with_capacity(n_samples);
+
+    for row_idx in 0..dataset.n_rows() {
+        if let Some(row_view) = dataset.row_view(row_idx) {
+            let tree_sum: f32 = forest.trees().iter().map(|t| t.predict(&row_view)).sum();
+            predictions.push(base + tree_sum);
+        }
+    }
+
+    let train_rmse = compute_rmse(&predictions, &labels);
+
+    println!("=== Results ===");
+    println!("Trees: {}", forest.n_trees());
     println!("Train RMSE: {:.4}", train_rmse);
     println!("\nNote: For production, split data into train/validation/test sets!");
 }

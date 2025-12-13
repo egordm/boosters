@@ -5,7 +5,11 @@
 //! - HingeLoss (SVM-style binary classification)
 
 use super::{compute_binary_accuracy, compute_test_rmse_default, load_test_data, load_train_data};
-use booste_rs::training::{GBLinearTrainer, LossFunction, Verbosity};
+use booste_rs::data::Dataset;
+use booste_rs::training::{
+    Accuracy, GBLinearParams, GBLinearTrainer, HingeLoss, LogLoss, LogisticLoss, PseudoHuberLoss,
+    Rmse, SquaredLoss, Verbosity,
+};
 
 // =============================================================================
 // PseudoHuberLoss Integration Tests
@@ -23,6 +27,7 @@ use booste_rs::training::{GBLinearTrainer, LossFunction, Verbosity};
 #[test]
 fn train_pseudo_huber_regression() {
     let (data, labels) = load_train_data("regression_l2");
+    let train = Dataset::from_numeric(&data, labels).unwrap();
     let (test_data, test_labels) = match load_test_data("regression_l2") {
         Some(d) => d,
         None => {
@@ -31,42 +36,41 @@ fn train_pseudo_huber_regression() {
         }
     };
 
-    // Train with Pseudo-Huber loss with large slope (more similar to squared)
-    // Using larger slope makes gradients more comparable to squared loss
-    let trainer_ph = GBLinearTrainer::builder()
-        .loss(LossFunction::PseudoHuber { slope: 5.0 })
-        .num_rounds(100usize)
-        .learning_rate(0.5f32)
-        .alpha(0.0f32)
-        .lambda(1.0f32)
-        .parallel(false)
-        .seed(42u64)
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
+    // Train with Pseudo-Huber loss with large delta (more similar to squared)
+    let params_ph = GBLinearParams {
+        n_rounds: 100,
+        learning_rate: 0.5,
+        alpha: 0.0,
+        lambda: 1.0,
+        parallel: false,
+        seed: 42,
+        verbosity: Verbosity::Silent,
+        ..Default::default()
+    };
 
-    let model = trainer_ph.train(&data, &labels, None, &[]);
+    let trainer_ph = GBLinearTrainer::new(PseudoHuberLoss::new(5.0), Rmse, params_ph);
+    let model = trainer_ph.train(&train, &[]).unwrap();
 
     // Also train with squared loss for comparison
-    let trainer_sq = GBLinearTrainer::builder()
-        .loss(LossFunction::SquaredError)
-        .num_rounds(100usize)
-        .learning_rate(0.5f32)
-        .alpha(0.0f32)
-        .lambda(1.0f32)
-        .parallel(false)
-        .seed(42u64)
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
+    let params_sq = GBLinearParams {
+        n_rounds: 100,
+        learning_rate: 0.5,
+        alpha: 0.0,
+        lambda: 1.0,
+        parallel: false,
+        seed: 42,
+        verbosity: Verbosity::Silent,
+        ..Default::default()
+    };
 
-    let sq_model = trainer_sq.train(&data, &labels, None, &[]);
+    let trainer_sq = GBLinearTrainer::new(SquaredLoss, Rmse, params_sq);
+    let sq_model = trainer_sq.train(&train, &[]).unwrap();
 
     // Compute RMSE on test set for both
     let ph_rmse = compute_test_rmse_default(&model, &test_data, &test_labels);
     let sq_rmse = compute_test_rmse_default(&sq_model, &test_data, &test_labels);
 
-    println!("PseudoHuber (slope=5.0) RMSE: {:.4}", ph_rmse);
+    println!("PseudoHuber (delta=5.0) RMSE: {:.4}", ph_rmse);
     println!("SquaredLoss RMSE: {:.4}", sq_rmse);
 
     // Both should have reasonable RMSE
@@ -74,17 +78,15 @@ fn train_pseudo_huber_regression() {
     assert!(sq_rmse < 20.0, "SquaredLoss RMSE too high: {}", sq_rmse);
 }
 
-/// Test PseudoHuberLoss with different slope values.
+/// Test PseudoHuberLoss with different delta values.
 ///
-/// Validates that the slope parameter affects training:
-/// - Large slope: Behaves more like squared loss, converges faster
-/// - Moderate slope: Still works but may need more rounds
-///
-/// Note: Very small slopes (< 1) clip gradients significantly, requiring
-/// many more rounds to converge. We test moderate-to-large slopes here.
+/// Validates that the delta parameter affects training:
+/// - Large delta: Behaves more like squared loss, converges faster
+/// - Moderate delta: Still works but may need more rounds
 #[test]
-fn train_pseudo_huber_with_slope() {
+fn train_pseudo_huber_with_delta() {
     let (data, labels) = load_train_data("regression_l2");
+    let train = Dataset::from_numeric(&data, labels).unwrap();
     let (test_data, test_labels) = match load_test_data("regression_l2") {
         Some(d) => d,
         None => {
@@ -93,77 +95,57 @@ fn train_pseudo_huber_with_slope() {
         }
     };
 
-    // Train with moderate slope
-    let trainer_moderate = GBLinearTrainer::builder()
-        .loss(LossFunction::PseudoHuber { slope: 2.0 })
-        .num_rounds(100usize)
-        .learning_rate(0.5f32)
-        .alpha(0.0f32)
-        .lambda(1.0f32)
-        .parallel(false)
-        .seed(42u64)
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
+    let base_params = GBLinearParams {
+        n_rounds: 100,
+        learning_rate: 0.5,
+        alpha: 0.0,
+        lambda: 1.0,
+        parallel: false,
+        seed: 42,
+        verbosity: Verbosity::Silent,
+        ..Default::default()
+    };
 
-    // Train with large slope (more like squared)
-    let trainer_large = GBLinearTrainer::builder()
-        .loss(LossFunction::PseudoHuber { slope: 10.0 })
-        .num_rounds(100usize)
-        .learning_rate(0.5f32)
-        .alpha(0.0f32)
-        .lambda(1.0f32)
-        .parallel(false)
-        .seed(42u64)
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
+    // Train with moderate delta
+    let trainer_moderate = GBLinearTrainer::new(PseudoHuberLoss::new(2.0), Rmse, base_params.clone());
+    let moderate_model = trainer_moderate.train(&train, &[]).unwrap();
+
+    // Train with large delta (more like squared)
+    let trainer_large = GBLinearTrainer::new(PseudoHuberLoss::new(10.0), Rmse, base_params.clone());
+    let large_model = trainer_large.train(&train, &[]).unwrap();
 
     // Train with squared for reference
-    let trainer_sq = GBLinearTrainer::builder()
-        .loss(LossFunction::SquaredError)
-        .num_rounds(100usize)
-        .learning_rate(0.5f32)
-        .alpha(0.0f32)
-        .lambda(1.0f32)
-        .parallel(false)
-        .seed(42u64)
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
+    let trainer_sq = GBLinearTrainer::new(SquaredLoss, Rmse, base_params);
+    let sq_model = trainer_sq.train(&train, &[]).unwrap();
 
-    let moderate_slope_model = trainer_moderate.train(&data, &labels, None, &[]);
-    let large_slope_model = trainer_large.train(&data, &labels, None, &[]);
-    let sq_model = trainer_sq.train(&data, &labels, None, &[]);
-
-    let moderate_rmse = compute_test_rmse_default(&moderate_slope_model, &test_data, &test_labels);
-    let large_rmse = compute_test_rmse_default(&large_slope_model, &test_data, &test_labels);
+    let moderate_rmse = compute_test_rmse_default(&moderate_model, &test_data, &test_labels);
+    let large_rmse = compute_test_rmse_default(&large_model, &test_data, &test_labels);
     let sq_rmse = compute_test_rmse_default(&sq_model, &test_data, &test_labels);
 
-    println!("Moderate slope (2.0) RMSE: {:.4}", moderate_rmse);
-    println!("Large slope (10.0) RMSE: {:.4}", large_rmse);
+    println!("Moderate delta (2.0) RMSE: {:.4}", moderate_rmse);
+    println!("Large delta (10.0) RMSE: {:.4}", large_rmse);
     println!("Squared loss RMSE: {:.4}", sq_rmse);
 
     // All should produce reasonable models
     assert!(
         moderate_rmse < 50.0,
-        "Moderate slope RMSE too high: {}",
+        "Moderate delta RMSE too high: {}",
         moderate_rmse
     );
     assert!(
         large_rmse < 20.0,
-        "Large slope RMSE too high: {}",
+        "Large delta RMSE too high: {}",
         large_rmse
     );
 
-    // Large slope should be closer to squared loss
+    // Large delta should be closer to squared loss
     let large_diff = (large_rmse - sq_rmse).abs();
-    println!("Large slope diff from squared: {:.4}", large_diff);
+    println!("Large delta diff from squared: {:.4}", large_diff);
 
-    // Large slope should be very close to squared
+    // Large delta should be very close to squared
     assert!(
         large_diff < 1.0,
-        "Large slope PseudoHuber should be close to squared: diff={}",
+        "Large delta PseudoHuber should be close to squared: diff={}",
         large_diff
     );
 }
@@ -181,6 +163,7 @@ fn train_pseudo_huber_with_slope() {
 #[test]
 fn train_hinge_binary_classification() {
     let (data, labels) = load_train_data("binary_classification");
+    let train = Dataset::from_numeric(&data, labels).unwrap();
     let (test_data, test_labels) = match load_test_data("binary_classification") {
         Some(d) => d,
         None => {
@@ -189,35 +172,24 @@ fn train_hinge_binary_classification() {
         }
     };
 
-    // Train with hinge loss
-    let trainer_hinge = GBLinearTrainer::builder()
-        .loss(LossFunction::Hinge)
-        .num_rounds(50usize)
-        .learning_rate(0.5f32)
-        .alpha(0.0f32)
-        .lambda(1.0f32)
-        .parallel(false)
-        .seed(42u64)
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
+    let base_params = GBLinearParams {
+        n_rounds: 50,
+        learning_rate: 0.5,
+        alpha: 0.0,
+        lambda: 1.0,
+        parallel: false,
+        seed: 42,
+        verbosity: Verbosity::Silent,
+        ..Default::default()
+    };
 
-    let hinge_model = trainer_hinge.train(&data, &labels, None, &[]);
+    // Train with hinge loss
+    let trainer_hinge = GBLinearTrainer::new(HingeLoss, Accuracy::with_threshold(0.0), base_params.clone());
+    let hinge_model = trainer_hinge.train(&train, &[]).unwrap();
 
     // Also train with logistic for comparison
-    let trainer_logistic = GBLinearTrainer::builder()
-        .loss(LossFunction::Logistic)
-        .num_rounds(50usize)
-        .learning_rate(0.5f32)
-        .alpha(0.0f32)
-        .lambda(1.0f32)
-        .parallel(false)
-        .seed(42u64)
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
-
-    let logistic_model = trainer_logistic.train(&data, &labels, None, &[]);
+    let trainer_logistic = GBLinearTrainer::new(LogisticLoss, LogLoss, base_params);
+    let logistic_model = trainer_logistic.train(&train, &[]).unwrap();
 
     // Compute accuracy (predictions > 0 → class 1, else class 0)
     let hinge_acc = compute_binary_accuracy(&hinge_model, &test_data, &test_labels, 0.0);

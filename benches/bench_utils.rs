@@ -9,9 +9,16 @@ use std::fs::File;
 use std::path::PathBuf;
 
 use booste_rs::compat::XgbModel;
+use booste_rs::inference::gbdt::{Forest, ScalarLeaf};
 use booste_rs::data::RowMatrix;
-use booste_rs::model::{FeatureInfo, Model, ModelMeta, ModelSource};
-use booste_rs::objective::Objective;
+
+/// Minimal model wrapper for benchmarks.
+///
+/// Benchmarks typically need only the parsed tree ensemble plus metadata like feature count.
+pub struct LoadedForestModel {
+    pub forest: Forest<ScalarLeaf>,
+    pub num_features: usize,
+}
 
 // =============================================================================
 // Data Generation
@@ -72,26 +79,15 @@ pub fn bench_models_dir() -> PathBuf {
 }
 
 /// Load a booste-rs model from JSON file.
-pub fn load_boosters_model(name: &str) -> Model {
+pub fn load_boosters_model(name: &str) -> LoadedForestModel {
     let path = bench_models_dir().join(format!("{}.model.json", name));
     let file = File::open(&path).unwrap_or_else(|_| panic!("Failed to open model: {:?}", path));
     let xgb_model: XgbModel = serde_json::from_reader(file).expect("Failed to parse model");
 
-    let booster = xgb_model.to_booster().expect("Failed to convert model");
-    let num_features = xgb_model.learner.learner_model_param.num_feature as u32;
-    let base_score = xgb_model.learner.learner_model_param.base_score;
+    let forest = xgb_model.to_forest().expect("Failed to convert model to Forest");
+    let num_features = xgb_model.learner.learner_model_param.num_feature as usize;
 
-    Model::new(
-        booster,
-        ModelMeta {
-            num_features,
-            num_groups: 1,
-            base_score: vec![base_score],
-            source: ModelSource::XGBoostJson { version: [2, 0, 0] },
-        },
-        FeatureInfo::default(),
-        Objective::SquaredError,
-    )
+    LoadedForestModel { forest, num_features }
 }
 
 /// Create a RowMatrix from generated data.

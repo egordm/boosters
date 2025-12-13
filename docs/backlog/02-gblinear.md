@@ -33,8 +33,8 @@ Validates training infrastructure before GBTree training.
 
 ### Story 3: GBLinear Training ✓
 
-- [x] 3.1 `CSCMatrix` — column-sparse format for efficient column access
-- [x] 3.2 `CSCMatrix::from_dense()` and column iteration
+- [x] 3.1 ~~`CSCMatrix` — column-sparse format for efficient column access~~ (delayed, use ColMatrix)
+- [x] 3.2 ~~`CSCMatrix::from_dense()` and column iteration~~ (delayed, use ColMatrix)
 - [x] 3.3 Coordinate descent update with elastic net regularization
 - [x] 3.4 Parallel updater — all features with stale gradients (default)
 - [x] 3.5 Sequential updater — features in order with stale gradients

@@ -11,6 +11,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 
 use bench_utils::{generate_random_input, load_boosters_model};
 use booste_rs::data::RowMatrix;
+use booste_rs::inference::gbdt::{Predictor, UnrolledTraversal6};
 
 // =============================================================================
 // Batch Size Benchmarks
@@ -19,7 +20,8 @@ use booste_rs::data::RowMatrix;
 /// Benchmark different batch sizes on a medium GBTree model.
 fn bench_gbtree_batch_sizes(c: &mut Criterion) {
     let model = load_boosters_model("bench_medium");
-    let num_features = model.num_features();
+    let num_features = model.num_features;
+    let predictor = Predictor::<UnrolledTraversal6>::new(&model.forest);
 
     let mut group = c.benchmark_group("gbtree/batch_size");
 
@@ -33,7 +35,7 @@ fn bench_gbtree_batch_sizes(c: &mut Criterion) {
             &matrix,
             |b, matrix| {
                 b.iter(|| {
-                    let output = model.predict(black_box(matrix));
+                    let output = predictor.predict(black_box(matrix));
                     black_box(output)
                 });
             },
@@ -69,14 +71,15 @@ fn bench_gbtree_model_sizes(c: &mut Criterion) {
             }
         };
 
-        let num_features = model.num_features();
+        let num_features = model.num_features;
+        let predictor = Predictor::<UnrolledTraversal6>::new(&model.forest);
         let input_data = generate_random_input(batch_size, num_features, 42);
         let matrix = RowMatrix::from_vec(input_data, batch_size, num_features);
 
         group.throughput(Throughput::Elements(batch_size as u64));
         group.bench_with_input(BenchmarkId::new(*label, batch_size), &matrix, |b, matrix| {
             b.iter(|| {
-                let output = model.predict(black_box(matrix));
+                let output = predictor.predict(black_box(matrix));
                 black_box(output)
             });
         });
@@ -92,14 +95,15 @@ fn bench_gbtree_model_sizes(c: &mut Criterion) {
 /// Benchmark single-row prediction latency on medium GBTree model.
 fn bench_gbtree_single_row(c: &mut Criterion) {
     let model = load_boosters_model("bench_medium");
-    let num_features = model.num_features();
+    let num_features = model.num_features;
+    let predictor = Predictor::<UnrolledTraversal6>::new(&model.forest);
 
     let input_data = generate_random_input(1, num_features, 42);
     let matrix = RowMatrix::from_vec(input_data, 1, num_features);
 
     c.bench_function("gbtree/single_row/medium", |b| {
         b.iter(|| {
-            let output = model.predict(black_box(&matrix));
+            let output = predictor.predict(black_box(&matrix));
             black_box(output)
         });
     });

@@ -1,6 +1,3 @@
----
-applyTo: '**'
----
 # Development Workflow Guide
 
 This document describes conventions and best practices for implementing booste-rs.

@@ -55,12 +55,14 @@ impl GradientBufferRowMajor {
 
     /// Get all outputs for a sample (contiguous slice)
     #[inline]
+    #[allow(dead_code)]
     fn sample_grads(&self, sample: usize) -> &[f32] {
         let start = sample * self.n_outputs;
         &self.grads[start..start + self.n_outputs]
     }
 
     #[inline]
+    #[allow(dead_code)]
     fn sample_hess(&self, sample: usize) -> &[f32] {
         let start = sample * self.n_outputs;
         &self.hess[start..start + self.n_outputs]
@@ -113,6 +115,7 @@ impl GradientBufferColMajor {
     }
 
     #[inline]
+    #[allow(dead_code)]
     fn get(&self, sample: usize, output: usize) -> (f32, f32) {
         let idx = output * self.n_samples + sample;
         (self.grads[idx], self.hess[idx])
@@ -140,12 +143,14 @@ impl GradientBufferColMajor {
 
     /// Get mutable slices for an output
     #[inline]
+    #[allow(dead_code)]
     fn output_grads_mut(&mut self, output: usize) -> &mut [f32] {
         let start = output * self.n_samples;
         &mut self.grads[start..start + self.n_samples]
     }
 
     #[inline]
+    #[allow(dead_code)]
     fn output_hess_mut(&mut self, output: usize) -> &mut [f32] {
         let start = output * self.n_samples;
         &mut self.hess[start..start + self.n_samples]
