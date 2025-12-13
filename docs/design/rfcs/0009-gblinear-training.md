@@ -49,10 +49,14 @@ hess_l2 = Σ(hessian × feature²) + λ
 delta   = soft_threshold(-grad_l2 / hess_l2, α / hess_l2) × learning_rate
 ```
 
-### Data Format: CSC
+### Data Format: ColMatrix
 
 Training requires column-wise access for efficient per-feature gradients.
-Convert from row-major input internally.
+Users should provide a `ColMatrix` (column-major dense matrix) for training.
+Convert from row-major input using `.to_layout()`.
+
+**Note**: CSC (Compressed Sparse Column) format was originally planned but has
+been delayed. For now, all training uses dense column-major matrices.
 
 ### Feature Selectors
 
@@ -65,10 +69,13 @@ XGBoost's greedy/thrifty selectors add complexity with marginal benefit.
 
 ## Design Decisions
 
-### DD-1: CSC Format for Training
+### DD-1: ColMatrix Format for Training
 
-Coordinate descent iterates over features (columns). CSC gives O(nnz_in_column)
-access. XGBoost uses CSC too.
+Coordinate descent iterates over features (columns). Column-major dense matrices
+provide efficient contiguous column access.
+
+**Update (2024-12-04)**: CSC format has been delayed. ColMatrix is sufficient for
+current use cases. Sparse data support will be added later when there's demand.
 
 ### DD-2: Stale Gradient Updates (Differs from XGBoost)
 
@@ -127,3 +134,4 @@ These apply to both GBLinear and future GBTree training.
 
 - 2024-11-29: Initial RFC approved
 - 2025-11-29: DD-2 updated to document algorithmic difference from XGBoost
+- 2024-12-04: DD-1 updated — CSC format delayed, using ColMatrix instead

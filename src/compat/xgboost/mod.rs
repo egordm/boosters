@@ -6,5 +6,5 @@
 mod convert;
 mod json;
 
-pub use convert::ConversionError;
+pub use convert::{Booster, ConversionError};
 pub use json::*;

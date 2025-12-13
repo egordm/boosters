@@ -9,7 +9,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 
 use bench_utils::{generate_random_input, load_boosters_model};
 use booste_rs::data::RowMatrix;
-use booste_rs::predict::{Predictor, UnrolledTraversal6};
+use booste_rs::inference::gbdt::{Predictor, UnrolledTraversal6};
 
 // =============================================================================
 // Thread Scaling Benchmarks
@@ -20,11 +20,8 @@ use booste_rs::predict::{Predictor, UnrolledTraversal6};
 /// Compares sequential vs parallel prediction with controlled thread counts.
 fn bench_gbtree_thread_scaling(c: &mut Criterion) {
     let model = load_boosters_model("bench_medium");
-    let forest = model
-        .booster
-        .forest()
-        .expect("Benchmark model must be tree-based");
-    let num_features = model.num_features();
+    let forest = &model.forest;
+    let num_features = model.num_features;
 
     let thread_counts = [1, 2, 4, 8];
     let batch_size = 10_000;
@@ -96,11 +93,8 @@ mod xgboost_comparison {
     /// Benchmark thread scaling comparison with XGBoost (medium GBTree model).
     pub fn bench_gbtree_thread_scaling_xgboost(c: &mut Criterion) {
         let boosters_model = load_boosters_model("bench_medium");
-        let forest = boosters_model
-            .booster
-            .forest()
-            .expect("Benchmark model must be tree-based");
-        let num_features = boosters_model.num_features();
+        let forest = &boosters_model.forest;
+        let num_features = boosters_model.num_features;
 
         let thread_counts = [1, 2, 4, 8];
         let batch_size = 10_000;
@@ -150,11 +144,8 @@ mod xgboost_comparison {
     pub fn bench_gbtree_xgboost_comparison(c: &mut Criterion) {
         let boosters_model = load_boosters_model("bench_medium");
         let xgb_model = load_xgb_model("bench_medium");
-        let num_features = boosters_model.num_features();
-        let forest = boosters_model
-            .booster
-            .forest()
-            .expect("Benchmark model must be tree-based");
+        let num_features = boosters_model.num_features;
+        let forest = &boosters_model.forest;
 
         let predictor = Predictor::<UnrolledTraversal6>::new(forest).with_block_size(64);
 
@@ -194,11 +185,8 @@ mod xgboost_comparison {
     pub fn bench_gbtree_single_row_xgboost(c: &mut Criterion) {
         let boosters_model = load_boosters_model("bench_medium");
         let xgb_model = load_xgb_model("bench_medium");
-        let num_features = boosters_model.num_features();
-        let forest = boosters_model
-            .booster
-            .forest()
-            .expect("Benchmark model must be tree-based");
+        let num_features = boosters_model.num_features;
+        let forest = &boosters_model.forest;
 
         let predictor = Predictor::<UnrolledTraversal6>::new(forest).with_block_size(64);
         let input_data = generate_random_input(1, num_features, 42);

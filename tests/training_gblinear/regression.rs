@@ -9,8 +9,8 @@
 
 use super::{load_config, load_train_data, load_xgb_weights};
 use approx::assert_relative_eq;
-use booste_rs::data::{ColMatrix, DataMatrix, RowMatrix};
-use booste_rs::training::{GBLinearTrainer, LossFunction, Verbosity};
+use booste_rs::data::{ColMatrix, DataMatrix, Dataset, RowMatrix};
+use booste_rs::training::{GBLinearParams, GBLinearTrainer, Rmse, SquaredLoss, Verbosity};
 use rstest::rstest;
 
 /// Test that we can train a simple linear regression and get similar weights to XGBoost.
@@ -19,24 +19,24 @@ use rstest::rstest;
 #[case("regression_multifeature")]
 fn train_regression_matches_xgboost(#[case] name: &str) {
     let (data, labels) = load_train_data(name);
+    let train = Dataset::from_numeric(&data, labels.clone()).unwrap();
     let xgb_weights = load_xgb_weights(name);
     let config = load_config(name);
 
-    // Configure trainer to match XGBoost settings
-    let trainer = GBLinearTrainer::builder()
-        .loss(LossFunction::SquaredError)
-        .num_rounds(config.num_boost_round)
-        .learning_rate(config.eta)
-        .alpha(config.alpha)
-        .lambda(config.lambda)
-        .parallel(false) // Use sequential for determinism
-        .seed(42u64)
-        .early_stopping_rounds(0usize)
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
+    let params = GBLinearParams {
+        n_rounds: config.num_boost_round as u32,
+        learning_rate: config.eta,
+        alpha: config.alpha,
+        lambda: config.lambda,
+        parallel: false,
+        seed: 42,
+        early_stopping_rounds: 0,
+        verbosity: Verbosity::Silent,
+        ..Default::default()
+    };
 
-    let model = trainer.train(&data, &labels, None, &[]);
+    let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
+    let model = trainer.train(&train, &[]).unwrap();
 
     // Compare weights
     // XGBoost stores weights as [w0, w1, ..., wn-1, bias]
@@ -67,31 +67,34 @@ fn train_regression_matches_xgboost(#[case] name: &str) {
 #[test]
 fn train_l2_regularization_shrinks_weights() {
     let (data, labels) = load_train_data("regression_l2");
+    let train = Dataset::from_numeric(&data, labels.clone()).unwrap();
     let config = load_config("regression_l2");
 
     // Train without regularization
-    let trainer_no_reg = GBLinearTrainer::builder()
-        .num_rounds(config.num_boost_round)
-        .learning_rate(config.eta)
-        .alpha(0.0f32)
-        .lambda(0.0f32) // No regularization
-        .parallel(false)
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
-    let no_reg_model = trainer_no_reg.train(&data, &labels, None, &[]);
+    let params_no_reg = GBLinearParams {
+        n_rounds: config.num_boost_round as u32,
+        learning_rate: config.eta,
+        alpha: 0.0,
+        lambda: 0.0,
+        parallel: false,
+        verbosity: Verbosity::Silent,
+        ..Default::default()
+    };
+    let trainer_no_reg = GBLinearTrainer::new(SquaredLoss, Rmse, params_no_reg);
+    let no_reg_model = trainer_no_reg.train(&train, &[]).unwrap();
 
     // Train with L2 regularization
-    let trainer_l2 = GBLinearTrainer::builder()
-        .num_rounds(config.num_boost_round)
-        .learning_rate(config.eta)
-        .alpha(config.alpha)
-        .lambda(config.lambda) // L2 regularization
-        .parallel(false)
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
-    let l2_model = trainer_l2.train(&data, &labels, None, &[]);
+    let params_l2 = GBLinearParams {
+        n_rounds: config.num_boost_round as u32,
+        learning_rate: config.eta,
+        alpha: config.alpha,
+        lambda: config.lambda,
+        parallel: false,
+        verbosity: Verbosity::Silent,
+        ..Default::default()
+    };
+    let trainer_l2 = GBLinearTrainer::new(SquaredLoss, Rmse, params_l2);
+    let l2_model = trainer_l2.train(&train, &[]).unwrap();
 
     // L2 should produce smaller weights on average
     let no_reg_l2_norm: f32 = (0..data.num_features())
@@ -114,20 +117,22 @@ fn train_l2_regularization_shrinks_weights() {
 #[test]
 fn train_elastic_net_produces_sparse_weights() {
     let (data, labels) = load_train_data("regression_elastic_net");
+    let train = Dataset::from_numeric(&data, labels.clone()).unwrap();
     let xgb_weights = load_xgb_weights("regression_elastic_net");
     let config = load_config("regression_elastic_net");
 
-    let trainer = GBLinearTrainer::builder()
-        .num_rounds(config.num_boost_round)
-        .learning_rate(config.eta)
-        .alpha(config.alpha)
-        .lambda(config.lambda)
-        .parallel(false)
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
+    let params = GBLinearParams {
+        n_rounds: config.num_boost_round as u32,
+        learning_rate: config.eta,
+        alpha: config.alpha,
+        lambda: config.lambda,
+        parallel: false,
+        verbosity: Verbosity::Silent,
+        ..Default::default()
+    };
 
-    let model = trainer.train(&data, &labels, None, &[]);
+    let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
+    let model = trainer.train(&train, &[]).unwrap();
 
     // Count near-zero weights in both
     let xgb_near_zero = xgb_weights
@@ -155,18 +160,20 @@ fn trained_model_predictions_reasonable() {
     let row_data = RowMatrix::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], 5, 1);
     let data: ColMatrix = row_data.to_layout();
     let labels = vec![3.0, 5.0, 7.0, 9.0, 11.0];
+    let train = Dataset::from_numeric(&data, labels.clone()).unwrap();
 
-    let trainer = GBLinearTrainer::builder()
-        .num_rounds(100usize)
-        .learning_rate(0.5f32)
-        .alpha(0.0f32)
-        .lambda(0.0f32)
-        .parallel(false)
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
+    let params = GBLinearParams {
+        n_rounds: 100,
+        learning_rate: 0.5,
+        alpha: 0.0,
+        lambda: 0.0,
+        parallel: false,
+        verbosity: Verbosity::Silent,
+        ..Default::default()
+    };
 
-    let model = trainer.train(&data, &labels, None, &[]);
+    let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
+    let model = trainer.train(&train, &[]).unwrap();
 
     // Predictions should be close to actual values
     for i in 0..5 {
@@ -192,24 +199,27 @@ fn parallel_vs_sequential_similar() {
     );
     let data: ColMatrix = row_data.to_layout();
     let labels = vec![3.0, 4.0, 5.0, 6.0]; // y = x0 + 2*x1
+    let train = Dataset::from_numeric(&data, labels.clone()).unwrap();
 
-    let trainer_seq = GBLinearTrainer::builder()
-        .num_rounds(50usize)
-        .learning_rate(0.3f32)
-        .parallel(false)
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
-    let seq_model = trainer_seq.train(&data, &labels, None, &[]);
+    let params_seq = GBLinearParams {
+        n_rounds: 50,
+        learning_rate: 0.3,
+        parallel: false,
+        verbosity: Verbosity::Silent,
+        ..Default::default()
+    };
+    let trainer_seq = GBLinearTrainer::new(SquaredLoss, Rmse, params_seq);
+    let seq_model = trainer_seq.train(&train, &[]).unwrap();
 
-    let trainer_par = GBLinearTrainer::builder()
-        .num_rounds(50usize)
-        .learning_rate(0.3f32)
-        .parallel(true)
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
-    let par_model = trainer_par.train(&data, &labels, None, &[]);
+    let params_par = GBLinearParams {
+        n_rounds: 50,
+        learning_rate: 0.3,
+        parallel: true,
+        verbosity: Verbosity::Silent,
+        ..Default::default()
+    };
+    let trainer_par = GBLinearTrainer::new(SquaredLoss, Rmse, params_par);
+    let par_model = trainer_par.train(&train, &[]).unwrap();
 
     // Predictions should be similar
     let seq_pred = seq_model.predict_row(&[2.0, 2.0], &[0.0])[0];
@@ -231,20 +241,22 @@ fn weight_correlation_with_xgboost(#[case] name: &str) {
     use super::pearson_correlation;
 
     let (data, labels) = load_train_data(name);
+    let train = Dataset::from_numeric(&data, labels.clone()).unwrap();
     let xgb_weights = load_xgb_weights(name);
     let config = load_config(name);
 
-    let trainer = GBLinearTrainer::builder()
-        .num_rounds(config.num_boost_round)
-        .learning_rate(config.eta)
-        .alpha(config.alpha)
-        .lambda(config.lambda)
-        .parallel(false)
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
+    let params = GBLinearParams {
+        n_rounds: config.num_boost_round as u32,
+        learning_rate: config.eta,
+        alpha: config.alpha,
+        lambda: config.lambda,
+        parallel: false,
+        verbosity: Verbosity::Silent,
+        ..Default::default()
+    };
 
-    let model = trainer.train(&data, &labels, None, &[]);
+    let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
+    let model = trainer.train(&train, &[]).unwrap();
 
     // Collect our weights (excluding bias)
     let our_weights: Vec<f32> = (0..xgb_weights.num_features)
@@ -273,6 +285,7 @@ fn test_set_prediction_quality(#[case] name: &str) {
     use super::{compute_test_rmse, load_test_data, load_xgb_predictions, rmse};
 
     let (train_data, train_labels) = load_train_data(name);
+    let train = Dataset::from_numeric(&train_data, train_labels.clone()).unwrap();
     let config = load_config(name);
 
     // Skip if no test data
@@ -281,17 +294,18 @@ fn test_set_prediction_quality(#[case] name: &str) {
         return;
     };
 
-    let trainer = GBLinearTrainer::builder()
-        .num_rounds(config.num_boost_round)
-        .learning_rate(config.eta)
-        .alpha(config.alpha)
-        .lambda(config.lambda)
-        .parallel(false)
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
+    let params = GBLinearParams {
+        n_rounds: config.num_boost_round as u32,
+        learning_rate: config.eta,
+        alpha: config.alpha,
+        lambda: config.lambda,
+        parallel: false,
+        verbosity: Verbosity::Silent,
+        ..Default::default()
+    };
 
-    let model = trainer.train(&train_data, &train_labels, None, &[]);
+    let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
+    let model = trainer.train(&train, &[]).unwrap();
     let base_scores = vec![0.0f32];
 
     let our_rmse = compute_test_rmse(&model, &test_data, &test_labels, &base_scores);

@@ -10,9 +10,11 @@
 use super::{
     compute_multiclass_accuracy, compute_test_rmse_default, load_test_data, load_train_data,
 };
-use booste_rs::data::DataMatrix;
-use booste_rs::training::linear::FeatureSelectorKind;
-use booste_rs::training::{GBLinearTrainer, LossFunction, Verbosity};
+use booste_rs::training::gblinear::FeatureSelectorKind;
+use booste_rs::data::Dataset;
+use booste_rs::training::{
+    GBLinearParams, GBLinearTrainer, MulticlassLogLoss, Rmse, SoftmaxLoss, SquaredLoss, Verbosity,
+};
 
 // =============================================================================
 // Feature Selector Integration Tests
@@ -22,6 +24,7 @@ use booste_rs::training::{GBLinearTrainer, LossFunction, Verbosity};
 #[test]
 fn train_all_selectors_regression() {
     let (data, labels) = load_train_data("regression_l2");
+    let train = Dataset::from_numeric(&data, labels).unwrap();
     let (test_data, test_labels) = match load_test_data("regression_l2") {
         Some(d) => d,
         None => {
@@ -39,35 +42,37 @@ fn train_all_selectors_regression() {
     ];
 
     // Train with shuffle as reference
-    let shuffle_trainer = GBLinearTrainer::builder()
-        .num_rounds(50usize)
-        .learning_rate(0.5f32)
-        .alpha(0.0f32)
-        .lambda(1.0f32)
-        .parallel(false)
-        .seed(42u64)
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
-    let shuffle_model = shuffle_trainer.train(&data, &labels, None, &[]);
+    let shuffle_params = GBLinearParams {
+        n_rounds: 50,
+        learning_rate: 0.5,
+        alpha: 0.0,
+        lambda: 1.0,
+        parallel: false,
+        seed: 42,
+        verbosity: Verbosity::Silent,
+        ..Default::default()
+    };
+    let shuffle_trainer = GBLinearTrainer::new(SquaredLoss, Rmse, shuffle_params);
+    let shuffle_model = shuffle_trainer.train(&train, &[]).unwrap();
     let shuffle_rmse = compute_test_rmse_default(&shuffle_model, &test_data, &test_labels);
 
     println!("Shuffle RMSE: {:.4}", shuffle_rmse);
 
     for (name, selector) in selectors {
-        let trainer = GBLinearTrainer::builder()
-            .num_rounds(50usize)
-            .learning_rate(0.5f32)
-            .alpha(0.0f32)
-            .lambda(1.0f32)
-            .parallel(false)
-            .seed(42u64)
-            .feature_selector(selector)
-            .verbosity(Verbosity::Silent)
-            .build()
-            .unwrap();
+        let params = GBLinearParams {
+            n_rounds: 50,
+            learning_rate: 0.5,
+            alpha: 0.0,
+            lambda: 1.0,
+            parallel: false,
+            seed: 42,
+            feature_selector: selector,
+            verbosity: Verbosity::Silent,
+            ..Default::default()
+        };
 
-        let model = trainer.train(&data, &labels, None, &[]);
+        let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
+        let model = trainer.train(&train, &[]).unwrap();
         let rmse = compute_test_rmse_default(&model, &test_data, &test_labels);
 
         println!("{} RMSE: {:.4}", name, rmse);
@@ -88,6 +93,7 @@ fn train_all_selectors_regression() {
 #[test]
 fn train_all_selectors_multiclass() {
     let (data, labels) = load_train_data("multiclass_classification");
+    let train = Dataset::from_numeric(&data, labels).unwrap();
     let (test_data, test_labels) = match load_test_data("multiclass_classification") {
         Some(d) => d,
         None => {
@@ -106,37 +112,39 @@ fn train_all_selectors_multiclass() {
     ];
 
     // Train with shuffle as reference
-    let shuffle_trainer = GBLinearTrainer::builder()
-        .loss(LossFunction::Softmax { num_classes })
-        .num_rounds(30usize)
-        .learning_rate(0.5f32)
-        .alpha(0.0f32)
-        .lambda(1.0f32)
-        .parallel(false)
-        .seed(42u64)
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
-    let shuffle_model = shuffle_trainer.train(&data, &labels, None, &[]);
+    let shuffle_params = GBLinearParams {
+        n_rounds: 30,
+        learning_rate: 0.5,
+        alpha: 0.0,
+        lambda: 1.0,
+        parallel: false,
+        seed: 42,
+        verbosity: Verbosity::Silent,
+        ..Default::default()
+    };
+    let shuffle_trainer =
+        GBLinearTrainer::new(SoftmaxLoss::new(num_classes), MulticlassLogLoss, shuffle_params);
+    let shuffle_model = shuffle_trainer.train(&train, &[]).unwrap();
     let shuffle_acc = compute_multiclass_accuracy(&shuffle_model, &test_data, &test_labels);
 
     println!("Shuffle accuracy: {:.4}", shuffle_acc);
 
     for (name, selector) in selectors {
-        let trainer = GBLinearTrainer::builder()
-            .loss(LossFunction::Softmax { num_classes })
-            .num_rounds(30usize)
-            .learning_rate(0.5f32)
-            .alpha(0.0f32)
-            .lambda(1.0f32)
-            .parallel(false)
-            .seed(42u64)
-            .feature_selector(selector)
-            .verbosity(Verbosity::Silent)
-            .build()
-            .unwrap();
+        let params = GBLinearParams {
+            n_rounds: 30,
+            learning_rate: 0.5,
+            alpha: 0.0,
+            lambda: 1.0,
+            parallel: false,
+            seed: 42,
+            feature_selector: selector,
+            verbosity: Verbosity::Silent,
+            ..Default::default()
+        };
 
-        let model = trainer.train(&data, &labels, None, &[]);
+        let trainer =
+            GBLinearTrainer::new(SoftmaxLoss::new(num_classes), MulticlassLogLoss, params);
+        let model = trainer.train(&train, &[]).unwrap();
         let acc = compute_multiclass_accuracy(&model, &test_data, &test_labels);
 
         println!("{} accuracy: {:.4}", name, acc);
@@ -157,40 +165,43 @@ fn train_all_selectors_multiclass() {
 #[test]
 fn train_greedy_selector_feature_priority() {
     let (data, labels) = load_train_data("regression_l2");
+    let train = Dataset::from_numeric(&data, labels).unwrap();
 
     // Train with greedy selector with small top_k
-    let greedy_trainer = GBLinearTrainer::builder()
-        .num_rounds(20usize)
-        .learning_rate(0.5f32)
-        .alpha(0.0f32)
-        .lambda(1.0f32)
-        .parallel(false)
-        .seed(42u64)
-        .feature_selector(FeatureSelectorKind::Greedy { top_k: 2 })
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
+    let greedy_params = GBLinearParams {
+        n_rounds: 20,
+        learning_rate: 0.5,
+        alpha: 0.0,
+        lambda: 1.0,
+        parallel: false,
+        seed: 42,
+        feature_selector: FeatureSelectorKind::Greedy { top_k: 2 },
+        verbosity: Verbosity::Silent,
+        ..Default::default()
+    };
+    let greedy_trainer = GBLinearTrainer::new(SquaredLoss, Rmse, greedy_params);
 
     // Train with cyclic (visits all features equally)
-    let cyclic_trainer = GBLinearTrainer::builder()
-        .num_rounds(20usize)
-        .learning_rate(0.5f32)
-        .alpha(0.0f32)
-        .lambda(1.0f32)
-        .parallel(false)
-        .seed(42u64)
-        .feature_selector(FeatureSelectorKind::Cyclic)
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
+    let cyclic_params = GBLinearParams {
+        n_rounds: 20,
+        learning_rate: 0.5,
+        alpha: 0.0,
+        lambda: 1.0,
+        parallel: false,
+        seed: 42,
+        feature_selector: FeatureSelectorKind::Cyclic,
+        verbosity: Verbosity::Silent,
+        ..Default::default()
+    };
+    let cyclic_trainer = GBLinearTrainer::new(SquaredLoss, Rmse, cyclic_params);
 
-    let greedy_model = greedy_trainer.train(&data, &labels, None, &[]);
-    let cyclic_model = cyclic_trainer.train(&data, &labels, None, &[]);
+    let greedy_model = greedy_trainer.train(&train, &[]).unwrap();
+    let cyclic_model = cyclic_trainer.train(&train, &[]).unwrap();
 
     // Both should produce valid models (non-zero weights somewhere)
-    let greedy_has_weights: bool = (0..data.num_features())
+    let greedy_has_weights: bool = (0..data.num_columns())
         .any(|i| greedy_model.weight(i, 0).abs() > 1e-6);
-    let cyclic_has_weights: bool = (0..data.num_features())
+    let cyclic_has_weights: bool = (0..data.num_columns())
         .any(|i| cyclic_model.weight(i, 0).abs() > 1e-6);
 
     assert!(
@@ -210,6 +221,7 @@ fn train_greedy_selector_feature_priority() {
 #[test]
 fn train_thrifty_selector_convergence() {
     let (data, labels) = load_train_data("regression_l2");
+    let train = Dataset::from_numeric(&data, labels).unwrap();
     let (test_data, test_labels) = match load_test_data("regression_l2") {
         Some(d) => d,
         None => {
@@ -219,19 +231,20 @@ fn train_thrifty_selector_convergence() {
     };
 
     // Train with thrifty selector
-    let trainer = GBLinearTrainer::builder()
-        .num_rounds(30usize)
-        .learning_rate(0.5f32)
-        .alpha(0.0f32)
-        .lambda(1.0f32)
-        .parallel(false)
-        .seed(42u64)
-        .feature_selector(FeatureSelectorKind::Thrifty { top_k: 3 })
-        .verbosity(Verbosity::Silent)
-        .build()
-        .unwrap();
+    let params = GBLinearParams {
+        n_rounds: 30,
+        learning_rate: 0.5,
+        alpha: 0.0,
+        lambda: 1.0,
+        parallel: false,
+        seed: 42,
+        feature_selector: FeatureSelectorKind::Thrifty { top_k: 3 },
+        verbosity: Verbosity::Silent,
+        ..Default::default()
+    };
 
-    let model = trainer.train(&data, &labels, None, &[]);
+    let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
+    let model = trainer.train(&train, &[]).unwrap();
     let rmse = compute_test_rmse_default(&model, &test_data, &test_labels);
 
     println!("Thrifty RMSE: {:.4}", rmse);

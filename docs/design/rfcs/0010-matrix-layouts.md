@@ -106,22 +106,21 @@ features.copy_row(row_idx, &mut feature_buffer[offset..][..num_features]);
 
 ### GBLinear Training (improved)
 
-**Before**: Convert to CSC
+**Before**: Convert row-major to column-major
 
 ```rust
-let csc = self.to_csc(train_data);  // Dense → CSC
+let row_matrix = RowMatrix::from_vec(data, num_rows, num_cols);
+let col_matrix: ColMatrix = row_matrix.to_layout();  // Row → Col conversion
 for col in selector.select(num_features) {
-    let col_data = csc.col(col);    // CSC column iteration
+    let col_data = col_matrix.col_slice(col);  // O(1), contiguous
 }
 ```
 
-**After**: Use column-major directly
+**Training API**: Users should provide `ColMatrix` directly for training:
 
 ```rust
-let col_major = data.to_layout::<ColMajor>();  // Dense → Dense (simpler)
-for col in selector.select(num_features) {
-    let col_slice: &[f32] = col_major.col_slice(col);  // O(1), contiguous
-}
+let col_data: ColMatrix = (&row_data).into();  // Convert once
+let model = trainer.train(&col_data, &labels, None, &[]);
 ```
 
 ## Open Questions
@@ -173,4 +172,9 @@ Story 4 if benchmarks show the copy is a bottleneck.
 3. Add layout-specific `row_slice()` / `col_slice()` impls
 4. Add `to_layout()` conversion
 5. Update `LinearTrainer` to use column-major
-6. Keep CSC for actually sparse data (future)
+6. ~~Keep CSC for actually sparse data (future)~~ — Delayed, see RFC-0009
+
+## Changelog
+
+- 2024-11-29: Initial RFC accepted
+- 2024-12-04: CSC support delayed, training APIs now use ColMatrix directly

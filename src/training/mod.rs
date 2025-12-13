@@ -4,28 +4,33 @@
 //!
 //! ## Shared Infrastructure
 //!
-//! - [`GradientBuffer`]: Structure-of-Arrays gradient storage
-//! - [`Loss`]: Trait for computing gradients (supports single and multi-output)
+//! - [`Gradients`]: Structure-of-Arrays gradient storage
+//! - [`Objective`]: Trait for computing gradients (supports single and multi-output)
 //! - [`Metric`], [`EvalSet`]: Evaluation during training
 //! - [`EarlyStopping`]: Callback for stopping when validation metric plateaus
 //! - [`TrainingLogger`], [`Verbosity`]: Structured logging
 //!
 //! ## Model-Specific Training
 //!
-//! - [`gbtree`]: GBTree (decision tree) training with histogram-based approach
-//! - [`linear`]: GBLinear training via coordinate descent
+//! - [`gbdt`]: GBDT (decision tree) training with histogram-based approach
+//! - [`gblinear`]: GBLinear training via coordinate descent
 //!
-//! ## Loss Functions
+//! ## Objectives (Loss Functions)
 //!
-//! Single-output (regression, binary classification):
-//! - [`SquaredLoss`]: Squared error for regression
-//! - [`LogisticLoss`]: Binary cross-entropy for classification
+//! Regression:
+//! - [`SquaredLoss`]: Squared error for regression (L2)
+//! - [`AbsoluteLoss`]: Mean absolute error (L1)
+//! - [`PinballLoss`]: Quantile regression (single or multiple quantiles)
 //! - [`PseudoHuberLoss`]: Robust regression, smooth approximation of Huber
-//! - [`HingeLoss`]: SVM-style binary classification
+//! - [`PoissonLoss`]: Count data regression
 //!
-//! Multi-output (multiclass, multi-quantile):
+//! Classification:
+//! - [`LogisticLoss`]: Binary cross-entropy
+//! - [`HingeLoss`]: SVM-style binary classification
 //! - [`SoftmaxLoss`]: Multiclass cross-entropy
-//! - [`QuantileLoss`]: Pinball loss (single or multiple quantiles)
+//!
+//! Ranking:
+//! - [`LambdaRankLoss`]: LambdaMART for learning to rank
 //!
 //! ## Metrics
 //!
@@ -36,39 +41,36 @@
 //!
 //! See RFC-0009 for design rationale.
 
-mod buffer;
 mod callback;
-pub mod gbtree;
-pub mod linear;
+mod eval;
+pub mod gbdt;
+pub mod gblinear;
+mod gradients;
 mod logger;
-mod loss;
-mod metric;
+mod metrics;
+mod objectives;
+pub mod sampling;
 
 // Re-export shared types at the training module level
-pub use buffer::GradientBuffer;
 pub use callback::EarlyStopping;
+pub use eval::EvalSet;
+pub use gradients::Gradients;
 pub use logger::{TrainingLogger, Verbosity};
-pub use loss::{
-    HingeLoss, LogisticLoss, Loss, LossFunction, PseudoHuberLoss, QuantileLoss, SoftmaxLoss,
-    SquaredLoss,
+pub use metrics::{
+    Accuracy, Auc, HuberMetric, LogLoss, Mae, Mape, Metric, MulticlassAccuracy,
+    MulticlassLogLoss, PoissonDeviance, QuantileMetric, Rmse,
 };
-pub use metric::{
-    Accuracy, Auc, EvalMetric, EvalSet, LogLoss, Mae, Mape, Metric, MulticlassAccuracy,
-    MulticlassLogLoss, QuantileMetric, Rmse,
-};
-
-// Re-export gbtree types for convenience (commonly used)
-pub use gbtree::{
-    BinCuts, BinIndex, BuildingNode, BuildingTree, CutFinder,
-    ExactQuantileCuts, GBTreeTrainer, GBTreeTrainerBuilder, GainParams,
-    GreedySplitFinder, GrowthStrategy, HistogramBuilder,
-    NodeCandidate, QuantizedEvalSet, QuantizedMatrix, Quantizer, RowPartitioner,
-    SplitFinder, SplitInfo, TreeBuildParams, TreeGrower, leaf_objective, leaf_weight, split_gain,
+pub use objectives::{
+    AbsoluteLoss, HingeLoss, LambdaRankLoss, LogisticLoss, Objective, ObjectiveExt,
+    ObjectiveFunction, PinballLoss, PoissonLoss, PseudoHuberLoss, SoftmaxLoss, SquaredLoss,
 };
 
-// Re-export linear types for convenience
-pub use linear::{
-    CyclicSelector, FeatureSelector, FeatureSelectorKind, GBLinearTrainer, GBLinearTrainerBuilder,
-    GreedySelector, RandomSelector, SelectorState, ShuffleSelector, ThriftySelector, UpdateConfig,
-    UpdaterKind, update_bias,
-};
+// Re-export gbdt trainer and params
+pub use gbdt::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy};
+
+// Re-export sampling types
+pub use sampling::{ColSamplingParams, RowSamplingParams};
+
+// Re-export gblinear trainer and params
+pub use gblinear::{GBLinearParams, GBLinearTrainer};
+

@@ -1,11 +1,28 @@
 //! Conversion from XGBoost JSON types to native booste-rs types.
 
-use crate::forest::SoAForest;
-use crate::linear::LinearModel;
-use crate::model::Booster;
-use crate::trees::{ScalarLeaf, TreeBuilder};
+use crate::inference::gbdt::Forest;
+use crate::inference::gblinear::LinearModel;
+
+use crate::inference::gbdt::{ScalarLeaf, TreeBuilder};
 
 use super::json::{GradientBooster, ModelTrees, Tree, XgbModel};
+
+/// A booster model converted from XGBoost.
+///
+/// This enum represents the different types of gradient boosting models
+/// that can be loaded from XGBoost JSON format.
+#[derive(Debug, Clone)]
+pub enum Booster {
+    /// Standard gradient boosted tree ensemble.
+    Tree(Forest<ScalarLeaf>),
+    /// DART (Dropout Additive Regression Trees) ensemble with per-tree weights.
+    Dart {
+        forest: Forest<ScalarLeaf>,
+        weights: Box<[f32]>,
+    },
+    /// Linear (gblinear) booster model.
+    Linear(LinearModel),
+}
 
 /// Error type for XGBoost model conversion.
 #[derive(Debug, thiserror::Error)]
@@ -44,14 +61,14 @@ fn prob_to_margin(base_score: f32, objective: &str) -> f32 {
 }
 
 impl XgbModel {
-    /// Convert to a native `SoAForest<ScalarLeaf>`.
+    /// Convert to a native `Forest<ScalarLeaf>`.
     ///
     /// This only supports gbtree and dart boosters (tree-based models).
     /// For gblinear models, use [`to_booster()`](Self::to_booster) instead.
     ///
     /// Note: For DART models, this returns just the forest without weights.
     /// Use [`to_booster()`](Self::to_booster) to get proper DART weighting.
-    pub fn to_forest(&self) -> Result<SoAForest<ScalarLeaf>, ConversionError> {
+    pub fn to_forest(&self) -> Result<Forest<ScalarLeaf>, ConversionError> {
         if self.is_linear() {
             // For linear models, to_forest doesn't make sense
             // Users should use to_booster() instead
@@ -134,7 +151,7 @@ impl XgbModel {
     /// Internal: Convert to forest with optional DART weights.
     fn to_forest_with_weights(
         &self,
-    ) -> Result<(SoAForest<ScalarLeaf>, Option<Vec<f32>>), ConversionError> {
+    ) -> Result<(Forest<ScalarLeaf>, Option<Vec<f32>>), ConversionError> {
         let (model_trees, tree_weights) = match &self.learner.gradient_booster {
             GradientBooster::Gbtree { model } => (model, None),
             GradientBooster::Dart { gbtree, weight_drop } => {
@@ -151,7 +168,7 @@ impl XgbModel {
         let num_groups = if num_class <= 1 { 1 } else { num_class as u32 };
 
         // Build the forest
-        let mut forest = SoAForest::new(num_groups);
+        let mut forest = Forest::new(num_groups);
 
         // Get base score and convert to margin space based on objective
         let raw_base_score = self.learner.learner_model_param.base_score;
@@ -170,11 +187,11 @@ impl XgbModel {
     }
 }
 
-/// Convert a single XGBoost tree to native SoATreeStorage.
+/// Convert a single XGBoost tree to native TreeStorage.
 fn convert_tree(
     xgb_tree: &Tree,
     tree_idx: usize,
-) -> Result<crate::trees::SoATreeStorage<ScalarLeaf>, ConversionError> {
+) -> Result<crate::inference::gbdt::TreeStorage<ScalarLeaf>, ConversionError> {
     let num_nodes = xgb_tree.tree_param.num_nodes as usize;
     if num_nodes == 0 {
         return Err(ConversionError::EmptyTree(tree_idx));

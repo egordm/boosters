@@ -454,7 +454,7 @@ fn parse_gblinear_multiclass_model() {
 
 #[test]
 fn predict_gblinear_regression() {
-    use booste_rs::model::Booster;
+    use booste_rs::compat::xgboost::Booster;
 
     let (model, input, expected) = load_gblinear("gblinear_regression");
     let booster = model.to_booster().expect("conversion failed");
@@ -474,7 +474,7 @@ fn predict_gblinear_regression() {
 
 #[test]
 fn predict_gblinear_binary() {
-    use booste_rs::model::Booster;
+    use booste_rs::compat::xgboost::Booster;
 
     let (model, input, expected) = load_gblinear("gblinear_binary");
     let booster = model.to_booster().expect("conversion failed");
@@ -497,7 +497,7 @@ fn predict_gblinear_binary() {
 
 #[test]
 fn predict_gblinear_multiclass() {
-    use booste_rs::model::Booster;
+    use booste_rs::compat::xgboost::Booster;
 
     let (model, input, expected) = load_gblinear("gblinear_multiclass");
     let booster = model.to_booster().expect("conversion failed");

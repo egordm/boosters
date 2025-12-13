@@ -10,9 +10,8 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use bench_utils::generate_random_input;
 use booste_rs::compat::LgbModel;
 use booste_rs::data::RowMatrix;
-use booste_rs::model::{Booster, FeatureInfo, Model, ModelMeta, ModelSource};
-use booste_rs::objective::Objective;
-use booste_rs::predict::{Predictor, UnrolledTraversal6};
+use booste_rs::inference::{Forest, Predictor, ScalarLeaf};
+use booste_rs::inference::gbdt::UnrolledTraversal6;
 
 use std::fs::File;
 use std::io::Read;
@@ -28,7 +27,7 @@ fn bench_models_dir() -> PathBuf {
 }
 
 /// Load a booste-rs model from LightGBM text file.
-fn load_boosters_lgb_model(name: &str) -> Model {
+fn load_boosters_lgb_model(name: &str) -> (Forest<ScalarLeaf>, usize) {
     let path = bench_models_dir().join(format!("{}.lgb.txt", name));
     let mut file = File::open(&path).unwrap_or_else(|_| panic!("Failed to open model: {:?}", path));
     let mut content = String::new();
@@ -37,25 +36,13 @@ fn load_boosters_lgb_model(name: &str) -> Model {
     let lgb_model =
         LgbModel::from_string(&content).unwrap_or_else(|e| panic!("Failed to parse model: {}", e));
 
-    let num_features = lgb_model.num_features() as u32;
-    let num_groups = lgb_model.num_groups();
-    let base_score = vec![0.0; num_groups]; // LightGBM uses 0 as base score
+    let num_features = lgb_model.num_features() as usize;
 
     let forest = lgb_model
         .to_forest()
         .expect("Failed to convert model to forest");
 
-    Model::new(
-        Booster::Tree(forest),
-        ModelMeta {
-            num_features,
-            num_groups: num_groups as u32,
-            base_score,
-            source: ModelSource::Unknown,
-        },
-        FeatureInfo::default(),
-        Objective::SquaredError,
-    )
+    (forest, num_features)
 }
 
 // =============================================================================
@@ -64,12 +51,7 @@ fn load_boosters_lgb_model(name: &str) -> Model {
 
 /// Benchmark booste-rs vs LightGBM on various batch sizes (medium model).
 fn bench_lightgbm_batch_sizes(c: &mut Criterion) {
-    let boosters_model = load_boosters_lgb_model("bench_medium");
-    let forest = boosters_model
-        .booster
-        .forest()
-        .expect("Benchmark model must be tree-based");
-    let num_features = boosters_model.num_features();
+    let (forest, num_features) = load_boosters_lgb_model("bench_medium");
 
     let lgb_booster = lightgbm3::Booster::from_file(
         bench_models_dir()
@@ -79,7 +61,7 @@ fn bench_lightgbm_batch_sizes(c: &mut Criterion) {
     )
     .expect("Failed to load LightGBM model");
 
-    let predictor = Predictor::<UnrolledTraversal6>::new(forest).with_block_size(64);
+    let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
 
     let mut group = c.benchmark_group("lightgbm/batch_size/medium");
 
@@ -116,12 +98,7 @@ fn bench_lightgbm_batch_sizes(c: &mut Criterion) {
 
 /// Benchmark single-row latency comparison (medium model).
 fn bench_lightgbm_single_row(c: &mut Criterion) {
-    let boosters_model = load_boosters_lgb_model("bench_medium");
-    let forest = boosters_model
-        .booster
-        .forest()
-        .expect("Benchmark model must be tree-based");
-    let num_features = boosters_model.num_features();
+    let (forest, num_features) = load_boosters_lgb_model("bench_medium");
 
     let lgb_booster = lightgbm3::Booster::from_file(
         bench_models_dir()
@@ -131,7 +108,7 @@ fn bench_lightgbm_single_row(c: &mut Criterion) {
     )
     .expect("Failed to load LightGBM model");
 
-    let predictor = Predictor::<UnrolledTraversal6>::new(forest).with_block_size(64);
+    let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
     let input_data = generate_random_input(1, num_features, 42);
 
     let mut group = c.benchmark_group("lightgbm/single_row/medium");
@@ -171,18 +148,13 @@ fn bench_lightgbm_model_sizes(c: &mut Criterion) {
 
     for (label, model_name) in models.iter() {
         // Try to load booste-rs model
-        let boosters_model = match std::panic::catch_unwind(|| load_boosters_lgb_model(model_name)) {
+        let (forest, num_features) = match std::panic::catch_unwind(|| load_boosters_lgb_model(model_name)) {
             Ok(m) => m,
             Err(_) => {
                 eprintln!("Skipping {} - model not found", model_name);
                 continue;
             }
         };
-        let forest = boosters_model
-            .booster
-            .forest()
-            .expect("Benchmark model must be tree-based");
-        let num_features = boosters_model.num_features();
 
         // Try to load LightGBM model
         let lgb_path = bench_models_dir().join(format!("{}.lgb.txt", model_name));
@@ -197,7 +169,7 @@ fn bench_lightgbm_model_sizes(c: &mut Criterion) {
         let input_data = generate_random_input(batch_size, num_features, 42);
         let matrix = RowMatrix::from_vec(input_data.clone(), batch_size, num_features);
 
-        let predictor = Predictor::<UnrolledTraversal6>::new(forest).with_block_size(64);
+        let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
 
         group.throughput(Throughput::Elements(batch_size as u64));
 
@@ -231,12 +203,7 @@ fn bench_lightgbm_model_sizes(c: &mut Criterion) {
 
 /// Benchmark parallel prediction scaling.
 fn bench_lightgbm_parallel(c: &mut Criterion) {
-    let boosters_model = load_boosters_lgb_model("bench_medium");
-    let forest = boosters_model
-        .booster
-        .forest()
-        .expect("Benchmark model must be tree-based");
-    let num_features = boosters_model.num_features();
+    let (forest, num_features) = load_boosters_lgb_model("bench_medium");
 
     let lgb_booster = lightgbm3::Booster::from_file(
         bench_models_dir()
@@ -252,7 +219,7 @@ fn bench_lightgbm_parallel(c: &mut Criterion) {
     let input_data = generate_random_input(batch_size, num_features, 42);
     let matrix = RowMatrix::from_vec(input_data.clone(), batch_size, num_features);
 
-    let predictor = Predictor::<UnrolledTraversal6>::new(forest).with_block_size(64);
+    let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
 
     let mut group = c.benchmark_group("lightgbm/parallel/medium");
     group.throughput(Throughput::Elements(batch_size as u64));

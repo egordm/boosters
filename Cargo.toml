@@ -13,7 +13,7 @@ approx = "0.5"
 rayon = "1.10"
 
 # Random number generation (for shuffle selector and sampling)
-rand = "0.8"
+rand = { version = "0.8", features = ["small_rng"] }
 rand_xoshiro = "0.6"
 
 # Optional: SIMD acceleration
@@ -49,6 +49,7 @@ lightgbm-compat = ["dep:serde", "dep:serde_json"]
 simd = ["dep:wide"]
 bench-xgboost = ["dep:xgb", "xgboost-compat"]
 bench-lightgbm = ["dep:lightgbm3", "lightgbm-compat"]
+bench-training = []
 
 [[bench]]
 name = "prediction_core"
@@ -65,14 +66,16 @@ harness = false
 [[bench]]
 name = "training_core"
 harness = false
+required-features = ["bench-training"]
 
 [[bench]]
 name = "training_access_patterns"
 harness = false
+required-features = ["bench-training"]
 
-[[bench]]
-name = "training_gbtree"
-harness = false
+# [[bench]]
+# name = "training_gbtree"
+# harness = false
 
 [[bench]]
 name = "prediction_lightgbm"

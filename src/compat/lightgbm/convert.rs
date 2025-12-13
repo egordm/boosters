@@ -1,7 +1,6 @@
 //! Conversion from LightGBM parsed types to native booste-rs types.
 
-use crate::forest::SoAForest;
-use crate::trees::{ScalarLeaf, TreeBuilder};
+use crate::inference::gbdt::{Forest, ScalarLeaf, TreeBuilder, TreeStorage};
 
 use super::text::{DecisionType, LgbModel, LgbTree};
 
@@ -23,7 +22,7 @@ pub enum ConversionError {
 }
 
 impl LgbModel {
-    /// Convert to a native `SoAForest<ScalarLeaf>`.
+    /// Convert to a native `Forest<ScalarLeaf>`.
     ///
     /// # Example
     ///
@@ -32,7 +31,7 @@ impl LgbModel {
     /// let forest = model.to_forest()?;
     /// let predictions = forest.predict_row(&features);
     /// ```
-    pub fn to_forest(&self) -> Result<SoAForest<ScalarLeaf>, ConversionError> {
+    pub fn to_forest(&self) -> Result<Forest<ScalarLeaf>, ConversionError> {
         // Check for unsupported features
         for (idx, tree) in self.trees.iter().enumerate() {
             if tree.is_linear {
@@ -44,7 +43,7 @@ impl LgbModel {
         }
 
         let num_groups = self.num_groups() as u32;
-        let mut forest = SoAForest::new(num_groups);
+        let mut forest = Forest::new(num_groups);
 
         // LightGBM doesn't store base_score the same way XGBoost does.
         // The initial prediction is typically 0 for regression, or learned from data.
@@ -66,11 +65,11 @@ impl LgbModel {
     }
 }
 
-/// Convert a single LightGBM tree to native SoATreeStorage.
+/// Convert a single LightGBM tree to native [`TreeStorage`].
 fn convert_tree(
     lgb_tree: &LgbTree,
     _tree_idx: usize,
-) -> Result<crate::trees::SoATreeStorage<ScalarLeaf>, ConversionError> {
+) -> Result<TreeStorage<ScalarLeaf>, ConversionError> {
     let mut builder = TreeBuilder::new();
 
     // Special case: single-leaf tree

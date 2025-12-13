@@ -15,7 +15,7 @@
 //! which checks both shape and values:
 //! ```ignore
 //! use approx::assert_abs_diff_eq;
-//! use booste_rs::predict::PredictionOutput;
+//! use booste_rs::inference::PredictionOutput;
 //!
 //! let actual = PredictionOutput::new(vec![1.0, 2.0], 2, 1);
 //! let expected = PredictionOutput::new(vec![1.0, 2.0], 2, 1);
