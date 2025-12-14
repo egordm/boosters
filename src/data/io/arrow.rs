@@ -58,12 +58,21 @@ pub fn load_ipc_to_col_matrix_f32(path: impl AsRef<Path>) -> Result<ColMatrix<f3
 /// Load an Arrow IPC file and return both features and targets as vecs.
 ///
 /// Returns `(features_row_major, targets, rows, cols)`.
-pub fn load_ipc_raw_f32(
+pub fn load_ipc_xy_row_major_f32(
 	path: impl AsRef<Path>,
 ) -> Result<(Vec<f32>, Vec<f32>, usize, usize), DatasetLoadError> {
 	let (batches, schema) = read_ipc_file(path)?;
 	let loaded = super::record_batches::LoadedBatches::new(schema, batches)?;
 	loaded.to_raw_f32()
+}
+
+/// Backward-compatible alias for [`load_ipc_xy_row_major_f32`].
+///
+/// Note: despite the generic name, this returns **row-major** features.
+pub fn load_ipc_raw_f32(
+	path: impl AsRef<Path>,
+) -> Result<(Vec<f32>, Vec<f32>, usize, usize), DatasetLoadError> {
+	load_ipc_xy_row_major_f32(path)
 }
 
 // =============================================================================
