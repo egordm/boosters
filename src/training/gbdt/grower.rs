@@ -75,6 +75,9 @@ pub struct TreeGrower {
     split_strategy: GreedySplitter,
     /// Column sampler for feature subsampling.
     col_sampler: ColSampler,
+    /// Per-node leaf values (scaled by learning rate) for the last grown tree.
+    /// Indexed by training node id used by the partitioner/histogram pool.
+    last_leaf_values: Vec<f32>,
 }
 
 impl TreeGrower {
@@ -134,7 +137,64 @@ impl TreeGrower {
             feature_metas,
             split_strategy,
             col_sampler,
+            last_leaf_values: Vec::new(),
         }
+    }
+
+    /// Grow a tree and (optionally) update predictions using training-time leaf assignments.
+    ///
+    /// When `sampled_rows` is `None`, the partitioner contains **all** rows, so we can update
+    /// predictions by iterating leaf ranges instead of traversing the tree per row.
+    pub fn grow_and_update_predictions(
+        &mut self,
+        dataset: &BinnedDataset,
+        gradients: &Gradients,
+        output: usize,
+        sampled_rows: Option<&[u32]>,
+        predictions: &mut [f32],
+    ) -> Tree<ScalarLeaf> {
+        debug_assert_eq!(predictions.len(), dataset.n_rows());
+
+        let tree = self.grow(dataset, gradients, output, sampled_rows);
+
+        // Fast path only valid when the partitioner includes all rows.
+        // After tree growth, partitioner leaves contain the final leaf assignment.
+        if sampled_rows.is_none() {
+            self.update_predictions_from_last_tree(predictions);
+        }
+
+        tree
+    }
+
+    /// Update predictions using the partitioner's leaf assignments and cached leaf values.
+    ///
+    /// After tree growth, the partitioner's leaves correspond to the final tree leaves.
+    /// Instead of traversing the tree for each row, we iterate over each leaf's row range
+    /// and apply the cached leaf value.
+    ///
+    /// This is O(n_rows) with sequential writes to predictions, which is much faster than
+    /// O(n_rows × tree_depth) random tree traversals.
+    fn update_predictions_from_last_tree(&self, predictions: &mut [f32]) {
+        for (leaf_node, leaf_value) in self.last_leaf_values.iter().enumerate() {
+            if leaf_value.is_nan() {
+                continue;
+            }
+            let (begin, end) = self.partitioner.leaf_range(leaf_node as u32);
+            let indices = self.partitioner.indices();
+            for &row_idx in &indices[begin..end] {
+                predictions[row_idx as usize] += *leaf_value;
+            }
+        }
+    }
+
+    /// Record a leaf value for fast prediction updates.
+    fn record_leaf_value(&mut self, node: usize, weight: f32) {
+        // Ensure we have room for this node
+        if node >= self.last_leaf_values.len() {
+            self.last_leaf_values.resize(node + 1, f32::NAN);
+        }
+        // Apply learning rate since tree.predict returns the post-learning-rate values
+        self.last_leaf_values[node] = weight * self.params.learning_rate;
     }
 
     /// Grow a tree from gradients for a specific output.
@@ -234,6 +294,7 @@ impl TreeGrower {
                 .compute_leaf_weight(candidate.grad_sum, candidate.hess_sum);
             self.tree_builder
                 .make_leaf(candidate.tree_node, ScalarLeaf(weight));
+            self.record_leaf_value(candidate.node as usize, weight);
             self.histogram_pool.release(candidate.node);
             return;
         }
@@ -282,9 +343,11 @@ impl TreeGrower {
             self.build_histogram(right_node, gradients, output, bin_views);
         }
 
-        // Compute gradient sums for smaller child
-        let small_rows = self.partitioner.get_leaf_indices(small_node);
-        let (small_grad, small_hess) = gradients.sum(output, Some(small_rows));
+        // Compute gradient sums for smaller child from histogram (O(n_bins) instead of O(n_rows))
+        let (small_grad, small_hess) = self.histogram_pool
+            .get(small_node)
+            .expect("small_node histogram should exist after build")
+            .sum_gradients();
         let (large_grad, large_hess) = (
             candidate.grad_sum - small_grad,
             candidate.hess_sum - small_hess,
@@ -356,6 +419,7 @@ impl TreeGrower {
                     .compute_leaf_weight(candidate.grad_sum, candidate.hess_sum);
                 self.tree_builder
                     .make_leaf(candidate.tree_node, ScalarLeaf(weight));
+                self.record_leaf_value(candidate.node as usize, weight);
                 self.histogram_pool.release(candidate.node);
             }
         }
@@ -366,6 +430,10 @@ impl TreeGrower {
         self.histogram_pool.reset_mappings();
         self.partitioner.reset(n_samples, sampled);
         self.tree_builder.reset();
+        // Clear leaf values from previous tree
+        for v in &mut self.last_leaf_values {
+            *v = f32::NAN;
+        }
     }
 
     /// Check if a candidate should be expanded.

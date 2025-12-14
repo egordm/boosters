@@ -248,16 +248,29 @@ impl<O: Objective> GBDTTrainer<O> {
                 let (grads, hess) = gradients.output_grads_hess_mut(output);
                 let sampled = row_sampler.sample(round as usize, grads, hess);
 
-                // Grow tree for this output (returns inference-ready Tree)
-                let tree = grower.grow(dataset, &gradients, output, sampled.as_deref());
-
-                // Update predictions for this output (column-major layout)
                 let pred_offset = output * n_rows;
-                for row in 0..n_rows {
-                    if let Some(view) = dataset.row_view(row) {
-                        predictions[pred_offset + row] += tree.predict_binned(&view, dataset).0;
+
+                // Fast path: if we trained on all rows, we can update predictions using
+                // training-time leaf assignments instead of traversing the tree per row.
+                let tree = if sampled.is_none() {
+                    grower.grow_and_update_predictions(
+                        dataset,
+                        &gradients,
+                        output,
+                        None,
+                        &mut predictions[pred_offset..pred_offset + n_rows],
+                    )
+                } else {
+                    // Fallback: row sampling trains on a subset; we must still apply the
+                    // trained tree to all rows to keep predictions correct.
+                    let tree = grower.grow(dataset, &gradients, output, sampled.as_deref());
+                    for row in 0..n_rows {
+                        if let Some(view) = dataset.row_view(row) {
+                            predictions[pred_offset + row] += tree.predict_binned(&view, dataset).0;
+                        }
                     }
-                }
+                    tree
+                };
 
                 forest.push_tree(tree, output as u32);
             }

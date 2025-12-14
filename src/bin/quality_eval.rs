@@ -33,7 +33,7 @@ use booste_rs::data::io::arrow::load_ipc_xy_row_major_f32;
 use booste_rs::data::io::parquet::load_parquet_xy_row_major_f32;
 
 #[cfg(feature = "bench-xgboost")]
-use xgb::parameters::tree::{TreeBoosterParametersBuilder, TreeMethod};
+use xgb::parameters::tree::{GrowPolicy, TreeBoosterParametersBuilder, TreeMethod};
 #[cfg(feature = "bench-xgboost")]
 use xgb::parameters::{learning::LearningTaskParametersBuilder, learning::Objective, BoosterParametersBuilder, TrainingParametersBuilder};
 #[cfg(feature = "bench-xgboost")]
@@ -51,18 +51,29 @@ enum Task {
 	Multiclass,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Growth {
+	DepthWise,
+	LeafWise,
+}
+
 #[derive(Debug)]
 struct Args {
 	task: Task,
 	rows: usize,
 	cols: usize,
 	num_classes: usize,
+	growth: Growth,
 	depth: u32,
+	max_leaves: u32,
 	trees: u32,
 	seed: u64,
 	valid_fraction: f32,
 	ipc: Option<PathBuf>,
 	parquet: Option<PathBuf>,
+	libsvm: Option<PathBuf>,
+	uci_machine: Option<PathBuf>,
+	label0: Option<PathBuf>,
 	out: Option<PathBuf>,
 }
 
@@ -71,12 +82,17 @@ fn parse_args() -> Args {
 	let mut rows = 50_000usize;
 	let mut cols = 100usize;
 	let mut num_classes = 3usize;
+	let mut growth = Growth::DepthWise;
 	let mut depth = 6u32;
+	let mut max_leaves: u32 = 0;
 	let mut trees = 200u32;
 	let mut seed = 42u64;
 	let mut valid_fraction = 0.2f32;
 	let mut ipc: Option<PathBuf> = None;
 	let mut parquet: Option<PathBuf> = None;
+	let mut libsvm: Option<PathBuf> = None;
+	let mut uci_machine: Option<PathBuf> = None;
+	let mut label0: Option<PathBuf> = None;
 	let mut out: Option<PathBuf> = None;
 
 	let mut it = std::env::args().skip(1);
@@ -91,17 +107,29 @@ fn parse_args() -> Args {
 					_ => panic!("unknown task: {v}"),
 				};
 			}
+			"--growth" => {
+				let v = it.next().expect("--growth requires a value");
+				growth = match v.as_str() {
+					"depthwise" => Growth::DepthWise,
+					"leafwise" => Growth::LeafWise,
+					_ => panic!("unknown growth: {v} (expected depthwise|leafwise)"),
+				};
+			}
 			"--synthetic" => {
 				rows = it.next().expect("--synthetic rows").parse().unwrap();
 				cols = it.next().expect("--synthetic cols").parse().unwrap();
 			}
 			"--classes" => num_classes = it.next().expect("--classes value").parse().unwrap(),
 			"--depth" => depth = it.next().expect("--depth value").parse().unwrap(),
+			"--leaves" => max_leaves = it.next().expect("--leaves value").parse().unwrap(),
 			"--trees" => trees = it.next().expect("--trees value").parse().unwrap(),
 			"--seed" => seed = it.next().expect("--seed value").parse().unwrap(),
 			"--valid" => valid_fraction = it.next().expect("--valid value").parse().unwrap(),
 			"--ipc" => ipc = Some(PathBuf::from(it.next().expect("--ipc path"))),
 			"--parquet" => parquet = Some(PathBuf::from(it.next().expect("--parquet path"))),
+			"--libsvm" => libsvm = Some(PathBuf::from(it.next().expect("--libsvm path"))),
+			"--uci-machine" => uci_machine = Some(PathBuf::from(it.next().expect("--uci-machine path"))),
+			"--label0" => label0 = Some(PathBuf::from(it.next().expect("--label0 path"))),
 			"--out" => out = Some(PathBuf::from(it.next().expect("--out path"))),
 			"--help" => {
 				print_help_and_exit();
@@ -110,24 +138,44 @@ fn parse_args() -> Args {
 		}
 	}
 
+	let data_sources = [ipc.is_some(), parquet.is_some(), libsvm.is_some(), uci_machine.is_some(), label0.is_some()]
+		.into_iter()
+		.filter(|x| *x)
+		.count();
+	if data_sources > 1 {
+		panic!("Please provide only one dataset source: --synthetic / --ipc / --parquet / --libsvm / --uci-machine / --label0");
+	}
+
+	if growth == Growth::LeafWise && max_leaves == 0 {
+		// By default, make leaf-wise comparable to a depth cap by allowing up to 2^depth leaves.
+		// This is the theoretical maximum leaves in a full binary tree with depth `depth`.
+		max_leaves = (1u64.checked_shl(depth).unwrap_or(u64::MAX).min(u32::MAX as u64)) as u32;
+		max_leaves = max_leaves.max(2);
+	}
+
 	Args {
 		task,
 		rows,
 		cols,
 		num_classes,
+		growth,
 		depth,
+		max_leaves,
 		trees,
 		seed,
 		valid_fraction,
 		ipc,
 		parquet,
+		libsvm,
+		uci_machine,
+		label0,
 		out,
 	}
 }
 
 fn print_help_and_exit() -> ! {
 	eprintln!(
-		"quality_eval\n\n  --task regression|binary|multiclass\n  --synthetic <rows> <cols>\n  --ipc <path> (requires io-arrow)\n  --parquet <path> (requires io-parquet)\n  --trees <n>\n  --depth <d>\n  --classes <k> (multiclass only)\n  --seed <u64>\n  --valid <fraction>\n  --out <path>\n\nFeature-gated libs:\n  --features bench-xgboost enables XGBoost\n  --features bench-lightgbm enables LightGBM\n"
+		"quality_eval\n\n  --task regression|binary|multiclass\n\n  Data:\n    --synthetic <rows> <cols>\n    --ipc <path> (requires io-arrow)\n    --parquet <path> (requires io-parquet)\n    --libsvm <path> (label + index:value, 1-based indices)\n    --uci-machine <path> (UCI computer hardware machine.data CSV)\n    --label0 <path> (tab/space-separated: label first, then features)\n\n  Training:\n    --trees <n>\n    --growth depthwise|leafwise\n    --depth <d> (depthwise; also used to derive default --leaves)\n    --leaves <n> (leafwise; default: 2^depth)\n\n  Task:\n    --classes <k> (multiclass only)\n\n  Misc:\n    --seed <u64>\n    --valid <fraction>\n    --out <path>\n\nFeature-gated libs:\n  --features bench-xgboost enables XGBoost\n  --features bench-lightgbm enables LightGBM\n"
 	);
 	std::process::exit(0)
 }
@@ -162,6 +210,16 @@ fn select_targets(targets: &[f32], row_indices: &[usize]) -> Vec<f32> {
 }
 
 fn load_or_generate(args: &Args) -> (Vec<f32>, Vec<f32>, usize, usize) {
+	if let Some(path) = &args.libsvm {
+		return load_libsvm_dense(path);
+	}
+	if let Some(path) = &args.uci_machine {
+		return load_uci_machine_regression(path);
+	}
+	if let Some(path) = &args.label0 {
+		return load_label0_dense(path);
+	}
+
 	#[cfg(feature = "io-arrow")]
 	if let Some(path) = &args.ipc {
 		return load_ipc_xy_row_major_f32(path).expect("failed to load ipc");
@@ -196,10 +254,138 @@ fn load_or_generate(args: &Args) -> (Vec<f32>, Vec<f32>, usize, usize) {
 	(x, y, args.rows, args.cols)
 }
 
+fn load_libsvm_dense(path: &PathBuf) -> (Vec<f32>, Vec<f32>, usize, usize) {
+	let content = fs::read_to_string(path).expect("failed to read libsvm file");
+	let mut rows: Vec<Vec<(usize, f32)>> = Vec::new();
+	let mut labels: Vec<f32> = Vec::new();
+	let mut max_col: usize = 0;
+
+	for (line_idx, line) in content.lines().enumerate() {
+		let line = line.trim();
+		if line.is_empty() {
+			continue;
+		}
+		let mut parts = line.split_whitespace();
+		let y_str = parts.next().unwrap();
+		let y: f32 = y_str.parse().unwrap_or_else(|_| panic!("invalid label at line {}", line_idx + 1));
+		labels.push(y);
+		let mut feats: Vec<(usize, f32)> = Vec::new();
+		for p in parts {
+			let (idx_str, val_str) = p
+				.split_once(':')
+				.unwrap_or_else(|| panic!("invalid feature token '{p}' at line {}", line_idx + 1));
+			let idx1: usize = idx_str.parse().unwrap_or_else(|_| panic!("invalid feature index at line {}", line_idx + 1));
+			if idx1 == 0 {
+				panic!("libsvm feature indices must be 1-based (got 0) at line {}", line_idx + 1);
+			}
+			let idx0 = idx1 - 1;
+			let v: f32 = val_str.parse().unwrap_or_else(|_| panic!("invalid feature value at line {}", line_idx + 1));
+			max_col = max_col.max(idx0 + 1);
+			feats.push((idx0, v));
+		}
+		rows.push(feats);
+	}
+
+	let n_rows = labels.len();
+	let n_cols = max_col;
+	let mut x = vec![0.0f32; n_rows * n_cols];
+	for (r, feats) in rows.iter().enumerate() {
+		let base = r * n_cols;
+		for &(c, v) in feats {
+			x[base + c] = v;
+		}
+	}
+	(x, labels, n_rows, n_cols)
+}
+
+fn load_label0_dense(path: &PathBuf) -> (Vec<f32>, Vec<f32>, usize, usize) {
+	let content = fs::read_to_string(path).expect("failed to read label0 file");
+	let mut x: Vec<f32> = Vec::new();
+	let mut y: Vec<f32> = Vec::new();
+	let mut n_cols: Option<usize> = None;
+
+	for (line_idx, line) in content.lines().enumerate() {
+		let line = line.trim();
+		if line.is_empty() {
+			continue;
+		}
+		let parts: Vec<&str> = line.split_whitespace().collect();
+		assert!(parts.len() >= 2, "expected label + at least 1 feature at line {}", line_idx + 1);
+		let label: f32 = parts[0].parse().unwrap_or_else(|_| panic!("invalid label at line {}", line_idx + 1));
+		y.push(label);
+		let cols_here = parts.len() - 1;
+		if let Some(c) = n_cols {
+			assert_eq!(c, cols_here, "inconsistent column count at line {}", line_idx + 1);
+		} else {
+			n_cols = Some(cols_here);
+		}
+		for j in 0..cols_here {
+			let v: f32 = parts[j + 1]
+				.parse()
+				.unwrap_or_else(|_| panic!("invalid feature value at line {}", line_idx + 1));
+			x.push(v);
+		}
+	}
+
+	let rows = y.len();
+	let cols = n_cols.unwrap_or(0);
+	assert_eq!(x.len(), rows * cols);
+	(x, y, rows, cols)
+}
+
+fn load_uci_machine_regression(path: &PathBuf) -> (Vec<f32>, Vec<f32>, usize, usize) {
+	let content = fs::read_to_string(path).expect("failed to read UCI machine.data");
+	let mut x: Vec<f32> = Vec::new();
+	let mut y: Vec<f32> = Vec::new();
+	for (line_idx, line) in content.lines().enumerate() {
+		let line = line.trim();
+		if line.is_empty() {
+			continue;
+		}
+		let parts: Vec<&str> = line.split(',').collect();
+		assert_eq!(parts.len(), 10, "expected 10 columns at line {}", line_idx + 1);
+		// Columns: vendor, model, MYCT, MMIN, MMAX, CACH, CHMIN, CHMAX, PRP, ERP
+		for j in 2..=7 {
+			let v: f32 = parts[j]
+				.parse()
+				.unwrap_or_else(|_| panic!("invalid numeric feature at line {}", line_idx + 1));
+			x.push(v);
+		}
+		let prp: f32 = parts[8]
+			.parse()
+			.unwrap_or_else(|_| panic!("invalid target (PRP) at line {}", line_idx + 1));
+		y.push(prp);
+	}
+	let rows = y.len();
+	let cols = 6;
+	assert_eq!(x.len(), rows * cols);
+	(x, y, rows, cols)
+}
+
 fn main() {
 	let args = parse_args();
 
 	let (x_all, y_all, rows, cols) = load_or_generate(&args);
+	let y_all = match args.task {
+		Task::Multiclass => {
+			let mut y = y_all;
+			let mut min = f32::INFINITY;
+			let mut max = f32::NEG_INFINITY;
+			for &v in &y {
+				min = min.min(v);
+				max = max.max(v);
+			}
+			let k = args.num_classes as f32;
+			// Common convention: labels are 1..K. Convert to 0..K-1.
+			if (min - 1.0).abs() < 1e-6 && (max - k).abs() < 1e-6 {
+				for v in &mut y {
+					*v -= 1.0;
+				}
+			}
+			y
+		}
+		_ => y_all,
+	};
 	let (train_idx, valid_idx) = split_indices(rows, args.valid_fraction, args.seed ^ 0x51EED);
 	let x_train = select_rows_row_major(&x_all, rows, cols, &train_idx);
 	let y_train = select_targets(&y_all, &train_idx);
@@ -212,10 +398,15 @@ fn main() {
 
 	let row_valid: RowMatrix<f32> = RowMatrix::from_vec(x_valid.clone(), valid_idx.len(), cols);
 
+	let growth_strategy = match args.growth {
+		Growth::DepthWise => GrowthStrategy::DepthWise { max_depth: args.depth },
+		Growth::LeafWise => GrowthStrategy::LeafWise { max_leaves: args.max_leaves },
+	};
+
 	let params = GBDTParams {
 		n_trees: args.trees,
 		learning_rate: 0.1,
-		growth_strategy: GrowthStrategy::DepthWise { max_depth: args.depth },
+		growth_strategy,
 		gain: GainParams { reg_lambda: 1.0, ..Default::default() },
 		n_threads: 0,
 		cache_size: 256,
@@ -279,16 +470,46 @@ fn main() {
 		}
 	};
 
+	let display_leaves = match args.growth {
+		Growth::DepthWise => (1u64.checked_shl(args.depth).unwrap_or(u64::MAX).min(u32::MAX as u64)) as u32,
+		Growth::LeafWise => args.max_leaves,
+	};
+
 	println!("=== booste-rs ===");
-	println!("task={:?} rows_train={} rows_valid={} cols={} trees={} depth={} pred_kind={}", args.task, train_idx.len(), valid_idx.len(), cols, args.trees, args.depth, boosters_pred_kind);
+	println!(
+		"task={:?} rows_train={} rows_valid={} cols={} trees={} growth={:?} depth={} leaves={} pred_kind={}",
+		args.task,
+		train_idx.len(),
+		valid_idx.len(),
+		cols,
+		args.trees,
+		args.growth,
+		args.depth,
+		display_leaves,
+		boosters_pred_kind
+	);
 	println!("metrics: {boosters_metrics}");
 
 	// Optional: XGBoost
 	#[cfg(feature = "bench-xgboost")]
 	{
+		let (max_depth, max_leaves) = match args.growth {
+			Growth::DepthWise => (args.depth, 0),
+			// In XGBoost, leaf-wise growth is typically represented by `grow_policy=lossguide`
+			// combined with `max_leaves`. To avoid imposing a depth cap that changes behavior,
+			// use max_depth=0 (unlimited) and constrain only by max_leaves.
+			Growth::LeafWise => (0, args.max_leaves),
+		};
+		let grow_policy = match args.growth {
+			Growth::DepthWise => GrowPolicy::Depthwise,
+			Growth::LeafWise => GrowPolicy::LossGuide,
+		};
+
 		let tree_params = TreeBoosterParametersBuilder::default()
 			.eta(0.1)
-			.max_depth(args.depth)
+			.max_depth(max_depth)
+			.max_leaves(max_leaves)
+			.grow_policy(grow_policy)
 			.lambda(1.0)
 			.alpha(0.0)
 			.gamma(0.0)
@@ -332,6 +553,7 @@ fn main() {
 
 		let pred = model.predict(&dvalid).unwrap();
 		println!("=== xgboost ===");
+		println!("task={:?} trees={} growth={:?} depth={} leaves={}", args.task, args.trees, args.growth, args.depth, display_leaves);
 		match args.task {
 			Task::Regression => {
 				let pred_f32: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
@@ -353,6 +575,15 @@ fn main() {
 				for (i, v) in pred.into_iter().enumerate() {
 					prob_row_major[i] = v as f32;
 				}
+				let mut sum_min = f32::INFINITY;
+				let mut sum_max = f32::NEG_INFINITY;
+				for r in 0..n_rows {
+					let start = r * args.num_classes;
+					let sum: f32 = prob_row_major[start..start + args.num_classes].iter().sum();
+					sum_min = sum_min.min(sum);
+					sum_max = sum_max.max(sum);
+				}
+				println!("prob_sums: min={sum_min:.6} max={sum_max:.6}");
 				let ll = MulticlassLogLoss.compute(n_rows, args.num_classes, &prob_row_major, &y_valid, &[]);
 				let acc = MulticlassAccuracy.compute(n_rows, args.num_classes, &prob_row_major, &y_valid, &[]);
 				println!("metrics: mlogloss={ll:.6} acc={acc:.4}");
@@ -372,8 +603,19 @@ fn main() {
 		};
 		params["num_iterations"] = serde_json::Value::from(args.trees as i64);
 		params["learning_rate"] = serde_json::Value::from(0.1f64);
-		params["max_depth"] = serde_json::Value::from(args.depth as i64);
-		params["num_leaves"] = serde_json::Value::from(31i64);
+		params["max_bin"] = serde_json::Value::from(256i64);
+		match args.growth {
+			Growth::DepthWise => {
+				params["max_depth"] = serde_json::Value::from(args.depth as i64);
+				// Avoid constraining depth-wise growth by `num_leaves`.
+				let num_leaves = (1u64.checked_shl(args.depth).unwrap_or(u64::MAX)).max(2) as i64;
+				params["num_leaves"] = serde_json::Value::from(num_leaves);
+			}
+			Growth::LeafWise => {
+				params["max_depth"] = serde_json::Value::from(-1i64);
+				params["num_leaves"] = serde_json::Value::from(args.max_leaves as i64);
+			}
+		}
 		params["min_data_in_leaf"] = serde_json::Value::from(1i64);
 		params["lambda_l2"] = serde_json::Value::from(1.0f64);
 		params["feature_fraction"] = serde_json::Value::from(1.0f64);
@@ -387,6 +629,7 @@ fn main() {
 
 		let pred = bst.predict(&x_valid_f64, cols as i32, true).unwrap();
 		println!("=== lightgbm ===");
+		println!("task={:?} trees={} growth={:?} depth={} leaves={}", args.task, args.trees, args.growth, args.depth, display_leaves);
 		match args.task {
 			Task::Regression => {
 				let pred_f32: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
@@ -408,6 +651,15 @@ fn main() {
 				for (i, v) in pred.into_iter().enumerate() {
 					prob_row_major[i] = v as f32;
 				}
+				let mut sum_min = f32::INFINITY;
+				let mut sum_max = f32::NEG_INFINITY;
+				for r in 0..n_rows {
+					let start = r * args.num_classes;
+					let sum: f32 = prob_row_major[start..start + args.num_classes].iter().sum();
+					sum_min = sum_min.min(sum);
+					sum_max = sum_max.max(sum);
+				}
+				println!("prob_sums: min={sum_min:.6} max={sum_max:.6}");
 				let ll = MulticlassLogLoss.compute(n_rows, args.num_classes, &prob_row_major, &y_valid, &[]);
 				let acc = MulticlassAccuracy.compute(n_rows, args.num_classes, &prob_row_major, &y_valid, &[]);
 				println!("metrics: mlogloss={ll:.6} acc={acc:.4}");
@@ -417,13 +669,15 @@ fn main() {
 
 	if let Some(out) = &args.out {
 		let content = format!(
-			"task={:?}\nrows_train={} rows_valid={} cols={} trees={} depth={}\nbooste_rs: {}\n",
+			"task={:?}\nrows_train={} rows_valid={} cols={} trees={} growth={:?} depth={} leaves={}\nbooste_rs: {}\n",
 			args.task,
 			train_idx.len(),
 			valid_idx.len(),
 			cols,
 			args.trees,
+			args.growth,
 			args.depth,
+			display_leaves,
 			boosters_metrics
 		);
 		fs::write(out, content).expect("write out");

@@ -117,6 +117,18 @@ pub struct HistogramPool {
     /// When true, `cache_size >= total_nodes` so we use identity mapping.
     identity_mode: bool,
 
+    /// Current epoch for identity-mode validity tracking.
+    ///
+    /// In identity mode, `node_id == slot_id` so we don't use mappings.
+    /// We still must invalidate histograms between trees and when simulating
+    /// `move_mapping` during the subtraction trick.
+    identity_epoch: u64,
+
+    /// Per-slot epoch marker for identity mode.
+    ///
+    /// A slot is considered valid iff `identity_slot_epoch[slot] == identity_epoch`.
+    identity_slot_epoch: Box<[u64]>,
+
 	/// Eviction pins (by slot). Only used when `!identity_mode`.
 	pinned: Box<[bool]>,
 }
@@ -158,6 +170,12 @@ impl HistogramPool {
             )
         };
 
+        let identity_slot_epoch = if identity_mode {
+            vec![0u64; cache_size].into_boxed_slice()
+        } else {
+            Box::default()
+        };
+
         Self {
             data,
             features: features.into_boxed_slice(),
@@ -169,6 +187,9 @@ impl HistogramPool {
             last_used_time,
             current_time: 0,
             identity_mode,
+
+            identity_epoch: 1,
+            identity_slot_epoch,
 			pinned,
         }
     }
@@ -177,13 +198,22 @@ impl HistogramPool {
     ///
     /// Call this at the start of each new tree.
     pub fn reset_mappings(&mut self) {
-        if !self.identity_mode {
-            self.current_time = 0;
-            self.node_to_slot.fill(UNMAPPED);
-            self.slot_to_node.fill(UNMAPPED);
-            self.last_used_time.fill(0);
-            self.pinned.fill(false);
+        if self.identity_mode {
+            // In identity mode, we don't use mappings. Instead, bump the epoch so that
+            // subsequent `acquire(node)` returns Miss and forces a rebuild/clear.
+            self.identity_epoch = self.identity_epoch.wrapping_add(1);
+            if self.identity_epoch == 0 {
+                // Avoid ambiguous "never valid" epoch.
+                self.identity_epoch = 1;
+            }
+            return;
         }
+
+        self.current_time = 0;
+        self.node_to_slot.fill(UNMAPPED);
+        self.slot_to_node.fill(UNMAPPED);
+        self.last_used_time.fill(0);
+        self.pinned.fill(false);
     }
 
     /// Pin a node's histogram slot (best-effort).
@@ -218,8 +248,20 @@ impl HistogramPool {
         let node_idx = node_id as usize;
 
         if self.identity_mode {
-            // Identity mode: node_id == slot_id, always a "hit" (no eviction tracking)
-            return AcquireResult::Hit(node_id);
+            // Identity mode: node_id == slot_id.
+            // We still need per-tree validity; treat as miss if this slot hasn't
+            // been built in the current epoch.
+            if node_idx >= self.cache_size {
+                return AcquireResult::Miss(node_id);
+            }
+
+            let slot_epoch = self.identity_slot_epoch[node_idx];
+            if slot_epoch == self.identity_epoch {
+                return AcquireResult::Hit(node_id);
+            }
+
+            self.identity_slot_epoch[node_idx] = self.identity_epoch;
+            return AcquireResult::Miss(node_id);
         }
 
         // Check if node is already mapped
@@ -280,12 +322,26 @@ impl HistogramPool {
             let from_slot = from_node as usize;
             let to_slot = to_node as usize;
 
+            // No-op if moving to self.
+            if from_slot == to_slot {
+                return;
+            }
+
             let from_start = from_slot * self.total_bins;
             let to_start = to_slot * self.total_bins;
 
             // Copy the data between slots
             for i in 0..self.total_bins {
                 self.data[to_start + i] = self.data[from_start + i];
+            }
+
+            // Simulate "moving" ownership semantics used by the subtraction trick:
+            // - destination becomes valid in the current epoch
+            // - source becomes invalid so a subsequent acquire(source) returns Miss
+            if from_slot < self.cache_size && to_slot < self.cache_size {
+                self.identity_slot_epoch[to_slot] = self.identity_epoch;
+                // Invalidate the source so a subsequent acquire(from_node) rebuilds.
+                self.identity_slot_epoch[from_slot] = 0;
             }
             return;
         }
@@ -392,7 +448,12 @@ impl HistogramPool {
     fn resolve_slot(&self, node_id: NodeId) -> Option<SlotId> {
         if self.identity_mode {
             let slot = node_id as usize;
-            if slot < self.cache_size {
+            if slot >= self.cache_size {
+                return None;
+            }
+
+            // Only consider the slot mapped if it has been built in this epoch.
+            if self.identity_slot_epoch[slot] == self.identity_epoch {
                 Some(node_id)
             } else {
                 None
@@ -456,6 +517,27 @@ impl<'a> HistogramSlot<'a> {
     #[inline]
     pub fn n_features(&self) -> usize {
         self.features.len()
+    }
+
+    /// Sum all histogram bins to get total gradient and hessian sums.
+    ///
+    /// This is O(n_bins) instead of O(n_rows), which is much faster for large leaves.
+    /// Each row contributes to exactly one bin per feature, so summing one feature's
+    /// bins gives the total gradient/hessian sums for all rows in this histogram.
+    #[inline]
+    pub fn sum_gradients(&self) -> (f64, f64) {
+        // Sum the first feature's bins (all features contain the same rows)
+        if self.features.is_empty() {
+            return (0.0, 0.0);
+        }
+        let bins = self.feature_bins(0);
+        let mut sum_g = 0.0f64;
+        let mut sum_h = 0.0f64;
+        for &(g, h) in bins {
+            sum_g += g;
+            sum_h += h;
+        }
+        (sum_g, sum_h)
     }
 }
 
@@ -524,16 +606,68 @@ mod tests {
         let features = make_features(&[4, 8, 16]);
         let mut pool = HistogramPool::new(features, 10, 10);
 
-        // In identity mode, acquire always returns Hit with node_id == slot_id
+        // In identity mode, node_id == slot_id, but validity is tracked per-epoch.
+        // The first acquire in an epoch is a Miss and forces a rebuild/clear.
         assert!(pool.identity_mode);
 
         let result = pool.acquire(5);
-        assert!(result.is_hit());
+        assert!(!result.is_hit());
         assert_eq!(result.slot(), 5);
 
-        // Can access the slot
+        // Second acquire in the same epoch is a hit.
+        let result2 = pool.acquire(5);
+        assert!(result2.is_hit());
+
+        // Can access the slot once acquired in the current epoch.
         assert!(pool.get(5).is_some());
         assert!(pool.get(11).is_none()); // Out of range
+
+        // After reset (new epoch), must rebuild again.
+        pool.reset_mappings();
+        let result3 = pool.acquire(5);
+        assert!(!result3.is_hit());
+    }
+
+    #[test]
+    fn test_identity_mode_move_mapping_invalidates_source() {
+        let features = make_features(&[4]);
+        // Identity mode: cache_size == total_nodes
+        let mut pool = HistogramPool::new(features, 4, 4);
+        assert!(pool.identity_mode);
+
+        // Acquire/build node 0 in current epoch.
+        let slot0 = pool.acquire(0).slot();
+        pool.slot_mut(slot0).bins[0] = (42.0, 10.0);
+
+        // Copy/move to node 1 (subtraction trick uses this pattern).
+        pool.move_mapping(0, 1);
+
+        // Destination should be visible and contain copied data.
+        let view1 = pool.get(1).expect("node 1 should be valid after move_mapping");
+        assert_eq!(view1.bins[0].0, 42.0);
+        assert_eq!(view1.bins[0].1, 10.0);
+
+        // Source should be invalidated (so rebuild clears old parent histogram).
+        assert!(pool.get(0).is_none());
+        let r = pool.acquire(0);
+        assert!(!r.is_hit(), "expected Miss after source invalidation");
+    }
+
+    #[test]
+    fn test_identity_mode_move_mapping_noop_self() {
+        let features = make_features(&[4]);
+        let mut pool = HistogramPool::new(features, 2, 2);
+        assert!(pool.identity_mode);
+
+        let slot0 = pool.acquire(0).slot();
+        pool.slot_mut(slot0).bins[0] = (7.0, 3.0);
+
+        // Moving to self should not invalidate or change data.
+        pool.move_mapping(0, 0);
+        let view0 = pool.get(0).expect("node 0 should remain valid");
+        assert_eq!(view0.bins[0].0, 7.0);
+        assert_eq!(view0.bins[0].1, 3.0);
+        assert!(pool.acquire(0).is_hit());
     }
 
     #[test]
