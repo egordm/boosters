@@ -137,6 +137,18 @@ impl RowPartitioner {
         self.leaf_begin[leaf as usize]
     }
 
+    #[inline]
+    pub(super) fn leaf_range(&self, leaf: LeafId) -> (usize, usize) {
+        let begin = self.leaf_begin[leaf as usize] as usize;
+        let count = self.leaf_count[leaf as usize] as usize;
+        (begin, begin + count)
+    }
+
+    #[inline]
+    pub(super) fn indices(&self) -> &[u32] {
+        &self.indices
+    }
+
     /// Number of allocated leaves.
     #[inline]
     pub fn n_leaves(&self) -> usize {

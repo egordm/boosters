@@ -18,6 +18,7 @@
 //! - Gain computation involves differences of large sums that can lose precision in f32
 //! - Memory overhead is acceptable (histograms are small: typically 256 bins × features)
 //! - Benchmarks showed f32→f64 quantization overhead outweighed memory bandwidth savings
+//!
 
 use crate::data::binned::FeatureView;
 use super::pool::FeatureMeta;
@@ -156,7 +157,24 @@ fn build_feature(
 // Core Building Functions
 // =============================================================================
 
+/// Check if indices represent a contiguous range [first, first + n).
+///
+/// When indices are contiguous, we can iterate directly without indirection,
+/// which enables hardware prefetching and better vectorization.
+#[inline]
+fn is_contiguous_range(indices: &[u32]) -> bool {
+    if indices.is_empty() {
+        return true;
+    }
+    let first = indices[0];
+    let last = indices[indices.len() - 1];
+    (last - first) as usize == indices.len() - 1
+}
+
 /// Build histogram for dense u8 bins.
+///
+/// Hot loop with explicit bounds check elimination.
+/// Detects contiguous index ranges to enable hardware prefetching.
 #[inline]
 pub fn build_histogram_u8(
     bins: &[u8],
@@ -166,22 +184,47 @@ pub fn build_histogram_u8(
     indices: &[u32],
 ) {
     if indices.is_empty() {
+        // All rows - sequential access, no prefetching needed (hardware handles it)
         for i in 0..bins.len() {
-            let bin = bins[i] as usize;
-            histogram[bin].0 += grad[i] as f64;
-            histogram[bin].1 += hess[i] as f64;
+            let bin = unsafe { *bins.get_unchecked(i) } as usize;
+            debug_assert!(bin < histogram.len());
+            let slot = unsafe { histogram.get_unchecked_mut(bin) };
+            slot.0 += unsafe { *grad.get_unchecked(i) } as f64;
+            slot.1 += unsafe { *hess.get_unchecked(i) } as f64;
+        }
+    } else if is_contiguous_range(indices) {
+        // Contiguous range - iterate directly without indirection
+        // This enables hardware prefetching and better vectorization
+        let start = indices[0] as usize;
+        let end = start + indices.len();
+        for row in start..end {
+            let bin = unsafe { *bins.get_unchecked(row) } as usize;
+            debug_assert!(bin < histogram.len());
+            let slot = unsafe { histogram.get_unchecked_mut(bin) };
+            slot.0 += unsafe { *grad.get_unchecked(row) } as f64;
+            slot.1 += unsafe { *hess.get_unchecked(row) } as f64;
         }
     } else {
-        for &idx in indices {
-            let row = idx as usize;
-            let bin = bins[row] as usize;
-            histogram[bin].0 += grad[row] as f64;
-            histogram[bin].1 += hess[row] as f64;
+        // Indexed rows - random access.
+        for i in 0..indices.len() {
+            let row = unsafe { *indices.get_unchecked(i) } as usize;
+            debug_assert!(row < bins.len());
+            debug_assert!(row < grad.len());
+
+            let bin = unsafe { *bins.get_unchecked(row) } as usize;
+            debug_assert!(bin < histogram.len());
+
+            let slot = unsafe { histogram.get_unchecked_mut(bin) };
+            slot.0 += unsafe { *grad.get_unchecked(row) } as f64;
+            slot.1 += unsafe { *hess.get_unchecked(row) } as f64;
         }
     }
 }
 
 /// Build histogram for dense u16 bins.
+///
+/// Hot loop with explicit bounds check elimination.
+/// Detects contiguous index ranges to enable hardware prefetching.
 #[inline]
 pub fn build_histogram_u16(
     bins: &[u16],
@@ -191,22 +234,45 @@ pub fn build_histogram_u16(
     indices: &[u32],
 ) {
     if indices.is_empty() {
+        // All rows - sequential access, no prefetching needed
         for i in 0..bins.len() {
-            let bin = bins[i] as usize;
-            histogram[bin].0 += grad[i] as f64;
-            histogram[bin].1 += hess[i] as f64;
+            let bin = unsafe { *bins.get_unchecked(i) } as usize;
+            debug_assert!(bin < histogram.len());
+            let slot = unsafe { histogram.get_unchecked_mut(bin) };
+            slot.0 += unsafe { *grad.get_unchecked(i) } as f64;
+            slot.1 += unsafe { *hess.get_unchecked(i) } as f64;
+        }
+    } else if is_contiguous_range(indices) {
+        // Contiguous range - iterate directly without indirection
+        let start = indices[0] as usize;
+        let end = start + indices.len();
+        for row in start..end {
+            let bin = unsafe { *bins.get_unchecked(row) } as usize;
+            debug_assert!(bin < histogram.len());
+            let slot = unsafe { histogram.get_unchecked_mut(bin) };
+            slot.0 += unsafe { *grad.get_unchecked(row) } as f64;
+            slot.1 += unsafe { *hess.get_unchecked(row) } as f64;
         }
     } else {
-        for &idx in indices {
-            let row = idx as usize;
-            let bin = bins[row] as usize;
-            histogram[bin].0 += grad[row] as f64;
-            histogram[bin].1 += hess[row] as f64;
+        // Indexed rows - random access.
+        for i in 0..indices.len() {
+            let row = unsafe { *indices.get_unchecked(i) } as usize;
+            debug_assert!(row < bins.len());
+            debug_assert!(row < grad.len());
+
+            let bin = unsafe { *bins.get_unchecked(row) } as usize;
+            debug_assert!(bin < histogram.len());
+
+            let slot = unsafe { histogram.get_unchecked_mut(bin) };
+            slot.0 += unsafe { *grad.get_unchecked(row) } as f64;
+            slot.1 += unsafe { *hess.get_unchecked(row) } as f64;
         }
     }
 }
 
 /// Build histogram with strided u8 bins (row-major groups).
+///
+/// Hot loop with bounds check elimination.
 #[inline]
 pub fn build_histogram_strided_u8(
     bins: &[u8],
@@ -219,21 +285,32 @@ pub fn build_histogram_strided_u8(
     if indices.is_empty() {
         let n_rows = grad.len();
         for row in 0..n_rows {
-            let bin = bins[row * stride] as usize;
-            histogram[bin].0 += grad[row] as f64;
-            histogram[bin].1 += hess[row] as f64;
+            let bin_idx = row * stride;
+            debug_assert!(bin_idx < bins.len());
+            let bin = unsafe { *bins.get_unchecked(bin_idx) } as usize;
+            debug_assert!(bin < histogram.len());
+            let slot = unsafe { histogram.get_unchecked_mut(bin) };
+            slot.0 += unsafe { *grad.get_unchecked(row) } as f64;
+            slot.1 += unsafe { *hess.get_unchecked(row) } as f64;
         }
     } else {
-        for &idx in indices {
-            let row = idx as usize;
-            let bin = bins[row * stride] as usize;
-            histogram[bin].0 += grad[row] as f64;
-            histogram[bin].1 += hess[row] as f64;
+        for i in 0..indices.len() {
+            let row = unsafe { *indices.get_unchecked(i) } as usize;
+            let bin_idx = row * stride;
+            debug_assert!(bin_idx < bins.len());
+            let bin = unsafe { *bins.get_unchecked(bin_idx) } as usize;
+            debug_assert!(bin < histogram.len());
+
+            let slot = unsafe { histogram.get_unchecked_mut(bin) };
+            slot.0 += unsafe { *grad.get_unchecked(row) } as f64;
+            slot.1 += unsafe { *hess.get_unchecked(row) } as f64;
         }
     }
 }
 
 /// Build histogram with strided u16 bins.
+///
+/// Hot loop with bounds check elimination.
 #[inline]
 pub fn build_histogram_strided_u16(
     bins: &[u16],
@@ -246,16 +323,25 @@ pub fn build_histogram_strided_u16(
     if indices.is_empty() {
         let n_rows = grad.len();
         for row in 0..n_rows {
-            let bin = bins[row * stride] as usize;
-            histogram[bin].0 += grad[row] as f64;
-            histogram[bin].1 += hess[row] as f64;
+            let bin_idx = row * stride;
+            debug_assert!(bin_idx < bins.len());
+            let bin = unsafe { *bins.get_unchecked(bin_idx) } as usize;
+            debug_assert!(bin < histogram.len());
+            let slot = unsafe { histogram.get_unchecked_mut(bin) };
+            slot.0 += unsafe { *grad.get_unchecked(row) } as f64;
+            slot.1 += unsafe { *hess.get_unchecked(row) } as f64;
         }
     } else {
-        for &idx in indices {
-            let row = idx as usize;
-            let bin = bins[row * stride] as usize;
-            histogram[bin].0 += grad[row] as f64;
-            histogram[bin].1 += hess[row] as f64;
+        for i in 0..indices.len() {
+            let row = unsafe { *indices.get_unchecked(i) } as usize;
+            let bin_idx = row * stride;
+            debug_assert!(bin_idx < bins.len());
+            let bin = unsafe { *bins.get_unchecked(bin_idx) } as usize;
+            debug_assert!(bin < histogram.len());
+
+            let slot = unsafe { histogram.get_unchecked_mut(bin) };
+            slot.0 += unsafe { *grad.get_unchecked(row) } as f64;
+            slot.1 += unsafe { *hess.get_unchecked(row) } as f64;
         }
     }
 }
