@@ -20,7 +20,8 @@
 //! all bin values are available for partitioning.
 
 use super::split::{SplitInfo, SplitType};
-use crate::data::BinnedDataset;
+use crate::data::binned::FeatureView;
+use crate::data::{BinnedDataset, MissingType};
 
 /// Leaf identifier (index during training).
 pub type LeafId = u32;
@@ -175,16 +176,98 @@ impl RowPartitioner {
         let count = self.leaf_count[leaf as usize] as usize;
         let end = begin + count;
 
+        // Pre-compute feature-specific data once (not per-row!)
+        let feature_view = dataset.feature_view(split.feature as usize);
+        let bin_mapper = dataset.bin_mapper(split.feature as usize);
+        let default_bin = bin_mapper.default_bin();
+        let has_missing = bin_mapper.missing_type() != MissingType::None;
+        let default_left = split.default_left;
+
         // Partition in place: left elements move to front
         let mut left_end = begin;
 
-        for i in begin..end {
-            let row = self.indices[i];
-            let goes_left = self.evaluate_split(row, split, dataset);
-
-            if goes_left {
-                self.indices.swap(i, left_end);
-                left_end += 1;
+        // Dispatch once based on split type and feature view type
+        match (&split.split_type, &feature_view) {
+            // Numerical split with u8 bins (most common case)
+            (SplitType::Numerical { bin: threshold }, FeatureView::U8 { bins, stride }) => {
+                let threshold = *threshold as u8;
+                let stride = *stride;
+                for i in begin..end {
+                    let row = self.indices[i] as usize;
+                    let bin = bins[row * stride];
+                    let goes_left = if bin == default_bin as u8 && has_missing {
+                        default_left
+                    } else {
+                        bin <= threshold
+                    };
+                    if goes_left {
+                        self.indices.swap(i, left_end);
+                        left_end += 1;
+                    }
+                }
+            }
+            // Numerical split with u16 bins
+            (SplitType::Numerical { bin: threshold }, FeatureView::U16 { bins, stride }) => {
+                let threshold = *threshold;
+                let stride = *stride;
+                for i in begin..end {
+                    let row = self.indices[i] as usize;
+                    let bin = bins[row * stride];
+                    let goes_left = if bin == default_bin as u16 && has_missing {
+                        default_left
+                    } else {
+                        bin <= threshold
+                    };
+                    if goes_left {
+                        self.indices.swap(i, left_end);
+                        left_end += 1;
+                    }
+                }
+            }
+            // Categorical split with u8 bins
+            (SplitType::Categorical { left_cats }, FeatureView::U8 { bins, stride }) => {
+                let stride = *stride;
+                for i in begin..end {
+                    let row = self.indices[i] as usize;
+                    let bin = bins[row * stride] as u32;
+                    let goes_left = if bin == default_bin && has_missing {
+                        default_left
+                    } else {
+                        left_cats.contains(bin)
+                    };
+                    if goes_left {
+                        self.indices.swap(i, left_end);
+                        left_end += 1;
+                    }
+                }
+            }
+            // Categorical split with u16 bins  
+            (SplitType::Categorical { left_cats }, FeatureView::U16 { bins, stride }) => {
+                let stride = *stride;
+                for i in begin..end {
+                    let row = self.indices[i] as usize;
+                    let bin = bins[row * stride] as u32;
+                    let goes_left = if bin == default_bin && has_missing {
+                        default_left
+                    } else {
+                        left_cats.contains(bin)
+                    };
+                    if goes_left {
+                        self.indices.swap(i, left_end);
+                        left_end += 1;
+                    }
+                }
+            }
+            // Sparse features - use the generic path (rare case)
+            _ => {
+                for i in begin..end {
+                    let row = self.indices[i];
+                    let goes_left = self.evaluate_split_generic(row, split, dataset);
+                    if goes_left {
+                        self.indices.swap(i, left_end);
+                        left_end += 1;
+                    }
+                }
             }
         }
 
@@ -203,7 +286,7 @@ impl RowPartitioner {
         (right_leaf, left_count, right_count)
     }
 
-    /// Evaluate whether a row goes left according to the split.
+    /// Generic split evaluation for sparse features (fallback path).
     ///
     /// # Panics
     ///
@@ -211,14 +294,14 @@ impl RowPartitioner {
     /// when using sparse storage where some bins are not present. GBDT training
     /// requires dense storage for all rows to be available during partitioning.
     #[inline]
-    fn evaluate_split(&self, row: u32, split: &SplitInfo, dataset: &BinnedDataset) -> bool {
+    fn evaluate_split_generic(&self, row: u32, split: &SplitInfo, dataset: &BinnedDataset) -> bool {
         let bin = dataset.get_bin(row as usize, split.feature as usize)
             .expect("partition requires dense storage");
 
         // Handle missing/default bin
         let bin_mapper = dataset.bin_mapper(split.feature as usize);
         let default_bin = bin_mapper.default_bin();
-        if bin == default_bin && bin_mapper.missing_type() != crate::data::MissingType::None {
+        if bin == default_bin && bin_mapper.missing_type() != MissingType::None {
             return split.default_left;
         }
 

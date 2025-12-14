@@ -531,6 +531,7 @@ impl TreeGrower {
     }
 
     /// Check if indices represent a contiguous range [first, first + n).
+    /// Only returns true if indices are strictly sequential: [k, k+1, k+2, ...].
     #[inline]
     fn is_contiguous_range(indices: &[u32]) -> bool {
         if indices.is_empty() {
@@ -538,7 +539,8 @@ impl TreeGrower {
         }
         let first = indices[0];
         let last = indices[indices.len() - 1];
-        (last - first) as usize == indices.len() - 1
+        // Check: last >= first (sorted) and range equals length
+        last >= first && (last - first) as usize == indices.len() - 1
     }
 
     /// Build histogram for a node.
