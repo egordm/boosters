@@ -45,6 +45,8 @@ mod slices;
 mod stats;
 mod tree;
 
+pub mod data;
+
 #[cfg(feature = "xgboost-compat")]
 mod cases;
 
