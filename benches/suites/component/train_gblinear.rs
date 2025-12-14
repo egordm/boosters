@@ -6,7 +6,7 @@ mod common;
 use common::criterion_config::default_criterion;
 
 use booste_rs::data::{ColMatrix, Dataset, RowMatrix};
-use booste_rs::testing::data::{random_dense_f32, regression_targets_linear};
+use booste_rs::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
 use booste_rs::training::{GBLinearParams, GBLinearTrainer, MulticlassLogLoss, Rmse, SoftmaxLoss, SquaredLoss, Verbosity};
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
@@ -18,7 +18,7 @@ fn bench_gblinear_regression_train(c: &mut Criterion) {
 
 	for num_rows in [1_000usize, 10_000, 50_000] {
 		let features = random_dense_f32(num_rows, num_features, 42, -1.0, 1.0);
-		let (labels, _w, _b) = regression_targets_linear(&features, num_rows, num_features, 1337, 0.05);
+		let (labels, _w, _b) = synthetic_regression_targets_linear(&features, num_rows, num_features, 1337, 0.05);
 
 		let row_matrix = RowMatrix::from_vec(features, num_rows, num_features);
 		let col_matrix: ColMatrix = ColMatrix::from_data_matrix(&row_matrix);
@@ -50,7 +50,7 @@ fn bench_gblinear_conversion_overhead(c: &mut Criterion) {
 
 	for num_rows in [1_000usize, 10_000, 50_000] {
 		let features = random_dense_f32(num_rows, num_features, 42, -1.0, 1.0);
-		let (labels, _w, _b) = regression_targets_linear(&features, num_rows, num_features, 1337, 0.05);
+		let (labels, _w, _b) = synthetic_regression_targets_linear(&features, num_rows, num_features, 1337, 0.05);
 		let row_matrix = RowMatrix::from_vec(features, num_rows, num_features);
 
 		group.throughput(Throughput::Elements((num_rows * num_features) as u64));
@@ -74,7 +74,7 @@ fn bench_gblinear_updater(c: &mut Criterion) {
 	let num_rows = 10_000usize;
 
 	let features = random_dense_f32(num_rows, num_features, 42, -1.0, 1.0);
-	let (labels, _w, _b) = regression_targets_linear(&features, num_rows, num_features, 1337, 0.05);
+	let (labels, _w, _b) = synthetic_regression_targets_linear(&features, num_rows, num_features, 1337, 0.05);
 	let row_matrix = RowMatrix::from_vec(features, num_rows, num_features);
 	let col_matrix: ColMatrix = ColMatrix::from_data_matrix(&row_matrix);
 	let dataset = Dataset::from_numeric(&col_matrix, labels).unwrap();
@@ -132,7 +132,7 @@ fn bench_gblinear_feature_scaling(c: &mut Criterion) {
 
 	for num_features in [10usize, 50, 100, 500, 1_000] {
 		let features = random_dense_f32(num_rows, num_features, 42, -1.0, 1.0);
-		let (labels, _w, _b) = regression_targets_linear(&features, num_rows, num_features, 1337, 0.05);
+		let (labels, _w, _b) = synthetic_regression_targets_linear(&features, num_rows, num_features, 1337, 0.05);
 		let row_matrix = RowMatrix::from_vec(features, num_rows, num_features);
 		let col_matrix: ColMatrix = ColMatrix::from_data_matrix(&row_matrix);
 		let dataset = Dataset::from_numeric(&col_matrix, labels).unwrap();

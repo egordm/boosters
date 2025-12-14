@@ -142,7 +142,7 @@ impl GrowthState {
                 current_depth,
                 current_level,
                 ..
-            } => *current_depth <= *max_depth && !current_level.is_empty(),
+            } => *current_depth < *max_depth && !current_level.is_empty(),
             GrowthState::LeafWise {
                 max_leaves,
                 candidates,
@@ -454,12 +454,8 @@ mod tests {
         state.pop_next();
         state.push(make_candidate(2, 0.3));
         state.advance();
-        assert!(state.should_continue()); // depth 2
-
-        state.pop_next();
-        state.push(make_candidate(3, 0.2));
-        state.advance();
-        assert!(!state.should_continue()); // depth 3 > max_depth
+		// At depth == max_depth, we stop expanding (leaves can be at depth=max_depth).
+        assert!(!state.should_continue());
     }
 
     #[test]

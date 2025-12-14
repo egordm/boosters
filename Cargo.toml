@@ -86,10 +86,32 @@ required-features = ["bench-training"]
 path = "benches/suites/component/train_gblinear.rs"
 
 [[bench]]
+name = "training_gbdt"
+harness = false
+path = "benches/suites/component/train_gbdt.rs"
+
+[[bench]]
+name = "e2e_train_predict_gbdt"
+harness = false
+path = "benches/suites/e2e/train_predict_gbdt.rs"
+
+[[bench]]
 name = "prediction_lightgbm"
 harness = false
 required-features = ["bench-lightgbm"]
 path = "benches/suites/compare/predict_lightgbm.rs"
+
+[[bench]]
+name = "training_xgboost"
+harness = false
+required-features = ["bench-xgboost"]
+path = "benches/suites/compare/train_xgboost.rs"
+
+[[bench]]
+name = "training_lightgbm"
+harness = false
+required-features = ["bench-lightgbm"]
+path = "benches/suites/compare/train_lightgbm.rs"
 
 [[bench]]
 name = "prediction_xgboost"

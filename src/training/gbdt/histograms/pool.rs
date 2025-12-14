@@ -116,6 +116,9 @@ pub struct HistogramPool {
 
     /// When true, `cache_size >= total_nodes` so we use identity mapping.
     identity_mode: bool,
+
+	/// Eviction pins (by slot). Only used when `!identity_mode`.
+	pinned: Box<[bool]>,
 }
 
 impl HistogramPool {
@@ -144,13 +147,14 @@ impl HistogramPool {
         let data = vec![(0.0, 0.0); data_len].into_boxed_slice();
 
         // Allocate mapping arrays only if needed
-        let (node_to_slot, slot_to_node, last_used_time) = if identity_mode {
-            (Box::default(), Box::default(), Box::default())
+        let (node_to_slot, slot_to_node, last_used_time, pinned) = if identity_mode {
+            (Box::default(), Box::default(), Box::default(), Box::default())
         } else {
             (
                 vec![UNMAPPED; total_nodes].into_boxed_slice(),
                 vec![UNMAPPED; cache_size].into_boxed_slice(),
                 vec![0u64; cache_size].into_boxed_slice(),
+				vec![false; cache_size].into_boxed_slice(),
             )
         };
 
@@ -165,6 +169,7 @@ impl HistogramPool {
             last_used_time,
             current_time: 0,
             identity_mode,
+			pinned,
         }
     }
 
@@ -177,6 +182,29 @@ impl HistogramPool {
             self.node_to_slot.fill(UNMAPPED);
             self.slot_to_node.fill(UNMAPPED);
             self.last_used_time.fill(0);
+            self.pinned.fill(false);
+        }
+    }
+
+    /// Pin a node's histogram slot (best-effort).
+    ///
+    /// When pinned, the slot will not be chosen for LRU eviction.
+    pub fn pin(&mut self, node_id: NodeId) {
+        if self.identity_mode {
+            return;
+        }
+        if let Some(slot) = self.resolve_slot(node_id) {
+            self.pinned[slot as usize] = true;
+        }
+    }
+
+    /// Unpin a node's histogram slot (best-effort).
+    pub fn unpin(&mut self, node_id: NodeId) {
+        if self.identity_mode {
+            return;
+        }
+        if let Some(slot) = self.resolve_slot(node_id) {
+            self.pinned[slot as usize] = false;
         }
     }
 
@@ -236,6 +264,7 @@ impl HistogramPool {
             self.node_to_slot[node_idx] = UNMAPPED;
             self.slot_to_node[slot as usize] = UNMAPPED;
             self.last_used_time[slot as usize] = 0; // Make it most eligible for eviction
+			self.pinned[slot as usize] = false;
         }
     }
 
@@ -382,14 +411,20 @@ impl HistogramPool {
     fn find_lru_slot(&self) -> SlotId {
         let mut min_time = u64::MAX;
         let mut lru_slot = 0;
+		let mut found = false;
 
         for (slot, &time) in self.last_used_time.iter().enumerate() {
+			if self.pinned[slot] {
+				continue;
+			}
             if time < min_time {
                 min_time = time;
                 lru_slot = slot;
+				found = true;
             }
         }
 
+		assert!(found, "All histogram slots are pinned; cannot evict");
         lru_slot as SlotId
     }
 }
@@ -633,5 +668,23 @@ mod tests {
         let view = pool.slot(slot);
         assert_eq!(view.bins[0].0, 0.0);
         assert_eq!(view.bins[0].1, 0.0);
+    }
+
+    #[test]
+    fn test_pinning_prevents_eviction() {
+        let features = vec![FeatureMeta { offset: 0, n_bins: 4 }];
+        let mut pool = HistogramPool::new(features, 2, 10);
+
+        pool.acquire(0);
+        pool.acquire(1);
+        assert!(pool.get(0).is_some());
+        assert!(pool.get(1).is_some());
+
+        pool.pin(0);
+        pool.acquire(2);
+
+        assert!(pool.get(0).is_some());
+        assert!(pool.get(2).is_some());
+        assert!(pool.get(1).is_none());
     }
 }

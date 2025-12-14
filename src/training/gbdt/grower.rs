@@ -258,13 +258,29 @@ impl TreeGrower {
             (right_node, right_count, left_node, left_count)
         };
 
-        // Subtraction trick:
-        // 1. Move parent histogram to large child (copies data, frees parent slot)
-        // 2. Build small child histogram (can now reuse parent's slot)
-        // 3. Subtract: large = large - small (large still has parent data)
-        self.histogram_pool.move_mapping(parent_node, large_node);
-        self.build_histogram(small_node, gradients, output, bin_views);
-        self.histogram_pool.subtract(large_node, small_node);
+        // Histogram building for children.
+        //
+        // Fast path: subtraction trick.
+        // This requires the parent's histogram to still be cached, so we pin the parent
+        // slot to prevent eviction during the subtract path.
+        //
+        // If the parent histogram is missing (should be rare), fall back to building
+        // both child histograms from scratch.
+        if self.histogram_pool.get(parent_node).is_some() {
+            // Subtraction trick:
+            // 1. Move parent histogram to large child (copies data, frees parent slot)
+            // 2. Build small child histogram (can now reuse parent's slot)
+            // 3. Subtract: large = large - small (large still has parent data)
+            self.histogram_pool.pin(parent_node);
+            self.histogram_pool.move_mapping(parent_node, large_node);
+            self.build_histogram(small_node, gradients, output, bin_views);
+            self.histogram_pool.subtract(large_node, small_node);
+            self.histogram_pool.unpin(large_node);
+        } else {
+            // Fallback: build both histograms directly.
+            self.build_histogram(left_node, gradients, output, bin_views);
+            self.build_histogram(right_node, gradients, output, bin_views);
+        }
 
         // Compute gradient sums for smaller child
         let small_rows = self.partitioner.get_leaf_indices(small_node);

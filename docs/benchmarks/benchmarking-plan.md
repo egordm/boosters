@@ -93,8 +93,10 @@ Important nuance: Criterion benches compile the library as a normal dependency, 
 
 Suggested feature naming:
 
-- `testing-utils`: enables synthetic generators + dataset loaders used by benches/tools
-- keep purely assertion-style helpers always-on
+Current approach:
+
+- Keep lightweight synthetic generators and split helpers always-on under `booste_rs::testing`.
+- Keep heavier / optional dataset loading behind existing IO features (`io-arrow`, `io-parquet`).
 
 This keeps the “one testing utilities module” story clean, while still making benchmarks reuse the same code paths as tests.
 
@@ -320,8 +322,7 @@ If we only benchmark runtime, we can accidentally “win” by being less accura
 
 This can live as:
 
-- an integration test-like harness under `tools/` (recommended), or
-- a `cargo run --example quality_eval` style executable
+- a small CLI (`src/bin/quality_eval.rs`) that loads data, trains, and prints metrics
 
 It should not run in CI by default.
 
@@ -394,11 +395,18 @@ Add a short checklist doc that every benchmark run references:
 
 ## 10) Next steps
 
-1. Introduce `src/testkit` + feature gating (tests always, benches via feature)
-1. Move synthetic data generation out of `benches/bench_utils.rs` into the testkit
-1. Add `benches/common` with a single Criterion config + naming conventions
-1. Refactor existing benches to use the common modules
-1. Add end-to-end suites (train N rounds, predict throughput)
-1. Add a separate “quality harness” under `tools/` to compare metrics across libs
+The plan above is now substantially implemented. Current status:
+
+1. Bench suites are organized under `benches/suites/{micro,component,e2e,compare}` and share glue via `benches/common/`.
+1. IO loaders support Arrow IPC and Parquet; benchmarks/tools load from these formats when desired.
+1. Training performance benches cover component-level GBLinear and GBDT training, plus an end-to-end train+predict benchmark for GBDT.
+1. **Cross-library training comparisons** exist for XGBoost and LightGBM (feature-gated) with explicit warm/cold dataset policies. Results show booste-rs is competitive on small data but slower on medium data vs highly-optimized baselines.
+1. **Quality evaluation** is provided via `src/bin/quality_eval.rs` (feature-gated optional dataset IO and external baselines). Cross-library quality comparisons on synthetic tasks reveal a quality gap that requires investigation (see benchmark report).
+
+Remaining work:
+
+- Investigate the quality gap (split scoring, gradient scaling, tie-breaking differences).
+- Add real dataset quality comparisons (Adult, California Housing, etc.) once synthetic quality is on par.
+- Expand performance comparisons to binary/multiclass objectives.
 
 Note: dataset loading can now standardize on Arrow IPC / Parquet via `booste_rs::data::io`, and benchmark/test harnesses should keep their own testcase metadata separate from the dataset file.
