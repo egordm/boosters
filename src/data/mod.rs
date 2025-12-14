@@ -32,6 +32,9 @@ mod dataset;
 mod matrix;
 mod traits;
 
+#[cfg(any(feature = "io-arrow", feature = "io-parquet"))]
+pub mod io;
+
 pub use matrix::{ColMajor, DenseColumnIter, DenseMatrix, Layout, RowMajor, StridedIter};
 pub use dataset::{Dataset, DatasetError, FeatureColumn};
 pub use traits::{DataMatrix, RowView};
