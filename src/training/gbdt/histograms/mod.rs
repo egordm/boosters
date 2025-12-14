@@ -2,6 +2,7 @@
 //!
 //! This module provides:
 //! - [`build_histograms`] for building histograms with automatic parallel strategy
+//! - [`build_histograms_ordered`] for building with pre-gathered ordered gradients
 //! - [`HistogramPool`] for LRU-cached histogram storage
 //!
 //! # Module Organization
@@ -22,13 +23,17 @@
 //!
 //! The subtraction trick (sibling = parent - child) provides 10-44x speedup and
 //! is the main optimization worth keeping.
+//!
+//! **Ordered gradients** (pre-gathering gradients into partition order) provides
+//! significant cache efficiency gains by converting random gradient access into
+//! sequential reads, following LightGBM's approach.
 
 pub mod ops;
 pub mod pool;
 
 // Re-export main types
 pub use ops::{
-    build_histograms, ParallelStrategy, HistogramBin,
+    build_histograms, build_histograms_ordered, ParallelStrategy, HistogramBin,
     subtract_histogram, merge_histogram, clear_histogram, sum_histogram,
 };
 pub use pool::{

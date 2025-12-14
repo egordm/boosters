@@ -9,7 +9,7 @@ use crate::training::Gradients;
 use crate::training::sampling::{ColSampler, ColSamplingParams};
 
 use super::expansion::{GrowthState, GrowthStrategy, NodeCandidate};
-use super::histograms::{build_histograms, FeatureMeta, FeatureView, HistogramPool};
+use super::histograms::{build_histograms_ordered, FeatureMeta, FeatureView, HistogramPool};
 use super::optimization::OptimizationProfile;
 use super::partition::RowPartitioner;
 use super::split::{GainParams, GreedySplitter, SplitInfo, SplitType};
@@ -58,6 +58,7 @@ impl GrowerParams {
 ///
 /// Grows a single decision tree from gradient and hessian vectors.
 /// Uses the subtraction trick to reduce histogram building work by ~50%.
+/// Uses ordered gradients for cache-efficient histogram building.
 pub struct TreeGrower {
     /// Growth parameters.
     params: GrowerParams,
@@ -78,6 +79,11 @@ pub struct TreeGrower {
     /// Per-node leaf values (scaled by learning rate) for the last grown tree.
     /// Indexed by training node id used by the partitioner/histogram pool.
     last_leaf_values: Vec<f32>,
+    /// Buffer for ordered (pre-gathered) gradients.
+    /// Reused across histogram builds to avoid allocation.
+    ordered_grad: Vec<f32>,
+    /// Buffer for ordered (pre-gathered) hessians.
+    ordered_hess: Vec<f32>,
 }
 
 impl TreeGrower {
@@ -138,6 +144,8 @@ impl TreeGrower {
             split_strategy,
             col_sampler,
             last_leaf_values: Vec::new(),
+            ordered_grad: Vec::with_capacity(n_samples),
+            ordered_hess: Vec::with_capacity(n_samples),
         }
     }
 
@@ -522,6 +530,17 @@ impl TreeGrower {
         }
     }
 
+    /// Check if indices represent a contiguous range [first, first + n).
+    #[inline]
+    fn is_contiguous_range(indices: &[u32]) -> bool {
+        if indices.is_empty() {
+            return true;
+        }
+        let first = indices[0];
+        let last = indices[indices.len() - 1];
+        (last - first) as usize == indices.len() - 1
+    }
+
     /// Build histogram for a node.
     fn build_histogram(
         &mut self,
@@ -547,11 +566,58 @@ impl TreeGrower {
         // Get mutable histogram slice
         let hist = self.histogram_pool.slot_mut(slot);
 
-        // Build histogram (rows are already filtered by partitioner)
-        build_histograms(
+        // Get gradient slices for this output
+        let grad_slice = gradients.output_grads(output);
+        let hess_slice = gradients.output_hess(output);
+
+        // Fast path: if indices are contiguous (common for root and early nodes),
+        // we can use the original gradient slices directly without gathering.
+        // The ordered histogram function will iterate sequentially over both.
+        if Self::is_contiguous_range(rows) {
+            let start = rows[0] as usize;
+            let end = start + rows.len();
+            // Use the contiguous slice directly - ordered grad access matches row access
+            build_histograms_ordered(
+                hist.bins,
+                &grad_slice[start..end],
+                &hess_slice[start..end],
+                rows,
+                bin_views,
+                &self.feature_metas,
+            );
+            return;
+        }
+
+        // Non-contiguous indices: gather gradients into ordered buffers
+        let n_rows = rows.len();
+
+        // Ensure buffers have capacity (reuses allocation across builds)
+        if self.ordered_grad.capacity() < n_rows {
+            self.ordered_grad.reserve(n_rows - self.ordered_grad.capacity());
+        }
+        if self.ordered_hess.capacity() < n_rows {
+            self.ordered_hess.reserve(n_rows - self.ordered_hess.capacity());
+        }
+
+        // Gather gradients in partition order with direct writes (no capacity checks)
+        // SAFETY: We just ensured capacity >= n_rows, and row indices are valid
+        unsafe {
+            self.ordered_grad.set_len(n_rows);
+            self.ordered_hess.set_len(n_rows);
+            let grad_ptr = self.ordered_grad.as_mut_ptr();
+            let hess_ptr = self.ordered_hess.as_mut_ptr();
+            for i in 0..n_rows {
+                let row = *rows.get_unchecked(i) as usize;
+                *grad_ptr.add(i) = *grad_slice.get_unchecked(row);
+                *hess_ptr.add(i) = *hess_slice.get_unchecked(row);
+            }
+        }
+
+        // Build histogram with ordered gradients (sequential gradient access)
+        build_histograms_ordered(
             hist.bins,
-            gradients.output_grads(output),
-            gradients.output_hess(output),
+            &self.ordered_grad,
+            &self.ordered_hess,
             rows,
             bin_views,
             &self.feature_metas,
