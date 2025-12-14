@@ -2,6 +2,7 @@
 name = "booste-rs"
 version = "0.1.0"
 edition = "2024"
+autobenches = false
 
 [dependencies]
 thiserror = "1.0"
@@ -66,34 +67,32 @@ io-parquet = ["dep:parquet", "dep:arrow"]
 [[bench]]
 name = "prediction_core"
 harness = false
+path = "benches/suites/component/predict.rs"
 
 [[bench]]
 name = "prediction_strategies"
 harness = false
+path = "benches/suites/component/predict_strategies.rs"
 
 [[bench]]
 name = "prediction_parallel"
 harness = false
+path = "benches/suites/component/predict_parallel.rs"
 
 [[bench]]
 name = "training_core"
 harness = false
 required-features = ["bench-training"]
-
-[[bench]]
-name = "training_access_patterns"
-harness = false
-required-features = ["bench-training"]
-
-# [[bench]]
-# name = "training_gbtree"
-# harness = false
+path = "benches/suites/component/train_gblinear.rs"
 
 [[bench]]
 name = "prediction_lightgbm"
 harness = false
 required-features = ["bench-lightgbm"]
+path = "benches/suites/compare/predict_lightgbm.rs"
 
 [[bench]]
-name = "gradient_buffer_layout"
+name = "prediction_xgboost"
 harness = false
+required-features = ["bench-xgboost"]
+path = "benches/suites/compare/predict_xgboost.rs"

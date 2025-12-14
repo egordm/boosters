@@ -179,7 +179,8 @@ fn next_up_f32(x: f32) -> f32 {
     }
 
     if x == -0.0 {
-        return 0.0f32.min_positive_value();
+        // nextafter(-0.0, +inf) = smallest positive subnormal
+        return f32::from_bits(1);
     }
 
     let bits = x.to_bits();
