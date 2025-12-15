@@ -39,7 +39,7 @@ pub mod pool;
 
 // Re-export main types
 pub use ops::{
-    build_histograms, build_histograms_ordered, ParallelStrategy, HistogramBin,
+    build_histograms, build_histograms_ordered, build_histograms_ordered_sequential, ParallelStrategy, HistogramBin,
     subtract_histogram, merge_histogram, clear_histogram, sum_histogram,
 };
 pub use pool::{
