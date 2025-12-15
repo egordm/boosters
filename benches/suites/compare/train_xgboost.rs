@@ -38,9 +38,7 @@ fn bench_train_regression(c: &mut Criterion) {
 		let features = random_dense_f32(rows, cols, 42, -1.0, 1.0);
 		let (targets, _w, _b) = synthetic_regression_targets_linear(&features, rows, cols, 1337, 0.05);
 
-		// booste-rs: pre-binned ("warm")
-		let col_matrix = build_col_matrix(features.clone(), rows, cols);
-		let binned = BinnedDatasetBuilder::from_matrix(&col_matrix, 256).build().unwrap();
+		// booste-rs: cold full pipeline (row->col->bin + train)
 		let params = GBDTParams {
 			n_trees,
 			learning_rate: 0.3,
@@ -53,10 +51,6 @@ fn bench_train_regression(c: &mut Criterion) {
 		let trainer = GBDTTrainer::new(SquaredLoss, params);
 
 		group.throughput(Throughput::Elements((rows * cols) as u64));
-		group.bench_function(BenchmarkId::new("boosters/warm_binned", name), |b| {
-			b.iter(|| black_box(trainer.train(black_box(&binned), black_box(&targets), &[]).unwrap()))
-		});
-
 		// booste-rs: cold full pipeline (row->col->bin + train)
 		group.bench_function(BenchmarkId::new("boosters/cold_full", name), |b| {
 			b.iter(|| {
@@ -92,24 +86,6 @@ fn bench_train_regression(c: &mut Criterion) {
 				.threads(Some(1))
 				.build()
 				.unwrap();
-
-			// warm DMatrix
-			let mut dtrain = DMatrix::from_dense(&features, rows).unwrap();
-			dtrain.set_labels(&targets).unwrap();
-
-			group.bench_function(BenchmarkId::new("xgboost/warm_dmatrix", name), |b| {
-				b.iter(|| {
-					let training_params = TrainingParametersBuilder::default()
-						.dtrain(&dtrain)
-						.boost_rounds(n_trees)
-						.booster_params(booster_params.clone())
-						.evaluation_sets(None)
-						.build()
-						.unwrap();
-
-					black_box(Booster::train(&training_params).unwrap())
-				})
-			});
 
 			// cold DMatrix
 			group.bench_function(BenchmarkId::new("xgboost/cold_dmatrix", name), |b| {

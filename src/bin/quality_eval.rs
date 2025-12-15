@@ -27,7 +27,7 @@ use booste_rs::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, L
 
 use booste_rs::training::{Accuracy, LogLoss, Mae, Metric, MulticlassAccuracy, MulticlassLogLoss, Rmse};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "io-arrow")]
 use booste_rs::data::io::arrow::load_ipc_xy_row_major_f32;
@@ -42,9 +42,6 @@ use xgb::parameters::{learning::LearningTaskParametersBuilder, learning::Objecti
 use xgb::parameters::BoosterType;
 #[cfg(feature = "bench-xgboost")]
 use xgb::{Booster as XgbBooster, DMatrix};
-
-#[cfg(feature = "bench-lightgbm")]
-use serde_json::json;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Task {
@@ -78,6 +75,7 @@ struct Args {
 	label0: Option<PathBuf>,
 	xgb_gbtree_case: Option<String>,
 	out: Option<PathBuf>,
+	out_json: Option<PathBuf>,
 }
 
 fn parse_args() -> Args {
@@ -98,6 +96,7 @@ fn parse_args() -> Args {
 	let mut label0: Option<PathBuf> = None;
 	let mut xgb_gbtree_case: Option<String> = None;
 	let mut out: Option<PathBuf> = None;
+	let mut out_json: Option<PathBuf> = None;
 
 	let mut it = std::env::args().skip(1);
 	while let Some(arg) = it.next() {
@@ -136,6 +135,7 @@ fn parse_args() -> Args {
 			"--label0" => label0 = Some(PathBuf::from(it.next().expect("--label0 path"))),
 			"--xgb-gbtree-case" => xgb_gbtree_case = Some(it.next().expect("--xgb-gbtree-case name")),
 			"--out" => out = Some(PathBuf::from(it.next().expect("--out path"))),
+			"--out-json" => out_json = Some(PathBuf::from(it.next().expect("--out-json path"))),
 			"--help" => {
 				print_help_and_exit();
 			}
@@ -185,14 +185,40 @@ fn parse_args() -> Args {
 		label0,
 		xgb_gbtree_case,
 		out,
+		out_json,
 	}
 }
 
 fn print_help_and_exit() -> ! {
 	eprintln!(
-		"quality_eval\n\n  --task regression|binary|multiclass\n\n  Data:\n    --synthetic <rows> <cols>\n    --ipc <path> (requires io-arrow)\n    --parquet <path> (requires io-parquet)\n    --libsvm <path> (label + index:value, 1-based indices)\n    --uci-machine <path> (UCI computer hardware machine.data CSV)\n    --label0 <path> (tab/space-separated: label first, then features)\n    --xgb-gbtree-case <name> (loads tests/test-cases/xgboost/gbtree/training/<name>.*)\n\n  Training:\n    --trees <n>\n    --growth depthwise|leafwise\n    --depth <d> (depthwise; also used to derive default --leaves)\n    --leaves <n> (leafwise; default: 2^depth)\n\n  Task:\n    --classes <k> (multiclass only)\n\n  Misc:\n    --seed <u64>\n    --valid <fraction>\n    --out <path>\n\nFeature-gated libs:\n  --features bench-xgboost enables XGBoost\n  --features bench-lightgbm enables LightGBM\n"
+		"quality_eval\n\n  --task regression|binary|multiclass\n\n  Data:\n    --synthetic <rows> <cols>\n    --ipc <path> (requires io-arrow)\n    --parquet <path> (requires io-parquet)\n    --libsvm <path> (label + index:value, 1-based indices)\n    --uci-machine <path> (UCI computer hardware machine.data CSV)\n    --label0 <path> (tab/space-separated: label first, then features)\n    --xgb-gbtree-case <name> (loads tests/test-cases/xgboost/gbtree/training/<name>.*)\n\n  Training:\n    --trees <n>\n    --growth depthwise|leafwise\n    --depth <d> (depthwise; also used to derive default --leaves)\n    --leaves <n> (leafwise; default: 2^depth)\n\n  Task:\n    --classes <k> (multiclass only)\n\n  Misc:\n    --seed <u64>\n    --valid <fraction>\n    --out <path>\n    --out-json <path>\n\nFeature-gated libs:\n  --features bench-xgboost enables XGBoost\n  --features bench-lightgbm enables LightGBM\n"
 	);
 	std::process::exit(0)
+}
+
+#[derive(Debug, Serialize)]
+struct QualityRunJson {
+	task: String,
+	seed: u64,
+	rows_train: usize,
+	rows_valid: usize,
+	cols: usize,
+	trees: u32,
+	growth: String,
+	depth: u32,
+	leaves: u32,
+	booste_rs: LibraryResultJson,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	xgboost: Option<LibraryResultJson>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	lightgbm: Option<LibraryResultJson>,
+}
+
+#[derive(Debug, Serialize)]
+struct LibraryResultJson {
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pred_kind: Option<String>,
+	metrics: serde_json::Value,
 }
 
 fn extract_group(output: &booste_rs::inference::common::PredictionOutput, group: usize) -> Vec<f32> {
@@ -493,7 +519,7 @@ fn main() {
 		..Default::default()
 	};
 
-	let (boosters_metrics, boosters_pred_kind) = match args.task {
+	let (boosters_metrics, boosters_metrics_json, boosters_pred_kind) = match args.task {
 		Task::Regression => {
 			let trainer = GBDTTrainer::new(SquaredLoss, params);
 			let forest = trainer.train(&binned_train, &y_train, &[]).unwrap();
@@ -505,6 +531,7 @@ fn main() {
 			let mae = Mae.compute(n_rows, 1, &pred0, &y_valid, &[]);
 			(
 				format!("rmse={rmse:.6} mae={mae:.6}"),
+				serde_json::json!({"rmse": rmse, "mae": mae}),
 				"raw".to_string(),
 			)
 		}
@@ -522,6 +549,7 @@ fn main() {
 				format!(
 					"logloss={ll:.6} acc={acc:.4}",
 				),
+				serde_json::json!({"logloss": ll, "acc": acc}),
 				"prob".to_string(),
 			)
 		}
@@ -544,6 +572,7 @@ fn main() {
 				format!(
 					"mlogloss={ll:.6} acc={acc:.4}",
 				),
+				serde_json::json!({"mlogloss": ll, "acc": acc}),
 				"prob".to_string(),
 			)
 		}
@@ -569,9 +598,9 @@ fn main() {
 	);
 	println!("metrics: {boosters_metrics}");
 
-	// Optional: XGBoost
-	#[cfg(feature = "bench-xgboost")]
-	{
+	let xgb_result: Option<LibraryResultJson> = {
+		#[cfg(feature = "bench-xgboost")]
+		{
 		let (max_depth, max_leaves) = match args.growth {
 			Growth::DepthWise => (args.depth, 0),
 			// In XGBoost, leaf-wise growth is typically represented by `grow_policy=lossguide`
@@ -633,13 +662,14 @@ fn main() {
 		let pred = model.predict(&dvalid).unwrap();
 		println!("=== xgboost ===");
 		println!("task={:?} trees={} growth={:?} depth={} leaves={}", args.task, args.trees, args.growth, args.depth, display_leaves);
-		match args.task {
+		let result = match args.task {
 			Task::Regression => {
 				let pred_f32: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
 				let n_rows = y_valid.len();
 				let rmse = Rmse.compute(n_rows, 1, &pred_f32, &y_valid, &[]);
 				let mae = Mae.compute(n_rows, 1, &pred_f32, &y_valid, &[]);
 				println!("metrics: rmse={rmse:.6} mae={mae:.6}");
+				LibraryResultJson { pred_kind: Some("raw".to_string()), metrics: serde_json::json!({"rmse": rmse, "mae": mae}) }
 			}
 			Task::Binary => {
 				let pred_f32: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
@@ -647,6 +677,7 @@ fn main() {
 				let ll = LogLoss.compute(n_rows, 1, &pred_f32, &y_valid, &[]);
 				let acc = Accuracy::default().compute(n_rows, 1, &pred_f32, &y_valid, &[]);
 				println!("metrics: logloss={ll:.6} acc={acc:.4}");
+				LibraryResultJson { pred_kind: Some("prob".to_string()), metrics: serde_json::json!({"logloss": ll, "acc": acc}) }
 			}
 			Task::Multiclass => {
 				let n_rows = rows_valid;
@@ -666,19 +697,26 @@ fn main() {
 				let ll = MulticlassLogLoss.compute(n_rows, args.num_classes, &prob_row_major, &y_valid, &[]);
 				let acc = MulticlassAccuracy.compute(n_rows, args.num_classes, &prob_row_major, &y_valid, &[]);
 				println!("metrics: mlogloss={ll:.6} acc={acc:.4}");
+				LibraryResultJson { pred_kind: Some("prob".to_string()), metrics: serde_json::json!({"mlogloss": ll, "acc": acc, "prob_sum_min": sum_min, "prob_sum_max": sum_max}) }
 			}
+		};
+		Some(result)
 		}
-	}
+		#[cfg(not(feature = "bench-xgboost"))]
+		{
+			None
+		}
+	};
 
-	// Optional: LightGBM
-	#[cfg(feature = "bench-lightgbm")]
-	{
+	let lgb_result: Option<LibraryResultJson> = {
+		#[cfg(feature = "bench-lightgbm")]
+		{
 		let x_train_f64: Vec<f64> = x_train.iter().map(|&x| x as f64).collect();
 		let x_valid_f64: Vec<f64> = x_valid.iter().map(|&x| x as f64).collect();
 		let mut params = match args.task {
-			Task::Regression => json!({"objective":"regression","metric":"l2"}),
-			Task::Binary => json!({"objective":"binary","metric":"binary_logloss"}),
-			Task::Multiclass => json!({"objective":"multiclass","metric":"multi_logloss","num_class": args.num_classes}),
+			Task::Regression => serde_json::json!({"objective":"regression","metric":"l2"}),
+			Task::Binary => serde_json::json!({"objective":"binary","metric":"binary_logloss"}),
+			Task::Multiclass => serde_json::json!({"objective":"multiclass","metric":"multi_logloss","num_class": args.num_classes}),
 		};
 		params["num_iterations"] = serde_json::Value::from(args.trees as i64);
 		params["learning_rate"] = serde_json::Value::from(0.1f64);
@@ -709,13 +747,14 @@ fn main() {
 		let pred = bst.predict(&x_valid_f64, cols as i32, true).unwrap();
 		println!("=== lightgbm ===");
 		println!("task={:?} trees={} growth={:?} depth={} leaves={}", args.task, args.trees, args.growth, args.depth, display_leaves);
-		match args.task {
+		let result = match args.task {
 			Task::Regression => {
 				let pred_f32: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
 				let n_rows = y_valid.len();
 				let rmse = Rmse.compute(n_rows, 1, &pred_f32, &y_valid, &[]);
 				let mae = Mae.compute(n_rows, 1, &pred_f32, &y_valid, &[]);
 				println!("metrics: rmse={rmse:.6} mae={mae:.6}");
+				LibraryResultJson { pred_kind: Some("raw".to_string()), metrics: serde_json::json!({"rmse": rmse, "mae": mae}) }
 			}
 			Task::Binary => {
 				let pred_f32: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
@@ -723,6 +762,7 @@ fn main() {
 				let ll = LogLoss.compute(n_rows, 1, &pred_f32, &y_valid, &[]);
 				let acc = Accuracy::default().compute(n_rows, 1, &pred_f32, &y_valid, &[]);
 				println!("metrics: logloss={ll:.6} acc={acc:.4}");
+				LibraryResultJson { pred_kind: Some("prob".to_string()), metrics: serde_json::json!({"logloss": ll, "acc": acc}) }
 			}
 			Task::Multiclass => {
 				let n_rows = rows_valid;
@@ -742,9 +782,16 @@ fn main() {
 				let ll = MulticlassLogLoss.compute(n_rows, args.num_classes, &prob_row_major, &y_valid, &[]);
 				let acc = MulticlassAccuracy.compute(n_rows, args.num_classes, &prob_row_major, &y_valid, &[]);
 				println!("metrics: mlogloss={ll:.6} acc={acc:.4}");
+				LibraryResultJson { pred_kind: Some("prob".to_string()), metrics: serde_json::json!({"mlogloss": ll, "acc": acc, "prob_sum_min": sum_min, "prob_sum_max": sum_max}) }
 			}
+		};
+		Some(result)
 		}
-	}
+		#[cfg(not(feature = "bench-lightgbm"))]
+		{
+			None
+		}
+	};
 
 	if let Some(out) = &args.out {
 		let content = format!(
@@ -761,5 +808,37 @@ fn main() {
 		);
 		fs::write(out, content).expect("write out");
 		println!("wrote {}", out.display());
+	}
+
+	if let Some(out_json) = &args.out_json {
+		let growth = match args.growth {
+			Growth::DepthWise => "depthwise",
+			Growth::LeafWise => "leafwise",
+		};
+		let task = match args.task {
+			Task::Regression => "regression",
+			Task::Binary => "binary",
+			Task::Multiclass => "multiclass",
+		};
+		let run = QualityRunJson {
+			task: task.to_string(),
+			seed: args.seed,
+			rows_train,
+			rows_valid,
+			cols,
+			trees: args.trees,
+			growth: growth.to_string(),
+			depth: args.depth,
+			leaves: display_leaves,
+			booste_rs: LibraryResultJson {
+				pred_kind: Some(boosters_pred_kind),
+				metrics: boosters_metrics_json,
+			},
+			xgboost: xgb_result,
+			lightgbm: lgb_result,
+		};
+		let content = serde_json::to_string_pretty(&run).expect("serialize json");
+		fs::write(out_json, content).expect("write out-json");
+		println!("wrote {}", out_json.display());
 	}
 }

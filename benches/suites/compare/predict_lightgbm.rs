@@ -52,11 +52,18 @@ fn bench_lightgbm_batch_sizes(c: &mut Criterion) {
 			b.iter(|| black_box(predictor.predict(black_box(m))))
 		});
 
-		let input_f64: Vec<f64> = input_data.iter().map(|&x| x as f64).collect();
+		let input_f64_a: Vec<f64> = input_data.iter().map(|&x| x as f64).collect();
+		let mut input_f64_b = input_f64_a.clone();
+		if let Some(first) = input_f64_b.first_mut() {
+			*first = f64::from_bits(first.to_bits().wrapping_add(1));
+		}
 		let num_feat = num_features as i32;
 		group.bench_function(BenchmarkId::new("lightgbm", batch_size), |b| {
+			let mut flip = false;
 			b.iter(|| {
-				let output = lgb_booster.predict(black_box(&input_f64), num_feat, true).unwrap();
+				flip = !flip;
+				let input = if flip { &input_f64_a } else { &input_f64_b };
+				let output = lgb_booster.predict(black_box(input), num_feat, true).unwrap();
 				black_box(output)
 			})
 		});
@@ -80,11 +87,18 @@ fn bench_lightgbm_single_row(c: &mut Criterion) {
 
 	group.bench_function("boosters", |b| b.iter(|| black_box(predictor.predict(black_box(&matrix)))));
 
-	let input_f64: Vec<f64> = input_data.iter().map(|&x| x as f64).collect();
+	let input_f64_a: Vec<f64> = input_data.iter().map(|&x| x as f64).collect();
+	let mut input_f64_b = input_f64_a.clone();
+	if let Some(first) = input_f64_b.first_mut() {
+		*first = f64::from_bits(first.to_bits().wrapping_add(1));
+	}
 	let num_feat = num_features as i32;
 	group.bench_function("lightgbm", |b| {
+		let mut flip = false;
 		b.iter(|| {
-			let output = lgb_booster.predict(black_box(&input_f64), num_feat, true).unwrap();
+			flip = !flip;
+			let input = if flip { &input_f64_a } else { &input_f64_b };
+			let output = lgb_booster.predict(black_box(input), num_feat, true).unwrap();
 			black_box(output)
 		})
 	});
@@ -126,11 +140,18 @@ fn bench_lightgbm_model_sizes(c: &mut Criterion) {
 			b.iter(|| black_box(predictor.predict(black_box(m))))
 		});
 
-		let input_f64: Vec<f64> = input_data.iter().map(|&x| x as f64).collect();
+		let input_f64_a: Vec<f64> = input_data.iter().map(|&x| x as f64).collect();
+		let mut input_f64_b = input_f64_a.clone();
+		if let Some(first) = input_f64_b.first_mut() {
+			*first = f64::from_bits(first.to_bits().wrapping_add(1));
+		}
 		let num_feat = num_features as i32;
 		group.bench_function(BenchmarkId::new(format!("{label}/lightgbm"), batch_size), |b| {
+			let mut flip = false;
 			b.iter(|| {
-				let output = lgb_booster.predict(black_box(&input_f64), num_feat, true).unwrap();
+				flip = !flip;
+				let input = if flip { &input_f64_a } else { &input_f64_b };
+				let output = lgb_booster.predict(black_box(input), num_feat, true).unwrap();
 				black_box(output)
 			})
 		});
@@ -162,11 +183,18 @@ fn bench_lightgbm_parallel(c: &mut Criterion) {
 		});
 
 		if n_threads == 1 {
-			let input_f64: Vec<f64> = input_data.iter().map(|&x| x as f64).collect();
+			let input_f64_a: Vec<f64> = input_data.iter().map(|&x| x as f64).collect();
+			let mut input_f64_b = input_f64_a.clone();
+			if let Some(first) = input_f64_b.first_mut() {
+				*first = f64::from_bits(first.to_bits().wrapping_add(1));
+			}
 			let num_feat = num_features as i32;
 			group.bench_function(BenchmarkId::new("lightgbm", "default"), |b| {
+				let mut flip = false;
 				b.iter(|| {
-					let output = lgb_booster.predict(black_box(&input_f64), num_feat, true).unwrap();
+					flip = !flip;
+					let input = if flip { &input_f64_a } else { &input_f64_b };
+					let output = lgb_booster.predict(black_box(input), num_feat, true).unwrap();
 					black_box(output)
 				})
 			});
