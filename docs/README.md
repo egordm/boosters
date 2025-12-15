@@ -6,29 +6,14 @@ Pure Rust gradient boosting library with XGBoost compatibility.
 
 | Section | Description |
 |---------|-------------|
-| [PERFORMANCE_COMPARISON.md](./PERFORMANCE_COMPARISON.md) | Benchmark results vs LightGBM and XGBoost |
+| [benchmarks/2025-12-14-benchmark-report.md](./benchmarks/2025-12-14-benchmark-report.md) | Latest consolidated benchmarks (training + inference + quality) |
 | [ROADMAP.md](./ROADMAP.md) | Feature status and future plans |
 | [design/](./design/) | Architecture, RFCs, and design decisions |
 | [benchmarks/](./benchmarks/) | Historical performance benchmark data |
 
-## Performance Summary
+## Performance + Quality
 
-**December 2025** on Apple Silicon (single-threaded, 100 trees):
-
-### Training Performance
-
-| Comparison | Result |
-|------------|--------|
-| vs LightGBM (medium dataset) | ~1% difference (parity) |
-| vs XGBoost (warm start) | **13% faster** |
-| vs XGBoost (cold start) | **28% faster** |
-
-### Inference Performance
-
-| Metric | booste-rs | XGBoost C++ | Speedup |
-|--------|-----------|-------------|---------|
-| Single-row | 1.24 µs | 11.6 µs | **9.4x** |
-| 10K batch (8 threads) | 1.58 ms | 5.00 ms | **3.2x** |
+See [benchmarks/2025-12-14-benchmark-report.md](./benchmarks/2025-12-14-benchmark-report.md) for the current performance comparisons and quality tables.
 
 ## Features
 

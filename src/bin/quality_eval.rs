@@ -14,7 +14,7 @@
 //!   `cargo run --bin quality_eval --release --features io-parquet -- --task regression --parquet data.parquet --trees 200 --depth 6`
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use booste_rs::data::{binned::BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMajor, RowMatrix};
 use booste_rs::inference::common::{sigmoid_inplace, softmax_inplace};
@@ -26,6 +26,8 @@ use booste_rs::testing::data::{
 use booste_rs::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, LogisticLoss, SoftmaxLoss, SquaredLoss};
 
 use booste_rs::training::{Accuracy, LogLoss, Mae, Metric, MulticlassAccuracy, MulticlassLogLoss, Rmse};
+
+use serde::Deserialize;
 
 #[cfg(feature = "io-arrow")]
 use booste_rs::data::io::arrow::load_ipc_xy_row_major_f32;
@@ -74,6 +76,7 @@ struct Args {
 	libsvm: Option<PathBuf>,
 	uci_machine: Option<PathBuf>,
 	label0: Option<PathBuf>,
+	xgb_gbtree_case: Option<String>,
 	out: Option<PathBuf>,
 }
 
@@ -93,6 +96,7 @@ fn parse_args() -> Args {
 	let mut libsvm: Option<PathBuf> = None;
 	let mut uci_machine: Option<PathBuf> = None;
 	let mut label0: Option<PathBuf> = None;
+	let mut xgb_gbtree_case: Option<String> = None;
 	let mut out: Option<PathBuf> = None;
 
 	let mut it = std::env::args().skip(1);
@@ -130,6 +134,7 @@ fn parse_args() -> Args {
 			"--libsvm" => libsvm = Some(PathBuf::from(it.next().expect("--libsvm path"))),
 			"--uci-machine" => uci_machine = Some(PathBuf::from(it.next().expect("--uci-machine path"))),
 			"--label0" => label0 = Some(PathBuf::from(it.next().expect("--label0 path"))),
+			"--xgb-gbtree-case" => xgb_gbtree_case = Some(it.next().expect("--xgb-gbtree-case name")),
 			"--out" => out = Some(PathBuf::from(it.next().expect("--out path"))),
 			"--help" => {
 				print_help_and_exit();
@@ -138,12 +143,21 @@ fn parse_args() -> Args {
 		}
 	}
 
-	let data_sources = [ipc.is_some(), parquet.is_some(), libsvm.is_some(), uci_machine.is_some(), label0.is_some()]
+	let data_sources = [
+		ipc.is_some(),
+		parquet.is_some(),
+		libsvm.is_some(),
+		uci_machine.is_some(),
+		label0.is_some(),
+		xgb_gbtree_case.is_some(),
+	]
 		.into_iter()
 		.filter(|x| *x)
 		.count();
 	if data_sources > 1 {
-		panic!("Please provide only one dataset source: --synthetic / --ipc / --parquet / --libsvm / --uci-machine / --label0");
+		panic!(
+			"Please provide only one dataset source: --synthetic / --ipc / --parquet / --libsvm / --uci-machine / --label0 / --xgb-gbtree-case"
+		);
 	}
 
 	if growth == Growth::LeafWise && max_leaves == 0 {
@@ -169,13 +183,14 @@ fn parse_args() -> Args {
 		libsvm,
 		uci_machine,
 		label0,
+		xgb_gbtree_case,
 		out,
 	}
 }
 
 fn print_help_and_exit() -> ! {
 	eprintln!(
-		"quality_eval\n\n  --task regression|binary|multiclass\n\n  Data:\n    --synthetic <rows> <cols>\n    --ipc <path> (requires io-arrow)\n    --parquet <path> (requires io-parquet)\n    --libsvm <path> (label + index:value, 1-based indices)\n    --uci-machine <path> (UCI computer hardware machine.data CSV)\n    --label0 <path> (tab/space-separated: label first, then features)\n\n  Training:\n    --trees <n>\n    --growth depthwise|leafwise\n    --depth <d> (depthwise; also used to derive default --leaves)\n    --leaves <n> (leafwise; default: 2^depth)\n\n  Task:\n    --classes <k> (multiclass only)\n\n  Misc:\n    --seed <u64>\n    --valid <fraction>\n    --out <path>\n\nFeature-gated libs:\n  --features bench-xgboost enables XGBoost\n  --features bench-lightgbm enables LightGBM\n"
+		"quality_eval\n\n  --task regression|binary|multiclass\n\n  Data:\n    --synthetic <rows> <cols>\n    --ipc <path> (requires io-arrow)\n    --parquet <path> (requires io-parquet)\n    --libsvm <path> (label + index:value, 1-based indices)\n    --uci-machine <path> (UCI computer hardware machine.data CSV)\n    --label0 <path> (tab/space-separated: label first, then features)\n    --xgb-gbtree-case <name> (loads tests/test-cases/xgboost/gbtree/training/<name>.*)\n\n  Training:\n    --trees <n>\n    --growth depthwise|leafwise\n    --depth <d> (depthwise; also used to derive default --leaves)\n    --leaves <n> (leafwise; default: 2^depth)\n\n  Task:\n    --classes <k> (multiclass only)\n\n  Misc:\n    --seed <u64>\n    --valid <fraction>\n    --out <path>\n\nFeature-gated libs:\n  --features bench-xgboost enables XGBoost\n  --features bench-lightgbm enables LightGBM\n"
 	);
 	std::process::exit(0)
 }
@@ -207,6 +222,76 @@ fn select_targets(targets: &[f32], row_indices: &[usize]) -> Vec<f32> {
 		out.push(targets[r]);
 	}
 	out
+}
+
+#[derive(Debug, Deserialize)]
+struct XgbDenseDataJson {
+	num_rows: usize,
+	num_features: usize,
+	data: Vec<f32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct XgbLabelsJson {
+	labels: Vec<f32>,
+}
+
+fn normalize_multiclass_labels(mut y: Vec<f32>, num_classes: usize) -> Vec<f32> {
+	let mut min = f32::INFINITY;
+	let mut max = f32::NEG_INFINITY;
+	for &v in &y {
+		min = min.min(v);
+		max = max.max(v);
+	}
+	let k = num_classes as f32;
+	// Common convention: labels are 1..K. Convert to 0..K-1.
+	if (min - 1.0).abs() < 1e-6 && (max - k).abs() < 1e-6 {
+		for v in &mut y {
+			*v -= 1.0;
+		}
+	}
+
+	for (i, &v) in y.iter().enumerate() {
+		if v < 0.0 || v >= k {
+			panic!("multiclass label out of range at idx={i}: got {v}, expected [0, {k})");
+		}
+	}
+	// Metrics expect class indices as floats.
+	y
+}
+
+fn load_xgb_dense_data(path: &Path) -> (Vec<f32>, usize, usize) {
+	let content = fs::read_to_string(path).unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+	let parsed: XgbDenseDataJson =
+		serde_json::from_str(&content).unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()));
+	assert_eq!(parsed.data.len(), parsed.num_rows * parsed.num_features);
+	(parsed.data, parsed.num_rows, parsed.num_features)
+}
+
+fn load_xgb_labels(path: &Path) -> Vec<f32> {
+	let content = fs::read_to_string(path).unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+	let parsed: XgbLabelsJson =
+		serde_json::from_str(&content).unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()));
+	parsed.labels
+}
+
+fn load_xgb_gbtree_case(case: &str) -> (Vec<f32>, Vec<f32>, usize, Vec<f32>, Vec<f32>, usize, usize) {
+	let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/test-cases/xgboost/gbtree/training");
+	let train_data_path = base.join(format!("{case}.train_data.json"));
+	let train_labels_path = base.join(format!("{case}.train_labels.json"));
+	let test_data_path = base.join(format!("{case}.test_data.json"));
+	let test_labels_path = base.join(format!("{case}.test_labels.json"));
+
+	let (x_train, train_rows, train_cols) = load_xgb_dense_data(&train_data_path);
+	let y_train = load_xgb_labels(&train_labels_path);
+	assert_eq!(y_train.len(), train_rows);
+
+	let (x_valid, valid_rows, valid_cols) = load_xgb_dense_data(&test_data_path);
+	let y_valid = load_xgb_labels(&test_labels_path);
+	assert_eq!(y_valid.len(), valid_rows);
+
+	assert_eq!(train_cols, valid_cols, "train/test feature counts differ");
+	(x_train, y_train, train_rows, x_valid, y_valid, valid_rows, train_cols)
 }
 
 fn load_or_generate(args: &Args) -> (Vec<f32>, Vec<f32>, usize, usize) {
@@ -365,38 +450,32 @@ fn load_uci_machine_regression(path: &PathBuf) -> (Vec<f32>, Vec<f32>, usize, us
 fn main() {
 	let args = parse_args();
 
-	let (x_all, y_all, rows, cols) = load_or_generate(&args);
-	let y_all = match args.task {
-		Task::Multiclass => {
-			let mut y = y_all;
-			let mut min = f32::INFINITY;
-			let mut max = f32::NEG_INFINITY;
-			for &v in &y {
-				min = min.min(v);
-				max = max.max(v);
-			}
-			let k = args.num_classes as f32;
-			// Common convention: labels are 1..K. Convert to 0..K-1.
-			if (min - 1.0).abs() < 1e-6 && (max - k).abs() < 1e-6 {
-				for v in &mut y {
-					*v -= 1.0;
-				}
-			}
-			y
-		}
-		_ => y_all,
+	let (x_train, y_train, rows_train, x_valid, y_valid, rows_valid, cols) = if let Some(case) = &args.xgb_gbtree_case {
+		load_xgb_gbtree_case(case)
+	} else {
+		let (x_all, y_all, rows, cols) = load_or_generate(&args);
+		let (train_idx, valid_idx) = split_indices(rows, args.valid_fraction, args.seed ^ 0x51EED);
+		let x_train = select_rows_row_major(&x_all, rows, cols, &train_idx);
+		let y_train = select_targets(&y_all, &train_idx);
+		let x_valid = select_rows_row_major(&x_all, rows, cols, &valid_idx);
+		let y_valid = select_targets(&y_all, &valid_idx);
+		(x_train, y_train, train_idx.len(), x_valid, y_valid, valid_idx.len(), cols)
 	};
-	let (train_idx, valid_idx) = split_indices(rows, args.valid_fraction, args.seed ^ 0x51EED);
-	let x_train = select_rows_row_major(&x_all, rows, cols, &train_idx);
-	let y_train = select_targets(&y_all, &train_idx);
-	let x_valid = select_rows_row_major(&x_all, rows, cols, &valid_idx);
-	let y_valid = select_targets(&y_all, &valid_idx);
 
-	let row_train: DenseMatrix<f32, RowMajor> = DenseMatrix::from_vec(x_train.clone(), train_idx.len(), cols);
+	let y_train = match args.task {
+		Task::Multiclass => normalize_multiclass_labels(y_train, args.num_classes),
+		_ => y_train,
+	};
+	let y_valid = match args.task {
+		Task::Multiclass => normalize_multiclass_labels(y_valid, args.num_classes),
+		_ => y_valid,
+	};
+
+	let row_train: DenseMatrix<f32, RowMajor> = DenseMatrix::from_vec(x_train.clone(), rows_train, cols);
 	let col_train: ColMatrix<f32> = row_train.to_layout();
 	let binned_train = BinnedDatasetBuilder::from_matrix(&col_train, 256).build().unwrap();
 
-	let row_valid: RowMatrix<f32> = RowMatrix::from_vec(x_valid.clone(), valid_idx.len(), cols);
+	let row_valid: RowMatrix<f32> = RowMatrix::from_vec(x_valid.clone(), rows_valid, cols);
 
 	let growth_strategy = match args.growth {
 		Growth::DepthWise => GrowthStrategy::DepthWise { max_depth: args.depth },
@@ -451,7 +530,7 @@ fn main() {
 			let forest = trainer.train(&binned_train, &y_train, &[]).unwrap();
 			let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
 			let raw = predictor.predict(&row_valid);
-			let n_rows = valid_idx.len();
+			let n_rows = rows_valid;
 			let mut prob_row_major = vec![0.0f32; n_rows * args.num_classes];
 			assert_eq!(raw.num_groups(), args.num_classes);
 			for r in 0..n_rows {
@@ -479,8 +558,8 @@ fn main() {
 	println!(
 		"task={:?} rows_train={} rows_valid={} cols={} trees={} growth={:?} depth={} leaves={} pred_kind={}",
 		args.task,
-		train_idx.len(),
-		valid_idx.len(),
+		rows_train,
+		rows_valid,
 		cols,
 		args.trees,
 		args.growth,
@@ -537,9 +616,9 @@ fn main() {
 			.build()
 			.unwrap();
 
-		let mut dtrain = DMatrix::from_dense(&x_train, train_idx.len()).unwrap();
+		let mut dtrain = DMatrix::from_dense(&x_train, rows_train).unwrap();
 		dtrain.set_labels(&y_train).unwrap();
-		let mut dvalid = DMatrix::from_dense(&x_valid, valid_idx.len()).unwrap();
+		let mut dvalid = DMatrix::from_dense(&x_valid, rows_valid).unwrap();
 		dvalid.set_labels(&y_valid).unwrap();
 
 		let training_params = TrainingParametersBuilder::default()
@@ -570,7 +649,7 @@ fn main() {
 				println!("metrics: logloss={ll:.6} acc={acc:.4}");
 			}
 			Task::Multiclass => {
-				let n_rows = valid_idx.len();
+				let n_rows = rows_valid;
 				let mut prob_row_major = vec![0.0f32; n_rows * args.num_classes];
 				for (i, v) in pred.into_iter().enumerate() {
 					prob_row_major[i] = v as f32;
@@ -646,7 +725,7 @@ fn main() {
 				println!("metrics: logloss={ll:.6} acc={acc:.4}");
 			}
 			Task::Multiclass => {
-				let n_rows = valid_idx.len();
+				let n_rows = rows_valid;
 				let mut prob_row_major = vec![0.0f32; n_rows * args.num_classes];
 				for (i, v) in pred.into_iter().enumerate() {
 					prob_row_major[i] = v as f32;
@@ -671,8 +750,8 @@ fn main() {
 		let content = format!(
 			"task={:?}\nrows_train={} rows_valid={} cols={} trees={} growth={:?} depth={} leaves={}\nbooste_rs: {}\n",
 			args.task,
-			train_idx.len(),
-			valid_idx.len(),
+			rows_train,
+			rows_valid,
 			cols,
 			args.trees,
 			args.growth,
