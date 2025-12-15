@@ -1,25 +1,48 @@
 # booste-rs Documentation
 
+Pure Rust gradient boosting library with XGBoost compatibility.
+
 ## Contents
 
 | Section | Description |
 |---------|-------------|
-| [design/](./design/) | Design documentation, RFCs, research |
-| [benchmarks/](./benchmarks/) | Performance benchmark results |
-
-## Quick Links
-
-- [Architecture Overview](./design/README.md)
-- [RFC Index](./design/rfcs/README.md)
-- [Implementation Roadmap](./design/ROADMAP.md)
-- [Latest Benchmarks](./benchmarks/2024-11-29-m38-performance-validation.md)
+| [PERFORMANCE_COMPARISON.md](./PERFORMANCE_COMPARISON.md) | Benchmark results vs LightGBM and XGBoost |
+| [ROADMAP.md](./ROADMAP.md) | Feature status and future plans |
+| [design/](./design/) | Architecture, RFCs, and design decisions |
+| [benchmarks/](./benchmarks/) | Historical performance benchmark data |
 
 ## Performance Summary
 
-As of 2024-11-29 on Apple M1 Pro:
+**December 2025** on Apple Silicon (single-threaded, 100 trees):
 
-| Benchmark | booste-rs | XGBoost C++ | Speedup |
-|-----------|-----------|-------------|---------|
+### Training Performance
+
+| Comparison | Result |
+|------------|--------|
+| vs LightGBM (medium dataset) | ~1% difference (parity) |
+| vs XGBoost (warm start) | **13% faster** |
+| vs XGBoost (cold start) | **28% faster** |
+
+### Inference Performance
+
+| Metric | booste-rs | XGBoost C++ | Speedup |
+|--------|-----------|-------------|---------|
 | Single-row | 1.24 µs | 11.6 µs | **9.4x** |
-| 1K batch | 1.07 ms | 1.38 ms | **1.29x** |
-| 10K batch (8 threads) | 1.58 ms | 5.00 ms | **3.18x** |
+| 10K batch (8 threads) | 1.58 ms | 5.00 ms | **3.2x** |
+
+## Features
+
+### Implemented
+
+- **Training**: GBDT (histogram-based), GBLinear
+- **Inference**: Tree and linear model prediction
+- **Objectives**: Binary/multiclass classification, regression, ranking, quantile
+- **Metrics**: AUC, RMSE, MAE, log-loss, and more
+- **Sampling**: GOSS, row/column sampling, class weights
+- **Compatibility**: Load XGBoost JSON models
+
+### Future Work
+
+- Sparse data support
+- Python bindings
+- LightGBM model loading

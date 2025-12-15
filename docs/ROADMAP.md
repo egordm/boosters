@@ -1,131 +1,73 @@
 # booste-rs Roadmap
 
-## Philosophy
+## Current Status
 
-**Slice-wise implementation**: Build thin vertical slices that work end-to-end, then expand.
+booste-rs has achieved **performance parity with LightGBM** and is **13-28% faster than XGBoost** while maintaining full quality compatibility.
 
-**Guiding principle**: At each milestone, we should be able to load a real model and produce correct predictions.
+### Feature Status
 
----
+| Feature | Status | Notes |
+|---------|--------|-------|
+| **Tree Inference** | ✅ Complete | 3-9x faster than XGBoost C++ |
+| **Tree Training** | ✅ Complete | Histogram-based, on par with LightGBM |
+| **Linear Booster** | ✅ Complete | GBLinear training and inference |
+| **XGBoost Compat** | ✅ Complete | Load JSON models, prediction parity |
+| **Objectives** | ✅ Complete | Binary, multiclass, regression, ranking, quantile |
+| **Metrics** | ✅ Complete | AUC, RMSE, MAE, log-loss, NDCG, etc. |
+| **Sampling** | ✅ Complete | GOSS, row/column sampling |
+| **Sample Weights** | ✅ Complete | Weighted training, class imbalance |
+| **Categorical** | ✅ Complete | Native categorical feature support |
+| **LightGBM Compat** | 🚧 Partial | Inference complete, model loading planned |
+| **Constraints** | 📋 Planned | Monotonic/interaction constraints |
+| **Sparse Data** | 📋 Planned | Sparse matrix support |
+| **Python Bindings** | 📋 Planned | PyO3 bindings |
 
-## Current Focus
+## Design Documents
 
-```text
-┌─────────────────────────────────────────────────────────────────┐
-│  GBTree Inference                       ✅ COMPLETE             │
-│  ══════════════════════════════════════════════════             │
-│  Load XGBoost JSON models, predict with 3x+ speedup vs C++      │
-│                                                                  │
-│  GBLinear Support                       ⏸️  PAUSED               │
-│  ════════════════════════════════════════════════               │
-│  Core training complete, feature parity stories pending         │
-│                                                                  │
-│  GBTree Training (Phase 1)              ✅ COMPLETE              │
-│  ════════════════════════════════════════════════               │
-│  Histogram-based tree training: 1.05x-1.57x of XGBoost          │
-│  See: docs/benchmarks/2024-11-30-gbtree-vs-xgboost.md           │
-│                                                                  │
-│  GBTree Training (Phase 2)              ✅ COMPLETE              │
-│  ════════════════════════════════════════════════               │
-│  Categorical, GOSS, row/column sampling complete                │
-│  Monotonic/interaction constraints delayed (RFC-0023)           │
-│                                                                  │
-│  LightGBM Compatibility                 ✅ INFERENCE COMPLETE    │
-│  ════════════════════════════════════════════════               │
-│  Model loading, inference validation (Stories 1-5 done)         │
-│  Training baselines pending (Stories 6-7)                       │
-│                                                                  │
-│  Sample Weighting                       ✅ COMPLETE              │
-│  ════════════════════════════════════════════════               │
-│  Weighted training, class imbalance handling (RFC-0026)         │
-│                                                                  │
-│  API Refactoring                        ✅ COMPLETE              │
-│  ════════════════════════════════════════════════               │
-│  Builder pattern API, unified train methods                     │
-│                                                                  │
-│  Future (backlog)                                                │
-│  ════════════════                                                │
-│  - Sparse data, Python bindings                                 │
-│  - Row-parallel histograms (RFC-0025)                           │
-│  - Gradient quantization (RFC-0027)                             │
-└─────────────────────────────────────────────────────────────────┘
-```
+See [design/rfcs/](./design/rfcs/) for detailed specifications of each component.
 
----
+### Core RFCs (Implemented)
 
-## Epics
+| RFC | Topic |
+|-----|-------|
+| 0001 | Forest data structures |
+| 0002 | Tree data structures |
+| 0003 | Visitor and traversal |
+| 0004 | DMatrix input |
+| 0007 | XGBoost serialization |
+| 0008 | GBLinear inference |
+| 0009 | GBLinear training |
+| 0010 | Matrix layouts |
+| 0011 | Quantization and binning |
+| 0012 | Histogram building |
+| 0013 | Split finding |
+| 0014 | Row partitioning |
+| 0015 | Tree growing |
+| 0016 | Categorical training |
+| 0017 | Sampling strategies |
+| 0026 | Sample weighting |
+| 0028 | Prediction outputs |
 
-| Epic | Status | Summary |
-|------|--------|---------|
-| [GBTree Inference](backlog/01-gbtree-inference.md) | ✅ Complete | Tree inference, 3x faster than XGBoost C++ |
-| [GBLinear](backlog/02-gblinear.md) | ⏸️ Paused | Linear booster, core training complete |
-| [GBTree Training Ph1](backlog/03-gbtree-training.md) | ✅ Complete | Histogram-based training, 1.05-1.57x of XGBoost |
-| [LightGBM Compat](backlog/04-lightgbm-compat.md) | ✅ Inference | Model loading complete, training baselines pending |
-| [GBTree Training Ph2](backlog/05-gbtree-training-phase2.md) | ✅ Complete | Categorical, GOSS, sampling, constraints |
-| [Sample Weighting](backlog/06-sample-weighting.md) | ✅ Complete | Weighted training, class imbalance handling |
-| [API Refactoring](backlog/07-api-refactoring.md) | ✅ Complete | Builder pattern API |
-| [Future](backlog/99-future.md) | 📋 Backlog | Sparse data, Python bindings, etc. |
+### Future RFCs (Draft/Planned)
 
----
+| RFC | Topic | Status |
+|-----|-------|--------|
+| 0023 | Monotonic constraints | Delayed |
+| 0025 | Row-parallel histograms | Draft |
+| 0027 | Gradient quantization | Draft |
+| 0029 | Arrow datasets | Draft |
 
-## Performance Summary
+## Development Philosophy
 
-### Inference (vs XGBoost C++)
+- **Slice-wise implementation**: Build working features end-to-end, then expand
+- **Test against reference**: Every feature validated against XGBoost/LightGBM
+- **Don't over-engineer early**: Get it working, then optimize
+- **Document as you go**: RFCs updated when implementation diverges
 
-| Metric | booste-rs | XGBoost C++ | Speedup |
-|--------|-----------|-------------|---------|
-| Single-row latency | 1.24µs | 11.6µs | **9.4x** |
-| 10K batch (8 threads) | 1.58ms | 5.0ms | **3.2x** |
+## Test Data Generation
 
-### Training (vs XGBoost C++, single-threaded)
-
-| Dataset | booste-rs | XGBoost | Ratio |
-|---------|-----------|---------|-------|
-| small (1k×20, 100 trees) | 322ms | 308ms | 1.05x |
-| medium (5k×50, 100 trees) | 1.32s | 1.11s | 1.19x |
-| large (20k×100, 100 trees) | 5.12s | 3.27s | 1.57x |
-
-See [benchmarks](benchmarks/) for details.
-
----
-
-## RFCs
-
-| RFC | Status | Topic |
-|-----|--------|-------|
-| [0001](design/rfcs/0001-forest-data-structures.md) | Implemented | Forest structures |
-| [0002](design/rfcs/0002-tree-data-structures.md) | Implemented | Tree structures |
-| [0003](design/rfcs/0003-visitor-and-traversal.md) | Implemented | Traversal & prediction |
-| [0004](design/rfcs/0004-dmatrix.md) | Implemented | Data input |
-| [0007](design/rfcs/0007-serialization.md) | Implemented | XGBoost loading |
-| [0008](design/rfcs/0008-gblinear-inference.md) | Implemented | Linear inference |
-| [0009](design/rfcs/0009-gblinear-training.md) | Implemented | Linear training |
-| [0010](design/rfcs/0010-matrix-layouts.md) | Implemented | Matrix layouts |
-| [0011](design/rfcs/0011-quantization-binning.md) | Implemented | Quantization & binning |
-| [0012](design/rfcs/0012-histogram-building.md) | Implemented | Histogram building |
-| [0013](design/rfcs/0013-split-finding.md) | Implemented | Split finding |
-| [0014](design/rfcs/0014-row-partitioning.md) | Implemented | Row partitioning |
-| [0015](design/rfcs/0015-tree-growing.md) | Implemented | Tree growing strategies |
-| [0023](design/rfcs/0023-constraints.md) | Delayed | Monotonic/interaction constraints |
-| [0025](design/rfcs/0025-row-parallel-histograms.md) | Draft | Row-parallel histograms + pooling |
-| [0026](design/rfcs/0026-sample-weighting.md) | Implemented | Sample weighting |
-| [0027](design/rfcs/0027-gradient-quantization.md) | Draft | Gradient quantization (16-bit) |
-
----
-
-## Test Data
-
-Reference predictions generated from Python XGBoost:
+Reference predictions from Python XGBoost:
 
 ```bash
 cd tools/data_generation && uv run python scripts/generate_test_cases.py
 ```
-
----
-
-## Notes
-
-- **Don't over-engineer early**: Get something working, then refactor
-- **Test against Python**: Every story should have validation tests
-- **Feature flags**: Keep optional stuff behind features
-- **Document as you go**: Update RFCs if implementation diverges

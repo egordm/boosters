@@ -1,53 +1,34 @@
-# Benchmark Results
+# Benchmarks
 
-This directory contains versioned benchmark results for tracking performance over time.
+Performance benchmark results for booste-rs.
 
-## Benchmark Index
+## Latest Results
 
-### Inference Optimization (Nov 2024)
+See [PERFORMANCE_COMPARISON.md](../PERFORMANCE_COMPARISON.md) for the current state (December 2025).
 
-| Date | File | Description |
-|------|------|-------------|
-| 2024-11-27 | [baseline](2024-11-27-baseline.md) | Initial baseline before block traversal |
-| 2024-11-28 | [m352-unrolled](2024-11-28-m352-unrolled.md) | Predictor refactor with unrolled layout |
-| 2024-11-28 | [simd-analysis](2024-11-28-simd-analysis.md) | SIMD investigation (concluded: not beneficial) |
-| 2024-11-28 | [m37-thread-parallelism](2024-11-28-m37-thread-parallelism.md) | Thread parallelism with Rayon |
-| 2024-11-29 | [m38-performance-validation](2024-11-29-m38-performance-validation.md) | Final performance validation |
+## Historical Benchmarks
 
-### Training Optimization (Nov 2024)
+| Date | Benchmark | Description |
+|------|-----------|-------------|
+| 2025-12-14 | [training-and-quality](./2025-12-14-training-and-quality.md) | Training performance and quality validation |
+| 2025-12-14 | [prediction-benchmarks](./2025-12-14-prediction-benchmarks.md) | Inference performance |
+| 2025-11-30 | [gbtree-vs-xgboost](./2025-11-30-gbtree-vs-xgboost.md) | Initial XGBoost training comparison |
+| 2025-11-30 | [lightgbm-vs-booste-rs](./2025-11-30-lightgbm-vs-booste-rs.md) | LightGBM comparison |
 
-| Date | File | Description |
-|------|------|-------------|
-| 2024-11-29 | [gradient-batch](2025-11-29-gradient-batch.md) | Batch gradient computation optimization |
-| 2024-11-29 | [gradient-soa](2025-11-29-gradient-soa.md) | SoA vs AoS gradient storage layout |
-| 2024-11-29 | [matrix-layout-training](2025-11-29-matrix-layout-training.md) | ColMajor vs CSC for training |
+## Reference
 
-## Naming Convention
-
-```text
-YYYY-MM-DD-<description>.md
-```
+- [growth_strategy_comparison.md](./growth_strategy_comparison.md) - Level-wise vs leaf-wise analysis
+- [TEMPLATE.md](./TEMPLATE.md) - Template for new benchmark reports
 
 ## Running Benchmarks
 
 ```bash
-# Run all benchmarks
-cargo bench
+# Internal training benchmarks
+cargo bench --bench training_gbdt
 
-# Run specific benchmark
-cargo bench --bench prediction
-cargo bench --bench linear_training
+# XGBoost comparison (requires libxgboost)
+cargo bench --bench training_xgboost --features bench-xgboost
 
-# With XGBoost comparison (requires xgboost feature)
-cargo bench --features bench-xgboost
-
-# View HTML reports
-open target/criterion/report/index.html
+# LightGBM comparison (requires liblightgbm)
+cargo bench --bench training_lightgbm --features bench-lightgbm
 ```
-
-## Adding New Benchmarks
-
-1. Create a new file following the naming convention
-2. Use [TEMPLATE.md](TEMPLATE.md) as a starting point
-3. Update this README with an entry in the appropriate section
-4. Commit both the benchmark results and README update together
