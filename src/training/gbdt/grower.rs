@@ -530,25 +530,6 @@ impl TreeGrower {
         }
     }
 
-    /// Check if indices represent a contiguous range [first, first + n).
-    /// Only returns true if indices are strictly sequential: [k, k+1, k+2, ...].
-    #[inline]
-    fn is_contiguous_range(indices: &[u32]) -> bool {
-        if indices.is_empty() {
-            return true;
-        }
-        let first = indices[0];
-        // Require strictly sequential order.
-        // This is necessary because `build_histograms_ordered()` assumes that
-        // `ordered_grad[i]` corresponds to `indices[i]`.
-        for (i, &idx) in indices.iter().enumerate() {
-            if idx != first + i as u32 {
-                return false;
-            }
-        }
-        true
-    }
-
     /// Build histogram for a node.
     fn build_histogram(
         &mut self,
@@ -578,25 +559,32 @@ impl TreeGrower {
         let grad_slice = gradients.output_grads(output);
         let hess_slice = gradients.output_hess(output);
 
-        // Fast path: if indices are contiguous (common for root and early nodes),
-        // we can use the original gradient slices directly without gathering.
-        // The ordered histogram function will iterate sequentially over both.
-        if Self::is_contiguous_range(rows) {
-            let start = rows[0] as usize;
-            let end = start + rows.len();
-            // Use the contiguous slice directly - ordered grad access matches row access
-            build_histograms_ordered(
-                hist.bins,
-                &grad_slice[start..end],
-                &hess_slice[start..end],
-                rows,
-                bin_views,
-                &self.feature_metas,
-            );
-            return;
+        match self.partitioner.leaf_sequential_start(node) {
+            Some(start) => {
+                // Strictly sequential indices.
+                // Invariant: when calling `build_histograms_ordered`, the gradient slices must be
+                // aligned with the index order used for bin lookup.
+                // Here, `rows` is exactly `[start..start+len)` so `grad_slice[start..end]` and
+                // `hess_slice[start..end]` correspond 1:1 with `rows[i]`.
+                let start = start as usize;
+                let end = start + rows.len();
+                build_histograms_ordered(
+                    hist.bins,
+                    &grad_slice[start..end],
+                    &hess_slice[start..end],
+                    rows,
+                    bin_views,
+                    &self.feature_metas,
+                );
+                return;
+            }
+            None => {
+                // Fall back to gather path below.
+            }
         }
 
-        // Non-contiguous indices: gather gradients into ordered buffers
+        // Non-sequential indices: gather gradients into partition order.
+        // Invariant: `ordered_grad[i]` must correspond to `rows[i]`.
         let n_rows = rows.len();
 
         // Ensure buffers have capacity (reuses allocation across builds)
@@ -663,17 +651,6 @@ impl TreeGrower {
 mod tests {
     use super::*;
     use crate::data::{BinMapper, BinnedDataset, BinnedDatasetBuilder, GroupLayout, GroupStrategy, MissingType};
-
-    #[test]
-    fn test_is_contiguous_range_strict() {
-        assert!(TreeGrower::is_contiguous_range(&[]));
-        assert!(TreeGrower::is_contiguous_range(&[7]));
-        assert!(TreeGrower::is_contiguous_range(&[2, 3, 4, 5]));
-        // Permutation of a contiguous range: must be false.
-        assert!(!TreeGrower::is_contiguous_range(&[0, 2, 1, 3]));
-        // Same endpoints but not sequential.
-        assert!(!TreeGrower::is_contiguous_range(&[5, 6, 8, 7]));
-    }
 
     /// Helper to count leaves in a Tree.
     fn count_leaves<L: crate::repr::gbdt::LeafValue>(tree: &Tree<L>) -> usize {

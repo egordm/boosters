@@ -32,9 +32,6 @@ fn bench_train_regression(c: &mut Criterion) {
 		let features = random_dense_f32(rows, cols, 42, -1.0, 1.0);
 		let (targets, _w, _b) = synthetic_regression_targets_linear(&features, rows, cols, 1337, 0.05);
 
-		let col_matrix = build_col_matrix(features.clone(), rows, cols);
-		let binned = BinnedDatasetBuilder::from_matrix(&col_matrix, 256).build().unwrap();
-
 		let params = GBDTParams {
 			n_trees,
 			learning_rate: 0.1,
@@ -47,8 +44,12 @@ fn bench_train_regression(c: &mut Criterion) {
 		let trainer = GBDTTrainer::new(SquaredLoss, params);
 
 		group.throughput(Throughput::Elements((rows * cols) as u64));
-		group.bench_function(BenchmarkId::new("boosters/warm_binned", name), |b| {
-			b.iter(|| black_box(trainer.train(black_box(&binned), black_box(&targets), &[]).unwrap()))
+		group.bench_function(BenchmarkId::new("boosters/cold_full", name), |b| {
+			b.iter(|| {
+				let col_matrix = build_col_matrix(features.clone(), rows, cols);
+				let binned = BinnedDatasetBuilder::from_matrix(&col_matrix, 256).build().unwrap();
+				black_box(trainer.train(black_box(&binned), black_box(&targets), &[]).unwrap())
+			})
 		});
 
 		#[cfg(feature = "bench-lightgbm")]

@@ -1,3 +1,11 @@
 /target
 
+# Generated benchmark/quality artifacts (reproducible via docs/benchmarks report commands)
+/docs/benchmarks/artifacts/**
+!/docs/benchmarks/artifacts/README.md
+
+# Helper outputs/tools that may generate local artifacts
+/tools/benchmarks/__pycache__/
+/tools/quality/__pycache__/
+
 .DS_Store

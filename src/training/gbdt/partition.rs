@@ -12,6 +12,17 @@
 //!
 //! When splitting a leaf, rows are partitioned in-place and the new leaf ranges are updated.
 //!
+//! # Important invariants
+//!
+//! - The tree grower’s **ordered-gradient** histogram builder assumes a 1:1 correspondence
+//!   between the per-leaf `indices` slice and the gathered `ordered_grad/ordered_hess` buffers:
+//!   `ordered_grad[i]` must correspond to `indices[i]`.
+//! - This partitioner uses **stable partitioning** when splitting leaves. Starting from the
+//!   root’s sequential indices, this ensures each leaf’s indices remain in ascending order.
+//!   This improves locality for downstream gradient gathering and histogram building.
+//! - Note: “ascending order” is not the same as being a contiguous range; most leaves will
+//!   still require gradient gathering.
+//!
 //! # Requirements
 //!
 //! The dataset must provide dense storage (no missing bins). When evaluating splits,
@@ -44,15 +55,34 @@ pub type LeafId = u32;
 pub struct RowPartitioner {
     /// Row indices buffer. Partitioned in-place.
     indices: Box<[u32]>,
+    /// Scratch buffer used for stable partitioning.
+    scratch: Box<[u32]>,
     /// Start position for each leaf in `indices`.
     leaf_begin: Vec<u32>,
     /// Number of rows in each leaf.
     leaf_count: Vec<u32>,
+    /// If present, the leaf's row indices are strictly sequential in leaf order: [k, k+1, ...].
+    ///
+    /// This allows histogram building to avoid an O(n) contiguity scan per node.
+    leaf_sequential_start: Vec<Option<u32>>,
     /// Number of leaves currently allocated.
     n_leaves: usize,
 }
 
 impl RowPartitioner {
+    #[inline]
+    fn sequential_start(indices: &[u32]) -> Option<u32> {
+        let (first, rest) = indices.split_first()?;
+        let mut prev = *first;
+        for &idx in rest {
+            if idx != prev.wrapping_add(1) {
+                return None;
+            }
+            prev = idx;
+        }
+        Some(*first)
+    }
+
     /// Create a new partitioner.
     ///
     /// # Arguments
@@ -60,11 +90,14 @@ impl RowPartitioner {
     /// * `max_leaves` - Maximum number of leaves to support
     pub fn new(n_samples: usize, max_leaves: usize) -> Self {
         let indices: Box<[u32]> = (0..n_samples as u32).collect();
+        let scratch: Box<[u32]> = vec![0u32; n_samples].into_boxed_slice();
 
         Self {
             indices,
+            scratch,
             leaf_begin: vec![0; max_leaves],
             leaf_count: vec![0; max_leaves],
+            leaf_sequential_start: vec![None; max_leaves],
             n_leaves: 0,
         }
     }
@@ -82,6 +115,7 @@ impl RowPartitioner {
                 // Reset indices to sequential order
                 if self.indices.len() != n_samples {
                     self.indices = (0..n_samples as u32).collect();
+                    self.scratch = vec![0u32; n_samples].into_boxed_slice();
                 } else {
                     for (i, idx) in self.indices.iter_mut().enumerate() {
                         *idx = i as u32;
@@ -95,6 +129,8 @@ impl RowPartitioner {
                 // Root leaf owns all rows
                 self.leaf_begin[0] = 0;
                 self.leaf_count[0] = n_samples as u32;
+                self.leaf_sequential_start.fill(None);
+                self.leaf_sequential_start[0] = Some(0);
                 self.n_leaves = 1;
             }
             Some(sampled_indices) => {
@@ -102,6 +138,7 @@ impl RowPartitioner {
                 let n_sampled = sampled_indices.len();
                 if self.indices.len() != n_sampled {
                     self.indices = sampled_indices.to_vec().into_boxed_slice();
+                    self.scratch = vec![0u32; n_sampled].into_boxed_slice();
                 } else {
                     self.indices[..n_sampled].copy_from_slice(sampled_indices);
                 }
@@ -113,9 +150,16 @@ impl RowPartitioner {
                 // Root leaf owns all sampled rows
                 self.leaf_begin[0] = 0;
                 self.leaf_count[0] = n_sampled as u32;
+                self.leaf_sequential_start.fill(None);
+                self.leaf_sequential_start[0] = Self::sequential_start(&self.indices);
                 self.n_leaves = 1;
             }
         }
+    }
+
+    #[inline]
+    pub(super) fn leaf_sequential_start(&self, leaf: LeafId) -> Option<u32> {
+        self.leaf_sequential_start[leaf as usize]
     }
 
     /// Get the row indices for a leaf.
@@ -183,17 +227,141 @@ impl RowPartitioner {
         let has_missing = bin_mapper.missing_type() != MissingType::None;
         let default_left = split.default_left;
 
-        // Partition in place: left elements move to front
-        let mut left_end = begin;
+        let eval_generic = |row: u32| -> bool {
+            let bin = dataset
+                .get_bin(row as usize, split.feature as usize)
+                .expect("partition requires dense storage");
 
-        // Dispatch once based on split type and feature view type
-        match (&split.split_type, &feature_view) {
+            if bin == default_bin && has_missing {
+                return default_left;
+            }
+
+            match &split.split_type {
+                SplitType::Numerical { bin: threshold } => bin <= *threshold as u32,
+                SplitType::Categorical { left_cats } => left_cats.contains(bin),
+            }
+        };
+
+        // Stable partition into scratch, then copy back. This preserves the relative
+        // order of indices within left and right partitions, improving memory locality.
+        let (indices, scratch) = (&mut self.indices, &mut self.scratch);
+
+        // Dispatch once based on split type and feature view type.
+        let left_count: u32 = match (&split.split_type, &feature_view) {
             // Numerical split with u8 bins (most common case)
             (SplitType::Numerical { bin: threshold }, FeatureView::U8 { bins, stride }) => {
                 let threshold = *threshold as u8;
                 let stride = *stride;
-                for i in begin..end {
-                    let row = self.indices[i] as usize;
+                let mut cnt = 0u32;
+                for &idx in &indices[begin..end] {
+                    let row = idx as usize;
+                    let bin = bins[row * stride];
+                    let goes_left = if bin == default_bin as u8 && has_missing {
+                        default_left
+                    } else {
+                        bin <= threshold
+                    };
+                    cnt += goes_left as u32;
+                }
+                cnt
+            }
+            // Numerical split with u16 bins
+            (SplitType::Numerical { bin: threshold }, FeatureView::U16 { bins, stride }) => {
+                let threshold = *threshold;
+                let stride = *stride;
+                let mut cnt = 0u32;
+                for &idx in &indices[begin..end] {
+                    let row = idx as usize;
+                    let bin = bins[row * stride];
+                    let goes_left = if bin == default_bin as u16 && has_missing {
+                        default_left
+                    } else {
+                        bin <= threshold
+                    };
+                    cnt += goes_left as u32;
+                }
+                cnt
+            }
+            // Categorical split with u8 bins
+            (SplitType::Categorical { left_cats }, FeatureView::U8 { bins, stride }) => {
+                let stride = *stride;
+                let mut cnt = 0u32;
+                for &idx in &indices[begin..end] {
+                    let row = idx as usize;
+                    let bin = bins[row * stride] as u32;
+                    let goes_left = if bin == default_bin && has_missing {
+                        default_left
+                    } else {
+                        left_cats.contains(bin)
+                    };
+                    cnt += goes_left as u32;
+                }
+                cnt
+            }
+            // Categorical split with u16 bins
+            (SplitType::Categorical { left_cats }, FeatureView::U16 { bins, stride }) => {
+                let stride = *stride;
+                let mut cnt = 0u32;
+                for &idx in &indices[begin..end] {
+                    let row = idx as usize;
+                    let bin = bins[row * stride] as u32;
+                    let goes_left = if bin == default_bin && has_missing {
+                        default_left
+                    } else {
+                        left_cats.contains(bin)
+                    };
+                    cnt += goes_left as u32;
+                }
+                cnt
+            }
+            // Sparse features - use the generic path (rare case)
+            _ => {
+                let mut cnt = 0u32;
+                for &idx in &indices[begin..end] {
+                    let goes_left = eval_generic(idx);
+                    cnt += goes_left as u32;
+                }
+                cnt
+            }
+        };
+
+        let mut left_write = begin;
+        let mut right_write = begin + left_count as usize;
+
+        // Track whether each child partition is strictly sequential in the produced order.
+        // This stays correct even when the root indices come from an arbitrary sampled order.
+        let mut left_seq_start: Option<u32> = None;
+        let mut left_prev: u32 = 0;
+        let mut left_is_seq = true;
+        let mut right_seq_start: Option<u32> = None;
+        let mut right_prev: u32 = 0;
+        let mut right_is_seq = true;
+
+        #[inline]
+        fn update_seq(start: &mut Option<u32>, prev: &mut u32, is_seq: &mut bool, idx: u32) {
+            match *start {
+                None => {
+                    *start = Some(idx);
+                    *prev = idx;
+                }
+                Some(_) => {
+                    if *is_seq {
+                        if idx == prev.wrapping_add(1) {
+                            *prev = idx;
+                        } else {
+                            *is_seq = false;
+                        }
+                    }
+                }
+            }
+        }
+
+        match (&split.split_type, &feature_view) {
+            (SplitType::Numerical { bin: threshold }, FeatureView::U8 { bins, stride }) => {
+                let threshold = *threshold as u8;
+                let stride = *stride;
+                for &idx in &indices[begin..end] {
+                    let row = idx as usize;
                     let bin = bins[row * stride];
                     let goes_left = if bin == default_bin as u8 && has_missing {
                         default_left
@@ -201,17 +369,21 @@ impl RowPartitioner {
                         bin <= threshold
                     };
                     if goes_left {
-                        self.indices.swap(i, left_end);
-                        left_end += 1;
+                        scratch[left_write] = idx;
+                        left_write += 1;
+                        update_seq(&mut left_seq_start, &mut left_prev, &mut left_is_seq, idx);
+                    } else {
+                        scratch[right_write] = idx;
+                        right_write += 1;
+                        update_seq(&mut right_seq_start, &mut right_prev, &mut right_is_seq, idx);
                     }
                 }
             }
-            // Numerical split with u16 bins
             (SplitType::Numerical { bin: threshold }, FeatureView::U16 { bins, stride }) => {
                 let threshold = *threshold;
                 let stride = *stride;
-                for i in begin..end {
-                    let row = self.indices[i] as usize;
+                for &idx in &indices[begin..end] {
+                    let row = idx as usize;
                     let bin = bins[row * stride];
                     let goes_left = if bin == default_bin as u16 && has_missing {
                         default_left
@@ -219,16 +391,20 @@ impl RowPartitioner {
                         bin <= threshold
                     };
                     if goes_left {
-                        self.indices.swap(i, left_end);
-                        left_end += 1;
+                        scratch[left_write] = idx;
+                        left_write += 1;
+                        update_seq(&mut left_seq_start, &mut left_prev, &mut left_is_seq, idx);
+                    } else {
+                        scratch[right_write] = idx;
+                        right_write += 1;
+                        update_seq(&mut right_seq_start, &mut right_prev, &mut right_is_seq, idx);
                     }
                 }
             }
-            // Categorical split with u8 bins
             (SplitType::Categorical { left_cats }, FeatureView::U8 { bins, stride }) => {
                 let stride = *stride;
-                for i in begin..end {
-                    let row = self.indices[i] as usize;
+                for &idx in &indices[begin..end] {
+                    let row = idx as usize;
                     let bin = bins[row * stride] as u32;
                     let goes_left = if bin == default_bin && has_missing {
                         default_left
@@ -236,16 +412,20 @@ impl RowPartitioner {
                         left_cats.contains(bin)
                     };
                     if goes_left {
-                        self.indices.swap(i, left_end);
-                        left_end += 1;
+                        scratch[left_write] = idx;
+                        left_write += 1;
+                        update_seq(&mut left_seq_start, &mut left_prev, &mut left_is_seq, idx);
+                    } else {
+                        scratch[right_write] = idx;
+                        right_write += 1;
+                        update_seq(&mut right_seq_start, &mut right_prev, &mut right_is_seq, idx);
                     }
                 }
             }
-            // Categorical split with u16 bins  
             (SplitType::Categorical { left_cats }, FeatureView::U16 { bins, stride }) => {
                 let stride = *stride;
-                for i in begin..end {
-                    let row = self.indices[i] as usize;
+                for &idx in &indices[begin..end] {
+                    let row = idx as usize;
                     let bin = bins[row * stride] as u32;
                     let goes_left = if bin == default_bin && has_missing {
                         default_left
@@ -253,63 +433,53 @@ impl RowPartitioner {
                         left_cats.contains(bin)
                     };
                     if goes_left {
-                        self.indices.swap(i, left_end);
-                        left_end += 1;
+                        scratch[left_write] = idx;
+                        left_write += 1;
+                        update_seq(&mut left_seq_start, &mut left_prev, &mut left_is_seq, idx);
+                    } else {
+                        scratch[right_write] = idx;
+                        right_write += 1;
+                        update_seq(&mut right_seq_start, &mut right_prev, &mut right_is_seq, idx);
                     }
                 }
             }
-            // Sparse features - use the generic path (rare case)
             _ => {
-                for i in begin..end {
-                    let row = self.indices[i];
-                    let goes_left = self.evaluate_split_generic(row, split, dataset);
+                for &idx in &indices[begin..end] {
+                    let goes_left = eval_generic(idx);
                     if goes_left {
-                        self.indices.swap(i, left_end);
-                        left_end += 1;
+                        scratch[left_write] = idx;
+                        left_write += 1;
+                        update_seq(&mut left_seq_start, &mut left_prev, &mut left_is_seq, idx);
+                    } else {
+                        scratch[right_write] = idx;
+                        right_write += 1;
+                        update_seq(&mut right_seq_start, &mut right_prev, &mut right_is_seq, idx);
                     }
                 }
             }
         }
 
-        let left_count = (left_end - begin) as u32;
-        let right_count = (end - left_end) as u32;
+        debug_assert_eq!(left_write, begin + left_count as usize);
+        debug_assert_eq!(right_write, end);
+
+        indices[begin..end].copy_from_slice(&scratch[begin..end]);
+
+        let right_count = count as u32 - left_count;
 
         // Update original leaf (now left only)
         self.leaf_count[leaf as usize] = left_count;
+        self.leaf_sequential_start[leaf as usize] = if left_is_seq { left_seq_start } else { None };
 
         // Allocate new leaf for right
         let right_leaf = self.n_leaves as LeafId;
         self.n_leaves += 1;
-        self.leaf_begin[right_leaf as usize] = left_end as u32;
+        self.leaf_begin[right_leaf as usize] = (begin as u32) + left_count;
         self.leaf_count[right_leaf as usize] = right_count;
+        self.leaf_sequential_start[right_leaf as usize] = if right_is_seq { right_seq_start } else { None };
 
         (right_leaf, left_count, right_count)
     }
 
-    /// Generic split evaluation for sparse features (fallback path).
-    ///
-    /// # Panics
-    ///
-    /// Panics if `dataset.get_bin(row, feature)` returns `None`. This can occur
-    /// when using sparse storage where some bins are not present. GBDT training
-    /// requires dense storage for all rows to be available during partitioning.
-    #[inline]
-    fn evaluate_split_generic(&self, row: u32, split: &SplitInfo, dataset: &BinnedDataset) -> bool {
-        let bin = dataset.get_bin(row as usize, split.feature as usize)
-            .expect("partition requires dense storage");
-
-        // Handle missing/default bin
-        let bin_mapper = dataset.bin_mapper(split.feature as usize);
-        let default_bin = bin_mapper.default_bin();
-        if bin == default_bin && bin_mapper.missing_type() != MissingType::None {
-            return split.default_left;
-        }
-
-        match &split.split_type {
-            SplitType::Numerical { bin: threshold } => bin <= *threshold as u32,
-            SplitType::Categorical { left_cats } => left_cats.contains(bin),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -351,6 +521,16 @@ mod tests {
         for i in 0..100 {
             assert_eq!(indices[i], i as u32);
         }
+    }
+
+    #[test]
+    fn test_leaf_sequential_start_sampled_order() {
+        let mut partitioner = RowPartitioner::new(4, 8);
+        partitioner.reset(0, Some(&[0, 2, 1, 3]));
+        assert_eq!(partitioner.leaf_sequential_start(0), None);
+
+        partitioner.reset(0, Some(&[5, 6, 7]));
+        assert_eq!(partitioner.leaf_sequential_start(0), Some(5));
     }
 
     #[test]

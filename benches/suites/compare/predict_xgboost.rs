@@ -61,15 +61,6 @@ fn bench_xgboost_batch_sizes(c: &mut Criterion) {
 			b.iter(|| black_box(predictor.predict(black_box(m))))
 		});
 
-		group.bench_function(BenchmarkId::new("xgboost/warm", batch_size), |b| {
-			let booster = new_xgb_booster(&xgb_model_bytes);
-			let dmatrix = create_dmatrix(&input_data, batch_size);
-			b.iter(|| {
-				let out = booster.predict(black_box(&dmatrix)).unwrap();
-				black_box(out)
-			})
-		});
-
 		group.bench_function(BenchmarkId::new("xgboost/cold_dmatrix", batch_size), |b| {
 			let mut booster = new_xgb_booster(&xgb_model_bytes);
 			b.iter_batched(
@@ -97,17 +88,11 @@ fn bench_xgboost_single_row(c: &mut Criterion) {
 
 	let input_data = random_dense_f32(1, num_features, 42, -5.0, 5.0);
 	let matrix = RowMatrix::from_vec(input_data.clone(), 1, num_features);
-	let dmatrix = create_dmatrix(&input_data, 1);
+	let _dmatrix = create_dmatrix(&input_data, 1);
 
 	let mut group = c.benchmark_group("compare/predict/xgboost/single_row/medium");
 
 	group.bench_function("boosters", |b| b.iter(|| black_box(predictor.predict(black_box(&matrix)))));
-	group.bench_function("xgboost/warm", |b| {
-		b.iter(|| {
-			let out = xgb_model.predict(black_box(&dmatrix)).unwrap();
-			black_box(out)
-		})
-	});
 
 	group.bench_function("xgboost/cold_dmatrix", |b| {
 		b.iter_batched(
@@ -149,8 +134,9 @@ fn bench_xgboost_thread_scaling(c: &mut Criterion) {
 		xgb_model.set_param("nthread", &threads).expect("Failed to set nthread");
 		reset_xgb_prediction_cache(&mut xgb_model);
 
-		group.bench_function(BenchmarkId::new("xgboost/warm", n_threads), |b| {
+		group.bench_function(BenchmarkId::new("xgboost/cold_cache", n_threads), |b| {
 			b.iter(|| {
+				reset_xgb_prediction_cache(&mut xgb_model);
 				let out = xgb_model.predict(black_box(&dmatrix)).unwrap();
 				black_box(out)
 			})

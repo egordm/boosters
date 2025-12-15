@@ -1,4 +1,4 @@
-# 2025-12-14: Benchmark Report (Training + Inference + Quality)
+# 2025-12-15: Benchmark Report (Training + Inference + Quality)
 
 ## Goal
 
@@ -11,8 +11,8 @@
 
 ## Summary
 
-- **Training (medium, single-thread)**: booste-rs is **slower than XGBoost** and **slower than LightGBM** on this harness.
-- **Inference (medium model)**: booste-rs batch prediction is ~**1.20 Melem/s** at 10k rows, and is ~**4.5× faster than LightGBM** at 10k rows. LightGBM still wins on single-row latency.
+- **Training (medium, single-thread)**: booste-rs is **~on par with XGBoost** (cold DMatrix) and **slower than LightGBM**.
+- **Inference (medium model)**: booste-rs batch prediction is ~**1.18 Melem/s** at 10k rows, and is ~**4.5× faster than LightGBM** at 10k rows. LightGBM still wins on single-row latency.
 - **Quality**: on the synthetic tasks used here, booste-rs is competitive (often best). On the in-repo fixture datasets the gap is mixed (fixture regression remains behind; multiclass is close).
 
 ## Environment
@@ -22,7 +22,7 @@
 | CPU | Apple M1 Pro |
 | OS | macOS 26.1 (25B78) |
 | Rust | 1.91.1 |
-| Commit | `957982e` (dirty working tree) |
+| Commit | `a27a582` (dirty working tree) |
 
 ## Results
 
@@ -32,14 +32,18 @@
 
 Regression, histogram bins=256, single-thread. (See benchmark sources for the exact LR used per suite.)
 
-| Dataset | booste-rs warm | booste-rs cold | XGBoost warm | XGBoost cold | LightGBM cold |
-|---|---:|---:|---:|---:|---:|
-| medium (50k×100, 50 trees, depth=6) | 2.024 s | 2.081 s | **1.637 s** | 2.147 s | 1.476 s |
+All comparisons below are **cold-only** (build data structures inside the timed region). This avoids misleading “warm-cache” effects.
+
+| Suite | Dataset | booste-rs cold_full | XGBoost cold_dmatrix | LightGBM cold_full |
+|---|---|---:|---:|---:|
+| vs XGBoost | medium (50k×100, 50 trees, depth=6) | 2.122 s | **2.083 s** | - |
+| vs LightGBM | medium (50k×100, 50 trees, depth=6) | 2.281 s | - | **1.466 s** |
 
 Notes:
 
-- warm = pre-built dataset structure outside timed region (BinnedDataset / DMatrix)
-- cold = build data structures inside timed region
+- booste-rs `cold_full`: build matrix + bin + train inside the timed region
+- XGBoost `cold_dmatrix`: recreate DMatrix inside the timed region
+- LightGBM `cold_full`: train end-to-end inside the timed region
 
 #### Growth strategy training cost (Criterion, booste-rs)
 
@@ -47,8 +51,8 @@ Regression, 50k×100, 50 trees, bins=256, `learning_rate=0.1`, single-thread.
 
 | Growth strategy | Time | Throughput |
 |---|---:|---:|
-| DepthWise (`max_depth=6`) | **2.027 s** | 2.47 Melem/s |
-| LeafWise (`max_leaves=64`) | 2.098 s | 2.38 Melem/s |
+| DepthWise (`max_depth=6`) | **2.073 s** | 2.4121 Melem/s |
+| LeafWise (`max_leaves=64`) | 2.145 s | 2.3314 Melem/s |
 
 ### Inference performance
 
@@ -58,13 +62,13 @@ Medium model; throughput counts rows/sec (not features).
 
 | Batch size | Time | Throughput |
 |---:|---:|---:|
-| 1 | 8.877 µs | 112.65 Kelem/s |
-| 10 | 12.518 µs | 798.83 Kelem/s |
-| 100 | 84.922 µs | **1.1776 Melem/s** |
-| 1,000 | 840.29 µs | **1.1901 Melem/s** |
-| 10,000 | 8.369 ms | **1.1950 Melem/s** |
+| 1 | 9.1476 µs | 109.318 Kelem/s |
+| 10 | 12.7336 µs | 785.323 Kelem/s |
+| 100 | 86.9201 µs | 1150.482 Kelem/s |
+| 1,000 | 847.5624 µs | 1179.854 Kelem/s |
+| 10,000 | 8.5002 ms | 1176.446 Kelem/s |
 
-Single-row (medium): 8.834 µs.
+Single-row (medium): 9.3817 µs.
 
 #### Traversal strategy comparison (Criterion, booste-rs)
 
@@ -72,8 +76,8 @@ Medium model.
 
 | Strategy | Batch 1,000 | Batch 10,000 |
 |---|---:|---:|
-| Standard (no block) | 2.665 ms | 25.981 ms |
-| Unrolled + block64 | **856.23 µs** | **8.600 ms** |
+| Standard (no block) | 2.6702 ms | 26.167 ms |
+| Unrolled + block64 | **863.7457 µs** | **8.6171 ms** |
 
 #### Parallel prediction scaling (Criterion, booste-rs)
 
@@ -81,45 +85,56 @@ Medium model, 10,000 rows.
 
 | Threads | `par_predict` time | Throughput |
 |---:|---:|---:|
-| 1 | 1.311 ms | **7.6269 Melem/s** |
-| 2 | 4.545 ms | 2.2003 Melem/s |
-| 4 | 2.491 ms | 4.0140 Melem/s |
-| 8 | 1.482 ms | 6.7458 Melem/s |
+| 1 | 1.5321 ms | 6.5272 Melem/s |
+| 2 | 4.5264 ms | 2.2093 Melem/s |
+| 4 | 2.3786 ms | 4.2041 Melem/s |
+| 8 | 1.5647 ms | 6.3910 Melem/s |
 
-Baseline (non-parallel `predict`, 1 thread): 8.600 ms (1.1628 Melem/s).
+Baseline (non-parallel `predict`, 1 thread): 8.6292 ms (1158.854 Kelem/s).
 
 #### Cross-library inference comparison (Criterion)
 
-XGBoost comparison uses both:
-
-- warm: reused booster + dmatrix (may include caching effects)
-- cold_dmatrix: re-creates DMatrix each iteration
+XGBoost comparison is **cold-only** (re-create DMatrix each iteration).
 
 Medium model, 10,000 rows:
 
 | Library / mode | Time |
 |---|---:|
-| booste-rs | 9.187 ms |
-| XGBoost warm | 32.067 µs *(cached; not comparable)* |
-| XGBoost cold_dmatrix | **9.103 ms** |
+| booste-rs | **9.0760 ms** |
+| XGBoost cold_dmatrix | 9.1366 ms |
 
 LightGBM comparison (medium model, 10,000 rows):
 
 | Library | Time |
 |---|---:|
-| booste-rs | **9.248 ms** |
-| LightGBM | 41.456 ms |
+| booste-rs | **9.0787 ms** |
+| LightGBM | 41.020 ms |
 
 Single-row (medium model):
 
 | Library | Time |
 |---|---:|
-| booste-rs | 8.405 µs |
-| LightGBM | **3.665 µs** |
+| booste-rs | 8.3532 µs |
+| LightGBM | **3.5517 µs** |
 
 ### Model quality
 
 Quality harness: `cargo run --bin quality_eval --release --features bench-xgboost,bench-lightgbm`
+
+#### Variance / confidence
+
+All quality numbers below are **single-seed snapshots** (seed=42). When comparing close results, treat deltas as inconclusive unless they exceed run-to-run variance.
+
+Recommended practice for transparency:
+
+- Run $N$ seeds (e.g. 10–20) and report **mean ± std** and an approximate **95% CI**: $\mu \pm 1.96\,\sigma/\sqrt{N}$.
+- Use `--out-json` + the helper script at tools/quality/aggregate_variance.py to aggregate metrics.
+
+Example (synthetic regression, 10 seeds):
+
+`mkdir -p docs/benchmarks/artifacts/quality/synth_regression && for s in 42 43 44 45 46 47 48 49 50 51; do cargo run --bin quality_eval --release --features bench-xgboost,bench-lightgbm -- --task regression --synthetic 20000 50 --trees 200 --depth 6 --seed $s --out-json docs/benchmarks/artifacts/quality/synth_regression/seed-$s.json; done`
+
+`python3 tools/quality/aggregate_variance.py --out docs/benchmarks/artifacts/quality/synth_regression/summary.json docs/benchmarks/artifacts/quality/synth_regression/seed-*.json`
 
 #### Synthetic quality (20k×50, split 80/20, seed=42)
 
@@ -230,8 +245,8 @@ Multiclass: LightGBM example dataset (K=5)
 
 ## Analysis
 
-- Cross-library training: on this harness, XGBoost and LightGBM are faster than booste-rs for the medium regression benchmark.
-- Inference: unrolled traversal + blocking is the main win for batch prediction; LightGBM retains an advantage in single-row latency.
+- Cross-library training: on this harness, booste-rs is ~on par with XGBoost (cold DMatrix) and slower than LightGBM.
+- Inference: unrolled traversal + blocking is the main win for batch prediction; LightGBM retains an advantage in single-row latency. LightGBM prediction may also perform internal one-time setup/caching, so treat these as steady-state timings.
 - Quality: synthetic tasks are generally at parity or better than the baselines here; fixture regression remains behind, and the external sweep is mixed.
 
 ## Conclusions
@@ -270,6 +285,16 @@ cargo run --bin quality_eval --release --features bench-xgboost,bench-lightgbm -
 # Growth strategy synthetic sweep (example)
 cargo run --bin quality_eval --release --features bench-xgboost,bench-lightgbm -- \
   --task multiclass --classes 3 --synthetic 50000 100 --trees 200 --growth leafwise --leaves 64 --seed 42
+
+# External datasets (examples; paths are in this workspace)
+cargo run --bin quality_eval --release --features bench-xgboost,bench-lightgbm -- \
+  --task binary --libsvm ../xgboost/demo/data/agaricus.txt.train --trees 200 --growth depthwise --depth 6 --seed 42
+
+cargo run --bin quality_eval --release --features bench-xgboost,bench-lightgbm -- \
+  --task regression --uci-machine ../xgboost/demo/data/regression/machine.data --trees 200 --growth depthwise --depth 6 --seed 42
+
+cargo run --bin quality_eval --release --features bench-xgboost,bench-lightgbm -- \
+  --task multiclass --classes 5 --label0 ../LightGBM/examples/multiclass_classification/multiclass.train --trees 200 --growth depthwise --depth 6 --seed 42
 
 # Quality as tests (booste-rs only)
 cargo test --test quality_smoke
