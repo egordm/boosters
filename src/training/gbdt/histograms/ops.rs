@@ -48,8 +48,15 @@ pub enum ParallelStrategy {
 
 impl ParallelStrategy {
     /// Select the best strategy based on data characteristics.
+    ///
+    /// Key thresholds tuned based on benchmarks:
+    /// - For very small node counts, sequential is faster (avoids thread spawn overhead)
+    /// - Feature-parallel kicks in with sufficient features to amortize overhead
     pub fn auto_select(n_rows: usize, n_features: usize, n_threads: usize) -> Self {
+        // Minimum rows before parallelism is worthwhile
         const MIN_ROWS_PARALLEL: usize = 1024;
+        
+        // Minimum features to justify parallelizing over features
         const MIN_FEATURES_PARALLEL: usize = 4;
 
         if n_rows < MIN_ROWS_PARALLEL || n_threads <= 1 {
