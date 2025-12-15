@@ -538,9 +538,15 @@ impl TreeGrower {
             return true;
         }
         let first = indices[0];
-        let last = indices[indices.len() - 1];
-        // Check: last >= first (sorted) and range equals length
-        last >= first && (last - first) as usize == indices.len() - 1
+        // Require strictly sequential order.
+        // This is necessary because `build_histograms_ordered()` assumes that
+        // `ordered_grad[i]` corresponds to `indices[i]`.
+        for (i, &idx) in indices.iter().enumerate() {
+            if idx != first + i as u32 {
+                return false;
+            }
+        }
+        true
     }
 
     /// Build histogram for a node.
@@ -657,6 +663,17 @@ impl TreeGrower {
 mod tests {
     use super::*;
     use crate::data::{BinMapper, BinnedDataset, BinnedDatasetBuilder, GroupLayout, GroupStrategy, MissingType};
+
+    #[test]
+    fn test_is_contiguous_range_strict() {
+        assert!(TreeGrower::is_contiguous_range(&[]));
+        assert!(TreeGrower::is_contiguous_range(&[7]));
+        assert!(TreeGrower::is_contiguous_range(&[2, 3, 4, 5]));
+        // Permutation of a contiguous range: must be false.
+        assert!(!TreeGrower::is_contiguous_range(&[0, 2, 1, 3]));
+        // Same endpoints but not sequential.
+        assert!(!TreeGrower::is_contiguous_range(&[5, 6, 8, 7]));
+    }
 
     /// Helper to count leaves in a Tree.
     fn count_leaves<L: crate::repr::gbdt::LeafValue>(tree: &Tree<L>) -> usize {
