@@ -1,110 +1,43 @@
-# RFCs (Request for Comments)
+# RFC Index
 
-This folder contains RFC-style design documents for the booste-rs library.
+Request for Comments (RFCs) document the design decisions for booste-rs.
 
-## What is an RFC?
+## Implemented
 
-An RFC is a design document for a **specific feature or component**. Each RFC should:
+| RFC | Topic | Description |
+|-----|-------|-------------|
+| [0001](./0001-forest-data-structures.md) | Forest Structures | Multi-tree ensemble representation |
+| [0002](./0002-tree-data-structures.md) | Tree Structures | Individual decision tree layout |
+| [0003](./0003-visitor-and-traversal.md) | Traversal | Tree traversal and prediction |
+| [0004](./0004-dmatrix.md) | DMatrix | Data input abstraction |
+| [0007](./0007-serialization.md) | Serialization | XGBoost JSON model loading |
+| [0008](./0008-gblinear-inference.md) | Linear Inference | GBLinear prediction |
+| [0009](./0009-gblinear-training.md) | Linear Training | GBLinear coordinate descent |
+| [0010](./0010-matrix-layouts.md) | Matrix Layouts | Row/column-major storage |
+| [0011](./0011-quantization-binning.md) | Quantization | Feature binning for histograms |
+| [0012](./0012-histogram-building.md) | Histograms | Gradient histogram construction |
+| [0013](./0013-split-finding.md) | Split Finding | Best split selection |
+| [0014](./0014-row-partitioning.md) | Row Partitioning | Sample assignment to nodes |
+| [0015](./0015-tree-growing.md) | Tree Growing | Level-wise and leaf-wise strategies |
+| [0016](./0016-categorical-training.md) | Categorical | Native categorical features |
+| [0017](./0017-sampling-strategies.md) | Sampling | GOSS, row/column sampling |
+| [0018](./0018-multi-output-trees.md) | Multi-Output Trees | Vector leaf support |
+| [0019](./0019-feature-bundling.md) | Feature Bundling | Exclusive feature bundling |
+| [0020](./0020-evaluation-metrics.md) | Evaluation | Training metrics |
+| [0021](./0021-base-score-init.md) | Base Score | Initial prediction setup |
+| [0022](./0022-unified-multi-output.md) | Multi-Output | One-tree-per-output strategy |
+| [0026](./0026-sample-weighting.md) | Sample Weights | Weighted training |
+| [0028](./0028-prediction-outputs-and-transforms.md) | Prediction Output | Raw/transformed predictions |
 
-- Have a clear, focused scope
-- Document design decisions and rationale
-- Be based on research (see `../research/`)
-- Stand alone as a reference for that feature
+## Draft / Planned
 
-**Not RFCs**: Planning documents, roadmaps, or architecture overviews belong elsewhere.
+| RFC | Topic | Status |
+|-----|-------|--------|
+| [0023](./0023-constraints.md) | Constraints | Delayed |
+| [0025](./0025-row-parallel-histograms.md) | Row-Parallel | Draft |
+| [0027](./0027-gradient-quantization.md) | Gradient Quantization | Draft |
+| [0029](./0029-arrow-datasets.md) | Arrow I/O | Draft |
 
-## Document Format
+## Creating New RFCs
 
-Each RFC follows this structure:
-
-- **Status**: See status definitions below
-- **Created**: Date
-- **Depends on**: Related RFCs
-- **Scope**: What aspect of the system this covers
-
-## Status Definitions
-
-| Status | Meaning |
-|--------|---------|
-| **Draft** | Initial proposal, under development |
-| **Review** | Ready for review, awaiting feedback |
-| **Accepted** | Approved design, not yet implemented |
-| **Active** | Currently being implemented |
-| **Implemented** | Fully implemented in code |
-| **Deprecated** | Superseded by another RFC |
-
-## RFC Index
-
-| RFC | Title | Status | Summary |
-|-----|-------|--------|---------|
-| [0001](./0001-forest-data-structures.md) | Forest Data Structures | Implemented | `SoAForest`, tree views, group handling |
-| [0002](./0002-tree-data-structures.md) | Tree Data Structures | Implemented | `SoATreeStorage`, `UnrolledTreeLayout` |
-| [0003](./0003-visitor-and-traversal.md) | Visitor and Traversal | Implemented | `TreeTraversal`, `Predictor`, parallelism |
-| [0004](./0004-dmatrix.md) | DMatrix and Data Input | Implemented | `DataMatrix` trait, `DenseMatrix` |
-| [0007](./0007-serialization.md) | Serialization | Active | XGBoost JSON ✅, LightGBM planned |
-| [0008](./0008-gblinear-inference.md) | GBLinear Inference | Approved | Linear model loading and prediction |
-| [0009](./0009-gblinear-training.md) | GBLinear Training | Approved | Coordinate descent training |
-
-### Planned RFCs (pending research)
-
-| RFC | Title | Status | Research Needed |
-|-----|-------|--------|-----------------|
-| 0010 | LightGBM Support | Planned | `../research/lightgbm.md` |
-| 0011 | Quantization | Planned | `../research/quantization.md` |
-| 0012 | Training Pipeline | Planned | `../research/training.md` |
-| 0013 | GPU Backend | Planned | Future |
-
-### Research Conclusions (no RFC needed)
-
-| Topic | Conclusion | Notes |
-|-------|------------|-------|
-| SIMD Acceleration | Not beneficial | Gather bottleneck, see [SIMD analysis](../../benchmarks/2024-11-28-simd-analysis.md) |
-
-## Dependency Graph
-
-```mermaid
-graph TD
-    subgraph "Implemented ✅"
-        RFC0001["0001: Forest"]
-        RFC0002["0002: Tree"]
-        RFC0003["0003: Visitor & Traversal"]
-        RFC0004["0004: DMatrix"]
-        RFC0007["0007: Serialization"]
-    end
-
-    subgraph "Draft 📝"
-        RFC0008["0008: GBLinear Inference"]
-        RFC0009["0009: GBLinear Training"]
-    end
-
-    subgraph "Planned ⏳"
-        RFC0010["0010: LightGBM"]
-        RFC0011["0011: Quantization"]
-        RFC0012["0012: Training"]
-    end
-
-    RFC0001 --> RFC0002
-    RFC0002 --> RFC0003
-    RFC0004 --> RFC0003
-    RFC0007 --> RFC0001
-    
-    RFC0007 --> RFC0008
-    RFC0008 --> RFC0009
-    RFC0007 --> RFC0010
-    RFC0004 --> RFC0011
-    RFC0011 --> RFC0012
-```
-
-## Writing a New RFC
-
-1. **Do the research first** — Document findings in `../research/`
-2. **Pick a number** — Use the next available number
-3. **Write the RFC** — Focus on design decisions, not implementation details
-4. **Get review** — Update status to "Review"
-5. **Implement** — Update status as you go
-
-## Archive
-
-Old/superseded documents are in [_archive/](./_archive/).
-
-- `0010-future-features-planning.md` — Original planning doc (not a proper RFC)
+Use [TEMPLATE.md](./TEMPLATE.md) as a starting point.
