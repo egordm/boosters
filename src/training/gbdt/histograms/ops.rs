@@ -75,7 +75,11 @@ impl ParallelStrategy {
 // Main Entry Point
 // =============================================================================
 
-/// Build histograms for all features.
+/// Build histograms for all features (non-ordered gradients).
+///
+/// **Note**: Prefer [`build_histograms_ordered`] for production use. The ordered
+/// variant pre-gathers gradients into partition order for better cache efficiency.
+/// This function is retained for testing and edge cases.
 ///
 /// Automatically selects between sequential and feature-parallel strategies.
 ///
