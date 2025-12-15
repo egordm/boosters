@@ -1,9 +1,19 @@
 //! Histogram data structures for gradient boosting tree training.
 //!
 //! This module provides:
-//! - [`build_histograms`] for building histograms with automatic parallel strategy
-//! - [`build_histograms_ordered`] for building with pre-gathered ordered gradients
+//! - [`build_histograms_ordered`] - **Preferred** for training with pre-gathered gradients
+//! - [`build_histograms`] - Legacy/testing; use ordered version in production
 //! - [`HistogramPool`] for LRU-cached histogram storage
+//!
+//! # Recommended Usage
+//!
+//! Always use [`build_histograms_ordered`] in production. The "ordered gradients"
+//! technique pre-gathers gradients into partition order, converting random memory
+//! access into sequential reads. This provides significant cache efficiency gains
+//! (following LightGBM's approach).
+//!
+//! The non-ordered [`build_histograms`] is kept for testing and edge cases where
+//! gradients cannot be pre-gathered.
 //!
 //! # Module Organization
 //!
@@ -23,10 +33,6 @@
 //!
 //! The subtraction trick (sibling = parent - child) provides 10-44x speedup and
 //! is the main optimization worth keeping.
-//!
-//! **Ordered gradients** (pre-gathering gradients into partition order) provides
-//! significant cache efficiency gains by converting random gradient access into
-//! sequential reads, following LightGBM's approach.
 
 pub mod ops;
 pub mod pool;
