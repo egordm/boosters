@@ -9,7 +9,7 @@ use crate::training::Gradients;
 use crate::training::sampling::{ColSampler, ColSamplingParams};
 
 use super::expansion::{GrowthState, GrowthStrategy, NodeCandidate};
-use super::histograms::{build_histograms_ordered, FeatureMeta, FeatureView, HistogramPool};
+use super::histograms::{build_histograms_ordered, build_histograms_ordered_sequential, FeatureMeta, FeatureView, HistogramPool};
 use super::optimization::OptimizationProfile;
 use super::partition::RowPartitioner;
 use super::split::{GainParams, GreedySplitter, SplitInfo, SplitType};
@@ -568,11 +568,11 @@ impl TreeGrower {
                 // `hess_slice[start..end]` correspond 1:1 with `rows[i]`.
                 let start = start as usize;
                 let end = start + rows.len();
-                build_histograms_ordered(
+                build_histograms_ordered_sequential(
                     hist.bins,
                     &grad_slice[start..end],
                     &hess_slice[start..end],
-                    rows,
+                    start,
                     bin_views,
                     &self.feature_metas,
                 );
