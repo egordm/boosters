@@ -160,6 +160,53 @@ fn bench_gbdt_thread_scaling(c: &mut Criterion) {
 	group.finish();
 }
 
+fn bench_gbdt_growth_strategy(c: &mut Criterion) {
+	let mut group = c.benchmark_group("component/train/gbdt/growth_strategy");
+	group.sample_size(10);
+
+	let (rows, cols, n_trees, max_depth) = (50_000usize, 100usize, 50u32, 6u32);
+	let max_leaves = 64u32;
+
+	let features = random_dense_f32(rows, cols, 42, -1.0, 1.0);
+	let (targets, _w, _b) = synthetic_regression_targets_linear(&features, rows, cols, 1337, 0.05);
+	let col_matrix = build_col_matrix(features, rows, cols);
+	let binned = BinnedDatasetBuilder::from_matrix(&col_matrix, 256).build().unwrap();
+
+	let common = GBDTParams {
+		n_trees,
+		learning_rate: 0.1,
+		gain: GainParams { reg_lambda: 1.0, ..Default::default() },
+		n_threads: 1,
+		cache_size: 256,
+		..Default::default()
+	};
+
+	let depthwise = GBDTTrainer::new(
+		SquaredLoss,
+		GBDTParams {
+			growth_strategy: GrowthStrategy::DepthWise { max_depth },
+			..common.clone()
+		},
+	);
+	let leafwise = GBDTTrainer::new(
+		SquaredLoss,
+		GBDTParams {
+			growth_strategy: GrowthStrategy::LeafWise { max_leaves },
+			..common
+		},
+	);
+
+	group.throughput(Throughput::Elements((rows * cols) as u64));
+	group.bench_function(BenchmarkId::new("depthwise", format!("{rows}x{cols}")), |b| {
+		b.iter(|| black_box(depthwise.train(black_box(&binned), black_box(&targets), &[]).unwrap()))
+	});
+	group.bench_function(BenchmarkId::new("leafwise", format!("{rows}x{cols}")), |b| {
+		b.iter(|| black_box(leafwise.train(black_box(&binned), black_box(&targets), &[]).unwrap()))
+	});
+
+	group.finish();
+}
+
 criterion_group! {
 	name = benches;
 	config = default_criterion();
@@ -167,6 +214,7 @@ criterion_group! {
 		bench_gbdt_train_regression,
 		bench_gbdt_train_binary,
 		bench_gbdt_train_multiclass,
-		bench_gbdt_thread_scaling
+		bench_gbdt_thread_scaling,
+		bench_gbdt_growth_strategy
 }
 criterion_main!(benches);
