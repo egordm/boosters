@@ -341,7 +341,7 @@ cargo bench --bench training_gbdt
 For qualitative model comparisons (training quality, not performance):
 
 ```bash
-# Regression comparison across libraries
+# Single run regression comparison
 cargo run --bin quality_eval --release --features "bench-xgboost,bench-lightgbm" -- \
     --task regression --synthetic 50000 100
 
@@ -349,9 +349,27 @@ cargo run --bin quality_eval --release --features "bench-xgboost,bench-lightgbm"
 cargo run --bin quality_eval --release --features "bench-xgboost,bench-lightgbm" -- \
     --task binary --synthetic 50000 100
 
+# Multiclass with 5 classes
+cargo run --bin quality_eval --release --features "bench-xgboost,bench-lightgbm" -- \
+    --task multiclass --classes 5 --synthetic 50000 100
+
 # With real dataset
 cargo run --bin quality_eval --release --features "bench-xgboost,bench-lightgbm" -- \
     --task regression --parquet path/to/data.parquet --label price
+```
+
+### Comprehensive Quality Benchmark
+
+For full quality comparison with multiple seeds and confidence intervals:
+
+```bash
+# Full quality benchmark (5 seeds, all tasks, writes markdown report)
+cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm" -- \
+    --seeds 5 --out docs/benchmarks/quality-report.md
+
+# Quick mode for development iteration
+cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm" -- \
+    --quick --seeds 3 --out /tmp/quality-quick.md
 ```
 
 ### Benchmark Report Naming
@@ -361,6 +379,12 @@ Format: `docs/benchmarks/YYYY-MM-DD-<commit-short>-<topic>.md`
 Example: `2025-01-15-a1b2c3d-library-comparison.md`
 
 Include the short commit hash to track which code version was benchmarked.
+
+### Benchmark Report Formatting
+
+- Best values in comparison tables should be **bold**
+- Include measurement uncertainty (± std) when multiple runs are performed
+- Clearly state whether lower or higher is better for each metric
 
 ---
 
