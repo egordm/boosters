@@ -1,0 +1,287 @@
+//! Unified comparison benchmarks: booste-rs vs XGBoost vs LightGBM prediction.
+//!
+//! Run with: `cargo bench --features "bench-xgboost,bench-lightgbm" --bench compare_prediction`
+//! Or single library: `cargo bench --features bench-xgboost --bench compare_prediction`
+
+#[path = "../../common/mod.rs"]
+mod common;
+
+use common::criterion_config::default_criterion;
+use common::models::load_boosters_model;
+#[cfg(any(feature = "bench-xgboost", feature = "bench-lightgbm"))]
+use common::models::bench_models_dir;
+use common::threading::with_rayon_threads;
+
+use booste_rs::data::RowMatrix;
+use booste_rs::inference::gbdt::{Predictor, UnrolledTraversal6};
+use booste_rs::testing::data::random_dense_f32;
+
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+
+#[cfg(feature = "bench-xgboost")]
+use criterion::BatchSize;
+
+#[cfg(feature = "bench-xgboost")]
+use xgb::{Booster, DMatrix};
+
+// =============================================================================
+// Standardized Dataset Sizes
+// =============================================================================
+
+/// Small batch: latency-sensitive scenarios
+const SMALL_BATCH: usize = 100;
+/// Medium batch: primary comparison point
+const MEDIUM_BATCH: usize = 1_000;
+/// Large batch: throughput scenarios
+const LARGE_BATCH: usize = 10_000;
+
+// =============================================================================
+// XGBoost Helpers
+// =============================================================================
+
+#[cfg(feature = "bench-xgboost")]
+fn load_xgb_model_bytes(name: &str) -> Vec<u8> {
+	let path = bench_models_dir().join(format!("{name}.model.json"));
+	std::fs::read(&path).unwrap_or_else(|_| panic!("Failed to read XGB model: {path:?}"))
+}
+
+#[cfg(feature = "bench-xgboost")]
+fn new_xgb_booster(model_bytes: &[u8]) -> Booster {
+	let mut booster = Booster::load_buffer(model_bytes).expect("Failed to load XGB model from buffer");
+	booster.set_param("predictor", "cpu_predictor").expect("Failed to set predictor");
+	booster.set_param("nthread", "1").expect("Failed to set nthread");
+	booster
+}
+
+#[cfg(feature = "bench-xgboost")]
+fn reset_xgb_prediction_cache(booster: &mut Booster) {
+	let _ = booster.reset();
+}
+
+#[cfg(feature = "bench-xgboost")]
+fn create_dmatrix(data: &[f32], num_rows: usize) -> DMatrix {
+	DMatrix::from_dense(data, num_rows).expect("Failed to create DMatrix")
+}
+
+// =============================================================================
+// LightGBM Helpers
+// =============================================================================
+
+#[cfg(feature = "bench-lightgbm")]
+fn load_native_lgb_booster(name: &str) -> lightgbm3::Booster {
+	lightgbm3::Booster::from_file(bench_models_dir().join(format!("{name}.lgb.txt")).to_str().unwrap())
+		.expect("Failed to load LightGBM model")
+}
+
+// =============================================================================
+// Batch Size Comparison
+// =============================================================================
+
+fn bench_predict_batch_sizes(c: &mut Criterion) {
+	let boosters_model = load_boosters_model("bench_medium");
+	let num_features = boosters_model.num_features;
+	let predictor = Predictor::<UnrolledTraversal6>::new(&boosters_model.forest).with_block_size(64);
+
+	#[cfg(feature = "bench-xgboost")]
+	let xgb_model_bytes = load_xgb_model_bytes("bench_medium");
+
+	#[cfg(feature = "bench-lightgbm")]
+	let lgb_booster = load_native_lgb_booster("bench_medium");
+
+	let mut group = c.benchmark_group("compare/predict/batch_size/medium");
+
+	for batch_size in [SMALL_BATCH, MEDIUM_BATCH, LARGE_BATCH] {
+		let input_data = random_dense_f32(batch_size, num_features, 42, -5.0, 5.0);
+		let matrix = RowMatrix::from_vec(input_data.clone(), batch_size, num_features);
+
+		group.throughput(Throughput::Elements(batch_size as u64));
+
+		// booste-rs
+		group.bench_with_input(BenchmarkId::new("boosters", batch_size), &matrix, |b, m| {
+			b.iter(|| black_box(predictor.predict(black_box(m))))
+		});
+
+		// XGBoost
+		#[cfg(feature = "bench-xgboost")]
+		{
+			group.bench_function(BenchmarkId::new("xgboost/cold_dmatrix", batch_size), |b| {
+				let mut booster = new_xgb_booster(&xgb_model_bytes);
+				b.iter_batched(
+					|| create_dmatrix(&input_data, batch_size),
+					|dmatrix| {
+						reset_xgb_prediction_cache(&mut booster);
+						let out = booster.predict(black_box(&dmatrix)).unwrap();
+						black_box(out)
+					},
+					BatchSize::SmallInput,
+				)
+			});
+		}
+
+		// LightGBM
+		#[cfg(feature = "bench-lightgbm")]
+		{
+			let input_f64_a: Vec<f64> = input_data.iter().map(|&x| x as f64).collect();
+			let mut input_f64_b = input_f64_a.clone();
+			if let Some(first) = input_f64_b.first_mut() {
+				*first = f64::from_bits(first.to_bits().wrapping_add(1));
+			}
+			let num_feat = num_features as i32;
+			group.bench_function(BenchmarkId::new("lightgbm", batch_size), |b| {
+				let mut flip = false;
+				b.iter(|| {
+					flip = !flip;
+					let input = if flip { &input_f64_a } else { &input_f64_b };
+					let output = lgb_booster.predict(black_box(input), num_feat, true).unwrap();
+					black_box(output)
+				})
+			});
+		}
+	}
+
+	group.finish();
+}
+
+// =============================================================================
+// Single Row Latency
+// =============================================================================
+
+fn bench_predict_single_row(c: &mut Criterion) {
+	let boosters_model = load_boosters_model("bench_medium");
+	let num_features = boosters_model.num_features;
+	let predictor = Predictor::<UnrolledTraversal6>::new(&boosters_model.forest).with_block_size(64);
+
+	#[cfg(feature = "bench-xgboost")]
+	let xgb_model_bytes = load_xgb_model_bytes("bench_medium");
+	#[cfg(feature = "bench-xgboost")]
+	let mut xgb_model = new_xgb_booster(&xgb_model_bytes);
+
+	#[cfg(feature = "bench-lightgbm")]
+	let lgb_booster = load_native_lgb_booster("bench_medium");
+
+	let input_data = random_dense_f32(1, num_features, 42, -5.0, 5.0);
+	let matrix = RowMatrix::from_vec(input_data.clone(), 1, num_features);
+
+	let mut group = c.benchmark_group("compare/predict/single_row/medium");
+
+	// booste-rs
+	group.bench_function("boosters", |b| {
+		b.iter(|| black_box(predictor.predict(black_box(&matrix))))
+	});
+
+	// XGBoost
+	#[cfg(feature = "bench-xgboost")]
+	{
+		group.bench_function("xgboost/cold_dmatrix", |b| {
+			b.iter_batched(
+				|| create_dmatrix(&input_data, 1),
+				|dmatrix| {
+					reset_xgb_prediction_cache(&mut xgb_model);
+					let out = xgb_model.predict(black_box(&dmatrix)).unwrap();
+					black_box(out)
+				},
+				BatchSize::SmallInput,
+			)
+		});
+	}
+
+	// LightGBM
+	#[cfg(feature = "bench-lightgbm")]
+	{
+		let input_f64_a: Vec<f64> = input_data.iter().map(|&x| x as f64).collect();
+		let mut input_f64_b = input_f64_a.clone();
+		if let Some(first) = input_f64_b.first_mut() {
+			*first = f64::from_bits(first.to_bits().wrapping_add(1));
+		}
+		let num_feat = num_features as i32;
+		group.bench_function("lightgbm", |b| {
+			let mut flip = false;
+			b.iter(|| {
+				flip = !flip;
+				let input = if flip { &input_f64_a } else { &input_f64_b };
+				let output = lgb_booster.predict(black_box(input), num_feat, true).unwrap();
+				black_box(output)
+			})
+		});
+	}
+
+	group.finish();
+}
+
+// =============================================================================
+// Thread Scaling
+// =============================================================================
+
+fn bench_predict_thread_scaling(c: &mut Criterion) {
+	let boosters_model = load_boosters_model("bench_medium");
+	let num_features = boosters_model.num_features;
+	let predictor = Predictor::<UnrolledTraversal6>::new(&boosters_model.forest).with_block_size(64);
+
+	#[cfg(feature = "bench-xgboost")]
+	let xgb_model_bytes = load_xgb_model_bytes("bench_medium");
+	#[cfg(feature = "bench-xgboost")]
+	let mut xgb_model = new_xgb_booster(&xgb_model_bytes);
+
+	#[cfg(feature = "bench-lightgbm")]
+	let lgb_booster = load_native_lgb_booster("bench_medium");
+
+	let batch_size = LARGE_BATCH;
+	let input_data = random_dense_f32(batch_size, num_features, 42, -5.0, 5.0);
+	let matrix = RowMatrix::from_vec(input_data.clone(), batch_size, num_features);
+
+	let mut group = c.benchmark_group("compare/predict/thread_scaling/medium");
+	group.throughput(Throughput::Elements(batch_size as u64));
+
+	for &n_threads in common::matrix::THREAD_COUNTS {
+		// booste-rs
+		group.bench_with_input(BenchmarkId::new("boosters", n_threads), &matrix, |b, m| {
+			b.iter(|| with_rayon_threads(n_threads, || black_box(predictor.par_predict(black_box(m)))))
+		});
+
+		// XGBoost
+		#[cfg(feature = "bench-xgboost")]
+		{
+			let dmatrix = create_dmatrix(&input_data, batch_size);
+			let threads = n_threads.to_string();
+			xgb_model.set_param("nthread", &threads).expect("Failed to set nthread");
+			reset_xgb_prediction_cache(&mut xgb_model);
+
+			group.bench_function(BenchmarkId::new("xgboost/cold_cache", n_threads), |b| {
+				b.iter(|| {
+					reset_xgb_prediction_cache(&mut xgb_model);
+					let out = xgb_model.predict(black_box(&dmatrix)).unwrap();
+					black_box(out)
+				})
+			});
+		}
+
+		// LightGBM (single-threaded baseline only)
+		#[cfg(feature = "bench-lightgbm")]
+		if n_threads == 1 {
+			let input_f64_a: Vec<f64> = input_data.iter().map(|&x| x as f64).collect();
+			let mut input_f64_b = input_f64_a.clone();
+			if let Some(first) = input_f64_b.first_mut() {
+				*first = f64::from_bits(first.to_bits().wrapping_add(1));
+			}
+			let num_feat = num_features as i32;
+			group.bench_function(BenchmarkId::new("lightgbm", "default"), |b| {
+				let mut flip = false;
+				b.iter(|| {
+					flip = !flip;
+					let input = if flip { &input_f64_a } else { &input_f64_b };
+					let output = lgb_booster.predict(black_box(input), num_feat, true).unwrap();
+					black_box(output)
+				})
+			});
+		}
+	}
+
+	group.finish();
+}
+
+criterion_group! {
+	name = benches;
+	config = default_criterion();
+	targets = bench_predict_batch_sizes, bench_predict_single_row, bench_predict_thread_scaling
+}
+criterion_main!(benches);
