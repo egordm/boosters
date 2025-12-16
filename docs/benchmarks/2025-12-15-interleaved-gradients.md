@@ -6,7 +6,7 @@ This report evaluates the “interleaved gradients” refactor (single canonical
 
 - Host: macOS, Apple M1 Pro
 - Toolchain: rustc 1.91.1, cargo 1.91.1
-- Git base: `751ed51` (working tree dirty; refactor not committed yet)
+- Git: `2f73f20` (clean)
 
 ## What Changed
 
@@ -121,4 +121,4 @@ These are candidates that should be lossless (no algorithm/accuracy changes), bu
 - LightGBM and XGBoost comparison benches require features:
   - `--features bench-lightgbm`
   - `--features bench-xgboost`
-- This report was collected with a dirty working tree (uncommitted refactor). For a final report we should re-run after committing the interleaved branch and ensure the criterion baseline is clearly identified.
+- This report was originally collected while iterating on the refactor; the final code is now committed as `2f73f20`. If you want, we can re-run the benches again post-commit to regenerate the numbers with a clean provenance.
