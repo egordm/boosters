@@ -39,4 +39,4 @@ pub use gbdt::{
     Predictor, SimplePredictor, UnrolledPredictor6,
     StandardTraversal, UnrolledTraversal, TreeTraversal,
 };
-pub use gblinear::LinearModel;
+pub use gblinear::LinearModelPredict;

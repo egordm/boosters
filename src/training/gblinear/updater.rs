@@ -27,7 +27,7 @@
 use rayon::prelude::*;
 
 use crate::data::ColMatrix;
-use crate::inference::gblinear::LinearModel;
+use crate::repr::gblinear::LinearModel;
 use crate::training::Gradients;
 
 use super::selector::FeatureSelector;
