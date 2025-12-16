@@ -295,6 +295,75 @@ Refs: RFC-0007
 
 ---
 
+## Benchmarking
+
+### Benchmark Structure
+
+Benchmarks are organized using Criterion.rs:
+
+```
+benches/
+├── common/                 # Shared benchmark utilities
+│   ├── criterion_config.rs # Default Criterion config (20s measurement)
+│   ├── models.rs           # Model loading helpers
+│   ├── matrix.rs           # Dataset size constants, THREAD_COUNTS
+│   └── threading.rs        # Rayon thread pool helpers
+└── suites/
+    ├── component/          # Individual component benchmarks
+    ├── e2e/                # End-to-end benchmarks
+    └── compare/            # Library comparison benchmarks
+```
+
+### Standardized Dataset Sizes
+
+All comparison benchmarks use consistent sizes:
+- **Small**: 5,000 rows × 50 features (quick iteration)
+- **Medium**: 50,000 rows × 100 features (primary comparison point)
+
+### Running Benchmarks
+
+```bash
+# Unified comparison benchmarks (preferred)
+cargo bench --features "bench-xgboost,bench-lightgbm" --bench compare_training
+cargo bench --features "bench-xgboost,bench-lightgbm" --bench compare_prediction
+
+# Single library comparison
+cargo bench --features bench-xgboost --bench compare_training
+cargo bench --features bench-lightgbm --bench compare_prediction
+
+# Component benchmarks (no feature flags needed)
+cargo bench --bench prediction_core
+cargo bench --bench training_gbdt
+```
+
+### Quality Evaluation
+
+For qualitative model comparisons (training quality, not performance):
+
+```bash
+# Regression comparison across libraries
+cargo run --bin quality_eval --release --features "bench-xgboost,bench-lightgbm" -- \
+    --task regression --synthetic 50000 100
+
+# Binary classification
+cargo run --bin quality_eval --release --features "bench-xgboost,bench-lightgbm" -- \
+    --task binary --synthetic 50000 100
+
+# With real dataset
+cargo run --bin quality_eval --release --features "bench-xgboost,bench-lightgbm" -- \
+    --task regression --parquet path/to/data.parquet --label price
+```
+
+### Benchmark Report Naming
+
+Format: `docs/benchmarks/YYYY-MM-DD-<commit-short>-<topic>.md`
+
+Example: `2025-01-15-a1b2c3d-library-comparison.md`
+
+Include the short commit hash to track which code version was benchmarked.
+
+---
+
 ## Quick Reference: File Locations
 
 | Content | Location |
@@ -306,13 +375,14 @@ Refs: RFC-0007
 | Research & deep dives | `docs/design/research/` |
 | Scratch notes | `docs/design/NOTES.md` |
 | This guide | `docs/design/CONTRIBUTING.md` |
-| Benchmarks | `docs/benchmarks/` |
+| Benchmarks reports | `docs/benchmarks/` |
 | Benchmark template | `docs/benchmarks/TEMPLATE.md` |
+| Benchmark code | `benches/` |
 | Source code | `src/` |
 | Test utilities | `src/testing.rs` |
 | Integration tests | `tests/` |
 | Test data loader | `tests/test_data.rs` |
-| Test data | `tests/test-cases/` |
+| Test data & models | `tests/test-cases/` |
 | Python data generation | `tools/data_generation/` |
 
 ---
@@ -324,3 +394,4 @@ Refs: RFC-0007
 3. **Document in code** — rustdoc for public APIs, comments for internals
 4. **Test as you go** — don't batch testing at the end
 5. **Clear commits** — reference epic/story/task and RFCs
+6. **Benchmark consistently** — use standardized dataset sizes, include commit hash in reports
