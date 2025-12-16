@@ -242,91 +242,13 @@ impl RowPartitioner {
             }
         };
 
-        // Stable partition into scratch, then copy back. This preserves the relative
-        // order of indices within left and right partitions, improving memory locality.
+        // Single-pass stable partition: write left from start, right from end of scratch,
+        // then reverse right portion in-place for stable ordering.
         let (indices, scratch) = (&mut self.indices, &mut self.scratch);
 
-        // Dispatch once based on split type and feature view type.
-        let left_count: u32 = match (&split.split_type, &feature_view) {
-            // Numerical split with u8 bins (most common case)
-            (SplitType::Numerical { bin: threshold }, FeatureView::U8 { bins, stride }) => {
-                let threshold = *threshold as u8;
-                let stride = *stride;
-                let mut cnt = 0u32;
-                for &idx in &indices[begin..end] {
-                    let row = idx as usize;
-                    let bin = bins[row * stride];
-                    let goes_left = if bin == default_bin as u8 && has_missing {
-                        default_left
-                    } else {
-                        bin <= threshold
-                    };
-                    cnt += goes_left as u32;
-                }
-                cnt
-            }
-            // Numerical split with u16 bins
-            (SplitType::Numerical { bin: threshold }, FeatureView::U16 { bins, stride }) => {
-                let threshold = *threshold;
-                let stride = *stride;
-                let mut cnt = 0u32;
-                for &idx in &indices[begin..end] {
-                    let row = idx as usize;
-                    let bin = bins[row * stride];
-                    let goes_left = if bin == default_bin as u16 && has_missing {
-                        default_left
-                    } else {
-                        bin <= threshold
-                    };
-                    cnt += goes_left as u32;
-                }
-                cnt
-            }
-            // Categorical split with u8 bins
-            (SplitType::Categorical { left_cats }, FeatureView::U8 { bins, stride }) => {
-                let stride = *stride;
-                let mut cnt = 0u32;
-                for &idx in &indices[begin..end] {
-                    let row = idx as usize;
-                    let bin = bins[row * stride] as u32;
-                    let goes_left = if bin == default_bin && has_missing {
-                        default_left
-                    } else {
-                        left_cats.contains(bin)
-                    };
-                    cnt += goes_left as u32;
-                }
-                cnt
-            }
-            // Categorical split with u16 bins
-            (SplitType::Categorical { left_cats }, FeatureView::U16 { bins, stride }) => {
-                let stride = *stride;
-                let mut cnt = 0u32;
-                for &idx in &indices[begin..end] {
-                    let row = idx as usize;
-                    let bin = bins[row * stride] as u32;
-                    let goes_left = if bin == default_bin && has_missing {
-                        default_left
-                    } else {
-                        left_cats.contains(bin)
-                    };
-                    cnt += goes_left as u32;
-                }
-                cnt
-            }
-            // Sparse features - use the generic path (rare case)
-            _ => {
-                let mut cnt = 0u32;
-                for &idx in &indices[begin..end] {
-                    let goes_left = eval_generic(idx);
-                    cnt += goes_left as u32;
-                }
-                cnt
-            }
-        };
-
+        // Single-pass partition: left goes forward [begin..], right goes backward [..end)
         let mut left_write = begin;
-        let mut right_write = begin + left_count as usize;
+        let mut right_write = end; // Points past the end, we decrement before writing
 
         // Track whether each child partition is strictly sequential in the produced order.
         // This stays correct even when the root indices come from an arbitrary sampled order.
@@ -373,8 +295,8 @@ impl RowPartitioner {
                         left_write += 1;
                         update_seq(&mut left_seq_start, &mut left_prev, &mut left_is_seq, idx);
                     } else {
+                        right_write -= 1;
                         scratch[right_write] = idx;
-                        right_write += 1;
                         update_seq(&mut right_seq_start, &mut right_prev, &mut right_is_seq, idx);
                     }
                 }
@@ -395,8 +317,8 @@ impl RowPartitioner {
                         left_write += 1;
                         update_seq(&mut left_seq_start, &mut left_prev, &mut left_is_seq, idx);
                     } else {
+                        right_write -= 1;
                         scratch[right_write] = idx;
-                        right_write += 1;
                         update_seq(&mut right_seq_start, &mut right_prev, &mut right_is_seq, idx);
                     }
                 }
@@ -416,8 +338,8 @@ impl RowPartitioner {
                         left_write += 1;
                         update_seq(&mut left_seq_start, &mut left_prev, &mut left_is_seq, idx);
                     } else {
+                        right_write -= 1;
                         scratch[right_write] = idx;
-                        right_write += 1;
                         update_seq(&mut right_seq_start, &mut right_prev, &mut right_is_seq, idx);
                     }
                 }
@@ -437,8 +359,8 @@ impl RowPartitioner {
                         left_write += 1;
                         update_seq(&mut left_seq_start, &mut left_prev, &mut left_is_seq, idx);
                     } else {
+                        right_write -= 1;
                         scratch[right_write] = idx;
-                        right_write += 1;
                         update_seq(&mut right_seq_start, &mut right_prev, &mut right_is_seq, idx);
                     }
                 }
@@ -451,16 +373,20 @@ impl RowPartitioner {
                         left_write += 1;
                         update_seq(&mut left_seq_start, &mut left_prev, &mut left_is_seq, idx);
                     } else {
+                        right_write -= 1;
                         scratch[right_write] = idx;
-                        right_write += 1;
                         update_seq(&mut right_seq_start, &mut right_prev, &mut right_is_seq, idx);
                     }
                 }
             }
         }
 
-        debug_assert_eq!(left_write, begin + left_count as usize);
-        debug_assert_eq!(right_write, end);
+        // Compute counts from write pointers
+        let left_count = (left_write - begin) as u32;
+        debug_assert_eq!(left_write, right_write, "partition pointers should meet");
+
+        // Right portion is in reverse order in scratch[left_write..end], reverse to restore stable order
+        scratch[left_write..end].reverse();
 
         indices[begin..end].copy_from_slice(&scratch[begin..end]);
 
