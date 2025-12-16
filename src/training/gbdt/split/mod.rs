@@ -64,6 +64,6 @@ pub mod gain;
 pub mod types;
 
 // Re-exports for convenience
-pub use find::{GreedySplitter, SplitStrategy, DEFAULT_MAX_ONEHOT_CATS};
+pub use find::{GreedySplitter, DEFAULT_MAX_ONEHOT_CATS};
 pub use gain::GainParams;
 pub use types::{SplitInfo, SplitType};

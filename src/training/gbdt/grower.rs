@@ -10,9 +10,9 @@ use crate::training::sampling::{ColSampler, ColSamplingParams};
 
 use super::expansion::{GrowthState, GrowthStrategy, NodeCandidate};
 use super::histograms::{
-    build_histograms_ordered_interleaved, build_histograms_ordered_sequential_interleaved,
-    FeatureMeta, FeatureView, HistogramPool,
+    FeatureMeta, FeatureView, HistogramBuilder, HistogramPool,
 };
+use super::parallelism::Parallelism;
 use super::optimization::OptimizationProfile;
 use super::partition::RowPartitioner;
 use super::split::{GainParams, GreedySplitter, SplitInfo, SplitType};
@@ -87,6 +87,9 @@ pub struct TreeGrower {
     /// Buffer for ordered (pre-gathered) gradients.
     /// Reused across histogram builds to avoid allocation.
     ordered_grad_hess: Vec<GradHessF32>,
+
+    /// Histogram builder (encapsulates parallelism and kernel dispatch).
+    histogram_builder: HistogramBuilder,
 }
 
 impl TreeGrower {
@@ -100,6 +103,7 @@ impl TreeGrower {
         dataset: &BinnedDataset,
         params: GrowerParams,
         cache_size: usize,
+        parallelism: Parallelism,
     ) -> Self {
         let n_features = dataset.n_features();
         let n_samples = dataset.n_rows();
@@ -151,8 +155,11 @@ impl TreeGrower {
             col_sampler,
             last_leaf_values: Vec::new(),
             ordered_grad_hess: Vec::with_capacity(n_samples),
+            histogram_builder: HistogramBuilder::new(parallelism),
         }
     }
+
+
 
     /// Grow a tree and (optionally) update predictions using training-time leaf assignments.
     ///
@@ -567,58 +574,49 @@ impl TreeGrower {
         // Get gradient slices for this output
         let grad_hess_slice = gradients.output_pairs(output);
 
-        match self.partitioner.leaf_sequential_start(node) {
-            Some(start) => {
-                // Strictly sequential indices.
-                // Invariant: when calling `build_histograms_ordered_sequential_interleaved`, the gradient slice must be
-                // aligned with the index order used for bin lookup.
-                // Here, `rows` is exactly `[start..start+len)` so `grad_hess_slice[start..end]`
-                // corresponds 1:1 with `rows[i]`.
-                let start = start as usize;
-                let end = start + rows.len();
-                build_histograms_ordered_sequential_interleaved(
-                    hist.bins,
-                    &grad_hess_slice[start..end],
-                    start,
-                    bin_views,
-                    &self.feature_metas,
-                );
-                return;
+        if let Some(start) = self.partitioner.leaf_sequential_start(node) {
+            // Strictly sequential indices.
+            // Invariant: `rows` is exactly `[start..start+len)` so `grad_hess_slice[start..end]`
+            // corresponds 1:1 with `rows[i]`.
+            let start = start as usize;
+            let end = start + rows.len();
+            self.histogram_builder.build_contiguous(
+                hist.bins,
+                &grad_hess_slice[start..end],
+                start,
+                bin_views,
+                &self.feature_metas,
+            );
+        } else {
+            // Non-sequential indices: gather gradients into partition order.
+            // Invariant: `ordered_grad_hess[i]` must correspond to `rows[i]`.
+            let n_rows = rows.len();
+
+            // Ensure buffers have capacity (reuses allocation across builds)
+            if self.ordered_grad_hess.capacity() < n_rows {
+                self.ordered_grad_hess
+                    .reserve(n_rows - self.ordered_grad_hess.capacity());
             }
-            None => {
-                // Fall back to gather path below.
+
+            // Gather gradients in partition order with direct writes (no capacity checks)
+            // SAFETY: We just ensured capacity >= n_rows, and row indices are valid
+            unsafe {
+                self.ordered_grad_hess.set_len(n_rows);
+                let gh_ptr = self.ordered_grad_hess.as_mut_ptr();
+                for i in 0..n_rows {
+                    let row = *rows.get_unchecked(i) as usize;
+                    *gh_ptr.add(i) = *grad_hess_slice.get_unchecked(row);
+                }
             }
+
+            self.histogram_builder.build_gathered(
+                hist.bins,
+                &self.ordered_grad_hess,
+                rows,
+                bin_views,
+                &self.feature_metas,
+            );
         }
-
-        // Non-sequential indices: gather gradients into partition order.
-        // Invariant: `ordered_grad_hess[i]` must correspond to `rows[i]`.
-        let n_rows = rows.len();
-
-        // Ensure buffers have capacity (reuses allocation across builds)
-        if self.ordered_grad_hess.capacity() < n_rows {
-            self.ordered_grad_hess
-                .reserve(n_rows - self.ordered_grad_hess.capacity());
-        }
-
-        // Gather gradients in partition order with direct writes (no capacity checks)
-        // SAFETY: We just ensured capacity >= n_rows, and row indices are valid
-        unsafe {
-            self.ordered_grad_hess.set_len(n_rows);
-            let gh_ptr = self.ordered_grad_hess.as_mut_ptr();
-            for i in 0..n_rows {
-                let row = *rows.get_unchecked(i) as usize;
-                *gh_ptr.add(i) = *grad_hess_slice.get_unchecked(row);
-            }
-        }
-
-        // Build histogram with ordered gradients (sequential gradient access)
-        build_histograms_ordered_interleaved(
-            hist.bins,
-            &self.ordered_grad_hess,
-            rows,
-            bin_views,
-            &self.feature_metas,
-        );
     }
 
     /// Find best split for a node using column sampler.
@@ -804,7 +802,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut grower = TreeGrower::new(&dataset, params, 4);
+        let mut grower = TreeGrower::new(&dataset, params, 4, Parallelism::Sequential);
 
         // All same gradient: no good splits
         let grad: Vec<f32> = vec![1.0; 10];
@@ -834,7 +832,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut grower = TreeGrower::new(&dataset, params, 4);
+        let mut grower = TreeGrower::new(&dataset, params, 4, Parallelism::Sequential);
 
         // Gradients that suggest a split
         let grad: Vec<f32> = vec![1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0];
@@ -865,7 +863,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut grower = TreeGrower::new(&dataset, params, 8);
+        let mut grower = TreeGrower::new(&dataset, params, 8, Parallelism::Sequential);
 
         let grad: Vec<f32> = vec![2.0, 1.0, -1.0, -2.0, 2.0, 1.0, -1.0, -2.0];
         let hess: Vec<f32> = vec![1.0; 8];
@@ -938,7 +936,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut grower = TreeGrower::new(&dataset, params, 4);
+        let mut grower = TreeGrower::new(&dataset, params, 4, Parallelism::Sequential);
 
         let grad_f32: Vec<f32> = vec![1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0];
         let hess_f32: Vec<f32> = vec![1.0; 10];
@@ -972,7 +970,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut grower = TreeGrower::new(&dataset, params, 8);
+        let mut grower = TreeGrower::new(&dataset, params, 8, Parallelism::Sequential);
 
         let grad: Vec<f32> = vec![2.0, 1.0, -1.0, -2.0, 2.0, 1.0, -1.0, -2.0];
         let hess: Vec<f32> = vec![1.0; 8];
@@ -1025,11 +1023,21 @@ mod tests {
         }
 
         // Without column sampling
-        let mut grower_all = TreeGrower::new(&dataset, params_no_sampling, 8);
+        let mut grower_all = TreeGrower::new(
+            &dataset,
+            params_no_sampling,
+            8,
+            Parallelism::Sequential,
+        );
         let tree_all = grower_all.grow(&dataset, &gradients, 0, None);
 
         // With column sampling
-        let mut grower_sampled = TreeGrower::new(&dataset, params_with_sampling, 8);
+        let mut grower_sampled = TreeGrower::new(
+            &dataset,
+            params_with_sampling,
+            8,
+            Parallelism::Sequential,
+        );
         let tree_sampled = grower_sampled.grow(&dataset, &gradients, 0, None);
 
         // Both should produce trees
@@ -1046,7 +1054,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut grower = TreeGrower::new(&dataset, params, 4);
+        let mut grower = TreeGrower::new(&dataset, params, 4, Parallelism::Sequential);
 
         let grad_f32: Vec<f32> = vec![1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0];
         let hess_f32: Vec<f32> = vec![1.0; 10];

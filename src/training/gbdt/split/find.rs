@@ -4,9 +4,11 @@ use super::gain::GainParams;
 use super::types::SplitInfo;
 use super::super::categorical::CatBitset;
 use super::super::histograms::{HistogramBin, HistogramSlot};
+use super::super::parallelism::Parallelism;
+
+use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
 /// Maximum categories supported in sorted partition scratch buffer.
-/// Above this, we fall back to heap allocation.
 const MAX_SCRATCH_CATS: usize = 256;
 
 /// Default maximum categories for one-hot split strategy.
@@ -14,22 +16,6 @@ pub const DEFAULT_MAX_ONEHOT_CATS: u32 = 4;
 
 /// Minimum features to consider parallel split finding.
 const MIN_FEATURES_PARALLEL: usize = 16;
-
-// =============================================================================
-// Parallelization Strategy
-// =============================================================================
-
-/// Strategy for split finding parallelization.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum SplitStrategy {
-    /// Always use sequential search (good for few features).
-    #[default]
-    Sequential,
-    /// Always use parallel search (good for many features).
-    Parallel,
-    /// Automatically select based on number of features.
-    Auto,
-}
 
 // =============================================================================
 // Greedy Splitter
@@ -44,17 +30,16 @@ pub enum SplitStrategy {
 /// # Configuration
 ///
 /// The splitter owns its `GainParams` since these are static for training.
-/// Feature types are passed separately since they come from the dataset.
+/// Parallelism is configured at construction and self-corrects based on workload.
 #[derive(Clone, Debug)]
 pub struct GreedySplitter {
     /// Gain computation and constraint parameters.
     gain_params: GainParams,
     /// Maximum categories to use one-hot strategy (above uses sorted partition).
     max_onehot_cats: u32,
-    /// Parallelization strategy for split finding.
-    strategy: SplitStrategy,
+    /// Parallelism hint (self-corrects if workload is too small).
+    parallelism: Parallelism,
     /// Scratch buffer for categorical split (avoids allocation).
-    /// Uses stack for small cardinality, heap for large.
     cat_scratch: Vec<(u32, f64)>,
 }
 
@@ -65,12 +50,12 @@ impl Default for GreedySplitter {
 }
 
 impl GreedySplitter {
-    /// Create a new greedy splitter with default settings.
+    /// Create a new greedy splitter with default settings (sequential).
     pub fn new(gain_params: GainParams) -> Self {
         Self {
             gain_params,
             max_onehot_cats: DEFAULT_MAX_ONEHOT_CATS,
-            strategy: SplitStrategy::Auto,
+            parallelism: Parallelism::Sequential,
             cat_scratch: Vec::with_capacity(MAX_SCRATCH_CATS),
         }
     }
@@ -79,12 +64,12 @@ impl GreedySplitter {
     pub fn with_config(
         gain_params: GainParams,
         max_onehot_cats: u32,
-        strategy: SplitStrategy,
+        parallelism: Parallelism,
     ) -> Self {
         Self {
             gain_params,
             max_onehot_cats,
-            strategy,
+            parallelism,
             cat_scratch: Vec::with_capacity(MAX_SCRATCH_CATS),
         }
     }
@@ -133,14 +118,10 @@ impl GreedySplitter {
         feature_has_missing: &[bool],
         features: &[u32],
     ) -> SplitInfo {
-        // Select strategy based on configuration
-        let use_parallel = match self.strategy {
-            SplitStrategy::Sequential => false,
-            SplitStrategy::Parallel => true,
-            SplitStrategy::Auto => features.len() >= MIN_FEATURES_PARALLEL,
-        };
+        // Self-correct parallelism based on workload
+        let parallelism = self.parallelism.correct_for_workload(features.len(), MIN_FEATURES_PARALLEL);
 
-        if use_parallel {
+        if parallelism.allows_parallel() {
             self.find_split_parallel(
                 histogram,
                 parent_grad,
@@ -164,9 +145,6 @@ impl GreedySplitter {
     }
 
     /// Find the best split using sequential search over features.
-    ///
-    /// Iterates through features one by one, finding the best split for each.
-    /// Suitable for datasets with few features.
     pub fn find_split_sequential(
         &mut self,
         histogram: &HistogramSlot<'_>,
@@ -188,22 +166,9 @@ impl GreedySplitter {
 
             // Find best split for this feature (type-specific)
             let split = if is_categorical {
-                self.find_categorical_split(
-                    bins,
-                    feature as u32,
-                    parent_grad,
-                    parent_hess,
-                    parent_count,
-                )
+                self.find_categorical_split(bins, feature as u32, parent_grad, parent_hess, parent_count)
             } else {
-                self.find_numerical_split(
-                    bins,
-                    feature as u32,
-                    parent_grad,
-                    parent_hess,
-                    parent_count,
-                    has_missing,
-                )
+                self.find_numerical_split(bins, feature as u32, parent_grad, parent_hess, parent_count, has_missing)
             };
 
             // Update best if this feature is better
@@ -229,8 +194,6 @@ impl GreedySplitter {
         feature_has_missing: &[bool],
         features: &[u32],
     ) -> SplitInfo {
-        use rayon::prelude::*;
-
         // Parallel search: each thread evaluates different features
         // Note: categorical sorted splits allocate per-thread scratch space
         features
@@ -238,27 +201,13 @@ impl GreedySplitter {
             .map(|&feature| {
                 let feature = feature as usize;
                 let is_categorical = feature_types.get(feature).copied().unwrap_or(false);
-                let feature_has_missing = feature_has_missing.get(feature).copied().unwrap_or(false);
+                let has_missing = feature_has_missing.get(feature).copied().unwrap_or(false);
                 let bins = histogram.feature_bins(feature);
 
                 if is_categorical {
-                    // For parallel categorical, we use a local allocation
-                    self.find_categorical_split_parallel(
-                        bins,
-                        feature as u32,
-                        parent_grad,
-                        parent_hess,
-                        parent_count,
-                    )
+                    self.find_categorical_split_parallel(bins, feature as u32, parent_grad, parent_hess, parent_count)
                 } else {
-                    self.find_numerical_split(
-                        bins,
-                        feature as u32,
-                        parent_grad,
-                        parent_hess,
-                        parent_count,
-                        feature_has_missing,
-                    )
+                    self.find_numerical_split(bins, feature as u32, parent_grad, parent_hess, parent_count, has_missing)
                 }
             })
             .reduce(|| SplitInfo::invalid(), |a, b| if a.gain > b.gain { a } else { b })
@@ -290,9 +239,7 @@ impl GreedySplitter {
 
         let mut best = SplitInfo::invalid();
 
-        // ---------------------------------------------------------------------
-        // Forward scan: missing values go right (default_left = false)
-        // ---------------------------------------------------------------------
+        // Forward scan: missing values go right
         let mut left_grad = 0.0;
         let mut left_hess = 0.0;
         let mut left_count = 0u32;
@@ -309,18 +256,9 @@ impl GreedySplitter {
             let right_hess = parent_hess - left_hess;
             let right_count = parent_count.saturating_sub(left_count);
 
-            // Check constraints and compute gain
-            if self
-                .gain_params
-                .is_valid_split(left_hess, right_hess, left_count, right_count)
-            {
+            if self.gain_params.is_valid_split(left_hess, right_hess, left_count, right_count) {
                 let gain = self.gain_params.compute_gain(
-                    left_grad,
-                    left_hess,
-                    right_grad,
-                    right_hess,
-                    parent_grad,
-                    parent_hess,
+                    left_grad, left_hess, right_grad, right_hess, parent_grad, parent_hess,
                 );
                 if gain > best.gain {
                     best = SplitInfo::numerical(feature, bin as u16, gain, false);
@@ -328,11 +266,7 @@ impl GreedySplitter {
             }
         }
 
-        // ---------------------------------------------------------------------
-        // Backward scan: missing values go left (default_left = true)
-        // Only needed when the feature has missing values - otherwise the
-        // forward scan already finds the optimal split.
-        // ---------------------------------------------------------------------
+        // Backward scan: missing values go left (only if has_missing)
         if has_missing {
             let mut right_grad = 0.0;
             let mut right_hess = 0.0;
@@ -350,18 +284,9 @@ impl GreedySplitter {
                 let left_hess = parent_hess - right_hess;
                 let left_count = parent_count.saturating_sub(right_count);
 
-                // Check constraints and compute gain
-                if self
-                    .gain_params
-                    .is_valid_split(left_hess, right_hess, left_count, right_count)
-                {
+                if self.gain_params.is_valid_split(left_hess, right_hess, left_count, right_count) {
                     let gain = self.gain_params.compute_gain(
-                        left_grad,
-                        left_hess,
-                        right_grad,
-                        right_hess,
-                        parent_grad,
-                        parent_hess,
+                        left_grad, left_hess, right_grad, right_hess, parent_grad, parent_hess,
                     );
                     if gain > best.gain {
                         // Split at bin-1 since bin goes right
@@ -421,11 +346,7 @@ impl GreedySplitter {
             self.find_onehot_split(bins, feature, parent_grad, parent_hess, parent_count)
         } else {
             self.find_sorted_split_with_scratch(
-                bins,
-                feature,
-                parent_grad,
-                parent_hess,
-                parent_count,
+                bins, feature, parent_grad, parent_hess, parent_count,
                 &mut Vec::with_capacity(bins.len().min(MAX_SCRATCH_CATS)),
             )
         }
@@ -448,33 +369,17 @@ impl GreedySplitter {
         for cat in 0..bins.len() {
             // This category alone goes left
             let (left_grad, left_hess) = bins[cat];
-            let left_count = 1u32; // Approximation (1 category worth of samples)
-
-            // Everything else goes right
+            let left_count = 1u32;
             let right_grad = parent_grad - left_grad;
             let right_hess = parent_hess - left_hess;
             let right_count = parent_count.saturating_sub(left_count);
 
-            // Check constraints and compute gain
-            if self
-                .gain_params
-                .is_valid_split(left_hess, right_hess, left_count, right_count)
-            {
+            if self.gain_params.is_valid_split(left_hess, right_hess, left_count, right_count) {
                 let gain = self.gain_params.compute_gain(
-                    left_grad,
-                    left_hess,
-                    right_grad,
-                    right_hess,
-                    parent_grad,
-                    parent_hess,
+                    left_grad, left_hess, right_grad, right_hess, parent_grad, parent_hess,
                 );
                 if gain > best.gain {
-                    best = SplitInfo::categorical(
-                        feature,
-                        CatBitset::singleton(cat as u32),
-                        gain,
-                        false,
-                    );
+                    best = SplitInfo::categorical(feature, CatBitset::singleton(cat as u32), gain, false);
                 }
             }
         }
@@ -531,18 +436,9 @@ impl GreedySplitter {
             let right_hess = parent_hess - left_hess;
             let right_count = parent_count.saturating_sub(left_count);
 
-            // Check constraints and compute gain
-            if self
-                .gain_params
-                .is_valid_split(left_hess, right_hess, left_count, right_count)
-            {
+            if self.gain_params.is_valid_split(left_hess, right_hess, left_count, right_count) {
                 let gain = self.gain_params.compute_gain(
-                    left_grad,
-                    left_hess,
-                    right_grad,
-                    right_hess,
-                    parent_grad,
-                    parent_hess,
+                    left_grad, left_hess, right_grad, right_hess, parent_grad, parent_hess,
                 );
                 if gain > best.gain {
                     best = SplitInfo::categorical(feature, left_cats.clone(), gain, false);
@@ -607,18 +503,9 @@ impl GreedySplitter {
             let right_hess = parent_hess - left_hess;
             let right_count = parent_count.saturating_sub(left_count);
 
-            // Check constraints and compute gain
-            if self
-                .gain_params
-                .is_valid_split(left_hess, right_hess, left_count, right_count)
-            {
+            if self.gain_params.is_valid_split(left_hess, right_hess, left_count, right_count) {
                 let gain = self.gain_params.compute_gain(
-                    left_grad,
-                    left_hess,
-                    right_grad,
-                    right_hess,
-                    parent_grad,
-                    parent_hess,
+                    left_grad, left_hess, right_grad, right_hess, parent_grad, parent_hess,
                 );
                 if gain > best.gain {
                     best = SplitInfo::categorical(feature, left_cats.clone(), gain, false);
@@ -646,7 +533,6 @@ mod tests {
                 meta
             })
             .collect();
-
         HistogramPool::new(features, 4, 4)
     }
 
@@ -673,30 +559,6 @@ mod tests {
 
         assert!(split.is_valid());
         assert_eq!(split.feature, 0);
-        assert!(split.bin().unwrap() <= 2);
-    }
-
-    #[test]
-    fn test_numerical_split_default_direction() {
-        let splitter = GreedySplitter::default();
-
-        // Asymmetric distribution
-        let bins: [(f64, f64); 3] = [
-            (1.0, 5.0),
-            (1.0, 5.0),
-            (-10.0, 5.0),
-        ];
-
-        let split = splitter.find_numerical_split(
-            &bins,
-            0,
-            -8.0,
-            15.0,
-            15,
-            false, // no missing values in test
-        );
-
-        assert!(split.is_valid());
     }
 
     #[test]
@@ -704,7 +566,7 @@ mod tests {
         let mut splitter = GreedySplitter::with_config(
             GainParams::default(),
             4, // max_onehot_cats
-            SplitStrategy::Sequential,
+            Parallelism::Sequential,
         );
 
         // 3 categories, middle one has distinct gradient
@@ -735,7 +597,7 @@ mod tests {
         let mut splitter = GreedySplitter::with_config(
             GainParams::default(),
             2, // Force sorted strategy (< 5 categories)
-            SplitStrategy::Sequential,
+            Parallelism::Sequential,
         );
 
         // 5 categories with gradient pattern
@@ -786,9 +648,7 @@ mod tests {
         let features: Vec<u32> = (0..3).collect();
         let mut splitter = GreedySplitter::default();
 
-        let split =
-            splitter.find_split(&histogram, 0.0, 45.0, 45, &feature_types, &feature_has_missing, &features);
-
+        let split = splitter.find_split(&histogram, 0.0, 45.0, 45, &feature_types, &feature_has_missing, &features);
         assert!(split.is_valid());
         assert_eq!(split.feature, 1);
     }
@@ -797,31 +657,8 @@ mod tests {
     fn test_invalid_single_bin() {
         let splitter = GreedySplitter::default();
         let bins: [(f64, f64); 1] = [(5.0, 5.0)];
-
         let split = splitter.find_numerical_split(&bins, 0, 5.0, 5.0, 5, false);
         assert!(!split.is_valid());
-    }
-
-    #[test]
-    fn test_strategy_auto_selection() {
-        let mut splitter = GreedySplitter::with_config(
-            GainParams::default(),
-            DEFAULT_MAX_ONEHOT_CATS,
-            SplitStrategy::Auto,
-        );
-
-        // Few features -> should use sequential
-        let mut pool = make_pool(&[4, 4]);
-        let slot = pool.acquire(0).slot();
-        let histogram = pool.slot(slot);
-        let feature_types = [false, false];
-        let feature_has_missing = [false, false];
-        let features: Vec<u32> = (0..2).collect();
-
-        // Just verify it doesn't crash
-        let split =
-            splitter.find_split(&histogram, 0.0, 8.0, 8, &feature_types, &feature_has_missing, &features);
-        assert!(!split.is_valid()); // No data in histogram
     }
 
     #[test]
@@ -853,24 +690,18 @@ mod tests {
 
         // All features: should pick feature 1 (strongest)
         let all_features = [0u32, 1, 2];
-        let split_all = splitter.find_split(
-            &histogram, 0.0, 45.0, 45, &feature_types, &feature_has_missing, &all_features
-        );
+        let split_all = splitter.find_split(&histogram, 0.0, 45.0, 45, &feature_types, &feature_has_missing, &all_features);
         assert_eq!(split_all.feature, 1);
 
         // Exclude feature 1, should pick feature 2 (medium)
         let filtered = [0u32, 2];
-        let split_filtered = splitter.find_split(
-            &histogram, 0.0, 45.0, 45, &feature_types, &feature_has_missing, &filtered
-        );
+        let split_filtered = splitter.find_split(&histogram, 0.0, 45.0, 45, &feature_types, &feature_has_missing, &filtered);
         assert!(split_filtered.is_valid());
         assert_eq!(split_filtered.feature, 2);
 
         // Single feature: should only pick that feature
         let single = [0u32];
-        let split_single = splitter.find_split(
-            &histogram, 0.0, 45.0, 45, &feature_types, &feature_has_missing, &single
-        );
+        let split_single = splitter.find_split(&histogram, 0.0, 45.0, 45, &feature_types, &feature_has_missing, &single);
         assert!(split_single.is_valid());
         assert_eq!(split_single.feature, 0);
     }

@@ -1,20 +1,19 @@
 //! Histogram data structures for gradient boosting tree training.
 //!
 //! This module provides:
-//! - [`build_histograms_ordered_interleaved`] - **Preferred** for training with pre-gathered gradients
-//! - [`HistogramPool`] for LRU-cached histogram storage
+//! - [`HistogramBuilder`] - Main interface for building histograms
+//! - [`HistogramPool`] - LRU-cached histogram storage
 //!
 //! # Recommended Usage
 //!
-//! Always use [`build_histograms_ordered_interleaved`] in production. The "ordered gradients"
-//! technique pre-gathers gradients into partition order, converting random memory
-//! access into sequential reads. This provides significant cache efficiency gains
-//! (following LightGBM's approach).
+//! Use [`HistogramBuilder`] for all histogram construction. It handles parallel
+//! strategy selection and kernel dispatch internally.
 //!
 //! # Module Organization
 //!
-//! - [`ops`] - Histogram building and operations
+//! - [`ops`] - Histogram building kernels and operations
 //! - [`pool`] - LRU-cached histogram storage pool
+//! - [`slices`] - Safe iteration over disjoint feature histogram regions
 //!
 //! # Design Philosophy
 //!
@@ -32,17 +31,17 @@
 
 pub mod ops;
 pub mod pool;
+pub mod slices;
 
 // Re-export main types
 pub use ops::{
-    build_histograms_ordered_interleaved, build_histograms_ordered_sequential_interleaved,
-    ParallelStrategy, HistogramBin,
-    subtract_histogram, merge_histogram, clear_histogram, sum_histogram,
+    HistogramBin, HistogramBuilder,
+    clear_histogram, merge_histogram, subtract_histogram, sum_histogram,
 };
 pub use pool::{
-    AcquireResult, FeatureMeta, HistogramPool, 
-    HistogramSlot, HistogramSlotMut, SlotId,
+    AcquireResult, FeatureMeta, HistogramPool, HistogramSlot, HistogramSlotMut, SlotId,
 };
+pub use slices::HistogramFeatureIter;
 
 // Re-export FeatureView from data module for convenience
 pub use crate::data::binned::FeatureView;
