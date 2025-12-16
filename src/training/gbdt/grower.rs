@@ -5,11 +5,14 @@
 
 use crate::data::BinnedDataset;
 use crate::repr::gbdt::{categories_to_bitset, MutableTree, ScalarLeaf, Tree};
-use crate::training::Gradients;
+use crate::training::{GradHessF32, Gradients};
 use crate::training::sampling::{ColSampler, ColSamplingParams};
 
 use super::expansion::{GrowthState, GrowthStrategy, NodeCandidate};
-use super::histograms::{build_histograms_ordered, build_histograms_ordered_sequential, FeatureMeta, FeatureView, HistogramPool};
+use super::histograms::{
+    build_histograms_ordered_interleaved, build_histograms_ordered_sequential_interleaved,
+    FeatureMeta, FeatureView, HistogramPool,
+};
 use super::optimization::OptimizationProfile;
 use super::partition::RowPartitioner;
 use super::split::{GainParams, GreedySplitter, SplitInfo, SplitType};
@@ -83,9 +86,7 @@ pub struct TreeGrower {
     last_leaf_values: Vec<f32>,
     /// Buffer for ordered (pre-gathered) gradients.
     /// Reused across histogram builds to avoid allocation.
-    ordered_grad: Vec<f32>,
-    /// Buffer for ordered (pre-gathered) hessians.
-    ordered_hess: Vec<f32>,
+    ordered_grad_hess: Vec<GradHessF32>,
 }
 
 impl TreeGrower {
@@ -149,8 +150,7 @@ impl TreeGrower {
             split_strategy,
             col_sampler,
             last_leaf_values: Vec::new(),
-            ordered_grad: Vec::with_capacity(n_samples),
-            ordered_hess: Vec::with_capacity(n_samples),
+            ordered_grad_hess: Vec::with_capacity(n_samples),
         }
     }
 
@@ -565,22 +565,20 @@ impl TreeGrower {
         let hist = self.histogram_pool.slot_mut(slot);
 
         // Get gradient slices for this output
-        let grad_slice = gradients.output_grads(output);
-        let hess_slice = gradients.output_hess(output);
+        let grad_hess_slice = gradients.output_pairs(output);
 
         match self.partitioner.leaf_sequential_start(node) {
             Some(start) => {
                 // Strictly sequential indices.
-                // Invariant: when calling `build_histograms_ordered`, the gradient slices must be
+                // Invariant: when calling `build_histograms_ordered_sequential_interleaved`, the gradient slice must be
                 // aligned with the index order used for bin lookup.
-                // Here, `rows` is exactly `[start..start+len)` so `grad_slice[start..end]` and
-                // `hess_slice[start..end]` correspond 1:1 with `rows[i]`.
+                // Here, `rows` is exactly `[start..start+len)` so `grad_hess_slice[start..end]`
+                // corresponds 1:1 with `rows[i]`.
                 let start = start as usize;
                 let end = start + rows.len();
-                build_histograms_ordered_sequential(
+                build_histograms_ordered_sequential_interleaved(
                     hist.bins,
-                    &grad_slice[start..end],
-                    &hess_slice[start..end],
+                    &grad_hess_slice[start..end],
                     start,
                     bin_views,
                     &self.feature_metas,
@@ -593,36 +591,30 @@ impl TreeGrower {
         }
 
         // Non-sequential indices: gather gradients into partition order.
-        // Invariant: `ordered_grad[i]` must correspond to `rows[i]`.
+        // Invariant: `ordered_grad_hess[i]` must correspond to `rows[i]`.
         let n_rows = rows.len();
 
         // Ensure buffers have capacity (reuses allocation across builds)
-        if self.ordered_grad.capacity() < n_rows {
-            self.ordered_grad.reserve(n_rows - self.ordered_grad.capacity());
-        }
-        if self.ordered_hess.capacity() < n_rows {
-            self.ordered_hess.reserve(n_rows - self.ordered_hess.capacity());
+        if self.ordered_grad_hess.capacity() < n_rows {
+            self.ordered_grad_hess
+                .reserve(n_rows - self.ordered_grad_hess.capacity());
         }
 
         // Gather gradients in partition order with direct writes (no capacity checks)
         // SAFETY: We just ensured capacity >= n_rows, and row indices are valid
         unsafe {
-            self.ordered_grad.set_len(n_rows);
-            self.ordered_hess.set_len(n_rows);
-            let grad_ptr = self.ordered_grad.as_mut_ptr();
-            let hess_ptr = self.ordered_hess.as_mut_ptr();
+            self.ordered_grad_hess.set_len(n_rows);
+            let gh_ptr = self.ordered_grad_hess.as_mut_ptr();
             for i in 0..n_rows {
                 let row = *rows.get_unchecked(i) as usize;
-                *grad_ptr.add(i) = *grad_slice.get_unchecked(row);
-                *hess_ptr.add(i) = *hess_slice.get_unchecked(row);
+                *gh_ptr.add(i) = *grad_hess_slice.get_unchecked(row);
             }
         }
 
         // Build histogram with ordered gradients (sequential gradient access)
-        build_histograms_ordered(
+        build_histograms_ordered_interleaved(
             hist.bins,
-            &self.ordered_grad,
-            &self.ordered_hess,
+            &self.ordered_grad_hess,
             rows,
             bin_views,
             &self.feature_metas,
@@ -818,8 +810,14 @@ mod tests {
         let grad: Vec<f32> = vec![1.0; 10];
         let hess: Vec<f32> = vec![1.0; 10];
         let mut gradients = Gradients::new(10, 1);
-        gradients.output_grads_mut(0).copy_from_slice(&grad);
-        gradients.output_hess_mut(0).copy_from_slice(&hess);
+        for (dst, (&g, &h)) in gradients
+            .output_pairs_mut(0)
+            .iter_mut()
+            .zip(grad.iter().zip(hess.iter()))
+        {
+            dst.grad = g;
+            dst.hess = h;
+        }
 
         let tree = grower.grow(&dataset, &gradients, 0, None);
 
@@ -842,8 +840,14 @@ mod tests {
         let grad: Vec<f32> = vec![1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0];
         let hess: Vec<f32> = vec![1.0; 10];
         let mut gradients = Gradients::new(10, 1);
-        gradients.output_grads_mut(0).copy_from_slice(&grad);
-        gradients.output_hess_mut(0).copy_from_slice(&hess);
+        for (dst, (&g, &h)) in gradients
+            .output_pairs_mut(0)
+            .iter_mut()
+            .zip(grad.iter().zip(hess.iter()))
+        {
+            dst.grad = g;
+            dst.hess = h;
+        }
 
         let tree = grower.grow(&dataset, &gradients, 0, None);
 
@@ -866,8 +870,14 @@ mod tests {
         let grad: Vec<f32> = vec![2.0, 1.0, -1.0, -2.0, 2.0, 1.0, -1.0, -2.0];
         let hess: Vec<f32> = vec![1.0; 8];
         let mut gradients = Gradients::new(8, 1);
-        gradients.output_grads_mut(0).copy_from_slice(&grad);
-        gradients.output_hess_mut(0).copy_from_slice(&hess);
+        for (dst, (&g, &h)) in gradients
+            .output_pairs_mut(0)
+            .iter_mut()
+            .zip(grad.iter().zip(hess.iter()))
+        {
+            dst.grad = g;
+            dst.hess = h;
+        }
 
         let tree = grower.grow(&dataset, &gradients, 0, None);
 
@@ -933,8 +943,14 @@ mod tests {
         let grad_f32: Vec<f32> = vec![1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0];
         let hess_f32: Vec<f32> = vec![1.0; 10];
         let mut gradients = Gradients::new(10, 1);
-        gradients.output_grads_mut(0).copy_from_slice(&grad_f32);
-        gradients.output_hess_mut(0).copy_from_slice(&hess_f32);
+        for (dst, (&g, &h)) in gradients
+            .output_pairs_mut(0)
+            .iter_mut()
+            .zip(grad_f32.iter().zip(hess_f32.iter()))
+        {
+            dst.grad = g;
+            dst.hess = h;
+        }
 
         let tree = grower.grow(&dataset, &gradients, 0, None);
 
@@ -961,8 +977,14 @@ mod tests {
         let grad: Vec<f32> = vec![2.0, 1.0, -1.0, -2.0, 2.0, 1.0, -1.0, -2.0];
         let hess: Vec<f32> = vec![1.0; 8];
         let mut gradients = Gradients::new(8, 1);
-        gradients.output_grads_mut(0).copy_from_slice(&grad);
-        gradients.output_hess_mut(0).copy_from_slice(&hess);
+        for (dst, (&g, &h)) in gradients
+            .output_pairs_mut(0)
+            .iter_mut()
+            .zip(grad.iter().zip(hess.iter()))
+        {
+            dst.grad = g;
+            dst.hess = h;
+        }
 
         let tree = grower.grow(&dataset, &gradients, 0, None);
 
@@ -993,8 +1015,14 @@ mod tests {
         let grad: Vec<f32> = vec![2.0, 1.0, -1.0, -2.0, 2.0, 1.0, -1.0, -2.0];
         let hess: Vec<f32> = vec![1.0; 8];
         let mut gradients = Gradients::new(8, 1);
-        gradients.output_grads_mut(0).copy_from_slice(&grad);
-        gradients.output_hess_mut(0).copy_from_slice(&hess);
+        for (dst, (&g, &h)) in gradients
+            .output_pairs_mut(0)
+            .iter_mut()
+            .zip(grad.iter().zip(hess.iter()))
+        {
+            dst.grad = g;
+            dst.hess = h;
+        }
 
         // Without column sampling
         let mut grower_all = TreeGrower::new(&dataset, params_no_sampling, 8);
@@ -1023,8 +1051,14 @@ mod tests {
         let grad_f32: Vec<f32> = vec![1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0];
         let hess_f32: Vec<f32> = vec![1.0; 10];
         let mut gradients = Gradients::new(10, 1);
-        gradients.output_grads_mut(0).copy_from_slice(&grad_f32);
-        gradients.output_hess_mut(0).copy_from_slice(&hess_f32);
+        for (dst, (&g, &h)) in gradients
+            .output_pairs_mut(0)
+            .iter_mut()
+            .zip(grad_f32.iter().zip(hess_f32.iter()))
+        {
+            dst.grad = g;
+            dst.hess = h;
+        }
 
         let tree = grower.grow(&dataset, &gradients, 0, None);
 

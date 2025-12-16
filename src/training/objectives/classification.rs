@@ -2,6 +2,7 @@
 
 use super::{validate_objective_inputs, weight_iter, Objective, TargetSchema, TaskKind};
 use crate::inference::common::{sigmoid_inplace, softmax_rows, PredictionKind, PredictionOutput};
+use crate::training::GradHessF32;
 use crate::training::metrics::MetricKind;
 
 // =============================================================================
@@ -37,15 +38,13 @@ impl Objective for LogisticLoss {
         predictions: &[f32],
         targets: &[f32],
         weights: &[f32],
-        gradients: &mut [f32],
-        hessians: &mut [f32],
+        grad_hess: &mut [GradHessF32],
     ) {
         validate_objective_inputs(
             n_rows,
             n_outputs,
             predictions.len(),
-            gradients.len(),
-            hessians.len(),
+            grad_hess.len(),
             weights,
         );
         debug_assert!(targets.len() >= n_outputs * n_rows);
@@ -56,13 +55,12 @@ impl Objective for LogisticLoss {
             let offset = out_idx * n_rows;
             let pred_slice = &predictions[offset..offset + n_rows];
             let target_slice = &targets[offset..offset + n_rows];
-            let grad_slice = &mut gradients[offset..offset + n_rows];
-            let hess_slice = &mut hessians[offset..offset + n_rows];
+            let pair_slice = &mut grad_hess[offset..offset + n_rows];
 
             for (i, w) in weight_iter(weights, n_rows).enumerate() {
                 let p = Self::sigmoid(pred_slice[i]);
-                grad_slice[i] = w * (p - target_slice[i]);
-                hess_slice[i] = (w * p * (1.0 - p)).max(HESS_MIN);
+                pair_slice[i].grad = w * (p - target_slice[i]);
+                pair_slice[i].hess = (w * p * (1.0 - p)).max(HESS_MIN);
             }
         }
     }
@@ -149,15 +147,13 @@ impl Objective for HingeLoss {
         predictions: &[f32],
         targets: &[f32],
         weights: &[f32],
-        gradients: &mut [f32],
-        hessians: &mut [f32],
+        grad_hess: &mut [GradHessF32],
     ) {
         validate_objective_inputs(
             n_rows,
             n_outputs,
             predictions.len(),
-            gradients.len(),
-            hessians.len(),
+            grad_hess.len(),
             weights,
         );
         debug_assert!(targets.len() >= n_outputs * n_rows);
@@ -166,8 +162,7 @@ impl Objective for HingeLoss {
             let offset = out_idx * n_rows;
             let pred_slice = &predictions[offset..offset + n_rows];
             let target_slice = &targets[offset..offset + n_rows];
-            let grad_slice = &mut gradients[offset..offset + n_rows];
-            let hess_slice = &mut hessians[offset..offset + n_rows];
+            let pair_slice = &mut grad_hess[offset..offset + n_rows];
 
             for (i, w) in weight_iter(weights, n_rows).enumerate() {
                 // Convert {0, 1} to {-1, +1}
@@ -175,11 +170,11 @@ impl Objective for HingeLoss {
                 let margin = y * pred_slice[i];
 
                 if margin < 1.0 {
-                    grad_slice[i] = -w * y;
+                    pair_slice[i].grad = -w * y;
                 } else {
-                    grad_slice[i] = 0.0;
+                    pair_slice[i].grad = 0.0;
                 }
-                hess_slice[i] = w;
+                pair_slice[i].hess = w;
             }
         }
     }
@@ -274,15 +269,13 @@ impl Objective for SoftmaxLoss {
         predictions: &[f32],
         targets: &[f32],
         weights: &[f32],
-        gradients: &mut [f32],
-        hessians: &mut [f32],
+        grad_hess: &mut [GradHessF32],
     ) {
         validate_objective_inputs(
             n_rows,
             n_outputs,
             predictions.len(),
-            gradients.len(),
-            hessians.len(),
+            grad_hess.len(),
             weights,
         );
         debug_assert!(targets.len() >= n_rows);
@@ -310,8 +303,9 @@ impl Objective for SoftmaxLoss {
                 let p = (predictions[c * n_rows + i] - max_logit).exp() / exp_sum;
                 let target_indicator = if c == label { 1.0 } else { 0.0 };
 
-                gradients[c * n_rows + i] = w * (p - target_indicator);
-                hessians[c * n_rows + i] = (w * p * (1.0 - p)).max(HESS_MIN);
+                let idx = c * n_rows + i;
+                grad_hess[idx].grad = w * (p - target_indicator);
+                grad_hess[idx].hess = (w * p * (1.0 - p)).max(HESS_MIN);
             }
         }
     }
@@ -466,17 +460,16 @@ impl Objective for LambdaRankLoss {
         predictions: &[f32],
         targets: &[f32],
         weights: &[f32],
-        gradients: &mut [f32],
-        hessians: &mut [f32],
+        grad_hess: &mut [GradHessF32],
     ) {
         debug_assert!(predictions.len() >= n_rows);
         debug_assert!(targets.len() >= n_rows);
-        debug_assert!(gradients.len() >= n_rows);
-        debug_assert!(hessians.len() >= n_rows);
+        debug_assert!(grad_hess.len() >= n_rows);
 
         // Initialize gradients and hessians to zero
-        gradients[..n_rows].fill(0.0);
-        hessians[..n_rows].fill(0.0);
+        for p in &mut grad_hess[..n_rows] {
+            *p = GradHessF32::default();
+        }
 
         let sigma = self.sigma as f64;
 
@@ -548,14 +541,16 @@ impl Objective for LambdaRankLoss {
                     };
 
                     // Update gradients
-                    gradients[start + idx_i] += (w * lambda) as f32;
-                    gradients[start + idx_j] -= (w * lambda) as f32;
+                    let gi = start + idx_i;
+                    let gj = start + idx_j;
+                    grad_hess[gi].grad += (w * lambda) as f32;
+                    grad_hess[gj].grad -= (w * lambda) as f32;
 
                     // Update hessians (second derivative approximation)
                     let hess_val =
                         (w * sigma * sigma * sigmoid * (1.0 - sigmoid) * delta_ndcg).max(1e-6);
-                    hessians[start + idx_i] += hess_val as f32;
-                    hessians[start + idx_j] += hess_val as f32;
+                    grad_hess[gi].hess += hess_val as f32;
+                    grad_hess[gj].hess += hess_val as f32;
                 }
             }
         }
@@ -610,15 +605,14 @@ mod tests {
         let obj = LogisticLoss;
         let preds = [0.0f32];
         let targets = [1.0f32];
-        let mut grads = [0.0f32];
-        let mut hess = [0.0f32];
+        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }];
 
-        obj.compute_gradients(1, 1, &preds, &targets, &[], &mut grads, &mut hess);
+        obj.compute_gradients(1, 1, &preds, &targets, &[], &mut grad_hess);
 
         // sigmoid(0) = 0.5, grad = 0.5 - 1 = -0.5
-        assert!((grads[0] - -0.5).abs() < 1e-6);
+        assert!((grad_hess[0].grad - -0.5).abs() < 1e-6);
         // hess = 0.5 * 0.5 = 0.25
-        assert!((hess[0] - 0.25).abs() < 1e-6);
+        assert!((grad_hess[0].hess - 0.25).abs() < 1e-6);
     }
 
     #[test]
@@ -627,18 +621,17 @@ mod tests {
         // 2 rows, 2 outputs (multi-label)
         let preds = [0.0f32, 0.0, 0.0, 0.0]; // all zero logits
         let targets = [1.0f32, 0.0, 0.0, 1.0]; // out0=[1,0], out1=[0,1]
-        let mut grads = [0.0f32; 4];
-        let mut hess = [0.0f32; 4];
+        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }; 4];
 
-        obj.compute_gradients(2, 2, &preds, &targets, &[], &mut grads, &mut hess);
+        obj.compute_gradients(2, 2, &preds, &targets, &[], &mut grad_hess);
 
         // All sigmoid(0) = 0.5
         // out0: grads = [0.5-1, 0.5-0] = [-0.5, 0.5]
-        assert!((grads[0] - -0.5).abs() < 1e-6);
-        assert!((grads[1] - 0.5).abs() < 1e-6);
+        assert!((grad_hess[0].grad - -0.5).abs() < 1e-6);
+        assert!((grad_hess[1].grad - 0.5).abs() < 1e-6);
         // out1: grads = [0.5-0, 0.5-1] = [0.5, -0.5]
-        assert!((grads[2] - 0.5).abs() < 1e-6);
-        assert!((grads[3] - -0.5).abs() < 1e-6);
+        assert!((grad_hess[2].grad - 0.5).abs() < 1e-6);
+        assert!((grad_hess[3].grad - -0.5).abs() < 1e-6);
     }
 
     #[test]
@@ -660,18 +653,17 @@ mod tests {
         // Correctly classified with margin
         let preds = [2.0f32];
         let targets = [1.0f32];
-        let mut grads = [0.0f32];
-        let mut hess = [0.0f32];
+        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }];
 
-        obj.compute_gradients(1, 1, &preds, &targets, &[], &mut grads, &mut hess);
+        obj.compute_gradients(1, 1, &preds, &targets, &[], &mut grad_hess);
         // margin = 1 * 2 = 2 >= 1, so grad = 0
-        assert!(grads[0].abs() < 1e-6);
+        assert!(grad_hess[0].grad.abs() < 1e-6);
 
         // Misclassified
         let preds = [-0.5f32];
-        obj.compute_gradients(1, 1, &preds, &targets, &[], &mut grads, &mut hess);
+        obj.compute_gradients(1, 1, &preds, &targets, &[], &mut grad_hess);
         // margin = 1 * -0.5 < 1, so grad = -y = -1
-        assert!((grads[0] - -1.0).abs() < 1e-6);
+        assert!((grad_hess[0].grad - -1.0).abs() < 1e-6);
     }
 
     #[test]
@@ -685,16 +677,15 @@ mod tests {
             0.0, 0.0, // class 2: [0.0, 0.0]
         ];
         let targets = [0.0f32, 1.0]; // sample 0 -> class 0, sample 1 -> class 1
-        let mut grads = [0.0f32; 6];
-        let mut hess = [0.0f32; 6];
+        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }; 6];
 
-        obj.compute_gradients(n_rows, 3, &preds, &targets, &[], &mut grads, &mut hess);
+        obj.compute_gradients(n_rows, 3, &preds, &targets, &[], &mut grad_hess);
 
         // For sample 0 (label=0):
         // softmax([1,0,0]) ≈ [0.576, 0.212, 0.212]
         // grad for class 0 = p - 1 ≈ -0.424
-        assert!(grads[0] < 0.0); // Should be negative for correct class
-        assert!(grads[2] > 0.0); // Should be positive for wrong class
+        assert!(grad_hess[0].grad < 0.0); // Should be negative for correct class
+        assert!(grad_hess[2].grad > 0.0); // Should be positive for wrong class
     }
 
     #[test]
@@ -716,16 +707,15 @@ mod tests {
         let preds = [0.0f32, 0.0];
         let targets = [1.0f32, 0.0];
         let weights = [2.0f32, 0.5];
-        let mut grads = [0.0f32; 2];
-        let mut hess = [0.0f32; 2];
+        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }; 2];
 
-        obj.compute_gradients(2, 1, &preds, &targets, &weights, &mut grads, &mut hess);
+        obj.compute_gradients(2, 1, &preds, &targets, &weights, &mut grad_hess);
 
         // sigmoid(0) = 0.5
         // grad[0] = 2.0 * (0.5 - 1) = -1.0
-        assert!((grads[0] - -1.0).abs() < 1e-6);
+        assert!((grad_hess[0].grad - -1.0).abs() < 1e-6);
         // grad[1] = 0.5 * (0.5 - 0) = 0.25
-        assert!((grads[1] - 0.25).abs() < 1e-6);
+        assert!((grad_hess[1].grad - 0.25).abs() < 1e-6);
     }
 
     #[test]
@@ -737,16 +727,15 @@ mod tests {
         // Predictions: doc0 scored highest (correct since label=2)
         let preds = [2.0f32, 0.0, 1.0];
         let targets = [2.0f32, 0.0, 1.0]; // relevance labels
-        let mut grads = [0.0f32; 3];
-        let mut hess = [0.0f32; 3];
+        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }; 3];
 
-        obj.compute_gradients(3, 1, &preds, &targets, &[], &mut grads, &mut hess);
+        obj.compute_gradients(3, 1, &preds, &targets, &[], &mut grad_hess);
 
         // All gradients and hessians should be computed
         // Can't easily verify exact values, but should be non-trivial
-        assert!(hess[0] > 0.0);
-        assert!(hess[1] > 0.0);
-        assert!(hess[2] > 0.0);
+        assert!(grad_hess[0].hess > 0.0);
+        assert!(grad_hess[1].hess > 0.0);
+        assert!(grad_hess[2].hess > 0.0);
     }
 
     #[test]
@@ -757,14 +746,13 @@ mod tests {
 
         let preds = [1.0f32, 0.0, 0.5, 0.5];
         let targets = [1.0f32, 0.0, 2.0, 1.0];
-        let mut grads = [0.0f32; 4];
-        let mut hess = [0.0f32; 4];
+        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }; 4];
 
-        obj.compute_gradients(4, 1, &preds, &targets, &[], &mut grads, &mut hess);
+        obj.compute_gradients(4, 1, &preds, &targets, &[], &mut grad_hess);
 
         // Both queries should contribute gradients
-        assert!(hess[0] > 0.0);
-        assert!(hess[2] > 0.0 || hess[3] > 0.0);
+        assert!(grad_hess[0].hess > 0.0);
+        assert!(grad_hess[2].hess > 0.0 || grad_hess[3].hess > 0.0);
     }
 
     #[test]

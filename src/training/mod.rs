@@ -4,7 +4,7 @@
 //!
 //! ## Shared Infrastructure
 //!
-//! - [`Gradients`]: Structure-of-Arrays gradient storage
+//! - [`Gradients`]: Interleaved gradient storage
 //! - [`Objective`]: Trait for computing gradients (supports single and multi-output)
 //! - [`Metric`], [`EvalSet`]: Evaluation during training
 //! - [`EarlyStopping`]: Callback for stopping when validation metric plateaus
@@ -54,7 +54,7 @@ pub mod sampling;
 // Re-export shared types at the training module level
 pub use callback::EarlyStopping;
 pub use eval::EvalSet;
-pub use gradients::Gradients;
+pub use gradients::{GradHessF32, Gradients};
 pub use logger::{TrainingLogger, Verbosity};
 pub use metrics::{
     Accuracy, Auc, HuberMetric, LogLoss, Mae, Mape, MarginAccuracy, Metric, MetricKind,
