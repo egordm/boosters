@@ -147,6 +147,12 @@ impl BinnedDataset {
         self.features[feature].is_categorical()
     }
 
+    /// Check if a feature has missing values.
+    #[inline]
+    pub fn has_missing(&self, feature: usize) -> bool {
+        self.features[feature].bin_mapper.missing_type() != super::MissingType::None
+    }
+
     /// Get the bin mapper for a feature.
     #[inline]
     pub fn bin_mapper(&self, feature: usize) -> &super::BinMapper {
