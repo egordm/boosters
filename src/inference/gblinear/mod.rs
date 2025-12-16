@@ -1,8 +1,9 @@
 //! GBLinear (linear booster) inference.
 //!
-//! This module provides linear model storage and prediction:
+//! This module provides linear model prediction capabilities:
 //!
-//! - [`LinearModel`]: Weight matrix storage with feature-major layout
+//! - [`LinearModel`](crate::repr::gblinear::LinearModel): Weight matrix storage
+//! - [`LinearModelPredict`]: Prediction trait for batch and single-row inference
 //!
 //! # Linear Model
 //!
@@ -19,7 +20,18 @@
 //! weights[feature * num_groups + group] → coefficient
 //! weights[num_features * num_groups + group] → bias
 //! ```
+//!
+//! # Usage
+//!
+//! ```
+//! use booste_rs::repr::gblinear::LinearModel;
+//! use booste_rs::inference::gblinear::LinearModelPredict;
+//!
+//! let weights = vec![0.5, 0.3, 0.1].into_boxed_slice();
+//! let model = LinearModel::new(weights, 2, 1);
+//!
+//! let output = model.predict_row(&[2.0, 3.0], &[0.0]);
+//! ```
 
-mod model;
-
-pub use model::LinearModel;
+mod predict;
+pub use predict::LinearModelPredict;

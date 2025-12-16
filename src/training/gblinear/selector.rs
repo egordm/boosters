@@ -25,7 +25,7 @@ use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 
 use crate::data::ColMatrix;
-use crate::inference::gblinear::LinearModel;
+use crate::repr::gblinear::LinearModel;
 use crate::training::Gradients;
 
 // =============================================================================
@@ -813,7 +813,7 @@ mod tests {
     #[test]
     fn greedy_selector_with_setup() {
         use crate::data::{ColMatrix, RowMatrix};
-        use crate::inference::gblinear::LinearModel;
+        use crate::repr::gblinear::LinearModel;
         use crate::training::Gradients;
 
         // Create simple test data
@@ -873,7 +873,7 @@ mod tests {
     #[test]
     fn thrifty_selector_with_setup() {
         use crate::data::{ColMatrix, RowMatrix};
-        use crate::inference::gblinear::LinearModel;
+        use crate::repr::gblinear::LinearModel;
         use crate::training::Gradients;
 
         // Same setup as greedy test

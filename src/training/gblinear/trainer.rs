@@ -37,7 +37,7 @@
 use rayon::ThreadPoolBuilder;
 
 use crate::data::{ColMatrix, Dataset};
-use crate::inference::gblinear::LinearModel;
+use crate::repr::gblinear::LinearModel;
 use crate::training::eval;
 use crate::training::{
     EarlyStopping, EarlyStopAction, EvalSet, Gradients, Metric, Objective, ObjectiveExt, TrainingLogger, Verbosity,
@@ -428,6 +428,7 @@ impl<O: Objective, M: Metric> GBLinearTrainer<O, M> {
 mod tests {
     use super::*;
     use crate::data::{ColMatrix, RowMatrix};
+    use crate::inference::gblinear::LinearModelPredict;
     use crate::training::{LogLoss, MulticlassLogLoss, Rmse, SquaredLoss, LogisticLoss, SoftmaxLoss};
 
     #[test]
