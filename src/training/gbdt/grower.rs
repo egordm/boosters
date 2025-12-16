@@ -70,6 +70,8 @@ pub struct TreeGrower {
     tree_builder: MutableTree<ScalarLeaf>,
     /// Feature types (true = categorical).
     feature_types: Vec<bool>,
+    /// Feature has missing values (true = has missing).
+    feature_has_missing: Vec<bool>,
     /// Feature metadata for histogram building.
     feature_metas: Vec<FeatureMeta>,
     /// Split strategy.
@@ -117,9 +119,11 @@ impl TreeGrower {
             HistogramPool::new(feature_metas.clone(), cache_size.max(2), max_nodes);
         let partitioner = RowPartitioner::new(n_samples, max_nodes);
 
-        // Collect feature types
+        // Collect feature types and missing info
         let feature_types: Vec<bool> =
             (0..n_features).map(|f| dataset.is_categorical(f)).collect();
+        let feature_has_missing: Vec<bool> =
+            (0..n_features).map(|f| dataset.has_missing(f)).collect();
 
         // Resolve split strategy based on data characteristics
         let split_strategy_mode = params.optimization_profile.resolve(n_samples, n_features);
@@ -140,6 +144,7 @@ impl TreeGrower {
             partitioner,
             tree_builder: MutableTree::with_capacity(max_nodes),
             feature_types,
+            feature_has_missing,
             feature_metas,
             split_strategy,
             col_sampler,
@@ -646,6 +651,7 @@ impl TreeGrower {
             hess_sum,
             count,
             &self.feature_types,
+            &self.feature_has_missing,
             features,
         )
     }

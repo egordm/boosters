@@ -37,6 +37,40 @@ summing histogram bins.
 
 Changes O(n_samples) to O(n_bins) for computing root gradient sums.
 
+### 4. Skip Backward Split Scan When No Missing Values
+
+**Impact:** large when the dataset has no missing values (common for our synthetic benches)
+
+LightGBM only runs the “missing goes left” (backward) split scan when the feature actually has missing values.
+When there are no missing values, the backward scan can’t produce a different best split than the forward scan,
+but it still costs a full extra histogram sweep per feature.
+
+We restored this behavior in our numerical split finder by guarding the backward scan behind `has_missing`.
+
+**Benchmark evidence (Criterion `training_gbdt`, Apple Silicon):**
+
+- Guarded (`has_missing`): `train_binary` was ~2.06s
+- Forced backward scan always-on: `train_binary` was ~2.47s (≈ +20%)
+
+Similar regressions showed up across regression/multiclass and thread-scaling benchmarks (≈ +9% to +37%),
+confirming that skipping the backward scan when it cannot matter is a meaningful win.
+
+## Notes: Histogram Layout Microbenchmark
+
+We previously carried an isolated microbenchmark (`histogram_layout`) comparing gradient/hessian layouts.
+It was useful for a quick signal, but it’s easy to overfit to it. We now rely on end-to-end `training_gbdt`
+and `e2e_train_predict_gbdt` as primary sources of truth.
+
+**Findings (before removal):** interleaving `(grad, hess)` as `(f32, f32)` was consistently faster than
+two separate `grad: &[f32]` / `hess: &[f32]` arrays in that microbenchmark:
+
+- 1k rows: ~802ns (separate) vs ~636ns (interleaved f32)  (≈ 21% faster)
+- 10k rows: ~7.46µs (separate) vs ~5.39µs (interleaved f32) (≈ 28% faster)
+- 50k rows: ~36.95µs (separate) vs ~28.86µs (interleaved f32) (≈ 22% faster)
+
+We keep these notes as context, but prioritize measuring any real implementation changes using the training
+benches above.
+
 ## Current Performance vs LightGBM
 
 | Size | boosters | LightGBM | Ratio |
