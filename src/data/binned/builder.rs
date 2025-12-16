@@ -304,9 +304,10 @@ impl BinnedDatasetBuilder {
 
         let mut specs = Vec::new();
 
-        // Dense numeric: row-major for efficient row-parallel
+        // Dense numeric: column-major for efficient histogram building (contiguous per-feature access)
+        // Benchmark shows 13% speedup vs row-major on Apple Silicon (see layout_benchmark.rs)
         if !dense_numeric.is_empty() {
-            specs.push(GroupSpec::new(dense_numeric, GroupLayout::RowMajor));
+            specs.push(GroupSpec::new(dense_numeric, GroupLayout::ColumnMajor));
         }
 
         // Wide numeric: column-major (u16)
@@ -601,7 +602,7 @@ mod tests {
 
     #[test]
     fn test_builder_auto_grouping() {
-        // Feature 0: dense numeric (<=256 bins) -> row-major
+        // Feature 0: dense numeric (<=256 bins) -> column-major (optimized for histogram building)
         // Feature 1: wide numeric (>256 bins) -> column-major
         let dataset = BinnedDatasetBuilder::new()
             .add_binned(vec![0, 1, 2, 3], make_simple_mapper(100))  // dense
@@ -612,9 +613,9 @@ mod tests {
 
         assert_eq!(dataset.n_groups(), 2);
 
-        // Dense should be in row-major group
+        // Dense should be in column-major group (faster for training histograms)
         let group0 = dataset.group(0);
-        assert!(group0.is_row_major());
+        assert!(group0.is_column_major());
 
         // Wide should be in column-major group
         let group1 = dataset.group(1);
