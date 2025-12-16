@@ -29,6 +29,7 @@ use crate::training::Gradients;
 use super::expansion::GrowthStrategy;
 use super::grower::{GrowerParams, TreeGrower};
 use super::optimization::OptimizationProfile;
+use super::parallelism::Parallelism;
 use super::split::GainParams;
 
 use crate::inference::gbdt::{Forest as InferenceForest, ScalarLeaf};
@@ -170,17 +171,22 @@ impl<O: Objective> GBDTTrainer<O> {
         targets: &[f32],
         weights: &[f32],
     ) -> Option<InferenceForest<ScalarLeaf>> {
-        // If n_threads == 0, use rayon's global thread pool.
-        // Otherwise, scope all rayon work for this training run to a dedicated pool.
-        if self.params.n_threads == 0 {
-            self.train_impl(dataset, targets, weights)
-        } else {
-            let pool = ThreadPoolBuilder::new()
-                .num_threads(self.params.n_threads)
-                .build()
-                .expect("Failed to create thread pool");
+        // Threading contract:
+        // - n_threads == 0: use rayon's global pool
+        // - n_threads == 1: run strictly sequential (no dedicated pool, no thread spawn)
+        // - n_threads > 1: create a dedicated pool for this training session
+        let parallelism = Parallelism::from_threads(self.params.n_threads);
 
-            pool.install(|| self.train_impl(dataset, targets, weights))
+        match self.params.n_threads {
+            0 | 1 => self.train_impl(dataset, targets, weights, parallelism),
+            _ => {
+                let pool = ThreadPoolBuilder::new()
+                    .num_threads(self.params.n_threads)
+                    .build()
+                    .expect("Failed to create thread pool");
+
+                pool.install(|| self.train_impl(dataset, targets, weights, parallelism))
+            }
         }
     }
 
@@ -190,6 +196,7 @@ impl<O: Objective> GBDTTrainer<O> {
         dataset: &BinnedDataset,
         targets: &[f32],
         weights: &[f32],
+        parallelism: Parallelism,
     ) -> Option<InferenceForest<ScalarLeaf>> {
         let n_rows = dataset.n_rows();
         let n_outputs = self.objective.n_outputs();
@@ -201,7 +208,12 @@ impl<O: Objective> GBDTTrainer<O> {
 
         // Initialize components (train-local)
         let grower_params = self.params.to_grower_params();
-        let mut grower = TreeGrower::new(dataset, grower_params, self.params.cache_size);
+        let mut grower = TreeGrower::new(
+            dataset,
+            grower_params,
+            self.params.cache_size,
+            parallelism,
+        );
 
         let mut row_sampler = RowSampler::new(
             self.params.row_sampling.clone(),

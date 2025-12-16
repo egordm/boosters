@@ -16,6 +16,7 @@ pub mod expansion;
 pub mod grower;
 pub mod histograms;
 pub mod optimization;
+pub mod parallelism;
 pub mod partition;
 pub mod split;
 pub mod trainer;
@@ -25,13 +26,14 @@ pub use categorical::CatBitset;
 pub use expansion::{GrowthState, GrowthStrategy, NodeCandidate};
 pub use grower::{TreeGrower, GrowerParams};
 pub use histograms::{
-    FeatureMeta, FeatureView, HistogramBin, HistogramPool, HistogramSlot,
-    HistogramSlotMut, ParallelStrategy as HistogramParallelStrategy,
+    FeatureMeta, FeatureView, HistogramBin, HistogramBuilder, HistogramPool, HistogramSlot,
+    HistogramSlotMut,
 };
 pub use crate::training::Gradients;
 pub use optimization::OptimizationProfile;
+pub use parallelism::Parallelism;
 pub use partition::{LeafId, RowPartitioner};
-pub use split::{GainParams, GreedySplitter, SplitInfo, SplitStrategy, SplitType, DEFAULT_MAX_ONEHOT_CATS};
+pub use split::{GainParams, GreedySplitter, SplitInfo, SplitType, DEFAULT_MAX_ONEHOT_CATS};
 pub use trainer::{GBDTParams, GBDTTrainer};
 
 // Re-export NodeId from expansion (was previously in tree module)

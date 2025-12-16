@@ -116,6 +116,17 @@ These are candidates that should be lossless (no algorithm/accuracy changes), bu
 - Revisit the ordered/sequential strategy thresholds specifically for M1 (the current `ParallelStrategy::auto_select` constants were tuned earlier and may not be optimal).
 - Reduce per-node work in TreeGrower outside histogram kernels (e.g., partition bookkeeping / split bookkeeping), since LightGBM’s implementation is extremely optimized around the full training pipeline.
 
+## Addendum: Histogram Strategy Tuning (2025-12-15)
+
+To make strategy tuning more scientific, ephemeral microbenchmarks were created during profiling.
+The bench-helper entrypoints (`build_histograms_ordered_*_with_strategy`) are exposed under the
+`bench-training` feature flag for future tuning exercises.
+
+Key observation on M1 Pro: for *small leaves* the best choice depends heavily on both feature count and available threads.
+For example, `512x10` can prefer sequential (parallel overhead dominates), while `512x100` benefits from feature-parallel even though row count is below the old `MIN_ROWS_PARALLEL` threshold.
+
+As a lossless improvement, `ParallelStrategy::auto_select` was refined to use a simple work-per-thread heuristic (`rows × features` per thread) rather than a hard minimum-row cutoff.
+
 ## Repro Notes
 
 - LightGBM and XGBoost comparison benches require features:

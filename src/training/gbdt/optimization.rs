@@ -1,63 +1,67 @@
 //! Optimization profiles for automatic strategy selection.
 //!
-//! This module provides automatic selection of split finding strategies based on
-//! data characteristics. Histogram building has its own auto-selection in the
-//! histograms module.
-//!
-//! The main entry point is [`OptimizationProfile`], which resolves to a [`SplitStrategy`]
-//! based on data shape (rows, features).
+//! This module provides automatic selection of parallelism strategies based on
+//! data characteristics. The main entry point is [`OptimizationProfile`], which
+//! resolves to a [`Parallelism`] hint that algorithms can further self-correct
+//! based on their specific workloads.
 
-use super::split::SplitStrategy;
+use super::parallelism::Parallelism;
 
-/// Minimum features to enable parallel split finding.
+/// Minimum features to enable parallel split finding by default.
 const MIN_FEATURES_PARALLEL: usize = 16;
 
 // =============================================================================
 // Optimization Profile
 // =============================================================================
 
-/// High-level optimization profile for split finding strategy.
+/// High-level optimization profile for parallelism strategy.
 ///
 /// Users select a profile based on their data characteristics or use `Auto`
-/// for automatic detection.
+/// for automatic detection. The resolved `Parallelism` is a hint that algorithms
+/// may further self-correct based on their specific workload (e.g., number of
+/// features to iterate).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum OptimizationProfile {
     /// Auto-detect based on data characteristics.
     #[default]
     Auto,
-    /// Optimized for small datasets (<100k rows). Sequential split finding.
+    /// Optimized for small datasets (<100k rows). Sequential strategies.
     SmallData,
-    /// Optimized for medium/large datasets (>=100k rows). Parallel split finding.
+    /// Optimized for medium/large datasets (>=100k rows). Parallel strategies.
     LargeData,
 }
 
 impl OptimizationProfile {
-    /// Resolve profile to split finding strategy.
+    /// Resolve profile to parallelism hint.
+    ///
+    /// The returned `Parallelism` is a hint that algorithms can further
+    /// self-correct based on their specific workload.
     ///
     /// # Arguments
     /// * `n_rows` - Number of samples
     /// * `n_features` - Number of features
-    pub fn resolve(&self, n_rows: usize, n_features: usize) -> SplitStrategy {
+    pub fn resolve(&self, n_rows: usize, n_features: usize) -> Parallelism {
         match self {
             Self::Auto => Self::auto_detect(n_rows, n_features),
-            Self::SmallData => SplitStrategy::Sequential,
+            Self::SmallData => Parallelism::Sequential,
             Self::LargeData => {
                 if n_features >= MIN_FEATURES_PARALLEL {
-                    SplitStrategy::Parallel
+                    // Use rayon's default thread count
+                    Parallelism::from_threads(0)
                 } else {
-                    SplitStrategy::Sequential
+                    Parallelism::Sequential
                 }
             }
         }
     }
 
-    /// Auto-detect optimal split strategy from data characteristics.
-    fn auto_detect(n_rows: usize, n_features: usize) -> SplitStrategy {
-        // Use parallel split finding for larger datasets with enough features
+    /// Auto-detect optimal parallelism from data characteristics.
+    fn auto_detect(n_rows: usize, n_features: usize) -> Parallelism {
+        // Use parallel strategies for larger datasets with enough features
         if n_rows >= 100_000 && n_features >= MIN_FEATURES_PARALLEL {
-            SplitStrategy::Parallel
+            Parallelism::from_threads(0)
         } else {
-            SplitStrategy::Sequential
+            Parallelism::Sequential
         }
     }
 }
@@ -72,33 +76,34 @@ mod tests {
 
     #[test]
     fn test_auto_detect_small() {
-        let strategy = OptimizationProfile::Auto.resolve(10_000, 50);
-        assert_eq!(strategy, SplitStrategy::Sequential);
+        let parallelism = OptimizationProfile::Auto.resolve(10_000, 50);
+        assert_eq!(parallelism, Parallelism::Sequential);
     }
 
     #[test]
     fn test_auto_detect_medium() {
-        let strategy = OptimizationProfile::Auto.resolve(500_000, 100);
-        assert_eq!(strategy, SplitStrategy::Parallel);
+        let parallelism = OptimizationProfile::Auto.resolve(500_000, 100);
+        // Should return parallel (thread count varies)
+        assert!(parallelism.allows_parallel());
     }
 
     #[test]
     fn test_auto_detect_few_features() {
         // Even large dataset should use sequential if few features
-        let strategy = OptimizationProfile::Auto.resolve(1_000_000, 5);
-        assert_eq!(strategy, SplitStrategy::Sequential);
+        let parallelism = OptimizationProfile::Auto.resolve(1_000_000, 5);
+        assert_eq!(parallelism, Parallelism::Sequential);
     }
 
     #[test]
     fn test_large_data_profile() {
-        let strategy = OptimizationProfile::LargeData.resolve(10_000, 100);
-        assert_eq!(strategy, SplitStrategy::Parallel);
+        let parallelism = OptimizationProfile::LargeData.resolve(10_000, 100);
+        assert!(parallelism.allows_parallel());
     }
 
     #[test]
     fn test_small_data_profile() {
-        let strategy = OptimizationProfile::SmallData.resolve(1_000_000, 100);
-        assert_eq!(strategy, SplitStrategy::Sequential);
+        let parallelism = OptimizationProfile::SmallData.resolve(1_000_000, 100);
+        assert_eq!(parallelism, Parallelism::Sequential);
     }
 }
 
