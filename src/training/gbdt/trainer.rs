@@ -28,7 +28,6 @@ use crate::training::Gradients;
 
 use super::expansion::GrowthStrategy;
 use super::grower::{GrowerParams, TreeGrower};
-use super::optimization::OptimizationProfile;
 use super::parallelism::Parallelism;
 use super::split::GainParams;
 
@@ -69,16 +68,14 @@ pub struct GBDTParams {
     /// Number of threads to use for parallel operations.
     ///
     /// - `0`: Use rayon's global thread pool (default, uses all available cores)
-    /// - `n > 0`: Create a dedicated thread pool with exactly `n` threads
+    /// - `1`: Sequential execution (no parallelism)
+    /// - `n > 1`: Parallel execution with up to `n` threads
     ///
-    /// When set to a value > 1, a scoped thread pool is created for the
-    /// training session, ensuring thread count is controlled without affecting
-    /// other parts of the application.
+    /// Parallelism is applied to both histogram building and split finding.
+    /// Algorithms self-correct if the workload is too small to benefit.
     pub n_threads: usize,
     /// Histogram cache size (number of slots).
     pub cache_size: usize,
-    /// Optimization profile for automatic tuning.
-    pub optimization_profile: OptimizationProfile,
 
     // --- Reproducibility ---
     /// Random seed.
@@ -97,7 +94,6 @@ impl Default for GBDTParams {
             col_sampling: ColSamplingParams::None,
             n_threads: 0,
             cache_size: 8,
-            optimization_profile: OptimizationProfile::Auto,
             seed: 42,
         }
     }
@@ -111,7 +107,6 @@ impl GBDTParams {
             learning_rate: self.learning_rate,
             growth_strategy: self.growth_strategy,
             max_onehot_cats: self.max_onehot_cats,
-            optimization_profile: self.optimization_profile.clone(),
             col_sampling: self.col_sampling.clone(),
         }
     }

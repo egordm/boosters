@@ -13,7 +13,6 @@ use super::histograms::{
     FeatureMeta, FeatureView, HistogramBuilder, HistogramPool,
 };
 use super::parallelism::Parallelism;
-use super::optimization::OptimizationProfile;
 use super::partition::RowPartitioner;
 use super::split::{GainParams, GreedySplitter, SplitInfo, SplitType};
 
@@ -28,8 +27,6 @@ pub struct GrowerParams {
     pub growth_strategy: GrowthStrategy,
     /// Max categories for one-hot categorical split.
     pub max_onehot_cats: u32,
-    /// Optimization profile for automatic strategy selection.
-    pub optimization_profile: OptimizationProfile,
     /// Column (feature) sampling configuration.
     pub col_sampling: ColSamplingParams,
 }
@@ -41,7 +38,6 @@ impl Default for GrowerParams {
             learning_rate: 0.3,
             growth_strategy: GrowthStrategy::default(),
             max_onehot_cats: 4,
-            optimization_profile: OptimizationProfile::Auto,
             col_sampling: ColSamplingParams::None,
         }
     }
@@ -130,14 +126,12 @@ impl TreeGrower {
         let feature_has_missing: Vec<bool> =
             (0..n_features).map(|f| dataset.has_missing(f)).collect();
 
-        // Resolve split strategy based on data characteristics
-        let split_strategy_mode = params.optimization_profile.resolve(n_samples, n_features);
-
         // Build split strategy with gain params encapsulated
+        // Parallelism self-corrects based on workload
         let split_strategy = GreedySplitter::with_config(
             params.gain.clone(),
             params.max_onehot_cats,
-            split_strategy_mode,
+            parallelism,
         );
 
         // Create column sampler (handles all/none case gracefully)
