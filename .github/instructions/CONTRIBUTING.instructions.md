@@ -336,31 +336,9 @@ cargo bench --bench prediction_core
 cargo bench --bench training_gbdt
 ```
 
-### Quality Evaluation
+### Quality Benchmark
 
 For qualitative model comparisons (training quality, not performance):
-
-```bash
-# Single run regression comparison
-cargo run --bin quality_eval --release --features "bench-xgboost,bench-lightgbm" -- \
-    --task regression --synthetic 50000 100
-
-# Binary classification
-cargo run --bin quality_eval --release --features "bench-xgboost,bench-lightgbm" -- \
-    --task binary --synthetic 50000 100
-
-# Multiclass with 5 classes
-cargo run --bin quality_eval --release --features "bench-xgboost,bench-lightgbm" -- \
-    --task multiclass --classes 5 --synthetic 50000 100
-
-# With real dataset
-cargo run --bin quality_eval --release --features "bench-xgboost,bench-lightgbm" -- \
-    --task regression --parquet path/to/data.parquet --label price
-```
-
-### Comprehensive Quality Benchmark
-
-For full quality comparison with multiple seeds and confidence intervals:
 
 ```bash
 # Full quality benchmark (5 seeds, all tasks, writes markdown report)

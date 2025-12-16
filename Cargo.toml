@@ -105,28 +105,3 @@ path = "benches/suites/compare/training.rs"
 name = "compare_prediction"
 harness = false
 path = "benches/suites/compare/prediction.rs"
-
-# Legacy separate comparison benchmarks
-[[bench]]
-name = "prediction_lightgbm"
-harness = false
-required-features = ["bench-lightgbm"]
-path = "benches/suites/compare/predict_lightgbm.rs"
-
-[[bench]]
-name = "training_xgboost"
-harness = false
-required-features = ["bench-xgboost"]
-path = "benches/suites/compare/train_xgboost.rs"
-
-[[bench]]
-name = "training_lightgbm"
-harness = false
-required-features = ["bench-lightgbm"]
-path = "benches/suites/compare/train_lightgbm.rs"
-
-[[bench]]
-name = "prediction_xgboost"
-harness = false
-required-features = ["bench-xgboost"]
-path = "benches/suites/compare/predict_xgboost.rs"

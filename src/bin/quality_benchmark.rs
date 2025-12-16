@@ -1,6 +1,6 @@
 //! Comprehensive quality benchmark runner.
 //!
-//! This script runs quality_eval across multiple configurations and seeds,
+//! This script runs quality evaluations across multiple configurations and seeds,
 //! aggregating results with confidence intervals.
 //!
 //! Usage:
@@ -10,25 +10,87 @@
 //!   --seeds <n>         Number of seeds to run (default: 5)
 //!   --out <path>        Output markdown file (default: stdout)
 //!   --quick             Quick mode: fewer rows, fewer trees
+//!   --libsvm <path>     Add libsvm regression dataset (label + index:value, 1-based)
+//!   --uci-machine <path> Add UCI machine.data regression dataset
+//!   --label0 <path>     Add label0 dataset (tab/space-separated: label first)
+//!
+//! Examples:
+//!   # Full synthetic benchmark
+//!   cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm" -- \
+//!       --seeds 5 --out docs/benchmarks/quality-report.md
+//!
+//!   # With real-world datasets
+//!   cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm" -- \
+//!       --libsvm data/housing.libsvm --seeds 3 --out report.md
 
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
-use std::process::Command;
+use std::path::{Path, PathBuf};
+
+use booste_rs::data::binned::BinnedDatasetBuilder;
+use booste_rs::data::{ColMatrix, DenseMatrix, RowMajor, RowMatrix};
+use booste_rs::inference::common::{sigmoid_inplace, softmax_inplace};
+use booste_rs::inference::gbdt::{Predictor, UnrolledTraversal6};
+use booste_rs::testing::data::{
+	random_dense_f32, split_indices, synthetic_binary_targets_from_linear_score,
+	synthetic_multiclass_targets_from_linear_scores, synthetic_regression_targets_linear,
+};
+use booste_rs::training::{
+	Accuracy, GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, LogLoss, LogisticLoss, Mae,
+	Metric, MulticlassAccuracy, MulticlassLogLoss, Rmse, SoftmaxLoss, SquaredLoss,
+};
+
+#[cfg(feature = "bench-xgboost")]
+use xgb::parameters::tree::{GrowPolicy, TreeBoosterParametersBuilder, TreeMethod};
+#[cfg(feature = "bench-xgboost")]
+use xgb::parameters::{
+	learning::LearningTaskParametersBuilder, learning::Objective, BoosterParametersBuilder,
+	BoosterType, TrainingParametersBuilder,
+};
+#[cfg(feature = "bench-xgboost")]
+use xgb::{Booster as XgbBooster, DMatrix};
 
 use serde::{Deserialize, Serialize};
+
+// =============================================================================
+// Task Types
+// =============================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Task {
+	Regression,
+	Binary,
+	Multiclass,
+}
+
+impl Task {
+	fn as_str(&self) -> &'static str {
+		match self {
+			Task::Regression => "regression",
+			Task::Binary => "binary",
+			Task::Multiclass => "multiclass",
+		}
+	}
+}
 
 // =============================================================================
 // Configuration
 // =============================================================================
 
 #[derive(Debug, Clone)]
+enum DataSource {
+	Synthetic { rows: usize, cols: usize },
+	LibSvm(PathBuf),
+	UciMachine(PathBuf),
+	Label0(PathBuf),
+}
+
+#[derive(Debug, Clone)]
 struct BenchmarkConfig {
 	name: String,
-	task: &'static str,
-	rows: usize,
-	cols: usize,
+	task: Task,
+	data_source: DataSource,
 	trees: u32,
 	depth: u32,
 	classes: Option<usize>,
@@ -42,18 +104,16 @@ fn default_configs(quick: bool) -> Vec<BenchmarkConfig> {
 		// Regression benchmarks
 		BenchmarkConfig {
 			name: "regression_small".to_string(),
-			task: "regression",
-			rows: small_rows,
-			cols: 50,
+			task: Task::Regression,
+			data_source: DataSource::Synthetic { rows: small_rows, cols: 50 },
 			trees,
 			depth: 6,
 			classes: None,
 		},
 		BenchmarkConfig {
 			name: "regression_medium".to_string(),
-			task: "regression",
-			rows: medium_rows,
-			cols: 100,
+			task: Task::Regression,
+			data_source: DataSource::Synthetic { rows: medium_rows, cols: 100 },
 			trees,
 			depth: 6,
 			classes: None,
@@ -61,18 +121,16 @@ fn default_configs(quick: bool) -> Vec<BenchmarkConfig> {
 		// Binary classification benchmarks
 		BenchmarkConfig {
 			name: "binary_small".to_string(),
-			task: "binary",
-			rows: small_rows,
-			cols: 50,
+			task: Task::Binary,
+			data_source: DataSource::Synthetic { rows: small_rows, cols: 50 },
 			trees,
 			depth: 6,
 			classes: None,
 		},
 		BenchmarkConfig {
 			name: "binary_medium".to_string(),
-			task: "binary",
-			rows: medium_rows,
-			cols: 100,
+			task: Task::Binary,
+			data_source: DataSource::Synthetic { rows: medium_rows, cols: 100 },
 			trees,
 			depth: 6,
 			classes: None,
@@ -80,23 +138,161 @@ fn default_configs(quick: bool) -> Vec<BenchmarkConfig> {
 		// Multiclass classification benchmarks
 		BenchmarkConfig {
 			name: "multiclass_small".to_string(),
-			task: "multiclass",
-			rows: small_rows,
-			cols: 50,
+			task: Task::Multiclass,
+			data_source: DataSource::Synthetic { rows: small_rows, cols: 50 },
 			trees,
 			depth: 6,
 			classes: Some(5),
 		},
 		BenchmarkConfig {
 			name: "multiclass_medium".to_string(),
-			task: "multiclass",
-			rows: medium_rows,
-			cols: 100,
+			task: Task::Multiclass,
+			data_source: DataSource::Synthetic { rows: medium_rows, cols: 100 },
 			trees,
 			depth: 6,
 			classes: Some(5),
 		},
 	]
+}
+
+// =============================================================================
+// Dataset Loading
+// =============================================================================
+
+fn load_libsvm_dense(path: &Path) -> (Vec<f32>, Vec<f32>, usize, usize) {
+	let content = fs::read_to_string(path).expect("failed to read libsvm file");
+	let mut rows: Vec<Vec<(usize, f32)>> = Vec::new();
+	let mut labels: Vec<f32> = Vec::new();
+	let mut max_col: usize = 0;
+
+	for (line_idx, line) in content.lines().enumerate() {
+		let line = line.trim();
+		if line.is_empty() {
+			continue;
+		}
+		let mut parts = line.split_whitespace();
+		let y_str = parts.next().unwrap();
+		let y: f32 = y_str.parse().unwrap_or_else(|_| panic!("invalid label at line {}", line_idx + 1));
+		labels.push(y);
+		let mut feats: Vec<(usize, f32)> = Vec::new();
+		for p in parts {
+			let (idx_str, val_str) = p
+				.split_once(':')
+				.unwrap_or_else(|| panic!("invalid feature token '{}' at line {}", p, line_idx + 1));
+			let idx1: usize = idx_str.parse().unwrap_or_else(|_| panic!("invalid feature index at line {}", line_idx + 1));
+			if idx1 == 0 {
+				panic!("libsvm feature indices must be 1-based (got 0) at line {}", line_idx + 1);
+			}
+			let idx0 = idx1 - 1;
+			let v: f32 = val_str.parse().unwrap_or_else(|_| panic!("invalid feature value at line {}", line_idx + 1));
+			max_col = max_col.max(idx0 + 1);
+			feats.push((idx0, v));
+		}
+		rows.push(feats);
+	}
+
+	let n_rows = labels.len();
+	let n_cols = max_col;
+	let mut x = vec![0.0f32; n_rows * n_cols];
+	for (r, feats) in rows.iter().enumerate() {
+		let base = r * n_cols;
+		for &(c, v) in feats {
+			x[base + c] = v;
+		}
+	}
+	(x, labels, n_rows, n_cols)
+}
+
+fn load_label0_dense(path: &Path) -> (Vec<f32>, Vec<f32>, usize, usize) {
+	let content = fs::read_to_string(path).expect("failed to read label0 file");
+	let mut x: Vec<f32> = Vec::new();
+	let mut y: Vec<f32> = Vec::new();
+	let mut n_cols: Option<usize> = None;
+
+	for (line_idx, line) in content.lines().enumerate() {
+		let line = line.trim();
+		if line.is_empty() {
+			continue;
+		}
+		let parts: Vec<&str> = line.split_whitespace().collect();
+		assert!(parts.len() >= 2, "expected label + at least 1 feature at line {}", line_idx + 1);
+		let label: f32 = parts[0].parse().unwrap_or_else(|_| panic!("invalid label at line {}", line_idx + 1));
+		y.push(label);
+		let cols_here = parts.len() - 1;
+		if let Some(c) = n_cols {
+			assert_eq!(c, cols_here, "inconsistent column count at line {}", line_idx + 1);
+		} else {
+			n_cols = Some(cols_here);
+		}
+		for j in 0..cols_here {
+			let v: f32 = parts[j + 1]
+				.parse()
+				.unwrap_or_else(|_| panic!("invalid feature value at line {}", line_idx + 1));
+			x.push(v);
+		}
+	}
+
+	let rows = y.len();
+	let cols = n_cols.unwrap_or(0);
+	assert_eq!(x.len(), rows * cols);
+	(x, y, rows, cols)
+}
+
+fn load_uci_machine_regression(path: &Path) -> (Vec<f32>, Vec<f32>, usize, usize) {
+	let content = fs::read_to_string(path).expect("failed to read UCI machine.data");
+	let mut x: Vec<f32> = Vec::new();
+	let mut y: Vec<f32> = Vec::new();
+	for (line_idx, line) in content.lines().enumerate() {
+		let line = line.trim();
+		if line.is_empty() {
+			continue;
+		}
+		let parts: Vec<&str> = line.split(',').collect();
+		assert_eq!(parts.len(), 10, "expected 10 columns at line {}", line_idx + 1);
+		// Columns: vendor, model, MYCT, MMIN, MMAX, CACH, CHMIN, CHMAX, PRP, ERP
+		for j in 2..=7 {
+			let v: f32 = parts[j]
+				.parse()
+				.unwrap_or_else(|_| panic!("invalid numeric feature at line {}", line_idx + 1));
+			x.push(v);
+		}
+		let prp: f32 = parts[8]
+			.parse()
+			.unwrap_or_else(|_| panic!("invalid target (PRP) at line {}", line_idx + 1));
+		y.push(prp);
+	}
+	let rows = y.len();
+	let cols = 6;
+	assert_eq!(x.len(), rows * cols);
+	(x, y, rows, cols)
+}
+
+fn select_rows_row_major(features_row_major: &[f32], rows: usize, cols: usize, row_indices: &[usize]) -> Vec<f32> {
+	assert_eq!(features_row_major.len(), rows * cols);
+	let mut out = Vec::with_capacity(row_indices.len() * cols);
+	for &r in row_indices {
+		assert!(r < rows);
+		let start = r * cols;
+		out.extend_from_slice(&features_row_major[start..start + cols]);
+	}
+	out
+}
+
+fn select_targets(targets: &[f32], row_indices: &[usize]) -> Vec<f32> {
+	let mut out = Vec::with_capacity(row_indices.len());
+	for &r in row_indices {
+		out.push(targets[r]);
+	}
+	out
+}
+
+fn extract_group(output: &booste_rs::inference::common::PredictionOutput, group: usize) -> Vec<f32> {
+	let num_groups = output.num_groups();
+	assert!(group < num_groups);
+	if num_groups == 1 {
+		return output.as_slice().to_vec();
+	}
+	(0..output.num_rows()).map(|r| output.row(r)[group]).collect()
 }
 
 // =============================================================================
@@ -138,7 +334,9 @@ struct MetricsJson {
 struct MetricStats {
 	mean: f64,
 	std: f64,
+	#[allow(dead_code)]
 	min: f64,
+	#[allow(dead_code)]
 	max: f64,
 	n: usize,
 }
@@ -206,57 +404,286 @@ struct BenchmarkResult {
 }
 
 // =============================================================================
-// Execution
+// Training and Evaluation
 // =============================================================================
 
-fn run_quality_eval(config: &BenchmarkConfig, seed: u64) -> Option<RunResult> {
-	let manifest_dir = env!("CARGO_MANIFEST_DIR");
-	let tmp_json = format!("/tmp/quality_eval_{}.json", std::process::id());
-
-	let mut cmd = Command::new("cargo");
-	cmd.current_dir(manifest_dir);
-	cmd.args([
-		"run",
-		"--bin",
-		"quality_eval",
-		"--release",
-		"--features",
-		"bench-xgboost,bench-lightgbm",
-		"--",
-		"--task",
-		config.task,
-		"--synthetic",
-		&config.rows.to_string(),
-		&config.cols.to_string(),
-		"--trees",
-		&config.trees.to_string(),
-		"--depth",
-		&config.depth.to_string(),
-		"--seed",
-		&seed.to_string(),
-		"--out-json",
-		&tmp_json,
-	]);
-
-	if let Some(classes) = config.classes {
-		cmd.args(["--classes", &classes.to_string()]);
+fn load_data(
+	config: &BenchmarkConfig,
+	seed: u64,
+	valid_fraction: f32,
+) -> (Vec<f32>, Vec<f32>, usize, Vec<f32>, Vec<f32>, usize, usize) {
+	match &config.data_source {
+		DataSource::Synthetic { rows, cols } => {
+			let x = random_dense_f32(*rows, *cols, seed, -1.0, 1.0);
+			let y = match config.task {
+				Task::Regression => synthetic_regression_targets_linear(&x, *rows, *cols, seed ^ 0x0BAD_5EED, 0.05).0,
+				Task::Binary => synthetic_binary_targets_from_linear_score(&x, *rows, *cols, seed ^ 0xB1A2_0001, 0.2),
+				Task::Multiclass => {
+					let num_classes = config.classes.unwrap_or(3);
+					synthetic_multiclass_targets_from_linear_scores(&x, *rows, *cols, num_classes, seed ^ 0x00C1_A550, 0.1)
+				}
+			};
+			let (train_idx, valid_idx) = split_indices(*rows, valid_fraction, seed ^ 0x51EED);
+			let x_train = select_rows_row_major(&x, *rows, *cols, &train_idx);
+			let y_train = select_targets(&y, &train_idx);
+			let x_valid = select_rows_row_major(&x, *rows, *cols, &valid_idx);
+			let y_valid = select_targets(&y, &valid_idx);
+			(x_train, y_train, train_idx.len(), x_valid, y_valid, valid_idx.len(), *cols)
+		}
+		DataSource::LibSvm(path) => {
+			let (x, y, rows, cols) = load_libsvm_dense(path);
+			let (train_idx, valid_idx) = split_indices(rows, valid_fraction, seed ^ 0x51EED);
+			let x_train = select_rows_row_major(&x, rows, cols, &train_idx);
+			let y_train = select_targets(&y, &train_idx);
+			let x_valid = select_rows_row_major(&x, rows, cols, &valid_idx);
+			let y_valid = select_targets(&y, &valid_idx);
+			(x_train, y_train, train_idx.len(), x_valid, y_valid, valid_idx.len(), cols)
+		}
+		DataSource::UciMachine(path) => {
+			let (x, y, rows, cols) = load_uci_machine_regression(path);
+			let (train_idx, valid_idx) = split_indices(rows, valid_fraction, seed ^ 0x51EED);
+			let x_train = select_rows_row_major(&x, rows, cols, &train_idx);
+			let y_train = select_targets(&y, &train_idx);
+			let x_valid = select_rows_row_major(&x, rows, cols, &valid_idx);
+			let y_valid = select_targets(&y, &valid_idx);
+			(x_train, y_train, train_idx.len(), x_valid, y_valid, valid_idx.len(), cols)
+		}
+		DataSource::Label0(path) => {
+			let (x, y, rows, cols) = load_label0_dense(path);
+			let (train_idx, valid_idx) = split_indices(rows, valid_fraction, seed ^ 0x51EED);
+			let x_train = select_rows_row_major(&x, rows, cols, &train_idx);
+			let y_train = select_targets(&y, &train_idx);
+			let x_valid = select_rows_row_major(&x, rows, cols, &valid_idx);
+			let y_valid = select_targets(&y, &valid_idx);
+			(x_train, y_train, train_idx.len(), x_valid, y_valid, valid_idx.len(), cols)
+		}
 	}
+}
 
-	let output = cmd.output().ok()?;
-	if !output.status.success() {
-		eprintln!(
-			"quality_eval failed for {} seed {}: {}",
-			config.name,
-			seed,
-			String::from_utf8_lossy(&output.stderr)
-		);
-		return None;
+fn train_boosters(
+	config: &BenchmarkConfig,
+	x_train: &[f32],
+	y_train: &[f32],
+	rows_train: usize,
+	x_valid: &[f32],
+	y_valid: &[f32],
+	rows_valid: usize,
+	cols: usize,
+	seed: u64,
+) -> LibraryMetrics {
+	let row_train: DenseMatrix<f32, RowMajor> = DenseMatrix::from_vec(x_train.to_vec(), rows_train, cols);
+	let col_train: ColMatrix<f32> = row_train.to_layout();
+	let binned_train = BinnedDatasetBuilder::from_matrix(&col_train, 256).build().unwrap();
+	let row_valid: RowMatrix<f32> = RowMatrix::from_vec(x_valid.to_vec(), rows_valid, cols);
+
+	let params = GBDTParams {
+		n_trees: config.trees,
+		learning_rate: 0.1,
+		growth_strategy: GrowthStrategy::DepthWise { max_depth: config.depth },
+		gain: GainParams { reg_lambda: 1.0, ..Default::default() },
+		n_threads: 1,
+		cache_size: 256,
+		seed,
+		..Default::default()
+	};
+
+	match config.task {
+		Task::Regression => {
+			let trainer = GBDTTrainer::new(SquaredLoss, params);
+			let forest = trainer.train(&binned_train, y_train, &[]).unwrap();
+			let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
+			let pred = predictor.predict(&row_valid);
+			let pred0 = extract_group(&pred, 0);
+			let rmse = Rmse.compute(rows_valid, 1, &pred0, y_valid, &[]);
+			let mae = Mae.compute(rows_valid, 1, &pred0, y_valid, &[]);
+			LibraryMetrics { metrics: MetricsJson { rmse: Some(rmse), mae: Some(mae), ..Default::default() } }
+		}
+		Task::Binary => {
+			let trainer = GBDTTrainer::new(LogisticLoss, params);
+			let forest = trainer.train(&binned_train, y_train, &[]).unwrap();
+			let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
+			let raw = predictor.predict(&row_valid);
+			let mut prob = extract_group(&raw, 0);
+			sigmoid_inplace(&mut prob);
+			let ll = LogLoss.compute(rows_valid, 1, &prob, y_valid, &[]);
+			let acc = Accuracy::default().compute(rows_valid, 1, &prob, y_valid, &[]);
+			LibraryMetrics { metrics: MetricsJson { logloss: Some(ll), acc: Some(acc), ..Default::default() } }
+		}
+		Task::Multiclass => {
+			let num_classes = config.classes.unwrap_or(3);
+			let trainer = GBDTTrainer::new(SoftmaxLoss::new(num_classes), params);
+			let forest = trainer.train(&binned_train, y_train, &[]).unwrap();
+			let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
+			let raw = predictor.predict(&row_valid);
+			let mut prob_row_major = vec![0.0f32; rows_valid * num_classes];
+			for r in 0..rows_valid {
+				let mut logits = raw.row(r).to_vec();
+				softmax_inplace(&mut logits);
+				prob_row_major[r * num_classes..(r + 1) * num_classes].copy_from_slice(&logits);
+			}
+			let ll = MulticlassLogLoss.compute(rows_valid, num_classes, &prob_row_major, y_valid, &[]);
+			let acc = MulticlassAccuracy.compute(rows_valid, num_classes, &prob_row_major, y_valid, &[]);
+			LibraryMetrics { metrics: MetricsJson { mlogloss: Some(ll), acc: Some(acc), ..Default::default() } }
+		}
 	}
+}
 
-	let json_content = fs::read_to_string(&tmp_json).ok()?;
-	let _ = fs::remove_file(&tmp_json);
+#[cfg(feature = "bench-xgboost")]
+fn train_xgboost(
+	config: &BenchmarkConfig,
+	x_train: &[f32],
+	y_train: &[f32],
+	rows_train: usize,
+	x_valid: &[f32],
+	y_valid: &[f32],
+	rows_valid: usize,
+	_cols: usize,
+) -> LibraryMetrics {
+	let tree_params = TreeBoosterParametersBuilder::default()
+		.eta(0.1)
+		.max_depth(config.depth)
+		.max_leaves(0u32)
+		.grow_policy(GrowPolicy::Depthwise)
+		.lambda(1.0)
+		.alpha(0.0)
+		.gamma(0.0)
+		.min_child_weight(1.0)
+		.tree_method(TreeMethod::Hist)
+		.max_bin(256u32)
+		.build()
+		.unwrap();
 
-	serde_json::from_str(&json_content).ok()
+	let num_classes = config.classes.unwrap_or(3);
+	let objective = match config.task {
+		Task::Regression => Objective::RegLinear,
+		Task::Binary => Objective::BinaryLogistic,
+		Task::Multiclass => Objective::MultiSoftprob(num_classes as u32),
+	};
+	let learning_params = LearningTaskParametersBuilder::default().objective(objective).build().unwrap();
+
+	let booster_params = BoosterParametersBuilder::default()
+		.booster_type(BoosterType::Tree(tree_params))
+		.learning_params(learning_params)
+		.verbose(false)
+		.threads(Some(1))
+		.build()
+		.unwrap();
+
+	let x_train_f32: Vec<f32> = x_train.to_vec();
+	let mut dtrain = DMatrix::from_dense(&x_train_f32, rows_train).unwrap();
+	dtrain.set_labels(y_train).unwrap();
+	let x_valid_f32: Vec<f32> = x_valid.to_vec();
+	let mut dvalid = DMatrix::from_dense(&x_valid_f32, rows_valid).unwrap();
+	dvalid.set_labels(y_valid).unwrap();
+
+	let training_params = TrainingParametersBuilder::default()
+		.dtrain(&dtrain)
+		.boost_rounds(config.trees)
+		.booster_params(booster_params)
+		.evaluation_sets(None)
+		.build()
+		.unwrap();
+	let model = XgbBooster::train(&training_params).unwrap();
+	let pred = model.predict(&dvalid).unwrap();
+
+	match config.task {
+		Task::Regression => {
+			let pred_f32: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
+			let rmse = Rmse.compute(rows_valid, 1, &pred_f32, y_valid, &[]);
+			let mae = Mae.compute(rows_valid, 1, &pred_f32, y_valid, &[]);
+			LibraryMetrics { metrics: MetricsJson { rmse: Some(rmse), mae: Some(mae), ..Default::default() } }
+		}
+		Task::Binary => {
+			let pred_f32: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
+			let ll = LogLoss.compute(rows_valid, 1, &pred_f32, y_valid, &[]);
+			let acc = Accuracy::default().compute(rows_valid, 1, &pred_f32, y_valid, &[]);
+			LibraryMetrics { metrics: MetricsJson { logloss: Some(ll), acc: Some(acc), ..Default::default() } }
+		}
+		Task::Multiclass => {
+			let prob_row_major: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
+			let ll = MulticlassLogLoss.compute(rows_valid, num_classes, &prob_row_major, y_valid, &[]);
+			let acc = MulticlassAccuracy.compute(rows_valid, num_classes, &prob_row_major, y_valid, &[]);
+			LibraryMetrics { metrics: MetricsJson { mlogloss: Some(ll), acc: Some(acc), ..Default::default() } }
+		}
+	}
+}
+
+#[cfg(feature = "bench-lightgbm")]
+fn train_lightgbm(
+	config: &BenchmarkConfig,
+	x_train: &[f32],
+	y_train: &[f32],
+	_rows_train: usize,
+	x_valid: &[f32],
+	y_valid: &[f32],
+	rows_valid: usize,
+	cols: usize,
+) -> LibraryMetrics {
+	let x_train_f64: Vec<f64> = x_train.iter().map(|&x| x as f64).collect();
+	let x_valid_f64: Vec<f64> = x_valid.iter().map(|&x| x as f64).collect();
+
+	let num_classes = config.classes.unwrap_or(3);
+	let mut params = match config.task {
+		Task::Regression => serde_json::json!({"objective":"regression","metric":"l2"}),
+		Task::Binary => serde_json::json!({"objective":"binary","metric":"binary_logloss"}),
+		Task::Multiclass => serde_json::json!({"objective":"multiclass","metric":"multi_logloss","num_class": num_classes}),
+	};
+	params["num_iterations"] = serde_json::Value::from(config.trees as i64);
+	params["learning_rate"] = serde_json::Value::from(0.1f64);
+	params["max_bin"] = serde_json::Value::from(256i64);
+	params["max_depth"] = serde_json::Value::from(config.depth as i64);
+	let num_leaves = (1u64.checked_shl(config.depth).unwrap_or(u64::MAX)).max(2) as i64;
+	params["num_leaves"] = serde_json::Value::from(num_leaves);
+	params["min_data_in_leaf"] = serde_json::Value::from(1i64);
+	params["lambda_l2"] = serde_json::Value::from(1.0f64);
+	params["feature_fraction"] = serde_json::Value::from(1.0f64);
+	params["bagging_fraction"] = serde_json::Value::from(1.0f64);
+	params["bagging_freq"] = serde_json::Value::from(0i64);
+	params["verbosity"] = serde_json::Value::from(-1i64);
+	params["num_threads"] = serde_json::Value::from(1i64);
+
+	let ds = lightgbm3::Dataset::from_slice(&x_train_f64, y_train, cols as i32, true).unwrap();
+	let bst = lightgbm3::Booster::train(ds, &params).unwrap();
+	let pred = bst.predict(&x_valid_f64, cols as i32, true).unwrap();
+
+	match config.task {
+		Task::Regression => {
+			let pred_f32: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
+			let rmse = Rmse.compute(rows_valid, 1, &pred_f32, y_valid, &[]);
+			let mae = Mae.compute(rows_valid, 1, &pred_f32, y_valid, &[]);
+			LibraryMetrics { metrics: MetricsJson { rmse: Some(rmse), mae: Some(mae), ..Default::default() } }
+		}
+		Task::Binary => {
+			let pred_f32: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
+			let ll = LogLoss.compute(rows_valid, 1, &pred_f32, y_valid, &[]);
+			let acc = Accuracy::default().compute(rows_valid, 1, &pred_f32, y_valid, &[]);
+			LibraryMetrics { metrics: MetricsJson { logloss: Some(ll), acc: Some(acc), ..Default::default() } }
+		}
+		Task::Multiclass => {
+			let prob_row_major: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
+			let ll = MulticlassLogLoss.compute(rows_valid, num_classes, &prob_row_major, y_valid, &[]);
+			let acc = MulticlassAccuracy.compute(rows_valid, num_classes, &prob_row_major, y_valid, &[]);
+			LibraryMetrics { metrics: MetricsJson { mlogloss: Some(ll), acc: Some(acc), ..Default::default() } }
+		}
+	}
+}
+
+fn run_single_eval(config: &BenchmarkConfig, seed: u64) -> RunResult {
+	let (x_train, y_train, rows_train, x_valid, y_valid, rows_valid, cols) = load_data(config, seed, 0.2);
+
+	let booste_rs = train_boosters(config, &x_train, &y_train, rows_train, &x_valid, &y_valid, rows_valid, cols, seed);
+
+	#[cfg(feature = "bench-xgboost")]
+	let xgboost = Some(train_xgboost(config, &x_train, &y_train, rows_train, &x_valid, &y_valid, rows_valid, cols));
+	#[cfg(not(feature = "bench-xgboost"))]
+	let xgboost: Option<LibraryMetrics> = None;
+
+	#[cfg(feature = "bench-lightgbm")]
+	let lightgbm = Some(train_lightgbm(config, &x_train, &y_train, rows_train, &x_valid, &y_valid, rows_valid, cols));
+	#[cfg(not(feature = "bench-lightgbm"))]
+	let lightgbm: Option<LibraryMetrics> = None;
+
+	RunResult { task: config.task.as_str().to_string(), seed, booste_rs, xgboost, lightgbm }
 }
 
 fn run_benchmark(config: &BenchmarkConfig, seeds: &[u64]) -> BenchmarkResult {
@@ -270,18 +697,15 @@ fn run_benchmark(config: &BenchmarkConfig, seeds: &[u64]) -> BenchmarkResult {
 		print!("  Seed {}/{}: {} ... ", i + 1, seeds.len(), seed);
 		std::io::stdout().flush().unwrap();
 
-		if let Some(result) = run_quality_eval(config, seed) {
-			boosters_runs.push(result.booste_rs);
-			if let Some(xgb) = result.xgboost {
-				xgb_runs.push(xgb);
-			}
-			if let Some(lgb) = result.lightgbm {
-				lgb_runs.push(lgb);
-			}
-			println!("OK");
-		} else {
-			println!("FAILED");
+		let result = run_single_eval(config, seed);
+		boosters_runs.push(result.booste_rs);
+		if let Some(xgb) = result.xgboost {
+			xgb_runs.push(xgb);
 		}
+		if let Some(lgb) = result.lightgbm {
+			lgb_runs.push(lgb);
+		}
+		println!("OK");
 	}
 
 	BenchmarkResult {
@@ -297,11 +721,7 @@ fn run_benchmark(config: &BenchmarkConfig, seeds: &[u64]) -> BenchmarkResult {
 // =============================================================================
 
 fn find_best(vals: &[Option<&MetricStats>], lower_is_better: bool) -> Option<usize> {
-	let valids: Vec<(usize, f64)> = vals
-		.iter()
-		.enumerate()
-		.filter_map(|(i, opt)| opt.map(|s| (i, s.mean)))
-		.collect();
+	let valids: Vec<(usize, f64)> = vals.iter().enumerate().filter_map(|(i, opt)| opt.map(|s| (i, s.mean))).collect();
 
 	if valids.is_empty() {
 		return None;
@@ -335,15 +755,17 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 	// Group results by task
 	let mut by_task: HashMap<&str, Vec<&BenchmarkResult>> = HashMap::new();
 	for r in results {
-		by_task.entry(r.config.task).or_default().push(r);
+		by_task.entry(r.config.task.as_str()).or_default().push(r);
 	}
 
-	for (task, task_results) in &by_task {
+	// Ensure consistent ordering
+	for task in ["regression", "binary", "multiclass"] {
+		let Some(task_results) = by_task.get(task) else { continue };
+
 		out.push_str(&format!("## {}\n\n", task.to_uppercase()));
 
-		match *task {
+		match task {
 			"regression" => {
-				// RMSE table
 				out.push_str("### RMSE (lower is better)\n\n");
 				out.push_str("| Dataset | booste-rs | XGBoost | LightGBM |\n");
 				out.push_str("|---------|-----------|---------|----------|\n");
@@ -352,7 +774,6 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 					let boosters = r.boosters.rmse.as_ref();
 					let xgb = r.xgboost.as_ref().and_then(|x| x.rmse.as_ref());
 					let lgb = r.lightgbm.as_ref().and_then(|x| x.rmse.as_ref());
-
 					let best = find_best(&[boosters, xgb, lgb], true);
 
 					out.push_str(&format!(
@@ -365,7 +786,6 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 				}
 				out.push_str("\n");
 
-				// MAE table
 				out.push_str("### MAE (lower is better)\n\n");
 				out.push_str("| Dataset | booste-rs | XGBoost | LightGBM |\n");
 				out.push_str("|---------|-----------|---------|----------|\n");
@@ -374,7 +794,6 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 					let boosters = r.boosters.mae.as_ref();
 					let xgb = r.xgboost.as_ref().and_then(|x| x.mae.as_ref());
 					let lgb = r.lightgbm.as_ref().and_then(|x| x.mae.as_ref());
-
 					let best = find_best(&[boosters, xgb, lgb], true);
 
 					out.push_str(&format!(
@@ -388,7 +807,6 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 				out.push_str("\n");
 			}
 			"binary" => {
-				// LogLoss table
 				out.push_str("### LogLoss (lower is better)\n\n");
 				out.push_str("| Dataset | booste-rs | XGBoost | LightGBM |\n");
 				out.push_str("|---------|-----------|---------|----------|\n");
@@ -397,7 +815,6 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 					let boosters = r.boosters.logloss.as_ref();
 					let xgb = r.xgboost.as_ref().and_then(|x| x.logloss.as_ref());
 					let lgb = r.lightgbm.as_ref().and_then(|x| x.logloss.as_ref());
-
 					let best = find_best(&[boosters, xgb, lgb], true);
 
 					out.push_str(&format!(
@@ -410,7 +827,6 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 				}
 				out.push_str("\n");
 
-				// Accuracy table
 				out.push_str("### Accuracy (higher is better)\n\n");
 				out.push_str("| Dataset | booste-rs | XGBoost | LightGBM |\n");
 				out.push_str("|---------|-----------|---------|----------|\n");
@@ -419,7 +835,6 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 					let boosters = r.boosters.acc.as_ref();
 					let xgb = r.xgboost.as_ref().and_then(|x| x.acc.as_ref());
 					let lgb = r.lightgbm.as_ref().and_then(|x| x.acc.as_ref());
-
 					let best = find_best(&[boosters, xgb, lgb], false);
 
 					out.push_str(&format!(
@@ -433,7 +848,6 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 				out.push_str("\n");
 			}
 			"multiclass" => {
-				// Multi-class LogLoss table
 				out.push_str("### Multi-class LogLoss (lower is better)\n\n");
 				out.push_str("| Dataset | booste-rs | XGBoost | LightGBM |\n");
 				out.push_str("|---------|-----------|---------|----------|\n");
@@ -442,7 +856,6 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 					let boosters = r.boosters.mlogloss.as_ref();
 					let xgb = r.xgboost.as_ref().and_then(|x| x.mlogloss.as_ref());
 					let lgb = r.lightgbm.as_ref().and_then(|x| x.mlogloss.as_ref());
-
 					let best = find_best(&[boosters, xgb, lgb], true);
 
 					out.push_str(&format!(
@@ -455,7 +868,6 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 				}
 				out.push_str("\n");
 
-				// Accuracy table
 				out.push_str("### Accuracy (higher is better)\n\n");
 				out.push_str("| Dataset | booste-rs | XGBoost | LightGBM |\n");
 				out.push_str("|---------|-----------|---------|----------|\n");
@@ -464,7 +876,6 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 					let boosters = r.boosters.acc.as_ref();
 					let xgb = r.xgboost.as_ref().and_then(|x| x.acc.as_ref());
 					let lgb = r.lightgbm.as_ref().and_then(|x| x.acc.as_ref());
-
 					let best = find_best(&[boosters, xgb, lgb], false);
 
 					out.push_str(&format!(
@@ -482,14 +893,19 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 	}
 
 	out.push_str("## Benchmark Configuration\n\n");
-	out.push_str("| Dataset | Rows | Features | Trees | Depth | Classes |\n");
-	out.push_str("|---------|------|----------|-------|-------|--------|\n");
+	out.push_str("| Dataset | Data Source | Trees | Depth | Classes |\n");
+	out.push_str("|---------|-------------|-------|-------|--------|\n");
 	for r in results {
+		let source = match &r.config.data_source {
+			DataSource::Synthetic { rows, cols } => format!("Synthetic {}x{}", rows, cols),
+			DataSource::LibSvm(p) => format!("libsvm: {}", p.display()),
+			DataSource::UciMachine(p) => format!("uci-machine: {}", p.display()),
+			DataSource::Label0(p) => format!("label0: {}", p.display()),
+		};
 		out.push_str(&format!(
-			"| {} | {} | {} | {} | {} | {} |\n",
+			"| {} | {} | {} | {} | {} |\n",
 			r.config.name,
-			r.config.rows,
-			r.config.cols,
+			source,
 			r.config.trees,
 			r.config.depth,
 			r.config.classes.map(|c| c.to_string()).unwrap_or("-".to_string()),
@@ -504,10 +920,22 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 // Main
 // =============================================================================
 
-fn parse_args() -> (usize, Option<PathBuf>, bool) {
+struct Args {
+	num_seeds: usize,
+	out: Option<PathBuf>,
+	quick: bool,
+	libsvm_paths: Vec<PathBuf>,
+	uci_machine_paths: Vec<PathBuf>,
+	label0_paths: Vec<PathBuf>,
+}
+
+fn parse_args() -> Args {
 	let mut num_seeds = 5usize;
 	let mut out: Option<PathBuf> = None;
 	let mut quick = false;
+	let mut libsvm_paths: Vec<PathBuf> = Vec::new();
+	let mut uci_machine_paths: Vec<PathBuf> = Vec::new();
+	let mut label0_paths: Vec<PathBuf> = Vec::new();
 
 	let mut it = std::env::args().skip(1);
 	while let Some(arg) = it.next() {
@@ -515,24 +943,65 @@ fn parse_args() -> (usize, Option<PathBuf>, bool) {
 			"--seeds" => num_seeds = it.next().expect("--seeds value").parse().unwrap(),
 			"--out" => out = Some(PathBuf::from(it.next().expect("--out path"))),
 			"--quick" => quick = true,
+			"--libsvm" => libsvm_paths.push(PathBuf::from(it.next().expect("--libsvm path"))),
+			"--uci-machine" => uci_machine_paths.push(PathBuf::from(it.next().expect("--uci-machine path"))),
+			"--label0" => label0_paths.push(PathBuf::from(it.next().expect("--label0 path"))),
 			"--help" => {
-				eprintln!("quality_benchmark\n\n  --seeds <n>   Number of seeds (default: 5)\n  --out <path>  Output markdown file\n  --quick       Quick mode (fewer rows/trees)");
+				eprintln!(
+					"quality_benchmark\n\n  --seeds <n>         Number of seeds (default: 5)\n  --out <path>        Output markdown file\n  --quick             Quick mode (fewer rows/trees)\n  --libsvm <path>     Add libsvm regression dataset\n  --uci-machine <path> Add UCI machine.data dataset\n  --label0 <path>     Add label0 regression dataset"
+				);
 				std::process::exit(0);
 			}
 			other => panic!("unknown arg: {other}"),
 		}
 	}
 
-	(num_seeds, out, quick)
+	Args { num_seeds, out, quick, libsvm_paths, uci_machine_paths, label0_paths }
 }
 
 fn main() {
-	let (num_seeds, out_path, quick) = parse_args();
+	let args = parse_args();
 
 	// Generate seeds
-	let seeds: Vec<u64> = (0..num_seeds).map(|i| 42 + i as u64 * 1337).collect();
+	let seeds: Vec<u64> = (0..args.num_seeds).map(|i| 42 + i as u64 * 1337).collect();
 
-	let configs = default_configs(quick);
+	let mut configs = default_configs(args.quick);
+
+	// Add real-world datasets
+	let trees = if args.quick { 50 } else { 100 };
+	for (i, path) in args.libsvm_paths.iter().enumerate() {
+		let name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| format!("libsvm_{}", i));
+		configs.push(BenchmarkConfig {
+			name: format!("libsvm_{}", name),
+			task: Task::Regression,
+			data_source: DataSource::LibSvm(path.clone()),
+			trees,
+			depth: 6,
+			classes: None,
+		});
+	}
+	for (i, path) in args.uci_machine_paths.iter().enumerate() {
+		let name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| format!("uci_{}", i));
+		configs.push(BenchmarkConfig {
+			name: format!("uci_{}", name),
+			task: Task::Regression,
+			data_source: DataSource::UciMachine(path.clone()),
+			trees,
+			depth: 6,
+			classes: None,
+		});
+	}
+	for (i, path) in args.label0_paths.iter().enumerate() {
+		let name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| format!("label0_{}", i));
+		configs.push(BenchmarkConfig {
+			name: format!("label0_{}", name),
+			task: Task::Regression,
+			data_source: DataSource::Label0(path.clone()),
+			trees,
+			depth: 6,
+			classes: None,
+		});
+	}
 
 	println!("=== Quality Benchmark ===");
 	println!("Running {} configurations with {} seeds each", configs.len(), seeds.len());
@@ -545,7 +1014,7 @@ fn main() {
 
 	let report = generate_report(&results, &seeds);
 
-	if let Some(path) = out_path {
+	if let Some(path) = args.out {
 		fs::write(&path, &report).expect("failed to write report");
 		println!("\nReport written to: {}", path.display());
 	} else {
