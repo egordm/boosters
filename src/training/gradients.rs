@@ -1,14 +1,14 @@
-//! Structure-of-Arrays gradient buffer with column-major layout.
+//! Interleaved gradient buffer with column-major layout.
 //!
-//! Provides a `Gradients` struct that stores gradients and hessians in separate
-//! contiguous arrays using **column-major** (output-major) order.
+//! Provides a `Gradients` struct that stores `(grad, hess)` pairs in a single
+//! contiguous array using **column-major** (output-major) order.
 //!
 //! # Design Rationale
 //!
 //! Column-major layout optimizes for the histogram building hot path:
 //!
-//! 1. **Zero-copy output slicing**: `output_grads(k)` returns a contiguous slice of all
-//!    samples' gradients for output `k`, enabling efficient histogram building
+//! 1. **Zero-copy output slicing**: `output_pairs(k)` returns a contiguous slice of all
+//!    samples for output `k`, enabling efficient histogram building
 //! 2. **Cache-friendly histograms**: Histogram builder iterates samples for one output,
 //!    which now has perfect cache locality
 //! 3. **Auto-vectorization**: Contiguous f32 arrays are SIMD-friendly
@@ -19,19 +19,16 @@
 //! For `n_samples` samples and `n_outputs` outputs (1 for regression, K for multiclass):
 //!
 //! ```text
-//! grads: [s0_o0, s1_o0, ..., sN_o0, s0_o1, s1_o1, ..., sN_o1, ...]
-//! hess:  [s0_o0, s1_o0, ..., sN_o0, s0_o1, s1_o1, ..., sN_o1, ...]
-//!        |---- output 0 ----|      |---- output 1 ----|
+//! data:  [(s0_o0), (s1_o0), ..., (sN_o0), (s0_o1), (s1_o1), ..., (sN_o1), ...]
+//!        |------ output 0 -------|      |------ output 1 -------|
 //! ```
 //!
-//! Index formula: `grads[output * n_samples + sample]`
+//! Index formula: `data[output * n_samples + sample]`
 //!
 //! # Performance Impact
 //!
-//! Benchmarks show:
-//! - Histogram building: **30-45% faster** (main hot path)
-//! - Softmax gradient: ~7% slower (acceptable tradeoff)
-//! - Gradient copy: **eliminated** (was O(samples) per output)
+//! This layout keeps per-output slices contiguous (important for training), while
+//! improving locality in hot loops that need both gradient and hessian together.
 
 /// Structure-of-Arrays gradient buffer with column-major layout.
 ///
@@ -48,7 +45,6 @@
 ///
 /// // Set gradient for sample 0
 /// buffer.set(0, 0, -0.5, 1.0);
-///
 /// // Get gradient and hessian
 /// let (grad, hess) = buffer.get(0, 0);
 /// assert_eq!(grad, -0.5);
@@ -67,15 +63,22 @@
 /// buffer.set(0, 2, -0.5, 0.25);  // class 2 (true class)
 ///
 /// // Get contiguous slice for class 0 (all samples) - zero-copy!
-/// let class0_grads = buffer.output_grads(0);
-/// assert_eq!(class0_grads[0], 0.2);  // sample 0's class 0 gradient
+/// let class0 = buffer.output_pairs(0);
+/// assert_eq!(class0[0].grad, 0.2);  // sample 0's class 0 gradient
 /// ```
+/// Interleaved gradient/hessian pair.
+#[derive(Clone, Copy, Debug, Default)]
+#[repr(C)]
+pub struct GradHessF32 {
+    pub grad: f32,
+    pub hess: f32,
+}
+
+/// Interleaved gradient buffer with column-major layout.
 #[derive(Debug, Clone)]
 pub struct Gradients {
-    /// Gradient values (∂L/∂pred).
-    grads: Vec<f32>,
-    /// Hessian values (∂²L/∂pred²).
-    hess: Vec<f32>,
+    /// Interleaved gradient/hessian pairs.
+    data: Vec<GradHessF32>,
     /// Number of samples.
     n_samples: usize,
     /// Number of outputs per sample (1 for regression, K for K-class).
@@ -99,8 +102,7 @@ impl Gradients {
 
         let size = n_samples * n_outputs;
         Self {
-            grads: vec![0.0; size],
-            hess: vec![0.0; size],
+            data: vec![GradHessF32::default(); size],
             n_samples,
             n_outputs,
         }
@@ -121,19 +123,18 @@ impl Gradients {
     /// Total number of gradient pairs (n_samples × n_outputs).
     #[inline]
     pub fn len(&self) -> usize {
-        self.grads.len()
+        self.data.len()
     }
 
     /// Whether the buffer is empty.
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.grads.is_empty()
+        self.data.is_empty()
     }
 
     /// Reset all gradients and hessians to zero.
     pub fn reset(&mut self) {
-        self.grads.fill(0.0);
-        self.hess.fill(0.0);
+        self.data.fill(GradHessF32::default());
     }
 
     // =========================================================================
@@ -149,53 +150,31 @@ impl Gradients {
     #[inline]
     pub fn get(&self, sample: usize, output: usize) -> (f32, f32) {
         let idx = self.index(sample, output);
-        (self.grads[idx], self.hess[idx])
+        let p = self.data[idx];
+        (p.grad, p.hess)
     }
 
     /// Set gradient and hessian for a (sample, output) pair.
     #[inline]
     pub fn set(&mut self, sample: usize, output: usize, grad: f32, hess: f32) {
         let idx = self.index(sample, output);
-        self.grads[idx] = grad;
-        self.hess[idx] = hess;
+        self.data[idx] = GradHessF32 { grad, hess };
     }
-
-
 
     // =========================================================================
     // Slice access for bulk operations
     // =========================================================================
 
-    /// Get the full gradients array as a slice.
+    /// Get the full interleaved buffer.
     #[inline]
-    pub fn grads(&self) -> &[f32] {
-        &self.grads
+    pub fn pairs(&self) -> &[GradHessF32] {
+        &self.data
     }
 
-    /// Get the full gradients array as a mutable slice.
+    /// Get the full interleaved buffer (mutable).
     #[inline]
-    pub fn grads_mut(&mut self) -> &mut [f32] {
-        &mut self.grads
-    }
-
-    /// Get the full hessians array as a slice.
-    #[inline]
-    pub fn hess_slice(&self) -> &[f32] {
-        &self.hess
-    }
-
-    /// Get the full hessians array as a mutable slice.
-    #[inline]
-    pub fn hess_mut(&mut self) -> &mut [f32] {
-        &mut self.hess
-    }
-
-    /// Get gradients and hessians as mutable slice pair.
-    ///
-    /// Useful for loss functions that need to write both arrays.
-    #[inline]
-    pub fn as_mut_slices(&mut self) -> (&mut [f32], &mut [f32]) {
-        (&mut self.grads, &mut self.hess)
+    pub fn pairs_mut(&mut self) -> &mut [GradHessF32] {
+        &mut self.data
     }
 
     // =========================================================================
@@ -211,7 +190,7 @@ impl Gradients {
     #[inline]
     pub fn sample_grads(&self, sample: usize) -> Vec<f32> {
         (0..self.n_outputs)
-            .map(|output| self.grads[self.index(sample, output)])
+            .map(|output| self.data[self.index(sample, output)].grad)
             .collect()
     }
 
@@ -221,7 +200,7 @@ impl Gradients {
     #[inline]
     pub fn sample_hess(&self, sample: usize) -> Vec<f32> {
         (0..self.n_outputs)
-            .map(|output| self.hess[self.index(sample, output)])
+            .map(|output| self.data[self.index(sample, output)].hess)
             .collect()
     }
 
@@ -229,66 +208,20 @@ impl Gradients {
     // Per-output access (for histogram building - the hot path)
     // =========================================================================
 
-    /// Get contiguous gradient slice for a specific output (all samples).
-    ///
-    /// This is the **key method** for efficient histogram building.
-    /// Returns a contiguous slice of length `n_samples`.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use booste_rs::training::Gradients;
-    ///
-    /// let mut buffer = Gradients::new(3, 2);
-    /// buffer.set(0, 0, 1.0, 0.5);
-    /// buffer.set(1, 0, 2.0, 0.5);
-    /// buffer.set(2, 0, 3.0, 0.5);
-    ///
-    /// // Zero-copy access to all samples' gradients for output 0
-    /// let grads = buffer.output_grads(0);
-    /// assert_eq!(grads, &[1.0, 2.0, 3.0]);
-    /// ```
+    /// Get contiguous `(grad, hess)` pairs for a specific output (all samples).
     #[inline]
-    pub fn output_grads(&self, output: usize) -> &[f32] {
+    pub fn output_pairs(&self, output: usize) -> &[GradHessF32] {
         debug_assert!(output < self.n_outputs);
         let start = output * self.n_samples;
-        &self.grads[start..start + self.n_samples]
+        &self.data[start..start + self.n_samples]
     }
 
-    /// Get mutable contiguous gradient slice for a specific output.
+    /// Get mutable contiguous `(grad, hess)` pairs for a specific output.
     #[inline]
-    pub fn output_grads_mut(&mut self, output: usize) -> &mut [f32] {
+    pub fn output_pairs_mut(&mut self, output: usize) -> &mut [GradHessF32] {
         debug_assert!(output < self.n_outputs);
         let start = output * self.n_samples;
-        &mut self.grads[start..start + self.n_samples]
-    }
-
-    /// Get contiguous hessian slice for a specific output (all samples).
-    #[inline]
-    pub fn output_hess(&self, output: usize) -> &[f32] {
-        debug_assert!(output < self.n_outputs);
-        let start = output * self.n_samples;
-        &self.hess[start..start + self.n_samples]
-    }
-
-    /// Get mutable contiguous hessian slice for a specific output.
-    #[inline]
-    pub fn output_hess_mut(&mut self, output: usize) -> &mut [f32] {
-        debug_assert!(output < self.n_outputs);
-        let start = output * self.n_samples;
-        &mut self.hess[start..start + self.n_samples]
-    }
-
-    /// Get both mutable gradient and hessian slices for a specific output.
-    ///
-    /// This allows simultaneous mutable access to both arrays for one output,
-    /// which is useful for weight application.
-    #[inline]
-    pub fn output_grads_hess_mut(&mut self, output: usize) -> (&mut [f32], &mut [f32]) {
-        debug_assert!(output < self.n_outputs);
-        let start = output * self.n_samples;
-        let end = start + self.n_samples;
-        (&mut self.grads[start..end], &mut self.hess[start..end])
+        &mut self.data[start..start + self.n_samples]
     }
 
     /// Iterator over (sample_idx, grad, hess) for a specific output.
@@ -313,8 +246,7 @@ impl Gradients {
     pub fn output_iter(&self, output: usize) -> OutputIter<'_> {
         debug_assert!(output < self.n_outputs);
         OutputIter {
-            grads: self.output_grads(output),
-            hess: self.output_hess(output),
+            pairs: self.output_pairs(output),
             sample: 0,
         }
     }
@@ -334,8 +266,7 @@ impl Gradients {
     /// in `f32` for performance.
     #[inline]
     pub fn sum(&self, output: usize, rows: Option<&[u32]>) -> (f64, f64) {
-        let grads = self.output_grads(output);
-        let hess = self.output_hess(output);
+        let pairs = self.output_pairs(output);
 
         let mut sum_grad = 0.0f64;
         let mut sum_hess = 0.0f64;
@@ -343,15 +274,15 @@ impl Gradients {
         match rows {
             None => {
                 for i in 0..self.n_samples {
-                    sum_grad += grads[i] as f64;
-                    sum_hess += hess[i] as f64;
+                    sum_grad += pairs[i].grad as f64;
+                    sum_hess += pairs[i].hess as f64;
                 }
             }
             Some(rows) => {
                 for &row in rows {
                     let row = row as usize;
-                    sum_grad += grads[row] as f64;
-                    sum_hess += hess[row] as f64;
+                    sum_grad += pairs[row].grad as f64;
+                    sum_hess += pairs[row].hess as f64;
                 }
             }
         }
@@ -390,8 +321,7 @@ impl Gradients {
 ///
 /// With column-major layout, this iterates over contiguous memory.
 pub struct OutputIter<'a> {
-    grads: &'a [f32],
-    hess: &'a [f32],
+    pairs: &'a [GradHessF32],
     sample: usize,
 }
 
@@ -400,21 +330,18 @@ impl<'a> Iterator for OutputIter<'a> {
     type Item = (usize, f32, f32);
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.sample >= self.grads.len() {
+        if self.sample >= self.pairs.len() {
             return None;
         }
 
-        let result = (
-            self.sample,
-            self.grads[self.sample],
-            self.hess[self.sample],
-        );
+        let p = self.pairs[self.sample];
+        let result = (self.sample, p.grad, p.hess);
         self.sample += 1;
         Some(result)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.grads.len() - self.sample;
+        let remaining = self.pairs.len() - self.sample;
         (remaining, Some(remaining))
     }
 }
@@ -462,9 +389,9 @@ mod tests {
         buffer.set(0, 2, -0.5, 0.25);
 
         // Verify via slices: sample 0 is at index 0 of each output slice
-        assert_eq!(buffer.output_grads(0)[0], 0.2);
-        assert_eq!(buffer.output_grads(1)[0], 0.3);
-        assert_eq!(buffer.output_grads(2)[0], -0.5);
+        assert_eq!(buffer.output_pairs(0)[0].grad, 0.2);
+        assert_eq!(buffer.output_pairs(1)[0].grad, 0.3);
+        assert_eq!(buffer.output_pairs(2)[0].grad, -0.5);
     }
 
     #[test]
@@ -472,14 +399,16 @@ mod tests {
         let mut buffer = Gradients::new(5, 3);
 
         // Set output 1's gradients (for all samples)
-        let grads = buffer.output_grads_mut(1);
-        grads[0] = 1.0;  // sample 0, output 1
-        grads[1] = 2.0;  // sample 1, output 1
-        grads[2] = 3.0;  // sample 2, output 1
+        let pairs = buffer.output_pairs_mut(1);
+        pairs[0].grad = 1.0; // sample 0, output 1
+        pairs[1].grad = 2.0; // sample 1, output 1
+        pairs[2].grad = 3.0; // sample 2, output 1
 
         // Read back via output slice
-        let grads = buffer.output_grads(1);
-        assert_eq!(&grads[0..3], &[1.0, 2.0, 3.0]);
+        let pairs = buffer.output_pairs(1);
+        assert_eq!(pairs[0].grad, 1.0);
+        assert_eq!(pairs[1].grad, 2.0);
+        assert_eq!(pairs[2].grad, 3.0);
     }
 
     #[test]
@@ -565,25 +494,8 @@ mod tests {
 
         buffer.reset();
 
-        // Verify all values are zero via slices
-        assert!(buffer.grads().iter().all(|&v| v == 0.0));
-        assert!(buffer.hess_slice().iter().all(|&v| v == 0.0));
-    }
-
-    #[test]
-    fn as_mut_slices() {
-        let mut buffer = Gradients::new(3, 1);
-
-        let (grads, hess) = buffer.as_mut_slices();
-        grads[0] = 1.0;
-        grads[1] = 2.0;
-        grads[2] = 3.0;
-        hess[0] = 0.5;
-        hess[1] = 0.5;
-        hess[2] = 0.5;
-
-        assert_eq!(buffer.grads(), &[1.0, 2.0, 3.0]);
-        assert_eq!(buffer.hess_slice(), &[0.5, 0.5, 0.5]);
+        // Verify all values are zero
+        assert!(buffer.pairs().iter().all(|p| p.grad == 0.0 && p.hess == 0.0));
     }
 
     #[test]

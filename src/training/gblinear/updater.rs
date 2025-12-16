@@ -184,16 +184,15 @@ fn compute_weight_update<S: AsRef<[f32]>>(
     let current_weight = model.weight(feature, output);
 
     // Column-major: use output-specific slices for direct indexing by row
-    let grads = buffer.output_grads(output);
-    let hess = buffer.output_hess(output);
+    let grad_hess = buffer.output_pairs(output);
 
     // Accumulate gradient and hessian for this feature
     let mut sum_grad = 0.0f32;
     let mut sum_hess = 0.0f32;
 
     for (row, value) in data.column(feature) {
-        sum_grad += grads[row] * value;
-        sum_hess += hess[row] * value * value;
+        sum_grad += grad_hess[row].grad * value;
+        sum_hess += grad_hess[row].hess * value * value;
     }
 
     // Add L2 regularization

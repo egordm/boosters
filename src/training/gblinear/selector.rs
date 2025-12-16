@@ -408,8 +408,7 @@ impl GreedySelector {
     ) {
         let num_features = model.num_features();
         // Column-major: use output-specific slices for direct indexing by row
-        let grads = buffer.output_grads(output);
-        let hess = buffer.output_hess(output);
+        let grad_hess = buffer.output_pairs(output);
 
         // Compute update magnitude for each feature
         self.update_magnitudes.clear();
@@ -423,8 +422,8 @@ impl GreedySelector {
             let mut sum_hess = 0.0f32;
 
             for (row, value) in data.column(feature) {
-                sum_grad += grads[row] * value;
-                sum_hess += hess[row] * value * value;
+                sum_grad += grad_hess[row].grad * value;
+                sum_hess += grad_hess[row].hess * value * value;
             }
 
             // Compute coordinate descent update with elastic net
@@ -560,8 +559,7 @@ impl ThriftySelector {
     ) {
         let num_features = model.num_features();
         // Column-major: use output-specific slices for direct indexing by row
-        let grads = buffer.output_grads(output);
-        let hess = buffer.output_hess(output);
+        let grad_hess = buffer.output_pairs(output);
 
         // Compute update magnitude for each feature
         let mut magnitudes: Vec<(usize, f32)> = (0..num_features)
@@ -572,8 +570,8 @@ impl ThriftySelector {
                 let mut sum_hess = 0.0f32;
 
                 for (row, value) in data.column(feature) {
-                    sum_grad += grads[row] * value;
-                    sum_hess += hess[row] * value * value;
+                    sum_grad += grad_hess[row].grad * value;
+                    sum_hess += grad_hess[row].hess * value * value;
                 }
 
                 let magnitude = coordinate_delta_magnitude(

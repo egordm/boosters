@@ -2,6 +2,7 @@
 
 use super::{validate_objective_inputs, weight_iter, Objective, TargetSchema, TaskKind};
 use crate::inference::common::{PredictionKind, PredictionOutput};
+use crate::training::GradHessF32;
 use crate::training::metrics::MetricKind;
 
 // =============================================================================
@@ -31,15 +32,13 @@ impl Objective for SquaredLoss {
         predictions: &[f32],
         targets: &[f32],
         weights: &[f32],
-        gradients: &mut [f32],
-        hessians: &mut [f32],
+        grad_hess: &mut [GradHessF32],
     ) {
         validate_objective_inputs(
             n_rows,
             n_outputs,
             predictions.len(),
-            gradients.len(),
-            hessians.len(),
+            grad_hess.len(),
             weights,
         );
         debug_assert!(targets.len() >= n_outputs * n_rows);
@@ -49,12 +48,11 @@ impl Objective for SquaredLoss {
             let offset = out_idx * n_rows;
             let pred_slice = &predictions[offset..offset + n_rows];
             let target_slice = &targets[offset..offset + n_rows];
-            let grad_slice = &mut gradients[offset..offset + n_rows];
-            let hess_slice = &mut hessians[offset..offset + n_rows];
+            let pair_slice = &mut grad_hess[offset..offset + n_rows];
 
             for (i, w) in weight_iter(weights, n_rows).enumerate() {
-                grad_slice[i] = w * (pred_slice[i] - target_slice[i]);
-                hess_slice[i] = w;
+                pair_slice[i].grad = w * (pred_slice[i] - target_slice[i]);
+                pair_slice[i].hess = w;
             }
         }
     }
@@ -196,16 +194,14 @@ impl Objective for PinballLoss {
         predictions: &[f32],
         targets: &[f32],
         weights: &[f32],
-        gradients: &mut [f32],
-        hessians: &mut [f32],
+        grad_hess: &mut [GradHessF32],
     ) {
         debug_assert_eq!(n_outputs, self.alphas.len());
         validate_objective_inputs(
             n_rows,
             n_outputs,
             predictions.len(),
-            gradients.len(),
-            hessians.len(),
+            grad_hess.len(),
             weights,
         );
 
@@ -220,14 +216,13 @@ impl Objective for PinballLoss {
 
             let pred_slice = &predictions[pred_offset..pred_offset + n_rows];
             let target_slice = &targets[target_offset..target_offset + n_rows];
-            let grad_slice = &mut gradients[pred_offset..pred_offset + n_rows];
-            let hess_slice = &mut hessians[pred_offset..pred_offset + n_rows];
+            let pair_slice = &mut grad_hess[pred_offset..pred_offset + n_rows];
 
             for (i, w) in weight_iter(weights, n_rows).enumerate() {
                 let diff = pred_slice[i] - target_slice[i];
                 let g = if diff < 0.0 { alpha - 1.0 } else { alpha };
-                grad_slice[i] = w * g;
-                hess_slice[i] = w;
+                pair_slice[i].grad = w * g;
+                pair_slice[i].hess = w;
             }
         }
     }
@@ -345,15 +340,13 @@ impl Objective for PseudoHuberLoss {
         predictions: &[f32],
         targets: &[f32],
         weights: &[f32],
-        gradients: &mut [f32],
-        hessians: &mut [f32],
+        grad_hess: &mut [GradHessF32],
     ) {
         validate_objective_inputs(
             n_rows,
             n_outputs,
             predictions.len(),
-            gradients.len(),
-            hessians.len(),
+            grad_hess.len(),
             weights,
         );
         debug_assert!(targets.len() >= n_outputs * n_rows);
@@ -365,8 +358,7 @@ impl Objective for PseudoHuberLoss {
             let offset = out_idx * n_rows;
             let pred_slice = &predictions[offset..offset + n_rows];
             let target_slice = &targets[offset..offset + n_rows];
-            let grad_slice = &mut gradients[offset..offset + n_rows];
-            let hess_slice = &mut hessians[offset..offset + n_rows];
+            let pair_slice = &mut grad_hess[offset..offset + n_rows];
 
             for (i, w) in weight_iter(weights, n_rows).enumerate() {
                 let residual = pred_slice[i] - target_slice[i];
@@ -374,8 +366,8 @@ impl Objective for PseudoHuberLoss {
                 let factor = 1.0 + r_sq * inv_delta_sq;
                 let sqrt_factor = factor.sqrt();
 
-                grad_slice[i] = w * residual / sqrt_factor;
-                hess_slice[i] = w / (factor * sqrt_factor);
+                pair_slice[i].grad = w * residual / sqrt_factor;
+                pair_slice[i].hess = w / (factor * sqrt_factor);
             }
         }
     }
@@ -469,15 +461,13 @@ impl Objective for AbsoluteLoss {
         predictions: &[f32],
         targets: &[f32],
         weights: &[f32],
-        gradients: &mut [f32],
-        hessians: &mut [f32],
+        grad_hess: &mut [GradHessF32],
     ) {
         validate_objective_inputs(
             n_rows,
             n_outputs,
             predictions.len(),
-            gradients.len(),
-            hessians.len(),
+            grad_hess.len(),
             weights,
         );
         debug_assert!(targets.len() >= n_outputs * n_rows);
@@ -486,13 +476,12 @@ impl Objective for AbsoluteLoss {
             let offset = out_idx * n_rows;
             let pred_slice = &predictions[offset..offset + n_rows];
             let target_slice = &targets[offset..offset + n_rows];
-            let grad_slice = &mut gradients[offset..offset + n_rows];
-            let hess_slice = &mut hessians[offset..offset + n_rows];
+            let pair_slice = &mut grad_hess[offset..offset + n_rows];
 
             for (i, w) in weight_iter(weights, n_rows).enumerate() {
                 let diff = pred_slice[i] - target_slice[i];
-                grad_slice[i] = w * diff.signum();
-                hess_slice[i] = w;
+                pair_slice[i].grad = w * diff.signum();
+                pair_slice[i].hess = w;
             }
         }
     }
@@ -591,15 +580,13 @@ impl Objective for PoissonLoss {
         predictions: &[f32],
         targets: &[f32],
         weights: &[f32],
-        gradients: &mut [f32],
-        hessians: &mut [f32],
+        grad_hess: &mut [GradHessF32],
     ) {
         validate_objective_inputs(
             n_rows,
             n_outputs,
             predictions.len(),
-            gradients.len(),
-            hessians.len(),
+            grad_hess.len(),
             weights,
         );
         debug_assert!(targets.len() >= n_outputs * n_rows);
@@ -611,14 +598,13 @@ impl Objective for PoissonLoss {
             let offset = out_idx * n_rows;
             let pred_slice = &predictions[offset..offset + n_rows];
             let target_slice = &targets[offset..offset + n_rows];
-            let grad_slice = &mut gradients[offset..offset + n_rows];
-            let hess_slice = &mut hessians[offset..offset + n_rows];
+            let pair_slice = &mut grad_hess[offset..offset + n_rows];
 
             for (i, w) in weight_iter(weights, n_rows).enumerate() {
                 let pred = pred_slice[i].clamp(-MAX_EXP, MAX_EXP);
                 let exp_pred = pred.exp();
-                grad_slice[i] = w * (exp_pred - target_slice[i]);
-                hess_slice[i] = (w * exp_pred).max(HESS_MIN);
+                pair_slice[i].grad = w * (exp_pred - target_slice[i]);
+                pair_slice[i].hess = (w * exp_pred).max(HESS_MIN);
             }
         }
     }
@@ -700,15 +686,14 @@ mod tests {
         let obj = SquaredLoss;
         let preds = [1.0f32, 2.0, 3.0];
         let targets = [0.5f32, 2.5, 2.5];
-        let mut grads = [0.0f32; 3];
-        let mut hess = [0.0f32; 3];
+        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }; 3];
 
-        obj.compute_gradients(3, 1, &preds, &targets, &[], &mut grads, &mut hess);
+        obj.compute_gradients(3, 1, &preds, &targets, &[], &mut grad_hess);
 
-        assert!((grads[0] - 0.5).abs() < 1e-6);
-        assert!((grads[1] - -0.5).abs() < 1e-6);
-        assert!((grads[2] - 0.5).abs() < 1e-6);
-        assert!((hess[0] - 1.0).abs() < 1e-6);
+        assert!((grad_hess[0].grad - 0.5).abs() < 1e-6);
+        assert!((grad_hess[1].grad - -0.5).abs() < 1e-6);
+        assert!((grad_hess[2].grad - 0.5).abs() < 1e-6);
+        assert!((grad_hess[0].hess - 1.0).abs() < 1e-6);
     }
 
     #[test]
@@ -717,17 +702,16 @@ mod tests {
         // 2 rows, 2 outputs - column major
         let preds = [1.0f32, 2.0, 3.0, 4.0]; // out0=[1,2], out1=[3,4]
         let targets = [0.0f32, 1.0, 2.0, 3.0]; // out0=[0,1], out1=[2,3]
-        let mut grads = [0.0f32; 4];
-        let mut hess = [0.0f32; 4];
+        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }; 4];
 
-        obj.compute_gradients(2, 2, &preds, &targets, &[], &mut grads, &mut hess);
+        obj.compute_gradients(2, 2, &preds, &targets, &[], &mut grad_hess);
 
         // out0: grads = [1-0, 2-1] = [1, 1]
-        assert!((grads[0] - 1.0).abs() < 1e-6);
-        assert!((grads[1] - 1.0).abs() < 1e-6);
+        assert!((grad_hess[0].grad - 1.0).abs() < 1e-6);
+        assert!((grad_hess[1].grad - 1.0).abs() < 1e-6);
         // out1: grads = [3-2, 4-3] = [1, 1]
-        assert!((grads[2] - 1.0).abs() < 1e-6);
-        assert!((grads[3] - 1.0).abs() < 1e-6);
+        assert!((grad_hess[2].grad - 1.0).abs() < 1e-6);
+        assert!((grad_hess[3].grad - 1.0).abs() < 1e-6);
     }
 
     #[test]
@@ -746,15 +730,14 @@ mod tests {
         let preds = [1.0f32, 2.0];
         let targets = [0.5f32, 2.5];
         let weights = [2.0f32, 0.5];
-        let mut grads = [0.0f32; 2];
-        let mut hess = [0.0f32; 2];
+        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }; 2];
 
-        obj.compute_gradients(2, 1, &preds, &targets, &weights, &mut grads, &mut hess);
+        obj.compute_gradients(2, 1, &preds, &targets, &weights, &mut grad_hess);
 
-        assert!((grads[0] - 1.0).abs() < 1e-6); // 2.0 * 0.5
-        assert!((grads[1] - -0.25).abs() < 1e-6); // 0.5 * -0.5
-        assert!((hess[0] - 2.0).abs() < 1e-6);
-        assert!((hess[1] - 0.5).abs() < 1e-6);
+        assert!((grad_hess[0].grad - 1.0).abs() < 1e-6); // 2.0 * 0.5
+        assert!((grad_hess[1].grad - -0.25).abs() < 1e-6); // 0.5 * -0.5
+        assert!((grad_hess[0].hess - 2.0).abs() < 1e-6);
+        assert!((grad_hess[1].hess - 0.5).abs() < 1e-6);
     }
 
     #[test]
@@ -762,14 +745,13 @@ mod tests {
         let obj = PinballLoss::new(0.5);
         let preds = [1.0f32, 2.0, 3.0];
         let targets = [0.5f32, 2.5, 2.5];
-        let mut grads = [0.0f32; 3];
-        let mut hess = [0.0f32; 3];
+        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }; 3];
 
-        obj.compute_gradients(3, 1, &preds, &targets, &[], &mut grads, &mut hess);
+        obj.compute_gradients(3, 1, &preds, &targets, &[], &mut grad_hess);
 
-        assert!((grads[0] - 0.5).abs() < 1e-6); // pred > target
-        assert!((grads[1] - -0.5).abs() < 1e-6); // pred < target
-        assert!((grads[2] - 0.5).abs() < 1e-6); // pred > target
+        assert!((grad_hess[0].grad - 0.5).abs() < 1e-6); // pred > target
+        assert!((grad_hess[1].grad - -0.5).abs() < 1e-6); // pred < target
+        assert!((grad_hess[2].grad - 0.5).abs() < 1e-6); // pred > target
     }
 
     #[test]
@@ -778,18 +760,17 @@ mod tests {
         // 2 rows, 2 quantiles, 1 shared target
         let preds = [5.0f32, 5.0, 5.0, 5.0]; // q0.1=[5,5], q0.9=[5,5]
         let targets = [10.0f32, 0.0]; // shared target for all quantiles
-        let mut grads = [0.0f32; 4];
-        let mut hess = [0.0f32; 4];
+        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }; 4];
 
-        obj.compute_gradients(2, 2, &preds, &targets, &[], &mut grads, &mut hess);
+        obj.compute_gradients(2, 2, &preds, &targets, &[], &mut grad_hess);
 
         // For alpha=0.1: pred[0]=5 < target[0]=10 → grad = alpha-1 = -0.9
-        assert!((grads[0] - -0.9).abs() < 1e-6);
+        assert!((grad_hess[0].grad - -0.9).abs() < 1e-6);
         // For alpha=0.1: pred[1]=5 > target[1]=0 → grad = alpha = 0.1
-        assert!((grads[1] - 0.1).abs() < 1e-6);
+        assert!((grad_hess[1].grad - 0.1).abs() < 1e-6);
         // For alpha=0.9: same logic
-        assert!((grads[2] - -0.1).abs() < 1e-6); // 5 < 10
-        assert!((grads[3] - 0.9).abs() < 1e-6); // 5 > 0
+        assert!((grad_hess[2].grad - -0.1).abs() < 1e-6); // 5 < 10
+        assert!((grad_hess[3].grad - 0.9).abs() < 1e-6); // 5 > 0
     }
 
     #[test]
@@ -797,15 +778,14 @@ mod tests {
         let obj = PinballLoss::new(0.1);
         let preds = [5.0f32];
         let targets = [10.0f32];
-        let mut grads = [0.0f32];
-        let mut hess = [0.0f32];
+        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }];
 
-        obj.compute_gradients(1, 1, &preds, &targets, &[], &mut grads, &mut hess);
-        assert!((grads[0] - -0.9).abs() < 1e-6);
+        obj.compute_gradients(1, 1, &preds, &targets, &[], &mut grad_hess);
+        assert!((grad_hess[0].grad - -0.9).abs() < 1e-6);
 
         let obj = PinballLoss::new(0.9);
-        obj.compute_gradients(1, 1, &preds, &targets, &[], &mut grads, &mut hess);
-        assert!((grads[0] - -0.1).abs() < 1e-6);
+        obj.compute_gradients(1, 1, &preds, &targets, &[], &mut grad_hess);
+        assert!((grad_hess[0].grad - -0.1).abs() < 1e-6);
     }
 
     #[test]
@@ -813,13 +793,12 @@ mod tests {
         let obj = PseudoHuberLoss::new(1.0);
         let preds = [0.01f32];
         let targets = [0.0f32];
-        let mut grads = [0.0f32];
-        let mut hess = [0.0f32];
+        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }];
 
-        obj.compute_gradients(1, 1, &preds, &targets, &[], &mut grads, &mut hess);
+        obj.compute_gradients(1, 1, &preds, &targets, &[], &mut grad_hess);
 
-        assert!((grads[0] - 0.01).abs() < 0.001);
-        assert!((hess[0] - 1.0).abs() < 0.01);
+        assert!((grad_hess[0].grad - 0.01).abs() < 0.001);
+        assert!((grad_hess[0].hess - 1.0).abs() < 0.01);
     }
 
     #[test]
@@ -827,13 +806,12 @@ mod tests {
         let obj = PseudoHuberLoss::new(1.0);
         let preds = [100.0f32];
         let targets = [0.0f32];
-        let mut grads = [0.0f32];
-        let mut hess = [0.0f32];
+        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }];
 
-        obj.compute_gradients(1, 1, &preds, &targets, &[], &mut grads, &mut hess);
+        obj.compute_gradients(1, 1, &preds, &targets, &[], &mut grad_hess);
 
-        assert!(grads[0] > 0.9 && grads[0] < 1.1);
-        assert!(hess[0] < 0.01);
+        assert!(grad_hess[0].grad > 0.9 && grad_hess[0].grad < 1.1);
+        assert!(grad_hess[0].hess < 0.01);
     }
 
     #[test]
@@ -842,17 +820,16 @@ mod tests {
         // 2 rows, 2 outputs
         let preds = [0.01f32, 0.02, 100.0, 100.0];
         let targets = [0.0f32, 0.0, 0.0, 0.0];
-        let mut grads = [0.0f32; 4];
-        let mut hess = [0.0f32; 4];
+        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }; 4];
 
-        obj.compute_gradients(2, 2, &preds, &targets, &[], &mut grads, &mut hess);
+        obj.compute_gradients(2, 2, &preds, &targets, &[], &mut grad_hess);
 
         // Near-zero residuals
-        assert!((grads[0] - 0.01).abs() < 0.001);
-        assert!((grads[1] - 0.02).abs() < 0.001);
+        assert!((grad_hess[0].grad - 0.01).abs() < 0.001);
+        assert!((grad_hess[1].grad - 0.02).abs() < 0.001);
         // Large residuals
-        assert!(grads[2] > 0.9 && grads[2] < 1.1);
-        assert!(grads[3] > 0.9 && grads[3] < 1.1);
+        assert!(grad_hess[2].grad > 0.9 && grad_hess[2].grad < 1.1);
+        assert!(grad_hess[3].grad > 0.9 && grad_hess[3].grad < 1.1);
     }
 
     #[test]
@@ -860,17 +837,16 @@ mod tests {
         let obj = AbsoluteLoss;
         let preds = [1.0f32, 2.0, 3.0];
         let targets = [0.5f32, 2.5, 2.5];
-        let mut grads = [0.0f32; 3];
-        let mut hess = [0.0f32; 3];
+        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }; 3];
 
-        obj.compute_gradients(3, 1, &preds, &targets, &[], &mut grads, &mut hess);
+        obj.compute_gradients(3, 1, &preds, &targets, &[], &mut grad_hess);
 
         // grad = sign(pred - target)
-        assert!((grads[0] - 1.0).abs() < 1e-6); // pred > target
-        assert!((grads[1] - -1.0).abs() < 1e-6); // pred < target
-        assert!((grads[2] - 1.0).abs() < 1e-6); // pred > target
+        assert!((grad_hess[0].grad - 1.0).abs() < 1e-6); // pred > target
+        assert!((grad_hess[1].grad - -1.0).abs() < 1e-6); // pred < target
+        assert!((grad_hess[2].grad - 1.0).abs() < 1e-6); // pred > target
         // hess = 1.0
-        assert!((hess[0] - 1.0).abs() < 1e-6);
+        assert!((grad_hess[0].hess - 1.0).abs() < 1e-6);
     }
 
     #[test]
@@ -891,15 +867,14 @@ mod tests {
         // pred=0 means expected count = exp(0) = 1
         let preds = [0.0f32];
         let targets = [2.0f32]; // actual count
-        let mut grads = [0.0f32];
-        let mut hess = [0.0f32];
+        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }];
 
-        obj.compute_gradients(1, 1, &preds, &targets, &[], &mut grads, &mut hess);
+        obj.compute_gradients(1, 1, &preds, &targets, &[], &mut grad_hess);
 
         // grad = exp(pred) - target = 1 - 2 = -1
-        assert!((grads[0] - -1.0).abs() < 1e-6);
+        assert!((grad_hess[0].grad - -1.0).abs() < 1e-6);
         // hess = exp(pred) = 1
-        assert!((hess[0] - 1.0).abs() < 1e-6);
+        assert!((grad_hess[0].hess - 1.0).abs() < 1e-6);
     }
 
     #[test]
@@ -920,13 +895,12 @@ mod tests {
         let obj = PoissonLoss;
         let preds = [1.0f32]; // exp(1) ≈ 2.718
         let targets = [3.0f32];
-        let mut grads = [0.0f32];
-        let mut hess = [0.0f32];
+        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }];
 
-        obj.compute_gradients(1, 1, &preds, &targets, &[], &mut grads, &mut hess);
+        obj.compute_gradients(1, 1, &preds, &targets, &[], &mut grad_hess);
 
         let exp_1 = 1.0f32.exp();
-        assert!((grads[0] - (exp_1 - 3.0)).abs() < 1e-5);
-        assert!((hess[0] - exp_1).abs() < 1e-5);
+        assert!((grad_hess[0].grad - (exp_1 - 3.0)).abs() < 1e-5);
+        assert!((grad_hess[0].hess - exp_1).abs() < 1e-5);
     }
 }

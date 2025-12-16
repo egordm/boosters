@@ -229,15 +229,13 @@ impl<O: Objective> GBDTTrainer<O> {
 
         for round in 0..self.params.n_trees {
             // Compute gradients for all outputs
-            let (grad_buf, hess_buf) = gradients.as_mut_slices();
             self.objective.compute_gradients(
                 n_rows,
                 n_outputs,
                 &predictions,
                 targets,
                 weights,
-                grad_buf,
-                hess_buf,
+                gradients.pairs_mut(),
             );
 
             // Grow one tree per output
@@ -245,8 +243,8 @@ impl<O: Objective> GBDTTrainer<O> {
                 // Row sampling: modifies gradients in place for this output
                 // - GOSS: amplifies sampled small-gradient rows
                 // - Uniform: zeros out unsampled rows (split finding requires hess_sum > 0)
-                let (grads, hess) = gradients.output_grads_hess_mut(output);
-                let sampled = row_sampler.sample(round as usize, grads, hess);
+                let grad_hess = gradients.output_pairs_mut(output);
+                let sampled = row_sampler.sample(round as usize, grad_hess);
 
                 let pred_offset = output * n_rows;
 

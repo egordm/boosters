@@ -1,19 +1,15 @@
 //! Histogram data structures for gradient boosting tree training.
 //!
 //! This module provides:
-//! - [`build_histograms_ordered`] - **Preferred** for training with pre-gathered gradients
-//! - [`build_histograms`] - Legacy/testing; use ordered version in production
+//! - [`build_histograms_ordered_interleaved`] - **Preferred** for training with pre-gathered gradients
 //! - [`HistogramPool`] for LRU-cached histogram storage
 //!
 //! # Recommended Usage
 //!
-//! Always use [`build_histograms_ordered`] in production. The "ordered gradients"
+//! Always use [`build_histograms_ordered_interleaved`] in production. The "ordered gradients"
 //! technique pre-gathers gradients into partition order, converting random memory
 //! access into sequential reads. This provides significant cache efficiency gains
 //! (following LightGBM's approach).
-//!
-//! The non-ordered [`build_histograms`] is kept for testing and edge cases where
-//! gradients cannot be pre-gathered.
 //!
 //! # Module Organization
 //!
@@ -39,7 +35,8 @@ pub mod pool;
 
 // Re-export main types
 pub use ops::{
-    build_histograms, build_histograms_ordered, build_histograms_ordered_sequential, ParallelStrategy, HistogramBin,
+    build_histograms_ordered_interleaved, build_histograms_ordered_sequential_interleaved,
+    ParallelStrategy, HistogramBin,
     subtract_histogram, merge_histogram, clear_histogram, sum_histogram,
 };
 pub use pool::{

@@ -1,7 +1,7 @@
 //! Histogram building and operations.
 //!
 //! This module provides histogram building functions for gradient boosting tree training.
-//! The main entry point is [`build_histograms_ordered`] which uses pre-gathered gradients
+//! The main entry point is [`build_histograms_ordered_interleaved`] which uses pre-gathered gradients
 //! for optimal cache efficiency, following LightGBM's "ordered gradients" technique.
 //!
 //! # Design Philosophy
@@ -23,6 +23,7 @@
 //!
 
 use crate::data::binned::FeatureView;
+use crate::training::GradHessF32;
 use super::pool::FeatureMeta;
 
 /// A histogram bin storing accumulated (gradient_sum, hessian_sum).
@@ -75,92 +76,17 @@ impl ParallelStrategy {
 // Main Entry Point
 // =============================================================================
 
-/// Build histograms for all features (non-ordered gradients).
+/// Build histograms using ordered gradients stored as interleaved `(grad, hess)` pairs.
 ///
-/// **Note**: Prefer [`build_histograms_ordered`] for production use. The ordered
-/// variant pre-gathers gradients into partition order for better cache efficiency.
-/// This function is retained for testing and edge cases.
-///
-/// Automatically selects between sequential and feature-parallel strategies.
-///
-/// # Arguments
-/// * `histogram` - Output histogram buffer (total_bins length, should be zeroed)
-/// * `grad` - Gradient values for all samples
-/// * `hess` - Hessian values for all samples  
-/// * `indices` - Row indices to process (empty = all rows)
-/// * `bin_views` - Feature bin views from BinnedDataset
-/// * `feature_metas` - Feature offset/size metadata
-pub fn build_histograms(
+/// This uses a single sequential stream for gradient+hessian reads.
+pub fn build_histograms_ordered_interleaved(
     histogram: &mut [HistogramBin],
-    grad: &[f32],
-    hess: &[f32],
+    ordered_grad_hess: &[GradHessF32],
     indices: &[u32],
     bin_views: &[FeatureView<'_>],
     feature_metas: &[FeatureMeta],
 ) {
-    let n_rows = if indices.is_empty() { grad.len() } else { indices.len() };
-    let n_features = feature_metas.len();
-    let n_threads = rayon::current_num_threads();
-
-    let strategy = ParallelStrategy::auto_select(n_rows, n_features, n_threads);
-
-    match strategy {
-        ParallelStrategy::Sequential => {
-            for (f, meta) in feature_metas.iter().enumerate() {
-                let offset = meta.offset as usize;
-                let n_bins = meta.n_bins as usize;
-                let hist_slice = &mut histogram[offset..offset + n_bins];
-                build_feature(hist_slice, grad, hess, indices, &bin_views[f]);
-            }
-        }
-        ParallelStrategy::FeatureParallel => {
-            use rayon::prelude::*;
-            // SAFETY: Each feature writes to disjoint histogram regions
-            feature_metas.par_iter().enumerate().for_each(|(f, meta)| {
-                let offset = meta.offset as usize;
-                let n_bins = meta.n_bins as usize;
-                let hist_slice = unsafe {
-                    let ptr = histogram.as_ptr().add(offset) as *mut HistogramBin;
-                    std::slice::from_raw_parts_mut(ptr, n_bins)
-                };
-                build_feature(hist_slice, grad, hess, indices, &bin_views[f]);
-            });
-        }
-    }
-}
-
-/// Build histograms using pre-gathered "ordered" gradients.
-///
-/// This is the **preferred** entry point when gradients have been gathered into
-/// partition order (i.e., `ordered_grad[i]` corresponds to `indices[i]`).
-///
-/// # Why Ordered Gradients?
-///
-/// The standard approach iterates: `grad[indices[i]]` which causes random memory access.
-/// By pre-gathering gradients into `ordered_grad`, the inner loop becomes:
-/// - Sequential read of `ordered_grad[i]` (cache-friendly)
-/// - Random write to `histogram[bin]` (unavoidable)
-///
-/// This matches LightGBM's "ordered gradients" optimization and significantly improves
-/// cache utilization, especially for large datasets.
-///
-/// # Arguments
-/// * `histogram` - Output histogram buffer (total_bins length, should be zeroed)
-/// * `ordered_grad` - Pre-gathered gradients in index order (length = indices.len())
-/// * `ordered_hess` - Pre-gathered hessians in index order (length = indices.len())
-/// * `indices` - Row indices (used for bin lookup, NOT gradient lookup)
-/// * `bin_views` - Feature bin views from BinnedDataset
-/// * `feature_metas` - Feature offset/size metadata
-pub fn build_histograms_ordered(
-    histogram: &mut [HistogramBin],
-    ordered_grad: &[f32],
-    ordered_hess: &[f32],
-    indices: &[u32],
-    bin_views: &[FeatureView<'_>],
-    feature_metas: &[FeatureMeta],
-) {
-    debug_assert_eq!(ordered_grad.len(), indices.len());
-    debug_assert_eq!(ordered_hess.len(), indices.len());
+    debug_assert_eq!(ordered_grad_hess.len(), indices.len());
 
     let n_rows = indices.len();
     let n_features = feature_metas.len();
@@ -174,7 +100,12 @@ pub fn build_histograms_ordered(
                 let offset = meta.offset as usize;
                 let n_bins = meta.n_bins as usize;
                 let hist_slice = &mut histogram[offset..offset + n_bins];
-                build_feature_ordered(hist_slice, ordered_grad, ordered_hess, indices, &bin_views[f]);
+                build_feature_ordered_interleaved(
+                    hist_slice,
+                    ordered_grad_hess,
+                    indices,
+                    &bin_views[f],
+                );
             }
         }
         ParallelStrategy::FeatureParallel => {
@@ -187,38 +118,29 @@ pub fn build_histograms_ordered(
                     let ptr = histogram.as_ptr().add(offset) as *mut HistogramBin;
                     std::slice::from_raw_parts_mut(ptr, n_bins)
                 };
-                build_feature_ordered(hist_slice, ordered_grad, ordered_hess, indices, &bin_views[f]);
+                build_feature_ordered_interleaved(
+                    hist_slice,
+                    ordered_grad_hess,
+                    indices,
+                    &bin_views[f],
+                );
             });
         }
     }
 }
 
-/// Build histograms using pre-gathered ordered gradients for a strictly sequential row range.
+/// Build histograms using interleaved ordered gradients for a strictly sequential row range.
 ///
 /// This is a specialized, lossless fast path for the case where the node's row indices are
 /// exactly `[start, start+1, ..., start+len-1]`.
-///
-/// Compared to [`build_histograms_ordered`], this avoids streaming the `indices` array entirely,
-/// which is especially beneficial for the root node (typically the largest histogram build).
-///
-/// # Arguments
-/// * `histogram` - Output histogram buffer (total_bins length, should be zeroed)
-/// * `ordered_grad` - Gradients in row order for the range (length = len)
-/// * `ordered_hess` - Hessians in row order for the range (length = len)
-/// * `start_row` - First row index in the sequential range
-/// * `bin_views` - Feature bin views from BinnedDataset
-/// * `feature_metas` - Feature offset/size metadata
-pub fn build_histograms_ordered_sequential(
+pub fn build_histograms_ordered_sequential_interleaved(
     histogram: &mut [HistogramBin],
-    ordered_grad: &[f32],
-    ordered_hess: &[f32],
+    ordered_grad_hess: &[GradHessF32],
     start_row: usize,
     bin_views: &[FeatureView<'_>],
     feature_metas: &[FeatureMeta],
 ) {
-    debug_assert_eq!(ordered_grad.len(), ordered_hess.len());
-
-    let n_rows = ordered_grad.len();
+    let n_rows = ordered_grad_hess.len();
     let n_features = feature_metas.len();
     let n_threads = rayon::current_num_threads();
 
@@ -230,7 +152,12 @@ pub fn build_histograms_ordered_sequential(
                 let offset = meta.offset as usize;
                 let n_bins = meta.n_bins as usize;
                 let hist_slice = &mut histogram[offset..offset + n_bins];
-                build_feature_ordered_sequential(hist_slice, ordered_grad, ordered_hess, start_row, &bin_views[f]);
+                build_feature_ordered_sequential_interleaved(
+                    hist_slice,
+                    ordered_grad_hess,
+                    start_row,
+                    &bin_views[f],
+                );
             }
         }
         ParallelStrategy::FeatureParallel => {
@@ -242,7 +169,12 @@ pub fn build_histograms_ordered_sequential(
                     let ptr = histogram.as_ptr().add(offset) as *mut HistogramBin;
                     std::slice::from_raw_parts_mut(ptr, n_bins)
                 };
-                build_feature_ordered_sequential(hist_slice, ordered_grad, ordered_hess, start_row, &bin_views[f]);
+                build_feature_ordered_sequential_interleaved(
+                    hist_slice,
+                    ordered_grad_hess,
+                    start_row,
+                    &bin_views[f],
+                );
             });
         }
     }
@@ -252,603 +184,312 @@ pub fn build_histograms_ordered_sequential(
 // Single-Feature Building
 // =============================================================================
 
-/// Build histogram for a single feature (dispatcher) - standard random-access version.
+/// Build histogram for a single feature using interleaved ordered gradients.
 #[inline]
-fn build_feature(
+fn build_feature_ordered_interleaved(
     histogram: &mut [HistogramBin],
-    grad: &[f32],
-    hess: &[f32],
+    ordered_grad_hess: &[GradHessF32],
     indices: &[u32],
     view: &FeatureView<'_>,
 ) {
     match view {
         FeatureView::U8 { bins, stride: 1 } => {
-            build_histogram_u8(bins, grad, hess, histogram, indices);
+            build_histogram_u8_ordered_interleaved(bins, ordered_grad_hess, histogram, indices);
         }
         FeatureView::U16 { bins, stride: 1 } => {
-            build_histogram_u16(bins, grad, hess, histogram, indices);
+            build_histogram_u16_ordered_interleaved(bins, ordered_grad_hess, histogram, indices);
         }
         FeatureView::U8 { bins, stride } => {
-            build_histogram_strided_u8(bins, *stride, grad, hess, histogram, indices);
+            build_histogram_strided_u8_ordered_interleaved(
+                bins,
+                *stride,
+                ordered_grad_hess,
+                histogram,
+                indices,
+            );
         }
         FeatureView::U16 { bins, stride } => {
-            build_histogram_strided_u16(bins, *stride, grad, hess, histogram, indices);
+            build_histogram_strided_u16_ordered_interleaved(
+                bins,
+                *stride,
+                ordered_grad_hess,
+                histogram,
+                indices,
+            );
         }
+        // Sparse features: ordered gradients are not currently supported in the ordered path.
         FeatureView::SparseU8 { row_indices, bin_values } => {
-            let node_indices = if indices.is_empty() { None } else { Some(indices) };
-            build_histogram_sparse_u8(row_indices, bin_values, grad, hess, histogram, node_indices);
+            let _ = (row_indices, bin_values, ordered_grad_hess);
         }
         FeatureView::SparseU16 { row_indices, bin_values } => {
-            let node_indices = if indices.is_empty() { None } else { Some(indices) };
-            build_histogram_sparse_u16(row_indices, bin_values, grad, hess, histogram, node_indices);
+            let _ = (row_indices, bin_values, ordered_grad_hess);
         }
     }
 }
 
-/// Build histogram for a single feature using pre-gathered ordered gradients.
-///
-/// Unlike `build_feature`, this version assumes gradients are already in index order,
-/// so `ordered_grad[i]` corresponds to `indices[i]`. This enables sequential gradient
-/// reads instead of random access.
 #[inline]
-fn build_feature_ordered(
+fn build_histogram_u8_ordered_interleaved(
+    bins: &[u8],
+    ordered_grad_hess: &[GradHessF32],
     histogram: &mut [HistogramBin],
-    ordered_grad: &[f32],
-    ordered_hess: &[f32],
     indices: &[u32],
+) {
+    debug_assert_eq!(ordered_grad_hess.len(), indices.len());
+    for i in 0..indices.len() {
+        let row = unsafe { *indices.get_unchecked(i) } as usize;
+        let bin = unsafe { *bins.get_unchecked(row) } as usize;
+        let slot = unsafe { histogram.get_unchecked_mut(bin) };
+        let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
+        slot.0 += gh.grad as f64;
+        slot.1 += gh.hess as f64;
+    }
+}
+
+#[inline]
+fn build_histogram_u16_ordered_interleaved(
+    bins: &[u16],
+    ordered_grad_hess: &[GradHessF32],
+    histogram: &mut [HistogramBin],
+    indices: &[u32],
+) {
+    debug_assert_eq!(ordered_grad_hess.len(), indices.len());
+    for i in 0..indices.len() {
+        let row = unsafe { *indices.get_unchecked(i) } as usize;
+        let bin = unsafe { *bins.get_unchecked(row) } as usize;
+        let slot = unsafe { histogram.get_unchecked_mut(bin) };
+        let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
+        slot.0 += gh.grad as f64;
+        slot.1 += gh.hess as f64;
+    }
+}
+
+#[inline]
+fn build_histogram_strided_u8_ordered_interleaved(
+    bins: &[u8],
+    stride: usize,
+    ordered_grad_hess: &[GradHessF32],
+    histogram: &mut [HistogramBin],
+    indices: &[u32],
+) {
+    debug_assert_eq!(ordered_grad_hess.len(), indices.len());
+    for i in 0..indices.len() {
+        let row = unsafe { *indices.get_unchecked(i) } as usize;
+        let bin = unsafe { *bins.get_unchecked(row * stride) } as usize;
+        let slot = unsafe { histogram.get_unchecked_mut(bin) };
+        let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
+        slot.0 += gh.grad as f64;
+        slot.1 += gh.hess as f64;
+    }
+}
+
+#[inline]
+fn build_histogram_strided_u16_ordered_interleaved(
+    bins: &[u16],
+    stride: usize,
+    ordered_grad_hess: &[GradHessF32],
+    histogram: &mut [HistogramBin],
+    indices: &[u32],
+) {
+    debug_assert_eq!(ordered_grad_hess.len(), indices.len());
+    for i in 0..indices.len() {
+        let row = unsafe { *indices.get_unchecked(i) } as usize;
+        let bin = unsafe { *bins.get_unchecked(row * stride) } as usize;
+        let slot = unsafe { histogram.get_unchecked_mut(bin) };
+        let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
+        slot.0 += gh.grad as f64;
+        slot.1 += gh.hess as f64;
+    }
+}
+
+/// Build histogram for a single feature using interleaved ordered gradients and a sequential row range.
+#[inline]
+fn build_feature_ordered_sequential_interleaved(
+    histogram: &mut [HistogramBin],
+    ordered_grad_hess: &[GradHessF32],
+    start_row: usize,
     view: &FeatureView<'_>,
 ) {
     match view {
         FeatureView::U8 { bins, stride: 1 } => {
-            build_histogram_u8_ordered(bins, ordered_grad, ordered_hess, histogram, indices);
+            build_histogram_u8_ordered_sequential_interleaved(
+                bins,
+                ordered_grad_hess,
+                histogram,
+                start_row,
+            );
         }
         FeatureView::U16 { bins, stride: 1 } => {
-            build_histogram_u16_ordered(bins, ordered_grad, ordered_hess, histogram, indices);
+            build_histogram_u16_ordered_sequential_interleaved(
+                bins,
+                ordered_grad_hess,
+                histogram,
+                start_row,
+            );
         }
         FeatureView::U8 { bins, stride } => {
-            build_histogram_strided_u8_ordered(bins, *stride, ordered_grad, ordered_hess, histogram, indices);
+            build_histogram_strided_u8_ordered_sequential_interleaved(
+                bins,
+                *stride,
+                ordered_grad_hess,
+                histogram,
+                start_row,
+            );
         }
         FeatureView::U16 { bins, stride } => {
-            build_histogram_strided_u16_ordered(bins, *stride, ordered_grad, ordered_hess, histogram, indices);
+            build_histogram_strided_u16_ordered_sequential_interleaved(
+                bins,
+                *stride,
+                ordered_grad_hess,
+                histogram,
+                start_row,
+            );
         }
-        // Sparse features: ordered gradients don't help (needs intersection logic)
-        // Fall back to unordered version
         FeatureView::SparseU8 { row_indices, bin_values } => {
-            // For sparse features with ordered gradients, we need to use the original
-            // gradient arrays. The caller should use build_feature for sparse features
-            // or provide the original gradients. For now, this is a rare case and we
-            // can optimize later if needed.
-            // Note: This path shouldn't be hit if caller uses build_histograms_ordered
-            // only for dense features.
-            let _ = (row_indices, bin_values, ordered_grad, ordered_hess);
-            // Skip - sparse with ordered gradients is complex; caller should handle separately
+            build_histogram_sparse_u8_ordered_sequential_interleaved(
+                row_indices,
+                bin_values,
+                ordered_grad_hess,
+                histogram,
+                start_row,
+            );
         }
         FeatureView::SparseU16 { row_indices, bin_values } => {
-            let _ = (row_indices, bin_values, ordered_grad, ordered_hess);
-            // Skip - sparse with ordered gradients is complex
-        }
-    }
-}
-
-/// Build histogram for a single feature using ordered gradients and a sequential row range.
-#[inline]
-fn build_feature_ordered_sequential(
-    histogram: &mut [HistogramBin],
-    ordered_grad: &[f32],
-    ordered_hess: &[f32],
-    start_row: usize,
-    view: &FeatureView<'_>,
-) {
-    match view {
-        FeatureView::U8 { bins, stride: 1 } => {
-            build_histogram_u8_ordered_sequential(bins, ordered_grad, ordered_hess, histogram, start_row);
-        }
-        FeatureView::U16 { bins, stride: 1 } => {
-            build_histogram_u16_ordered_sequential(bins, ordered_grad, ordered_hess, histogram, start_row);
-        }
-        FeatureView::U8 { bins, stride } => {
-            build_histogram_strided_u8_ordered_sequential(bins, *stride, ordered_grad, ordered_hess, histogram, start_row);
-        }
-        FeatureView::U16 { bins, stride } => {
-            build_histogram_strided_u16_ordered_sequential(bins, *stride, ordered_grad, ordered_hess, histogram, start_row);
-        }
-        // Sparse features: no sequential-row advantage; fall back.
-        FeatureView::SparseU8 { row_indices, bin_values } => {
-            let indices: Box<[u32]> = (start_row as u32..(start_row as u32 + ordered_grad.len() as u32)).collect();
-            let node_indices = Some(indices.as_ref());
-            build_histogram_sparse_u8(row_indices, bin_values, ordered_grad, ordered_hess, histogram, node_indices);
-        }
-        FeatureView::SparseU16 { row_indices, bin_values } => {
-            let indices: Box<[u32]> = (start_row as u32..(start_row as u32 + ordered_grad.len() as u32)).collect();
-            let node_indices = Some(indices.as_ref());
-            build_histogram_sparse_u16(row_indices, bin_values, ordered_grad, ordered_hess, histogram, node_indices);
+            build_histogram_sparse_u16_ordered_sequential_interleaved(
+                row_indices,
+                bin_values,
+                ordered_grad_hess,
+                histogram,
+                start_row,
+            );
         }
     }
 }
 
 #[inline]
-fn build_histogram_u8_ordered_sequential(
+fn build_histogram_u8_ordered_sequential_interleaved(
     bins: &[u8],
-    ordered_grad: &[f32],
-    ordered_hess: &[f32],
+    ordered_grad_hess: &[GradHessF32],
     histogram: &mut [HistogramBin],
     start_row: usize,
 ) {
-    debug_assert_eq!(ordered_grad.len(), ordered_hess.len());
     let mut row = start_row;
-    for i in 0..ordered_grad.len() {
+    for i in 0..ordered_grad_hess.len() {
         debug_assert!(row < bins.len());
         let bin = unsafe { *bins.get_unchecked(row) } as usize;
         debug_assert!(bin < histogram.len());
         let slot = unsafe { histogram.get_unchecked_mut(bin) };
-        slot.0 += unsafe { *ordered_grad.get_unchecked(i) } as f64;
-        slot.1 += unsafe { *ordered_hess.get_unchecked(i) } as f64;
+        let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
+        slot.0 += gh.grad as f64;
+        slot.1 += gh.hess as f64;
         row += 1;
     }
 }
 
 #[inline]
-fn build_histogram_u16_ordered_sequential(
+fn build_histogram_u16_ordered_sequential_interleaved(
     bins: &[u16],
-    ordered_grad: &[f32],
-    ordered_hess: &[f32],
+    ordered_grad_hess: &[GradHessF32],
     histogram: &mut [HistogramBin],
     start_row: usize,
 ) {
-    debug_assert_eq!(ordered_grad.len(), ordered_hess.len());
     let mut row = start_row;
-    for i in 0..ordered_grad.len() {
+    for i in 0..ordered_grad_hess.len() {
         debug_assert!(row < bins.len());
         let bin = unsafe { *bins.get_unchecked(row) } as usize;
         debug_assert!(bin < histogram.len());
         let slot = unsafe { histogram.get_unchecked_mut(bin) };
-        slot.0 += unsafe { *ordered_grad.get_unchecked(i) } as f64;
-        slot.1 += unsafe { *ordered_hess.get_unchecked(i) } as f64;
+        let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
+        slot.0 += gh.grad as f64;
+        slot.1 += gh.hess as f64;
         row += 1;
     }
 }
 
 #[inline]
-fn build_histogram_strided_u8_ordered_sequential(
+fn build_histogram_strided_u8_ordered_sequential_interleaved(
     bins: &[u8],
     stride: usize,
-    ordered_grad: &[f32],
-    ordered_hess: &[f32],
+    ordered_grad_hess: &[GradHessF32],
     histogram: &mut [HistogramBin],
     start_row: usize,
 ) {
-    debug_assert_eq!(ordered_grad.len(), ordered_hess.len());
     let mut row = start_row;
-    for i in 0..ordered_grad.len() {
+    for i in 0..ordered_grad_hess.len() {
         let bin_idx = row * stride;
         debug_assert!(bin_idx < bins.len());
         let bin = unsafe { *bins.get_unchecked(bin_idx) } as usize;
         debug_assert!(bin < histogram.len());
         let slot = unsafe { histogram.get_unchecked_mut(bin) };
-        slot.0 += unsafe { *ordered_grad.get_unchecked(i) } as f64;
-        slot.1 += unsafe { *ordered_hess.get_unchecked(i) } as f64;
+        let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
+        slot.0 += gh.grad as f64;
+        slot.1 += gh.hess as f64;
         row += 1;
     }
 }
 
 #[inline]
-fn build_histogram_strided_u16_ordered_sequential(
+fn build_histogram_strided_u16_ordered_sequential_interleaved(
     bins: &[u16],
     stride: usize,
-    ordered_grad: &[f32],
-    ordered_hess: &[f32],
+    ordered_grad_hess: &[GradHessF32],
     histogram: &mut [HistogramBin],
     start_row: usize,
 ) {
-    debug_assert_eq!(ordered_grad.len(), ordered_hess.len());
     let mut row = start_row;
-    for i in 0..ordered_grad.len() {
+    for i in 0..ordered_grad_hess.len() {
         let bin_idx = row * stride;
         debug_assert!(bin_idx < bins.len());
         let bin = unsafe { *bins.get_unchecked(bin_idx) } as usize;
         debug_assert!(bin < histogram.len());
         let slot = unsafe { histogram.get_unchecked_mut(bin) };
-        slot.0 += unsafe { *ordered_grad.get_unchecked(i) } as f64;
-        slot.1 += unsafe { *ordered_hess.get_unchecked(i) } as f64;
+        let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
+        slot.0 += gh.grad as f64;
+        slot.1 += gh.hess as f64;
         row += 1;
     }
 }
 
-// =============================================================================
-// Core Building Functions
-// =============================================================================
-
-/// Check if indices represent a contiguous range [first, first + n).
-///
-/// When indices are contiguous, we can iterate directly without indirection,
-/// which enables hardware prefetching and better vectorization.
 #[inline]
-fn is_contiguous_range(indices: &[u32]) -> bool {
-    if indices.is_empty() {
-        return true;
-    }
-    let first = indices[0];
-    let last = indices[indices.len() - 1];
-    (last - first) as usize == indices.len() - 1
-}
-
-/// Build histogram for dense u8 bins.
-///
-/// Hot loop with explicit bounds check elimination.
-/// Detects contiguous index ranges to enable hardware prefetching.
-#[inline]
-pub fn build_histogram_u8(
-    bins: &[u8],
-    grad: &[f32],
-    hess: &[f32],
-    histogram: &mut [HistogramBin],
-    indices: &[u32],
-) {
-    if indices.is_empty() {
-        // All rows - sequential access, no prefetching needed (hardware handles it)
-        for i in 0..bins.len() {
-            let bin = unsafe { *bins.get_unchecked(i) } as usize;
-            debug_assert!(bin < histogram.len());
-            let slot = unsafe { histogram.get_unchecked_mut(bin) };
-            slot.0 += unsafe { *grad.get_unchecked(i) } as f64;
-            slot.1 += unsafe { *hess.get_unchecked(i) } as f64;
-        }
-    } else if is_contiguous_range(indices) {
-        // Contiguous range - iterate directly without indirection
-        // This enables hardware prefetching and better vectorization
-        let start = indices[0] as usize;
-        let end = start + indices.len();
-        for row in start..end {
-            let bin = unsafe { *bins.get_unchecked(row) } as usize;
-            debug_assert!(bin < histogram.len());
-            let slot = unsafe { histogram.get_unchecked_mut(bin) };
-            slot.0 += unsafe { *grad.get_unchecked(row) } as f64;
-            slot.1 += unsafe { *hess.get_unchecked(row) } as f64;
-        }
-    } else {
-        // Indexed rows - random access.
-        for i in 0..indices.len() {
-            let row = unsafe { *indices.get_unchecked(i) } as usize;
-            debug_assert!(row < bins.len());
-            debug_assert!(row < grad.len());
-
-            let bin = unsafe { *bins.get_unchecked(row) } as usize;
-            debug_assert!(bin < histogram.len());
-
-            let slot = unsafe { histogram.get_unchecked_mut(bin) };
-            slot.0 += unsafe { *grad.get_unchecked(row) } as f64;
-            slot.1 += unsafe { *hess.get_unchecked(row) } as f64;
-        }
-    }
-}
-
-/// Build histogram for dense u16 bins.
-///
-/// Hot loop with explicit bounds check elimination.
-/// Detects contiguous index ranges to enable hardware prefetching.
-#[inline]
-pub fn build_histogram_u16(
-    bins: &[u16],
-    grad: &[f32],
-    hess: &[f32],
-    histogram: &mut [HistogramBin],
-    indices: &[u32],
-) {
-    if indices.is_empty() {
-        // All rows - sequential access, no prefetching needed
-        for i in 0..bins.len() {
-            let bin = unsafe { *bins.get_unchecked(i) } as usize;
-            debug_assert!(bin < histogram.len());
-            let slot = unsafe { histogram.get_unchecked_mut(bin) };
-            slot.0 += unsafe { *grad.get_unchecked(i) } as f64;
-            slot.1 += unsafe { *hess.get_unchecked(i) } as f64;
-        }
-    } else if is_contiguous_range(indices) {
-        // Contiguous range - iterate directly without indirection
-        let start = indices[0] as usize;
-        let end = start + indices.len();
-        for row in start..end {
-            let bin = unsafe { *bins.get_unchecked(row) } as usize;
-            debug_assert!(bin < histogram.len());
-            let slot = unsafe { histogram.get_unchecked_mut(bin) };
-            slot.0 += unsafe { *grad.get_unchecked(row) } as f64;
-            slot.1 += unsafe { *hess.get_unchecked(row) } as f64;
-        }
-    } else {
-        // Indexed rows - random access.
-        for i in 0..indices.len() {
-            let row = unsafe { *indices.get_unchecked(i) } as usize;
-            debug_assert!(row < bins.len());
-            debug_assert!(row < grad.len());
-
-            let bin = unsafe { *bins.get_unchecked(row) } as usize;
-            debug_assert!(bin < histogram.len());
-
-            let slot = unsafe { histogram.get_unchecked_mut(bin) };
-            slot.0 += unsafe { *grad.get_unchecked(row) } as f64;
-            slot.1 += unsafe { *hess.get_unchecked(row) } as f64;
-        }
-    }
-}
-
-/// Build histogram with strided u8 bins (row-major groups).
-///
-/// Hot loop with bounds check elimination.
-#[inline]
-pub fn build_histogram_strided_u8(
-    bins: &[u8],
-    stride: usize,
-    grad: &[f32],
-    hess: &[f32],
-    histogram: &mut [HistogramBin],
-    indices: &[u32],
-) {
-    if indices.is_empty() {
-        let n_rows = grad.len();
-        for row in 0..n_rows {
-            let bin_idx = row * stride;
-            debug_assert!(bin_idx < bins.len());
-            let bin = unsafe { *bins.get_unchecked(bin_idx) } as usize;
-            debug_assert!(bin < histogram.len());
-            let slot = unsafe { histogram.get_unchecked_mut(bin) };
-            slot.0 += unsafe { *grad.get_unchecked(row) } as f64;
-            slot.1 += unsafe { *hess.get_unchecked(row) } as f64;
-        }
-    } else {
-        for i in 0..indices.len() {
-            let row = unsafe { *indices.get_unchecked(i) } as usize;
-            let bin_idx = row * stride;
-            debug_assert!(bin_idx < bins.len());
-            let bin = unsafe { *bins.get_unchecked(bin_idx) } as usize;
-            debug_assert!(bin < histogram.len());
-
-            let slot = unsafe { histogram.get_unchecked_mut(bin) };
-            slot.0 += unsafe { *grad.get_unchecked(row) } as f64;
-            slot.1 += unsafe { *hess.get_unchecked(row) } as f64;
-        }
-    }
-}
-
-/// Build histogram with strided u16 bins.
-///
-/// Hot loop with bounds check elimination.
-#[inline]
-pub fn build_histogram_strided_u16(
-    bins: &[u16],
-    stride: usize,
-    grad: &[f32],
-    hess: &[f32],
-    histogram: &mut [HistogramBin],
-    indices: &[u32],
-) {
-    if indices.is_empty() {
-        let n_rows = grad.len();
-        for row in 0..n_rows {
-            let bin_idx = row * stride;
-            debug_assert!(bin_idx < bins.len());
-            let bin = unsafe { *bins.get_unchecked(bin_idx) } as usize;
-            debug_assert!(bin < histogram.len());
-            let slot = unsafe { histogram.get_unchecked_mut(bin) };
-            slot.0 += unsafe { *grad.get_unchecked(row) } as f64;
-            slot.1 += unsafe { *hess.get_unchecked(row) } as f64;
-        }
-    } else {
-        for i in 0..indices.len() {
-            let row = unsafe { *indices.get_unchecked(i) } as usize;
-            let bin_idx = row * stride;
-            debug_assert!(bin_idx < bins.len());
-            let bin = unsafe { *bins.get_unchecked(bin_idx) } as usize;
-            debug_assert!(bin < histogram.len());
-
-            let slot = unsafe { histogram.get_unchecked_mut(bin) };
-            slot.0 += unsafe { *grad.get_unchecked(row) } as f64;
-            slot.1 += unsafe { *hess.get_unchecked(row) } as f64;
-        }
-    }
-}
-
-// =============================================================================
-// Ordered Gradient Building Functions
-// =============================================================================
-//
-// These functions assume gradients have been pre-gathered into partition order:
-// `ordered_grad[i]` corresponds to `indices[i]`, enabling sequential gradient reads.
-
-/// Build histogram for dense u8 bins with ordered (pre-gathered) gradients.
-///
-/// This is the most cache-efficient version: gradients are read sequentially while
-/// bins are accessed via row indices.
-#[inline]
-pub fn build_histogram_u8_ordered(
-    bins: &[u8],
-    ordered_grad: &[f32],
-    ordered_hess: &[f32],
-    histogram: &mut [HistogramBin],
-    indices: &[u32],
-) {
-    debug_assert_eq!(ordered_grad.len(), indices.len());
-    debug_assert_eq!(ordered_hess.len(), indices.len());
-
-    // Sequential gradient access, random bin access
-    for i in 0..indices.len() {
-        let row = unsafe { *indices.get_unchecked(i) } as usize;
-        debug_assert!(row < bins.len());
-
-        let bin = unsafe { *bins.get_unchecked(row) } as usize;
-        debug_assert!(bin < histogram.len());
-
-        let slot = unsafe { histogram.get_unchecked_mut(bin) };
-        // Sequential read of pre-gathered gradients
-        slot.0 += unsafe { *ordered_grad.get_unchecked(i) } as f64;
-        slot.1 += unsafe { *ordered_hess.get_unchecked(i) } as f64;
-    }
-}
-
-/// Build histogram for dense u16 bins with ordered gradients.
-#[inline]
-pub fn build_histogram_u16_ordered(
-    bins: &[u16],
-    ordered_grad: &[f32],
-    ordered_hess: &[f32],
-    histogram: &mut [HistogramBin],
-    indices: &[u32],
-) {
-    debug_assert_eq!(ordered_grad.len(), indices.len());
-    debug_assert_eq!(ordered_hess.len(), indices.len());
-
-    for i in 0..indices.len() {
-        let row = unsafe { *indices.get_unchecked(i) } as usize;
-        debug_assert!(row < bins.len());
-
-        let bin = unsafe { *bins.get_unchecked(row) } as usize;
-        debug_assert!(bin < histogram.len());
-
-        let slot = unsafe { histogram.get_unchecked_mut(bin) };
-        slot.0 += unsafe { *ordered_grad.get_unchecked(i) } as f64;
-        slot.1 += unsafe { *ordered_hess.get_unchecked(i) } as f64;
-    }
-}
-
-/// Build histogram with strided u8 bins and ordered gradients.
-#[inline]
-pub fn build_histogram_strided_u8_ordered(
-    bins: &[u8],
-    stride: usize,
-    ordered_grad: &[f32],
-    ordered_hess: &[f32],
-    histogram: &mut [HistogramBin],
-    indices: &[u32],
-) {
-    debug_assert_eq!(ordered_grad.len(), indices.len());
-    debug_assert_eq!(ordered_hess.len(), indices.len());
-
-    for i in 0..indices.len() {
-        let row = unsafe { *indices.get_unchecked(i) } as usize;
-        let bin_idx = row * stride;
-        debug_assert!(bin_idx < bins.len());
-
-        let bin = unsafe { *bins.get_unchecked(bin_idx) } as usize;
-        debug_assert!(bin < histogram.len());
-
-        let slot = unsafe { histogram.get_unchecked_mut(bin) };
-        slot.0 += unsafe { *ordered_grad.get_unchecked(i) } as f64;
-        slot.1 += unsafe { *ordered_hess.get_unchecked(i) } as f64;
-    }
-}
-
-/// Build histogram with strided u16 bins and ordered gradients.
-#[inline]
-pub fn build_histogram_strided_u16_ordered(
-    bins: &[u16],
-    stride: usize,
-    ordered_grad: &[f32],
-    ordered_hess: &[f32],
-    histogram: &mut [HistogramBin],
-    indices: &[u32],
-) {
-    debug_assert_eq!(ordered_grad.len(), indices.len());
-    debug_assert_eq!(ordered_hess.len(), indices.len());
-
-    for i in 0..indices.len() {
-        let row = unsafe { *indices.get_unchecked(i) } as usize;
-        let bin_idx = row * stride;
-        debug_assert!(bin_idx < bins.len());
-
-        let bin = unsafe { *bins.get_unchecked(bin_idx) } as usize;
-        debug_assert!(bin < histogram.len());
-
-        let slot = unsafe { histogram.get_unchecked_mut(bin) };
-        slot.0 += unsafe { *ordered_grad.get_unchecked(i) } as f64;
-        slot.1 += unsafe { *ordered_hess.get_unchecked(i) } as f64;
-    }
-}
-
-// =============================================================================
-// Sparse Feature Building
-// =============================================================================
-
-/// Build histogram for sparse u8 features.
-#[inline]
-pub fn build_histogram_sparse_u8(
+fn build_histogram_sparse_u8_ordered_sequential_interleaved(
     row_indices: &[u32],
     bin_values: &[u8],
-    grad: &[f32],
-    hess: &[f32],
+    ordered_grad_hess: &[GradHessF32],
     histogram: &mut [HistogramBin],
-    node_indices: Option<&[u32]>,
+    start_row: usize,
 ) {
-    match node_indices {
-        None => {
-            for (i, &row) in row_indices.iter().enumerate() {
-                let r = row as usize;
-                let bin = bin_values[i] as usize;
-                histogram[bin].0 += grad[r] as f64;
-                histogram[bin].1 += hess[r] as f64;
-            }
+    let start = start_row as u32;
+    let end = start + ordered_grad_hess.len() as u32;
+    for (i, &row) in row_indices.iter().enumerate() {
+        if row < start || row >= end {
+            continue;
         }
-        Some(indices) => {
-            // Sorted merge - both arrays are sorted
-            let mut sparse_ptr = 0;
-            let mut node_ptr = 0;
-            while sparse_ptr < row_indices.len() && node_ptr < indices.len() {
-                let sparse_row = row_indices[sparse_ptr];
-                let node_row = indices[node_ptr];
-                match sparse_row.cmp(&node_row) {
-                    std::cmp::Ordering::Less => sparse_ptr += 1,
-                    std::cmp::Ordering::Greater => node_ptr += 1,
-                    std::cmp::Ordering::Equal => {
-                        let r = sparse_row as usize;
-                        let bin = bin_values[sparse_ptr] as usize;
-                        histogram[bin].0 += grad[r] as f64;
-                        histogram[bin].1 += hess[r] as f64;
-                        sparse_ptr += 1;
-                        node_ptr += 1;
-                    }
-                }
-            }
-        }
+        let idx = (row - start) as usize;
+        let bin = bin_values[i] as usize;
+        let gh = unsafe { *ordered_grad_hess.get_unchecked(idx) };
+        histogram[bin].0 += gh.grad as f64;
+        histogram[bin].1 += gh.hess as f64;
     }
 }
 
-/// Build histogram for sparse u16 features.
 #[inline]
-pub fn build_histogram_sparse_u16(
+fn build_histogram_sparse_u16_ordered_sequential_interleaved(
     row_indices: &[u32],
     bin_values: &[u16],
-    grad: &[f32],
-    hess: &[f32],
+    ordered_grad_hess: &[GradHessF32],
     histogram: &mut [HistogramBin],
-    node_indices: Option<&[u32]>,
+    start_row: usize,
 ) {
-    match node_indices {
-        None => {
-            for (i, &row) in row_indices.iter().enumerate() {
-                let r = row as usize;
-                let bin = bin_values[i] as usize;
-                histogram[bin].0 += grad[r] as f64;
-                histogram[bin].1 += hess[r] as f64;
-            }
+    let start = start_row as u32;
+    let end = start + ordered_grad_hess.len() as u32;
+    for (i, &row) in row_indices.iter().enumerate() {
+        if row < start || row >= end {
+            continue;
         }
-        Some(indices) => {
-            let mut sparse_ptr = 0;
-            let mut node_ptr = 0;
-            while sparse_ptr < row_indices.len() && node_ptr < indices.len() {
-                let sparse_row = row_indices[sparse_ptr];
-                let node_row = indices[node_ptr];
-                match sparse_row.cmp(&node_row) {
-                    std::cmp::Ordering::Less => sparse_ptr += 1,
-                    std::cmp::Ordering::Greater => node_ptr += 1,
-                    std::cmp::Ordering::Equal => {
-                        let r = sparse_row as usize;
-                        let bin = bin_values[sparse_ptr] as usize;
-                        histogram[bin].0 += grad[r] as f64;
-                        histogram[bin].1 += hess[r] as f64;
-                        sparse_ptr += 1;
-                        node_ptr += 1;
-                    }
-                }
-            }
-        }
+        let idx = (row - start) as usize;
+        let bin = bin_values[i] as usize;
+        let gh = unsafe { *ordered_grad_hess.get_unchecked(idx) };
+        histogram[bin].0 += gh.grad as f64;
+        histogram[bin].1 += gh.hess as f64;
     }
 }
 
@@ -927,11 +568,25 @@ mod tests {
     #[test]
     fn test_build_histogram_basic() {
         let bins: Vec<u8> = vec![0, 1, 0, 2, 1, 0];
-        let grad = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
-        let hess = vec![0.5, 1.0, 1.5, 2.0, 2.5, 3.0];
+        let grad = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let hess = vec![0.5f32, 1.0, 1.5, 2.0, 2.5, 3.0];
         let mut histogram = vec![(0.0, 0.0); 3];
 
-        build_histogram_u8(&bins, &grad, &hess, &mut histogram, &[]);
+        let features = make_features(&[3]);
+        let bin_views = vec![FeatureView::U8 { bins: &bins, stride: 1 }];
+        let ordered_grad_hess: Vec<GradHessF32> = grad
+            .iter()
+            .zip(&hess)
+            .map(|(&g, &h)| GradHessF32 { grad: g, hess: h })
+            .collect();
+
+        build_histograms_ordered_sequential_interleaved(
+            &mut histogram,
+            &ordered_grad_hess,
+            0,
+            &bin_views,
+            &features,
+        );
 
         assert!((histogram[0].0 - 10.0).abs() < 1e-10); // 1+3+6
         assert!((histogram[0].1 - 5.0).abs() < 1e-10);  // 0.5+1.5+3
@@ -942,12 +597,31 @@ mod tests {
     #[test]
     fn test_build_histogram_with_indices() {
         let bins: Vec<u8> = vec![0, 1, 2, 0, 1, 2];
-        let grad = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let grad = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
         let hess = vec![1.0; 6];
         let mut histogram = vec![(0.0, 0.0); 3];
         let indices: Vec<u32> = vec![0, 2, 4];
 
-        build_histogram_u8(&bins, &grad, &hess, &mut histogram, &indices);
+        let features = make_features(&[3]);
+        let bin_views = vec![FeatureView::U8 { bins: &bins, stride: 1 }];
+        let ordered_grad_hess: Vec<GradHessF32> = indices
+            .iter()
+            .map(|&r| {
+                let r = r as usize;
+                GradHessF32 {
+                    grad: grad[r],
+                    hess: hess[r],
+                }
+            })
+            .collect();
+
+        build_histograms_ordered_interleaved(
+            &mut histogram,
+            &ordered_grad_hess,
+            &indices,
+            &bin_views,
+            &features,
+        );
 
         assert!((histogram[0].0 - 1.0).abs() < 1e-10);
         assert!((histogram[1].0 - 5.0).abs() < 1e-10);
@@ -971,7 +645,24 @@ mod tests {
         let hess = vec![0.5f32, 1.0, 1.5, 2.0, 2.5, 3.0];
         let mut histogram = vec![(0.0, 0.0); 3];
 
-        build_histogram_sparse_u8(&row_indices, &bin_values, &grad, &hess, &mut histogram, None);
+        let features = make_features(&[3]);
+        let bin_views = vec![FeatureView::SparseU8 {
+            row_indices: &row_indices,
+            bin_values: &bin_values,
+        }];
+        let ordered_grad_hess: Vec<GradHessF32> = grad
+            .iter()
+            .zip(&hess)
+            .map(|(&g, &h)| GradHessF32 { grad: g, hess: h })
+            .collect();
+
+        build_histograms_ordered_sequential_interleaved(
+            &mut histogram,
+            &ordered_grad_hess,
+            0,
+            &bin_views,
+            &features,
+        );
 
         assert!((histogram[0].0 - 3.0).abs() < 1e-10); // row 2
         assert!((histogram[1].0 - 1.0).abs() < 1e-10); // row 0
@@ -996,12 +687,74 @@ mod tests {
         let hess: Vec<f32> = vec![1.0; n_samples];
         let mut histogram = vec![(0.0, 0.0); 12];
 
-        build_histograms(&mut histogram, &grad, &hess, &[], &bin_views, &features);
+        let ordered_grad_hess: Vec<GradHessF32> = grad
+            .iter()
+            .zip(&hess)
+            .map(|(&g, &h)| GradHessF32 { grad: g, hess: h })
+            .collect();
+
+        build_histograms_ordered_sequential_interleaved(
+            &mut histogram,
+            &ordered_grad_hess,
+            0,
+            &bin_views,
+            &features,
+        );
 
         let f0_bin0_grad: f64 = (0..n_samples)
             .filter(|i| i % 4 == 0)
             .map(|i| i as f64)
             .sum();
         assert!((histogram[0].0 - f0_bin0_grad).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_build_histograms_ordered_interleaved_matches_naive() {
+        let features = make_features(&[4, 4]);
+        let n_samples = 128;
+        let bins_f0: Vec<u8> = (0..n_samples).map(|i| (i % 4) as u8).collect();
+        let bins_f1: Vec<u8> = (0..n_samples).map(|i| ((i + 1) % 4) as u8).collect();
+
+        let bin_views = vec![
+            FeatureView::U8 { bins: &bins_f0, stride: 1 },
+            FeatureView::U8 { bins: &bins_f1, stride: 1 },
+        ];
+
+        let indices: Vec<u32> = (0..n_samples as u32).step_by(3).collect();
+        // Naive reference: accumulate directly from rows.
+        let mut hist_ref = vec![(0.0, 0.0); 8];
+        for &row_u32 in &indices {
+            let row = row_u32 as usize;
+            // Match the kernel's `f32 -> f64` accumulation behavior exactly.
+            let g = (row as f32 * 0.25) as f64;
+            let h = (1.0f32 + (row as f32) * 0.01) as f64;
+
+            let b0 = bins_f0[row] as usize;
+            hist_ref[b0].0 += g;
+            hist_ref[b0].1 += h;
+
+            let b1 = bins_f1[row] as usize;
+            hist_ref[4 + b1].0 += g;
+            hist_ref[4 + b1].1 += h;
+        }
+
+        let ordered_interleaved: Vec<GradHessF32> = indices
+            .iter()
+            .map(|&r| {
+                let r = r as f32;
+                GradHessF32 {
+                    grad: r * 0.25,
+                    hess: 1.0 + r * 0.01,
+                }
+            })
+            .collect();
+
+        let mut hist = vec![(0.0, 0.0); 8];
+        build_histograms_ordered_interleaved(&mut hist, &ordered_interleaved, &indices, &bin_views, &features);
+
+        for i in 0..hist.len() {
+            assert!((hist_ref[i].0 - hist[i].0).abs() < 1e-10);
+            assert!((hist_ref[i].1 - hist[i].1).abs() < 1e-10);
+        }
     }
 }
