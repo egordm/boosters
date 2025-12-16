@@ -18,9 +18,7 @@ Use this template when documenting benchmark results.
 
 | Property | Value |
 |----------|-------|
-| CPU | <!-- e.g., Apple M1 Pro (10-core: 8P+2E) --> |
-| RAM | <!-- e.g., 32GB --> |
-| OS | <!-- e.g., macOS 15.1 --> |
+| CPU | <!-- e.g., Apple M1 Pro, 10 cores --> |
 | Rust | <!-- e.g., 1.82.0 --> |
 | Commit | <!-- git short hash --> |
 

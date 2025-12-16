@@ -11,7 +11,7 @@ Comprehensive comparison of booste-rs against XGBoost and LightGBM for:
 
 | Property | Value |
 |----------|-------|
-| CPU | Apple M1 Pro (10 cores) |
+| CPU | Apple M1 Pro, 10 cores |
 | OS | macOS |
 | Rust | 1.91.1 |
 | XGBoost | 2.x (via xgboost-rs) |

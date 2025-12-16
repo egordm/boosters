@@ -1,7 +1,7 @@
 # Prediction Benchmarks Report
 
 **Date:** 2025-12-15  
-**Environment:** macOS, Apple Silicon  
+**Environment:** Apple M1 Pro, 10 cores  
 **Rust Edition:** 2024  
 **Criterion:** 0.5 with default settings
 

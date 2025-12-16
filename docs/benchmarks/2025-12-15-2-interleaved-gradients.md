@@ -4,7 +4,7 @@
 
 This report evaluates the “interleaved gradients” refactor (single canonical `(grad,hess)` AoS layout across training) for both performance and basic quality/accuracy checks.
 
-- Host: macOS, Apple M1 Pro
+- Host: Apple M1 Pro, 10 cores
 - Toolchain: rustc 1.91.1, cargo 1.91.1
 - Git: `2f73f20` (clean)
 
