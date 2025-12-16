@@ -238,7 +238,7 @@ impl GreedySplitter {
             .map(|&feature| {
                 let feature = feature as usize;
                 let is_categorical = feature_types.get(feature).copied().unwrap_or(false);
-                let has_missing_for_feature = feature_has_missing.get(feature).copied().unwrap_or(false);
+                let feature_has_missing = feature_has_missing.get(feature).copied().unwrap_or(false);
                 let bins = histogram.feature_bins(feature);
 
                 if is_categorical {
@@ -257,7 +257,7 @@ impl GreedySplitter {
                         parent_grad,
                         parent_hess,
                         parent_count,
-                        has_missing_for_feature,
+                        feature_has_missing,
                     )
                 }
             })
