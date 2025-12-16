@@ -242,11 +242,15 @@ impl TreeGrower {
         // Initialize root
         let root_tree_node = self.tree_builder.init_root();
 
-        // Compute root gradient sums (f64 accumulation for numerical stability)
-        let (total_grad, total_hess) = gradients.sum(output, None);
-
-        // Build root histogram
+        // Build root histogram first
         self.build_histogram(0, gradients, output, &bin_views);
+
+        // Compute root gradient sums from histogram (O(n_bins) instead of O(n_samples))
+        let (total_grad, total_hess) = self
+            .histogram_pool
+            .get(0)
+            .expect("root histogram must exist")
+            .sum_gradients();
 
         // Find root split
         let root_split = self.find_split(0, total_grad, total_hess, n_samples as u32);
