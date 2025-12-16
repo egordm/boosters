@@ -19,8 +19,7 @@
 
 | Property | Value |
 |----------|-------|
-| CPU | Apple M1 Pro |
-| OS | macOS 26.1 (25B78) |
+| CPU | Apple M1 Pro, 10 cores |
 | Rust | 1.91.1 |
 | Commit | `a27a582` (dirty working tree) |
 

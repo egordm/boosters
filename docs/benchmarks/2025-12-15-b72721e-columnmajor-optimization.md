@@ -2,7 +2,7 @@
 
 **Date**: 2025-12-15  
 **Commit**: b72721e (perf(data): change default dense feature layout to ColumnMajor)  
-**Machine**: Apple M1 Pro (10 cores), macOS
+**Machine**: Apple M1 Pro, 10 cores
 
 ---
 

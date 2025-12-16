@@ -2,7 +2,7 @@
 
 **Date**: 2025-01-27  
 **Commit**: 7683f0f (feat(bench): add comprehensive quality benchmark runner)  
-**Machine**: Apple Silicon (M-series), macOS
+**Machine**: Apple M1 Pro, 10 cores
 
 ---
 
@@ -247,7 +247,7 @@ From BENCHMARK_REPORT.md:
 | multiclass_small | 10,000 | 50 | 100 | 6 | 5 |
 | multiclass_medium | 50,000 | 100 | 100 | 6 | 5 |
 
-**Hardware**: Apple Silicon M-series, macOS
+**Hardware**: Apple M1 Pro, 10 cores
 
 ---
 

@@ -145,9 +145,9 @@ Based on research into LightGBM and XGBoost source code:
 2. **Multi-target shared partitioning**
    - Only helps for multiclass (K > 2) problems
 
-## Notes on ARM64 (Apple Silicon)
+## Notes on ARM64 (Apple M1 Pro, 10 cores)
 
-The current optimizations were benchmarked on Apple Silicon (ARM64). Some observations:
+The current optimizations were benchmarked on Apple M1 Pro, 10 cores. Some observations:
 
 - ARM's hardware prefetcher is very effective for sequential access
 - Software prefetching showed minimal benefit in our tests

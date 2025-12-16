@@ -2,7 +2,7 @@
 
 **Commit**: 3df5707
 **Date**: 2025-01-16
-**Machine**: Apple Silicon (M-series)
+**Machine**: Apple M1 Pro, 10 cores
 **Configuration**: Single-threaded unless otherwise noted
 
 ## Summary

@@ -2,7 +2,7 @@
 
 **Date**: 2025-12-16  
 **Commit**: c1a7ab5  
-**Environment**: macOS (Apple Silicon), Rust 1.91.1  
+**Environment**: Apple M1 Pro, 10 cores, Rust 1.91.1  
 **Tree Growth**: All benchmarks use **depth-wise expansion** (not leaf-wise)
 
 ## Overview
