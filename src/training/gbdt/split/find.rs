@@ -1,6 +1,6 @@
 //! Greedy split finder implementation.
 
-use super::gain::GainParams;
+use super::gain::{GainParams, NodeGainContext};
 use super::types::SplitInfo;
 use super::super::categorical::CatBitset;
 use super::super::histograms::{HistogramBin, HistogramSlot};
@@ -156,6 +156,9 @@ impl GreedySplitter {
         features: &[u32],
     ) -> SplitInfo {
         let mut best = SplitInfo::invalid();
+        
+        // Pre-compute parent score context once for all features
+        let ctx = NodeGainContext::new(parent_grad, parent_hess, &self.gain_params);
 
         // Iterate over provided features
         for &feature in features {
@@ -166,9 +169,9 @@ impl GreedySplitter {
 
             // Find best split for this feature (type-specific)
             let split = if is_categorical {
-                self.find_categorical_split(bins, feature as u32, parent_grad, parent_hess, parent_count)
+                self.find_categorical_split(bins, feature as u32, parent_grad, parent_hess, parent_count, &ctx)
             } else {
-                self.find_numerical_split(bins, feature as u32, parent_grad, parent_hess, parent_count, has_missing)
+                self.find_numerical_split(bins, feature as u32, parent_grad, parent_hess, parent_count, has_missing, &ctx)
             };
 
             // Update best if this feature is better
@@ -194,6 +197,9 @@ impl GreedySplitter {
         feature_has_missing: &[bool],
         features: &[u32],
     ) -> SplitInfo {
+        // Pre-compute parent score context once for all features
+        let ctx = NodeGainContext::new(parent_grad, parent_hess, &self.gain_params);
+        
         // Parallel search: each thread evaluates different features
         // Note: categorical sorted splits allocate per-thread scratch space
         features
@@ -205,9 +211,9 @@ impl GreedySplitter {
                 let bins = histogram.feature_bins(feature);
 
                 if is_categorical {
-                    self.find_categorical_split_parallel(bins, feature as u32, parent_grad, parent_hess, parent_count)
+                    self.find_categorical_split_parallel(bins, feature as u32, parent_grad, parent_hess, parent_count, &ctx)
                 } else {
-                    self.find_numerical_split(bins, feature as u32, parent_grad, parent_hess, parent_count, has_missing)
+                    self.find_numerical_split(bins, feature as u32, parent_grad, parent_hess, parent_count, has_missing, &ctx)
                 }
             })
             .reduce(|| SplitInfo::invalid(), |a, b| if a.gain > b.gain { a } else { b })
@@ -231,6 +237,7 @@ impl GreedySplitter {
         parent_hess: f64,
         parent_count: u32,
         has_missing: bool,
+        ctx: &NodeGainContext,
     ) -> SplitInfo {
         let n_bins = bins.len();
         if n_bins < 2 {
@@ -257,9 +264,7 @@ impl GreedySplitter {
             let right_count = parent_count.saturating_sub(left_count);
 
             if self.gain_params.is_valid_split(left_hess, right_hess, left_count, right_count) {
-                let gain = self.gain_params.compute_gain(
-                    left_grad, left_hess, right_grad, right_hess, parent_grad, parent_hess,
-                );
+                let gain = ctx.compute_gain(left_grad, left_hess, right_grad, right_hess);
                 if gain > best.gain {
                     best = SplitInfo::numerical(feature, bin as u16, gain, false);
                 }
@@ -285,9 +290,7 @@ impl GreedySplitter {
                 let left_count = parent_count.saturating_sub(right_count);
 
                 if self.gain_params.is_valid_split(left_hess, right_hess, left_count, right_count) {
-                    let gain = self.gain_params.compute_gain(
-                        left_grad, left_hess, right_grad, right_hess, parent_grad, parent_hess,
-                    );
+                    let gain = ctx.compute_gain(left_grad, left_hess, right_grad, right_hess);
                     if gain > best.gain {
                         // Split at bin-1 since bin goes right
                         best = SplitInfo::numerical(feature, (bin - 1) as u16, gain, true);
@@ -315,6 +318,7 @@ impl GreedySplitter {
         parent_grad: f64,
         parent_hess: f64,
         parent_count: u32,
+        ctx: &NodeGainContext,
     ) -> SplitInfo {
         let n_cats = bins.len() as u32;
         if n_cats < 2 {
@@ -322,9 +326,9 @@ impl GreedySplitter {
         }
 
         if n_cats <= self.max_onehot_cats {
-            self.find_onehot_split(bins, feature, parent_grad, parent_hess, parent_count)
+            self.find_onehot_split(bins, feature, parent_grad, parent_hess, parent_count, ctx)
         } else {
-            self.find_sorted_split(bins, feature, parent_grad, parent_hess, parent_count)
+            self.find_sorted_split(bins, feature, parent_grad, parent_hess, parent_count, ctx)
         }
     }
 
@@ -336,6 +340,7 @@ impl GreedySplitter {
         parent_grad: f64,
         parent_hess: f64,
         parent_count: u32,
+        ctx: &NodeGainContext,
     ) -> SplitInfo {
         let n_cats = bins.len() as u32;
         if n_cats < 2 {
@@ -343,10 +348,10 @@ impl GreedySplitter {
         }
 
         if n_cats <= self.max_onehot_cats {
-            self.find_onehot_split(bins, feature, parent_grad, parent_hess, parent_count)
+            self.find_onehot_split(bins, feature, parent_grad, parent_hess, parent_count, ctx)
         } else {
             self.find_sorted_split_with_scratch(
-                bins, feature, parent_grad, parent_hess, parent_count,
+                bins, feature, parent_grad, parent_hess, parent_count, ctx,
                 &mut Vec::with_capacity(bins.len().min(MAX_SCRATCH_CATS)),
             )
         }
@@ -362,6 +367,7 @@ impl GreedySplitter {
         parent_grad: f64,
         parent_hess: f64,
         parent_count: u32,
+        ctx: &NodeGainContext,
     ) -> SplitInfo {
         let mut best = SplitInfo::invalid();
 
@@ -375,9 +381,7 @@ impl GreedySplitter {
             let right_count = parent_count.saturating_sub(left_count);
 
             if self.gain_params.is_valid_split(left_hess, right_hess, left_count, right_count) {
-                let gain = self.gain_params.compute_gain(
-                    left_grad, left_hess, right_grad, right_hess, parent_grad, parent_hess,
-                );
+                let gain = ctx.compute_gain(left_grad, left_hess, right_grad, right_hess);
                 if gain > best.gain {
                     best = SplitInfo::categorical(feature, CatBitset::singleton(cat as u32), gain, false);
                 }
@@ -395,6 +399,7 @@ impl GreedySplitter {
         parent_grad: f64,
         parent_hess: f64,
         parent_count: u32,
+        ctx: &NodeGainContext,
     ) -> SplitInfo {
         // Step 1: Collect (category, grad/hess ratio) for valid categories
         self.cat_scratch.clear();
@@ -437,9 +442,7 @@ impl GreedySplitter {
             let right_count = parent_count.saturating_sub(left_count);
 
             if self.gain_params.is_valid_split(left_hess, right_hess, left_count, right_count) {
-                let gain = self.gain_params.compute_gain(
-                    left_grad, left_hess, right_grad, right_hess, parent_grad, parent_hess,
-                );
+                let gain = ctx.compute_gain(left_grad, left_hess, right_grad, right_hess);
                 if gain > best.gain {
                     best = SplitInfo::categorical(feature, left_cats.clone(), gain, false);
                 }
@@ -463,6 +466,7 @@ impl GreedySplitter {
         parent_grad: f64,
         parent_hess: f64,
         parent_count: u32,
+        ctx: &NodeGainContext,
         scratch: &mut Vec<(u32, f64)>,
     ) -> SplitInfo {
         // Step 1: Collect (category, grad/hess ratio) for valid categories
@@ -504,9 +508,7 @@ impl GreedySplitter {
             let right_count = parent_count.saturating_sub(left_count);
 
             if self.gain_params.is_valid_split(left_hess, right_hess, left_count, right_count) {
-                let gain = self.gain_params.compute_gain(
-                    left_grad, left_hess, right_grad, right_hess, parent_grad, parent_hess,
-                );
+                let gain = ctx.compute_gain(left_grad, left_hess, right_grad, right_hess);
                 if gain > best.gain {
                     best = SplitInfo::categorical(feature, left_cats.clone(), gain, false);
                 }
@@ -548,13 +550,17 @@ mod tests {
             (-10.0, 5.0),
         ];
 
+        let parent_grad = 0.0;
+        let parent_hess = 20.0;
+        let ctx = NodeGainContext::new(parent_grad, parent_hess, &splitter.gain_params);
         let split = splitter.find_numerical_split(
             &bins,
             0,
-            0.0,
-            20.0,
+            parent_grad,
+            parent_hess,
             20,
             false, // no missing values in test
+            &ctx,
         );
 
         assert!(split.is_valid());
@@ -576,12 +582,16 @@ mod tests {
             (5.0, 5.0),
         ];
 
+        let parent_grad = 0.0;
+        let parent_hess = 15.0;
+        let ctx = NodeGainContext::new(parent_grad, parent_hess, &splitter.gain_params);
         let split = splitter.find_categorical_split(
             &bins,
             0,
-            0.0,
-            15.0,
+            parent_grad,
+            parent_hess,
             15,
+            &ctx,
         );
 
         assert!(split.is_valid());
@@ -609,12 +619,16 @@ mod tests {
             (-5.0, 3.0),
         ];
 
+        let parent_grad = 0.0;
+        let parent_hess = 15.0;
+        let ctx = NodeGainContext::new(parent_grad, parent_hess, &splitter.gain_params);
         let split = splitter.find_categorical_split(
             &bins,
             0,
-            0.0,
-            15.0,
+            parent_grad,
+            parent_hess,
             15,
+            &ctx,
         );
 
         assert!(split.is_valid());
@@ -657,7 +671,10 @@ mod tests {
     fn test_invalid_single_bin() {
         let splitter = GreedySplitter::default();
         let bins: [(f64, f64); 1] = [(5.0, 5.0)];
-        let split = splitter.find_numerical_split(&bins, 0, 5.0, 5.0, 5, false);
+        let parent_grad = 5.0;
+        let parent_hess = 5.0;
+        let ctx = NodeGainContext::new(parent_grad, parent_hess, &splitter.gain_params);
+        let split = splitter.find_numerical_split(&bins, 0, parent_grad, parent_hess, 5, false, &ctx);
         assert!(!split.is_valid());
     }
 

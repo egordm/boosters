@@ -25,14 +25,14 @@ impl HistogramFeatureIter {
     ///
     /// In debug builds, validates that all feature regions are disjoint and in-bounds.
     #[inline]
-    pub fn new(histogram: &mut [HistogramBin], feature_metas: &[FeatureMeta]) -> Self {
+    pub fn new(histogram: &mut [HistogramBin], _feature_metas: &[FeatureMeta]) -> Self {
         let this = Self {
             hist_addr: histogram.as_mut_ptr() as usize,
             hist_len: histogram.len(),
         };
 
         #[cfg(debug_assertions)]
-        this.debug_validate_feature_metas(feature_metas);
+        this.debug_validate_feature_metas(_feature_metas);
 
         this
     }
