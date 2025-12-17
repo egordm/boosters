@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use crate::data::{
     BinMapper, BinnedDataset, BinnedDatasetBuilder, BuildError, ColMajor, ColMatrix, GroupStrategy,
-    MissingType,
+    MissingType, RowMatrix,
 };
 
 /// A single feature column.
@@ -212,6 +212,38 @@ impl Dataset {
         Ok(crate::data::DenseMatrix::<f32, ColMajor>::from_vec(
             data, n_rows, n_features,
         ))
+    }
+
+    /// Convert into a row-major numeric matrix for GBDT inference.
+    ///
+    /// Categorical features are encoded as their bin index (0-based integer),
+    /// which matches how the trained trees expect category values.
+    pub fn for_gbdt(&self) -> Result<RowMatrix<f32>, DatasetError> {
+        let n_rows = self.n_rows;
+        let n_features = self.features.len();
+
+        // Pre-allocate row-major: feature values are stored row by row
+        let mut data = vec![0.0f32; n_rows * n_features];
+
+        for (feature_idx, col) in self.features.iter().enumerate() {
+            match col {
+                FeatureColumn::Numeric { values, .. } => {
+                    debug_assert_eq!(values.len(), n_rows);
+                    for (row, &value) in values.iter().enumerate() {
+                        data[row * n_features + feature_idx] = value;
+                    }
+                }
+                FeatureColumn::Categorical { values, .. } => {
+                    debug_assert_eq!(values.len(), n_rows);
+                    for (row, &cat) in values.iter().enumerate() {
+                        // Encode category index as float
+                        data[row * n_features + feature_idx] = cat as f32;
+                    }
+                }
+            }
+        }
+
+        Ok(RowMatrix::from_vec(data, n_rows, n_features))
     }
 }
 

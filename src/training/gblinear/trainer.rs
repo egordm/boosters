@@ -40,7 +40,7 @@ use crate::data::{ColMatrix, Dataset};
 use crate::inference::common::{PredictionKind, PredictionOutput};
 use crate::inference::gblinear::LinearModel;
 use crate::training::{
-    EarlyStopping, EvalSet, Gradients, Metric, Objective, ObjectiveExt, TrainingLogger, Verbosity,
+    EarlyStopping, EarlyStopAction, EvalSet, Gradients, Metric, Objective, ObjectiveExt, TrainingLogger, Verbosity,
 };
 
 use super::selector::FeatureSelectorKind;
@@ -259,9 +259,8 @@ impl<O: Objective, M: Metric> GBLinearTrainer<O, M> {
         // Initialize predictions with base scores (column-major)
         let mut predictions = vec![0.0f32; num_samples * num_outputs];
         for (group, &base_score) in base_scores.iter().enumerate() {
-            for i in 0..num_samples {
-                predictions[group * num_samples + i] = base_score;
-            }
+            let start = group * num_samples;
+            predictions[start..start + num_samples].fill(base_score);
         }
         // Initialize eval predictions with base scores
         let eval_data: Vec<ColMatrix<f32>> = eval_sets
@@ -275,23 +274,19 @@ impl<O: Objective, M: Metric> GBLinearTrainer<O, M> {
                 let eval_rows = m.num_rows();
                 let mut preds = vec![0.0f32; eval_rows * num_outputs];
                 for (group, &base_score) in base_scores.iter().enumerate() {
-                    for i in 0..eval_rows {
-                        preds[group * eval_rows + i] = base_score;
-                    }
+                    let start = group * eval_rows;
+                    preds[start..start + eval_rows].fill(base_score);
                 }
                 preds
             })
             .collect();
 
-        // Early stopping state
-        let mut early_stopping = if self.params.early_stopping_rounds > 0 && !eval_sets.is_empty() {
-            Some(EarlyStopping::new(
-                self.params.early_stopping_rounds as usize,
-                self.metric.higher_is_better(),
-            ))
-        } else {
-            None
-        };
+        // Early stopping (always present, may be disabled)
+        let mut early_stopping = EarlyStopping::new(
+            self.params.early_stopping_rounds as usize,
+            self.metric.higher_is_better(),
+        );
+        let mut best_model: Option<LinearModel> = None;
 
         // Logger
         let mut logger = TrainingLogger::new(self.params.verbosity);
@@ -346,20 +341,34 @@ impl<O: Objective, M: Metric> GBLinearTrainer<O, M> {
             }
 
             // Early stopping check
-            if let Some(ref mut es) = early_stopping {
-                if let Some(value) = early_stop_value {
-                    if es.should_stop(value) {
+            if let Some(value) = early_stop_value {
+                match early_stopping.update(value) {
+                    EarlyStopAction::Improved => {
+                        best_model = Some(model.clone());
+                    }
+                    EarlyStopAction::Stop => {
                         if self.params.verbosity >= Verbosity::Info {
-                            logger.log_early_stopping(round as usize, es.best_round(), self.metric.name());
+                            logger.log_early_stopping(
+                                round as usize,
+                                early_stopping.best_round(),
+                                self.metric.name(),
+                            );
                         }
                         break;
                     }
+                    EarlyStopAction::Continue => {}
                 }
             }
         }
 
         logger.finish_training();
-        Some(model)
+
+        // Return best model if early stopping was active and found a best
+        if early_stopping.is_enabled() && best_model.is_some() {
+            best_model
+        } else {
+            Some(model)
+        }
     }
 
     // ========================================================================

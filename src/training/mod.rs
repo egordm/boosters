@@ -52,7 +52,7 @@ mod objectives;
 pub mod sampling;
 
 // Re-export shared types at the training module level
-pub use callback::EarlyStopping;
+pub use callback::{EarlyStopping, EarlyStopAction};
 pub use eval::EvalSet;
 pub use gradients::{GradsTuple, Gradients};
 pub use logger::{TrainingLogger, Verbosity};

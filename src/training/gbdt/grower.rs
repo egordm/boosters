@@ -752,8 +752,8 @@ mod tests {
         // And the binned path must match training semantics.
         let row0 = dataset.row_view(0).unwrap();
         let row1 = dataset.row_view(1).unwrap();
-        assert_eq!(tree.predict_binned(&row0, &dataset).0, 10.0);
-        assert_eq!(tree.predict_binned(&row1, &dataset).0, 20.0);
+        assert_eq!(tree.predict_binned_row(&row0, &dataset).0, 10.0);
+        assert_eq!(tree.predict_binned_row(&row1, &dataset).0, 20.0);
     }
 
     #[test]
@@ -784,8 +784,8 @@ mod tests {
         // Binned path should match too (bins are the category indices).
         let row1 = dataset.row_view(1).unwrap(); // bin 1
         let row2 = dataset.row_view(2).unwrap(); // bin 2
-        assert_eq!(tree.predict_binned(&row1, &dataset).0, 10.0);
-        assert_eq!(tree.predict_binned(&row2, &dataset).0, 20.0);
+        assert_eq!(tree.predict_binned_row(&row1, &dataset).0, 10.0);
+        assert_eq!(tree.predict_binned_row(&row2, &dataset).0, 20.0);
     }
 
     #[test]

@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use booste_rs::training::{GBDTTrainer, GBDTParams, SquaredLoss, GainParams};
+//! use booste_rs::training::{GBDTTrainer, GBDTParams, SquaredLoss, Rmse, GainParams};
 //!
 //! let params = GBDTParams {
 //!     n_trees: 100,
@@ -15,16 +15,22 @@
 //!     ..Default::default()
 //! };
 //!
-//! let mut trainer = GBDTTrainer::new(SquaredLoss, params);
-//! let forest = trainer.train(&dataset, &targets, &[]);
+//! let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+//! let forest = trainer.train(&dataset, &targets, &[], &[]);
 //! ```
 
 use rayon::ThreadPoolBuilder;
 
-use crate::data::BinnedDataset;
+use crate::data::{BinnedDataset, RowMatrix};
+use crate::inference::common::PredictionKind;
+use crate::training::callback::{EarlyStopping, EarlyStopAction};
+use crate::training::eval::EvalSet;
+use crate::training::logger::TrainingLogger;
+use crate::training::metrics::Metric;
 use crate::training::objectives::Objective;
 use crate::training::sampling::{ColSamplingParams, RowSampler, RowSamplingParams};
 use crate::training::Gradients;
+use crate::training::Verbosity;
 
 use super::expansion::GrowthStrategy;
 use super::grower::{GrowerParams, TreeGrower};
@@ -77,6 +83,17 @@ pub struct GBDTParams {
     /// Histogram cache size (number of slots).
     pub cache_size: usize,
 
+    // --- Early stopping ---
+    /// Early stopping rounds. Training stops if no improvement for this many rounds.
+    /// Set to 0 to disable.
+    pub early_stopping_rounds: u32,
+    /// Index of eval set to use for early stopping (default: first eval set).
+    pub early_stopping_eval_set: usize,
+
+    // --- Logging ---
+    /// Verbosity level for training output.
+    pub verbosity: Verbosity,
+
     // --- Reproducibility ---
     /// Random seed.
     pub seed: u64,
@@ -94,6 +111,9 @@ impl Default for GBDTParams {
             col_sampling: ColSamplingParams::None,
             n_threads: 0,
             cache_size: 8,
+            early_stopping_rounds: 0,
+            early_stopping_eval_set: 0,
+            verbosity: Verbosity::default(),
             seed: 42,
         }
     }
@@ -121,20 +141,22 @@ impl GBDTParams {
 /// # Example
 ///
 /// ```ignore
-/// let mut trainer = GBDTTrainer::new(SquaredLoss, params);
+/// let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
 /// let forest = trainer.train(&dataset, &targets, &[]);
 /// ```
-pub struct GBDTTrainer<O: Objective> {
+pub struct GBDTTrainer<O: Objective, M: Metric> {
     /// Objective function.
     objective: O,
+    /// Evaluation metric.
+    metric: M,
     /// Training parameters.
     params: GBDTParams,
 }
 
-impl<O: Objective> GBDTTrainer<O> {
+impl<O: Objective, M: Metric> GBDTTrainer<O, M> {
     /// Create a new GBDT trainer.
-    pub fn new(objective: O, params: GBDTParams) -> Self {
-        Self { objective, params }
+    pub fn new(objective: O, metric: M, params: GBDTParams) -> Self {
+        Self { objective, metric, params }
     }
 
     /// Get reference to parameters.
@@ -147,12 +169,18 @@ impl<O: Objective> GBDTTrainer<O> {
         &self.objective
     }
 
+    /// Get reference to metric.
+    pub fn metric(&self) -> &M {
+        &self.metric
+    }
+
     /// Train a forest.
     ///
     /// # Arguments
     /// * `dataset` - Binned dataset
     /// * `targets` - Target values (length = n_rows * n_outputs)
     /// * `weights` - Sample weights (empty = uniform weights)
+    /// * `eval_sets` - Optional evaluation sets for monitoring
     ///
     /// # Returns
     /// Trained forest, or `None` if training fails (e.g., invalid input).
@@ -165,6 +193,7 @@ impl<O: Objective> GBDTTrainer<O> {
         dataset: &BinnedDataset,
         targets: &[f32],
         weights: &[f32],
+        eval_sets: &[EvalSet<'_>],
     ) -> Option<InferenceForest<ScalarLeaf>> {
         // Threading contract:
         // - n_threads == 0: use rayon's global pool
@@ -173,14 +202,14 @@ impl<O: Objective> GBDTTrainer<O> {
         let parallelism = Parallelism::from_threads(self.params.n_threads);
 
         match self.params.n_threads {
-            0 | 1 => self.train_impl(dataset, targets, weights, parallelism),
+            0 | 1 => self.train_impl(dataset, targets, weights, eval_sets, parallelism),
             _ => {
                 let pool = ThreadPoolBuilder::new()
                     .num_threads(self.params.n_threads)
                     .build()
                     .expect("Failed to create thread pool");
 
-                pool.install(|| self.train_impl(dataset, targets, weights, parallelism))
+                pool.install(|| self.train_impl(dataset, targets, weights, eval_sets, parallelism))
             }
         }
     }
@@ -191,6 +220,7 @@ impl<O: Objective> GBDTTrainer<O> {
         dataset: &BinnedDataset,
         targets: &[f32],
         weights: &[f32],
+        eval_sets: &[EvalSet<'_>],
         parallelism: Parallelism,
     ) -> Option<InferenceForest<ScalarLeaf>> {
         let n_rows = dataset.n_rows();
@@ -225,14 +255,47 @@ impl<O: Objective> GBDTTrainer<O> {
             .compute_base_score(n_rows, n_outputs, targets, weights, &mut base_scores);
 
         // Initialize predictions (column-major: [output0_all_rows, output1_all_rows, ...])
-        let mut predictions = Vec::with_capacity(n_rows * n_outputs);
-        for output in 0..n_outputs {
-            predictions.extend(std::iter::repeat(base_scores[output]).take(n_rows));
+        let mut predictions = vec![0.0f32; n_rows * n_outputs];
+        for (output, &base_score) in base_scores.iter().enumerate() {
+            let start = output * n_rows;
+            predictions[start..start + n_rows].fill(base_score);
         }
 
         // Create inference forest directly (Phase 2: no conversion needed)
         let mut forest = InferenceForest::<ScalarLeaf>::new(n_outputs as u32)
-            .with_base_score(base_scores);
+            .with_base_score(base_scores.clone());
+
+        // Prepare eval set data and incremental prediction buffers
+        let eval_data: Vec<RowMatrix<f32>> = eval_sets
+            .iter()
+            .filter_map(|es| es.dataset.for_gbdt().ok())
+            .collect();
+
+        // Initialize eval predictions with base scores (column-major like training predictions)
+        // Layout: [out0_row0, out0_row1, ..., out0_rowN, out1_row0, ...]
+        let mut eval_predictions: Vec<Vec<f32>> = eval_data
+            .iter()
+            .map(|m| {
+                let eval_rows = m.num_rows();
+                let mut preds = vec![0.0f32; eval_rows * n_outputs];
+                for (output, &base_score) in base_scores.iter().enumerate() {
+                    let start = output * eval_rows;
+                    preds[start..start + eval_rows].fill(base_score);
+                }
+                preds
+            })
+            .collect();
+
+        // Early stopping (always present, may be disabled)
+        let mut early_stopping = EarlyStopping::new(
+            self.params.early_stopping_rounds as usize,
+            self.metric.higher_is_better(),
+        );
+        let mut best_n_trees: usize = 0;
+
+        // Logger
+        let mut logger = TrainingLogger::new(self.params.verbosity);
+        logger.start_training(self.params.n_trees as usize);
 
         for round in 0..self.params.n_trees {
             // Compute gradients for all outputs
@@ -268,20 +331,181 @@ impl<O: Objective> GBDTTrainer<O> {
                 } else {
                     // Fallback: row sampling trains on a subset; we must still apply the
                     // trained tree to all rows to keep predictions correct.
+                    // Use batch prediction for better cache efficiency.
                     let tree = grower.grow(dataset, &gradients, output, sampled.as_deref());
-                    for row in 0..n_rows {
-                        if let Some(view) = dataset.row_view(row) {
-                            predictions[pred_offset + row] += tree.predict_binned(&view, dataset).0;
-                        }
-                    }
+                    tree.predict_binned_batch(dataset, &mut predictions[pred_offset..pred_offset + n_rows]);
                     tree
                 };
 
+                // Incremental eval set prediction: add this tree's contribution
+                // eval_predictions is column-major, so we can pass a contiguous slice
+                for (set_idx, matrix) in eval_data.iter().enumerate() {
+                    let eval_rows = matrix.num_rows();
+                    let start = output * eval_rows;
+                    let pred_slice = &mut eval_predictions[set_idx][start..start + eval_rows];
+                    tree.predict_batch(matrix, pred_slice);
+                }
+
                 forest.push_tree(tree, output as u32);
+            }
+
+            // Evaluate on eval sets (using accumulated predictions)
+            let (round_metrics, early_stop_value) = self.evaluate_round(
+                targets,
+                weights,
+                &predictions,
+                eval_sets,
+                &eval_predictions,
+                n_outputs,
+                n_rows,
+                self.params.early_stopping_eval_set,
+            );
+
+            if self.params.verbosity >= Verbosity::Info {
+                logger.log_round(round as usize, &round_metrics);
+            }
+
+            // Early stopping check (value always present: either eval or train metric)
+            if early_stopping.is_enabled() {
+                match early_stopping.update(early_stop_value) {
+                    EarlyStopAction::Improved => {
+                        best_n_trees = forest.n_trees();
+                    }
+                    EarlyStopAction::Stop => {
+                        if self.params.verbosity >= Verbosity::Info {
+                            logger.log_early_stopping(
+                                round as usize,
+                                early_stopping.best_round(),
+                                self.metric.name(),
+                            );
+                        }
+                        break;
+                    }
+                    EarlyStopAction::Continue => {}
+                }
             }
         }
 
-        Some(forest)
+        logger.finish_training();
+
+        // Return best model if early stopping was active and found a best
+        if early_stopping.is_enabled() && best_n_trees > 0 && best_n_trees < forest.n_trees() {
+            Some(Self::truncate_forest(&forest, best_n_trees))
+        } else {
+            Some(forest)
+        }
+    }
+
+    /// Create a truncated copy of the forest with only the first `n_trees` trees.
+    fn truncate_forest(
+        forest: &InferenceForest<ScalarLeaf>,
+        n_trees: usize,
+    ) -> InferenceForest<ScalarLeaf> {
+        let mut truncated = InferenceForest::new(forest.n_groups())
+            .with_base_score(forest.base_score().to_vec());
+
+        for (idx, (tree, group)) in forest.trees_with_groups().enumerate() {
+            if idx >= n_trees {
+                break;
+            }
+            truncated.push_tree(tree.clone(), group);
+        }
+
+        truncated
+    }
+
+    /// Evaluate accumulated predictions on all eval sets for this round.
+    ///
+    /// Also computes training metric. If early stopping is enabled but no eval sets
+    /// are provided, uses the training metric for early stopping.
+    ///
+    /// Returns (metrics, early_stop_value). early_stop_value is always present:
+    /// either from the designated eval set or the training metric.
+    fn evaluate_round(
+        &self,
+        train_targets: &[f32],
+        train_weights: &[f32],
+        train_predictions: &[f32],
+        eval_sets: &[EvalSet<'_>],
+        eval_predictions: &[Vec<f32>],
+        n_outputs: usize,
+        n_rows: usize,
+        early_stopping_eval_idx: usize,
+    ) -> (Vec<(String, f64)>, f64) {
+        let mut round_metrics = Vec::new();
+
+        // Determine if we need to transform predictions for this metric
+        let needs_transform = self.metric.expected_prediction_kind() != PredictionKind::Margin;
+
+        // Always compute training metric (needed for logging and potential early stopping)
+        let train_metric_value = {
+            // Convert column-major to row-major for metric computation
+            let mut row_major = vec![0.0f32; n_rows * n_outputs];
+            for out in 0..n_outputs {
+                for row in 0..n_rows {
+                    row_major[row * n_outputs + out] = train_predictions[out * n_rows + row];
+                }
+            }
+
+            let predictions: std::borrow::Cow<'_, [f32]> = if needs_transform {
+                let output = crate::inference::common::PredictionOutput::new(
+                    row_major,
+                    n_rows,
+                    n_outputs,
+                );
+                let transformed = self.objective.transform_prediction(output);
+                std::borrow::Cow::Owned(transformed.output.into_vec())
+            } else {
+                std::borrow::Cow::Owned(row_major)
+            };
+
+            self.metric.compute(n_rows, n_outputs, &predictions, train_targets, train_weights)
+        };
+
+        round_metrics.push((format!("train-{}", self.metric.name()), train_metric_value));
+
+        // Default early stop value is training metric (used if no eval sets)
+        let mut early_stop_value = train_metric_value;
+
+        // Compute eval set metrics
+        for (set_idx, eval_set) in eval_sets.iter().enumerate() {
+            let raw_preds = &eval_predictions[set_idx];
+            let eval_rows = raw_preds.len() / n_outputs;
+
+            // Convert column-major to row-major for metric computation
+            let mut row_major = vec![0.0f32; eval_rows * n_outputs];
+            for out in 0..n_outputs {
+                for row in 0..eval_rows {
+                    row_major[row * n_outputs + out] = raw_preds[out * eval_rows + row];
+                }
+            }
+
+            // Transform predictions if metric requires it (e.g., probability for logloss)
+            let predictions: std::borrow::Cow<'_, [f32]> = if needs_transform {
+                let output = crate::inference::common::PredictionOutput::new(
+                    row_major,
+                    eval_rows,
+                    n_outputs,
+                );
+                let transformed = self.objective.transform_prediction(output);
+                std::borrow::Cow::Owned(transformed.output.into_vec())
+            } else {
+                std::borrow::Cow::Owned(row_major)
+            };
+
+            let targets = eval_set.dataset.targets();
+            let w = eval_set.dataset.weights().unwrap_or(&[]);
+            let value = self.metric.compute(eval_rows, n_outputs, &predictions, targets, w);
+
+            round_metrics.push((format!("{}-{}", eval_set.name, self.metric.name()), value));
+
+            // Use eval set metric for early stopping if this is the designated set
+            if set_idx == early_stopping_eval_idx {
+                early_stop_value = value;
+            }
+        }
+
+        (round_metrics, early_stop_value)
     }
 }
 
@@ -295,6 +519,7 @@ mod tests {
     use crate::data::{
         BinMapper, BinStorage, BinnedDataset, FeatureGroup, FeatureMeta, GroupLayout, MissingType,
     };
+    use crate::training::metrics::Rmse;
     use crate::training::objectives::SquaredLoss;
 
     fn make_simple_mapper(n_bins: u32) -> BinMapper {
@@ -363,8 +588,8 @@ mod tests {
 
         let params = GBDTParams { n_trees: 1, ..Default::default() };
 
-        let trainer = GBDTTrainer::new(SquaredLoss, params);
-        let forest = trainer.train(&dataset, &targets, &[]).unwrap();
+        let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+        let forest = trainer.train(&dataset, &targets, &[], &[]).unwrap();
 
         assert_eq!(forest.n_trees(), 1);
         assert_eq!(forest.n_groups(), 1);
@@ -381,8 +606,8 @@ mod tests {
             ..Default::default()
         };
 
-        let trainer = GBDTTrainer::new(SquaredLoss, params);
-        let forest = trainer.train(&dataset, &targets, &[]).unwrap();
+        let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+        let forest = trainer.train(&dataset, &targets, &[], &[]).unwrap();
 
         assert_eq!(forest.n_trees(), 10);
     }
@@ -402,8 +627,8 @@ mod tests {
             ..Default::default()
         };
 
-        let trainer = GBDTTrainer::new(SquaredLoss, params);
-        let forest = trainer.train(&dataset, &targets, &[]).unwrap();
+        let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+        let forest = trainer.train(&dataset, &targets, &[], &[]).unwrap();
 
         assert_eq!(forest.n_trees(), 5);
     }
@@ -416,8 +641,8 @@ mod tests {
 
         let params = GBDTParams { n_trees: 5, ..Default::default() };
 
-        let trainer = GBDTTrainer::new(SquaredLoss, params);
-        let forest = trainer.train(&dataset, &targets, &weights).unwrap();
+        let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+        let forest = trainer.train(&dataset, &targets, &weights, &[]).unwrap();
 
         assert_eq!(forest.n_trees(), 5);
     }
@@ -433,8 +658,8 @@ mod tests {
             ..Default::default()
         };
 
-        let trainer = GBDTTrainer::new(SquaredLoss, params);
-        let forest = trainer.train(&dataset, &targets, &[]).unwrap();
+        let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+        let forest = trainer.train(&dataset, &targets, &[], &[]).unwrap();
 
         assert_eq!(forest.n_trees(), 3);
     }
@@ -446,8 +671,8 @@ mod tests {
 
         let params = GBDTParams::default();
 
-        let trainer = GBDTTrainer::new(SquaredLoss, params);
-        let result = trainer.train(&dataset, &targets, &[]);
+        let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+        let result = trainer.train(&dataset, &targets, &[], &[]);
 
         assert!(result.is_none());
     }

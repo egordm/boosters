@@ -35,7 +35,7 @@ fn train_binary_classification() {
     let model = trainer.train(&train, &[]).unwrap();
 
     // Verify predictions are in reasonable range for logits.
-    let output: PredictionOutput = model.predict_batch(&data, &[0.0]);
+    let output: PredictionOutput = model.predict(&data, &[0.0]);
     let predictions: Vec<f32> = output
         .rows()
         .take(10)
@@ -77,7 +77,7 @@ fn train_multioutput_classification() {
     assert_eq!(model.num_groups(), num_class);
 
     // Verify predictions exist for all classes
-    let output: PredictionOutput = model.predict_batch(&data, &vec![0.0; num_class]);
+    let output: PredictionOutput = model.predict(&data, &vec![0.0; num_class]);
     let predictions = output.row(0);
 
     assert_eq!(predictions.len(), num_class);
@@ -95,7 +95,7 @@ fn train_multioutput_classification() {
     // Compute training accuracy (argmax over logits).
     use booste_rs::training::{Metric, MulticlassAccuracy};
 
-    let output = model.predict_batch(&data, &vec![0.0; num_class]);
+    let output = model.predict(&data, &vec![0.0; num_class]);
     let n_rows = output.num_rows();
     let pred_classes: Vec<f32> = (0..n_rows)
         .map(|row| {

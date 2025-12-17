@@ -189,7 +189,7 @@ impl LinearModel {
     /// Predict for a batch of rows.
     ///
     /// Returns a flat output buffer with shape `(num_rows, num_groups)`.
-    pub fn predict_batch<M: DataMatrix<Element = f32>>(
+    pub fn predict<M: DataMatrix<Element = f32>>(
         &self,
         data: &M,
         base_score: &[f32],
@@ -220,7 +220,7 @@ impl LinearModel {
     /// Parallel prediction for a batch of rows.
     ///
     /// Uses Rayon to parallelize over rows.
-    pub fn par_predict_batch<M: DataMatrix<Element = f32> + Sync>(
+    pub fn par_predict<M: DataMatrix<Element = f32> + Sync>(
         &self,
         data: &M,
         base_score: &[f32],
@@ -340,7 +340,7 @@ mod tests {
             2,
         );
 
-        let output = model.predict_batch(&data, &[0.0]);
+        let output = model.predict(&data, &[0.0]);
 
         assert_eq!(output.shape(), (2, 1));
         assert!((output.row(0)[0] - 2.0).abs() < 1e-6);
@@ -359,7 +359,7 @@ mod tests {
         let model = LinearModel::new(weights, 2, 2);
 
         let data = RowMatrix::from_vec(vec![1.0, 1.0], 1, 2);
-        let output = model.predict_batch(&data, &[0.0, 0.0]);
+        let output = model.predict(&data, &[0.0, 0.0]);
 
         assert_eq!(output.shape(), (1, 2));
         // group 0: 0.1*1 + 0.3*1 = 0.4
@@ -382,7 +382,7 @@ mod tests {
             2,
         );
 
-        let output = model.par_predict_batch(&data, &[0.0]);
+        let output = model.par_predict(&data, &[0.0]);
 
         assert_eq!(output.shape(), (2, 1));
         assert!((output.row(0)[0] - 2.0).abs() < 1e-6);

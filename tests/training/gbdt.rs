@@ -3,7 +3,7 @@
 //! Focused on behavior and invariants (not default params or superficial shapes).
 
 use booste_rs::data::{BinnedDatasetBuilder, ColMatrix};
-use booste_rs::training::{GBDTParams, GBDTTrainer, GrowthStrategy, SquaredLoss};
+use booste_rs::training::{GBDTParams, GBDTTrainer, GrowthStrategy, Rmse, SquaredLoss};
 
 #[test]
 fn train_rejects_invalid_targets_len() {
@@ -15,8 +15,8 @@ fn train_rejects_invalid_targets_len() {
         .build()
         .expect("Failed to build binned dataset");
 
-    let trainer = GBDTTrainer::new(SquaredLoss, GBDTParams::default());
-    let result = trainer.train(&dataset, &targets, &[]);
+    let trainer = GBDTTrainer::new(SquaredLoss, Rmse, GBDTParams::default());
+    let result = trainer.train(&dataset, &targets, &[], &[]);
 
     assert!(result.is_none());
 }
@@ -40,8 +40,8 @@ fn trained_model_improves_over_base_score_on_simple_problem() {
         ..Default::default()
     };
 
-    let trainer = GBDTTrainer::new(SquaredLoss, params);
-    let forest = trainer.train(&dataset, &targets, &[]).unwrap();
+    let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+    let forest = trainer.train(&dataset, &targets, &[], &[]).unwrap();
 
     forest
         .validate()
@@ -98,8 +98,8 @@ fn trained_model_improves_over_base_score_on_medium_problem() {
         ..Default::default()
     };
 
-    let trainer = GBDTTrainer::new(SquaredLoss, params);
-    let forest = trainer.train(&dataset, &targets, &[]).unwrap();
+    let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+    let forest = trainer.train(&dataset, &targets, &[], &[]).unwrap();
 
     forest
         .validate()

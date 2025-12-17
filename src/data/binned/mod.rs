@@ -35,4 +35,4 @@ pub use bin_mapper::{BinMapper, FeatureType, MissingType};
 pub use storage::{FeatureView, BinStorage, BinType, GroupLayout};
 pub use group::{FeatureGroup, FeatureMeta};
 pub use dataset::{BinnedDataset, RowView};
-pub use builder::{BinnedDatasetBuilder, GroupStrategy, GroupSpec, BuildError};
+pub use builder::{BinnedDatasetBuilder, GroupStrategy, GroupSpec, BuildError, BinningConfig};
