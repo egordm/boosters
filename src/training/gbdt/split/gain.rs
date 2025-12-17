@@ -11,7 +11,7 @@
 /// so we precompute it once and reuse it.
 ///
 /// **Benchmark evidence**: This provides ~7% speedup on isolated gain computation
-/// (see `benches/suites/component/split_finding.rs`).
+/// (see `docs/benchmarks/2025-06-09-split-finding-optimization.md`).
 #[derive(Clone, Debug)]
 pub struct NodeGainContext {
     /// L2 regularization constant.

@@ -4,24 +4,34 @@
 //! aggregating results with confidence intervals.
 //!
 //! Usage:
-//!   cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm" -- [options]
+//!   cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm,io-parquet" -- [options]
 //!
 //! Options:
-//!   --seeds <n>         Number of seeds to run (default: 5)
-//!   --out <path>        Output markdown file (default: stdout)
-//!   --quick             Quick mode: fewer rows, fewer trees
-//!   --libsvm <path>     Add libsvm regression dataset (label + index:value, 1-based)
+//!   --seeds <n>          Number of seeds to run (default: 5)
+//!   --out <path>         Output markdown file (default: stdout)
+//!   --quick              Quick mode: fewer rows, fewer trees
+//!   --no-real            Skip real-world datasets (only synthetic)
+//!   --libsvm <path>      Add libsvm regression dataset (label + index:value, 1-based)
 //!   --uci-machine <path> Add UCI machine.data regression dataset
-//!   --label0 <path>     Add label0 dataset (tab/space-separated: label first)
+//!   --label0 <path>      Add label0 dataset (tab/space-separated: label first)
+//!
+//! Real-world Datasets:
+//!   By default, if parquet files exist in data/benchmarks/, they are included:
+//!   - california_housing.parquet (regression, 20k samples)
+//!   - adult.parquet (binary classification, 48k samples)
+//!   - covertype.parquet (multiclass, 581k samples - subsampled to 50k)
+//!
+//!   Generate these files with:
+//!     cd tools/data_generation && uv run python scripts/generate_benchmark_datasets.py
 //!
 //! Examples:
-//!   # Full synthetic benchmark
-//!   cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm" -- \
+//!   # Full benchmark (synthetic + real-world if available)
+//!   cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm,io-parquet" -- \
 //!       --seeds 5 --out docs/benchmarks/quality-report.md
 //!
-//!   # With real-world datasets
+//!   # Synthetic only
 //!   cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm" -- \
-//!       --libsvm data/housing.libsvm --seeds 3 --out report.md
+//!       --no-real --seeds 3
 
 use std::collections::HashMap;
 use std::fs;
@@ -40,6 +50,9 @@ use booste_rs::training::{
 	Accuracy, GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, LogLoss, LogisticLoss, Mae,
 	Metric, MulticlassAccuracy, MulticlassLogLoss, Rmse, SoftmaxLoss, SquaredLoss,
 };
+
+#[cfg(feature = "io-parquet")]
+use booste_rs::data::io::parquet::load_parquet_xy_row_major_f32;
 
 #[cfg(feature = "bench-xgboost")]
 use xgb::parameters::tree::{GrowPolicy, TreeBoosterParametersBuilder, TreeMethod};
@@ -81,6 +94,8 @@ impl Task {
 #[derive(Debug, Clone)]
 enum DataSource {
 	Synthetic { rows: usize, cols: usize },
+	#[cfg(feature = "io-parquet")]
+	Parquet { path: PathBuf, subsample: Option<usize> },
 	LibSvm(PathBuf),
 	UciMachine(PathBuf),
 	Label0(PathBuf),
@@ -153,6 +168,69 @@ fn default_configs(quick: bool) -> Vec<BenchmarkConfig> {
 			classes: Some(5),
 		},
 	]
+}
+
+/// Default paths for real-world benchmark datasets.
+#[cfg(feature = "io-parquet")]
+const CALIFORNIA_HOUSING_PATH: &str = "data/benchmarks/california_housing.parquet";
+#[cfg(feature = "io-parquet")]
+const ADULT_PATH: &str = "data/benchmarks/adult.parquet";
+#[cfg(feature = "io-parquet")]
+const COVERTYPE_PATH: &str = "data/benchmarks/covertype.parquet";
+
+/// Get real-world dataset configs if parquet files exist.
+#[cfg(feature = "io-parquet")]
+fn real_world_configs(quick: bool) -> Vec<BenchmarkConfig> {
+	let trees = if quick { 50 } else { 100 };
+	let covertype_subsample = if quick { Some(10_000) } else { Some(50_000) };
+	
+	let mut configs = Vec::new();
+	
+	// California Housing (regression)
+	let california_path = PathBuf::from(CALIFORNIA_HOUSING_PATH);
+	if california_path.exists() {
+		configs.push(BenchmarkConfig {
+			name: "california_housing".to_string(),
+			task: Task::Regression,
+			data_source: DataSource::Parquet { path: california_path, subsample: None },
+			trees,
+			depth: 6,
+			classes: None,
+		});
+	}
+	
+	// Adult (binary classification)
+	let adult_path = PathBuf::from(ADULT_PATH);
+	if adult_path.exists() {
+		configs.push(BenchmarkConfig {
+			name: "adult".to_string(),
+			task: Task::Binary,
+			data_source: DataSource::Parquet { path: adult_path, subsample: None },
+			trees,
+			depth: 6,
+			classes: None,
+		});
+	}
+	
+	// Covertype (multiclass - subsampled for speed)
+	let covertype_path = PathBuf::from(COVERTYPE_PATH);
+	if covertype_path.exists() {
+		configs.push(BenchmarkConfig {
+			name: "covertype".to_string(),
+			task: Task::Multiclass,
+			data_source: DataSource::Parquet { path: covertype_path, subsample: covertype_subsample },
+			trees,
+			depth: 6,
+			classes: Some(7),
+		});
+	}
+	
+	configs
+}
+
+#[cfg(not(feature = "io-parquet"))]
+fn real_world_configs(_quick: bool) -> Vec<BenchmarkConfig> {
+	Vec::new()
 }
 
 // =============================================================================
@@ -429,6 +507,39 @@ fn load_data(
 			let x_valid = select_rows_row_major(&x, *rows, *cols, &valid_idx);
 			let y_valid = select_targets(&y, &valid_idx);
 			(x_train, y_train, train_idx.len(), x_valid, y_valid, valid_idx.len(), *cols)
+		}
+		#[cfg(feature = "io-parquet")]
+		DataSource::Parquet { path, subsample } => {
+			let (x_all, y_all, rows_orig, cols) = load_parquet_xy_row_major_f32(path).expect("failed to load parquet");
+			
+			// Optionally subsample large datasets
+			let (x, y, rows) = if let Some(max_rows) = subsample {
+				if rows_orig > *max_rows {
+					// Deterministic subsampling based on seed
+					use rand::prelude::*;
+					use rand::SeedableRng;
+					let mut rng = rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(seed ^ 0x5B5A_AAAA);
+					let mut indices: Vec<usize> = (0..rows_orig).collect();
+					indices.shuffle(&mut rng);
+					indices.truncate(*max_rows);
+					indices.sort_unstable();
+					
+					let x_sub = select_rows_row_major(&x_all, rows_orig, cols, &indices);
+					let y_sub = select_targets(&y_all, &indices);
+					(x_sub, y_sub, *max_rows)
+				} else {
+					(x_all, y_all, rows_orig)
+				}
+			} else {
+				(x_all, y_all, rows_orig)
+			};
+			
+			let (train_idx, valid_idx) = split_indices(rows, valid_fraction, seed ^ 0x51EED);
+			let x_train = select_rows_row_major(&x, rows, cols, &train_idx);
+			let y_train = select_targets(&y, &train_idx);
+			let x_valid = select_rows_row_major(&x, rows, cols, &valid_idx);
+			let y_valid = select_targets(&y, &valid_idx);
+			(x_train, y_train, train_idx.len(), x_valid, y_valid, valid_idx.len(), cols)
 		}
 		DataSource::LibSvm(path) => {
 			let (x, y, rows, cols) = load_libsvm_dense(path);
@@ -898,6 +1009,15 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 	for r in results {
 		let source = match &r.config.data_source {
 			DataSource::Synthetic { rows, cols } => format!("Synthetic {}x{}", rows, cols),
+			#[cfg(feature = "io-parquet")]
+			DataSource::Parquet { path, subsample } => {
+				let name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "parquet".to_string());
+				if let Some(n) = subsample {
+					format!("{} (subsampled to {})", name, n)
+				} else {
+					name
+				}
+			}
 			DataSource::LibSvm(p) => format!("libsvm: {}", p.display()),
 			DataSource::UciMachine(p) => format!("uci-machine: {}", p.display()),
 			DataSource::Label0(p) => format!("label0: {}", p.display()),
@@ -924,6 +1044,7 @@ struct Args {
 	num_seeds: usize,
 	out: Option<PathBuf>,
 	quick: bool,
+	no_real: bool,
 	libsvm_paths: Vec<PathBuf>,
 	uci_machine_paths: Vec<PathBuf>,
 	label0_paths: Vec<PathBuf>,
@@ -933,6 +1054,7 @@ fn parse_args() -> Args {
 	let mut num_seeds = 5usize;
 	let mut out: Option<PathBuf> = None;
 	let mut quick = false;
+	let mut no_real = false;
 	let mut libsvm_paths: Vec<PathBuf> = Vec::new();
 	let mut uci_machine_paths: Vec<PathBuf> = Vec::new();
 	let mut label0_paths: Vec<PathBuf> = Vec::new();
@@ -943,12 +1065,13 @@ fn parse_args() -> Args {
 			"--seeds" => num_seeds = it.next().expect("--seeds value").parse().unwrap(),
 			"--out" => out = Some(PathBuf::from(it.next().expect("--out path"))),
 			"--quick" => quick = true,
+			"--no-real" => no_real = true,
 			"--libsvm" => libsvm_paths.push(PathBuf::from(it.next().expect("--libsvm path"))),
 			"--uci-machine" => uci_machine_paths.push(PathBuf::from(it.next().expect("--uci-machine path"))),
 			"--label0" => label0_paths.push(PathBuf::from(it.next().expect("--label0 path"))),
 			"--help" => {
 				eprintln!(
-					"quality_benchmark\n\n  --seeds <n>         Number of seeds (default: 5)\n  --out <path>        Output markdown file\n  --quick             Quick mode (fewer rows/trees)\n  --libsvm <path>     Add libsvm regression dataset\n  --uci-machine <path> Add UCI machine.data dataset\n  --label0 <path>     Add label0 regression dataset"
+					"quality_benchmark\n\n  --seeds <n>         Number of seeds (default: 5)\n  --out <path>        Output markdown file\n  --quick             Quick mode (fewer rows/trees)\n  --no-real           Skip real-world datasets\n  --libsvm <path>     Add libsvm regression dataset\n  --uci-machine <path> Add UCI machine.data dataset\n  --label0 <path>     Add label0 regression dataset"
 				);
 				std::process::exit(0);
 			}
@@ -956,7 +1079,7 @@ fn parse_args() -> Args {
 		}
 	}
 
-	Args { num_seeds, out, quick, libsvm_paths, uci_machine_paths, label0_paths }
+	Args { num_seeds, out, quick, no_real, libsvm_paths, uci_machine_paths, label0_paths }
 }
 
 fn main() {
@@ -966,8 +1089,17 @@ fn main() {
 	let seeds: Vec<u64> = (0..args.num_seeds).map(|i| 42 + i as u64 * 1337).collect();
 
 	let mut configs = default_configs(args.quick);
+	
+	// Add real-world datasets if not disabled and parquet files exist
+	if !args.no_real {
+		let real_configs = real_world_configs(args.quick);
+		if !real_configs.is_empty() {
+			println!("Found {} real-world dataset(s)", real_configs.len());
+			configs.extend(real_configs);
+		}
+	}
 
-	// Add real-world datasets
+	// Add user-specified datasets
 	let trees = if args.quick { 50 } else { 100 };
 	for (i, path) in args.libsvm_paths.iter().enumerate() {
 		let name = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| format!("libsvm_{}", i));

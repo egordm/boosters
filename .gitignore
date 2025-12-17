@@ -4,8 +4,11 @@
 /docs/benchmarks/artifacts/**
 !/docs/benchmarks/artifacts/README.md
 
-# Helper outputs/tools that may generate local artifacts
-/tools/benchmarks/__pycache__/
-/tools/quality/__pycache__/
+# Generated benchmark datasets (reproducible via tools/data_generation scripts)
+/data/benchmarks/
+
+# Python cache files
+__pycache__/
+*.pyc
 
 .DS_Store
