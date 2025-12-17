@@ -10,7 +10,7 @@ use common::criterion_config::default_criterion;
 
 use booste_rs::data::{binned::BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMajor};
 use booste_rs::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
-use booste_rs::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, SquaredLoss};
+use booste_rs::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
@@ -73,13 +73,13 @@ fn bench_train_regression(c: &mut Criterion) {
 			cache_size: 32,
 			..Default::default()
 		};
-		let trainer = GBDTTrainer::new(SquaredLoss, params);
+		let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
 
 		group.bench_function(BenchmarkId::new("boosters/cold_full", name), |b| {
 			b.iter(|| {
 				let col_matrix = build_col_matrix(features.clone(), rows, cols);
 				let binned = BinnedDatasetBuilder::from_matrix(&col_matrix, 256).build().unwrap();
-				black_box(trainer.train(black_box(&binned), black_box(&targets), &[]).unwrap())
+				black_box(trainer.train(black_box(&binned), black_box(&targets), &[], &[]).unwrap())
 			})
 		});
 
