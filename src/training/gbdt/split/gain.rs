@@ -1,6 +1,51 @@
 //! Gain computation and regularization parameters.
 
 // =============================================================================
+// Node Gain Context (Precomputed for efficient split finding)
+// =============================================================================
+
+/// Pre-computed context for a node to avoid redundant parent score computation.
+///
+/// When finding the best split for a node, we evaluate many candidate split points.
+/// The parent score (`G_parent² / (H_parent + λ)`) is constant across all candidates,
+/// so we precompute it once and reuse it.
+///
+/// **Benchmark evidence**: This provides ~7% speedup on isolated gain computation
+/// (see `benches/suites/component/split_finding.rs`).
+#[derive(Clone, Debug)]
+pub struct NodeGainContext {
+    /// L2 regularization constant.
+    lambda: f64,
+    /// Pre-computed: `0.5 * parent_score + min_gain`
+    /// This allows computing gain as: `0.5 * (left_score + right_score) - gain_offset`
+    gain_offset: f64,
+}
+
+impl NodeGainContext {
+    /// Create a new context for a node with given gradient/hessian sums.
+    #[inline]
+    pub fn new(parent_grad: f64, parent_hess: f64, params: &GainParams) -> Self {
+        let lambda = params.reg_lambda as f64;
+        let parent_score = parent_grad * parent_grad / (parent_hess + lambda);
+        Self {
+            lambda,
+            gain_offset: 0.5 * parent_score + params.min_gain as f64,
+        }
+    }
+
+    /// Compute split gain with pre-computed parent score.
+    ///
+    /// This is the hot path called for every split candidate.
+    /// Uses only 2 divisions instead of the 3 in the original formula.
+    #[inline]
+    pub fn compute_gain(&self, grad_left: f64, hess_left: f64, grad_right: f64, hess_right: f64) -> f32 {
+        let score_left = grad_left * grad_left / (hess_left + self.lambda);
+        let score_right = grad_right * grad_right / (hess_right + self.lambda);
+        (0.5 * (score_left + score_right) - self.gain_offset) as f32
+    }
+}
+
+// =============================================================================
 // Gain Parameters
 // =============================================================================
 

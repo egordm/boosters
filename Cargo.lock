@@ -294,6 +294,7 @@ dependencies = [
  "lightgbm3",
  "parquet",
  "rand",
+ "rand_chacha",
  "rand_xoshiro",
  "rayon",
  "rstest",

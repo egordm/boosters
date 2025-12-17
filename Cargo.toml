@@ -50,6 +50,7 @@ serde = { version = "1.0", features = ["derive"] } # Needed by integration tests
 serde_json = "1.0"  # Always available in tests
 criterion = { version = "0.5", features = ["html_reports"] }
 rand = "0.8"  # For generating random benchmark inputs
+rand_chacha = "0.3"  # For reproducible RNG in benchmarks
 tempfile = "3.20"  # For Arrow/Parquet I/O tests
 
 [features]
@@ -89,6 +90,11 @@ path = "benches/suites/component/train_gblinear.rs"
 name = "training_gbdt"
 harness = false
 path = "benches/suites/component/train_gbdt.rs"
+
+[[bench]]
+name = "split_finding"
+harness = false
+path = "benches/suites/component/split_finding.rs"
 
 [[bench]]
 name = "e2e_train_predict_gbdt"
