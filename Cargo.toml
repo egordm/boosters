@@ -58,6 +58,8 @@ default = ["xgboost-compat"]
 xgboost-compat = ["dep:serde", "dep:serde_json", "dep:serde_with"]
 lightgbm-compat = ["dep:serde", "dep:serde_json"]
 simd = ["dep:wide"]
+# Unified comparison feature - enables both XGBoost and LightGBM bindings
+bench-compare = ["bench-xgboost", "bench-lightgbm"]
 bench-xgboost = ["dep:xgb", "xgboost-compat"]
 bench-lightgbm = ["dep:lightgbm3", "lightgbm-compat"]
 bench-training = []
@@ -106,3 +108,19 @@ path = "benches/suites/compare/training.rs"
 name = "compare_prediction"
 harness = false
 path = "benches/suites/compare/prediction.rs"
+
+# Feature benchmarks
+[[bench]]
+name = "multithreading"
+harness = false
+path = "benches/suites/feature/multithreading.rs"
+
+[[bench]]
+name = "scaling"
+harness = false
+path = "benches/suites/feature/scaling.rs"
+
+[[bench]]
+name = "sampling"
+harness = false
+path = "benches/suites/feature/sampling.rs"

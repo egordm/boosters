@@ -323,13 +323,17 @@ All comparison benchmarks use consistent sizes:
 ### Running Benchmarks
 
 ```bash
-# Unified comparison benchmarks (preferred)
-cargo bench --features "bench-xgboost,bench-lightgbm" --bench compare_training
-cargo bench --features "bench-xgboost,bench-lightgbm" --bench compare_prediction
+# Unified comparison benchmarks (preferred - uses bench-compare feature)
+cargo bench --features bench-compare --bench compare_training
+cargo bench --features bench-compare --bench compare_prediction
 
-# Single library comparison
-cargo bench --features bench-xgboost --bench compare_training
-cargo bench --features bench-lightgbm --bench compare_prediction
+# Legacy: individual library features also work
+cargo bench --features "bench-xgboost,bench-lightgbm" --bench compare_training
+
+# Feature benchmarks
+cargo bench --features bench-compare --bench multithreading  # Thread scaling
+cargo bench --features bench-compare --bench scaling         # Dataset size scaling
+cargo bench --bench sampling                                 # GOSS vs uniform (booste-rs only)
 
 # Component benchmarks (no feature flags needed)
 cargo bench --bench prediction_core
@@ -343,20 +347,20 @@ For qualitative model comparisons (training quality, not performance):
 ```bash
 # Full quality benchmark (synthetic + real-world datasets)
 cargo run --bin quality_benchmark --release \
-    --features "bench-xgboost,bench-lightgbm,io-parquet" -- \
+    --features "bench-compare,io-parquet" -- \
     --seeds 5 --out docs/benchmarks/quality-report.md
 
 # Quick mode for development iteration
 cargo run --bin quality_benchmark --release \
-    --features "bench-xgboost,bench-lightgbm,io-parquet" -- \
+    --features "bench-compare,io-parquet" -- \
     --quick --seeds 3
 
 # Mode selection: all (default), synthetic, real
 cargo run --bin quality_benchmark --release \
-    --features "bench-xgboost,bench-lightgbm,io-parquet" -- \
+    --features "bench-compare,io-parquet" -- \
     --mode synthetic --seeds 5      # Synthetic only
 cargo run --bin quality_benchmark --release \
-    --features "bench-xgboost,bench-lightgbm,io-parquet" -- \
+    --features "bench-compare,io-parquet" -- \
     --mode real --seeds 5           # Real-world only
 ```
 
