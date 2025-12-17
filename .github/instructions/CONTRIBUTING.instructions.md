@@ -341,13 +341,32 @@ cargo bench --bench training_gbdt
 For qualitative model comparisons (training quality, not performance):
 
 ```bash
-# Full quality benchmark (5 seeds, all tasks, writes markdown report)
-cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm" -- \
+# Full quality benchmark (synthetic + real-world datasets)
+cargo run --bin quality_benchmark --release \
+    --features "bench-xgboost,bench-lightgbm,io-parquet" -- \
     --seeds 5 --out docs/benchmarks/quality-report.md
 
 # Quick mode for development iteration
-cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm" -- \
-    --quick --seeds 3 --out /tmp/quality-quick.md
+cargo run --bin quality_benchmark --release \
+    --features "bench-xgboost,bench-lightgbm,io-parquet" -- \
+    --quick --seeds 3
+
+# Mode selection: all (default), synthetic, real
+cargo run --bin quality_benchmark --release \
+    --features "bench-xgboost,bench-lightgbm,io-parquet" -- \
+    --mode synthetic --seeds 5      # Synthetic only
+cargo run --bin quality_benchmark --release \
+    --features "bench-xgboost,bench-lightgbm,io-parquet" -- \
+    --mode real --seeds 5           # Real-world only
+```
+
+**Real-world datasets** (California Housing, Adult, Covertype) are included when:
+1. The `io-parquet` feature is enabled
+2. Parquet files exist in `data/benchmarks/`
+
+Generate the parquet files:
+```bash
+cd tools/data_generation && uv run python scripts/generate_benchmark_datasets.py
 ```
 
 ### Benchmark Report Naming

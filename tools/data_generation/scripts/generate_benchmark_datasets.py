@@ -15,6 +15,10 @@ Output:
         california_housing.parquet
         adult.parquet
         covertype.parquet
+
+The parquet files use a standardized format:
+- `y`: float32 target column
+- `x_0`, `x_1`, ..., `x_N`: float32 feature columns
 """
 
 from __future__ import annotations
@@ -40,6 +44,24 @@ def ensure_dependencies():
         sys.exit(1)
 
 
+def standardize_dataframe(df, target_col: str):
+    """Convert a dataframe to standardized format with y and x_0, x_1, ... columns."""
+    import pandas as pd
+    
+    # Extract target
+    y = df[target_col].astype('float32')
+    
+    # Get feature columns (everything except target)
+    feature_cols = [c for c in df.columns if c != target_col]
+    
+    # Build new dataframe with standardized column names
+    result = pd.DataFrame({'y': y})
+    for i, col in enumerate(feature_cols):
+        result[f'x_{i}'] = df[col].astype('float32')
+    
+    return result
+
+
 def generate_california_housing():
     """California Housing dataset (regression).
     
@@ -52,18 +74,16 @@ def generate_california_housing():
     print("Generating California Housing dataset...")
     data = fetch_california_housing(as_frame=True)
     
-    # Combine features and target, with 'label' as the first column
+    # Combine features and target
     df = data.frame.copy()
-    # Rename target column to 'label' and move to front
-    df = df.rename(columns={'MedHouseVal': 'label'})
-    cols = ['label'] + [c for c in df.columns if c != 'label']
-    df = df[cols]
+    df = standardize_dataframe(df, 'MedHouseVal')
     
     output_path = DATA_DIR / "california_housing.parquet"
     df.to_parquet(output_path, index=False)
     print(f"  Saved: {output_path}")
     print(f"  Shape: {df.shape}")
-    print(f"  Target range: [{df['label'].min():.2f}, {df['label'].max():.2f}]")
+    print(f"  Features: {len([c for c in df.columns if c.startswith('x_')])}")
+    print(f"  Target range: [{df['y'].min():.2f}, {df['y'].max():.2f}]")
     return output_path
 
 
@@ -82,7 +102,7 @@ def generate_adult():
     df = data.frame.copy()
     
     # Convert target to binary (0/1)
-    df['label'] = (df['class'] == '>50K').astype('float32')
+    df['target'] = (df['class'] == '>50K').astype('float32')
     df = df.drop(columns=['class'])
     
     # One-hot encode categorical columns
@@ -90,19 +110,19 @@ def generate_adult():
     if cat_cols:
         df = pd.get_dummies(df, columns=cat_cols, dtype='float32')
     
-    # Move label to front
-    cols = ['label'] + [c for c in df.columns if c != 'label']
-    df = df[cols]
-    
     # Convert all to float32
     for col in df.columns:
-        df[col] = df[col].astype('float32')
+        if col != 'target':
+            df[col] = df[col].astype('float32')
+    
+    df = standardize_dataframe(df, 'target')
     
     output_path = DATA_DIR / "adult.parquet"
     df.to_parquet(output_path, index=False)
     print(f"  Saved: {output_path}")
     print(f"  Shape: {df.shape}")
-    print(f"  Class distribution: {df['label'].value_counts().to_dict()}")
+    print(f"  Features: {len([c for c in df.columns if c.startswith('x_')])}")
+    print(f"  Class distribution: {df['y'].value_counts().to_dict()}")
     return output_path
 
 
@@ -120,22 +140,22 @@ def generate_covertype():
     
     df = data.frame.copy()
     # Target is 'Cover_Type', values 1-7. Remap to 0-6.
-    df['label'] = (df['Cover_Type'] - 1).astype('float32')
+    df['target'] = (df['Cover_Type'] - 1).astype('float32')
     df = df.drop(columns=['Cover_Type'])
-    
-    # Move label to front
-    cols = ['label'] + [c for c in df.columns if c != 'label']
-    df = df[cols]
     
     # Convert all to float32
     for col in df.columns:
-        df[col] = df[col].astype('float32')
+        if col != 'target':
+            df[col] = df[col].astype('float32')
+    
+    df = standardize_dataframe(df, 'target')
     
     output_path = DATA_DIR / "covertype.parquet"
     df.to_parquet(output_path, index=False)
     print(f"  Saved: {output_path}")
     print(f"  Shape: {df.shape}")
-    print(f"  Classes: {sorted(df['label'].unique())}")
+    print(f"  Features: {len([c for c in df.columns if c.startswith('x_')])}")
+    print(f"  Classes: {sorted(df['y'].unique())}")
     return output_path
 
 
