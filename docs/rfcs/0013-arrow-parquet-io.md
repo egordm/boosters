@@ -110,3 +110,11 @@ All functions return `Result<T, DatasetLoadError>` with variants:
 arrow = { version = "54", optional = true, default-features = false, features = ["ipc"] }
 parquet = { version = "54", optional = true, default-features = false, features = ["arrow", "snap"] }
 ```
+
+## Future Considerations
+
+**Deprecation after Python bindings**: Once Python bindings are implemented with NumPy/Pandas zero-copy support, Arrow/Parquet I/O may be deprecated or moved to dev-only. Most users will interact through Python, making native data loading less relevant. The features may remain useful for:
+
+- Rust-only usage
+- Internal benchmarking (quality benchmarks currently use Parquet)
+- Testing data fixtures

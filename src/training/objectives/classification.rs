@@ -2,7 +2,7 @@
 
 use super::{validate_objective_inputs, weight_iter, Objective, TargetSchema, TaskKind};
 use crate::inference::common::{sigmoid_inplace, softmax_rows, PredictionKind, PredictionOutput};
-use crate::training::GradHessF32;
+use crate::training::GradsTuple;
 use crate::training::metrics::MetricKind;
 
 // =============================================================================
@@ -38,7 +38,7 @@ impl Objective for LogisticLoss {
         predictions: &[f32],
         targets: &[f32],
         weights: &[f32],
-        grad_hess: &mut [GradHessF32],
+        grad_hess: &mut [GradsTuple],
     ) {
         validate_objective_inputs(
             n_rows,
@@ -147,7 +147,7 @@ impl Objective for HingeLoss {
         predictions: &[f32],
         targets: &[f32],
         weights: &[f32],
-        grad_hess: &mut [GradHessF32],
+        grad_hess: &mut [GradsTuple],
     ) {
         validate_objective_inputs(
             n_rows,
@@ -269,7 +269,7 @@ impl Objective for SoftmaxLoss {
         predictions: &[f32],
         targets: &[f32],
         weights: &[f32],
-        grad_hess: &mut [GradHessF32],
+        grad_hess: &mut [GradsTuple],
     ) {
         validate_objective_inputs(
             n_rows,
@@ -460,7 +460,7 @@ impl Objective for LambdaRankLoss {
         predictions: &[f32],
         targets: &[f32],
         weights: &[f32],
-        grad_hess: &mut [GradHessF32],
+        grad_hess: &mut [GradsTuple],
     ) {
         debug_assert!(predictions.len() >= n_rows);
         debug_assert!(targets.len() >= n_rows);
@@ -468,7 +468,7 @@ impl Objective for LambdaRankLoss {
 
         // Initialize gradients and hessians to zero
         for p in &mut grad_hess[..n_rows] {
-            *p = GradHessF32::default();
+            *p = GradsTuple::default();
         }
 
         let sigma = self.sigma as f64;
@@ -605,7 +605,7 @@ mod tests {
         let obj = LogisticLoss;
         let preds = [0.0f32];
         let targets = [1.0f32];
-        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }];
+        let mut grad_hess = [GradsTuple { grad: 0.0, hess: 0.0 }];
 
         obj.compute_gradients(1, 1, &preds, &targets, &[], &mut grad_hess);
 
@@ -621,7 +621,7 @@ mod tests {
         // 2 rows, 2 outputs (multi-label)
         let preds = [0.0f32, 0.0, 0.0, 0.0]; // all zero logits
         let targets = [1.0f32, 0.0, 0.0, 1.0]; // out0=[1,0], out1=[0,1]
-        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }; 4];
+        let mut grad_hess = [GradsTuple { grad: 0.0, hess: 0.0 }; 4];
 
         obj.compute_gradients(2, 2, &preds, &targets, &[], &mut grad_hess);
 
@@ -653,7 +653,7 @@ mod tests {
         // Correctly classified with margin
         let preds = [2.0f32];
         let targets = [1.0f32];
-        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }];
+        let mut grad_hess = [GradsTuple { grad: 0.0, hess: 0.0 }];
 
         obj.compute_gradients(1, 1, &preds, &targets, &[], &mut grad_hess);
         // margin = 1 * 2 = 2 >= 1, so grad = 0
@@ -677,7 +677,7 @@ mod tests {
             0.0, 0.0, // class 2: [0.0, 0.0]
         ];
         let targets = [0.0f32, 1.0]; // sample 0 -> class 0, sample 1 -> class 1
-        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }; 6];
+        let mut grad_hess = [GradsTuple { grad: 0.0, hess: 0.0 }; 6];
 
         obj.compute_gradients(n_rows, 3, &preds, &targets, &[], &mut grad_hess);
 
@@ -707,7 +707,7 @@ mod tests {
         let preds = [0.0f32, 0.0];
         let targets = [1.0f32, 0.0];
         let weights = [2.0f32, 0.5];
-        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }; 2];
+        let mut grad_hess = [GradsTuple { grad: 0.0, hess: 0.0 }; 2];
 
         obj.compute_gradients(2, 1, &preds, &targets, &weights, &mut grad_hess);
 
@@ -727,7 +727,7 @@ mod tests {
         // Predictions: doc0 scored highest (correct since label=2)
         let preds = [2.0f32, 0.0, 1.0];
         let targets = [2.0f32, 0.0, 1.0]; // relevance labels
-        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }; 3];
+        let mut grad_hess = [GradsTuple { grad: 0.0, hess: 0.0 }; 3];
 
         obj.compute_gradients(3, 1, &preds, &targets, &[], &mut grad_hess);
 
@@ -746,7 +746,7 @@ mod tests {
 
         let preds = [1.0f32, 0.0, 0.5, 0.5];
         let targets = [1.0f32, 0.0, 2.0, 1.0];
-        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }; 4];
+        let mut grad_hess = [GradsTuple { grad: 0.0, hess: 0.0 }; 4];
 
         obj.compute_gradients(4, 1, &preds, &targets, &[], &mut grad_hess);
 

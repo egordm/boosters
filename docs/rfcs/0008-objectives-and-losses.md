@@ -23,7 +23,7 @@ pub trait Objective: Send + Sync {
         predictions: &[f32],    // column-major [n_outputs * n_rows]
         targets: &[f32],        // column-major [n_targets * n_rows]
         weights: &[f32],        // sample weights (empty for unweighted)
-        grad_hess: &mut [GradHessF32],
+        grad_hess: &mut [GradsTuple],
     );
 
     /// Compute initial base score (bias) from targets.
@@ -146,11 +146,11 @@ pub enum ObjectiveFunction {
 
 ### Gradient Storage
 
-`GradHessF32` stores interleaved gradient/hessian pairs:
+`GradsTuple` stores interleaved gradient/hessian pairs:
 
 ```rust
 #[repr(C)]
-pub struct GradHessF32 {
+pub struct GradsTuple {
     pub grad: f32,
     pub hess: f32,
 }
@@ -187,7 +187,7 @@ pub struct SoftmaxLoss { pub num_classes: usize }
 pub struct LambdaRankLoss { pub query_groups: Vec<usize>, pub sigma: f32 }
 
 // Gradient storage
-pub struct GradHessF32 { pub grad: f32, pub hess: f32 }
+pub struct GradsTuple { pub grad: f32, pub hess: f32 }
 pub struct Gradients { ... }
 pub enum ObjectiveFunction { ... }
 ```

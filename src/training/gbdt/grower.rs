@@ -5,7 +5,7 @@
 
 use crate::data::BinnedDataset;
 use crate::repr::gbdt::{categories_to_bitset, MutableTree, ScalarLeaf, Tree};
-use crate::training::{GradHessF32, Gradients};
+use crate::training::{GradsTuple, Gradients};
 use crate::training::sampling::{ColSampler, ColSamplingParams};
 
 use super::expansion::{GrowthState, GrowthStrategy, NodeCandidate};
@@ -82,7 +82,7 @@ pub struct TreeGrower {
     last_leaf_values: Vec<f32>,
     /// Buffer for ordered (pre-gathered) gradients.
     /// Reused across histogram builds to avoid allocation.
-    ordered_grad_hess: Vec<GradHessF32>,
+    ordered_grad_hess: Vec<GradsTuple>,
 
     /// Histogram builder (encapsulates parallelism and kernel dispatch).
     histogram_builder: HistogramBuilder,

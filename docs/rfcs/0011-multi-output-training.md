@@ -61,7 +61,7 @@ Column-major layout optimizes for the per-output training pattern:
 
 ```rust
 pub struct Gradients {
-    data: Vec<GradHessF32>,  // [n_samples * n_outputs] pairs
+    data: Vec<GradsTuple>,  // [n_samples * n_outputs] pairs
     n_samples: usize,
     n_outputs: usize,
 }
@@ -72,8 +72,8 @@ Layout: `[output0_sample0, output0_sample1, ..., output1_sample0, ...]`
 Key method for training:
 ```rust
 // Zero-copy contiguous slice for output k
-fn output_pairs(&self, output: usize) -> &[GradHessF32]
-fn output_pairs_mut(&mut self, output: usize) -> &mut [GradHessF32]
+fn output_pairs(&self, output: usize) -> &[GradsTuple]
+fn output_pairs_mut(&mut self, output: usize) -> &mut [GradsTuple]
 ```
 
 This layout gives perfect cache locality when building histograms for a single output.
@@ -146,7 +146,7 @@ The trainer queries this to determine how many trees to grow per round.
 | Type | Purpose |
 |------|---------|
 | `Gradients` | Column-major gradient buffer with per-output slicing |
-| `GradHessF32` | Interleaved gradient/hessian pair |
+| `GradsTuple` | Interleaved gradient/hessian pair |
 | `Forest<ScalarLeaf>` | Tree ensemble with group assignments |
 | `tree_groups: Vec<u32>` | Maps each tree to its output index |
 | `VectorLeaf` | K-dimensional leaf (inference-only, for external model compat) |
