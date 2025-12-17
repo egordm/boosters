@@ -163,22 +163,35 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
     ///
     /// Returns a [`PredictionOutput`] with shape `(num_rows, num_groups)`.
     ///
+    /// # Arguments
+    /// * `features` - Input feature matrix
+    /// * `n_threads` - Number of threads to use:
+    ///   - `0`: Auto-detect (use Rayon default based on available cores)
+    ///   - `1`: Serial execution (no parallelism, avoids Rayon overhead)
+    ///   - `>1`: Use exactly this many threads
+    ///
     /// # Performance
     ///
     /// Best for large batches (1000+ rows) on multi-core systems. For small batches
-    /// or single-core systems, [`predict`](Self::predict) may be faster due to lower overhead.
+    /// or single-core systems, use `n_threads=1` to avoid parallelism overhead.
     #[inline]
     pub fn par_predict<M: DataMatrix<Element = f32> + Sync>(
         &self,
         features: &M,
+        n_threads: usize,
     ) -> PredictionOutput {
-        self.par_predict_internal(features, None)
+        self.par_predict_internal(features, None, n_threads)
     }
 
     /// Parallel prediction with per-tree weights (for DART).
     ///
     /// Uses Rayon to parallelize block processing. Each tree's contribution
     /// is multiplied by its corresponding weight.
+    ///
+    /// # Arguments
+    /// * `features` - Input feature matrix
+    /// * `weights` - Per-tree weights (length must equal number of trees)
+    /// * `n_threads` - Number of threads (0=auto, 1=serial, >1=exact)
     ///
     /// # Panics
     ///
@@ -188,20 +201,22 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
         &self,
         features: &M,
         weights: &[f32],
+        n_threads: usize,
     ) -> PredictionOutput {
         assert_eq!(
             weights.len(),
             self.forest.n_trees(),
             "weights length must match number of trees"
         );
-        self.par_predict_internal(features, Some(weights))
+        self.par_predict_internal(features, Some(weights), n_threads)
     }
 
-    /// Internal parallel prediction with optional weights.
+    /// Internal parallel prediction with optional weights and thread control.
     fn par_predict_internal<M: DataMatrix<Element = f32> + Sync>(
         &self,
         features: &M,
         weights: Option<&[f32]>,
+        n_threads: usize,
     ) -> PredictionOutput {
         let num_rows = features.num_rows();
         let num_groups = self.n_groups();
@@ -213,6 +228,11 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
 
         let base_score = self.forest.base_score();
 
+        // n_threads == 1 means serial execution
+        if n_threads == 1 {
+            return self.predict_internal(features, weights);
+        }
+
         // Split rows into blocks and process in parallel
         let blocks: Vec<_> = (0..num_rows)
             .step_by(self.block_size)
@@ -222,22 +242,36 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
             })
             .collect();
 
-        // Process each block in parallel
-        let block_outputs: Vec<_> = blocks
-            .par_iter()
-            .map(|&(block_start, block_end)| {
-                let current_block_size = block_end - block_start;
-                self.process_block_parallel(
-                    features,
-                    block_start,
-                    current_block_size,
-                    num_features,
-                    num_groups,
-                    base_score,
-                    weights,
-                )
-            })
-            .collect();
+        // Closure to process blocks in parallel
+        let process_blocks = || {
+            blocks
+                .par_iter()
+                .map(|&(block_start, block_end)| {
+                    let current_block_size = block_end - block_start;
+                    self.process_block_parallel(
+                        features,
+                        block_start,
+                        current_block_size,
+                        num_features,
+                        num_groups,
+                        base_score,
+                        weights,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+
+        // Process blocks with optional thread pool
+        // n_threads == 0 means auto (use Rayon default)
+        let block_outputs = if n_threads == 0 {
+            process_blocks()
+        } else {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(n_threads)
+                .build()
+                .expect("Failed to create thread pool");
+            pool.install(process_blocks)
+        };
 
         // Combine results
         let mut output = PredictionOutput::zeros(num_rows, num_groups);
@@ -810,10 +844,10 @@ mod tests {
             let features = RowMatrix::from_vec(data, num_rows, 2);
 
             let seq_simple = simple.predict(&features);
-            let par_simple = simple.par_predict(&features);
+            let par_simple = simple.par_predict(&features, 0); // 0 = auto threads
 
             let seq_unrolled = unrolled.predict(&features);
-            let par_unrolled = unrolled.par_predict(&features);
+            let par_unrolled = unrolled.par_predict(&features, 0);
 
             assert_abs_diff_eq!(seq_simple, par_simple, epsilon = 1e-6);
             assert_abs_diff_eq!(seq_unrolled, par_unrolled, epsilon = 1e-6);
@@ -833,7 +867,7 @@ mod tests {
         let features = RowMatrix::from_vec(data, 100, 1);
 
         let seq_output = predictor.predict_weighted(&features, weights);
-        let par_output = predictor.par_predict_weighted(&features, weights);
+        let par_output = predictor.par_predict_weighted(&features, weights, 0);
 
         assert_abs_diff_eq!(seq_output, par_output, epsilon = 1e-6);
     }
@@ -850,7 +884,7 @@ mod tests {
         let features = RowMatrix::from_vec(vec![0.3, 0.7, 0.4, 0.6], 4, 1);
 
         let seq_output = predictor.predict(&features);
-        let par_output = predictor.par_predict(&features);
+        let par_output = predictor.par_predict(&features, 0);
 
         assert_abs_diff_eq!(seq_output, par_output, epsilon = 1e-6);
     }
@@ -863,8 +897,25 @@ mod tests {
         let predictor = UnrolledPredictor6::new(&forest);
 
         let features = RowMatrix::from_vec(vec![], 0, 1);
-        let output = predictor.par_predict(&features);
+        let output = predictor.par_predict(&features, 0);
 
         assert_eq!(output.shape(), (0, 1));
+    }
+
+    #[test]
+    fn par_predict_serial_matches_parallel() {
+        let mut forest = Forest::for_regression();
+        forest.push_tree(build_deeper_tree(), 0);
+
+        let predictor = UnrolledPredictor6::new(&forest);
+        let data: Vec<f32> = (0..200).map(|i| (i as f32) / 200.0).collect();
+        let features = RowMatrix::from_vec(data, 100, 2);
+
+        let parallel = predictor.par_predict(&features, 0);  // auto
+        let serial = predictor.par_predict(&features, 1);    // serial
+        let two_threads = predictor.par_predict(&features, 2); // exact
+
+        assert_abs_diff_eq!(parallel, serial, epsilon = 1e-6);
+        assert_abs_diff_eq!(parallel, two_threads, epsilon = 1e-6);
     }
 }

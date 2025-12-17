@@ -332,7 +332,7 @@ impl<L: LeafValue> Tree<L> {
     /// Used during training when we have binned data. Numeric bins are converted
     /// to float values using the bin mappers before comparison. Categorical bins
     /// are treated as canonical category indices (0..K-1).
-    pub fn predict_binned(
+    pub fn predict_binned_row(
         &self,
         row: &crate::data::binned::RowView<'_>,
         dataset: &crate::data::BinnedDataset,
@@ -374,6 +374,88 @@ impl<L: LeafValue> Tree<L> {
         }
 
         self.leaf_value(idx)
+    }
+
+    /// Batch predict for multiple rows in a binned dataset.
+    ///
+    /// This is more efficient than calling `predict_binned_row` in a loop because:
+    /// - Better memory access patterns (processes all rows through same tree path)
+    /// - Reduces function call overhead
+    /// - Can be parallelized with Rayon
+    ///
+    /// # Arguments
+    /// * `dataset` - The binned dataset containing the rows
+    /// * `predictions` - Slice to update with leaf values (one per row)
+    ///
+    /// The leaf values are **added** to the existing predictions.
+    pub fn predict_binned_batch(
+        &self,
+        dataset: &crate::data::BinnedDataset,
+        predictions: &mut [f32],
+    ) where
+        L: Into<f32> + Copy,
+    {
+        let n_rows = dataset.n_rows();
+        debug_assert_eq!(predictions.len(), n_rows);
+
+        for row_idx in 0..n_rows {
+            if let Some(row) = dataset.row_view(row_idx) {
+                let leaf = self.predict_binned_row(&row, dataset);
+                predictions[row_idx] += (*leaf).into();
+            }
+        }
+    }
+
+    /// Parallel batch predict for multiple rows in a binned dataset.
+    ///
+    /// Uses Rayon for parallel execution across rows.
+    pub fn par_predict_binned_batch(
+        &self,
+        dataset: &crate::data::BinnedDataset,
+        predictions: &mut [f32],
+    ) where
+        L: Into<f32> + Copy + Send + Sync,
+    {
+        use rayon::prelude::*;
+
+        let n_rows = dataset.n_rows();
+        debug_assert_eq!(predictions.len(), n_rows);
+
+        predictions.par_iter_mut().enumerate().for_each(|(row_idx, pred)| {
+            if let Some(row) = dataset.row_view(row_idx) {
+                let leaf = self.predict_binned_row(&row, dataset);
+                *pred += (*leaf).into();
+            }
+        });
+    }
+
+    /// Batch predict for multiple rows in a row-major matrix.
+    ///
+    /// This is used for evaluation on non-binned data (e.g., eval sets).
+    /// The leaf values are **added** to the existing predictions.
+    ///
+    /// # Arguments
+    /// * `matrix` - Row-major feature matrix
+    /// * `predictions` - Slice to update with leaf values (one per row)
+    pub fn predict_batch(
+        &self,
+        matrix: &crate::data::RowMatrix<f32>,
+        predictions: &mut [f32],
+    ) where
+        L: Into<f32> + Copy,
+    {
+        use crate::data::DataMatrix;
+        
+        let n_rows = matrix.num_rows();
+        let n_features = matrix.num_features();
+        debug_assert_eq!(predictions.len(), n_rows);
+
+        let mut row_buf = vec![0.0f32; n_features];
+        for row_idx in 0..n_rows {
+            matrix.copy_row(row_idx, &mut row_buf);
+            let leaf = self.predict_row(&row_buf);
+            predictions[row_idx] += (*leaf).into();
+        }
     }
 }
 

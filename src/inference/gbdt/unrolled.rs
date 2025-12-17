@@ -289,6 +289,24 @@ impl<D: UnrollDepth> UnrolledTreeLayout<D> {
         self.exit_node_idx.as_ref()[exit_idx]
     }
 
+    /// Get a slice of all split indices for SIMD traversal.
+    #[inline]
+    pub fn split_indices_slice(&self) -> &[u32] {
+        self.split_indices.as_ref()
+    }
+
+    /// Get a slice of all split thresholds for SIMD traversal.
+    #[inline]
+    pub fn split_thresholds_slice(&self) -> &[f32] {
+        self.split_thresholds.as_ref()
+    }
+
+    /// Get a slice of all default_left flags for SIMD traversal.
+    #[inline]
+    pub fn default_left_slice(&self) -> &[bool] {
+        self.default_left.as_ref()
+    }
+
     /// Whether this tree has categorical splits.
     #[inline]
     pub fn has_categorical(&self) -> bool {

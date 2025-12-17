@@ -10,7 +10,6 @@ use common::criterion_config::default_criterion;
 use common::models::load_boosters_model;
 #[cfg(any(feature = "bench-xgboost", feature = "bench-lightgbm"))]
 use common::models::bench_models_dir;
-use common::threading::with_rayon_threads;
 
 use booste_rs::data::RowMatrix;
 use booste_rs::inference::gbdt::{Predictor, UnrolledTraversal6};
@@ -235,7 +234,7 @@ fn bench_predict_thread_scaling(c: &mut Criterion) {
 	for &n_threads in common::matrix::THREAD_COUNTS {
 		// booste-rs
 		group.bench_with_input(BenchmarkId::new("boosters", n_threads), &matrix, |b, m| {
-			b.iter(|| with_rayon_threads(n_threads, || black_box(predictor.par_predict(black_box(m)))))
+			b.iter(|| black_box(predictor.par_predict(black_box(m), n_threads)))
 		});
 
 		// XGBoost

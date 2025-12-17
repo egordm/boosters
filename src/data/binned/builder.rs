@@ -5,6 +5,75 @@ use super::group::{FeatureGroup, FeatureMeta};
 use super::storage::{BinStorage, BinType, GroupLayout};
 use super::BinMapper;
 
+// =============================================================================
+// Binning Configuration
+// =============================================================================
+
+/// Configuration for feature binning.
+///
+/// This controls how many bins are used for each feature during quantization.
+/// You can set a global default and override for specific features.
+///
+/// # Example
+///
+/// ```ignore
+/// let config = BinningConfig::new(256)
+///     .with_feature_bins(0, 64)   // Feature 0 uses 64 bins
+///     .with_feature_bins(5, 512); // Feature 5 uses 512 bins
+/// ```
+#[derive(Clone, Debug)]
+pub struct BinningConfig {
+    /// Default max bins for all features.
+    pub default_max_bins: u32,
+    /// Per-feature overrides: (feature_index, max_bins).
+    pub feature_overrides: Vec<(usize, u32)>,
+}
+
+impl Default for BinningConfig {
+    fn default() -> Self {
+        Self {
+            default_max_bins: 256,
+            feature_overrides: Vec::new(),
+        }
+    }
+}
+
+impl BinningConfig {
+    /// Create a new binning configuration with the given default max bins.
+    pub fn new(default_max_bins: u32) -> Self {
+        Self {
+            default_max_bins,
+            feature_overrides: Vec::new(),
+        }
+    }
+
+    /// Set max bins for a specific feature.
+    ///
+    /// This overrides the default for features that need more or fewer bins.
+    /// For example, high-cardinality features may benefit from more bins,
+    /// while low-cardinality features can use fewer.
+    pub fn with_feature_bins(mut self, feature_idx: usize, max_bins: u32) -> Self {
+        self.feature_overrides.push((feature_idx, max_bins));
+        self
+    }
+
+    /// Get the max bins for a specific feature.
+    pub fn max_bins_for_feature(&self, feature_idx: usize) -> u32 {
+        for &(idx, bins) in &self.feature_overrides {
+            if idx == feature_idx {
+                return bins;
+            }
+        }
+        self.default_max_bins
+    }
+}
+
+impl From<u32> for BinningConfig {
+    fn from(max_bins: u32) -> Self {
+        Self::new(max_bins)
+    }
+}
+
 /// Strategy for grouping features.
 #[derive(Clone, Debug, Default)]
 pub enum GroupStrategy {
@@ -128,6 +197,32 @@ impl BinnedDatasetBuilder {
         data: &crate::data::DenseMatrix<f32, crate::data::ColMajor, S>,
         max_bins: u32,
     ) -> Self {
+        Self::from_matrix_with_config(data, BinningConfig::new(max_bins))
+    }
+
+    /// Create a builder from a column-major matrix with custom binning configuration.
+    ///
+    /// This allows per-feature bin count customization for optimal memory usage
+    /// and split quality.
+    ///
+    /// # Arguments
+    /// * `data` - Column-major matrix (each column is a feature)
+    /// * `config` - Binning configuration with global default and per-feature overrides
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let config = BinningConfig::new(256)
+    ///     .with_feature_bins(0, 64)   // Low-cardinality feature
+    ///     .with_feature_bins(5, 512); // High-cardinality feature
+    ///
+    /// let dataset = BinnedDatasetBuilder::from_matrix_with_config(&matrix, config)
+    ///     .build()?;
+    /// ```
+    pub fn from_matrix_with_config<S: AsRef<[f32]>>(
+        data: &crate::data::DenseMatrix<f32, crate::data::ColMajor, S>,
+        config: BinningConfig,
+    ) -> Self {
         use super::MissingType;
 
         let n_rows = data.num_rows();
@@ -136,6 +231,8 @@ impl BinnedDatasetBuilder {
         let mut builder = Self::new();
 
         for col_idx in 0..n_cols {
+            let max_bins = config.max_bins_for_feature(col_idx);
+
             // Collect non-NaN values for this column
             let mut values: Vec<f32> = Vec::with_capacity(n_rows);
             let mut min_val = f32::MAX;

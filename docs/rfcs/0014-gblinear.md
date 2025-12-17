@@ -62,7 +62,7 @@ Prediction is a dot product:
 output[g] = base_score[g] + bias[g] + Σ(feature[i] × weight[i, g])
 ```
 
-Both single-row and batch prediction supported. `par_predict_batch` uses Rayon for parallel row processing.
+Both single-row and batch prediction supported. `par_predict` uses Rayon for parallel row processing.
 
 ## Key Types
 

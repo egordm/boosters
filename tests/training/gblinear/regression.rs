@@ -262,7 +262,7 @@ fn test_set_prediction_quality(#[case] name: &str) {
     let base_scores = vec![0.0f32];
 
     use booste_rs::training::Metric;
-    let output = model.predict_batch(&test_data, &base_scores);
+    let output = model.predict(&test_data, &base_scores);
     let our_rmse = Rmse.compute(test_labels.len(), 1, output.as_slice(), &test_labels, &[]);
 
     // Compare to XGBoost if available

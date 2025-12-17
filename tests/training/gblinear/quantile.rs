@@ -50,7 +50,7 @@ fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
     let model = trainer.train(&train, &[]).unwrap();
 
     // Compute predictions on test set
-    let output = model.predict_batch(&test_data, &[0.0]);
+    let output = model.predict(&test_data, &[0.0]);
     let test_preds: Vec<f32> = output.rows().map(|row| row[0]).collect();
 
     // Compute pinball loss on test set
@@ -122,9 +122,9 @@ fn quantile_regression_predictions_differ() {
     let model_high = trainer_high.train(&train, &[]).unwrap();
 
     // Get predictions for first sample
-    let pred_low = model_low.predict_batch(&data, &[0.0]).row(0)[0];
-    let pred_med = model_med.predict_batch(&data, &[0.0]).row(0)[0];
-    let pred_high = model_high.predict_batch(&data, &[0.0]).row(0)[0];
+    let pred_low = model_low.predict(&data, &[0.0]).row(0)[0];
+    let pred_med = model_med.predict(&data, &[0.0]).row(0)[0];
+    let pred_high = model_high.predict(&data, &[0.0]).row(0)[0];
 
     // Lower quantile should produce lower predictions.
     assert!(
@@ -211,7 +211,7 @@ fn train_multi_quantile_regression() {
     assert_eq!(model.num_groups(), num_quantiles);
 
     // Get predictions on test set
-    let output = model.predict_batch(&test_data, &vec![0.0; num_quantiles]);
+    let output = model.predict(&test_data, &vec![0.0; num_quantiles]);
     let mut our_predictions: Vec<Vec<f32>> = vec![vec![0.0; test_data.num_rows()]; num_quantiles];
     for i in 0..test_data.num_rows() {
         let row = output.row(i);
@@ -294,8 +294,8 @@ fn multi_quantile_vs_separate_models() {
 
     // Predictions should be correlated
     for (q, single_model) in single_models.iter().enumerate() {
-        let multi_output = multi_model.predict_batch(&data, &[0.0; 3]);
-        let single_output = single_model.predict_batch(&data, &[0.0]);
+        let multi_output = multi_model.predict(&data, &[0.0; 3]);
+        let single_output = single_model.predict(&data, &[0.0]);
 
         let mut multi_preds = Vec::with_capacity(data.num_rows());
         let mut single_preds = Vec::with_capacity(data.num_rows());

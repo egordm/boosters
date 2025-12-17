@@ -69,8 +69,8 @@ fn train_pseudo_huber_regression() {
     // Compute RMSE on test set for both
     use booste_rs::training::Metric;
 
-    let ph_output = model.predict_batch(&test_data, &[]);
-    let sq_output = sq_model.predict_batch(&test_data, &[]);
+    let ph_output = model.predict(&test_data, &[]);
+    let sq_output = sq_model.predict(&test_data, &[]);
 
     let ph_rmse = Rmse.compute(test_labels.len(), 1, ph_output.as_slice(), &test_labels, &[]);
     let sq_rmse = Rmse.compute(test_labels.len(), 1, sq_output.as_slice(), &test_labels, &[]);
@@ -124,9 +124,9 @@ fn train_pseudo_huber_with_delta() {
 
     use booste_rs::training::Metric;
 
-    let moderate_output = moderate_model.predict_batch(&test_data, &[]);
-    let large_output = large_model.predict_batch(&test_data, &[]);
-    let sq_output = sq_model.predict_batch(&test_data, &[]);
+    let moderate_output = moderate_model.predict(&test_data, &[]);
+    let large_output = large_model.predict(&test_data, &[]);
+    let sq_output = sq_model.predict(&test_data, &[]);
 
     let moderate_rmse = Rmse.compute(test_labels.len(), 1, moderate_output.as_slice(), &test_labels, &[]);
     let large_rmse = Rmse.compute(test_labels.len(), 1, large_output.as_slice(), &test_labels, &[]);
@@ -198,12 +198,12 @@ fn train_hinge_binary_classification() {
     // - Logistic: transform logits to probabilities via objective transform, then threshold at 0.5.
     use booste_rs::training::Metric;
 
-    let hinge_output = hinge_model.predict_batch(&test_data, &[]);
+    let hinge_output = hinge_model.predict(&test_data, &[]);
     let hinge_acc = MarginAccuracy::default()
         .compute(test_labels.len(), 1, hinge_output.as_slice(), &test_labels, &[])
         as f32;
 
-    let mut logistic_output = logistic_model.predict_batch(&test_data, &[]);
+    let mut logistic_output = logistic_model.predict(&test_data, &[]);
     LogisticLoss.transform_prediction_inplace(&mut logistic_output);
     let logistic_acc = Accuracy::with_threshold(0.5)
         .compute(

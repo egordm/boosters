@@ -58,8 +58,8 @@ fn run_synthetic_regression(rows: usize, cols: usize, trees: u32, depth: u32, se
 	let row_valid: RowMatrix<f32> = RowMatrix::from_vec(x_valid, valid_idx.len(), cols);
 
 	let params = default_params(trees, GrowthStrategy::DepthWise { max_depth: depth }, seed);
-	let trainer = GBDTTrainer::new(SquaredLoss, params);
-	let forest = trainer.train(&binned_train, &y_train, &[]).unwrap();
+	let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+	let forest = trainer.train(&binned_train, &y_train, &[], &[]).unwrap();
 	let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
 	let pred = predictor.predict(&row_valid);
 	let pred0: Vec<f32> = (0..row_valid.num_rows()).map(|r| pred.row(r)[0]).collect();
@@ -86,8 +86,8 @@ fn run_synthetic_binary(rows: usize, cols: usize, trees: u32, depth: u32, seed: 
 	let row_valid: RowMatrix<f32> = RowMatrix::from_vec(x_valid, valid_idx.len(), cols);
 
 	let params = default_params(trees, GrowthStrategy::DepthWise { max_depth: depth }, seed);
-	let trainer = GBDTTrainer::new(LogisticLoss, params);
-	let forest = trainer.train(&binned_train, &y_train, &[]).unwrap();
+	let trainer = GBDTTrainer::new(LogisticLoss, LogLoss, params);
+	let forest = trainer.train(&binned_train, &y_train, &[], &[]).unwrap();
 	let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
 	let raw = predictor.predict(&row_valid);
 	let mut prob: Vec<f32> = (0..row_valid.num_rows()).map(|r| raw.row(r)[0]).collect();
@@ -122,8 +122,8 @@ fn run_synthetic_multiclass(
 	let row_valid: RowMatrix<f32> = RowMatrix::from_vec(x_valid, valid_idx.len(), cols);
 
 	let params = default_params(trees, GrowthStrategy::DepthWise { max_depth: depth }, seed);
-	let trainer = GBDTTrainer::new(SoftmaxLoss::new(classes), params);
-	let forest = trainer.train(&binned_train, &y_train, &[]).unwrap();
+	let trainer = GBDTTrainer::new(SoftmaxLoss::new(classes), MulticlassLogLoss, params);
+	let forest = trainer.train(&binned_train, &y_train, &[], &[]).unwrap();
 	let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
 	let raw = predictor.predict(&row_valid);
 

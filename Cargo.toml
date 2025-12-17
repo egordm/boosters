@@ -100,14 +100,19 @@ path = "benches/suites/e2e/train_predict_gbdt.rs"
 
 # Unified comparison benchmarks (preferred)
 [[bench]]
-name = "compare_training"
+name = "gbdt_training"
 harness = false
-path = "benches/suites/compare/training.rs"
+path = "benches/suites/compare/gbdt_training.rs"
 
 [[bench]]
-name = "compare_prediction"
+name = "gbdt_prediction"
 harness = false
-path = "benches/suites/compare/prediction.rs"
+path = "benches/suites/compare/gbdt_prediction.rs"
+
+[[bench]]
+name = "gblinear_training"
+harness = false
+path = "benches/suites/compare/gblinear_training.rs"
 
 # Feature benchmarks
 [[bench]]

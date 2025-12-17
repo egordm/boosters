@@ -605,8 +605,8 @@ fn train_boosters(
 
 	match config.task {
 		Task::Regression => {
-			let trainer = GBDTTrainer::new(SquaredLoss, params);
-			let forest = trainer.train(&binned_train, y_train, &[]).unwrap();
+			let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+			let forest = trainer.train(&binned_train, y_train, &[], &[]).unwrap();
 			let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
 			let pred = predictor.predict(&row_valid);
 			let pred0 = extract_group(&pred, 0);
@@ -615,8 +615,8 @@ fn train_boosters(
 			LibraryMetrics { metrics: MetricsJson { rmse: Some(rmse), mae: Some(mae), ..Default::default() } }
 		}
 		Task::Binary => {
-			let trainer = GBDTTrainer::new(LogisticLoss, params);
-			let forest = trainer.train(&binned_train, y_train, &[]).unwrap();
+			let trainer = GBDTTrainer::new(LogisticLoss, LogLoss, params);
+			let forest = trainer.train(&binned_train, y_train, &[], &[]).unwrap();
 			let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
 			let raw = predictor.predict(&row_valid);
 			let mut prob = extract_group(&raw, 0);
@@ -627,8 +627,8 @@ fn train_boosters(
 		}
 		Task::Multiclass => {
 			let num_classes = config.classes.unwrap_or(3);
-			let trainer = GBDTTrainer::new(SoftmaxLoss::new(num_classes), params);
-			let forest = trainer.train(&binned_train, y_train, &[]).unwrap();
+			let trainer = GBDTTrainer::new(SoftmaxLoss::new(num_classes), MulticlassLogLoss, params);
+			let forest = trainer.train(&binned_train, y_train, &[], &[]).unwrap();
 			let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
 			let raw = predictor.predict(&row_valid);
 			let mut prob_row_major = vec![0.0f32; rows_valid * num_classes];

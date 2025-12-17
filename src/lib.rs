@@ -15,7 +15,7 @@
 //! ```ignore
 //! use booste_rs::{
 //!     data::BinnedDatasetBuilder,
-//!     training::{GBDTTrainer, GBDTParams, SquaredLoss},
+//!     training::{GBDTTrainer, GBDTParams, SquaredLoss, Rmse},
 //! };
 //!
 //! // Prepare data
@@ -25,8 +25,8 @@
 //!     .unwrap();
 //!
 //! // Train model
-//! let trainer = GBDTTrainer::new(SquaredLoss, GBDTParams::default());
-//! let forest = trainer.train(&dataset, &targets, &[]);
+//! let trainer = GBDTTrainer::new(SquaredLoss, Rmse, GBDTParams::default());
+//! let forest = trainer.train(&dataset, &targets, &[], &[]);
 //!
 //! // Predict using forest directly
 //! let prediction = forest.predict_row(&test_row);

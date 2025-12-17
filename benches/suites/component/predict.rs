@@ -7,7 +7,9 @@ use common::criterion_config::default_criterion;
 use common::models::load_boosters_model;
 
 use booste_rs::data::RowMatrix;
-use booste_rs::inference::gbdt::{Predictor, UnrolledTraversal6};
+use booste_rs::inference::gbdt::{Predictor, StandardTraversal, UnrolledTraversal6};
+#[cfg(feature = "simd")]
+use booste_rs::inference::gbdt::SimdTraversal6;
 use booste_rs::testing::data::random_dense_f32;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
@@ -81,9 +83,45 @@ fn bench_gbtree_single_row(c: &mut Criterion) {
 	});
 }
 
+/// Compare traversal strategies: Standard vs Unrolled vs SIMD
+fn bench_traversal_strategies(c: &mut Criterion) {
+	let model = load_boosters_model("bench_medium");
+	let num_features = model.num_features;
+	
+	let batch_size = 10_000usize;
+	let input_data = random_dense_f32(batch_size, num_features, 42, -5.0, 5.0);
+	let matrix = RowMatrix::from_vec(input_data, batch_size, num_features);
+
+	let mut group = c.benchmark_group("component/predict/traversal");
+	group.throughput(Throughput::Elements(batch_size as u64));
+
+	// Standard traversal (baseline)
+	let standard = Predictor::<StandardTraversal>::new(&model.forest).with_block_size(64);
+	group.bench_with_input(BenchmarkId::new("standard", batch_size), &matrix, |b, m| {
+		b.iter(|| black_box(standard.predict(black_box(m))))
+	});
+
+	// Unrolled traversal (6 levels)
+	let unrolled = Predictor::<UnrolledTraversal6>::new(&model.forest).with_block_size(64);
+	group.bench_with_input(BenchmarkId::new("unrolled6", batch_size), &matrix, |b, m| {
+		b.iter(|| black_box(unrolled.predict(black_box(m))))
+	});
+
+	// SIMD traversal (when feature enabled)
+	#[cfg(feature = "simd")]
+	{
+		let simd = Predictor::<SimdTraversal6>::new(&model.forest).with_block_size(64);
+		group.bench_with_input(BenchmarkId::new("simd6", batch_size), &matrix, |b, m| {
+			b.iter(|| black_box(simd.predict(black_box(m))))
+		});
+	}
+
+	group.finish();
+}
+
 criterion_group! {
 	name = benches;
 	config = default_criterion();
-	targets = bench_gbtree_batch_sizes, bench_gbtree_model_sizes, bench_gbtree_single_row
+	targets = bench_gbtree_batch_sizes, bench_gbtree_model_sizes, bench_gbtree_single_row, bench_traversal_strategies
 }
 criterion_main!(benches);
