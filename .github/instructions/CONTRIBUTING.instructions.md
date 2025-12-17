@@ -37,12 +37,10 @@ We use a lightweight agile structure:
 ```
 docs/
 ├── ROADMAP.md              # High-level priorities & current focus
-├── backlog/
-│   ├── 01-gbtree-inference.md # Epic: GBTree Inference (complete)
-│   ├── 02-gblinear.md         # Epic: GBLinear Support (active)
-│   └── 99-future.md           # Backlog of future epics
-└── design/
-    └── rfcs/               # Design documents
+├── README.md               # Documentation overview
+├── benchmarks/             # Performance and quality reports
+├── rfcs/                   # Design documents and RFCs
+└── research/               # Implementation research
 ```
 
 **Key principle**: Each epic file uses relative numbering (Story 1, 2, 3...) so
@@ -121,8 +119,7 @@ If you update an accepted RFC, add a changelog at the bottom:
 | Public API docs | `///` rustdoc on pub items | As you implement |
 | Internal notes | `//` comments | When non-obvious |
 | Module overview | `//!` at top of file | Once module is stable |
-| Design rationale | RFC or `docs/design/research/` | Before/during implementation |
-| Quick thoughts | `docs/design/NOTES.md` | Anytime |
+| Design rationale | RFC or `docs/research/` | Before/during implementation |
 
 ### Rustdoc Guidelines
 
@@ -234,7 +231,7 @@ mod tests {
 
 ## Implementation Research
 
-Use `docs/design/research/` for deep dives:
+Use `docs/research/` for deep dives:
 
 - XGBoost/LightGBM internals exploration
 - Performance experiments
@@ -245,10 +242,10 @@ Use `docs/design/research/` for deep dives:
 Example structure:
 
 ```
-docs/design/research/
+docs/research/
 ├── xgboost-gbtree/         # GBTree-specific research
-├── gblinear/               # GBLinear-specific research
-└── lightgbm/               # Future LightGBM research
+├── xgboost-gblinear/       # GBLinear-specific research
+└── lightgbm/               # LightGBM research
 ```
 
 ---
@@ -394,12 +391,9 @@ Include the short commit hash to track which code version was benchmarked.
 | Content | Location |
 |---------|----------|
 | High-level roadmap | `docs/ROADMAP.md` |
-| Epic details | `docs/backlog/<epic>.md` |
-| RFCs (design docs) | `docs/design/rfcs/0XXX-*.md` |
-| RFC template | `docs/design/rfcs/TEMPLATE.md` |
-| Research & deep dives | `docs/design/research/` |
-| Scratch notes | `docs/design/NOTES.md` |
-| This guide | `docs/design/CONTRIBUTING.md` |
+| RFCs (design docs) | `docs/rfcs/0XXX-*.md` |
+| RFC template | `docs/rfcs/TEMPLATE.md` |
+| Research & deep dives | `docs/research/` |
 | Benchmarks reports | `docs/benchmarks/` |
 | Benchmark template | `docs/benchmarks/TEMPLATE.md` |
 | Benchmark code | `benches/` |
