@@ -9,15 +9,6 @@ per bin.
 
 ## The Core Insight
 
-### ELI5
-
-Imagine you're a teacher sorting students by test scores to decide who needs extra help.
-You could look at every individual score (95.2, 87.4, 73.1, ...), but that's tedious.
-Instead, you create buckets: A (90-100), B (80-89), C (70-79), etc. Now you only need
-to decide which bucket boundary is the best dividing line — much faster!
-
-### ELI13
-
 Traditional split finding examines every unique value:
 
 ```text
@@ -34,8 +25,6 @@ Count gradients per bin: bin[0]: sum_g=5.2, sum_h=3.1
                          ...
 Try each bin as split: for each bin, compute gain   ← O(bins) where bins << n
 ```
-
-### ELI-Grad
 
 For a candidate split at bin boundary $b$, we partition samples into left ($I_L$) and
 right ($I_R$) sets. The split gain is:
@@ -162,6 +151,7 @@ LightGBM can quantize gradients themselves for even faster histogram building:
 | int8 packed | 1 byte | 2 bytes |
 
 Benefits:
+
 - 4-8× less memory bandwidth
 - Faster histogram accumulation
 - Slight accuracy trade-off

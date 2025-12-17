@@ -11,18 +11,9 @@ CatBoost, and other popular libraries.
 
 ## The Core Idea
 
-### ELI5
-
-Imagine you're trying to predict house prices. The first tree might learn "big houses cost more."
-But it gets some predictions wrong. The second tree focuses only on those mistakes — maybe it
-learns "houses near good schools cost more than the first tree thought." Each new tree fixes
-what the previous trees got wrong, and together they make better predictions than any single tree.
-
-### ELI13
-
 GBDT builds an ensemble of trees sequentially:
 
-```
+```text
 Prediction = Tree₁(x) + Tree₂(x) + Tree₃(x) + ... + Treeₘ(x)
 ```
 
@@ -30,12 +21,6 @@ Each tree is trained on the **gradient** of the loss function with respect to th
 predictions. For squared error loss, this is simply the residual (actual - predicted).
 For other losses, it's the gradient that tells us "which direction should we move the
 prediction to reduce error?"
-
-### ELI-Grad
-
-At iteration $m$, we have ensemble $F^{(m-1)}(x)$. The next tree $h_m$ is trained to approximate:
-
-$$h_m(x) \approx -\frac{\partial L(y, F^{(m-1)}(x))}{\partial F^{(m-1)}(x)}$$
 
 Modern implementations (XGBoost, LightGBM) use a second-order Taylor expansion. For each
 sample $i$ at a given tree node, we compute:
@@ -148,8 +133,7 @@ Efficient prediction with trained models:
 
 | Document | Description |
 |----------|-------------|
-| [Overview](inference/) | GBDT inference pipeline |
-| [Batch Traversal](inference/batch-traversal.md) | Block-based prediction |
+| [Batch Traversal](inference/batch-traversal.md) | Block-based prediction, cache efficiency |
 | [Multi-Output](inference/multi-output.md) | Multi-class and multi-target |
 
 ### Data Structures
@@ -158,10 +142,9 @@ Key representations for training and inference:
 
 | Document | Description |
 |----------|-------------|
-| [Overview](data-structures/) | Data structure design choices |
-| [Histogram Cuts](data-structures/histogram-cuts.md) | Bin boundaries |
+| [Histogram Cuts](data-structures/histogram-cuts.md) | Bin boundaries and quantile sketches |
 | [Quantized Data](data-structures/quantized-matrix.md) | Binned feature storage |
-| [Tree Storage](data-structures/tree-storage.md) | Tree representation formats |
+| [Tree Storage](data-structures/tree-storage.md) | AoS vs SoA tree layouts |
 
 ---
 

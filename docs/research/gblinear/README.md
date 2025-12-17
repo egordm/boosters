@@ -19,16 +19,9 @@ relationships or as a quick baseline.
 
 ## The Core Idea
 
-### ELI5
+A linear model predicts by summing weighted features:
 
-A linear model is like a recipe: each ingredient (feature) has a fixed contribution to the
-result. If "bedrooms" has weight +20,000 and "bathrooms" has weight +15,000, then a house
-with 3 bedrooms and 2 baths gets: `3×20,000 + 2×15,000 = 90,000` added to its predicted price.
-
-Compare this to GBDT, which learns rules like "if bedrooms > 3 AND near park, then +$50k".
-Linear models are simpler but can't capture such interactions.
-
-### ELI-Grad
+$$\hat{y} = w_0 + w_1 x_1 + w_2 x_2 + \ldots + w_n x_n = \mathbf{w}^T \mathbf{x} + b$$
 
 GBLinear minimizes the elastic net objective:
 

@@ -1,20 +1,10 @@
 # Batch Traversal
 
-## ELI5
-
-Imagine you're a teacher grading tests. You could:
-1. Grade one student's entire test, then the next student's, etc.
-2. Grade Question 1 for ALL students, then Question 2 for ALL students, etc.
-
-The second way is faster because you keep the answer key for Question 1 in your head while grading everyone's answer—you don't have to keep looking it up!
-
-**Batch traversal** works similarly: instead of running one sample through all trees, we run many samples through each tree together. This keeps tree nodes "in our head" (CPU cache) while processing all samples.
-
-## ELI-Grad
+## Overview
 
 Batch traversal is an optimization that processes multiple samples together through a tree ensemble, improving cache utilization and enabling vectorization. The key insight is that **tree structure is read-only during inference**—if we process many samples simultaneously, they all share access to the same tree nodes.
 
-### The Cache Efficiency Problem
+## The Cache Efficiency Problem
 
 Modern CPUs have a memory hierarchy:
 
@@ -80,6 +70,7 @@ ALGORITHM: BatchPredict(samples, trees, block_size=64)
 **Recommended default: 64 samples**
 
 This matches:
+
 - Typical L1 cache line behavior
 - Common SIMD register widths (8x8 or 4x16 patterns)
 - GPU warp sizes (32 threads, 2 warps per block)
@@ -235,6 +226,7 @@ WITH staging (good):
 ```
 
 Benefits:
+
 - Original data might be column-major (bad for row access)
 - Staged buffer is compact and cache-friendly
 - Same features reused across many trees
@@ -352,6 +344,7 @@ SIMD gather instructions exist but are slower than contiguous loads.
 ### Practical SIMD Strategy
 
 Focus SIMD on predictable parts:
+
 - **Level-by-level comparison**: All samples at same level, vectorize threshold comparison
 - **Leaf accumulation**: Vectorize adding leaf values to outputs
 - **Multi-tree parallelism**: Process 4/8 trees simultaneously for one sample

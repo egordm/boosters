@@ -1,14 +1,6 @@
 # Multi-Output Inference
 
-## ELI5
-
-Normally, a decision tree gives you one answer per prediction (like "the house price is $350,000"). But sometimes you want multiple answers at once:
-- "This image shows a cat (90% sure) and might show a dog (10% sure) and definitely not a bird (1%)"
-- "Tomorrow's temperature will be 72°F, humidity will be 65%, and wind speed will be 8mph"
-
-**Multi-output trees** give you several numbers at each leaf instead of just one, answering multiple questions simultaneously.
-
-## ELI-Grad
+## Overview
 
 Multi-output prediction extends tree ensembles to produce K output values per sample, supporting:
 
@@ -50,6 +42,7 @@ Prediction: sum of leaf values from all trees -> single scalar
 ```
 
 Used for:
+
 - Binary classification (single logit)
 - Scalar regression
 - Ranking
@@ -69,6 +62,7 @@ Prediction: sum of leaf vectors from all trees -> vector of K values
 ```
 
 Used for:
+
 - Multi-class classification (K class logits)
 - Multi-target regression (K target values)
 
@@ -85,6 +79,7 @@ Leaf {
 ```
 
 Problems:
+
 - Pointer indirection per leaf access
 - Cache-unfriendly scattered allocations
 - Cannot vectorize accumulation
@@ -103,6 +98,7 @@ Access leaf i: leaf_values[i * K : (i+1) * K]
 ```
 
 Benefits:
+
 - Contiguous reads: load entire leaf vector with one cache line
 - SIMD-friendly: aligned vectors enable vectorized accumulation
 - Memory efficient: no pointer overhead
@@ -245,18 +241,21 @@ This is applied independently for each of the K outputs.
 For B samples and K outputs:
 
 **Row-major** (outputs contiguous per sample):
+
 ```
 output: [S0_O0, S0_O1, S0_O2, S1_O0, S1_O1, S1_O2, S2_O0, ...]
          |-- Sample 0 ---|  |-- Sample 1 ---|  |-- Sample 2...
 ```
 
 **Column-major** (samples contiguous per output):
+
 ```
 output: [S0_O0, S1_O0, S2_O0, S0_O1, S1_O1, S2_O1, S0_O2, ...]
          |-- Output 0 ---|  |-- Output 1 ---|  |-- Output 2...
 ```
 
-**Recommendation**: 
+**Recommendation**:
+
 - Row-major for CPU (cache-friendly per sample, natural for most use cases)
 - Column-major for GPU (coalesced writes when threads handle different samples)
 
@@ -318,11 +317,13 @@ The max subtraction prevents overflow when logits are large.
 ### Separate Trees per Output
 
 **Advantages**:
+
 - Simpler implementation (standard scalar trees)
 - Each output can have different tree structure
 - Parallelizable by output
 
 **Disadvantages**:
+
 - No shared representation learning across outputs
 - K times more trees to store and traverse
 - Cannot exploit correlations between outputs
@@ -330,11 +331,13 @@ The max subtraction prevents overflow when logits are large.
 ### Vector Leaves
 
 **Advantages**:
+
 - Captures correlations between outputs (shared splits)
 - More compact model (one tree predicts all outputs)
 - Single traversal per tree
 
 **Disadvantages**:
+
 - More complex training (K gradients per sample)
 - All outputs must use same tree structure
 - Larger leaf storage

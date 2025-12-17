@@ -47,19 +47,9 @@ algorithm folder contains:
 
 - `training/` — How models are trained
 - `inference/` — How predictions are made  
-- `data-structures/` — Key representations
+- `data-structures/` — Key representations (GBDT only)
 
 This reflects that training and inference have different concerns and optimizations.
-
-### ELI5 / ELI13 / ELI-Grad Format
-
-Many documents use layered explanations:
-
-- **ELI5**: Simple intuition with analogies
-- **ELI13**: More complete picture with some technical details  
-- **ELI-Grad**: Full mathematical/algorithmic details
-
-This helps readers at different levels understand the material.
 
 ---
 
@@ -68,25 +58,24 @@ This helps readers at different levels understand the material.
 ### GBDT Training Pipeline
 
 1. **Quantization**: [gbdt/training/quantization.md](gbdt/training/quantization.md)
-   - Convert continuous features to discrete bins
+   — Convert continuous features to discrete bins
 
 2. **Histogram Building**: [gbdt/training/histogram-training.md](gbdt/training/histogram-training.md)
-   - Aggregate gradients per bin
-   - Subtraction trick for efficiency
+   — Aggregate gradients per bin, subtraction trick
 
 3. **Split Finding**: [gbdt/training/split-finding.md](gbdt/training/split-finding.md)
-   - Evaluate gain for candidate splits
-   - Handle missing values
+   — Evaluate gain for candidate splits
 
 4. **Tree Growth**: [gbdt/training/tree-growth-strategies.md](gbdt/training/tree-growth-strategies.md)
-   - Depth-wise vs leaf-wise growth
+   — Depth-wise vs leaf-wise growth
 
 5. **Sampling**: [gbdt/training/sampling-strategies.md](gbdt/training/sampling-strategies.md)
-   - Random subsampling and GOSS
+   — Random subsampling and GOSS
 
 ### GBDT Inference
 
-- [gbdt/inference/](gbdt/inference/) — Batch traversal, multi-output
+- [gbdt/inference/batch-traversal.md](gbdt/inference/batch-traversal.md) — Batch prediction
+- [gbdt/inference/multi-output.md](gbdt/inference/multi-output.md) — Multi-class/multi-target
 
 ### GBLinear
 
