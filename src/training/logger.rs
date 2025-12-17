@@ -11,11 +11,11 @@ use super::eval::MetricValue;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Verbosity {
     /// No output.
+    #[default]
     Silent,
     /// Errors and warnings only.
     Warning,
     /// Progress and important information.
-    #[default]
     Info,
     /// Detailed debugging information.
     Debug,
