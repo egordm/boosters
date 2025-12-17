@@ -1,14 +1,9 @@
 # Categorical Feature Handling
 
-## ELI5
+## Overview
 
-Imagine you're sorting fruits. With numbers (like weight), you can say "heavier than 100g goes left, lighter goes right." But with categories (like apple, banana, orange), there's no natural order—you can't say "bigger than banana."
-
-**Categorical handling** solves this by asking: "Which fruits should go left?" Maybe {apple, orange} go left and {banana} goes right. The tree learns the best grouping.
-
-## ELI-Grad
-
-Categorical features (discrete values without natural ordering) require special split mechanisms because threshold-based splits are meaningless:
+Categorical features (discrete values without natural ordering) require special split mechanisms
+because threshold-based splits are meaningless:
 
 **Numerical feature (ordered)**:
 $$\text{Split: } x_j \le t \rightarrow \text{left, otherwise right}$$
@@ -18,9 +13,10 @@ $$\text{Split: } x_j \in S \rightarrow \text{left, otherwise right}$$
 
 where $S \subset \{\text{all categories}\}$ is a subset of categories.
 
-### The Combinatorial Challenge
+## The Combinatorial Challenge
 
-For a categorical feature with $k$ categories, there are $2^{k-1} - 1$ possible binary partitions (non-empty, non-trivial subsets up to symmetry).
+For a categorical feature with $k$ categories, there are $2^{k-1} - 1$ possible binary partitions
+(non-empty, non-trivial subsets up to symmetry).
 
 | Categories | Possible Partitions |
 |------------|---------------------|
@@ -38,7 +34,7 @@ Exhaustive search is only feasible for small $k$. Larger cardinalities require a
 
 Convert each category to a binary feature:
 
-```
+```text
 Original: color ∈ {red, blue, green}
 
 One-hot encoded:
@@ -48,11 +44,13 @@ One-hot encoded:
 ```
 
 **Advantages**:
+
 - Works with any tree implementation (no special support needed)
 - Each split tests one category ("is color = red?")
 - Simple and well-understood
 
 **Disadvantages**:
+
 - Feature explosion: k categories → k features
 - Memory inefficient for high cardinality
 - Tree depth increases (multiple splits needed to test subsets)
@@ -62,17 +60,19 @@ One-hot encoded:
 
 Trees directly support partition-based splits:
 
-```
+```text
 Split: color ∈ {red, green} → left, {blue} → right
 ```
 
 **Advantages**:
+
 - No feature expansion
 - More expressive splits (arbitrary subsets in one split)
 - Compact model representation
 - Can capture "similar category" relationships
 
 **Disadvantages**:
+
 - Exponential split candidates ($2^{k-1}$)
 - Requires specialized algorithms
 - Additional storage for category sets
@@ -83,7 +83,7 @@ Split: color ∈ {red, green} → left, {blue} → right
 
 For few categories (k ≤ 4-8), enumerate all possible binary partitions:
 
-```
+```text
 ALGORITHM: ExhaustiveCategoricalSplit(categories, gradients, hessians)
 ----------------------------------------------------------------------
 1. k <- |categories|
@@ -111,7 +111,7 @@ ALGORITHM: ExhaustiveCategoricalSplit(categories, gradients, hessians)
 
 For k ≤ `max_cat_to_onehot` (default 4), test each category individually:
 
-```
+```text
 ALGORITHM: OneHotCategoricalSplit(categories, gradients, hessians)
 ------------------------------------------------------------------
 1. best_gain <- -infinity
@@ -131,7 +131,8 @@ ALGORITHM: OneHotCategoricalSplit(categories, gradients, hessians)
 15. RETURN {best_category}, best_gain
 ```
 
-This finds the single best category to isolate but won't find multi-category partitions like {red, green} vs {blue}.
+This finds the single best category to isolate but won't find multi-category partitions
+like {red, green} vs {blue}.
 
 **Complexity**: O(k) per split—linear in number of categories.
 
@@ -140,12 +141,13 @@ This finds the single best category to isolate but won't find multi-category par
 For k > `max_cat_to_onehot`, LightGBM uses a clever approximation based on a classic result:
 
 **Key Insight (Fisher, 1958)**: For squared error loss, the optimal binary partition can be found by:
+
 1. Sort categories by their mean target value
 2. Test all O(k) split points in this sorted order
 
 For gradient boosting, we use the gradient/hessian ratio as a proxy for "mean target":
 
-```
+```text
 ALGORITHM: GradientSortedCategoricalSplit(categories, gradients, hessians)
 --------------------------------------------------------------------------
 1. // Step 1: Compute per-category gradient ratio
@@ -178,11 +180,14 @@ ALGORITHM: GradientSortedCategoricalSplit(categories, gradients, hessians)
 28. RETURN sorted_cats[0:best_split_point], best_gain
 ```
 
-**Why This Works**: Categories with similar gradient/hessian ratios have similar optimal leaf values and should be grouped together. Sorting by ratio orders categories by their "effect direction," and the optimal partition is contiguous in this ordering.
+**Why This Works**: Categories with similar gradient/hessian ratios have similar optimal
+leaf values and should be grouped together. Sorting by ratio orders categories by their
+"effect direction," and the optimal partition is contiguous in this ordering.
 
 **Complexity**: O(k log k) for sorting + O(k) for scanning = O(k log k)
 
-> **Reference**: `LightGBM/src/treelearner/feature_histogram.cpp`, Fisher, W.D. (1958), "On Grouping for Maximum Homogeneity"
+> **Reference**: `LightGBM/src/treelearner/feature_histogram.cpp`, Fisher, W.D. (1958),
+> "On Grouping for Maximum Homogeneity"
 
 ### Algorithm Comparison
 
@@ -198,7 +203,7 @@ ALGORITHM: GradientSortedCategoricalSplit(categories, gradients, hessians)
 
 Store the "goes left" category set as a bitset:
 
-```
+```text
 Categories: {0: apple, 1: banana, 2: cherry, 3: date}
 Split: {apple, cherry} go left
 
@@ -216,7 +221,7 @@ Decision: IF bitset & (1 << category) THEN left ELSE right
 
 Pack bits into machine words:
 
-```
+```text
 For up to 64 categories: 1 uint64 word
 For up to 128 categories: 2 uint64 words
 For k categories: ceil(k / 64) uint64 words
@@ -228,7 +233,7 @@ Storage per split node: ceil(max_category / 64) * 8 bytes
 
 Different splits may have different cardinalities. Use CSR-like storage:
 
-```
+```text
 Categorical split storage:
   data:    [word0, word1, word2, word3, ...]  // All bitsets packed
   offsets: [0, 1, 3, 3, 5, ...]               // Start index per node
@@ -250,6 +255,7 @@ Access bitset for node i:
 | 10,000 | 157 | 1,256 |
 
 For high-cardinality features, consider:
+
 - Limiting to top-k most frequent categories
 - Hashing to fixed range
 - Rejecting categorical split if cardinality exceeds threshold
@@ -258,7 +264,7 @@ For high-cardinality features, consider:
 
 ### Traversal with Categorical Splits
 
-```
+```text
 ALGORITHM: TraverseWithCategorical(node, features, tree)
 --------------------------------------------------------
 1. WHILE node is not leaf:
@@ -288,7 +294,7 @@ ALGORITHM: TraverseWithCategorical(node, features, tree)
 
 LightGBM packs split metadata into a single byte:
 
-```
+```text
 decision_type byte layout:
   Bit 0: Categorical flag     (0=numerical, 1=categorical)
   Bit 1: Default left flag    (0=missing→right, 1=missing→left)
@@ -304,11 +310,12 @@ Example: decision_type = 0b00000101 = 5
 
 ## Regularization for Categorical Splits
 
-Categorical splits are prone to overfitting, especially with high cardinality (can perfectly separate small groups). Apply extra regularization:
+Categorical splits are prone to overfitting, especially with high cardinality
+(can perfectly separate small groups). Apply extra regularization:
 
 ### Additional L2 Penalty
 
-```
+```text
 Standard leaf value: w = -G / (H + lambda)
 
 With categorical penalty: w = -G / (H + lambda + cat_l2)
@@ -320,7 +327,7 @@ LightGBM default: cat_l2 = 10.0
 
 Prevent extreme ratios for rare categories:
 
-```
+```text
 Standard ratio: ratio = G / H
 Smoothed ratio: ratio = G / (H + cat_smooth)
 
@@ -331,7 +338,7 @@ LightGBM default: cat_smooth = 10.0
 
 Skip categories with insufficient data:
 
-```
+```text
 IF count[category] < min_data_per_group:
     exclude category from split finding
 
@@ -342,7 +349,7 @@ LightGBM default: min_data_per_group = 100
 
 Limit complexity of category sets:
 
-```
+```text
 Only consider top max_cat_threshold categories by |G/H| magnitude
 
 LightGBM default: max_cat_threshold = 32
@@ -350,19 +357,22 @@ LightGBM default: max_cat_threshold = 32
 
 ## When to Use Each Approach
 
-### Use One-Hot Encoding When:
+### Use One-Hot Encoding When
+
 - Cardinality is low (< 10 categories)
 - Using a library without native categorical support
 - Interpretability is important (one feature per category)
 - Categories are expected to have independent effects
 
-### Use Native Categorical When:
+### Use Native Categorical When
+
 - Cardinality is moderate (10-1000 categories)
 - Memory efficiency matters
 - Categories should be grouped (e.g., similar products, related locations)
 - Using LightGBM, XGBoost (with `enable_categorical`), or compatible implementation
 
-### Consider Alternatives When:
+### Consider Alternatives When
+
 - Very high cardinality (> 1000): Target encoding, embeddings
 - Ordinal relationship exists: Treat as numerical
 - Too few samples per category: Group rare categories into "other"
@@ -373,7 +383,7 @@ LightGBM default: max_cat_threshold = 32
 
 ### The Problem
 
-```
+```text
 Training data categories: ["apple", "banana", "cherry"]
 Mapping: apple→0, banana→1, cherry→2
 
@@ -385,7 +395,7 @@ The model learned that "0" means apple, but inference is sending cherry as 0.
 
 ### Solution: Store Encoder with Model
 
-```
+```text
 Model artifact should include:
   1. Tree ensemble (splits, leaves)
   2. Category encoder (category string → integer mapping per feature)

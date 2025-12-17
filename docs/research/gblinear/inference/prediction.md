@@ -4,7 +4,7 @@ How inference works for linear models, and why there are fewer optimizations tha
 
 ## Inference Algorithm
 
-Prediction is just a weighted sum — the simplest possible model evaluation:
+Prediction is a weighted sum — the simplest possible model evaluation:
 
 $$
 \text{output}[g] = \text{bias}[g] + \sum_{j} x_j \cdot w_{j,g}
@@ -15,11 +15,7 @@ Where:
 - $w_{j,g}$ = weight for feature $j$, output group $g$
 - $\text{bias}[g]$ = bias term for output group $g$
 
-### ELI5
-
-Linear prediction is like calculating a grocery bill: multiply each item's quantity by its price, add them up, done. No conditionals, no branching — just multiply and add.
-
-### Pseudocode: Dense Features
+### Dense Features
 
 ```python
 def predict_linear(features, weights, bias, num_groups):
@@ -32,7 +28,7 @@ def predict_linear(features, weights, bias, num_groups):
     return outputs
 ```
 
-### Pseudocode: Sparse Features
+### Sparse Features
 
 For sparse data, only non-zero features contribute:
 
@@ -51,13 +47,13 @@ def predict_sparse(indices, values, weights, bias, num_groups):
 
 Like tree models, linear models add a base score to predictions:
 
-```python
+```text
 output = bias + base_score + Σ(feature × weight)
 ```
 
 If per-row `base_margin` values are provided, those override the global base score:
 
-```python
+```text
 output = bias + base_margin[row] + Σ(feature × weight)
 ```
 
@@ -129,6 +125,7 @@ Linear models have significantly fewer optimizations than tree methods. Here's w
 ### 1. Inherent Simplicity
 
 The prediction loop is just:
+
 ```cpp
 for (auto& entry : sparse_row) {
     sum += entry.fvalue * weights[entry.index];

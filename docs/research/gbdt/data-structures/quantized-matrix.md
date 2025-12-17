@@ -1,342 +1,232 @@
 # Quantized Feature Matrix
 
-## Overview
+A quantized feature matrix stores pre-computed bin indices for all (sample, feature) pairs,
+enabling O(1) histogram updates instead of O(log b) per-sample bin lookups during training.
 
-A quantized feature matrix stores pre-computed bin indices for all (sample, feature) pairs. Given histogram cuts computed during preprocessing, the quantization function:
+---
+
+## Core Concept
+
+Given histogram cuts computed during preprocessing, the quantization function:
 
 $$Q(x_{i,j}) = \text{SearchBin}(x_{i,j}, \text{cuts}_j)$$
 
-maps each raw feature value to its bin index. This transformation is performed once during data loading, amortizing the O(log b) binary search cost across all subsequent histogram operations.
+maps each raw feature value to its bin index. This transformation is performed once
+during data loading, amortizing the O(log b) binary search cost.
 
-## Key Benefits
+### The Space-Time Trade-off
 
-| Benefit | Explanation |
-|---------|-------------|
-| **Memory reduction** | 1 byte (uint8) vs 4 bytes (float32) per value |
-| **Cache efficiency** | 4x more data fits in cache |
-| **Integer operations** | Bin comparisons are integer ops (faster than float) |
-| **SIMD friendly** | Pack 32 uint8 values into one AVX-256 register |
-| **Deterministic** | Integer comparisons are exact across platforms |
-
-## The Core Trade-off
-
-Quantization represents a fundamental space-time trade-off:
-
-```
+```text
 Traditional approach:
-  - Store raw floats
-  - Every histogram build: O(n * log(bins)) for bin lookups
-  
+  - Store raw floats (4 bytes each)
+  - Every histogram build: O(n × log(bins)) for bin lookups
+
 Quantized approach:
-  - Pre-compute bins once: O(n * log(bins))
-  - Store bin indices (smaller)
+  - Pre-compute bins once: O(n × log(bins))
+  - Store bin indices (1 byte each for ≤256 bins)
   - Every histogram build: O(n) direct indexing
 ```
 
-Since histogram building happens many times (once per node candidate, per tree, per iteration), the one-time quantization cost is quickly amortized.
+Since histogram building happens many times (once per node, per tree, per iteration),
+the one-time quantization cost is quickly amortized.
 
-## Conceptual Data Layouts
+---
 
-### Dense Layout (Row-Major)
+## Benefits
 
-For data without missing values, store bin indices in a simple 2D array:
+| Benefit | Explanation |
+|---------|-------------|
+| **Memory reduction** | 1 byte (uint8) vs 4 bytes (float32) per value — 4× reduction |
+| **Cache efficiency** | 4× more data fits in cache, reducing memory bandwidth pressure |
+| **Integer operations** | Bin comparisons are integer ops, faster than float comparisons |
+| **Determinism** | Integer comparisons are exact across platforms (no float issues) |
 
+### Type Selection
+
+The storage type adapts to the maximum number of bins:
+
+| max_bins | Storage Type | Bytes per Value |
+|----------|--------------|-----------------|
+| ≤ 256    | uint8        | 1 |
+| ≤ 65536  | uint16       | 2 |
+| > 65536  | uint32       | 4 |
+
+**256 bins is the sweet spot**: sufficient precision for most datasets while fitting
+in a single byte.
+
+---
+
+## Memory Layouts
+
+### Dense (Row-Major)
+
+For data without missing values, store bin indices in a contiguous 2D array:
+
+```text
+Layout: bins[row × n_features + feature]
+
+Row 0: [b₀₀, b₀₁, b₀₂, ..., b₀ₙ]
+Row 1: [b₁₀, b₁₁, b₁₂, ..., b₁ₙ]
+Row 2: [b₂₀, b₂₁, b₂₂, ..., b₂ₙ]
+...
 ```
-Row-major storage (samples x features):
-+-------------------------------------------+
-| Row 0: [bin_f0, bin_f1, bin_f2, ..., bin_fn] |
-| Row 1: [bin_f0, bin_f1, bin_f2, ..., bin_fn] |
-| Row 2: [bin_f0, bin_f1, bin_f2, ..., bin_fn] |
-| ...                                          |
-+-------------------------------------------+
 
-Access pattern: index[row * n_features + feature]
-```
+**Access pattern**: O(1) per cell, excellent cache locality for row-wise iteration.
 
-**When to use**: Dense data, no missing values, primarily row-wise iteration.
+**Best for**: Dense data, histogram building (iterates by row).
 
-### Sparse Layout (CSR)
+### Sparse (CSR)
 
-For sparse data or data with many missing values, use Compressed Sparse Row format:
+For sparse data or data with many missing values, Compressed Sparse Row format:
 
-```
-CSR (Compressed Sparse Row):
-  row_ptr: [0, 2, 3, 6]    <- Row boundaries
-  col_idx: [0, 2, 1, 0, 1, 2]  <- Feature indices  
-  values:  [b0, b1, b2, b3, b4, b5]  <- Bin values
+```text
+row_ptr: [0, 2, 3, 6]           ← Row boundaries  
+col_idx: [0, 2, 1, 0, 1, 2]     ← Feature indices  
+values:  [b₀, b₁, b₂, b₃, b₄, b₅]  ← Bin values
 
 Row 0: 2 values at features 0, 2
 Row 1: 1 value at feature 1
 Row 2: 3 values at features 0, 1, 2
 ```
 
-Missing values are implicit (not stored), saving memory for sparse datasets.
+**Invariant**: Missing values are implicit (not stored), saving memory.
 
-**When to use**: Sparse data (>50% zeros/missing), memory-constrained environments.
+**Best for**: >50% sparsity, memory-constrained environments.
 
-### GPU Layout (Padded/ELLPACK)
+### GPU (ELLPACK)
 
-GPUs require different memory layouts for coalesced memory access:
+GPUs require uniform memory access patterns for coalesced reads:
 
-```
+```text
 ELLPACK (padded dense format):
-  row_stride = max_features_per_row (e.g., 3)
-  
-  Row 0: [bin0, bin1, NULL]
-  Row 1: [bin0, NULL, NULL]  
-  Row 2: [bin0, bin1, bin2]
+  row_stride = max_features_per_row
 
-All rows padded to same width -> predictable memory access
+  Row 0: [b₀, b₁, PAD]
+  Row 1: [b₀, PAD, PAD]  
+  Row 2: [b₀, b₁, b₂]
 ```
 
-**Why GPU needs this**: GPU threads in a warp must access adjacent memory addresses for efficient coalesced reads. Variable-length rows break this pattern.
+All rows padded to the same width, enabling predictable strided access.
 
-## XGBoost: GHistIndexMatrix
+**Why GPUs need this**: Threads in a warp (32 threads) must access adjacent memory
+addresses for efficient coalesced reads. Variable-length rows break this pattern.
 
-XGBoost's primary CPU structure for quantized training data:
+**Trade-off**: Padding wastes memory for sparse data, but enables massive parallelism.
 
-```cpp
-// From xgboost/src/data/gradient_index.h
-class GHistIndexMatrix {
-    common::Index index;           // Quantized bin indices
-    std::vector<size_t> row_ptr;   // Row pointers (for sparse)
-    HistogramCuts cut;             // Bin boundaries
-    bool isDense_;                 // Dense or sparse layout
-    size_t max_bins_;              // Determines index type
-};
+---
+
+## Global Bin Indexing
+
+During histogram building, we need a **global bin index** across all features to use
+a single flat histogram array:
+
+```text
+Feature 0: 3 bins → local indices {0, 1, 2}
+Feature 1: 4 bins → local indices {0, 1, 2, 3}  
+Feature 2: 3 bins → local indices {0, 1, 2}
+
+feature_offsets = [0, 3, 7, 10]   // Cumulative sum
+
+Global bin = feature_offsets[feature] + local_bin
+
+Example: feature=1, local_bin=2 → global_bin = 3 + 2 = 5
 ```
 
-### Type-Adaptive Storage
+This enables O(1) mapping and a single contiguous histogram array.
 
-XGBoost adapts the storage type based on the number of bins:
+---
 
-| max_bins | Storage Type | Bytes per Value |
-|----------|--------------|-----------------|
-| <= 256 | uint8_t | 1 |
-| <= 65536 | uint16_t | 2 |
-| > 65536 | uint32_t | 4 |
+## Quantization Algorithm
 
-This is why `max_bins=256` is the sweet spot: each value fits in a single byte.
+```text
+ALGORITHM: BuildQuantizedMatrix(data, max_bins)
+───────────────────────────────────────────────
+Input:  Raw feature matrix data[n_rows × n_features]
+        Maximum bins per feature
+Output: Quantized matrix with bin indices
 
-> **Reference**: `xgboost/src/data/gradient_index.h`, class `GHistIndexMatrix`
+1. cuts ← BuildHistogramCuts(data, max_bins)  // See histogram-cuts.md
 
-### GPU: EllpackPage
+2. SELECT storage type:
+   IF max_bins ≤ 256:   use uint8
+   ELIF max_bins ≤ 65536: use uint16
+   ELSE: use uint32
 
-For GPU training, XGBoost uses the ELLPACK format:
+3. PARALLEL FOR row ∈ [0, n_rows):
+       FOR feature ∈ [0, n_features):
+           value ← data[row, feature]
+           IF is_missing(value):
+               bin ← MISSING_BIN  // Special sentinel
+           ELSE:
+               bin ← BinarySearch(value, cuts[feature])
+           index[row, feature] ← bin
 
-```cpp
-// Conceptual structure from xgboost/src/data/ellpack_page.cuh
-struct EllpackPage {
-    size_t row_stride;                  // Max features per row
-    common::CompressedBuffer gidx_buffer;  // Bit-packed bins
-};
+4. RETURN QuantizedMatrix(index, cuts, feature_offsets)
 ```
 
-Bit-packing further reduces memory: if you have 256 bins, you need 8 bits per value, but multiple values can be packed into a single 32-bit or 64-bit word.
+**Complexity**: O(n × d × log(bins)) for n samples, d features.
 
-## LightGBM: Dataset and Bin Storage
+**Parallelization**: Embarrassingly parallel — each cell independent.
 
-LightGBM organizes data by **feature groups** for cache efficiency:
+---
 
-```cpp
-// Conceptual structure from LightGBM/include/LightGBM/bin.h
-template<typename VAL_T>
-class DenseBin {
-    std::vector<VAL_T> data_;  // data_[row] = bin_idx
-};
+## Access During Histogram Building
 
-template<typename VAL_T>
-class SparseBin {
-    std::vector<VAL_T> vals_;         // Non-zero bins
-    std::vector<data_size_t> deltas_; // Row index deltas (delta encoding)
-};
+The histogram building loop uses the quantized matrix for O(1) bin lookup:
+
+```text
+ALGORITHM: BuildHistogram(node_samples, gradients, qmatrix)
+───────────────────────────────────────────────────────────
+histogram ← zeros(total_bins)
+
+FOR row ∈ node_samples:
+    grad ← gradients[row]
+    FOR feature ∈ [0, n_features):
+        local_bin ← qmatrix[row, feature]
+        global_bin ← feature_offset[feature] + local_bin
+        histogram[global_bin] += grad
+
+RETURN histogram
 ```
 
-### Feature Groups
+**Key insight**: The inner loop is just an array index + accumulate — no binary search.
 
-LightGBM groups features that will be processed together:
+---
 
-```
-Feature Group 0: [feature 0, feature 1, feature 2]
-Feature Group 1: [feature 3, feature 4]
-...
-```
+## Missing Value Handling
 
-Each group is stored contiguously, improving cache locality when histogram building processes one group at a time.
+Different strategies for representing missing values:
 
-> **Reference**: `LightGBM/src/io/bin.cpp`, `LightGBM/include/LightGBM/bin.h`
+| Strategy | Description | Memory | Lookup |
+|----------|-------------|--------|--------|
+| **Sentinel bin** | Assign bin_id = max_bins to missing | Same | O(1) |
+| **Separate mask** | Boolean array tracking missing | +12.5% | O(1) |
+| **Implicit (CSR)** | Missing values not stored | Sparse wins | O(log nnz) |
 
-## CPU vs GPU Layout Comparison
+XGBoost uses sentinel bins. LightGBM uses a mix depending on sparsity.
 
-| Aspect | CPU (GHistIndexMatrix) | GPU (EllpackPage) |
-|--------|------------------------|-------------------|
-| **Format** | CSR sparse or dense | Padded dense (ELLPACK) |
-| **Access pattern** | Sequential per row | Strided across rows |
-| **Missing values** | Implicit (not stored) | Explicit (sentinel value) |
-| **Memory efficiency** | High (skip missing) | Lower (padding overhead) |
-| **Thread model** | Few threads, large work chunks | Many threads, lockstep execution |
+---
 
-### Why the Difference?
-
-**CPU threading**: Each thread processes many rows independently. Variable-length rows are fine because each thread manages its own iteration.
-
-**GPU threading**: Thousands of threads execute in lockstep (warps of 32). All threads in a warp should access adjacent memory locations simultaneously for coalesced memory access.
-
-```
-GPU warp reading feature 0 from 32 consecutive samples:
-  Thread 0: row[0].feat[0]  --+
-  Thread 1: row[1].feat[0]    |-- Coalesced read (one memory transaction)
-  Thread 2: row[2].feat[0]    |
-  ...                       --+
-```
-
-## Quantization Process
-
-### Conceptual Algorithm
-
-```
-ALGORITHM: BuildQuantizedMatrix(raw_data, max_bins)
----------------------------------------------------
-1. cuts <- BuildHistogramCuts(raw_data, max_bins)
-2. n_rows, n_features <- SHAPE(raw_data)
-3. 
-4. // Choose storage type based on max_bins
-5. IF max_bins <= 256:
-       index <- ALLOCATE(n_rows * n_features, type=uint8)
-   ELSE IF max_bins <= 65536:
-       index <- ALLOCATE(n_rows * n_features, type=uint16)
-   ELSE:
-       index <- ALLOCATE(n_rows * n_features, type=uint32)
-6. 
-7. // Quantize each value (parallelizable by row)
-8. PARALLEL FOR row FROM 0 TO n_rows:
-       FOR feat FROM 0 TO n_features:
-           value <- raw_data[row, feat]
-           index[row * n_features + feat] <- SearchBin(value, cuts[feat])
-9. 
-10. RETURN QuantizedMatrix(index, cuts)
-```
-
-### Parallelization
-
-Quantization is embarrassingly parallel:
-
-- Each (row, feature) cell can be quantized independently
-- Row-wise parallelism is typically used (better cache locality)
-- GPU construction uses per-row threads
-
-## Memory Layout Comparison
-
-| Layout | Memory Size | Access Pattern | Best For |
-|--------|-------------|----------------|----------|
-| Dense row-major | n *d* sizeof(bin) | O(1) per cell | Dense data, row iteration |
-| Dense col-major | n *d* sizeof(bin) | O(1) per cell | Column iteration, split finding |
-| CSR | nnz *(sizeof(bin) + sizeof(col)) + n* sizeof(ptr) | O(k) per row | Sparse data (>50% sparse) |
-| ELLPACK | n *row_stride* bits | Strided | GPU, moderate sparsity |
-
-### Memory Estimates
+## Memory Estimates
 
 For 1 million samples, 100 features:
 
-```
-Dense (uint8):        100 MB
-Dense (uint16):       200 MB
-CSR (50% sparse):     ~75 MB (with feature indices)
-ELLPACK (bit-packed): Depends on row_stride and bit width
-```
+| Format | Size | Notes |
+|--------|------|-------|
+| Raw float32 | 400 MB | 4 bytes × 100M cells |
+| Quantized uint8 | 100 MB | 1 byte × 100M cells |
+| CSR (50% sparse) | ~75 MB | Saves on missing, adds indices |
+| ELLPACK (GPU) | Varies | Depends on row_stride, bit-packing |
 
-## When to Use Each Format
-
-### Dense Row-Major (Simple Case)
-
-**Use when:**
-
-- Data is dense (no or few missing values)
-- Simple implementation needed
-- Primarily row-wise access during histogram building
-
-**Avoid when:**
-
-- Very sparse data (wasted memory)
-- Need column-wise access for split finding
-
-### CSR Sparse (Memory-Constrained)
-
-**Use when:**
-
-- Significant sparsity (>50% missing/zero)
-- Memory is constrained
-- Missing values are common
-
-**Avoid when:**
-
-- Dense data (overhead of column indices)
-- GPU training (layout not suitable)
-
-### ELLPACK (GPU)
-
-**Use when:**
-
-- GPU training or inference
-- Dense or moderately sparse data
-- High sample count (amortizes padding)
-
-**Avoid when:**
-
-- Very sparse data (padding explodes memory)
-- CPU-only workloads
-
-## Access Patterns
-
-### Row Access (Histogram Building)
-
-During histogram building, iterate over rows assigned to a node:
-
-```
-ALGORITHM: BuildHistogram(row_indices, gradients, quantized_matrix)
--------------------------------------------------------------------
-1. histogram <- ZEROS(total_bins)
-2. 
-3. FOR row IN row_indices:
-       grad <- gradients[row]
-       FOR feat FROM 0 TO n_features:
-           bin <- quantized_matrix.get_bin(row, feat)
-           global_bin <- feature_offset[feat] + bin
-           histogram[global_bin] += grad
-4. 
-5. RETURN histogram
-```
-
-### Column Access (Split Finding)
-
-For split finding, sometimes column-major access is preferred:
-
-```
-// Transpose can be pre-computed for efficient column iteration
-column_matrix <- TRANSPOSE(row_matrix)
-
-FOR feat FROM 0 TO n_features:
-    FOR row IN column_matrix.rows_for_feature(feat):
-        bin <- column_matrix.get_bin(feat, row)
-        // Process bin for split evaluation
-```
-
-Some implementations maintain both row-major and column-major views for optimal access patterns.
+---
 
 ## Summary
 
 | Aspect | Description |
 |--------|-------------|
-| **Purpose** | Pre-computed bin indices for fast histogram building |
-| **Key insight** | One-time O(log b) lookup vs per-histogram lookup |
-| **CPU format** | GHistIndexMatrix (CSR or dense) |
-| **GPU format** | EllpackPage (padded dense, bit-packed) |
-| **Type selection** | uint8 for <=256 bins, uint16 for <=65536, uint32 otherwise |
-| **Benefits** | 4x memory, cache efficiency, SIMD-friendly |
-
-### Key References
-
-- `xgboost/src/data/gradient_index.h` — `GHistIndexMatrix` class
-- `xgboost/src/data/ellpack_page.cuh` — GPU ELLPACK format
-- `LightGBM/include/LightGBM/bin.h` — `DenseBin`, `SparseBin` classes
-- `LightGBM/src/io/dataset.cpp` — Dataset construction and feature grouping
+| **Purpose** | Pre-computed bin indices for O(1) histogram updates |
+| **Key trade-off** | One-time O(log b) quantization vs per-histogram lookup |
+| **Memory** | 4× reduction with uint8 bins |
+| **CPU format** | Dense or CSR depending on sparsity |
+| **GPU format** | ELLPACK (padded, bit-packed) |
+| **Missing values** | Sentinel bin or implicit (CSR) |

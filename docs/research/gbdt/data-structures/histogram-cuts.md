@@ -2,11 +2,15 @@
 
 ## Overview
 
-Histogram cuts (also called bin boundaries or split candidates) partition continuous feature values into discrete intervals. Given $n$ cut points, we create $n+1$ bins. The quantization function maps:
+Histogram cuts (also called bin boundaries or split candidates) partition continuous feature
+values into discrete intervals. Given $n$ cut points, we create $n+1$ bins. The quantization
+function maps:
 
 $$f: \mathbb{R} \rightarrow \{0, 1, \ldots, n\}$$
 
-The cuts are typically chosen via **quantile sketch** algorithms to ensure each bin contains approximately the same number of samples (equal-frequency binning), which maximizes information gain potential per bin.
+The cuts are typically chosen via **quantile sketch** algorithms to ensure each bin contains
+approximately the same number of samples (equal-frequency binning), which maximizes information
+gain potential per bin.
 
 ## Why Quantile-Based?
 
@@ -24,7 +28,9 @@ Equal-frequency (quantile) binning ensures:
 - Sparse regions don't waste bins
 - Approximately balanced gradient/hessian sums per bin
 
-This directly relates to split quality: a bin with 10% of data can only improve the split by at most 10% of total information, so giving more bins to dense regions maximizes the chance of finding good splits.
+This directly relates to split quality: a bin with 10% of data can only improve the split by
+at most 10% of total information, so giving more bins to dense regions maximizes the chance
+of finding good splits.
 
 ## Theory: How Cuts Are Computed
 
@@ -32,7 +38,7 @@ This directly relates to split quality: a bin with 10% of data can only improve 
 
 For data that fits in memory, compute exact quantiles:
 
-```
+```text
 ALGORITHM: ExactQuantileCuts(feature_values, max_bins)
 -------------------------------------------------------
 1. sorted_values <- SORT(feature_values)
@@ -49,15 +55,19 @@ ALGORITHM: ExactQuantileCuts(feature_values, max_bins)
 
 ### Method 2: Weighted Quantile Sketch (Large/Distributed Data)
 
-For distributed or streaming data where exact sorting is impractical, XGBoost uses a **weighted quantile sketch** algorithm (described in the XGBoost paper, Section 3.3).
+For distributed or streaming data where exact sorting is impractical, XGBoost uses a
+**weighted quantile sketch** algorithm (described in the XGBoost paper, Section 3.3).
 
-The key insight is that we want bins to contain equal **weighted sums**, not equal counts. In gradient boosting, the natural weight is the Hessian (second derivative):
+The key insight is that we want bins to contain equal **weighted sums**, not equal counts.
+In gradient boosting, the natural weight is the Hessian (second derivative):
 
 $$\text{Find cuts } \{c_1, \ldots, c_k\} \text{ such that } \sum_{x_i < c_j} h_i \approx \sum_{c_j \le x_i < c_{j+1}} h_i$$
 
 This is called **adaptive binning** or **Hessian-weighted quantiles**.
 
-**Why weight by Hessian?** The optimal leaf value is $-G/H$ (gradient sum over Hessian sum). Regions with high Hessian have more "curvature" in the loss function and benefit from finer binning resolution.
+**Why weight by Hessian?** The optimal leaf value is $-G/H$ (gradient sum over Hessian sum).
+Regions with high Hessian have more "curvature" in the loss function and benefit from finer
+binning resolution.
 
 The sketch algorithm:
 
@@ -66,7 +76,8 @@ The sketch algorithm:
 3. Merge summaries from different workers (associative operation)
 4. Guarantees bounded approximation error: epsilon-approximate quantiles
 
-> **Reference**: XGBoost paper Section 3.3, "Weighted Quantile Sketch", and `xgboost/src/common/quantile.h`
+> **Reference**: XGBoost paper Section 3.3, "Weighted Quantile Sketch", and
+> `xgboost/src/common/quantile.h`
 
 ### LightGBM's Approach
 
@@ -83,9 +94,10 @@ LightGBM's `BinMapper` class uses similar quantile-based binning with additional
 
 ### XGBoost: HistogramCuts (CSR-like Layout)
 
-XGBoost stores all feature cuts in a single concatenated array with pointers to delimit each feature's range:
+XGBoost stores all feature cuts in a single concatenated array with pointers to delimit
+each feature's range:
 
-```
+```text
 +-----------------------------------------------------------+
 | cut_values_: [0.5, 1.5 | 10, 20, 30 | 0.0, 0.5]           |
 |               |-feat 0-| |--feat 1--| |-feat 2-|          |
@@ -103,7 +115,7 @@ XGBoost stores all feature cuts in a single concatenated array with pointers to 
 This CSR-like (Compressed Sparse Row) layout:
 
 - Concatenates all cuts into one contiguous array
-- Uses pointer array to delimit each feature's range  
+- Uses pointer array to delimit each feature's range
 - Enables O(log b) bin lookup via binary search (b = bins per feature)
 - Memory efficient: no per-feature allocation overhead
 
@@ -113,7 +125,7 @@ This CSR-like (Compressed Sparse Row) layout:
 
 LightGBM uses a separate `BinMapper` object for each feature:
 
-```
+```text
 +-----------------------------------------------------------+
 | bin_upper_bound_: [0.5, 1.5, 2.5, ...]                    |
 +-----------------------------------------------------------+
@@ -136,9 +148,10 @@ Each feature has its own `BinMapper` instance storing:
 
 ### The Binary Search Approach
 
-Finding which bin a value belongs to is essentially a **binary search** for the first cut point greater than the value:
+Finding which bin a value belongs to is essentially a **binary search** for the first cut
+point greater than the value:
 
-```
+```text
 ALGORITHM: SearchBin(value, cuts[0..n-1])
 -----------------------------------------
 1. IF value < cuts[0]:
@@ -148,13 +161,14 @@ ALGORITHM: SearchBin(value, cuts[0..n-1])
 3. RETURN UPPER_BOUND(cuts, value) // Binary search
 ```
 
-The XGBoost implementation uses `std::upper_bound` to find the first cut strictly greater than the value.
+The XGBoost implementation uses `std::upper_bound` to find the first cut strictly greater
+than the value.
 
 > **Reference**: `xgboost/src/common/hist_util.h`, method `HistogramCuts::SearchBin()`
 
 ### Worked Example
 
-```
+```text
 cuts = [0.5, 1.5, 2.5]  -> Creates 4 bins: (-inf, 0.5), [0.5, 1.5), [1.5, 2.5), [2.5, +inf)
 
 value = 0.3  -> bin 0  (less than first cut 0.5)
@@ -167,11 +181,12 @@ value = 3.0  -> bin 3  (greater than last cut 2.5)
 
 ## Global Bin Indexing
 
-During histogram building, we need a **global bin index** that spans all features, enabling a single flat histogram array.
+During histogram building, we need a **global bin index** that spans all features, enabling
+a single flat histogram array.
 
 ### The Offset Scheme
 
-```
+```text
 Feature 0: 3 bins -> local indices {0, 1, 2}
 Feature 1: 4 bins -> local indices {0, 1, 2, 3}  
 Feature 2: 3 bins -> local indices {0, 1, 2}
@@ -193,7 +208,7 @@ This indexing scheme enables:
 
 With global bin indexing, histogram building becomes a simple scatter-add operation:
 
-```
+```text
 histogram[global_bin_index] += gradient_pair
 ```
 
@@ -224,7 +239,9 @@ This happens automatically during training—no user configuration needed.
 
 ### LightGBM's Explicit Bin
 
-LightGBM assigns missing values to a dedicated bin and tracks the `missing_type_` (None, Zero, or NaN) per feature. The `default_bin_` field stores which bin represents missing/zero values.
+LightGBM assigns missing values to a dedicated bin and tracks the `missing_type_`
+(None, Zero, or NaN) per feature. The `default_bin_` field stores which bin represents
+missing/zero values.
 
 ## Configuration and Trade-offs
 
@@ -257,7 +274,7 @@ Beyond ~256 bins, you're mostly spending memory and time for negligible accuracy
 
 Consider a dataset with 1 million samples and 100 features:
 
-```
+```text
 Without quantization:
   Storage = 1M x 100 x 4 bytes (float32) = 400 MB
 
@@ -269,7 +286,8 @@ With quantization (256 bins = uint8):
 Memory reduction: 4x (from 400 MB to 100 MB)
 ```
 
-For larger datasets or more features, the savings multiply. This is why histogram-based methods scale to datasets that don't fit in memory with traditional exact methods.
+For larger datasets or more features, the savings multiply. This is why histogram-based
+methods scale to datasets that don't fit in memory with traditional exact methods.
 
 ## Summary
 

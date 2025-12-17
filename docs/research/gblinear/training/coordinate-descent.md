@@ -6,12 +6,6 @@ How linear models learn feature weights using coordinate descent optimization.
 
 Linear boosters use **coordinate descent** — instead of updating all weights at once (like gradient descent), we update one weight at a time while holding others fixed.
 
-### ELI5
-
-Imagine tuning a guitar. Gradient descent tries to adjust all strings at once. Coordinate descent adjusts one string, listens, adjusts the next string, listens, and keeps cycling through. Simpler, and for certain problems, just as effective.
-
-### Why Coordinate Descent?
-
 For convex problems with separable regularization (like elastic net):
 
 1. **Closed-form updates** — Each coordinate update has an analytical solution (no step size tuning)
@@ -43,6 +37,24 @@ Where:
 | Elastic Net | Sparse AND stable | Two hyperparameters |
 
 Elastic net gets the best of both: it can zero out irrelevant features (like L1) while remaining stable when features are correlated (like L2).
+
+### Handling Collinear Features
+
+**Invariant**: Coordinate descent does not require features to be linearly independent.
+
+In classical linear regression, perfect collinearity (one feature is a linear combination of others) makes the solution undefined — the design matrix $X^TX$ is singular. However, elastic net regularization resolves this:
+
+$$
+(X^TX + \lambda_2 I)^{-1}
+$$
+
+The L2 term $\lambda_2 I$ ensures the matrix is always invertible. This means:
+
+- **With $\lambda_2 > 0$**: Training always converges, even with perfectly collinear features
+- **Practical implication**: No need to explicitly remove correlated features before training
+- **Weight distribution**: Among collinear features, L2 spreads weights evenly; L1 tends to select one and zero others
+
+The L1 component provides an additional benefit: it can automatically select among correlated features, effectively performing feature selection during training.
 
 ---
 
@@ -129,7 +141,7 @@ XGBoost provides two coordinate descent implementations:
 
 Updates features **in parallel** — different threads update different weights simultaneously.
 
-```
+```text
 Thread 0: update w₀    ┐
 Thread 1: update w₁    ├── all at the same time
 Thread 2: update w₂    │
@@ -155,7 +167,7 @@ Thread 3: update w₃    ┘
 
 Updates features **one at a time**, updating residuals after each change.
 
-```
+```text
 update w₀ → refresh gradients
         ↓
 update w₁ → refresh gradients
@@ -252,7 +264,7 @@ $$
 
 Training uses **CSC (Column-Sparse-Compressed)** format for efficient feature-wise access:
 
-```
+```text
 Column 0: [(row_2, 0.5), (row_7, 1.2), (row_9, 0.8)]
 Column 1: [(row_0, 0.3), (row_5, 2.1)]
 Column 2: [(row_1, 0.7), (row_3, 1.5), (row_6, 0.2), (row_8, 0.9)]
