@@ -22,7 +22,7 @@ Without it, training large datasets is impractical.
 
 The subtraction trick `child = parent - sibling` reduces histogram builds:
 
-```
+```text
 Instead of building histograms for both children:
   1. Build histogram for SMALLER child only
   2. Derive larger child: larger = parent - smaller
@@ -145,7 +145,7 @@ GOOD: Sequential access (pre-reordered)
 
 Both XGBoost and LightGBM learn `default_left` for each split:
 
-```
+```text
 During split evaluation:
   1. Try all missing → left: compute gain
   2. Try all missing → right: compute gain

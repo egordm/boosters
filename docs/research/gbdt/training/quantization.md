@@ -8,28 +8,18 @@ histogram-based gradient boosting.
 
 ## Overview
 
-### ELI5
-
-Imagine you have house prices ranging from $50,000 to $5,000,000. Instead of remembering
-every exact price, you create "buckets": 0-100k, 100k-200k, 200k-300k, etc. Now every house
-just gets a bucket number (0, 1, 2, ...). This is much faster to work with and takes less
-memory.
-
-### ELI13
-
 Quantization maps continuous features to integer bin indices:
 
-```
+```text
 Feature value: 0.35 → Bin boundaries: [0.0, 0.25, 0.5, 0.75, 1.0]
 Search: 0.35 falls in [0.25, 0.5) → Bin index: 1
 ```
 
 This enables:
+
 - **Histogram-based training**: O(bins) split finding instead of O(n)
 - **Memory efficiency**: u8 indices instead of f32 values (4x reduction)
 - **Cache efficiency**: Small working set fits in cache
-
-### ELI-Grad
 
 Given feature values $x_1, x_2, \ldots, x_n$ and $k$ bins, we compute bin boundaries
 $b_0, b_1, \ldots, b_k$ where $b_0 = -\infty$ and $b_k = +\infty$.
@@ -53,7 +43,7 @@ The choice of boundaries affects model quality. Two main strategies:
 
 Divides the range into equal-width intervals:
 
-```
+```text
 Values: [0, 1, 2, 3, 100]  max_bins=4
 Boundaries: [0, 25, 50, 75, 100]
 Bins: [0, 0, 0, 0, 3]  ← All small values in same bin!
@@ -65,7 +55,7 @@ Bins: [0, 0, 0, 0, 3]  ← All small values in same bin!
 
 Divides the range so each bin has roughly equal samples:
 
-```
+```text
 Values: [0, 1, 2, 3, 100]  max_bins=4
 Boundaries: [0, 1, 2, 3, 100]  (approximate quantiles)
 Bins: [0, 1, 2, 3, 4]  ← Each value gets its own bin
@@ -91,6 +81,7 @@ Streaming sketches provide approximate quantiles with bounded error.
 ### Greenwald-Khanna Sketch
 
 Used by XGBoost. Properties:
+
 - **Space**: O(1/ε log εn) for ε-approximate quantiles
 - **Time**: O(log(1/ε)) per insertion
 - **Mergeable**: Can combine sketches from distributed workers
@@ -99,7 +90,7 @@ Used by XGBoost. Properties:
 
 XGBoost weights samples by their hessian during quantile computation:
 
-```
+```text
 For loss L(y, f), the optimal split considers:
   - Gradient: g_i = ∂L/∂f
   - Hessian: h_i = ∂²L/∂f²
@@ -174,7 +165,7 @@ default.
 
 If a feature has fewer distinct values than max_bins, use one bin per value:
 
-```
+```text
 Feature has values: {1.0, 2.0, 3.0}  max_bins=256
 Use 3 bins, not 256
 ```
@@ -188,6 +179,7 @@ This preserves exact splits and saves memory.
 ### Default: 256 bins (u8 index)
 
 Most libraries default to 256 bins:
+
 - Fits in u8 (1 byte per feature per row)
 - Sufficient resolution for most features
 - Good balance of accuracy vs memory
@@ -217,7 +209,7 @@ Most libraries default to 256 bins:
 
 Each feature has bins 0, 1, 2, ..., k-1:
 
-```
+```text
 Feature 0: bins 0-255
 Feature 1: bins 0-255
 Feature 2: bins 0-127 (fewer distinct values)
@@ -230,7 +222,7 @@ Feature 2: bins 0-127 (fewer distinct values)
 
 Bins are numbered globally across all features:
 
-```
+```text
 Feature 0: bins 0-255
 Feature 1: bins 256-511
 Feature 2: bins 512-639
@@ -245,7 +237,7 @@ Feature 2: bins 512-639
 
 ### Training-Time Quantization
 
-```
+```text
 1. Compute bin boundaries (quantile sketch or exact)
    - Store as HistogramCuts structure
    
@@ -281,6 +273,7 @@ For a dataset with n rows, d features, and b bins:
 | Bin boundaries | O(db) | Per-feature cuts |
 
 **Example**: 1M rows × 100 features
+
 - Raw: 400 MB
 - Quantized (u8): 100 MB
 - Savings: 300 MB
@@ -292,16 +285,19 @@ For a dataset with n rows, d features, and b bins:
 ### Parallel Quantization
 
 Bin finding is embarrassingly parallel:
+
 - Each row can be processed independently
 - Each feature can be processed independently (if global cuts precomputed)
 
 ### Cache Efficiency
 
 For row-major raw data:
+
 - Process one row at a time across features
 - Output row-major quantized data
 
 For column-major:
+
 - Process one feature at a time across rows
 - Better for quantile computation (needs sorted feature)
 
