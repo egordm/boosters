@@ -51,7 +51,7 @@ fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
 
     // Compute predictions on test set
     let output = model.predict(&test_data, &[0.0]);
-    let test_preds: Vec<f32> = output.rows().map(|row| row[0]).collect();
+    let test_preds: Vec<f32> = output.column(0).to_vec();
 
     // Compute pinball loss on test set
     let pinball_loss: f64 = test_preds
@@ -122,9 +122,9 @@ fn quantile_regression_predictions_differ() {
     let model_high = trainer_high.train(&train, &[]).unwrap();
 
     // Get predictions for first sample
-    let pred_low = model_low.predict(&data, &[0.0]).row(0)[0];
-    let pred_med = model_med.predict(&data, &[0.0]).row(0)[0];
-    let pred_high = model_high.predict(&data, &[0.0]).row(0)[0];
+    let pred_low = model_low.predict(&data, &[0.0]).get(0, 0);
+    let pred_med = model_med.predict(&data, &[0.0]).get(0, 0);
+    let pred_high = model_high.predict(&data, &[0.0]).get(0, 0);
 
     // Lower quantile should produce lower predictions.
     assert!(
@@ -214,9 +214,8 @@ fn train_multi_quantile_regression() {
     let output = model.predict(&test_data, &vec![0.0; num_quantiles]);
     let mut our_predictions: Vec<Vec<f32>> = vec![vec![0.0; test_data.num_rows()]; num_quantiles];
     for i in 0..test_data.num_rows() {
-        let row = output.row(i);
         for q in 0..num_quantiles {
-            our_predictions[q][i] = row[q];
+            our_predictions[q][i] = output.get(i, q);
         }
     }
 
@@ -300,8 +299,8 @@ fn multi_quantile_vs_separate_models() {
         let mut multi_preds = Vec::with_capacity(data.num_rows());
         let mut single_preds = Vec::with_capacity(data.num_rows());
         for i in 0..data.num_rows() {
-            multi_preds.push(multi_output.row(i)[q]);
-            single_preds.push(single_output.row(i)[0]);
+            multi_preds.push(multi_output.get(i, q));
+            single_preds.push(single_output.get(i, 0));
         }
 
         let correlation = pearson_correlation(&multi_preds, &single_preds);

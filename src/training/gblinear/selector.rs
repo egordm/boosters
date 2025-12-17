@@ -35,7 +35,7 @@ use crate::training::Gradients;
 /// Feature selector configuration for training.
 ///
 /// This enum specifies which feature selection strategy to use during
-/// coordinate descent training. It's used in [`GBLinearTrainer`] to
+/// coordinate descent training. It's used in [`super::GBLinearTrainer`] to
 /// configure the trainer.
 ///
 /// # Example

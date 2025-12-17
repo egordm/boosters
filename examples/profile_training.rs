@@ -8,7 +8,7 @@
 
 use booste_rs::data::binned::BinnedDatasetBuilder;
 use booste_rs::data::{ColMatrix, DenseMatrix, RowMajor};
-use booste_rs::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, SquaredLoss};
+use booste_rs::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 
 fn main() {
     // Large synthetic dataset for profiling
@@ -68,8 +68,8 @@ fn main() {
     println!("  Depth: {}", max_depth);
     
     let start = std::time::Instant::now();
-    let forest = GBDTTrainer::new(SquaredLoss, params)
-        .train(&dataset, &labels, &[])
+    let forest = GBDTTrainer::new(SquaredLoss, Rmse, params)
+        .train(&dataset, &labels, &[], &[])
         .unwrap();
     let train_time = start.elapsed();
 

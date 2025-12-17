@@ -125,13 +125,69 @@ let eval_sets = vec![
 ];
 ```
 
+### Evaluator Component
+
+The `Evaluator` encapsulates evaluation logic during training:
+
+```rust
+pub struct Evaluator<'a, O: Objective, M: Metric> {
+    objective: &'a O,
+    metric: &'a M,
+    n_outputs: usize,
+    transform_buffer: Vec<f32>,
+}
+
+impl<'a, O: Objective, M: Metric> Evaluator<'a, O, M> {
+    pub fn new(objective: &'a O, metric: &'a M, n_outputs: usize) -> Self;
+    
+    /// Compute metric on single dataset
+    pub fn compute(&mut self, predictions: &[f32], targets: &[f32], 
+                   weights: &[f32], n_rows: usize) -> f64;
+    
+    /// Compute and wrap as MetricValue
+    pub fn compute_metric(&mut self, name: impl Into<String>, predictions: &[f32],
+                          targets: &[f32], weights: &[f32], n_rows: usize) -> MetricValue;
+    
+    /// Evaluate on training + eval sets for one round
+    pub fn evaluate_round(&mut self, train_predictions: &[f32], train_targets: &[f32],
+                          train_weights: &[f32], train_n_rows: usize,
+                          eval_sets: &[EvalSet<'_>], eval_predictions: &[Vec<f32>]) 
+                          -> Vec<MetricValue>;
+    
+    /// Get early stopping value from metrics
+    pub fn early_stop_value(metrics: &[MetricValue], eval_set_idx: usize) -> f64;
+}
+```
+
+The Evaluator handles prediction transforms (sigmoid/softmax) when required by the metric, manages its own transform buffer, and produces `MetricValue` wrappers with metadata.
+
+### MetricValue
+
+A computed metric value with metadata:
+
+```rust
+pub struct MetricValue {
+    pub name: String,           // e.g., "train-rmse", "valid-logloss"
+    pub value: f64,
+    pub higher_is_better: bool,
+}
+
+impl MetricValue {
+    pub fn new(name: impl Into<String>, value: f64, higher_is_better: bool) -> Self;
+    pub fn is_better_than(&self, other: &Self) -> bool;
+    pub fn is_better_than_value(&self, other_value: f64) -> bool;
+}
+```
+
 ## Key Types
 
 | Type | Purpose |
 |------|---------|
 | `Metric` | Trait for computing evaluation scores |
 | `MetricKind` | Enum for configuration/defaults (Rmse, Mae, LogLoss, etc.) |
+| `MetricValue` | Computed metric with name, value, and direction metadata |
 | `EvalSet` | Named dataset reference for evaluation |
+| `Evaluator` | Component managing evaluation logic and transform buffers |
 | `EarlyStopping` | Callback that monitors metric and signals when to stop |
 | `PredictionKind` | Expected prediction format (Value, Probability, Margin) |
 

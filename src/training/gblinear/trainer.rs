@@ -37,8 +37,8 @@
 use rayon::ThreadPoolBuilder;
 
 use crate::data::{ColMatrix, Dataset};
-use crate::inference::common::{PredictionKind, PredictionOutput};
 use crate::inference::gblinear::LinearModel;
+use crate::training::eval;
 use crate::training::{
     EarlyStopping, EarlyStopAction, EvalSet, Gradients, Metric, Objective, ObjectiveExt, TrainingLogger, Verbosity,
 };
@@ -232,7 +232,8 @@ impl<O: Objective, M: Metric> GBLinearTrainer<O, M> {
         debug_assert!(weights.map_or(true, |w| w.len() == num_samples));
 
         // Compute base scores from objective (optimal constant prediction)
-        let base_scores = self.objective.init_base_score(train_labels, weights);
+        let w = weights.unwrap_or(&[]);
+        let base_scores = self.objective.base_scores(num_samples, train_labels, w);
 
         // Initialize model with base scores as biases
         let mut model = LinearModel::zeros(num_features, num_outputs);
@@ -292,13 +293,16 @@ impl<O: Objective, M: Metric> GBLinearTrainer<O, M> {
         let mut logger = TrainingLogger::new(self.params.verbosity);
         logger.start_training(self.params.n_rounds as usize);
 
+        // Evaluator for computing metrics
+        let mut evaluator = eval::Evaluator::new(&self.objective, &self.metric, num_outputs);
+
         // Training loop
         for round in 0..self.params.n_rounds {
             // Compute predictions
-            Self::compute_predictions(&model, &train_data, &mut predictions);
+            model.predict_col_major(&train_data, &mut predictions);
 
             // Compute gradients
-            self.objective.compute_gradients_buffer(&predictions, train_labels, weights, &mut gradients);
+            self.objective.compute_gradients_buffer(&predictions, train_labels, w, &mut gradients);
 
             // Update each output
             for output in 0..num_outputs {
@@ -323,26 +327,32 @@ impl<O: Objective, M: Metric> GBLinearTrainer<O, M> {
                 );
             }
 
-            // Evaluation
-            let (round_metrics, early_stop_value) = self.evaluate_round(
-                &model,
-                train_labels,
-                weights,
+            // Compute eval set predictions (full recompute each round for GBLinear)
+            for (set_idx, matrix) in eval_data.iter().enumerate() {
+                model.predict_col_major(matrix, &mut eval_predictions[set_idx]);
+            }
+
+            // Evaluation using Evaluator
+            let round_metrics = evaluator.evaluate_round(
                 &predictions,
+                train_labels,
+                weights.unwrap_or(&[]),
+                num_samples,
                 eval_sets,
-                &eval_data,
-                &mut eval_predictions,
-                num_outputs,
+                &eval_predictions,
+            );
+            let early_stop_value = eval::Evaluator::<O, M>::early_stop_value(
+                &round_metrics,
                 self.params.early_stopping_eval_set,
             );
 
             if self.params.verbosity >= Verbosity::Info {
-                logger.log_round(round as usize, &round_metrics);
+                logger.log_metrics(round as usize, &round_metrics);
             }
 
-            // Early stopping check
-            if let Some(value) = early_stop_value {
-                match early_stopping.update(value) {
+            // Early stopping check (value always present: either eval or train metric)
+            if early_stopping.is_enabled() {
+                match early_stopping.update(early_stop_value) {
                     EarlyStopAction::Improved => {
                         best_model = Some(model.clone());
                     }
@@ -369,98 +379,6 @@ impl<O: Objective, M: Metric> GBLinearTrainer<O, M> {
         } else {
             Some(model)
         }
-    }
-
-    // ========================================================================
-    // Helper methods
-    // ========================================================================
-
-    /// Compute predictions for all samples.
-    ///
-    /// Handles both single-output and multi-output models.
-    /// Output is column-major: index = group * num_rows + row_idx
-    fn compute_predictions(model: &LinearModel, data: &ColMatrix<f32>, output: &mut [f32]) {
-        let num_rows = data.num_rows();
-        let num_groups = model.num_groups();
-        let num_features = model.num_features();
-
-        // Initialize with bias (column-major: group-first)
-        for group in 0..num_groups {
-            let group_start = group * num_rows;
-            for row_idx in 0..num_rows {
-                output[group_start + row_idx] = model.bias(group);
-            }
-        }
-
-        // Add weighted features (iterate by group for column-major writes)
-        for feat_idx in 0..num_features {
-            for (row_idx, value) in data.column(feat_idx) {
-                for group in 0..num_groups {
-                    output[group * num_rows + row_idx] += value * model.weight(feat_idx, group);
-                }
-            }
-        }
-    }
-
-    fn evaluate_round(
-        &self,
-        model: &LinearModel,
-        _train_labels: &[f32],
-        _train_weights: Option<&[f32]>,
-        _train_predictions: &[f32],
-        eval_sets: &[EvalSet<'_>],
-        eval_data: &[ColMatrix<f32>],
-        eval_predictions: &mut [Vec<f32>],
-        num_outputs: usize,
-        early_stopping_eval_idx: usize,
-    ) -> (Vec<(String, f64)>, Option<f64>) {
-        let mut round_metrics = Vec::new();
-        let mut early_stop_value = None;
-
-        // Determine if we need to transform predictions for this metric
-        let metric_kind = self.metric.expected_prediction_kind();
-        let needs_transform = metric_kind != PredictionKind::Margin;
-
-        // Training set metric is not computed here because the training ColMatrix
-        // is not passed to this method. Eval-set metrics suffice for monitoring.
-
-        for (set_idx, eval_set) in eval_sets.iter().enumerate() {
-            // Compute raw predictions in column-major buffer
-            Self::compute_predictions(model, &eval_data[set_idx], &mut eval_predictions[set_idx]);
-
-            let n_rows = eval_data[set_idx].num_rows();
-
-            // Convert column-major → row-major PredictionOutput and optionally transform
-            let mut output = Self::col_major_to_row_major(&eval_predictions[set_idx], n_rows, num_outputs);
-            if needs_transform {
-                self.objective.transform_prediction_inplace(&mut output);
-            }
-
-            let targets = eval_set.dataset.targets();
-            let w = eval_set.dataset.weights().unwrap_or(&[]);
-            let value = self
-                .metric
-                .compute(n_rows, num_outputs, output.as_slice(), targets, w);
-
-            round_metrics.push((format!("{}-{}", eval_set.name, self.metric.name()), value));
-
-            if set_idx == early_stopping_eval_idx {
-                early_stop_value = Some(value);
-            }
-        }
-
-        (round_metrics, early_stop_value)
-    }
-
-    /// Convert column-major predictions to row-major `PredictionOutput`.
-    fn col_major_to_row_major(col_major: &[f32], n_rows: usize, n_outputs: usize) -> PredictionOutput {
-        let mut row_major = vec![0.0f32; n_rows * n_outputs];
-        for out in 0..n_outputs {
-            for row in 0..n_rows {
-                row_major[row * n_outputs + out] = col_major[out * n_rows + row];
-            }
-        }
-        PredictionOutput::new(row_major, n_rows, n_outputs)
     }
 }
 

@@ -6,8 +6,8 @@
 //! # Multi-Output Support
 //!
 //! Metrics support multi-output models (multiclass, multi-quantile) via the
-//! `n_outputs` parameter. The predictions buffer has shape `[n_samples, n_outputs]`
-//! in row-major order.
+//! `n_outputs` parameter. The predictions buffer has shape `[n_outputs, n_rows]`
+//! in **column-major** order (output-first), matching the training prediction layout.
 //!
 //! # Weighted Evaluation
 //!
@@ -80,13 +80,14 @@ pub enum MetricKind {
 
 /// A metric for evaluating model quality.
 ///
-/// Unlike [`super::Loss`] which computes gradients for optimization,
+/// Unlike objectives (which compute gradients for optimization),
 /// metrics compute scalar values for model evaluation and monitoring.
 ///
 /// # Multi-Output Support
 ///
 /// For multi-output models (multiclass, multi-quantile), pass `n_outputs > 1`.
-/// The predictions buffer has shape `[n_samples, n_outputs]` in row-major order.
+/// The predictions buffer uses **column-major** layout: `predictions[output * n_rows + row]`.
+/// This matches the training prediction layout for zero-copy evaluation.
 ///
 /// # Weighted Evaluation
 ///
@@ -101,7 +102,7 @@ pub enum MetricKind {
 pub trait Metric: Send + Sync {
     /// Compute metric value.
     ///
-    /// Predictions are expected in **row-major** layout with shape `(n_rows, n_outputs)`.
+    /// Predictions are expected in **column-major** layout: `predictions[output * n_rows + row]`.
     ///
     /// Pass an empty `weights` slice for unweighted computation.
     fn compute(
