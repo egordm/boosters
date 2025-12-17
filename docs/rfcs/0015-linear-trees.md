@@ -18,7 +18,35 @@ trees, and edge extrapolation.
 LightGBM supports this (`linear_tree=True`). We improve with coordinate descent
 (numerical stability) and feature whitelist (control extrapolation).
 
+**When NOT to use linear trees:**
+
+- Very deep trees (max_depth > 10): Leaves have few samples, linear fits are unstable
+- Pure categorical problems: No linear structure to exploit
+- When individual tree interpretability matters: Linear coefficients add complexity
+- High-noise domains: Linear fits may overfit noise patterns
+
 ## Design
+
+### Integration Point
+
+Linear leaves are configured via `GBDTConfig`:
+
+```rust
+let config = GBDTConfig {
+    n_trees: 100,
+    max_depth: 6,
+    learning_rate: 0.1,
+    // Enable linear leaves with custom settings
+    linear_leaves: Some(LinearLeafConfig {
+        lambda: 0.01,
+        min_samples: 100,
+        ..Default::default()
+    }),
+    ..Default::default()
+};
+
+let model = GBDTTrainer::new(config).train(&dataset)?;
+```
 
 ### Training Flow
 
@@ -112,6 +140,20 @@ a `rows: &[u32]` slice to map buffer indices back to gradient indices.
 Use coordinate descent on the normal equations with fixed GBDT gradients.
 This matches LightGBM's approach while avoiding matrix inversion.
 
+#### Symmetric Matrix Indexing
+
+Store only upper triangle of the symmetric matrix X^THX:
+
+```rust
+/// Index into upper triangle storage for symmetric matrix
+/// For k×k matrix stored as [A[0,0], A[0,1], ..., A[0,k-1], A[1,1], A[1,2], ...]
+#[inline]
+fn tri_index(i: usize, j: usize, size: usize) -> usize {
+    let (i, j) = if i <= j { (i, j) } else { (j, i) };  // Ensure i <= j
+    i * size - i * (i + 1) / 2 + j
+}
+```
+
 #### Solver Abstraction
 
 Create a reusable solver for weighted least squares problems:
@@ -165,6 +207,44 @@ This solver:
 - Reuses buffers for each leaf
 - Encapsulates CD logic for potential replacement with direct solve
 
+#### Configuration
+
+```rust
+/// Configuration for linear leaf training
+pub struct LinearLeafConfig {
+    /// L2 regularization on coefficients (default: 0.01)
+    /// Small default prevents overfitting in small leaves.
+    pub lambda: f32,
+    /// L1 regularization for sparse coefficients (default: 0.0)
+    pub alpha: f32,
+    /// Maximum CD iterations per leaf (default: 10)
+    pub max_iterations: u32,
+    /// Convergence tolerance (default: 1e-6)
+    pub tolerance: f64,
+    /// Minimum samples in leaf to fit linear model (default: 50)
+    pub min_samples: usize,
+    /// Coefficient threshold—prune if |coef| < threshold (default: 1e-6)
+    pub coefficient_threshold: f32,
+    /// Feature whitelist—None means use all path features
+    /// Can be built from names via `DataMatrix::feature_indices(&["age", "income"])`
+    pub feature_whitelist: Option<Box<[u32]>>,
+}
+
+impl Default for LinearLeafConfig {
+    fn default() -> Self {
+        Self {
+            lambda: 0.01,  // Light regularization by default
+            alpha: 0.0,
+            max_iterations: 10,
+            tolerance: 1e-6,
+            min_samples: 50,
+            coefficient_threshold: 1e-6,
+            feature_whitelist: None,
+        }
+    }
+}
+```
+
 #### Fitting Flow
 
 ```rust
@@ -175,27 +255,39 @@ fn fit_leaf(
     rows: &[u32],
     gradients: &Gradients,
     output: usize,
-    config: &LinearConfig,
-) -> LeafCoefficients {
+    config: &LinearLeafConfig,
+) -> Option<LeafCoefficients> {
     let n_features = feature_buffer.n_features;
+    let n_rows = rows.len();
     solver.reset(n_features);
     
-    // Accumulate normal equations (single pass over leaf data)
-    for (buf_idx, &orig_row) in rows.iter().enumerate() {
-        let gh = gradients.get_pair(orig_row as usize, output);
-        
-        // Gather feature values for this row
-        let row_features: Vec<f32> = (0..n_features)
-            .map(|f| feature_buffer.feature_slice(f)[buf_idx])
-            .collect();
-        
-        solver.accumulate(&row_features, gh.grad, gh.hess);
+    // Accumulate normal equations (column-wise for cache efficiency)
+    for feat_idx in 0..n_features {
+        let feat_slice = feature_buffer.feature_slice(feat_idx);
+        for (buf_idx, &orig_row) in rows.iter().enumerate() {
+            let gh = gradients.get_pair(orig_row as usize, output);
+            let x = feat_slice[buf_idx];
+            solver.accumulate_column(feat_idx, buf_idx, x, gh.grad, gh.hess);
+        }
     }
     
     solver.add_regularization(config.lambda as f64, n_features);
-    let (intercept, coefs) = solver.solve_cd(n_features, &config.cd_config);
     
-    LeafCoefficients::new(*intercept as f32, coefs.iter().map(|&c| c as f32).collect())
+    // Solve and check convergence
+    let converged = solver.solve_cd(n_features, config.max_iterations, config.tolerance);
+    if !converged {
+        // Fall back to constant leaf if CD doesn't converge
+        return None;
+    }
+    
+    // Prune near-zero coefficients and convert to f32
+    let (intercept, coefs) = solver.coefficients(n_features);
+    let pruned: Vec<(usize, f32)> = coefs.iter().enumerate()
+        .filter(|(_, &c)| c.abs() > config.coefficient_threshold as f64)
+        .map(|(i, &c)| (i, c as f32))
+        .collect();
+    
+    Some(LeafCoefficients::new(*intercept as f32, pruned))
 }
 ```
 
@@ -241,6 +333,7 @@ impl LeafLinearTrainer {
         partitioner: &RowPartitioner,
         gradients: &Gradients,
         output: usize,
+        learning_rate: f32,
     ) {
         for leaf_node in tree.leaf_nodes() {
             let rows = partitioner.get_leaf_indices(leaf_node);
@@ -249,20 +342,29 @@ impl LeafLinearTrainer {
             let features = self.select_features(tree, leaf_node);
             self.feature_buffer.gather(rows, col_matrix, &features);
             
-            let coefs = fit_leaf(
+            if let Some(coefs) = fit_leaf(
                 &mut self.solver,
                 &self.feature_buffer,
                 rows,
                 gradients,
                 output,
                 &self.config,
-            );
-            
-            tree.set_leaf_coefficients(leaf_node, features, coefs);
+            ) {
+                // Apply learning rate to coefficients (matches constant leaf scaling)
+                let scaled = coefs.scale(learning_rate);
+                tree.set_leaf_coefficients(leaf_node, features, scaled);
+            }
+            // If fit_leaf returns None, leaf keeps constant value only
         }
     }
 }
 ```
+
+**Multi-output**: For multi-output regression, call `train()` once per output with
+the corresponding `output` index. Each output gets independent coefficients.
+
+**Performance**: Linear leaf training adds ~20-50% overhead vs standard GBDT,
+depending on tree depth and leaf sizes. The main cost is the gather + CD solve.
 
 ### Parallel Training
 
@@ -356,6 +458,14 @@ pub struct LeafCoefficients {
 The `freeze()` method builds `LeafCoefficients` from the Vec, exactly like it
 builds `CategoriesStorage` from `categorical_nodes: Vec<(NodeId, Vec<u32>)>`.
 
+**Empty coefficients**: If all coefficients are pruned (below threshold) or
+fitting fails, the leaf has no entry in `LeafCoefficients`. The `leaf_terms()`
+method returns `None`, and inference uses the constant base value.
+
+**Serialization**: `LeafCoefficients` is included in tree serialization (JSON,
+binary formats). Models with linear leaves can be saved and loaded normally.
+Older library versions without linear leaf support will fail to load these models.
+
 **No MutableLeafCoefficients struct**—just a Vec in MutableTree.
 
 ### Inference
@@ -370,6 +480,12 @@ impl Tree<ScalarLeaf> {
         
         // If no linear coefficients, this returns empty slices
         if let Some((feat_idx, coefs)) = self.leaf_coefficients.leaf_terms(node) {
+            // Check for NaN in linear features—fall back to base if found
+            for &f in feat_idx {
+                if features[f as usize].is_nan() {
+                    return base;
+                }
+            }
             let linear: f32 = feat_idx.iter()
                 .zip(coefs)
                 .map(|(&f, &c)| c * features[f as usize])
@@ -382,8 +498,21 @@ impl Tree<ScalarLeaf> {
 }
 ```
 
+**NaN handling**: If any feature in the linear model is NaN at inference, return
+the constant base value only. This matches training behavior (leaves with NaN
+fall back to constant).
+
 The `leaf_terms()` method returns `Option` or empty slices for nodes without
 coefficients—standard trees have no overhead beyond the check.
+
+**Model inspection**: For debugging and interpretability:
+
+```rust
+impl Tree<ScalarLeaf> {
+    /// Iterate over all leaves with linear coefficients
+    pub fn linear_leaves(&self) -> impl Iterator<Item = (u32, &[u32], &[f32])> { ... }
+}
+```
 
 ### LinearTree Wrapper (Alternative)
 
@@ -447,7 +576,10 @@ and applies them—zero overhead for standard trees (empty check is cheap).
 
 ### DD-7: Skip First Tree
 
-First tree approximates mean—poor signal for linear coefficients. Match LightGBM.
+First tree has homogeneous gradients: at round 0, all samples have
+`gradient = y_i - base_score`. Linear regression on constant pseudo-targets
+yields zero coefficients (intercept absorbs everything). Skip linear fitting
+for first tree. Match LightGBM.
 
 ### DD-8: Start Embedded, Consider Wrapper
 

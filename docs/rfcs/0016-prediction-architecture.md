@@ -91,7 +91,10 @@ Implementations:
 |------|----------|-------|
 | `RowMatrix<f32>` | Inference | Row-major raw features |
 | `ColMatrix<f32>` | GBLinear, linear leaves | Column-major raw features |
-| `BinnedAccessor<'_>` | Training prediction | Converts bin → threshold |
+| `BinnedAccessor<'_>` | Training prediction | Converts bin → midpoint of bin range |
+
+**Extensibility**: Third-party code can implement `FeatureAccessor` to wrap
+DataFrames (polars, arrow) or custom data structures without conversion.
 
 For column-major data, `get(row, feature)` does indexed access. The trait
 abstracts layout—traversal code doesn't care.
@@ -162,7 +165,21 @@ leaf training. Full prediction happens after `freeze()`.
 |-----------|--------|
 | Tree | `predict_batch_accumulate<A>` |
 | Forest | `predict<A>` (convenience, uses Predictor) |
-| Predictor<T> | `predict<A>` (optimized with blocking/unrolling) |
+| Forest | `predict_into<A>` (allocates and returns Vec) |
+| Predictor\<T\> | `predict<A>` (optimized with blocking/unrolling) |
+
+**Convenience method**: For simple use cases:
+
+```rust
+impl<L: LeafValue> Forest<L> {
+    /// Predict and return new Vec (allocates)
+    pub fn predict_into<A: FeatureAccessor>(&self, accessor: &A) -> Vec<f32> {
+        let mut preds = vec![0.0; accessor.n_rows()];
+        self.predict(accessor, &mut preds);
+        preds
+    }
+}
+```
 
 Removed: `predict_row`, `predict_binned_*`, `par_predict_binned_batch`.
 

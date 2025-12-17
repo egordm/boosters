@@ -752,6 +752,11 @@ $$
 g_{ik} = p_{ik} - \mathbf{1}[y_i = k], \quad p_{ik} = \frac{e^{f_{ik}}}{\sum_j e^{f_{ij}}}
 $$
 
+**Important**: The true Hessian for softmax is **not diagonal**—it's the covariance
+matrix of class probabilities: $H_{kl} = p_k(\mathbf{1}[k=l] - p_l)$. The fixed-gradient
+approach implicitly uses only the diagonal terms $H_{kk} = p_k(1-p_k)$, which is a
+valid Newton approximation but ignores cross-class correlations.
+
 **With fixed gradients:** Use gradients computed at round start. Each class's
 trees are independent—the gradient for class $k$ was computed before any linear
 fitting in this round. This is simple and matches LightGBM.
