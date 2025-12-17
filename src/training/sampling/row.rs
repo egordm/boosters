@@ -24,7 +24,7 @@
 use rand::prelude::*;
 use rand::rngs::SmallRng;
 
-use crate::training::GradHessF32;
+use crate::training::GradsTuple;
 
 /// Configuration for row sampling.
 #[derive(Clone, Debug)]
@@ -137,7 +137,7 @@ impl RowSampler {
     pub fn sample(
         &mut self,
         iteration: usize,
-        grad_hess: &mut [GradHessF32],
+        grad_hess: &mut [GradsTuple],
     ) -> Option<&[u32]> {
         let n_rows = grad_hess.len();
         
@@ -166,7 +166,7 @@ impl RowSampler {
     /// Zeros out gradients for unsampled rows to exclude them from tree building.
     fn sample_uniform(
         &mut self,
-        grad_hess: &mut [GradHessF32],
+        grad_hess: &mut [GradsTuple],
         n_rows: usize,
         subsample: f32,
     ) {
@@ -177,7 +177,7 @@ impl RowSampler {
         
         let target_count = target_count.min(n_rows);
         if target_count == 0 {
-            grad_hess.fill(GradHessF32::default());
+            grad_hess.fill(GradsTuple::default());
             return;
         }
 
@@ -212,7 +212,7 @@ impl RowSampler {
     /// GOSS sampling.
     fn sample_goss(
         &mut self,
-        grad_hess: &mut [GradHessF32],
+        grad_hess: &mut [GradsTuple],
         top_rate: f32,
         other_rate: f32,
     ) {
@@ -317,7 +317,7 @@ mod tests {
             0.1,
         );
         
-        let mut grad_hess = vec![GradHessF32 { grad: 1.0, hess: 1.0 }; 100];
+        let mut grad_hess = vec![GradsTuple { grad: 1.0, hess: 1.0 }; 100];
         
         let indices = sampler.sample(0, &mut grad_hess).unwrap();
         
@@ -339,7 +339,7 @@ mod tests {
             0.1, // warmup = 10 rounds
         );
         
-        let mut grad_hess = vec![GradHessF32 { grad: 1.0, hess: 1.0 }; 100];
+        let mut grad_hess = vec![GradsTuple { grad: 1.0, hess: 1.0 }; 100];
         
         // During warmup, should return None
         assert!(sampler.sample(0, &mut grad_hess).is_none());
@@ -361,8 +361,8 @@ mod tests {
         );
         
         // Create gradients with varying magnitudes
-        let mut grad_hess: Vec<GradHessF32> = (0..n_rows)
-            .map(|i| GradHessF32 {
+        let mut grad_hess: Vec<GradsTuple> = (0..n_rows)
+            .map(|i| GradsTuple {
                 grad: (i as f32) * 0.01,
                 hess: 1.0,
             })
@@ -395,7 +395,7 @@ mod tests {
         );
         
         // All small gradients
-        let mut grad_hess = vec![GradHessF32 { grad: 0.01, hess: 1.0 }; n_rows];
+        let mut grad_hess = vec![GradsTuple { grad: 0.01, hess: 1.0 }; n_rows];
         
         // Set a few to be "top" gradients
         for i in 80..100 {
@@ -435,7 +435,7 @@ mod tests {
             0.1,
         );
         
-        let mut grad_hess = vec![GradHessF32 { grad: 1.0, hess: 1.0 }; 100];
+        let mut grad_hess = vec![GradsTuple { grad: 1.0, hess: 1.0 }; 100];
         
         assert!(sampler.sample(0, &mut grad_hess).is_none());
         assert!(!sampler.is_sampling_active(0));

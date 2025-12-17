@@ -69,7 +69,7 @@
 /// Interleaved gradient/hessian pair.
 #[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
-pub struct GradHessF32 {
+pub struct GradsTuple {
     pub grad: f32,
     pub hess: f32,
 }
@@ -78,7 +78,7 @@ pub struct GradHessF32 {
 #[derive(Debug, Clone)]
 pub struct Gradients {
     /// Interleaved gradient/hessian pairs.
-    data: Vec<GradHessF32>,
+    data: Vec<GradsTuple>,
     /// Number of samples.
     n_samples: usize,
     /// Number of outputs per sample (1 for regression, K for K-class).
@@ -102,7 +102,7 @@ impl Gradients {
 
         let size = n_samples * n_outputs;
         Self {
-            data: vec![GradHessF32::default(); size],
+            data: vec![GradsTuple::default(); size],
             n_samples,
             n_outputs,
         }
@@ -134,7 +134,7 @@ impl Gradients {
 
     /// Reset all gradients and hessians to zero.
     pub fn reset(&mut self) {
-        self.data.fill(GradHessF32::default());
+        self.data.fill(GradsTuple::default());
     }
 
     // =========================================================================
@@ -158,7 +158,7 @@ impl Gradients {
     #[inline]
     pub fn set(&mut self, sample: usize, output: usize, grad: f32, hess: f32) {
         let idx = self.index(sample, output);
-        self.data[idx] = GradHessF32 { grad, hess };
+        self.data[idx] = GradsTuple { grad, hess };
     }
 
     // =========================================================================
@@ -167,13 +167,13 @@ impl Gradients {
 
     /// Get the full interleaved buffer.
     #[inline]
-    pub fn pairs(&self) -> &[GradHessF32] {
+    pub fn pairs(&self) -> &[GradsTuple] {
         &self.data
     }
 
     /// Get the full interleaved buffer (mutable).
     #[inline]
-    pub fn pairs_mut(&mut self) -> &mut [GradHessF32] {
+    pub fn pairs_mut(&mut self) -> &mut [GradsTuple] {
         &mut self.data
     }
 
@@ -210,7 +210,7 @@ impl Gradients {
 
     /// Get contiguous `(grad, hess)` pairs for a specific output (all samples).
     #[inline]
-    pub fn output_pairs(&self, output: usize) -> &[GradHessF32] {
+    pub fn output_pairs(&self, output: usize) -> &[GradsTuple] {
         debug_assert!(output < self.n_outputs);
         let start = output * self.n_samples;
         &self.data[start..start + self.n_samples]
@@ -218,7 +218,7 @@ impl Gradients {
 
     /// Get mutable contiguous `(grad, hess)` pairs for a specific output.
     #[inline]
-    pub fn output_pairs_mut(&mut self, output: usize) -> &mut [GradHessF32] {
+    pub fn output_pairs_mut(&mut self, output: usize) -> &mut [GradsTuple] {
         debug_assert!(output < self.n_outputs);
         let start = output * self.n_samples;
         &mut self.data[start..start + self.n_samples]
@@ -321,7 +321,7 @@ impl Gradients {
 ///
 /// With column-major layout, this iterates over contiguous memory.
 pub struct OutputIter<'a> {
-    pairs: &'a [GradHessF32],
+    pairs: &'a [GradsTuple],
     sample: usize,
 }
 

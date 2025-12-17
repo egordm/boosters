@@ -42,7 +42,7 @@ pub use regression::{AbsoluteLoss, PinballLoss, PoissonLoss, PseudoHuberLoss, Sq
 
 use crate::inference::common::{PredictionKind, PredictionOutput, Predictions};
 use crate::training::metrics::MetricKind;
-use crate::training::GradHessF32;
+use crate::training::GradsTuple;
 
 // =============================================================================
 // RFC 0028: Task + Target Semantics
@@ -172,7 +172,7 @@ pub trait Objective: Send + Sync {
         predictions: &[f32],
         targets: &[f32],
         weights: &[f32],
-        grad_hess: &mut [GradHessF32],
+        grad_hess: &mut [GradsTuple],
     );
 
     /// Compute the initial base score (bias) from targets.
@@ -356,7 +356,7 @@ impl Objective for ObjectiveFunction {
         predictions: &[f32],
         targets: &[f32],
         weights: &[f32],
-        grad_hess: &mut [GradHessF32],
+        grad_hess: &mut [GradsTuple],
     ) {
         match self {
             Self::SquaredError => {
@@ -512,7 +512,7 @@ mod tests {
         let obj = SquaredLoss;
         let preds = [1.0f32, 2.0, 3.0];
         let targets = [0.5f32, 2.5, 2.5];
-        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }; 3];
+        let mut grad_hess = [GradsTuple { grad: 0.0, hess: 0.0 }; 3];
 
         obj.compute_gradients(3, 1, &preds, &targets, &[], &mut grad_hess);
 
@@ -533,7 +533,7 @@ mod tests {
         let preds = [1.0f32, 2.0];
         let targets = [0.5f32, 2.5];
         let weights = [2.0f32, 0.5];
-        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }; 2];
+        let mut grad_hess = [GradsTuple { grad: 0.0, hess: 0.0 }; 2];
 
         obj.compute_gradients(2, 1, &preds, &targets, &weights, &mut grad_hess);
 
@@ -551,7 +551,7 @@ mod tests {
         let obj = PinballLoss::new(0.5);
         let preds = [1.0f32, 2.0, 3.0];
         let targets = [0.5f32, 2.5, 2.5];
-        let mut grad_hess = [GradHessF32 { grad: 0.0, hess: 0.0 }; 3];
+        let mut grad_hess = [GradsTuple { grad: 0.0, hess: 0.0 }; 3];
 
         obj.compute_gradients(3, 1, &preds, &targets, &[], &mut grad_hess);
 

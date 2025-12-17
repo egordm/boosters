@@ -42,22 +42,22 @@ pub trait Metric: Send + Sync {
 
 | Metric | Name | Formula | Direction |
 |--------|------|---------|-----------|
-| `Rmse` | `rmse` | $\sqrt{\frac{1}{n}\sum(p_i - y_i)^2}$ | Lower ↓ |
-| `Mae` | `mae` | $\frac{1}{n}\sum|p_i - y_i|$ | Lower ↓ |
-| `Mape` | `mape` | $\frac{100}{n}\sum\frac{|p_i - y_i|}{|y_i|}$ | Lower ↓ |
+| `Rmse` | `rmse` | RMSE = √(Σ(p-y)²/n) | Lower ↓ |
+| `Mae` | `mae` | MAE = Σ\|p-y\|/n | Lower ↓ |
+| `Mape` | `mape` | MAPE = 100×Σ(\|p-y\|/\|y\|)/n | Lower ↓ |
 | `HuberMetric` | `huber` | Quadratic for small residuals, linear for large (configurable δ) | Lower ↓ |
-| `PoissonDeviance` | `poisson` | $\frac{2}{n}\sum\left[y_i\ln\frac{y_i}{\hat\mu_i} - (y_i - \hat\mu_i)\right]$ | Lower ↓ |
-| `QuantileMetric` | `quantile` | Pinball loss: $\tau\max(y-q, 0) + (1-\tau)\max(q-y, 0)$ | Lower ↓ |
+| `PoissonDeviance` | `poisson` | 2×Σ[y×ln(y/μ) - (y-μ)]/n | Lower ↓ |
+| `QuantileMetric` | `quantile` | Pinball loss: τ×max(y-q,0) + (1-τ)×max(q-y,0) | Lower ↓ |
 
 #### Classification Metrics
 
 | Metric | Name | Formula | Direction |
 |--------|------|---------|-----------|
-| `LogLoss` | `logloss` | $-\frac{1}{n}\sum\left[y\ln p + (1-y)\ln(1-p)\right]$ | Lower ↓ |
-| `Accuracy` | `accuracy` | $\frac{1}{n}\sum\mathbf{1}[\hat{y}_i = y_i]$ (threshold=0.5) | Higher ↑ |
+| `LogLoss` | `logloss` | -Σ[y×ln(p) + (1-y)×ln(1-p)]/n | Lower ↓ |
+| `Accuracy` | `accuracy` | Σ1[ŷ=y]/n (threshold=0.5) | Higher ↑ |
 | `MarginAccuracy` | `margin_accuracy` | Accuracy on raw margin scores (threshold=0.0) | Higher ↑ |
 | `Auc` | `auc` | Area under ROC curve (O(n log n) algorithm) | Higher ↑ |
-| `MulticlassLogLoss` | `mlogloss` | $-\frac{1}{n}\sum\ln p_{y_i}$ | Lower ↓ |
+| `MulticlassLogLoss` | `mlogloss` | -Σln(p_y)/n | Lower ↓ |
 | `MulticlassAccuracy` | `multiclass_accuracy` | Argmax prediction vs true class | Higher ↑ |
 
 ### Weighted Computation

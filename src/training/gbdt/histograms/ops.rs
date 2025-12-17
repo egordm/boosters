@@ -24,7 +24,7 @@ use super::pool::FeatureMeta;
 use super::slices::HistogramFeatureIter;
 use crate::data::binned::FeatureView;
 use crate::training::gbdt::parallelism::Parallelism;
-use crate::training::GradHessF32;
+use crate::training::GradsTuple;
 
 /// A histogram bin storing accumulated (gradient_sum, hessian_sum).
 ///
@@ -72,7 +72,7 @@ impl HistogramBuilder {
     pub fn build_gathered(
         &self,
         histogram: &mut [HistogramBin],
-        ordered_grad_hess: &[GradHessF32],
+        ordered_grad_hess: &[GradsTuple],
         indices: &[u32],
         bin_views: &[FeatureView<'_>],
         feature_metas: &[FeatureMeta],
@@ -99,7 +99,7 @@ impl HistogramBuilder {
     pub fn build_contiguous(
         &self,
         histogram: &mut [HistogramBin],
-        ordered_grad_hess: &[GradHessF32],
+        ordered_grad_hess: &[GradsTuple],
         start_row: usize,
         bin_views: &[FeatureView<'_>],
         feature_metas: &[FeatureMeta],
@@ -138,7 +138,7 @@ impl HistogramBuilder {
 #[inline]
 fn build_feature_gathered(
     histogram: &mut [HistogramBin],
-    ordered_grad_hess: &[GradHessF32],
+    ordered_grad_hess: &[GradsTuple],
     indices: &[u32],
     view: &FeatureView<'_>,
 ) {
@@ -164,7 +164,7 @@ fn build_feature_gathered(
 #[inline]
 fn build_u8_gathered(
     bins: &[u8],
-    ordered_grad_hess: &[GradHessF32],
+    ordered_grad_hess: &[GradsTuple],
     histogram: &mut [HistogramBin],
     indices: &[u32],
 ) {
@@ -181,7 +181,7 @@ fn build_u8_gathered(
 #[inline]
 fn build_u16_gathered(
     bins: &[u16],
-    ordered_grad_hess: &[GradHessF32],
+    ordered_grad_hess: &[GradsTuple],
     histogram: &mut [HistogramBin],
     indices: &[u32],
 ) {
@@ -199,7 +199,7 @@ fn build_u16_gathered(
 fn build_u8_strided_gathered(
     bins: &[u8],
     stride: usize,
-    ordered_grad_hess: &[GradHessF32],
+    ordered_grad_hess: &[GradsTuple],
     histogram: &mut [HistogramBin],
     indices: &[u32],
 ) {
@@ -217,7 +217,7 @@ fn build_u8_strided_gathered(
 fn build_u16_strided_gathered(
     bins: &[u16],
     stride: usize,
-    ordered_grad_hess: &[GradHessF32],
+    ordered_grad_hess: &[GradsTuple],
     histogram: &mut [HistogramBin],
     indices: &[u32],
 ) {
@@ -239,7 +239,7 @@ fn build_u16_strided_gathered(
 #[inline]
 fn build_feature_contiguous(
     histogram: &mut [HistogramBin],
-    ordered_grad_hess: &[GradHessF32],
+    ordered_grad_hess: &[GradsTuple],
     start_row: usize,
     view: &FeatureView<'_>,
 ) {
@@ -268,7 +268,7 @@ fn build_feature_contiguous(
 #[inline]
 fn build_u8_contiguous(
     bins: &[u8],
-    ordered_grad_hess: &[GradHessF32],
+    ordered_grad_hess: &[GradsTuple],
     histogram: &mut [HistogramBin],
     start_row: usize,
 ) {
@@ -285,7 +285,7 @@ fn build_u8_contiguous(
 #[inline]
 fn build_u16_contiguous(
     bins: &[u16],
-    ordered_grad_hess: &[GradHessF32],
+    ordered_grad_hess: &[GradsTuple],
     histogram: &mut [HistogramBin],
     start_row: usize,
 ) {
@@ -303,7 +303,7 @@ fn build_u16_contiguous(
 fn build_u8_strided_contiguous(
     bins: &[u8],
     stride: usize,
-    ordered_grad_hess: &[GradHessF32],
+    ordered_grad_hess: &[GradsTuple],
     histogram: &mut [HistogramBin],
     start_row: usize,
 ) {
@@ -323,7 +323,7 @@ fn build_u8_strided_contiguous(
 fn build_u16_strided_contiguous(
     bins: &[u16],
     stride: usize,
-    ordered_grad_hess: &[GradHessF32],
+    ordered_grad_hess: &[GradsTuple],
     histogram: &mut [HistogramBin],
     start_row: usize,
 ) {
@@ -343,7 +343,7 @@ fn build_u16_strided_contiguous(
 fn build_sparse_u8_contiguous(
     row_indices: &[u32],
     bin_values: &[u8],
-    ordered_grad_hess: &[GradHessF32],
+    ordered_grad_hess: &[GradsTuple],
     histogram: &mut [HistogramBin],
     start_row: usize,
 ) {
@@ -365,7 +365,7 @@ fn build_sparse_u8_contiguous(
 fn build_sparse_u16_contiguous(
     row_indices: &[u32],
     bin_values: &[u16],
-    ordered_grad_hess: &[GradHessF32],
+    ordered_grad_hess: &[GradsTuple],
     histogram: &mut [HistogramBin],
     start_row: usize,
 ) {
@@ -456,10 +456,10 @@ mod tests {
 
         let features = make_features(&[3]);
         let bin_views = vec![FeatureView::U8 { bins: &bins, stride: 1 }];
-        let ordered_grad_hess: Vec<GradHessF32> = grad
+        let ordered_grad_hess: Vec<GradsTuple> = grad
             .iter()
             .zip(&hess)
-            .map(|(&g, &h)| GradHessF32 { grad: g, hess: h })
+            .map(|(&g, &h)| GradsTuple { grad: g, hess: h })
             .collect();
 
         let builder = HistogramBuilder::new(Parallelism::Sequential);
@@ -481,11 +481,11 @@ mod tests {
 
         let features = make_features(&[3]);
         let bin_views = vec![FeatureView::U8 { bins: &bins, stride: 1 }];
-        let ordered_grad_hess: Vec<GradHessF32> = indices
+        let ordered_grad_hess: Vec<GradsTuple> = indices
             .iter()
             .map(|&r| {
                 let r = r as usize;
-                GradHessF32 { grad: grad[r], hess: hess[r] }
+                GradsTuple { grad: grad[r], hess: hess[r] }
             })
             .collect();
 
@@ -519,10 +519,10 @@ mod tests {
             row_indices: &row_indices,
             bin_values: &bin_values,
         }];
-        let ordered_grad_hess: Vec<GradHessF32> = grad
+        let ordered_grad_hess: Vec<GradsTuple> = grad
             .iter()
             .zip(&hess)
-            .map(|(&g, &h)| GradHessF32 { grad: g, hess: h })
+            .map(|(&g, &h)| GradsTuple { grad: g, hess: h })
             .collect();
 
         let builder = HistogramBuilder::new(Parallelism::Sequential);
@@ -551,10 +551,10 @@ mod tests {
         let hess: Vec<f32> = vec![1.0; n_samples];
         let mut histogram = vec![(0.0, 0.0); 12];
 
-        let ordered_grad_hess: Vec<GradHessF32> = grad
+        let ordered_grad_hess: Vec<GradsTuple> = grad
             .iter()
             .zip(&hess)
-            .map(|(&g, &h)| GradHessF32 { grad: g, hess: h })
+            .map(|(&g, &h)| GradsTuple { grad: g, hess: h })
             .collect();
 
         let builder = HistogramBuilder::new(Parallelism::Sequential);
@@ -597,11 +597,11 @@ mod tests {
             hist_ref[4 + b1].1 += h;
         }
 
-        let ordered_interleaved: Vec<GradHessF32> = indices
+        let ordered_interleaved: Vec<GradsTuple> = indices
             .iter()
             .map(|&r| {
                 let r = r as f32;
-                GradHessF32 { grad: r * 0.25, hess: 1.0 + r * 0.01 }
+                GradsTuple { grad: r * 0.25, hess: 1.0 + r * 0.01 }
             })
             .collect();
 
@@ -625,8 +625,8 @@ mod tests {
             .map(|_| FeatureView::U8 { bins: &bins, stride: 1 })
             .collect();
 
-        let ordered_grad_hess: Vec<GradHessF32> = (0..n_samples)
-            .map(|i| GradHessF32 { grad: i as f32, hess: 1.0 })
+        let ordered_grad_hess: Vec<GradsTuple> = (0..n_samples)
+            .map(|i| GradsTuple { grad: i as f32, hess: 1.0 })
             .collect();
 
         // Sequential

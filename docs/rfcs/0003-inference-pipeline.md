@@ -105,10 +105,7 @@ pub struct PredictionOutput {
 - `softmax_inplace(row)` → multiclass probabilities (numerically stable: subtract max before exp)
 - `softmax_rows(output)` → apply softmax to each row
 
-**Higher-level `Predictions`** enum wraps output with semantic meaning:
-- `Regression(PredictionOutput)`
-- `BinaryClassification { logits, probabilities }`
-- `MulticlassClassification { logits, probabilities }`
+Output kind is tracked via `OutputKind` enum for dynamic dispatch on transform needs.
 
 ## Performance
 
@@ -133,4 +130,12 @@ pub type SimplePredictor<'f> = Predictor<'f, StandardTraversal>;
 pub type UnrolledPredictor6<'f> = Predictor<'f, UnrolledTraversal<Depth6>>;
 ```
 
-**SIMD**: `SimdTraversal<D>` exists as a placeholder. Currently identical to `UnrolledTraversal` (scalar correctness-first). Defines `SIMD_WIDTH = 8` as a hint for batch tuning.
+**SIMD**: `SimdTraversal<D>` exists as a placeholder for future SIMD optimization. Currently uses the same scalar unrolled traversal for correctness-first implementation. Defines `SIMD_WIDTH = 8` as a hint for batch tuning. True SIMD vectorization (processing 4-8 rows simultaneously) is a future optimization opportunity.
+
+## Future Improvements
+
+1. **SIMD Vectorization**: Implement actual SIMD traversal using `std::simd` or `packed_simd` to process multiple rows in parallel through tree levels.
+
+2. **Thread Pool Control**: `par_predict` currently uses Rayon's global thread pool. Consider adding `par_predict_with_threads(n)` to constrain parallelism.
+
+3. **Training Integration**: Consider exposing batch prediction for use during training/evaluation instead of per-row prediction.
