@@ -36,9 +36,6 @@ mod predictor;
 mod traversal;
 mod unrolled;
 
-#[cfg(feature = "simd")]
-mod simd;
-
 // Re-export canonical representation types from `repr`.
 pub use crate::repr::gbdt::{
     categories_to_bitset, float_to_category,
@@ -62,14 +59,3 @@ pub use traversal::{
     StandardTraversal, TreeTraversal, UnrolledTraversal, UnrolledTraversal4, UnrolledTraversal6,
     UnrolledTraversal8, traverse_from_node,
 };
-
-// Re-export SIMD types when feature is enabled
-#[cfg(feature = "simd")]
-pub use simd::{SimdTraversal, SimdTraversal4, SimdTraversal6, SimdTraversal8, SIMD_WIDTH};
-
-#[cfg(feature = "simd")]
-pub type SimdPredictor4<'f> = Predictor<'f, SimdTraversal4>;
-#[cfg(feature = "simd")]
-pub type SimdPredictor6<'f> = Predictor<'f, SimdTraversal6>;
-#[cfg(feature = "simd")]
-pub type SimdPredictor8<'f> = Predictor<'f, SimdTraversal8>;

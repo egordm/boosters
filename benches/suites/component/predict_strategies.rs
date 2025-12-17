@@ -10,9 +10,6 @@ use booste_rs::data::RowMatrix;
 use booste_rs::inference::gbdt::{Predictor, StandardTraversal, UnrolledTraversal6};
 use booste_rs::testing::data::random_dense_f32;
 
-#[cfg(feature = "simd")]
-use booste_rs::inference::gbdt::SimdTraversal6;
-
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 fn bench_gbtree_traversal_strategies(c: &mut Criterion) {
@@ -24,11 +21,6 @@ fn bench_gbtree_traversal_strategies(c: &mut Criterion) {
 
 	let unroll_no_block = Predictor::<UnrolledTraversal6>::new(forest).with_block_size(100_000);
 	let unroll_block64 = Predictor::<UnrolledTraversal6>::new(forest).with_block_size(64);
-
-	#[cfg(feature = "simd")]
-	let simd_no_block = Predictor::<SimdTraversal6>::new(forest).with_block_size(100_000);
-	#[cfg(feature = "simd")]
-	let simd_block64 = Predictor::<SimdTraversal6>::new(forest).with_block_size(64);
 
 	let mut group = c.benchmark_group("component/predict/traversal/medium");
 
@@ -50,16 +42,6 @@ fn bench_gbtree_traversal_strategies(c: &mut Criterion) {
 		group.bench_with_input(BenchmarkId::new("unroll_block64", batch_size), &matrix, |b, m| {
 			b.iter(|| black_box(unroll_block64.predict(black_box(m))))
 		});
-
-		#[cfg(feature = "simd")]
-		{
-			group.bench_with_input(BenchmarkId::new("simd_no_block", batch_size), &matrix, |b, m| {
-				b.iter(|| black_box(simd_no_block.predict(black_box(m))))
-			});
-			group.bench_with_input(BenchmarkId::new("simd_block64", batch_size), &matrix, |b, m| {
-				b.iter(|| black_box(simd_block64.predict(black_box(m))))
-			});
-		}
 	}
 
 	group.finish();
