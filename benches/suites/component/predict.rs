@@ -8,8 +8,6 @@ use common::models::load_boosters_model;
 
 use booste_rs::data::RowMatrix;
 use booste_rs::inference::gbdt::{Predictor, StandardTraversal, UnrolledTraversal6};
-#[cfg(feature = "simd")]
-use booste_rs::inference::gbdt::SimdTraversal6;
 use booste_rs::testing::data::random_dense_f32;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
@@ -83,7 +81,7 @@ fn bench_gbtree_single_row(c: &mut Criterion) {
 	});
 }
 
-/// Compare traversal strategies: Standard vs Unrolled vs SIMD
+/// Compare traversal strategies: Standard vs Unrolled
 fn bench_traversal_strategies(c: &mut Criterion) {
 	let model = load_boosters_model("bench_medium");
 	let num_features = model.num_features;
@@ -106,15 +104,6 @@ fn bench_traversal_strategies(c: &mut Criterion) {
 	group.bench_with_input(BenchmarkId::new("unrolled6", batch_size), &matrix, |b, m| {
 		b.iter(|| black_box(unrolled.predict(black_box(m))))
 	});
-
-	// SIMD traversal (when feature enabled)
-	#[cfg(feature = "simd")]
-	{
-		let simd = Predictor::<SimdTraversal6>::new(&model.forest).with_block_size(64);
-		group.bench_with_input(BenchmarkId::new("simd6", batch_size), &matrix, |b, m| {
-			b.iter(|| black_box(simd.predict(black_box(m))))
-		});
-	}
 
 	group.finish();
 }

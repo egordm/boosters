@@ -17,9 +17,6 @@ rayon = "1.10"
 rand = { version = "0.8", features = ["small_rng"] }
 rand_xoshiro = "0.6"
 
-# Optional: SIMD acceleration
-wide = { version = "0.7", optional = true }
-
 # Optional: XGBoost compatibility
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", optional = true }
@@ -57,7 +54,6 @@ tempfile = "3.20"  # For Arrow/Parquet I/O tests
 default = ["xgboost-compat"]
 xgboost-compat = ["dep:serde", "dep:serde_json", "dep:serde_with"]
 lightgbm-compat = ["dep:serde", "dep:serde_json"]
-simd = ["dep:wide"]
 # Unified comparison feature - enables both XGBoost and LightGBM bindings
 bench-compare = ["bench-xgboost", "bench-lightgbm"]
 bench-xgboost = ["dep:xgb", "xgboost-compat"]
