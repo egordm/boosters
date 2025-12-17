@@ -5,7 +5,7 @@
 
 use booste_rs::data::binned::{BinnedDatasetBuilder, GroupLayout, GroupStrategy};
 use booste_rs::data::{ColMatrix, DenseMatrix, RowMajor};
-use booste_rs::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, SquaredLoss};
+use booste_rs::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use std::time::Instant;
 
 fn main() {
@@ -80,8 +80,8 @@ fn main() {
     let mut row_times = Vec::new();
     for _ in 0..n_runs {
         let start = Instant::now();
-        let _ = GBDTTrainer::new(SquaredLoss, params.clone())
-            .train(&row_major_dataset, &labels, &[])
+        let _ = GBDTTrainer::new(SquaredLoss, Rmse, params.clone())
+            .train(&row_major_dataset, &labels, &[], &[])
             .unwrap();
         row_times.push(start.elapsed());
     }
@@ -92,8 +92,8 @@ fn main() {
     let mut col_times = Vec::new();
     for _ in 0..n_runs {
         let start = Instant::now();
-        let _ = GBDTTrainer::new(SquaredLoss, params.clone())
-            .train(&col_major_dataset, &labels, &[])
+        let _ = GBDTTrainer::new(SquaredLoss, Rmse, params.clone())
+            .train(&col_major_dataset, &labels, &[], &[])
             .unwrap();
         col_times.push(start.elapsed());
     }

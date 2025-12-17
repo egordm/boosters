@@ -45,7 +45,6 @@ use std::path::{Path, PathBuf};
 
 use booste_rs::data::binned::BinnedDatasetBuilder;
 use booste_rs::data::{ColMatrix, DenseMatrix, RowMajor, RowMatrix};
-use booste_rs::inference::common::{sigmoid_inplace, softmax_inplace};
 use booste_rs::inference::gbdt::{Predictor, UnrolledTraversal6};
 use booste_rs::testing::data::{
 	random_dense_f32, split_indices, synthetic_binary_targets_from_linear_score,
@@ -53,7 +52,7 @@ use booste_rs::testing::data::{
 };
 use booste_rs::training::{
 	Accuracy, GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, LogLoss, LogisticLoss, Mae,
-	Metric, MulticlassAccuracy, MulticlassLogLoss, Rmse, SoftmaxLoss, SquaredLoss,
+	Metric, MulticlassAccuracy, MulticlassLogLoss, Objective, Rmse, SoftmaxLoss, SquaredLoss,
 };
 
 #[cfg(feature = "io-parquet")]
@@ -63,7 +62,7 @@ use booste_rs::data::io::parquet::load_parquet_xy_row_major_f32;
 use xgb::parameters::tree::{GrowPolicy, TreeBoosterParametersBuilder, TreeMethod};
 #[cfg(feature = "bench-xgboost")]
 use xgb::parameters::{
-	learning::LearningTaskParametersBuilder, learning::Objective, BoosterParametersBuilder,
+	learning::LearningTaskParametersBuilder, learning::Objective as XgbObjective, BoosterParametersBuilder,
 	BoosterType, TrainingParametersBuilder,
 };
 #[cfg(feature = "bench-xgboost")]
@@ -375,7 +374,8 @@ fn extract_group(output: &booste_rs::inference::common::PredictionOutput, group:
 	if num_groups == 1 {
 		return output.as_slice().to_vec();
 	}
-	(0..output.num_rows()).map(|r| output.row(r)[group]).collect()
+	// Column-major: column(group) is contiguous
+	output.column(group).to_vec()
 }
 
 // =============================================================================
@@ -615,30 +615,30 @@ fn train_boosters(
 			LibraryMetrics { metrics: MetricsJson { rmse: Some(rmse), mae: Some(mae), ..Default::default() } }
 		}
 		Task::Binary => {
-			let trainer = GBDTTrainer::new(LogisticLoss, LogLoss, params);
+			let objective = LogisticLoss;
+			let trainer = GBDTTrainer::new(objective, LogLoss, params);
 			let forest = trainer.train(&binned_train, y_train, &[], &[]).unwrap();
 			let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
-			let raw = predictor.predict(&row_valid);
-			let mut prob = extract_group(&raw, 0);
-			sigmoid_inplace(&mut prob);
-			let ll = LogLoss.compute(rows_valid, 1, &prob, y_valid, &[]);
-			let acc = Accuracy::default().compute(rows_valid, 1, &prob, y_valid, &[]);
+			let mut raw = predictor.predict(&row_valid);
+			objective.transform_prediction_inplace(&mut raw);
+			let prob = raw.column(0);
+			let ll = LogLoss.compute(rows_valid, 1, prob, y_valid, &[]);
+			let acc = Accuracy::default().compute(rows_valid, 1, prob, y_valid, &[]);
 			LibraryMetrics { metrics: MetricsJson { logloss: Some(ll), acc: Some(acc), ..Default::default() } }
 		}
 		Task::Multiclass => {
 			let num_classes = config.classes.unwrap_or(3);
-			let trainer = GBDTTrainer::new(SoftmaxLoss::new(num_classes), MulticlassLogLoss, params);
+			let objective = SoftmaxLoss::new(num_classes);
+			let trainer = GBDTTrainer::new(objective, MulticlassLogLoss, params);
 			let forest = trainer.train(&binned_train, y_train, &[], &[]).unwrap();
 			let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
-			let raw = predictor.predict(&row_valid);
-			let mut prob_row_major = vec![0.0f32; rows_valid * num_classes];
-			for r in 0..rows_valid {
-				let mut logits = raw.row(r).to_vec();
-				softmax_inplace(&mut logits);
-				prob_row_major[r * num_classes..(r + 1) * num_classes].copy_from_slice(&logits);
-			}
-			let ll = MulticlassLogLoss.compute(rows_valid, num_classes, &prob_row_major, y_valid, &[]);
-			let acc = MulticlassAccuracy.compute(rows_valid, num_classes, &prob_row_major, y_valid, &[]);
+			let mut raw = predictor.predict(&row_valid);
+			// Apply softmax to column-major output
+			objective.transform_prediction_inplace(&mut raw);
+			// Metrics can now use column-major directly
+			let prob_col_major = raw.as_slice();
+			let ll = MulticlassLogLoss.compute(rows_valid, num_classes, prob_col_major, y_valid, &[]);
+			let acc = MulticlassAccuracy.compute(rows_valid, num_classes, prob_col_major, y_valid, &[]);
 			LibraryMetrics { metrics: MetricsJson { mlogloss: Some(ll), acc: Some(acc), ..Default::default() } }
 		}
 	}
@@ -670,12 +670,12 @@ fn train_xgboost(
 		.unwrap();
 
 	let num_classes = config.classes.unwrap_or(3);
-	let objective = match config.task {
-		Task::Regression => Objective::RegLinear,
-		Task::Binary => Objective::BinaryLogistic,
-		Task::Multiclass => Objective::MultiSoftprob(num_classes as u32),
+	let xgb_objective = match config.task {
+		Task::Regression => XgbObjective::RegLinear,
+		Task::Binary => XgbObjective::BinaryLogistic,
+		Task::Multiclass => XgbObjective::MultiSoftprob(num_classes as u32),
 	};
-	let learning_params = LearningTaskParametersBuilder::default().objective(objective).build().unwrap();
+	let learning_params = LearningTaskParametersBuilder::default().objective(xgb_objective).build().unwrap();
 
 	let booster_params = BoosterParametersBuilder::default()
 		.booster_type(BoosterType::Tree(tree_params))

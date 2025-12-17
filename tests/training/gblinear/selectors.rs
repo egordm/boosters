@@ -127,7 +127,7 @@ fn train_all_selectors_multiclass() {
     let n_rows = shuffle_output.num_rows();
     let shuffle_pred_classes: Vec<f32> = (0..n_rows)
         .map(|row| {
-            let row_preds = shuffle_output.row(row);
+            let row_preds = shuffle_output.row_vec(row);
             let mut best_idx = 0usize;
             let mut best_val = f32::NEG_INFINITY;
             for (idx, &v) in row_preds.iter().enumerate() {
@@ -163,7 +163,7 @@ fn train_all_selectors_multiclass() {
         let n_rows = output.num_rows();
         let pred_classes: Vec<f32> = (0..n_rows)
             .map(|row| {
-                let row_preds = output.row(row);
+                let row_preds = output.row_vec(row);
                 let mut best_idx = 0usize;
                 let mut best_val = f32::NEG_INFINITY;
                 for (idx, &v) in row_preds.iter().enumerate() {

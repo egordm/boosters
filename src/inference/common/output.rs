@@ -4,14 +4,19 @@ use approx::{AbsDiffEq, RelativeEq};
 
 /// Prediction output: flat storage with shape metadata.
 ///
-/// Stores predictions in row-major layout for cache efficiency.
-/// Each row contains `num_groups` values (1 for regression, K for K-class).
+/// Stores predictions in column-major layout for efficient training and
+/// vectorized operations. Each column contains all values for one output group.
 ///
 /// # Memory Layout
 ///
 /// ```text
-/// data[row * num_groups + group] = prediction for (row, group)
+/// data[group * num_rows + row] = prediction for (row, group)
 /// ```
+///
+/// Column-major layout enables:
+/// - Efficient base score initialization via `column_mut(g).fill(base_score)`
+/// - Sequential writes when accumulating tree outputs for a group
+/// - Vectorized operations (softmax, transforms) over columns
 ///
 /// # Example
 ///
@@ -19,15 +24,15 @@ use approx::{AbsDiffEq, RelativeEq};
 /// use booste_rs::inference::common::PredictionOutput;
 ///
 /// // 3 rows, 2 groups (binary classification logits)
-/// let output = PredictionOutput::new(vec![0.1, -0.2, 0.3, -0.4, 0.5, -0.6], 3, 2);
+/// // Column-major: [g0r0, g0r1, g0r2, g1r0, g1r1, g1r2]
+/// let output = PredictionOutput::new(vec![0.1, 0.2, 0.3, -0.1, -0.2, -0.3], 3, 2);
 ///
-/// assert_eq!(output.row(0), &[0.1, -0.2]);
-/// assert_eq!(output.row(1), &[0.3, -0.4]);
-/// assert_eq!(output.row(2), &[0.5, -0.6]);
+/// assert_eq!(output.column(0), &[0.1, 0.2, 0.3]);
+/// assert_eq!(output.column(1), &[-0.1, -0.2, -0.3]);
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct PredictionOutput {
-    /// Flat data in row-major layout.
+    /// Flat data in column-major layout.
     data: Vec<f32>,
     /// Number of rows (samples).
     num_rows: usize,
@@ -84,53 +89,96 @@ impl PredictionOutput {
         (self.num_rows, self.num_groups)
     }
 
-    /// Get prediction for a single row.
+    /// Get a single column (all rows for one output group).
     ///
     /// # Panics
     ///
-    /// Panics if `row_idx >= num_rows`.
+    /// Panics if `group_idx >= num_groups`.
     #[inline]
-    pub fn row(&self, row_idx: usize) -> &[f32] {
-        let start = row_idx * self.num_groups;
-        &self.data[start..start + self.num_groups]
+    pub fn column(&self, group_idx: usize) -> &[f32] {
+        let start = group_idx * self.num_rows;
+        &self.data[start..start + self.num_rows]
     }
 
-    /// Get mutable prediction for a single row.
+    /// Get mutable column (all rows for one output group).
     ///
     /// # Panics
     ///
-    /// Panics if `row_idx >= num_rows`.
+    /// Panics if `group_idx >= num_groups`.
     #[inline]
-    pub fn row_mut(&mut self, row_idx: usize) -> &mut [f32] {
-        let start = row_idx * self.num_groups;
-        &mut self.data[start..start + self.num_groups]
+    pub fn column_mut(&mut self, group_idx: usize) -> &mut [f32] {
+        let start = group_idx * self.num_rows;
+        &mut self.data[start..start + self.num_rows]
     }
 
-    /// Iterate over rows.
-    pub fn rows(&self) -> impl Iterator<Item = &[f32]> {
-        self.data.chunks_exact(self.num_groups)
+    /// Get prediction value at (row, group).
+    #[inline]
+    pub fn get(&self, row_idx: usize, group_idx: usize) -> f32 {
+        self.data[group_idx * self.num_rows + row_idx]
     }
 
-    /// Get raw flat data.
+    /// Set prediction value at (row, group).
+    #[inline]
+    pub fn set(&mut self, row_idx: usize, group_idx: usize, value: f32) {
+        self.data[group_idx * self.num_rows + row_idx] = value;
+    }
+
+    /// Add to prediction value at (row, group).
+    #[inline]
+    pub fn add(&mut self, row_idx: usize, group_idx: usize, value: f32) {
+        self.data[group_idx * self.num_rows + row_idx] += value;
+    }
+
+    /// Iterate over columns.
+    pub fn columns(&self) -> impl Iterator<Item = &[f32]> {
+        self.data.chunks_exact(self.num_rows)
+    }
+
+    /// Iterate over columns mutably.
+    pub fn columns_mut(&mut self) -> impl Iterator<Item = &mut [f32]> {
+        self.data.chunks_exact_mut(self.num_rows)
+    }
+
+    /// Get raw flat data (column-major layout).
     #[inline]
     pub fn as_slice(&self) -> &[f32] {
         &self.data
     }
 
-    /// Get mutable raw flat data.
+    /// Get mutable raw flat data (column-major layout).
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [f32] {
         &mut self.data
     }
 
-    /// Consume and return raw data.
+    /// Consume and return raw data (column-major layout).
     pub fn into_vec(self) -> Vec<f32> {
         self.data
     }
 
-    /// Convert to `Vec<Vec<f32>>` (allocates).
+    /// Convert to `Vec<Vec<f32>>` where each inner vec is a column (group).
     pub fn to_nested(&self) -> Vec<Vec<f32>> {
-        self.rows().map(|r| r.to_vec()).collect()
+        self.columns().map(|c| c.to_vec()).collect()
+    }
+
+    /// Get row values by copying into a buffer.
+    ///
+    /// For column-major layout, row access requires strided iteration.
+    #[inline]
+    pub fn copy_row(&self, row_idx: usize, out: &mut [f32]) {
+        debug_assert_eq!(out.len(), self.num_groups);
+        for (group, val) in out.iter_mut().enumerate() {
+            *val = self.get(row_idx, group);
+        }
+    }
+
+    /// Get all values for a single row as a new Vec.
+    ///
+    /// Note: This allocates. For tight loops, prefer `copy_row`.
+    pub fn row_vec(&self, row_idx: usize) -> Vec<f32> {
+        let mut out = vec![0.0; self.num_groups];
+        self.copy_row(row_idx, &mut out);
+        out
     }
 }
 
@@ -196,30 +244,51 @@ mod tests {
     }
 
     #[test]
-    fn row_access() {
+    fn column_access() {
+        // Column-major: [g0r0, g0r1, g0r2, g1r0, g1r1, g1r2]
         let output = PredictionOutput::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 3, 2);
-        assert_eq!(output.row(0), &[1.0, 2.0]);
-        assert_eq!(output.row(1), &[3.0, 4.0]);
-        assert_eq!(output.row(2), &[5.0, 6.0]);
+        assert_eq!(output.column(0), &[1.0, 2.0, 3.0]);
+        assert_eq!(output.column(1), &[4.0, 5.0, 6.0]);
     }
 
     #[test]
-    fn row_mut() {
+    fn get_set() {
         let mut output = PredictionOutput::zeros(2, 2);
-        output.row_mut(0)[0] = 1.0;
-        output.row_mut(1)[1] = 2.0;
+        output.set(0, 0, 1.0);
+        output.set(1, 1, 2.0);
+        // Column-major: [g0r0, g0r1, g1r0, g1r1] = [1.0, 0.0, 0.0, 2.0]
         assert_eq!(output.as_slice(), &[1.0, 0.0, 0.0, 2.0]);
+        assert_eq!(output.get(0, 0), 1.0);
+        assert_eq!(output.get(1, 1), 2.0);
     }
 
     #[test]
-    fn rows_iteration() {
+    fn add() {
+        let mut output = PredictionOutput::zeros(2, 2);
+        output.add(0, 0, 1.0);
+        output.add(0, 0, 0.5);
+        assert_eq!(output.get(0, 0), 1.5);
+    }
+
+    #[test]
+    fn columns_iteration() {
         let output = PredictionOutput::new(vec![1.0, 2.0, 3.0, 4.0], 2, 2);
-        let rows: Vec<_> = output.rows().collect();
-        assert_eq!(rows, vec![&[1.0, 2.0][..], &[3.0, 4.0][..]]);
+        let cols: Vec<_> = output.columns().collect();
+        assert_eq!(cols, vec![&[1.0, 2.0][..], &[3.0, 4.0][..]]);
+    }
+
+    #[test]
+    fn row_vec_access() {
+        // Column-major: [g0r0, g0r1, g0r2, g1r0, g1r1, g1r2]
+        let output = PredictionOutput::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 3, 2);
+        assert_eq!(output.row_vec(0), vec![1.0, 4.0]);
+        assert_eq!(output.row_vec(1), vec![2.0, 5.0]);
+        assert_eq!(output.row_vec(2), vec![3.0, 6.0]);
     }
 
     #[test]
     fn to_nested() {
+        // Column-major: columns become the nested vecs
         let output = PredictionOutput::new(vec![1.0, 2.0, 3.0, 4.0], 2, 2);
         let nested = output.to_nested();
         assert_eq!(nested, vec![vec![1.0, 2.0], vec![3.0, 4.0]]);

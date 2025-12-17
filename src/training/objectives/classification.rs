@@ -1,9 +1,68 @@
 //! Classification objective functions.
 
 use super::{validate_objective_inputs, weight_iter, Objective, TargetSchema, TaskKind};
-use crate::inference::common::{sigmoid_inplace, softmax_rows, PredictionKind, PredictionOutput};
+use crate::inference::common::{PredictionKind, PredictionOutput};
 use crate::training::GradsTuple;
 use crate::training::metrics::MetricKind;
+
+// =============================================================================
+// Transform Functions (module-private)
+// =============================================================================
+
+/// Apply softmax transform in-place to a single row of logits.
+#[inline]
+fn softmax_row_inplace(row: &mut [f32]) {
+    if row.is_empty() {
+        return;
+    }
+
+    // Find max for numerical stability
+    let max_val = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+
+    // Compute exp(x - max) and sum
+    let mut sum = 0.0f32;
+    for x in row.iter_mut() {
+        *x = (*x - max_val).exp();
+        sum += *x;
+    }
+
+    // Normalize
+    if sum > 0.0 {
+        for x in row.iter_mut() {
+            *x /= sum;
+        }
+    }
+}
+
+/// Apply softmax transform to column-major predictions in-place.
+///
+/// Layout: `predictions[output * n_rows + row]`
+///
+/// For each sample, gathers logits from all outputs, applies softmax, scatters back.
+fn softmax_col_major(predictions: &mut [f32], n_rows: usize, n_outputs: usize) {
+    if n_outputs <= 1 {
+        return;
+    }
+    debug_assert_eq!(predictions.len(), n_rows * n_outputs);
+
+    // Scratch space for one sample's logits
+    let mut scratch = vec![0.0f32; n_outputs];
+
+    for row in 0..n_rows {
+        // Gather logits for this sample
+        for out in 0..n_outputs {
+            scratch[out] = predictions[out * n_rows + row];
+        }
+
+        // Apply softmax in-place
+        softmax_row_inplace(&mut scratch);
+
+        // Scatter back
+        for out in 0..n_outputs {
+            predictions[out * n_rows + row] = scratch[out];
+        }
+    }
+}
 
 // =============================================================================
 // Logistic Loss
@@ -115,8 +174,11 @@ impl Objective for LogisticLoss {
         MetricKind::LogLoss
     }
 
-    fn transform_prediction_inplace(&self, raw: &mut PredictionOutput) -> PredictionKind {
-        sigmoid_inplace(raw.as_mut_slice());
+    fn transform_predictions(&self, predictions: &mut [f32], _n_rows: usize, _n_outputs: usize) -> PredictionKind {
+        // Apply sigmoid: x = 1 / (1 + exp(-x))
+        for x in predictions.iter_mut() {
+            *x = Self::sigmoid(*x);
+        }
         PredictionKind::Probability
     }
 }
@@ -360,8 +422,8 @@ impl Objective for SoftmaxLoss {
         MetricKind::MulticlassLogLoss
     }
 
-    fn transform_prediction_inplace(&self, raw: &mut PredictionOutput) -> PredictionKind {
-        softmax_rows(raw);
+    fn transform_predictions(&self, predictions: &mut [f32], n_rows: usize, n_outputs: usize) -> PredictionKind {
+        softmax_col_major(predictions, n_rows, n_outputs);
         PredictionKind::Probability
     }
 }

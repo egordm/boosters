@@ -22,9 +22,8 @@
 use rayon::ThreadPoolBuilder;
 
 use crate::data::{BinnedDataset, RowMatrix};
-use crate::inference::common::PredictionKind;
 use crate::training::callback::{EarlyStopping, EarlyStopAction};
-use crate::training::eval::EvalSet;
+use crate::training::eval::{self, EvalSet};
 use crate::training::logger::TrainingLogger;
 use crate::training::metrics::Metric;
 use crate::training::objectives::Objective;
@@ -293,6 +292,9 @@ impl<O: Objective, M: Metric> GBDTTrainer<O, M> {
         );
         let mut best_n_trees: usize = 0;
 
+        // Evaluator for computing metrics
+        let mut evaluator = eval::Evaluator::new(&self.objective, &self.metric, n_outputs);
+
         // Logger
         let mut logger = TrainingLogger::new(self.params.verbosity);
         logger.start_training(self.params.n_trees as usize);
@@ -350,19 +352,21 @@ impl<O: Objective, M: Metric> GBDTTrainer<O, M> {
             }
 
             // Evaluate on eval sets (using accumulated predictions)
-            let (round_metrics, early_stop_value) = self.evaluate_round(
+            let round_metrics = evaluator.evaluate_round(
+                &predictions,
                 targets,
                 weights,
-                &predictions,
+                n_rows,
                 eval_sets,
                 &eval_predictions,
-                n_outputs,
-                n_rows,
+            );
+            let early_stop_value = eval::Evaluator::<O, M>::early_stop_value(
+                &round_metrics,
                 self.params.early_stopping_eval_set,
             );
 
             if self.params.verbosity >= Verbosity::Info {
-                logger.log_round(round as usize, &round_metrics);
+                logger.log_metrics(round as usize, &round_metrics);
             }
 
             // Early stopping check (value always present: either eval or train metric)
@@ -412,100 +416,6 @@ impl<O: Objective, M: Metric> GBDTTrainer<O, M> {
         }
 
         truncated
-    }
-
-    /// Evaluate accumulated predictions on all eval sets for this round.
-    ///
-    /// Also computes training metric. If early stopping is enabled but no eval sets
-    /// are provided, uses the training metric for early stopping.
-    ///
-    /// Returns (metrics, early_stop_value). early_stop_value is always present:
-    /// either from the designated eval set or the training metric.
-    fn evaluate_round(
-        &self,
-        train_targets: &[f32],
-        train_weights: &[f32],
-        train_predictions: &[f32],
-        eval_sets: &[EvalSet<'_>],
-        eval_predictions: &[Vec<f32>],
-        n_outputs: usize,
-        n_rows: usize,
-        early_stopping_eval_idx: usize,
-    ) -> (Vec<(String, f64)>, f64) {
-        let mut round_metrics = Vec::new();
-
-        // Determine if we need to transform predictions for this metric
-        let needs_transform = self.metric.expected_prediction_kind() != PredictionKind::Margin;
-
-        // Always compute training metric (needed for logging and potential early stopping)
-        let train_metric_value = {
-            // Convert column-major to row-major for metric computation
-            let mut row_major = vec![0.0f32; n_rows * n_outputs];
-            for out in 0..n_outputs {
-                for row in 0..n_rows {
-                    row_major[row * n_outputs + out] = train_predictions[out * n_rows + row];
-                }
-            }
-
-            let predictions: std::borrow::Cow<'_, [f32]> = if needs_transform {
-                let output = crate::inference::common::PredictionOutput::new(
-                    row_major,
-                    n_rows,
-                    n_outputs,
-                );
-                let transformed = self.objective.transform_prediction(output);
-                std::borrow::Cow::Owned(transformed.output.into_vec())
-            } else {
-                std::borrow::Cow::Owned(row_major)
-            };
-
-            self.metric.compute(n_rows, n_outputs, &predictions, train_targets, train_weights)
-        };
-
-        round_metrics.push((format!("train-{}", self.metric.name()), train_metric_value));
-
-        // Default early stop value is training metric (used if no eval sets)
-        let mut early_stop_value = train_metric_value;
-
-        // Compute eval set metrics
-        for (set_idx, eval_set) in eval_sets.iter().enumerate() {
-            let raw_preds = &eval_predictions[set_idx];
-            let eval_rows = raw_preds.len() / n_outputs;
-
-            // Convert column-major to row-major for metric computation
-            let mut row_major = vec![0.0f32; eval_rows * n_outputs];
-            for out in 0..n_outputs {
-                for row in 0..eval_rows {
-                    row_major[row * n_outputs + out] = raw_preds[out * eval_rows + row];
-                }
-            }
-
-            // Transform predictions if metric requires it (e.g., probability for logloss)
-            let predictions: std::borrow::Cow<'_, [f32]> = if needs_transform {
-                let output = crate::inference::common::PredictionOutput::new(
-                    row_major,
-                    eval_rows,
-                    n_outputs,
-                );
-                let transformed = self.objective.transform_prediction(output);
-                std::borrow::Cow::Owned(transformed.output.into_vec())
-            } else {
-                std::borrow::Cow::Owned(row_major)
-            };
-
-            let targets = eval_set.dataset.targets();
-            let w = eval_set.dataset.weights().unwrap_or(&[]);
-            let value = self.metric.compute(eval_rows, n_outputs, &predictions, targets, w);
-
-            round_metrics.push((format!("{}-{}", eval_set.name, self.metric.name()), value));
-
-            // Use eval set metric for early stopping if this is the designated set
-            if set_idx == early_stopping_eval_idx {
-                early_stop_value = value;
-            }
-        }
-
-        (round_metrics, early_stop_value)
     }
 }
 

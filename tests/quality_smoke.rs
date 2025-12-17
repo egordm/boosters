@@ -1,5 +1,4 @@
 use booste_rs::data::{binned::BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMajor, RowMatrix};
-use booste_rs::inference::common::{sigmoid_inplace, softmax_inplace};
 use booste_rs::inference::gbdt::{Predictor, UnrolledTraversal6};
 use booste_rs::testing::data::{
 	random_dense_f32, split_indices, synthetic_binary_targets_from_linear_score,
@@ -7,7 +6,7 @@ use booste_rs::testing::data::{
 };
 use booste_rs::training::{
 	Accuracy, GainParams, GBDTParams, GBDTTrainer, GrowthStrategy, LogLoss, Mae, Metric,
-	MulticlassAccuracy, MulticlassLogLoss, Rmse, LogisticLoss, SoftmaxLoss, SquaredLoss,
+	MulticlassAccuracy, MulticlassLogLoss, Objective, Rmse, LogisticLoss, SoftmaxLoss, SquaredLoss,
 };
 
 fn select_rows_row_major(features_row_major: &[f32], rows: usize, cols: usize, row_indices: &[usize]) -> Vec<f32> {
@@ -62,7 +61,7 @@ fn run_synthetic_regression(rows: usize, cols: usize, trees: u32, depth: u32, se
 	let forest = trainer.train(&binned_train, &y_train, &[], &[]).unwrap();
 	let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
 	let pred = predictor.predict(&row_valid);
-	let pred0: Vec<f32> = (0..row_valid.num_rows()).map(|r| pred.row(r)[0]).collect();
+	let pred0: Vec<f32> = pred.column(0).to_vec();
 
 	let n_rows = y_valid.len();
 	let rmse = Rmse.compute(n_rows, 1, &pred0, &y_valid, &[]);
@@ -86,16 +85,17 @@ fn run_synthetic_binary(rows: usize, cols: usize, trees: u32, depth: u32, seed: 
 	let row_valid: RowMatrix<f32> = RowMatrix::from_vec(x_valid, valid_idx.len(), cols);
 
 	let params = default_params(trees, GrowthStrategy::DepthWise { max_depth: depth }, seed);
-	let trainer = GBDTTrainer::new(LogisticLoss, LogLoss, params);
+	let objective = LogisticLoss;
+	let trainer = GBDTTrainer::new(objective, LogLoss, params);
 	let forest = trainer.train(&binned_train, &y_train, &[], &[]).unwrap();
 	let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
-	let raw = predictor.predict(&row_valid);
-	let mut prob: Vec<f32> = (0..row_valid.num_rows()).map(|r| raw.row(r)[0]).collect();
-	sigmoid_inplace(&mut prob);
+	let mut raw = predictor.predict(&row_valid);
+	objective.transform_prediction_inplace(&mut raw);
+	let prob = raw.column(0);
 
 	let n_rows = y_valid.len();
-	let ll = LogLoss.compute(n_rows, 1, &prob, &y_valid, &[]);
-	let acc = Accuracy::default().compute(n_rows, 1, &prob, &y_valid, &[]);
+	let ll = LogLoss.compute(n_rows, 1, prob, &y_valid, &[]);
+	let acc = Accuracy::default().compute(n_rows, 1, prob, &y_valid, &[]);
 	(ll, acc)
 }
 
@@ -122,21 +122,20 @@ fn run_synthetic_multiclass(
 	let row_valid: RowMatrix<f32> = RowMatrix::from_vec(x_valid, valid_idx.len(), cols);
 
 	let params = default_params(trees, GrowthStrategy::DepthWise { max_depth: depth }, seed);
-	let trainer = GBDTTrainer::new(SoftmaxLoss::new(classes), MulticlassLogLoss, params);
+	let objective = SoftmaxLoss::new(classes);
+	let trainer = GBDTTrainer::new(objective, MulticlassLogLoss, params);
 	let forest = trainer.train(&binned_train, &y_train, &[], &[]).unwrap();
 	let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
-	let raw = predictor.predict(&row_valid);
 
 	let n_rows = row_valid.num_rows();
-	let mut prob_row_major = vec![0.0f32; n_rows * classes];
-	for r in 0..n_rows {
-		let mut logits = raw.row(r).to_vec();
-		softmax_inplace(&mut logits);
-		prob_row_major[r * classes..(r + 1) * classes].copy_from_slice(&logits);
-	}
+	// Apply softmax directly to column-major output
+	let mut raw = predictor.predict(&row_valid);
+	objective.transform_prediction_inplace(&mut raw);
+	// raw is already column-major: predictions[class * n_rows + row]
+	let prob_col_major = raw.as_slice();
 
-	let ll = MulticlassLogLoss.compute(n_rows, classes, &prob_row_major, &y_valid, &[]);
-	let acc = MulticlassAccuracy.compute(n_rows, classes, &prob_row_major, &y_valid, &[]);
+	let ll = MulticlassLogLoss.compute(n_rows, classes, prob_col_major, &y_valid, &[]);
+	let acc = MulticlassAccuracy.compute(n_rows, classes, &prob_col_major, &y_valid, &[]);
 	(ll, acc)
 }
 

@@ -277,8 +277,11 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
         let mut output = PredictionOutput::zeros(num_rows, num_groups);
         for (block_idx, &(block_start, block_end)) in blocks.iter().enumerate() {
             let block_output = &block_outputs[block_idx];
-            for i in 0..(block_end - block_start) {
-                output.row_mut(block_start + i).copy_from_slice(block_output.row(i));
+            let block_size = block_end - block_start;
+            for group_idx in 0..num_groups {
+                let out_col = output.column_mut(group_idx);
+                let blk_col = block_output.column(group_idx);
+                out_col[block_start..block_end].copy_from_slice(&blk_col[..block_size]);
             }
         }
 
@@ -302,9 +305,9 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
     ) -> PredictionOutput {
         let mut block_output = PredictionOutput::zeros(block_size, num_groups);
 
-        // Initialize with base scores
-        for row_idx in 0..block_size {
-            block_output.row_mut(row_idx).copy_from_slice(base_score);
+        // Initialize with base scores (column-major: efficient fill per group)
+        for (group_idx, &score) in base_score.iter().enumerate() {
+            block_output.column_mut(group_idx).fill(score);
         }
 
         // Load features for this block into contiguous buffer
@@ -336,8 +339,10 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
                 weight,
             );
 
+            // Column-major: add to output column (contiguous in memory)
+            let out_col = block_output.column_mut(group_idx);
             for i in 0..block_size {
-                block_output.row_mut(i)[group_idx] += group_buffer[i];
+                out_col[i] += group_buffer[i];
             }
         }
 
@@ -372,10 +377,10 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
 
         let mut output = PredictionOutput::zeros(num_rows, num_groups);
 
-        // Initialize with base scores
+        // Initialize with base scores (column-major: efficient fill per group)
         let base_score = self.forest.base_score();
-        for row_idx in 0..num_rows {
-            output.row_mut(row_idx).copy_from_slice(base_score);
+        for (group_idx, &score) in base_score.iter().enumerate() {
+            output.column_mut(group_idx).fill(score);
         }
 
         if num_rows == 0 {
@@ -415,7 +420,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
                         Some(w) => leaf_value.0 * w[tree_idx],
                         None => leaf_value.0,
                     };
-                    output.row_mut(block_start + i)[group_idx] += value;
+                    output.add(block_start + i, group_idx, value);
                 }
             }
         }
@@ -436,10 +441,10 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
 
         let mut output = PredictionOutput::zeros(num_rows, num_groups);
 
-        // Initialize with base scores
+        // Initialize with base scores (column-major: efficient fill per group)
         let base_score = self.forest.base_score();
-        for row_idx in 0..num_rows {
-            output.row_mut(row_idx).copy_from_slice(base_score);
+        for (group_idx, &score) in base_score.iter().enumerate() {
+            output.column_mut(group_idx).fill(score);
         }
 
         if num_rows == 0 {
@@ -485,9 +490,10 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
                     weight,
                 );
 
-                // Scatter results into output (row-major layout)
+                // Scatter results into output (column-major: contiguous writes)
+                let out_col = output.column_mut(group_idx);
                 for i in 0..current_block_size {
-                    output.row_mut(block_start + i)[group_idx] += group_buffer[i];
+                    out_col[block_start + i] += group_buffer[i];
                 }
             }
         }
@@ -614,9 +620,9 @@ mod tests {
         let output = predictor.predict(&features);
 
         assert_eq!(output.shape(), (3, 1));
-        assert_eq!(output.row(0), &[1.0]);
-        assert_eq!(output.row(1), &[2.0]);
-        assert_eq!(output.row(2), &[2.0]);
+        assert_eq!(output.row_vec(0), vec![1.0]);
+        assert_eq!(output.row_vec(1), vec![2.0]);
+        assert_eq!(output.row_vec(2), vec![2.0]);
     }
 
     #[test]
@@ -642,8 +648,8 @@ mod tests {
         let output = predictor.predict(&features);
 
         assert_eq!(output.shape(), (2, 3));
-        assert_eq!(output.row(0), &[0.1, 0.2, 0.3]);
-        assert_eq!(output.row(1), &[0.9, 0.8, 0.7]);
+        assert_eq!(output.row_vec(0), vec![0.1, 0.2, 0.3]);
+        assert_eq!(output.row_vec(1), vec![0.9, 0.8, 0.7]);
     }
 
     #[test]
@@ -712,8 +718,8 @@ mod tests {
 
         for row_idx in 0..4 {
             assert_eq!(
-                simple_output.row(row_idx),
-                unrolled_output.row(row_idx),
+                simple_output.row_vec(row_idx),
+                unrolled_output.row_vec(row_idx),
                 "Mismatch at row {}",
                 row_idx
             );
@@ -755,7 +761,7 @@ mod tests {
 
         assert_eq!(output.shape(), (100, 1));
         for row_idx in 0..100 {
-            assert_eq!(output.row(row_idx), &[1.0]);
+            assert_eq!(output.get(row_idx, 0), 1.0);
         }
     }
 
@@ -808,8 +814,8 @@ mod tests {
         let features = RowMatrix::from_vec(vec![0.3, 0.7], 2, 1);
         let output = predictor.predict(&features);
 
-        assert_eq!(output.row(0), &[1.5]); // 1.0 + 0.5
-        assert_eq!(output.row(1), &[3.5]); // 2.0 + 1.5
+        assert_eq!(output.row_vec(0), vec![1.5]); // 1.0 + 0.5
+        assert_eq!(output.row_vec(1), vec![3.5]); // 2.0 + 1.5
     }
 
     #[test]

@@ -70,10 +70,10 @@ fn main() {
         ..Default::default()
     };
 
-    let trainer_baseline = GBDTTrainer::new(SquaredLoss, params_baseline);
+    let trainer_baseline = GBDTTrainer::new(SquaredLoss, Rmse, params_baseline);
 
     let start = Instant::now();
-    let forest_baseline = trainer_baseline.train(&dataset, &train_labels, &[]).unwrap();
+    let forest_baseline = trainer_baseline.train(&dataset, &train_labels, &[], &[]).unwrap();
     let time_baseline = start.elapsed();
 
     let preds_baseline: Vec<f32> = test_features
@@ -104,10 +104,10 @@ fn main() {
         ..Default::default()
     };
 
-    let trainer_goss = GBDTTrainer::new(SquaredLoss, params_goss);
+    let trainer_goss = GBDTTrainer::new(SquaredLoss, Rmse, params_goss);
 
     let start = Instant::now();
-    let forest_goss = trainer_goss.train(&dataset, &train_labels, &[]).unwrap();
+    let forest_goss = trainer_goss.train(&dataset, &train_labels, &[], &[]).unwrap();
     let time_goss = start.elapsed();
 
     let preds_goss: Vec<f32> = test_features
@@ -139,10 +139,10 @@ fn main() {
         ..Default::default()
     };
 
-    let trainer_uniform = GBDTTrainer::new(SquaredLoss, params_uniform);
+    let trainer_uniform = GBDTTrainer::new(SquaredLoss, Rmse, params_uniform);
 
     let start = Instant::now();
-    let forest_uniform = trainer_uniform.train(&dataset, &train_labels, &[]).unwrap();
+    let forest_uniform = trainer_uniform.train(&dataset, &train_labels, &[], &[]).unwrap();
     let time_uniform = start.elapsed();
 
     let preds_uniform: Vec<f32> = test_features

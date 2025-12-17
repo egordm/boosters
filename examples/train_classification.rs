@@ -19,7 +19,7 @@
 
 use booste_rs::data::binned::BinnedDatasetBuilder;
 use booste_rs::data::{ColMatrix, DenseMatrix, RowMajor};
-use booste_rs::training::{Accuracy, GBDTParams, GBDTTrainer, GrowthStrategy, LogisticLoss, Metric};
+use booste_rs::training::{Accuracy, GBDTParams, GBDTTrainer, GrowthStrategy, LogLoss, LogisticLoss, Metric};
 
 fn main() {
     // =========================================================================
@@ -72,8 +72,8 @@ fn main() {
         ..Default::default()
     };
 
-    let trainer_depth = GBDTTrainer::new(LogisticLoss, params_depth);
-    let forest_depth = trainer_depth.train(&dataset, &labels, &[]).unwrap();
+    let trainer_depth = GBDTTrainer::new(LogisticLoss, LogLoss, params_depth);
+    let forest_depth = trainer_depth.train(&dataset, &labels, &[], &[]).unwrap();
 
     // Predict: apply sigmoid to convert logits to probabilities
     let predictions: Vec<f32> = features
@@ -101,8 +101,8 @@ fn main() {
         ..Default::default()
     };
 
-    let trainer_leaf = GBDTTrainer::new(LogisticLoss, params_leaf);
-    let forest_leaf = trainer_leaf.train(&dataset, &labels, &[]).unwrap();
+    let trainer_leaf = GBDTTrainer::new(LogisticLoss, LogLoss, params_leaf);
+    let forest_leaf = trainer_leaf.train(&dataset, &labels, &[], &[]).unwrap();
 
     let predictions: Vec<f32> = features
         .chunks(n_features)
@@ -132,7 +132,7 @@ fn main() {
         })
         .collect();
 
-    let forest_weighted = trainer_depth.train(&dataset, &labels, &weights).unwrap();
+    let forest_weighted = trainer_depth.train(&dataset, &labels, &weights, &[]).unwrap();
 
     let predictions: Vec<f32> = features
         .chunks(n_features)

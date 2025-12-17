@@ -1,6 +1,11 @@
 //! Regression metrics.
 //!
 //! Metrics for evaluating regression model quality.
+//!
+//! # Multi-Output Support
+//!
+//! For multi-output models, metrics are computed per-output and then averaged.
+//! This provides an honest aggregate measure across all outputs.
 
 use super::Metric;
 use crate::inference::common::PredictionKind;
@@ -13,6 +18,10 @@ use crate::inference::common::PredictionKind;
 ///
 /// Lower is better. Used for regression tasks.
 ///
+/// # Multi-Output
+///
+/// For multi-output models, computes RMSE per output and returns the average.
+///
 /// # Weighted Computation
 ///
 /// When weights are provided, computes weighted RMSE:
@@ -21,6 +30,42 @@ use crate::inference::common::PredictionKind;
 /// ```
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Rmse;
+
+impl Rmse {
+    /// Compute RMSE for a single output.
+    fn compute_single(preds: &[f32], labels: &[f32], weights: &[f32]) -> f64 {
+        if preds.is_empty() {
+            return 0.0;
+        }
+
+        if weights.is_empty() {
+            let mse: f64 = preds
+                .iter()
+                .zip(labels.iter())
+                .map(|(p, l)| {
+                    let diff = (*p as f64) - (*l as f64);
+                    diff * diff
+                })
+                .sum::<f64>()
+                / preds.len() as f64;
+            mse.sqrt()
+        } else {
+            let (sum_sq, sum_w) = preds
+                .iter()
+                .zip(labels.iter())
+                .zip(weights.iter())
+                .fold((0.0f64, 0.0f64), |(ss, sw), ((&p, &l), &wt)| {
+                    let diff = (p as f64) - (l as f64);
+                    (ss + (wt as f64) * diff * diff, sw + wt as f64)
+                });
+            if sum_w > 0.0 {
+                (sum_sq / sum_w).sqrt()
+            } else {
+                0.0
+            }
+        }
+    }
+}
 
 impl Metric for Rmse {
     fn compute(
@@ -31,46 +76,26 @@ impl Metric for Rmse {
         targets: &[f32],
         weights: &[f32],
     ) -> f64 {
-        debug_assert_eq!(n_outputs, 1);
         if n_rows == 0 {
             return 0.0;
         }
+        debug_assert!(predictions.len() >= n_rows * n_outputs);
 
-        let preds = &predictions[..n_rows];
-        let labels = &targets[..n_rows];
-        debug_assert_eq!(predictions.len(), n_rows * n_outputs);
-        debug_assert_eq!(targets.len(), n_rows);
+        // Determine targets layout: could be [n_outputs * n_rows] or [n_rows] (shared)
+        let targets_per_output = targets.len() >= n_outputs * n_rows;
 
-        if weights.is_empty() {
-                let mse: f64 = preds
-                    .iter()
-                    .zip(labels.iter())
-                    .map(|(p, l)| {
-                        let diff = (*p as f64) - (*l as f64);
-                        diff * diff
-                    })
-                    .sum::<f64>()
-                    / preds.len() as f64;
-
-                mse.sqrt()
-        } else {
-                debug_assert_eq!(preds.len(), weights.len());
-
-                let (sum_sq, sum_w) = preds
-                    .iter()
-                    .zip(labels.iter())
-                    .zip(weights.iter())
-                    .fold((0.0f64, 0.0f64), |(ss, sw), ((&p, &l), &wt)| {
-                        let diff = (p as f64) - (l as f64);
-                        (ss + (wt as f64) * diff * diff, sw + wt as f64)
-                    });
-
-                if sum_w > 0.0 {
-                    (sum_sq / sum_w).sqrt()
-                } else {
-                    0.0
-                }
+        let mut sum_rmse = 0.0f64;
+        for out_idx in 0..n_outputs {
+            let preds = &predictions[out_idx * n_rows..(out_idx + 1) * n_rows];
+            let labels = if targets_per_output {
+                &targets[out_idx * n_rows..(out_idx + 1) * n_rows]
+            } else {
+                &targets[..n_rows]
+            };
+            sum_rmse += Self::compute_single(preds, labels, weights);
         }
+
+        sum_rmse / n_outputs as f64
     }
 
     fn higher_is_better(&self) -> bool {
@@ -94,6 +119,10 @@ impl Metric for Rmse {
 ///
 /// Lower is better. More robust to outliers than RMSE.
 ///
+/// # Multi-Output
+///
+/// For multi-output models, computes MAE per output and returns the average.
+///
 /// # Weighted Computation
 ///
 /// When weights are provided, computes weighted MAE:
@@ -102,6 +131,38 @@ impl Metric for Rmse {
 /// ```
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Mae;
+
+impl Mae {
+    /// Compute MAE for a single output.
+    fn compute_single(preds: &[f32], labels: &[f32], weights: &[f32]) -> f64 {
+        if preds.is_empty() {
+            return 0.0;
+        }
+
+        if weights.is_empty() {
+            let sum: f64 = preds
+                .iter()
+                .zip(labels.iter())
+                .map(|(p, l)| ((*p as f64) - (*l as f64)).abs())
+                .sum();
+            sum / preds.len() as f64
+        } else {
+            let (sum_ae, sum_w) = preds
+                .iter()
+                .zip(labels.iter())
+                .zip(weights.iter())
+                .fold((0.0f64, 0.0f64), |(sa, sw), ((&p, &l), &wt)| {
+                    let ae = ((p as f64) - (l as f64)).abs();
+                    (sa + (wt as f64) * ae, sw + wt as f64)
+                });
+            if sum_w > 0.0 {
+                sum_ae / sum_w
+            } else {
+                0.0
+            }
+        }
+    }
+}
 
 impl Metric for Mae {
     fn compute(
@@ -112,42 +173,26 @@ impl Metric for Mae {
         targets: &[f32],
         weights: &[f32],
     ) -> f64 {
-        debug_assert_eq!(n_outputs, 1);
         if n_rows == 0 {
             return 0.0;
         }
+        debug_assert!(predictions.len() >= n_rows * n_outputs);
 
-        let preds = &predictions[..n_rows];
-        let labels = &targets[..n_rows];
-        debug_assert_eq!(predictions.len(), n_rows * n_outputs);
-        debug_assert_eq!(targets.len(), n_rows);
+        // Determine targets layout: could be [n_outputs * n_rows] or [n_rows] (shared)
+        let targets_per_output = targets.len() >= n_outputs * n_rows;
 
-        if weights.is_empty() {
-                preds
-                    .iter()
-                    .zip(labels.iter())
-                    .map(|(p, l)| ((*p as f64) - (*l as f64)).abs())
-                    .sum::<f64>()
-                    / preds.len() as f64
-        } else {
-                debug_assert_eq!(preds.len(), weights.len());
-
-                let (weighted_sum, weight_sum) = preds
-                    .iter()
-                    .zip(labels.iter())
-                    .zip(weights.iter())
-                    .fold((0.0f64, 0.0f64), |(acc_err, acc_w), ((p, l), wt)| {
-                        let wt = *wt as f64;
-                        let abs_err = ((*p as f64) - (*l as f64)).abs();
-                        (acc_err + wt * abs_err, acc_w + wt)
-                    });
-
-                if weight_sum == 0.0 {
-                    return 0.0;
-                }
-
-                weighted_sum / weight_sum
+        let mut sum_mae = 0.0f64;
+        for out_idx in 0..n_outputs {
+            let preds = &predictions[out_idx * n_rows..(out_idx + 1) * n_rows];
+            let labels = if targets_per_output {
+                &targets[out_idx * n_rows..(out_idx + 1) * n_rows]
+            } else {
+                &targets[..n_rows]
+            };
+            sum_mae += Self::compute_single(preds, labels, weights);
         }
+
+        sum_mae / n_outputs as f64
     }
 
     fn higher_is_better(&self) -> bool {
@@ -190,14 +235,14 @@ impl Metric for Mape {
         targets: &[f32],
         weights: &[f32],
     ) -> f64 {
-        debug_assert_eq!(n_outputs, 1);
+        let _ = n_outputs; // May be > 1 for multi-output, but MAPE uses first output
         if n_rows == 0 {
             return 0.0;
         }
 
         let predictions = &predictions[..n_rows];
         let labels = &targets[..n_rows];
-        debug_assert_eq!(targets.len(), n_rows);
+        debug_assert!(targets.len() >= n_rows);
 
         let eps = 1e-15f64; // Avoid division by zero
 
@@ -313,60 +358,59 @@ impl Metric for QuantileMetric {
         debug_assert_eq!(predictions.len(), n_samples * n_quantiles);
 
         if weights.is_empty() {
-                // Row-major: predictions[i * n_quantiles + q]
-                let total_loss: f64 = labels
-                    .iter()
-                    .enumerate()
-                    .flat_map(|(i, &label)| {
-                        self.alphas.iter().enumerate().map(move |(q, &alpha)| {
-                            let pred = predictions[i * n_quantiles + q] as f64;
+            // Column-major: predictions[q * n_rows + row]
+            let total_loss: f64 = (0..n_samples)
+                .flat_map(|row| {
+                    self.alphas.iter().enumerate().map(move |(q, &alpha)| {
+                        let pred = predictions[q * n_rows + row] as f64;
+                        let y = labels[row] as f64;
+                        let residual = y - pred;
+
+                        if residual >= 0.0 {
+                            alpha as f64 * residual
+                        } else {
+                            (1.0 - alpha as f64) * (-residual)
+                        }
+                    })
+                })
+                .sum();
+
+            total_loss / (n_samples * n_quantiles) as f64
+        } else {
+            debug_assert_eq!(weights.len(), n_samples);
+
+            // Weighted quantile loss: sum over quantiles of sum(w * loss) / sum(w)
+            let (weighted_loss, weight_sum): (f64, f64) = self
+                .alphas
+                .iter()
+                .enumerate()
+                .map(|(q, &alpha)| {
+                    labels
+                        .iter()
+                        .enumerate()
+                        .fold((0.0f64, 0.0f64), |(acc_loss, acc_w), (row, &label)| {
+                            // Column-major: predictions[q * n_rows + row]
+                            let pred = predictions[q * n_rows + row] as f64;
                             let y = label as f64;
                             let residual = y - pred;
+                            let wt = weights[row] as f64;
 
-                            if residual >= 0.0 {
+                            let loss = if residual >= 0.0 {
                                 alpha as f64 * residual
                             } else {
                                 (1.0 - alpha as f64) * (-residual)
-                            }
+                            };
+
+                            (acc_loss + wt * loss, acc_w + wt)
                         })
-                    })
-                    .sum();
+                })
+                .fold((0.0, 0.0), |(tl, tw), (l, wsum)| (tl + l, tw + wsum));
 
-                total_loss / (n_samples * n_quantiles) as f64
-        } else {
-                debug_assert_eq!(weights.len(), n_samples);
+            if weight_sum == 0.0 {
+                return 0.0;
+            }
 
-                // Weighted quantile loss: sum over quantiles of sum(w * loss) / sum(w)
-                let (weighted_loss, weight_sum): (f64, f64) = self
-                    .alphas
-                    .iter()
-                    .enumerate()
-                    .map(|(q, &alpha)| {
-                        labels
-                            .iter()
-                            .enumerate()
-                            .fold((0.0f64, 0.0f64), |(acc_loss, acc_w), (i, &label)| {
-                                let pred = predictions[i * n_quantiles + q] as f64;
-                                let y = label as f64;
-                                let residual = y - pred;
-                                let wt = weights[i] as f64;
-
-                                let loss = if residual >= 0.0 {
-                                    alpha as f64 * residual
-                                } else {
-                                    (1.0 - alpha as f64) * (-residual)
-                                };
-
-                                (acc_loss + wt * loss, acc_w + wt)
-                            })
-                    })
-                    .fold((0.0, 0.0), |(tl, tw), (l, wsum)| (tl + l, tw + wsum));
-
-                if weight_sum == 0.0 {
-                    return 0.0;
-                }
-
-                weighted_loss / weight_sum
+            weighted_loss / weight_sum
         }
     }
 
@@ -411,14 +455,14 @@ impl Metric for PoissonDeviance {
         targets: &[f32],
         weights: &[f32],
     ) -> f64 {
-        debug_assert_eq!(n_outputs, 1);
+        let _ = n_outputs; // May be > 1 for multi-output, but Poisson uses first output
         if n_rows == 0 {
             return 0.0;
         }
 
         let predictions = &predictions[..n_rows];
         let labels = &targets[..n_rows];
-        debug_assert_eq!(targets.len(), n_rows);
+        debug_assert!(targets.len() >= n_rows);
 
         const EPSILON: f64 = 1e-9;
 
@@ -527,14 +571,14 @@ impl Metric for HuberMetric {
         targets: &[f32],
         weights: &[f32],
     ) -> f64 {
-        debug_assert_eq!(n_outputs, 1);
+        let _ = n_outputs; // May be > 1 for multi-output, but Huber uses first output
         if n_rows == 0 {
             return 0.0;
         }
 
         let predictions = &predictions[..n_rows];
         let labels = &targets[..n_rows];
-        debug_assert_eq!(targets.len(), n_rows);
+        debug_assert!(targets.len() >= n_rows);
 
         let delta = self.delta;
 

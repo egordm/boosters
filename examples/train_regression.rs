@@ -62,8 +62,8 @@ fn main() {
     println!("  Learning rate: {}", params.learning_rate);
     println!("  Growth: {:?}\n", params.growth_strategy);
 
-    let trainer = GBDTTrainer::new(SquaredLoss, params);
-    let forest = trainer.train(&dataset, &labels, &[]).unwrap();
+    let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+    let forest = trainer.train(&dataset, &labels, &[], &[]).unwrap();
 
     // =========================================================================
     // Evaluate

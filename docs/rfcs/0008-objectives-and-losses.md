@@ -92,15 +92,14 @@ Relationship between outputs and targets:
 
 ### Base Score Initialization
 
-Each objective computes the optimal constant prediction before trees:
+Each objective computes the optimal constant prediction before trees. Two convenience methods are provided:
 
 ```rust
-fn init_base_score(&self, targets: &[f32], weights: Option<&[f32]>) -> Vec<f32> {
-    let n_outputs = self.n_outputs();
-    let mut base_scores = vec![0.0f32; n_outputs];
-    self.compute_base_score(n_rows, n_outputs, targets, weights, &mut base_scores);
-    base_scores
-}
+/// Compute base scores and return as Vec.
+fn base_scores(&self, n_rows: usize, targets: &[f32], weights: &[f32]) -> Vec<f32>;
+
+/// Fill column-major prediction buffer with computed base scores.
+fn fill_base_scores(&self, predictions: &mut [f32], n_rows: usize, targets: &[f32], weights: &[f32]);
 ```
 
 | Objective | Base Score Strategy |

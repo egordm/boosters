@@ -14,7 +14,7 @@
 /// # Example
 ///
 /// ```
-/// use booste_rs::training::EarlyStopping;
+/// use booste_rs::training::{EarlyStopping, EarlyStopAction};
 ///
 /// // Monitor a metric where lower is better (e.g., RMSE)
 /// let mut early_stop = EarlyStopping::new(5, false);

@@ -214,13 +214,26 @@ pub trait Objective: Send + Sync {
         MetricKind::Rmse
     }
 
-    /// Transform raw model outputs (margins/logits) **in-place**.
+    /// Transform raw predictions in-place (column-major layout).
     ///
+    /// Converts margins/logits to semantic predictions (probabilities, values, etc.).
     /// Returns the semantic kind of the resulting values.
     ///
-    /// Trainers can use this to avoid allocations.
-    fn transform_prediction_inplace(&self, _raw: &mut PredictionOutput) -> PredictionKind {
+    /// Layout: `predictions[output * n_rows + row]`
+    ///
+    /// Most regression objectives are no-ops. Classification objectives apply
+    /// sigmoid (binary) or softmax (multiclass).
+    fn transform_predictions(&self, _predictions: &mut [f32], _n_rows: usize, _n_outputs: usize) -> PredictionKind {
         PredictionKind::Value
+    }
+
+    /// Transform a [`PredictionOutput`] in-place.
+    ///
+    /// Convenience wrapper around [`transform_predictions`](Self::transform_predictions).
+    fn transform_prediction_inplace(&self, raw: &mut PredictionOutput) -> PredictionKind {
+        let n_rows = raw.num_rows();
+        let n_groups = raw.num_groups();
+        self.transform_predictions(raw.as_mut_slice(), n_rows, n_groups)
     }
 
     /// Transform raw model outputs (margins/logits) into semantic predictions.
@@ -244,16 +257,48 @@ pub trait Objective: Send + Sync {
         self.n_outputs()
     }
 
-    /// Convenience method: compute initial base scores and return as Vec.
+    /// Compute initial base scores (optimal constant prediction).
     ///
-    /// This is a wrapper around `compute_base_score` that allocates the output.
-    fn init_base_score(&self, targets: &[f32], weights: Option<&[f32]>) -> Vec<f32> {
+    /// Convenience wrapper around `compute_base_score` that allocates the output.
+    ///
+    /// # Arguments
+    ///
+    /// * `n_rows` - Number of samples
+    /// * `targets` - Ground truth labels
+    /// * `weights` - Sample weights (empty slice for unweighted)
+    fn base_scores(&self, n_rows: usize, targets: &[f32], weights: &[f32]) -> Vec<f32> {
         let n_outputs = self.n_outputs();
-        let n_rows = targets.len();
+        let mut output = vec![0.0f32; n_outputs];
+        self.compute_base_score(n_rows, n_outputs, targets, weights, &mut output);
+        output
+    }
+
+    /// Fill a column-major prediction buffer with computed base scores.
+    ///
+    /// Useful for initializing prediction buffers before tree accumulation.
+    ///
+    /// # Arguments
+    ///
+    /// * `predictions` - Column-major buffer to fill `[n_outputs * n_rows]`
+    /// * `n_rows` - Number of samples
+    /// * `targets` - Ground truth labels
+    /// * `weights` - Sample weights (empty slice for unweighted)
+    fn fill_base_scores(
+        &self,
+        predictions: &mut [f32],
+        n_rows: usize,
+        targets: &[f32],
+        weights: &[f32],
+    ) {
+        let n_outputs = self.n_outputs();
         let mut base_scores = vec![0.0f32; n_outputs];
-        let w = weights.unwrap_or(&[]);
-        self.compute_base_score(n_rows, n_outputs, targets, w, &mut base_scores);
-        base_scores
+        self.compute_base_score(n_rows, n_outputs, targets, weights, &mut base_scores);
+
+        // Fill column-major: each output column gets its base score
+        for (out_idx, &score) in base_scores.iter().enumerate() {
+            let start = out_idx * n_rows;
+            predictions[start..start + n_rows].fill(score);
+        }
     }
 }
 
@@ -268,18 +313,24 @@ pub trait ObjectiveExt: Objective {
     ///
     /// This is a convenience wrapper that extracts the mutable slices from
     /// the buffer and calls the underlying compute_gradients.
+    ///
+    /// # Arguments
+    ///
+    /// * `predictions` - Model predictions
+    /// * `targets` - Ground truth labels
+    /// * `weights` - Sample weights (empty slice for unweighted)
+    /// * `buffer` - Gradient buffer to fill
     fn compute_gradients_buffer(
         &self,
         predictions: &[f32],
         targets: &[f32],
-        weights: Option<&[f32]>,
+        weights: &[f32],
         buffer: &mut Gradients,
     ) {
         let n_rows = buffer.n_samples();
         let n_outputs = buffer.n_outputs();
         let grad_hess = buffer.pairs_mut();
-        let w = weights.unwrap_or(&[]);
-        self.compute_gradients(n_rows, n_outputs, predictions, targets, w, grad_hess);
+        self.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess);
     }
 }
 
@@ -484,17 +535,17 @@ impl Objective for ObjectiveFunction {
         }
     }
 
-    fn transform_prediction_inplace(&self, raw: &mut PredictionOutput) -> PredictionKind {
+    fn transform_predictions(&self, predictions: &mut [f32], n_rows: usize, n_outputs: usize) -> PredictionKind {
         match self {
-            Self::SquaredError => SquaredLoss.transform_prediction_inplace(raw),
-            Self::AbsoluteError => AbsoluteLoss.transform_prediction_inplace(raw),
-            Self::Logistic => LogisticLoss.transform_prediction_inplace(raw),
-            Self::Hinge => HingeLoss.transform_prediction_inplace(raw),
-            Self::Softmax { num_classes } => SoftmaxLoss::new(*num_classes).transform_prediction_inplace(raw),
-            Self::Quantile { alpha } => PinballLoss::new(*alpha).transform_prediction_inplace(raw),
-            Self::MultiQuantile { alphas } => PinballLoss::with_quantiles(alphas.clone()).transform_prediction_inplace(raw),
-            Self::PseudoHuber { delta } => PseudoHuberLoss::new(*delta).transform_prediction_inplace(raw),
-            Self::Poisson => PoissonLoss.transform_prediction_inplace(raw),
+            Self::SquaredError => SquaredLoss.transform_predictions(predictions, n_rows, n_outputs),
+            Self::AbsoluteError => AbsoluteLoss.transform_predictions(predictions, n_rows, n_outputs),
+            Self::Logistic => LogisticLoss.transform_predictions(predictions, n_rows, n_outputs),
+            Self::Hinge => HingeLoss.transform_predictions(predictions, n_rows, n_outputs),
+            Self::Softmax { num_classes } => SoftmaxLoss::new(*num_classes).transform_predictions(predictions, n_rows, n_outputs),
+            Self::Quantile { alpha } => PinballLoss::new(*alpha).transform_predictions(predictions, n_rows, n_outputs),
+            Self::MultiQuantile { alphas } => PinballLoss::with_quantiles(alphas.clone()).transform_predictions(predictions, n_rows, n_outputs),
+            Self::PseudoHuber { delta } => PseudoHuberLoss::new(*delta).transform_predictions(predictions, n_rows, n_outputs),
+            Self::Poisson => PoissonLoss.transform_predictions(predictions, n_rows, n_outputs),
         }
     }
 }

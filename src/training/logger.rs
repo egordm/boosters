@@ -5,6 +5,8 @@
 use std::io::{self, Write};
 use std::time::Instant;
 
+use super::eval::MetricValue;
+
 /// Verbosity level for training output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum Verbosity {
@@ -119,6 +121,30 @@ impl<W: Write + Send> TrainingLogger<W> {
         let metrics_str: Vec<String> = metrics
             .iter()
             .map(|(name, value)| format!("{}: {:.6}", name, value))
+            .collect();
+
+        let _ = writeln!(
+            self.writer,
+            "[Training] {} {}",
+            round_str,
+            metrics_str.join(", ")
+        );
+    }
+
+    /// Log a training round with MetricValue metrics.
+    pub fn log_metrics(&mut self, round: usize, metrics: &[MetricValue]) {
+        if self.verbosity < Verbosity::Info {
+            return;
+        }
+
+        let round_str = match self.total_rounds {
+            Some(total) => format!("[{}/{}]", round + 1, total),
+            None => format!("[{}]", round + 1),
+        };
+
+        let metrics_str: Vec<String> = metrics
+            .iter()
+            .map(|m| format!("{}: {:.6}", m.name, m.value))
             .collect();
 
         let _ = writeln!(

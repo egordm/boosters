@@ -37,9 +37,10 @@ fn train_binary_classification() {
     // Verify predictions are in reasonable range for logits.
     let output: PredictionOutput = model.predict(&data, &[0.0]);
     let predictions: Vec<f32> = output
-        .rows()
+        .column(0)
+        .iter()
+        .copied()
         .take(10)
-        .map(|row| row[0])
         .collect();
 
     // Logits should be finite and not too extreme
@@ -78,10 +79,10 @@ fn train_multioutput_classification() {
 
     // Verify predictions exist for all classes
     let output: PredictionOutput = model.predict(&data, &vec![0.0; num_class]);
-    let predictions = output.row(0);
+    let predictions = output.row_vec(0);
 
     assert_eq!(predictions.len(), num_class);
-    for pred in predictions {
+    for pred in &predictions {
         assert!(pred.is_finite(), "Prediction is not finite: {}", pred);
     }
 
@@ -99,7 +100,7 @@ fn train_multioutput_classification() {
     let n_rows = output.num_rows();
     let pred_classes: Vec<f32> = (0..n_rows)
         .map(|row| {
-            let row_preds = output.row(row);
+            let row_preds = output.row_vec(row);
             let mut best_idx = 0usize;
             let mut best_val = f32::NEG_INFINITY;
             for (idx, &v) in row_preds.iter().enumerate() {
