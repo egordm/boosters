@@ -10,7 +10,8 @@
 //!   --seeds <n>          Number of seeds to run (default: 5)
 //!   --out <path>         Output markdown file (default: stdout)
 //!   --quick              Quick mode: fewer rows, fewer trees
-//!   --no-real            Skip real-world datasets (only synthetic)
+//!   --mode <mode>        Benchmark mode: all (default), synthetic, real
+//!   --no-real            Alias for --mode synthetic (deprecated)
 //!   --libsvm <path>      Add libsvm regression dataset (label + index:value, 1-based)
 //!   --uci-machine <path> Add UCI machine.data regression dataset
 //!   --label0 <path>      Add label0 dataset (tab/space-separated: label first)
@@ -25,13 +26,17 @@
 //!     cd tools/data_generation && uv run python scripts/generate_benchmark_datasets.py
 //!
 //! Examples:
-//!   # Full benchmark (synthetic + real-world if available)
+//!   # Full benchmark (synthetic + real-world)
 //!   cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm,io-parquet" -- \
 //!       --seeds 5 --out docs/benchmarks/quality-report.md
 //!
 //!   # Synthetic only
 //!   cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm" -- \
-//!       --no-real --seeds 3
+//!       --mode synthetic --seeds 3
+//!
+//!   # Real-world only  
+//!   cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm,io-parquet" -- \
+//!       --mode real --seeds 5
 
 use std::collections::HashMap;
 use std::fs;
@@ -1040,11 +1045,18 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 // Main
 // =============================================================================
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BenchmarkMode {
+	All,
+	Synthetic,
+	Real,
+}
+
 struct Args {
 	num_seeds: usize,
 	out: Option<PathBuf>,
 	quick: bool,
-	no_real: bool,
+	mode: BenchmarkMode,
 	libsvm_paths: Vec<PathBuf>,
 	uci_machine_paths: Vec<PathBuf>,
 	label0_paths: Vec<PathBuf>,
@@ -1054,7 +1066,7 @@ fn parse_args() -> Args {
 	let mut num_seeds = 5usize;
 	let mut out: Option<PathBuf> = None;
 	let mut quick = false;
-	let mut no_real = false;
+	let mut mode = BenchmarkMode::All;
 	let mut libsvm_paths: Vec<PathBuf> = Vec::new();
 	let mut uci_machine_paths: Vec<PathBuf> = Vec::new();
 	let mut label0_paths: Vec<PathBuf> = Vec::new();
@@ -1065,13 +1077,23 @@ fn parse_args() -> Args {
 			"--seeds" => num_seeds = it.next().expect("--seeds value").parse().unwrap(),
 			"--out" => out = Some(PathBuf::from(it.next().expect("--out path"))),
 			"--quick" => quick = true,
-			"--no-real" => no_real = true,
+			"--mode" => {
+				let val = it.next().expect("--mode value");
+				mode = match val.as_str() {
+					"all" => BenchmarkMode::All,
+					"synthetic" => BenchmarkMode::Synthetic,
+					"real" => BenchmarkMode::Real,
+					other => panic!("invalid mode: {other} (expected: all, synthetic, real)"),
+				};
+			}
+			// Legacy flag, kept for backwards compatibility
+			"--no-real" => mode = BenchmarkMode::Synthetic,
 			"--libsvm" => libsvm_paths.push(PathBuf::from(it.next().expect("--libsvm path"))),
 			"--uci-machine" => uci_machine_paths.push(PathBuf::from(it.next().expect("--uci-machine path"))),
 			"--label0" => label0_paths.push(PathBuf::from(it.next().expect("--label0 path"))),
 			"--help" => {
 				eprintln!(
-					"quality_benchmark\n\n  --seeds <n>         Number of seeds (default: 5)\n  --out <path>        Output markdown file\n  --quick             Quick mode (fewer rows/trees)\n  --no-real           Skip real-world datasets\n  --libsvm <path>     Add libsvm regression dataset\n  --uci-machine <path> Add UCI machine.data dataset\n  --label0 <path>     Add label0 regression dataset"
+					"quality_benchmark\n\n  --seeds <n>         Number of seeds (default: 5)\n  --out <path>        Output markdown file\n  --quick             Quick mode (fewer rows/trees)\n  --mode <mode>       Benchmark mode: all (default), synthetic, real\n  --no-real           Alias for --mode synthetic\n  --libsvm <path>     Add libsvm regression dataset\n  --uci-machine <path> Add UCI machine.data dataset\n  --label0 <path>     Add label0 regression dataset"
 				);
 				std::process::exit(0);
 			}
@@ -1079,7 +1101,7 @@ fn parse_args() -> Args {
 		}
 	}
 
-	Args { num_seeds, out, quick, no_real, libsvm_paths, uci_machine_paths, label0_paths }
+	Args { num_seeds, out, quick, mode, libsvm_paths, uci_machine_paths, label0_paths }
 }
 
 fn main() {
@@ -1088,14 +1110,23 @@ fn main() {
 	// Generate seeds
 	let seeds: Vec<u64> = (0..args.num_seeds).map(|i| 42 + i as u64 * 1337).collect();
 
-	let mut configs = default_configs(args.quick);
+	let mut configs = Vec::new();
 	
-	// Add real-world datasets if not disabled and parquet files exist
-	if !args.no_real {
+	// Add synthetic datasets if mode is All or Synthetic
+	if args.mode == BenchmarkMode::All || args.mode == BenchmarkMode::Synthetic {
+		configs.extend(default_configs(args.quick));
+	}
+	
+	// Add real-world datasets if mode is All or Real
+	if args.mode == BenchmarkMode::All || args.mode == BenchmarkMode::Real {
 		let real_configs = real_world_configs(args.quick);
 		if !real_configs.is_empty() {
 			println!("Found {} real-world dataset(s)", real_configs.len());
 			configs.extend(real_configs);
+		} else if args.mode == BenchmarkMode::Real {
+			eprintln!("Warning: --mode real specified but no real-world datasets found.");
+			eprintln!("Generate them with: cd tools/data_generation && uv run python scripts/generate_benchmark_datasets.py");
+			eprintln!("Make sure to compile with --features io-parquet");
 		}
 	}
 
