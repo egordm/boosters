@@ -8,18 +8,6 @@ terms of efficiency, accuracy, and overfitting risk.
 
 ## Overview
 
-### ELI5
-
-Imagine you're organizing a tournament bracket. 
-
-**Depth-wise** (level-by-level): Play all first-round games, then all second-round games,
-then all third-round games. Very organized, but you do work even on "boring" games.
-
-**Leaf-wise** (best-first): Always play the most exciting game next, wherever it is in
-the bracket. More efficient if some branches are clearly decided early.
-
-### ELI13
-
 **Depth-wise** builds balanced trees by splitting all nodes at each level before moving
 to the next level. This is the traditional approach.
 
@@ -264,6 +252,7 @@ datasets. The `max_depth` constraint mitigates this.
 Both strategies: O(samples × features × depth) per tree.
 
 Leaf-wise has lower constants because:
+
 - Histogram subtraction is more effective (larger sibling more common)
 - Fewer total nodes visited
 

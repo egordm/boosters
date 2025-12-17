@@ -1,12 +1,6 @@
 # Histogram Cuts (Bin Boundaries)
 
-## ELI5
-
-Imagine you have a thermometer with continuous readings (72.3°F, 68.7°F, 75.1°F...). Instead of remembering every exact temperature, you create buckets: "cold" (< 60°F), "comfortable" (60-75°F), "hot" (> 75°F). Now each reading just gets a bucket number (0, 1, or 2).
-
-**Histogram cuts** are the boundaries between these buckets. For our example: `[60.0, 75.0]` are the cuts, creating 3 buckets.
-
-## ELI-Grad
+## Overview
 
 Histogram cuts (also called bin boundaries or split candidates) partition continuous feature values into discrete intervals. Given $n$ cut points, we create $n+1$ bins. The quantization function maps:
 
@@ -14,7 +8,7 @@ $$f: \mathbb{R} \rightarrow \{0, 1, \ldots, n\}$$
 
 The cuts are typically chosen via **quantile sketch** algorithms to ensure each bin contains approximately the same number of samples (equal-frequency binning), which maximizes information gain potential per bin.
 
-### Why Quantile-Based?
+## Why Quantile-Based?
 
 Consider two binning strategies for a feature with values clustered around 0 and 100:
 
@@ -24,6 +18,7 @@ Consider two binning strategies for a feature with values clustered around 0 and
 | **Equal-frequency** | Adaptive based on data density | Each bin equally useful for splits |
 
 Equal-frequency (quantile) binning ensures:
+
 - Each bin contains roughly the same number of samples
 - Dense regions get more resolution (more bins where data concentrates)
 - Sparse regions don't waste bins
@@ -65,6 +60,7 @@ This is called **adaptive binning** or **Hessian-weighted quantiles**.
 **Why weight by Hessian?** The optimal leaf value is $-G/H$ (gradient sum over Hessian sum). Regions with high Hessian have more "curvature" in the loss function and benefit from finer binning resolution.
 
 The sketch algorithm:
+
 1. Process data in chunks (summaries)
 2. Each summary maintains approximate quantile information
 3. Merge summaries from different workers (associative operation)
@@ -75,6 +71,7 @@ The sketch algorithm:
 ### LightGBM's Approach
 
 LightGBM's `BinMapper` class uses similar quantile-based binning with additional optimizations:
+
 - Stores bin upper bounds (`bin_upper_bound_` array)
 - Tracks the most-frequent bin for zero-value optimization
 - Supports explicit missing value bins
@@ -104,6 +101,7 @@ XGBoost stores all feature cuts in a single concatenated array with pointers to 
 ```
 
 This CSR-like (Compressed Sparse Row) layout:
+
 - Concatenates all cuts into one contiguous array
 - Uses pointer array to delimit each feature's range  
 - Enables O(log b) bin lookup via binary search (b = bins per feature)
@@ -127,6 +125,7 @@ LightGBM uses a separate `BinMapper` object for each feature:
 ```
 
 Each feature has its own `BinMapper` instance storing:
+
 - Upper bounds of each bin
 - Metadata for optimization (sparse handling, most frequent bin)
 - Missing value strategy
@@ -185,6 +184,7 @@ Global bin index for (feature=1, local_bin=2):
 ```
 
 This indexing scheme enables:
+
 - Single contiguous histogram array of size `total_bins`
 - O(1) mapping from (feature, local_bin) to global index
 - Cache-efficient histogram accumulation
@@ -236,6 +236,7 @@ LightGBM assigns missing values to a dedicated bin and tracks the `missing_type_
 ### Why 256 Bins?
 
 The magic number 256 is popular because:
+
 - Fits in a single byte (`uint8`): 4x memory reduction vs float32
 - Provides sufficient precision for most datasets
 - More bins have diminishing returns (the 257th split point rarely helps)

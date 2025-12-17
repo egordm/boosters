@@ -8,14 +8,6 @@ maximizes information gain.
 
 ## The Split Gain Formula
 
-### ELI5
-
-When splitting a group of students into two rooms, we want each room to be as "similar"
-as possible internally. A good split puts all the A students in one room and all the
-C students in another. A bad split mixes them together in both rooms.
-
-### ELI-Grad
-
 The gain from a split measures improvement in the objective:
 
 $$
@@ -25,6 +17,7 @@ $$
 $$
 
 Where:
+
 - $G_L, H_L$ = sum of gradients/Hessians in left partition
 - $G_R, H_R$ = sum of gradients/Hessians in right partition  
 - $G, H$ = sum of gradients/Hessians in parent node

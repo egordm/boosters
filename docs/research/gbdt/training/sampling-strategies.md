@@ -3,11 +3,13 @@
 ## Overview
 
 Row sampling (also called bagging or subsampling) trains each tree on a subset of the data. This provides:
+
 - **Regularization**: Reduces overfitting by introducing randomness
 - **Speed**: Less data to process per tree
 - **Variance reduction**: Ensemble of diverse trees
 
 There are two main approaches:
+
 1. **Random Subsampling**: Uniform random selection
 2. **GOSS**: Gradient-based One-Side Sampling (prioritizes informative samples)
 
@@ -65,6 +67,7 @@ GOSS is a smarter sampling strategy that keeps samples with large gradients (inf
 ### Intuition
 
 Not all samples are equally important for learning:
+
 - **Large gradient**: Model is making big mistakes → very informative
 - **Small gradient**: Model is already accurate → less informative
 
@@ -246,6 +249,7 @@ for each tree:
 ```
 
 This provides multiple sources of randomness:
+
 1. Which rows each tree sees
 2. Which features each tree/level/node considers
 3. Bootstrap-like variance reduction
@@ -271,6 +275,7 @@ This provides multiple sources of randomness:
 ### GOSS Overhead
 
 GOSS has additional overhead compared to random sampling:
+
 1. Compute gradient magnitudes: O(n)
 2. Partial sort for top-k: O(n)
 3. Weight multiplication: O(n × other_rate)

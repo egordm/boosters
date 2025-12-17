@@ -1,12 +1,6 @@
 # Quantized Feature Matrix
 
-## ELI5
-
-Imagine a giant spreadsheet of numbers. Instead of storing the actual numbers (like 3.14159), we replace each with a small bucket number (like 7). Now the spreadsheet is much smaller and faster to read!
-
-The **quantized matrix** is this compressed spreadsheet where every cell contains a bucket number (0-255) instead of the original value.
-
-## ELI-Grad
+## Overview
 
 A quantized feature matrix stores pre-computed bin indices for all (sample, feature) pairs. Given histogram cuts computed during preprocessing, the quantization function:
 
@@ -14,7 +8,7 @@ $$Q(x_{i,j}) = \text{SearchBin}(x_{i,j}, \text{cuts}_j)$$
 
 maps each raw feature value to its bin index. This transformation is performed once during data loading, amortizing the O(log b) binary search cost across all subsequent histogram operations.
 
-### Key Benefits
+## Key Benefits
 
 | Benefit | Explanation |
 |---------|-------------|
@@ -226,6 +220,7 @@ ALGORITHM: BuildQuantizedMatrix(raw_data, max_bins)
 ### Parallelization
 
 Quantization is embarrassingly parallel:
+
 - Each (row, feature) cell can be quantized independently
 - Row-wise parallelism is typically used (better cache locality)
 - GPU construction uses per-row threads
@@ -234,10 +229,10 @@ Quantization is embarrassingly parallel:
 
 | Layout | Memory Size | Access Pattern | Best For |
 |--------|-------------|----------------|----------|
-| Dense row-major | n * d * sizeof(bin) | O(1) per cell | Dense data, row iteration |
-| Dense col-major | n * d * sizeof(bin) | O(1) per cell | Column iteration, split finding |
-| CSR | nnz * (sizeof(bin) + sizeof(col)) + n * sizeof(ptr) | O(k) per row | Sparse data (>50% sparse) |
-| ELLPACK | n * row_stride * bits | Strided | GPU, moderate sparsity |
+| Dense row-major | n *d* sizeof(bin) | O(1) per cell | Dense data, row iteration |
+| Dense col-major | n *d* sizeof(bin) | O(1) per cell | Column iteration, split finding |
+| CSR | nnz *(sizeof(bin) + sizeof(col)) + n* sizeof(ptr) | O(k) per row | Sparse data (>50% sparse) |
+| ELLPACK | n *row_stride* bits | Strided | GPU, moderate sparsity |
 
 ### Memory Estimates
 
@@ -255,33 +250,39 @@ ELLPACK (bit-packed): Depends on row_stride and bit width
 ### Dense Row-Major (Simple Case)
 
 **Use when:**
+
 - Data is dense (no or few missing values)
 - Simple implementation needed
 - Primarily row-wise access during histogram building
 
 **Avoid when:**
+
 - Very sparse data (wasted memory)
 - Need column-wise access for split finding
 
 ### CSR Sparse (Memory-Constrained)
 
 **Use when:**
+
 - Significant sparsity (>50% missing/zero)
 - Memory is constrained
 - Missing values are common
 
 **Avoid when:**
+
 - Dense data (overhead of column indices)
 - GPU training (layout not suitable)
 
 ### ELLPACK (GPU)
 
 **Use when:**
+
 - GPU training or inference
 - Dense or moderately sparse data
 - High sample count (amortizes padding)
 
 **Avoid when:**
+
 - Very sparse data (padding explodes memory)
 - CPU-only workloads
 

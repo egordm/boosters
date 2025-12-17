@@ -13,31 +13,16 @@ This document explains the theoretical foundations common to all gradient boosti
 
 ## The Core Idea
 
-### ELI5
-
-Imagine you're trying to guess someone's age from their photo. Your first guess might be
-"30 years old" — but you're off by 5 years. So you make a second guess that tries to
-correct that 5-year error. Then a third guess to correct any remaining error. And so on.
-
-Gradient boosting works the same way: each new model focuses on fixing what the previous
-models got wrong.
-
-### ELI13
-
 Gradient boosting builds a prediction model as a **sum of weak learners**:
 
-```
-F(x) = f₁(x) + f₂(x) + f₃(x) + ... + fₘ(x)
-```
+$$F(x) = f_1(x) + f_2(x) + f_3(x) + \ldots + f_M(x)$$
 
-Each weak learner `fᵢ` is trained to predict the **residual errors** of all previous
+Each weak learner $f_i$ is trained to predict the **residual errors** of all previous
 learners combined. The key insight is that we can use gradient descent in function space:
 instead of adjusting parameters, we add entire functions that point in the direction of
 steepest descent.
 
-### ELI-Grad
-
-#### Functional Gradient Descent
+### Functional Gradient Descent
 
 Consider minimizing an expected loss over a training set:
 

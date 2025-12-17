@@ -1,17 +1,6 @@
 # Tree Storage Formats
 
-## ELI5
-
-Think of a family tree. You could store it two ways:
-
-1. **One card per person** (AoS): Each card has all info about one person (name, birthday, parents, children)
-2. **One list per fact** (SoA): Separate lists for all names, all birthdays, all parent links, all child links
-
-The first way is easier to update (just grab one card). The second way is faster when you need to look up the same fact for everyone (just scan one list).
-
-Decision trees work the same way!
-
-## ELI-Grad
+## Overview
 
 Tree storage formats present a classic **AoS vs SoA** (Array of Structures vs Structure of Arrays) trade-off:
 
@@ -21,6 +10,7 @@ Tree storage formats present a classic **AoS vs SoA** (Array of Structures vs St
 | **SoA** | `feat[], thresh[], left[], right[]` | Per-field access | Harder | Good for batch ops |
 
 The fundamental insight:
+
 - **Training** needs frequent mutation (adding nodes, updating splits) → AoS is natural
 - **Inference** needs fast batch prediction (same operation on many samples) → SoA enables SIMD/coalescing
 
@@ -87,6 +77,7 @@ During training, trees are built incrementally:
 ```
 
 Each step modifies individual nodes:
+
 - Add new nodes to the array
 - Update parent pointers
 - Store split information
@@ -313,6 +304,7 @@ std::vector<std::vector<int>> leaf_features_; // Feature indices per leaf
 ## Conversion: AoS to SoA
 
 Models are typically:
+
 1. **Trained** with AoS (mutable, easy to build)
 2. **Converted** to SoA after training
 3. **Serialized** in SoA format
@@ -376,6 +368,7 @@ LightGBM SoA: 100 * 49 * 31 = ~152 KB
 ```
 
 SoA is typically more compact because:
+
 - No padding between fields
 - Leaves and internal nodes can use different field sets
 - Bit-packing for flags
@@ -385,12 +378,14 @@ SoA is typically more compact because:
 ### AoS (Training)
 
 **Use when:**
+
 - Building trees incrementally
 - Frequent node mutations
 - Need parent pointers for backtracking
 - Implementing tree updaters/pruners
 
 **Avoid when:**
+
 - Batch inference with many samples
 - GPU inference
 - SIMD optimization is critical
@@ -398,6 +393,7 @@ SoA is typically more compact because:
 ### SoA (Inference)
 
 **Use when:**
+
 - Batch prediction (many samples)
 - GPU inference
 - SIMD optimization
@@ -405,6 +401,7 @@ SoA is typically more compact because:
 - Read-only tree access
 
 **Avoid when:**
+
 - Training (frequent mutations are awkward)
 - Single-sample latency-critical paths (AoS may be simpler)
 
