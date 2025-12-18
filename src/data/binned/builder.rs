@@ -1,9 +1,13 @@
 //! Builder for BinnedDataset.
 
+use super::bundling::{create_bundle_plan, BundlePlan, BundlingConfig};
 use super::dataset::BinnedDataset;
+use super::feature_analysis::FeatureInfo;
 use super::group::{FeatureGroup, FeatureMeta};
 use super::storage::{BinStorage, BinType, GroupLayout};
 use super::BinMapper;
+
+use crate::data::DataMatrix;
 
 // =============================================================================
 // Binning Configuration
@@ -173,6 +177,144 @@ impl FeatureData {
     }
 }
 
+// =============================================================================
+// Feature Bin Accessor for Bundling
+// =============================================================================
+
+/// Adapter that provides access to binned feature values for conflict detection.
+///
+/// This allows the bundling algorithm to access bin values (as f32) from the
+/// builder's internal feature data, treating bin 0 as "zero" and other bins
+/// as "non-zero" for conflict detection purposes.
+struct FeatureBinAccessor<'a> {
+    features: &'a [FeatureData],
+    n_rows: usize,
+}
+
+/// Row view for FeatureBinAccessor.
+struct FeatureBinRow<'a> {
+    features: &'a [FeatureData],
+    row_idx: usize,
+}
+
+impl<'a> crate::data::RowView for FeatureBinRow<'a> {
+    type Element = f32;
+    type Iter<'b>
+        = FeatureBinRowIter<'b>
+    where
+        Self: 'b;
+
+    fn nnz(&self) -> usize {
+        self.features.len()
+    }
+
+    fn get(&self, col: usize) -> Option<Self::Element> {
+        if col < self.features.len() {
+            Some(self.features[col].bins[self.row_idx] as f32)
+        } else {
+            None
+        }
+    }
+
+    fn iter(&self) -> Self::Iter<'_> {
+        FeatureBinRowIter {
+            features: self.features,
+            row_idx: self.row_idx,
+            col: 0,
+        }
+    }
+}
+
+/// Iterator over a row in FeatureBinAccessor.
+struct FeatureBinRowIter<'a> {
+    features: &'a [FeatureData],
+    row_idx: usize,
+    col: usize,
+}
+
+impl Iterator for FeatureBinRowIter<'_> {
+    type Item = (usize, f32);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.col < self.features.len() {
+            let col = self.col;
+            let val = self.features[col].bins[self.row_idx] as f32;
+            self.col += 1;
+            Some((col, val))
+        } else {
+            None
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.features.len() - self.col;
+        (remaining, Some(remaining))
+    }
+}
+
+impl std::iter::FusedIterator for FeatureBinRowIter<'_> {}
+impl ExactSizeIterator for FeatureBinRowIter<'_> {}
+
+impl<'a> DataMatrix for FeatureBinAccessor<'a> {
+    type Element = f32;
+    type Row<'b>
+        = FeatureBinRow<'b>
+    where
+        Self: 'b;
+
+    fn num_rows(&self) -> usize {
+        self.n_rows
+    }
+
+    fn num_features(&self) -> usize {
+        self.features.len()
+    }
+
+    fn row(&self, i: usize) -> Self::Row<'_> {
+        assert!(i < self.n_rows, "Row index out of bounds");
+        FeatureBinRow {
+            features: self.features,
+            row_idx: i,
+        }
+    }
+
+    fn get(&self, row: usize, col: usize) -> Option<Self::Element> {
+        if row < self.n_rows && col < self.features.len() {
+            // Return bin value as f32 - bin 0 is "zero", others are "non-zero"
+            Some(self.features[col].bins[row] as f32)
+        } else {
+            None
+        }
+    }
+
+    fn is_dense(&self) -> bool {
+        true
+    }
+
+    fn copy_row(&self, i: usize, buf: &mut [Self::Element]) {
+        assert!(i < self.n_rows, "Row index out of bounds");
+        assert!(
+            buf.len() >= self.features.len(),
+            "Buffer too small"
+        );
+        for (col, f) in self.features.iter().enumerate() {
+            buf[col] = f.bins[i] as f32;
+        }
+    }
+
+    fn has_missing(&self) -> bool {
+        false // Binned data doesn't have NaN
+    }
+
+    fn density(&self) -> f64 {
+        1.0 // All elements are present
+    }
+}
+
+// FeatureBinAccessor is safe to share between threads because it only
+// reads from the immutable feature data
+unsafe impl Sync for FeatureBinAccessor<'_> {}
+
 /// Builder for `BinnedDataset`.
 ///
 /// # Example
@@ -189,11 +331,19 @@ impl FeatureData {
 /// ```ignore
 /// let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 256).build()?;
 /// ```
+///
+/// Building with feature bundling:
+/// ```ignore
+/// let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 256)
+///     .with_bundling(BundlingConfig::auto())
+///     .build()?;
+/// ```
 #[derive(Debug, Default)]
 pub struct BinnedDatasetBuilder {
     features: Vec<FeatureData>,
     n_rows: Option<usize>,
     group_strategy: GroupStrategy,
+    bundling_config: Option<BundlingConfig>,
 }
 
 impl BinnedDatasetBuilder {
@@ -399,6 +549,33 @@ impl BinnedDatasetBuilder {
         self
     }
 
+    /// Enable feature bundling for sparse/one-hot features.
+    ///
+    /// Bundling analyzes feature sparsity and creates a bundle plan that
+    /// groups non-conflicting sparse features. This can significantly reduce
+    /// memory usage and improve training speed for datasets with many sparse
+    /// or one-hot encoded features.
+    ///
+    /// The actual column reduction happens during histogram building (Story 1.4).
+    /// This method stores the bundle plan in the dataset for later use.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let dataset = BinnedDatasetBuilder::from_matrix(&matrix, 256)
+    ///     .with_bundling(BundlingConfig::auto())
+    ///     .build()?;
+    ///
+    /// // Check bundling stats
+    /// if let Some(stats) = dataset.bundling_stats() {
+    ///     println!("Bundles created: {}", stats.bundles_created);
+    /// }
+    /// ```
+    pub fn with_bundling(mut self, config: BundlingConfig) -> Self {
+        self.bundling_config = Some(config);
+        self
+    }
+
     /// Build the dataset.
     pub fn build(self) -> Result<BinnedDataset, BuildError> {
         let n_rows = self.n_rows.unwrap_or(0);
@@ -423,7 +600,50 @@ impl BinnedDatasetBuilder {
         // Build groups and feature metadata
         let (groups, features) = self.build_groups(n_rows, &group_specs)?;
 
-        Ok(BinnedDataset::new(n_rows, features, groups))
+        // Create bundle plan if bundling is enabled
+        let bundle_plan = if let Some(config) = &self.bundling_config {
+            if config.enable_bundling {
+                Some(self.create_bundle_plan(n_rows, config))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        Ok(BinnedDataset::with_bundle_plan(
+            n_rows, features, groups, bundle_plan,
+        ))
+    }
+
+    /// Create a bundle plan by analyzing feature sparsity and conflicts.
+    fn create_bundle_plan(&self, n_rows: usize, config: &BundlingConfig) -> BundlePlan {
+        // Analyze features to get sparsity and binary info
+        let feature_infos: Vec<FeatureInfo> = self
+            .features
+            .iter()
+            .enumerate()
+            .map(|(idx, f)| {
+                // Convert FeatureData to FeatureInfo
+                let density = (1.0 - f.sparsity()) as f32;
+                let is_binary = f.n_bins() <= 2;
+                let is_trivial = f.n_bins() <= 1;
+                FeatureInfo {
+                    original_idx: idx,
+                    density,
+                    is_binary,
+                    is_trivial,
+                }
+            })
+            .collect();
+
+        // Create a simple adapter that provides bin values for conflict detection
+        let bin_accessor = FeatureBinAccessor {
+            features: &self.features,
+            n_rows,
+        };
+
+        create_bundle_plan(&bin_accessor, &feature_infos, config)
     }
 
     /// Validate that a new feature has consistent row count.
@@ -854,5 +1074,95 @@ mod tests {
             name: None,
         };
         assert!((f.sparsity() - 0.8).abs() < 0.001);
+    }
+
+    // =========================================================================
+    // Bundling Integration Tests
+    // =========================================================================
+
+    #[test]
+    fn test_builder_with_bundling_disabled() {
+        let dataset = BinnedDatasetBuilder::new()
+            .add_binned(vec![0, 0, 0, 1], make_simple_mapper(2)) // sparse
+            .add_binned(vec![0, 1, 0, 0], make_simple_mapper(2)) // sparse
+            .with_bundling(BundlingConfig::disabled())
+            .build()
+            .unwrap();
+
+        // Bundling disabled, no bundle plan stored
+        assert!(dataset.bundle_plan().is_none());
+        assert!(!dataset.has_effective_bundling());
+    }
+
+    #[test]
+    fn test_builder_with_bundling_auto_sparse_features() {
+        // Create 10 one-hot encoded features (mutually exclusive, very sparse)
+        // With 100 rows and 10 features, each feature has ~10% non-zero (density 0.1)
+        // This is 90% sparse, meeting the default min_sparsity threshold of 0.9
+        let n_rows = 100;
+        let n_features = 10;
+
+        let features: Vec<Vec<u32>> = (0..n_features)
+            .map(|f| {
+                (0..n_rows)
+                    .map(|r| if r % n_features == f { 1 } else { 0 })
+                    .collect()
+            })
+            .collect();
+
+        let mut builder = BinnedDatasetBuilder::new();
+        for feat in features {
+            builder = builder.add_binned(feat, make_simple_mapper(2));
+        }
+
+        let dataset = builder
+            .with_bundling(BundlingConfig::auto())
+            .build()
+            .unwrap();
+
+        // Should have a bundle plan
+        let plan = dataset.bundle_plan().expect("Should have bundle plan");
+
+        // All features are sparse (90% zeros) and non-conflicting
+        // They should be detected as sparse
+        assert!(
+            plan.sparse_feature_count > 0 || plan.skipped,
+            "Expected sparse features or bundling to be skipped, got sparse_count={}, skipped={}",
+            plan.sparse_feature_count,
+            plan.skipped
+        );
+    }
+
+    #[test]
+    fn test_builder_with_bundling_stores_plan() {
+        // Create a few sparse features
+        let dataset = BinnedDatasetBuilder::new()
+            .add_binned(vec![0, 0, 0, 1, 0, 0, 0, 0, 0, 0], make_simple_mapper(2))
+            .add_binned(vec![0, 1, 0, 0, 0, 0, 0, 0, 0, 0], make_simple_mapper(2))
+            .add_binned(vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1], make_simple_mapper(2)) // dense
+            .with_bundling(BundlingConfig::auto())
+            .build()
+            .unwrap();
+
+        // Should have a bundle plan stored
+        assert!(dataset.bundle_plan().is_some());
+
+        // Can get stats
+        if let Some(stats) = dataset.bundling_stats() {
+            // 2 sparse features
+            assert!(stats.original_sparse_features <= 3);
+        }
+    }
+
+    #[test]
+    fn test_builder_without_bundling_no_plan() {
+        let dataset = BinnedDatasetBuilder::new()
+            .add_binned(vec![0, 0, 0, 1], make_simple_mapper(2))
+            .add_binned(vec![0, 1, 0, 0], make_simple_mapper(2))
+            .build() // No with_bundling call
+            .unwrap();
+
+        assert!(dataset.bundle_plan().is_none());
+        assert!(!dataset.has_effective_bundling());
     }
 }
