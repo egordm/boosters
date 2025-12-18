@@ -44,7 +44,7 @@ use crate::training::{
 };
 
 use super::selector::FeatureSelectorKind;
-use super::updater::{update_bias, UpdateConfig, UpdaterKind};
+use super::updater::{Updater, UpdateConfig, UpdaterKind};
 
 // ============================================================================
 // GBLinearParams
@@ -242,7 +242,7 @@ impl<O: Objective, M: Metric> GBLinearTrainer<O, M> {
         }
 
         // Create updater and selector
-        let updater = if self.params.parallel {
+        let updater_kind = if self.params.parallel {
             UpdaterKind::Parallel
         } else {
             UpdaterKind::Sequential
@@ -254,6 +254,7 @@ impl<O: Objective, M: Metric> GBLinearTrainer<O, M> {
             lambda: self.params.lambda,
             learning_rate: self.params.learning_rate,
         };
+        let updater = Updater::new(updater_kind, update_config);
 
         // Gradient and prediction buffers
         let mut gradients = Gradients::new(num_samples, num_outputs);
@@ -298,15 +299,35 @@ impl<O: Objective, M: Metric> GBLinearTrainer<O, M> {
 
         // Training loop
         for round in 0..self.params.n_rounds {
-            // Compute predictions
-            model.predict_col_major(&train_data, &mut predictions);
+            // NOTE: We don't call predict_col_major() here anymore!
+            // Predictions are maintained incrementally by applying weight deltas.
+            // On first round (round == 0), predictions are already initialized with base scores.
 
-            // Compute gradients
+            // Compute gradients from current predictions
             self.objective.compute_gradients_buffer(&predictions, train_labels, w, &mut gradients);
 
             // Update each output
             for output in 0..num_outputs {
-                update_bias(&mut model, &gradients, output, self.params.learning_rate);
+                let bias_delta = updater.update_bias(&mut model, &gradients, output);
+                
+                // Apply bias delta to predictions incrementally
+                if bias_delta.abs() > 1e-10 {
+                    updater.apply_bias_delta_to_predictions(bias_delta, output, num_samples, &mut predictions);
+                    
+                    // Also update eval predictions
+                    for (set_idx, matrix) in eval_data.iter().enumerate() {
+                        let eval_rows = matrix.num_rows();
+                        updater.apply_bias_delta_to_predictions(
+                            bias_delta,
+                            output,
+                            eval_rows,
+                            &mut eval_predictions[set_idx],
+                        );
+                    }
+                    
+                    // Recompute gradients after bias update
+                    self.objective.compute_gradients_buffer(&predictions, train_labels, w, &mut gradients);
+                }
 
                 selector.setup_round(
                     &model,
@@ -317,19 +338,36 @@ impl<O: Objective, M: Metric> GBLinearTrainer<O, M> {
                     self.params.lambda,
                 );
 
-                updater.update_round(
+                let weight_deltas = updater.update_round(
                     &mut model,
                     &train_data,
                     &gradients,
                     &mut selector,
                     output,
-                    &update_config,
                 );
-            }
-
-            // Compute eval set predictions (full recompute each round for GBLinear)
-            for (set_idx, matrix) in eval_data.iter().enumerate() {
-                model.predict_col_major(matrix, &mut eval_predictions[set_idx]);
+                
+                // Apply weight deltas to predictions incrementally
+                if !weight_deltas.is_empty() {
+                    updater.apply_weight_deltas_to_predictions(
+                        &train_data,
+                        &weight_deltas,
+                        output,
+                        num_samples,
+                        &mut predictions,
+                    );
+                    
+                    // Also update eval predictions
+                    for (set_idx, matrix) in eval_data.iter().enumerate() {
+                        let eval_rows = matrix.num_rows();
+                        updater.apply_weight_deltas_to_predictions(
+                            matrix,
+                            &weight_deltas,
+                            output,
+                            eval_rows,
+                            &mut eval_predictions[set_idx],
+                        );
+                    }
+                }
             }
 
             // Evaluation using Evaluator

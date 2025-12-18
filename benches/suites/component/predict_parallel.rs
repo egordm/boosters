@@ -27,7 +27,7 @@ fn bench_gbtree_thread_scaling(c: &mut Criterion) {
 	for &n_threads in common::matrix::THREAD_COUNTS {
 		group.bench_with_input(BenchmarkId::new("par_predict", n_threads), &matrix, |b, m| {
 			b.iter(|| {
-				with_rayon_threads(n_threads, || black_box(predictor.par_predict(black_box(m))))
+				with_rayon_threads(n_threads, || black_box(predictor.par_predict(black_box(m), n_threads)))
 			})
 		});
 	}

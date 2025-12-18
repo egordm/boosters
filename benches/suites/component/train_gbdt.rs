@@ -11,7 +11,8 @@ use booste_rs::testing::data::{
 	synthetic_multiclass_targets_from_linear_scores, synthetic_regression_targets_linear,
 };
 use booste_rs::training::{
-	GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, LogisticLoss, SoftmaxLoss, SquaredLoss,
+	GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, LogLoss, LogisticLoss, MulticlassLogLoss,
+	Rmse, SoftmaxLoss, SquaredLoss,
 };
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
@@ -63,11 +64,11 @@ fn bench_gbdt_train_regression(c: &mut Criterion) {
 			cache_size: 256,
 			..Default::default()
 		};
-		let trainer = GBDTTrainer::new(SquaredLoss, params);
+		let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
 
 		group.throughput(Throughput::Elements((rows * cols) as u64));
 		group.bench_function(BenchmarkId::new("train", name), |b| {
-			b.iter(|| black_box(trainer.train(black_box(&binned), black_box(&targets), &[]).unwrap()))
+			b.iter(|| black_box(trainer.train(black_box(&binned), black_box(&targets), &[], &[]).unwrap()))
 		});
 	}
 
@@ -93,11 +94,11 @@ fn bench_gbdt_train_binary(c: &mut Criterion) {
 		cache_size: 256,
 		..Default::default()
 	};
-	let trainer = GBDTTrainer::new(LogisticLoss, params);
+	let trainer = GBDTTrainer::new(LogisticLoss, LogLoss, params);
 
 	group.throughput(Throughput::Elements((rows * cols) as u64));
-	group.bench_function("train", |b| {
-		b.iter(|| black_box(trainer.train(black_box(&binned), black_box(&targets), &[]).unwrap()))
+	group.bench_function("train_binary", |b| {
+		b.iter(|| black_box(trainer.train(black_box(&binned), black_box(&targets), &[], &[]).unwrap()))
 	});
 	group.finish();
 }
@@ -121,11 +122,11 @@ fn bench_gbdt_train_multiclass(c: &mut Criterion) {
 		cache_size: 256,
 		..Default::default()
 	};
-	let trainer = GBDTTrainer::new(SoftmaxLoss::new(num_classes), params);
+	let trainer = GBDTTrainer::new(SoftmaxLoss::new(num_classes), MulticlassLogLoss, params);
 
 	group.throughput(Throughput::Elements((rows * cols) as u64));
-	group.bench_function("train", |b| {
-		b.iter(|| black_box(trainer.train(black_box(&binned), black_box(&targets), &[]).unwrap()))
+	group.bench_function("train_multiclass", |b| {
+		b.iter(|| black_box(trainer.train(black_box(&binned), black_box(&targets), &[], &[]).unwrap()))
 	});
 	group.finish();
 }
@@ -150,10 +151,10 @@ fn bench_gbdt_thread_scaling(c: &mut Criterion) {
 			cache_size: 256,
 			..Default::default()
 		};
-		let trainer = GBDTTrainer::new(SquaredLoss, params);
+		let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
 		group.throughput(Throughput::Elements((rows * cols) as u64));
 		group.bench_function(BenchmarkId::new("train", n_threads), |b| {
-			b.iter(|| black_box(trainer.train(black_box(&binned), black_box(&targets), &[]).unwrap()))
+			b.iter(|| black_box(trainer.train(black_box(&binned), black_box(&targets), &[], &[]).unwrap()))
 		});
 	}
 
@@ -183,6 +184,7 @@ fn bench_gbdt_growth_strategy(c: &mut Criterion) {
 
 	let depthwise = GBDTTrainer::new(
 		SquaredLoss,
+		Rmse,
 		GBDTParams {
 			growth_strategy: GrowthStrategy::DepthWise { max_depth },
 			..common.clone()
@@ -190,6 +192,7 @@ fn bench_gbdt_growth_strategy(c: &mut Criterion) {
 	);
 	let leafwise = GBDTTrainer::new(
 		SquaredLoss,
+		Rmse,
 		GBDTParams {
 			growth_strategy: GrowthStrategy::LeafWise { max_leaves },
 			..common
@@ -198,10 +201,10 @@ fn bench_gbdt_growth_strategy(c: &mut Criterion) {
 
 	group.throughput(Throughput::Elements((rows * cols) as u64));
 	group.bench_function(BenchmarkId::new("depthwise", format!("{rows}x{cols}")), |b| {
-		b.iter(|| black_box(depthwise.train(black_box(&binned), black_box(&targets), &[]).unwrap()))
+		b.iter(|| black_box(depthwise.train(black_box(&binned), black_box(&targets), &[], &[]).unwrap()))
 	});
 	group.bench_function(BenchmarkId::new("leafwise", format!("{rows}x{cols}")), |b| {
-		b.iter(|| black_box(leafwise.train(black_box(&binned), black_box(&targets), &[]).unwrap()))
+		b.iter(|| black_box(leafwise.train(black_box(&binned), black_box(&targets), &[], &[]).unwrap()))
 	});
 
 	group.finish();

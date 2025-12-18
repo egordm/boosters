@@ -562,6 +562,56 @@ def generate_bench_large():
     save_benchmark_model("bench_large", booster, num_features=100)
 
 
+def generate_bench_gblinear_small():
+    """Small GBLinear benchmark model: 50 features, 100 rounds."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=500, n_features=50, noise=10.0, random_state=42)
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'reg:squarederror',
+        'booster': 'gblinear',
+        'eta': 0.1,
+        'lambda': 0.1,
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=100)
+    save_benchmark_model("bench_gblinear_small", booster, num_features=50)
+
+
+def generate_bench_gblinear_medium():
+    """Medium GBLinear benchmark model: 100 features, 200 rounds."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=2000, n_features=100, n_informative=60, noise=10.0, random_state=42)
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'reg:squarederror',
+        'booster': 'gblinear',
+        'eta': 0.05,
+        'lambda': 0.1,
+        'alpha': 0.05,
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=200)
+    save_benchmark_model("bench_gblinear_medium", booster, num_features=100)
+
+
+def generate_bench_gblinear_large():
+    """Large GBLinear benchmark model: 200 features, 300 rounds."""
+    np.random.seed(42)
+    X, y = make_regression(n_samples=5000, n_features=200, n_informative=100, noise=10.0, random_state=42)
+    
+    dtrain = xgb.DMatrix(X, label=y)
+    params = {
+        'objective': 'reg:squarederror',
+        'booster': 'gblinear',
+        'eta': 0.03,
+        'lambda': 0.2,
+        'alpha': 0.1,
+    }
+    booster = xgb.train(params, dtrain, num_boost_round=300)
+    save_benchmark_model("bench_gblinear_large", booster, num_features=200)
+
+
 # =============================================================================
 # Main Entry Points
 # =============================================================================
@@ -603,6 +653,9 @@ def generate_all_benchmarks():
     generate_bench_small()
     generate_bench_medium()
     generate_bench_large()
+    generate_bench_gblinear_small()
+    generate_bench_gblinear_medium()
+    generate_bench_gblinear_large()
 
 
 # =============================================================================
