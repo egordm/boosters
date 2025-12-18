@@ -8,6 +8,7 @@
 //! - [`StandardTraversal`]: Direct node-by-node traversal (simple, good for single rows)
 //! - [`UnrolledTraversal`]: Uses [`UnrolledTreeLayout`] for cache-friendly batch traversal
 
+use crate::repr::gbdt::TreeView;
 use super::SplitType;
 use super::{
     float_to_category, Depth6, LeafValue, ScalarLeaf, Tree, UnrollDepth,

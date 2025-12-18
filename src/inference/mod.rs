@@ -41,7 +41,4 @@ pub use gbdt::{
     // Accessor utilities for generic traversal
     BinnedAccessor, traverse_to_leaf,
 };
-// Re-export traits from their home modules
-pub use crate::data::FeatureAccessor;
-pub use crate::repr::gbdt::TreeView;
 pub use gblinear::LinearModelPredict;

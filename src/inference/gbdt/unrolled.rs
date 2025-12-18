@@ -40,6 +40,7 @@
 //! - `UnrolledTreeLayout6` — 63 nodes, 64 exits (default, matches XGBoost)
 //! - `UnrolledTreeLayout8` — 255 nodes, 256 exits (deep trees)
 
+use crate::repr::gbdt::TreeView;
 use super::LeafValue;
 use super::SplitType;
 use super::Tree;

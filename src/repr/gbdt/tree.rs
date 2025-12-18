@@ -77,6 +77,11 @@ pub trait TreeView {
 
     /// Get the leaf value at a leaf node.
     fn leaf_value(&self, node: NodeId) -> &Self::LeafValue;
+
+    /// Check if the tree has any categorical splits.
+    fn has_categorical(&self) -> bool {
+        !self.categories().is_empty()
+    }
 }
 
 // ============================================================================
@@ -196,72 +201,6 @@ impl<L: LeafValue> Tree<L> {
             split_types: split_types.into_boxed_slice(),
             categories,
         }
-    }
-
-    /// Number of nodes in this tree.
-    #[inline]
-    pub fn n_nodes(&self) -> usize {
-        self.is_leaf.len()
-    }
-
-    /// Check if a node is a leaf.
-    #[inline]
-    pub fn is_leaf(&self, node_idx: NodeId) -> bool {
-        self.is_leaf[node_idx as usize]
-    }
-
-    /// Get split feature index for a node.
-    #[inline]
-    pub fn split_index(&self, node_idx: NodeId) -> u32 {
-        self.split_indices[node_idx as usize]
-    }
-
-    /// Get split threshold for a node.
-    #[inline]
-    pub fn split_threshold(&self, node_idx: NodeId) -> f32 {
-        self.split_thresholds[node_idx as usize]
-    }
-
-    /// Get left child index.
-    #[inline]
-    pub fn left_child(&self, node_idx: NodeId) -> NodeId {
-        self.left_children[node_idx as usize]
-    }
-
-    /// Get right child index.
-    #[inline]
-    pub fn right_child(&self, node_idx: NodeId) -> NodeId {
-        self.right_children[node_idx as usize]
-    }
-
-    /// Get default direction for missing values.
-    #[inline]
-    pub fn default_left(&self, node_idx: NodeId) -> bool {
-        self.default_left[node_idx as usize]
-    }
-
-    /// Get leaf value for a node.
-    #[inline]
-    pub fn leaf_value(&self, node_idx: NodeId) -> &L {
-        &self.leaf_values[node_idx as usize]
-    }
-
-    /// Get split type for a node.
-    #[inline]
-    pub fn split_type(&self, node_idx: NodeId) -> SplitType {
-        self.split_types[node_idx as usize]
-    }
-
-    /// Check if this tree has any categorical splits.
-    #[inline]
-    pub fn has_categorical(&self) -> bool {
-        !self.categories.is_empty()
-    }
-
-    /// Get reference to categories storage.
-    #[inline]
-    pub fn categories(&self) -> &CategoriesStorage {
-        &self.categories
     }
 
     /// Traverse the tree to find the leaf for given features.

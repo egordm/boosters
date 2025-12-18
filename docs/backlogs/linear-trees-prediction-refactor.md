@@ -114,13 +114,13 @@ Unify to batch-first accumulate pattern, remove old methods.
 
 **Prerequisite**: Story 1.2 complete (Grower returns MutableTree)
 
-### Story 2.1: LeafFeatureBuffer [S]
+### Story 2.1: LeafFeatureBuffer [S] ✅
 
 Column-major buffer for gathering leaf features into contiguous memory.
 
 **Tasks:**
 
-- [ ] Implement `LeafFeatureBuffer::new()`, `gather()`, `feature_slice()`
+- [x] Implement `LeafFeatureBuffer::new()`, `gather()`, `feature_slice()`
 
 **Acceptance Criteria:**
 
@@ -131,6 +131,8 @@ Column-major buffer for gathering leaf features into contiguous memory.
 
 - `test_leaf_buffer_gather`: 10 rows × 3 features, verify layout
 - `test_leaf_buffer_reuse`: gather twice, verify old data overwritten
+- `test_leaf_buffer_overflow_rows`: panic on too many rows
+- `test_leaf_buffer_overflow_features`: panic on too many features
 
 ---
 
