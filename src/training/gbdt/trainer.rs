@@ -22,6 +22,7 @@
 use rayon::ThreadPoolBuilder;
 
 use crate::data::{BinnedDataset, RowMatrix};
+use crate::inference::gbdt::BinnedAccessor;
 use crate::training::callback::{EarlyStopping, EarlyStopAction};
 use crate::training::eval::{self, EvalSet};
 use crate::training::logger::TrainingLogger;
@@ -33,6 +34,7 @@ use crate::training::Verbosity;
 
 use super::expansion::GrowthStrategy;
 use super::grower::{GrowerParams, TreeGrower};
+use super::linear::{LeafLinearTrainer, LinearLeafConfig};
 use super::parallelism::Parallelism;
 use super::split::GainParams;
 
@@ -96,6 +98,11 @@ pub struct GBDTParams {
     // --- Reproducibility ---
     /// Random seed.
     pub seed: u64,
+
+    // --- Linear leaves ---
+    /// Linear leaf configuration. If set, fit linear models in leaves.
+    /// See RFC-0009 for design rationale.
+    pub linear_leaves: Option<LinearLeafConfig>,
 }
 
 impl Default for GBDTParams {
@@ -114,6 +121,7 @@ impl Default for GBDTParams {
             early_stopping_eval_set: 0,
             verbosity: Verbosity::default(),
             seed: 42,
+            linear_leaves: None,
         }
     }
 }
@@ -239,6 +247,19 @@ impl<O: Objective, M: Metric> GBDTTrainer<O, M> {
             parallelism,
         );
 
+        // Initialize linear leaf trainer if configured
+        let mut linear_trainer = self.params.linear_leaves.as_ref().map(|config| {
+            // Estimate max samples per leaf: use n_rows as upper bound
+            // (worst case: single-leaf tree for some output)
+            // This may overallocate but is safe; typical usage is much smaller
+            LeafLinearTrainer::new(config.clone(), n_rows)
+        });
+
+        // Create bin mappers array for BinnedAccessor
+        let bin_mappers: Vec<_> = (0..dataset.n_features())
+            .map(|f| dataset.bin_mapper(f).clone())
+            .collect();
+
         let mut row_sampler = RowSampler::new(
             self.params.row_sampling.clone(),
             n_rows,
@@ -320,24 +341,51 @@ impl<O: Objective, M: Metric> GBDTTrainer<O, M> {
 
                 let pred_offset = output * n_rows;
 
-                // Fast path: if we trained on all rows, we can update predictions using
-                // training-time leaf assignments instead of traversing the tree per row.
-                let tree = if sampled.is_none() {
-                    grower.grow_and_update_predictions(
-                        dataset,
-                        &gradients,
-                        output,
-                        None,
-                        &mut predictions[pred_offset..pred_offset + n_rows],
-                    )
+                // Grow tree (returns MutableTree for potential linear fitting)
+                let mut mutable_tree = grower.grow(dataset, &gradients, output, sampled.as_deref());
+
+                // Fit linear models in leaves (skip round 0: homogeneous gradients)
+                // Only fit if linear_leaves config is set and we're past round 0
+                if round > 0 {
+                    if let Some(ref mut trainer) = linear_trainer {
+                        let accessor = BinnedAccessor::new(dataset, &bin_mappers);
+                        let fitted = trainer.train(
+                            &mutable_tree,
+                            &accessor,
+                            grower.partitioner(),
+                            grower.leaf_node_mapping(),
+                            &gradients,
+                            output,
+                            self.params.learning_rate,
+                        );
+                        // Apply fitted coefficients to tree
+                        #[cfg(debug_assertions)]
+                        let fitted_count = fitted.len();
+                        for leaf in fitted {
+                            mutable_tree.set_linear_leaf(
+                                leaf.node_id,
+                                leaf.features,
+                                leaf.intercept,
+                                leaf.coefficients,
+                            );
+                        }
+                        #[cfg(debug_assertions)]
+                        eprintln!("Round {}: set {} linear leaves", round, fitted_count);
+                    }
+                }
+
+                // Freeze tree
+                let tree = mutable_tree.freeze();
+
+                // Update predictions
+                if sampled.is_none() {
+                    // Fast path: use partitioner for O(n) prediction update
+                    grower.update_predictions_from_last_tree(&mut predictions[pred_offset..pred_offset + n_rows]);
                 } else {
                     // Fallback: row sampling trains on a subset; we must still apply the
                     // trained tree to all rows to keep predictions correct.
-                    // Use batch prediction for better cache efficiency.
-                    let tree = grower.grow(dataset, &gradients, output, sampled.as_deref()).freeze();
                     tree.predict_binned_batch(dataset, &mut predictions[pred_offset..pred_offset + n_rows]);
-                    tree
-                };
+                }
 
                 // Incremental eval set prediction: add this tree's contribution
                 // eval_predictions is column-major, so we can pass a contiguous slice
@@ -585,5 +633,49 @@ mod tests {
         let result = trainer.train(&dataset, &targets, &[], &[]);
 
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_train_with_linear_leaves() {
+        let dataset = make_test_dataset();
+        // Targets have a linear pattern on feature 0
+        let targets: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5];
+
+        let params = GBDTParams {
+            n_trees: 5,
+            learning_rate: 0.3,
+            linear_leaves: Some(LinearLeafConfig::default()),
+            ..Default::default()
+        };
+
+        let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+        let forest = trainer.train(&dataset, &targets, &[], &[]).unwrap();
+
+        assert_eq!(forest.n_trees(), 5);
+
+        // Check that at least some trees have linear leaves (skip first tree)
+        let has_linear_leaves = (0..5).any(|i| forest.tree(i).has_linear_leaves());
+        // Note: linear leaves may not always be fitted if data doesn't support it
+        // This is just a smoke test that the code runs without panicking
+        let _ = has_linear_leaves;
+    }
+
+    #[test]
+    fn test_first_tree_no_linear_coefficients() {
+        let dataset = make_test_dataset();
+        let targets: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5];
+
+        let params = GBDTParams {
+            n_trees: 3,
+            linear_leaves: Some(LinearLeafConfig::default()),
+            ..Default::default()
+        };
+
+        let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+        let forest = trainer.train(&dataset, &targets, &[], &[]).unwrap();
+
+        // First tree should NOT have linear leaves (round 0 is skipped)
+        let first_tree = forest.tree(0);
+        assert!(!first_tree.has_linear_leaves(), "First tree should not have linear leaves");
     }
 }

@@ -344,7 +344,8 @@ mod tests {
     }
 
     #[test]
-    fn default_verbosity_is_info() {
-        assert_eq!(Verbosity::default(), Verbosity::Info);
+    fn default_verbosity_is_silent() {
+        // Default is Silent: libraries should be quiet by default
+        assert_eq!(Verbosity::default(), Verbosity::Silent);
     }
 }

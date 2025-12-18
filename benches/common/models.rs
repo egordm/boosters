@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use booste_rs::compat::xgboost::Booster;
 use booste_rs::compat::XgbModel;
 use booste_rs::inference::gbdt::{Forest, ScalarLeaf};
-use booste_rs::inference::gblinear::LinearModel;
+use booste_rs::repr::gblinear::LinearModel;
 
 /// Minimal model wrapper for benchmarks.
 ///

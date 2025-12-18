@@ -10,6 +10,7 @@
 use super::{load_config, load_train_data, load_xgb_weights};
 use approx::assert_relative_eq;
 use booste_rs::data::{ColMatrix, DataMatrix, Dataset, RowMatrix};
+use booste_rs::inference::LinearModelPredict;
 use booste_rs::training::{GBLinearParams, GBLinearTrainer, Rmse, SquaredLoss, Verbosity};
 use rstest::rstest;
 

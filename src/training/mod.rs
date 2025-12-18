@@ -67,7 +67,7 @@ pub use objectives::{
 };
 
 // Re-export gbdt trainer and params
-pub use gbdt::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy};
+pub use gbdt::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, LinearLeafConfig};
 
 // Re-export sampling types
 pub use sampling::{ColSamplingParams, RowSamplingParams};

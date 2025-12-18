@@ -3,7 +3,7 @@
 //! This buffer is allocated once at training start and reused for each leaf.
 //! It gathers features into contiguous columns for efficient coordinate descent.
 
-use crate::data::ColMatrix;
+use crate::data::FeatureAccessor;
 
 /// Column-major buffer for leaf feature data.
 ///
@@ -14,9 +14,11 @@ use crate::data::ColMatrix;
 /// # Example
 ///
 /// ```ignore
+/// use crate::data::ColMatrix;
+///
 /// let mut buffer = LeafFeatureBuffer::new(1000, 10);
 ///
-/// // Gather features for rows in this leaf
+/// // Gather features for rows in this leaf (ColMatrix implements FeatureAccessor)
 /// buffer.gather(&leaf_rows, &col_matrix, &path_features);
 ///
 /// // Access feature columns for coordinate descent
@@ -63,25 +65,25 @@ impl LeafFeatureBuffer {
         }
     }
 
-    /// Gather features from a column-major matrix into this buffer.
+    /// Gather features from any FeatureAccessor into this buffer.
     ///
-    /// Features are gathered in column-major order: for each feature,
-    /// we copy all row values contiguously. This is cache-friendly when
-    /// reading from `ColMatrix` (also column-major).
+    /// Works with any type implementing `FeatureAccessor`, including:
+    /// - `ColMatrix` for raw feature values
+    /// - `BinnedAccessor` for binned data (using midpoint values)
     ///
     /// # Arguments
     ///
     /// * `rows` - Row indices of samples in this leaf
-    /// * `col_matrix` - Column-major feature matrix
+    /// * `accessor` - Feature accessor
     /// * `features` - Feature indices to gather (typically path features)
     ///
     /// # Panics
     ///
     /// Panics if `rows.len() > max_rows` or `features.len() > max_features`.
-    pub fn gather<S: AsRef<[f32]>>(
+    pub fn gather<A: FeatureAccessor>(
         &mut self,
         rows: &[u32],
-        col_matrix: &ColMatrix<f32, S>,
+        accessor: &A,
         features: &[u32],
     ) {
         debug_assert!(
@@ -100,13 +102,11 @@ impl LeafFeatureBuffer {
         self.n_rows = rows.len();
         self.n_features = features.len();
 
-        // Iterate features first (source is column-major)
-        // This gives cache-friendly reads from ColMatrix
+        // Iterate features first (column-major output)
         for (feat_idx, &feat) in features.iter().enumerate() {
             let col_offset = feat_idx * self.max_rows;
             for (row_idx, &row) in rows.iter().enumerate() {
-                self.data[col_offset + row_idx] =
-                    col_matrix.get(row as usize, feat as usize).copied().unwrap_or(f32::NAN);
+                self.data[col_offset + row_idx] = accessor.get_feature(row as usize, feat as usize);
             }
         }
     }

@@ -8,6 +8,7 @@ use super::load_config;
 use super::load_train_data;
 use booste_rs::data::Dataset;
 use booste_rs::inference::common::PredictionOutput;
+use booste_rs::inference::LinearModelPredict;
 use booste_rs::training::{
     GBLinearParams, GBLinearTrainer, LogLoss, LogisticLoss, MulticlassLogLoss, SoftmaxLoss,
     Verbosity,

@@ -262,6 +262,7 @@ impl BinMapper {
     /// For numerical features:
     /// - Bin 0: `(min_val + upper_bound[0]) / 2`
     /// - Bin n: `(upper_bound[n-1] + upper_bound[n]) / 2`
+    /// - Last bin: Uses `max_val` instead of the sentinel `f64::MAX` upper bound
     ///
     /// For categorical features, returns the category value.
     /// For missing/NaN bins, returns `f64::NAN`.
@@ -283,13 +284,21 @@ impl BinMapper {
 
         let bin_idx = bin as usize;
         let upper = self.bin_upper_bounds[bin_idx];
+        
+        // Use max_val for the last bin to avoid f64::MAX sentinel values
+        let effective_upper = if upper.is_infinite() || upper > self.max_val {
+            self.max_val
+        } else {
+            upper
+        };
+        
         let lower = if bin_idx == 0 {
             self.min_val
         } else {
             self.bin_upper_bounds[bin_idx - 1]
         };
 
-        (lower + upper) / 2.0
+        (lower + effective_upper) / 2.0
     }
 
     /// Get max category value (categorical only).
