@@ -113,7 +113,7 @@ struct BenchmarkConfig {
 	trees: u32,
 	depth: u32,
 	classes: Option<usize>,
-	/// Enable linear tree training (booste-rs and LightGBM only).
+	/// Enable linear GBDT training (booste-rs and LightGBM only).
 	linear_leaves: bool,
 }
 
@@ -141,7 +141,7 @@ fn default_configs(quick: bool) -> Vec<BenchmarkConfig> {
 			classes: None,
 			linear_leaves: false,
 		},
-		// Linear tree regression benchmarks (booste-rs + LightGBM only)
+		// Linear GBDT regression benchmarks (booste-rs + LightGBM only)
 		BenchmarkConfig {
 			name: "regression_linear_small".to_string(),
 			task: Task::Regression,
@@ -229,7 +229,7 @@ fn real_world_configs(quick: bool) -> Vec<BenchmarkConfig> {
 			classes: None,
 			linear_leaves: false,
 		});
-		// Linear tree variant for California Housing
+		// Linear GBDT variant for California Housing
 		configs.push(BenchmarkConfig {
 			name: "california_housing_linear".to_string(),
 			task: Task::Regression,
