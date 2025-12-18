@@ -676,6 +676,7 @@ impl TreeGrower {
 mod tests {
     use super::*;
     use crate::data::{BinMapper, BinnedDataset, BinnedDatasetBuilder, GroupLayout, GroupStrategy, MissingType};
+    use crate::repr::gbdt::TreeView;
 
     /// Helper to count leaves in a Tree.
     fn count_leaves<L: crate::repr::gbdt::LeafValue>(tree: &Tree<L>) -> usize {
