@@ -567,14 +567,64 @@ impl<L: LeafValue> Tree<L> {
         L: Into<f32> + Copy,
     {
         use crate::inference::gbdt::traverse_to_leaf;
-        
+
         let n_rows = accessor.num_rows();
         debug_assert_eq!(predictions.len(), n_rows);
 
-        for row_idx in 0..n_rows {
-            let leaf_idx = traverse_to_leaf(self, accessor, row_idx);
-            let leaf = self.leaf_value(leaf_idx);
-            predictions[row_idx] += (*leaf).into();
+        if self.has_linear_leaves() {
+            // Linear leaf path: need to compute linear contribution
+            for row_idx in 0..n_rows {
+                let leaf_idx = traverse_to_leaf(self, accessor, row_idx);
+                let value = self.compute_leaf_value(leaf_idx, accessor, row_idx);
+                predictions[row_idx] += value;
+            }
+        } else {
+            // Standard path: just use leaf values
+            for row_idx in 0..n_rows {
+                let leaf_idx = traverse_to_leaf(self, accessor, row_idx);
+                let leaf = self.leaf_value(leaf_idx);
+                predictions[row_idx] += (*leaf).into();
+            }
+        }
+    }
+
+    /// Compute the prediction value for a leaf, including linear terms if present.
+    ///
+    /// For constant leaves, returns the leaf value.
+    /// For linear leaves, returns `intercept + Σ(coef × feature)`.
+    /// If any linear feature is NaN, falls back to the base leaf value.
+    #[inline]
+    fn compute_leaf_value<A: crate::data::FeatureAccessor>(
+        &self,
+        leaf_idx: NodeId,
+        accessor: &A,
+        row_idx: usize,
+    ) -> f32
+    where
+        L: Into<f32> + Copy,
+    {
+        let base = (*self.leaf_value(leaf_idx)).into();
+
+        if let Some((feat_indices, coefs)) = self.leaf_terms(leaf_idx) {
+            // Check for NaN in any linear feature
+            for &feat_idx in feat_indices {
+                let val = accessor.get_feature(row_idx, feat_idx as usize);
+                if val.is_nan() {
+                    return base; // Fall back to constant leaf
+                }
+            }
+
+            // Compute linear prediction: intercept + Σ(coef × feature)
+            let intercept = self.leaf_intercept(leaf_idx);
+            let linear_sum: f32 = feat_indices
+                .iter()
+                .zip(coefs.iter())
+                .map(|(&f, &c)| c * accessor.get_feature(row_idx, f as usize))
+                .sum();
+
+            intercept + linear_sum
+        } else {
+            base
         }
     }
 }
@@ -1130,5 +1180,89 @@ mod tests {
         // Freeze an empty tree
         let frozen = tree.freeze();
         assert!(!frozen.has_linear_leaves());
+    }
+
+    #[test]
+    fn test_linear_prediction_single() {
+        use super::MutableTree;
+        use crate::data::RowMatrix;
+        use crate::repr::gbdt::ScalarLeaf;
+
+        let mut tree: MutableTree<ScalarLeaf> = MutableTree::new();
+
+        // Create tree: root splits on feature 0 at 0.5
+        // Left leaf: linear with intercept=0.5, coef[0]=2.0
+        // Right leaf: constant 10.0
+        let root = tree.init_root();
+        let (left, right) = tree.apply_numeric_split(root, 0, 0.5, false);
+        tree.make_leaf(left, ScalarLeaf(1.0)); // Base value (not used for linear)
+        tree.make_leaf(right, ScalarLeaf(10.0));
+        tree.set_linear_leaf(left, vec![0], 0.5, vec![2.0]);
+
+        let frozen = tree.freeze();
+
+        // Test data: 3 rows, 1 feature
+        // Row 0: x=0.3 -> left leaf -> 0.5 + 2.0*0.3 = 1.1
+        // Row 1: x=0.7 -> right leaf -> 10.0
+        // Row 2: x=0.1 -> left leaf -> 0.5 + 2.0*0.1 = 0.7
+        let data = RowMatrix::from_vec(vec![0.3, 0.7, 0.1], 3, 1);
+        let mut predictions = vec![0.0; 3];
+        frozen.predict_batch_accumulate(&data, &mut predictions);
+
+        assert!((predictions[0] - 1.1).abs() < 1e-5, "got {}", predictions[0]);
+        assert!((predictions[1] - 10.0).abs() < 1e-5, "got {}", predictions[1]);
+        assert!((predictions[2] - 0.7).abs() < 1e-5, "got {}", predictions[2]);
+    }
+
+    #[test]
+    fn test_linear_prediction_nan_fallback() {
+        use super::MutableTree;
+        use crate::data::RowMatrix;
+        use crate::repr::gbdt::ScalarLeaf;
+
+        let mut tree: MutableTree<ScalarLeaf> = MutableTree::new();
+
+        // Create simple tree with linear leaf
+        let root = tree.init_root();
+        tree.make_leaf(root, ScalarLeaf(5.0)); // Base value
+        tree.set_linear_leaf(root, vec![0], 1.0, vec![2.0]); // intercept=1.0, coef=2.0
+
+        let frozen = tree.freeze();
+
+        // Test data: 2 rows, 1 feature
+        // Row 0: x=0.5 -> 1.0 + 2.0*0.5 = 2.0
+        // Row 1: x=NaN -> fall back to base=5.0
+        let data = RowMatrix::from_vec(vec![0.5, f32::NAN], 2, 1);
+        let mut predictions = vec![0.0; 2];
+        frozen.predict_batch_accumulate(&data, &mut predictions);
+
+        assert!((predictions[0] - 2.0).abs() < 1e-5, "got {}", predictions[0]);
+        assert!((predictions[1] - 5.0).abs() < 1e-5, "got {}", predictions[1]);
+    }
+
+    #[test]
+    fn test_linear_prediction_multivariate() {
+        use super::MutableTree;
+        use crate::data::RowMatrix;
+        use crate::repr::gbdt::ScalarLeaf;
+
+        let mut tree: MutableTree<ScalarLeaf> = MutableTree::new();
+
+        // Single leaf with linear model: y = 1.0 + 2.0*x0 + 3.0*x1
+        let root = tree.init_root();
+        tree.make_leaf(root, ScalarLeaf(0.0));
+        tree.set_linear_leaf(root, vec![0, 1], 1.0, vec![2.0, 3.0]);
+
+        let frozen = tree.freeze();
+
+        // Test data: 2 rows, 2 features
+        // Row 0: [1.0, 1.0] -> 1.0 + 2.0*1.0 + 3.0*1.0 = 6.0
+        // Row 1: [0.5, 2.0] -> 1.0 + 2.0*0.5 + 3.0*2.0 = 8.0
+        let data = RowMatrix::from_vec(vec![1.0, 1.0, 0.5, 2.0], 2, 2);
+        let mut predictions = vec![0.0; 2];
+        frozen.predict_batch_accumulate(&data, &mut predictions);
+
+        assert!((predictions[0] - 6.0).abs() < 1e-5, "got {}", predictions[0]);
+        assert!((predictions[1] - 8.0).abs() < 1e-5, "got {}", predictions[1]);
     }
 }
