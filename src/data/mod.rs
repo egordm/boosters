@@ -41,9 +41,9 @@ pub use traits::{DataMatrix, FeatureAccessor, RowView};
 
 // Re-export binned types for convenience
 pub use binned::{
-    BinMapper, BinStorage, BinType, BinnedDataset, BinnedDatasetBuilder, BuildError,
-    FeatureGroup, FeatureMeta, FeatureType, FeatureView, GroupLayout, GroupSpec,
-    GroupStrategy, MissingType, RowView as BinnedRowView,
+    BinMapper, BinStorage, BinType, BinnedDataset, BinnedDatasetBuilder, BinningConfig,
+    BinningStrategy, BuildError, FeatureGroup, FeatureMeta, FeatureType, FeatureView,
+    GroupLayout, GroupSpec, GroupStrategy, MissingType, RowView as BinnedRowView,
 };
 
 /// Type alias for row-major dense matrix (the common case).

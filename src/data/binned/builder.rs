@@ -9,6 +9,20 @@ use super::BinMapper;
 // Binning Configuration
 // =============================================================================
 
+/// Strategy for computing bin boundaries.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BinningStrategy {
+    /// Equal-width bins: divide [min, max] into equal intervals.
+    /// Fast but poor for skewed data - many samples end up in few bins.
+    EqualWidth,
+
+    /// Equal-frequency (quantile) bins: each bin has ~same number of samples.
+    /// Better for real-world data with skewed distributions.
+    /// This matches LightGBM and XGBoost behavior.
+    #[default]
+    Quantile,
+}
+
 /// Configuration for feature binning.
 ///
 /// This controls how many bins are used for each feature during quantization.
@@ -27,6 +41,8 @@ pub struct BinningConfig {
     pub default_max_bins: u32,
     /// Per-feature overrides: (feature_index, max_bins).
     pub feature_overrides: Vec<(usize, u32)>,
+    /// Binning strategy (default: Quantile).
+    pub strategy: BinningStrategy,
 }
 
 impl Default for BinningConfig {
@@ -34,6 +50,7 @@ impl Default for BinningConfig {
         Self {
             default_max_bins: 256,
             feature_overrides: Vec::new(),
+            strategy: BinningStrategy::default(),
         }
     }
 }
@@ -44,7 +61,14 @@ impl BinningConfig {
         Self {
             default_max_bins,
             feature_overrides: Vec::new(),
+            strategy: BinningStrategy::default(),
         }
+    }
+
+    /// Set the binning strategy.
+    pub fn with_strategy(mut self, strategy: BinningStrategy) -> Self {
+        self.strategy = strategy;
+        self
     }
 
     /// Set max bins for a specific feature.
@@ -264,30 +288,60 @@ impl BinnedDatasetBuilder {
                 continue;
             }
 
-            // Compute equal-width bin boundaries
             let n_bins = max_bins.min(values.len() as u32);
-            let width = (max_val - min_val) / n_bins as f32;
 
-            let bounds: Vec<f64> = (1..=n_bins)
-                .map(|i| {
-                    if i == n_bins {
-                        f64::MAX // Last bin catches everything
-                    } else {
-                        (min_val + width * i as f32) as f64
+            // Compute bin boundaries based on strategy
+            let bounds: Vec<f64> = match config.strategy {
+                BinningStrategy::EqualWidth => {
+                    // Equal-width: divide [min, max] into equal intervals
+                    let width = (max_val - min_val) / n_bins as f32;
+                    (1..=n_bins)
+                        .map(|i| {
+                            if i == n_bins {
+                                f64::MAX
+                            } else {
+                                (min_val + width * i as f32) as f64
+                            }
+                        })
+                        .collect()
+                }
+                BinningStrategy::Quantile => {
+                    // Quantile: each bin has approximately equal sample count
+                    // This matches LightGBM/XGBoost behavior
+                    values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+                    let mut bounds = Vec::with_capacity(n_bins as usize);
+                    for i in 1..n_bins {
+                        // Quantile index: i/n_bins percentile
+                        let q = i as f64 / n_bins as f64;
+                        let idx = ((q * (values.len() - 1) as f64).round() as usize)
+                            .min(values.len() - 1);
+                        let bound = values[idx] as f64;
+
+                        // Avoid duplicate boundaries
+                        if bounds.is_empty() || bound > *bounds.last().unwrap() {
+                            bounds.push(bound);
+                        }
                     }
-                })
-                .collect();
+                    bounds.push(f64::MAX); // Last bin catches everything
+                    bounds
+                }
+            };
 
-            // Bin each value
+            // Bin each value using binary search on bounds
             let bins: Vec<u32> = (0..n_rows)
                 .map(|row_idx| {
                     let val = data.get(row_idx, col_idx).copied().unwrap_or(f32::NAN);
                     if !val.is_finite() {
                         0 // Map NaN to bin 0
                     } else {
-                        // Find bin: linear search is fine for small n_bins
-                        let bin = ((val - min_val) / width).floor() as u32;
-                        bin.min(n_bins - 1)
+                        // Binary search for first bound >= val
+                        match bounds.binary_search_by(|b| {
+                            b.partial_cmp(&(val as f64)).unwrap()
+                        }) {
+                            Ok(i) => i as u32,
+                            Err(i) => i as u32,
+                        }
                     }
                 })
                 .collect();
