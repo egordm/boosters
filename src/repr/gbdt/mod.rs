@@ -15,4 +15,4 @@ pub use categories::{categories_to_bitset, float_to_category, CategoriesStorage}
 pub use forest::{Forest, ForestValidationError};
 pub use leaf::{LeafValue, ScalarLeaf, VectorLeaf};
 pub use node::{Node, SplitCondition, SplitType};
-pub use tree::{MutableTree, Tree, TreeValidationError};
+pub use tree::{MutableTree, Tree, TreeValidationError, TreeView};

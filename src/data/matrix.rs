@@ -716,6 +716,46 @@ impl<T: Copy, S: AsRef<[T]>> DataMatrix for DenseMatrix<T, ColMajor, S> {
 }
 
 // =============================================================================
+// FeatureAccessor implementations
+// =============================================================================
+
+use super::traits::FeatureAccessor;
+
+impl<S: AsRef<[f32]>> FeatureAccessor for DenseMatrix<f32, RowMajor, S> {
+    #[inline]
+    fn get_feature(&self, row: usize, feature: usize) -> f32 {
+        self.get(row, feature).copied().unwrap_or(f32::NAN)
+    }
+
+    #[inline]
+    fn num_rows(&self) -> usize {
+        self.num_rows
+    }
+
+    #[inline]
+    fn num_features(&self) -> usize {
+        self.num_cols
+    }
+}
+
+impl<S: AsRef<[f32]>> FeatureAccessor for DenseMatrix<f32, ColMajor, S> {
+    #[inline]
+    fn get_feature(&self, row: usize, feature: usize) -> f32 {
+        self.get(row, feature).copied().unwrap_or(f32::NAN)
+    }
+
+    #[inline]
+    fn num_rows(&self) -> usize {
+        self.num_rows
+    }
+
+    #[inline]
+    fn num_features(&self) -> usize {
+        self.num_cols
+    }
+}
+
+// =============================================================================
 // Row view types
 // =============================================================================
 
@@ -1150,7 +1190,7 @@ mod tests {
 
         // DataMatrix trait methods
         assert_eq!(DataMatrix::num_rows(&matrix), 2);
-        assert_eq!(matrix.num_features(), 3);
+        assert_eq!(DataMatrix::num_features(&matrix), 3);
 
         let row = matrix.row(0);
         assert_eq!(row.get(0), Some(1.0));

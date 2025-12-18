@@ -37,7 +37,7 @@ pub mod io;
 
 pub use matrix::{ColMajor, DenseColumnIter, DenseMatrix, Layout, RowMajor, StridedIter};
 pub use dataset::{Dataset, DatasetError, FeatureColumn};
-pub use traits::{DataMatrix, RowView};
+pub use traits::{DataMatrix, FeatureAccessor, RowView};
 
 // Re-export binned types for convenience
 pub use binned::{

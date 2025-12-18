@@ -2,6 +2,46 @@
 
 use std::iter::FusedIterator;
 
+// ============================================================================
+// FeatureAccessor Trait
+// ============================================================================
+
+/// Uniform access to feature values for tree traversal.
+///
+/// Abstracts over different data layouts (row-major, column-major, binned).
+/// Returns `f32` values suitable for comparison with split thresholds.
+///
+/// # Design
+///
+/// This trait provides a simpler interface than [`DataMatrix`] specifically
+/// for tree traversal. It:
+/// - Always returns `f32` (suitable for threshold comparison)
+/// - Returns `f32::NAN` for missing values
+/// - Uses (row, feature) indexing
+///
+/// # Implementations
+///
+/// Implemented for:
+/// - [`RowMatrix`](super::RowMatrix): Row-major dense matrix
+/// - [`ColMatrix`](super::ColMatrix): Column-major dense matrix
+/// - [`BinnedAccessor`](crate::inference::gbdt::BinnedAccessor): Binned data with midpoint conversion
+pub trait FeatureAccessor {
+    /// Get the feature value at (row, feature_index).
+    ///
+    /// Returns `f32::NAN` for missing values.
+    fn get_feature(&self, row: usize, feature: usize) -> f32;
+
+    /// Number of rows in the dataset.
+    fn num_rows(&self) -> usize;
+
+    /// Number of features.
+    fn num_features(&self) -> usize;
+}
+
+// ============================================================================
+// DataMatrix Trait
+// ============================================================================
+
 /// Core trait for feature matrix access.
 ///
 /// Provides a uniform interface for accessing feature values during tree traversal,

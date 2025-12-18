@@ -334,7 +334,7 @@ impl<O: Objective, M: Metric> GBDTTrainer<O, M> {
                     // Fallback: row sampling trains on a subset; we must still apply the
                     // trained tree to all rows to keep predictions correct.
                     // Use batch prediction for better cache efficiency.
-                    let tree = grower.grow(dataset, &gradients, output, sampled.as_deref());
+                    let tree = grower.grow(dataset, &gradients, output, sampled.as_deref()).freeze();
                     tree.predict_binned_batch(dataset, &mut predictions[pred_offset..pred_offset + n_rows]);
                     tree
                 };

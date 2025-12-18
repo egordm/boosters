@@ -149,6 +149,63 @@ impl Forest<ScalarLeaf> {
     pub fn predict_batch(&self, features: &[&[f32]]) -> Vec<Vec<f32>> {
         features.iter().map(|row| self.predict_row(row)).collect()
     }
+
+    /// Batch predict using any feature accessor, writing into a flat output buffer.
+    ///
+    /// This is the unified batch prediction method that works with any data source
+    /// implementing [`FeatureAccessor`].
+    ///
+    /// # Arguments
+    /// * `accessor` - Feature value source (RowMatrix, ColMatrix, BinnedAccessor, etc.)
+    /// * `output` - Pre-allocated output buffer, must have length `n_rows * n_groups`.
+    ///              Layout: row-major `[row0_g0, row0_g1, ..., row1_g0, row1_g1, ...]`
+    ///
+    /// # Panics
+    /// Panics if `output.len() != accessor.num_rows() * self.n_groups()`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use booste_rs::inference::Forest;
+    /// use booste_rs::data::RowMatrix;
+    ///
+    /// let forest: Forest<ScalarLeaf> = /* ... */;
+    /// let data = RowMatrix::from_vec(vec![0.1, 0.2, 0.3, 0.4], 2, 2);
+    /// let mut output = vec![0.0; 2 * forest.n_groups()];
+    /// forest.predict_into(&data, &mut output);
+    /// ```
+    pub fn predict_into<A: crate::data::FeatureAccessor>(
+        &self,
+        accessor: &A,
+        output: &mut [f32],
+    ) {
+        use crate::inference::gbdt::traverse_to_leaf;
+
+        let n_rows = accessor.num_rows();
+        let n_groups = self.n_groups() as usize;
+        assert_eq!(
+            output.len(),
+            n_rows * n_groups,
+            "output buffer must have length n_rows * n_groups"
+        );
+
+        // Initialize with base scores
+        for row in 0..n_rows {
+            for (group, &base) in self.base_score.iter().enumerate() {
+                output[row * n_groups + group] = base;
+            }
+        }
+
+        // Accumulate tree predictions
+        for (tree, group) in self.trees_with_groups() {
+            let group_idx = group as usize;
+            for row in 0..n_rows {
+                let leaf_idx = traverse_to_leaf(tree, accessor, row);
+                let leaf_val = tree.leaf_value(leaf_idx).0;
+                output[row * n_groups + group_idx] += leaf_val;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -196,5 +253,30 @@ mod tests {
 
         let pred = forest.predict_row(&[0.3]);
         assert_eq!(pred, vec![1.5]);
+    }
+
+    #[test]
+    fn test_predict_into_matches_predict_row() {
+        use crate::data::RowMatrix;
+
+        let mut forest = Forest::for_regression().with_base_score(vec![0.1]);
+        forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
+        forest.push_tree(build_simple_tree(0.5, 1.0, 0.5), 0);
+
+        // Test data: 3 rows, 1 feature
+        let data = RowMatrix::from_vec(vec![0.3, 0.7, 0.5], 3, 1);
+        
+        // predict_into
+        let mut batch_output = vec![0.0; 3];
+        forest.predict_into(&data, &mut batch_output);
+
+        // predict_row for comparison
+        let row0 = forest.predict_row(&[0.3])[0];
+        let row1 = forest.predict_row(&[0.7])[0];
+        let row2 = forest.predict_row(&[0.5])[0];
+
+        assert!((batch_output[0] - row0).abs() < 1e-6);
+        assert!((batch_output[1] - row1).abs() < 1e-6);
+        assert!((batch_output[2] - row2).abs() < 1e-6);
     }
 }

@@ -154,11 +154,37 @@ impl TreeGrower {
     }
 
 
+    /// Get read-only access to the row partitioner.
+    ///
+    /// After `grow()` returns, the partitioner contains the final leaf assignments.
+    /// Use `get_leaf_indices(leaf_id)` to get row indices assigned to each leaf.
+    ///
+    /// This is useful for fitting linear leaves or any post-processing that needs
+    /// to know which rows ended up in which leaf.
+    #[inline]
+    pub fn partitioner(&self) -> &RowPartitioner {
+        &self.partitioner
+    }
 
     /// Grow a tree and (optionally) update predictions using training-time leaf assignments.
     ///
     /// When `sampled_rows` is `None`, the partitioner contains **all** rows, so we can update
     /// predictions by iterating leaf ranges instead of traversing the tree per row.
+    /// Grow a decision tree and update predictions in-place.
+    ///
+    /// This is the preferred method when you need both the tree and want to update
+    /// predictions efficiently. Uses the partitioner's leaf assignments to update
+    /// predictions in O(n_rows) time instead of O(n_rows × tree_depth) traversals.
+    ///
+    /// # Arguments
+    /// * `dataset` - Binned training data
+    /// * `gradients` - Current gradient and hessian vectors
+    /// * `output` - Output index (for multi-class)
+    /// * `sampled_rows` - Optional sampled row indices
+    /// * `predictions` - Prediction buffer to update
+    ///
+    /// # Returns
+    /// The trained tree (frozen).
     pub fn grow_and_update_predictions(
         &mut self,
         dataset: &BinnedDataset,
@@ -177,7 +203,7 @@ impl TreeGrower {
             self.update_predictions_from_last_tree(predictions);
         }
 
-        tree
+        tree.freeze()
     }
 
     /// Update predictions using the partitioner's leaf assignments and cached leaf values.
@@ -213,6 +239,9 @@ impl TreeGrower {
 
     /// Grow a tree from gradients for a specific output.
     ///
+    /// Returns a `MutableTree` which allows post-processing (e.g., fitting linear leaves)
+    /// before calling `freeze()` to get the final `Tree`.
+    ///
     /// # Arguments
     /// * `dataset` - Binned dataset
     /// * `gradients` - Gradient storage
@@ -220,14 +249,14 @@ impl TreeGrower {
     /// * `sampled_rows` - Optional sampled row indices (skips unsampled rows in histograms)
     ///
     /// # Returns
-    /// The trained tree, ready for inference.
+    /// The trained mutable tree. Call `freeze()` to convert to inference-ready `Tree`.
     pub fn grow(
         &mut self,
         dataset: &BinnedDataset,
         gradients: &Gradients,
         output: usize,
         sampled_rows: Option<&[u32]>,
-    ) -> Tree<ScalarLeaf> {
+    ) -> MutableTree<ScalarLeaf> {
         let n_samples = dataset.n_rows();
         assert_eq!(gradients.n_samples(), n_samples);
 
@@ -288,10 +317,12 @@ impl TreeGrower {
         // Finalize any remaining candidates as leaves
         self.finalize_remaining(&mut state);
 
-        // Apply learning rate and finish
+        // Apply learning rate
         self.tree_builder
             .apply_learning_rate(self.params.learning_rate);
-        std::mem::take(&mut self.tree_builder).freeze()
+        
+        // Return mutable tree (caller should call freeze() after any post-processing)
+        std::mem::take(&mut self.tree_builder)
     }
 
     /// Process a single candidate node.
@@ -811,7 +842,7 @@ mod tests {
             dst.hess = h;
         }
 
-        let tree = grower.grow(&dataset, &gradients, 0, None);
+        let tree = grower.grow(&dataset, &gradients, 0, None).freeze();
 
         assert_eq!(count_leaves(&tree), 1);
         assert!(tree.is_leaf(0));
@@ -841,7 +872,7 @@ mod tests {
             dst.hess = h;
         }
 
-        let tree = grower.grow(&dataset, &gradients, 0, None);
+        let tree = grower.grow(&dataset, &gradients, 0, None).freeze();
 
         // Should have a split at root with 2 leaves
         assert!(!tree.is_leaf(0));
@@ -871,7 +902,7 @@ mod tests {
             dst.hess = h;
         }
 
-        let tree = grower.grow(&dataset, &gradients, 0, None);
+        let tree = grower.grow(&dataset, &gradients, 0, None).freeze();
 
         // Should produce a tree with multiple nodes (max_depth=2 allows up to 4 leaves)
         assert!(tree.n_nodes() >= 1);
@@ -944,7 +975,7 @@ mod tests {
             dst.hess = h;
         }
 
-        let tree = grower.grow(&dataset, &gradients, 0, None);
+        let tree = grower.grow(&dataset, &gradients, 0, None).freeze();
 
         // Check that leaf values are scaled by learning rate
         for i in 0..tree.n_nodes() as u32 {
@@ -978,7 +1009,7 @@ mod tests {
             dst.hess = h;
         }
 
-        let tree = grower.grow(&dataset, &gradients, 0, None);
+        let tree = grower.grow(&dataset, &gradients, 0, None).freeze();
 
         // Should have at most 4 leaves
         assert!(count_leaves(&tree) <= 4);
@@ -1023,7 +1054,7 @@ mod tests {
             8,
             Parallelism::Sequential,
         );
-        let tree_all = grower_all.grow(&dataset, &gradients, 0, None);
+        let tree_all = grower_all.grow(&dataset, &gradients, 0, None).freeze();
 
         // With column sampling
         let mut grower_sampled = TreeGrower::new(
@@ -1032,7 +1063,7 @@ mod tests {
             8,
             Parallelism::Sequential,
         );
-        let tree_sampled = grower_sampled.grow(&dataset, &gradients, 0, None);
+        let tree_sampled = grower_sampled.grow(&dataset, &gradients, 0, None).freeze();
 
         // Both should produce trees
         assert!(count_leaves(&tree_all) >= 1);
@@ -1062,9 +1093,56 @@ mod tests {
             dst.hess = h;
         }
 
-        let tree = grower.grow(&dataset, &gradients, 0, None);
+        let tree = grower.grow(&dataset, &gradients, 0, None).freeze();
 
         assert!(!tree.is_leaf(0));
         assert_eq!(count_leaves(&tree), 2);
+    }
+
+    #[test]
+    fn test_partitioner_exposes_leaf_indices() {
+        let dataset = make_simple_dataset();
+        let params = GrowerParams {
+            growth_strategy: GrowthStrategy::DepthWise { max_depth: 1 },
+            gain: GainParams { min_gain: 0.0, ..Default::default() },
+            ..Default::default()
+        };
+
+        let mut grower = TreeGrower::new(&dataset, params, 4, Parallelism::Sequential);
+
+        // Create gradients that produce a simple left/right split
+        let grad: Vec<f32> = vec![1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0];
+        let hess: Vec<f32> = vec![1.0; 10];
+        let mut gradients = Gradients::new(10, 1);
+        for (dst, (&g, &h)) in gradients
+            .output_pairs_mut(0)
+            .iter_mut()
+            .zip(grad.iter().zip(hess.iter()))
+        {
+            dst.grad = g;
+            dst.hess = h;
+        }
+
+        let _tree = grower.grow(&dataset, &gradients, 0, None);
+
+        // Partitioner should have 2 leaves after the split
+        let partitioner = grower.partitioner();
+        assert!(partitioner.n_leaves() >= 2, "Should have at least 2 leaves");
+
+        // Total samples across leaves should equal dataset size
+        let total_samples: usize = (0..partitioner.n_leaves())
+            .map(|i| partitioner.get_leaf_indices(i as u32).len())
+            .sum();
+        assert_eq!(total_samples, 10, "All 10 rows should be assigned to leaves");
+
+        // Each leaf should have non-overlapping row indices
+        let mut all_indices: Vec<u32> = Vec::new();
+        for leaf in 0..partitioner.n_leaves() {
+            let indices = partitioner.get_leaf_indices(leaf as u32);
+            all_indices.extend(indices);
+        }
+        all_indices.sort();
+        all_indices.dedup();
+        assert_eq!(all_indices.len(), 10, "Row indices should be unique");
     }
 }
