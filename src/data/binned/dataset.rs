@@ -1,6 +1,6 @@
 //! BinnedDataset - the main dataset structure.
 
-use super::bundling::BundlePlan;
+use super::bundling::{BundlePlan, FeatureLocation};
 use super::group::{FeatureGroup, FeatureMeta};
 use super::storage::{BinStorage, FeatureView, GroupLayout};
 
@@ -202,6 +202,55 @@ impl BinnedDataset {
             reduction_ratio: plan.reduction_ratio(),
             binned_columns: plan.binned_column_count(),
         })
+    }
+
+    /// Decode an encoded bin from a bundled column to (original_feature, original_bin).
+    ///
+    /// This is used when a split is found on a bundled column and we need to
+    /// determine which original feature the split actually applies to.
+    ///
+    /// # Arguments
+    /// * `bundle_idx` - Index of the bundle (0..n_bundles)
+    /// * `encoded_bin` - The encoded bin value in the bundled column
+    ///
+    /// # Returns
+    /// * `Some((original_feature_idx, original_bin))` if bundling is active and decode succeeds
+    /// * `None` if no bundling or invalid indices
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // If a split is found on bundled column 2 at bin 7:
+    /// if let Some((orig_feat, orig_bin)) = dataset.decode_bundle_split(2, 7) {
+    ///     println!("Split is on original feature {} at bin {}", orig_feat, orig_bin);
+    /// }
+    /// ```
+    pub fn decode_bundle_split(&self, bundle_idx: usize, encoded_bin: u32) -> Option<(usize, u32)> {
+        self.bundle_plan.as_ref()?.decode_bundle_split(bundle_idx, encoded_bin)
+    }
+
+    /// Get the location of an original feature after bundling.
+    ///
+    /// # Arguments
+    /// * `feature_idx` - Original feature index (0..n_features)
+    ///
+    /// # Returns
+    /// * `Some(FeatureLocation)` if bundling is active
+    /// * `None` if no bundling was applied
+    pub fn original_to_location(&self, feature_idx: usize) -> Option<&FeatureLocation> {
+        self.bundle_plan.as_ref()?.original_to_location(feature_idx)
+    }
+
+    /// Get all original feature indices that belong to a bundle.
+    ///
+    /// # Arguments
+    /// * `bundle_idx` - Index of the bundle
+    ///
+    /// # Returns
+    /// * `Some(&[usize])` - Slice of original feature indices
+    /// * `None` if no bundling or invalid bundle index
+    pub fn bundle_features(&self, bundle_idx: usize) -> Option<&[usize]> {
+        self.bundle_plan.as_ref()?.bundle_features(bundle_idx)
     }
 }
 
