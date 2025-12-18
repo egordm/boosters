@@ -102,27 +102,24 @@ Single-pass detection of binary and sparse features.
 
 ---
 
-### Story 1.2: Conflict Detection & Bundling
+### Story 1.2: Conflict Detection & Bundling ✅
 
 Build conflict graph and assign features to bundles.
 
-- [ ] **1.2.1** (1h): `BundlingConfig` with defaults from RFC
-- [ ] **1.2.2** (3h): Bitset-based conflict graph (O(n_sparse²) pairs)
-- [ ] **1.2.3** (1h): Row sampling (≤10K) for large datasets
-- [ ] **1.2.4** (2h): Greedy bundle assignment
-- [ ] **1.2.5** (0.5h): Skip if >1000 sparse features (log warning)
+- [x] **1.2.1** (1h): `BundlingConfig` with defaults from RFC
+- [x] **1.2.2** (3h): Bitset-based conflict graph (O(n_sparse²) pairs)
+- [x] **1.2.3** (1h): Row sampling (≤10K) for large datasets
+- [x] **1.2.4** (2h): Greedy bundle assignment
+- [x] **1.2.5** (0.5h): Skip if >1000 sparse features (log warning)
 
-**DoD**: Perfect one-hot encoding → 1 bundle per categorical.
+**DoD**: Perfect one-hot encoding → 1 bundle per categorical. ✅
 
-**Tests**:
-
-- One-hot: 10 binary features from same categorical → 1 bundle
-- Conflict: 2 features with 50% overlap → separate bundles
-- Scale: 500 sparse features complete in <1s
-
-**Edge cases**: 0 sparse features (skip), 1 sparse feature (trivial bundle).
-
-**Complexity limit**: If n_sparse > 1000, skip bundling entirely.
+**Implementation**: `src/data/binned/bundling.rs` with 20 unit tests.
+- `BundlingConfig` with `auto()`, `disabled()`, `aggressive()`, `strict()` presets
+- `ConflictGraph` using `fixedbitset` for efficient bitset operations
+- `sample_rows()` with stratified sampling (80% random + 10% first + 10% last)
+- `assign_bundles()` greedy algorithm sorted by density
+- `create_bundle_plan()` main entry point with early termination
 
 ---
 
@@ -327,7 +324,7 @@ categorical splits. ✅
 | Story | Tasks | Estimated | Status |
 |-------|-------|-----------|--------|
 | 1.1 Feature Analysis | 3 | 4h | ✅ Complete |
-| 1.2 Conflict/Bundling | 5 | 7.5h | Not Started |
+| 1.2 Conflict/Bundling | 5 | 7.5h | ✅ Complete |
 | 1.3 Encoding/Integration | 5 | 7h | Not Started |
 | 1.4 Histogram Integration | 4 | 4.5h | Not Started |
 | 1.5 User API (post-MVP) | 4 | 3h | Post-MVP |
@@ -336,7 +333,7 @@ categorical splits. ✅
 | 2.3 Dataset Integration | 4 | 3.5h | ✅ Complete |
 | 2.4 Inference | 4 | 4.5h | ✅ Complete |
 | 2.5 Verification | 2 | 1.5h | ✅ Complete |
-| **Remaining MVP** | 17 | ~23h | |
+| **Remaining MVP** | 9 | ~11.5h | |
 
 ---
 
