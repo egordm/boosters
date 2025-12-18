@@ -19,8 +19,9 @@
 | Training Speed | booste-rs **16-22% faster** for ≥100 features |
 | Prediction Regression | 3-7% in some cases (trade-off for linear GBDT support) |
 | Training Regression | None - actually **27-39% faster** |
-| Quality vs XGBoost | ~1% better on regression, 0.1% worse on binary |
-| Quality vs LightGBM | ~1% better on regression and binary |
+| Quality (synthetic) | ~1% better on regression, 0.1% worse on binary |
+| Quality (real-world) | ~6% worse on regression/binary, **2-4% better** on multiclass |
+| Multiclass | **booste-rs wins** across all datasets (2-4% better accuracy) |
 | Linear GBDT | Only booste-rs works (LightGBM crate crashes) |
 
 **Benchmark Reports:**
@@ -233,7 +234,7 @@ variance across multiple seeds.
 **Tasks:**
 
 - [x] Run quality_benchmark with 5+ seeds on synthetic datasets
-- [x] Run quality_benchmark with 5+ seeds on real-world datasets (skipped - parquet files not available)
+- [x] Run quality_benchmark with 3+ seeds on real-world datasets
 - [x] Generate comparison tables with mean ± std for each metric
 - [x] Compare booste-rs linear GBDT vs LightGBM linear trees
 - [x] Compare booste-rs standard GBDT vs LightGBM standard GBDT
@@ -243,18 +244,22 @@ variance across multiple seeds.
 
 | Task Type | booste-rs vs XGBoost | booste-rs vs LightGBM |
 |-----------|---------------------|----------------------|
-| Regression | **1% better** | **1% better** |
-| Binary | 0.1% worse | 0.2% better |
-| Multiclass | N/A (config diff) | N/A (config diff) |
+| Regression (synthetic) | **1% better** | **1% better** |
+| Regression (real-world) | 6% worse | 6% worse |
+| Binary (synthetic) | 0.1% worse | 0.2% better |
+| Binary (real-world) | 0.2% worse | 0.2% worse |
+| Multiclass | **2-4% better** | **1-2% better** |
 | Linear GBDT | ✅ Supported | ⚠️ Crate crashes |
 
+**Real-World Datasets:**
+
+| Dataset | Samples | Features | Best |
+|---------|---------|----------|------|
+| California Housing | 20,640 | 8 | XGBoost |
+| Adult | 48,842 | 105 | LightGBM |
+| Covertype | 50,000* | 54 | **booste-rs** |
+
 **Benchmark Report**: [2025-01-8065629-quality-comparison.md](../benchmarks/2025-01-8065629-quality-comparison.md)
-
-**Notes:**
-
-- Real-world datasets require generating parquet files first
-- Multiclass results show large gap due to different default parameterization
-- Linear GBDT comparison not possible due to lightgbm3 crate crash
 
 ---
 

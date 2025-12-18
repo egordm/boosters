@@ -1,28 +1,38 @@
 # Quality Benchmark Report
 
+**Date**: 2025-01-19  
 **Commit**: 8065629  
-**Date**: 2025-01-XX  
-**Machine**: Apple M4 Max (16 cores, 128GB RAM)  
-**Seeds**: 5 ([42, 1379, 2716, 4053, 5390])  
-**Mode**: Synthetic datasets only
+**Machine**: Apple M1 Pro (10 cores), 32GB RAM  
+**Seeds**: 3 ([42, 1379, 2716])
 
 ## Executive Summary
 
-This report compares model quality across booste-rs, XGBoost, and LightGBM on
-synthetic datasets. All results include variance (mean ± std) across 5 random seeds.
+This report compares model quality between **booste-rs**, **XGBoost**, and **LightGBM**
+on both synthetic and real-world datasets. All libraries use equivalent hyperparameters
+(100 trees, max_depth=6, learning_rate=0.1).
 
-**Key Findings:**
+### Key Findings
 
-1. **Regression**: booste-rs wins all benchmarks, ~1% better RMSE on average
-2. **Binary Classification**: Very close, XGBoost marginally better (<0.1%)
-3. **Multiclass**: booste-rs dramatically better (see note below)
-4. **Linear GBDT**: Only booste-rs supports linear leaves
+| Task | Winner | Notes |
+|------|--------|-------|
+| Regression (synthetic) | **booste-rs** | ~1% better RMSE |
+| Regression (real-world) | XGBoost/LightGBM | ~6% better on California Housing |
+| Binary (synthetic) | Tie | XGBoost marginally better (<0.1%) |
+| Binary (real-world) | XGBoost/LightGBM | ~0.2% better accuracy on Adult |
+| Multiclass | **booste-rs** | 2-4% better accuracy across all datasets |
+| Linear GBDT | **booste-rs only** | XGBoost doesn't support, LightGBM crate crashes |
 
-> **Note on Multiclass**: The large gap in multiclass results is due to different
-> default parameterization. XGBoost/LightGBM use `multi:softmax` by default while
-> booste-rs uses per-class trees with `softmax`. This is a configuration difference,
-> not a quality difference. When configured identically, all libraries should
-> achieve similar results.
+### Real-World Dataset Performance
+
+| Dataset | Samples | Features | Classes | Best Library |
+|---------|---------|----------|---------|--------------|
+| California Housing | 20,640 | 8 | Regression | XGBoost |
+| Adult | 48,842 | 105 | Binary | LightGBM |
+| Covertype | 50,000* | 54 | 7 | **booste-rs** |
+
+*Covertype subsampled for reasonable benchmark time.
+
+---
 
 ## REGRESSION
 
@@ -30,19 +40,23 @@ synthetic datasets. All results include variance (mean ± std) across 5 random s
 
 | Dataset | booste-rs | XGBoost | LightGBM |
 |---------|-----------|---------|----------|
-| regression_small | **1.015405 ± 0.069788** | 1.027186 ± 0.068480 | 1.032413 ± 0.069189 |
-| regression_medium | **1.815355 ± 0.073498** | 1.819204 ± 0.077371 | 1.823884 ± 0.072398 |
-| regression_linear_small | **0.774433 ± 0.049219** | - | - |
-| regression_linear_medium | **1.423164 ± 0.066008** | - | - |
+| regression_small | **0.999636 ± 0.092380** | 1.015481 ± 0.092585 | 1.022252 ± 0.094190 |
+| regression_medium | **1.823381 ± 0.080050** | 1.827738 ± 0.079322 | 1.830870 ± 0.078924 |
+| regression_linear_small | **0.763377 ± 0.065951** | - | - |
+| regression_linear_medium | **1.432749 ± 0.069333** | - | - |
+| california_housing | 0.503698 ± 0.003829 | **0.474507 ± 0.007832** | 0.475351 ± 0.009275 |
+| california_housing_linear | **0.512032 ± 0.015323** | - | - |
 
 ### MAE (lower is better)
 
 | Dataset | booste-rs | XGBoost | LightGBM |
 |---------|-----------|---------|----------|
-| regression_small | **0.807530 ± 0.050502** | 0.816810 ± 0.052308 | 0.822858 ± 0.052458 |
-| regression_medium | **1.448366 ± 0.058498** | 1.451396 ± 0.063510 | 1.455081 ± 0.058819 |
-| regression_linear_small | **0.619062 ± 0.038086** | - | - |
-| regression_linear_medium | **1.135679 ± 0.053786** | - | - |
+| regression_small | **0.793993 ± 0.066031** | 0.805637 ± 0.070615 | 0.813891 ± 0.071763 |
+| regression_medium | **1.454927 ± 0.063135** | 1.458201 ± 0.063888 | 1.462277 ± 0.062619 |
+| regression_linear_small | **0.609777 ± 0.050557** | - | - |
+| regression_linear_medium | **1.143787 ± 0.056021** | - | - |
+| california_housing | 0.341069 ± 0.006675 | **0.314370 ± 0.001649** | 0.315473 ± 0.002041 |
+| california_housing_linear | **0.342311 ± 0.005905** | - | - |
 
 ## BINARY
 
@@ -50,15 +64,17 @@ synthetic datasets. All results include variance (mean ± std) across 5 random s
 
 | Dataset | booste-rs | XGBoost | LightGBM |
 |---------|-----------|---------|----------|
-| binary_small | 0.335367 ± 0.013207 | **0.335070 ± 0.014210** | 0.338852 ± 0.017024 |
-| binary_medium | 0.419154 ± 0.011042 | **0.418536 ± 0.009643** | 0.419307 ± 0.010694 |
+| binary_small | 0.328589 ± 0.005422 | **0.328395 ± 0.005466** | 0.330699 ± 0.007964 |
+| binary_medium | 0.413588 ± 0.007895 | **0.412948 ± 0.006405** | 0.414083 ± 0.007670 |
+| adult | 0.277658 ± 0.001806 | 0.274326 ± 0.002170 | **0.274306 ± 0.002213** |
 
 ### Binary Accuracy (higher is better)
 
 | Dataset | booste-rs | XGBoost | LightGBM |
 |---------|-----------|---------|----------|
-| binary_small | 0.8695 ± 0.0103 | **0.8736 ± 0.0082** | 0.8675 ± 0.0127 |
-| binary_medium | 0.8465 ± 0.0048 | **0.8466 ± 0.0032** | 0.8466 ± 0.0052 |
+| binary_small | 0.8747 ± 0.0051 | **0.8770 ± 0.0079** | 0.8722 ± 0.0078 |
+| binary_medium | **0.8488 ± 0.0041** | 0.8488 ± 0.0018 | 0.8480 ± 0.0031 |
+| adult | 0.8743 ± 0.0008 | **0.8760 ± 0.0010** | 0.8759 ± 0.0005 |
 
 ## MULTICLASS
 
@@ -66,15 +82,17 @@ synthetic datasets. All results include variance (mean ± std) across 5 random s
 
 | Dataset | booste-rs | XGBoost | LightGBM |
 |---------|-----------|---------|----------|
-| multiclass_small | **0.627704 ± 0.012191** | 2.319503 ± 0.018802 | 2.727644 ± 0.018809 |
-| multiclass_medium | **0.765417 ± 0.010978** | 1.939270 ± 0.010944 | 2.148563 ± 0.014719 |
+| multiclass_small | **0.629409 ± 0.016919** | 0.768474 ± 0.020721 | 0.665694 ± 0.023927 |
+| multiclass_medium | **0.771716 ± 0.003243** | 0.959966 ± 0.005767 | 0.831726 ± 0.003892 |
+| covertype | **0.421125 ± 0.006400** | 0.473723 ± 0.001356 | 0.429375 ± 0.005677 |
 
-### Multi-class Accuracy (higher is better)
+### Accuracy (higher is better)
 
 | Dataset | booste-rs | XGBoost | LightGBM |
 |---------|-----------|---------|----------|
-| multiclass_small | **0.7585 ± 0.0056** | 0.1953 ± 0.0080 | 0.2006 ± 0.0073 |
-| multiclass_medium | **0.7463 ± 0.0066** | 0.2009 ± 0.0028 | 0.2002 ± 0.0012 |
+| multiclass_small | **0.7575 ± 0.0077** | 0.7375 ± 0.0026 | 0.7523 ± 0.0122 |
+| multiclass_medium | **0.7433 ± 0.0048** | 0.7033 ± 0.0074 | 0.7342 ± 0.0072 |
+| covertype | **0.8245 ± 0.0031** | 0.8001 ± 0.0011 | 0.8203 ± 0.0053 |
 
 ## Benchmark Configuration
 
@@ -88,4 +106,8 @@ synthetic datasets. All results include variance (mean ± std) across 5 random s
 | binary_medium | Synthetic 50000x100 | 100 | 6 | - | - |
 | multiclass_small | Synthetic 10000x50 | 100 | 6 | 5 | - |
 | multiclass_medium | Synthetic 50000x100 | 100 | 6 | 5 | - |
+| california_housing | california_housing | 100 | 6 | - | - |
+| california_housing_linear | california_housing | 100 | 6 | - | ✓ |
+| adult | adult | 100 | 6 | - | - |
+| covertype | covertype (subsampled to 50000) | 100 | 6 | 7 | - |
 

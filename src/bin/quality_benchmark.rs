@@ -530,6 +530,21 @@ struct BenchmarkResult {
 // Training and Evaluation
 // =============================================================================
 
+/// Transpose from row-major to column-major format.
+///
+/// XGBoost/LightGBM output row-major: [row0_class0, row0_class1, ..., row1_class0, ...]
+/// Our metrics expect column-major: [class0_row0, class0_row1, ..., class1_row0, ...]
+fn transpose_row_to_col_major(row_major: &[f32], n_rows: usize, n_cols: usize) -> Vec<f32> {
+	debug_assert_eq!(row_major.len(), n_rows * n_cols);
+	let mut col_major = vec![0.0f32; n_rows * n_cols];
+	for row in 0..n_rows {
+		for col in 0..n_cols {
+			col_major[col * n_rows + row] = row_major[row * n_cols + col];
+		}
+	}
+	col_major
+}
+
 fn load_data(
 	config: &BenchmarkConfig,
 	seed: u64,
@@ -763,9 +778,12 @@ fn train_xgboost(
 			LibraryMetrics { metrics: MetricsJson { logloss: Some(ll), acc: Some(acc), ..Default::default() } }
 		}
 		Task::Multiclass => {
+			// XGBoost outputs row-major: [row0_class0, row0_class1, ..., row1_class0, ...]
+			// Our metrics expect column-major: [class0_row0, class0_row1, ..., class1_row0, ...]
 			let prob_row_major: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
-			let ll = MulticlassLogLoss.compute(rows_valid, num_classes, &prob_row_major, y_valid, &[]);
-			let acc = MulticlassAccuracy.compute(rows_valid, num_classes, &prob_row_major, y_valid, &[]);
+			let prob_col_major = transpose_row_to_col_major(&prob_row_major, rows_valid, num_classes);
+			let ll = MulticlassLogLoss.compute(rows_valid, num_classes, &prob_col_major, y_valid, &[]);
+			let acc = MulticlassAccuracy.compute(rows_valid, num_classes, &prob_col_major, y_valid, &[]);
 			LibraryMetrics { metrics: MetricsJson { mlogloss: Some(ll), acc: Some(acc), ..Default::default() } }
 		}
 	}
@@ -827,9 +845,12 @@ fn train_lightgbm(
 			LibraryMetrics { metrics: MetricsJson { logloss: Some(ll), acc: Some(acc), ..Default::default() } }
 		}
 		Task::Multiclass => {
+			// LightGBM outputs row-major: [row0_class0, row0_class1, ..., row1_class0, ...]
+			// Our metrics expect column-major: [class0_row0, class0_row1, ..., class1_row0, ...]
 			let prob_row_major: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
-			let ll = MulticlassLogLoss.compute(rows_valid, num_classes, &prob_row_major, y_valid, &[]);
-			let acc = MulticlassAccuracy.compute(rows_valid, num_classes, &prob_row_major, y_valid, &[]);
+			let prob_col_major = transpose_row_to_col_major(&prob_row_major, rows_valid, num_classes);
+			let ll = MulticlassLogLoss.compute(rows_valid, num_classes, &prob_col_major, y_valid, &[]);
+			let acc = MulticlassAccuracy.compute(rows_valid, num_classes, &prob_col_major, y_valid, &[]);
 			LibraryMetrics { metrics: MetricsJson { mlogloss: Some(ll), acc: Some(acc), ..Default::default() } }
 		}
 	}
