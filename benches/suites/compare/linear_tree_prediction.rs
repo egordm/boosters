@@ -1,4 +1,4 @@
-//! Comparison benchmarks: booste-rs vs LightGBM linear tree prediction.
+//! Comparison benchmarks: booste-rs vs LightGBM linear GBDT prediction.
 //!
 //! Uses models trained with LightGBM's `linear_tree=True` option, loaded via
 //! our LightGBM text format parser.
@@ -36,11 +36,11 @@ fn load_lgb_linear_model(name: &str) -> (booste_rs::inference::gbdt::Forest<boos
 }
 
 // =============================================================================
-// Linear Tree Inference Comparison
+// Linear GBDT Inference Comparison
 // =============================================================================
 
-fn bench_linear_tree_prediction(c: &mut Criterion) {
-    // Load linear tree model
+fn bench_linear_gbdt_prediction(c: &mut Criterion) {
+    // Load linear GBDT model
     let (linear_forest, num_features) = load_lgb_linear_model("bench_linear_medium");
     let linear_predictor = Predictor::<UnrolledTraversal6>::new(&linear_forest).with_block_size(64);
     
@@ -61,7 +61,7 @@ fn bench_linear_tree_prediction(c: &mut Criterion) {
     
     let batch_sizes = [100, 1_000, 10_000];
     
-    let mut group = c.benchmark_group("compare/predict/linear_tree");
+    let mut group = c.benchmark_group("compare/predict/linear_gbdt");
     
     for batch_size in batch_sizes {
         let input_data = random_dense_f32(batch_size, num_features, 42, -1.0, 1.0);
@@ -69,7 +69,7 @@ fn bench_linear_tree_prediction(c: &mut Criterion) {
         
         group.throughput(Throughput::Elements(batch_size as u64));
         
-        // booste-rs linear tree
+        // booste-rs linear GBDT
         group.bench_with_input(
             BenchmarkId::new("boosters/linear", batch_size), 
             &matrix, 
@@ -83,7 +83,7 @@ fn bench_linear_tree_prediction(c: &mut Criterion) {
             |b, m| b.iter(|| black_box(standard_predictor.predict(black_box(m))))
         );
         
-        // LightGBM linear tree
+        // LightGBM linear GBDT
         #[cfg(feature = "bench-lightgbm")]
         {
             let input_f64_a: Vec<f64> = input_data.iter().map(|&x| x as f64).collect();
@@ -119,10 +119,10 @@ fn bench_linear_tree_prediction(c: &mut Criterion) {
 }
 
 // =============================================================================
-// Linear Tree Overhead Measurement
+// Linear GBDT Overhead Measurement
 // =============================================================================
 
-fn bench_linear_tree_overhead(c: &mut Criterion) {
+fn bench_linear_gbdt_overhead(c: &mut Criterion) {
     let (linear_forest, num_features) = load_lgb_linear_model("bench_linear_medium");
     let linear_predictor = Predictor::<UnrolledTraversal6>::new(&linear_forest).with_block_size(64);
     
@@ -133,7 +133,7 @@ fn bench_linear_tree_overhead(c: &mut Criterion) {
     let input_data = random_dense_f32(batch_size, num_features, 42, -1.0, 1.0);
     let matrix = RowMatrix::from_vec(input_data, batch_size, num_features);
     
-    let mut group = c.benchmark_group("overhead/linear_tree");
+    let mut group = c.benchmark_group("overhead/linear_gbdt");
     group.throughput(Throughput::Elements(batch_size as u64));
     
     group.bench_function("standard", |b| {
@@ -150,6 +150,6 @@ fn bench_linear_tree_overhead(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = default_criterion();
-    targets = bench_linear_tree_prediction, bench_linear_tree_overhead
+    targets = bench_linear_gbdt_prediction, bench_linear_gbdt_overhead
 }
 criterion_main!(benches);
