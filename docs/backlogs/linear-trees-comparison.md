@@ -2,15 +2,15 @@
 
 **RFCs**: RFC-0015 (Linear Leaves)  
 **Created**: 2025-12-18  
-**Status**: Mostly Complete (Story 5 deferred)  
+**Status**: Complete (Stories 5, 10 deferred to future epics)  
 **Depends on**: Linear Trees Implementation (Epic 2 from linear-trees-prediction-refactor.md)
 
 ---
 
 ## Summary
 
-**Completed Stories**: 1, 2, 3, 4, 6, 7, 8, 9  
-**Deferred Stories**: 5 (Prediction Optimization)
+**Completed Stories**: 1, 2, 3, 4, 6, 7, 8, 9, 11  
+**Deferred Stories**: 5 (Prediction Optimization), 10 (lgbm Crate)
 
 **Key Findings:**
 
@@ -20,9 +20,10 @@
 | Prediction Regression | 3-7% in some cases (trade-off for linear GBDT support) |
 | Training Regression | None - actually **27-39% faster** |
 | Quality (synthetic) | ~1% better on regression, 0.1% worse on binary |
-| Quality (real-world) | ~6% worse on regression/binary, **2-4% better** on multiclass |
+| Quality (real-world) | **~1% worse** on regression, ~4% worse on binary, **2-4% better** on multiclass |
 | Multiclass | **booste-rs wins** across all datasets (2-4% better accuracy) |
 | Linear GBDT | Only booste-rs works (LightGBM crate crashes) |
+| **Binning Fix** | Quantile binning closed California Housing gap from 6% to 1% |
 
 **Benchmark Reports:**
 
@@ -404,6 +405,90 @@ If booste-rs linear trees are significantly worse than LightGBM:
 | Quality Parity | RMSE within 10% of LightGBM | Story 2 |
 | Benchmark Coverage | All configs run successfully | Story 3 |
 | Documentation | RFC + research docs updated | Story 4 |
+| Real-World Quality | Within 5% of competitors | Story 11 |
+
+---
+
+## Story 10: Try lgbm Crate for Linear GBDT
+
+**Status**: Deferred to future epic  
+**Priority**: Low  
+**Source**: Stakeholder request
+
+Investigate whether the `lgbm` crate (0.0.6) supports linear GBDT training
+without crashing like lightgbm3.
+
+**Research Completed:**
+
+The lgbm crate uses a generic `Parameters::push(key, value)` API:
+```rust
+let mut p = Parameters::new();
+p.push("objective", "regression");
+p.push("linear_tree", true);  // Should work!
+```
+
+**Tasks (for future epic):**
+
+- [ ] Add lgbm to Cargo.toml with `bench-lgbm` feature
+- [ ] Test training with `linear_tree=true`
+- [ ] If it works, add to quality benchmark comparison
+- [ ] Compare prediction accuracy vs lightgbm3 on standard GBDT
+
+**Notes:**
+
+- lgbm crate: 2,246 recent downloads, updated 4 months ago
+- Better maintained than lightgbm3 (7 months old)
+- Uses system LightGBM installation, may need CMake
+
+---
+
+## Story 11: Quality Gap Investigation ✅
+
+**Status**: Complete  
+**Priority**: Critical  
+**Source**: Stakeholder feedback
+
+Investigate why booste-rs performs worse on real-world benchmarks but better
+on synthetic datasets.
+
+**Root Cause Found:**
+
+booste-rs used **equal-width binning** while LightGBM/XGBoost use **quantile binning**.
+
+- Equal-width: Divides [min, max] into equal intervals
+- Quantile: Each bin has ~same sample count
+
+Equal-width works for uniform synthetic data but fails for skewed real-world
+distributions where samples cluster in certain value ranges.
+
+**Fix Implemented:**
+
+- Added `BinningStrategy` enum (EqualWidth, Quantile)
+- Set `Quantile` as default (matches LightGBM/XGBoost)
+- Updated `BinningConfig` with strategy field
+
+**Results:**
+
+| Dataset | Before | After | Improvement |
+|---------|--------|-------|-------------|
+| California Housing RMSE | 0.504 | **0.479** | 5.0% better |
+| California Housing gap vs XGBoost | 6% | **0.9%** | 5x smaller gap |
+| Adult LogLoss | 0.278 | 0.285 | 2.5% worse |
+| Synthetic | No change | No change | ✅ No regression |
+
+**Known Limitation:**
+
+Adult dataset (105 features, heavily one-hot encoded) shows slight regression.
+Quantile binning is suboptimal for binary features - future optimization could
+detect and skip for 0/1 features.
+
+**Tasks:**
+
+- [x] Research binning differences between libraries
+- [x] Implement quantile binning strategy
+- [x] Make quantile binning the default
+- [x] Verify no synthetic regression
+- [x] Document results and commit
 
 ---
 
@@ -426,3 +511,8 @@ Python LightGBM 4.x works correctly with the same parameters.
 - Try lgbm crate (0.0.6, updated 4 months ago)
 - File issue with lightgbm3 upstream
 - Use Python subprocess for training benchmarks
+
+### Binning Strategy
+
+booste-rs now uses quantile binning by default, matching LightGBM/XGBoost.
+Equal-width binning is still available via `BinningConfig::with_strategy(EqualWidth)`.
