@@ -220,6 +220,45 @@ impl FeatureBundle {
         // All features are zero - use bin 0 of first feature
         0
     }
+
+    /// Decode an encoded bundle bin back to (original_feature_idx, original_bin).
+    ///
+    /// This is the inverse of `encode()`. Given an encoded bin value from a bundled
+    /// column, it returns which original feature the value came from and what the
+    /// original bin value was.
+    ///
+    /// # Returns
+    /// * `Some((feature_idx, original_bin))` if the bin belongs to a known feature
+    /// * `None` if the bin is out of range
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Bundle with features [0, 1, 2] having bins [4, 4, 4]
+    /// // Offsets would be [0, 4, 8], total_bins = 12
+    ///
+    /// bundle.decode(0);  // -> Some((0, 0))  - first bin of feature 0
+    /// bundle.decode(3);  // -> Some((0, 3))  - last bin of feature 0
+    /// bundle.decode(4);  // -> Some((1, 0))  - first bin of feature 1
+    /// bundle.decode(11); // -> Some((2, 3))  - last bin of feature 2
+    /// bundle.decode(12); // -> None          - out of range
+    /// ```
+    pub fn decode(&self, encoded_bin: u32) -> Option<(usize, u32)> {
+        if encoded_bin >= self.total_bins || self.feature_indices.is_empty() {
+            return None;
+        }
+
+        // Binary search to find which feature's range contains the bin
+        let pos = self
+            .bin_offsets
+            .partition_point(|&offset| offset <= encoded_bin)
+            .saturating_sub(1);
+
+        let feature_idx = self.feature_indices[pos];
+        let original_bin = encoded_bin - self.bin_offsets[pos];
+
+        Some((feature_idx, original_bin))
+    }
 }
 
 /// Where a feature ended up after bundling.
@@ -308,6 +347,44 @@ impl BundlePlan {
         for bundle in &mut self.bundles {
             bundle.finalize(&n_bins_per_feature);
         }
+    }
+
+    /// Get the location of an original feature.
+    ///
+    /// # Arguments
+    /// * `feature_idx` - Original feature index
+    ///
+    /// # Returns
+    /// The feature's location (Standalone, Bundled, or Skipped)
+    pub fn original_to_location(&self, feature_idx: usize) -> Option<&FeatureLocation> {
+        self.feature_mapping.get(feature_idx)
+    }
+
+    /// Decode an encoded bin from a bundled column back to (original_feature, original_bin).
+    ///
+    /// This is used when a split is found on a bundled column and we need to
+    /// determine which original feature the split applies to.
+    ///
+    /// # Arguments
+    /// * `bundle_idx` - Index of the bundle in `self.bundles`
+    /// * `encoded_bin` - The encoded bin value in the bundled column
+    ///
+    /// # Returns
+    /// * `Some((original_feature_idx, original_bin))` if valid
+    /// * `None` if bundle_idx is invalid or bin is out of range
+    pub fn decode_bundle_split(&self, bundle_idx: usize, encoded_bin: u32) -> Option<(usize, u32)> {
+        self.bundles.get(bundle_idx).and_then(|b| b.decode(encoded_bin))
+    }
+
+    /// Get all original feature indices that belong to a bundle.
+    ///
+    /// # Arguments
+    /// * `bundle_idx` - Index of the bundle
+    ///
+    /// # Returns
+    /// Slice of original feature indices, or None if bundle_idx is invalid
+    pub fn bundle_features(&self, bundle_idx: usize) -> Option<&[usize]> {
+        self.bundles.get(bundle_idx).map(|b| b.feature_indices.as_slice())
     }
 }
 
@@ -1239,5 +1316,126 @@ mod tests {
 
         // 2 bundles + 3 standalone = 5 columns
         assert_eq!(plan.binned_column_count(), 5);
+    }
+
+    #[test]
+    fn test_feature_bundle_decode() {
+        let mut bundle = FeatureBundle::new(0);
+        bundle.add(1);
+        bundle.add(2);
+
+        // Feature 0 has 4 bins, feature 1 has 4 bins, feature 2 has 4 bins
+        // Offsets: [0, 4, 8], total_bins = 12
+        bundle.finalize(|_| 4);
+
+        // Decode bin 0 -> feature 0, bin 0
+        assert_eq!(bundle.decode(0), Some((0, 0)));
+        // Decode bin 3 -> feature 0, bin 3
+        assert_eq!(bundle.decode(3), Some((0, 3)));
+        // Decode bin 4 -> feature 1, bin 0
+        assert_eq!(bundle.decode(4), Some((1, 0)));
+        // Decode bin 7 -> feature 1, bin 3
+        assert_eq!(bundle.decode(7), Some((1, 3)));
+        // Decode bin 8 -> feature 2, bin 0
+        assert_eq!(bundle.decode(8), Some((2, 0)));
+        // Decode bin 11 -> feature 2, bin 3
+        assert_eq!(bundle.decode(11), Some((2, 3)));
+        // Decode bin 12 -> out of range
+        assert_eq!(bundle.decode(12), None);
+    }
+
+    #[test]
+    fn test_feature_bundle_encode_decode_roundtrip() {
+        let mut bundle = FeatureBundle::new(0);
+        bundle.add(1);
+        bundle.add(2);
+
+        // Feature 0 has 10 bins, feature 1 has 20 bins, feature 2 has 5 bins
+        bundle.finalize(|idx| match idx {
+            0 => 10,
+            1 => 20,
+            2 => 5,
+            _ => 0,
+        });
+
+        // Test roundtrip: encode then decode should return original feature
+        for (feat_idx, original_bin) in [(0, 5), (1, 15), (2, 3)] {
+            let encoded = bundle.encode(|idx| {
+                if idx == feat_idx {
+                    (true, original_bin)
+                } else {
+                    (false, 0)
+                }
+            });
+
+            let decoded = bundle.decode(encoded);
+            assert_eq!(decoded, Some((feat_idx, original_bin)));
+        }
+    }
+
+    #[test]
+    fn test_bundle_plan_decode_bundle_split() {
+        let mut bundle = FeatureBundle::new(0);
+        bundle.add(1);
+        bundle.finalize(|idx| if idx == 0 { 10 } else { 20 });
+
+        let plan = BundlePlan {
+            bundles: vec![bundle],
+            standalone_features: vec![2],
+            skipped_features: vec![],
+            feature_mapping: vec![
+                FeatureLocation::Bundled { bundle_idx: 0, position: 0 },
+                FeatureLocation::Bundled { bundle_idx: 0, position: 1 },
+                FeatureLocation::Standalone(0),
+            ],
+            total_conflicts: 0,
+            rows_sampled: 100,
+            sparse_feature_count: 2,
+            skipped: false,
+            skip_reason: None,
+        };
+
+        // Decode split on bundle 0 at bin 5 -> feature 0, bin 5
+        assert_eq!(plan.decode_bundle_split(0, 5), Some((0, 5)));
+
+        // Decode split on bundle 0 at bin 15 -> feature 1, bin 5
+        assert_eq!(plan.decode_bundle_split(0, 15), Some((1, 5)));
+
+        // Invalid bundle index
+        assert_eq!(plan.decode_bundle_split(1, 0), None);
+    }
+
+    #[test]
+    fn test_bundle_plan_original_to_location() {
+        let plan = BundlePlan {
+            bundles: vec![FeatureBundle::new(0)],
+            standalone_features: vec![2],
+            skipped_features: vec![3],
+            feature_mapping: vec![
+                FeatureLocation::Bundled { bundle_idx: 0, position: 0 },
+                FeatureLocation::Bundled { bundle_idx: 0, position: 1 },
+                FeatureLocation::Standalone(0),
+                FeatureLocation::Skipped,
+            ],
+            total_conflicts: 0,
+            rows_sampled: 100,
+            sparse_feature_count: 2,
+            skipped: false,
+            skip_reason: None,
+        };
+
+        assert_eq!(
+            plan.original_to_location(0),
+            Some(&FeatureLocation::Bundled { bundle_idx: 0, position: 0 })
+        );
+        assert_eq!(
+            plan.original_to_location(2),
+            Some(&FeatureLocation::Standalone(0))
+        );
+        assert_eq!(
+            plan.original_to_location(3),
+            Some(&FeatureLocation::Skipped)
+        );
+        assert_eq!(plan.original_to_location(10), None);
     }
 }
