@@ -11,7 +11,7 @@
 use crate::data::ColMatrix;
 use crate::repr::gbdt::{MutableTree, ScalarLeaf, SplitType, TreeView};
 use crate::training::gbdt::partition::RowPartitioner;
-use crate::training::Gradients;
+use crate::training::{Gradients, GradsTuple};
 
 use super::{LeafFeatureBuffer, LinearLeafConfig, WeightedLeastSquaresSolver};
 
@@ -55,10 +55,8 @@ pub struct LeafLinearTrainer {
     feature_buffer: LeafFeatureBuffer,
     /// Pre-allocated solver (reused per leaf)
     solver: WeightedLeastSquaresSolver,
-    /// Pre-allocated gradient buffer (reused per leaf)
-    grad_buffer: Vec<f32>,
-    /// Pre-allocated hessian buffer (reused per leaf)
-    hess_buffer: Vec<f32>,
+    /// Pre-allocated gradient/hessian buffer (reused per leaf)
+    grad_hess_buffer: Vec<GradsTuple>,
 }
 
 impl LeafLinearTrainer {
@@ -71,8 +69,7 @@ impl LeafLinearTrainer {
         Self {
             feature_buffer: LeafFeatureBuffer::new(max_leaf_samples, config.max_features),
             solver: WeightedLeastSquaresSolver::new(config.max_features),
-            grad_buffer: vec![0.0; max_leaf_samples],
-            hess_buffer: vec![0.0; max_leaf_samples],
+            grad_hess_buffer: vec![GradsTuple::default(); max_leaf_samples],
             config,
         }
     }
@@ -224,23 +221,20 @@ impl LeafLinearTrainer {
         // Reset solver and accumulate
         self.solver.reset(n_features);
 
-        // Collect gradients and hessians into pre-allocated buffers
+        // Collect gradients and hessians into pre-allocated buffer
         for (i, &row) in rows.iter().enumerate() {
             let (g, h) = gradients.get(row as usize, output);
-            self.grad_buffer[i] = g;
-            self.hess_buffer[i] = h;
+            self.grad_hess_buffer[i] = GradsTuple { grad: g, hess: h };
         }
-        let grads = &self.grad_buffer[..n_rows];
-        let hess = &self.hess_buffer[..n_rows];
+        let grad_hess = &self.grad_hess_buffer[..n_rows];
 
         // Accumulate intercept
-        self.solver.accumulate_intercept(grads, hess);
+        self.solver.accumulate_intercept(grad_hess);
 
         // Accumulate each feature column
         for feat_idx in 0..n_features {
             let feat_values = self.feature_buffer.feature_slice(feat_idx);
-            self.solver
-                .accumulate_column(feat_idx, feat_values, grads, hess);
+            self.solver.accumulate_column(feat_idx, feat_values, grad_hess);
         }
 
         // Accumulate cross-terms
@@ -248,7 +242,7 @@ impl LeafLinearTrainer {
             let col_i = self.feature_buffer.feature_slice(i);
             for j in (i + 1)..n_features {
                 let col_j = self.feature_buffer.feature_slice(j);
-                self.solver.accumulate_cross_term(i, j, col_i, col_j, hess);
+                self.solver.accumulate_cross_term(i, j, col_i, col_j, grad_hess);
             }
         }
 

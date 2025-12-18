@@ -15,6 +15,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use super::categories::{float_to_category, CategoriesStorage};
+use super::coefficients::{LeafCoefficients, LeafCoefficientsBuilder};
 use super::leaf::LeafValue;
 use super::node::SplitType;
 use super::NodeId;
@@ -130,6 +131,7 @@ pub struct Tree<L: LeafValue> {
     leaf_values: Box<[L]>,
     split_types: Box<[SplitType]>,
     categories: CategoriesStorage,
+    leaf_coefficients: LeafCoefficients,
 }
 
 impl<L: LeafValue> Tree<L> {
@@ -164,6 +166,7 @@ impl<L: LeafValue> Tree<L> {
             leaf_values: leaf_values.into_boxed_slice(),
             split_types: vec![SplitType::Numeric; num_nodes].into_boxed_slice(),
             categories: CategoriesStorage::empty(),
+            leaf_coefficients: LeafCoefficients::empty(),
         }
     }
 
@@ -200,7 +203,69 @@ impl<L: LeafValue> Tree<L> {
             leaf_values: leaf_values.into_boxed_slice(),
             split_types: split_types.into_boxed_slice(),
             categories,
+            leaf_coefficients: LeafCoefficients::empty(),
         }
+    }
+
+    /// Create a new tree with categorical splits and linear leaf coefficients.
+    ///
+    /// All arrays must have the same length (number of nodes).
+    pub fn with_linear_leaves(
+        split_indices: Vec<u32>,
+        split_thresholds: Vec<f32>,
+        left_children: Vec<u32>,
+        right_children: Vec<u32>,
+        default_left: Vec<bool>,
+        is_leaf: Vec<bool>,
+        leaf_values: Vec<L>,
+        split_types: Vec<SplitType>,
+        categories: CategoriesStorage,
+        leaf_coefficients: LeafCoefficients,
+    ) -> Self {
+        let num_nodes = split_indices.len();
+        debug_assert_eq!(num_nodes, split_thresholds.len());
+        debug_assert_eq!(num_nodes, left_children.len());
+        debug_assert_eq!(num_nodes, right_children.len());
+        debug_assert_eq!(num_nodes, default_left.len());
+        debug_assert_eq!(num_nodes, is_leaf.len());
+        debug_assert_eq!(num_nodes, leaf_values.len());
+        debug_assert_eq!(num_nodes, split_types.len());
+
+        Self {
+            split_indices: split_indices.into_boxed_slice(),
+            split_thresholds: split_thresholds.into_boxed_slice(),
+            left_children: left_children.into_boxed_slice(),
+            right_children: right_children.into_boxed_slice(),
+            default_left: default_left.into_boxed_slice(),
+            is_leaf: is_leaf.into_boxed_slice(),
+            leaf_values: leaf_values.into_boxed_slice(),
+            split_types: split_types.into_boxed_slice(),
+            categories,
+            leaf_coefficients,
+        }
+    }
+
+    /// Get the linear terms for a leaf node, if any.
+    ///
+    /// Returns `Some((feature_indices, coefficients))` for linear leaves,
+    /// or `None` for constant leaves.
+    #[inline]
+    pub fn leaf_terms(&self, node: NodeId) -> Option<(&[u32], &[f32])> {
+        self.leaf_coefficients.leaf_terms(node)
+    }
+
+    /// Get the intercept for a leaf node.
+    ///
+    /// Returns 0.0 for constant leaves or if linear terms are empty.
+    #[inline]
+    pub fn leaf_intercept(&self, node: NodeId) -> f32 {
+        self.leaf_coefficients.intercept(node)
+    }
+
+    /// Check if this tree has any linear leaf nodes.
+    #[inline]
+    pub fn has_linear_leaves(&self) -> bool {
+        !self.leaf_coefficients.is_empty()
     }
 
     /// Traverse the tree to find the leaf for given features.
@@ -592,6 +657,8 @@ pub struct MutableTree<L: LeafValue> {
     split_types: Vec<SplitType>,
     /// Categorical data: (node_idx, category_bitset)
     categorical_nodes: Vec<(NodeId, Vec<u32>)>,
+    /// Linear leaf coefficients: (node_idx, feature_indices, coefficients, intercept)
+    linear_leaves: Vec<(NodeId, Vec<u32>, Vec<f32>, f32)>,
     next_id: NodeId,
 }
 
@@ -614,6 +681,7 @@ impl<L: LeafValue> MutableTree<L> {
             leaf_values: Vec::with_capacity(64),
             split_types: Vec::with_capacity(64),
             categorical_nodes: Vec::new(),
+            linear_leaves: Vec::new(),
             next_id: 0,
         }
     }
@@ -630,6 +698,7 @@ impl<L: LeafValue> MutableTree<L> {
             leaf_values: Vec::with_capacity(capacity),
             split_types: Vec::with_capacity(capacity),
             categorical_nodes: Vec::new(),
+            linear_leaves: Vec::new(),
             next_id: 0,
         }
     }
@@ -765,6 +834,36 @@ impl<L: LeafValue> MutableTree<L> {
         self.leaf_values[idx] = value;
     }
 
+    /// Set linear coefficients for a leaf node.
+    ///
+    /// The leaf should already be marked as a leaf via `make_leaf`.
+    /// The `feature_indices` identify which features have non-zero coefficients,
+    /// and `coefficients` are the corresponding weights.
+    ///
+    /// # Panics
+    ///
+    /// Debug-panics if `feature_indices.len() != coefficients.len()`.
+    pub fn set_linear_leaf(
+        &mut self,
+        node: NodeId,
+        feature_indices: Vec<u32>,
+        intercept: f32,
+        coefficients: Vec<f32>,
+    ) {
+        debug_assert_eq!(
+            feature_indices.len(),
+            coefficients.len(),
+            "feature_indices and coefficients must have same length"
+        );
+
+        // Remove any existing entry for this node
+        if let Some(pos) = self.linear_leaves.iter().position(|(n, _, _, _)| *n == node) {
+            self.linear_leaves.remove(pos);
+        }
+        self.linear_leaves
+            .push((node, feature_indices, coefficients, intercept));
+    }
+
     /// Apply learning rate to all leaf values.
     pub fn apply_learning_rate(&mut self, learning_rate: f32) {
         for (is_leaf, value) in self.is_leaf.iter().zip(self.leaf_values.iter_mut()) {
@@ -791,18 +890,21 @@ impl<L: LeafValue> MutableTree<L> {
         self.leaf_values.clear();
         self.split_types.clear();
         self.categorical_nodes.clear();
+        self.linear_leaves.clear();
         self.next_id = 0;
     }
 
     /// Finalize the tree and return immutable storage.
     pub fn freeze(self) -> Tree<L> {
+        let num_nodes = self.split_indices.len();
+
+        // Build categories storage
         let categories = if self.categorical_nodes.is_empty() {
             CategoriesStorage::empty()
         } else {
             let mut cat_nodes = self.categorical_nodes;
             cat_nodes.sort_by_key(|(idx, _)| *idx);
 
-            let num_nodes = self.split_indices.len();
             let mut segments = vec![(0u32, 0u32); num_nodes];
             let mut bitsets = Vec::new();
 
@@ -816,7 +918,18 @@ impl<L: LeafValue> MutableTree<L> {
             CategoriesStorage::new(bitsets, segments)
         };
 
-        Tree::with_categories(
+        // Build linear coefficients storage
+        let leaf_coefficients = if self.linear_leaves.is_empty() {
+            LeafCoefficients::empty()
+        } else {
+            let mut builder = LeafCoefficientsBuilder::new();
+            for (node, features, coefs, intercept) in self.linear_leaves {
+                builder.add(node, &features, intercept, &coefs);
+            }
+            builder.build(num_nodes)
+        };
+
+        Tree::with_linear_leaves(
             self.split_indices,
             self.split_thresholds,
             self.left_children,
@@ -826,6 +939,7 @@ impl<L: LeafValue> MutableTree<L> {
             self.leaf_values,
             self.split_types,
             categories,
+            leaf_coefficients,
         )
     }
 
@@ -961,5 +1075,60 @@ mod tests {
         // Row 1: 0.7 >= 0.5 -> right (2.0), 20.0 + 2.0 = 22.0
         // Row 2: 0.5 >= 0.5 -> right (2.0), 30.0 + 2.0 = 32.0
         assert_eq!(predictions, vec![11.0, 22.0, 32.0]);
+    }
+
+    #[test]
+    fn test_mutable_tree_linear_leaf_freeze() {
+        use super::MutableTree;
+        use crate::repr::gbdt::ScalarLeaf;
+
+        let mut tree: MutableTree<ScalarLeaf> = MutableTree::new();
+
+        // Create a simple tree with one split
+        let root = tree.init_root();
+        let (left, right) = tree.apply_numeric_split(root, 0, 0.5, false);
+        tree.make_leaf(left, ScalarLeaf(1.0));
+        tree.make_leaf(right, ScalarLeaf(2.0));
+
+        // Set linear coefficients on the left leaf only
+        tree.set_linear_leaf(left, vec![0], 0.5, vec![1.0]);
+
+        // Freeze and verify
+        let frozen = tree.freeze();
+
+        // Left leaf (node 1) should have linear terms
+        let terms = frozen.leaf_terms(1);
+        assert!(terms.is_some());
+        let (features, coefs) = terms.unwrap();
+        assert_eq!(features, &[0u32]);
+        assert_eq!(coefs, &[1.0f32]);
+        assert_eq!(frozen.leaf_intercept(1), 0.5);
+
+        // Right leaf (node 2) should not have linear terms
+        assert!(frozen.leaf_terms(2).is_none());
+        assert_eq!(frozen.leaf_intercept(2), 0.0);
+
+        // Tree should report having linear leaves
+        assert!(frozen.has_linear_leaves());
+    }
+
+    #[test]
+    fn test_mutable_tree_reset_clears_linear() {
+        use super::MutableTree;
+        use crate::repr::gbdt::ScalarLeaf;
+
+        let mut tree: MutableTree<ScalarLeaf> = MutableTree::new();
+
+        // Create tree with linear leaf
+        let root = tree.init_root();
+        tree.make_leaf(root, ScalarLeaf(1.0));
+        tree.set_linear_leaf(root, vec![0], 0.5, vec![1.0]);
+
+        // Reset should clear linear leaves
+        tree.reset();
+
+        // Freeze an empty tree
+        let frozen = tree.freeze();
+        assert!(!frozen.has_linear_leaves());
     }
 }
