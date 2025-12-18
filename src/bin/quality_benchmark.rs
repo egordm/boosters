@@ -534,6 +534,7 @@ struct BenchmarkResult {
 ///
 /// XGBoost/LightGBM output row-major: [row0_class0, row0_class1, ..., row1_class0, ...]
 /// Our metrics expect column-major: [class0_row0, class0_row1, ..., class1_row0, ...]
+#[allow(dead_code)] // Used only with bench-xgboost/bench-lightgbm features
 fn transpose_row_to_col_major(row_major: &[f32], n_rows: usize, n_cols: usize) -> Vec<f32> {
 	debug_assert_eq!(row_major.len(), n_rows * n_cols);
 	let mut col_major = vec![0.0f32; n_rows * n_cols];
