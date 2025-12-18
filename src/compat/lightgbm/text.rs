@@ -126,6 +126,16 @@ pub struct LgbTree {
     pub cat_boundaries: Vec<i32>,
     /// Categorical split threshold bitset
     pub cat_threshold: Vec<u32>,
+    
+    // Linear tree fields (only populated when is_linear=true)
+    /// Intercept for each leaf's linear model (size: num_leaves)
+    pub leaf_const: Vec<f64>,
+    /// Number of features used in each leaf's linear model (size: num_leaves)
+    pub num_features_per_leaf: Vec<i32>,
+    /// Feature indices used in each leaf's linear model (flattened, grouped by leaf)
+    pub leaf_features: Vec<Vec<i32>>,
+    /// Coefficients for each leaf's linear model (flattened, grouped by leaf)
+    pub leaf_coeff: Vec<Vec<f64>>,
 }
 
 impl Default for LgbTree {
@@ -146,6 +156,11 @@ impl Default for LgbTree {
             is_linear: false,
             cat_boundaries: Vec::new(),
             cat_threshold: Vec::new(),
+            // Linear tree fields
+            leaf_const: Vec::new(),
+            num_features_per_leaf: Vec::new(),
+            leaf_features: Vec::new(),
+            leaf_coeff: Vec::new(),
         }
     }
 }
@@ -540,6 +555,40 @@ fn parse_tree(lines: &mut std::iter::Peekable<std::str::Lines>) -> Result<LgbTre
             .unwrap_or_default();
     }
 
+    // Parse linear tree data if present
+    if tree.is_linear {
+        tree.leaf_const = kv
+            .get("leaf_const")
+            .map(|v| parse_double_array(v))
+            .transpose()?
+            .unwrap_or_else(|| vec![0.0; tree.num_leaves]);
+        validate_array_size("leaf_const", &tree.leaf_const, tree.num_leaves)?;
+
+        tree.num_features_per_leaf = kv
+            .get("num_features")
+            .map(|v| parse_int_array(v))
+            .transpose()?
+            .unwrap_or_else(|| vec![0; tree.num_leaves]);
+        validate_array_size("num_features", &tree.num_features_per_leaf, tree.num_leaves)?;
+
+        // Parse leaf_features: grouped by leaf, separated by spaces
+        // Format: "0 1  2  0 1 2" where groups are based on num_features_per_leaf
+        if let Some(features_str) = kv.get("leaf_features") {
+            tree.leaf_features =
+                parse_grouped_int_array(features_str, &tree.num_features_per_leaf)?;
+        } else {
+            tree.leaf_features = vec![Vec::new(); tree.num_leaves];
+        }
+
+        // Parse leaf_coeff: same grouping as leaf_features
+        if let Some(coeff_str) = kv.get("leaf_coeff") {
+            tree.leaf_coeff =
+                parse_grouped_double_array(coeff_str, &tree.num_features_per_leaf)?;
+        } else {
+            tree.leaf_coeff = vec![Vec::new(); tree.num_leaves];
+        }
+    }
+
     Ok(tree)
 }
 
@@ -596,6 +645,64 @@ fn parse_double_array(s: &str) -> Result<Vec<f64>, ParseError> {
             })
         })
         .collect()
+}
+
+/// Parse a grouped array of integers.
+///
+/// LightGBM serializes arrays grouped by leaf, e.g., "0 1  2  0 1 2"
+/// where the number of values per group is given by `counts`.
+/// The values are separated by whitespace, and groups may have extra spaces between them.
+fn parse_grouped_int_array(s: &str, counts: &[i32]) -> Result<Vec<Vec<i32>>, ParseError> {
+    let all_values: Vec<i32> = parse_int_array(s)?;
+    let mut result = Vec::with_capacity(counts.len());
+    let mut offset = 0;
+
+    for (i, &count) in counts.iter().enumerate() {
+        let count = count as usize;
+        if offset + count > all_values.len() {
+            return Err(ParseError::InvalidValue {
+                field: "leaf_features",
+                message: format!(
+                    "not enough values for leaf {}: expected {} values at offset {}, only {} total",
+                    i,
+                    count,
+                    offset,
+                    all_values.len()
+                ),
+            });
+        }
+        result.push(all_values[offset..offset + count].to_vec());
+        offset += count;
+    }
+
+    Ok(result)
+}
+
+/// Parse a grouped array of doubles.
+fn parse_grouped_double_array(s: &str, counts: &[i32]) -> Result<Vec<Vec<f64>>, ParseError> {
+    let all_values: Vec<f64> = parse_double_array(s)?;
+    let mut result = Vec::with_capacity(counts.len());
+    let mut offset = 0;
+
+    for (i, &count) in counts.iter().enumerate() {
+        let count = count as usize;
+        if offset + count > all_values.len() {
+            return Err(ParseError::InvalidValue {
+                field: "leaf_coeff",
+                message: format!(
+                    "not enough values for leaf {}: expected {} values at offset {}, only {} total",
+                    i,
+                    count,
+                    offset,
+                    all_values.len()
+                ),
+            });
+        }
+        result.push(all_values[offset..offset + count].to_vec());
+        offset += count;
+    }
+
+    Ok(result)
 }
 
 fn validate_array_size<T>(field: &'static str, arr: &[T], expected: usize) -> Result<(), ParseError> {
