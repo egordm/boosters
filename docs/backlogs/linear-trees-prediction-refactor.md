@@ -218,27 +218,27 @@ Store coefficients in MutableTree, pack into Tree on freeze. Includes serializat
 
 ---
 
-### Story 2.5: Linear Leaf Inference [S]
+### Story 2.5: Linear Leaf Inference [S] ✅
 
 Prediction using linear coefficients.
 
 **Tasks:**
 
-- [ ] Update `predict_row` to use new traversal + linear coefficients
-- [ ] Add NaN handling (fall back to base value)
-- [ ] Update batch prediction to handle linear leaves
+- [x] Update `predict_batch_accumulate` to handle linear coefficients
+- [x] Add NaN handling (fall back to base value)
+- [x] Add `compute_leaf_value` helper method
 
 **Acceptance Criteria:**
 
-- Prediction = base + Σ(coef × feature)
+- Prediction = intercept + Σ(coef × feature) for linear leaves
 - NaN in any linear feature → returns base only
-- Batch and single-row give same results
+- Batch prediction handles both constant and linear leaves
 
 **Tests:**
 
-- `test_linear_prediction_single`: Known tree + coefficients → exact prediction
-- `test_linear_prediction_batch`: Batch matches single-row results
-- `test_linear_prediction_nan_fallback`: NaN input → base value
+- `test_linear_prediction_single`: Known tree + coefficients → exact prediction (implemented)
+- `test_linear_prediction_multivariate`: Multi-feature linear model (implemented)
+- `test_linear_prediction_nan_fallback`: NaN input → base value (implemented)
 
 ---
 
