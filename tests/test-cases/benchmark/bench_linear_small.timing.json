@@ -1,0 +1,10 @@
+{
+  "name": "bench_linear_small",
+  "n_rows": 5000,
+  "n_cols": 50,
+  "n_trees": 50,
+  "max_depth": 6,
+  "linear_tree": true,
+  "training_time_ms": 301.1135500157252,
+  "n_runs": 5
+}

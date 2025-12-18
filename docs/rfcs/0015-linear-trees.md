@@ -1,7 +1,8 @@
 # RFC-0015: Linear Leaves for GBDT
 
-- **Status**: Draft
+- **Status**: Implemented
 - **Created**: 2025-12-17
+- **Implemented**: 2025-12-18
 - **Depends on**: RFC-0002, RFC-0007, RFC-0014, RFC-0016
 
 ## Summary
@@ -612,3 +613,15 @@ apply to MutableTree after parallel phase (avoids mutable sharing).
 | Tree | Add `leaf_coefficients: LeafCoefficients` |
 | TreeGrower | Add `partitioner()` getter |
 | LeafLinearTrainer | New: `LeafFeatureBuffer` + parallel CD |
+
+---
+
+## Changelog
+
+- **2025-12-18**: Status updated to Implemented
+- **2025-12-18**: DD-10 added — LightGBM uses direct matrix solve (Eigen fullPivLu),
+  not coordinate descent. Our CD approach is intentional for simplicity and L1 support.
+- **2025-12-18**: Implementation note — Prediction overhead is ~5.4x vs standard
+  trees (LightGBM achieves ~1.75x). Future optimization story created.
+- **2025-12-18**: LightGBM loader completed — Parses `is_linear`, `leaf_const`,
+  `leaf_features`, `leaf_coeff` fields. Predictions match exactly.

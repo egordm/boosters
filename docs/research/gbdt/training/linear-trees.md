@@ -868,3 +868,53 @@ This is essentially Strategy 2, and is the recommended approach.
 - If users report issues with complex objectives
 - Requires separate RFC due to interface changes
 - Most beneficial for quantile regression and custom losses
+
+---
+
+## Implementation Learnings (2025-12-18)
+
+### Performance Findings
+
+**Training Overhead:**
+
+- booste-rs: +10.4% overhead vs standard GBDT
+- LightGBM: +11.9% overhead
+- Our CD approach is competitive with LightGBM's direct solve
+
+**Prediction Overhead:**
+
+- booste-rs: +5.4x overhead vs standard trees
+- LightGBM: +1.75x overhead
+- **Root cause**: We fall back to per-row traversal for linear trees,
+  losing block traversal benefits
+
+**Optimization Opportunity:**
+
+- Separate traversal from linear computation
+- Use block traversal to get all leaf indices, then batch-compute linear values
+- Expected improvement: reduce to <2x overhead
+
+### LightGBM Loader
+
+Successfully implemented loading LightGBM linear tree models:
+
+- Format: `is_linear=1`, `leaf_const`, `num_features_per_leaf`, `leaf_features`, `leaf_coeff`
+- Shrinkage already applied in serialized values
+- Predictions match LightGBM exactly (< 1e-3 tolerance)
+
+**Key insight**: LightGBM uses grouped array format for leaf coefficients:
+
+```text
+leaf_const=0.1 0.2 0.3 ...
+num_features_per_leaf=3 2 4 ...
+leaf_features=0:1:2 3:4 0:2:5:6 ...
+leaf_coeff=0.1:0.2:0.3 0.4:0.5 ...
+```
+
+### Solver Approach Validation
+
+- LightGBM uses Eigen `fullPivLu().inverse()` — direct matrix solve
+- We use coordinate descent — iterative but robust
+- CD handles collinearity gracefully without explicit condition checking
+- Both achieve similar training quality on synthetic data
+- CD is simpler (no LAPACK dependency) and supports L1 regularization

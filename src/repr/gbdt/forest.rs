@@ -1,5 +1,7 @@
 //! Canonical forest representation (collection of trees).
 
+use crate::inference::gbdt::{traverse_from_node, traverse_to_leaf};
+
 use super::{tree::TreeValidationError, LeafValue, ScalarLeaf, Tree, TreeView};
 
 /// Structural validation errors for [`Forest`].
@@ -133,13 +135,47 @@ impl<L: LeafValue> Forest<L> {
 
 /// Prediction methods for forests with scalar leaves.
 impl Forest<ScalarLeaf> {
+    /// Compute the prediction value for a leaf, handling linear coefficients if present.
+    ///
+    /// Returns `intercept + Σ(coef × feature)` for linear leaves, or the base leaf value
+    /// if no linear terms or if any linear feature is NaN.
+    #[inline]
+    fn compute_leaf_value(tree: &Tree<ScalarLeaf>, leaf_idx: u32, features: &[f32]) -> f32 {
+        let base = tree.leaf_value(leaf_idx).0;
+
+        if let Some((feat_indices, coefs)) = tree.leaf_terms(leaf_idx) {
+            // Check for NaN in any linear feature
+            for &feat_idx in feat_indices {
+                let val = features.get(feat_idx as usize).copied().unwrap_or(f32::NAN);
+                if val.is_nan() {
+                    return base; // Fall back to constant leaf
+                }
+            }
+
+            // Compute linear prediction: intercept + Σ(coef × feature)
+            let intercept = tree.leaf_intercept(leaf_idx);
+            let linear_sum: f32 = feat_indices
+                .iter()
+                .zip(coefs.iter())
+                .map(|(&f, &c)| c * features.get(f as usize).copied().unwrap_or(0.0))
+                .sum();
+
+            intercept + linear_sum
+        } else {
+            base
+        }
+    }
+
     /// Predict for a single row of features.
+    ///
+    /// Handles linear leaf coefficients if present, computing `intercept + Σ(coef × feature)`.
     pub fn predict_row(&self, features: &[f32]) -> Vec<f32> {
         let mut output = self.base_score.clone();
 
         for (tree, group) in self.trees_with_groups() {
-            let leaf = tree.predict_row(features);
-            output[group as usize] += leaf.0;
+            let leaf_idx = traverse_from_node(tree, 0, features);
+            let leaf_val = Self::compute_leaf_value(tree, leaf_idx, features);
+            output[group as usize] += leaf_val;
         }
 
         output
@@ -154,6 +190,11 @@ impl Forest<ScalarLeaf> {
     ///
     /// This is the unified batch prediction method that works with any data source
     /// implementing [`FeatureAccessor`].
+    ///
+    /// # Note on Linear Leaves
+    ///
+    /// This method does **not** support linear leaf coefficients. For trees with
+    /// linear leaves, use [`Predictor`](crate::inference::gbdt::Predictor) instead.
     ///
     /// # Arguments
     /// * `accessor` - Feature value source (RowMatrix, ColMatrix, BinnedAccessor, etc.)
@@ -179,7 +220,11 @@ impl Forest<ScalarLeaf> {
         accessor: &A,
         output: &mut [f32],
     ) {
-        use crate::inference::gbdt::traverse_to_leaf;
+        // Debug check: this method doesn't support linear leaves
+        debug_assert!(
+            !self.trees.iter().any(|t| t.has_linear_leaves()),
+            "predict_into does not support linear leaves; use Predictor instead"
+        );
 
         let n_rows = accessor.num_rows();
         let n_groups = self.n_groups() as usize;

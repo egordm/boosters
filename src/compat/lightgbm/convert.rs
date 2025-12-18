@@ -15,8 +15,6 @@ pub enum ConversionError {
         node: usize,
         child: i32,
     },
-    #[error("linear trees are not supported")]
-    LinearTreesNotSupported,
     #[error("conversion error: {0}")]
     Other(String),
 }
@@ -34,9 +32,6 @@ impl LgbModel {
     pub fn to_forest(&self) -> Result<Forest<ScalarLeaf>, ConversionError> {
         // Check for unsupported features
         for (idx, tree) in self.trees.iter().enumerate() {
-            if tree.is_linear {
-                return Err(ConversionError::LinearTreesNotSupported);
-            }
             if tree.num_leaves == 0 {
                 return Err(ConversionError::EmptyTree(idx));
             }
@@ -143,14 +138,28 @@ fn convert_tree(
         tree.make_leaf(node_idx as u32, ScalarLeaf(lgb_tree.leaf_value[leaf_idx] as f32));
     }
 
-    Ok(tree.freeze())
-}
+    // Add linear coefficients if this is a linear tree
+    if lgb_tree.is_linear {
+        for leaf_idx in 0..lgb_tree.num_leaves {
+            let node_idx = (num_internal + leaf_idx) as u32;
+            
+            // Get linear model data for this leaf
+            let intercept = lgb_tree.leaf_const.get(leaf_idx).copied().unwrap_or(0.0) as f32;
+            let features = lgb_tree.leaf_features.get(leaf_idx)
+                .map(|f| f.iter().map(|&x| x as u32).collect::<Vec<_>>())
+                .unwrap_or_default();
+            let coefficients = lgb_tree.leaf_coeff.get(leaf_idx)
+                .map(|c| c.iter().map(|&x| x as f32).collect::<Vec<_>>())
+                .unwrap_or_default();
+            
+            // Only add if there are actual coefficients
+            if !coefficients.is_empty() || intercept.abs() > 1e-10 {
+                tree.set_linear_leaf(node_idx, features, intercept, coefficients);
+            }
+        }
+    }
 
-/// Node or leaf in the conversion process.
-#[allow(dead_code)]
-enum NodeOrLeaf {
-    Internal(usize),
-    Leaf(usize),
+    Ok(tree.freeze())
 }
 
 /// Convert a LightGBM child reference to our format.
@@ -418,6 +427,39 @@ mod tests {
                 pred[0],
                 *exp as f32,
                 epsilon = 0.02 // Slightly higher tolerance for missing value handling
+            );
+        }
+    }
+
+    #[test]
+    fn convert_linear_tree() {
+        let model = load_model("linear_tree");
+        let forest = model.to_forest().expect("Conversion failed");
+
+        assert_eq!(forest.n_groups(), 1);
+        assert_eq!(forest.n_trees(), 5);
+        
+        // Verify that at least some trees have linear leaves
+        let has_linear = (0..forest.n_trees())
+            .any(|i| forest.tree(i).has_linear_leaves());
+        assert!(has_linear, "Expected at least one tree with linear leaves");
+    }
+
+    #[test]
+    fn predict_linear_tree() {
+        let model = load_model("linear_tree");
+        let forest = model.to_forest().expect("Conversion failed");
+        let (data, expected) = load_expected("linear_tree");
+
+        for (i, (row, exp)) in data.iter().zip(expected.iter()).enumerate() {
+            let features: Vec<f32> = row.iter().map(|x| *x as f32).collect();
+            let pred = forest.predict_row(&features);
+            assert_eq!(pred.len(), 1, "Row {}: expected 1 output", i);
+            // Tighter tolerance for linear trees since they should match closely
+            assert_abs_diff_eq!(
+                pred[0],
+                *exp as f32,
+                epsilon = 0.001
             );
         }
     }

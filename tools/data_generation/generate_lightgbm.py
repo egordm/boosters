@@ -299,6 +299,40 @@ def generate_bench_large():
     save_benchmark_model("bench_large", model, num_features=100)
 
 
+def generate_linear_tree_test():
+    """Generate a test case with linear leaves."""
+    np.random.seed(42)
+    
+    # Create data with a strong linear relationship that benefits from linear leaves
+    X = np.random.randn(200, 5).astype(np.float64)
+    # y is a linear combination plus some nonlinear structure
+    y = 2.0 * X[:, 0] + 3.0 * X[:, 1] - 1.5 * X[:, 2] + 10.0
+    # Add nonlinear component via interaction
+    y += 0.5 * X[:, 0] * X[:, 1]
+    y += np.random.randn(200) * 0.1  # Small noise
+    
+    # Train model with linear_tree=True
+    params = {
+        "objective": "regression",
+        "num_leaves": 8,
+        "learning_rate": 0.3,
+        "n_estimators": 5,
+        "verbose": -1,
+        "seed": 42,
+        "min_data_in_leaf": 10,
+        "linear_tree": True,  # Enable linear leaves
+    }
+    train_data = lgb.Dataset(X, label=y)
+    model = lgb.train(params, train_data, num_boost_round=5)
+    
+    # Get predictions
+    test_X = X[:20]
+    test_y = y[:20]
+    raw_preds = model.predict(test_X, raw_score=True)
+    
+    save_test_case("linear_tree", model, test_X, test_y, raw_preds)
+
+
 def main():
     """Generate all test cases."""
     print(f"Output directory: {OUTPUT_DIR}")
@@ -311,6 +345,7 @@ def main():
     generate_binary_classification_test()
     generate_multiclass_test()
     generate_missing_values_test()
+    generate_linear_tree_test()
     
     print("\n=== Generating LightGBM Benchmark Models ===\n")
     

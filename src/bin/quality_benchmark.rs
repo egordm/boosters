@@ -51,7 +51,7 @@ use booste_rs::testing::data::{
 	synthetic_multiclass_targets_from_linear_scores, synthetic_regression_targets_linear,
 };
 use booste_rs::training::{
-	Accuracy, GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, LogLoss, LogisticLoss, Mae,
+	Accuracy, GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, LinearLeafConfig, LogLoss, LogisticLoss, Mae,
 	Metric, MulticlassAccuracy, MulticlassLogLoss, Objective, Rmse, SoftmaxLoss, SquaredLoss,
 };
 
@@ -113,6 +113,8 @@ struct BenchmarkConfig {
 	trees: u32,
 	depth: u32,
 	classes: Option<usize>,
+	/// Enable linear tree training (booste-rs and LightGBM only).
+	linear_leaves: bool,
 }
 
 fn default_configs(quick: bool) -> Vec<BenchmarkConfig> {
@@ -128,6 +130,7 @@ fn default_configs(quick: bool) -> Vec<BenchmarkConfig> {
 			trees,
 			depth: 6,
 			classes: None,
+			linear_leaves: false,
 		},
 		BenchmarkConfig {
 			name: "regression_medium".to_string(),
@@ -136,6 +139,26 @@ fn default_configs(quick: bool) -> Vec<BenchmarkConfig> {
 			trees,
 			depth: 6,
 			classes: None,
+			linear_leaves: false,
+		},
+		// Linear tree regression benchmarks (booste-rs + LightGBM only)
+		BenchmarkConfig {
+			name: "regression_linear_small".to_string(),
+			task: Task::Regression,
+			data_source: DataSource::Synthetic { rows: small_rows, cols: 50 },
+			trees,
+			depth: 6,
+			classes: None,
+			linear_leaves: true,
+		},
+		BenchmarkConfig {
+			name: "regression_linear_medium".to_string(),
+			task: Task::Regression,
+			data_source: DataSource::Synthetic { rows: medium_rows, cols: 100 },
+			trees,
+			depth: 6,
+			classes: None,
+			linear_leaves: true,
 		},
 		// Binary classification benchmarks
 		BenchmarkConfig {
@@ -145,6 +168,7 @@ fn default_configs(quick: bool) -> Vec<BenchmarkConfig> {
 			trees,
 			depth: 6,
 			classes: None,
+			linear_leaves: false,
 		},
 		BenchmarkConfig {
 			name: "binary_medium".to_string(),
@@ -153,6 +177,7 @@ fn default_configs(quick: bool) -> Vec<BenchmarkConfig> {
 			trees,
 			depth: 6,
 			classes: None,
+			linear_leaves: false,
 		},
 		// Multiclass classification benchmarks
 		BenchmarkConfig {
@@ -162,6 +187,7 @@ fn default_configs(quick: bool) -> Vec<BenchmarkConfig> {
 			trees,
 			depth: 6,
 			classes: Some(5),
+			linear_leaves: false,
 		},
 		BenchmarkConfig {
 			name: "multiclass_medium".to_string(),
@@ -170,6 +196,7 @@ fn default_configs(quick: bool) -> Vec<BenchmarkConfig> {
 			trees,
 			depth: 6,
 			classes: Some(5),
+			linear_leaves: false,
 		},
 	]
 }
@@ -196,10 +223,21 @@ fn real_world_configs(quick: bool) -> Vec<BenchmarkConfig> {
 		configs.push(BenchmarkConfig {
 			name: "california_housing".to_string(),
 			task: Task::Regression,
+			data_source: DataSource::Parquet { path: california_path.clone(), subsample: None },
+			trees,
+			depth: 6,
+			classes: None,
+			linear_leaves: false,
+		});
+		// Linear tree variant for California Housing
+		configs.push(BenchmarkConfig {
+			name: "california_housing_linear".to_string(),
+			task: Task::Regression,
 			data_source: DataSource::Parquet { path: california_path, subsample: None },
 			trees,
 			depth: 6,
 			classes: None,
+			linear_leaves: true,
 		});
 	}
 	
@@ -213,6 +251,7 @@ fn real_world_configs(quick: bool) -> Vec<BenchmarkConfig> {
 			trees,
 			depth: 6,
 			classes: None,
+			linear_leaves: false,
 		});
 	}
 	
@@ -226,6 +265,7 @@ fn real_world_configs(quick: bool) -> Vec<BenchmarkConfig> {
 			trees,
 			depth: 6,
 			classes: Some(7),
+			linear_leaves: false,
 		});
 	}
 	
@@ -592,6 +632,12 @@ fn train_boosters(
 	let binned_train = BinnedDatasetBuilder::from_matrix(&col_train, 256).build().unwrap();
 	let row_valid: RowMatrix<f32> = RowMatrix::from_vec(x_valid.to_vec(), rows_valid, cols);
 
+	let linear_leaves = if config.linear_leaves {
+		Some(LinearLeafConfig::default())
+	} else {
+		None
+	};
+
 	let params = GBDTParams {
 		n_trees: config.trees,
 		learning_rate: 0.1,
@@ -600,6 +646,7 @@ fn train_boosters(
 		n_threads: 1,
 		cache_size: 256,
 		seed,
+		linear_leaves,
 		..Default::default()
 	};
 
@@ -757,6 +804,10 @@ fn train_lightgbm(
 	params["bagging_freq"] = serde_json::Value::from(0i64);
 	params["verbosity"] = serde_json::Value::from(-1i64);
 	params["num_threads"] = serde_json::Value::from(1i64);
+	// Enable linear trees if configured
+	if config.linear_leaves {
+		params["linear_tree"] = serde_json::Value::from(true);
+	}
 
 	let ds = lightgbm3::Dataset::from_slice(&x_train_f64, y_train, cols as i32, true).unwrap();
 	let bst = lightgbm3::Booster::train(ds, &params).unwrap();
@@ -789,13 +840,24 @@ fn run_single_eval(config: &BenchmarkConfig, seed: u64) -> RunResult {
 
 	let booste_rs = train_boosters(config, &x_train, &y_train, rows_train, &x_valid, &y_valid, rows_valid, cols, seed);
 
+	// XGBoost doesn't support linear trees, so skip it for linear tree configs
 	#[cfg(feature = "bench-xgboost")]
-	let xgboost = Some(train_xgboost(config, &x_train, &y_train, rows_train, &x_valid, &y_valid, rows_valid, cols));
+	let xgboost = if config.linear_leaves {
+		None
+	} else {
+		Some(train_xgboost(config, &x_train, &y_train, rows_train, &x_valid, &y_valid, rows_valid, cols))
+	};
 	#[cfg(not(feature = "bench-xgboost"))]
 	let xgboost: Option<LibraryMetrics> = None;
 
+	// LightGBM linear_tree support requires specific library version
+	// The lightgbm3 crate may not support it properly, so skip for linear configs
 	#[cfg(feature = "bench-lightgbm")]
-	let lightgbm = Some(train_lightgbm(config, &x_train, &y_train, rows_train, &x_valid, &y_valid, rows_valid, cols));
+	let lightgbm = if config.linear_leaves {
+		None // Skip - lightgbm3 crate crashes with linear_tree=true
+	} else {
+		Some(train_lightgbm(config, &x_train, &y_train, rows_train, &x_valid, &y_valid, rows_valid, cols))
+	};
 	#[cfg(not(feature = "bench-lightgbm"))]
 	let lightgbm: Option<LibraryMetrics> = None;
 
@@ -1009,8 +1071,8 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 	}
 
 	out.push_str("## Benchmark Configuration\n\n");
-	out.push_str("| Dataset | Data Source | Trees | Depth | Classes |\n");
-	out.push_str("|---------|-------------|-------|-------|--------|\n");
+	out.push_str("| Dataset | Data Source | Trees | Depth | Classes | Linear |\n");
+	out.push_str("|---------|-------------|-------|-------|---------|--------|\n");
 	for r in results {
 		let source = match &r.config.data_source {
 			DataSource::Synthetic { rows, cols } => format!("Synthetic {}x{}", rows, cols),
@@ -1027,13 +1089,15 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 			DataSource::UciMachine(p) => format!("uci-machine: {}", p.display()),
 			DataSource::Label0(p) => format!("label0: {}", p.display()),
 		};
+		let linear_str = if r.config.linear_leaves { "✓" } else { "-" };
 		out.push_str(&format!(
-			"| {} | {} | {} | {} | {} |\n",
+			"| {} | {} | {} | {} | {} | {} |\n",
 			r.config.name,
 			source,
 			r.config.trees,
 			r.config.depth,
 			r.config.classes.map(|c| c.to_string()).unwrap_or("-".to_string()),
+			linear_str,
 		));
 	}
 	out.push_str("\n");
@@ -1141,6 +1205,7 @@ fn main() {
 			trees,
 			depth: 6,
 			classes: None,
+			linear_leaves: false,
 		});
 	}
 	for (i, path) in args.uci_machine_paths.iter().enumerate() {
@@ -1152,6 +1217,7 @@ fn main() {
 			trees,
 			depth: 6,
 			classes: None,
+			linear_leaves: false,
 		});
 	}
 	for (i, path) in args.label0_paths.iter().enumerate() {
@@ -1163,6 +1229,7 @@ fn main() {
 			trees,
 			depth: 6,
 			classes: None,
+			linear_leaves: false,
 		});
 	}
 

@@ -120,6 +120,12 @@ name = "gblinear_prediction"
 harness = false
 path = "benches/suites/compare/gblinear_prediction.rs"
 
+[[bench]]
+name = "linear_tree_prediction"
+harness = false
+required-features = ["lightgbm-compat"]
+path = "benches/suites/compare/linear_tree_prediction.rs"
+
 # Feature benchmarks
 [[bench]]
 name = "multithreading"

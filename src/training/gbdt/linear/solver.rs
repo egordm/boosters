@@ -298,15 +298,6 @@ impl WeightedLeastSquaresSolver {
     pub fn n_features(&self) -> usize {
         self.current_features
     }
-
-    /// Debug helper: print internal state (enabled only in debug builds)
-    #[cfg(debug_assertions)]
-    pub fn debug_print_state(&self) {
-        let size = self.current_features + 1;
-        eprintln!("    solver state: n_features={}, size={}", self.current_features, size);
-        eprintln!("    xtg[..size]: {:?}", &self.xtg[..size]);
-        eprintln!("    xthx[..tri_size]: {:?}", &self.xthx[..(size * (size + 1) / 2)]);
-    }
 }
 
 #[cfg(test)]

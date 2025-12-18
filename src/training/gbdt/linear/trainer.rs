@@ -258,9 +258,9 @@ impl LeafLinearTrainer {
         // Add regularization
         self.solver.add_regularization(self.config.lambda as f64);
 
-        // Solve
-        // Note: For linear leaf fitting, we still use coefficients even if not fully
-        // converged, as XGBoost does. The tolerance is used for early stopping only.
+        // Solve using coordinate descent.
+        // We use the coefficients even if not fully converged, matching LightGBM's
+        // linear tree behavior. The tolerance enables early stopping optimization.
         self.solver
             .solve_cd(self.config.max_iterations, self.config.tolerance);
 

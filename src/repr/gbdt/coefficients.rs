@@ -103,15 +103,23 @@ impl LeafCoefficients {
     /// Get the linear terms for a leaf node.
     ///
     /// Returns `Some((feature_indices, coefficients))` if the node has
-    /// linear coefficients, `None` otherwise.
+    /// linear coefficients or an intercept, `None` otherwise.
+    /// May return `Some(([], []))` for intercept-only linear leaves.
     #[inline]
     pub fn leaf_terms(&self, node: NodeId) -> Option<(&[u32], &[f32])> {
         if self.segments.is_empty() {
             return None;
         }
         let (start, len) = self.segments[node as usize];
+        // Check if this node has linear data (either coefficients or intercept)
+        // If len == 0 but there's a non-zero intercept, return empty slices
         if len == 0 {
-            return None;
+            // Check for non-zero intercept
+            if self.intercepts.get(node as usize).copied().unwrap_or(0.0).abs() < 1e-10 {
+                return None;
+            }
+            // Return empty slices - caller should use leaf_intercept
+            return Some((&[], &[]));
         }
         let start = start as usize;
         let end = start + len as usize;
@@ -340,7 +348,7 @@ mod tests {
 
         // Has intercept stored even though no coefficients
         assert_eq!(coefs.intercept(1), 2.5);
-        // But leaf_terms returns None because no feature terms
-        assert!(coefs.leaf_terms(1).is_none());
+        // leaf_terms returns Some with empty slices for intercept-only linear leaves
+        assert_eq!(coefs.leaf_terms(1), Some((&[][..], &[][..])));
     }
 }
