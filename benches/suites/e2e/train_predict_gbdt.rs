@@ -8,7 +8,7 @@ use common::criterion_config::default_criterion;
 use booste_rs::data::{binned::BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMajor, RowMatrix};
 use booste_rs::inference::gbdt::{Predictor, UnrolledTraversal6};
 use booste_rs::testing::data::{random_dense_f32, split_indices, synthetic_regression_targets_linear};
-use booste_rs::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, SquaredLoss};
+use booste_rs::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 
 use common::select::{select_rows_row_major, select_targets};
 
@@ -42,11 +42,11 @@ fn bench_train_then_predict_regression(c: &mut Criterion) {
 		cache_size: 256,
 		..Default::default()
 	};
-	let trainer = GBDTTrainer::new(SquaredLoss, params);
+	let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
 
 	group.bench_function("train_then_predict", |b| {
 		b.iter(|| {
-			let forest = trainer.train(black_box(&binned_train), black_box(&y_train), &[]).unwrap();
+			let forest = trainer.train(black_box(&binned_train), black_box(&y_train), &[], &[]).unwrap();
 			let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
 			let preds = predictor.predict(black_box(&row_valid));
 			black_box(preds)

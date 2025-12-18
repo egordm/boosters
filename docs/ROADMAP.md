@@ -34,6 +34,7 @@ booste-rs has achieved **performance parity with LightGBM** and is **13-28%% fas
 | **Per-Feature Binning** | Low | Custom max_bins per feature |
 | **GPU Acceleration** | Low | CUDA/Metal/WebGPU support |
 | **SIMD Inference** | Low | Vectorized tree traversal |
+| **Natural Gradient Boosting** | Low | NGBoost-style probabilistic boosting |
 
 ## Design Documents
 

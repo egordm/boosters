@@ -114,6 +114,11 @@ name = "gblinear_training"
 harness = false
 path = "benches/suites/compare/gblinear_training.rs"
 
+[[bench]]
+name = "gblinear_prediction"
+harness = false
+path = "benches/suites/compare/gblinear_prediction.rs"
+
 # Feature benchmarks
 [[bench]]
 name = "multithreading"
