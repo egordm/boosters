@@ -30,9 +30,11 @@ mod storage;
 mod group;
 mod dataset;
 mod builder;
+mod feature_analysis;
 
 pub use bin_mapper::{BinMapper, FeatureType, MissingType};
 pub use storage::{FeatureView, BinStorage, BinType, GroupLayout};
 pub use group::{FeatureGroup, FeatureMeta};
 pub use dataset::{BinnedDataset, RowView};
 pub use builder::{BinnedDatasetBuilder, GroupStrategy, GroupSpec, BuildError, BinningConfig, BinningStrategy};
+pub use feature_analysis::{FeatureInfo, analyze_features, analyze_features_sequential};
