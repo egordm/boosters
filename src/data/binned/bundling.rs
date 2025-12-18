@@ -139,11 +139,23 @@ impl BundlingConfig {
     }
 }
 
-/// A bundle of mutually exclusive features.
+/// A bundle of mutually exclusive features encoded as one.
+///
+/// Features in a bundle share a single column in the binned dataset.
+/// Each feature's bins are offset to avoid collision.
 #[derive(Clone, Debug)]
 pub struct FeatureBundle {
     /// Indices of features in this bundle (in original feature space).
     pub feature_indices: Vec<usize>,
+
+    /// Bin offset for each feature in the bundle.
+    /// Bundle bin = bin_offsets[i] + feature_bin[i].
+    /// Only populated after `finalize()` is called.
+    pub bin_offsets: Vec<u32>,
+
+    /// Total bins in this bundle (sum of all feature bins).
+    /// Only populated after `finalize()` is called.
+    pub total_bins: u32,
 }
 
 impl FeatureBundle {
@@ -151,6 +163,8 @@ impl FeatureBundle {
     pub fn new(feature_idx: usize) -> Self {
         Self {
             feature_indices: vec![feature_idx],
+            bin_offsets: Vec::new(),
+            total_bins: 0,
         }
     }
 
@@ -168,13 +182,82 @@ impl FeatureBundle {
     pub fn is_empty(&self) -> bool {
         self.feature_indices.is_empty()
     }
+
+    /// Finalize the bundle by computing bin offsets.
+    ///
+    /// # Arguments
+    /// * `n_bins_per_feature` - A function that returns the number of bins for a feature
+    pub fn finalize<F>(&mut self, n_bins_per_feature: F)
+    where
+        F: Fn(usize) -> u32,
+    {
+        self.bin_offsets.clear();
+        let mut offset = 0u32;
+        for &feat_idx in &self.feature_indices {
+            self.bin_offsets.push(offset);
+            offset += n_bins_per_feature(feat_idx);
+        }
+        self.total_bins = offset;
+    }
+
+    /// Encode a value for this bundle.
+    ///
+    /// Finds the first non-zero feature and returns its offset + bin.
+    /// Returns 0 if all features are zero (default bin).
+    ///
+    /// # Arguments
+    /// * `get_bin` - A function that returns (is_non_zero, bin) for a given feature index
+    pub fn encode<F>(&self, get_bin: F) -> u32
+    where
+        F: Fn(usize) -> (bool, u32),
+    {
+        for (i, &feat_idx) in self.feature_indices.iter().enumerate() {
+            let (is_non_zero, bin) = get_bin(feat_idx);
+            if is_non_zero {
+                return self.bin_offsets[i] + bin;
+            }
+        }
+        // All features are zero - use bin 0 of first feature
+        0
+    }
+}
+
+/// Where a feature ended up after bundling.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FeatureLocation {
+    /// Feature is standalone at this binned column index.
+    Standalone(usize),
+
+    /// Feature is in bundle at (bundle_idx, position within bundle).
+    Bundled {
+        /// Index of the bundle in BundlePlan.bundles.
+        bundle_idx: usize,
+        /// Position within the bundle (index into FeatureBundle.feature_indices).
+        position: usize,
+    },
+
+    /// Feature was trivial and skipped.
+    Skipped,
 }
 
 /// Result of the bundling analysis.
+///
+/// Contains bundles for sparse features and tracks which features
+/// are standalone (not bundled) or skipped.
 #[derive(Clone, Debug)]
 pub struct BundlePlan {
-    /// The computed bundles.
+    /// The computed bundles for sparse features.
     pub bundles: Vec<FeatureBundle>,
+
+    /// Indices of features that remain standalone (dense/non-sparse).
+    pub standalone_features: Vec<usize>,
+
+    /// Indices of features that were skipped (trivial).
+    pub skipped_features: Vec<usize>,
+
+    /// Mapping from original feature index to its location.
+    /// Length equals total number of features analyzed.
+    pub feature_mapping: Vec<FeatureLocation>,
 
     /// Total conflicts in the plan.
     pub total_conflicts: usize,
@@ -205,6 +288,25 @@ impl BundlePlan {
             1.0
         } else {
             self.bundles.len() as f32 / self.sparse_feature_count as f32
+        }
+    }
+
+    /// Total number of binned columns after bundling.
+    /// Each bundle becomes 1 column, plus standalone features.
+    pub fn binned_column_count(&self) -> usize {
+        self.bundles.len() + self.standalone_features.len()
+    }
+
+    /// Finalize the plan by computing bin offsets for each bundle.
+    ///
+    /// # Arguments
+    /// * `n_bins_per_feature` - A function that returns the number of bins for a feature
+    pub fn finalize<F>(&mut self, n_bins_per_feature: F)
+    where
+        F: Fn(usize) -> u32,
+    {
+        for bundle in &mut self.bundles {
+            bundle.finalize(&n_bins_per_feature);
         }
     }
 }
@@ -464,16 +566,50 @@ pub fn create_bundle_plan<M: DataMatrix<Element = f32> + Sync>(
     feature_infos: &[FeatureInfo],
     config: &BundlingConfig,
 ) -> BundlePlan {
+    let n_features = feature_infos.len();
+
+    // Helper to build a skipped/no-bundling plan
+    let build_no_bundling_plan = |reason: String, rows_sampled: usize| -> BundlePlan {
+        let sparse_threshold = 1.0 - config.min_sparsity;
+
+        let mut standalone_features = Vec::new();
+        let mut skipped_features = Vec::new();
+        let mut feature_mapping = vec![FeatureLocation::Skipped; n_features];
+
+        let mut standalone_idx = 0usize;
+        for info in feature_infos {
+            if info.is_trivial {
+                skipped_features.push(info.original_idx);
+                feature_mapping[info.original_idx] = FeatureLocation::Skipped;
+            } else {
+                // All non-trivial features become standalone when bundling is skipped
+                standalone_features.push(info.original_idx);
+                feature_mapping[info.original_idx] = FeatureLocation::Standalone(standalone_idx);
+                standalone_idx += 1;
+            }
+        }
+
+        let sparse_count = feature_infos
+            .iter()
+            .filter(|f| f.density <= sparse_threshold && !f.is_trivial)
+            .count();
+
+        BundlePlan {
+            bundles: Vec::new(),
+            standalone_features,
+            skipped_features,
+            feature_mapping,
+            total_conflicts: 0,
+            rows_sampled,
+            sparse_feature_count: sparse_count,
+            skipped: true,
+            skip_reason: Some(reason),
+        }
+    };
+
     // Check if bundling is disabled
     if !config.enable_bundling {
-        return BundlePlan {
-            bundles: Vec::new(),
-            total_conflicts: 0,
-            rows_sampled: 0,
-            sparse_feature_count: 0,
-            skipped: true,
-            skip_reason: Some("Bundling disabled".to_string()),
-        };
+        return build_no_bundling_plan("Bundling disabled".to_string(), 0);
     }
 
     // Filter to sparse features only
@@ -487,37 +623,18 @@ pub fn create_bundle_plan<M: DataMatrix<Element = f32> + Sync>(
 
     // Check if too few sparse features
     if sparse_count < 2 {
-        return BundlePlan {
-            bundles: sparse_features
-                .iter()
-                .map(|f| FeatureBundle::new(f.original_idx))
-                .collect(),
-            total_conflicts: 0,
-            rows_sampled: 0,
-            sparse_feature_count: sparse_count,
-            skipped: true,
-            skip_reason: Some("Too few sparse features for bundling".to_string()),
-        };
+        return build_no_bundling_plan("Too few sparse features for bundling".to_string(), 0);
     }
 
     // Check if too many sparse features
     if sparse_count > config.max_sparse_features {
-        // Log warning would go here in production
-        // For now, we just mark as skipped
-        return BundlePlan {
-            bundles: sparse_features
-                .iter()
-                .map(|f| FeatureBundle::new(f.original_idx))
-                .collect(),
-            total_conflicts: 0,
-            rows_sampled: 0,
-            sparse_feature_count: sparse_count,
-            skipped: true,
-            skip_reason: Some(format!(
+        return build_no_bundling_plan(
+            format!(
                 "Too many sparse features ({} > {})",
                 sparse_count, config.max_sparse_features
-            )),
-        };
+            ),
+            0,
+        );
     }
 
     // Sample rows for conflict detection
@@ -533,21 +650,13 @@ pub fn create_bundle_plan<M: DataMatrix<Element = f32> + Sync>(
 
     // Check for high conflict rate (early termination)
     if conflict_graph.conflict_rate() > 0.5 {
-        // More than 50% of pairs conflict - bundling won't help much
-        return BundlePlan {
-            bundles: sparse_features
-                .iter()
-                .map(|f| FeatureBundle::new(f.original_idx))
-                .collect(),
-            total_conflicts: 0,
-            rows_sampled: n_sampled,
-            sparse_feature_count: sparse_count,
-            skipped: true,
-            skip_reason: Some(format!(
+        return build_no_bundling_plan(
+            format!(
                 "High conflict rate ({:.1}%)",
                 conflict_graph.conflict_rate() * 100.0
-            )),
-        };
+            ),
+            n_sampled,
+        );
     }
 
     // Create a local copy of sparse feature infos for assignment
@@ -557,8 +666,40 @@ pub fn create_bundle_plan<M: DataMatrix<Element = f32> + Sync>(
     let (bundles, total_conflicts) =
         assign_bundles(&sparse_feature_infos, &conflict_graph, config, n_sampled);
 
+    // Build the complete feature mapping
+    let mut standalone_features = Vec::new();
+    let mut skipped_features = Vec::new();
+    let mut feature_mapping = vec![FeatureLocation::Skipped; n_features];
+
+    // First, mark trivial features as skipped
+    for info in feature_infos {
+        if info.is_trivial {
+            skipped_features.push(info.original_idx);
+        }
+    }
+
+    // Dense (non-sparse) features become standalone
+    let mut standalone_idx = 0usize;
+    for info in feature_infos {
+        if !info.is_trivial && info.density > sparse_threshold {
+            standalone_features.push(info.original_idx);
+            feature_mapping[info.original_idx] = FeatureLocation::Standalone(standalone_idx);
+            standalone_idx += 1;
+        }
+    }
+
+    // Bundled features
+    for (bundle_idx, bundle) in bundles.iter().enumerate() {
+        for (position, &feat_idx) in bundle.feature_indices.iter().enumerate() {
+            feature_mapping[feat_idx] = FeatureLocation::Bundled { bundle_idx, position };
+        }
+    }
+
     BundlePlan {
         bundles,
+        standalone_features,
+        skipped_features,
+        feature_mapping,
         total_conflicts,
         rows_sampled: n_sampled,
         sparse_feature_count: sparse_count,
@@ -892,6 +1033,12 @@ mod tests {
     fn test_bundle_plan_effectiveness() {
         let plan = BundlePlan {
             bundles: vec![FeatureBundle::new(0)],
+            standalone_features: vec![],
+            skipped_features: vec![],
+            feature_mapping: vec![FeatureLocation::Bundled {
+                bundle_idx: 0,
+                position: 0,
+            }],
             total_conflicts: 0,
             rows_sampled: 100,
             sparse_feature_count: 4,
@@ -911,6 +1058,26 @@ mod tests {
                 FeatureBundle::new(1),
                 FeatureBundle::new(2),
                 FeatureBundle::new(3),
+            ],
+            standalone_features: vec![],
+            skipped_features: vec![],
+            feature_mapping: vec![
+                FeatureLocation::Bundled {
+                    bundle_idx: 0,
+                    position: 0,
+                },
+                FeatureLocation::Bundled {
+                    bundle_idx: 1,
+                    position: 0,
+                },
+                FeatureLocation::Bundled {
+                    bundle_idx: 2,
+                    position: 0,
+                },
+                FeatureLocation::Bundled {
+                    bundle_idx: 3,
+                    position: 0,
+                },
             ],
             total_conflicts: 0,
             rows_sampled: 100,
@@ -938,5 +1105,139 @@ mod tests {
         assert_eq!(graph.total_pair_count(), 6);
         assert_eq!(graph.conflict_pair_count(), 2);
         assert!((graph.conflict_rate() - 2.0 / 6.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_feature_bundle_finalize() {
+        let mut bundle = FeatureBundle::new(0);
+        bundle.add(1);
+        bundle.add(2);
+
+        // Feature 0 has 10 bins, feature 1 has 20 bins, feature 2 has 5 bins
+        bundle.finalize(|idx| match idx {
+            0 => 10,
+            1 => 20,
+            2 => 5,
+            _ => 0,
+        });
+
+        assert_eq!(bundle.bin_offsets, vec![0, 10, 30]);
+        assert_eq!(bundle.total_bins, 35);
+    }
+
+    #[test]
+    fn test_feature_bundle_encode() {
+        let mut bundle = FeatureBundle::new(0);
+        bundle.add(1);
+        bundle.finalize(|idx| if idx == 0 { 10 } else { 20 });
+
+        // Simulate: feature 0 is non-zero with bin 5
+        let result = bundle.encode(|idx| {
+            if idx == 0 {
+                (true, 5) // non-zero, bin 5
+            } else {
+                (false, 0) // zero
+            }
+        });
+        assert_eq!(result, 5); // offset 0 + bin 5
+
+        // Simulate: feature 1 is non-zero with bin 15
+        let result = bundle.encode(|idx| {
+            if idx == 0 {
+                (false, 0)
+            } else {
+                (true, 15)
+            }
+        });
+        assert_eq!(result, 10 + 15); // offset 10 + bin 15
+
+        // Simulate: both features are zero
+        let result = bundle.encode(|_| (false, 0));
+        assert_eq!(result, 0); // default bin
+    }
+
+    #[test]
+    fn test_bundle_plan_feature_mapping() {
+        // 10 rows, 3 cols - 2 sparse (mutually exclusive) + 1 dense
+        // Col 0: [1,0,0,0,0,0,0,0,0,0] - sparse
+        // Col 1: [0,1,0,0,0,0,0,0,0,0] - sparse
+        // Col 2: [1,1,1,1,1,1,1,1,1,1] - dense
+        let mut data = vec![0.0f32; 30];
+        data[0] = 1.0;  // col 0, row 0
+        data[11] = 1.0; // col 1, row 1
+        for i in 0..10 {
+            data[20 + i] = 1.0; // col 2, all rows
+        }
+        let matrix = ColMatrix::from_vec(data, 10, 3);
+
+        let feature_infos = vec![
+            FeatureInfo {
+                original_idx: 0,
+                density: 0.1,
+                is_binary: true,
+                is_trivial: false,
+            },
+            FeatureInfo {
+                original_idx: 1,
+                density: 0.1,
+                is_binary: true,
+                is_trivial: false,
+            },
+            FeatureInfo {
+                original_idx: 2,
+                density: 1.0, // dense
+                is_binary: false,
+                is_trivial: false,
+            },
+        ];
+
+        let config = BundlingConfig::auto();
+        let plan = create_bundle_plan(&matrix, &feature_infos, &config);
+
+        assert!(!plan.skipped);
+
+        // Feature 2 should be standalone (dense)
+        assert_eq!(plan.standalone_features, vec![2]);
+
+        // Features 0 and 1 should be bundled together
+        assert_eq!(plan.bundles.len(), 1);
+        assert!(plan.bundles[0].feature_indices.contains(&0));
+        assert!(plan.bundles[0].feature_indices.contains(&1));
+
+        // Check feature mapping
+        assert!(matches!(
+            plan.feature_mapping[0],
+            FeatureLocation::Bundled { bundle_idx: 0, .. }
+        ));
+        assert!(matches!(
+            plan.feature_mapping[1],
+            FeatureLocation::Bundled { bundle_idx: 0, .. }
+        ));
+        assert_eq!(plan.feature_mapping[2], FeatureLocation::Standalone(0));
+    }
+
+    #[test]
+    fn test_bundle_plan_binned_column_count() {
+        let plan = BundlePlan {
+            bundles: vec![FeatureBundle::new(0), FeatureBundle::new(1)],
+            standalone_features: vec![2, 3, 4],
+            skipped_features: vec![5],
+            feature_mapping: vec![
+                FeatureLocation::Bundled { bundle_idx: 0, position: 0 },
+                FeatureLocation::Bundled { bundle_idx: 1, position: 0 },
+                FeatureLocation::Standalone(0),
+                FeatureLocation::Standalone(1),
+                FeatureLocation::Standalone(2),
+                FeatureLocation::Skipped,
+            ],
+            total_conflicts: 0,
+            rows_sampled: 100,
+            sparse_feature_count: 2,
+            skipped: false,
+            skip_reason: None,
+        };
+
+        // 2 bundles + 3 standalone = 5 columns
+        assert_eq!(plan.binned_column_count(), 5);
     }
 }

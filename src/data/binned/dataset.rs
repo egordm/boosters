@@ -1,5 +1,6 @@
 //! BinnedDataset - the main dataset structure.
 
+use super::bundling::BundlePlan;
 use super::group::{FeatureGroup, FeatureMeta};
 use super::storage::{BinStorage, FeatureView, GroupLayout};
 
@@ -36,6 +37,8 @@ pub struct BinnedDataset {
     /// `global_bin_offsets[i]` = sum of n_bins for features 0..i
     /// Length is n_features + 1 (last element is total_bins).
     global_bin_offsets: Box<[u32]>,
+    /// Optional bundle plan if bundling was applied.
+    bundle_plan: Option<BundlePlan>,
 }
 
 impl BinnedDataset {
@@ -46,6 +49,16 @@ impl BinnedDataset {
         n_rows: usize,
         features: Vec<FeatureMeta>,
         groups: Vec<FeatureGroup>,
+    ) -> Self {
+        Self::with_bundle_plan(n_rows, features, groups, None)
+    }
+
+    /// Create a new binned dataset with an optional bundle plan.
+    pub(crate) fn with_bundle_plan(
+        n_rows: usize,
+        features: Vec<FeatureMeta>,
+        groups: Vec<FeatureGroup>,
+        bundle_plan: Option<BundlePlan>,
     ) -> Self {
         // Compute global bin offsets
         let mut global_bin_offsets = Vec::with_capacity(features.len() + 1);
@@ -61,6 +74,7 @@ impl BinnedDataset {
             features: features.into_boxed_slice(),
             groups,
             global_bin_offsets: global_bin_offsets.into_boxed_slice(),
+            bundle_plan,
         }
     }
 
@@ -71,6 +85,7 @@ impl BinnedDataset {
             features: Box::new([]),
             groups: Vec::new(),
             global_bin_offsets: vec![0].into_boxed_slice(),
+            bundle_plan: None,
         }
     }
 
@@ -164,6 +179,54 @@ impl BinnedDataset {
         self.groups.iter().map(|g| g.size_bytes()).sum()
     }
 
+    /// Get the bundle plan if bundling was applied.
+    pub fn bundle_plan(&self) -> Option<&BundlePlan> {
+        self.bundle_plan.as_ref()
+    }
+
+    /// Check if bundling was applied and was effective.
+    pub fn has_effective_bundling(&self) -> bool {
+        self.bundle_plan.as_ref().is_some_and(|p| p.is_effective())
+    }
+
+    /// Get bundling statistics if bundling was applied.
+    pub fn bundling_stats(&self) -> Option<BundlingStats> {
+        let plan = self.bundle_plan.as_ref()?;
+        Some(BundlingStats {
+            original_sparse_features: plan.sparse_feature_count,
+            bundles_created: plan.bundles.len(),
+            standalone_features: plan.standalone_features.len(),
+            skipped_features: plan.skipped_features.len(),
+            total_conflicts: plan.total_conflicts,
+            is_effective: plan.is_effective(),
+            reduction_ratio: plan.reduction_ratio(),
+            binned_columns: plan.binned_column_count(),
+        })
+    }
+}
+
+/// Statistics about bundling effectiveness.
+#[derive(Clone, Debug)]
+pub struct BundlingStats {
+    /// Number of sparse features that were considered for bundling.
+    pub original_sparse_features: usize,
+    /// Number of bundles created.
+    pub bundles_created: usize,
+    /// Number of standalone (non-bundled) features.
+    pub standalone_features: usize,
+    /// Number of skipped (trivial) features.
+    pub skipped_features: usize,
+    /// Total conflicts in the bundle plan.
+    pub total_conflicts: usize,
+    /// Whether bundling was effective (reduced column count).
+    pub is_effective: bool,
+    /// Reduction ratio: bundles / original_sparse_features.
+    pub reduction_ratio: f32,
+    /// Total binned columns after bundling.
+    pub binned_columns: usize,
+}
+
+impl BinnedDataset {
     /// Check if all groups use the same layout.
     pub fn is_uniform_layout(&self) -> Option<GroupLayout> {
         let first = self.groups.first()?.layout();
