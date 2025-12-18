@@ -30,7 +30,7 @@ pub use histograms::{
     FeatureMeta, FeatureView, HistogramBin, HistogramBuilder, HistogramPool, HistogramSlot,
     HistogramSlotMut,
 };
-pub use linear::LeafFeatureBuffer;
+pub use linear::{LeafFeatureBuffer, WeightedLeastSquaresSolver};
 pub use parallelism::Parallelism;
 pub use partition::{LeafId, RowPartitioner};
 pub use split::{GainParams, GreedySplitter, SplitInfo, SplitType, DEFAULT_MAX_ONEHOT_CATS};

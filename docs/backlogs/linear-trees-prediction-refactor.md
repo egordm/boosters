@@ -136,15 +136,15 @@ Column-major buffer for gathering leaf features into contiguous memory.
 
 ---
 
-### Story 2.2: WeightedLeastSquaresSolver [M]
+### Story 2.2: WeightedLeastSquaresSolver [M] ✅
 
 Reusable coordinate descent solver for leaf fitting.
 
 **Tasks:**
 
-- [ ] Implement solver with `reset()`, `accumulate_column()`, `solve_cd()`
-- [ ] Add `tri_index` helper for symmetric matrix storage
-- [ ] Add regularization and convergence check
+- [x] Implement solver with `reset()`, `accumulate()`, `accumulate_column()`, `solve_cd()`
+- [x] Add `tri_index` helper for symmetric matrix storage
+- [x] Add regularization and convergence check
 
 **Acceptance Criteria:**
 
@@ -160,6 +160,8 @@ Reusable coordinate descent solver for leaf fitting.
 - `test_solver_with_regularization`: High λ shrinks coefficients toward 0
 - `test_solver_convergence`: Verify early exit when converged
 - `test_solver_non_convergence`: Max iterations reached, returns false
+- `test_tri_index`: Verify triangular matrix index computation
+- `test_column_accumulation`: Verify column-wise matches sample-wise accumulation
 
 ---
 

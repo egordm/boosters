@@ -6,6 +6,7 @@
 //! # Components
 //!
 //! - [`LeafFeatureBuffer`]: Column-major buffer for gathering leaf features
+//! - [`WeightedLeastSquaresSolver`]: Coordinate descent solver for weighted least squares
 //!
 //! # Design
 //!
@@ -13,5 +14,7 @@
 //! See RFC-0015 for design rationale.
 
 mod buffer;
+mod solver;
 
 pub use buffer::LeafFeatureBuffer;
+pub use solver::WeightedLeastSquaresSolver;
