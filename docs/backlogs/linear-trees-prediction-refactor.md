@@ -189,29 +189,32 @@ Orchestrate linear fitting for all leaves in a tree.
 
 ---
 
-### Story 2.4: Coefficient Storage and Freeze [M]
+### Story 2.4: Coefficient Storage and Freeze [M] ✅
 
 Store coefficients in MutableTree, pack into Tree on freeze. Includes serialization.
 
 **Tasks:**
 
-- [ ] Add `linear_leaves: Vec<...>` to MutableTree
-- [ ] Implement `LeafCoefficients` packed storage
-- [ ] Build LeafCoefficients in `freeze()`
-- [ ] Add `leaf_terms()` and `linear_leaves()` accessors
-- [ ] Extend JSON/binary serialization for LeafCoefficients
+- [x] Add `linear_leaves: Vec<...>` to MutableTree
+- [x] Implement `LeafCoefficients` packed storage
+- [x] Build LeafCoefficients in `freeze()`
+- [x] Add `leaf_terms()` and `has_linear_leaves()` accessors
+- [x] Add serde derives for LeafCoefficients (behind xgboost-compat feature)
+- [ ] ~~Extend JSON/binary serialization for LeafCoefficients~~ (Deferred: no native serialization format exists; can serialize via serde)
 
 **Acceptance Criteria:**
 
 - Coefficients survive freeze() round-trip
 - `leaf_terms(node)` returns correct feature indices and coefficients
-- Serialization works (save + load produces same predictions)
+- ~~Serialization works (save + load produces same predictions)~~ (Deferred)
 
 **Tests:**
 
-- `test_coefficients_roundtrip`: Set → freeze → read
-- `test_empty_coefficients`: Leaf with pruned coefficients returns None
-- `test_linear_tree_serialization`: Save → load → predict matches
+- `test_mutable_tree_linear_leaf_freeze`: Set → freeze → read (implemented)
+- `test_mutable_tree_reset_clears_linear`: Reset clears linear leaves (implemented)
+- `test_coefficients_roundtrip`: Set → freeze → read (via coefficients module tests)
+- `test_empty_coefficients`: Empty storage returns None
+- ~~`test_linear_tree_serialization`: Save → load → predict matches~~ (Deferred)
 
 ---
 

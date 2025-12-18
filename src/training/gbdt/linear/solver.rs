@@ -5,6 +5,8 @@
 //! Uses coordinate descent for simplicity and L1 support (no BLAS dependency).
 //! Pre-allocates buffers and reuses them between leaves.
 
+use crate::training::GradsTuple;
+
 /// Compute the triangular matrix index for a symmetric matrix stored in packed form.
 ///
 /// For a symmetric matrix stored as upper triangle in row-major order:
@@ -145,8 +147,7 @@ impl WeightedLeastSquaresSolver {
     /// # Arguments
     /// - `feat_idx`: feature index (0-based, will be offset for intercept)
     /// - `values`: feature values for all samples
-    /// - `grads`: gradients for all samples
-    /// - `hess`: hessians for all samples
+    /// - `grad_hess`: gradient/hessian tuples for all samples
     ///
     /// Note: Must call `accumulate_intercept` first/separately, then
     /// accumulate each feature column.
@@ -154,8 +155,7 @@ impl WeightedLeastSquaresSolver {
         &mut self,
         feat_idx: usize,
         values: &[f32],
-        grads: &[f32],
-        hess: &[f32],
+        grad_hess: &[GradsTuple],
     ) {
         let n_features = self.current_features;
         let size = n_features + 1;
@@ -166,10 +166,10 @@ impl WeightedLeastSquaresSolver {
         let mut sum_hxx = 0.0f64;
         let mut sum_gx = 0.0f64;
 
-        for ((&x, &g), &h) in values.iter().zip(grads.iter()).zip(hess.iter()) {
+        for (&x, gh) in values.iter().zip(grad_hess.iter()) {
             let xf = x as f64;
-            let hf = h as f64;
-            let gf = g as f64;
+            let hf = gh.hess as f64;
+            let gf = gh.grad as f64;
 
             sum_hx += hf * xf;
             sum_hxx += hf * xf * xf;
@@ -187,16 +187,15 @@ impl WeightedLeastSquaresSolver {
     /// Accumulate the intercept terms (call once per problem).
     ///
     /// # Arguments
-    /// - `grads`: gradients for all samples
-    /// - `hess`: hessians for all samples
-    pub fn accumulate_intercept(&mut self, grads: &[f32], hess: &[f32]) {
+    /// - `grad_hess`: gradient/hessian tuples for all samples
+    pub fn accumulate_intercept(&mut self, grad_hess: &[GradsTuple]) {
         let size = self.current_features + 1;
         let mut sum_h = 0.0f64;
         let mut sum_g = 0.0f64;
 
-        for (&g, &h) in grads.iter().zip(hess.iter()) {
-            sum_h += h as f64;
-            sum_g += g as f64;
+        for gh in grad_hess.iter() {
+            sum_h += gh.hess as f64;
+            sum_g += gh.grad as f64;
         }
 
         // Intercept-intercept: XᵀHX[0, 0] = Σh
@@ -212,15 +211,15 @@ impl WeightedLeastSquaresSolver {
         feat_j: usize,
         values_i: &[f32],
         values_j: &[f32],
-        hess: &[f32],
+        grad_hess: &[GradsTuple],
     ) {
         let size = self.current_features + 1;
         let row = feat_i + 1;
         let col = feat_j + 1;
 
         let mut sum = 0.0f64;
-        for ((&xi, &xj), &h) in values_i.iter().zip(values_j.iter()).zip(hess.iter()) {
-            sum += (h as f64) * (xi as f64) * (xj as f64);
+        for ((&xi, &xj), gh) in values_i.iter().zip(values_j.iter()).zip(grad_hess.iter()) {
+            sum += (gh.hess as f64) * (xi as f64) * (xj as f64);
         }
 
         self.xthx[tri_index(row, col, size)] += sum;
@@ -528,15 +527,17 @@ mod tests {
         let mut solver2 = WeightedLeastSquaresSolver::new(2);
         solver2.reset(2);
 
-        let grads: Vec<f32> = data.iter().map(|(_, g, _)| *g).collect();
-        let hess: Vec<f32> = data.iter().map(|(_, _, h)| *h).collect();
+        let grad_hess: Vec<GradsTuple> = data
+            .iter()
+            .map(|(_, g, h)| GradsTuple { grad: *g, hess: *h })
+            .collect();
         let col0: Vec<f32> = data.iter().map(|(f, _, _)| f[0]).collect();
         let col1: Vec<f32> = data.iter().map(|(f, _, _)| f[1]).collect();
 
-        solver2.accumulate_intercept(&grads, &hess);
-        solver2.accumulate_column(0, &col0, &grads, &hess);
-        solver2.accumulate_column(1, &col1, &grads, &hess);
-        solver2.accumulate_cross_term(0, 1, &col0, &col1, &hess);
+        solver2.accumulate_intercept(&grad_hess);
+        solver2.accumulate_column(0, &col0, &grad_hess);
+        solver2.accumulate_column(1, &col1, &grad_hess);
+        solver2.accumulate_cross_term(0, 1, &col0, &col1, &grad_hess);
 
         // Solve both
         solver1.solve_cd(100, 1e-10);
