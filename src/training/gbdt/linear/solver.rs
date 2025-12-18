@@ -77,7 +77,7 @@ impl WeightedLeastSquaresSolver {
     ///
     /// Clears accumulated statistics but reuses allocated buffers.
     pub fn reset(&mut self, n_features: usize) {
-        assert!(
+        debug_assert!(
             n_features <= self.max_features,
             "Too many features: {} > max {}",
             n_features,

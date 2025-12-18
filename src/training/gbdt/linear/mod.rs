@@ -7,6 +7,8 @@
 //!
 //! - [`LeafFeatureBuffer`]: Column-major buffer for gathering leaf features
 //! - [`WeightedLeastSquaresSolver`]: Coordinate descent solver for weighted least squares
+//! - [`LinearLeafConfig`]: Configuration for linear leaf training
+//! - [`LeafLinearTrainer`]: Orchestrates linear fitting for all leaves
 //!
 //! # Design
 //!
@@ -14,7 +16,11 @@
 //! See RFC-0015 for design rationale.
 
 mod buffer;
+mod config;
 mod solver;
+mod trainer;
 
 pub use buffer::LeafFeatureBuffer;
+pub use config::LinearLeafConfig;
 pub use solver::WeightedLeastSquaresSolver;
+pub use trainer::{FittedLeaf, LeafLinearTrainer};

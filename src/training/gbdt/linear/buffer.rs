@@ -49,10 +49,10 @@ impl LeafFeatureBuffer {
     ///
     /// # Panics
     ///
-    /// Panics if either capacity is zero.
+    /// Panics in debug builds if either capacity is zero.
     pub fn new(max_rows: usize, max_features: usize) -> Self {
-        assert!(max_rows > 0, "max_rows must be positive");
-        assert!(max_features > 0, "max_features must be positive");
+        debug_assert!(max_rows > 0, "max_rows must be positive");
+        debug_assert!(max_features > 0, "max_features must be positive");
         
         Self {
             data: vec![0.0; max_rows * max_features],
@@ -84,13 +84,13 @@ impl LeafFeatureBuffer {
         col_matrix: &ColMatrix<f32, S>,
         features: &[u32],
     ) {
-        assert!(
+        debug_assert!(
             rows.len() <= self.max_rows,
             "Too many rows: {} > max {}",
             rows.len(),
             self.max_rows
         );
-        assert!(
+        debug_assert!(
             features.len() <= self.max_features,
             "Too many features: {} > max {}",
             features.len(),
@@ -120,7 +120,7 @@ impl LeafFeatureBuffer {
     /// Panics if `feat_idx >= n_features`.
     #[inline]
     pub fn feature_slice(&self, feat_idx: usize) -> &[f32] {
-        assert!(
+        debug_assert!(
             feat_idx < self.n_features,
             "feature index {} out of bounds (n_features = {})",
             feat_idx,

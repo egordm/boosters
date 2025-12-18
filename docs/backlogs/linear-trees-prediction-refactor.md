@@ -165,15 +165,15 @@ Reusable coordinate descent solver for leaf fitting.
 
 ---
 
-### Story 2.3: LeafLinearTrainer Core [M]
+### Story 2.3: LeafLinearTrainer Core [M] ✅
 
 Orchestrate linear fitting for all leaves in a tree.
 
 **Tasks:**
 
-- [ ] Implement `LinearLeafConfig` with defaults
-- [ ] Implement `LeafLinearTrainer` with sequential `train()` method
-- [ ] Implement path feature selection (numeric features on root→leaf path)
+- [x] Implement `LinearLeafConfig` with defaults
+- [x] Implement `LeafLinearTrainer` with sequential `train()` method
+- [x] Implement path feature selection (numeric features on root→leaf path)
 
 **Acceptance Criteria:**
 
