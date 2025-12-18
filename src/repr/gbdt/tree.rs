@@ -1,4 +1,15 @@
 //! Canonical tree representation (SoA) and mutable construction API.
+//!
+//! This module provides:
+//! - [`Tree`]: Immutable SoA tree storage for efficient traversal
+//! - [`MutableTree`]: Builder for constructing trees during training
+//! - [`TreeView`]: Read-only trait for unified tree access
+//!
+//! # TreeView Trait
+//!
+//! The [`TreeView`] trait provides a uniform interface for tree traversal,
+//! implemented by both `Tree` and `MutableTree`. This enables generic
+//! traversal code that works with either representation.
 
 // Allow many constructor arguments for creating trees with all their fields.
 #![allow(clippy::too_many_arguments)]
@@ -7,6 +18,70 @@ use super::categories::{float_to_category, CategoriesStorage};
 use super::leaf::LeafValue;
 use super::node::SplitType;
 use super::NodeId;
+
+// ============================================================================
+// TreeView Trait
+// ============================================================================
+
+/// Read-only view of a tree for traversal.
+///
+/// Provides the minimal interface needed to traverse a tree from root to leaf.
+/// Implemented for both [`Tree`] and [`MutableTree`].
+///
+/// # Design
+///
+/// This trait abstracts tree structure access, enabling generic prediction code
+/// that works with both immutable trees (inference) and mutable trees (training).
+///
+/// # Example
+///
+/// ```ignore
+/// use booste_rs::repr::gbdt::TreeView;
+///
+/// fn count_leaves<T: TreeView>(tree: &T) -> usize {
+///     (0..tree.n_nodes())
+///         .filter(|&n| tree.is_leaf(n as u32))
+///         .count()
+/// }
+/// ```
+pub trait TreeView {
+    /// The leaf value type (e.g., `ScalarLeaf`).
+    type LeafValue: LeafValue;
+
+    /// Number of nodes in the tree.
+    fn n_nodes(&self) -> usize;
+
+    /// Check if a node is a leaf.
+    fn is_leaf(&self, node: NodeId) -> bool;
+
+    /// Get the feature index for a split node.
+    fn split_index(&self, node: NodeId) -> u32;
+
+    /// Get the split threshold for a numeric split.
+    fn split_threshold(&self, node: NodeId) -> f32;
+
+    /// Get the left child node index.
+    fn left_child(&self, node: NodeId) -> NodeId;
+
+    /// Get the right child node index.
+    fn right_child(&self, node: NodeId) -> NodeId;
+
+    /// Get the default direction for missing values.
+    fn default_left(&self, node: NodeId) -> bool;
+
+    /// Get the split type (numeric or categorical).
+    fn split_type(&self, node: NodeId) -> SplitType;
+
+    /// Get reference to categories storage for categorical splits.
+    fn categories(&self) -> &CategoriesStorage;
+
+    /// Get the leaf value at a leaf node.
+    fn leaf_value(&self, node: NodeId) -> &Self::LeafValue;
+}
+
+// ============================================================================
+// TreeValidationError
+// ============================================================================
 
 /// Structural validation errors for [`Tree`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -457,6 +532,105 @@ impl<L: LeafValue> Tree<L> {
             predictions[row_idx] += (*leaf).into();
         }
     }
+
+    /// Generic batch predict using any feature accessor.
+    ///
+    /// This is the unified prediction method that works with any data source
+    /// implementing [`FeatureAccessor`]: RowMatrix, ColMatrix, BinnedAccessor, etc.
+    ///
+    /// Leaf values are **added** to the existing predictions (accumulate pattern).
+    ///
+    /// # Arguments
+    /// * `accessor` - Feature value source
+    /// * `predictions` - Slice to update with leaf values (one per row)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use booste_rs::inference::{Tree, FeatureAccessor, traverse_to_leaf};
+    /// use booste_rs::data::RowMatrix;
+    ///
+    /// let tree: Tree<ScalarLeaf> = /* ... */;
+    /// let data = RowMatrix::from_vec(vec![0.1, 0.2, 0.3, 0.4], 2, 2);
+    /// let mut predictions = vec![0.0; 2];
+    /// tree.predict_batch_accumulate(&data, &mut predictions);
+    /// ```
+    pub fn predict_batch_accumulate<A: crate::data::FeatureAccessor>(
+        &self,
+        accessor: &A,
+        predictions: &mut [f32],
+    ) where
+        L: Into<f32> + Copy,
+    {
+        use crate::inference::gbdt::traverse_to_leaf;
+        
+        let n_rows = accessor.num_rows();
+        debug_assert_eq!(predictions.len(), n_rows);
+
+        for row_idx in 0..n_rows {
+            let leaf_idx = traverse_to_leaf(self, accessor, row_idx);
+            let leaf = self.leaf_value(leaf_idx);
+            predictions[row_idx] += (*leaf).into();
+        }
+    }
+}
+
+// =============================================================================
+// TreeView for Tree
+// =============================================================================
+
+impl<L: LeafValue> TreeView for Tree<L> {
+    type LeafValue = L;
+
+    #[inline]
+    fn n_nodes(&self) -> usize {
+        self.is_leaf.len()
+    }
+
+    #[inline]
+    fn is_leaf(&self, node: NodeId) -> bool {
+        self.is_leaf[node as usize]
+    }
+
+    #[inline]
+    fn split_index(&self, node: NodeId) -> u32 {
+        self.split_indices[node as usize]
+    }
+
+    #[inline]
+    fn split_threshold(&self, node: NodeId) -> f32 {
+        self.split_thresholds[node as usize]
+    }
+
+    #[inline]
+    fn left_child(&self, node: NodeId) -> NodeId {
+        self.left_children[node as usize]
+    }
+
+    #[inline]
+    fn right_child(&self, node: NodeId) -> NodeId {
+        self.right_children[node as usize]
+    }
+
+    #[inline]
+    fn default_left(&self, node: NodeId) -> bool {
+        self.default_left[node as usize]
+    }
+
+    #[inline]
+    fn split_type(&self, node: NodeId) -> SplitType {
+        self.split_types[node as usize]
+    }
+
+    #[inline]
+    fn categories(&self) -> &CategoriesStorage {
+        &self.categories
+    }
+
+    #[inline]
+    fn leaf_value(&self, node: NodeId) -> &L {
+        &self.leaf_values[node as usize]
+    }
 }
 
 // =============================================================================
@@ -733,6 +907,67 @@ impl<L: LeafValue> MutableTree<L> {
     }
 }
 
+// =============================================================================
+// TreeView for MutableTree
+// =============================================================================
+
+impl<L: LeafValue> TreeView for MutableTree<L> {
+    type LeafValue = L;
+
+    #[inline]
+    fn n_nodes(&self) -> usize {
+        self.split_indices.len()
+    }
+
+    #[inline]
+    fn is_leaf(&self, node: NodeId) -> bool {
+        self.is_leaf[node as usize]
+    }
+
+    #[inline]
+    fn split_index(&self, node: NodeId) -> u32 {
+        self.split_indices[node as usize]
+    }
+
+    #[inline]
+    fn split_threshold(&self, node: NodeId) -> f32 {
+        self.split_thresholds[node as usize]
+    }
+
+    #[inline]
+    fn left_child(&self, node: NodeId) -> NodeId {
+        self.left_children[node as usize]
+    }
+
+    #[inline]
+    fn right_child(&self, node: NodeId) -> NodeId {
+        self.right_children[node as usize]
+    }
+
+    #[inline]
+    fn default_left(&self, node: NodeId) -> bool {
+        self.default_left[node as usize]
+    }
+
+    #[inline]
+    fn split_type(&self, node: NodeId) -> SplitType {
+        self.split_types[node as usize]
+    }
+
+    #[inline]
+    fn categories(&self) -> &CategoriesStorage {
+        // During construction, categorical splits are stored per-node
+        // and not yet packed. Returns a static empty storage.
+        // Categorical traversal is only supported after freeze().
+        CategoriesStorage::empty_ref()
+    }
+
+    #[inline]
+    fn leaf_value(&self, node: NodeId) -> &L {
+        &self.leaf_values[node as usize]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -764,5 +999,28 @@ mod tests {
         assert_eq!(tree.predict_row(&[1.0]).0, 1.0);
         assert_eq!(tree.predict_row(&[3.0]).0, 1.0);
         assert_eq!(tree.predict_row(&[2.0]).0, -1.0);
+    }
+
+    #[test]
+    fn test_predict_batch_accumulate() {
+        use crate::data::RowMatrix;
+
+        let tree = crate::scalar_tree! {
+            0 => num(0, 0.5, L) -> 1, 2,
+            1 => leaf(1.0),
+            2 => leaf(2.0),
+        };
+
+        // 3 rows, 1 feature
+        let data = RowMatrix::from_vec(vec![0.3, 0.7, 0.5], 3, 1);
+        
+        // Test accumulate pattern (starts with existing values)
+        let mut predictions = vec![10.0, 20.0, 30.0];
+        tree.predict_batch_accumulate(&data, &mut predictions);
+
+        // Row 0: 0.3 < 0.5 -> left (1.0), 10.0 + 1.0 = 11.0
+        // Row 1: 0.7 >= 0.5 -> right (2.0), 20.0 + 2.0 = 22.0
+        // Row 2: 0.5 >= 0.5 -> right (2.0), 30.0 + 2.0 = 32.0
+        assert_eq!(predictions, vec![11.0, 22.0, 32.0]);
     }
 }

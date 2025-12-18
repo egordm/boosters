@@ -257,6 +257,41 @@ impl BinMapper {
         }
     }
 
+    /// Get the midpoint of a bin (for feature value approximation).
+    ///
+    /// For numerical features:
+    /// - Bin 0: `(min_val + upper_bound[0]) / 2`
+    /// - Bin n: `(upper_bound[n-1] + upper_bound[n]) / 2`
+    ///
+    /// For categorical features, returns the category value.
+    /// For missing/NaN bins, returns `f64::NAN`.
+    #[inline]
+    pub fn bin_to_midpoint(&self, bin: u32) -> f64 {
+        if self.is_categorical() {
+            // Categorical: return category value
+            return self
+                .bin_to_cat
+                .as_ref()
+                .map(|cats| cats[bin as usize] as f64)
+                .unwrap_or(0.0);
+        }
+
+        // Handle NaN bin (typically last bin when missing_type == NaN)
+        if self.missing_type == MissingType::NaN && bin == self.n_bins - 1 {
+            return f64::NAN;
+        }
+
+        let bin_idx = bin as usize;
+        let upper = self.bin_upper_bounds[bin_idx];
+        let lower = if bin_idx == 0 {
+            self.min_val
+        } else {
+            self.bin_upper_bounds[bin_idx - 1]
+        };
+
+        (lower + upper) / 2.0
+    }
+
     /// Get max category value (categorical only).
     pub fn max_cat_value(&self) -> Option<i32> {
         self.bin_to_cat.as_ref().and_then(|cats| cats.iter().max().copied())

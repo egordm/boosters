@@ -35,7 +35,21 @@ pub struct CategoriesStorage {
     segments: Box<[(u32, u32)]>,
 }
 
+use std::sync::LazyLock;
+
+/// Static empty CategoriesStorage for returning references.
+static EMPTY_CATEGORIES: LazyLock<CategoriesStorage> =
+    LazyLock::new(CategoriesStorage::empty);
+
 impl CategoriesStorage {
+    /// Get a static reference to an empty storage.
+    ///
+    /// Useful for returning `&CategoriesStorage` when no categories exist.
+    #[inline]
+    pub fn empty_ref() -> &'static Self {
+        &EMPTY_CATEGORIES
+    }
+
     /// Create empty categories storage.
     #[inline]
     pub fn empty() -> Self {
