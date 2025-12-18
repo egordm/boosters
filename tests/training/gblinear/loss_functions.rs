@@ -6,6 +6,7 @@
 
 use super::{load_test_data, load_train_data};
 use booste_rs::data::Dataset;
+use booste_rs::inference::LinearModelPredict;
 use booste_rs::training::{
     Accuracy, GBLinearParams, GBLinearTrainer, HingeLoss, LogLoss, LogisticLoss, MarginAccuracy,
     Objective, PseudoHuberLoss, Rmse, SquaredLoss, Verbosity,

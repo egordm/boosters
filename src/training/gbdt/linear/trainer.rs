@@ -8,7 +8,7 @@
 //!
 //! See RFC-0015 for design rationale.
 
-use crate::data::ColMatrix;
+use crate::data::FeatureAccessor;
 use crate::repr::gbdt::{MutableTree, ScalarLeaf, SplitType, TreeView};
 use crate::training::gbdt::partition::RowPartitioner;
 use crate::training::{Gradients, GradsTuple};
@@ -86,47 +86,56 @@ impl LeafLinearTrainer {
     ///
     /// # Arguments
     /// * `tree` - The tree being trained (implements TreeView for path traversal)
-    /// * `col_matrix` - Feature values in column-major format
+    /// * `accessor` - Feature accessor (any type implementing FeatureAccessor)
     /// * `partitioner` - Row partitioner with leaf assignments
+    /// * `leaf_node_mapping` - Mapping from tree node IDs to partitioner node IDs
     /// * `gradients` - Gradient/hessian values
     /// * `output` - Output index for multi-output (usually 0)
     /// * `learning_rate` - Learning rate to apply to coefficients
-    pub fn train<S: AsRef<[f32]>>(
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // With BinnedAccessor (during GBDT training):
+    /// let accessor = BinnedAccessor::new(dataset, &bin_mappers);
+    /// let mapping = grower.leaf_node_mapping();
+    /// let fitted = trainer.train(&tree, &accessor, partitioner, mapping, gradients, 0, 0.1);
+    ///
+    /// // With ColMatrix (for testing):
+    /// let fitted = trainer.train(&tree, &col_matrix, partitioner, mapping, gradients, 0, 0.1);
+    /// ```
+    pub fn train<A: FeatureAccessor>(
         &mut self,
         tree: &MutableTree<ScalarLeaf>,
-        col_matrix: &ColMatrix<f32, S>,
+        accessor: &A,
         partitioner: &RowPartitioner,
+        leaf_node_mapping: &[(u32, u32)],
         gradients: &Gradients,
         output: usize,
         learning_rate: f32,
     ) -> Vec<FittedLeaf> {
-        // MutableTree implements TreeView, so we can use it directly
-        let n_nodes = tree.n_nodes();
         let mut results = Vec::new();
 
-        for node_id in 0..n_nodes as u32 {
-            if !tree.is_leaf(node_id) {
+        for &(tree_node, partitioner_node) in leaf_node_mapping {
+            // Get samples in this leaf using partitioner node ID
+            let rows = partitioner.get_leaf_indices(partitioner_node);
+            
+            if rows.len() < self.config.min_samples {
                 continue;
             }
 
-            // Get samples in this leaf
-            let rows = partitioner.get_leaf_indices(node_id.into());
-            if rows.len() < self.config.min_samples {
-                continue; // Skip leaves with too few samples
-            }
-
-            // Select path features (numeric only)
-            let features = self.select_path_features(tree, node_id);
+            // Select path features (numeric only) - uses tree node ID
+            let features = self.select_path_features(tree, tree_node);
             if features.is_empty() {
-                continue; // Skip leaves with no numeric path features
+                continue;
             }
 
-            // Fit linear model
+            // Fit linear model - uses tree node ID for the result
             if let Some(fitted) = self.fit_leaf(
-                node_id,
+                tree_node,
                 &features,
                 rows,
-                col_matrix,
+                accessor,
                 gradients,
                 output,
                 learning_rate,
@@ -202,12 +211,12 @@ impl LeafLinearTrainer {
     }
 
     /// Fit a linear model for a single leaf.
-    fn fit_leaf<S: AsRef<[f32]>>(
+    fn fit_leaf<A: FeatureAccessor>(
         &mut self,
         node_id: u32,
         features: &[u32],
         rows: &[u32],
-        col_matrix: &ColMatrix<f32, S>,
+        accessor: &A,
         gradients: &Gradients,
         output: usize,
         learning_rate: f32,
@@ -215,8 +224,8 @@ impl LeafLinearTrainer {
         let n_features = features.len();
         let n_rows = rows.len();
 
-        // Gather features into column-major buffer
-        self.feature_buffer.gather(rows, col_matrix, features);
+        // Gather features using accessor
+        self.feature_buffer.gather(rows, accessor, features);
 
         // Reset solver and accumulate
         self.solver.reset(n_features);
@@ -250,12 +259,10 @@ impl LeafLinearTrainer {
         self.solver.add_regularization(self.config.lambda as f64);
 
         // Solve
-        let converged = self
-            .solver
+        // Note: For linear leaf fitting, we still use coefficients even if not fully
+        // converged, as XGBoost does. The tolerance is used for early stopping only.
+        self.solver
             .solve_cd(self.config.max_iterations, self.config.tolerance);
-        if !converged {
-            return None; // Fall back to constant leaf
-        }
 
         // Get coefficients
         let (intercept, coefs) = self.solver.coefficients();

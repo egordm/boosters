@@ -4,7 +4,7 @@
 //! and the subtraction trick to reduce computation.
 
 use crate::data::BinnedDataset;
-use crate::repr::gbdt::{categories_to_bitset, MutableTree, ScalarLeaf, Tree};
+use crate::repr::gbdt::{categories_to_bitset, MutableTree, NodeId, ScalarLeaf, Tree};
 use crate::training::{GradsTuple, Gradients};
 use crate::training::sampling::{ColSampler, ColSamplingParams};
 
@@ -83,6 +83,9 @@ pub struct TreeGrower {
     /// Buffer for ordered (pre-gathered) gradients.
     /// Reused across histogram builds to avoid allocation.
     ordered_grad_hess: Vec<GradsTuple>,
+    /// Mapping from tree_node to partitioner_node for leaves.
+    /// Populated during tree growth, cleared on reset.
+    leaf_node_map: Vec<(NodeId, NodeId)>,
 
     /// Histogram builder (encapsulates parallelism and kernel dispatch).
     histogram_builder: HistogramBuilder,
@@ -149,6 +152,7 @@ impl TreeGrower {
             col_sampler,
             last_leaf_values: Vec::new(),
             ordered_grad_hess: Vec::with_capacity(n_samples),
+            leaf_node_map: Vec::with_capacity(max_nodes / 2 + 1),
             histogram_builder: HistogramBuilder::new(parallelism),
         }
     }
@@ -164,6 +168,17 @@ impl TreeGrower {
     #[inline]
     pub fn partitioner(&self) -> &RowPartitioner {
         &self.partitioner
+    }
+
+    /// Get the leaf node mapping (tree_node -> partitioner_node).
+    ///
+    /// After `grow()` returns, this contains a mapping for each leaf in the tree.
+    /// Use with `partitioner().get_leaf_indices(partitioner_node)` to get row indices.
+    ///
+    /// Returns tuples of `(tree_node_id, partitioner_node_id)`.
+    #[inline]
+    pub fn leaf_node_mapping(&self) -> &[(NodeId, NodeId)] {
+        &self.leaf_node_map
     }
 
     /// Grow a tree and (optionally) update predictions using training-time leaf assignments.
@@ -214,7 +229,13 @@ impl TreeGrower {
     ///
     /// This is O(n_rows) with sequential writes to predictions, which is much faster than
     /// O(n_rows × tree_depth) random tree traversals.
-    fn update_predictions_from_last_tree(&self, predictions: &mut [f32]) {
+    ///
+    /// # Note
+    ///
+    /// This method uses only the base leaf values (not linear coefficients), which is
+    /// correct for training: we accumulate predictions incrementally using constant
+    /// leaf values, and linear adjustments are inference-time only.
+    pub fn update_predictions_from_last_tree(&self, predictions: &mut [f32]) {
         for (leaf_node, leaf_value) in self.last_leaf_values.iter().enumerate() {
             if leaf_value.is_nan() {
                 continue;
@@ -228,13 +249,17 @@ impl TreeGrower {
     }
 
     /// Record a leaf value for fast prediction updates.
-    fn record_leaf_value(&mut self, node: usize, weight: f32) {
-        // Ensure we have room for this node
+    /// Also records the mapping from tree node to partitioner node.
+    fn record_leaf_value(&mut self, tree_node: NodeId, partitioner_node: NodeId, weight: f32) {
+        // Ensure we have room for this partitioner node
+        let node = partitioner_node as usize;
         if node >= self.last_leaf_values.len() {
             self.last_leaf_values.resize(node + 1, f32::NAN);
         }
         // Apply learning rate since tree.predict returns the post-learning-rate values
         self.last_leaf_values[node] = weight * self.params.learning_rate;
+        // Record tree_node -> partitioner_node mapping for linear leaf fitting
+        self.leaf_node_map.push((tree_node, partitioner_node));
     }
 
     /// Grow a tree from gradients for a specific output.
@@ -343,7 +368,7 @@ impl TreeGrower {
                 .compute_leaf_weight(candidate.grad_sum, candidate.hess_sum);
             self.tree_builder
                 .make_leaf(candidate.tree_node, ScalarLeaf(weight));
-            self.record_leaf_value(candidate.node as usize, weight);
+            self.record_leaf_value(candidate.tree_node, candidate.node, weight);
             self.histogram_pool.release(candidate.node);
             return;
         }
@@ -468,7 +493,7 @@ impl TreeGrower {
                     .compute_leaf_weight(candidate.grad_sum, candidate.hess_sum);
                 self.tree_builder
                     .make_leaf(candidate.tree_node, ScalarLeaf(weight));
-                self.record_leaf_value(candidate.node as usize, weight);
+                self.record_leaf_value(candidate.tree_node, candidate.node, weight);
                 self.histogram_pool.release(candidate.node);
             }
         }
@@ -483,6 +508,8 @@ impl TreeGrower {
         for v in &mut self.last_leaf_values {
             *v = f32::NAN;
         }
+        // Clear leaf node mapping from previous tree
+        self.leaf_node_map.clear();
     }
 
     /// Check if a candidate should be expanded.

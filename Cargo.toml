@@ -94,6 +94,11 @@ name = "e2e_train_predict_gbdt"
 harness = false
 path = "benches/suites/e2e/train_predict_gbdt.rs"
 
+[[bench]]
+name = "e2e_train_linear_leaves"
+harness = false
+path = "benches/suites/e2e/train_linear_leaves.rs"
+
 # Unified comparison benchmarks (preferred)
 [[bench]]
 name = "gbdt_training"

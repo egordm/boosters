@@ -135,14 +135,6 @@ impl EarlyStopping {
         }
     }
 
-    /// Legacy API: Update with a metric value and check if training should stop.
-    ///
-    /// Prefer `update()` for new code as it also signals improvement.
-    #[deprecated(since = "0.2.0", note = "Use `update()` instead")]
-    pub fn should_stop(&mut self, value: f64) -> bool {
-        matches!(self.update(value), EarlyStopAction::Stop)
-    }
-
     /// Get the best metric value observed.
     pub fn best_value(&self) -> Option<f64> {
         self.best_value

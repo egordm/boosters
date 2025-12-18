@@ -41,8 +41,10 @@
 //! See [`TreeTraversal`] for implementing custom strategies.
 
 use crate::data::DataMatrix;
+use crate::repr::gbdt::TreeView;
 use super::Forest;
 use super::ScalarLeaf;
+use super::Tree;
 use rayon::prelude::*;
 
 use crate::inference::common::PredictionOutput;
@@ -50,6 +52,37 @@ use super::TreeTraversal;
 
 /// Default block size for batch processing (matches XGBoost).
 pub const DEFAULT_BLOCK_SIZE: usize = 64;
+
+/// Compute the prediction value for a linear leaf.
+///
+/// Returns `intercept + Σ(coef × feature)`, or the base leaf value if any
+/// linear feature is NaN.
+#[inline]
+fn compute_linear_leaf_value(tree: &Tree<ScalarLeaf>, leaf_idx: u32, features: &[f32]) -> f32 {
+    let base = tree.leaf_value(leaf_idx).0;
+
+    if let Some((feat_indices, coefs)) = tree.leaf_terms(leaf_idx) {
+        // Check for NaN in any linear feature
+        for &feat_idx in feat_indices {
+            let val = features.get(feat_idx as usize).copied().unwrap_or(f32::NAN);
+            if val.is_nan() {
+                return base; // Fall back to constant leaf
+            }
+        }
+
+        // Compute linear prediction: intercept + Σ(coef × feature)
+        let intercept = tree.leaf_intercept(leaf_idx);
+        let linear_sum: f32 = feat_indices
+            .iter()
+            .zip(coefs.iter())
+            .map(|(&f, &c)| c * features.get(f as usize).copied().unwrap_or(0.0))
+            .sum();
+
+        intercept + linear_sum
+    } else {
+        base
+    }
+}
 
 /// Unified predictor for tree ensemble inference.
 ///
@@ -414,11 +447,18 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
                     let buf_offset = i * num_features;
                     let row_features = &feature_buffer[buf_offset..][..num_features];
 
-                    let leaf_value = T::traverse_tree(&tree, state, row_features);
+                    let leaf_value = if tree.has_linear_leaves() {
+                        // Linear tree: compute linear value
+                        let leaf_idx = super::traversal::traverse_from_node(&tree, 0, row_features);
+                        compute_linear_leaf_value(&tree, leaf_idx, row_features)
+                    } else {
+                        // Standard: use traversal result
+                        T::traverse_tree(&tree, state, row_features).0
+                    };
 
                     let value = match weights {
-                        Some(w) => leaf_value.0 * w[tree_idx],
-                        None => leaf_value.0,
+                        Some(w) => leaf_value * w[tree_idx],
+                        None => leaf_value,
                     };
                     output.add(block_start + i, group_idx, value);
                 }
@@ -480,15 +520,26 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
                 // Reset group buffer
                 group_buffer[..current_block_size].fill(0.0);
 
-                // Traverse all rows through this tree
-                T::traverse_block(
-                    &tree,
-                    state,
-                    &feature_buffer[..current_block_size * num_features],
-                    num_features,
-                    &mut group_buffer[..current_block_size],
-                    weight,
-                );
+                if tree.has_linear_leaves() {
+                    // Linear tree path: traverse to get leaf index, then compute linear value
+                    for i in 0..current_block_size {
+                        let row_offset = i * num_features;
+                        let row_features = &feature_buffer[row_offset..][..num_features];
+                        let leaf_idx = super::traversal::traverse_from_node(&tree, 0, row_features);
+                        let value = compute_linear_leaf_value(&tree, leaf_idx, row_features);
+                        group_buffer[i] = value * weight;
+                    }
+                } else {
+                    // Standard path: use optimized traversal
+                    T::traverse_block(
+                        &tree,
+                        state,
+                        &feature_buffer[..current_block_size * num_features],
+                        num_features,
+                        &mut group_buffer[..current_block_size],
+                        weight,
+                    );
+                }
 
                 // Scatter results into output (column-major: contiguous writes)
                 let out_col = output.column_mut(group_idx);
@@ -510,8 +561,13 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
 
         for (tree_idx, (tree, group)) in self.forest.trees_with_groups().enumerate() {
             let state = &self.tree_states[tree_idx];
-            let leaf_value = T::traverse_tree(&tree, state, features);
-            output[group as usize] += leaf_value.0;
+            let leaf_value = if tree.has_linear_leaves() {
+                let leaf_idx = super::traversal::traverse_from_node(&tree, 0, features);
+                compute_linear_leaf_value(&tree, leaf_idx, features)
+            } else {
+                T::traverse_tree(&tree, state, features).0
+            };
+            output[group as usize] += leaf_value;
         }
 
         output
@@ -534,8 +590,13 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
 
         for (tree_idx, (tree, group)) in self.forest.trees_with_groups().enumerate() {
             let state = &self.tree_states[tree_idx];
-            let leaf_value = T::traverse_tree(&tree, state, features);
-            output[group as usize] += leaf_value.0 * weights[tree_idx];
+            let leaf_value = if tree.has_linear_leaves() {
+                let leaf_idx = super::traversal::traverse_from_node(&tree, 0, features);
+                compute_linear_leaf_value(&tree, leaf_idx, features)
+            } else {
+                T::traverse_tree(&tree, state, features).0
+            };
+            output[group as usize] += leaf_value * weights[tree_idx];
         }
 
         output
