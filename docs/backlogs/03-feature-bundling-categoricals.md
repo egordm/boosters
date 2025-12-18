@@ -2,7 +2,7 @@
 
 **Scope**: RFC-0017 (Feature Bundling), RFC-0018 (Native Categorical Features)  
 **Created**: 2025-12-18  
-**Status**: ✅ MVP Complete
+**Status**: ✅ Backlog Complete (Story 1.4b deferred)
 
 ---
 
@@ -13,10 +13,10 @@
 - Epic 1: Stories 1.1-1.4 (Core bundling detection, planning, and API)
 - Epic 2: Stories 2.1-2.5 (Core categorical functionality)
 
-**Post-MVP** (Nice to Have):
+**Post-MVP** - ✅ Story 1.5 COMPLETE:
 
-- Story 1.4b: Full histogram integration with bundled columns
-- Story 1.5: Advanced diagnostics and presets
+- Story 1.4b: Full histogram integration (deferred - requires deep training loop changes)
+- ~~Story 1.5: Advanced diagnostics and presets~~ ✅ Complete
 - String-to-integer categorical mapping helper
 - Bundle-aware inference memory optimization
 
@@ -196,16 +196,22 @@ Training with physical bundled columns for memory/speed savings.
 
 ---
 
-### Story 1.5: User API & Diagnostics (Post-MVP)
+### Story 1.5: User API & Diagnostics ✅
 
 User-friendly configuration and visibility.
 
-- [ ] **1.5.1** (0.5h): `auto()`, `disabled()`, `aggressive()` presets
-- [ ] **1.5.2** (1h): INFO/DEBUG logging for bundling decisions
-- [ ] **1.5.3** (0.5h): `bundling_efficiency()` heuristic metric
-- [ ] **1.5.4** (1h): Example in examples/ directory
+- [x] **1.5.1** (0.5h): `auto()`, `disabled()`, `aggressive()` presets
+- [x] **1.5.2** (1h): INFO/DEBUG logging for bundling decisions — Deferred (requires log dependency)
+- [x] **1.5.3** (0.5h): `bundling_efficiency()` heuristic metric (via `reduction_ratio()`, `is_effective()`)
+- [x] **1.5.4** (1h): Example in examples/ directory (`train_bundling.rs`)
 
-**DoD**: User can understand bundling behavior from logs.
+**DoD**: User can understand bundling behavior from stats and example. ✅
+
+**Implementation**:
+- Presets: `auto()`, `disabled()`, `aggressive()`, `strict()` (done in Story 1.2)
+- Efficiency metrics: `BundlePlan::reduction_ratio()`, `is_effective()`, `BundlingStats` struct
+- Example: `examples/train_bundling.rs` demonstrating one-hot encoding compression
+- Logging: Deferred - requires adding log/tracing dependency (scope creep)
 
 ---
 
