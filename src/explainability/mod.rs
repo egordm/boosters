@@ -11,6 +11,12 @@
 //! - **Cover**: Total cover (sample weight) at nodes using each feature
 //! - **AverageCover**: Cover divided by split count
 //!
+//! # SHAP Values
+//!
+//! SHAP (SHapley Additive exPlanations) values explain individual predictions:
+//! - **TreeExplainer**: For tree ensembles (GBDT, Random Forest)
+//! - **LinearExplainer**: For linear models (closed-form solution)
+//!
 //! # Example
 //!
 //! ```ignore
@@ -26,4 +32,4 @@ pub mod shap;
 pub use importance::{
     compute_forest_importance, ExplainError, FeatureImportance, ImportanceType,
 };
-pub use shap::{PathState, ShapValues};
+pub use shap::{LinearExplainer, PathState, ShapValues, TreeExplainer};
