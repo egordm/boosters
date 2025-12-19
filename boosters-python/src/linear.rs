@@ -27,7 +27,7 @@ use boosters::training::{GBLinearParams, GBLinearTrainer, MetricFunction, Object
 /// model.fit(X, y)
 /// predictions = model.predict(X)
 /// ```
-#[pyclass(name = "GBLinearBooster")]
+#[pyclass(name = "GBLinearBooster", module = "boosters._boosters_python")]
 pub struct PyGBLinearBooster {
     // Model (None until fitted)
     model: Option<GBLinearModel>,
@@ -340,6 +340,7 @@ impl PyGBLinearBooster {
     ///
     /// Returns array of shape (n_features,) for single-output,
     /// or (n_features, n_groups) for multi-output.
+    #[getter]
     fn weights<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f32>>> {
         let model = self.model.as_ref().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err(
@@ -361,6 +362,7 @@ impl PyGBLinearBooster {
     }
 
     /// Get model bias as a NumPy array.
+    #[getter]
     fn bias<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f32>>> {
         let model = self.model.as_ref().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err(

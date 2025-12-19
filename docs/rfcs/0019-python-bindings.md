@@ -1,8 +1,8 @@
 # RFC-0019: Python Bindings & Model Abstraction
 
-- **Status**: Draft
+- **Status**: Implemented (Phase 1 MVP)
 - **Created**: 2025-12-19
-- **Updated**: 2025-12-19
+- **Updated**: 2025-01-06
 - **Depends on**: RFC-0001, RFC-0002, RFC-0008, RFC-0014, RFC-0016
 - **Scope**: High-level model abstraction for Rust and Python APIs
 
@@ -1693,6 +1693,26 @@ shap.summary_plot(shap_values, X_test[:100])
 
 ## Changelog
 
+- 2025-01-06: **Phase 1 MVP Complete**
+  - Status changed from Draft to Implemented (Phase 1 MVP)
+  - Implementation notes:
+    - Simplified API: sklearn-style `fit(X, y)` directly on boosters (no separate Dataset class needed)
+    - PyDataset removed (was causing interface duplication)
+    - `GBDTBooster.fit()` and `GBLinearBooster.fit()` accept NumPy arrays directly
+    - Categorical features supported via `categorical_features=[...]` parameter
+    - Sample weights supported via `sample_weight=...` parameter
+    - Feature names supported via `feature_names=[...]` parameter
+    - All hyperparameters set in constructor (not separate Params class)
+    - `to_bytes()`/`from_bytes()` implemented for serialization
+    - `save()`/`load()` implemented for file I/O
+    - Pickle support via `module` attribute on pyclass
+    - sklearn.py wrappers created: `GBDTRegressor`, `GBDTClassifier`, `GBLinearRegressor`, `GBLinearClassifier`
+    - Full sklearn compatibility: `get_params()`, `set_params()`, `clone()`, `cross_val_score`, `GridSearchCV`, `Pipeline`
+    - 38 Python tests passing (import, training, serialization, sklearn)
+  - Deferred to Phase 2:
+    - Conversion utilities (`xgboost_to_bstr`, `lightgbm_to_bstr`)
+    - Arrow table support
+    - Zero-copy data access (currently copies for safety)
 - 2025-12-19: Round 5 review updates:
   - Added `ObjectiveKind` and `MetricKind` enum definitions
   - Added comprehensive objectives reference table with task/metric/output mapping
