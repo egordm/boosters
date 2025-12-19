@@ -1,0 +1,20 @@
+[package]
+name = "boosters-python"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "boosters_python"
+crate-type = ["cdylib"]
+
+[dependencies]
+# Core library
+boosters = { path = "..", features = ["storage", "xgboost-compat"] }
+
+# Python bindings
+pyo3 = { version = "0.22", features = ["extension-module"] }
+numpy = "0.22"
+
+# Error handling
+thiserror = "1.0"
