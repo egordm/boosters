@@ -13,6 +13,43 @@ boosters is a gradient boosting implementation written from scratch in Rust, des
 - **Compatible** — Load and use XGBoost and LightGBM models
 - **Accurate** — Achieves equal or better model quality on standard benchmarks
 
+## Quick Start
+
+### Training a Model
+
+```rust
+use boosters::data::{BinnedDatasetBuilder, DenseMatrix, RowMajor};
+use boosters::training::{GBDTTrainer, GBDTParams, SquaredLoss, Rmse};
+
+// Prepare data (row-major format)
+let features: DenseMatrix<f32, RowMajor> = DenseMatrix::from_vec(data, n_samples, n_features);
+let labels: Vec<f32> = /* your targets */;
+
+// Bin the data for histogram-based training
+let dataset = BinnedDatasetBuilder::from_row_matrix(&features, 256).build()?;
+
+// Train a GBDT model
+let params = GBDTParams { n_trees: 100, learning_rate: 0.1, ..Default::default() };
+let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+let forest = trainer.train(&dataset, &labels, &[], &[])?;
+
+// Predict
+let prediction = forest.predict_row(&test_sample);
+```
+
+### Loading XGBoost Models
+
+```rust
+use boosters::compat::xgboost::XgbModel;
+
+// Load XGBoost JSON model
+let model = XgbModel::from_file("model.json")?;
+let forest = model.to_forest()?;
+
+// Use for prediction
+let prediction = forest.predict_row(&features);
+```
+
 ## Performance
 
 GBDT benchmarks with equivalent parameters (histogram-based, 50 trees, depth 6, 256 bins).  

@@ -40,10 +40,7 @@
 //! - `UnrolledTreeLayout6` — 63 nodes, 64 exits (default, matches XGBoost)
 //! - `UnrolledTreeLayout8` — 255 nodes, 256 exits (deep trees)
 
-use crate::repr::gbdt::TreeView;
-use super::LeafValue;
-use super::SplitType;
-use super::Tree;
+use crate::repr::gbdt::{LeafValue, SplitType, Tree, TreeView};
 
 /// Maximum number of levels to unroll (matches XGBoost).
 /// 6 levels = 63 nodes, 8 levels = 255 nodes.
@@ -531,7 +528,7 @@ fn populate_recursive<L: LeafValue>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::{MutableTree, ScalarLeaf, Tree};
+    use crate::repr::gbdt::{MutableTree, ScalarLeaf, Tree};
 
     fn build_complete_tree(depth: usize) -> Tree<ScalarLeaf> {
         let mut builder = MutableTree::with_capacity(nodes_at_depth(depth + 1));

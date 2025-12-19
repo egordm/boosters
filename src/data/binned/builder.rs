@@ -374,6 +374,31 @@ impl BinnedDatasetBuilder {
         Self::from_matrix_with_config(data, BinningConfig::new(max_bins))
     }
 
+    /// Create a builder from a row-major matrix with automatic binning.
+    ///
+    /// This is a convenience method for users who have row-major data.
+    /// Internally converts to column-major layout for binning.
+    ///
+    /// # Arguments
+    /// * `data` - Row-major matrix (each row is a sample)
+    /// * `max_bins` - Maximum number of bins per feature (typically 256)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use boosters::data::{BinnedDatasetBuilder, DenseMatrix, RowMajor};
+    ///
+    /// let row_matrix: DenseMatrix<f32, RowMajor> = DenseMatrix::from_vec(features, n_samples, n_features);
+    /// let dataset = BinnedDatasetBuilder::from_row_matrix(&row_matrix, 256).build()?;
+    /// ```
+    pub fn from_row_matrix<S: AsRef<[f32]>>(
+        data: &crate::data::DenseMatrix<f32, crate::data::RowMajor, S>,
+        max_bins: u32,
+    ) -> Self {
+        let col_matrix = data.to_layout::<crate::data::ColMajor>();
+        Self::from_matrix(&col_matrix, max_bins)
+    }
+
     /// Create a builder from a column-major matrix with custom binning configuration.
     ///
     /// This allows per-feature bin count customization for optimal memory usage
@@ -1164,5 +1189,32 @@ mod tests {
 
         assert!(dataset.bundle_plan().is_none());
         assert!(!dataset.has_effective_bundling());
+    }
+
+    #[test]
+    fn test_from_row_matrix_matches_manual_conversion() {
+        use crate::data::{ColMajor, DenseMatrix, RowMajor};
+
+        // Create row-major data: 4 samples, 3 features
+        let row_data = vec![
+            1.0, 2.0, 3.0, // row 0
+            4.0, 5.0, 6.0, // row 1
+            7.0, 8.0, 9.0, // row 2
+            0.0, 1.0, 2.0, // row 3
+        ];
+        let row_matrix: DenseMatrix<f32, RowMajor> =
+            DenseMatrix::from_vec(row_data.clone(), 4, 3);
+
+        // Method 1: from_row_matrix (convenience)
+        let dataset1 = BinnedDatasetBuilder::from_row_matrix(&row_matrix, 256).build().unwrap();
+
+        // Method 2: manual conversion
+        let col_matrix: DenseMatrix<f32, ColMajor, _> = row_matrix.to_layout();
+        let dataset2 = BinnedDatasetBuilder::from_matrix(&col_matrix, 256).build().unwrap();
+
+        // Verify they produce identical structure
+        assert_eq!(dataset1.n_rows(), dataset2.n_rows());
+        assert_eq!(dataset1.n_features(), dataset2.n_features());
+        assert_eq!(dataset1.n_groups(), dataset2.n_groups());
     }
 }

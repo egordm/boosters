@@ -41,10 +41,7 @@
 //! See [`TreeTraversal`] for implementing custom strategies.
 
 use crate::data::DataMatrix;
-use crate::repr::gbdt::TreeView;
-use super::Forest;
-use super::ScalarLeaf;
-use super::Tree;
+use crate::repr::gbdt::{Forest, ScalarLeaf, Tree, TreeView};
 use rayon::prelude::*;
 
 use crate::inference::common::PredictionOutput;
@@ -629,7 +626,7 @@ mod tests {
     use super::*;
     use approx::assert_abs_diff_eq;
     use crate::data::RowMatrix;
-    use crate::inference::gbdt::{Forest, ScalarLeaf, Tree};
+    use crate::repr::gbdt::{Forest, ScalarLeaf, Tree};
 
     fn build_simple_tree(
         left_val: f32,

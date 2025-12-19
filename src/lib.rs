@@ -33,10 +33,8 @@
 //!
 //! ```ignore
 //! use boosters::compat::xgboost::XgbModel;
-//! use std::fs::File;
 //!
-//! let file = File::open("model.json")?;
-//! let model: XgbModel = serde_json::from_reader(file)?;
+//! let model = XgbModel::from_file("model.json")?;
 //! let forest = model.to_forest()?;
 //!
 //! let prediction = forest.predict_row(&features);

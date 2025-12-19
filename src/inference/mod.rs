@@ -6,20 +6,21 @@
 //! # Module Structure
 //!
 //! - [`common`]: Shared types (`PredictionOutput`, output transforms)
-//! - [`gbdt`]: Tree ensemble inference (`Forest`, `Tree`, predictors)
+//! - [`gbdt`]: Tree ensemble inference (predictors, traversal strategies)
 //! - [`gblinear`]: Linear model inference
 //!
 //! # Quick Start
 //!
 //! ```ignore
-//! use boosters::inference::{Forest, Predictor, PredictionOutput};
-//! use boosters::data::RowMatrix;
+//! use boosters::repr::gbdt::Forest;
+//! use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
+//! use boosters::inference::PredictionOutput;
 //!
 //! // Load or build a forest
 //! let forest: Forest = /* ... */;
 //!
-//! // Create predictor (optional optimization)
-//! let predictor = Predictor::new(&forest);
+//! // Create predictor with traversal strategy
+//! let predictor = Predictor::<UnrolledTraversal6>::new(&forest);
 //!
 //! // Predict
 //! let output = predictor.predict(&features);
@@ -29,16 +30,11 @@ pub mod common;
 pub mod gbdt;
 pub mod gblinear;
 
-// Re-export commonly used types
+// Re-export commonly used inference types
 pub use common::PredictionOutput;
 pub use gbdt::{
-    Forest, Tree, MutableTree,
-    Node, SplitCondition, SplitType,
-    LeafValue, ScalarLeaf, VectorLeaf,
-    CategoriesStorage,
     Predictor, SimplePredictor, UnrolledPredictor6,
-    StandardTraversal, UnrolledTraversal, TreeTraversal,
-    // Accessor utilities for generic traversal
+    StandardTraversal, UnrolledTraversal, UnrolledTraversal6, TreeTraversal,
     BinnedAccessor, traverse_to_leaf,
 };
 pub use gblinear::LinearModelPredict;
