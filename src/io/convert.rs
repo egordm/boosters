@@ -180,7 +180,30 @@ impl Payload {
     /// Create a payload from a Forest.
     ///
     /// Serializes the forest into the V1 payload format.
+    /// This version infers `n_features` from the trees (max split index + 1).
+    /// For accurate `n_features`, use `from_forest_with_meta` instead.
     pub fn from_forest(forest: &Forest<ScalarLeaf>) -> Self {
+        // Infer n_features from maximum split index in trees
+        let n_features = infer_n_features(forest);
+        Self::from_forest_with_features(forest, n_features)
+    }
+
+    /// Create a payload from a Forest with explicit `n_features`.
+    ///
+    /// Use this when you know the actual number of features (e.g., from model metadata),
+    /// which may be higher than the maximum split index used in the trees.
+    pub fn from_forest_with_features(forest: &Forest<ScalarLeaf>, n_features: u32) -> Self {
+        Self::from_forest_with_meta(forest, n_features, None)
+    }
+
+    /// Create a payload from a Forest with full metadata.
+    ///
+    /// Use this when you have complete model metadata including feature names.
+    pub fn from_forest_with_meta(
+        forest: &Forest<ScalarLeaf>,
+        n_features: u32,
+        feature_names: Option<Vec<String>>,
+    ) -> Self {
         let n_groups = forest.n_groups();
 
         // Build forest payload
@@ -205,11 +228,11 @@ impl Payload {
         };
 
         let metadata = ModelMetadata {
-            num_features: 0, // TODO: get from forest if we track it
+            num_features: n_features,
             num_groups: n_groups,
             base_scores: forest.base_score().to_vec(),
             objective: None,
-            feature_names: None,
+            feature_names,
             attributes: Vec::new(),
         };
 
@@ -265,6 +288,13 @@ impl Payload {
         }
     }
 
+    /// Get the feature names from this payload, if present.
+    pub fn feature_names(&self) -> Option<&Vec<String>> {
+        match self {
+            Payload::V1(v1) => v1.metadata.feature_names.as_ref(),
+        }
+    }
+
     /// Extract a Forest from this payload.
     ///
     /// Returns an error if the payload doesn't contain a GBDT model.
@@ -307,6 +337,21 @@ impl Payload {
 // ============================================================================
 // Tree Conversion Helpers
 // ============================================================================
+
+/// Infer the number of features from the maximum split index in trees.
+fn infer_n_features(forest: &Forest<ScalarLeaf>) -> u32 {
+    use crate::repr::gbdt::TreeView;
+    let mut max_feature = 0u32;
+    for tree in forest.trees() {
+        for node_idx in 0..tree.n_nodes() as u32 {
+            if !tree.is_leaf(node_idx) {
+                max_feature = max_feature.max(tree.split_index(node_idx));
+            }
+        }
+    }
+    // +1 because features are 0-indexed
+    max_feature + 1
+}
 
 fn tree_to_payload(tree: &Tree<ScalarLeaf>) -> TreePayload {
     let n_nodes = tree.n_nodes();

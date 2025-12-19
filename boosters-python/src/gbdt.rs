@@ -572,6 +572,303 @@ impl PyGBDTBooster {
         Ok(booster)
     }
 
+    /// Create a model from a list of tree dictionaries.
+    ///
+    /// This is useful for importing models trained with other libraries
+    /// (XGBoost, LightGBM) by extracting their tree structure.
+    ///
+    /// # Arguments
+    /// * `trees` - List of tree dictionaries. Each tree dict must have:
+    ///   - `split_indices`: List[int] - Feature index for each node
+    ///   - `thresholds`: List[float] - Split threshold for each node
+    ///   - `left_children`: List[int] - Left child index for each node
+    ///   - `right_children`: List[int] - Right child index for each node
+    ///   - `default_left`: List[bool] - Default direction for missing values
+    ///   - `is_leaf`: List[bool] - Whether each node is a leaf
+    ///   - `leaf_values`: List[float] - Leaf values (0 for internal nodes)
+    /// * `tree_groups` - Group assignment for each tree (for multiclass)
+    /// * `n_features` - Total number of features
+    /// * `base_scores` - Base score for each group
+    /// * `feature_names` - Optional feature names
+    ///
+    /// # Returns
+    /// GBDTBooster with the imported model
+    #[staticmethod]
+    #[pyo3(signature = (trees, tree_groups, n_features, base_scores, feature_names=None))]
+    fn from_trees(
+        trees: Vec<std::collections::HashMap<String, PyObject>>,
+        tree_groups: Vec<u32>,
+        n_features: usize,
+        base_scores: Vec<f32>,
+        feature_names: Option<Vec<String>>,
+        py: Python<'_>,
+    ) -> PyResult<Self> {
+        use boosters::model::{ModelMeta, TaskKind};
+        use boosters::repr::gbdt::{Forest, ScalarLeaf, Tree};
+
+        if trees.len() != tree_groups.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "trees length {} doesn't match tree_groups length {}",
+                trees.len(),
+                tree_groups.len()
+            )));
+        }
+
+        let n_groups = base_scores.len() as u32;
+        let mut forest = Forest::new(n_groups).with_base_score(base_scores.clone());
+
+        for (tree_idx, tree_dict) in trees.into_iter().enumerate() {
+            let group = tree_groups[tree_idx];
+
+            // Extract arrays from dict
+            let split_indices: Vec<u32> = tree_dict
+                .get("split_indices")
+                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("missing 'split_indices'"))?
+                .extract::<Vec<u32>>(py)?;
+            
+            let thresholds: Vec<f32> = tree_dict
+                .get("thresholds")
+                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("missing 'thresholds'"))?
+                .extract::<Vec<f32>>(py)?;
+            
+            let left_children: Vec<u32> = tree_dict
+                .get("left_children")
+                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("missing 'left_children'"))?
+                .extract::<Vec<u32>>(py)?;
+            
+            let right_children: Vec<u32> = tree_dict
+                .get("right_children")
+                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("missing 'right_children'"))?
+                .extract::<Vec<u32>>(py)?;
+            
+            let default_left: Vec<bool> = tree_dict
+                .get("default_left")
+                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("missing 'default_left'"))?
+                .extract::<Vec<bool>>(py)?;
+            
+            let is_leaf: Vec<bool> = tree_dict
+                .get("is_leaf")
+                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("missing 'is_leaf'"))?
+                .extract::<Vec<bool>>(py)?;
+            
+            let leaf_values: Vec<f32> = tree_dict
+                .get("leaf_values")
+                .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("missing 'leaf_values'"))?
+                .extract::<Vec<f32>>(py)?;
+
+            // Validate lengths match
+            let n_nodes = split_indices.len();
+            if thresholds.len() != n_nodes
+                || left_children.len() != n_nodes
+                || right_children.len() != n_nodes
+                || default_left.len() != n_nodes
+                || is_leaf.len() != n_nodes
+                || leaf_values.len() != n_nodes
+            {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Tree {} has inconsistent array lengths",
+                    tree_idx
+                )));
+            }
+
+            // Convert leaf values to ScalarLeaf
+            let leaves: Vec<ScalarLeaf> = leaf_values.into_iter().map(ScalarLeaf).collect();
+
+            // Create Tree
+            let tree = Tree::new(
+                split_indices,
+                thresholds,
+                left_children,
+                right_children,
+                default_left,
+                is_leaf,
+                leaves,
+            );
+
+            forest.push_tree(tree, group);
+        }
+
+        // Infer task kind from number of groups
+        let task = match n_groups {
+            1 => TaskKind::Regression,
+            n => TaskKind::MulticlassClassification { n_classes: n as usize },
+        };
+
+        let meta = ModelMeta {
+            n_features,
+            n_groups: n_groups as usize,
+            task,
+            base_scores,
+            feature_names,
+            ..Default::default()
+        };
+
+        let model = GBDTModel::from_forest(forest, meta);
+
+        let mut booster = Self::new(
+            100, 0.3, 6, "squared_error".to_string(),
+            1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 256, None, 0,
+            0.5, 1.0,
+        );
+        booster.model = Some(model);
+        Ok(booster)
+    }
+
+    /// Load a model from an XGBoost JSON file.
+    ///
+    /// This parses the XGBoost JSON format directly without requiring
+    /// the xgboost library to be installed.
+    ///
+    /// # Arguments
+    /// * `path` - Path to the XGBoost JSON model file
+    ///
+    /// # Returns
+    /// GBDTBooster with the loaded model
+    ///
+    /// # Example
+    /// ```python
+    /// model = GBDTBooster.load_from_xgboost_json("model.json")
+    /// predictions = model.predict(X)
+    /// ```
+    #[staticmethod]
+    #[cfg(feature = "xgboost-compat")]
+    fn load_from_xgboost_json(path: PathBuf) -> PyResult<Self> {
+        use boosters::compat::xgboost::{Booster, XgbModel};
+
+        let xgb_model = XgbModel::from_file(&path)
+            .map_err(|e| PyBoostersError::Deserialization(format!("Failed to parse XGBoost JSON: {}", e)))?;
+
+        let booster = xgb_model
+            .to_booster()
+            .map_err(|e| PyBoostersError::Deserialization(format!("Failed to convert XGBoost model: {}", e)))?;
+
+        // Extract metadata from the model
+        let num_features = xgb_model.learner.learner_model_param.num_feature as usize;
+        let num_class = xgb_model.learner.learner_model_param.num_class;
+        let num_groups = if num_class <= 1 { 1 } else { num_class as usize };
+        let base_score = xgb_model.learner.learner_model_param.base_score;
+        let feature_names = if xgb_model.learner.feature_names.is_empty() {
+            None
+        } else {
+            Some(xgb_model.learner.feature_names.clone())
+        };
+
+        let model = match booster {
+            Booster::Tree(forest) => GBDTModel::from_forest(
+                forest,
+                boosters::model::ModelMeta {
+                    n_features: num_features,
+                    n_groups: num_groups,
+                    task: if num_groups > 1 {
+                        boosters::model::TaskKind::MulticlassClassification {
+                            n_classes: num_groups,
+                        }
+                    } else {
+                        boosters::model::TaskKind::Regression
+                    },
+                    base_scores: vec![base_score; num_groups],
+                    feature_names,
+                    ..Default::default()
+                },
+            ),
+            Booster::Dart { forest, .. } => GBDTModel::from_forest(
+                forest,
+                boosters::model::ModelMeta {
+                    n_features: num_features,
+                    n_groups: num_groups,
+                    task: if num_groups > 1 {
+                        boosters::model::TaskKind::MulticlassClassification {
+                            n_classes: num_groups,
+                        }
+                    } else {
+                        boosters::model::TaskKind::Regression
+                    },
+                    base_scores: vec![base_score; num_groups],
+                    feature_names,
+                    ..Default::default()
+                },
+            ),
+            Booster::Linear(_) => {
+                return Err(PyBoostersError::Deserialization(
+                    "gblinear models should use GBLinearBooster".into(),
+                )
+                .into());
+            }
+        };
+
+        let mut booster = Self::new(
+            100, 0.3, 6, "squared_error".to_string(),
+            1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 256, None, 0,
+            0.5, 1.0,
+        );
+        booster.model = Some(model);
+        Ok(booster)
+    }
+
+    /// Load a model from a LightGBM text file.
+    ///
+    /// This parses the LightGBM text format directly without requiring
+    /// the lightgbm library to be installed.
+    ///
+    /// # Arguments
+    /// * `path` - Path to the LightGBM text model file (.txt)
+    ///
+    /// # Returns
+    /// GBDTBooster with the loaded model
+    ///
+    /// # Example
+    /// ```python
+    /// model = GBDTBooster.load_from_lightgbm_txt("model.txt")
+    /// predictions = model.predict(X)
+    /// ```
+    #[staticmethod]
+    #[cfg(feature = "lightgbm-compat")]
+    fn load_from_lightgbm_txt(path: PathBuf) -> PyResult<Self> {
+        use boosters::compat::lightgbm::LgbModel;
+
+        let lgb_model = LgbModel::from_file(&path)
+            .map_err(|e| PyBoostersError::Deserialization(format!("Failed to parse LightGBM txt: {}", e)))?;
+
+        let forest = lgb_model
+            .to_forest()
+            .map_err(|e| PyBoostersError::Deserialization(format!("Failed to convert LightGBM model: {}", e)))?;
+
+        // Extract metadata
+        let num_features = lgb_model.num_features();
+        let num_groups = lgb_model.num_groups();
+        let feature_names = if lgb_model.header.feature_names.is_empty() {
+            None
+        } else {
+            Some(lgb_model.header.feature_names.clone())
+        };
+
+        let model = GBDTModel::from_forest(
+            forest,
+            boosters::model::ModelMeta {
+                n_features: num_features,
+                n_groups: num_groups,
+                task: if num_groups > 1 {
+                    boosters::model::TaskKind::MulticlassClassification {
+                        n_classes: num_groups,
+                    }
+                } else {
+                    boosters::model::TaskKind::Regression
+                },
+                base_scores: vec![0.0; num_groups],
+                feature_names,
+                ..Default::default()
+            },
+        );
+
+        let mut booster = Self::new(
+            100, 0.3, 6, "squared_error".to_string(),
+            1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 256, None, 0,
+            0.5, 1.0,
+        );
+        booster.model = Some(model);
+        Ok(booster)
+    }
+
     /// Support for Python pickling.
     fn __getstate__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
         self.to_bytes(py)

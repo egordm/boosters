@@ -325,6 +325,7 @@ dependencies = [
  "boosters",
  "numpy",
  "pyo3",
+ "serde_json",
  "thiserror 1.0.69",
 ]
 

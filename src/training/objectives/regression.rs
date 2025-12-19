@@ -1,9 +1,10 @@
 //! Regression objective functions.
 
-use super::{validate_objective_inputs, weight_iter, Objective, TargetSchema, TaskKind};
+use super::{validate_objective_inputs, Objective, TargetSchema, TaskKind};
 use crate::inference::common::{PredictionKind, PredictionOutput};
 use crate::training::GradsTuple;
 use crate::training::metrics::MetricKind;
+use crate::utils::weight_iter;
 
 // =============================================================================
 // Squared Loss

@@ -288,54 +288,78 @@ impl GBDTModel {
     /// Save the model to a file.
     #[cfg(feature = "storage")]
     pub fn save(&self, path: impl AsRef<Path>) -> Result<(), SerializeError> {
-        // Update forest base scores from meta
-        let mut forest = self.forest.clone();
-        forest = forest.with_base_score(self.meta.base_scores.clone());
-        forest.save(path)
+        let bytes = self.to_bytes()?;
+        std::fs::write(path, bytes)?;
+        Ok(())
     }
 
     /// Load a model from a file.
     #[cfg(feature = "storage")]
     pub fn load(path: impl AsRef<Path>) -> Result<Self, DeserializeError> {
-        let forest = Forest::load(path)?;
-
-        // Infer n_features from maximum split index in trees
-        let n_features = Self::infer_n_features(&forest);
-
-        // Reconstruct metadata from forest
-        let meta = ModelMeta {
-            n_features,
-            n_groups: forest.n_groups() as usize,
-            task: if forest.n_groups() == 1 {
-                TaskKind::Regression
-            } else {
-                TaskKind::MulticlassClassification {
-                    n_classes: forest.n_groups() as usize,
-                }
-            },
-            base_scores: forest.base_score().to_vec(),
-            ..Default::default()
-        };
-
-        Ok(Self { forest, meta })
+        let bytes = std::fs::read(path)?;
+        Self::from_bytes(&bytes)
     }
 
     /// Serialize the model to bytes.
+    ///
+    /// This properly includes `n_features` and `feature_names` in the serialized payload,
+    /// ensuring they survive roundtrip even if not all features are used in splits.
     #[cfg(feature = "storage")]
     pub fn to_bytes(&self) -> Result<Vec<u8>, SerializeError> {
+        use crate::io::native::{ModelType, NativeCodec};
+        use crate::io::payload::Payload;
+
+        // Update forest base scores from meta
         let mut forest = self.forest.clone();
         forest = forest.with_base_score(self.meta.base_scores.clone());
-        forest.to_bytes()
+
+        // Create payload with explicit metadata from model
+        let payload = Payload::from_forest_with_meta(
+            &forest,
+            self.meta.n_features as u32,
+            self.meta.feature_names.clone(),
+        );
+        let codec = NativeCodec::new();
+        codec.serialize(
+            ModelType::Gbdt,
+            self.meta.n_features as u32,
+            self.meta.n_groups as u32,
+            &payload,
+        )
     }
 
     /// Deserialize a model from bytes.
+    ///
+    /// This uses `n_features` and `feature_names` from the serialized payload
+    /// rather than inferring from trees, ensuring they match what was originally saved.
     #[cfg(feature = "storage")]
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, DeserializeError> {
-        let forest = Forest::from_bytes(bytes)?;
+        use crate::io::native::{ModelType, NativeCodec};
+        use crate::io::payload::Payload;
 
-        // Infer n_features from maximum split index in trees
-        let n_features = Self::infer_n_features(&forest);
+        let codec = NativeCodec::new();
+        let (header, payload): (_, Payload) = codec.deserialize(bytes)?;
+        
+        if header.model_type != ModelType::Gbdt {
+            return Err(DeserializeError::TypeMismatch {
+                expected: ModelType::Gbdt,
+                actual: header.model_type,
+            });
+        }
 
+        // Extract feature names before consuming payload
+        let feature_names = payload.feature_names().cloned();
+        
+        let forest = payload.into_forest()?;
+
+        // Use n_features from header if available, otherwise infer
+        let n_features = if header.num_features > 0 {
+            header.num_features as usize
+        } else {
+            Self::infer_n_features(&forest)
+        };
+
+        // Reconstruct metadata from forest, header, and payload
         let meta = ModelMeta {
             n_features,
             n_groups: forest.n_groups() as usize,
@@ -347,6 +371,7 @@ impl GBDTModel {
                 }
             },
             base_scores: forest.base_score().to_vec(),
+            feature_names,
             ..Default::default()
         };
 
