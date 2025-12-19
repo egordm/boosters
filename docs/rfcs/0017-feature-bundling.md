@@ -1236,3 +1236,9 @@ let dataset = BinnedDatasetBuilder::new()
   added "when in doubt use auto()" guidance to preset docs
 - 2025-12-18: Review Round 4 (Final) - Added hyperparameter sweep confounds note
   to Known Limitations, added FAQ about bundling vs native categoricals
+- 2025-12-19: Implementation Complete - EFB fully implemented and validated
+  - 84-98% memory reduction for one-hot encoded data
+  - Training time unchanged (EFB is memory optimization, not compute optimization)
+  - 4-19% binning overhead for bundling analysis (one-time cost)
+  - Quality identical (bundling is lossless)
+  - See benchmark report: `docs/benchmarks/2025-12-19-0f8c2b2-efb-performance.md`

@@ -18,6 +18,7 @@ booste-rs has achieved **performance parity with LightGBM** and is **13-28%% fas
 | **Sampling** | ✅ Complete | GOSS, row/column sampling |
 | **Sample Weights** | ✅ Complete | Weighted training, class imbalance |
 | **Categorical** | ✅ Complete | Native categorical feature support |
+| **Feature Bundling (EFB)** | ✅ Complete | 84-98% memory reduction for one-hot data |
 | **Arrow/Parquet** | ✅ Complete | Data loading (may deprecate after Python bindings) |
 
 ### Future Work
@@ -30,7 +31,6 @@ booste-rs has achieved **performance parity with LightGBM** and is **13-28%% fas
 | **Sparse Data** | Medium | CSR/CSC matrix support |
 | **Linear Trees** | Medium | LightGBM-style linear models in leaves |
 | **Explainability** | Medium | SHAP values, feature importance |
-| **Feature Bundling (EFB)** | Medium | Bundle mutually exclusive features |
 | **Per-Feature Binning** | Low | Custom max_bins per feature |
 | **GPU Acceleration** | Low | CUDA/Metal/WebGPU support |
 | **SIMD Inference** | Low | Vectorized tree traversal |
