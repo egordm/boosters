@@ -21,7 +21,9 @@
 //! ```
 
 mod importance;
+pub mod shap;
 
 pub use importance::{
     compute_forest_importance, ExplainError, FeatureImportance, ImportanceType,
 };
+pub use shap::{PathState, ShapValues};
