@@ -37,12 +37,7 @@ mod predictor;
 mod traversal;
 mod unrolled;
 
-// Re-export canonical representation types from `repr`.
-pub use crate::repr::gbdt::{
-    categories_to_bitset, float_to_category,
-    CategoriesStorage, Forest, LeafValue, MutableTree, Node, ScalarLeaf, SplitCondition,
-    SplitType, Tree, VectorLeaf,
-};
+// Unrolled tree layout types (inference-specific optimization)
 pub use unrolled::{
     UnrolledTreeLayout, UnrolledTreeLayout4, UnrolledTreeLayout6, UnrolledTreeLayout8,
     UnrollDepth, Depth4, Depth6, Depth8,

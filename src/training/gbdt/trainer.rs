@@ -38,7 +38,7 @@ use super::linear::{LeafLinearTrainer, LinearLeafConfig};
 use super::parallelism::Parallelism;
 use super::split::GainParams;
 
-use crate::inference::gbdt::{Forest as InferenceForest, ScalarLeaf};
+use crate::repr::gbdt::{Forest, ScalarLeaf};
 
 // =============================================================================
 // GBDTParams
@@ -184,24 +184,43 @@ impl<O: Objective, M: Metric> GBDTTrainer<O, M> {
     /// Train a forest.
     ///
     /// # Arguments
-    /// * `dataset` - Binned dataset
-    /// * `targets` - Target values (length = n_rows * n_outputs)
-    /// * `weights` - Sample weights (empty = uniform weights)
-    /// * `eval_sets` - Optional evaluation sets for monitoring
+    ///
+    /// * `dataset` - Binned dataset created with [`BinnedDatasetBuilder`]
+    /// * `targets` - Target values (length = n_rows × n_outputs)
+    /// * `weights` - Sample weights for each row. Pass `&[]` for uniform weights.
+    /// * `eval_sets` - Validation sets for early stopping/monitoring. Pass `&[]` to skip.
     ///
     /// # Returns
+    ///
     /// Trained forest, or `None` if training fails (e.g., invalid input).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Basic training (no sample weights, no validation)
+    /// let forest = trainer.train(&dataset, &targets, &[], &[])?;
+    ///
+    /// // With sample weights
+    /// let weights = vec![1.0; n_samples]; // or custom weights
+    /// let forest = trainer.train(&dataset, &targets, &weights, &[])?;
+    ///
+    /// // With validation set for monitoring
+    /// let eval = EvalSet::new(&valid_dataset, &valid_targets, "validation");
+    /// let forest = trainer.train(&dataset, &targets, &[], &[eval])?;
+    /// ```
     ///
     /// # Panics
     ///
-    /// Panics if `n_threads > 0` and the thread pool cannot be created (rare OS-level failure).
+    /// Panics if `n_threads > 0` and the thread pool cannot be created.
+    ///
+    /// [`BinnedDatasetBuilder`]: crate::data::BinnedDatasetBuilder
     pub fn train(
         &self,
         dataset: &BinnedDataset,
         targets: &[f32],
         weights: &[f32],
         eval_sets: &[EvalSet<'_>],
-    ) -> Option<InferenceForest<ScalarLeaf>> {
+    ) -> Option<Forest<ScalarLeaf>> {
         // Threading contract:
         // - n_threads == 0: use rayon's global pool
         // - n_threads == 1: run strictly sequential (no dedicated pool, no thread spawn)
@@ -229,7 +248,7 @@ impl<O: Objective, M: Metric> GBDTTrainer<O, M> {
         weights: &[f32],
         eval_sets: &[EvalSet<'_>],
         parallelism: Parallelism,
-    ) -> Option<InferenceForest<ScalarLeaf>> {
+    ) -> Option<Forest<ScalarLeaf>> {
         let n_rows = dataset.n_rows();
         let n_outputs = self.objective.n_outputs();
 
@@ -282,7 +301,7 @@ impl<O: Objective, M: Metric> GBDTTrainer<O, M> {
         }
 
         // Create inference forest directly (Phase 2: no conversion needed)
-        let mut forest = InferenceForest::<ScalarLeaf>::new(n_outputs as u32)
+        let mut forest = Forest::<ScalarLeaf>::new(n_outputs as u32)
             .with_base_score(base_scores.clone());
 
         // Prepare eval set data and incremental prediction buffers
@@ -450,10 +469,10 @@ impl<O: Objective, M: Metric> GBDTTrainer<O, M> {
 
     /// Create a truncated copy of the forest with only the first `n_trees` trees.
     fn truncate_forest(
-        forest: &InferenceForest<ScalarLeaf>,
+        forest: &Forest<ScalarLeaf>,
         n_trees: usize,
-    ) -> InferenceForest<ScalarLeaf> {
-        let mut truncated = InferenceForest::new(forest.n_groups())
+    ) -> Forest<ScalarLeaf> {
+        let mut truncated = Forest::new(forest.n_groups())
             .with_base_score(forest.base_score().to_vec());
 
         for (idx, (tree, group)) in forest.trees_with_groups().enumerate() {

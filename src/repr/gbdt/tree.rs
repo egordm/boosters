@@ -551,7 +551,7 @@ impl<L: LeafValue> Tree<L> {
     /// # Example
     ///
     /// ```ignore
-    /// use boosters::inference::{Tree, FeatureAccessor, traverse_to_leaf};
+    /// use boosters::repr::gbdt::{Tree, ScalarLeaf};
     /// use boosters::data::RowMatrix;
     ///
     /// let tree: Tree<ScalarLeaf> = /* ... */;

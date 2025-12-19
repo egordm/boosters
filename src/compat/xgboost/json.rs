@@ -581,6 +581,25 @@ pub struct XgbModel {
 }
 
 impl XgbModel {
+    /// Load a model from a JSON file.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use boosters::compat::xgboost::XgbModel;
+    ///
+    /// let model = XgbModel::from_file("model.json")?;
+    /// let forest = model.to_forest()?;
+    /// ```
+    pub fn from_file(path: impl AsRef<std::path::Path>) -> std::io::Result<Self> {
+        let file = std::fs::File::open(path)?;
+        let reader = std::io::BufReader::new(file);
+        serde_json::from_reader(reader).map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, e)
+        })
+    }
+
+    /// Parse a model from a serde_json Value.
     pub fn from_value(value: &Value) -> Result<Self, serde_json::Error> {
         serde_json::from_value(value.clone())
     }

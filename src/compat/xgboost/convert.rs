@@ -1,8 +1,7 @@
-//! Conversion from XGBoost JSON types to native booste-rs types.
+//! Conversion from XGBoost JSON types to native boosters types.
 
-use crate::inference::gbdt::Forest;
+use crate::repr::gbdt::{categories_to_bitset, Forest, MutableTree, ScalarLeaf, Tree};
 use crate::repr::gblinear::LinearModel;
-use crate::repr::gbdt::{categories_to_bitset, MutableTree, ScalarLeaf, Tree};
 
 use super::json::{GradientBooster, ModelTrees, Tree as XgbTree, XgbModel};
 

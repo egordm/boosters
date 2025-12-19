@@ -8,12 +8,8 @@
 //! - [`StandardTraversal`]: Direct node-by-node traversal (simple, good for single rows)
 //! - [`UnrolledTraversal`]: Uses [`UnrolledTreeLayout`] for cache-friendly batch traversal
 
-use crate::repr::gbdt::TreeView;
-use super::SplitType;
-use super::{
-    float_to_category, Depth6, LeafValue, ScalarLeaf, Tree, UnrollDepth,
-    UnrolledTreeLayout,
-};
+use crate::repr::gbdt::{float_to_category, LeafValue, ScalarLeaf, SplitType, Tree, TreeView};
+use super::{Depth6, UnrollDepth, UnrolledTreeLayout};
 
 // =============================================================================
 // TreeTraversal Trait
@@ -330,7 +326,7 @@ mod tests {
     #![allow(clippy::let_unit_value)]
 
     use super::*;
-    use crate::inference::gbdt::Forest;
+    use crate::repr::gbdt::Forest;
 
     fn build_simple_tree(
         left_val: f32,

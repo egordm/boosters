@@ -207,7 +207,7 @@ impl Forest<ScalarLeaf> {
     /// # Example
     ///
     /// ```ignore
-    /// use boosters::inference::Forest;
+    /// use boosters::repr::gbdt::{Forest, ScalarLeaf};
     /// use boosters::data::RowMatrix;
     ///
     /// let forest: Forest<ScalarLeaf> = /* ... */;

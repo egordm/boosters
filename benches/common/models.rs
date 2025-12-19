@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use boosters::compat::xgboost::Booster;
 use boosters::compat::XgbModel;
-use boosters::inference::gbdt::{Forest, ScalarLeaf};
+use boosters::repr::gbdt::{Forest, ScalarLeaf};
 use boosters::repr::gblinear::LinearModel;
 
 /// Minimal model wrapper for benchmarks.
