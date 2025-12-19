@@ -75,10 +75,6 @@ pub enum TargetSchema {
 // =============================================================================
 // Helpers
 // =============================================================================
-
-// Re-export weight_iter from utils for internal use
-pub(super) use crate::utils::weight_iter;
-
 /// Validate objective input parameters.
 ///
 /// Panics with a descriptive message if inputs are invalid.
