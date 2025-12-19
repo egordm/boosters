@@ -1,9 +1,10 @@
 """Test serialization: pickle, save/load, to_bytes/from_bytes."""
 
-import numpy as np
+import os
 import pickle
 import tempfile
-import os
+
+import numpy as np
 import pytest
 
 from boosters import GBDTBooster, GBLinearBooster
@@ -43,22 +44,22 @@ class TestGBDTSerialization:
         """Test that pickle preserves model predictions."""
         model, X = trained_gbdt_model
         original_preds = model.predict(X)
-        
+
         # Pickle and unpickle
         pickled = pickle.dumps(model)
         loaded = pickle.loads(pickled)
         loaded_preds = loaded.predict(X)
-        
+
         assert np.allclose(original_preds, loaded_preds), "Pickle predictions mismatch"
 
     def test_save_load_roundtrip(self, trained_gbdt_model):
         """Test that save/load preserves model predictions."""
         model, X = trained_gbdt_model
         original_preds = model.predict(X)
-        
+
         with tempfile.NamedTemporaryFile(suffix='.bstr', delete=False) as f:
             path = f.name
-        
+
         try:
             model.save(path)
             loaded = GBDTBooster.load(path)
@@ -71,11 +72,11 @@ class TestGBDTSerialization:
         """Test that to_bytes/from_bytes preserves model predictions."""
         model, X = trained_gbdt_model
         original_preds = model.predict(X)
-        
+
         model_bytes = model.to_bytes()
         loaded = GBDTBooster.from_bytes(model_bytes)
         loaded_preds = loaded.predict(X)
-        
+
         assert np.allclose(original_preds, loaded_preds), "Bytes predictions mismatch"
 
 
@@ -86,21 +87,21 @@ class TestGBLinearSerialization:
         """Test that pickle preserves model predictions."""
         model, X = trained_gblinear_model
         original_preds = model.predict(X)
-        
+
         pickled = pickle.dumps(model)
         loaded = pickle.loads(pickled)
         loaded_preds = loaded.predict(X)
-        
+
         assert np.allclose(original_preds, loaded_preds), "Pickle predictions mismatch"
 
     def test_save_load_roundtrip(self, trained_gblinear_model):
         """Test that save/load preserves model predictions."""
         model, X = trained_gblinear_model
         original_preds = model.predict(X)
-        
+
         with tempfile.NamedTemporaryFile(suffix='.bstr', delete=False) as f:
             path = f.name
-        
+
         try:
             model.save(path)
             loaded = GBLinearBooster.load(path)
@@ -113,11 +114,11 @@ class TestGBLinearSerialization:
         """Test that to_bytes/from_bytes preserves model predictions."""
         model, X = trained_gblinear_model
         original_preds = model.predict(X)
-        
+
         model_bytes = model.to_bytes()
         loaded = GBLinearBooster.from_bytes(model_bytes)
         loaded_preds = loaded.predict(X)
-        
+
         assert np.allclose(original_preds, loaded_preds), "Bytes predictions mismatch"
 
 
