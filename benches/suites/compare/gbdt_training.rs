@@ -8,9 +8,9 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
-use booste_rs::data::{binned::BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMajor};
-use booste_rs::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
-use booste_rs::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
+use boosters::data::{binned::BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMajor};
+use boosters::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
+use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 

@@ -17,9 +17,9 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
-use booste_rs::data::binned::{BinnedDatasetBuilder, BundlingConfig};
-use booste_rs::data::{ColMatrix, DenseMatrix, RowMajor};
-use booste_rs::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
+use boosters::data::binned::{BinnedDatasetBuilder, BundlingConfig};
+use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
+use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 

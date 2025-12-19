@@ -18,7 +18,7 @@ memory usage and computation by up to 10-25× on sparse datasets.
 ### Current Problem
 
 The Adult benchmark dataset has 14 original categorical features that become 105
-one-hot encoded features. booste-rs currently:
+one-hot encoded features. boosters currently:
 
 1. Treats each one-hot column as an independent feature
 2. Applies quantile binning (expensive for binary features)
@@ -793,7 +793,7 @@ the hints are invalid?
 
 ## Integration with Existing Code
 
-This section describes how bundling integrates with existing booste-rs structures.
+This section describes how bundling integrates with existing boosters structures.
 
 ### Existing Structures (from RFC-0004)
 
@@ -1161,7 +1161,7 @@ let dataset_b = BinnedDatasetBuilder::new()
 Happy path usage for users:
 
 ```rust
-use booste_rs::{BinnedDatasetBuilder, BundlingConfig, GbdtParams};
+use boosters::{BinnedDatasetBuilder, BundlingConfig, GbdtParams};
 
 // Default: automatic bundling enabled
 let dataset = BinnedDatasetBuilder::new()

@@ -1,10 +1,10 @@
 use std::fs::File;
 use std::path::PathBuf;
 
-use booste_rs::compat::xgboost::Booster;
-use booste_rs::compat::XgbModel;
-use booste_rs::inference::gbdt::{Forest, ScalarLeaf};
-use booste_rs::repr::gblinear::LinearModel;
+use boosters::compat::xgboost::Booster;
+use boosters::compat::XgbModel;
+use boosters::inference::gbdt::{Forest, ScalarLeaf};
+use boosters::repr::gblinear::LinearModel;
 
 /// Minimal model wrapper for benchmarks.
 ///

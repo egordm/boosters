@@ -38,7 +38,7 @@
 /// # Example
 ///
 /// ```
-/// use booste_rs::training::Gradients;
+/// use boosters::training::Gradients;
 ///
 /// // Single-output regression: 100 samples, 1 output
 /// let mut buffer = Gradients::new(100, 1);
@@ -52,7 +52,7 @@
 /// ```
 ///
 /// ```
-/// use booste_rs::training::Gradients;
+/// use boosters::training::Gradients;
 ///
 /// // Multiclass: 100 samples, 3 classes
 /// let mut buffer = Gradients::new(100, 3);
@@ -232,7 +232,7 @@ impl Gradients {
     /// # Example
     ///
     /// ```
-    /// use booste_rs::training::Gradients;
+    /// use boosters::training::Gradients;
     ///
     /// let mut buffer = Gradients::new(3, 2);
     /// buffer.set(0, 0, 1.0, 0.5);

@@ -7,9 +7,9 @@
 //! cargo run --example train_regression
 //! ```
 
-use booste_rs::data::binned::BinnedDatasetBuilder;
-use booste_rs::data::{ColMatrix, DenseMatrix, RowMajor};
-use booste_rs::training::{GBDTParams, GBDTTrainer, GrowthStrategy, Metric, Rmse, SquaredLoss};
+use boosters::data::binned::BinnedDatasetBuilder;
+use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
+use boosters::training::{GBDTParams, GBDTTrainer, GrowthStrategy, Metric, Rmse, SquaredLoss};
 
 fn main() {
     // =========================================================================

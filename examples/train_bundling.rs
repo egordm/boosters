@@ -13,9 +13,9 @@
 
 use std::time::Instant;
 
-use booste_rs::data::binned::{BinnedDatasetBuilder, BundlingConfig};
-use booste_rs::data::{ColMatrix, DenseMatrix, RowMajor};
-use booste_rs::training::{GBDTParams, GBDTTrainer, GrowthStrategy, Metric, Rmse, SquaredLoss};
+use boosters::data::binned::{BinnedDatasetBuilder, BundlingConfig};
+use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
+use boosters::training::{GBDTParams, GBDTTrainer, GrowthStrategy, Metric, Rmse, SquaredLoss};
 
 fn main() {
     // =========================================================================

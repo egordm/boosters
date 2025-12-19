@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use booste_rs::training::{GBDTTrainer, GBDTParams, SquaredLoss, Rmse, GainParams};
+//! use boosters::training::{GBDTTrainer, GBDTParams, SquaredLoss, Rmse, GainParams};
 //!
 //! let params = GBDTParams {
 //!     n_trees: 100,

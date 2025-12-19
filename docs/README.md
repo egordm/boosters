@@ -1,4 +1,4 @@
-# booste-rs Documentation
+# boosters Documentation
 
 Pure Rust gradient boosting library with XGBoost compatibility.
 

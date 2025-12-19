@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-This report evaluates the performance and memory characteristics of Exclusive Feature Bundling (EFB) in booste-rs compared to LightGBM's bundling implementation.
+This report evaluates the performance and memory characteristics of Exclusive Feature Bundling (EFB) in boosters compared to LightGBM's bundling implementation.
 
 **Key Findings**:
 - **Memory reduction**: 84-98% fewer binned columns for one-hot encoded data
@@ -80,7 +80,7 @@ The bundling analysis adds a small overhead during dataset construction. This is
 
 LightGBM also shows no training time difference between bundling modes, confirming that EFB's value is memory-focused, not compute-focused.
 
-**Note**: LightGBM is ~10-15× faster than booste-rs in these benchmarks due to:
+**Note**: LightGBM is ~10-15× faster than boosters in these benchmarks due to:
 - SIMD histogram updates
 - Optimized multi-threading
 - Mature C++ implementation
@@ -112,7 +112,7 @@ EFB adds minimal value when:
 
 ## Conclusion
 
-Exclusive Feature Bundling in booste-rs achieves its design goal: **massive memory reduction for sparse one-hot data with negligible impact on training accuracy or speed**. 
+Exclusive Feature Bundling in boosters achieves its design goal: **massive memory reduction for sparse one-hot data with negligible impact on training accuracy or speed**. 
 
 The implementation correctly identifies mutually exclusive features and compresses them efficiently. The 4-19% binning overhead is acceptable given the 84-98% memory reduction.
 

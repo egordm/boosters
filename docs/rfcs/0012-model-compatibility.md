@@ -49,7 +49,7 @@ Booste-rs provides compatibility loaders for XGBoost and LightGBM models, conver
 
 ### Unified Model API
 
-Both loaders convert to native booste-rs types:
+Both loaders convert to native boosters types:
 
 ```
 XgbModel.to_forest() → Forest<ScalarLeaf>
@@ -102,7 +102,7 @@ LgbModel.to_forest() → Forest<ScalarLeaf>
 ## Usage Example
 
 ```rust
-use booste_rs::compat::xgboost::XgbModel;
+use boosters::compat::xgboost::XgbModel;
 
 // Load XGBoost model
 let json: serde_json::Value = serde_json::from_reader(file)?;
@@ -121,7 +121,7 @@ match model.to_booster()? {
 ```
 
 ```rust
-use booste_rs::compat::lightgbm::LgbModel;
+use boosters::compat::lightgbm::LgbModel;
 
 // Load LightGBM model
 let model = LgbModel::from_file("model.txt")?;

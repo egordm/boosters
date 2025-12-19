@@ -11,9 +11,9 @@
 
 ## Summary
 
-- **Training (medium, single-thread)**: booste-rs is **~on par with XGBoost** (cold DMatrix) and **slower than LightGBM**.
-- **Inference (medium model)**: booste-rs batch prediction is ~**1.18 Melem/s** at 10k rows, and is ~**4.5× faster than LightGBM** at 10k rows. LightGBM still wins on single-row latency.
-- **Quality**: on the synthetic tasks used here, booste-rs is competitive (often best). On the in-repo fixture datasets the gap is mixed (fixture regression remains behind; multiclass is close).
+- **Training (medium, single-thread)**: boosters is **~on par with XGBoost** (cold DMatrix) and **slower than LightGBM**.
+- **Inference (medium model)**: boosters batch prediction is ~**1.18 Melem/s** at 10k rows, and is ~**4.5× faster than LightGBM** at 10k rows. LightGBM still wins on single-row latency.
+- **Quality**: on the synthetic tasks used here, boosters is competitive (often best). On the in-repo fixture datasets the gap is mixed (fixture regression remains behind; multiclass is close).
 
 ## Environment
 
@@ -33,18 +33,18 @@ Regression, histogram bins=256, single-thread. (See benchmark sources for the ex
 
 All comparisons below are **cold-only** (build data structures inside the timed region). This avoids misleading “warm-cache” effects.
 
-| Suite | Dataset | booste-rs cold_full | XGBoost cold_dmatrix | LightGBM cold_full |
+| Suite | Dataset | boosters cold_full | XGBoost cold_dmatrix | LightGBM cold_full |
 |---|---|---:|---:|---:|
 | vs XGBoost | medium (50k×100, 50 trees, depth=6) | 2.122 s | **2.083 s** | - |
 | vs LightGBM | medium (50k×100, 50 trees, depth=6) | 2.281 s | - | **1.466 s** |
 
 Notes:
 
-- booste-rs `cold_full`: build matrix + bin + train inside the timed region
+- boosters `cold_full`: build matrix + bin + train inside the timed region
 - XGBoost `cold_dmatrix`: recreate DMatrix inside the timed region
 - LightGBM `cold_full`: train end-to-end inside the timed region
 
-#### Growth strategy training cost (Criterion, booste-rs)
+#### Growth strategy training cost (Criterion, boosters)
 
 Regression, 50k×100, 50 trees, bins=256, `learning_rate=0.1`, single-thread.
 
@@ -55,7 +55,7 @@ Regression, 50k×100, 50 trees, bins=256, `learning_rate=0.1`, single-thread.
 
 ### Inference performance
 
-#### Core prediction scaling (Criterion, booste-rs)
+#### Core prediction scaling (Criterion, boosters)
 
 Medium model; throughput counts rows/sec (not features).
 
@@ -69,7 +69,7 @@ Medium model; throughput counts rows/sec (not features).
 
 Single-row (medium): 9.3817 µs.
 
-#### Traversal strategy comparison (Criterion, booste-rs)
+#### Traversal strategy comparison (Criterion, boosters)
 
 Medium model.
 
@@ -78,7 +78,7 @@ Medium model.
 | Standard (no block) | 2.6702 ms | 26.167 ms |
 | Unrolled + block64 | **863.7457 µs** | **8.6171 ms** |
 
-#### Parallel prediction scaling (Criterion, booste-rs)
+#### Parallel prediction scaling (Criterion, boosters)
 
 Medium model, 10,000 rows.
 
@@ -99,21 +99,21 @@ Medium model, 10,000 rows:
 
 | Library / mode | Time |
 |---|---:|
-| booste-rs | **9.0760 ms** |
+| boosters | **9.0760 ms** |
 | XGBoost cold_dmatrix | 9.1366 ms |
 
 LightGBM comparison (medium model, 10,000 rows):
 
 | Library | Time |
 |---|---:|
-| booste-rs | **9.0787 ms** |
+| boosters | **9.0787 ms** |
 | LightGBM | 41.020 ms |
 
 Single-row (medium model):
 
 | Library | Time |
 |---|---:|
-| booste-rs | 8.3532 µs |
+| boosters | 8.3532 µs |
 | LightGBM | **3.5517 µs** |
 
 ### Model quality
@@ -141,7 +141,7 @@ Regression:
 
 | Library | RMSE (↓) | MAE (↓) |
 |---|---:|---:|
-| booste-rs | 1.317053 | **1.045699** |
+| boosters | 1.317053 | **1.045699** |
 | XGBoost | **1.316839** | 1.049416 |
 | LightGBM | 1.334718 | 1.067370 |
 
@@ -149,7 +149,7 @@ Binary classification:
 
 | Library | LogLoss (↓) | Accuracy (↑) |
 |---|---:|---:|
-| booste-rs | **0.417135** | **0.8438** |
+| boosters | **0.417135** | **0.8438** |
 | XGBoost | 0.419187 | **0.8438** |
 | LightGBM | 0.421672 | 0.8397 |
 
@@ -157,7 +157,7 @@ Multiclass (5 classes):
 
 | Library | MLogLoss (↓) | Accuracy (↑) |
 |---|---:|---:|
-| booste-rs | **0.746448** | **0.7505** |
+| boosters | **0.746448** | **0.7505** |
 | XGBoost | 0.937139 | 0.7117 |
 | LightGBM | 0.816711 | 0.7355 |
 
@@ -169,7 +169,7 @@ Regression (`regression_simple`, 80 train / 20 test, 5 features; 20 trees, depth
 
 | Library | RMSE (↓) | MAE (↓) |
 |---|---:|---:|
-| booste-rs | 44.924254 | 36.194095 |
+| boosters | 44.924254 | 36.194095 |
 | XGBoost | **38.586405** | **29.293216** |
 | LightGBM | 48.044723 | 39.625950 |
 
@@ -177,7 +177,7 @@ Binary (`binary_classification`, 160 train / 40 test, 10 features; 20 trees, dep
 
 | Library | LogLoss (↓) | Accuracy (↑) |
 |---|---:|---:|
-| booste-rs | 0.761148 | 0.5250 |
+| boosters | 0.761148 | 0.5250 |
 | XGBoost | 0.743262 | 0.5000 |
 | LightGBM | **0.684498** | **0.5750** |
 
@@ -185,7 +185,7 @@ Multiclass (`multiclass`, 240 train / 60 test, 10 features; 20 trees, depth=3):
 
 | Library | MLogLoss (↓) | Accuracy (↑) |
 |---|---:|---:|
-| booste-rs | **0.399065** | **0.8500** |
+| boosters | **0.399065** | **0.8500** |
 | XGBoost | 0.469370 | **0.8500** |
 | LightGBM | 0.418020 | **0.8500** |
 
@@ -197,7 +197,7 @@ This section re-runs the comparisons that previously lived in a standalone note.
 
 Depth-wise (`max_depth=6`, leaf budget=64):
 
-| Task | booste-rs | XGBoost | LightGBM |
+| Task | boosters | XGBoost | LightGBM |
 |---|---:|---:|---:|
 | Regression (RMSE) | **1.483721** | 1.498711 | 1.493007 |
 | Regression (MAE) | **1.186293** | 1.195885 | 1.192656 |
@@ -208,7 +208,7 @@ Depth-wise (`max_depth=6`, leaf budget=64):
 
 Leaf-wise (`max_leaves=64`):
 
-| Task | booste-rs | XGBoost | LightGBM |
+| Task | boosters | XGBoost | LightGBM |
 |---|---:|---:|---:|
 | Regression (RMSE) | **1.420528** | 1.432027 | 1.428714 |
 | Regression (MAE) | **1.129851** | 1.140904 | 1.138415 |
@@ -223,28 +223,28 @@ These datasets are *not stored in this repo*, but are available in this workspac
 
 Binary: XGBoost demo agaricus (libsvm)
 
-| Growth | booste-rs LogLoss | XGBoost LogLoss | LightGBM LogLoss |
+| Growth | boosters LogLoss | XGBoost LogLoss | LightGBM LogLoss |
 |---|---:|---:|---:|
 | depthwise (depth=6) | 0.000716 | 0.000717 | **0.000124** |
 | leafwise (leaves=64) | 0.000716 | 0.000717 | **0.000121** |
 
 Regression: UCI machine
 
-| Growth | booste-rs RMSE | XGBoost RMSE | LightGBM RMSE |
+| Growth | boosters RMSE | XGBoost RMSE | LightGBM RMSE |
 |---|---:|---:|---:|
 | depthwise (depth=6) | **77.8829** | 83.5060 | 85.8998 |
 | leafwise (leaves=64) | **80.8976** | 86.4909 | 86.4276 |
 
 Multiclass: LightGBM example dataset (K=5)
 
-| Growth | booste-rs mLogLoss | XGBoost mLogLoss | LightGBM mLogLoss |
+| Growth | boosters mLogLoss | XGBoost mLogLoss | LightGBM mLogLoss |
 |---|---:|---:|---:|
 | depthwise (depth=6) | **1.208078** | 1.293726 | 1.270620 |
 | leafwise (leaves=64) | 1.129189 | 1.123613 | **1.106219** |
 
 ## Analysis
 
-- Cross-library training: on this harness, booste-rs is ~on par with XGBoost (cold DMatrix) and slower than LightGBM.
+- Cross-library training: on this harness, boosters is ~on par with XGBoost (cold DMatrix) and slower than LightGBM.
 - Inference: unrolled traversal + blocking is the main win for batch prediction; LightGBM retains an advantage in single-row latency. LightGBM prediction may also perform internal one-time setup/caching, so treat these as steady-state timings.
 - Quality: synthetic tasks are generally at parity or better than the baselines here; fixture regression remains behind, and the external sweep is mixed.
 
@@ -257,14 +257,14 @@ Multiclass: LightGBM example dataset (K=5)
 ## Reproducing
 
 ```bash
-# Training performance (booste-rs internal)
+# Training performance (boosters internal)
 cargo bench --bench training_gbdt
 
 # Training performance vs baselines
 cargo bench --features bench-xgboost --bench training_xgboost -- --noplot medium
 cargo bench --features bench-lightgbm --bench training_lightgbm -- --noplot medium
 
-# Inference performance (booste-rs internal)
+# Inference performance (boosters internal)
 cargo bench --bench prediction_core
 cargo bench --bench prediction_strategies -- --noplot medium
 cargo bench --bench prediction_parallel -- --noplot medium
@@ -295,7 +295,7 @@ cargo run --bin quality_eval --release --features bench-xgboost,bench-lightgbm -
 cargo run --bin quality_eval --release --features bench-xgboost,bench-lightgbm -- \
   --task multiclass --classes 5 --label0 ../LightGBM/examples/multiclass_classification/multiclass.train --trees 200 --growth depthwise --depth 6 --seed 42
 
-# Quality as tests (booste-rs only)
+# Quality as tests (boosters only)
 cargo test --test quality_smoke
 BOOSTERS_RUN_QUALITY=1 cargo test --test quality_smoke
 ```

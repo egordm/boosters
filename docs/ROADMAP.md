@@ -1,8 +1,8 @@
-# booste-rs Roadmap
+# boosters Roadmap
 
 ## Current Status
 
-booste-rs has achieved **performance parity with LightGBM** and is **13-28%% faster than XGBoost** while maintaining full quality compatibility.
+boosters has achieved **performance parity with LightGBM** and is **13-28%% faster than XGBoost** while maintaining full quality compatibility.
 
 ### Feature Status
 

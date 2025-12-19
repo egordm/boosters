@@ -5,9 +5,9 @@
 //! - HingeLoss (SVM-style binary classification)
 
 use super::{load_test_data, load_train_data};
-use booste_rs::data::Dataset;
-use booste_rs::inference::LinearModelPredict;
-use booste_rs::training::{
+use boosters::data::Dataset;
+use boosters::inference::LinearModelPredict;
+use boosters::training::{
     Accuracy, GBLinearParams, GBLinearTrainer, HingeLoss, LogLoss, LogisticLoss, MarginAccuracy,
     Objective, PseudoHuberLoss, Rmse, SquaredLoss, Verbosity,
 };
@@ -68,7 +68,7 @@ fn train_pseudo_huber_regression() {
     let sq_model = trainer_sq.train(&train, &[]).unwrap();
 
     // Compute RMSE on test set for both
-    use booste_rs::training::Metric;
+    use boosters::training::Metric;
 
     let ph_output = model.predict(&test_data, &[]);
     let sq_output = sq_model.predict(&test_data, &[]);
@@ -123,7 +123,7 @@ fn train_pseudo_huber_with_delta() {
     let trainer_sq = GBLinearTrainer::new(SquaredLoss, Rmse, base_params);
     let sq_model = trainer_sq.train(&train, &[]).unwrap();
 
-    use booste_rs::training::Metric;
+    use boosters::training::Metric;
 
     let moderate_output = moderate_model.predict(&test_data, &[]);
     let large_output = large_model.predict(&test_data, &[]);
@@ -197,7 +197,7 @@ fn train_hinge_binary_classification() {
     // Compute accuracy.
     // - Hinge: MarginAccuracy (threshold on margins at 0.0).
     // - Logistic: transform logits to probabilities via objective transform, then threshold at 0.5.
-    use booste_rs::training::Metric;
+    use boosters::training::Metric;
 
     let hinge_output = hinge_model.predict(&test_data, &[]);
     let hinge_acc = MarginAccuracy::default()

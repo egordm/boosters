@@ -294,7 +294,7 @@ impl Objective for HingeLoss {
 /// # Example
 ///
 /// ```ignore
-/// use booste_rs::training::SoftmaxLoss;
+/// use boosters::training::SoftmaxLoss;
 ///
 /// // 3-class classification
 /// let obj = SoftmaxLoss::new(3);

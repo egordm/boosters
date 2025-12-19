@@ -26,7 +26,7 @@ use std::collections::HashMap;
 /// # Example
 ///
 /// ```
-/// use booste_rs::data::binned::BundlingConfig;
+/// use boosters::data::binned::BundlingConfig;
 ///
 /// // Use defaults for most datasets
 /// let config = BundlingConfig::auto();

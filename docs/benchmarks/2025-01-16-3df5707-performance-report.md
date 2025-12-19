@@ -7,7 +7,7 @@
 
 ## Summary
 
-booste-rs demonstrates **competitive or superior performance** compared to XGBoost and LightGBM across most benchmarks:
+boosters demonstrates **competitive or superior performance** compared to XGBoost and LightGBM across most benchmarks:
 
 - **GBDT Training**: **1.6x faster** than XGBoost, **1.17x faster** than LightGBM
 - **GBLinear Training**: Comparable to XGBoost (within 10%)
@@ -19,15 +19,15 @@ booste-rs demonstrates **competitive or superior performance** compared to XGBoo
 
 Benchmark: 50,000 rows × 100 features, 50 trees, depth 6, single-threaded.
 
-| Library | Time | Throughput | vs booste-rs |
+| Library | Time | Throughput | vs boosters |
 |---------|------|------------|--------------|
-| **booste-rs** | **1.38s** | **3.63 Melem/s** | 1.0x |
+| **boosters** | **1.38s** | **3.63 Melem/s** | 1.0x |
 | LightGBM | 1.61s | 3.10 Melem/s | 1.17x slower |
 | XGBoost | 2.24s | 2.24 Melem/s | 1.62x slower |
 
 ### Analysis
 
-booste-rs achieves the best training performance through:
+boosters achieves the best training performance through:
 - Cache-friendly histogram layout with interleaved gradient/hessian storage
 - Efficient binning with minimal preprocessing overhead
 - Optimized split finding with early exit conditions
@@ -40,7 +40,7 @@ Benchmark: 100 rounds, single-threaded.
 
 ### Regression
 
-| Dataset | booste-rs | XGBoost | Speedup |
+| Dataset | boosters | XGBoost | Speedup |
 |---------|-----------|---------|---------|
 | Small (5K × 50) | **143ms** | 167ms | **1.17x** |
 | Medium (50K × 100) | **517ms** | 571ms | **1.10x** |
@@ -48,14 +48,14 @@ Benchmark: 100 rounds, single-threaded.
 
 ### Binary Classification
 
-| Dataset | booste-rs | XGBoost | Speedup |
+| Dataset | boosters | XGBoost | Speedup |
 |---------|-----------|---------|---------|
 | Medium (50K × 100) | 587ms | **574ms** | 0.98x |
 
 ### Analysis
 
 GBLinear performance is competitive with XGBoost:
-- Small/medium datasets favor booste-rs due to lower overhead
+- Small/medium datasets favor boosters due to lower overhead
 - Large datasets show XGBoost's optimized BLAS routines providing slight edge
 - The difference is minimal (<5%) in most cases
 
@@ -67,7 +67,7 @@ Model: 50 trees, depth 6, 100 features.
 
 ### Batch Prediction (single-threaded)
 
-| Batch Size | booste-rs | XGBoost | LightGBM | booste-rs vs Best |
+| Batch Size | boosters | XGBoost | LightGBM | boosters vs Best |
 |------------|-----------|---------|----------|-------------------|
 | 100 rows | 0.82ms | 0.95ms | 4.26ms | **1.16x faster** |
 | 1,000 rows | 8.01ms | 9.50ms | 42.6ms | **1.19x faster** |
@@ -75,15 +75,15 @@ Model: 50 trees, depth 6, 100 features.
 
 ### Single Row Latency
 
-| Library | Latency | vs booste-rs |
+| Library | Latency | vs boosters |
 |---------|---------|--------------|
-| **booste-rs** | **0.82ms** | 1.0x |
+| **boosters** | **0.82ms** | 1.0x |
 | XGBoost | 0.98ms | 1.20x slower |
 | LightGBM | 21.4ms | **26x slower** |
 
 ### Multi-threaded Scaling (10K rows)
 
-| Threads | booste-rs | XGBoost | booste-rs Speedup |
+| Threads | boosters | XGBoost | boosters Speedup |
 |---------|-----------|---------|-------------------|
 | 1 | 8.0ms | 9.5ms | 1.19x |
 | 2 | 4.3ms | 5.6ms | 1.30x |
@@ -92,7 +92,7 @@ Model: 50 trees, depth 6, 100 features.
 
 ### Analysis
 
-booste-rs prediction benefits from:
+boosters prediction benefits from:
 - Unrolled tree traversal (6 trees at a time)
 - Cache-optimized tree layout
 - Efficient parallel work distribution
@@ -106,19 +106,19 @@ For detailed quality results, see [2025-12-16-3df5707-quality-report.md](2025-12
 
 ### Key Findings
 
-| Task | booste-rs vs XGBoost | booste-rs vs LightGBM |
+| Task | boosters vs XGBoost | boosters vs LightGBM |
 |------|----------------------|-----------------------|
 | Regression (RMSE) | **Better** on synthetic | Similar on real-world |
 | Binary Classification | Within 1% | Within 1% |
 | Multi-class | **Significantly better** | **Significantly better** |
 
-**Note**: Multi-class results show booste-rs with dramatically better metrics. This may indicate a configuration mismatch in how other libraries handle multi-class - investigation recommended.
+**Note**: Multi-class results show boosters with dramatically better metrics. This may indicate a configuration mismatch in how other libraries handle multi-class - investigation recommended.
 
 ---
 
 ## Conclusions
 
-1. **GBDT Training**: booste-rs is the fastest option, beating XGBoost by 1.6x and LightGBM by 1.17x
+1. **GBDT Training**: boosters is the fastest option, beating XGBoost by 1.6x and LightGBM by 1.17x
 
 2. **GBLinear Training**: Competitive with XGBoost, faster on small/medium datasets
 
@@ -128,8 +128,8 @@ For detailed quality results, see [2025-12-16-3df5707-quality-report.md](2025-12
 
 ### Recommendations
 
-- Use booste-rs when training speed is critical
-- Use booste-rs for low-latency prediction workloads
+- Use boosters when training speed is critical
+- Use boosters for low-latency prediction workloads
 - For GBLinear with very large datasets (>100K rows), XGBoost is marginally faster
 
 ---

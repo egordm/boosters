@@ -21,8 +21,8 @@ mod quantile;
 mod regression;
 mod selectors;
 
-use booste_rs::data::{ColMatrix, RowMatrix};
-use booste_rs::training::Rmse;
+use boosters::data::{ColMatrix, RowMatrix};
+use boosters::training::Rmse;
 use serde::Deserialize;
 use std::fs;
 use std::path::Path;
@@ -161,10 +161,10 @@ pub fn load_xgb_predictions(name: &str) -> Option<Vec<f32>> {
 // =============================================================================
 
 // Re-export from library
-pub use booste_rs::testing::pearson_correlation;
+pub use boosters::testing::pearson_correlation;
 
 /// Root mean squared error - uses library Rmse metric.
 pub fn rmse(predictions: &[f32], labels: &[f32]) -> f64 {
-    use booste_rs::training::Metric;
+    use boosters::training::Metric;
     Rmse.compute(labels.len(), 1, predictions, labels, &[])
 }

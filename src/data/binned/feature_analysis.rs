@@ -153,8 +153,8 @@ impl FeatureStats {
 /// # Example
 ///
 /// ```
-/// use booste_rs::data::ColMatrix;
-/// use booste_rs::data::binned::analyze_features;
+/// use boosters::data::ColMatrix;
+/// use boosters::data::binned::analyze_features;
 ///
 /// // 3 rows, 2 features
 /// let data = ColMatrix::from_vec(vec![

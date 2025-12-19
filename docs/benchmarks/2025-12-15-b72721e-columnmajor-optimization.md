@@ -9,7 +9,7 @@
 ## Executive Summary
 
 After changing the default layout for dense features from RowMajor to ColumnMajor,
-booste-rs now **matches or beats LightGBM on training speed** while maintaining
+boosters now **matches or beats LightGBM on training speed** while maintaining
 excellent model quality and superior prediction performance.
 
 | Aspect | vs XGBoost | vs LightGBM | Notes |
@@ -60,16 +60,16 @@ Speedup: 1.15x (13% faster)
 
 ### Cold-Start Training (includes dataset creation)
 
-| Dataset | booste-rs | XGBoost | LightGBM | Best |
+| Dataset | boosters | XGBoost | LightGBM | Best |
 |---------|-----------|---------|----------|------|
 | Small (5k×100, 50 trees) | **314 ms** | 553 ms | **245 ms** | LightGBM (1.28x faster) |
-| Medium (50k×100, 50 trees) | **1.39 s** | 2.13 s | 1.49 s | **booste-rs (1.07x faster)** |
+| Medium (50k×100, 50 trees) | **1.39 s** | 2.13 s | 1.49 s | **boosters (1.07x faster)** |
 
 ### Throughput Comparison
 
 | Library | Small (Melem/s) | Medium (Melem/s) |
 |---------|-----------------|------------------|
-| booste-rs | 1.59 | **3.60** |
+| boosters | 1.59 | **3.60** |
 | XGBoost | 0.90 | 2.35 |
 | LightGBM | **2.04** | 3.36 |
 
@@ -88,14 +88,14 @@ The larger dataset benefits more because histogram building dominates the runtim
 
 ### Batch Prediction (1000 rows)
 
-| Model Size | booste-rs | LightGBM | Speedup |
+| Model Size | boosters | LightGBM | Speedup |
 |------------|-----------|----------|---------|
 | Medium (50 trees) | **0.88 ms** | 4.14 ms | **4.7x faster** |
 | Large (200 trees) | **5.66 ms** | 29.27 ms | **5.2x faster** |
 
 ### Thread Scaling (10k rows, medium model)
 
-| Threads | booste-rs | LightGBM | Speedup |
+| Threads | boosters | LightGBM | Speedup |
 |---------|-----------|----------|---------|
 | 1 | **1.48 ms** | 42.79 ms | **29x faster** |
 | 2 | 4.77 ms | - | - |
@@ -110,40 +110,40 @@ All benchmarks run with 3 seeds for statistical confidence.
 
 ### Regression (RMSE - lower is better)
 
-| Dataset | booste-rs | XGBoost | LightGBM |
+| Dataset | boosters | XGBoost | LightGBM |
 |---------|-----------|---------|----------|
 | Small (10k×50) | **0.9996 ± 0.092** | 1.0155 ± 0.093 | 1.0223 ± 0.094 |
 | Medium (50k×100) | **1.8234 ± 0.080** | 1.8277 ± 0.079 | 1.8309 ± 0.079 |
 
 ### Binary Classification (LogLoss - lower is better)
 
-| Dataset | booste-rs | XGBoost | LightGBM |
+| Dataset | boosters | XGBoost | LightGBM |
 |---------|-----------|---------|----------|
 | Small (10k×50) | **0.3274 ± 0.003** | 0.3284 ± 0.005 | 0.3307 ± 0.008 |
 | Medium (50k×100) | 0.4136 ± 0.008 | **0.4129 ± 0.006** | 0.4141 ± 0.008 |
 
 ### Binary Classification (Accuracy - higher is better)
 
-| Dataset | booste-rs | XGBoost | LightGBM |
+| Dataset | boosters | XGBoost | LightGBM |
 |---------|-----------|---------|----------|
 | Small (10k×50) | **0.878 ± 0.005** | 0.877 ± 0.008 | 0.872 ± 0.008 |
 | Medium (50k×100) | **0.849 ± 0.004** | 0.849 ± 0.002 | 0.848 ± 0.003 |
 
 ### Multi-class Classification (LogLoss - lower is better)
 
-| Dataset | booste-rs | XGBoost | LightGBM |
+| Dataset | boosters | XGBoost | LightGBM |
 |---------|-----------|---------|----------|
 | Small (10k×50, 5 classes) | **0.629 ± 0.026** | 0.768 ± 0.021 | 0.666 ± 0.024 |
 | Medium (50k×100, 5 classes) | **0.772 ± 0.003** | 0.960 ± 0.006 | 0.832 ± 0.004 |
 
 ### Multi-class Classification (Accuracy - higher is better)
 
-| Dataset | booste-rs | XGBoost | LightGBM |
+| Dataset | boosters | XGBoost | LightGBM |
 |---------|-----------|---------|----------|
 | Small (10k×50, 5 classes) | **0.760 ± 0.017** | 0.738 ± 0.003 | 0.752 ± 0.012 |
 | Medium (50k×100, 5 classes) | **0.743 ± 0.005** | 0.703 ± 0.007 | 0.734 ± 0.007 |
 
-**booste-rs wins on 10/12 quality metrics.**
+**boosters wins on 10/12 quality metrics.**
 
 ---
 
@@ -151,14 +151,14 @@ All benchmarks run with 3 seeds for statistical confidence.
 
 ### Before ColumnMajor Optimization
 
-| Metric | booste-rs vs LightGBM |
+| Metric | boosters vs LightGBM |
 |--------|----------------------|
 | Training (small) | 1.39x slower |
 | Training (medium) | 1.24x slower |
 
 ### After ColumnMajor Optimization
 
-| Metric | booste-rs vs LightGBM |
+| Metric | boosters vs LightGBM |
 |--------|----------------------|
 | Training (small) | 1.28x slower |
 | Training (medium) | **1.07x faster** |
@@ -171,15 +171,15 @@ All benchmarks run with 3 seeds for statistical confidence.
 
 The ColumnMajor layout optimization closes the training performance gap with LightGBM:
 
-- **Small datasets**: booste-rs is now only 28% slower (was 39%)
-- **Medium datasets**: booste-rs is now **7% faster** (was 24% slower)
+- **Small datasets**: boosters is now only 28% slower (was 39%)
+- **Medium datasets**: boosters is now **7% faster** (was 24% slower)
 
 Combined with our existing advantages:
 - **5x faster batch prediction**
 - **Best-in-class model quality** (10/12 metrics)
 - **Pure Rust implementation** (no C++ dependencies)
 
-booste-rs is now a compelling choice for both training and inference workloads.
+boosters is now a compelling choice for both training and inference workloads.
 
 ---
 

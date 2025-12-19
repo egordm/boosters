@@ -32,7 +32,7 @@ Notes:
 
 ## Benchmarks
 
-### Intra-crate (booste-rs) training benchmarks
+### Intra-crate (boosters) training benchmarks
 
 Command:
 
@@ -80,7 +80,7 @@ Observed results (regression):
 
 ## Has the Gap to LightGBM Narrowed?
 
-- The interleaved refactor produced a large speedup inside booste-rs itself (per `training_gbdt` deltas and also the “boosters” side of the LightGBM comparison benches).
+- The interleaved refactor produced a large speedup inside boosters itself (per `training_gbdt` deltas and also the “boosters” side of the LightGBM comparison benches).
 - Despite that, on these regression training benchmarks we are still behind LightGBM (roughly 22–34% slower in the measured cases above).
 
 ## Histogram Kernels: Are They All Needed?

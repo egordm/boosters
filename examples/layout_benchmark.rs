@@ -3,9 +3,9 @@
 //! Run with:
 //! cargo run --release --example layout_benchmark
 
-use booste_rs::data::binned::{BinnedDatasetBuilder, GroupLayout, GroupStrategy};
-use booste_rs::data::{ColMatrix, DenseMatrix, RowMajor};
-use booste_rs::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
+use boosters::data::binned::{BinnedDatasetBuilder, GroupLayout, GroupStrategy};
+use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
+use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use std::time::Instant;
 
 fn main() {

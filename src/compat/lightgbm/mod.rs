@@ -20,7 +20,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use booste_rs::compat::lightgbm::LgbModel;
+//! use boosters::compat::lightgbm::LgbModel;
 //!
 //! let model = LgbModel::from_file("model.txt")?;
 //! let forest = model.to_forest()?;

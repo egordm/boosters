@@ -43,20 +43,20 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use booste_rs::data::binned::BinnedDatasetBuilder;
-use booste_rs::data::{ColMatrix, DenseMatrix, RowMajor, RowMatrix};
-use booste_rs::inference::gbdt::{Predictor, UnrolledTraversal6};
-use booste_rs::testing::data::{
+use boosters::data::binned::BinnedDatasetBuilder;
+use boosters::data::{ColMatrix, DenseMatrix, RowMajor, RowMatrix};
+use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
+use boosters::testing::data::{
 	random_dense_f32, split_indices, synthetic_binary_targets_from_linear_score,
 	synthetic_multiclass_targets_from_linear_scores, synthetic_regression_targets_linear,
 };
-use booste_rs::training::{
+use boosters::training::{
 	Accuracy, GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, LinearLeafConfig, LogLoss, LogisticLoss, Mae,
 	Metric, MulticlassAccuracy, MulticlassLogLoss, Objective, Rmse, SoftmaxLoss, SquaredLoss,
 };
 
 #[cfg(feature = "io-parquet")]
-use booste_rs::data::io::parquet::load_parquet_xy_row_major_f32;
+use boosters::data::io::parquet::load_parquet_xy_row_major_f32;
 
 #[cfg(feature = "bench-xgboost")]
 use xgb::parameters::tree::{GrowPolicy, TreeBoosterParametersBuilder, TreeMethod};
@@ -408,7 +408,7 @@ fn select_targets(targets: &[f32], row_indices: &[usize]) -> Vec<f32> {
 	out
 }
 
-fn extract_group(output: &booste_rs::inference::common::PredictionOutput, group: usize) -> Vec<f32> {
+fn extract_group(output: &boosters::inference::common::PredictionOutput, group: usize) -> Vec<f32> {
 	let num_groups = output.num_groups();
 	assert!(group < num_groups);
 	if num_groups == 1 {
@@ -426,7 +426,7 @@ fn extract_group(output: &booste_rs::inference::common::PredictionOutput, group:
 struct RunResult {
 	task: String,
 	seed: u64,
-	booste_rs: LibraryMetrics,
+	boosters: LibraryMetrics,
 	#[serde(default)]
 	xgboost: Option<LibraryMetrics>,
 	#[serde(default)]
@@ -860,7 +860,7 @@ fn train_lightgbm(
 fn run_single_eval(config: &BenchmarkConfig, seed: u64) -> RunResult {
 	let (x_train, y_train, rows_train, x_valid, y_valid, rows_valid, cols) = load_data(config, seed, 0.2);
 
-	let booste_rs = train_boosters(config, &x_train, &y_train, rows_train, &x_valid, &y_valid, rows_valid, cols, seed);
+	let boosters = train_boosters(config, &x_train, &y_train, rows_train, &x_valid, &y_valid, rows_valid, cols, seed);
 
 	// XGBoost doesn't support linear trees, so skip it for linear tree configs
 	#[cfg(feature = "bench-xgboost")]
@@ -883,7 +883,7 @@ fn run_single_eval(config: &BenchmarkConfig, seed: u64) -> RunResult {
 	#[cfg(not(feature = "bench-lightgbm"))]
 	let lightgbm: Option<LibraryMetrics> = None;
 
-	RunResult { task: config.task.as_str().to_string(), seed, booste_rs, xgboost, lightgbm }
+	RunResult { task: config.task.as_str().to_string(), seed, boosters, xgboost, lightgbm }
 }
 
 fn run_benchmark(config: &BenchmarkConfig, seeds: &[u64]) -> BenchmarkResult {
@@ -898,7 +898,7 @@ fn run_benchmark(config: &BenchmarkConfig, seeds: &[u64]) -> BenchmarkResult {
 		std::io::stdout().flush().unwrap();
 
 		let result = run_single_eval(config, seed);
-		boosters_runs.push(result.booste_rs);
+		boosters_runs.push(result.boosters);
 		if let Some(xgb) = result.xgboost {
 			xgb_runs.push(xgb);
 		}

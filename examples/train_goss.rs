@@ -11,10 +11,10 @@
 
 use std::time::Instant;
 
-use booste_rs::data::binned::BinnedDatasetBuilder;
-use booste_rs::data::{ColMatrix, DenseMatrix, RowMajor};
-use booste_rs::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
-use booste_rs::training::{
+use boosters::data::binned::BinnedDatasetBuilder;
+use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
+use boosters::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
+use boosters::training::{
     GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Metric, Rmse, RowSamplingParams,
     SquaredLoss,
 };

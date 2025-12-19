@@ -13,7 +13,7 @@
 /// # Example
 ///
 /// ```
-/// use booste_rs::{scalar_tree, repr::gbdt::ScalarLeaf};
+/// use boosters::{scalar_tree, repr::gbdt::ScalarLeaf};
 ///
 /// let tree = scalar_tree! {
 ///     0 => num(0, 0.5, L) -> 1, 2,

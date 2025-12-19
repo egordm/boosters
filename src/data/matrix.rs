@@ -14,7 +14,7 @@
 //! # Example
 //!
 //! ```
-//! use booste_rs::data::{DenseMatrix, RowMajor, ColMajor};
+//! use boosters::data::{DenseMatrix, RowMajor, ColMajor};
 //!
 //! // Row-major (default): rows are contiguous
 //! let rm = DenseMatrix::<f32, RowMajor>::from_vec(vec![1.0, 2.0, 3.0, 4.0], 2, 2);
@@ -207,7 +207,7 @@ impl<T> FusedIterator for StridedIter<'_, T> {}
 /// # Example
 ///
 /// ```
-/// use booste_rs::data::{DenseMatrix, DataMatrix, RowMajor, ColMajor, RowMatrix};
+/// use boosters::data::{DenseMatrix, DataMatrix, RowMajor, ColMajor, RowMatrix};
 ///
 /// // Row-major (default): optimal for tree inference
 /// let rm = RowMatrix::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 2, 3);
@@ -376,7 +376,7 @@ impl<T: Copy, L: Layout, S: AsRef<[T]>> DenseMatrix<T, L, S> {
     /// # Example
     ///
     /// ```
-    /// use booste_rs::data::{DenseMatrix, RowMajor, ColMajor, RowMatrix};
+    /// use boosters::data::{DenseMatrix, RowMajor, ColMajor, RowMatrix};
     ///
     /// let rm = RowMatrix::from_vec(vec![1.0, 2.0, 3.0, 4.0], 2, 2);
     /// let cm: DenseMatrix<f32, ColMajor> = rm.to_layout();
@@ -500,7 +500,7 @@ impl<T: Copy + Default> DenseMatrix<T, ColMajor, Box<[T]>> {
     /// # Example
     ///
     /// ```
-    /// use booste_rs::data::{ColMatrix, RowMatrix};
+    /// use boosters::data::{ColMatrix, RowMatrix};
     ///
     /// let row_major = RowMatrix::from_vec(vec![1.0, 2.0, 3.0, 4.0], 2, 2);
     /// let col_major = ColMatrix::from_data_matrix(&row_major);

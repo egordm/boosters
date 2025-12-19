@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use booste_rs::training::{GBLinearTrainer, GBLinearParams, SquaredLoss};
+//! use boosters::training::{GBLinearTrainer, GBLinearParams, SquaredLoss};
 //!
 //! let params = GBLinearParams {
 //!     n_rounds: 100,

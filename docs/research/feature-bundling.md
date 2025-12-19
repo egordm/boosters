@@ -38,7 +38,7 @@ For a dataset with 50 categorical features of average cardinality 20:
 
 ### Real-World Impact
 
-Our quality benchmark shows booste-rs is 4% worse on the Adult dataset (105 one-hot
+Our quality benchmark shows boosters is 4% worse on the Adult dataset (105 one-hot
 features from 14 original) compared to LightGBM. This is partly due to:
 1. Equal-width binning on binary features (addressed separately via quantile binning)
 2. No feature bundling optimization (this RFC)

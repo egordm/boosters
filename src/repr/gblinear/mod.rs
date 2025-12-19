@@ -16,7 +16,7 @@
 //! # Example
 //!
 //! ```
-//! use booste_rs::repr::gblinear::LinearModel;
+//! use boosters::repr::gblinear::LinearModel;
 //!
 //! // Create a simple linear model: y = 0.5*x0 + 0.3*x1 + 0.1
 //! let weights = vec![0.5, 0.3, 0.1].into_boxed_slice();

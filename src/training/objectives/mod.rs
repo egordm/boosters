@@ -350,7 +350,7 @@ impl<T: Objective + ?Sized> ObjectiveExt for T {}
 /// # Example
 ///
 /// ```ignore
-/// use booste_rs::training::{GBTreeTrainer, ObjectiveFunction};
+/// use boosters::training::{GBTreeTrainer, ObjectiveFunction};
 ///
 /// let trainer = GBTreeTrainer::builder()
 ///     .objective(ObjectiveFunction::Logistic)

@@ -5,9 +5,9 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
-use booste_rs::data::{ColMatrix, Dataset, RowMatrix};
-use booste_rs::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
-use booste_rs::training::{GBLinearParams, GBLinearTrainer, MulticlassLogLoss, Rmse, SoftmaxLoss, SquaredLoss, Verbosity};
+use boosters::data::{ColMatrix, Dataset, RowMatrix};
+use boosters::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
+use boosters::training::{GBLinearParams, GBLinearTrainer, MulticlassLogLoss, Rmse, SoftmaxLoss, SquaredLoss, Verbosity};
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use rand::prelude::*;

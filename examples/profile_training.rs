@@ -6,9 +6,9 @@
 //! samply record target/release/examples/profile_training
 //! ```
 
-use booste_rs::data::binned::BinnedDatasetBuilder;
-use booste_rs::data::{ColMatrix, DenseMatrix, RowMajor};
-use booste_rs::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
+use boosters::data::binned::BinnedDatasetBuilder;
+use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
+use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 
 fn main() {
     // Large synthetic dataset for profiling

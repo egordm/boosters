@@ -94,7 +94,7 @@ This reflects that training and inference have different concerns and optimizati
 |----------|------|
 | "How does gradient boosting work?" | "How will we build it?" |
 | Algorithm documentation | Design decisions |
-| External focus (XGBoost, LightGBM) | Internal focus (booste-rs) |
+| External focus (XGBoost, LightGBM) | Internal focus (boosters) |
 | Educational | Prescriptive |
 | Can cite academic papers | Should be self-contained |
 
