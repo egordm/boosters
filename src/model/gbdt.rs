@@ -252,6 +252,34 @@ impl GBDTModel {
         )
     }
 
+    /// Compute SHAP values for a batch of samples.
+    ///
+    /// Returns per-sample, per-feature SHAP contributions that explain
+    /// how each feature contributes to the prediction.
+    ///
+    /// # Arguments
+    /// * `features` - Feature matrix, row-major [n_samples × n_features]
+    /// * `n_samples` - Number of samples
+    ///
+    /// # Errors
+    /// Returns `ExplainError::MissingNodeStats` if the model doesn't have
+    /// cover statistics (required for TreeSHAP).
+    ///
+    /// # Example
+    /// ```ignore
+    /// let shap = model.shap_values(&features, n_samples)?;
+    /// let sum: f64 = (0..n_features).map(|f| shap.get(0, f, 0)).sum();
+    /// // sum + shap.base_value(0, 0) ≈ prediction
+    /// ```
+    pub fn shap_values(
+        &self,
+        features: &[f32],
+        n_samples: usize,
+    ) -> Result<crate::explainability::ShapValues, crate::explainability::ExplainError> {
+        let explainer = crate::explainability::TreeExplainer::new(&self.forest)?;
+        Ok(explainer.shap_values(features, n_samples, self.n_features()))
+    }
+
     // =========================================================================
     // Serialization (requires 'storage' feature)
     // =========================================================================
@@ -513,5 +541,48 @@ mod tests {
         let loaded = GBDTModel::from_bytes(&bytes).unwrap();
 
         assert_eq!(model.n_trees(), loaded.n_trees());
+    }
+
+    #[test]
+    fn shap_values() {
+        use crate::explainability::ExplainError;
+
+        // Forest with covers
+        let tree = scalar_tree! {
+            0 => num(0, 0.5, L) -> 1, 2,
+            1 => leaf(-1.0),
+            2 => leaf(1.0),
+        };
+        let tree = tree.with_covers(vec![100.0, 50.0, 50.0]);
+
+        let mut forest = crate::repr::gbdt::Forest::for_regression().with_base_score(vec![0.0]);
+        forest.push_tree(tree, 0);
+
+        let meta = ModelMeta::for_regression(2);
+        let model = GBDTModel::from_forest(forest, meta);
+
+        // Compute SHAP values
+        let features = vec![0.3, 0.7]; // goes left
+        let shap = model.shap_values(&features, 1);
+        assert!(shap.is_ok());
+
+        let shap = shap.unwrap();
+        assert_eq!(shap.n_samples(), 1);
+        assert_eq!(shap.n_features(), 2);
+
+        // Forest without covers fails
+        let tree2 = scalar_tree! {
+            0 => num(0, 0.5, L) -> 1, 2,
+            1 => leaf(-1.0),
+            2 => leaf(1.0),
+        };
+        let mut forest2 = crate::repr::gbdt::Forest::for_regression().with_base_score(vec![0.0]);
+        forest2.push_tree(tree2, 0);
+        let model2 = GBDTModel::from_forest(forest2, ModelMeta::for_regression(2));
+
+        assert!(matches!(
+            model2.shap_values(&features, 1),
+            Err(ExplainError::MissingNodeStats(_))
+        ));
     }
 }
