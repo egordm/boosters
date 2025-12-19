@@ -106,6 +106,8 @@ impl LinearModel {
     }
 
     /// Get bias for a group.
+    ///
+    /// For bulk access, use [`biases()`](Self::biases) instead.
     #[inline]
     pub fn bias(&self, group: usize) -> f32 {
         debug_assert!(group < self.num_groups, "group index out of bounds");

@@ -78,15 +78,9 @@ impl<L: LeafValue> Forest<L> {
         &self.trees[idx]
     }
 
-    /// Get the group assignment for a tree.
-    #[inline]
-    pub fn tree_group(&self, idx: usize) -> u32 {
-        self.tree_groups[idx]
-    }
-
     /// Get all tree group assignments as a slice.
     #[inline]
-    pub fn tree_groups_slice(&self) -> &[u32] {
+    pub fn tree_groups(&self) -> &[u32] {
         &self.tree_groups
     }
 
