@@ -299,6 +299,20 @@ impl Metric for Mape {
 // Quantile Metric (Pinball Loss)
 // =============================================================================
 
+/// Compute pinball loss for a single residual.
+///
+/// L_tau(y, q) = tau * max(y - q, 0) + (1 - tau) * max(q - y, 0)
+///            = tau * residual if residual >= 0
+///            = (1 - tau) * |residual| if residual < 0
+#[inline]
+fn pinball_loss(alpha: f64, residual: f64) -> f64 {
+    if residual >= 0.0 {
+        alpha * residual
+    } else {
+        (1.0 - alpha) * (-residual)
+    }
+}
+
 /// Quantile metric (pinball loss) for quantile regression.
 ///
 /// L_tau(y, q) = tau * max(y - q, 0) + (1 - tau) * max(q - y, 0)
@@ -353,11 +367,7 @@ impl QuantileMetric {
                 .zip(predictions.iter())
                 .map(|(&y, &pred)| {
                     let residual = y as f64 - pred as f64;
-                    if residual >= 0.0 {
-                        alpha_f64 * residual
-                    } else {
-                        (1.0 - alpha_f64) * (-residual)
-                    }
+                    pinball_loss(alpha_f64, residual)
                 })
                 .sum();
 
@@ -372,11 +382,7 @@ impl QuantileMetric {
                 .fold((0.0, 0.0), |(acc_loss, acc_w), ((&y, &pred), &wt)| {
                     let residual = y as f64 - pred as f64;
                     let wt = wt as f64;
-                    let loss = if residual >= 0.0 {
-                        alpha_f64 * residual
-                    } else {
-                        (1.0 - alpha_f64) * (-residual)
-                    };
+                    let loss = pinball_loss(alpha_f64, residual);
                     (acc_loss + wt * loss, acc_w + wt)
                 });
 
@@ -408,34 +414,40 @@ impl Metric for QuantileMetric {
             return 0.0;
         }
 
-        let labels = &targets[..n_rows];
-
-        let n_samples = n_rows;
         let n_quantiles = self.alphas.len();
         debug_assert_eq!(n_outputs, n_quantiles);
-        debug_assert_eq!(predictions.len(), n_samples * n_quantiles);
+        debug_assert_eq!(predictions.len(), n_rows * n_quantiles);
+
+        // Single quantile: delegate to optimized compute_single (no multi-quantile overhead)
+        if n_quantiles == 1 {
+            return Self::compute_single(
+                self.alphas[0],
+                n_rows,
+                predictions,
+                targets,
+                weights,
+            );
+        }
+
+        // Multi-quantile: compute weighted loss across all quantiles
+        let labels = &targets[..n_rows];
 
         if weights.is_empty() {
             // Column-major: predictions[q * n_rows + row]
-            let total_loss: f64 = (0..n_samples)
+            let total_loss: f64 = (0..n_rows)
                 .flat_map(|row| {
                     self.alphas.iter().enumerate().map(move |(q, &alpha)| {
                         let pred = predictions[q * n_rows + row] as f64;
                         let y = labels[row] as f64;
                         let residual = y - pred;
-
-                        if residual >= 0.0 {
-                            alpha as f64 * residual
-                        } else {
-                            (1.0 - alpha as f64) * (-residual)
-                        }
+                        pinball_loss(alpha as f64, residual)
                     })
                 })
                 .sum();
 
-            total_loss / (n_samples * n_quantiles) as f64
+            total_loss / (n_rows * n_quantiles) as f64
         } else {
-            debug_assert_eq!(weights.len(), n_samples);
+            debug_assert_eq!(weights.len(), n_rows);
 
             // Weighted quantile loss: sum over quantiles of sum(w * loss) / sum(w)
             let (weighted_loss, weight_sum): (f64, f64) = self
@@ -452,12 +464,7 @@ impl Metric for QuantileMetric {
                             let y = label as f64;
                             let residual = y - pred;
                             let wt = weights[row] as f64;
-
-                            let loss = if residual >= 0.0 {
-                                alpha as f64 * residual
-                            } else {
-                                (1.0 - alpha as f64) * (-residual)
-                            };
+                            let loss = pinball_loss(alpha as f64, residual);
 
                             (acc_loss + wt * loss, acc_w + wt)
                         })

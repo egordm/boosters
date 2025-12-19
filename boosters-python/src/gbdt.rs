@@ -4,9 +4,10 @@ use crate::error::PyBoostersError;
 use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
+use std::collections::HashSet;
 use std::path::PathBuf;
 
-use boosters::data::{BinnedDatasetBuilder, DenseMatrix, RowMajor};
+use boosters::data::{BinnedDatasetBuilder, Dataset, DenseMatrix, FeatureColumn, RowMajor};
 use boosters::model::GBDTModel;
 use boosters::training::{GBDTParams, GainParams, MetricFunction, ObjectiveFunction};
 
@@ -172,10 +173,18 @@ impl PyGBDTBooster {
     /// * `y` - Target values of shape (n_samples,)
     /// * `sample_weight` - Optional sample weights
     /// * `feature_names` - Optional feature names for interpretability
+    /// * `categorical_features` - Optional list of indices for categorical features.
+    ///                            Values at these indices are treated as integer category IDs.
     ///
     /// # Returns
     /// Self (for method chaining in Python)
-    #[pyo3(signature = (x, y, sample_weight=None, feature_names=None))]
+    ///
+    /// # Example
+    /// ```python
+    /// # With categorical features at indices 0 and 3
+    /// model.fit(X, y, categorical_features=[0, 3])
+    /// ```
+    #[pyo3(signature = (x, y, sample_weight=None, feature_names=None, categorical_features=None))]
     #[allow(clippy::wrong_self_convention)]
     fn fit<'py>(
         mut slf: PyRefMut<'py, Self>,
@@ -183,6 +192,7 @@ impl PyGBDTBooster {
         y: PyReadonlyArray1<'py, f32>,
         sample_weight: Option<PyReadonlyArray1<'py, f32>>,
         feature_names: Option<Vec<String>>,
+        categorical_features: Option<Vec<usize>>,
     ) -> PyResult<PyRefMut<'py, Self>> {
         let shape = x.shape();
         let n_rows = shape[0];
@@ -209,6 +219,22 @@ impl PyGBDTBooster {
             }
         }
         
+        // Create set of categorical feature indices for fast lookup
+        let cat_indices: HashSet<usize> = categorical_features
+            .as_ref()
+            .map(|v| v.iter().copied().collect())
+            .unwrap_or_default();
+        
+        // Validate categorical indices
+        for &idx in &cat_indices {
+            if idx >= n_cols {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "categorical_features index {} out of bounds (n_features={})",
+                    idx, n_cols
+                )));
+            }
+        }
+        
         // Create matrix from input - handles both C-contiguous (NumPy default) 
         // and Fortran-contiguous (pandas DataFrame) arrays
         let features: Vec<f32> = if x.is_c_contiguous() {
@@ -219,12 +245,42 @@ impl PyGBDTBooster {
             // Use as_array() to get ndarray view that handles strides
             x.as_array().iter().copied().collect()
         };
-        let matrix: DenseMatrix<f32, RowMajor, _> = DenseMatrix::from_vec(features, n_rows, n_cols);
         
-        // Build binned dataset
-        let binned_dataset = BinnedDatasetBuilder::from_row_matrix(&matrix, slf.max_bin as u32)
-            .build()
-            .map_err(|e| PyBoostersError::Training(format!("Failed to build dataset: {}", e)))?;
+        // Build binned dataset using appropriate method
+        let binned_dataset = if cat_indices.is_empty() {
+            // Fast path: no categorical features, use direct matrix binning
+            let matrix: DenseMatrix<f32, RowMajor, _> = DenseMatrix::from_vec(features, n_rows, n_cols);
+            BinnedDatasetBuilder::from_row_matrix(&matrix, slf.max_bin as u32)
+                .build()
+                .map_err(|e| PyBoostersError::Training(format!("Failed to build dataset: {}", e)))?
+        } else {
+            // Has categorical features: build Dataset with proper FeatureColumn types
+            let mut columns = Vec::with_capacity(n_cols);
+            
+            for col_idx in 0..n_cols {
+                let name = feature_names.as_ref().map(|names| names[col_idx].clone());
+                
+                if cat_indices.contains(&col_idx) {
+                    // Categorical: extract column and convert to i32 category IDs
+                    let values: Vec<i32> = (0..n_rows)
+                        .map(|row| features[row * n_cols + col_idx] as i32)
+                        .collect();
+                    columns.push(FeatureColumn::Categorical { name, values });
+                } else {
+                    // Numeric: extract column as f32
+                    let values: Vec<f32> = (0..n_rows)
+                        .map(|row| features[row * n_cols + col_idx])
+                        .collect();
+                    columns.push(FeatureColumn::Numeric { name, values });
+                }
+            }
+            
+            let dataset = Dataset::new(columns, labels.to_vec())
+                .map_err(|e| PyBoostersError::Training(format!("Failed to create dataset: {}", e)))?;
+            
+            dataset.to_binned(slf.max_bin as u32)
+                .map_err(|e| PyBoostersError::Training(format!("Failed to bin dataset: {}", e)))?
+        };
         
         // Create training params
         let trainer_params = GBDTParams {
@@ -267,8 +323,11 @@ impl PyGBDTBooster {
             trainer_params,
         )?;
         
-        // Set feature names if provided
-        let model = if let Some(names) = feature_names {
+        // Set feature names if provided and not already set via categorical path
+        let model = if !cat_indices.is_empty() {
+            // Feature names already set via Dataset when using categorical features
+            model
+        } else if let Some(names) = feature_names {
             model.with_feature_names(names)
         } else {
             model

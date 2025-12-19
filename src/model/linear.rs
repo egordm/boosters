@@ -172,22 +172,27 @@ impl GBLinearModel {
     /// * `features` - Feature matrix, row-major [n_samples × n_features]
     /// * `n_samples` - Number of samples
     /// * `feature_means` - Mean value for each feature (background distribution).
-    ///                     Use training data means or zeros if features are centered.
+    ///                     If `None`, assumes features are centered (zero means).
+    ///                     For accurate base values, pass training data means.
     ///
     /// # Example
     /// ```ignore
-    /// // Compute feature means from training data
+    /// // Option 1: Use centered data assumption (no means needed)
+    /// let shap = model.shap_values(&features, n_samples, None)?;
+    ///
+    /// // Option 2: Use actual feature means for accurate base values
     /// let means = compute_feature_means(&training_data);
-    /// let shap = model.shap_values(&features, n_samples, means)?;
+    /// let shap = model.shap_values(&features, n_samples, Some(means))?;
     /// // sum(shap) + base_value = prediction
     /// ```
     pub fn shap_values(
         &self,
         features: &[f32],
         n_samples: usize,
-        feature_means: Vec<f64>,
+        feature_means: Option<Vec<f64>>,
     ) -> Result<crate::explainability::ShapValues, crate::explainability::ExplainError> {
-        let explainer = crate::explainability::LinearExplainer::new(&self.model, feature_means)?;
+        let means = feature_means.unwrap_or_else(|| vec![0.0; self.n_features()]);
+        let explainer = crate::explainability::LinearExplainer::new(&self.model, means)?;
         Ok(explainer.shap_values(features, n_samples))
     }
 
@@ -368,7 +373,7 @@ mod tests {
         // Test with means
         let features = vec![1.0, 2.0];
         let means = vec![0.5, 1.0]; // Centered around different values
-        let shap = model.shap_values(&features, 1, means).unwrap();
+        let shap = model.shap_values(&features, 1, Some(means)).unwrap();
 
         assert_eq!(shap.n_samples(), 1);
         assert_eq!(shap.n_features(), 2);
@@ -387,9 +392,8 @@ mod tests {
         let model = GBLinearModel::from_linear_model(linear, meta, 100);
 
         let features = vec![1.0, 2.0];
-        // Use zero means (for when data is already centered)
-        let zero_means = vec![0.0, 0.0];
-        let shap = model.shap_values(&features, 1, zero_means).unwrap();
+        // Use None for zero means (centered data assumption)
+        let shap = model.shap_values(&features, 1, None).unwrap();
 
         assert_eq!(shap.n_samples(), 1);
         assert_eq!(shap.n_features(), 2);
