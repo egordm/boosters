@@ -162,12 +162,14 @@ impl GBLinearModel {
     /// # Arguments
     /// * `features` - Feature matrix, row-major [n_samples × n_features]
     /// * `n_samples` - Number of samples
-    /// * `feature_means` - Mean value for each feature (background distribution)
+    /// * `feature_means` - Mean value for each feature (background distribution).
+    ///                     Use training data means or zeros if features are centered.
     ///
     /// # Example
     /// ```ignore
-    /// let means = vec![0.0; n_features]; // Assuming centered data
-    /// let shap = model.shap_values(&features, n_samples, means);
+    /// // Compute feature means from training data
+    /// let means = compute_feature_means(&training_data);
+    /// let shap = model.shap_values(&features, n_samples, means)?;
     /// // sum(shap) + base_value = prediction
     /// ```
     pub fn shap_values(
@@ -178,18 +180,6 @@ impl GBLinearModel {
     ) -> Result<crate::explainability::ShapValues, crate::explainability::ExplainError> {
         let explainer = crate::explainability::LinearExplainer::new(&self.model, feature_means)?;
         Ok(explainer.shap_values(features, n_samples))
-    }
-
-    /// Compute SHAP values assuming zero-centered features.
-    ///
-    /// This is a convenience method when features are already centered (mean=0).
-    pub fn shap_values_centered(
-        &self,
-        features: &[f32],
-        n_samples: usize,
-    ) -> crate::explainability::ShapValues {
-        let explainer = crate::explainability::LinearExplainer::with_zero_means(&self.model);
-        explainer.shap_values(features, n_samples)
     }
 
     // =========================================================================
@@ -382,13 +372,15 @@ mod tests {
     }
 
     #[test]
-    fn shap_values_centered() {
+    fn shap_values_zero_means() {
         let linear = make_simple_model();
         let meta = ModelMeta::for_regression(2);
         let model = GBLinearModel::from_linear_model(linear, meta, 100);
 
         let features = vec![1.0, 2.0];
-        let shap = model.shap_values_centered(&features, 1);
+        // Use zero means (for when data is already centered)
+        let zero_means = vec![0.0, 0.0];
+        let shap = model.shap_values(&features, 1, zero_means).unwrap();
 
         assert_eq!(shap.n_samples(), 1);
         assert_eq!(shap.n_features(), 2);
