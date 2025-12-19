@@ -158,14 +158,14 @@ impl FeatureStats {
 ///
 /// // 3 rows, 2 features
 /// let data = ColMatrix::from_vec(vec![
-///     0.0, 0.0, 1.0,  // Feature 0: sparse binary
+///     0.0, 0.0, 1.0,  // Feature 0: sparse binary (1 non-zero out of 3)
 ///     1.0, 2.0, 3.0,  // Feature 1: dense continuous
 /// ], 3, 2);
 ///
 /// let infos = analyze_features(&data);
 ///
 /// assert!(infos[0].is_binary);
-/// assert!(infos[0].is_sparse(0.9));  // 33% density < 10% threshold
+/// assert!(infos[0].is_sparse(0.5));  // density 0.33 < 0.5 sparse threshold
 /// assert!(!infos[1].is_binary);
 /// ```
 pub fn analyze_features<M>(matrix: &M) -> Vec<FeatureInfo>

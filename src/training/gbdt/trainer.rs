@@ -505,7 +505,7 @@ mod tests {
             FeatureMeta::new(make_simple_mapper(3), 0, 1),
         ];
 
-        BinnedDataset::new(8, features, vec![group])
+        BinnedDataset::with_bundle_plan(8, features, vec![group], None)
     }
 
     #[test]

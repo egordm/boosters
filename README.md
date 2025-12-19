@@ -1,12 +1,12 @@
-# 🚀🚀🚀 boosters
+# 🚀 booste-rs
 
 A fast, pure-Rust gradient boosting library for training and inference.
 
 > **Work in Progress**: This library is under active development but already functional for training and inference with XGBoost/LightGBM compatibility.
 
-## What is boosters?
+## What is booste-rs?
 
-boosters is a gradient boosting implementation written from scratch in Rust, designed to be:
+booste-rs is a gradient boosting implementation written from scratch in Rust, designed to be:
 
 - **Fast** — Matches or beats LightGBM training speed, significantly outperforms XGBoost
 - **Pure Rust** — No C/C++ dependencies for core functionality
@@ -20,25 +20,25 @@ See [full benchmark reports](docs/benchmarks/) for details.
 
 ### Training Speed
 
-| Dataset | boosters | XGBoost | LightGBM |
-|---------|----------|---------|----------|
+| Dataset | booste-rs | XGBoost | LightGBM |
+|---------|-----------|---------|----------|
 | Small (5k×100) | 314ms | 553ms | **245ms** |
 | Medium (50k×100) | **1.39s** | 2.13s | 1.49s |
 
-On medium datasets, **boosters is 1.5x faster than XGBoost** and matches LightGBM performance.
+On medium datasets, **booste-rs is 1.5x faster than XGBoost** and matches LightGBM performance.
 
 ### Prediction Speed (batch 1K rows)
 
-| Model | boosters | LightGBM |
-|-------|----------|----------|
+| Model | booste-rs | LightGBM |
+|-------|-----------|----------|
 | Medium (50 trees, 100 features) | **0.88ms** | 4.14ms |
 | Large (200 trees, 100 features) | **5.66ms** | 29.27ms |
 
-**boosters is 4-5x faster** than LightGBM for batch prediction.
+**booste-rs is 4-5x faster** than LightGBM for batch prediction.
 
 ### Model Quality
 
-Equal or better across regression, binary, and multiclass tasks — with boosters achieving **10-25% better logloss** on multiclass classification.
+Equal or better across regression, binary, and multiclass tasks — with booste-rs achieving **10-25% better logloss** on multiclass classification.
 
 ## Features
 
@@ -85,7 +85,7 @@ Equal or better across regression, binary, and multiclass tasks — with booster
 
 ## Project Status
 
-boosters is functional for both training and inference but not yet production-ready:
+booste-rs is functional for both training and inference but not yet production-ready:
 
 - API may change without notice
 - Some advanced features (monotonic constraints, SHAP) are not yet implemented

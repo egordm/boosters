@@ -289,7 +289,6 @@ dependencies = [
  "approx",
  "arrow",
  "criterion",
- "derive_builder",
  "fixedbitset",
  "glob",
  "lightgbm3",

@@ -42,18 +42,9 @@ pub struct BinnedDataset {
 }
 
 impl BinnedDataset {
-    /// Create a new binned dataset.
+    /// Create a new binned dataset with an optional bundle plan.
     ///
     /// Typically constructed via `BinnedDatasetBuilder`.
-    pub(crate) fn new(
-        n_rows: usize,
-        features: Vec<FeatureMeta>,
-        groups: Vec<FeatureGroup>,
-    ) -> Self {
-        Self::with_bundle_plan(n_rows, features, groups, None)
-    }
-
-    /// Create a new binned dataset with an optional bundle plan.
     pub(crate) fn with_bundle_plan(
         n_rows: usize,
         features: Vec<FeatureMeta>,
@@ -518,7 +509,7 @@ mod tests {
             FeatureMeta::new(make_simple_mapper(4), 0, 1),
         ];
 
-        let dataset = BinnedDataset::new(4, features, vec![group]);
+        let dataset = BinnedDataset::with_bundle_plan(4, features, vec![group], None);
 
         assert_eq!(dataset.n_rows(), 4);
         assert_eq!(dataset.n_features(), 2);
@@ -570,7 +561,7 @@ mod tests {
             FeatureMeta::new(make_simple_mapper(16), 1, 0),  // feature 2 -> group 1, idx 0
         ];
 
-        let dataset = BinnedDataset::new(3, features, vec![group0, group1]);
+        let dataset = BinnedDataset::with_bundle_plan(3, features, vec![group0, group1], None);
 
         assert_eq!(dataset.n_rows(), 3);
         assert_eq!(dataset.n_features(), 3);
@@ -624,7 +615,7 @@ mod tests {
             FeatureMeta::new(make_simple_mapper(16), 0, 1),
         ];
 
-        let dataset = BinnedDataset::new(4, features, vec![group]);
+        let dataset = BinnedDataset::with_bundle_plan(4, features, vec![group], None);
         let slices = dataset.feature_views();
 
         assert_eq!(slices.len(), 2);

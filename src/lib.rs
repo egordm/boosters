@@ -10,26 +10,36 @@
 //! - [`training`]: Training infrastructure (objectives, metrics, trainers)
 //! - [`compat`]: External model loading (XGBoost, LightGBM)
 //!
-//! # Quick Start
+//! # Quick Start: Training
 //!
 //! ```ignore
-//! use booste_rs::{
-//!     data::BinnedDatasetBuilder,
-//!     training::{GBDTTrainer, GBDTParams, SquaredLoss, Rmse},
-//! };
+//! use booste_rs::data::{BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMajor};
+//! use booste_rs::training::{GBDTTrainer, GBDTParams, SquaredLoss, Rmse};
 //!
-//! // Prepare data
-//! let dataset = BinnedDatasetBuilder::new(&features)
-//!     .max_bins(256)
-//!     .build()
-//!     .unwrap();
+//! // Prepare column-major data for training
+//! let row_matrix: DenseMatrix<f32, RowMajor> = DenseMatrix::from_vec(features, n_rows, n_cols);
+//! let col_matrix: ColMatrix<f32> = row_matrix.to_layout();
+//! let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 256).build()?;
 //!
 //! // Train model
 //! let trainer = GBDTTrainer::new(SquaredLoss, Rmse, GBDTParams::default());
-//! let forest = trainer.train(&dataset, &targets, &[], &[]);
+//! let forest = trainer.train(&dataset, &targets, &[], &[])?;
 //!
-//! // Predict using forest directly
+//! // Predict
 //! let prediction = forest.predict_row(&test_row);
+//! ```
+//!
+//! # Quick Start: Loading XGBoost Models
+//!
+//! ```ignore
+//! use booste_rs::compat::xgboost::XgbModel;
+//! use std::fs::File;
+//!
+//! let file = File::open("model.json")?;
+//! let model: XgbModel = serde_json::from_reader(file)?;
+//! let forest = model.to_forest()?;
+//!
+//! let prediction = forest.predict_row(&features);
 //! ```
 
 // Re-export approx traits for users who want to compare predictions
