@@ -152,6 +152,47 @@ impl GBLinearModel {
     }
 
     // =========================================================================
+    // Explainability
+    // =========================================================================
+
+    /// Compute SHAP values for a batch of samples.
+    ///
+    /// Linear SHAP has a closed-form solution: shap[i] = w[i] * (x[i] - mean[i])
+    ///
+    /// # Arguments
+    /// * `features` - Feature matrix, row-major [n_samples × n_features]
+    /// * `n_samples` - Number of samples
+    /// * `feature_means` - Mean value for each feature (background distribution)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let means = vec![0.0; n_features]; // Assuming centered data
+    /// let shap = model.shap_values(&features, n_samples, means);
+    /// // sum(shap) + base_value = prediction
+    /// ```
+    pub fn shap_values(
+        &self,
+        features: &[f32],
+        n_samples: usize,
+        feature_means: Vec<f64>,
+    ) -> Result<crate::explainability::ShapValues, crate::explainability::ExplainError> {
+        let explainer = crate::explainability::LinearExplainer::new(&self.model, feature_means)?;
+        Ok(explainer.shap_values(features, n_samples))
+    }
+
+    /// Compute SHAP values assuming zero-centered features.
+    ///
+    /// This is a convenience method when features are already centered (mean=0).
+    pub fn shap_values_centered(
+        &self,
+        features: &[f32],
+        n_samples: usize,
+    ) -> crate::explainability::ShapValues {
+        let explainer = crate::explainability::LinearExplainer::with_zero_means(&self.model);
+        explainer.shap_values(features, n_samples)
+    }
+
+    // =========================================================================
     // Serialization (requires 'storage' feature)
     // =========================================================================
 
@@ -317,5 +358,46 @@ mod tests {
         let loaded = GBLinearModel::from_bytes(&bytes).unwrap();
 
         assert_eq!(model.n_features(), loaded.n_features());
+    }
+
+    #[test]
+    fn shap_values() {
+        let linear = make_simple_model();
+        let meta = ModelMeta::for_regression(2);
+        let model = GBLinearModel::from_linear_model(linear, meta, 100);
+
+        // Test with means
+        let features = vec![1.0, 2.0];
+        let means = vec![0.5, 1.0]; // Centered around different values
+        let shap = model.shap_values(&features, 1, means).unwrap();
+
+        assert_eq!(shap.n_samples(), 1);
+        assert_eq!(shap.n_features(), 2);
+
+        // SHAP[0] = 0.5 * (1.0 - 0.5) = 0.25
+        // SHAP[1] = 0.3 * (2.0 - 1.0) = 0.30
+        // base = 0.5*0.5 + 0.3*1.0 + 0.1 = 0.25 + 0.3 + 0.1 = 0.65
+        // sum = 0.25 + 0.30 + 0.65 = 1.2 (equals prediction)
+        assert!(shap.verify(&[1.2], 1e-5));
+    }
+
+    #[test]
+    fn shap_values_centered() {
+        let linear = make_simple_model();
+        let meta = ModelMeta::for_regression(2);
+        let model = GBLinearModel::from_linear_model(linear, meta, 100);
+
+        let features = vec![1.0, 2.0];
+        let shap = model.shap_values_centered(&features, 1);
+
+        assert_eq!(shap.n_samples(), 1);
+        assert_eq!(shap.n_features(), 2);
+
+        // With zero means: SHAP = weights * features
+        // SHAP[0] = 0.5 * 1.0 = 0.5
+        // SHAP[1] = 0.3 * 2.0 = 0.6
+        // base = bias = 0.1
+        // sum = 0.5 + 0.6 + 0.1 = 1.2
+        assert!(shap.verify(&[1.2], 1e-5));
     }
 }
