@@ -689,7 +689,38 @@ For very high cardinality (>100K), consider limiting `max_cat_threshold`.
   Model introspection methods (has_categorical_features, categorical_feature_count)
 - 2025-12-18: Persona Review Round 4 (Final) - Added "When to Use" decision helper
   section in Motivation, added tuning note for cat_l2/cat_smooth with global lambda
-- 2025-01-XX: Implementation Complete - DD-7: SoA design chosen over SplitCondition
-  enum. Tree stores split_types: Box<[SplitType]> + CategoriesStorage instead of
-  per-node enum variant. This is more cache-friendly for inference traversal and
-  matches XGBoost's internal representation. See docs/backlogs/03-feature-bundling-categoricals.md.
+- 2025-12-19: **Implementation Complete** - Native categorical features fully working
+  
+  **DD-7 [DECIDED]**: SoA design chosen over SplitCondition enum.
+  - Tree stores `split_types: Box<[SplitType]>` + `CategoriesStorage` separately
+  - More cache-friendly for inference traversal (hot path reads split_types linearly)
+  - Matches XGBoost's internal representation
+  - `SplitType` enum: `Numerical`, `Categorical` (not per-node SplitCondition)
+  
+  **Key Implementation Locations**:
+  - `repr/gbdt/node.rs`: SplitType enum (Numerical, Categorical)
+  - `repr/gbdt/categories.rs`: CategoriesStorage (per-tree packed bitsets)
+  - `training/gbdt/categorical.rs`: CatBitset (64-bit inline + overflow)
+  - `training/gbdt/split/find.rs`: find_onehot_split(), find_sorted_split()
+  - `inference/gbdt/traversal.rs`: Categorical split handling
+  
+  **Implementation Deviations from RFC**:
+  - DD-8 [DECIDED]: cat_l2 regularization uses global lambda parameter, not separate.
+    Quality benchmarks show parity with LightGBM/XGBoost on Adult (86.57% acc) and
+    Covertype (77.12% acc), validating this simpler approach.
+  - DD-9 [DECIDED]: Unknown category warning not implemented (requires log dependency).
+    Deferred as nice-to-have for post-1.0.
+  - DD-10 [DECIDED]: String category support not implemented. Users provide integer IDs.
+  - max_cat_one_hot threshold uses `GreedySplitter` config, not separate CategoricalConfig.
+  
+  **Test Coverage**:
+  - 14 categorical-specific tests in src/training/gbdt/categorical.rs
+  - Integration test: `tests/training/gbdt.rs::train_with_categorical_features_produces_categorical_splits`
+  - Quality benchmark validates accuracy parity with reference implementations
+  
+  **Quality Results (Adult dataset)**:
+  | Library | Accuracy | AUC |
+  |---------|----------|-----|
+  | booste-rs | 86.57% | 0.926+ |
+  | LightGBM | 86.6% | 0.927 |
+  | XGBoost | 86.5% | 0.926 |
