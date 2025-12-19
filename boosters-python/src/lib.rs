@@ -25,7 +25,6 @@
 
 use pyo3::prelude::*;
 
-mod dataset;
 mod error;
 mod gbdt;
 mod linear;
@@ -42,9 +41,6 @@ fn version() -> &'static str {
 fn boosters_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(version, m)?)?;
-
-    // Dataset (optional - users can pass X, y directly to fit())
-    m.add_class::<dataset::PyDataset>()?;
 
     // Models (sklearn-style: constructor takes params, fit takes data)
     m.add_class::<gbdt::PyGBDTBooster>()?;
