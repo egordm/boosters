@@ -87,12 +87,18 @@ pub enum ImportanceType {
     
     /// Average samples per split.
     AverageCover,
+    
+    /// Permutation importance (future).
+    /// Measures loss increase when feature is randomly shuffled.
+    /// Not implemented in initial version - placeholder for API completeness.
+    Permutation,
 }
 
 /// Feature importance result.
 #[derive(Debug, Clone)]
 pub struct FeatureImportance {
     /// Importance values indexed by feature index.
+    /// All features are included, even those with zero importance.
     values: Vec<f64>,
     /// Importance type used.
     importance_type: ImportanceType,
@@ -113,6 +119,12 @@ impl FeatureImportance {
         })
     }
 
+    /// Iterate over (feature_idx, importance) pairs.
+    /// More efficient than to_map() for hot paths.
+    pub fn iter(&self) -> impl Iterator<Item = (usize, f64)> + '_ {
+        self.values.iter().copied().enumerate()
+    }
+
     /// Get sorted (feature_idx, importance) pairs, descending.
     pub fn sorted(&self) -> Vec<(usize, f64)> {
         let mut pairs: Vec<_> = self.values.iter().copied().enumerate().collect();
@@ -126,10 +138,27 @@ impl FeatureImportance {
     }
 
     /// Convert to HashMap (feature_name → importance).
+    /// Note: Allocates. Use iter() for hot paths.
     pub fn to_map(&self) -> HashMap<String, f64> {
         let names = self.feature_names.clone()
             .unwrap_or_else(|| (0..self.values.len()).map(|i| format!("f{}", i)).collect());
         names.into_iter().zip(self.values.iter().copied()).collect()
+    }
+    
+    /// Return normalized importance (sums to 1.0).
+    /// Returns clone with normalized values.
+    pub fn normalized(&self) -> Self {
+        let sum: f64 = self.values.iter().sum();
+        let values = if sum > 0.0 {
+            self.values.iter().map(|v| v / sum).collect()
+        } else {
+            self.values.clone()
+        };
+        Self {
+            values,
+            importance_type: self.importance_type,
+            feature_names: self.feature_names.clone(),
+        }
     }
 }
 ```
@@ -141,6 +170,15 @@ impl FeatureImportance {
 ///
 /// Shape: `[n_samples, n_features + 1, n_outputs]`
 /// The last feature dimension is the base value (expected output).
+///
+/// # Single-sample usage
+/// 
+/// The API accepts both single samples and batches. For a single row:
+/// ```rust
+/// // Single row (1 x n_features) works fine
+/// let shap = model.shap_values(&single_row_matrix)?;
+/// // shap.n_samples == 1
+/// ```
 #[derive(Debug, Clone)]
 pub struct ShapValues {
     /// Flat storage in row-major order.
@@ -405,9 +443,15 @@ impl LinearModel {
 
 The TreeSHAP algorithm computes exact SHAP values by tracking contribution through tree paths.
 
+**Complexity**: O(TLD²) per sample, where T = trees, L = leaves, D = depth. For N samples: O(NTLD²). This can be slow for large datasets - consider batching or approximate methods for N > 10,000.
+
+**Memory Estimation**: Output requires `N * (M + 1) * K * 8` bytes for N samples, M features, K outputs (f64 values). For 10,000 samples × 100 features × 1 output ≈ 8 MB. Working memory during computation is approximately `O(D * M)` per thread for path tracking.
+
 **Important**: TreeSHAP requires per-node `cover` values (sum of hessians for samples reaching that node) to compute the zero_fraction for each child. This is why the Tree struct needs optional `covers: Option<Box<[f32]>>` as described in the Feature Importance section above.
 
-If cover values are not available, SHAP computation will return `ExplainError::MissingNodeStats("cover")`.
+If cover values are not available, SHAP computation will return `ExplainError::MissingNodeStats("cover")`. **Resolution**: Re-train the model (training populates stats), or re-load from a format that includes stats (XGBoost JSON includes gain/cover).
+
+**Interventional vs Conditional**: TreeSHAP computes *conditional* expectations using the tree structure. This can produce counterintuitive results for correlated features (e.g., attributing importance to a correlated-but-unused feature). *Interventional* SHAP treats features as independent interventions, providing more causally-meaningful attributions but at higher computational cost.
 
 ```rust
 /// TreeSHAP explainer for tree ensembles.
@@ -1002,7 +1046,7 @@ pub enum ExplainError {
 1. **Parallel SHAP**: How to efficiently parallelize TreeSHAP?
    - Per-sample parallelism (simple, good for many samples)
    - Per-tree parallelism (more complex, good for large forests)
-   - **Tentative**: Per-sample with rayon
+   - **Tentative**: Per-sample with rayon, using thread-local accumulators to avoid false sharing
 
 2. **Approximate SHAP**: Should we support sampling-based approximation?
    - Pro: Much faster for large models
@@ -1013,14 +1057,21 @@ pub enum ExplainError {
    - Full interaction matrix is O(TLD² × M²)
    - **Tentative**: Defer to post-1.0
 
+4. **SHAP library compatibility**: Can our output be used with the `shap` Python package for plotting?
+   - Yes: `ShapValues.to_numpy()` returns `[n_samples, n_features]` array compatible with `shap.summary_plot()`, `shap.waterfall_plot()`, etc.
+   - Base values returned separately as `ShapValues.base_values` array
+   - **Decision**: Match shap library array conventions
+
 ## Future Work
 
 - [ ] GPU-accelerated SHAP (GPUTreeSHAP integration)
 - [ ] SHAP interaction values
 - [ ] Approximate SHAP (sampling-based)
 - [ ] Permutation importance
-- [ ] Partial dependence plots
-- [ ] Global surrogate explanations
+- [ ] Partial dependence plots  
+- [ ] Integration with `shap` plotting (Python wrapper)
+- [ ] `FeatureImportance.plot()` convenience method (matplotlib)
+- [ ] Feature interaction detection heuristic (co-occurrence in tree paths)
 
 ## References
 
@@ -1033,4 +1084,19 @@ pub enum ExplainError {
 
 ## Changelog
 
+- 2025-12-19: Round 4 review updates:
+  - Added `Permutation` variant to ImportanceType (placeholder for future)
+  - Added SHAP memory estimation formula (`N * (M+1) * K * 8` bytes)
+  - Documented working memory requirements per thread
+- 2025-12-19: Round 3 review updates:
+  - Added single-sample usage example in ShapValues docs
+  - Added plot methods and interaction heuristic to Future Work
+  - Added iter() and normalized() to FeatureImportance
+  - Clarified that all features (including zero-importance) are in output
+- 2025-12-19: Round 1 review updates:
+  - Added explicit complexity analysis (O(NTLD²) for N samples)
+  - Clarified conditional vs interventional SHAP implications
+  - Added MissingNodeStats resolution guidance
+  - Added SHAP library compatibility to Open Questions
+  - Noted thread-local accumulators for parallelization
 - 2025-12-19: Initial draft
