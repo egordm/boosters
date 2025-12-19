@@ -1062,6 +1062,148 @@ pub enum ExplainError {
    - Base values returned separately as `ShapValues.base_values` array
    - **Decision**: Match shap library array conventions
 
+## Usage Examples
+
+### Python: Feature Importance
+
+```python
+from boosters import GBDTBooster, GBDTParams, Dataset
+
+# Train model
+model = GBDTBooster.train(params, train_data)
+
+# Get feature importance (returns dict)
+importance = model.feature_importance(importance_type="gain")
+
+# Top 10 features
+for name, score in sorted(importance.items(), key=lambda x: -x[1])[:10]:
+    print(f"{name}: {score:.4f}")
+
+# Normalized importance (sums to 1.0)
+total = sum(importance.values())
+normalized = {k: v/total for k, v in importance.items()}
+
+# Importance types available
+for imp_type in ["split", "gain", "cover"]:
+    imp = model.feature_importance(importance_type=imp_type)
+    print(f"{imp_type}: {list(imp.items())[:3]}...")
+```
+
+### Python: SHAP Values with shap Library Plotting
+
+```python
+import shap
+from boosters import GBDTBooster
+
+model = GBDTBooster.train(params, train_data)
+
+# Compute SHAP values
+shap_values = model.shap_values(X_test)
+
+# Use with shap library for visualization
+shap.summary_plot(shap_values, X_test)
+shap.waterfall_plot(shap.Explanation(
+    values=shap_values[0],  # First sample
+    base_values=model.expected_value,
+    data=X_test[0],
+    feature_names=feature_names,
+))
+
+# Force plot for single prediction
+shap.force_plot(model.expected_value, shap_values[0], X_test[0])
+```
+
+### Python: SHAP for Model Debugging
+
+```python
+# Find predictions where a specific feature dominates
+target_feature = "income"
+feature_idx = feature_names.index(target_feature)
+
+# Get SHAP values
+shap_values = model.shap_values(X_test)
+
+# Find samples where this feature has high positive contribution
+high_contrib_mask = shap_values[:, feature_idx] > 0.5
+high_contrib_samples = X_test[high_contrib_mask]
+
+print(f"Samples with high {target_feature} contribution: {high_contrib_mask.sum()}")
+
+# Verify SHAP values sum to predictions
+predictions = model.predict(X_test)
+shap_sum = shap_values.sum(axis=1) + model.expected_value
+assert np.allclose(predictions, shap_sum, atol=1e-6)
+```
+
+### Python: Linear Model Explainability
+
+```python
+from boosters import GBLinearBooster, GBLinearParams
+
+# Train linear model
+model = GBLinearBooster.train(params, train_data)
+
+# Feature importance (weight magnitude)
+importance = model.feature_importance()
+
+# SHAP for linear is exact: contribution = weight × (value - mean)
+shap_values = model.shap_values(X_test)
+
+# For linear models, SHAP has closed form
+weights = model.weights
+means = X_train.mean(axis=0)
+expected_shap = weights * (X_test - means)
+assert np.allclose(shap_values, expected_shap, atol=1e-6)
+```
+
+### Rust: Feature Importance
+
+```rust
+use boosters::{GBDTModel, ImportanceType, FeatureImportance};
+
+let model = GBDTModel::train(&data, &labels, params)?;
+
+// Compute feature importance
+let importance = model.feature_importance(ImportanceType::Gain)?;
+
+// Top 5 features
+for (idx, score) in importance.top_k(5) {
+    let name = importance.feature_name(idx).unwrap_or(&format!("f{}", idx));
+    println!("{}: {:.4}", name, score);
+}
+
+// Normalized importance
+let normalized = importance.normalized();
+```
+
+### Rust: SHAP Values
+
+```rust
+use boosters::{GBDTModel, TreeExplainer, ShapValues};
+
+let model = GBDTModel::train(&data, &labels, params)?;
+
+// Create explainer
+let explainer = TreeExplainer::new(&model.forest);
+
+// Compute SHAP values
+let shap = explainer.shap_values(&test_data);
+
+// Access values
+for sample in 0..shap.n_samples() {
+    let base = shap.base_value(sample, 0);
+    let prediction: f64 = (0..shap.n_features())
+        .map(|f| shap.get(sample, f, 0))
+        .sum::<f64>() + base;
+    
+    println!("Sample {}: prediction = {:.4}", sample, prediction);
+}
+
+// Verify consistency
+let predictions = model.predict(&test_data);
+assert!(shap.verify(&predictions, 1e-6));
+```
+
 ## Future Work
 
 - [ ] GPU-accelerated SHAP (GPUTreeSHAP integration)
@@ -1084,6 +1226,11 @@ pub enum ExplainError {
 
 ## Changelog
 
+- 2025-12-19: Round 5 review updates:
+  - Added Usage Examples section with Python and Rust patterns
+  - Added shap library integration examples (summary_plot, waterfall_plot)
+  - Added linear model explainability examples
+  - Added SHAP verification/debugging patterns
 - 2025-12-19: Round 4 review updates:
   - Added `Permutation` variant to ImportanceType (placeholder for future)
   - Added SHAP memory estimation formula (`N * (M+1) * K * 8` bytes)

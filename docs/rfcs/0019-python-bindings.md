@@ -258,7 +258,128 @@ Rather than a single unified `Model` with all parameters mixed together (XGBoost
 └──────────────────────┴──────────────────────┴───────────────────┘
 ```
 
+#### Objectives and Metrics
+
+**Objective naming convention**: We use XGBoost-style prefixes for discoverability:
+
+- `reg:*` - Regression objectives
+- `binary:*` - Binary classification objectives  
+- `multi:*` - Multiclass classification objectives
+- `rank:*` - Learning to rank objectives (future)
+
+**Simple vs Parameterized Objectives**:
+
+- **Simple objectives** can be specified as strings: `objective="reg:squared_error"`
+- **Parameterized objectives** require `ObjectiveConfig` with additional parameters:
+  ```python
+  # Quantile regression needs quantile values
+  objective=ObjectiveConfig("reg:quantile", quantiles=[0.1, 0.5, 0.9])
+  
+  # Multiclass needs number of classes
+  objective=ObjectiveConfig("multi:softmax", n_classes=5)
+  
+  # Tweedie needs variance power
+  objective=ObjectiveConfig("reg:tweedie", tweedie_variance_power=1.5)
+  ```
+
+**Objectives Reference Table**:
+
+| Objective | Task | Default Metric | Output Shape | Notes |
+|-----------|------|----------------|--------------|-------|
+| `reg:squared_error` | Regression | RMSE | `(n,)` | Default, simple |
+| `reg:absolute_error` | Regression | MAE | `(n,)` | Simple |
+| `reg:huber` | Regression | MAE | `(n,)` | Parameterized: `delta` |
+| `reg:quantile` | Quantile Regression | Pinball | `(n, q)` | Parameterized: `quantiles` |
+| `reg:tweedie` | Regression | Tweedie | `(n,)` | Parameterized: `tweedie_variance_power` |
+| `binary:logistic` | Binary Classification | LogLoss | `(n,)` prob | Simple |
+| `multi:softmax` | Multiclass | Accuracy | `(n, c)` probs | Parameterized: `n_classes` |
+| `multi:one_vs_all` | Multiclass | LogLoss | `(n, c)` probs | Parameterized: `n_classes` |
+
+**Metrics**:
+
+| Metric | Task | Description |
+|--------|------|-------------|
+| `rmse` | Regression | Root mean squared error |
+| `mae` | Regression | Mean absolute error |
+| `mape` | Regression | Mean absolute percentage error |
+| `logloss` | Classification | Negative log-likelihood |
+| `auc` | Binary Classification | Area under ROC curve |
+| `accuracy` | Classification | Classification accuracy |
+| `ndcg` | Ranking | Normalized discounted cumulative gain |
+
 ```rust
+/// Objective function for training.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ObjectiveKind {
+    // === Regression ===
+    /// Squared error (L2 loss) - default for regression
+    SquaredError,
+    /// Absolute error (L1 loss)
+    AbsoluteError,
+    /// Huber loss - robust to outliers
+    Huber { delta: f32 },
+    /// Quantile regression - predict percentiles
+    Quantile { quantiles: Vec<f32> },
+    /// Tweedie regression - for insurance/count data
+    Tweedie { variance_power: f32 },
+    
+    // === Binary Classification ===
+    /// Logistic regression - outputs probability
+    BinaryLogistic,
+    /// Hinge loss (SVM-style)
+    BinaryHinge,
+    
+    // === Multiclass Classification ===
+    /// Softmax - outputs probability distribution
+    MultiSoftmax { n_classes: u32 },
+    /// One-vs-All - decomposed binary classifiers
+    MultiOneVsAll { n_classes: u32 },
+}
+
+impl ObjectiveKind {
+    /// Parse from string (XGBoost-compatible).
+    pub fn from_str(s: &str) -> Result<Self, ParseError> {
+        match s {
+            "reg:squared_error" | "squared_error" | "mse" => Ok(Self::SquaredError),
+            "reg:absolute_error" | "absolute_error" | "mae" => Ok(Self::AbsoluteError),
+            "binary:logistic" | "logistic" => Ok(Self::BinaryLogistic),
+            // Parameterized objectives require ObjectiveConfig
+            _ => Err(ParseError::UnknownObjective(s.to_string())),
+        }
+    }
+    
+    /// Returns true if this is a classification objective.
+    pub fn is_classification(&self) -> bool {
+        matches!(self, 
+            Self::BinaryLogistic | Self::BinaryHinge |
+            Self::MultiSoftmax { .. } | Self::MultiOneVsAll { .. })
+    }
+    
+    /// Returns true if this is a regression objective.
+    pub fn is_regression(&self) -> bool {
+        matches!(self,
+            Self::SquaredError | Self::AbsoluteError | Self::Huber { .. } |
+            Self::Quantile { .. } | Self::Tweedie { .. })
+    }
+}
+
+/// Evaluation metric for monitoring and early stopping.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MetricKind {
+    // === Regression ===
+    Rmse,
+    Mae,
+    Mape,
+    
+    // === Classification ===
+    LogLoss,
+    Auc,
+    Accuracy,
+    
+    // === Ranking ===
+    Ndcg { k: Option<u32> },
+}
+
 /// Common training parameters shared across all model types.
 #[derive(Clone, Debug)]
 pub struct CommonParams {
@@ -268,7 +389,7 @@ pub struct CommonParams {
     pub learning_rate: f32,
     /// Objective function
     pub objective: ObjectiveKind,
-    /// Evaluation metric (for early stopping)
+    /// Evaluation metric (for early stopping). Auto-selected if None.
     pub eval_metric: Option<MetricKind>,
     /// Early stopping rounds (0 = disabled)
     pub early_stopping_rounds: u32,
@@ -737,6 +858,15 @@ class GBDTBooster:
     
     def shap_values(self, data: Dataset | np.ndarray) -> np.ndarray: ...
     
+    @property
+    def expected_value(self) -> float | np.ndarray:
+        """Base value for SHAP explanations.
+        
+        For single-output: returns float (mean prediction over training data).
+        For multi-output: returns array of shape (n_outputs,).
+        """
+        ...
+    
     def save(self, path: str | Path, format: str = "json") -> None:
         """Save model to file."""
         ...
@@ -908,7 +1038,7 @@ class GBDTParams:
     def for_regression(cls, **kwargs) -> "GBDTParams":
         """Preset for regression tasks.
         
-        Sets objective="squared_error", eval_metric="rmse".
+        Sets objective="reg:squared_error", eval_metric="rmse".
         """
         ...
     
@@ -916,8 +1046,15 @@ class GBDTParams:
     def for_classification(cls, n_classes: int = 2, **kwargs) -> "GBDTParams":
         """Preset for classification tasks.
         
-        For binary: objective="binary:logistic"
-        For multi-class: objective=ObjectiveConfig("multi:softmax", n_classes=n_classes)
+        Parameters
+        ----------
+        n_classes : int, default=2
+            Number of classes. 
+            - n_classes=2: Uses "binary:logistic" (single probability output)
+            - n_classes>2: Uses "multi:softmax" (probability per class)
+        
+        Note: For n_classes=2, the output is a single probability P(y=1).
+        For n_classes>2, the output is (n_samples, n_classes) probabilities.
         """
         ...
 
@@ -967,6 +1104,17 @@ class PrintMetricsCallback:
 
 #### Sklearn-Compatible Wrappers
 
+The sklearn wrappers inherit from `BaseEstimator` which provides:
+
+- **`get_params()` / `set_params()`** - Required for `GridSearchCV`, `RandomizedSearchCV`
+- **`clone()`** - Required for `cross_val_score`, pipelines
+- **Pickling** - Via `__reduce__` (inherits from BaseEstimator)
+
+All wrappers follow sklearn conventions:
+- **Classifiers**: `predict()` returns class labels, `predict_proba()` returns probabilities
+- **Regressors**: `predict()` returns continuous values
+- **After fit**: `feature_importances_`, `n_features_in_`, `feature_names_in_` available
+
 ```python
 # boosters/sklearn.py
 
@@ -974,6 +1122,9 @@ class GBDTRegressor(RegressorMixin, BaseEstimator):
     """Sklearn-compatible GBDT regressor.
     
     Parameters match sklearn conventions (flat, not nested).
+    Inherits get_params(), set_params(), clone() from BaseEstimator.
+    
+    Objective is automatically set to "reg:squared_error".
     """
     
     def __init__(
@@ -987,9 +1138,12 @@ class GBDTRegressor(RegressorMixin, BaseEstimator):
         reg_alpha: float = 0.0,
         n_jobs: int = -1,
         random_state: int | None = None,
+        early_stopping_rounds: int = 0,
     ):
-        # Store all params for sklearn's get_params()
-        ...
+        # Store all params as instance attributes for sklearn's get_params()
+        self.n_estimators = n_estimators
+        self.learning_rate = learning_rate
+        # ... all params stored identically
     
     def fit(
         self, 
@@ -998,18 +1152,37 @@ class GBDTRegressor(RegressorMixin, BaseEstimator):
         sample_weight: np.ndarray | None = None,
         eval_set: list[tuple] | None = None,
     ) -> "GBDTRegressor":
+        """Fit the model.
+        
+        Parameters
+        ----------
+        X : array-like of shape (n_samples, n_features)
+        y : array-like of shape (n_samples,)
+        sample_weight : array-like of shape (n_samples,), optional
+        eval_set : list of (X, y) tuples, optional
+            Validation sets for early stopping.
+        """
+        # Store feature names if DataFrame
+        if hasattr(X, 'columns'):
+            self.feature_names_in_ = np.array(X.columns)
+        self.n_features_in_ = X.shape[1]
+        
         # Convert to Dataset, build GBDTParams, train
         ...
+        return self
     
     def predict(self, X: np.ndarray | pd.DataFrame) -> np.ndarray:
+        """Predict regression target for X."""
         ...
     
     @property
     def feature_importances_(self) -> np.ndarray:
+        """Feature importances (gain-based)."""
         ...
     
     @property
     def n_features_in_(self) -> int:
+        """Number of features seen during fit."""
         ...
     
     @property
@@ -1019,22 +1192,63 @@ class GBDTRegressor(RegressorMixin, BaseEstimator):
 
 
 class GBDTClassifier(ClassifierMixin, BaseEstimator):
-    """Sklearn-compatible GBDT classifier."""
+    """Sklearn-compatible GBDT classifier.
     
-    def __init__(self, ...): ...
+    For binary classification, objective is "binary:logistic".
+    For multiclass, objective is "multi:softmax" with n_classes auto-detected from y.
+    """
     
-    def fit(self, X, y, ...): ...
+    def __init__(
+        self,
+        n_estimators: int = 100,
+        learning_rate: float = 0.3,
+        max_depth: int = 6,
+        subsample: float = 1.0,
+        colsample_bytree: float = 1.0,
+        reg_lambda: float = 1.0,
+        reg_alpha: float = 0.0,
+        n_jobs: int = -1,
+        random_state: int | None = None,
+        early_stopping_rounds: int = 0,
+    ): ...
     
-    def predict(self, X) -> np.ndarray: ...
+    def fit(self, X, y, sample_weight=None, eval_set=None):
+        """Fit the classifier.
+        
+        Automatically detects n_classes from unique values in y.
+        """
+        self.classes_ = np.unique(y)
+        self.n_classes_ = len(self.classes_)
+        # Sets objective based on n_classes
+        ...
     
-    def predict_proba(self, X) -> np.ndarray: ...
+    def predict(self, X) -> np.ndarray:
+        """Predict class labels for X.
+        
+        Returns array of shape (n_samples,) with class labels.
+        """
+        probs = self.predict_proba(X)
+        return self.classes_[np.argmax(probs, axis=1)]
+    
+    def predict_proba(self, X) -> np.ndarray:
+        """Predict class probabilities for X.
+        
+        Returns array of shape (n_samples, n_classes).
+        """
+        ...
     
     @property
-    def classes_(self) -> np.ndarray: ...
+    def classes_(self) -> np.ndarray:
+        """Class labels known to the classifier."""
+        ...
 
 
 class GBLinearRegressor(RegressorMixin, BaseEstimator):
-    """Sklearn-compatible linear booster regressor."""
+    """Sklearn-compatible linear booster regressor.
+    
+    Uses gradient-boosted linear model instead of trees.
+    Useful for high-dimensional sparse data or when linear model is appropriate.
+    """
     ...
 
 
@@ -1241,6 +1455,227 @@ Key validations:
    - Forward compatibility: older library fails gracefully with "unsupported version" error
    - **Tentative**: Support backward compat for last 3 minor versions
 
+## Usage Examples
+
+This section shows real-world usage patterns for common tasks.
+
+### Example 1: Quick Regression
+
+```python
+import numpy as np
+from boosters.sklearn import GBDTRegressor
+
+# Minimal code path
+model = GBDTRegressor()
+model.fit(X_train, y_train)
+predictions = model.predict(X_test)
+```
+
+### Example 2: Binary Classification with Early Stopping
+
+```python
+from boosters import GBDTBooster, GBDTParams, Dataset
+
+# Using low-level API
+params = GBDTParams.for_classification(n_classes=2)
+params.common.early_stopping_rounds = 50
+params.common.n_estimators = 1000
+
+train_ds = Dataset(X_train, label=y_train)
+valid_ds = Dataset(X_valid, label=y_valid)
+
+model = GBDTBooster.train(
+    params=params,
+    train_data=train_ds,
+    eval_data=[(valid_ds, "validation")],
+)
+
+print(f"Best iteration: {model.best_iteration}")
+
+# Predict probabilities
+probs = model.predict(X_test)  # Returns probabilities for binary
+
+# Predict class labels (threshold at 0.5)
+labels = (probs > 0.5).astype(int)
+```
+
+### Example 3: Multiclass Classification
+
+```python
+from boosters import GBDTParams, ObjectiveConfig
+
+# Option A: Using preset factory
+params = GBDTParams.for_classification(n_classes=5)
+
+# Option B: Explicit configuration
+params = GBDTParams.quick(
+    objective=ObjectiveConfig("multi:softmax", n_classes=5),
+    n_estimators=200,
+    learning_rate=0.1,
+    max_depth=5,
+)
+
+# Using sklearn wrapper
+from boosters.sklearn import GBDTClassifier
+
+clf = GBDTClassifier(objective="multi:softmax", n_classes=5)
+clf.fit(X_train, y_train)
+
+# predict() returns class labels (0, 1, 2, 3, 4)
+labels = clf.predict(X_test)
+
+# predict_proba() returns probability distribution (n_samples, n_classes)
+probs = clf.predict_proba(X_test)
+```
+
+### Example 4: Quantile Regression for Prediction Intervals
+
+```python
+from boosters import GBDTParams, ObjectiveConfig
+
+# Predict 10th, 50th, and 90th percentiles
+params = GBDTParams.quick(
+    objective=ObjectiveConfig("reg:quantile", quantiles=[0.1, 0.5, 0.9]),
+    n_estimators=100,
+)
+
+model = GBDTBooster.train(params, train_data)
+
+# Output shape: (n_samples, 3) for 3 quantiles
+preds = model.predict(X_test)
+lower_10 = preds[:, 0]
+median = preds[:, 1]
+upper_90 = preds[:, 2]
+```
+
+### Example 5: Sklearn Pipeline with Cross-Validation
+
+```python
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import cross_val_score, GridSearchCV
+from boosters.sklearn import GBDTClassifier
+
+# Build pipeline
+pipe = Pipeline([
+    ('scaler', StandardScaler()),
+    ('model', GBDTClassifier(n_estimators=100))
+])
+
+# Cross-validation works out of the box
+scores = cross_val_score(pipe, X, y, cv=5, scoring='roc_auc')
+print(f"CV AUC: {scores.mean():.3f} ± {scores.std():.3f}")
+
+# GridSearchCV for hyperparameter tuning
+param_grid = {
+    'model__max_depth': [3, 5, 7],
+    'model__learning_rate': [0.01, 0.1, 0.3],
+    'model__n_estimators': [50, 100, 200],
+}
+
+grid = GridSearchCV(pipe, param_grid, cv=3, scoring='roc_auc')
+grid.fit(X_train, y_train)
+
+print(f"Best params: {grid.best_params_}")
+print(f"Best score: {grid.best_score_:.3f}")
+```
+
+### Example 6: Hyperparameter Tuning with Optuna
+
+```python
+import optuna
+from sklearn.model_selection import cross_val_score
+from boosters.sklearn import GBDTRegressor
+
+def objective(trial):
+    params = {
+        'n_estimators': trial.suggest_int('n_estimators', 50, 500),
+        'max_depth': trial.suggest_int('max_depth', 3, 10),
+        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
+        'subsample': trial.suggest_float('subsample', 0.6, 1.0),
+        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
+        'reg_lambda': trial.suggest_float('reg_lambda', 1e-3, 10.0, log=True),
+    }
+    
+    model = GBDTRegressor(**params)
+    scores = cross_val_score(model, X, y, cv=3, scoring='neg_root_mean_squared_error')
+    return scores.mean()
+
+study = optuna.create_study(direction='maximize')
+study.optimize(objective, n_trials=100)
+
+print(f"Best RMSE: {-study.best_value:.4f}")
+print(f"Best params: {study.best_params}")
+```
+
+### Example 7: Rust API Usage
+
+```rust
+use boosters::{GBDTModel, GBDTParams, CommonParams, ObjectiveKind, ColMatrix};
+
+// === Regression (default) ===
+let params = GBDTParams::default();  // Uses SquaredError objective
+let model = GBDTModel::train(&data, &labels, params)?;
+let predictions = model.predict(&test_data);
+
+// === Binary Classification ===
+let params = GBDTParams {
+    common: CommonParams {
+        objective: ObjectiveKind::BinaryLogistic,
+        n_estimators: 100,
+        learning_rate: 0.1,
+        ..Default::default()
+    },
+    max_depth: 6,
+    ..Default::default()
+};
+let model = GBDTModel::train(&data, &labels, params)?;
+let probabilities = model.predict(&test_data);
+
+// === Multiclass Classification ===
+let params = GBDTParams {
+    common: CommonParams {
+        objective: ObjectiveKind::MultiSoftmax { n_classes: 5 },
+        ..Default::default()
+    },
+    ..Default::default()
+};
+let model = GBDTModel::train(&data, &labels, params)?;
+// Output shape: n_samples * n_classes (flattened)
+let probs = model.predict(&test_data);
+```
+
+### Example 8: Feature Importance and SHAP
+
+```python
+from boosters import GBDTBooster, GBDTParams, Dataset
+
+model = GBDTBooster.train(params, train_data)
+
+# Feature importance (returns dict: feature_name -> importance)
+importance = model.feature_importance(importance_type="gain")
+for name, score in sorted(importance.items(), key=lambda x: -x[1])[:10]:
+    print(f"{name}: {score:.4f}")
+
+# SHAP values for local explanations
+shap_values = model.shap_values(X_test[:100])  # Shape: (100, n_features)
+
+# Works with shap library for plotting
+import shap
+shap.summary_plot(shap_values, X_test[:100])
+```
+
+### Prediction Behavior Summary
+
+| Class | `predict()` Returns | `predict_proba()` Returns |
+|-------|---------------------|---------------------------|
+| `GBDTBooster` | Raw output (prob for logistic, margin if `output_margin=True`) | N/A |
+| `GBDTClassifier` | Class labels (0, 1, 2, ...) | Probabilities `(n, n_classes)` |
+| `GBDTRegressor` | Predicted values | N/A |
+| `GBLinearBooster` | Raw output | N/A |
+| `GBLinearClassifier` | Class labels | Probabilities |
+| `GBLinearRegressor` | Predicted values | N/A |
+
 ## Future Work
 
 - [ ] ONNX export support
@@ -1258,6 +1693,14 @@ Key validations:
 
 ## Changelog
 
+- 2025-12-19: Round 5 review updates:
+  - Added `ObjectiveKind` and `MetricKind` enum definitions
+  - Added comprehensive objectives reference table with task/metric/output mapping
+  - Added XGBoost-style objective prefixes (`reg:*`, `binary:*`, `multi:*`)
+  - Added Usage Examples section with 8 real-world patterns
+  - Clarified predict() vs predict_proba() behavior for all classes
+  - Expanded sklearn wrapper documentation (get_params, set_params, clone)
+  - Added Rust API usage examples for regression/classification
 - 2025-12-19: Round 4 review updates:
   - Added preset factories (`GBDTParams.for_regression()`, `for_classification()`)
   - Added `PrintMetricsCallback` example
