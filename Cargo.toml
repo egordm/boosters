@@ -144,3 +144,8 @@ path = "benches/suites/feature/scaling.rs"
 name = "sampling"
 harness = false
 path = "benches/suites/feature/sampling.rs"
+
+[[bench]]
+name = "bundling"
+harness = false
+path = "benches/suites/feature/bundling.rs"
