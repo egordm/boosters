@@ -43,9 +43,46 @@ pub fn disjoint_slices_mut<T>(
     }
 }
 
+// =============================================================================
+// Weight Iterator
+// =============================================================================
+
+/// Returns an iterator over weights, using 1.0 for empty weights.
+///
+/// This allows unified handling of weighted and unweighted computations
+/// without branching in hot loops. Used by both objectives and metrics.
+///
+/// # Example
+///
+/// ```ignore
+/// for (i, w) in weight_iter(weights, n_rows).enumerate() {
+///     sum += w * values[i];
+///     weight_sum += w;
+/// }
+/// ```
+#[inline]
+pub(crate) fn weight_iter(weights: &[f32], n_rows: usize) -> impl Iterator<Item = f32> + '_ {
+    let use_weights = !weights.is_empty();
+    (0..n_rows).map(move |i| if use_weights { weights[i] } else { 1.0 })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_weight_iter_empty() {
+        let weights: &[f32] = &[];
+        let result: Vec<f32> = weight_iter(weights, 3).collect();
+        assert_eq!(result, vec![1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn test_weight_iter_with_weights() {
+        let weights = &[0.5f32, 2.0, 1.5];
+        let result: Vec<f32> = weight_iter(weights, 3).collect();
+        assert_eq!(result, vec![0.5, 2.0, 1.5]);
+    }
 
     #[test]
     fn test_disjoint_slices_mut() {

@@ -38,6 +38,7 @@ fn version() -> &'static str {
 
 /// Python module for boosters gradient boosting library.
 #[pymodule]
+#[pyo3(name = "_boosters_python")]
 fn boosters_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(version, m)?)?;

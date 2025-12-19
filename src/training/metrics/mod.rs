@@ -53,14 +53,8 @@ use crate::inference::common::PredictionKind;
 // Helpers
 // =============================================================================
 
-/// Returns an iterator over weights, using 1.0 for empty weights.
-///
-/// This allows unified handling of weighted and unweighted metrics without branching.
-#[inline]
-pub(super) fn weight_iter(weights: &[f32], n_rows: usize) -> impl Iterator<Item = f32> + '_ {
-    let use_weights = !weights.is_empty();
-    (0..n_rows).map(move |i| if use_weights { weights[i] } else { 1.0 })
-}
+// Re-export weight_iter from utils for internal use
+pub(super) use crate::utils::weight_iter;
 
 // =============================================================================
 // MetricKind (for defaults / configuration)

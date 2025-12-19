@@ -33,7 +33,7 @@ use boosters::training::{GBDTParams, GainParams, MetricFunction, ObjectiveFuncti
 /// model.fit(X, y, feature_names=['f1', 'f2', ...])
 /// print(model.feature_importance())  # Returns dict with feature names
 /// ```
-#[pyclass(name = "GBDTBooster")]
+#[pyclass(name = "GBDTBooster", module = "boosters._boosters_python")]
 pub struct PyGBDTBooster {
     /// The trained model (None until fit() is called)
     model: Option<GBDTModel>,
