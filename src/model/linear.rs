@@ -2,6 +2,7 @@
 //!
 //! High-level wrapper around LinearModel with training, prediction, and serialization.
 
+#[cfg(feature = "storage")]
 use std::path::Path;
 
 use crate::model::meta::{ModelMeta, TaskKind};

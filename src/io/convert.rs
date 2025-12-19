@@ -345,8 +345,8 @@ fn tree_to_payload(tree: &Tree<ScalarLeaf>) -> TreePayload {
         is_leaf,
         leaf_values,
         split_types,
-        gains: None,  // TODO: add when we have gains on Tree
-        covers: None, // TODO: add when we have covers on Tree
+        gains: tree.gains().map(|g| g.to_vec()),
+        covers: tree.covers().map(|c| c.to_vec()),
     }
 }
 
@@ -369,7 +369,7 @@ fn payload_to_tree(
     // Use the provided linear coefficients or empty
     let leaf_coeffs = linear_coeffs.cloned().unwrap_or_else(LeafCoefficients::empty);
 
-    Tree::with_linear_leaves(
+    let mut tree = Tree::with_linear_leaves(
         payload.split_features,
         payload.thresholds,
         payload.left_children,
@@ -380,7 +380,17 @@ fn payload_to_tree(
         split_types,
         cat_storage,
         leaf_coeffs,
-    )
+    );
+
+    // Attach gains and covers if present
+    if let Some(gains) = payload.gains {
+        tree = tree.with_gains(gains);
+    }
+    if let Some(covers) = payload.covers {
+        tree = tree.with_covers(covers);
+    }
+
+    tree
 }
 
 // ============================================================================
