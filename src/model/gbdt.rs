@@ -2,6 +2,7 @@
 //!
 //! High-level wrapper around Forest with training, prediction, and serialization.
 
+#[cfg(feature = "storage")]
 use std::path::Path;
 
 use crate::data::binned::BinnedDataset;

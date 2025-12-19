@@ -132,6 +132,10 @@ pub struct Tree<L: LeafValue> {
     split_types: Box<[SplitType]>,
     categories: CategoriesStorage,
     leaf_coefficients: LeafCoefficients,
+    /// Optional gain at each split node (for explainability).
+    gains: Option<Box<[f32]>>,
+    /// Optional cover (hessian sum) at each node (for explainability).
+    covers: Option<Box<[f32]>>,
 }
 
 impl<L: LeafValue> Tree<L> {
@@ -167,6 +171,8 @@ impl<L: LeafValue> Tree<L> {
             split_types: vec![SplitType::Numeric; num_nodes].into_boxed_slice(),
             categories: CategoriesStorage::empty(),
             leaf_coefficients: LeafCoefficients::empty(),
+            gains: None,
+            covers: None,
         }
     }
 
@@ -204,6 +210,8 @@ impl<L: LeafValue> Tree<L> {
             split_types: split_types.into_boxed_slice(),
             categories,
             leaf_coefficients: LeafCoefficients::empty(),
+            gains: None,
+            covers: None,
         }
     }
 
@@ -242,6 +250,8 @@ impl<L: LeafValue> Tree<L> {
             split_types: split_types.into_boxed_slice(),
             categories,
             leaf_coefficients,
+            gains: None,
+            covers: None,
         }
     }
 
@@ -266,6 +276,67 @@ impl<L: LeafValue> Tree<L> {
     #[inline]
     pub fn has_linear_leaves(&self) -> bool {
         !self.leaf_coefficients.is_empty()
+    }
+
+    // =========================================================================
+    // Explainability: Gains and Covers
+    // =========================================================================
+
+    /// Get the split gain at a node, if available.
+    ///
+    /// Returns `None` if gains are not populated or node is a leaf.
+    #[inline]
+    pub fn gain(&self, node: NodeId) -> Option<f32> {
+        self.gains.as_ref().map(|g| g[node as usize])
+    }
+
+    /// Get the cover (hessian sum) at a node, if available.
+    ///
+    /// Returns `None` if covers are not populated.
+    #[inline]
+    pub fn cover(&self, node: NodeId) -> Option<f32> {
+        self.covers.as_ref().map(|c| c[node as usize])
+    }
+
+    /// Check if this tree has gain statistics.
+    #[inline]
+    pub fn has_gains(&self) -> bool {
+        self.gains.is_some()
+    }
+
+    /// Check if this tree has cover statistics.
+    #[inline]
+    pub fn has_covers(&self) -> bool {
+        self.covers.is_some()
+    }
+
+    /// Set the gains for this tree (builder pattern).
+    pub fn with_gains(mut self, gains: Vec<f32>) -> Self {
+        debug_assert_eq!(gains.len(), self.n_nodes());
+        self.gains = Some(gains.into_boxed_slice());
+        self
+    }
+
+    /// Set the covers for this tree (builder pattern).
+    pub fn with_covers(mut self, covers: Vec<f32>) -> Self {
+        debug_assert_eq!(covers.len(), self.n_nodes());
+        self.covers = Some(covers.into_boxed_slice());
+        self
+    }
+
+    /// Set both gains and covers.
+    pub fn with_stats(self, gains: Vec<f32>, covers: Vec<f32>) -> Self {
+        self.with_gains(gains).with_covers(covers)
+    }
+
+    /// Get read-only access to gains slice.
+    pub fn gains(&self) -> Option<&[f32]> {
+        self.gains.as_deref()
+    }
+
+    /// Get read-only access to covers slice.
+    pub fn covers(&self) -> Option<&[f32]> {
+        self.covers.as_deref()
     }
 
     /// Traverse the tree to find the leaf for given features.
@@ -1264,5 +1335,34 @@ mod tests {
 
         assert!((predictions[0] - 6.0).abs() < 1e-5, "got {}", predictions[0]);
         assert!((predictions[1] - 8.0).abs() < 1e-5, "got {}", predictions[1]);
+    }
+
+    #[test]
+    fn test_gains_and_covers() {
+        // Test tree with gains/covers for explainability
+        let tree = crate::scalar_tree! {
+            0 => num(0, 0.5, L) -> 1, 2,
+            1 => leaf(1.0),
+            2 => leaf(2.0),
+        };
+
+        // Initially no gains/covers
+        assert!(!tree.has_gains());
+        assert!(!tree.has_covers());
+        assert_eq!(tree.gain(0), None);
+        assert_eq!(tree.cover(0), None);
+
+        // Add gains and covers
+        let gains = vec![10.0, 0.0, 0.0]; // Only root has gain
+        let covers = vec![100.0, 40.0, 60.0]; // All nodes have cover
+        let tree = tree.with_stats(gains, covers);
+
+        assert!(tree.has_gains());
+        assert!(tree.has_covers());
+        assert_eq!(tree.gain(0), Some(10.0));
+        assert_eq!(tree.gain(1), Some(0.0));
+        assert_eq!(tree.cover(0), Some(100.0));
+        assert_eq!(tree.cover(1), Some(40.0));
+        assert_eq!(tree.cover(2), Some(60.0));
     }
 }
