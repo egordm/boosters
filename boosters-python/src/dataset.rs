@@ -1,31 +1,33 @@
 //! Optional Dataset wrapper for NumPy arrays.
 //!
-//! Note: For most use cases, pass NumPy arrays directly to `fit()`.
-//! This class is provided for users who want to pre-package data
-//! with labels, weights, and feature names.
+//! **DEPRECATED**: Use `model.fit(X, y, ...)` directly instead.
+//! This class will be removed in a future version.
+//!
+//! For most use cases, pass NumPy arrays directly to `fit()`.
+//! This class was provided for users who wanted to pre-package data
+//! with labels, weights, and feature names, but `fit()` now accepts
+//! all of these parameters directly including categorical features.
 
 use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::prelude::*;
 
 /// Optional dataset wrapper for feature matrix and labels.
 ///
-/// **Note**: For most use cases, pass NumPy arrays directly to `fit()`.
-/// This class is provided for users who want to:
-/// - Pre-validate data before training
-/// - Store feature names with the data
-/// - Reuse the same dataset for multiple training runs
+/// **DEPRECATED**: Use `model.fit(X, y, ...)` directly instead.
+/// This class will be removed in a future version.
+///
+/// The `fit()` method now accepts all parameters directly:
+/// - `sample_weight` for weighted training
+/// - `feature_names` for interpretability
+/// - `categorical_features` for categorical feature support
 ///
 /// # Example
 /// ```python
-/// import numpy as np
-/// from boosters import Dataset, GBDTBooster
+/// from boosters import GBDTBooster
 ///
-/// # Option 1: Direct fit (preferred)
+/// # Preferred: Direct fit
 /// model = GBDTBooster()
-/// model.fit(X, y)
-///
-/// # Option 2: Using Dataset (optional)
-/// dataset = Dataset(X, y, feature_names=['a', 'b', 'c'])
+/// model.fit(X, y, feature_names=['a', 'b'], categorical_features=[0])
 /// ```
 #[pyclass(name = "Dataset")]
 #[derive(Clone)]

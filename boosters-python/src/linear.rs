@@ -232,15 +232,17 @@ impl PyGBLinearBooster {
     ///
     /// # Arguments
     /// * `x` - Feature matrix of shape (n_samples, n_features)
-    /// * `feature_means` - Mean value for each feature (background distribution)
+    /// * `feature_means` - Optional mean value for each feature (background distribution).
+    ///                     If not provided, assumes data is centered (zeros).
     ///
     /// # Returns
     /// SHAP values as a NumPy array of shape (n_samples, n_features)
+    #[pyo3(signature = (x, feature_means=None))]
     fn shap_values<'py>(
         &self,
         py: Python<'py>,
         x: PyReadonlyArray2<'py, f32>,
-        feature_means: PyReadonlyArray1<'py, f64>,
+        feature_means: Option<PyReadonlyArray1<'py, f64>>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
         let model = self.model.as_ref().ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err(
@@ -260,10 +262,15 @@ impl PyGBLinearBooster {
             features = x.as_array().iter().copied().collect();
             &features
         };
-        let means = feature_means.as_slice()?.to_vec();
+        
+        // Use provided means or default to zeros (centered data assumption)
+        let means = match feature_means {
+            Some(arr) => arr.as_slice()?.to_vec(),
+            None => vec![0.0; n_features],
+        };
 
         let shap = model
-            .shap_values(features_slice, n_samples, means)
+            .shap_values(features_slice, n_samples, Some(means))
             .map_err(PyBoostersError::from)?;
 
         // Convert to 2D array (n_samples, n_features)
