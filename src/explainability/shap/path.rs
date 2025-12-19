@@ -140,13 +140,14 @@ impl PathState {
         let zero_fraction = self.zero_fractions[target_idx];
 
         let mut total = 0.0;
-        let mut next_one_portion = self.weights[d - 1];
+        let mut next_one_portion = if d > 0 { self.weights[d - 1] } else { 1.0 };
 
         for i in (0..d).rev() {
             if one_fraction != 0.0 {
                 let w = next_one_portion * (d as f64) / ((i + 1) as f64 * one_fraction);
                 total += w;
-                next_one_portion = self.weights[i - 1.max(0)] - self.weights[i] * zero_fraction * ((d - i) as f64) / (d as f64);
+                let prev_weight = if i > 0 { self.weights[i - 1] } else { 0.0 };
+                next_one_portion = prev_weight - self.weights[i] * zero_fraction * ((d - i) as f64) / (d as f64);
                 if i == 0 {
                     next_one_portion = 0.0;
                 }
