@@ -282,22 +282,6 @@ impl<L: LeafValue> Tree<L> {
     // Explainability: Gains and Covers
     // =========================================================================
 
-    /// Get the split gain at a node, if available.
-    ///
-    /// Returns `None` if gains are not populated or node is a leaf.
-    #[inline]
-    pub fn gain(&self, node: NodeId) -> Option<f32> {
-        self.gains.as_ref().map(|g| g[node as usize])
-    }
-
-    /// Get the cover (hessian sum) at a node, if available.
-    ///
-    /// Returns `None` if covers are not populated.
-    #[inline]
-    pub fn cover(&self, node: NodeId) -> Option<f32> {
-        self.covers.as_ref().map(|c| c[node as usize])
-    }
-
     /// Check if this tree has gain statistics.
     #[inline]
     pub fn has_gains(&self) -> bool {
@@ -330,11 +314,15 @@ impl<L: LeafValue> Tree<L> {
     }
 
     /// Get read-only access to gains slice.
+    ///
+    /// Leaf nodes have gain=0, split nodes have the information gain from that split.
     pub fn gains(&self) -> Option<&[f32]> {
         self.gains.as_deref()
     }
 
     /// Get read-only access to covers slice.
+    ///
+    /// Cover is the sum of hessians for samples reaching each node.
     pub fn covers(&self) -> Option<&[f32]> {
         self.covers.as_deref()
     }
@@ -780,6 +768,10 @@ pub struct MutableTree<L: LeafValue> {
     categorical_nodes: Vec<(NodeId, Vec<u32>)>,
     /// Linear leaf coefficients: (node_idx, feature_indices, coefficients, intercept)
     linear_leaves: Vec<(NodeId, Vec<u32>, Vec<f32>, f32)>,
+    /// Split gains (one per node, 0.0 for leaves).
+    gains: Vec<f32>,
+    /// Node covers/hessian sums (one per node).
+    covers: Vec<f32>,
     next_id: NodeId,
 }
 
@@ -803,6 +795,8 @@ impl<L: LeafValue> MutableTree<L> {
             split_types: Vec::with_capacity(64),
             categorical_nodes: Vec::new(),
             linear_leaves: Vec::new(),
+            gains: Vec::with_capacity(64),
+            covers: Vec::with_capacity(64),
             next_id: 0,
         }
     }
@@ -820,6 +814,8 @@ impl<L: LeafValue> MutableTree<L> {
             split_types: Vec::with_capacity(capacity),
             categorical_nodes: Vec::new(),
             linear_leaves: Vec::new(),
+            gains: Vec::with_capacity(capacity),
+            covers: Vec::with_capacity(capacity),
             next_id: 0,
         }
     }
@@ -1012,6 +1008,8 @@ impl<L: LeafValue> MutableTree<L> {
         self.split_types.clear();
         self.categorical_nodes.clear();
         self.linear_leaves.clear();
+        self.gains.clear();
+        self.covers.clear();
         self.next_id = 0;
     }
 
@@ -1050,7 +1048,11 @@ impl<L: LeafValue> MutableTree<L> {
             builder.build(num_nodes)
         };
 
-        Tree::with_linear_leaves(
+        // Check if gains/covers were populated (any non-zero values)
+        let has_stats = self.gains.iter().any(|&g| g != 0.0)
+            || self.covers.iter().any(|&c| c != 0.0);
+
+        let mut tree = Tree::with_linear_leaves(
             self.split_indices,
             self.split_thresholds,
             self.left_children,
@@ -1061,7 +1063,14 @@ impl<L: LeafValue> MutableTree<L> {
             self.split_types,
             categories,
             leaf_coefficients,
-        )
+        );
+
+        // Attach gains/covers if they were populated
+        if has_stats {
+            tree = tree.with_stats(self.gains, self.covers);
+        }
+
+        tree
     }
 
     fn allocate_node(&mut self) -> NodeId {
@@ -1076,8 +1085,32 @@ impl<L: LeafValue> MutableTree<L> {
         self.is_leaf.push(false);
         self.leaf_values.push(L::default());
         self.split_types.push(SplitType::Numeric);
+        self.gains.push(0.0);
+        self.covers.push(0.0);
 
         id
+    }
+
+    /// Set gain and cover for a node (for explainability).
+    ///
+    /// Should be called after applying a split with the split's gain
+    /// and the node's hessian sum (cover).
+    #[inline]
+    pub fn set_node_stats(&mut self, node: NodeId, gain: f32, cover: f32) {
+        if let Some(g) = self.gains.get_mut(node as usize) {
+            *g = gain;
+        }
+        if let Some(c) = self.covers.get_mut(node as usize) {
+            *c = cover;
+        }
+    }
+
+    /// Set only cover for a node (e.g., for leaves).
+    #[inline]
+    pub fn set_cover(&mut self, node: NodeId, cover: f32) {
+        if let Some(c) = self.covers.get_mut(node as usize) {
+            *c = cover;
+        }
     }
 }
 
@@ -1349,8 +1382,8 @@ mod tests {
         // Initially no gains/covers
         assert!(!tree.has_gains());
         assert!(!tree.has_covers());
-        assert_eq!(tree.gain(0), None);
-        assert_eq!(tree.cover(0), None);
+        assert!(tree.gains().is_none());
+        assert!(tree.covers().is_none());
 
         // Add gains and covers
         let gains = vec![10.0, 0.0, 0.0]; // Only root has gain
@@ -1359,10 +1392,7 @@ mod tests {
 
         assert!(tree.has_gains());
         assert!(tree.has_covers());
-        assert_eq!(tree.gain(0), Some(10.0));
-        assert_eq!(tree.gain(1), Some(0.0));
-        assert_eq!(tree.cover(0), Some(100.0));
-        assert_eq!(tree.cover(1), Some(40.0));
-        assert_eq!(tree.cover(2), Some(60.0));
+        assert_eq!(tree.gains().unwrap(), &[10.0, 0.0, 0.0]);
+        assert_eq!(tree.covers().unwrap(), &[100.0, 40.0, 60.0]);
     }
 }
