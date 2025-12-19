@@ -86,6 +86,8 @@ impl GBLinearModel {
     }
 
     /// Get bias for a group.
+    ///
+    /// For bulk access, use [`biases()`](Self::biases) instead.
     pub fn bias(&self, group: usize) -> f32 {
         self.model.bias(group)
     }

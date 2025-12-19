@@ -361,8 +361,7 @@ impl PyGBLinearBooster {
             )
         })?;
 
-        let n_groups = model.n_groups();
-        let bias: Vec<f32> = (0..n_groups).map(|g| model.bias(g)).collect();
+        let bias = model.biases().to_vec();
         Ok(PyArray1::from_vec_bound(py, bias))
     }
 

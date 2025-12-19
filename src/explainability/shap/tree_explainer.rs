@@ -113,7 +113,7 @@ impl<'a> TreeExplainer<'a> {
         let mut path = PathState::new(max_depth);
 
         for (tree_idx, tree) in self.forest.trees().enumerate() {
-            let group = self.forest.tree_group(tree_idx) as usize;
+            let group = self.forest.tree_groups()[tree_idx] as usize;
             path.reset();
             self.tree_shap(shap, sample_idx, group, tree, features, &mut path, 0);
         }

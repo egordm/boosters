@@ -188,9 +188,7 @@ impl Payload {
 
         let forest_payload = ForestPayload {
             num_trees: forest.n_trees() as u32,
-            tree_groups: (0..forest.n_trees())
-                .map(|i| forest.tree_group(i))
-                .collect(),
+            tree_groups: forest.tree_groups().to_vec(),
             trees,
         };
 
