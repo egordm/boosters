@@ -368,10 +368,19 @@ impl TreeGrower {
                 .compute_leaf_weight(candidate.grad_sum, candidate.hess_sum);
             self.tree_builder
                 .make_leaf(candidate.tree_node, ScalarLeaf(weight));
+            // Record cover for explainability (leaves have gain=0)
+            self.tree_builder.set_cover(candidate.tree_node, candidate.hess_sum as f32);
             self.record_leaf_value(candidate.tree_node, candidate.node, weight);
             self.histogram_pool.release(candidate.node);
             return;
         }
+
+        // Record node stats for explainability before applying split
+        self.tree_builder.set_node_stats(
+            candidate.tree_node,
+            candidate.split.gain,
+            candidate.hess_sum as f32,
+        );
 
         // Apply split (translating bin thresholds to float values)
         let (left_tree, right_tree) =
@@ -493,6 +502,8 @@ impl TreeGrower {
                     .compute_leaf_weight(candidate.grad_sum, candidate.hess_sum);
                 self.tree_builder
                     .make_leaf(candidate.tree_node, ScalarLeaf(weight));
+                // Record cover for explainability (leaves have gain=0)
+                self.tree_builder.set_cover(candidate.tree_node, candidate.hess_sum as f32);
                 self.record_leaf_value(candidate.tree_node, candidate.node, weight);
                 self.histogram_pool.release(candidate.node);
             }

@@ -224,6 +224,10 @@ pub fn compute_forest_importance(
     let mut values = vec![0.0f64; n_features];
 
     for tree in forest.trees() {
+        // Pre-fetch gains and covers slices for this tree
+        let gains_slice = tree.gains();
+        let covers_slice = tree.covers();
+
         for node_idx in 0..tree.n_nodes() as u32 {
             if !tree.is_leaf(node_idx) {
                 let feature = tree.split_index(node_idx) as usize;
@@ -235,13 +239,13 @@ pub fn compute_forest_importance(
                             values[feature] += 1.0;
                         }
                         ImportanceType::Gain | ImportanceType::AverageGain => {
-                            if let Some(gain) = tree.gain(node_idx) {
-                                values[feature] += gain as f64;
+                            if let Some(gains) = gains_slice {
+                                values[feature] += gains[node_idx as usize] as f64;
                             }
                         }
                         ImportanceType::Cover | ImportanceType::AverageCover => {
-                            if let Some(cover) = tree.cover(node_idx) {
-                                values[feature] += cover as f64;
+                            if let Some(covers) = covers_slice {
+                                values[feature] += covers[node_idx as usize] as f64;
                             }
                         }
                     }

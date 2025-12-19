@@ -697,4 +697,53 @@ mod tests {
         let first_tree = forest.tree(0);
         assert!(!first_tree.has_linear_leaves(), "First tree should not have linear leaves");
     }
+
+    #[test]
+    fn test_training_populates_gains_and_covers() {
+        use crate::repr::gbdt::TreeView;
+
+        let dataset = make_test_dataset();
+        let targets: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5];
+
+        let params = GBDTParams {
+            n_trees: 3,
+            growth_strategy: GrowthStrategy::DepthWise { max_depth: 3 },
+            ..Default::default()
+        };
+
+        let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+        let forest = trainer.train(&dataset, &targets, &[], &[]).unwrap();
+
+        // All trained trees should have gains and covers
+        for i in 0..forest.n_trees() {
+            let tree = forest.tree(i);
+            assert!(tree.has_gains(), "Tree {} should have gains", i);
+            assert!(tree.has_covers(), "Tree {} should have covers", i);
+
+            let gains = tree.gains().expect("gains should be present");
+            let covers = tree.covers().expect("covers should be present");
+
+            assert_eq!(gains.len(), tree.n_nodes());
+            assert_eq!(covers.len(), tree.n_nodes());
+
+            // Covers should be positive (sum of hessians)
+            for (node_idx, &cover) in covers.iter().enumerate() {
+                assert!(cover >= 0.0, "Cover at node {} should be non-negative", node_idx);
+            }
+
+            // Split nodes should have positive gain, leaves have gain=0
+            for (node_idx, &gain) in gains.iter().enumerate() {
+                if tree.is_leaf(node_idx as u32) {
+                    assert!(
+                        gain.abs() < 1e-6,
+                        "Leaf {} should have gain=0, got {}",
+                        node_idx,
+                        gain
+                    );
+                }
+                // Split gains should be non-negative (enforced by min_gain)
+                assert!(gain >= 0.0, "Gain at node {} should be non-negative", node_idx);
+            }
+        }
+    }
 }
