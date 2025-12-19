@@ -132,10 +132,22 @@ impl GBDTModel {
     pub fn n_features(&self) -> usize;
     
     /// Save to file.
-    pub fn save(&self, path: &str) -> Result<()>;
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<()>;
     
     /// Load from file (automatically optimizes for inference).
-    pub fn load(path: &str) -> Result<Self>;
+    pub fn load(path: impl AsRef<Path>) -> Result<Self>;
+    
+    /// Serialize to bytes (for custom storage/transmission).
+    pub fn to_bytes(&self) -> Result<Vec<u8>>;
+    
+    /// Deserialize from bytes (automatically optimizes for inference).
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self>;
+    
+    /// Write to any output stream (streaming serialization, no intermediate buffer).
+    pub fn write_to(&self, writer: &mut impl std::io::Write) -> Result<()>;
+    
+    /// Read from any input stream.
+    pub fn read_from(reader: &mut impl std::io::Read) -> Result<Self>;
 }
 ```
 
@@ -183,10 +195,16 @@ impl GBLinearModel {
     pub fn shap_values(&self, features: &impl RowMajorMatrix<f32>) -> Result<ShapResult>;
     
     /// Save to file.
-    pub fn save(&self, path: &str) -> Result<()>;
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<()>;
     
     /// Load from file.
-    pub fn load(path: &str) -> Result<Self>;
+    pub fn load(path: impl AsRef<Path>) -> Result<Self>;
+    
+    /// Serialize to bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>>;
+    
+    /// Deserialize from bytes.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self>;
 }
 ```
 
@@ -719,10 +737,31 @@ class GBDTBooster:
     
     def shap_values(self, data: Dataset | np.ndarray) -> np.ndarray: ...
     
-    def save(self, path: str, format: str = "json") -> None: ...
+    def save(self, path: str | Path, format: str = "json") -> None:
+        """Save model to file."""
+        ...
     
     @staticmethod
-    def load(path: str) -> "GBDTBooster": ...
+    def load(path: str | Path) -> "GBDTBooster":
+        """Load model from file."""
+        ...
+    
+    def to_bytes(self, format: str = "json") -> bytes:
+        """Serialize model to bytes (for pickling, custom storage)."""
+        ...
+    
+    @staticmethod
+    def from_bytes(data: bytes) -> "GBDTBooster":
+        """Deserialize model from bytes."""
+        ...
+    
+    def __getstate__(self) -> bytes:
+        """Pickle support - returns serialized bytes."""
+        return self.to_bytes()
+    
+    def __setstate__(self, state: bytes) -> None:
+        """Pickle support - restores from bytes."""
+        ...
     
     @property
     def n_trees(self) -> int: ...
@@ -758,10 +797,31 @@ class GBLinearBooster:
     
     def shap_values(self, data: Dataset | np.ndarray) -> np.ndarray: ...
     
-    def save(self, path: str) -> None: ...
+    def save(self, path: str | Path) -> None:
+        """Save model to file."""
+        ...
     
     @staticmethod
-    def load(path: str) -> "GBLinearBooster": ...
+    def load(path: str | Path) -> "GBLinearBooster":
+        """Load model from file."""
+        ...
+    
+    def to_bytes(self) -> bytes:
+        """Serialize model to bytes."""
+        ...
+    
+    @staticmethod
+    def from_bytes(data: bytes) -> "GBLinearBooster":
+        """Deserialize model from bytes."""
+        ...
+    
+    def __getstate__(self) -> bytes:
+        """Pickle support."""
+        return self.to_bytes()
+    
+    def __setstate__(self, state: bytes) -> None:
+        """Pickle support."""
+        ...
     
     @property
     def weights(self) -> np.ndarray: ...
@@ -786,12 +846,35 @@ class CommonParams:
     """Common training parameters."""
     n_estimators: int = 100
     learning_rate: float = 0.3
-    objective: str = "squared_error"  # or ObjectiveKind enum
+    objective: str | ObjectiveConfig = "squared_error"
     eval_metric: str | None = None
     early_stopping_rounds: int = 0
+    base_score: float | None = None  # Auto-computed if None
     seed: int = 42
     n_threads: int = 0  # 0 = auto
     verbosity: int = 1
+    callbacks: list[Callback] | None = None  # Custom callbacks
+
+@dataclass
+class ObjectiveConfig:
+    """Parameterized objective function.
+    
+    Required fields by objective:
+    - "quantile": requires `quantiles` (list of floats in (0,1))
+    - "tweedie": requires `tweedie_variance_power` (float in (1,2))
+    - "huber": optional `delta` (default 1.0)
+    - "multi:softmax": requires `n_classes` >= 2
+    
+    Examples:
+        ObjectiveConfig("quantile", quantiles=[0.1, 0.5, 0.9])
+        ObjectiveConfig("tweedie", tweedie_variance_power=1.5)
+        ObjectiveConfig("multi:softmax", n_classes=5)
+    """
+    name: str
+    quantiles: list[float] | None = None
+    tweedie_variance_power: float | None = None
+    delta: float | None = None
+    n_classes: int | None = None
 
 @dataclass  
 class GBDTParams:
@@ -806,6 +889,37 @@ class GBDTParams:
     colsample_bytree: float = 1.0
     max_bin: int = 256
     linear_tree: bool = False
+    # Multi-class: "one_vs_all" or "softmax" (default: "softmax")
+    multi_class_strategy: str = "softmax"
+    
+    @classmethod
+    def quick(cls, **kwargs) -> "GBDTParams":
+        """Quick constructor with flat kwargs.
+        
+        Common params (learning_rate, n_estimators, etc.) are
+        automatically routed to CommonParams.
+        
+        Example:
+            GBDTParams.quick(learning_rate=0.1, max_depth=8)
+        """
+        ...
+    
+    @classmethod
+    def for_regression(cls, **kwargs) -> "GBDTParams":
+        """Preset for regression tasks.
+        
+        Sets objective="squared_error", eval_metric="rmse".
+        """
+        ...
+    
+    @classmethod
+    def for_classification(cls, n_classes: int = 2, **kwargs) -> "GBDTParams":
+        """Preset for classification tasks.
+        
+        For binary: objective="binary:logistic"
+        For multi-class: objective=ObjectiveConfig("multi:softmax", n_classes=n_classes)
+        """
+        ...
 
 @dataclass
 class GBLinearParams:
@@ -814,6 +928,41 @@ class GBLinearParams:
     reg_lambda: float = 0.0
     reg_alpha: float = 0.0
     feature_selector: str = "cyclic"
+    
+    def __init__(self, **kwargs):
+        """Allow flat kwargs for convenience."""
+        ...
+
+
+class Callback(Protocol):
+    """Training callback interface."""
+    
+    def on_iteration_end(
+        self, 
+        iteration: int, 
+        train_loss: float,
+        eval_results: dict[str, float] | None,
+    ) -> bool:
+        """Called after each boosting round.
+        
+        Return False to stop training early.
+        """
+        ...
+
+
+class PrintMetricsCallback:
+    """Example callback that prints metrics each round."""
+    
+    def __init__(self, period: int = 10):
+        self.period = period
+    
+    def on_iteration_end(self, iteration, train_loss, eval_results):
+        if iteration % self.period == 0:
+            print(f"[{iteration}] train_loss={train_loss:.4f}")
+            if eval_results:
+                for name, value in eval_results.items():
+                    print(f"       {name}={value:.4f}")
+        return True  # Continue training
 ```
 
 #### Sklearn-Compatible Wrappers
@@ -861,6 +1010,11 @@ class GBDTRegressor(RegressorMixin, BaseEstimator):
     
     @property
     def n_features_in_(self) -> int:
+        ...
+    
+    @property
+    def feature_names_in_(self) -> np.ndarray | None:
+        """Feature names seen during fit (if X was DataFrame)."""
         ...
 
 
@@ -1081,6 +1235,12 @@ Key validations:
    - Current design doesn't preclude it
    - Models could have device placement info
 
+4. **Serialization format versioning**: How to handle model files across library versions?
+   - Format includes magic number + version in header
+   - Backward compatibility: newer library reads older formats
+   - Forward compatibility: older library fails gracefully with "unsupported version" error
+   - **Tentative**: Support backward compat for last 3 minor versions
+
 ## Future Work
 
 - [ ] ONNX export support
@@ -1098,6 +1258,25 @@ Key validations:
 
 ## Changelog
 
+- 2025-12-19: Round 4 review updates:
+  - Added preset factories (`GBDTParams.for_regression()`, `for_classification()`)
+  - Added `PrintMetricsCallback` example
+  - Added serialization format versioning to Open Questions
+- 2025-12-19: Round 3 review updates:
+  - Added `multi_class_strategy` to GBDTParams
+  - Added `GBDTParams.quick()` classmethod for flat kwargs
+  - Added `feature_names_in_` and `n_features_in_` to models
+- 2025-12-19: Round 2 review updates:
+  - Added `ObjectiveConfig` for parameterized objectives
+  - Added `Callback` protocol for training customization
+  - Added `callbacks` list to CommonParams
+- 2025-12-19: Round 1 review updates:
+  - Added `base_score` to CommonParams
+  - Added `early_stopping_eval_set` to train()
+- 2025-12-19: Pre-review updates:
+  - Added `to_bytes()`/`from_bytes()` for in-memory serialization
+  - Added `write_to()`/`read_from()` for streaming
+  - Added `__reduce_ex__` for pickle support
 - 2025-12-19: Second revision based on feedback:
   - DD-6 added: Automatic inference optimization (no manual call needed)
   - DD-7 added: Params stored in model for reproducibility/serialization
