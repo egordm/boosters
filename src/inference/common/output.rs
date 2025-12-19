@@ -21,7 +21,7 @@ use approx::{AbsDiffEq, RelativeEq};
 /// # Example
 ///
 /// ```
-/// use booste_rs::inference::common::PredictionOutput;
+/// use boosters::inference::common::PredictionOutput;
 ///
 /// // 3 rows, 2 groups (binary classification logits)
 /// // Column-major: [g0r0, g0r1, g0r2, g1r0, g1r1, g1r2]

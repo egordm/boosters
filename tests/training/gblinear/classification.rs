@@ -6,10 +6,10 @@
 
 use super::load_config;
 use super::load_train_data;
-use booste_rs::data::Dataset;
-use booste_rs::inference::common::PredictionOutput;
-use booste_rs::inference::LinearModelPredict;
-use booste_rs::training::{
+use boosters::data::Dataset;
+use boosters::inference::common::PredictionOutput;
+use boosters::inference::LinearModelPredict;
+use boosters::training::{
     GBLinearParams, GBLinearTrainer, LogLoss, LogisticLoss, MulticlassLogLoss, SoftmaxLoss,
     Verbosity,
 };
@@ -95,7 +95,7 @@ fn train_multioutput_classification() {
     );
 
     // Compute training accuracy (argmax over logits).
-    use booste_rs::training::{Metric, MulticlassAccuracy};
+    use boosters::training::{Metric, MulticlassAccuracy};
 
     let output = model.predict(&data, &vec![0.0; num_class]);
     let n_rows = output.num_rows();

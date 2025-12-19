@@ -12,8 +12,8 @@
 //! # Quick Start
 //!
 //! ```ignore
-//! use booste_rs::inference::{Forest, Predictor, PredictionOutput};
-//! use booste_rs::data::RowMatrix;
+//! use boosters::inference::{Forest, Predictor, PredictionOutput};
+//! use boosters::data::RowMatrix;
 //!
 //! // Load or build a forest
 //! let forest: Forest = /* ... */;

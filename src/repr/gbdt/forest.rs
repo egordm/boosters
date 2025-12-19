@@ -207,8 +207,8 @@ impl Forest<ScalarLeaf> {
     /// # Example
     ///
     /// ```ignore
-    /// use booste_rs::inference::Forest;
-    /// use booste_rs::data::RowMatrix;
+    /// use boosters::inference::Forest;
+    /// use boosters::data::RowMatrix;
     ///
     /// let forest: Forest<ScalarLeaf> = /* ... */;
     /// let data = RowMatrix::from_vec(vec![0.1, 0.2, 0.3, 0.4], 2, 2);

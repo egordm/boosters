@@ -1,6 +1,6 @@
 # Benchmarks
 
-Performance benchmark results for booste-rs.
+Performance benchmark results for boosters.
 
 ## Latest Results
 

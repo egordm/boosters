@@ -1,6 +1,6 @@
 # RFC Index
 
-Design documents for booste-rs, ordered by learning path.
+Design documents for boosters, ordered by learning path.
 
 ## Implemented
 

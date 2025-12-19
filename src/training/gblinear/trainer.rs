@@ -7,7 +7,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use booste_rs::training::{GBLinearTrainer, GBLinearParams, SquaredLoss};
+//! use boosters::training::{GBLinearTrainer, GBLinearParams, SquaredLoss};
 //!
 //! let params = GBLinearParams {
 //!     n_rounds: 100,
@@ -23,7 +23,7 @@
 //! For multiclass training:
 //!
 //! ```ignore
-//! use booste_rs::training::{GBLinearTrainer, GBLinearParams, SoftmaxLoss};
+//! use boosters::training::{GBLinearTrainer, GBLinearParams, SoftmaxLoss};
 //!
 //! let params = GBLinearParams {
 //!     n_rounds: 100,
@@ -57,7 +57,7 @@ use super::updater::{Updater, UpdateConfig, UpdaterKind};
 /// # Example
 ///
 /// ```ignore
-/// use booste_rs::training::GBLinearParams;
+/// use boosters::training::GBLinearParams;
 ///
 /// let params = GBLinearParams {
 ///     n_rounds: 200,
@@ -142,7 +142,7 @@ impl Default for GBLinearParams {
 /// # Example
 ///
 /// ```ignore
-/// use booste_rs::training::{GBLinearTrainer, GBLinearParams, SquaredLoss, LogisticLoss, Rmse, LogLoss};
+/// use boosters::training::{GBLinearTrainer, GBLinearParams, SquaredLoss, LogisticLoss, Rmse, LogLoss};
 ///
 /// // Regression
 /// let params = GBLinearParams::default();
@@ -182,8 +182,8 @@ impl<O: Objective, M: Metric> GBLinearTrainer<O, M> {
     /// # Example
     ///
     /// ```ignore
-    /// use booste_rs::data::ColMatrix;
-    /// use booste_rs::training::{GBLinearTrainer, GBLinearParams, SquaredLoss};
+    /// use boosters::data::ColMatrix;
+    /// use boosters::training::{GBLinearTrainer, GBLinearParams, SquaredLoss};
     ///
     /// // Regression (unweighted)
     /// let params = GBLinearParams::default();

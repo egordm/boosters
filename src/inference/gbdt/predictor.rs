@@ -8,8 +8,8 @@
 //! # Usage
 //!
 //! ```ignore
-//! use booste_rs::inference::gbdt::{Predictor, StandardTraversal, UnrolledTraversal6};
-//! use booste_rs::data::DenseMatrix;
+//! use boosters::inference::gbdt::{Predictor, StandardTraversal, UnrolledTraversal6};
+//! use boosters::data::DenseMatrix;
 //!
 //! // Simple predictor (no pre-computation)
 //! let predictor = Predictor::<StandardTraversal>::new(&forest);
@@ -96,7 +96,7 @@ fn compute_linear_leaf_value(tree: &Tree<ScalarLeaf>, leaf_idx: u32, features: &
 /// # Example
 ///
 /// ```ignore
-    /// use booste_rs::inference::gbdt::{Predictor, UnrolledTraversal6};
+    /// use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
 ///
 /// let predictor = Predictor::<UnrolledTraversal6>::new(&forest);
 /// let output = predictor.predict(&features);

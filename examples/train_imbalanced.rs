@@ -19,9 +19,9 @@
 //! cargo run --example train_imbalanced
 //! ```
 
-use booste_rs::data::binned::BinnedDatasetBuilder;
-use booste_rs::data::{ColMatrix, DenseMatrix, RowMajor};
-use booste_rs::training::{Accuracy, GBDTParams, GBDTTrainer, GrowthStrategy, LogLoss, LogisticLoss, Metric};
+use boosters::data::binned::BinnedDatasetBuilder;
+use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
+use boosters::training::{Accuracy, GBDTParams, GBDTTrainer, GrowthStrategy, LogLoss, LogisticLoss, Metric};
 
 fn main() {
     // =========================================================================

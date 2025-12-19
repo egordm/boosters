@@ -90,7 +90,7 @@ pub fn format_slice_diff_f64(actual: &[f32], expected: &[f64], epsilon: f64) -> 
 /// # Example
 ///
 /// ```
-/// use booste_rs::testing::{assert_slices_approx_eq, DEFAULT_TOLERANCE};
+/// use boosters::testing::{assert_slices_approx_eq, DEFAULT_TOLERANCE};
 ///
 /// let actual = &[1.0f32, 2.0, 3.0];
 /// let expected = &[1.0f32, 2.0, 3.0];

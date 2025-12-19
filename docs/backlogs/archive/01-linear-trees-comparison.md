@@ -16,13 +16,13 @@
 
 | Metric | Result |
 |--------|--------|
-| Training Speed | booste-rs **16-22% faster** for ≥100 features |
+| Training Speed | boosters **16-22% faster** for ≥100 features |
 | Prediction Regression | 3-7% in some cases (trade-off for linear GBDT support) |
 | Training Regression | None - actually **27-39% faster** |
 | Quality (synthetic) | ~1% better on regression, 0.1% worse on binary |
 | Quality (real-world) | **~1% worse** on regression, ~4% worse on binary, **2-4% better** on multiclass |
-| Multiclass | **booste-rs wins** across all datasets (2-4% better accuracy) |
-| Linear GBDT | Only booste-rs works (LightGBM crate crashes) |
+| Multiclass | **boosters wins** across all datasets (2-4% better accuracy) |
+| Linear GBDT | Only boosters works (LightGBM crate crashes) |
 | **Binning Fix** | Quantile binning closed California Housing gap from 6% to 1% |
 
 **Benchmark Reports:**
@@ -35,7 +35,7 @@
 
 ## Overview
 
-This epic covers comparing booste-rs linear trees against LightGBM's implementation
+This epic covers comparing boosters linear trees against LightGBM's implementation
 for both quality and performance. The goal is to verify we achieve parity with
 LightGBM and document the results.
 
@@ -89,7 +89,7 @@ Load LightGBM linear tree models and verify 1:1 prediction matching.
 
 **Status**: Complete
 
-Add linear trees to quality_benchmark.rs to compare booste-rs quality metrics.
+Add linear trees to quality_benchmark.rs to compare boosters quality metrics.
 
 **Tasks:**
 
@@ -104,7 +104,7 @@ Add linear trees to quality_benchmark.rs to compare booste-rs quality metrics.
 **Acceptance Criteria:**
 
 - Quality benchmark runs with linear tree configurations
-- booste-rs linear trees produce competitive RMSE on synthetic linear data
+- boosters linear trees produce competitive RMSE on synthetic linear data
 - Report clearly indicates which libraries support linear trees
 
 **Tests:**
@@ -123,7 +123,7 @@ Add linear trees to quality_benchmark.rs to compare booste-rs quality metrics.
 
 **Status**: Complete
 
-Create training and inference benchmarks comparing booste-rs vs LightGBM.
+Create training and inference benchmarks comparing boosters vs LightGBM.
 
 **Tasks:**
 
@@ -134,7 +134,7 @@ Create training and inference benchmarks comparing booste-rs vs LightGBM.
 
 **Results:**
 
-| Metric | booste-rs | LightGBM | Status |
+| Metric | boosters | LightGBM | Status |
 |--------|-----------|----------|--------|
 | Training overhead | +10.4% | +11.9% | ✅ On par |
 | Prediction overhead | +5.4x | +1.75x | ⚠️ Needs optimization |
@@ -229,7 +229,7 @@ on standard GBDT and GBLinear models.
 **Priority**: High  
 **Source**: Stakeholder feedback
 
-Create comprehensive quality comparison between booste-rs and LightGBM with
+Create comprehensive quality comparison between boosters and LightGBM with
 variance across multiple seeds.
 
 **Tasks:**
@@ -237,13 +237,13 @@ variance across multiple seeds.
 - [x] Run quality_benchmark with 5+ seeds on synthetic datasets
 - [x] Run quality_benchmark with 3+ seeds on real-world datasets
 - [x] Generate comparison tables with mean ± std for each metric
-- [x] Compare booste-rs linear GBDT vs LightGBM linear trees
-- [x] Compare booste-rs standard GBDT vs LightGBM standard GBDT
+- [x] Compare boosters linear GBDT vs LightGBM linear trees
+- [x] Compare boosters standard GBDT vs LightGBM standard GBDT
 - [x] Update benchmark report with quality tables
 
 **Results:**
 
-| Task Type | booste-rs vs XGBoost | booste-rs vs LightGBM |
+| Task Type | boosters vs XGBoost | boosters vs LightGBM |
 |-----------|---------------------|----------------------|
 | Regression (synthetic) | **1% better** | **1% better** |
 | Regression (real-world) | 6% worse | 6% worse |
@@ -258,7 +258,7 @@ variance across multiple seeds.
 |---------|---------|----------|------|
 | California Housing | 20,640 | 8 | XGBoost |
 | Adult | 48,842 | 105 | LightGBM |
-| Covertype | 50,000* | 54 | **booste-rs** |
+| Covertype | 50,000* | 54 | **boosters** |
 
 **Benchmark Report**: [2025-01-8065629-quality-comparison.md](../benchmarks/2025-01-8065629-quality-comparison.md)
 
@@ -274,25 +274,25 @@ Add comprehensive training speed benchmarks, not just overhead percentages.
 
 **Tasks:**
 
-- [x] Create training speed comparison: booste-rs vs LightGBM vs XGBoost
-- [x] Include linear GBDT training (booste-rs only due to LightGBM crash)
+- [x] Create training speed comparison: boosters vs LightGBM vs XGBoost
+- [x] Include linear GBDT training (boosters only due to LightGBM crash)
 - [x] Measure absolute times and rows/second throughput
 - [x] Document results in benchmark report
 
 **Results:**
 
-| Features | booste-rs | XGBoost | LightGBM | Winner |
+| Features | boosters | XGBoost | LightGBM | Winner |
 |----------|-----------|---------|----------|--------|
 | 50 | 2.48 Melem/s | 3.19 Melem/s | **3.26 Melem/s** | LightGBM |
-| 100 | **3.84 Melem/s** | 2.94 Melem/s | 3.21 Melem/s | booste-rs |
-| 200 | **3.86 Melem/s** | 2.82 Melem/s | 3.18 Melem/s | booste-rs |
-| 500 | **3.97 Melem/s** | 3.05 Melem/s | 3.08 Melem/s | booste-rs |
+| 100 | **3.84 Melem/s** | 2.94 Melem/s | 3.21 Melem/s | boosters |
+| 200 | **3.86 Melem/s** | 2.82 Melem/s | 3.18 Melem/s | boosters |
+| 500 | **3.97 Melem/s** | 3.05 Melem/s | 3.08 Melem/s | boosters |
 
 **Key Findings:**
 
-- booste-rs is fastest for ≥100 features (16-22% faster)
+- boosters is fastest for ≥100 features (16-22% faster)
 - LightGBM leads on small datasets (<100 features)
-- booste-rs scales best with increasing feature count
+- boosters scales best with increasing feature count
 
 **Benchmark Report**: [2025-01-8065629-training-speed.md](../benchmarks/2025-01-8065629-training-speed.md)
 
@@ -339,7 +339,7 @@ Optimize linear tree prediction to reduce overhead from 5.4x to <2x.
 
 Current implementation falls back to per-row traversal for linear trees,
 losing the benefits of block-optimized traversal. LightGBM achieves 1.75x
-overhead while booste-rs has 5.4x.
+overhead while boosters has 5.4x.
 
 **Tasks:**
 
@@ -386,7 +386,7 @@ If lgbm crate works with linear trees, migrate benchmarks to use it.
 
 ### Story 6: Quality Improvements (If Needed)
 
-If booste-rs linear trees are significantly worse than LightGBM:
+If boosters linear trees are significantly worse than LightGBM:
 
 **Tasks:**
 
@@ -448,12 +448,12 @@ p.push("linear_tree", true);  // Should work!
 **Priority**: Critical  
 **Source**: Stakeholder feedback
 
-Investigate why booste-rs performs worse on real-world benchmarks but better
+Investigate why boosters performs worse on real-world benchmarks but better
 on synthetic datasets.
 
 **Root Cause Found:**
 
-booste-rs used **equal-width binning** while LightGBM/XGBoost use **quantile binning**.
+boosters used **equal-width binning** while LightGBM/XGBoost use **quantile binning**.
 
 - Equal-width: Divides [min, max] into equal intervals
 - Quantile: Each bin has ~same sample count
@@ -503,7 +503,7 @@ Python LightGBM 4.x works correctly with the same parameters.
 **Workarounds implemented:**
 
 1. LightGBM linear tree **loading** works (text format parser)
-2. Training comparison uses booste-rs only for linear tree configs
+2. Training comparison uses boosters only for linear tree configs
 3. Quality benchmark skips LightGBM for linear tree configs
 
 **Future options:**
@@ -514,5 +514,5 @@ Python LightGBM 4.x works correctly with the same parameters.
 
 ### Binning Strategy
 
-booste-rs now uses quantile binning by default, matching LightGBM/XGBoost.
+boosters now uses quantile binning by default, matching LightGBM/XGBoost.
 Equal-width binning is still available via `BinningConfig::with_strategy(EqualWidth)`.

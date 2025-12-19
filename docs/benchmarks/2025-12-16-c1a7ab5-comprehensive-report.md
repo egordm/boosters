@@ -7,7 +7,7 @@
 
 ## Overview
 
-This report documents the current state of booste-rs quality and performance compared to XGBoost and LightGBM.
+This report documents the current state of boosters quality and performance compared to XGBoost and LightGBM.
 
 ## Quality Benchmarks
 
@@ -16,7 +16,7 @@ Results averaged over 5 random seeds with ± std deviation.
 
 ### Regression
 
-| Dataset | booste-rs | XGBoost | LightGBM | Notes |
+| Dataset | boosters | XGBoost | LightGBM | Notes |
 |---------|-----------|---------|----------|-------|
 | **RMSE** |
 | regression_small (10k×50) | **1.015 ± 0.070** | 1.027 ± 0.068 | 1.032 ± 0.069 | Synthetic |
@@ -27,11 +27,11 @@ Results averaged over 5 random seeds with ± std deviation.
 | regression_medium | **1.448 ± 0.058** | 1.451 ± 0.064 | 1.455 ± 0.059 | Synthetic |
 | california_housing | 0.340 ± 0.007 | **0.316 ± 0.004** | 0.317 ± 0.004 | Real-world |
 
-**Summary**: booste-rs wins on synthetic data, XGBoost/LightGBM slightly better on California Housing.
+**Summary**: boosters wins on synthetic data, XGBoost/LightGBM slightly better on California Housing.
 
 ### Binary Classification
 
-| Dataset | booste-rs | XGBoost | LightGBM | Notes |
+| Dataset | boosters | XGBoost | LightGBM | Notes |
 |---------|-----------|---------|----------|-------|
 | **LogLoss** | | | | |
 | binary_small (10k×50) | 0.335 ± 0.013 | **0.335 ± 0.014** | 0.339 ± 0.017 | Synthetic |
@@ -46,7 +46,7 @@ Results averaged over 5 random seeds with ± std deviation.
 
 ### Multiclass Classification
 
-| Dataset | booste-rs | XGBoost | LightGBM | Notes |
+| Dataset | boosters | XGBoost | LightGBM | Notes |
 |---------|-----------|---------|----------|-------|
 | **Multi-class LogLoss** |
 | multiclass_small (10k×50, 5 classes) | **0.628 ± 0.012** | 0.769 ± 0.015 | 0.667 ± 0.017 | Synthetic |
@@ -57,34 +57,34 @@ Results averaged over 5 random seeds with ± std deviation.
 | multiclass_medium | **0.746 ± 0.007** | 0.704 ± 0.008 | 0.735 ± 0.006 | Synthetic |
 | covertype | **0.825 ± 0.004** | 0.801 ± 0.002 | 0.820 ± 0.004 | Real-world |
 
-**Summary**: booste-rs significantly outperforms on all multiclass tasks. This is a strong differentiator.
+**Summary**: boosters significantly outperforms on all multiclass tasks. This is a strong differentiator.
 
 ## Quality Summary
 
 | Task | Winner | Margin |
 |------|--------|--------|
-| Regression (synthetic) | **booste-rs** | Small |
+| Regression (synthetic) | **boosters** | Small |
 | Regression (real-world) | XGBoost/LightGBM | Small |
 | Binary (all) | XGBoost | Negligible |
-| **Multiclass (all)** | **booste-rs** | **Large** |
+| **Multiclass (all)** | **boosters** | **Large** |
 
-The multiclass advantage is particularly notable - booste-rs achieves 10-25% lower logloss across all datasets.
+The multiclass advantage is particularly notable - boosters achieves 10-25% lower logloss across all datasets.
 
 ### Analysis: Real-World Dataset Differences
 
-**California Housing (regression)**: booste-rs is ~5% worse on RMSE.
+**California Housing (regression)**: boosters is ~5% worse on RMSE.
 - This is a small, 8-feature dataset with only 20k samples
 - XGBoost/LightGBM may have better handling of small feature counts
 - The absolute difference (0.504 vs 0.479) is small in practical terms
 
-**Adult (binary)**: booste-rs is ~1% worse on LogLoss - **essentially parity**.
+**Adult (binary)**: boosters is ~1% worse on LogLoss - **essentially parity**.
 
-**Covertype (multiclass)**: booste-rs is **10-11% better** on LogLoss!
+**Covertype (multiclass)**: boosters is **10-11% better** on LogLoss!
 - 7-class classification with 54 features
-- booste-rs's softmax implementation appears more effective
+- boosters's softmax implementation appears more effective
 - This validates the multiclass strength seen in synthetic data
 
-**Conclusion**: The slight regression/binary gap on real-world data is within acceptable range (~1-5%), while booste-rs has a significant multiclass advantage. The differences are likely due to:
+**Conclusion**: The slight regression/binary gap on real-world data is within acceptable range (~1-5%), while boosters has a significant multiclass advantage. The differences are likely due to:
 1. Minor split-finding algorithm variations
 2. Histogram binning edge cases
 3. Default parameter tuning differences in edge cases
@@ -118,12 +118,12 @@ The quality improvement with GOSS is surprising and suggests it acts as a regula
 
 Based on partial benchmark runs:
 
-| Dataset | booste-rs | XGBoost | LightGBM |
+| Dataset | boosters | XGBoost | LightGBM |
 |---------|-----------|---------|----------|
 | Small (5k×50, 50 trees) | ~70ms | ~500ms | ~130ms |
 | Medium (50k×100, 50 trees) | ~1.4s | ~2.1s | ~1.6s |
 
-**Preliminary finding**: booste-rs appears competitive on training speed, with XGBoost's DMatrix creation being a significant overhead.
+**Preliminary finding**: boosters appears competitive on training speed, with XGBoost's DMatrix creation being a significant overhead.
 
 ### Prediction Time
 
@@ -139,7 +139,7 @@ The following feature benchmarks are now implemented:
 cargo bench --features bench-compare --bench multithreading
 ```
 
-Compares training speedup across 1, 2, 4, 8 threads for booste-rs, XGBoost, and LightGBM.
+Compares training speedup across 1, 2, 4, 8 threads for boosters, XGBoost, and LightGBM.
 
 ### 2. Dataset Scaling
 
@@ -158,7 +158,7 @@ Tests how training time grows with dataset size:
 cargo bench --bench sampling
 ```
 
-Compares booste-rs sampling strategies:
+Compares boosters sampling strategies:
 
 - No sampling (baseline)
 - Uniform 30%, 50%
@@ -167,7 +167,7 @@ Compares booste-rs sampling strategies:
 
 ### 4. Categorical Features
 
-*Not yet implemented in booste-rs. Future benchmark when available.*
+*Not yet implemented in boosters. Future benchmark when available.*
 
 ## Running Benchmarks
 
@@ -202,7 +202,7 @@ cargo bench --features bench-compare --bench compare_prediction
 # Feature benchmarks
 cargo bench --features bench-compare --bench multithreading
 cargo bench --features bench-compare --bench scaling
-cargo bench --bench sampling  # booste-rs only
+cargo bench --bench sampling  # boosters only
 ```
 
 ### GOSS Example
@@ -213,11 +213,11 @@ cargo run --example train_goss --release
 
 ## Conclusions
 
-1. **Quality parity or better**: booste-rs matches or exceeds XGBoost/LightGBM on most tasks
+1. **Quality parity or better**: boosters matches or exceeds XGBoost/LightGBM on most tasks
 2. **Multiclass leader**: Significant advantage on multiclass classification (10-25% better logloss)
 3. **GOSS works well**: 1.38x speedup with quality improvement
 4. **Real-world gap is small**: ~5% on regression, ~1% on binary - acceptable for a new library
-5. **Performance competitive**: Initial results show booste-rs is competitive on training speed
+5. **Performance competitive**: Initial results show boosters is competitive on training speed
 
 ## Next Steps
 

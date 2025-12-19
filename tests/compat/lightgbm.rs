@@ -8,8 +8,8 @@
 use std::fs::File;
 use std::path::PathBuf;
 
-use booste_rs::assert_slices_approx_eq_f64;
-use booste_rs::compat::lightgbm::LgbModel;
+use boosters::assert_slices_approx_eq_f64;
+use boosters::compat::lightgbm::LgbModel;
 use serde::Deserialize;
 
 /// Test directory for LightGBM test cases.

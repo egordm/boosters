@@ -121,7 +121,7 @@ let col_major: ColMatrix = (&row_major).into();
 ## Usage Example
 
 ```rust
-use booste_rs::data::{DataMatrix, RowMatrix, ColMatrix, Dataset, FeatureColumn};
+use boosters::data::{DataMatrix, RowMatrix, ColMatrix, Dataset, FeatureColumn};
 
 // Create row-major matrix (optimal for inference)
 let features = RowMatrix::from_vec(vec![

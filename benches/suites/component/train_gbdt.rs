@@ -5,12 +5,12 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
-use booste_rs::data::{binned::BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMajor};
-use booste_rs::testing::data::{
+use boosters::data::{binned::BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMajor};
+use boosters::testing::data::{
 	random_dense_f32, synthetic_binary_targets_from_linear_score,
 	synthetic_multiclass_targets_from_linear_scores, synthetic_regression_targets_linear,
 };
-use booste_rs::training::{
+use boosters::training::{
 	GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, LogLoss, LogisticLoss, MulticlassLogLoss,
 	Rmse, SoftmaxLoss, SquaredLoss,
 };

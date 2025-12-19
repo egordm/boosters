@@ -7,7 +7,7 @@
 
 ## Summary
 
-This report captures the current state of booste-rs prediction performance across three dimensions:
+This report captures the current state of boosters prediction performance across three dimensions:
 
 1. **Internal variants** - Traversal strategies, blocking, parallelism
 2. **External baselines** - XGBoost and LightGBM comparison
@@ -98,7 +98,7 @@ This report captures the current state of booste-rs prediction performance acros
 
 ### Batch Size Scaling (Medium Model, XGBoost)
 
-| Batch Size | booste-rs | XGBoost (cold) | vs Cold |
+| Batch Size | boosters | XGBoost (cold) | vs Cold |
 |------------|-----------|----------------|---------|
 | 100 | 112.97 µs | 1.7454 ms | **15× faster** |
 | 1,000 | 1.121 ms | 2.6722 ms | **2.4× faster** |
@@ -108,18 +108,18 @@ This report captures the current state of booste-rs prediction performance acros
 
 | Library | Time |
 |---------|------|
-| booste-rs | 11.121 µs |
+| boosters | 11.121 µs |
 | XGBoost (cold) | 1.6422 ms |
 
 **Analysis:**
 
-- Fair comparison (cold DMatrix) shows booste-rs is **significantly faster** for smaller batches
+- Fair comparison (cold DMatrix) shows boosters is **significantly faster** for smaller batches
 - At 10k batch, XGBoost's DMatrix overhead is amortized, making performance comparable
-- **Single-row inference: booste-rs is 150× faster than XGBoost (cold)**
+- **Single-row inference: boosters is 150× faster than XGBoost (cold)**
 
 ### Thread Scaling Comparison
 
-| Threads | booste-rs | XGBoost (cold_cache) |
+| Threads | boosters | XGBoost (cold_cache) |
 |---------|-----------|----------------------|
 | 1 | 1.7129 ms | 11.877 ms |
 | 2 | 5.8842 ms | 6.7977 ms |
@@ -132,7 +132,7 @@ This report captures the current state of booste-rs prediction performance acros
 
 ### Batch Size Scaling (Medium Model, LightGBM)
 
-| Batch Size | booste-rs | LightGBM | Speedup |
+| Batch Size | boosters | LightGBM | Speedup |
 |------------|-----------|----------|---------|
 | 100 | 115.20 µs | 493.91 µs | **4.3×** |
 | 1,000 | 1.1598 ms | 5.3972 ms | **4.7×** |
@@ -140,7 +140,7 @@ This report captures the current state of booste-rs prediction performance acros
 
 ### Model Size Scaling (1,000 rows, LightGBM)
 
-| Model Size | booste-rs | LightGBM | Speedup |
+| Model Size | boosters | LightGBM | Speedup |
 |------------|-----------|----------|---------|
 | Small | 233.27 µs | 468.13 µs | **2.0×** |
 | Medium | 1.1626 ms | 5.2959 ms | **4.6×** |
@@ -150,14 +150,14 @@ This report captures the current state of booste-rs prediction performance acros
 
 | Library | Time |
 |---------|------|
-| booste-rs | 11.097 µs |
+| boosters | 11.097 µs |
 | LightGBM | 4.649 µs |
 
-**Surprise:** LightGBM is **2.4× faster** for single-row prediction. This is likely due to LightGBM's native C++ implementation having lower per-call overhead vs Rust FFI overhead in booste-rs for single row lookups.
+**Surprise:** LightGBM is **2.4× faster** for single-row prediction. This is likely due to LightGBM's native C++ implementation having lower per-call overhead vs Rust FFI overhead in boosters for single row lookups.
 
 ### Parallel Scaling (10,000 rows)
 
-| Threads | booste-rs | LightGBM |
+| Threads | boosters | LightGBM |
 |---------|-----------|----------|
 | 1 | 1.706 ms | 53.277 ms |
 | 2 | 6.037 ms | N/A |
@@ -166,9 +166,9 @@ This report captures the current state of booste-rs prediction performance acros
 
 **Analysis:**
 
-- booste-rs is **4-5× faster** than LightGBM for batch prediction
+- boosters is **4-5× faster** than LightGBM for batch prediction
 - LightGBM's advantage on single-row suggests FFI/setup overhead
-- Larger models show greater booste-rs advantage (5× for large vs 2× for small)
+- Larger models show greater boosters advantage (5× for large vs 2× for small)
 
 ---
 
@@ -178,9 +178,9 @@ This report captures the current state of booste-rs prediction performance acros
 
 | Scenario | Winner | Margin |
 |----------|--------|--------|
-| **Batch prediction (100+)** | booste-rs | 4-5× vs LightGBM |
-| **Single-row prediction** | LightGBM | 2.4× vs booste-rs |
-| **vs XGBoost (fair comparison)** | booste-rs | 2-15× depending on batch |
+| **Batch prediction (100+)** | boosters | 4-5× vs LightGBM |
+| **Single-row prediction** | LightGBM | 2.4× vs boosters |
+| **vs XGBoost (fair comparison)** | boosters | 2-15× depending on batch |
 
 ### Optimal Configuration
 
@@ -195,7 +195,7 @@ predictor.par_predict(&matrix);
 
 ### Areas for Future Investigation
 
-1. **Single-row overhead** - Profile why booste-rs is slower than LightGBM for single rows
+1. **Single-row overhead** - Profile why boosters is slower than LightGBM for single rows
 2. **SIMD traversal** - Measure SIMD benefit on different architectures
 3. **Memory layout** - Consider alternative tree layouts for better cache utilization
 4. **Prediction caching** - Consider caching for repeated identical inputs (with care to avoid misleading benchmarks)

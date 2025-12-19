@@ -1,4 +1,4 @@
-//! booste-rs: A gradient boosting library for Rust.
+//! boosters: A gradient boosting library for Rust.
 //!
 //! This crate provides native Rust implementations for gradient boosted decision trees,
 //! with support for loading models from external frameworks like XGBoost and LightGBM.
@@ -13,8 +13,8 @@
 //! # Quick Start: Training
 //!
 //! ```ignore
-//! use booste_rs::data::{BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMajor};
-//! use booste_rs::training::{GBDTTrainer, GBDTParams, SquaredLoss, Rmse};
+//! use boosters::data::{BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMajor};
+//! use boosters::training::{GBDTTrainer, GBDTParams, SquaredLoss, Rmse};
 //!
 //! // Prepare column-major data for training
 //! let row_matrix: DenseMatrix<f32, RowMajor> = DenseMatrix::from_vec(features, n_rows, n_cols);
@@ -32,7 +32,7 @@
 //! # Quick Start: Loading XGBoost Models
 //!
 //! ```ignore
-//! use booste_rs::compat::xgboost::XgbModel;
+//! use boosters::compat::xgboost::XgbModel;
 //! use std::fs::File;
 //!
 //! let file = File::open("model.json")?;

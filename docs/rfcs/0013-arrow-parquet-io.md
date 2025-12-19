@@ -4,7 +4,7 @@
 
 ## Summary
 
-Optional data loading from Arrow IPC (Feather) and Parquet files into booste-rs matrix and dataset types, with support for two schema layouts and automatic missing value handling.
+Optional data loading from Arrow IPC (Feather) and Parquet files into boosters matrix and dataset types, with support for two schema layouts and automatic missing value handling.
 
 ## Design
 

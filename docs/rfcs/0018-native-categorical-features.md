@@ -13,7 +13,7 @@ improves model quality on high-cardinality categoricals.
 
 ### Current State
 
-booste-rs currently handles categorical features via one-hot encoding:
+boosters currently handles categorical features via one-hot encoding:
 
 ```text
 color ∈ {red, blue, green, yellow}  →  4 binary features
@@ -530,7 +530,7 @@ to control overall model complexity.
 ### User-Facing API
 
 ```rust
-use booste_rs::{BinnedDatasetBuilder, CategoricalConfig, GbdtParams};
+use boosters::{BinnedDatasetBuilder, CategoricalConfig, GbdtParams};
 
 // Method 1: Explicit categorical columns
 let dataset = BinnedDatasetBuilder::from_matrix(&matrix, 256)
@@ -721,6 +721,6 @@ For very high cardinality (>100K), consider limiting `max_cat_threshold`.
   **Quality Results (Adult dataset)**:
   | Library | Accuracy | AUC |
   |---------|----------|-----|
-  | booste-rs | 86.57% | 0.926+ |
+  | boosters | 86.57% | 0.926+ |
   | LightGBM | 86.6% | 0.927 |
   | XGBoost | 86.5% | 0.926 |

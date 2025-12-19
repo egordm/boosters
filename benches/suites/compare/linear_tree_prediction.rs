@@ -12,10 +12,10 @@ use common::criterion_config::default_criterion;
 #[cfg(feature = "bench-lightgbm")]
 use common::models::bench_models_dir;
 
-use booste_rs::compat::lightgbm::LgbModel;
-use booste_rs::data::RowMatrix;
-use booste_rs::inference::gbdt::{Predictor, UnrolledTraversal6};
-use booste_rs::testing::data::random_dense_f32;
+use boosters::compat::lightgbm::LgbModel;
+use boosters::data::RowMatrix;
+use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
+use boosters::testing::data::random_dense_f32;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
@@ -23,7 +23,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 // Helpers
 // =============================================================================
 
-fn load_lgb_linear_model(name: &str) -> (booste_rs::inference::gbdt::Forest<booste_rs::inference::gbdt::ScalarLeaf>, usize) {
+fn load_lgb_linear_model(name: &str) -> (boosters::inference::gbdt::Forest<boosters::inference::gbdt::ScalarLeaf>, usize) {
     let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/test-cases/benchmark")
         .join(format!("{name}.lgb.txt"));

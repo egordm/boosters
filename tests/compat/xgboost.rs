@@ -7,9 +7,9 @@
 
 use std::path::PathBuf;
 
-use booste_rs::compat::xgboost::{Booster, FeatureType, GradientBooster};
-use booste_rs::compat::XgbModel;
-use booste_rs::inference::LinearModelPredict;
+use boosters::compat::xgboost::{Booster, FeatureType, GradientBooster};
+use boosters::compat::XgbModel;
+use boosters::inference::LinearModelPredict;
 
 use super::test_data::{load_json, xgboost_test_cases_dir, TestExpected, TestInput, DEFAULT_TOLERANCE_F64};
 

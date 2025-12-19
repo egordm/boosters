@@ -24,9 +24,9 @@ This report evaluates the performance impact of optimizing GBLinear training by:
 
 ### Training Performance
 
-Benchmarks compare booste-rs vs XGBoost on multiclass classification (5 outputs, 50 rounds).
+Benchmarks compare boosters vs XGBoost on multiclass classification (5 outputs, 50 rounds).
 
-| Dataset | Size | booste-rs | XGBoost | Speedup |
+| Dataset | Size | boosters | XGBoost | Speedup |
 |---------|------|-----------|---------|---------|
 | **Small** | 5K × 50 feat | **13.65 ms** | 62.82 ms | **4.6×** |
 | **Medium** | 50K × 100 feat | **157.5 ms** | 524.0 ms | **3.3×** |
@@ -35,9 +35,9 @@ Benchmarks compare booste-rs vs XGBoost on multiclass classification (5 outputs,
 
 **Throughput (higher is better)**:
 
-- Small: **18.3 Melem/s** (booste-rs) vs 3.98 Melem/s (XGBoost)
-- Medium: **31.7 Melem/s** (booste-rs) vs 9.54 Melem/s (XGBoost)
-- Large: **36.8 Melem/s** (booste-rs) vs 8.72 Melem/s (XGBoost)
+- Small: **18.3 Melem/s** (boosters) vs 3.98 Melem/s (XGBoost)
+- Medium: **31.7 Melem/s** (boosters) vs 9.54 Melem/s (XGBoost)
+- Large: **36.8 Melem/s** (boosters) vs 8.72 Melem/s (XGBoost)
 
 ### Prediction Performance
 
@@ -45,7 +45,7 @@ Benchmarks use medium-sized model (100 features, 5 outputs, 20 rounds).
 
 #### Batch Size Scaling (1K samples)
 
-| Batch Size | booste-rs | XGBoost | Comparison |
+| Batch Size | boosters | XGBoost | Comparison |
 |------------|-----------|---------|------------|
 | 100 | 7.33 µs | 82.6 µs | **11.3× faster** |
 | 1,000 | 71.5 µs | 113.2 µs | **1.6× faster** |
@@ -57,14 +57,14 @@ Benchmarks use medium-sized model (100 features, 5 outputs, 20 rounds).
 
 | Implementation | Latency | Notes |
 |----------------|---------|-------|
-| booste-rs | **99.8 ns** | Direct model prediction |
+| boosters | **99.8 ns** | Direct model prediction |
 | XGBoost | 74.7 µs | Includes DMatrix construction |
 
-Single-row prediction is **748× faster** in booste-rs due to zero overhead.
+Single-row prediction is **748× faster** in boosters due to zero overhead.
 
 #### Model Size Scaling (1K samples)
 
-| Model | Features | booste-rs | XGBoost |
+| Model | Features | boosters | XGBoost |
 |-------|----------|-----------|---------|
 | Small | 50 | 32.1 µs | 99.5 µs |
 | Medium | 100 | 71.9 µs | 114.0 µs |
@@ -80,7 +80,7 @@ Validation that incremental gradient updates produce identical results to full p
 
 ### Regression (RMSE - lower is better)
 
-| Dataset | booste-rs | XGBoost | LightGBM |
+| Dataset | boosters | XGBoost | LightGBM |
 |---------|-----------|---------|----------|
 | regression_small | **1.393 ± 0.117** | 1.417 ± 0.148 | 1.417 ± 0.151 |
 | regression_medium | **2.279 ± 0.091** | 2.296 ± 0.091 | 2.301 ± 0.083 |
@@ -88,7 +88,7 @@ Validation that incremental gradient updates produce identical results to full p
 
 ### Binary Classification (LogLoss - lower is better)
 
-| Dataset | booste-rs | XGBoost | LightGBM |
+| Dataset | boosters | XGBoost | LightGBM |
 |---------|-----------|---------|----------|
 | binary_small | 0.440 ± 0.022 | **0.432 ± 0.024** | 0.445 ± 0.018 |
 | binary_medium | **0.485 ± 0.007** | 0.487 ± 0.008 | 0.489 ± 0.003 |
@@ -96,13 +96,13 @@ Validation that incremental gradient updates produce identical results to full p
 
 ### Multiclass Classification (LogLoss - lower is better)
 
-| Dataset | booste-rs | XGBoost | LightGBM |
+| Dataset | boosters | XGBoost | LightGBM |
 |---------|-----------|---------|----------|
 | multiclass_small | **0.943 ± 0.076** | 1.985 ± 0.049 | 2.192 ± 0.047 |
 | multiclass_medium | **0.986 ± 0.005** | 1.784 ± 0.017 | 1.904 ± 0.024 |
 | covertype | **0.540 ± 0.017** | 3.658 ± 0.031 | 5.408 ± 0.111 |
 
-**Quality Assessment**: ✅ No regression detected. booste-rs achieves competitive or superior quality across all benchmarks.
+**Quality Assessment**: ✅ No regression detected. boosters achieves competitive or superior quality across all benchmarks.
 
 ---
 
@@ -189,7 +189,7 @@ impl Updater {
 
 - **Seeds**: 3 random seeds (42, 1379, 2716)
 - **Metrics**: RMSE/MAE (regression), LogLoss/Accuracy (classification)
-- **Comparison**: booste-rs vs XGBoost vs LightGBM
+- **Comparison**: boosters vs XGBoost vs LightGBM
 
 ---
 

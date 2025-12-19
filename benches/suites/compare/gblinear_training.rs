@@ -7,9 +7,9 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
-use booste_rs::data::{ColMatrix, Dataset, DenseMatrix, RowMajor};
-use booste_rs::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
-use booste_rs::training::{GBLinearParams, GBLinearTrainer, Rmse, SquaredLoss, Verbosity};
+use boosters::data::{ColMatrix, Dataset, DenseMatrix, RowMajor};
+use boosters::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
+use boosters::training::{GBLinearParams, GBLinearTrainer, Rmse, SquaredLoss, Verbosity};
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
@@ -132,7 +132,7 @@ fn bench_gblinear_regression(c: &mut Criterion) {
 }
 
 fn bench_gblinear_classification(c: &mut Criterion) {
-    use booste_rs::training::{LogLoss, LogisticLoss};
+    use boosters::training::{LogLoss, LogisticLoss};
 
     let mut group = c.benchmark_group("compare/train/gblinear_binary");
     group.sample_size(10);

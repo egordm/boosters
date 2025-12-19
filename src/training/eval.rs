@@ -90,7 +90,7 @@ impl<'a> EvalSet<'a> {
 /// # Example
 ///
 /// ```ignore
-/// use booste_rs::training::{Evaluator, SquaredLoss, Rmse, EvalSet};
+/// use boosters::training::{Evaluator, SquaredLoss, Rmse, EvalSet};
 ///
 /// let objective = SquaredLoss;
 /// let metric = Rmse;

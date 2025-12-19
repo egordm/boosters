@@ -412,7 +412,7 @@ and document feature value.
 Comprehensive benchmark comparing EFB vs no-EFB across libraries.
 
 - [x] **3.1.1** (1h): Create EFB benchmark suite in `benches/suites/feature/`
-- [x] **3.1.2** (1h): Benchmark booste-rs EFB vs no-EFB (training time, memory proxy)
+- [x] **3.1.2** (1h): Benchmark boosters EFB vs no-EFB (training time, memory proxy)
 - [x] **3.1.3** (1h): Benchmark LightGBM enable_bundle=true vs false
 - [x] **3.1.4** (0.5h): Quality comparison (RMSE/AUC with EFB on/off)
 - [x] **3.1.5** (1h): Write benchmark report in docs/benchmarks/

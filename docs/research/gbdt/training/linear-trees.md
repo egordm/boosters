@@ -451,7 +451,7 @@ struct LinearTree {
 }
 ```
 
-Cache-friendly for inference, similar to how categories are stored in booste-rs.
+Cache-friendly for inference, similar to how categories are stored in boosters.
 
 ---
 
@@ -877,13 +877,13 @@ This is essentially Strategy 2, and is the recommended approach.
 
 **Training Overhead:**
 
-- booste-rs: +10.4% overhead vs standard GBDT
+- boosters: +10.4% overhead vs standard GBDT
 - LightGBM: +11.9% overhead
 - Our CD approach is competitive with LightGBM's direct solve
 
 **Prediction Overhead:**
 
-- booste-rs: +5.4x overhead vs standard trees
+- boosters: +5.4x overhead vs standard trees
 - LightGBM: +1.75x overhead
 - **Root cause**: We fall back to per-row traversal for linear trees,
   losing block traversal benefits

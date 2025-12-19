@@ -6,9 +6,9 @@ mod common;
 use common::criterion_config::default_criterion;
 use common::models::load_boosters_model;
 
-use booste_rs::data::RowMatrix;
-use booste_rs::inference::gbdt::{Predictor, StandardTraversal, UnrolledTraversal6};
-use booste_rs::testing::data::random_dense_f32;
+use boosters::data::RowMatrix;
+use boosters::inference::gbdt::{Predictor, StandardTraversal, UnrolledTraversal6};
+use boosters::testing::data::random_dense_f32;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 

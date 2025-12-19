@@ -2,9 +2,9 @@
 //!
 //! Focused on behavior and invariants (not default params or superficial shapes).
 
-use booste_rs::data::{BinMapper, BinnedDatasetBuilder, ColMatrix, GroupLayout, GroupStrategy, MissingType};
-use booste_rs::repr::gbdt::{TreeView, SplitType};
-use booste_rs::training::{GBDTParams, GBDTTrainer, GrowthStrategy, Rmse, SquaredLoss};
+use boosters::data::{BinMapper, BinnedDatasetBuilder, ColMatrix, GroupLayout, GroupStrategy, MissingType};
+use boosters::repr::gbdt::{TreeView, SplitType};
+use boosters::training::{GBDTParams, GBDTTrainer, GrowthStrategy, Rmse, SquaredLoss};
 
 #[test]
 fn train_rejects_invalid_targets_len() {

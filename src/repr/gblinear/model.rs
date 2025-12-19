@@ -13,7 +13,7 @@
 /// # Example
 ///
 /// ```
-/// use booste_rs::repr::gblinear::LinearModel;
+/// use boosters::repr::gblinear::LinearModel;
 ///
 /// // 3 features, 2 output groups (e.g., binary classification)
 /// let weights = vec![

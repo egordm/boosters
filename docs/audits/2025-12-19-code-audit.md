@@ -1,4 +1,4 @@
-# booste-rs Comprehensive Code Audit
+# boosters Comprehensive Code Audit
 
 **Date**: 2025-12-19  
 **Version**: 0.1.0 (pre-1.0.0)  
@@ -544,10 +544,10 @@ Actual API is `BinnedDatasetBuilder::from_matrix(&col_matrix, 256)`.
 
 #### Finding U-3.5: README Uses Wrong Crate Name
 
-**Severity**: High  
-**Problem**: README says "boosters" but crate is "booste-rs".
+**Severity**: High (RESOLVED)  
+**Problem**: README said "boosters" but crate is "boosters".
 
-**Action Required**: Update README to use consistent naming.
+**Action Applied**: Updated README to use consistent "boosters" naming.
 
 #### Finding U-3.6: No Code Examples in README
 
@@ -690,7 +690,7 @@ Based on audit findings, GPU implementation can proceed in phases:
 
 | ID | Finding | Action |
 |----|---------|--------|
-| U-3.5 | README uses wrong crate name | Update "boosters" → "booste-rs" |
+| U-3.5 | README used wrong crate name | ✅ RESOLVED - Updated to "boosters" |
 
 #### Medium Severity (Should Fix Before 1.0)
 
@@ -736,9 +736,9 @@ Based on audit findings, GPU implementation can proceed in phases:
 ### Recommended 1.0 Preparation
 
 **Immediate Actions** (do now):
-1. Remove `derive_builder` from Cargo.toml
-2. Fix README crate name
-3. Update lib.rs Quick Start example
+1. ✅ Remove `derive_builder` from Cargo.toml
+2. ✅ Fix README/lib.rs crate naming
+3. ✅ Update lib.rs Quick Start example
 
 **Pre-1.0 Actions** (next sprint):
 1. Clean up re-export chains (establish canonical paths)

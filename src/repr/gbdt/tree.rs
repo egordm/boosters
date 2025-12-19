@@ -37,7 +37,7 @@ use super::NodeId;
 /// # Example
 ///
 /// ```ignore
-/// use booste_rs::repr::gbdt::TreeView;
+/// use boosters::repr::gbdt::TreeView;
 ///
 /// fn count_leaves<T: TreeView>(tree: &T) -> usize {
 ///     (0..tree.n_nodes())
@@ -551,8 +551,8 @@ impl<L: LeafValue> Tree<L> {
     /// # Example
     ///
     /// ```ignore
-    /// use booste_rs::inference::{Tree, FeatureAccessor, traverse_to_leaf};
-    /// use booste_rs::data::RowMatrix;
+    /// use boosters::inference::{Tree, FeatureAccessor, traverse_to_leaf};
+    /// use boosters::data::RowMatrix;
     ///
     /// let tree: Tree<ScalarLeaf> = /* ... */;
     /// let data = RowMatrix::from_vec(vec![0.1, 0.2, 0.3, 0.4], 2, 2);

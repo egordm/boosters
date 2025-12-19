@@ -50,9 +50,9 @@ The larger improvement on medium dataset is expected as split finding represents
 
 ### Comparison to Other Libraries (Medium Dataset)
 
-| Library | Time | vs booste-rs |
+| Library | Time | vs boosters |
 |---------|------|--------------|
-| **booste-rs** | **1.33 s** | baseline |
+| **boosters** | **1.33 s** | baseline |
 | LightGBM | 1.55 s | 14% slower |
 | XGBoost | 2.13 s | 60% slower |
 
@@ -60,7 +60,7 @@ The larger improvement on medium dataset is expected as split finding represents
 
 Model quality was verified to be unchanged:
 
-| Task | Metric | booste-rs | vs XGBoost | vs LightGBM |
+| Task | Metric | boosters | vs XGBoost | vs LightGBM |
 |------|--------|-----------|------------|-------------|
 | Regression | RMSE | **2.279** | 0.8% better | 1.0% better |
 | Binary | LogLoss | **0.485** | 0.5% better | 0.9% better |

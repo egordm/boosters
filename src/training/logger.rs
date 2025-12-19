@@ -29,7 +29,7 @@ pub enum Verbosity {
 /// # Example
 ///
 /// ```
-/// use booste_rs::training::{TrainingLogger, Verbosity};
+/// use boosters::training::{TrainingLogger, Verbosity};
 ///
 /// let mut logger = TrainingLogger::new(Verbosity::Info);
 ///

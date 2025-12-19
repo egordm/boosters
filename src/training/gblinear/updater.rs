@@ -75,7 +75,7 @@ impl Default for UpdateConfig {
 /// # Example
 ///
 /// ```ignore
-/// use booste_rs::training::gblinear::{Updater, UpdaterKind, UpdateConfig};
+/// use boosters::training::gblinear::{Updater, UpdaterKind, UpdateConfig};
 ///
 /// let config = UpdateConfig {
 ///     alpha: 0.5,

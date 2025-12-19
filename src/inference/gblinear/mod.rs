@@ -24,8 +24,8 @@
 //! # Usage
 //!
 //! ```
-//! use booste_rs::repr::gblinear::LinearModel;
-//! use booste_rs::inference::gblinear::LinearModelPredict;
+//! use boosters::repr::gblinear::LinearModel;
+//! use boosters::inference::gblinear::LinearModelPredict;
 //!
 //! let weights = vec![0.5, 0.3, 0.1].into_boxed_slice();
 //! let model = LinearModel::new(weights, 2, 1);

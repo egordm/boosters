@@ -41,7 +41,7 @@ use crate::training::Gradients;
 /// # Example
 ///
 /// ```ignore
-/// use booste_rs::training::{GBLinearTrainer, FeatureSelectorKind};
+/// use boosters::training::{GBLinearTrainer, FeatureSelectorKind};
 ///
 /// let trainer = GBLinearTrainer::builder()
 ///     .feature_selector(FeatureSelectorKind::Thrifty { top_k: 10 })

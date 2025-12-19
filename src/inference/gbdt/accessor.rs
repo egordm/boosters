@@ -100,8 +100,8 @@ impl FeatureAccessor for BinnedAccessor<'_> {
 /// # Example
 ///
 /// ```ignore
-/// use booste_rs::inference::gbdt::traverse_to_leaf;
-/// use booste_rs::data::RowMatrix;
+/// use boosters::inference::gbdt::traverse_to_leaf;
+/// use boosters::data::RowMatrix;
 ///
 /// let features = RowMatrix::from_vec(vec![0.5, 1.0], 1, 2);
 /// let leaf_id = traverse_to_leaf(&tree, &features, 0);

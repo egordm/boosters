@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-booste-rs shows **excellent model quality** but **slower training performance** compared to LightGBM:
+boosters shows **excellent model quality** but **slower training performance** compared to LightGBM:
 
 | Aspect | vs XGBoost | vs LightGBM | Notes |
 |--------|------------|-------------|-------|
@@ -25,42 +25,42 @@ Quality benchmarks run with **3 seeds** for statistical confidence.
 
 ### Regression (RMSE - lower is better)
 
-| Dataset | booste-rs | XGBoost | LightGBM |
+| Dataset | boosters | XGBoost | LightGBM |
 |---------|-----------|---------|----------|
 | regression_small | **0.999627 ± 0.092242** | 1.015481 ± 0.092585 | 1.022252 ± 0.094190 |
 | regression_medium | **1.823381 ± 0.080050** | 1.827738 ± 0.079322 | 1.830870 ± 0.078924 |
 
 ### Regression (MAE - lower is better)
 
-| Dataset | booste-rs | XGBoost | LightGBM |
+| Dataset | boosters | XGBoost | LightGBM |
 |---------|-----------|---------|----------|
 | regression_small | **0.793894 ± 0.065894** | 0.805637 ± 0.070615 | 0.813891 ± 0.071763 |
 | regression_medium | **1.454927 ± 0.063135** | 1.458201 ± 0.063888 | 1.462277 ± 0.062619 |
 
 ### Binary Classification (LogLoss - lower is better)
 
-| Dataset | booste-rs | XGBoost | LightGBM |
+| Dataset | boosters | XGBoost | LightGBM |
 |---------|-----------|---------|----------|
 | binary_small | **0.327409 ± 0.003401** | 0.328395 ± 0.005466 | 0.330699 ± 0.007964 |
 | binary_medium | 0.413588 ± 0.007895 | **0.412948 ± 0.006405** | 0.414083 ± 0.007670 |
 
 ### Binary Classification (Accuracy - higher is better)
 
-| Dataset | booste-rs | XGBoost | LightGBM |
+| Dataset | boosters | XGBoost | LightGBM |
 |---------|-----------|---------|----------|
 | binary_small | **0.8780 ± 0.0052** | 0.8770 ± 0.0079 | 0.8722 ± 0.0078 |
 | binary_medium | **0.8488 ± 0.0041** | 0.8488 ± 0.0018 | 0.8480 ± 0.0031 |
 
 ### Multi-class Classification (LogLoss - lower is better)
 
-| Dataset | booste-rs | XGBoost | LightGBM |
+| Dataset | boosters | XGBoost | LightGBM |
 |---------|-----------|---------|----------|
 | multiclass_small | **0.629301 ± 0.025969** | 0.768474 ± 0.020721 | 0.665694 ± 0.023927 |
 | multiclass_medium | **0.771716 ± 0.003243** | 0.959966 ± 0.005767 | 0.831726 ± 0.003892 |
 
 ### Multi-class Classification (Accuracy - higher is better)
 
-| Dataset | booste-rs | XGBoost | LightGBM |
+| Dataset | boosters | XGBoost | LightGBM |
 |---------|-----------|---------|----------|
 | multiclass_small | **0.7605 ± 0.0169** | 0.7375 ± 0.0026 | 0.7523 ± 0.0122 |
 | multiclass_medium | **0.7433 ± 0.0048** | 0.7033 ± 0.0074 | 0.7342 ± 0.0072 |
@@ -71,7 +71,7 @@ Quality benchmarks run with **3 seeds** for statistical confidence.
 
 ### Regression Training (cold start, includes data loading)
 
-| Dataset | booste-rs | XGBoost | LightGBM | Best |
+| Dataset | boosters | XGBoost | LightGBM | Best |
 |---------|-----------|---------|----------|------|
 | small (250K) | 231 ms | 509 ms | **213 ms** | LightGBM (1.08x faster) |
 | medium (5M) | 1.88 s | 2.16 s | **1.59 s** | LightGBM (1.18x faster) |
@@ -80,7 +80,7 @@ Quality benchmarks run with **3 seeds** for statistical confidence.
 
 | Library | Small (Melem/s) | Medium (Melem/s) |
 |---------|-----------------|------------------|
-| booste-rs | 1.08 | 2.66 |
+| boosters | 1.08 | 2.66 |
 | XGBoost | 0.49 | 2.31 |
 | LightGBM | **1.18** | **3.15** |
 
@@ -94,7 +94,7 @@ Quality benchmarks run with **3 seeds** for statistical confidence.
 
 | Library | Time | Speedup vs LightGBM |
 |---------|------|---------------------|
-| booste-rs | 8.3 µs | 0.42x (slower) |
+| boosters | 8.3 µs | 0.42x (slower) |
 | XGBoost | 1.26 ms | 0.003x (much slower) |
 | LightGBM | **3.5 µs** | 1x (baseline) |
 
@@ -102,24 +102,24 @@ Note: LightGBM wins on single-row due to their optimized C++ row-major traversal
 
 ### Batch Prediction (rows × 100 trees × 50 features)
 
-| Batch Size | booste-rs | XGBoost | LightGBM | Best |
+| Batch Size | boosters | XGBoost | LightGBM | Best |
 |------------|-----------|---------|----------|------|
-| 100 | **87 µs** | 1.33 ms | 372 µs | booste-rs (4.3x faster) |
-| 1,000 | **860 µs** | 2.04 ms | 4.05 ms | booste-rs (4.7x faster) |
-| 10,000 | **8.56 ms** | 9.13 ms | 40.7 ms | booste-rs (4.8x faster) |
+| 100 | **87 µs** | 1.33 ms | 372 µs | boosters (4.3x faster) |
+| 1,000 | **860 µs** | 2.04 ms | 4.05 ms | boosters (4.7x faster) |
+| 10,000 | **8.56 ms** | 9.13 ms | 40.7 ms | boosters (4.8x faster) |
 
-**Key Finding**: booste-rs excels at batch prediction, 4-5x faster than LightGBM.
+**Key Finding**: boosters excels at batch prediction, 4-5x faster than LightGBM.
 
 ### Thread Scaling (10K rows)
 
-| Threads | booste-rs | XGBoost | LightGBM |
+| Threads | boosters | XGBoost | LightGBM |
 |---------|-----------|---------|----------|
 | 1 | 1.34 ms | 9.21 ms | 40.9 ms |
 | 2 | 4.52 ms | 5.50 ms | - |
 | 4 | 2.40 ms | 3.37 ms | - |
 | 8 | **1.48 ms** | 2.47 ms | - |
 
-**Key Finding**: booste-rs scales well with threads, achieving 7.5 Melem/s throughput at 8 threads.
+**Key Finding**: boosters scales well with threads, achieving 7.5 Melem/s throughput at 8 threads.
 
 ---
 
@@ -133,7 +133,7 @@ After analyzing LightGBM's source code ([feature_histogram.hpp](../../../LightGB
 LightGBM offers `use_quantized_grad=True` which packs gradient+hessian into 16-bit or 32-bit integers:
 - Reduces memory bandwidth by 4-8x
 - Requires scale factors for conversion
-- booste-rs tested this but found it **slower due to unpacking overhead** (see BENCHMARK_REPORT.md)
+- boosters tested this but found it **slower due to unpacking overhead** (see BENCHMARK_REPORT.md)
 
 **Conclusion**: Not worth implementing unless distributed training is needed.
 
@@ -142,7 +142,7 @@ LightGBM uses adaptive histogram building:
 - Row-wise iteration when features fit in L2 cache
 - Feature-wise iteration otherwise
 
-booste-rs tested this but found **feature-parallel 25-30% faster** on both ARM and x86.
+boosters tested this but found **feature-parallel 25-30% faster** on both ARM and x86.
 
 **Conclusion**: Current approach is correct for single-machine training.
 
@@ -151,7 +151,7 @@ booste-rs tested this but found **feature-parallel 25-30% faster** on both ARM a
 LightGBM uses:
 - **Feature-major storage** with contiguous bin arrays per feature (stride=1)
 
-booste-rs currently uses:
+boosters currently uses:
 - **RowMajor for dense features** via `auto_group()` default
 - **Strided access** (stride = n_features) in histogram kernels
 
@@ -168,7 +168,7 @@ LightGBM's `FindBestThresholdSequentially` uses:
 - Packed gradient/hessian in same cache line
 - Compile-time specialization for L1/L2/smoothing
 
-booste-rs could benefit from similar const-generic specialization.
+boosters could benefit from similar const-generic specialization.
 
 ---
 
@@ -206,7 +206,7 @@ specs.push(GroupSpec::new(dense_numeric, GroupLayout::RowMajor));
 specs.push(GroupSpec::new(dense_numeric, GroupLayout::ColumnMajor));
 ```
 
-**Impact**: ~13% training speedup with a one-line change. This would bring booste-rs to parity with LightGBM on training speed.
+**Impact**: ~13% training speedup with a one-line change. This would bring boosters to parity with LightGBM on training speed.
 
 **Note**: The RowMajor comment "for efficient row-parallel" is misleading. ColumnMajor is actually better because histogram kernels iterate over features within partitions, making contiguous per-feature access optimal.
 
@@ -253,7 +253,7 @@ From BENCHMARK_REPORT.md:
 
 ## Conclusion
 
-booste-rs is highly competitive:
+boosters is highly competitive:
 
 - ✅ **Best-in-class model quality** (wins on 10/12 metrics)
 - ✅ **Excellent prediction performance** (4-5x faster batch, scales well)
@@ -275,4 +275,4 @@ specs.push(GroupSpec::new(dense_numeric, GroupLayout::ColumnMajor));
 
 This achieves **training parity with LightGBM** while maintaining our advantages in quality and prediction speed.
 
-For users who train once and predict often, booste-rs is already the better choice.
+For users who train once and predict often, boosters is already the better choice.

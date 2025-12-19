@@ -2,19 +2,19 @@
 
 **Date**: 2025-12-18  
 **Commit**: 6958442  
-**Author**: booste-rs team
+**Author**: boosters team
 
 ---
 
 ## Summary
 
-This report documents the performance comparison between booste-rs and LightGBM
+This report documents the performance comparison between boosters and LightGBM
 for linear tree training and inference. Linear trees replace constant leaf values
 with `intercept + Σ(coef × feature)` for smoother predictions.
 
 ### Key Findings
 
-| Metric | booste-rs | LightGBM | Status |
+| Metric | boosters | LightGBM | Status |
 |--------|-----------|----------|--------|
 | Training overhead (vs standard) | +10% | +12% | ✅ On par |
 | Prediction overhead (vs standard) | +5.4x | +1.75x | ⚠️ Needs optimization |
@@ -38,11 +38,11 @@ Trained on synthetic linear regression data:
 
 | Library | Standard (ms) | Linear Tree (ms) | Overhead |
 |---------|---------------|------------------|----------|
-| **booste-rs** | 270.6 | 298.6 | **+10.4%** |
+| **boosters** | 270.6 | 298.6 | **+10.4%** |
 | LightGBM | 1499.7 | 1678.8 | **+11.9%** |
 
-**Analysis**: booste-rs training with linear leaves has comparable overhead to
-LightGBM. booste-rs is significantly faster overall due to our histogram-based
+**Analysis**: boosters training with linear leaves has comparable overhead to
+LightGBM. boosters is significantly faster overall due to our histogram-based
 split finding optimizations.
 
 ---
@@ -62,12 +62,12 @@ Predictions on random data with models trained on synthetic linear data:
 
 | Library | Standard | Linear | Overhead | Throughput (linear) |
 |---------|----------|--------|----------|---------------------|
-| **booste-rs** | 5.75 ms | 30.9 ms | **5.4x** | 324 Kelem/s |
+| **boosters** | 5.75 ms | 30.9 ms | **5.4x** | 324 Kelem/s |
 | LightGBM | 22.5 ms | 39.4 ms | **1.75x** | 254 Kelem/s |
 
 ### Throughput Comparison
 
-| Batch Size | booste-rs (linear) | LightGBM (linear) | booste-rs advantage |
+| Batch Size | boosters (linear) | LightGBM (linear) | boosters advantage |
 |------------|--------------------|--------------------|---------------------|
 | 100 | 340 Kelem/s | 250 Kelem/s | **1.4x faster** |
 | 1,000 | 325 Kelem/s | 254 Kelem/s | **1.3x faster** |
@@ -75,8 +75,8 @@ Predictions on random data with models trained on synthetic linear data:
 
 **Analysis**:
 
-- booste-rs linear tree prediction is **1.3x faster than LightGBM** in absolute terms
-- However, booste-rs has higher relative overhead compared to its standard trees
+- boosters linear tree prediction is **1.3x faster than LightGBM** in absolute terms
+- However, boosters has higher relative overhead compared to its standard trees
 - The overhead is due to falling back to per-row traversal for linear leaves
 - Optimization opportunity: vectorized linear leaf computation
 
@@ -87,7 +87,7 @@ Predictions on random data with models trained on synthetic linear data:
 ### Verification
 
 Linear tree models trained with LightGBM (`linear_tree=True`) loaded via
-booste-rs LightGBM loader produce **identical predictions**.
+boosters LightGBM loader produce **identical predictions**.
 
 Test case:
 
@@ -101,10 +101,10 @@ Test case:
 
 ### Loading LightGBM Linear Tree Models
 
-booste-rs can load LightGBM text-format models with `linear_tree=True`:
+boosters can load LightGBM text-format models with `linear_tree=True`:
 
 ```rust
-use booste_rs::compat::lightgbm::LgbModel;
+use boosters::compat::lightgbm::LgbModel;
 
 let model = LgbModel::from_file("model.lgb.txt")?;
 let forest = model.to_forest()?;
@@ -116,12 +116,12 @@ let output = predictor.predict(&features);
 ### Known Limitation
 
 The `lightgbm3` Rust crate crashes (SIGSEGV) when training with `linear_tree=True`.
-This is an upstream crate issue, not a booste-rs issue. Python LightGBM works correctly.
+This is an upstream crate issue, not a boosters issue. Python LightGBM works correctly.
 
 For benchmark comparison, we:
 
 1. Train models with Python LightGBM
-2. Load trained models in booste-rs for prediction benchmarks
+2. Load trained models in boosters for prediction benchmarks
 3. Use Python subprocess timing for training benchmarks
 
 ---
@@ -150,7 +150,7 @@ linear leaves, losing the benefits of block-optimized traversal.
 ## Benchmark Commands
 
 ```bash
-# Linear tree training (booste-rs)
+# Linear tree training (boosters)
 cargo bench --bench e2e_train_linear_leaves
 
 # Linear tree prediction comparison
@@ -169,4 +169,4 @@ uv run python scripts/generate_linear_tree_benchmarks.py
 - **OS**: macOS
 - **Rust**: 1.91.1
 - **LightGBM**: 4.x (Python), lightgbm3 1.0.8 (Rust crate, training broken)
-- **booste-rs**: v0.1.0 (commit 6958442)
+- **boosters**: v0.1.0 (commit 6958442)

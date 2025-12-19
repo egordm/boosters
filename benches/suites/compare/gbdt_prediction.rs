@@ -11,9 +11,9 @@ use common::models::load_boosters_model;
 #[cfg(any(feature = "bench-xgboost", feature = "bench-lightgbm"))]
 use common::models::bench_models_dir;
 
-use booste_rs::data::RowMatrix;
-use booste_rs::inference::gbdt::{Predictor, UnrolledTraversal6};
-use booste_rs::testing::data::random_dense_f32;
+use boosters::data::RowMatrix;
+use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
+use boosters::testing::data::random_dense_f32;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 

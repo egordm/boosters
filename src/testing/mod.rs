@@ -15,7 +15,7 @@
 //! which checks both shape and values:
 //! ```ignore
 //! use approx::assert_abs_diff_eq;
-//! use booste_rs::inference::PredictionOutput;
+//! use boosters::inference::PredictionOutput;
 //!
 //! let actual = PredictionOutput::new(vec![1.0, 2.0], 2, 1);
 //! let expected = PredictionOutput::new(vec![1.0, 2.0], 2, 1);
@@ -24,7 +24,7 @@
 //!
 //! For slice comparisons with nice diff output on failure:
 //! ```ignore
-//! use booste_rs::testing::assert_slices_approx_eq;
+//! use boosters::testing::assert_slices_approx_eq;
 //!
 //! let actual = &[1.0f32, 2.0, 3.0];
 //! let expected = &[1.0f32, 2.0, 3.0];
@@ -35,7 +35,7 @@
 //!
 //! For loading test cases from JSON files, use [`TestInput`] and [`TestExpected`]:
 //! ```ignore
-//! use booste_rs::testing::{TestInput, TestExpected};
+//! use boosters::testing::{TestInput, TestExpected};
 //!
 //! let input: TestInput = serde_json::from_str(json).unwrap();
 //! let features = input.to_f32_rows();
