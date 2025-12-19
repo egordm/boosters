@@ -1236,8 +1236,33 @@ let dataset = BinnedDatasetBuilder::new()
   added "when in doubt use auto()" guidance to preset docs
 - 2025-12-18: Review Round 4 (Final) - Added hyperparameter sweep confounds note
   to Known Limitations, added FAQ about bundling vs native categoricals
-- 2025-12-19: Implementation Complete - EFB fully implemented and validated
+- 2025-12-19: **Implementation Complete** - EFB fully implemented and validated
   - 84-98% memory reduction for one-hot encoded data
+  - Training time unchanged (EFB is memory optimization, not compute optimization)
+  - 4-19% binning overhead for bundling analysis (one-time cost)
+  - Quality identical (bundling is lossless)
+  - Benchmark report: `docs/benchmarks/2025-12-19-0f8c2b2-efb-performance.md`
+  
+  **Key Implementation Deviations from RFC**:
+  - DD-12 [DECIDED]: `bundle_hints` API not implemented (deferred - auto detection works well)
+  - DD-13 [DECIDED]: Bitpacking for binary features not implemented (deferred - u8 storage sufficient)
+  - DD-14 [DECIDED]: Histogram integration uses original column iteration, not bundled columns.
+    The bundling reduces memory for binned data storage, but histogram iteration still
+    processes all original features. This matches LightGBM behavior and explains why
+    training time is unchanged - the histogram loop iterates over rows, not columns.
+  - Presets implemented: `auto()`, `disabled()`, `aggressive()`, `strict()`
+  - Bundle statistics fully exposed via `BundlingStats` struct
+  - Integration test: `tests/training/gbdt.rs` validates categorical splits work
+  
+  **Measured Performance (from benchmarks)**:
+  | Dataset | Features | Bundled Cols | Memory Reduction |
+  |---------|----------|--------------|------------------|
+  | small_sparse (10K×32) | 32 | 5 | 84.4% |
+  | medium_sparse (50K×105) | 105 | 10 | 90.5% |
+  | high_sparse (20K×502) | 502 | 12 | 97.6% |
+  
+  **LightGBM Comparison**: Both libraries show identical training time with bundling
+  on/off, confirming EFB's value is memory, not speed.
   - Training time unchanged (EFB is memory optimization, not compute optimization)
   - 4-19% binning overhead for bundling analysis (one-time cost)
   - Quality identical (bundling is lossless)
