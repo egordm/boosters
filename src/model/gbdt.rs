@@ -219,6 +219,8 @@ impl GBDTModel {
     ///
     /// Returns a vector of importance scores, one per feature.
     /// Importance is the number of times each feature is used in splits.
+    ///
+    /// For more importance types (gain, cover), use [`feature_importance_typed`].
     pub fn feature_importance(&self) -> Vec<u32> {
         let mut counts = vec![0u32; self.n_features()];
 
@@ -234,6 +236,26 @@ impl GBDTModel {
         }
 
         counts
+    }
+
+    /// Compute feature importance with a specific importance type.
+    ///
+    /// # Arguments
+    /// * `importance_type` - Type of importance (Split, Gain, Cover, etc.)
+    ///
+    /// # Errors
+    /// Returns `ExplainError::MissingNodeStats` if gain/cover importance
+    /// is requested but the model doesn't have node statistics.
+    pub fn feature_importance_typed(
+        &self,
+        importance_type: crate::explainability::ImportanceType,
+    ) -> Result<crate::explainability::FeatureImportance, crate::explainability::ExplainError> {
+        crate::explainability::compute_forest_importance(
+            &self.forest,
+            self.n_features(),
+            importance_type,
+            self.meta.feature_names.clone(),
+        )
     }
 
     /// Compute feature importance with normalized scores.
@@ -414,6 +436,53 @@ mod tests {
 
         let importance = model.feature_importance();
         assert_eq!(importance, vec![1, 1]); // feature 0 and 1 each used once
+    }
+
+    #[test]
+    fn feature_importance_typed() {
+        use crate::explainability::{ExplainError, ImportanceType};
+
+        // Forest with stats
+        let tree = scalar_tree! {
+            0 => num(0, 0.5, L) -> 1, 2,
+            1 => leaf(1.0),
+            2 => num(1, 0.3, R) -> 3, 4,
+            3 => leaf(2.0),
+            4 => leaf(3.0),
+        };
+        let tree = tree
+            .with_gains(vec![10.0, 0.0, 5.0, 0.0, 0.0])
+            .with_covers(vec![100.0, 40.0, 60.0, 30.0, 30.0]);
+
+        let mut forest = crate::repr::gbdt::Forest::for_regression().with_base_score(vec![0.0]);
+        forest.push_tree(tree, 0);
+
+        let meta = ModelMeta::for_regression(2);
+        let model = GBDTModel::from_forest(forest, meta);
+
+        // Split importance always works
+        let split_imp = model.feature_importance_typed(ImportanceType::Split).unwrap();
+        assert_eq!(split_imp.values(), &[1.0, 1.0]);
+
+        // Gain importance works with stats
+        let gain_imp = model.feature_importance_typed(ImportanceType::Gain).unwrap();
+        assert_eq!(gain_imp.values(), &[10.0, 5.0]);
+
+        // Forest without stats
+        let tree2 = scalar_tree! {
+            0 => num(0, 0.5, L) -> 1, 2,
+            1 => leaf(1.0),
+            2 => leaf(2.0),
+        };
+        let mut forest2 = crate::repr::gbdt::Forest::for_regression().with_base_score(vec![0.0]);
+        forest2.push_tree(tree2, 0);
+        let model2 = GBDTModel::from_forest(forest2, ModelMeta::for_regression(2));
+
+        // Gain fails without stats
+        assert!(matches!(
+            model2.feature_importance_typed(ImportanceType::Gain),
+            Err(ExplainError::MissingNodeStats(_))
+        ));
     }
 
     #[test]
