@@ -57,7 +57,7 @@ pub use eval::{EvalSet, Evaluator, MetricValue};
 pub use gradients::{GradsTuple, Gradients};
 pub use logger::{TrainingLogger, Verbosity};
 pub use metrics::{
-    Accuracy, Auc, HuberMetric, LogLoss, Mae, Mape, MarginAccuracy, Metric, MetricKind,
+    Accuracy, Auc, HuberMetric, LogLoss, Mae, Mape, MarginAccuracy, Metric, MetricFunction, MetricKind,
     MulticlassAccuracy, MulticlassLogLoss, PoissonDeviance, QuantileMetric, Rmse,
 };
 pub use objectives::{
