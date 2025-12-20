@@ -104,8 +104,8 @@ Rename `Objective` trait → `ObjectiveFn`, `ObjectiveFunction` enum → `Object
 
 **Tasks**:
 
-- [ ] 1.2.1: Rename trait and enum, update all implementations and usages
-- [ ] 1.2.2: Add convenience constructors to `Objective` enum
+- [x] 1.2.1: Rename trait and enum, update all implementations and usages
+- [x] 1.2.2: Add convenience constructors to `Objective` enum
 
 **Definition of Done**:
 
@@ -126,8 +126,8 @@ Apply same pattern: `Metric` trait → `MetricFn`, `MetricFunction` enum → `Me
 
 **Tasks**:
 
-- [ ] 1.3.1: Rename trait and enum, update all implementations and usages
-- [ ] 1.3.2: Add convenience constructors to `Metric` enum
+- [x] 1.3.1: Rename trait and enum, update all implementations and usages
+- [x] 1.3.2: Add convenience constructors to `Metric` enum
 
 **Definition of Done**:
 
