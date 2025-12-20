@@ -363,11 +363,11 @@ cargo run --bin quality_benchmark --release \
 
 **Real-world datasets** (California Housing, Adult, Covertype) are included when:
 1. The `io-parquet` feature is enabled
-2. Parquet files exist in `data/benchmarks/`
+2. Parquet files exist in `packages/boosters-datagen/data/`
 
 Generate the parquet files:
 ```bash
-cd tools/data_generation && uv run python scripts/generate_benchmark_datasets.py
+cd packages/boosters-datagen && uv run python scripts/generate_benchmark_datasets.py
 ```
 
 ### Benchmark Report Naming
@@ -402,7 +402,7 @@ Include the short commit hash to track which code version was benchmarked.
 | Integration tests | `tests/` |
 | Test data loader | `tests/test_data.rs` |
 | Test data & models | `tests/test-cases/` |
-| Python data generation | `tools/data_generation/` |
+| Python data generation | `packages/boosters-datagen/` |
 
 ---
 

@@ -4,8 +4,8 @@
 /docs/benchmarks/artifacts/**
 !/docs/benchmarks/artifacts/README.md
 
-# Generated benchmark datasets (reproducible via tools/data_generation scripts)
-/data/benchmarks/
+# Generated benchmark datasets (reproducible via packages/boosters-datagen scripts)
+/packages/boosters-datagen/data/*.parquet
 
 # Python cache files
 __pycache__/
@@ -13,3 +13,4 @@ __pycache__/
 
 .DS_Store
 tmp
+*.so

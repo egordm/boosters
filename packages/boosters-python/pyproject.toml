@@ -1,0 +1,30 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "boosters"
+version = "0.1.0"
+description = "Fast gradient boosting library (placeholder)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+]
+keywords = ["machine-learning", "gradient-boosting"]
+
+dependencies = []
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+python-source = "python"
+module-name = "boosters._boosters_python"
+
+[dependency-groups]
+dev = ["maturin>=1.10.2", "pytest>=8.0"]
