@@ -38,6 +38,8 @@
 //!   cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm,io-parquet" -- \
 //!       --mode real --seeds 5
 
+#![allow(clippy::type_complexity, clippy::too_many_arguments)]
+
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
@@ -372,8 +374,8 @@ fn load_uci_machine_regression(path: &Path) -> (Vec<f32>, Vec<f32>, usize, usize
 		let parts: Vec<&str> = line.split(',').collect();
 		assert_eq!(parts.len(), 10, "expected 10 columns at line {}", line_idx + 1);
 		// Columns: vendor, model, MYCT, MMIN, MMAX, CACH, CHMIN, CHMAX, PRP, ERP
-		for j in 2..=7 {
-			let v: f32 = parts[j]
+		for part in parts.iter().take(8).skip(2) {
+			let v: f32 = part
 				.parse()
 				.unwrap_or_else(|_| panic!("invalid numeric feature at line {}", line_idx + 1));
 			x.push(v);
@@ -984,7 +986,7 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 						format_cell(lgb, 6, best == Some(2)),
 					));
 				}
-				out.push_str("\n");
+				out.push('\n');
 
 				out.push_str("### MAE (lower is better)\n\n");
 				out.push_str("| Dataset | booste-rs | XGBoost | LightGBM |\n");
@@ -1004,7 +1006,7 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 						format_cell(lgb, 6, best == Some(2)),
 					));
 				}
-				out.push_str("\n");
+				out.push('\n');
 			}
 			"binary" => {
 				out.push_str("### LogLoss (lower is better)\n\n");
@@ -1025,7 +1027,7 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 						format_cell(lgb, 6, best == Some(2)),
 					));
 				}
-				out.push_str("\n");
+				out.push('\n');
 
 				out.push_str("### Accuracy (higher is better)\n\n");
 				out.push_str("| Dataset | booste-rs | XGBoost | LightGBM |\n");
@@ -1045,7 +1047,7 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 						format_cell(lgb, 4, best == Some(2)),
 					));
 				}
-				out.push_str("\n");
+				out.push('\n');
 			}
 			"multiclass" => {
 				out.push_str("### Multi-class LogLoss (lower is better)\n\n");
@@ -1066,7 +1068,7 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 						format_cell(lgb, 6, best == Some(2)),
 					));
 				}
-				out.push_str("\n");
+				out.push('\n');
 
 				out.push_str("### Accuracy (higher is better)\n\n");
 				out.push_str("| Dataset | booste-rs | XGBoost | LightGBM |\n");
@@ -1086,7 +1088,7 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 						format_cell(lgb, 4, best == Some(2)),
 					));
 				}
-				out.push_str("\n");
+				out.push('\n');
 			}
 			_ => {}
 		}
@@ -1122,7 +1124,7 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 			linear_str,
 		));
 	}
-	out.push_str("\n");
+	out.push('\n');
 
 	out
 }

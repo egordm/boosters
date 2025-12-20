@@ -361,7 +361,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
             group_buffer[..block_size].fill(0.0);
 
             T::traverse_block(
-                &tree,
+                tree,
                 state,
                 &feature_buffer[..block_size * num_features],
                 num_features,
@@ -446,11 +446,11 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
 
                     let leaf_value = if tree.has_linear_leaves() {
                         // Linear tree: compute linear value
-                        let leaf_idx = super::traversal::traverse_from_node(&tree, 0, row_features);
-                        compute_linear_leaf_value(&tree, leaf_idx, row_features)
+                        let leaf_idx = super::traversal::traverse_from_node(tree, 0, row_features);
+                        compute_linear_leaf_value(tree, leaf_idx, row_features)
                     } else {
                         // Standard: use traversal result
-                        T::traverse_tree(&tree, state, row_features).0
+                        T::traverse_tree(tree, state, row_features).0
                     };
 
                     let value = match weights {
@@ -522,14 +522,14 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
                     for i in 0..current_block_size {
                         let row_offset = i * num_features;
                         let row_features = &feature_buffer[row_offset..][..num_features];
-                        let leaf_idx = super::traversal::traverse_from_node(&tree, 0, row_features);
-                        let value = compute_linear_leaf_value(&tree, leaf_idx, row_features);
+                        let leaf_idx = super::traversal::traverse_from_node(tree, 0, row_features);
+                        let value = compute_linear_leaf_value(tree, leaf_idx, row_features);
                         group_buffer[i] = value * weight;
                     }
                 } else {
                     // Standard path: use optimized traversal
                     T::traverse_block(
-                        &tree,
+                        tree,
                         state,
                         &feature_buffer[..current_block_size * num_features],
                         num_features,
@@ -559,10 +559,10 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
         for (tree_idx, (tree, group)) in self.forest.trees_with_groups().enumerate() {
             let state = &self.tree_states[tree_idx];
             let leaf_value = if tree.has_linear_leaves() {
-                let leaf_idx = super::traversal::traverse_from_node(&tree, 0, features);
-                compute_linear_leaf_value(&tree, leaf_idx, features)
+                let leaf_idx = super::traversal::traverse_from_node(tree, 0, features);
+                compute_linear_leaf_value(tree, leaf_idx, features)
             } else {
-                T::traverse_tree(&tree, state, features).0
+                T::traverse_tree(tree, state, features).0
             };
             output[group as usize] += leaf_value;
         }
@@ -588,10 +588,10 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
         for (tree_idx, (tree, group)) in self.forest.trees_with_groups().enumerate() {
             let state = &self.tree_states[tree_idx];
             let leaf_value = if tree.has_linear_leaves() {
-                let leaf_idx = super::traversal::traverse_from_node(&tree, 0, features);
-                compute_linear_leaf_value(&tree, leaf_idx, features)
+                let leaf_idx = super::traversal::traverse_from_node(tree, 0, features);
+                compute_linear_leaf_value(tree, leaf_idx, features)
             } else {
-                T::traverse_tree(&tree, state, features).0
+                T::traverse_tree(tree, state, features).0
             };
             output[group as usize] += leaf_value * weights[tree_idx];
         }

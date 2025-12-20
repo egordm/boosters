@@ -158,7 +158,7 @@ impl GrowthState {
     pub fn pop_next(&mut self) -> Vec<NodeCandidate> {
         match self {
             GrowthState::DepthWise { current_level, .. } => {
-                current_level.drain(..).collect()
+                std::mem::take(current_level)
             }
             GrowthState::LeafWise {
                 candidates,

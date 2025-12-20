@@ -3,7 +3,6 @@
 use super::{validate_objective_inputs, ObjectiveFn, TargetSchema, TaskKind};
 use crate::inference::common::{PredictionKind, PredictionOutput};
 use crate::training::GradsTuple;
-use crate::training::metrics::MetricKind;
 use crate::utils::weight_iter;
 
 // =============================================================================
@@ -76,7 +75,7 @@ impl ObjectiveFn for SquaredLoss {
         }
 
         // Compute weighted mean for each output
-        for out_idx in 0..n_outputs {
+        for (out_idx, output) in outputs.iter_mut().enumerate().take(n_outputs) {
             let offset = out_idx * n_rows;
             let target_slice = &targets[offset..offset + n_rows];
 
@@ -87,7 +86,7 @@ impl ObjectiveFn for SquaredLoss {
                     (sw + w as f64, swy + w as f64 * y as f64)
                 });
 
-            outputs[out_idx] = if sum_w > 0.0 {
+            *output = if sum_w > 0.0 {
                 (sum_wy / sum_w) as f32
             } else {
                 0.0
@@ -105,10 +104,6 @@ impl ObjectiveFn for SquaredLoss {
 
     fn target_schema(&self) -> TargetSchema {
         TargetSchema::Continuous
-    }
-
-    fn default_metric(&self) -> MetricKind {
-        MetricKind::Rmse
     }
 
     fn transform_prediction_inplace(&self, _raw: &mut PredictionOutput) -> PredictionKind {
@@ -283,10 +278,6 @@ impl ObjectiveFn for PinballLoss {
         TargetSchema::Continuous
     }
 
-    fn default_metric(&self) -> MetricKind {
-        MetricKind::Quantile
-    }
-
     fn transform_prediction_inplace(&self, _raw: &mut PredictionOutput) -> PredictionKind {
         PredictionKind::Value
     }
@@ -391,7 +382,7 @@ impl ObjectiveFn for PseudoHuberLoss {
         }
 
         // Use median as robust base score for each output
-        for out_idx in 0..n_outputs {
+        for (out_idx, output) in outputs.iter_mut().enumerate().take(n_outputs) {
             let offset = out_idx * n_rows;
             let target_slice = &targets[offset..offset + n_rows];
 
@@ -406,11 +397,11 @@ impl ObjectiveFn for PseudoHuberLoss {
             let target_weight = 0.5 * total_weight;
 
             let mut cumulative = 0.0f32;
-            outputs[out_idx] = sorted.last().map(|(v, _)| *v).unwrap_or(0.0);
+            *output = sorted.last().map(|(v, _)| *v).unwrap_or(0.0);
             for (value, w) in &sorted {
                 cumulative += w;
                 if cumulative >= target_weight {
-                    outputs[out_idx] = *value;
+                    *output = *value;
                     break;
                 }
             }
@@ -427,10 +418,6 @@ impl ObjectiveFn for PseudoHuberLoss {
 
     fn target_schema(&self) -> TargetSchema {
         TargetSchema::Continuous
-    }
-
-    fn default_metric(&self) -> MetricKind {
-        MetricKind::Huber
     }
 
     fn transform_prediction_inplace(&self, _raw: &mut PredictionOutput) -> PredictionKind {
@@ -505,7 +492,7 @@ impl ObjectiveFn for AbsoluteLoss {
         }
 
         // Use median as base score (optimal for L1 loss)
-        for out_idx in 0..n_outputs {
+        for (out_idx, output) in outputs.iter_mut().enumerate().take(n_outputs) {
             let offset = out_idx * n_rows;
             let target_slice = &targets[offset..offset + n_rows];
 
@@ -520,11 +507,11 @@ impl ObjectiveFn for AbsoluteLoss {
             let target_weight = 0.5 * total_weight;
 
             let mut cumulative = 0.0f32;
-            outputs[out_idx] = sorted.last().map(|(v, _)| *v).unwrap_or(0.0);
+            *output = sorted.last().map(|(v, _)| *v).unwrap_or(0.0);
             for (value, w) in &sorted {
                 cumulative += w;
                 if cumulative >= target_weight {
-                    outputs[out_idx] = *value;
+                    *output = *value;
                     break;
                 }
             }
@@ -541,10 +528,6 @@ impl ObjectiveFn for AbsoluteLoss {
 
     fn target_schema(&self) -> TargetSchema {
         TargetSchema::Continuous
-    }
-
-    fn default_metric(&self) -> MetricKind {
-        MetricKind::Mae
     }
 
     fn transform_prediction_inplace(&self, _raw: &mut PredictionOutput) -> PredictionKind {
@@ -628,7 +611,7 @@ impl ObjectiveFn for PoissonLoss {
         }
 
         // Base score is log of weighted mean target
-        for out_idx in 0..n_outputs {
+        for (out_idx, output) in outputs.iter_mut().enumerate().take(n_outputs) {
             let offset = out_idx * n_rows;
             let target_slice = &targets[offset..offset + n_rows];
 
@@ -645,7 +628,7 @@ impl ObjectiveFn for PoissonLoss {
                 1.0
             };
 
-            outputs[out_idx] = mean.ln() as f32;
+            *output = mean.ln() as f32;
         }
     }
 
@@ -659,10 +642,6 @@ impl ObjectiveFn for PoissonLoss {
 
     fn target_schema(&self) -> TargetSchema {
         TargetSchema::CountNonNegative
-    }
-
-    fn default_metric(&self) -> MetricKind {
-        MetricKind::PoissonDeviance
     }
 
     fn transform_prediction_inplace(&self, raw: &mut PredictionOutput) -> PredictionKind {

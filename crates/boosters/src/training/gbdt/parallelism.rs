@@ -9,9 +9,10 @@
 /// This is a *hint* that components can override. For example, histogram building
 /// may choose sequential execution even when `Parallel(8)` is specified if the
 /// workload is too small to benefit from parallelism.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Parallelism {
     /// Force strictly sequential execution (no thread spawning).
+    #[default]
     Sequential,
     /// Allow parallel execution with up to `n` threads.
     ///
@@ -19,11 +20,7 @@ pub enum Parallelism {
     Parallel(usize),
 }
 
-impl Default for Parallelism {
-    fn default() -> Self {
-        Self::Sequential
-    }
-}
+
 
 impl Parallelism {
     /// Create a parallelism hint from a thread count.

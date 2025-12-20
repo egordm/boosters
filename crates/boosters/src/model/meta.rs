@@ -5,9 +5,10 @@
 use serde::{Deserialize, Serialize};
 
 /// Type of machine learning task.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum TaskKind {
     /// Regression (continuous target).
+    #[default]
     Regression,
     /// Binary classification (2 classes).
     BinaryClassification,
@@ -20,11 +21,7 @@ pub enum TaskKind {
     Ranking,
 }
 
-impl Default for TaskKind {
-    fn default() -> Self {
-        Self::Regression
-    }
-}
+
 
 impl TaskKind {
     /// Returns the number of output groups for this task.
@@ -52,9 +49,10 @@ impl TaskKind {
 }
 
 /// Feature type information.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum FeatureType {
     /// Numeric feature.
+    #[default]
     Numeric,
     /// Categorical feature.
     Categorical {
@@ -63,11 +61,7 @@ pub enum FeatureType {
     },
 }
 
-impl Default for FeatureType {
-    fn default() -> Self {
-        Self::Numeric
-    }
-}
+
 
 /// Shared metadata for all model types.
 ///

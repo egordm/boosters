@@ -486,7 +486,7 @@ impl TreeGrower {
                     if current_level.is_empty() {
                         break;
                     }
-                    current_level.drain(..).collect()
+                    std::mem::take(current_level)
                 }
                 GrowthState::LeafWise { candidates, .. } => {
                     if candidates.is_empty() {
@@ -593,7 +593,7 @@ impl TreeGrower {
                 // treat as canonical category indices (0..K-1). Do NOT convert via
                 // `bin_to_value()` here: categorical bin mappers store original category
                 // values, which may be large and would explode bitset size.
-                let mut categories: Vec<u32> = left_cats.iter().map(|c| c as u32).collect();
+                let mut categories: Vec<u32> = left_cats.iter().collect();
                 categories.sort_unstable();
                 categories.dedup();
                 let bitset = categories_to_bitset(&categories);

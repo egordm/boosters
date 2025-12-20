@@ -536,10 +536,10 @@ impl<L: LeafValue> Tree<L> {
         let n_rows = dataset.n_rows();
         debug_assert_eq!(predictions.len(), n_rows);
 
-        for row_idx in 0..n_rows {
+        for (row_idx, pred) in predictions.iter_mut().enumerate() {
             if let Some(row) = dataset.row_view(row_idx) {
                 let leaf = self.predict_binned_row(&row, dataset);
-                predictions[row_idx] += (*leaf).into();
+                *pred += (*leaf).into();
             }
         }
     }
@@ -589,10 +589,10 @@ impl<L: LeafValue> Tree<L> {
         debug_assert_eq!(predictions.len(), n_rows);
 
         let mut row_buf = vec![0.0f32; n_features];
-        for row_idx in 0..n_rows {
+        for (row_idx, pred) in predictions.iter_mut().enumerate() {
             matrix.copy_row(row_idx, &mut row_buf);
             let leaf = self.predict_row(&row_buf);
-            predictions[row_idx] += (*leaf).into();
+            *pred += (*leaf).into();
         }
     }
 
@@ -632,17 +632,17 @@ impl<L: LeafValue> Tree<L> {
 
         if self.has_linear_leaves() {
             // Linear leaf path: need to compute linear contribution
-            for row_idx in 0..n_rows {
+            for (row_idx, pred) in predictions.iter_mut().enumerate() {
                 let leaf_idx = traverse_to_leaf(self, accessor, row_idx);
                 let value = self.compute_leaf_value(leaf_idx, accessor, row_idx);
-                predictions[row_idx] += value;
+                *pred += value;
             }
         } else {
             // Standard path: just use leaf values
-            for row_idx in 0..n_rows {
+            for (row_idx, pred) in predictions.iter_mut().enumerate() {
                 let leaf_idx = traverse_to_leaf(self, accessor, row_idx);
                 let leaf = self.leaf_value(leaf_idx);
-                predictions[row_idx] += (*leaf).into();
+                *pred += (*leaf).into();
             }
         }
     }

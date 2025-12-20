@@ -13,7 +13,7 @@
 use std::path::Path;
 
 use crate::data::Dataset;
-use crate::model::meta::{ModelMeta, TaskKind};
+use crate::model::meta::ModelMeta;
 use crate::repr::gblinear::LinearModel;
 use crate::training::gblinear::GBLinearTrainer;
 use crate::training::{Metric, ObjectiveFn};
@@ -205,14 +205,14 @@ impl GBLinearModel {
         let n_features = self.meta.n_features;
         let mut output = vec![0.0f32; n_groups];
 
-        for g in 0..n_groups {
+        for (g, out) in output.iter_mut().enumerate() {
             let mut sum = self.model.bias(g);
             for (f, &x) in features.iter().enumerate() {
                 if f < n_features {
                     sum += self.model.weight(f, g) * x;
                 }
             }
-            output[g] = sum;
+            *out = sum;
         }
 
         output
@@ -254,8 +254,8 @@ impl GBLinearModel {
     /// * `features` - Feature matrix, row-major [n_samples × n_features]
     /// * `n_samples` - Number of samples
     /// * `feature_means` - Mean value for each feature (background distribution).
-    ///                     If `None`, assumes features are centered (zero means).
-    ///                     For accurate base values, pass training data means.
+    ///   If `None`, assumes features are centered (zero means).
+    ///   For accurate base values, pass training data means.
     ///
     /// # Example
     /// ```ignore
@@ -292,50 +292,53 @@ impl GBLinearModel {
     /// Load a model from a file.
     #[cfg(feature = "storage")]
     pub fn load(path: impl AsRef<Path>) -> Result<Self, DeserializeError> {
-        let model = LinearModel::load(path)?;
-
-        let meta = ModelMeta {
-            n_features: model.n_features(),
-            n_groups: model.n_groups(),
-            task: if model.n_groups() == 1 {
-                TaskKind::Regression
-            } else {
-                TaskKind::MulticlassClassification {
-                    n_classes: model.n_groups(),
-                }
-            },
-            ..Default::default()
-        };
-
-        Ok(Self {
-            model,
-            meta,
-            config: None,
-        })
+        let bytes = std::fs::read(path)?;
+        Self::from_bytes(&bytes)
     }
 
     /// Serialize the model to bytes.
     #[cfg(feature = "storage")]
     pub fn to_bytes(&self) -> Result<Vec<u8>, SerializeError> {
+        use crate::io::native::{ModelType, NativeCodec};
+        use crate::io::payload::Payload;
+
         let n_rounds = self.config.as_ref().map(|c| c.n_rounds).unwrap_or(0);
-        self.model.to_bytes(n_rounds)
+
+        // Create payload with explicit task kind
+        let payload = Payload::from_linear_model(&self.model, n_rounds, self.meta.task);
+        let codec = NativeCodec::new();
+        codec.serialize(
+            ModelType::GbLinear,
+            payload.num_features(),
+            payload.num_groups(),
+            &payload,
+        )
     }
 
     /// Deserialize a model from bytes.
     #[cfg(feature = "storage")]
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, DeserializeError> {
-        let model = LinearModel::from_bytes(bytes)?;
+        use crate::io::native::{ModelType, NativeCodec};
+        use crate::io::payload::Payload;
+
+        let codec = NativeCodec::new();
+        let (header, payload): (_, Payload) = codec.deserialize(bytes)?;
+        
+        if header.model_type != ModelType::GbLinear {
+            return Err(DeserializeError::TypeMismatch {
+                expected: ModelType::GbLinear,
+                actual: header.model_type,
+            });
+        }
+
+        // Extract task kind before consuming payload
+        let task = payload.task_kind();
+        let model = payload.into_linear_model()?;
 
         let meta = ModelMeta {
             n_features: model.n_features(),
             n_groups: model.n_groups(),
-            task: if model.n_groups() == 1 {
-                TaskKind::Regression
-            } else {
-                TaskKind::MulticlassClassification {
-                    n_classes: model.n_groups(),
-                }
-            },
+            task,
             ..Default::default()
         };
 

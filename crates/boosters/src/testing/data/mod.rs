@@ -104,8 +104,8 @@ pub fn synthetic_multiclass_targets_from_linear_scores(
 		let base = r * cols;
 		let mut best_class = 0usize;
 		let mut best_score = f32::NEG_INFINITY;
-		for k in 0..num_classes {
-			let mut s = bias[k];
+		for (k, &b) in bias.iter().enumerate() {
+			let mut s = b;
 			let w_off = k * cols;
 			for c in 0..cols {
 				s += features_row_major[base + c] * weights[w_off + c];

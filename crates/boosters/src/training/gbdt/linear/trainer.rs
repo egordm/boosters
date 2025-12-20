@@ -104,6 +104,7 @@ impl LeafLinearTrainer {
     /// // With ColMatrix (for testing):
     /// let fitted = trainer.train(&tree, &col_matrix, partitioner, mapping, gradients, 0, 0.1);
     /// ```
+    #[allow(clippy::too_many_arguments)]
     pub fn train<A: FeatureAccessor>(
         &mut self,
         tree: &MutableTree<ScalarLeaf>,
@@ -156,7 +157,7 @@ impl LeafLinearTrainer {
         let mut visited = std::collections::HashSet::new();
 
         // Walk from root to leaf
-        self.collect_path_features_recursive(tree, 0, leaf_node, &mut features, &mut visited);
+        Self::collect_path_features_recursive(tree, 0, leaf_node, &mut features, &mut visited);
 
         // Limit to max_features
         features.truncate(self.config.max_features);
@@ -165,7 +166,6 @@ impl LeafLinearTrainer {
 
     /// Recursively collect path features while walking to target leaf.
     fn collect_path_features_recursive<T: TreeView>(
-        &self,
         tree: &T,
         current: u32,
         target_leaf: u32,
@@ -185,7 +185,7 @@ impl LeafLinearTrainer {
         let right = tree.right_child(current);
 
         // Try left path
-        if self.collect_path_features_recursive(tree, left, target_leaf, features, visited) {
+        if Self::collect_path_features_recursive(tree, left, target_leaf, features, visited) {
             // Found target in left subtree - add this node's feature if numeric
             if tree.split_type(current) == SplitType::Numeric {
                 let feat = tree.split_index(current);
@@ -197,7 +197,7 @@ impl LeafLinearTrainer {
         }
 
         // Try right path
-        if self.collect_path_features_recursive(tree, right, target_leaf, features, visited) {
+        if Self::collect_path_features_recursive(tree, right, target_leaf, features, visited) {
             if tree.split_type(current) == SplitType::Numeric {
                 let feat = tree.split_index(current);
                 if visited.insert(feat) {
@@ -211,6 +211,7 @@ impl LeafLinearTrainer {
     }
 
     /// Fit a linear model for a single leaf.
+    #[allow(clippy::too_many_arguments)]
     fn fit_leaf<A: FeatureAccessor>(
         &mut self,
         node_id: u32,

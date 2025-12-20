@@ -56,9 +56,8 @@ pub const fn nodes_at_depth(depth: usize) -> usize {
     (1 << depth) - 1
 }
 
-/// Number of exit points (leaves at bottom of unrolled section).
-/// For depth K: `2^K` exit points.
-
+// Number of exit points (leaves at bottom of unrolled section).
+// For depth K: `2^K` exit points.
 
 // =============================================================================
 // Sealed Trait for Unroll Depth

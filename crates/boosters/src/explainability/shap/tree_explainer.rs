@@ -120,6 +120,7 @@ impl<'a> TreeExplainer<'a> {
     }
 
     /// Recursive TreeSHAP algorithm for a single tree.
+    #[allow(clippy::too_many_arguments)]
     fn tree_shap(
         &self,
         shap: &mut ShapValues,

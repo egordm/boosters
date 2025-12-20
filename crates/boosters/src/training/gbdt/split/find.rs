@@ -108,6 +108,7 @@ impl GreedySplitter {
     ///
     /// # Returns
     /// The best split found, or an invalid split if none meets constraints.
+    #[allow(clippy::too_many_arguments)]
     pub fn find_split(
         &mut self,
         histogram: &HistogramSlot<'_>,
@@ -145,6 +146,7 @@ impl GreedySplitter {
     }
 
     /// Find the best split using sequential search over features.
+    #[allow(clippy::too_many_arguments)]
     pub fn find_split_sequential(
         &mut self,
         histogram: &HistogramSlot<'_>,
@@ -187,6 +189,7 @@ impl GreedySplitter {
     ///
     /// Uses rayon to evaluate features concurrently. Suitable for datasets
     /// with many features where parallel overhead is amortized.
+    #[allow(clippy::too_many_arguments)]
     pub fn find_split_parallel(
         &self,
         histogram: &HistogramSlot<'_>,
@@ -216,7 +219,7 @@ impl GreedySplitter {
                     self.find_numerical_split(bins, feature as u32, parent_grad, parent_hess, parent_count, has_missing, &ctx)
                 }
             })
-            .reduce(|| SplitInfo::invalid(), |a, b| if a.gain > b.gain { a } else { b })
+            .reduce(SplitInfo::invalid, |a, b| if a.gain > b.gain { a } else { b })
     }
 
     // =========================================================================
@@ -229,6 +232,7 @@ impl GreedySplitter {
     /// 1. **Forward scan**: Accumulate left stats, missing goes right
     /// 2. **Backward scan**: Accumulate right stats, missing goes left (only if `has_missing`)
     /// 3. Return best split with optimal missing value handling
+    #[allow(clippy::too_many_arguments)]
     fn find_numerical_split(
         &self,
         bins: &[HistogramBin],
@@ -251,9 +255,8 @@ impl GreedySplitter {
         let mut left_hess = 0.0;
         let mut left_count = 0u32;
 
-        for bin in 0..(n_bins - 1) {
+        for (bin, &(bin_grad, bin_hess)) in bins.iter().enumerate().take(n_bins - 1) {
             // Accumulate current bin into left child
-            let (bin_grad, bin_hess) = bins[bin];
             left_grad += bin_grad;
             left_hess += bin_hess;
             left_count += 1;
@@ -372,9 +375,8 @@ impl GreedySplitter {
         let mut best = SplitInfo::invalid();
 
         // Try each category as singleton left partition
-        for cat in 0..bins.len() {
+        for (cat, &(left_grad, left_hess)) in bins.iter().enumerate() {
             // This category alone goes left
-            let (left_grad, left_hess) = bins[cat];
             let left_count = 1u32;
             let right_grad = parent_grad - left_grad;
             let right_hess = parent_hess - left_hess;
@@ -459,6 +461,7 @@ impl GreedySplitter {
     /// 2. Sort categories by ratio (optimal ordering for binary partition)
     /// 3. Scan sorted order, accumulating left partition
     /// 4. Return best partition found
+    #[allow(clippy::too_many_arguments)]
     fn find_sorted_split_with_scratch(
         &self,
         bins: &[HistogramBin],

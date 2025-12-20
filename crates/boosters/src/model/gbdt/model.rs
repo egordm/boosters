@@ -16,7 +16,7 @@ use std::path::Path;
 
 use crate::data::binned::BinnedDataset;
 use crate::inference::gbdt::UnrolledPredictor6;
-use crate::model::meta::{ModelMeta, TaskKind};
+use crate::model::meta::ModelMeta;
 use crate::repr::gbdt::{Forest, ScalarLeaf};
 use crate::training::gbdt::GBDTTrainer;
 use crate::training::{Metric, ObjectiveFn};
@@ -378,6 +378,7 @@ impl GBDTModel {
             &forest,
             self.meta.n_features as u32,
             self.meta.feature_names.clone(),
+            self.meta.task,  // Include task kind for correct deserialization
         );
         let codec = NativeCodec::new();
         codec.serialize(
@@ -390,7 +391,7 @@ impl GBDTModel {
 
     /// Deserialize a model from bytes.
     ///
-    /// This uses `n_features` and `feature_names` from the serialized payload
+    /// This uses `n_features`, `feature_names`, and `task_kind` from the serialized payload
     /// rather than inferring from trees, ensuring they match what was originally saved.
     #[cfg(feature = "storage")]
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, DeserializeError> {
@@ -407,8 +408,9 @@ impl GBDTModel {
             });
         }
 
-        // Extract feature names before consuming payload
+        // Extract metadata before consuming payload
         let feature_names = payload.feature_names().cloned();
+        let task = payload.task_kind();  // Use stored task kind, not inferred
         
         let forest = payload.into_forest()?;
 
@@ -423,13 +425,7 @@ impl GBDTModel {
         let meta = ModelMeta {
             n_features,
             n_groups: forest.n_groups() as usize,
-            task: if forest.n_groups() == 1 {
-                TaskKind::Regression
-            } else {
-                TaskKind::MulticlassClassification {
-                    n_classes: forest.n_groups() as usize,
-                }
-            },
+            task,
             base_scores: forest.base_score().to_vec(),
             feature_names,
             ..Default::default()

@@ -28,6 +28,7 @@ use crate::io::payload::{
     CategoriesPayload, ForestPayload, GbLinearPayload, GbdtPayload, LinearLeavesPayload,
     ModelMetadata, ModelPayload, Payload, PayloadV1, TreePayload,
 };
+use crate::model::TaskKind;
 use crate::repr::gbdt::categories::CategoriesStorage;
 use crate::repr::gbdt::coefficients::{LeafCoefficients, LeafCoefficientsBuilder};
 use crate::repr::gbdt::node::SplitType;
@@ -147,8 +148,11 @@ impl LinearModel {
     /// # Arguments
     ///
     /// * `num_rounds` - Number of training rounds (for metadata)
+    ///
+    /// Note: Uses default TaskKind. For correct task preservation,
+    /// use `GBLinearModel::to_bytes()` which includes task kind.
     pub fn to_bytes(&self, num_rounds: u32) -> Result<Vec<u8>, SerializeError> {
-        let payload = Payload::from_linear_model(self, num_rounds);
+        let payload = Payload::from_linear_model(self, num_rounds, TaskKind::default());
         let codec = NativeCodec::new();
         codec.serialize(
             ModelType::GbLinear,
@@ -159,6 +163,9 @@ impl LinearModel {
     }
 
     /// Deserialize a model from bytes.
+    ///
+    /// Note: Returns model only. Task kind is available via payload
+    /// but lost here. Use `GBLinearModel::from_bytes()` for full metadata.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, DeserializeError> {
         let codec = NativeCodec::new();
         let (header, payload): (_, Payload) = codec.deserialize(bytes)?;
@@ -193,7 +200,7 @@ impl Payload {
     /// Use this when you know the actual number of features (e.g., from model metadata),
     /// which may be higher than the maximum split index used in the trees.
     pub fn from_forest_with_features(forest: &Forest<ScalarLeaf>, n_features: u32) -> Self {
-        Self::from_forest_with_meta(forest, n_features, None)
+        Self::from_forest_with_meta(forest, n_features, None, Default::default())
     }
 
     /// Create a payload from a Forest with full metadata.
@@ -203,6 +210,7 @@ impl Payload {
         forest: &Forest<ScalarLeaf>,
         n_features: u32,
         feature_names: Option<Vec<String>>,
+        task_kind: TaskKind,
     ) -> Self {
         let n_groups = forest.n_groups();
 
@@ -232,6 +240,7 @@ impl Payload {
             num_groups: n_groups,
             base_scores: forest.base_score().to_vec(),
             objective: None,
+            task_kind,
             feature_names,
             attributes: Vec::new(),
         };
@@ -243,7 +252,7 @@ impl Payload {
     }
 
     /// Create a payload from a LinearModel.
-    pub fn from_linear_model(model: &LinearModel, num_boosted_rounds: u32) -> Self {
+    pub fn from_linear_model(model: &LinearModel, num_boosted_rounds: u32, task_kind: TaskKind) -> Self {
         let linear_payload = GbLinearPayload {
             weights: model.weights().to_vec(),
             num_boosted_rounds,
@@ -254,6 +263,7 @@ impl Payload {
             num_groups: model.n_groups() as u32,
             base_scores: vec![0.0; model.n_groups()], // Linear model has bias in weights
             objective: None,
+            task_kind,
             feature_names: None,
             attributes: Vec::new(),
         };
@@ -292,6 +302,13 @@ impl Payload {
     pub fn feature_names(&self) -> Option<&Vec<String>> {
         match self {
             Payload::V1(v1) => v1.metadata.feature_names.as_ref(),
+        }
+    }
+
+    /// Get the task kind from this payload.
+    pub fn task_kind(&self) -> TaskKind {
+        match self {
+            Payload::V1(v1) => v1.metadata.task_kind,
         }
     }
 
@@ -714,7 +731,7 @@ mod tests {
         let weights = vec![0.5, 0.3, 0.1].into_boxed_slice();
         let model = LinearModel::new(weights, 2, 1);
 
-        let payload = Payload::from_linear_model(&model, 100);
+        let payload = Payload::from_linear_model(&model, 100, TaskKind::default());
         let restored = payload.into_linear_model().unwrap();
 
         assert_eq!(restored.n_features(), 2);
@@ -728,7 +745,7 @@ mod tests {
     fn type_mismatch_error() {
         let weights = vec![0.5, 0.3, 0.1].into_boxed_slice();
         let model = LinearModel::new(weights, 2, 1);
-        let payload = Payload::from_linear_model(&model, 100);
+        let payload = Payload::from_linear_model(&model, 100, TaskKind::default());
 
         // Try to extract as forest
         let result = payload.into_forest();
