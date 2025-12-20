@@ -146,9 +146,9 @@ Rename task-based names to loss-based names where applicable.
 
 **Tasks**:
 
-- [ ] 1.4.1: Audit existing loss/objective names in `training/objectives/` - identify any needing rename (e.g., `Quantile` → `PinballLoss`)
-- [ ] 1.4.2: Rename identified types to `FooLoss` pattern
-- [ ] 1.4.3: Update enum variants and usages
+- [x] 1.4.1: Audit existing loss/objective names in `training/objectives/` - identify any needing rename (e.g., `Quantile` → `PinballLoss`)
+- [x] 1.4.2: Rename identified types to `FooLoss` pattern
+- [x] 1.4.3: Update enum variants and usages
 
 **Definition of Done**:
 
