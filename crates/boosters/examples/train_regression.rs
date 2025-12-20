@@ -9,7 +9,7 @@
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
-use boosters::training::{GBDTParams, GBDTTrainer, GrowthStrategy, Metric, Rmse, SquaredLoss};
+use boosters::training::{GBDTParams, GBDTTrainer, GrowthStrategy, MetricFn, Rmse, SquaredLoss};
 
 fn main() {
     // =========================================================================
