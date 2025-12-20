@@ -41,7 +41,7 @@ impl CatBitset {
             self.overflow
                 .as_ref()
                 .and_then(|o| o.get(idx))
-                .map_or(false, |&w| (w >> bit) & 1 != 0)
+                .is_some_and(|&w| (w >> bit) & 1 != 0)
         }
     }
 
@@ -80,7 +80,7 @@ impl CatBitset {
     /// Check if the bitset is empty.
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.bits == 0 && self.overflow.as_ref().map_or(true, |o| o.iter().all(|&w| w == 0))
+        self.bits == 0 && self.overflow.as_ref().is_none_or(|o| o.iter().all(|&w| w == 0))
     }
 
     /// Iterate over all categories contained in the set.
@@ -111,7 +111,7 @@ impl<'a> Iterator for CatBitsetIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         if self.inline_remaining != 0 {
             let tz = self.inline_remaining.trailing_zeros();
-            let cat = tz as u32;
+            let cat = tz;
             self.inline_remaining &= self.inline_remaining - 1;
             return Some(cat);
         }
@@ -121,7 +121,7 @@ impl<'a> Iterator for CatBitsetIter<'a> {
                 let tz = self.overflow_word_remaining.trailing_zeros();
                 // overflow_word_idx was already incremented AFTER loading this word,
                 // so subtract 1 for the category calculation.
-                let cat = 64u32 + (self.overflow_word_idx as u32 - 1) * 64u32 + tz as u32;
+                let cat = 64u32 + (self.overflow_word_idx as u32 - 1) * 64u32 + tz;
                 self.overflow_word_remaining &= self.overflow_word_remaining - 1;
                 return Some(cat);
             }

@@ -16,9 +16,10 @@ use rand::rngs::SmallRng;
 /// - `bytree`: Applied once when tree starts
 /// - `bylevel`: Applied at each new depth level
 /// - `bynode`: Applied for each node during split finding
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum ColSamplingParams {
     /// No column sampling (use all features).
+    #[default]
     None,
     /// Sample columns with specified rates.
     Sample {
@@ -31,11 +32,7 @@ pub enum ColSamplingParams {
     },
 }
 
-impl Default for ColSamplingParams {
-    fn default() -> Self {
-        Self::None
-    }
-}
+
 
 impl ColSamplingParams {
     /// Create a config with only `colsample_bytree`.

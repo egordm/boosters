@@ -12,6 +12,8 @@
 //!
 //! Each group has sensible defaults and validation methods.
 
+use bon::Builder;
+
 use crate::training::gbdt::GrowthStrategy;
 
 // =============================================================================
@@ -28,48 +30,60 @@ use crate::training::gbdt::GrowthStrategy;
 /// use boosters::model::gbdt::TreeParams;
 /// use boosters::training::GrowthStrategy;
 ///
-/// // Depth-limited trees (XGBoost style)
+/// // Using convenience constructors (recommended)
 /// let params = TreeParams::depth_wise(8);
-///
-/// // Leaf-limited trees (LightGBM style)
 /// let params = TreeParams::leaf_wise(63);
+///
+/// // Using builder pattern for full control
+/// let params = TreeParams::builder()
+///     .growth_strategy(GrowthStrategy::DepthWise { max_depth: 8 })
+///     .max_onehot_cats(8)
+///     .build();
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Builder)]
+#[builder(derive(Clone, Debug))]
 pub struct TreeParams {
     /// Tree growth strategy (depth-wise or leaf-wise with size limits).
+    #[builder(default)]
     pub growth_strategy: GrowthStrategy,
     /// Maximum categories for one-hot encoding categorical splits.
     /// Categories beyond this threshold use partition-based splits.
+    #[builder(default = 4)]
     pub max_onehot_cats: u32,
 }
 
 impl Default for TreeParams {
     fn default() -> Self {
-        Self {
-            growth_strategy: GrowthStrategy::default(),
-            max_onehot_cats: 4,
-        }
+        Self::builder().build()
     }
 }
 
 impl TreeParams {
     /// Create depth-wise growth with specified max depth.
+    ///
+    /// This is the XGBoost-style growth pattern where trees grow level-by-level
+    /// up to the specified maximum depth.
     pub fn depth_wise(max_depth: u32) -> Self {
-        Self {
-            growth_strategy: GrowthStrategy::DepthWise { max_depth },
-            ..Default::default()
-        }
+        Self::builder()
+            .growth_strategy(GrowthStrategy::DepthWise { max_depth })
+            .build()
     }
 
     /// Create leaf-wise growth with specified max leaves.
+    ///
+    /// This is the LightGBM-style growth pattern where the leaf with highest
+    /// gain is split first, up to the specified maximum number of leaves.
     pub fn leaf_wise(max_leaves: u32) -> Self {
-        Self {
-            growth_strategy: GrowthStrategy::LeafWise { max_leaves },
-            ..Default::default()
-        }
+        Self::builder()
+            .growth_strategy(GrowthStrategy::LeafWise { max_leaves })
+            .build()
     }
 
     /// Set max categories for one-hot encoding.
+    #[deprecated(
+        since = "0.1.0",
+        note = "Use builder pattern instead: TreeParams::builder().max_onehot_cats(n).build()"
+    )]
     pub fn with_max_onehot_cats(mut self, max_onehot_cats: u32) -> Self {
         self.max_onehot_cats = max_onehot_cats;
         self
@@ -329,6 +343,28 @@ mod tests {
         let params = TreeParams::leaf_wise(63);
         assert_eq!(params.max_depth(), None);
         assert_eq!(params.max_leaves(), Some(63));
+    }
+
+    #[test]
+    fn tree_params_builder() {
+        // Builder with default values
+        let params = TreeParams::builder().build();
+        assert!(matches!(
+            params.growth_strategy,
+            GrowthStrategy::DepthWise { max_depth: 6 }
+        ));
+        assert_eq!(params.max_onehot_cats, 4);
+
+        // Builder with custom values
+        let params = TreeParams::builder()
+            .growth_strategy(GrowthStrategy::LeafWise { max_leaves: 31 })
+            .max_onehot_cats(8)
+            .build();
+        assert!(matches!(
+            params.growth_strategy,
+            GrowthStrategy::LeafWise { max_leaves: 31 }
+        ));
+        assert_eq!(params.max_onehot_cats, 8);
     }
 
     #[test]

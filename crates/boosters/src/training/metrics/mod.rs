@@ -57,31 +57,6 @@ use crate::inference::common::PredictionKind;
 pub(super) use crate::utils::weight_iter;
 
 // =============================================================================
-// MetricKind (for defaults / configuration)
-// =============================================================================
-
-/// Metric identifier used for configuration and objective defaults.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum MetricKind {
-    // Regression
-    Rmse,
-    Mae,
-    Mape,
-    Huber,
-    PoissonDeviance,
-    Quantile,
-
-    // Classification
-    LogLoss,
-    Accuracy,
-    MarginAccuracy,
-    Auc,
-    MulticlassLogLoss,
-    MulticlassAccuracy,
-}
-
-// =============================================================================
 // Metric Enum (Convenience wrapper)
 // =============================================================================
 
@@ -254,28 +229,6 @@ impl Metric {
     /// Custom user-provided metric.
     pub fn custom(metric: impl MetricFn + 'static) -> Self {
         Self::Custom(std::sync::Arc::new(metric))
-    }
-
-    // =========================================================================
-    // Factory Methods
-    // =========================================================================
-
-    /// Get the default metric for a MetricKind.
-    pub fn from_kind(kind: MetricKind) -> Self {
-        match kind {
-            MetricKind::Rmse => Self::rmse(),
-            MetricKind::Mae => Self::mae(),
-            MetricKind::Mape => Self::mape(),
-            MetricKind::Huber => Self::huber(1.0),
-            MetricKind::PoissonDeviance => Self::poisson_deviance(),
-            MetricKind::Quantile => Self::quantile(0.5),
-            MetricKind::LogLoss => Self::logloss(),
-            MetricKind::Accuracy => Self::accuracy(),
-            MetricKind::MarginAccuracy => Self::margin_accuracy(),
-            MetricKind::Auc => Self::auc(),
-            MetricKind::MulticlassLogLoss => Self::multiclass_logloss(),
-            MetricKind::MulticlassAccuracy => Self::multiclass_accuracy(),
-        }
     }
 }
 

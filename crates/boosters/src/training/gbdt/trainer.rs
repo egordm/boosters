@@ -354,13 +354,11 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
 
         for round in 0..self.params.n_trees {
             // Compute gradients for all outputs
-            self.objective.compute_gradients(
-                n_rows,
-                n_outputs,
+            self.objective.compute_gradients_buffer(
                 &predictions,
                 targets,
                 weights,
-                gradients.pairs_mut(),
+                &mut gradients,
             );
 
             // Grow one tree per output
@@ -374,36 +372,34 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
                 let pred_offset = output * n_rows;
 
                 // Grow tree (returns MutableTree for potential linear fitting)
-                let mut mutable_tree = grower.grow(dataset, &gradients, output, sampled.as_deref());
+                let mut mutable_tree = grower.grow(dataset, &gradients, output, sampled);
 
                 // Fit linear models in leaves (skip round 0: homogeneous gradients)
                 // Only fit if linear_leaves config is set and we're past round 0
-                if round > 0 {
-                    if let Some(ref mut trainer) = linear_trainer {
-                        let accessor = BinnedAccessor::new(dataset, &bin_mappers);
-                        let fitted = trainer.train(
-                            &mutable_tree,
-                            &accessor,
-                            grower.partitioner(),
-                            grower.leaf_node_mapping(),
-                            &gradients,
-                            output,
-                            self.params.learning_rate,
+                if round > 0 && let Some(ref mut trainer) = linear_trainer {
+                    let accessor = BinnedAccessor::new(dataset, &bin_mappers);
+                    let fitted = trainer.train(
+                        &mutable_tree,
+                        &accessor,
+                        grower.partitioner(),
+                        grower.leaf_node_mapping(),
+                        &gradients,
+                        output,
+                        self.params.learning_rate,
+                    );
+                    // Apply fitted coefficients to tree
+                    #[cfg(debug_assertions)]
+                    let fitted_count = fitted.len();
+                    for leaf in fitted {
+                        mutable_tree.set_linear_leaf(
+                            leaf.node_id,
+                            leaf.features,
+                            leaf.intercept,
+                            leaf.coefficients,
                         );
-                        // Apply fitted coefficients to tree
-                        #[cfg(debug_assertions)]
-                        let fitted_count = fitted.len();
-                        for leaf in fitted {
-                            mutable_tree.set_linear_leaf(
-                                leaf.node_id,
-                                leaf.features,
-                                leaf.intercept,
-                                leaf.coefficients,
-                            );
-                        }
-                        #[cfg(debug_assertions)]
-                        eprintln!("Round {}: set {} linear leaves", round, fitted_count);
                     }
+                    #[cfg(debug_assertions)]
+                    eprintln!("Round {}: set {} linear leaves", round, fitted_count);
                 }
 
                 // Freeze tree

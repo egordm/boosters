@@ -367,9 +367,9 @@ impl MetricFn for MulticlassAccuracy {
 
         if weights.is_empty() {
             let mut correct = 0usize;
-            for row in 0..n_rows {
+            for (row, &label) in labels.iter().enumerate() {
                 let pred_class = argmax(row) as f32;
-                if (pred_class - labels[row]).abs() < 0.5 {
+                if (pred_class - label).abs() < 0.5 {
                     correct += 1;
                 }
             }
@@ -515,8 +515,7 @@ fn compute_auc_unweighted(predictions: &[f32], labels: &[f32]) -> f64 {
         let avg_rank = (i + 1 + j) as f64 / 2.0;
 
         // Add to rank sum if positive
-        for k in i..j {
-            let idx = indices[k];
+        for &idx in indices.iter().take(j).skip(i) {
             if labels[idx] > 0.5 {
                 rank_sum_pos += avg_rank;
             }
@@ -589,8 +588,7 @@ fn compute_auc_weighted(predictions: &[f32], labels: &[f32], weights: &[f32]) ->
         let mut group_pos_weight = 0.0f64;
         let mut group_neg_weight = 0.0f64;
 
-        for k in i..j {
-            let idx = indices[k];
+        for &idx in indices.iter().take(j).skip(i) {
             if labels[idx] > 0.5 {
                 group_pos_weight += weights[idx] as f64;
             } else {

@@ -32,6 +32,8 @@ pub struct PayloadV1 {
 // Metadata
 // ============================================================================
 
+use crate::model::TaskKind;
+
 /// Metadata common to all model types.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelMetadata {
@@ -43,6 +45,10 @@ pub struct ModelMetadata {
     pub base_scores: Vec<f32>,
     /// Objective function name (e.g., "reg:squarederror").
     pub objective: Option<String>,
+    /// Task kind (regression, classification, etc.).
+    /// Added to fix inference from n_outputs (which is wrong for multi-output regression).
+    #[serde(default)]
+    pub task_kind: TaskKind,
     /// Feature names (optional).
     pub feature_names: Option<Vec<String>>,
     /// Additional key-value attributes.
@@ -56,6 +62,7 @@ impl Default for ModelMetadata {
             num_groups: 1,
             base_scores: vec![0.0],
             objective: None,
+            task_kind: TaskKind::default(),
             feature_names: None,
             attributes: Vec::new(),
         }
@@ -68,6 +75,7 @@ impl Default for ModelMetadata {
 
 /// Model-specific payload variant.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(clippy::large_enum_variant)]
 pub enum ModelPayload {
     /// Gradient-boosted decision tree payload.
     Gbdt(GbdtPayload),
@@ -184,6 +192,7 @@ mod tests {
                 num_groups: 1,
                 base_scores: vec![0.5],
                 objective: Some("reg:squarederror".to_string()),
+                task_kind: TaskKind::default(),
                 feature_names: None,
                 attributes: vec![],
             },

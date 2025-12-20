@@ -229,7 +229,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
             num_outputs
         );
         debug_assert_eq!(train_labels.len(), num_samples);
-        debug_assert!(weights.map_or(true, |w| w.len() == num_samples));
+        debug_assert!(weights.is_none_or(|w| w.len() == num_samples));
 
         // Compute base scores from objective (optimal constant prediction)
         let w = weights.unwrap_or(&[]);

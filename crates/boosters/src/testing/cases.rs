@@ -1,4 +1,5 @@
-#![cfg(feature = "xgboost-compat")]
+// Note: This module is only compiled with the xgboost-compat feature.
+// The feature gate is already applied in testing/mod.rs.
 
 use serde::Deserialize;
 

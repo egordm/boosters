@@ -27,9 +27,10 @@ use rand::rngs::SmallRng;
 use crate::training::GradsTuple;
 
 /// Configuration for row sampling.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum RowSamplingParams {
     /// No sampling - use all rows.
+    #[default]
     None,
     /// Uniform random sampling (bagging).
     Uniform {
@@ -45,11 +46,7 @@ pub enum RowSamplingParams {
     },
 }
 
-impl Default for RowSamplingParams {
-    fn default() -> Self {
-        Self::None
-    }
-}
+
 
 impl RowSamplingParams {
     /// Create uniform sampling config.
@@ -182,7 +179,7 @@ impl RowSampler {
         }
 
         // Reservoir sampling into `indices`.
-        self.indices.extend((0..target_count as u32).map(|i| i));
+        self.indices.extend(0..target_count as u32);
         for i in target_count..n_rows {
             let j = self.rng.gen_range(0..=i);
             if j < target_count {
@@ -199,10 +196,10 @@ impl RowSampler {
             self.uniform_mask[row as usize] = 1;
         }
 
-        for i in 0..n_rows {
+        for (i, gh) in grad_hess.iter_mut().enumerate() {
             if self.uniform_mask[i] == 0 {
-                grad_hess[i].grad = 0.0;
-                grad_hess[i].hess = 0.0;
+                gh.grad = 0.0;
+                gh.hess = 0.0;
             }
         }
 
@@ -247,7 +244,7 @@ impl RowSampler {
         let mut big_count = 0usize;
         let mut small_sampled = 0usize;
         
-        for i in 0..n_rows {
+        for (i, gh) in grad_hess.iter_mut().enumerate() {
             let mag = self.grad_magnitudes[i];
             
             if mag >= threshold {
@@ -266,8 +263,8 @@ impl RowSampler {
                         small_sampled += 1;
                         
                         // Amplify gradients to correct bias
-                        grad_hess[i].grad *= multiply;
-                        grad_hess[i].hess *= multiply;
+                        gh.grad *= multiply;
+                        gh.hess *= multiply;
                     }
                 }
             }

@@ -275,11 +275,11 @@ impl GBLinearConfig {
             alpha: self.alpha,
             lambda: self.lambda,
             parallel: self.parallel,
-            feature_selector: self.feature_selector.clone(),
+            feature_selector: self.feature_selector,
             seed: self.seed,
             early_stopping_rounds: self.early_stopping_rounds.unwrap_or(0),
             early_stopping_eval_set: 0, // Always use first eval set
-            verbosity: self.verbosity.clone(),
+            verbosity: self.verbosity,
             n_threads: self.n_threads.map(|n| n.get()).unwrap_or(0),
         }
     }

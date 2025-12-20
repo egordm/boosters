@@ -199,7 +199,7 @@ impl Forest<ScalarLeaf> {
     /// # Arguments
     /// * `accessor` - Feature value source (RowMatrix, ColMatrix, BinnedAccessor, etc.)
     /// * `output` - Pre-allocated output buffer, must have length `n_rows * n_groups`.
-    ///              Layout: row-major `[row0_g0, row0_g1, ..., row1_g0, row1_g1, ...]`
+    ///   Layout: row-major `[row0_g0, row0_g1, ..., row1_g0, row1_g1, ...]`
     ///
     /// # Panics
     /// Panics if `output.len() != accessor.num_rows() * self.n_groups()`.

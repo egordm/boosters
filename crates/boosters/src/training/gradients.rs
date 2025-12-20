@@ -273,9 +273,9 @@ impl Gradients {
 
         match rows {
             None => {
-                for i in 0..self.n_samples {
-                    sum_grad += pairs[i].grad as f64;
-                    sum_hess += pairs[i].hess as f64;
+                for pair in pairs.iter().take(self.n_samples) {
+                    sum_grad += pair.grad as f64;
+                    sum_hess += pair.hess as f64;
                 }
             }
             Some(rows) => {

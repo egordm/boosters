@@ -84,11 +84,10 @@ impl<'a> LinearExplainer<'a> {
                 shap.set_base_value(sample_idx, output, self.base_value(output));
 
                 // Compute SHAP for each feature: w[i] * (x[i] - mean[i])
-                for feature in 0..n_features {
+                for (feature, (&x, &mean)) in features.iter().zip(&self.feature_means).enumerate() {
                     let weight_idx = feature * n_outputs + output;
                     let weight = weights[weight_idx] as f64;
-                    let x = features[feature] as f64;
-                    let mean = self.feature_means[feature];
+                    let x = x as f64;
 
                     let contribution = weight * (x - mean);
                     shap.set(sample_idx, feature, output, contribution);

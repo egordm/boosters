@@ -3,7 +3,6 @@
 use super::{validate_objective_inputs, ObjectiveFn, TargetSchema, TaskKind};
 use crate::inference::common::{PredictionKind, PredictionOutput};
 use crate::training::GradsTuple;
-use crate::training::metrics::MetricKind;
 use crate::utils::weight_iter;
 
 // =============================================================================
@@ -142,7 +141,7 @@ impl ObjectiveFn for LogisticLoss {
             return;
         }
 
-        for out_idx in 0..n_outputs {
+        for (out_idx, output) in outputs.iter_mut().enumerate().take(n_outputs) {
             let offset = out_idx * n_rows;
             let target_slice = &targets[offset..offset + n_rows];
 
@@ -155,7 +154,7 @@ impl ObjectiveFn for LogisticLoss {
 
             // Convert to log-odds
             let p = (pos_weight / total_weight).clamp(1e-7, 1.0 - 1e-7);
-            outputs[out_idx] = (p / (1.0 - p)).ln() as f32;
+            *output = (p / (1.0 - p)).ln() as f32;
         }
     }
 
@@ -169,10 +168,6 @@ impl ObjectiveFn for LogisticLoss {
 
     fn target_schema(&self) -> TargetSchema {
         TargetSchema::Binary01
-    }
-
-    fn default_metric(&self) -> MetricKind {
-        MetricKind::LogLoss
     }
 
     fn transform_predictions(&self, predictions: &mut [f32], _n_rows: usize, _n_outputs: usize) -> PredictionKind {
@@ -264,10 +259,6 @@ impl ObjectiveFn for HingeLoss {
 
     fn target_schema(&self) -> TargetSchema {
         TargetSchema::BinarySigned
-    }
-
-    fn default_metric(&self) -> MetricKind {
-        MetricKind::MarginAccuracy
     }
 
     fn transform_prediction_inplace(&self, _raw: &mut PredictionOutput) -> PredictionKind {
@@ -417,10 +408,6 @@ impl ObjectiveFn for SoftmaxLoss {
 
     fn target_schema(&self) -> TargetSchema {
         TargetSchema::MulticlassIndex
-    }
-
-    fn default_metric(&self) -> MetricKind {
-        MetricKind::MulticlassLogLoss
     }
 
     fn transform_predictions(&self, predictions: &mut [f32], n_rows: usize, n_outputs: usize) -> PredictionKind {
@@ -642,11 +629,6 @@ impl ObjectiveFn for LambdaRankLoss {
     fn target_schema(&self) -> TargetSchema {
         // LambdaRank supports graded relevance labels.
         TargetSchema::Continuous
-    }
-
-    fn default_metric(&self) -> MetricKind {
-        // TODO: add NDCG metric; AUC is a placeholder.
-        MetricKind::Auc
     }
 
     fn transform_prediction_inplace(&self, _raw: &mut PredictionOutput) -> PredictionKind {

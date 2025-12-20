@@ -41,7 +41,6 @@ pub use classification::{HingeLoss, LambdaRankLoss, LogisticLoss, SoftmaxLoss};
 pub use regression::{AbsoluteLoss, PinballLoss, PoissonLoss, PseudoHuberLoss, SquaredLoss};
 
 use crate::inference::common::{PredictionKind, PredictionOutput, Predictions};
-use crate::training::metrics::MetricKind;
 use crate::training::{Gradients, GradsTuple};
 
 // Re-export TaskKind from model module for unified usage
@@ -193,11 +192,6 @@ pub trait ObjectiveFn: Send + Sync {
     /// Target encoding/schema expected by this objective.
     fn target_schema(&self) -> TargetSchema {
         TargetSchema::Continuous
-    }
-
-    /// Default metric suggested by this objective.
-    fn default_metric(&self) -> MetricKind {
-        MetricKind::Rmse
     }
 
     /// Transform raw predictions in-place (column-major layout).
@@ -531,20 +525,6 @@ impl ObjectiveFn for Objective {
             Self::PseudoHuberLoss(inner) => inner.target_schema(),
             Self::PoissonLoss(inner) => inner.target_schema(),
             Self::Custom(inner) => inner.target_schema(),
-        }
-    }
-
-    fn default_metric(&self) -> MetricKind {
-        match self {
-            Self::SquaredLoss(inner) => inner.default_metric(),
-            Self::AbsoluteLoss(inner) => inner.default_metric(),
-            Self::LogisticLoss(inner) => inner.default_metric(),
-            Self::HingeLoss(inner) => inner.default_metric(),
-            Self::SoftmaxLoss(inner) => inner.default_metric(),
-            Self::PinballLoss(inner) => inner.default_metric(),
-            Self::PseudoHuberLoss(inner) => inner.default_metric(),
-            Self::PoissonLoss(inner) => inner.default_metric(),
-            Self::Custom(inner) => inner.default_metric(),
         }
     }
 
