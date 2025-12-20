@@ -1,6 +1,15 @@
 //! GBDT model implementation.
 //!
 //! High-level wrapper around Forest with training, prediction, and serialization.
+//!
+//! # Access Pattern
+//!
+//! Instead of forwarding methods, access model components directly:
+//! - `model.forest().n_trees()` - number of trees
+//! - `model.meta().n_features` - number of features
+//! - `model.config().learning_rate` - training config
+//!
+//! This keeps the API surface small and avoids duplication.
 
 #[cfg(feature = "storage")]
 use std::path::Path;
@@ -12,6 +21,8 @@ use crate::repr::gbdt::{Forest, ScalarLeaf};
 use crate::training::gbdt::{GBDTParams, GBDTTrainer};
 use crate::training::{MetricFn, ObjectiveFn};
 
+use super::GBDTConfig;
+
 #[cfg(feature = "storage")]
 use crate::repr::gbdt::tree::TreeView;
 #[cfg(feature = "storage")]
@@ -22,18 +33,34 @@ use crate::io::native::{DeserializeError, SerializeError};
 /// Combines training, prediction, and serialization into a unified interface.
 /// Uses an optimized prediction layout for fast inference.
 ///
+/// # Access Pattern
+///
+/// Use accessors to access model components:
+/// - [`forest()`](Self::forest) - underlying tree ensemble
+/// - [`meta()`](Self::meta) - model metadata (n_features, n_groups, task)
+/// - [`config()`](Self::config) - training configuration (if available)
+///
 /// # Example
 ///
 /// ```ignore
 /// use boosters::model::GBDTModel;
-/// use boosters::training::{GBDTParams, SquaredLoss, Rmse};
+/// use boosters::model::gbdt::GBDTConfig;
 ///
 /// // Train
-/// let params = GBDTParams { n_trees: 50, ..Default::default() };
-/// let model = GBDTModel::train(&dataset, &labels, SquaredLoss, Rmse, params);
+/// let config = GBDTConfig::builder()
+///     .n_trees(50)
+///     .learning_rate(0.1)
+///     .build()
+///     .unwrap();
+/// let model = GBDTModel::train(&dataset, &labels, &[], config);
+///
+/// // Access components
+/// let n_trees = model.forest().n_trees();
+/// let n_features = model.meta().n_features;
+/// let lr = model.config().map(|c| c.learning_rate);
 ///
 /// // Predict
-/// let predictions = model.predict_batch(&features);
+/// let predictions = model.predict_batch(&features, n_rows);
 ///
 /// // Save/Load
 /// model.save("model.bstr")?;
@@ -44,6 +71,12 @@ pub struct GBDTModel {
     forest: Forest<ScalarLeaf>,
     /// Model metadata.
     meta: ModelMeta,
+    /// Training configuration (if available).
+    /// 
+    /// This is `Some` when trained with the new API or loaded from a format
+    /// that includes config. May be `None` for models loaded from legacy
+    /// formats or created with `from_forest()`.
+    config: Option<GBDTConfig>,
 }
 
 impl GBDTModel {
@@ -93,68 +126,77 @@ impl GBDTModel {
             ..Default::default()
         };
 
-        Some(Self { forest, meta })
+        Some(Self { forest, meta, config: None })
     }
 
-    /// Create a model from an existing forest.
+    /// Create a model from an existing forest and metadata.
     ///
-    /// Useful for wrapping forests loaded from other sources.
+    /// Useful for wrapping forests loaded from other sources (e.g., XGBoost).
+    /// Config will be `None` since the training parameters are unknown.
     pub fn from_forest(forest: Forest<ScalarLeaf>, meta: ModelMeta) -> Self {
-        Self { forest, meta }
+        Self { forest, meta, config: None }
     }
+
+    /// Create a model from all its parts.
+    ///
+    /// Used when loading from a format that includes config, or after training
+    /// with the new config-based API.
+    pub fn from_parts(
+        forest: Forest<ScalarLeaf>,
+        meta: ModelMeta,
+        config: Option<GBDTConfig>,
+    ) -> Self {
+        Self { forest, meta, config }
+    }
+
+    // =========================================================================
+    // Accessors
+    // =========================================================================
 
     /// Get reference to the underlying forest.
+    ///
+    /// Use this to access tree-level information:
+    /// - `model.forest().n_trees()` - number of trees
+    /// - `model.forest().n_groups()` - number of output groups
+    /// - `model.forest().trees()` - iterate over trees
     pub fn forest(&self) -> &Forest<ScalarLeaf> {
         &self.forest
     }
 
     /// Get reference to model metadata.
+    ///
+    /// Use this to access metadata:
+    /// - `model.meta().n_features` - number of input features
+    /// - `model.meta().n_groups` - number of output groups
+    /// - `model.meta().task` - task type (regression, classification)
+    /// - `model.meta().feature_names` - feature names (if set)
     pub fn meta(&self) -> &ModelMeta {
         &self.meta
     }
 
-    /// Number of trees in the forest.
-    pub fn n_trees(&self) -> usize {
-        self.forest.n_trees()
-    }
-
-    /// Number of input features.
-    pub fn n_features(&self) -> usize {
-        self.meta.n_features
-    }
-
-    /// Number of output groups.
-    pub fn n_groups(&self) -> usize {
-        self.meta.n_groups
-    }
-
-    /// Task type.
-    pub fn task(&self) -> TaskKind {
-        self.meta.task
-    }
-
-    /// Feature names (if set).
-    pub fn feature_names(&self) -> Option<&[String]> {
-        self.meta.feature_names.as_deref()
-    }
-
-    /// Best iteration (from early stopping).
-    pub fn best_iteration(&self) -> Option<usize> {
-        self.meta.best_iteration
-    }
-
-    /// Base scores (one per group).
-    pub fn base_scores(&self) -> &[f32] {
-        &self.meta.base_scores
+    /// Get reference to training configuration (if available).
+    ///
+    /// Returns `Some` if the model was trained with the new config-based API
+    /// or loaded from a format that includes config. Returns `None` for models
+    /// loaded from legacy formats or created with `from_forest()`.
+    ///
+    /// Use this to access training parameters:
+    /// - `model.config().map(|c| c.learning_rate)`
+    /// - `model.config().map(|c| c.n_trees)`
+    pub fn config(&self) -> Option<&GBDTConfig> {
+        self.config.as_ref()
     }
 
     /// Set feature names.
+    ///
+    /// This mutates the metadata. For new models, prefer setting feature names
+    /// during training.
     pub fn with_feature_names(mut self, names: Vec<String>) -> Self {
         self.meta.feature_names = Some(names);
         self
     }
 
-    /// Set best iteration.
+    /// Set best iteration (from early stopping).
     pub fn with_best_iteration(mut self, iter: usize) -> Self {
         self.meta.best_iteration = Some(iter);
         self
@@ -184,8 +226,8 @@ impl GBDTModel {
     pub fn predict_batch(&self, features: &[f32], n_rows: usize) -> Vec<f32> {
         // Create the optimized predictor (borrows forest)
         let predictor = UnrolledPredictor6::new(&self.forest);
-        let n_features = self.n_features();
-        let n_groups = self.n_groups();
+        let n_features = self.meta.n_features;
+        let n_groups = self.meta.n_groups;
 
         let mut output = vec![0.0f32; n_rows * n_groups];
 
@@ -232,7 +274,7 @@ impl GBDTModel {
     ) -> Result<crate::explainability::FeatureImportance, crate::explainability::ExplainError> {
         crate::explainability::compute_forest_importance(
             &self.forest,
-            self.n_features(),
+            self.meta.n_features,
             importance_type,
             self.meta.feature_names.clone(),
         )
@@ -263,7 +305,7 @@ impl GBDTModel {
         n_samples: usize,
     ) -> Result<crate::explainability::ShapValues, crate::explainability::ExplainError> {
         let explainer = crate::explainability::TreeExplainer::new(&self.forest)?;
-        Ok(explainer.shap_values(features, n_samples, self.n_features()))
+        Ok(explainer.shap_values(features, n_samples, self.meta.n_features))
     }
 
     // =========================================================================
@@ -375,17 +417,17 @@ impl GBDTModel {
             ..Default::default()
         };
 
-        Ok(Self { forest, meta })
+        Ok(Self { forest, meta, config: None })
     }
 }
 
 impl std::fmt::Debug for GBDTModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GBDTModel")
-            .field("n_trees", &self.n_trees())
-            .field("n_features", &self.n_features())
-            .field("n_groups", &self.n_groups())
-            .field("task", &self.task())
+            .field("n_trees", &self.forest.n_trees())
+            .field("n_features", &self.meta.n_features)
+            .field("n_groups", &self.meta.n_groups)
+            .field("task", &self.meta.task)
             .finish()
     }
 }
@@ -415,9 +457,21 @@ mod tests {
         let meta = ModelMeta::for_regression(2);
         let model = GBDTModel::from_forest(forest, meta);
 
-        assert_eq!(model.n_trees(), 1);
-        assert_eq!(model.n_features(), 2);
-        assert_eq!(model.n_groups(), 1);
+        assert_eq!(model.forest().n_trees(), 1);
+        assert_eq!(model.meta().n_features, 2);
+        assert_eq!(model.meta().n_groups, 1);
+        assert!(model.config().is_none()); // No config for from_forest
+    }
+
+    #[test]
+    fn from_parts_with_config() {
+        let forest = make_simple_forest();
+        let meta = ModelMeta::for_regression(2);
+        let config = GBDTConfig::builder().n_trees(100).build().unwrap();
+        let model = GBDTModel::from_parts(forest, meta, Some(config.clone()));
+
+        assert!(model.config().is_some());
+        assert_eq!(model.config().unwrap().n_trees, 100);
     }
 
     #[test]
@@ -513,7 +567,10 @@ mod tests {
         let model =
             GBDTModel::from_forest(forest, meta).with_feature_names(vec!["a".into(), "b".into()]);
 
-        assert_eq!(model.feature_names(), Some(&["a".to_string(), "b".to_string()][..]));
+        assert_eq!(
+            model.meta().feature_names.as_deref(),
+            Some(&["a".to_string(), "b".to_string()][..])
+        );
     }
 
     #[cfg(feature = "storage")]
@@ -531,12 +588,12 @@ mod tests {
 
         std::fs::remove_file(&path).ok();
 
-        assert_eq!(model.n_trees(), loaded.n_trees());
+        assert_eq!(model.forest().n_trees(), loaded.forest().n_trees());
         assert_eq!(model.predict_row(&[0.3, 0.5]), loaded.predict_row(&[0.3, 0.5]));
 
         // Batch prediction
         let features = vec![0.3, 0.5, 0.7, 0.5];
-        let preds_orig = model.forest.predict_row(&features[0..2]);
+        let preds_orig = model.forest().predict_row(&features[0..2]);
         let preds_loaded = loaded.predict_batch(&features, 2);
         assert_eq!(preds_orig[0], preds_loaded[0]);
     }
@@ -551,7 +608,7 @@ mod tests {
         let bytes = model.to_bytes().unwrap();
         let loaded = GBDTModel::from_bytes(&bytes).unwrap();
 
-        assert_eq!(model.n_trees(), loaded.n_trees());
+        assert_eq!(model.forest().n_trees(), loaded.forest().n_trees());
     }
 
     #[test]

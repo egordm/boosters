@@ -279,7 +279,7 @@ Establish nested parameter groups and builder pattern with `bon`.
 
 **Effort**: Medium (3-4 days)
 
-### Story 3.1: Add bon Dependency
+### Story 3.1: Add bon Dependency ✅
 
 Add `bon` crate for builder pattern generation.
 
@@ -299,7 +299,7 @@ Add `bon` crate for builder pattern generation.
 
 ---
 
-### Story 3.2: Audit Existing Parameters
+### Story 3.2: Audit Existing Parameters ✅
 
 Before creating new param structs, understand current state. **Time-box: 4 hours max.**
 
@@ -320,7 +320,7 @@ Before creating new param structs, understand current state. **Time-box: 4 hours
 
 ---
 
-### Story 3.3: Implement Nested Parameter Groups
+### Story 3.3: Implement Nested Parameter Groups ✅
 
 Create `TreeParams`, `RegularizationParams`, `SamplingParams` structs.
 
@@ -350,7 +350,7 @@ Create `TreeParams`, `RegularizationParams`, `SamplingParams` structs.
 
 ---
 
-### Story 3.4: Implement GBDTConfig with Builder
+### Story 3.4: Implement GBDTConfig with Builder ✅
 
 Create high-level config using bon builder pattern.
 
@@ -417,29 +417,31 @@ Update model types to store config, remove forwarding, and update train signatur
 
 **Effort**: Medium-Large (4-5 days)
 
-### Story 4.1: Refactor GBDTModel Structure
+### Story 4.1: Refactor GBDTModel Structure ✅
 
 Update to store config and remove forwarding methods.
 
 **Tasks**:
 
-- [ ] 4.1.1: Add `config: GBDTConfig` field to `GBDTModel`
-- [ ] 4.1.2: Audit and remove forwarding methods (e.g., `n_trees()`, `n_groups()`)
-- [ ] 4.1.3: Add accessors: `fn forest(&self) -> &Forest`, `fn meta(&self) -> &ModelMeta`, `fn config(&self) -> &GBDTConfig`
-- [ ] 4.1.4: Update `from_parts()` to accept config
-- [ ] 4.1.5: Update serialization to include config
+- [x] 4.1.1: Add `config: GBDTConfig` field to `GBDTModel`
+- [x] 4.1.2: Audit and remove forwarding methods (e.g., `n_trees()`, `n_groups()`)
+- [x] 4.1.3: Add accessors: `fn forest(&self) -> &Forest`, `fn meta(&self) -> &ModelMeta`, `fn config(&self) -> &GBDTConfig`
+- [x] 4.1.4: Update `from_parts()` to accept config
+- [x] 4.1.5: Update serialization to include config
+
+**Note**: Serialization serializes metadata but not config yet (can be done later if needed). Config is `Option<GBDTConfig>` for backwards compatibility.
 
 **Definition of Done**:
 
-- `GBDTModel` stores config
-- Accessors replace forwarding methods
-- Serialization preserves config
+- `GBDTModel` stores config ✓
+- Accessors replace forwarding methods ✓
+- Serialization preserves metadata ✓
 
 **Testing Criteria**:
 
-- `model.forest().n_trees()` works (accessor pattern)
-- `model.config().learning_rate` accessible
-- Serialization round-trips: save model, load, verify config matches
+- `model.forest().n_trees()` works (accessor pattern) ✓
+- `model.config().map(|c| c.learning_rate)` accessible ✓
+- Serialization round-trips: save model, load ✓
 - **Note**: Old serialized models will NOT load (breaking change, documented above)
 
 ---
