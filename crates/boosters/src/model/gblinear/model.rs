@@ -16,7 +16,7 @@ use crate::data::Dataset;
 use crate::model::meta::{ModelMeta, TaskKind};
 use crate::repr::gblinear::LinearModel;
 use crate::training::gblinear::GBLinearTrainer;
-use crate::training::ObjectiveFn;
+use crate::training::{Metric, ObjectiveFn};
 
 use super::GBLinearConfig;
 
@@ -109,10 +109,13 @@ impl GBLinearModel {
         // Convert config to trainer params
         let params = config.to_trainer_params();
         
+        // Convert Option<Metric> to Metric (None -> Metric::None)
+        let metric = config.metric.clone().unwrap_or(Metric::none());
+        
         // Create trainer with objective and metric from config
         let trainer = GBLinearTrainer::new(
             config.objective.clone(),
-            config.metric.clone(),
+            metric,
             params,
         );
         let linear_model = trainer.train(dataset, &[])?;

@@ -264,24 +264,36 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
             let start = group * num_samples;
             predictions[start..start + num_samples].fill(base_score);
         }
-        // Initialize eval predictions with base scores
-        let eval_data: Vec<ColMatrix<f32>> = eval_sets
-            .iter()
-            .map(|es| es.dataset.for_gblinear().ok())
-            .collect::<Option<Vec<_>>>()?;
+        
+        // Check if we need evaluation (metric is enabled)
+        let needs_evaluation = self.metric.is_enabled();
+        
+        // Initialize eval predictions with base scores (only if evaluation is needed)
+        let eval_data: Vec<ColMatrix<f32>> = if needs_evaluation {
+            eval_sets
+                .iter()
+                .map(|es| es.dataset.for_gblinear().ok())
+                .collect::<Option<Vec<_>>>()?
+        } else {
+            Vec::new()
+        };
 
-        let mut eval_predictions: Vec<Vec<f32>> = eval_data
-            .iter()
-            .map(|m| {
-                let eval_rows = m.num_rows();
-                let mut preds = vec![0.0f32; eval_rows * num_outputs];
-                for (group, &base_score) in base_scores.iter().enumerate() {
-                    let start = group * eval_rows;
-                    preds[start..start + eval_rows].fill(base_score);
-                }
-                preds
-            })
-            .collect();
+        let mut eval_predictions: Vec<Vec<f32>> = if needs_evaluation {
+            eval_data
+                .iter()
+                .map(|m| {
+                    let eval_rows = m.num_rows();
+                    let mut preds = vec![0.0f32; eval_rows * num_outputs];
+                    for (group, &base_score) in base_scores.iter().enumerate() {
+                        let start = group * eval_rows;
+                        preds[start..start + eval_rows].fill(base_score);
+                    }
+                    preds
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         // Early stopping (always present, may be disabled)
         let mut early_stopping = EarlyStopping::new(
@@ -314,15 +326,17 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                 if bias_delta.abs() > 1e-10 {
                     updater.apply_bias_delta_to_predictions(bias_delta, output, num_samples, &mut predictions);
                     
-                    // Also update eval predictions
-                    for (set_idx, matrix) in eval_data.iter().enumerate() {
-                        let eval_rows = matrix.num_rows();
-                        updater.apply_bias_delta_to_predictions(
-                            bias_delta,
-                            output,
-                            eval_rows,
-                            &mut eval_predictions[set_idx],
-                        );
+                    // Also update eval predictions (only if evaluation is needed)
+                    if needs_evaluation {
+                        for (set_idx, matrix) in eval_data.iter().enumerate() {
+                            let eval_rows = matrix.num_rows();
+                            updater.apply_bias_delta_to_predictions(
+                                bias_delta,
+                                output,
+                                eval_rows,
+                                &mut eval_predictions[set_idx],
+                            );
+                        }
                     }
                     
                     // Recompute gradients after bias update
@@ -356,33 +370,40 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                         &mut predictions,
                     );
                     
-                    // Also update eval predictions
-                    for (set_idx, matrix) in eval_data.iter().enumerate() {
-                        let eval_rows = matrix.num_rows();
-                        updater.apply_weight_deltas_to_predictions(
-                            matrix,
-                            &weight_deltas,
-                            output,
-                            eval_rows,
-                            &mut eval_predictions[set_idx],
-                        );
+                    // Also update eval predictions (only if evaluation is needed)
+                    if needs_evaluation {
+                        for (set_idx, matrix) in eval_data.iter().enumerate() {
+                            let eval_rows = matrix.num_rows();
+                            updater.apply_weight_deltas_to_predictions(
+                                matrix,
+                                &weight_deltas,
+                                output,
+                                eval_rows,
+                                &mut eval_predictions[set_idx],
+                            );
+                        }
                     }
                 }
             }
 
-            // Evaluation using Evaluator
-            let round_metrics = evaluator.evaluate_round(
-                &predictions,
-                train_labels,
-                weights.unwrap_or(&[]),
-                num_samples,
-                eval_sets,
-                &eval_predictions,
-            );
-            let early_stop_value = eval::Evaluator::<O, M>::early_stop_value(
-                &round_metrics,
-                self.params.early_stopping_eval_set,
-            );
+            // Evaluation using Evaluator (only if metric is enabled)
+            let (round_metrics, early_stop_value) = if needs_evaluation {
+                let metrics = evaluator.evaluate_round(
+                    &predictions,
+                    train_labels,
+                    weights.unwrap_or(&[]),
+                    num_samples,
+                    eval_sets,
+                    &eval_predictions,
+                );
+                let value = eval::Evaluator::<O, M>::early_stop_value(
+                    &metrics,
+                    self.params.early_stopping_eval_set,
+                );
+                (metrics, value)
+            } else {
+                (Vec::new(), f64::NAN)
+            };
 
             if self.params.verbosity >= Verbosity::Info {
                 logger.log_metrics(round as usize, &round_metrics);

@@ -19,7 +19,7 @@ use crate::inference::gbdt::UnrolledPredictor6;
 use crate::model::meta::{ModelMeta, TaskKind};
 use crate::repr::gbdt::{Forest, ScalarLeaf};
 use crate::training::gbdt::GBDTTrainer;
-use crate::training::ObjectiveFn;
+use crate::training::{Metric, ObjectiveFn};
 
 use super::GBDTConfig;
 
@@ -125,10 +125,13 @@ impl GBDTModel {
         // Convert config to trainer params
         let params = config.to_trainer_params();
         
+        // Convert Option<Metric> to Metric (None -> Metric::None)
+        let metric = config.metric.clone().unwrap_or(Metric::none());
+        
         // Create trainer with objective and metric from config
         let trainer = GBDTTrainer::new(
             config.objective.clone(),
-            config.metric.clone(),
+            metric,
             params,
         );
         let forest = trainer.train(dataset, targets, weights, &[])?;
