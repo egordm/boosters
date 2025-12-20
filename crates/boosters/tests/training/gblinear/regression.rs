@@ -262,7 +262,7 @@ fn test_set_prediction_quality(#[case] name: &str) {
     let model = trainer.train(&train, &[]).unwrap();
     let base_scores = vec![0.0f32];
 
-    use boosters::training::Metric;
+    use boosters::training::MetricFn;
     let output = model.predict(&test_data, &base_scores);
     let our_rmse = Rmse.compute(test_labels.len(), 1, output.as_slice(), &test_labels, &[]);
 

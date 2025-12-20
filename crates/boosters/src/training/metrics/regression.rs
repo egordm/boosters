@@ -7,7 +7,7 @@
 //! For multi-output models, metrics are computed per-output and then averaged.
 //! This provides an honest aggregate measure across all outputs.
 
-use super::{weight_iter, Metric};
+use super::{weight_iter, MetricFn};
 use crate::inference::common::PredictionKind;
 
 // =============================================================================
@@ -67,7 +67,7 @@ impl Rmse {
     }
 }
 
-impl Metric for Rmse {
+impl MetricFn for Rmse {
     fn compute(
         &self,
         n_rows: usize,
@@ -164,7 +164,7 @@ impl Mae {
     }
 }
 
-impl Metric for Mae {
+impl MetricFn for Mae {
     fn compute(
         &self,
         n_rows: usize,
@@ -226,7 +226,7 @@ impl Metric for Mae {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Mape;
 
-impl Metric for Mape {
+impl MetricFn for Mape {
     fn compute(
         &self,
         n_rows: usize,
@@ -376,7 +376,7 @@ impl Default for QuantileMetric {
     }
 }
 
-impl Metric for QuantileMetric {
+impl MetricFn for QuantileMetric {
     fn compute(
         &self,
         n_rows: usize,
@@ -472,7 +472,7 @@ impl Metric for QuantileMetric {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PoissonDeviance;
 
-impl Metric for PoissonDeviance {
+impl MetricFn for PoissonDeviance {
     fn compute(
         &self,
         n_rows: usize,
@@ -588,7 +588,7 @@ impl Default for HuberMetric {
     }
 }
 
-impl Metric for HuberMetric {
+impl MetricFn for HuberMetric {
     fn compute(
         &self,
         n_rows: usize,

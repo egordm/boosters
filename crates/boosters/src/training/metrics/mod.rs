@@ -82,7 +82,7 @@ pub enum MetricKind {
 }
 
 // =============================================================================
-// MetricFunction Enum (Convenience wrapper)
+// Metric Enum (Convenience wrapper)
 // =============================================================================
 
 /// A dynamically-dispatched metric function.
@@ -93,13 +93,13 @@ pub enum MetricKind {
 /// # Example
 ///
 /// ```ignore
-/// use boosters::training::MetricFunction;
+/// use boosters::training::Metric;
 ///
-/// let metric = MetricFunction::from_objective_str("binary:logistic");
-/// // metric is MetricFunction::LogLoss
+/// let metric = Metric::from_objective_str("binary:logistic");
+/// // metric is Metric::LogLoss
 /// ```
 #[derive(Debug, Clone)]
-pub enum MetricFunction {
+pub enum Metric {
     /// Root Mean Squared Error (regression).
     Rmse,
     /// Mean Absolute Error (regression).
@@ -126,13 +126,86 @@ pub enum MetricFunction {
     PoissonDeviance,
 }
 
-impl Default for MetricFunction {
+impl Default for Metric {
     fn default() -> Self {
         Self::Rmse
     }
 }
 
-impl MetricFunction {
+impl Metric {
+    // =========================================================================
+    // Convenience Constructors
+    // =========================================================================
+
+    /// Root Mean Squared Error for regression.
+    pub fn rmse() -> Self {
+        Self::Rmse
+    }
+
+    /// Mean Absolute Error for regression.
+    pub fn mae() -> Self {
+        Self::Mae
+    }
+
+    /// Mean Absolute Percentage Error for regression.
+    pub fn mape() -> Self {
+        Self::Mape
+    }
+
+    /// Log Loss for binary classification.
+    pub fn logloss() -> Self {
+        Self::LogLoss
+    }
+
+    /// Accuracy for binary classification with threshold 0.5.
+    pub fn accuracy() -> Self {
+        Self::Accuracy { threshold: 0.5 }
+    }
+
+    /// Accuracy for binary classification with custom threshold.
+    pub fn accuracy_with_threshold(threshold: f32) -> Self {
+        Self::Accuracy { threshold }
+    }
+
+    /// Area Under ROC Curve for binary classification.
+    pub fn auc() -> Self {
+        Self::Auc
+    }
+
+    /// Multiclass Log Loss for multiclass classification.
+    pub fn multiclass_logloss() -> Self {
+        Self::MulticlassLogLoss
+    }
+
+    /// Multiclass Accuracy.
+    pub fn multiclass_accuracy() -> Self {
+        Self::MulticlassAccuracy
+    }
+
+    /// Quantile metric (pinball loss) with given alpha.
+    pub fn quantile(alpha: f32) -> Self {
+        Self::Quantile { alpha }
+    }
+
+    /// Multi-quantile metric with given alphas.
+    pub fn multi_quantile(alphas: Vec<f32>) -> Self {
+        Self::MultiQuantile { alphas }
+    }
+
+    /// Huber metric with given delta.
+    pub fn huber(delta: f32) -> Self {
+        Self::Huber { delta }
+    }
+
+    /// Poisson Deviance for count data.
+    pub fn poisson_deviance() -> Self {
+        Self::PoissonDeviance
+    }
+
+    // =========================================================================
+    // Factory Methods
+    // =========================================================================
+
     /// Get the default metric for an objective string.
     pub fn from_objective_str(objective: &str) -> Self {
         match objective {
@@ -167,7 +240,7 @@ impl MetricFunction {
     }
 }
 
-impl Metric for MetricFunction {
+impl MetricFn for Metric {
     fn compute(
         &self,
         n_rows: usize,
@@ -269,7 +342,7 @@ impl Metric for MetricFunction {
 /// - `evaluate`: Called with predictions, labels, optional weights, and n_outputs
 /// - Higher is better for some metrics (accuracy, AUC), lower for others (RMSE, logloss)
 /// - Use `higher_is_better()` to determine the direction
-pub trait Metric: Send + Sync {
+pub trait MetricFn: Send + Sync {
     /// Compute metric value.
     ///
     /// Predictions are expected in **column-major** layout: `predictions[output * n_rows + row]`.
