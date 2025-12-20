@@ -102,9 +102,17 @@ pub enum MetricKind {
 /// let rmse = Metric::rmse();
 /// let logloss = Metric::logloss();
 /// let accuracy = Metric::accuracy_with_threshold(0.7);
+///
+/// // No metric (skips evaluation)
+/// let none = Metric::none();
 /// ```
 #[derive(Clone)]
 pub enum Metric {
+    /// No metric - skips evaluation entirely.
+    ///
+    /// When used, the trainer skips metric computation and prediction
+    /// transformation, avoiding wasted compute.
+    None,
     /// Root Mean Squared Error (regression).
     Rmse(Rmse),
     /// Mean Absolute Error (regression).
@@ -136,6 +144,7 @@ pub enum Metric {
 impl std::fmt::Debug for Metric {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::None => f.write_str("None"),
             Self::Rmse(inner) => f.debug_tuple("Rmse").field(inner).finish(),
             Self::Mae(inner) => f.debug_tuple("Mae").field(inner).finish(),
             Self::Mape(inner) => f.debug_tuple("Mape").field(inner).finish(),
@@ -163,6 +172,14 @@ impl Metric {
     // =========================================================================
     // Convenience Constructors
     // =========================================================================
+
+    /// No metric - skips evaluation entirely.
+    ///
+    /// When used, the trainer skips metric computation and prediction
+    /// transformation, avoiding wasted compute.
+    pub fn none() -> Self {
+        Self::None
+    }
 
     /// Root Mean Squared Error for regression.
     pub fn rmse() -> Self {
@@ -272,6 +289,7 @@ impl MetricFn for Metric {
         weights: &[f32],
     ) -> f64 {
         match self {
+            Self::None => f64::NAN,
             Self::Rmse(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
             Self::Mae(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
             Self::Mape(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
@@ -290,6 +308,7 @@ impl MetricFn for Metric {
 
     fn expected_prediction_kind(&self) -> PredictionKind {
         match self {
+            Self::None => PredictionKind::Margin,
             Self::Rmse(inner) => inner.expected_prediction_kind(),
             Self::Mae(inner) => inner.expected_prediction_kind(),
             Self::Mape(inner) => inner.expected_prediction_kind(),
@@ -308,6 +327,7 @@ impl MetricFn for Metric {
 
     fn higher_is_better(&self) -> bool {
         match self {
+            Self::None => false,
             Self::Rmse(inner) => inner.higher_is_better(),
             Self::Mae(inner) => inner.higher_is_better(),
             Self::Mape(inner) => inner.higher_is_better(),
@@ -326,6 +346,7 @@ impl MetricFn for Metric {
 
     fn name(&self) -> &'static str {
         match self {
+            Self::None => "<none>",
             Self::Rmse(inner) => inner.name(),
             Self::Mae(inner) => inner.name(),
             Self::Mape(inner) => inner.name(),
@@ -341,46 +362,9 @@ impl MetricFn for Metric {
             Self::Custom(inner) => inner.name(),
         }
     }
-}
 
-/// Blanket implementation for `Option<Metric>`.
-///
-/// When `None`, acts as a no-op metric (returns NaN, no name).
-/// This allows configs with optional metrics to pass `None` to trainers.
-impl MetricFn for Option<Metric> {
-    fn compute(
-        &self,
-        n_rows: usize,
-        n_outputs: usize,
-        predictions: &[f32],
-        targets: &[f32],
-        weights: &[f32],
-    ) -> f64 {
-        match self {
-            Some(m) => m.compute(n_rows, n_outputs, predictions, targets, weights),
-            None => f64::NAN,
-        }
-    }
-
-    fn expected_prediction_kind(&self) -> PredictionKind {
-        match self {
-            Some(m) => m.expected_prediction_kind(),
-            None => PredictionKind::Margin, // Default to margin (no transform)
-        }
-    }
-
-    fn higher_is_better(&self) -> bool {
-        match self {
-            Some(m) => m.higher_is_better(),
-            None => false,
-        }
-    }
-
-    fn name(&self) -> &'static str {
-        match self {
-            Some(m) => m.name(),
-            None => "",
-        }
+    fn is_enabled(&self) -> bool {
+        !matches!(self, Self::None)
     }
 }
 
@@ -435,4 +419,16 @@ pub trait MetricFn: Send + Sync {
 
     /// Name of the metric (for logging).
     fn name(&self) -> &'static str;
+
+    /// Whether this metric is enabled.
+    ///
+    /// When `false`, the trainer should skip metric computation entirely,
+    /// avoiding wasted compute on prediction transformation and evaluation.
+    ///
+    /// Default implementation returns `true`. Only `NoMetric` returns `false`.
+    fn is_enabled(&self) -> bool {
+        true
+    }
 }
+
+// hello? Read the comment above ^^

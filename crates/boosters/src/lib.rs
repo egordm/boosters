@@ -74,3 +74,21 @@ pub mod repr;
 pub mod testing;
 pub mod training;
 pub mod utils;
+
+// =============================================================================
+// Convenience Re-exports
+// =============================================================================
+
+// High-level model types
+pub use model::{GBDTModel, GBLinearModel, ModelMeta, TaskKind};
+
+// Configuration types (most users want these)
+pub use model::gbdt::{GBDTConfig, RegularizationParams, SamplingParams, TreeParams};
+pub use model::gblinear::GBLinearConfig;
+
+// Training types (objectives, metrics)
+pub use training::{Metric, MetricFn, Objective, ObjectiveFn};
+
+// Data types (for preparing training data)
+pub use data::{ColMatrix, Dataset, DenseMatrix, RowMatrix};
+

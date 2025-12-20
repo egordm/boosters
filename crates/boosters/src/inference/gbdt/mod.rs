@@ -2,8 +2,8 @@
 //!
 //! This module provides tree ensemble storage and prediction:
 //!
-//! - [`Tree`]: Structure-of-Arrays storage for a single tree
-//! - [`Forest`]: Collection of trees with group assignments
+//! - `Tree`: Structure-of-Arrays storage for a single tree
+//! - `Forest`: Collection of trees with group assignments
 //! - [`Predictor`]: High-performance batch prediction
 //!
 //! # Tree Storage

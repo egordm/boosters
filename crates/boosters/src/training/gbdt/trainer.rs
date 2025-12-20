@@ -304,26 +304,39 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
         let mut forest = Forest::<ScalarLeaf>::new(n_outputs as u32)
             .with_base_score(base_scores.clone());
 
+        // Check if we need evaluation (metric is enabled)
+        let needs_evaluation = self.metric.is_enabled();
+
         // Prepare eval set data and incremental prediction buffers
-        let eval_data: Vec<RowMatrix<f32>> = eval_sets
-            .iter()
-            .filter_map(|es| es.dataset.for_gbdt().ok())
-            .collect();
+        // Only allocate if evaluation is needed
+        let eval_data: Vec<RowMatrix<f32>> = if needs_evaluation {
+            eval_sets
+                .iter()
+                .filter_map(|es| es.dataset.for_gbdt().ok())
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         // Initialize eval predictions with base scores (column-major like training predictions)
         // Layout: [out0_row0, out0_row1, ..., out0_rowN, out1_row0, ...]
-        let mut eval_predictions: Vec<Vec<f32>> = eval_data
-            .iter()
-            .map(|m| {
-                let eval_rows = m.num_rows();
-                let mut preds = vec![0.0f32; eval_rows * n_outputs];
-                for (output, &base_score) in base_scores.iter().enumerate() {
-                    let start = output * eval_rows;
-                    preds[start..start + eval_rows].fill(base_score);
-                }
-                preds
-            })
-            .collect();
+        // Only allocate if evaluation is needed
+        let mut eval_predictions: Vec<Vec<f32>> = if needs_evaluation {
+            eval_data
+                .iter()
+                .map(|m| {
+                    let eval_rows = m.num_rows();
+                    let mut preds = vec![0.0f32; eval_rows * n_outputs];
+                    for (output, &base_score) in base_scores.iter().enumerate() {
+                        let start = output * eval_rows;
+                        preds[start..start + eval_rows].fill(base_score);
+                    }
+                    preds
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         // Early stopping (always present, may be disabled)
         let mut early_stopping = EarlyStopping::new(
@@ -332,7 +345,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
         );
         let mut best_n_trees: usize = 0;
 
-        // Evaluator for computing metrics
+        // Evaluator for computing metrics (only used if evaluation is needed)
         let mut evaluator = eval::Evaluator::new(&self.objective, &self.metric, n_outputs);
 
         // Logger
@@ -408,29 +421,38 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
 
                 // Incremental eval set prediction: add this tree's contribution
                 // eval_predictions is column-major, so we can pass a contiguous slice
-                for (set_idx, matrix) in eval_data.iter().enumerate() {
-                    let eval_rows = matrix.num_rows();
-                    let start = output * eval_rows;
-                    let pred_slice = &mut eval_predictions[set_idx][start..start + eval_rows];
-                    tree.predict_batch(matrix, pred_slice);
+                // Only compute if evaluation is needed
+                if needs_evaluation {
+                    for (set_idx, matrix) in eval_data.iter().enumerate() {
+                        let eval_rows = matrix.num_rows();
+                        let start = output * eval_rows;
+                        let pred_slice = &mut eval_predictions[set_idx][start..start + eval_rows];
+                        tree.predict_batch(matrix, pred_slice);
+                    }
                 }
 
                 forest.push_tree(tree, output as u32);
             }
 
             // Evaluate on eval sets (using accumulated predictions)
-            let round_metrics = evaluator.evaluate_round(
-                &predictions,
-                targets,
-                weights,
-                n_rows,
-                eval_sets,
-                &eval_predictions,
-            );
-            let early_stop_value = eval::Evaluator::<O, M>::early_stop_value(
-                &round_metrics,
-                self.params.early_stopping_eval_set,
-            );
+            // Only evaluate if metric is enabled
+            let (round_metrics, early_stop_value) = if needs_evaluation {
+                let metrics = evaluator.evaluate_round(
+                    &predictions,
+                    targets,
+                    weights,
+                    n_rows,
+                    eval_sets,
+                    &eval_predictions,
+                );
+                let value = eval::Evaluator::<O, M>::early_stop_value(
+                    &metrics,
+                    self.params.early_stopping_eval_set,
+                );
+                (metrics, value)
+            } else {
+                (Vec::new(), f64::NAN)
+            };
 
             if self.params.verbosity >= Verbosity::Info {
                 logger.log_metrics(round as usize, &round_metrics);

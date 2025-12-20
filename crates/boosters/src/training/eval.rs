@@ -147,6 +147,13 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
         self.metric.name()
     }
 
+    /// Whether the metric is enabled.
+    ///
+    /// When `false`, evaluation should be skipped entirely.
+    pub fn is_enabled(&self) -> bool {
+        self.metric.is_enabled()
+    }
+
     /// Compute a single metric value.
     ///
     /// Handles transformation if the metric requires it.
@@ -203,6 +210,7 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
     /// Evaluate predictions on training and eval sets for one round.
     ///
     /// Returns a vector of metric values for all datasets.
+    /// If the metric is not enabled (e.g., `Metric::None`), returns an empty vector.
     pub fn evaluate_round(
         &mut self,
         train_predictions: &[f32],
@@ -212,6 +220,11 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
         eval_sets: &[EvalSet<'_>],
         eval_predictions: &[Vec<f32>],
     ) -> Vec<MetricValue> {
+        // Skip evaluation entirely if metric is not enabled
+        if !self.metric.is_enabled() {
+            return Vec::new();
+        }
+        
         let mut metrics = Vec::with_capacity(1 + eval_sets.len());
 
         // Compute training metric
