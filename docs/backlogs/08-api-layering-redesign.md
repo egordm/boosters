@@ -285,8 +285,8 @@ Add `bon` crate for builder pattern generation.
 
 **Tasks**:
 
-- [ ] 3.1.1: Add `bon = "3.8"` to `Cargo.toml`
-- [ ] 3.1.2: Verify compilation with `cargo check`
+- [x] 3.1.1: Add `bon = "3.8"` to `Cargo.toml`
+- [x] 3.1.2: Verify compilation with `cargo check`
 
 **Definition of Done**:
 
@@ -305,9 +305,9 @@ Before creating new param structs, understand current state. **Time-box: 4 hours
 
 **Tasks**:
 
-- [ ] 3.2.1: Inventory all existing parameter/config structs
-- [ ] 3.2.2: Document current field names and default values
-- [ ] 3.2.3: Identify what can be grouped vs what stays top-level
+- [x] 3.2.1: Inventory all existing parameter/config structs
+- [x] 3.2.2: Document current field names and default values
+- [x] 3.2.3: Identify what can be grouped vs what stays top-level
 
 **Definition of Done**:
 
@@ -326,12 +326,12 @@ Create `TreeParams`, `RegularizationParams`, `SamplingParams` structs.
 
 **Tasks**:
 
-- [ ] 3.3.1: Create `TreeParams` with `max_depth`, `max_leaves`, `growth_strategy`
-- [ ] 3.3.2: Create `RegularizationParams` with `lambda`, `alpha`, `min_child_weight`, `min_gain`
-- [ ] 3.3.3: Create `SamplingParams` with `subsample`, `colsample_bytree`, `colsample_bylevel`
-- [ ] 3.3.4: Implement `Default` for each with documented values
-- [ ] 3.3.5: Add validation methods (e.g., `SamplingParams::validate()`)
-- [ ] 3.3.6: Place in `model::gbdt` module
+- [x] 3.3.1: Create `TreeParams` with `max_depth`, `max_leaves`, `growth_strategy`
+- [x] 3.3.2: Create `RegularizationParams` with `lambda`, `alpha`, `min_child_weight`, `min_gain`
+- [x] 3.3.3: Create `SamplingParams` with `subsample`, `colsample_bytree`, `colsample_bylevel`
+- [x] 3.3.4: Implement `Default` for each with documented values
+- [x] 3.3.5: Add validation methods (e.g., `SamplingParams::validate()`)
+- [x] 3.3.6: Place in `model::gbdt` module
 
 **Definition of Done**:
 
@@ -410,6 +410,8 @@ Create parallel config for linear models.
 ## Epic 4: Model Layer Refactoring
 
 Update model types to store config, remove forwarding, and update train signatures.
+
+> Note: don't forget to address stakeholder feedback in tmp/stakeholder_feedback.md.
 
 **Effort**: Medium-Large (4-5 days)
 
@@ -530,6 +532,8 @@ Remove wrapper types, return ColMatrix directly.
 
 **Effort**: Small (1-2 days)
 
+> Note: don't forget to address stakeholder feedback in tmp/stakeholder_feedback.md.
+
 ### Story 5.1: Remove PredictionOutput
 
 Replace any prediction wrapper with direct ColMatrix returns.
@@ -563,6 +567,8 @@ Move types to their final locations and establish clean public API.
 **Effort**: Medium (2-3 days)
 
 **Note**: Module skeleton already created in Epic 1. This epic populates the modules.
+
+> Note: don't forget to address stakeholder feedback in tmp/stakeholder_feedback.md.
 
 ### Story 6.1: Relocate All Types
 
