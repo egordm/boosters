@@ -255,9 +255,9 @@ Ensure single source of truth for TaskKind.
 
 **Tasks**:
 
-- [ ] 2.4.1: Audit codebase for TaskKind definitions/duplicates
-- [ ] 2.4.2: Consolidate to single definition in `training/objectives/mod.rs`
-- [ ] 2.4.3: Update all usages to import from single location
+- [x] 2.4.1: Audit codebase for TaskKind definitions/duplicates
+- [x] 2.4.2: Consolidate to single definition in `model/meta.rs`
+- [x] 2.4.3: Update all usages to import from single location
 
 **Definition of Done**:
 

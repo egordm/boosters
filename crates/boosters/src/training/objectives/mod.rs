@@ -44,18 +44,12 @@ use crate::inference::common::{PredictionKind, PredictionOutput, Predictions};
 use crate::training::metrics::MetricKind;
 use crate::training::GradsTuple;
 
-// =============================================================================
-// RFC 0028: Task + Target Semantics
-// =============================================================================
+// Re-export TaskKind from model module for unified usage
+pub use crate::model::TaskKind;
 
-/// High-level task kind implied by an objective.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TaskKind {
-    Regression,
-    BinaryClassification,
-    MulticlassClassification,
-    Ranking,
-}
+// =============================================================================
+// RFC 0028: Target Semantics
+// =============================================================================
 
 /// Target encoding/schema expected by an objective.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
