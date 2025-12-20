@@ -42,7 +42,7 @@ pub use regression::{AbsoluteLoss, PinballLoss, PoissonLoss, PseudoHuberLoss, Sq
 
 use crate::inference::common::{PredictionKind, PredictionOutput, Predictions};
 use crate::training::metrics::MetricKind;
-use crate::training::GradsTuple;
+use crate::training::{Gradients, GradsTuple};
 
 // Re-export TaskKind from model module for unified usage
 pub use crate::model::TaskKind;
@@ -288,16 +288,8 @@ pub trait ObjectiveFn: Send + Sync {
             predictions[start..start + n_rows].fill(score);
         }
     }
-}
 
-use crate::training::Gradients;
-
-/// Extension trait for objective functions that work with Gradients.
-///
-/// This provides a convenient interface for trainers that use Gradients
-/// for gradient storage.
-pub trait ObjectiveFnExt: ObjectiveFn {
-    /// Compute gradients into a Gradients.
+    /// Compute gradients into a Gradients buffer.
     ///
     /// This is a convenience wrapper that extracts the mutable slices from
     /// the buffer and calls the underlying compute_gradients.
@@ -321,9 +313,6 @@ pub trait ObjectiveFnExt: ObjectiveFn {
         self.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess);
     }
 }
-
-// Implement ObjectiveExt for all Objective types
-impl<T: ObjectiveFn + ?Sized> ObjectiveFnExt for T {}
 
 // =============================================================================
 // Objective Enum (Convenience wrapper)
