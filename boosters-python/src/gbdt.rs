@@ -6,7 +6,6 @@ use crate::params::PyGBDTParams;
 use numpy::{PyArray1, PyArray2, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use boosters::data::{BinnedDatasetBuilder, DenseMatrix, RowMajor};
@@ -72,6 +71,9 @@ impl PyGBDTBooster {
         // Create training params
         let trainer_params = Self::params_to_trainer_params(&params);
 
+        // Get feature names from dataset
+        let feature_names = train_data.get_feature_names();
+
         // Train with appropriate objective based on params
         let model = Self::train_with_objective(
             &binned_dataset,
@@ -81,6 +83,13 @@ impl PyGBDTBooster {
             params.num_class,
             trainer_params,
         )?;
+
+        // Set feature names on the model if available
+        let model = if let Some(names) = feature_names {
+            model.with_feature_names(names)
+        } else {
+            model
+        };
 
         Ok(Self { model, params })
     }
@@ -112,13 +121,15 @@ impl PyGBDTBooster {
     /// * `importance_type` - Type of importance: "split" (default), "gain", or "cover"
     ///
     /// # Returns
-    /// Dictionary mapping feature names/indices to importance scores
+    /// Dictionary mapping feature names to importance scores (or indices if names unavailable)
     #[pyo3(signature = (importance_type = "split".to_string()))]
     fn feature_importance(
         &self,
+        py: Python<'_>,
         importance_type: String,
-    ) -> PyResult<HashMap<usize, f64>> {
+    ) -> PyResult<PyObject> {
         use boosters::explainability::ImportanceType;
+        use pyo3::types::PyDict;
 
         let imp_type = match importance_type.as_str() {
             "split" | "weight" => ImportanceType::Split,
@@ -139,7 +150,20 @@ impl PyGBDTBooster {
             .feature_importance(imp_type)
             .map_err(|e| PyBoostersError::Explainability(e.to_string()))?;
 
-        Ok(importance.to_map())
+        let dict = PyDict::new_bound(py);
+        
+        // Use feature names if available, otherwise use indices
+        if let Some(named_map) = importance.to_named_map() {
+            for (name, val) in named_map {
+                dict.set_item(name, val)?;
+            }
+        } else {
+            for (idx, val) in importance.to_map() {
+                dict.set_item(idx, val)?;
+            }
+        }
+        
+        Ok(dict.into())
     }
 
     /// Compute SHAP values for explaining predictions.
