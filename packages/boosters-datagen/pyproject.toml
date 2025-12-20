@@ -1,0 +1,28 @@
+[project]
+name = "boosters-datagen"
+version = "0.1.0"
+description = "Test data generation for boosters library"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = [
+    "numpy>=2.0",
+    "scikit-learn>=1.5",
+    "xgboost>=2.0",
+    "lightgbm>=4.0",
+    "typer>=0.12",
+    "rich>=13.0",
+]
+
+[project.scripts]
+boosters-datagen = "boosters_datagen.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/boosters_datagen"]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]

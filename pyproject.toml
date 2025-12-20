@@ -1,0 +1,89 @@
+[project]
+name = "boosters-workspace"
+version = "0.1.0"
+description = "Boosters monorepo workspace"
+requires-python = ">=3.12"
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+boosters = { workspace = true }
+boosters-datagen = { workspace = true }
+boosters-eval = { workspace = true }
+microsoft-python-type-stubs = { git = "https://github.com/microsoft/python-type-stubs.git" }
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8.0",
+    "pyright>=1.1.0",
+    "pytest>=8.0",
+    "poethepoet>=0.31.0",
+    "microsoft-python-type-stubs",
+]
+
+# =============================================================================
+# Poe Tasks - Run with: uv run poe <task>
+# =============================================================================
+[tool.poe.tasks]
+lint = "ruff check ."
+lint-fix = "ruff check --fix ."
+format = "ruff format ."
+format-check = "ruff format --check ."
+typecheck = "pyright"
+check = ["format-check", "lint", "typecheck"]
+fix = ["format", "lint-fix"]
+test = "pytest"
+
+# =============================================================================
+# Ruff Configuration (shared across all packages)
+# =============================================================================
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["packages/*/src", "packages/*/python"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "RUF",    # Ruff-specific
+]
+ignore = [
+    "E501",   # Line too long (handled by formatter)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["D", "B017", "F401"]
+"**/tests/*" = ["D", "B017", "F401"]
+"**/cli.py" = ["B008"]  # Typer uses function calls in defaults
+
+[tool.ruff.lint.isort]
+known-first-party = ["boosters", "boosters_eval", "boosters_datagen"]
+
+# =============================================================================
+# Pyright Configuration (shared across all packages)
+# =============================================================================
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+include = ["packages/*/src", "packages/*/python", "packages/*/tests"]
+exclude = ["**/__pycache__", "**/.venv", "**/node_modules"]
+# External libraries have incomplete stubs
+reportMissingTypeStubs = false
+
+# =============================================================================
+# Pytest Configuration
+# =============================================================================
+[tool.pytest.ini_options]
+testpaths = ["packages/*/tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]

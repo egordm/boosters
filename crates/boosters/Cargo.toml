@@ -1,0 +1,157 @@
+[package]
+name = "boosters"
+version = "0.1.0"
+edition = "2024"
+autobenches = false
+
+[dependencies]
+thiserror = "1.0"
+
+# Approximate equality traits (used in PredictionOutput)
+approx = "0.5"
+
+# Parallel processing
+rayon = "1.10"
+
+# Random number generation (for shuffle selector and sampling)
+rand = { version = "0.8", features = ["small_rng"] }
+rand_xoshiro = "0.6"
+
+# Efficient bitset operations for feature bundling conflict detection
+fixedbitset = "0.5"
+
+# Optional: XGBoost compatibility
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_json = { version = "1.0", optional = true }
+serde_with = { version = "3.16.0", features = ["json"], optional = true }
+
+# Optional: dataset loaders for benches/tools
+zstd = { version = "0.13", optional = true }
+
+# Optional: Arrow/Parquet I/O (RFC-0029)
+arrow = { version = "54", optional = true, default-features = false, features = ["ipc"] }
+parquet = { version = "54", optional = true, default-features = false, features = ["arrow", "snap"] }
+
+# Optional: Native storage format (RFC-0021)
+postcard = { version = "1.1", optional = true, features = ["alloc"] }
+crc32fast = { version = "1.4", optional = true }
+
+# Optional: XGBoost C++ bindings for benchmark comparison
+# Fork with reset() method for accurate benchmarking (clears internal caches)
+# Requires: libclang-dev (Debian/Ubuntu), clang (Arch), or Xcode (macOS)
+xgb = { git = "https://github.com/egordm/rust-xgboost-bindings.git", optional = true }
+
+# Optional: LightGBM C++ bindings for benchmark comparison
+# Compiles LightGBM from source for fair native performance comparison
+# Requires: cmake, libclang-dev (Debian/Ubuntu), clang (Arch), or Xcode (macOS)
+lightgbm3 = { version = "1.0", optional = true }
+
+[dev-dependencies]
+glob = "0.3.3"
+rstest = "0.21"
+serde = { version = "1.0", features = ["derive"] } # Needed by integration tests under --no-default-features
+serde_json = "1.0"  # Always available in tests
+criterion = { version = "0.5", features = ["html_reports"] }
+rand = "0.8"  # For generating random benchmark inputs
+rand_chacha = "0.3"  # For reproducible RNG in benchmarks
+tempfile = "3.20"  # For Arrow/Parquet I/O tests
+
+[features]
+default = ["xgboost-compat", "storage"]
+xgboost-compat = ["dep:serde", "dep:serde_json", "dep:serde_with"]
+lightgbm-compat = ["dep:serde", "dep:serde_json"]
+# Unified comparison feature - enables both XGBoost and LightGBM bindings
+bench-compare = ["bench-xgboost", "bench-lightgbm"]
+bench-xgboost = ["dep:xgb", "xgboost-compat"]
+bench-lightgbm = ["dep:lightgbm3", "lightgbm-compat"]
+bench-training = []
+testing-utils = ["dep:serde", "dep:serde_json", "dep:zstd"]
+io-arrow = ["dep:arrow"]
+io-parquet = ["dep:parquet", "dep:arrow"]
+# Native storage format (RFC-0021) - enabled by default for save/load functionality
+storage = ["dep:postcard", "dep:crc32fast", "dep:serde"]
+storage-compression = ["storage", "dep:zstd"]
+
+[[bench]]
+name = "prediction_core"
+harness = false
+path = "benches/suites/component/predict.rs"
+
+[[bench]]
+name = "prediction_strategies"
+harness = false
+path = "benches/suites/component/predict_strategies.rs"
+
+[[bench]]
+name = "prediction_parallel"
+harness = false
+path = "benches/suites/component/predict_parallel.rs"
+
+[[bench]]
+name = "training_core"
+harness = false
+required-features = ["bench-training"]
+path = "benches/suites/component/train_gblinear.rs"
+
+[[bench]]
+name = "training_gbdt"
+harness = false
+path = "benches/suites/component/train_gbdt.rs"
+
+[[bench]]
+name = "e2e_train_predict_gbdt"
+harness = false
+path = "benches/suites/e2e/train_predict_gbdt.rs"
+
+[[bench]]
+name = "e2e_train_linear_leaves"
+harness = false
+path = "benches/suites/e2e/train_linear_leaves.rs"
+
+# Unified comparison benchmarks (preferred)
+[[bench]]
+name = "gbdt_training"
+harness = false
+path = "benches/suites/compare/gbdt_training.rs"
+
+[[bench]]
+name = "gbdt_prediction"
+harness = false
+path = "benches/suites/compare/gbdt_prediction.rs"
+
+[[bench]]
+name = "gblinear_training"
+harness = false
+path = "benches/suites/compare/gblinear_training.rs"
+
+[[bench]]
+name = "gblinear_prediction"
+harness = false
+path = "benches/suites/compare/gblinear_prediction.rs"
+
+[[bench]]
+name = "linear_tree_prediction"
+harness = false
+required-features = ["lightgbm-compat"]
+path = "benches/suites/compare/linear_tree_prediction.rs"
+
+# Feature benchmarks
+[[bench]]
+name = "multithreading"
+harness = false
+path = "benches/suites/feature/multithreading.rs"
+
+[[bench]]
+name = "scaling"
+harness = false
+path = "benches/suites/feature/scaling.rs"
+
+[[bench]]
+name = "sampling"
+harness = false
+path = "benches/suites/feature/sampling.rs"
+
+[[bench]]
+name = "bundling"
+harness = false
+path = "benches/suites/feature/bundling.rs"
