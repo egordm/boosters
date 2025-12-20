@@ -87,8 +87,11 @@ pub enum MetricKind {
 
 /// A dynamically-dispatched metric function.
 ///
-/// This enum wraps all available metrics and implements the `Metric` trait,
+/// This enum wraps all available metrics using the newtype pattern,
 /// allowing metric selection at runtime without generics.
+///
+/// Each variant wraps its corresponding struct type directly, enabling
+/// clean delegation and avoiding per-call struct instantiation.
 ///
 /// # Example
 ///
@@ -96,39 +99,61 @@ pub enum MetricKind {
 /// use boosters::training::Metric;
 ///
 /// let metric = Metric::from_objective_str("binary:logistic");
-/// // metric is Metric::LogLoss
+/// // metric is Metric::LogLoss(LogLoss)
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Metric {
     /// Root Mean Squared Error (regression).
-    Rmse,
+    Rmse(Rmse),
     /// Mean Absolute Error (regression).
-    Mae,
+    Mae(Mae),
     /// Mean Absolute Percentage Error (regression).
-    Mape,
+    Mape(Mape),
     /// Log Loss / Binary Cross-Entropy (binary classification).
-    LogLoss,
-    /// Accuracy (binary classification).
-    Accuracy { threshold: f32 },
+    LogLoss(LogLoss),
+    /// Accuracy (binary classification) with configurable threshold.
+    Accuracy(Accuracy),
+    /// Margin-based accuracy (threshold=0.0, for hinge loss).
+    MarginAccuracy(MarginAccuracy),
     /// Area Under ROC Curve (binary classification).
-    Auc,
+    Auc(Auc),
     /// Multiclass Log Loss (multiclass classification).
-    MulticlassLogLoss,
+    MulticlassLogLoss(MulticlassLogLoss),
     /// Multiclass Accuracy (multiclass classification).
-    MulticlassAccuracy,
-    /// Quantile metric (quantile regression).
-    Quantile { alpha: f32 },
-    /// Multi-quantile metric.
-    MultiQuantile { alphas: Vec<f32> },
-    /// Huber metric.
-    Huber { delta: f32 },
-    /// Poisson Deviance.
-    PoissonDeviance,
+    MulticlassAccuracy(MulticlassAccuracy),
+    /// Quantile metric (pinball loss).
+    Quantile(QuantileMetric),
+    /// Huber metric for robust regression.
+    Huber(HuberMetric),
+    /// Poisson Deviance for count data.
+    PoissonDeviance(PoissonDeviance),
+    /// Custom user-provided metric.
+    Custom(std::sync::Arc<dyn MetricFn>),
+}
+
+impl std::fmt::Debug for Metric {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Rmse(inner) => f.debug_tuple("Rmse").field(inner).finish(),
+            Self::Mae(inner) => f.debug_tuple("Mae").field(inner).finish(),
+            Self::Mape(inner) => f.debug_tuple("Mape").field(inner).finish(),
+            Self::LogLoss(inner) => f.debug_tuple("LogLoss").field(inner).finish(),
+            Self::Accuracy(inner) => f.debug_tuple("Accuracy").field(inner).finish(),
+            Self::MarginAccuracy(inner) => f.debug_tuple("MarginAccuracy").field(inner).finish(),
+            Self::Auc(inner) => f.debug_tuple("Auc").field(inner).finish(),
+            Self::MulticlassLogLoss(inner) => f.debug_tuple("MulticlassLogLoss").field(inner).finish(),
+            Self::MulticlassAccuracy(inner) => f.debug_tuple("MulticlassAccuracy").field(inner).finish(),
+            Self::Quantile(inner) => f.debug_tuple("Quantile").field(inner).finish(),
+            Self::Huber(inner) => f.debug_tuple("Huber").field(inner).finish(),
+            Self::PoissonDeviance(inner) => f.debug_tuple("PoissonDeviance").field(inner).finish(),
+            Self::Custom(_) => f.debug_tuple("Custom").field(&"<dyn MetricFn>").finish(),
+        }
+    }
 }
 
 impl Default for Metric {
     fn default() -> Self {
-        Self::Rmse
+        Self::Rmse(Rmse)
     }
 }
 
@@ -139,67 +164,77 @@ impl Metric {
 
     /// Root Mean Squared Error for regression.
     pub fn rmse() -> Self {
-        Self::Rmse
+        Self::Rmse(Rmse)
     }
 
     /// Mean Absolute Error for regression.
     pub fn mae() -> Self {
-        Self::Mae
+        Self::Mae(Mae)
     }
 
     /// Mean Absolute Percentage Error for regression.
     pub fn mape() -> Self {
-        Self::Mape
+        Self::Mape(Mape)
     }
 
     /// Log Loss for binary classification.
     pub fn logloss() -> Self {
-        Self::LogLoss
+        Self::LogLoss(LogLoss)
     }
 
     /// Accuracy for binary classification with threshold 0.5.
     pub fn accuracy() -> Self {
-        Self::Accuracy { threshold: 0.5 }
+        Self::Accuracy(Accuracy::default())
     }
 
     /// Accuracy for binary classification with custom threshold.
     pub fn accuracy_with_threshold(threshold: f32) -> Self {
-        Self::Accuracy { threshold }
+        Self::Accuracy(Accuracy::with_threshold(threshold))
+    }
+
+    /// Margin-based accuracy (threshold=0.0) for hinge loss.
+    pub fn margin_accuracy() -> Self {
+        Self::MarginAccuracy(MarginAccuracy::default())
     }
 
     /// Area Under ROC Curve for binary classification.
     pub fn auc() -> Self {
-        Self::Auc
+        Self::Auc(Auc)
     }
 
     /// Multiclass Log Loss for multiclass classification.
     pub fn multiclass_logloss() -> Self {
-        Self::MulticlassLogLoss
+        Self::MulticlassLogLoss(MulticlassLogLoss)
     }
 
     /// Multiclass Accuracy.
     pub fn multiclass_accuracy() -> Self {
-        Self::MulticlassAccuracy
+        Self::MulticlassAccuracy(MulticlassAccuracy)
     }
 
     /// Quantile metric (pinball loss) with given alpha.
     pub fn quantile(alpha: f32) -> Self {
-        Self::Quantile { alpha }
+        Self::Quantile(QuantileMetric::new(vec![alpha]))
     }
 
     /// Multi-quantile metric with given alphas.
     pub fn multi_quantile(alphas: Vec<f32>) -> Self {
-        Self::MultiQuantile { alphas }
+        Self::Quantile(QuantileMetric::new(alphas))
     }
 
     /// Huber metric with given delta.
     pub fn huber(delta: f32) -> Self {
-        Self::Huber { delta }
+        Self::Huber(HuberMetric::new(delta.into()))
     }
 
     /// Poisson Deviance for count data.
     pub fn poisson_deviance() -> Self {
-        Self::PoissonDeviance
+        Self::PoissonDeviance(PoissonDeviance)
+    }
+
+    /// Custom user-provided metric.
+    pub fn custom(metric: impl MetricFn + 'static) -> Self {
+        Self::Custom(std::sync::Arc::new(metric))
     }
 
     // =========================================================================
@@ -209,33 +244,33 @@ impl Metric {
     /// Get the default metric for an objective string.
     pub fn from_objective_str(objective: &str) -> Self {
         match objective {
-            "squared_error" | "reg:squared_error" | "reg:squarederror" => Self::Rmse,
-            "absolute_error" | "reg:absoluteerror" | "mae" => Self::Mae,
-            "binary:logistic" | "binary_logistic" | "logistic" => Self::LogLoss,
-            "binary:hinge" => Self::Accuracy { threshold: 0.0 },
-            "multi:softmax" | "multiclass" | "softmax" | "multi:softprob" => Self::MulticlassLogLoss,
-            "reg:quantile" | "quantile" => Self::Quantile { alpha: 0.5 },
-            "reg:pseudohuber" | "huber" => Self::Huber { delta: 1.0 },
-            "poisson" | "count:poisson" => Self::PoissonDeviance,
-            _ => Self::Rmse,
+            "squared_error" | "reg:squared_error" | "reg:squarederror" => Self::rmse(),
+            "absolute_error" | "reg:absoluteerror" | "mae" => Self::mae(),
+            "binary:logistic" | "binary_logistic" | "logistic" => Self::logloss(),
+            "binary:hinge" => Self::margin_accuracy(),
+            "multi:softmax" | "multiclass" | "softmax" | "multi:softprob" => Self::multiclass_logloss(),
+            "reg:quantile" | "quantile" => Self::quantile(0.5),
+            "reg:pseudohuber" | "huber" => Self::huber(1.0),
+            "poisson" | "count:poisson" => Self::poisson_deviance(),
+            _ => Self::rmse(),
         }
     }
 
     /// Get the default metric for a MetricKind.
     pub fn from_kind(kind: MetricKind) -> Self {
         match kind {
-            MetricKind::Rmse => Self::Rmse,
-            MetricKind::Mae => Self::Mae,
-            MetricKind::Mape => Self::Mape,
-            MetricKind::Huber => Self::Huber { delta: 1.0 },
-            MetricKind::PoissonDeviance => Self::PoissonDeviance,
-            MetricKind::Quantile => Self::Quantile { alpha: 0.5 },
-            MetricKind::LogLoss => Self::LogLoss,
-            MetricKind::Accuracy => Self::Accuracy { threshold: 0.5 },
-            MetricKind::MarginAccuracy => Self::Accuracy { threshold: 0.0 },
-            MetricKind::Auc => Self::Auc,
-            MetricKind::MulticlassLogLoss => Self::MulticlassLogLoss,
-            MetricKind::MulticlassAccuracy => Self::MulticlassAccuracy,
+            MetricKind::Rmse => Self::rmse(),
+            MetricKind::Mae => Self::mae(),
+            MetricKind::Mape => Self::mape(),
+            MetricKind::Huber => Self::huber(1.0),
+            MetricKind::PoissonDeviance => Self::poisson_deviance(),
+            MetricKind::Quantile => Self::quantile(0.5),
+            MetricKind::LogLoss => Self::logloss(),
+            MetricKind::Accuracy => Self::accuracy(),
+            MetricKind::MarginAccuracy => Self::margin_accuracy(),
+            MetricKind::Auc => Self::auc(),
+            MetricKind::MulticlassLogLoss => Self::multiclass_logloss(),
+            MetricKind::MulticlassAccuracy => Self::multiclass_accuracy(),
         }
     }
 }
@@ -250,69 +285,73 @@ impl MetricFn for Metric {
         weights: &[f32],
     ) -> f64 {
         match self {
-            Self::Rmse => Rmse.compute(n_rows, n_outputs, predictions, targets, weights),
-            Self::Mae => Mae.compute(n_rows, n_outputs, predictions, targets, weights),
-            Self::Mape => Mape.compute(n_rows, n_outputs, predictions, targets, weights),
-            Self::LogLoss => LogLoss.compute(n_rows, n_outputs, predictions, targets, weights),
-            Self::Accuracy { threshold } => {
-                Accuracy { threshold: *threshold }.compute(n_rows, n_outputs, predictions, targets, weights)
-            }
-            Self::Auc => Auc.compute(n_rows, n_outputs, predictions, targets, weights),
-            Self::MulticlassLogLoss => {
-                MulticlassLogLoss.compute(n_rows, n_outputs, predictions, targets, weights)
-            }
-            Self::MulticlassAccuracy => {
-                MulticlassAccuracy.compute(n_rows, n_outputs, predictions, targets, weights)
-            }
-            Self::Quantile { alpha } => {
-                QuantileMetric::compute_single(*alpha, n_rows, predictions, targets, weights)
-            }
-            Self::MultiQuantile { alphas } => {
-                QuantileMetric::new(alphas.clone()).compute(n_rows, n_outputs, predictions, targets, weights)
-            }
-            Self::Huber { delta } => {
-                HuberMetric::new((*delta).into()).compute(n_rows, n_outputs, predictions, targets, weights)
-            }
-            Self::PoissonDeviance => {
-                PoissonDeviance.compute(n_rows, n_outputs, predictions, targets, weights)
-            }
+            Self::Rmse(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
+            Self::Mae(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
+            Self::Mape(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
+            Self::LogLoss(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
+            Self::Accuracy(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
+            Self::MarginAccuracy(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
+            Self::Auc(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
+            Self::MulticlassLogLoss(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
+            Self::MulticlassAccuracy(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
+            Self::Quantile(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
+            Self::Huber(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
+            Self::PoissonDeviance(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
+            Self::Custom(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
         }
     }
 
     fn expected_prediction_kind(&self) -> PredictionKind {
         match self {
-            Self::Rmse | Self::Mae | Self::Mape | Self::Huber { .. } | Self::PoissonDeviance => {
-                PredictionKind::Value
-            }
-            Self::Quantile { .. } | Self::MultiQuantile { .. } => PredictionKind::Value,
-            Self::LogLoss | Self::Auc | Self::Accuracy { .. } => PredictionKind::Probability,
-            Self::MulticlassLogLoss | Self::MulticlassAccuracy => PredictionKind::Probability,
+            Self::Rmse(inner) => inner.expected_prediction_kind(),
+            Self::Mae(inner) => inner.expected_prediction_kind(),
+            Self::Mape(inner) => inner.expected_prediction_kind(),
+            Self::LogLoss(inner) => inner.expected_prediction_kind(),
+            Self::Accuracy(inner) => inner.expected_prediction_kind(),
+            Self::MarginAccuracy(inner) => inner.expected_prediction_kind(),
+            Self::Auc(inner) => inner.expected_prediction_kind(),
+            Self::MulticlassLogLoss(inner) => inner.expected_prediction_kind(),
+            Self::MulticlassAccuracy(inner) => inner.expected_prediction_kind(),
+            Self::Quantile(inner) => inner.expected_prediction_kind(),
+            Self::Huber(inner) => inner.expected_prediction_kind(),
+            Self::PoissonDeviance(inner) => inner.expected_prediction_kind(),
+            Self::Custom(inner) => inner.expected_prediction_kind(),
         }
     }
 
     fn higher_is_better(&self) -> bool {
         match self {
-            Self::Rmse | Self::Mae | Self::Mape | Self::LogLoss | Self::MulticlassLogLoss => false,
-            Self::Quantile { .. } | Self::MultiQuantile { .. } | Self::Huber { .. } => false,
-            Self::PoissonDeviance => false,
-            Self::Accuracy { .. } | Self::Auc | Self::MulticlassAccuracy => true,
+            Self::Rmse(inner) => inner.higher_is_better(),
+            Self::Mae(inner) => inner.higher_is_better(),
+            Self::Mape(inner) => inner.higher_is_better(),
+            Self::LogLoss(inner) => inner.higher_is_better(),
+            Self::Accuracy(inner) => inner.higher_is_better(),
+            Self::MarginAccuracy(inner) => inner.higher_is_better(),
+            Self::Auc(inner) => inner.higher_is_better(),
+            Self::MulticlassLogLoss(inner) => inner.higher_is_better(),
+            Self::MulticlassAccuracy(inner) => inner.higher_is_better(),
+            Self::Quantile(inner) => inner.higher_is_better(),
+            Self::Huber(inner) => inner.higher_is_better(),
+            Self::PoissonDeviance(inner) => inner.higher_is_better(),
+            Self::Custom(inner) => inner.higher_is_better(),
         }
     }
 
     fn name(&self) -> &'static str {
         match self {
-            Self::Rmse => "rmse",
-            Self::Mae => "mae",
-            Self::Mape => "mape",
-            Self::LogLoss => "logloss",
-            Self::Accuracy { .. } => "accuracy",
-            Self::Auc => "auc",
-            Self::MulticlassLogLoss => "mlogloss",
-            Self::MulticlassAccuracy => "accuracy",
-            Self::Quantile { .. } => "quantile",
-            Self::MultiQuantile { .. } => "multi_quantile",
-            Self::Huber { .. } => "huber",
-            Self::PoissonDeviance => "poisson_deviance",
+            Self::Rmse(inner) => inner.name(),
+            Self::Mae(inner) => inner.name(),
+            Self::Mape(inner) => inner.name(),
+            Self::LogLoss(inner) => inner.name(),
+            Self::Accuracy(inner) => inner.name(),
+            Self::MarginAccuracy(inner) => inner.name(),
+            Self::Auc(inner) => inner.name(),
+            Self::MulticlassLogLoss(inner) => inner.name(),
+            Self::MulticlassAccuracy(inner) => inner.name(),
+            Self::Quantile(inner) => inner.name(),
+            Self::Huber(inner) => inner.name(),
+            Self::PoissonDeviance(inner) => inner.name(),
+            Self::Custom(inner) => inner.name(),
         }
     }
 }
