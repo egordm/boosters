@@ -10,11 +10,19 @@
 //! - `model.config().learning_rate` - training config
 //!
 //! This keeps the API surface small and avoids duplication.
+//!
+//! # Prediction
+//!
+//! - [`predict()`](GBDTModel::predict) - Returns probabilities for classification,
+//!   raw values for regression
+//! - [`predict_raw()`](GBDTModel::predict_raw) - Returns raw margin scores (no transform)
+//! - [`predict_row()`](GBDTModel::predict_row) - Single row prediction
 
 #[cfg(feature = "storage")]
 use std::path::Path;
 
 use crate::data::binned::BinnedDataset;
+use crate::data::{ColMatrix, DenseMatrix, RowMajor, ColMajor};
 use crate::inference::gbdt::UnrolledPredictor6;
 use crate::model::meta::ModelMeta;
 use crate::repr::gbdt::{Forest, ScalarLeaf};
@@ -224,25 +232,107 @@ impl GBDTModel {
     // Prediction
     // =========================================================================
 
-    /// Predict for a single row.
+    /// Predict for a single row, returning raw margins.
     ///
-    /// Returns raw margin scores (before any transform).
+    /// Returns raw margin scores before any transform (no sigmoid/softmax).
+    /// For transformed predictions, use [`predict()`](Self::predict) on a batch.
     pub fn predict_row(&self, features: &[f32]) -> Vec<f32> {
         self.forest.predict_row(features)
     }
 
-    /// Predict for multiple rows using optimized predictor.
+    /// Predict for multiple rows, returning transformed predictions.
+    ///
+    /// Returns probabilities for classification objectives (sigmoid for binary,
+    /// softmax for multiclass) and raw values for regression objectives.
+    ///
+    /// The transformation is determined by the objective used during training.
+    /// For models loaded from external formats without objective info, returns
+    /// raw margins.
     ///
     /// # Arguments
     ///
-    /// * `features` - Feature matrix, row-major (n_rows × n_features)
+    /// * `features` - Feature matrix in row-major layout (n_rows × n_features)
+    ///
+    /// # Returns
+    ///
+    /// Column-major matrix of predictions (n_rows × n_groups). Access with:
+    /// - `predictions[(row, group)]` - prediction for row at output group
+    /// - `predictions.col_slice(group)` - all predictions for one group
+    pub fn predict(&self, features: &DenseMatrix<f32, RowMajor>) -> ColMatrix<f32> {
+        let n_rows = features.num_rows();
+        let n_groups = self.meta.n_groups;
+        
+        // Get raw predictions
+        let mut raw = self.predict_raw_slice(features.as_slice(), n_rows);
+        
+        // Apply transformation if we have config with objective
+        if let Some(config) = &self.config {
+            config.objective.transform_predictions(&mut raw, n_rows, n_groups);
+        }
+        
+        // Convert to column-major matrix
+        // Raw predictions are in row-major order (n_rows × n_groups)
+        // Need to transpose to column-major
+        let mut col_data = vec![0.0f32; n_rows * n_groups];
+        for row in 0..n_rows {
+            for group in 0..n_groups {
+                col_data[group * n_rows + row] = raw[row * n_groups + group];
+            }
+        }
+        
+        DenseMatrix::<f32, ColMajor>::from_vec(col_data, n_rows, n_groups)
+    }
+
+    /// Predict for multiple rows, returning raw margin scores.
+    ///
+    /// Returns raw margin scores before any transformation (no sigmoid/softmax).
+    /// Use this when you need the untransformed model output, or when doing
+    /// custom post-processing.
+    ///
+    /// # Arguments
+    ///
+    /// * `features` - Feature matrix in row-major layout (n_rows × n_features)
+    ///
+    /// # Returns
+    ///
+    /// Column-major matrix of raw predictions (n_rows × n_groups).
+    pub fn predict_raw(&self, features: &DenseMatrix<f32, RowMajor>) -> ColMatrix<f32> {
+        let n_rows = features.num_rows();
+        let n_groups = self.meta.n_groups;
+        
+        let raw = self.predict_raw_slice(features.as_slice(), n_rows);
+        
+        // Convert to column-major matrix
+        let mut col_data = vec![0.0f32; n_rows * n_groups];
+        for row in 0..n_rows {
+            for group in 0..n_groups {
+                col_data[group * n_rows + row] = raw[row * n_groups + group];
+            }
+        }
+        
+        DenseMatrix::<f32, ColMajor>::from_vec(col_data, n_rows, n_groups)
+    }
+
+    /// Predict for multiple rows using slice input.
+    ///
+    /// This is the original low-level API. For most use cases, prefer
+    /// [`predict()`](Self::predict) or [`predict_raw()`](Self::predict_raw)
+    /// which accept structured matrix input.
+    ///
+    /// # Arguments
+    ///
+    /// * `features` - Feature slice, row-major (n_rows × n_features)
     /// * `n_rows` - Number of rows
     ///
     /// # Returns
     ///
-    /// Predictions, length = n_rows × n_groups
+    /// Raw predictions as flat slice, length = n_rows × n_groups
     pub fn predict_batch(&self, features: &[f32], n_rows: usize) -> Vec<f32> {
-        // Create the optimized predictor (borrows forest)
+        self.predict_raw_slice(features, n_rows)
+    }
+
+    /// Internal prediction that returns raw margins as Vec.
+    fn predict_raw_slice(&self, features: &[f32], n_rows: usize) -> Vec<f32> {
         let predictor = UnrolledPredictor6::new(&self.forest);
         let n_features = self.meta.n_features;
         let n_groups = self.meta.n_groups;
