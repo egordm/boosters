@@ -185,7 +185,7 @@ impl Metric for MetricFunction {
                 MulticlassAccuracy.compute(n_rows, n_outputs, predictions, targets, weights)
             }
             Self::Quantile { alpha } => {
-                QuantileMetric::new(vec![*alpha]).compute(n_rows, n_outputs, predictions, targets, weights)
+                QuantileMetric::compute_single(*alpha, n_rows, predictions, targets, weights)
             }
             Self::MultiQuantile { alphas } => {
                 QuantileMetric::new(alphas.clone()).compute(n_rows, n_outputs, predictions, targets, weights)

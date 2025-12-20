@@ -1,23 +1,31 @@
-//! Dataset wrapper for zero-copy NumPy array access.
+//! Optional Dataset wrapper for NumPy arrays.
+//!
+//! Note: For most use cases, pass NumPy arrays directly to `fit()`.
+//! This class is provided for users who want to pre-package data
+//! with labels, weights, and feature names.
 
 use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::prelude::*;
 
-/// Dataset wrapping feature matrix and optional labels/weights.
+/// Optional dataset wrapper for feature matrix and labels.
 ///
-/// This class provides a zero-copy wrapper around NumPy arrays for efficient
-/// data transfer to the training algorithm.
+/// **Note**: For most use cases, pass NumPy arrays directly to `fit()`.
+/// This class is provided for users who want to:
+/// - Pre-validate data before training
+/// - Store feature names with the data
+/// - Reuse the same dataset for multiple training runs
 ///
 /// # Example
 /// ```python
 /// import numpy as np
-/// from boosters_python import Dataset
+/// from boosters import Dataset, GBDTBooster
 ///
-/// X = np.random.randn(1000, 10).astype(np.float32)
-/// y = np.random.randn(1000).astype(np.float32)
+/// # Option 1: Direct fit (preferred)
+/// model = GBDTBooster()
+/// model.fit(X, y)
 ///
-/// dataset = Dataset(X, y)
-/// print(f"Rows: {dataset.n_rows}, Cols: {dataset.n_cols}")
+/// # Option 2: Using Dataset (optional)
+/// dataset = Dataset(X, y, feature_names=['a', 'b', 'c'])
 /// ```
 #[pyclass(name = "Dataset")]
 #[derive(Clone)]

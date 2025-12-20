@@ -84,6 +84,12 @@ impl<L: LeafValue> Forest<L> {
         self.tree_groups[idx]
     }
 
+    /// Get all tree group assignments as a slice.
+    #[inline]
+    pub fn tree_groups_slice(&self) -> &[u32] {
+        &self.tree_groups
+    }
+
     /// Iterate over trees.
     pub fn trees(&self) -> impl Iterator<Item = &Tree<L>> {
         self.trees.iter()

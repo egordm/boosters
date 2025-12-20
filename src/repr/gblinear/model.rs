@@ -112,6 +112,15 @@ impl LinearModel {
         self.weights[self.num_features * self.num_groups + group]
     }
 
+    /// Get all biases as a slice.
+    ///
+    /// Returns a slice of length `num_groups`.
+    #[inline]
+    pub fn biases(&self) -> &[f32] {
+        let offset = self.num_features * self.num_groups;
+        &self.weights[offset..offset + self.num_groups]
+    }
+
     /// Raw access to weights (for feature importance, serialization, etc.).
     #[inline]
     pub fn weights(&self) -> &[f32] {
