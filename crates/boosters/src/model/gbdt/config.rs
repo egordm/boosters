@@ -260,6 +260,63 @@ impl Default for GBDTConfig {
     }
 }
 
+impl GBDTConfig {
+    /// Convert to trainer-level parameters.
+    ///
+    /// This creates the internal `GBDTParams` used by the trainer from
+    /// the high-level configuration.
+    pub fn to_trainer_params(&self) -> crate::training::gbdt::GBDTParams {
+        use crate::training::gbdt::{GBDTParams, GainParams};
+        use crate::training::sampling::{ColSamplingParams, RowSamplingParams};
+
+        // Convert SamplingParams to RowSamplingParams
+        let row_sampling = if (self.sampling.subsample - 1.0).abs() < 1e-6 {
+            RowSamplingParams::None
+        } else {
+            RowSamplingParams::uniform(self.sampling.subsample)
+        };
+
+        // Convert SamplingParams to ColSamplingParams
+        let col_sampling = if (self.sampling.colsample_bytree - 1.0).abs() < 1e-6
+            && (self.sampling.colsample_bylevel - 1.0).abs() < 1e-6
+        {
+            ColSamplingParams::None
+        } else {
+            ColSamplingParams::Sample {
+                colsample_bytree: self.sampling.colsample_bytree,
+                colsample_bylevel: self.sampling.colsample_bylevel,
+                colsample_bynode: 1.0, // Not exposed in high-level config
+            }
+        };
+
+        // Convert RegularizationParams to GainParams
+        let gain = GainParams {
+            reg_lambda: self.regularization.lambda,
+            reg_alpha: self.regularization.alpha,
+            min_gain: self.regularization.min_gain,
+            min_child_weight: self.regularization.min_child_weight,
+            min_samples_leaf: self.regularization.min_samples_leaf,
+        };
+
+        GBDTParams {
+            n_trees: self.n_trees,
+            learning_rate: self.learning_rate,
+            growth_strategy: self.tree.growth_strategy,
+            max_onehot_cats: self.tree.max_onehot_cats,
+            gain,
+            row_sampling,
+            col_sampling,
+            n_threads: self.n_threads.map(|n| n.get()).unwrap_or(0),
+            cache_size: self.cache_size,
+            early_stopping_rounds: self.early_stopping_rounds.unwrap_or(0),
+            early_stopping_eval_set: 0, // Always use first eval set
+            verbosity: self.verbosity.clone(),
+            seed: self.seed,
+            linear_leaves: self.linear_leaves.clone(),
+        }
+    }
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -465,5 +522,87 @@ mod tests {
     fn test_config_default_trait() {
         let config = GBDTConfig::default();
         assert_eq!(config.n_trees, 100);
+    }
+
+    #[test]
+    fn test_to_trainer_params_conversion() {
+        use crate::training::sampling::{ColSamplingParams, RowSamplingParams};
+
+        let config = GBDTConfig::builder()
+            .n_trees(200)
+            .learning_rate(0.1)
+            .regularization(RegularizationParams {
+                lambda: 2.0,
+                alpha: 0.5,
+                min_gain: 0.01,
+                min_child_weight: 5.0,
+                min_samples_leaf: 3,
+            })
+            .sampling(SamplingParams {
+                subsample: 0.8,
+                colsample_bytree: 0.9,
+                colsample_bylevel: 0.7,
+            })
+            .tree(TreeParams::depth_wise(10))
+            .seed(123)
+            .early_stopping_rounds(10)
+            .n_threads(NonZeroUsize::new(4).unwrap())
+            .build()
+            .unwrap();
+
+        let params = config.to_trainer_params();
+
+        // Check boosting params
+        assert_eq!(params.n_trees, 200);
+        assert!((params.learning_rate - 0.1).abs() < 1e-6);
+        assert_eq!(params.seed, 123);
+        assert_eq!(params.early_stopping_rounds, 10);
+        assert_eq!(params.n_threads, 4);
+
+        // Check regularization/gain params
+        assert!((params.gain.reg_lambda - 2.0).abs() < 1e-6);
+        assert!((params.gain.reg_alpha - 0.5).abs() < 1e-6);
+        assert!((params.gain.min_gain - 0.01).abs() < 1e-6);
+        assert!((params.gain.min_child_weight - 5.0).abs() < 1e-6);
+        assert_eq!(params.gain.min_samples_leaf, 3);
+
+        // Check row sampling
+        if let RowSamplingParams::Uniform { subsample } = params.row_sampling {
+            assert!((subsample - 0.8).abs() < 1e-6);
+        } else {
+            panic!("Expected Uniform row sampling");
+        }
+
+        // Check column sampling
+        if let ColSamplingParams::Sample { colsample_bytree, colsample_bylevel, colsample_bynode } = params.col_sampling {
+            assert!((colsample_bytree - 0.9).abs() < 1e-6);
+            assert!((colsample_bylevel - 0.7).abs() < 1e-6);
+            assert!((colsample_bynode - 1.0).abs() < 1e-6); // Not exposed in high-level
+        } else {
+            panic!("Expected Sample column sampling");
+        }
+
+        // Check growth strategy
+        if let crate::training::gbdt::GrowthStrategy::DepthWise { max_depth } = params.growth_strategy {
+            assert_eq!(max_depth, 10);
+        } else {
+            panic!("Expected DepthWise growth strategy");
+        }
+    }
+
+    #[test]
+    fn test_to_trainer_params_no_sampling() {
+        use crate::training::sampling::{ColSamplingParams, RowSamplingParams};
+
+        let config = GBDTConfig::builder()
+            .sampling(SamplingParams::default()) // subsample=1.0, colsample_*=1.0
+            .build()
+            .unwrap();
+
+        let params = config.to_trainer_params();
+
+        // Should be None when all rates are 1.0
+        assert!(matches!(params.row_sampling, RowSamplingParams::None));
+        assert!(matches!(params.col_sampling, ColSamplingParams::None));
     }
 }

@@ -12,8 +12,11 @@
 #[cfg(feature = "storage")]
 use std::path::Path;
 
+use crate::data::Dataset;
 use crate::model::meta::{ModelMeta, TaskKind};
 use crate::repr::gblinear::LinearModel;
+use crate::training::gblinear::GBLinearTrainer;
+use crate::training::ObjectiveFn;
 
 use super::GBLinearConfig;
 
@@ -67,6 +70,63 @@ pub struct GBLinearModel {
 }
 
 impl GBLinearModel {
+    /// Train a new GBLinear model.
+    ///
+    /// # Arguments
+    ///
+    /// * `dataset` - Training dataset (features, targets, optional weights)
+    /// * `config` - Training configuration (objective, metric, hyperparameters)
+    ///
+    /// # Returns
+    ///
+    /// Trained model, or `None` if training fails.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use boosters::model::gblinear::{GBLinearConfig, GBLinearModel};
+    /// use boosters::training::{Objective, Metric};
+    /// use boosters::data::Dataset;
+    ///
+    /// let config = GBLinearConfig::builder()
+    ///     .objective(Objective::logistic())
+    ///     .metric(Metric::auc())
+    ///     .n_rounds(100)
+    ///     .learning_rate(0.5)
+    ///     .build()
+    ///     .unwrap();
+    ///
+    /// let model = GBLinearModel::train(&dataset, config)?;
+    /// ```
+    pub fn train(dataset: &Dataset, config: GBLinearConfig) -> Option<Self> {
+        let n_features = dataset.n_features();
+        let n_outputs = config.objective.n_outputs();
+        
+        // Get task kind from objective (not inferred from n_outputs)
+        // This correctly handles multi-output regression (e.g., multi-quantile)
+        let task = config.objective.task_kind();
+        
+        // Convert config to trainer params
+        let params = config.to_trainer_params();
+        
+        // Create trainer with objective and metric from config
+        let trainer = GBLinearTrainer::new(
+            config.objective.clone(),
+            config.metric.clone(),
+            params,
+        );
+        let linear_model = trainer.train(dataset, &[])?;
+
+        let meta = ModelMeta {
+            n_features,
+            n_groups: n_outputs,
+            task,
+            ..Default::default()
+        };
+
+        Some(Self { model: linear_model, meta, config: Some(config) })
+    }
+
     /// Create a model from an existing LinearModel.
     ///
     /// Config will be `None` since the training parameters are unknown.
