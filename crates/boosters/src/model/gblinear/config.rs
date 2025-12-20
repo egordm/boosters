@@ -261,6 +261,28 @@ impl GBLinearConfig {
             lambda: self.lambda,
         }
     }
+
+    /// Convert to trainer-level parameters.
+    ///
+    /// This creates the internal `GBLinearParams` used by the trainer from
+    /// the high-level configuration.
+    pub fn to_trainer_params(&self) -> crate::training::gblinear::GBLinearParams {
+        use crate::training::gblinear::GBLinearParams;
+
+        GBLinearParams {
+            n_rounds: self.n_rounds,
+            learning_rate: self.learning_rate,
+            alpha: self.alpha,
+            lambda: self.lambda,
+            parallel: self.parallel,
+            feature_selector: self.feature_selector.clone(),
+            seed: self.seed,
+            early_stopping_rounds: self.early_stopping_rounds.unwrap_or(0),
+            early_stopping_eval_set: 0, // Always use first eval set
+            verbosity: self.verbosity.clone(),
+            n_threads: self.n_threads.map(|n| n.get()).unwrap_or(0),
+        }
+    }
 }
 
 impl Default for GBLinearConfig {
@@ -393,5 +415,42 @@ mod tests {
     fn test_config_default_trait() {
         let config = GBLinearConfig::default();
         assert_eq!(config.n_rounds, 100);
+    }
+
+    #[test]
+    fn test_to_trainer_params_conversion() {
+        let config = GBLinearConfig::builder()
+            .n_rounds(200)
+            .learning_rate(0.3)
+            .alpha(0.5)
+            .lambda(2.0)
+            .parallel(false)
+            .seed(123)
+            .early_stopping_rounds(10)
+            .n_threads(NonZeroUsize::new(4).unwrap())
+            .build()
+            .unwrap();
+
+        let params = config.to_trainer_params();
+
+        // Check basic params
+        assert_eq!(params.n_rounds, 200);
+        assert!((params.learning_rate - 0.3).abs() < 1e-6);
+        assert!((params.alpha - 0.5).abs() < 1e-6);
+        assert!((params.lambda - 2.0).abs() < 1e-6);
+        assert!(!params.parallel);
+        assert_eq!(params.seed, 123);
+        assert_eq!(params.early_stopping_rounds, 10);
+        assert_eq!(params.n_threads, 4);
+    }
+
+    #[test]
+    fn test_to_trainer_params_no_early_stopping() {
+        let config = GBLinearConfig::builder().build().unwrap();
+
+        let params = config.to_trainer_params();
+
+        // Early stopping should be 0 when not set
+        assert_eq!(params.early_stopping_rounds, 0);
     }
 }

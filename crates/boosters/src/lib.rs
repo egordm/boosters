@@ -5,31 +5,52 @@
 //!
 //! # Module Structure
 //!
+//! - [`model`]: High-level model types (`GBDTModel`, `GBLinearModel`)
 //! - [`data`]: Data matrix types and dataset utilities
-//! - [`inference`]: Prediction infrastructure (trees, forests, linear models)
 //! - [`training`]: Training infrastructure (objectives, metrics, trainers)
 //! - [`compat`]: External model loading (XGBoost, LightGBM)
 //!
-//! # Quick Start: Training
+//! # Quick Start: Training (Recommended)
+//!
+//! Use the high-level model API with configuration builders:
 //!
 //! ```ignore
-//! use boosters::data::{BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMajor};
-//! use boosters::training::{GBDTTrainer, GBDTParams, SquaredLoss, Rmse};
+//! use boosters::model::GBDTModel;
+//! use boosters::model::gbdt::GBDTConfig;
+//! use boosters::training::{Objective, Metric};
 //!
-//! // Prepare column-major data for training
-//! let row_matrix: DenseMatrix<f32, RowMajor> = DenseMatrix::from_vec(features, n_rows, n_cols);
-//! let col_matrix: ColMatrix<f32> = row_matrix.to_layout();
-//! let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 256).build()?;
+//! // Build configuration
+//! let config = GBDTConfig::builder()
+//!     .objective(Objective::squared_error())
+//!     .metric(Metric::rmse())
+//!     .n_trees(100)
+//!     .learning_rate(0.1)
+//!     .build()?;
 //!
 //! // Train model
-//! let trainer = GBDTTrainer::new(SquaredLoss, Rmse, GBDTParams::default());
-//! let forest = trainer.train(&dataset, &targets, &[], &[])?;
+//! let model = GBDTModel::train(&dataset, &targets, &[], config)?;
 //!
 //! // Predict
-//! let prediction = forest.predict_row(&test_row);
+//! let predictions = model.predict_batch(&features, n_rows);
+//!
+//! // Save/Load
+//! model.save("model.bstr")?;
+//! let loaded = GBDTModel::load("model.bstr")?;
 //! ```
 //!
-//! # Quick Start: Loading XGBoost Models
+//! # Advanced: Direct Trainer Access
+//!
+//! For fine-grained control, use the trainer API directly:
+//!
+//! ```ignore
+//! use boosters::training::{GBDTTrainer, GBDTParams, SquaredLoss, Rmse};
+//!
+//! let params = GBDTParams { n_trees: 100, ..Default::default() };
+//! let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+//! let forest = trainer.train(&binned_dataset, &targets, &[], &[])?;
+//! ```
+//!
+//! # Loading XGBoost Models
 //!
 //! ```ignore
 //! use boosters::compat::xgboost::XgbModel;

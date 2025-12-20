@@ -343,6 +343,47 @@ impl MetricFn for Metric {
     }
 }
 
+/// Blanket implementation for `Option<Metric>`.
+///
+/// When `None`, acts as a no-op metric (returns NaN, no name).
+/// This allows configs with optional metrics to pass `None` to trainers.
+impl MetricFn for Option<Metric> {
+    fn compute(
+        &self,
+        n_rows: usize,
+        n_outputs: usize,
+        predictions: &[f32],
+        targets: &[f32],
+        weights: &[f32],
+    ) -> f64 {
+        match self {
+            Some(m) => m.compute(n_rows, n_outputs, predictions, targets, weights),
+            None => f64::NAN,
+        }
+    }
+
+    fn expected_prediction_kind(&self) -> PredictionKind {
+        match self {
+            Some(m) => m.expected_prediction_kind(),
+            None => PredictionKind::Margin, // Default to margin (no transform)
+        }
+    }
+
+    fn higher_is_better(&self) -> bool {
+        match self {
+            Some(m) => m.higher_is_better(),
+            None => false,
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        match self {
+            Some(m) => m.name(),
+            None => "",
+        }
+    }
+}
+
 // =============================================================================
 // Metric Trait
 // =============================================================================

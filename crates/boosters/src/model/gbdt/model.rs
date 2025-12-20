@@ -18,8 +18,8 @@ use crate::data::binned::BinnedDataset;
 use crate::inference::gbdt::UnrolledPredictor6;
 use crate::model::meta::{ModelMeta, TaskKind};
 use crate::repr::gbdt::{Forest, ScalarLeaf};
-use crate::training::gbdt::{GBDTParams, GBDTTrainer};
-use crate::training::{MetricFn, ObjectiveFn};
+use crate::training::gbdt::GBDTTrainer;
+use crate::training::ObjectiveFn;
 
 use super::GBDTConfig;
 
@@ -87,36 +87,51 @@ impl GBDTModel {
     /// * `dataset` - Binned training dataset
     /// * `targets` - Target values (length = n_rows × n_outputs)
     /// * `weights` - Optional sample weights (empty slice for uniform)
-    /// * `objective` - Objective function for training
-    /// * `metric` - Evaluation metric
-    /// * `params` - Training parameters
+    /// * `config` - Training configuration (objective, metric, hyperparameters)
     ///
     /// # Returns
     ///
     /// Trained model, or `None` if training fails.
-    pub fn train<O, M>(
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use boosters::model::gbdt::{GBDTConfig, GBDTModel};
+    /// use boosters::training::{Objective, Metric};
+    ///
+    /// let config = GBDTConfig::builder()
+    ///     .objective(Objective::logistic())
+    ///     .metric(Metric::auc())
+    ///     .n_trees(100)
+    ///     .learning_rate(0.1)
+    ///     .build()
+    ///     .unwrap();
+    ///
+    /// let model = GBDTModel::train(&dataset, &targets, &[], config);
+    /// ```
+    pub fn train(
         dataset: &BinnedDataset,
         targets: &[f32],
         weights: &[f32],
-        objective: O,
-        metric: M,
-        params: GBDTParams,
-    ) -> Option<Self>
-    where
-        O: ObjectiveFn,
-        M: MetricFn,
-    {
+        config: GBDTConfig,
+    ) -> Option<Self> {
         let n_features = dataset.n_features();
-        let n_outputs = objective.n_outputs();
-
-        let trainer = GBDTTrainer::new(objective, metric, params);
+        let n_outputs = config.objective.n_outputs();
+        
+        // Get task kind from objective (not inferred from n_outputs)
+        // This correctly handles multi-output regression (e.g., multi-quantile)
+        let task = config.objective.task_kind();
+        
+        // Convert config to trainer params
+        let params = config.to_trainer_params();
+        
+        // Create trainer with objective and metric from config
+        let trainer = GBDTTrainer::new(
+            config.objective.clone(),
+            config.metric.clone(),
+            params,
+        );
         let forest = trainer.train(dataset, targets, weights, &[])?;
-
-        // Infer task kind from n_outputs
-        let task = match n_outputs {
-            1 => TaskKind::Regression, // Could also be binary classification
-            n => TaskKind::MulticlassClassification { n_classes: n },
-        };
 
         let meta = ModelMeta {
             n_features,
@@ -126,7 +141,7 @@ impl GBDTModel {
             ..Default::default()
         };
 
-        Some(Self { forest, meta, config: None })
+        Some(Self { forest, meta, config: Some(config) })
     }
 
     /// Create a model from an existing forest and metadata.

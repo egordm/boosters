@@ -13,18 +13,21 @@
 //!
 //! ```ignore
 //! use boosters::model::{GBDTModel, TaskKind};
-//! use boosters::training::GBDTParams;
-//! use boosters::training::Objective;
+//! use boosters::model::gbdt::GBDTConfig;
+//! use boosters::training::{Objective, Metric};
 //!
 //! // Train a model
-//! let params = GBDTParams {
-//!     n_trees: 50,
-//!     ..Default::default()
-//! };
-//! let model = GBDTModel::train(&data, Objective::SquaredError, params)?;
+//! let config = GBDTConfig::builder()
+//!     .objective(Objective::squared_error())
+//!     .metric(Metric::rmse())
+//!     .n_trees(50)
+//!     .learning_rate(0.1)
+//!     .build()
+//!     .unwrap();
+//! let model = GBDTModel::train(&data, &labels, &[], config)?;
 //!
 //! // Make predictions
-//! let predictions = model.predict(&new_data);
+//! let predictions = model.predict_batch(&new_data, n_rows);
 //!
 //! // Save and load
 //! model.save("model.bstr")?;
