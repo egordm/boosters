@@ -1048,7 +1048,9 @@ impl<L: LeafValue> MutableTree<L> {
             builder.build(num_nodes)
         };
 
-        // Check if gains/covers were populated (any non-zero values)
+        // Check if gains/covers were populated (any non-zero values).
+        // During training, the grower always populates stats. But loaders
+        // (XGBoost/LightGBM) may not have this data, so we check.
         let has_stats = self.gains.iter().any(|&g| g != 0.0)
             || self.covers.iter().any(|&c| c != 0.0);
 

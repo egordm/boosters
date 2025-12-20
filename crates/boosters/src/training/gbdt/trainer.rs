@@ -267,17 +267,19 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
         );
 
         // Initialize linear leaf trainer if configured
-        let mut linear_trainer = self.params.linear_leaves.as_ref().map(|config| {
+        let (mut linear_trainer, bin_mappers) = if let Some(config) = &self.params.linear_leaves {
             // Estimate max samples per leaf: use n_rows as upper bound
             // (worst case: single-leaf tree for some output)
             // This may overallocate but is safe; typical usage is much smaller
-            LeafLinearTrainer::new(config.clone(), n_rows)
-        });
-
-        // Create bin mappers array for BinnedAccessor
-        let bin_mappers: Vec<_> = (0..dataset.n_features())
-            .map(|f| dataset.bin_mapper(f).clone())
-            .collect();
+            let trainer = LeafLinearTrainer::new(config.clone(), n_rows);
+            // Only clone bin mappers when linear leaves are enabled
+            let mappers: Vec<_> = (0..dataset.n_features())
+                .map(|f| dataset.bin_mapper(f).clone())
+                .collect();
+            (Some(trainer), mappers)
+        } else {
+            (None, Vec::new())
+        };
 
         let mut row_sampler = RowSampler::new(
             self.params.row_sampling.clone(),

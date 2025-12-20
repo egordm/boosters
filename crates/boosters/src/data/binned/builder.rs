@@ -432,13 +432,15 @@ impl BinnedDatasetBuilder {
         for col_idx in 0..n_cols {
             let max_bins = config.max_bins_for_feature(col_idx);
 
+            // Get column slice directly (O(1) for column-major layout)
+            let col_data = data.col_slice(col_idx);
+
             // Collect non-NaN values for this column
             let mut values: Vec<f32> = Vec::with_capacity(n_rows);
             let mut min_val = f32::MAX;
             let mut max_val = f32::MIN;
 
-            for row_idx in 0..n_rows {
-                let val = data.get(row_idx, col_idx).copied().unwrap_or(f32::NAN);
+            for &val in col_data {
                 if val.is_finite() {
                     values.push(val);
                     min_val = min_val.min(val);
@@ -504,9 +506,10 @@ impl BinnedDatasetBuilder {
             };
 
             // Bin each value using binary search on bounds
-            let bins: Vec<u32> = (0..n_rows)
-                .map(|row_idx| {
-                    let val = data.get(row_idx, col_idx).copied().unwrap_or(f32::NAN);
+            // Use column slice directly for better cache efficiency
+            let bins: Vec<u32> = col_data
+                .iter()
+                .map(|&val| {
                     if !val.is_finite() {
                         0 // Map NaN to bin 0
                     } else {
