@@ -46,13 +46,13 @@ Record performance and output baselines for regression testing.
 
 **Tasks**:
 
-- [ ] 0.1.1: Run benchmark suite and save results:
+- [x] 0.1.1: Run benchmark suite and save results:
   - `cargo bench --bench prediction_core`
   - `cargo bench --bench training_gbdt`
   - Save to `docs/benchmarks/<date>-pre-refactor-baseline.md` (use actual date)
-- [ ] 0.1.2: Select 3 representative XGBoost compat test cases
-- [ ] 0.1.3: Run selected tests, capture exact prediction outputs to test file
-- [ ] 0.1.4: Commit baseline file (can be in `tests/` or `docs/`)
+- [x] 0.1.2: Select 3 representative XGBoost compat test cases
+- [x] 0.1.3: Run selected tests, capture exact prediction outputs to test file
+- [x] 0.1.4: Commit baseline file (can be in `tests/` or `docs/`)
 
 **Definition of Done**:
 
