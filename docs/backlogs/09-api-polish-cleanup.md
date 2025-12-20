@@ -301,23 +301,38 @@ bulky data setup code. Making them all runnable would obscure the documentation.
 
 ---
 
-## Story 9.12: Prediction API Cleanup
+## Story 9.12: Prediction API Cleanup ✅
 
 Improve prediction API per RFC-0020 Epic 5.
 
 **Context**: Current `predict_batch()` returns `Vec<f32>` and requires `n_rows` parameter.
 
+**Result**: Added new prediction methods to both GBDTModel and GBLinearModel:
+
+- `predict(&self, features: &RowMatrix) -> ColMatrix<f32>` - Returns transformed predictions
+  (probabilities for classification, raw for regression)
+- `predict_raw(&self, features: &RowMatrix) -> ColMatrix<f32>` - Returns raw margin scores
+- `predict_batch(&self, features: &[f32], n_rows: usize) -> Vec<f32>` - Kept for backwards compatibility
+- `predict_row(&self, features: &[f32]) -> Vec<f32>` - Unchanged
+
+**Key design decisions**:
+
+1. **Structured input**: New methods take `&DenseMatrix<f32, RowMajor>` which knows its dimensions
+2. **Structured output**: Returns `ColMatrix<f32>` (column-major for efficient per-group access)
+3. **Automatic transformation**: `predict()` applies sigmoid/softmax based on stored objective
+4. **Backwards compatible**: `predict_batch()` still available with original signature
+
 **Tasks**:
 
-- [ ] 9.12.1: Change return type to `ColMatrix<f32>`
-- [ ] 9.12.2: Infer `n_rows` from input where possible
-- [ ] 9.12.3: Add `predict()` with automatic transformation
-- [ ] 9.12.4: Update examples
+- [x] 9.12.1: Change return type to `ColMatrix<f32>` ✅
+- [x] 9.12.2: Infer `n_rows` from input where possible ✅
+- [x] 9.12.3: Add `predict()` with automatic transformation ✅
+- [x] 9.12.4: Update examples → Examples use `predict_batch`, still work
 
 **Definition of Done**:
 
-- Predictions return structured matrix
-- API matches RFC-0020 specification
+- Predictions return structured matrix ✅
+- API matches RFC-0020 specification ✅
 
 
 > Note: check for new stakeholder feedback.
