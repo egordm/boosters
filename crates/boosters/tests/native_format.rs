@@ -188,11 +188,11 @@ fn linear_simple_roundtrip() {
     let bytes = model.to_bytes(100).expect("serialize");
     let restored = LinearModel::from_bytes(&bytes).expect("deserialize");
 
-    assert_eq!(model.num_features(), restored.num_features());
-    assert_eq!(model.num_groups(), restored.num_groups());
+    assert_eq!(model.n_features(), restored.n_features());
+    assert_eq!(model.n_groups(), restored.n_groups());
 
     // Check weights
-    for f in 0..model.num_features() {
+    for f in 0..model.n_features() {
         assert_eq!(
             model.weight(f, 0),
             restored.weight(f, 0),
@@ -209,9 +209,9 @@ fn linear_multioutput_roundtrip() {
     let bytes = model.to_bytes(50).expect("serialize");
     let restored = LinearModel::from_bytes(&bytes).expect("deserialize");
 
-    assert_eq!(model.num_groups(), restored.num_groups());
-    for g in 0..model.num_groups() {
-        for f in 0..model.num_features() {
+    assert_eq!(model.n_groups(), restored.n_groups());
+    for g in 0..model.n_groups() {
+        for f in 0..model.n_features() {
             assert_eq!(
                 model.weight(f, g),
                 restored.weight(f, g),

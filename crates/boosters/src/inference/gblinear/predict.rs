@@ -42,8 +42,8 @@ pub trait LinearModelPredict {
 impl LinearModelPredict for LinearModel {
     fn predict_col_major(&self, data: &crate::data::ColMatrix<f32>, output: &mut [f32]) {
         let num_rows = data.num_rows();
-        let num_groups = self.num_groups();
-        let num_features = self.num_features();
+        let num_groups = self.n_groups();
+        let num_features = self.n_features();
         debug_assert_eq!(output.len(), num_rows * num_groups);
 
         // Initialize with bias (column-major: group-first)
@@ -62,8 +62,8 @@ impl LinearModelPredict for LinearModel {
     }
 
     fn predict_row(&self, features: &[f32], base_score: &[f32]) -> Vec<f32> {
-        let num_features = self.num_features();
-        let num_groups = self.num_groups();
+        let num_features = self.n_features();
+        let num_groups = self.n_groups();
 
         debug_assert!(
             features.len() >= num_features,
@@ -94,8 +94,8 @@ impl LinearModelPredict for LinearModel {
         base_score: &[f32],
     ) -> PredictionOutput {
         let num_rows = data.num_rows();
-        let num_features = self.num_features();
-        let num_groups = self.num_groups();
+        let num_features = self.n_features();
+        let num_groups = self.n_groups();
         let mut output = vec![0.0; num_rows * num_groups];
 
         // Column-major: output[group * num_rows + row] = prediction
@@ -124,8 +124,8 @@ impl LinearModelPredict for LinearModel {
         base_score: &[f32],
     ) -> PredictionOutput {
         let num_rows = data.num_rows();
-        let num_features = self.num_features();
-        let num_groups = self.num_groups();
+        let num_features = self.n_features();
+        let num_groups = self.n_groups();
 
         // First collect row-major results per row (each row returns its groups)
         let row_outputs: Vec<Vec<f32>> = (0..num_rows)

@@ -588,7 +588,7 @@ mod tests {
         let model = trainer.train(&train, &[]).unwrap();
 
         // Model should have 3 output groups
-        assert_eq!(model.num_groups(), 3);
+        assert_eq!(model.n_groups(), 3);
 
         // Verify model produces different outputs for different classes
         let preds0 = model.predict_row(&[2.0, 1.0], &[0.0, 0.0, 0.0]);
@@ -627,6 +627,6 @@ mod tests {
         let trainer = GBLinearTrainer::new(LogisticLoss, LogLoss, params);
         let model = trainer.train(&train, &[]).unwrap();
 
-        assert_eq!(model.num_groups(), 1);
+        assert_eq!(model.n_groups(), 1);
     }
 }

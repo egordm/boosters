@@ -209,7 +209,7 @@ fn train_multi_quantile_regression() {
     let model = trainer.train(&train, &[]).unwrap();
 
     // Verify model has correct number of output groups
-    assert_eq!(model.num_groups(), num_quantiles);
+    assert_eq!(model.n_groups(), num_quantiles);
 
     // Get predictions on test set
     let output = model.predict(&test_data, &vec![0.0; num_quantiles]);

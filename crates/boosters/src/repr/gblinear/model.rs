@@ -82,13 +82,13 @@ impl LinearModel {
 
     /// Number of input features.
     #[inline]
-    pub fn num_features(&self) -> usize {
+    pub fn n_features(&self) -> usize {
         self.num_features
     }
 
     /// Number of output groups.
     #[inline]
-    pub fn num_groups(&self) -> usize {
+    pub fn n_groups(&self) -> usize {
         self.num_groups
     }
 
@@ -176,8 +176,8 @@ mod tests {
         let weights = vec![0.5, 0.3, 0.1].into_boxed_slice(); // w0, w1, bias
         let model = LinearModel::new(weights, 2, 1);
 
-        assert_eq!(model.num_features(), 2);
-        assert_eq!(model.num_groups(), 1);
+        assert_eq!(model.n_features(), 2);
+        assert_eq!(model.n_groups(), 1);
         assert_eq!(model.weight(0, 0), 0.5);
         assert_eq!(model.weight(1, 0), 0.3);
         assert_eq!(model.bias(0), 0.1);
@@ -206,8 +206,8 @@ mod tests {
     fn linear_model_zeros() {
         let model = LinearModel::zeros(3, 2);
 
-        assert_eq!(model.num_features(), 3);
-        assert_eq!(model.num_groups(), 2);
+        assert_eq!(model.n_features(), 3);
+        assert_eq!(model.n_groups(), 2);
         assert_eq!(model.weights().len(), 8); // (3+1) * 2
         assert!(model.weights().iter().all(|&w| w == 0.0));
     }

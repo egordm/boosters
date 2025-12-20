@@ -62,12 +62,12 @@ impl GBLinearModel {
 
     /// Number of input features.
     pub fn n_features(&self) -> usize {
-        self.model.num_features()
+        self.model.n_features()
     }
 
     /// Number of output groups.
     pub fn n_groups(&self) -> usize {
-        self.model.num_groups()
+        self.model.n_groups()
     }
 
     /// Task type.
@@ -212,13 +212,13 @@ impl GBLinearModel {
         let model = LinearModel::load(path)?;
 
         let meta = ModelMeta {
-            n_features: model.num_features(),
-            n_groups: model.num_groups(),
-            task: if model.num_groups() == 1 {
+            n_features: model.n_features(),
+            n_groups: model.n_groups(),
+            task: if model.n_groups() == 1 {
                 TaskKind::Regression
             } else {
                 TaskKind::MulticlassClassification {
-                    n_classes: model.num_groups(),
+                    n_classes: model.n_groups(),
                 }
             },
             ..Default::default()
@@ -243,13 +243,13 @@ impl GBLinearModel {
         let model = LinearModel::from_bytes(bytes)?;
 
         let meta = ModelMeta {
-            n_features: model.num_features(),
-            n_groups: model.num_groups(),
-            task: if model.num_groups() == 1 {
+            n_features: model.n_features(),
+            n_groups: model.n_groups(),
+            task: if model.n_groups() == 1 {
                 TaskKind::Regression
             } else {
                 TaskKind::MulticlassClassification {
-                    n_classes: model.num_groups(),
+                    n_classes: model.n_groups(),
                 }
             },
             ..Default::default()

@@ -76,7 +76,7 @@ fn train_multioutput_classification() {
     let model = trainer.train(&train, &[]).unwrap();
 
     // Verify model has correct number of output groups
-    assert_eq!(model.num_groups(), num_class);
+    assert_eq!(model.n_groups(), num_class);
 
     // Verify predictions exist for all classes
     let output: PredictionOutput = model.predict(&data, &vec![0.0; num_class]);

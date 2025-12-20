@@ -114,16 +114,16 @@ impl SelectorState {
         lambda: f32,
     ) {
         match self {
-            Self::Cyclic(s) => s.reset(model.num_features()),
-            Self::Shuffle(s) => s.reset(model.num_features()),
-            Self::Random(s) => s.reset(model.num_features()),
+            Self::Cyclic(s) => s.reset(model.n_features()),
+            Self::Shuffle(s) => s.reset(model.n_features()),
+            Self::Random(s) => s.reset(model.n_features()),
             Self::Greedy(s) => {
                 s.setup(model, data, buffer, output, alpha, lambda);
-                s.reset(model.num_features());
+                s.reset(model.n_features());
             }
             Self::Thrifty(s) => {
                 s.setup(model, data, buffer, output, alpha, lambda);
-                s.reset(model.num_features());
+                s.reset(model.n_features());
             }
         }
     }
@@ -406,7 +406,7 @@ impl GreedySelector {
         alpha: f32,
         lambda: f32,
     ) {
-        let num_features = model.num_features();
+        let num_features = model.n_features();
         // Column-major: use output-specific slices for direct indexing by row
         let grad_hess = buffer.output_pairs(output);
 
@@ -557,7 +557,7 @@ impl ThriftySelector {
         alpha: f32,
         lambda: f32,
     ) {
-        let num_features = model.num_features();
+        let num_features = model.n_features();
         // Column-major: use output-specific slices for direct indexing by row
         let grad_hess = buffer.output_pairs(output);
 
