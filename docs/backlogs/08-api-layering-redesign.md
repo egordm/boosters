@@ -77,13 +77,13 @@ Create empty module structure per RFC layout (files can be empty or have placeho
 
 **Tasks**:
 
-- [ ] 1.1.1: Create all new module directories and files:
+- [x] 1.1.1: Create all new module directories and files:
   - `model/mod.rs`, `model/gbdt.rs`, `model/gblinear.rs`
   - `training/mod.rs`, `training/objectives/mod.rs`, `training/metrics/mod.rs`
   - `training/gbdt/mod.rs`, `training/gblinear/mod.rs`
   - `inference/mod.rs`, `inference/gbdt/mod.rs`, `inference/gblinear/mod.rs`
   - `repr/mod.rs`
-- [ ] 1.1.2: Update `lib.rs` to declare new modules (can be empty initially)
+- [x] 1.1.2: Update `lib.rs` to declare new modules (can be empty initially)
 
 **Note**: `inference/` module may remain empty initially; created for future compatibility.
 

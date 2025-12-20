@@ -7,7 +7,7 @@ use crate::data::Dataset;
 use crate::inference::common::PredictionKind;
 
 use super::metrics::Metric;
-use super::objectives::Objective;
+use super::objectives::ObjectiveFn;
 
 // =============================================================================
 // MetricValue
@@ -103,14 +103,14 @@ impl<'a> EvalSet<'a> {
 /// );
 /// let early_stop_value = evaluator.early_stop_value(&metrics, eval_set_idx);
 /// ```
-pub struct Evaluator<'a, O: Objective, M: Metric> {
+pub struct Evaluator<'a, O: ObjectiveFn, M: Metric> {
     objective: &'a O,
     metric: &'a M,
     n_outputs: usize,
     transform_buffer: Vec<f32>,
 }
 
-impl<'a, O: Objective, M: Metric> Evaluator<'a, O, M> {
+impl<'a, O: ObjectiveFn, M: Metric> Evaluator<'a, O, M> {
     /// Create a new evaluator.
     ///
     /// # Arguments

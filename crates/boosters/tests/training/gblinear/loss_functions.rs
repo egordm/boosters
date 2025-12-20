@@ -9,7 +9,7 @@ use boosters::data::Dataset;
 use boosters::inference::LinearModelPredict;
 use boosters::training::{
     Accuracy, GBLinearParams, GBLinearTrainer, HingeLoss, LogLoss, LogisticLoss, MarginAccuracy,
-    Objective, PseudoHuberLoss, Rmse, SquaredLoss, Verbosity,
+    ObjectiveFn, PseudoHuberLoss, Rmse, SquaredLoss, Verbosity,
 };
 
 // =============================================================================
