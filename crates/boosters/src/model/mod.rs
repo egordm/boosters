@@ -33,7 +33,7 @@
 
 mod meta;
 pub mod gbdt;
-mod gblinear;
+pub mod gblinear;
 
 pub use meta::{ModelMeta, TaskKind, FeatureType};
 pub use gbdt::GBDTModel;
