@@ -175,10 +175,10 @@ Define minimal required methods with sensible optional defaults.
 
 **Tasks**:
 
-- [ ] 2.1.1: Audit existing objective trait in `training/objectives/` - identify current method set
-- [ ] 2.1.2: Define required methods: `compute_gradients()`, `compute_base_score()`
-- [ ] 2.1.3: Add optional methods with defaults: `n_outputs()`, `transform_predictions()`, `task_kind()`, `name()`
-- [ ] 2.1.4: Update all implementations to match new signature
+- [x] 2.1.1: Audit existing objective trait in `training/objectives/` - identify current method set
+- [x] 2.1.2: Define required methods: `compute_gradients()`, `compute_base_score()`
+- [x] 2.1.3: Add optional methods with defaults: `n_outputs()`, `transform_predictions()`, `task_kind()`, `name()`
+- [x] 2.1.4: Update all implementations to match new signature
 
 **Definition of Done**:
 
@@ -200,10 +200,10 @@ Ensure enum holds pre-constructed structs with trivial delegation.
 
 **Tasks**:
 
-- [ ] 2.2.1: Verify enum variants hold actual structs (not raw data)
-- [ ] 2.2.2: Implement `ObjectiveFn` for `Objective` with simple match-delegation
-- [ ] 2.2.3: Add `Custom(Arc<dyn ObjectiveFn>)` variant for runtime polymorphism
-- [ ] 2.2.4: Implement `Default` (returns `SquaredLoss`)
+- [x] 2.2.1: Verify enum variants hold actual structs (not raw data)
+- [x] 2.2.2: Implement `ObjectiveFn` for `Objective` with simple match-delegation
+- [x] 2.2.3: Add `Custom(Arc<dyn ObjectiveFn>)` variant for runtime polymorphism
+- [x] 2.2.4: Implement `Default` (returns `SquaredLoss`)
 
 **Definition of Done**:
 
@@ -227,11 +227,11 @@ Apply same patterns to metrics.
 
 **Tasks**:
 
-- [ ] 2.3.1: Audit existing metric trait
-- [ ] 2.3.2: Define `MetricFn` with `compute()`, `name()`, `higher_is_better()`
-- [ ] 2.3.3: Implement `Metric` enum with delegation
-- [ ] 2.3.4: Add `Custom(Arc<dyn MetricFn>)` variant
-- [ ] 2.3.5: Implement `Default` (returns `Rmse`)
+- [x] 2.3.1: Audit existing metric trait
+- [x] 2.3.2: Define `MetricFn` with `compute()`, `name()`, `higher_is_better()`
+- [x] 2.3.3: Implement `Metric` enum with delegation
+- [x] 2.3.4: Add `Custom(Arc<dyn MetricFn>)` variant
+- [x] 2.3.5: Implement `Default` (returns `Rmse`)
 
 **Definition of Done**:
 
