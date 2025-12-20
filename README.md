@@ -18,36 +18,47 @@ boosters is a gradient boosting implementation written from scratch in Rust, des
 ### Training a Model
 
 ```rust
-use boosters::data::{BinnedDatasetBuilder, DenseMatrix, RowMajor};
-use boosters::training::{GBDTTrainer, GBDTParams, SquaredLoss, Rmse};
+use boosters::model::{GBDTModel, gbdt::GBDTConfig};
+use boosters::data::{Dataset, RowMatrix};
+use boosters::training::{Objective, Metric};
 
-// Prepare data (row-major format)
-let features: DenseMatrix<f32, RowMajor> = DenseMatrix::from_vec(data, n_samples, n_features);
+// Prepare data
+let features = RowMatrix::from_vec(data, n_samples, n_features);
 let labels: Vec<f32> = /* your targets */;
 
-// Bin the data for histogram-based training
-let dataset = BinnedDatasetBuilder::from_row_matrix(&features, 256).build()?;
+// Create dataset with binned features for histogram-based training
+let dataset = Dataset::from_parts(features, labels.clone(), None);
 
-// Train a GBDT model
-let params = GBDTParams { n_trees: 100, learning_rate: 0.1, ..Default::default() };
-let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-let forest = trainer.train(&dataset, &labels, &[], &[])?;
+// Configure and train
+let config = GBDTConfig::builder()
+    .objective(Objective::squared_error())
+    .metric(Metric::rmse())
+    .n_trees(100)
+    .learning_rate(0.1)
+    .build()?;
+
+let model = GBDTModel::train(&dataset, config)?;
 
 // Predict
-let prediction = forest.predict_row(&test_sample);
+let test_features = RowMatrix::from_vec(test_data, n_test, n_features);
+let predictions = model.predict(&test_features);  // ColMatrix<f32>
 ```
 
 ### Loading XGBoost Models
 
 ```rust
 use boosters::compat::xgboost::XgbModel;
+use boosters::inference::gbdt::Predictor;
+use boosters::data::RowMatrix;
 
 // Load XGBoost JSON model
 let model = XgbModel::from_file("model.json")?;
 let forest = model.to_forest()?;
 
-// Use for prediction
-let prediction = forest.predict_row(&features);
+// Use Predictor for efficient batch prediction
+let features = RowMatrix::from_vec(data, n_rows, n_features);
+let predictor = Predictor::new(&forest);
+let predictions = predictor.predict(&features);  // Batch prediction
 ```
 
 ## Performance

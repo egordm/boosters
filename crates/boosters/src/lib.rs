@@ -53,11 +53,16 @@
 //!
 //! ```ignore
 //! use boosters::compat::xgboost::XgbModel;
+//! use boosters::data::RowMatrix;
 //!
 //! let model = XgbModel::from_file("model.json")?;
 //! let forest = model.to_forest()?;
 //!
-//! let prediction = forest.predict_row(&features);
+//! // Use Predictor for efficient batch prediction
+//! use boosters::inference::gbdt::Predictor;
+//! let features = RowMatrix::from_vec(data, n_rows, n_features);
+//! let predictor = Predictor::new(&forest);
+//! let predictions = predictor.predict(&features);
 //! ```
 
 // Re-export approx traits for users who want to compare predictions

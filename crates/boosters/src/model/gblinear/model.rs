@@ -14,7 +14,6 @@
 //! - [`predict()`](GBLinearModel::predict) - Returns probabilities for classification,
 //!   raw values for regression
 //! - [`predict_raw()`](GBLinearModel::predict_raw) - Returns raw margin scores
-//! - [`predict_row()`](GBLinearModel::predict_row) - Single row prediction
 
 use crate::data::{ColMatrix, DataMatrix, DenseMatrix, ColMajor};
 use crate::data::Dataset;
@@ -41,18 +40,20 @@ use super::GBLinearConfig;
 /// ```ignore
 /// use boosters::model::GBLinearModel;
 /// use boosters::model::gblinear::GBLinearConfig;
+/// use boosters::data::RowMatrix;
 ///
 /// // Train
 /// let config = GBLinearConfig::builder().n_rounds(200).build().unwrap();
-/// let model = GBLinearModel::train(&dataset, &labels, &[], config)?;
+/// let model = GBLinearModel::train(&dataset, config)?;
 ///
 /// // Access components
 /// let n_features = model.meta().n_features;
 /// let n_groups = model.meta().n_groups;
 /// let lr = model.config().map(|c| c.learning_rate);
 ///
-/// // Predict
-/// let predictions = model.predict_batch(&features, n_rows);
+/// // Predict (uses batch prediction internally)
+/// let features = RowMatrix::from_vec(vec![...], n_rows, n_features);
+/// let predictions = model.predict(&features);
 /// ```
 pub struct GBLinearModel {
     /// The underlying linear model.
@@ -195,30 +196,6 @@ impl GBLinearModel {
     // Prediction
     // =========================================================================
 
-    /// Predict for a single row, returning raw margins.
-    ///
-    /// Returns raw margin scores before any transform (no sigmoid/softmax).
-    ///
-    /// **Note**: For batch prediction, prefer [`predict()`](Self::predict) or
-    /// [`predict_raw()`](Self::predict_raw) which are more efficient.
-    pub fn predict_row(&self, features: &[f32]) -> Vec<f32> {
-        let n_groups = self.meta.n_groups;
-        let n_features = self.meta.n_features;
-        let mut output = vec![0.0f32; n_groups];
-
-        for (g, out) in output.iter_mut().enumerate() {
-            let mut sum = self.model.bias(g);
-            for (f, &x) in features.iter().enumerate() {
-                if f < n_features {
-                    sum += self.model.weight(f, g) * x;
-                }
-            }
-            *out = sum;
-        }
-
-        output
-    }
-
     /// Predict for multiple rows, returning transformed predictions.
     ///
     /// Returns probabilities for classification objectives (sigmoid for binary,
@@ -244,23 +221,16 @@ impl GBLinearModel {
     pub fn predict<M: DataMatrix<Element = f32>>(&self, features: &M) -> ColMatrix<f32> {
         let n_rows = features.num_rows();
         let n_groups = self.meta.n_groups;
-        
-        // Get raw predictions
-        let mut raw = self.predict_matrix(features);
-        
+
+        // Compute raw predictions directly (avoids allocation)
+        let raw = self.compute_predictions_raw(features);
+
         // Apply transformation if we have config with objective
+        let mut col_data = raw;
         if let Some(config) = &self.config {
-            config.objective.transform_predictions(&mut raw, n_rows, n_groups);
+            config.objective.transform_predictions(&mut col_data, n_rows, n_groups);
         }
-        
-        // Convert to column-major matrix
-        let mut col_data = vec![0.0f32; n_rows * n_groups];
-        for row in 0..n_rows {
-            for group in 0..n_groups {
-                col_data[group * n_rows + row] = raw[row * n_groups + group];
-            }
-        }
-        
+
         DenseMatrix::<f32, ColMajor>::from_vec(col_data, n_rows, n_groups)
     }
 
@@ -278,65 +248,36 @@ impl GBLinearModel {
     pub fn predict_raw<M: DataMatrix<Element = f32>>(&self, features: &M) -> ColMatrix<f32> {
         let n_rows = features.num_rows();
         let n_groups = self.meta.n_groups;
-        
-        let raw = self.predict_matrix(features);
-        
-        // Convert to column-major matrix
-        let mut col_data = vec![0.0f32; n_rows * n_groups];
-        for row in 0..n_rows {
-            for group in 0..n_groups {
-                col_data[group * n_rows + row] = raw[row * n_groups + group];
-            }
-        }
-        
-        DenseMatrix::<f32, ColMajor>::from_vec(col_data, n_rows, n_groups)
+
+        let raw = self.compute_predictions_raw(features);
+        DenseMatrix::<f32, ColMajor>::from_vec(raw, n_rows, n_groups)
     }
 
-    /// Predict for multiple rows using slice input.
+    /// Internal: Compute raw predictions in column-major layout.
     ///
-    /// **Legacy API**: For most use cases, prefer [`predict()`](Self::predict)
-    /// or [`predict_raw()`](Self::predict_raw) which accept structured matrix input.
-    ///
-    /// # Arguments
-    ///
-    /// * `features` - Feature slice, row-major (n_rows × n_features)
-    /// * `n_rows` - Number of rows
-    ///
-    /// # Returns
-    ///
-    /// Raw predictions as flat slice, length = n_rows × n_groups
-    pub fn predict_batch(&self, features: &[f32], n_rows: usize) -> Vec<f32> {
-        self.predict_raw_slice(features, n_rows)
-    }
-
-    /// Internal prediction from a DataMatrix.
-    fn predict_matrix<M: DataMatrix<Element = f32>>(&self, features: &M) -> Vec<f32> {
+    /// Output layout: column-major [n_groups × n_rows], so predictions[g * n_rows + row]
+    fn compute_predictions_raw<M: DataMatrix<Element = f32>>(&self, features: &M) -> Vec<f32> {
         let n_rows = features.num_rows();
         let n_features = self.meta.n_features;
         let n_groups = self.meta.n_groups;
+
+        // Column-major output: [n_groups × n_rows]
         let mut output = vec![0.0f32; n_rows * n_groups];
         let mut row_buf = vec![0.0f32; n_features];
 
         for row_idx in 0..n_rows {
             features.copy_row(row_idx, &mut row_buf);
-            let preds = self.predict_row(&row_buf);
-            let offset = row_idx * n_groups;
-            output[offset..offset + n_groups].copy_from_slice(&preds);
-        }
 
-        output
-    }
-
-    /// Internal prediction that returns raw margins as Vec (slice-based).
-    fn predict_raw_slice(&self, features: &[f32], n_rows: usize) -> Vec<f32> {
-        let n_features = self.meta.n_features;
-        let n_groups = self.meta.n_groups;
-        let mut output = vec![0.0f32; n_rows * n_groups];
-
-        for (row_idx, row) in features.chunks(n_features).enumerate() {
-            let preds = self.predict_row(row);
-            let offset = row_idx * n_groups;
-            output[offset..offset + n_groups].copy_from_slice(&preds);
+            for g in 0..n_groups {
+                let mut sum = self.model.bias(g);
+                for (f, &x) in row_buf.iter().enumerate() {
+                    if f < n_features {
+                        sum += self.model.weight(f, g) * x;
+                    }
+                }
+                // Column-major: predictions for group g are contiguous
+                output[g * n_rows + row_idx] = sum;
+            }
         }
 
         output
@@ -393,6 +334,7 @@ impl std::fmt::Debug for GBLinearModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::RowMatrix;
 
     fn make_simple_model() -> LinearModel {
         // y = 0.5*x0 + 0.3*x1 + 0.1
@@ -423,30 +365,32 @@ mod tests {
     }
 
     #[test]
-    fn predict_row() {
+    fn predict_basic() {
         let linear = make_simple_model();
         let meta = ModelMeta::for_regression(2);
         let model = GBLinearModel::from_linear_model(linear, meta);
 
         // y = 0.5*1.0 + 0.3*2.0 + 0.1 = 0.5 + 0.6 + 0.1 = 1.2
-        let pred = model.predict_row(&[1.0, 2.0]);
-        assert!((pred[0] - 1.2).abs() < 1e-6);
+        let features = RowMatrix::from_vec(vec![1.0, 2.0], 1, 2);
+        let preds = model.predict_raw(&features);
+        assert!((preds.col_slice(0)[0] - 1.2).abs() < 1e-6);
     }
 
     #[test]
-    fn predict_batch() {
+    fn predict_batch_rows() {
         let linear = make_simple_model();
         let meta = ModelMeta::for_regression(2);
         let model = GBLinearModel::from_linear_model(linear, meta);
 
-        let features = vec![
+        let features = RowMatrix::from_vec(vec![
             1.0, 2.0, // row 0: 0.5 + 0.6 + 0.1 = 1.2
             0.0, 0.0, // row 1: 0 + 0 + 0.1 = 0.1
-        ];
-        let preds = model.predict_batch(&features, 2);
+        ], 2, 2);
+        let preds = model.predict_raw(&features);
+        let col = preds.col_slice(0);
 
-        assert!((preds[0] - 1.2).abs() < 1e-6);
-        assert!((preds[1] - 0.1).abs() < 1e-6);
+        assert!((col[0] - 1.2).abs() < 1e-6);
+        assert!((col[1] - 0.1).abs() < 1e-6);
     }
 
     #[test]
