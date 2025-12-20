@@ -60,7 +60,7 @@ rand_chacha = "0.3"  # For reproducible RNG in benchmarks
 tempfile = "3.20"  # For Arrow/Parquet I/O tests
 
 [features]
-default = ["xgboost-compat"]
+default = ["xgboost-compat", "storage"]
 xgboost-compat = ["dep:serde", "dep:serde_json", "dep:serde_with"]
 lightgbm-compat = ["dep:serde", "dep:serde_json"]
 # Unified comparison feature - enables both XGBoost and LightGBM bindings
@@ -71,7 +71,7 @@ bench-training = []
 testing-utils = ["dep:serde", "dep:serde_json", "dep:zstd"]
 io-arrow = ["dep:arrow"]
 io-parquet = ["dep:parquet", "dep:arrow"]
-# Native storage format (RFC-0021)
+# Native storage format (RFC-0021) - enabled by default for save/load functionality
 storage = ["dep:postcard", "dep:crc32fast", "dep:serde"]
 storage-compression = ["storage", "dep:zstd"]
 

@@ -1,9 +1,7 @@
 //! GBDT booster Python bindings.
 
-use crate::dataset::PyDataset;
 use crate::error::PyBoostersError;
-use crate::params::PyGBDTParams;
-use numpy::{PyArray1, PyArray2, PyReadonlyArray2, PyUntypedArrayMethods};
+use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use std::path::PathBuf;
@@ -14,104 +12,269 @@ use boosters::training::{GBDTParams, GainParams, MetricFunction, ObjectiveFuncti
 
 /// Gradient Boosted Decision Trees model.
 ///
-/// This class provides training and prediction for tree ensemble models.
+/// This class provides training and prediction for tree ensemble models,
+/// with an sklearn-compatible interface.
 ///
 /// # Example
 /// ```python
 /// import numpy as np
-/// from boosters_python import GBDTBooster, GBDTParams, Dataset
+/// from boosters import GBDTBooster
 ///
 /// X = np.random.randn(1000, 10).astype(np.float32)
 /// y = np.random.randn(1000).astype(np.float32)
 ///
-/// dataset = Dataset(X, y)
-/// params = GBDTParams(n_estimators=100, max_depth=6)
-///
-/// model = GBDTBooster.train(params, dataset)
+/// # Sklearn-style: constructor takes params, fit() takes data
+/// model = GBDTBooster(n_estimators=100, max_depth=6, learning_rate=0.1)
+/// model.fit(X, y)
 /// predictions = model.predict(X)
+///
+/// # With feature names
+/// model.fit(X, y, feature_names=['f1', 'f2', ...])
+/// print(model.feature_importance())  # Returns dict with feature names
 /// ```
 #[pyclass(name = "GBDTBooster")]
 pub struct PyGBDTBooster {
-    model: GBDTModel,
-    params: PyGBDTParams,
+    /// The trained model (None until fit() is called)
+    model: Option<GBDTModel>,
+    
+    // === Common parameters ===
+    /// Learning rate (shrinkage). Default: 0.3
+    #[pyo3(get, set)]
+    pub learning_rate: f32,
+    /// Number of boosting rounds. Default: 100
+    #[pyo3(get, set)]
+    pub n_estimators: usize,
+    /// Objective function. Default: "squared_error"
+    #[pyo3(get, set)]
+    pub objective: String,
+    
+    // === Tree parameters ===
+    /// Maximum depth of each tree. Default: 6
+    #[pyo3(get, set)]
+    pub max_depth: usize,
+    /// Minimum sum of instance weight in a child. Default: 1.0
+    #[pyo3(get, set)]
+    pub min_child_weight: f32,
+    /// L2 regularization on leaf weights. Default: 1.0
+    #[pyo3(get, set)]
+    pub reg_lambda: f32,
+    /// L1 regularization on leaf weights. Default: 0.0
+    #[pyo3(get, set)]
+    pub reg_alpha: f32,
+    /// Minimum loss reduction for split. Default: 0.0
+    #[pyo3(get, set)]
+    pub gamma: f32,
+    /// Maximum number of bins for histogram. Default: 256
+    #[pyo3(get, set)]
+    pub max_bin: usize,
+    /// Subsample ratio of training instances. Default: 1.0
+    #[pyo3(get, set)]
+    pub subsample: f32,
+    /// Subsample ratio of columns for each tree. Default: 1.0
+    #[pyo3(get, set)]
+    pub colsample_bytree: f32,
+    /// Number of classes (for multiclass). Default: None (auto-detect)
+    #[pyo3(get, set)]
+    pub num_class: Option<usize>,
+    /// Random seed. Default: 0
+    #[pyo3(get, set)]
+    pub random_state: u64,
 }
 
 #[pymethods]
 impl PyGBDTBooster {
-    /// Train a new GBDT model.
+    /// Create a new GBDT booster with the specified parameters.
     ///
     /// # Arguments
-    /// * `params` - Training parameters
-    /// * `train_data` - Training dataset
-    /// * `eval_data` - Optional evaluation dataset (for early stopping)
-    #[staticmethod]
-    #[pyo3(signature = (params, train_data, eval_data=None))]
-    fn train(
-        params: PyGBDTParams,
-        train_data: PyDataset,
-        eval_data: Option<PyDataset>,
-    ) -> PyResult<Self> {
-        let _ = eval_data; // TODO: implement early stopping
+    /// * `n_estimators` - Number of boosting rounds (default: 100)
+    /// * `learning_rate` - Learning rate/shrinkage (default: 0.3)
+    /// * `max_depth` - Maximum tree depth (default: 6)
+    /// * `objective` - Loss function: "squared_error", "binary:logistic", "multi:softmax", etc.
+    /// * `reg_lambda` - L2 regularization (default: 1.0)
+    /// * `reg_alpha` - L1 regularization (default: 0.0)
+    /// * `gamma` - Minimum loss reduction for split (default: 0.0)
+    /// * `min_child_weight` - Minimum sum of instance weight in child (default: 1.0)
+    /// * `subsample` - Row subsampling ratio (default: 1.0)
+    /// * `colsample_bytree` - Column subsampling ratio per tree (default: 1.0)
+    /// * `max_bin` - Maximum histogram bins (default: 256)
+    /// * `num_class` - Number of classes for multiclass (default: auto-detect)
+    /// * `random_state` - Random seed (default: 0)
+    #[new]
+    #[pyo3(signature = (
+        n_estimators = 100,
+        learning_rate = 0.3,
+        max_depth = 6,
+        objective = "squared_error".to_string(),
+        reg_lambda = 1.0,
+        reg_alpha = 0.0,
+        gamma = 0.0,
+        min_child_weight = 1.0,
+        subsample = 1.0,
+        colsample_bytree = 1.0,
+        max_bin = 256,
+        num_class = None,
+        random_state = 0,
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        n_estimators: usize,
+        learning_rate: f32,
+        max_depth: usize,
+        objective: String,
+        reg_lambda: f32,
+        reg_alpha: f32,
+        gamma: f32,
+        min_child_weight: f32,
+        subsample: f32,
+        colsample_bytree: f32,
+        max_bin: usize,
+        num_class: Option<usize>,
+        random_state: u64,
+    ) -> Self {
+        Self {
+            model: None,
+            learning_rate,
+            n_estimators,
+            objective,
+            max_depth,
+            min_child_weight,
+            reg_lambda,
+            reg_alpha,
+            gamma,
+            max_bin,
+            subsample,
+            colsample_bytree,
+            num_class,
+            random_state,
+        }
+    }
 
-        let labels = train_data
-            .labels()
-            .ok_or_else(|| PyBoostersError::InvalidData("Labels required for training".into()))?;
-
-        // Create RowMatrix from the data
-        let n_rows = train_data.num_samples();
-        let n_cols = train_data.num_features();
-        let features = train_data.features().to_vec();
+    /// Fit the model to training data.
+    ///
+    /// # Arguments
+    /// * `x` - Feature matrix of shape (n_samples, n_features)
+    /// * `y` - Target values of shape (n_samples,)
+    /// * `sample_weight` - Optional sample weights
+    /// * `feature_names` - Optional feature names for interpretability
+    ///
+    /// # Returns
+    /// Self (for method chaining in Python)
+    #[pyo3(signature = (x, y, sample_weight=None, feature_names=None))]
+    #[allow(clippy::wrong_self_convention)]
+    fn fit<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        x: PyReadonlyArray2<'py, f32>,
+        y: PyReadonlyArray1<'py, f32>,
+        sample_weight: Option<PyReadonlyArray1<'py, f32>>,
+        feature_names: Option<Vec<String>>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        let shape = x.shape();
+        let n_rows = shape[0];
+        let n_cols = shape[1];
+        
+        // Validate inputs
+        let labels = y.as_slice()?;
+        if labels.len() != n_rows {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "y length {} doesn't match x rows {}",
+                labels.len(),
+                n_rows
+            )));
+        }
+        
+        // Validate feature names
+        if let Some(ref names) = feature_names {
+            if names.len() != n_cols {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "feature_names length {} doesn't match X columns {}",
+                    names.len(),
+                    n_cols
+                )));
+            }
+        }
+        
+        // Create matrix from input
+        let features = x.as_slice()?.to_vec();
         let matrix: DenseMatrix<f32, RowMajor, _> = DenseMatrix::from_vec(features, n_rows, n_cols);
-
+        
         // Build binned dataset
-        let binned_dataset = BinnedDatasetBuilder::from_row_matrix(&matrix, params.max_bin as u32)
+        let binned_dataset = BinnedDatasetBuilder::from_row_matrix(&matrix, slf.max_bin as u32)
             .build()
             .map_err(|e| PyBoostersError::Training(format!("Failed to build dataset: {}", e)))?;
-
+        
         // Create training params
-        let trainer_params = Self::params_to_trainer_params(&params);
-
-        // Get feature names from dataset
-        let feature_names = train_data.get_feature_names();
-
-        // Train with appropriate objective based on params
-        let model = Self::train_with_objective(
+        let trainer_params = GBDTParams {
+            n_trees: slf.n_estimators as u32,
+            learning_rate: slf.learning_rate,
+            gain: GainParams {
+                reg_lambda: slf.reg_lambda,
+                reg_alpha: slf.reg_alpha,
+                min_child_weight: slf.min_child_weight,
+                min_gain: slf.gamma,
+                min_samples_leaf: 1,
+            },
+            ..Default::default()
+        };
+        
+        // Handle optional sample weights
+        let weights: Option<Vec<f32>> = if let Some(w) = sample_weight {
+            let w_slice = w.as_slice()?;
+            if w_slice.len() != n_rows {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "sample_weight length {} doesn't match x rows {}",
+                    w_slice.len(),
+                    n_rows
+                )));
+            }
+            Some(w_slice.to_vec())
+        } else {
+            None
+        };
+        
+        // Train the model
+        let model = Self::train_internal(
             &binned_dataset,
             labels,
-            train_data.weights(),
-            &params.objective,
-            params.num_class,
+            weights.as_deref(),
+            &slf.objective,
+            slf.num_class,
             trainer_params,
         )?;
-
-        // Set feature names on the model if available
+        
+        // Set feature names if provided
         let model = if let Some(names) = feature_names {
             model.with_feature_names(names)
         } else {
             model
         };
-
-        Ok(Self { model, params })
+        
+        slf.model = Some(model);
+        Ok(slf)
     }
 
     /// Make predictions on input data.
     ///
     /// # Arguments
-    /// * `data` - Feature matrix of shape (n_samples, n_features)
+    /// * `x` - Feature matrix of shape (n_samples, n_features)
     ///
     /// # Returns
     /// Predictions as a NumPy array
     fn predict<'py>(
         &self,
         py: Python<'py>,
-        data: PyReadonlyArray2<f32>,
+        x: PyReadonlyArray2<'py, f32>,
     ) -> PyResult<Bound<'py, PyArray1<f32>>> {
-        let shape = data.shape();
+        let model = self.model.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "Model not fitted. Call fit() before predict()."
+            )
+        })?;
+        
+        let shape = x.shape();
         let n_samples = shape[0];
-        let features = data.as_slice()?;
+        let features = x.as_slice()?;
 
-        let predictions = self.model.predict_batch(features, n_samples);
-
+        let predictions = model.predict_batch(features, n_samples);
         Ok(PyArray1::from_vec_bound(py, predictions))
     }
 
@@ -121,7 +284,7 @@ impl PyGBDTBooster {
     /// * `importance_type` - Type of importance: "split" (default), "gain", or "cover"
     ///
     /// # Returns
-    /// Dictionary mapping feature names to importance scores (or indices if names unavailable)
+    /// Dictionary mapping feature names to importance scores
     #[pyo3(signature = (importance_type = "split".to_string()))]
     fn feature_importance(
         &self,
@@ -130,6 +293,12 @@ impl PyGBDTBooster {
     ) -> PyResult<PyObject> {
         use boosters::explainability::ImportanceType;
         use pyo3::types::PyDict;
+
+        let model = self.model.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "Model not fitted. Call fit() before feature_importance()."
+            )
+        })?;
 
         let imp_type = match importance_type.as_str() {
             "split" | "weight" => ImportanceType::Split,
@@ -145,8 +314,7 @@ impl PyGBDTBooster {
             }
         };
 
-        let importance = self
-            .model
+        let importance = model
             .feature_importance(imp_type)
             .map_err(|e| PyBoostersError::Explainability(e.to_string()))?;
 
@@ -169,27 +337,31 @@ impl PyGBDTBooster {
     /// Compute SHAP values for explaining predictions.
     ///
     /// # Arguments
-    /// * `data` - Feature matrix of shape (n_samples, n_features)
+    /// * `x` - Feature matrix of shape (n_samples, n_features)
     ///
     /// # Returns
     /// SHAP values as a NumPy array of shape (n_samples, n_features)
     fn shap_values<'py>(
         &self,
         py: Python<'py>,
-        data: PyReadonlyArray2<f32>,
+        x: PyReadonlyArray2<'py, f32>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        let shape = data.shape();
+        let model = self.model.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "Model not fitted. Call fit() before shap_values()."
+            )
+        })?;
+        
+        let shape = x.shape();
         let n_samples = shape[0];
         let n_features = shape[1];
-        let features = data.as_slice()?;
+        let features = x.as_slice()?;
 
-        let shap = self
-            .model
+        let shap = model
             .shap_values(features, n_samples)
             .map_err(PyBoostersError::from)?;
 
         // Convert to 2D array (n_samples, n_features)
-        // Note: shap includes base value at the end, we exclude it here
         let mut result = Vec::with_capacity(n_samples * n_features);
         for sample in 0..n_samples {
             for feature in 0..n_features {
@@ -208,32 +380,49 @@ impl PyGBDTBooster {
 
     /// Get the expected value (base value) for SHAP.
     #[getter]
-    fn expected_value(&self) -> f64 {
-        // Base score from forest
-        self.model.base_scores().first().copied().unwrap_or(0.0) as f64
+    fn expected_value(&self) -> PyResult<f64> {
+        let model = self.model.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err("Model not fitted.")
+        })?;
+        Ok(model.base_scores().first().copied().unwrap_or(0.0) as f64)
     }
 
     /// Number of trees in the ensemble.
     #[getter]
-    fn n_trees(&self) -> usize {
-        self.model.n_trees()
+    fn n_trees(&self) -> PyResult<usize> {
+        let model = self.model.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err("Model not fitted.")
+        })?;
+        Ok(model.n_trees())
     }
 
     /// Number of features.
     #[getter]
-    fn n_features(&self) -> usize {
-        self.model.n_features()
+    fn n_features(&self) -> PyResult<usize> {
+        let model = self.model.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err("Model not fitted.")
+        })?;
+        Ok(model.n_features())
     }
 
     /// Feature names, if available.
     #[getter]
     fn feature_names(&self) -> Option<Vec<String>> {
-        self.model.feature_names().map(|v| v.to_vec())
+        self.model.as_ref()?.feature_names().map(|v| v.to_vec())
+    }
+    
+    /// Whether the model has been fitted.
+    #[getter]
+    fn is_fitted(&self) -> bool {
+        self.model.is_some()
     }
 
     /// Save the model to a file.
     fn save(&self, path: PathBuf) -> PyResult<()> {
-        self.model
+        let model = self.model.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err("Model not fitted.")
+        })?;
+        model
             .save(&path)
             .map_err(|e| PyBoostersError::Serialization(e.to_string()))?;
         Ok(())
@@ -245,19 +434,23 @@ impl PyGBDTBooster {
         let model = GBDTModel::load(&path)
             .map_err(|e| PyBoostersError::Deserialization(e.to_string()))?;
 
-        // Reconstruct params (best effort)
-        let params = PyGBDTParams::default();
-
-        Ok(Self { model, params })
+        // Create booster with default params (TODO: save/load params with model)
+        let mut booster = Self::new(
+            100, 0.3, 6, "squared_error".to_string(),
+            1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 256, None, 0
+        );
+        booster.model = Some(model);
+        Ok(booster)
     }
 
     /// Serialize the model to bytes.
     fn to_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-        let bytes = self
-            .model
+        let model = self.model.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err("Model not fitted.")
+        })?;
+        let bytes = model
             .to_bytes()
             .map_err(|e| PyBoostersError::Serialization(e.to_string()))?;
-
         Ok(PyBytes::new_bound(py, &bytes))
     }
 
@@ -266,10 +459,13 @@ impl PyGBDTBooster {
     fn from_bytes(data: &[u8]) -> PyResult<Self> {
         let model = GBDTModel::from_bytes(data)
             .map_err(|e| PyBoostersError::Deserialization(e.to_string()))?;
-
-        let params = PyGBDTParams::default();
-
-        Ok(Self { model, params })
+        
+        let mut booster = Self::new(
+            100, 0.3, 6, "squared_error".to_string(),
+            1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 256, None, 0
+        );
+        booster.model = Some(model);
+        Ok(booster)
     }
 
     /// Support for Python pickling.
@@ -281,37 +477,27 @@ impl PyGBDTBooster {
     fn __setstate__(&mut self, state: &[u8]) -> PyResult<()> {
         let loaded = Self::from_bytes(state)?;
         self.model = loaded.model;
-        self.params = loaded.params;
         Ok(())
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "GBDTBooster(n_trees={}, n_features={})",
-            self.n_trees(),
-            self.n_features()
-        )
+        if self.model.is_some() {
+            format!(
+                "GBDTBooster(n_estimators={}, learning_rate={}, objective='{}', is_fitted=True)",
+                self.n_estimators, self.learning_rate, self.objective
+            )
+        } else {
+            format!(
+                "GBDTBooster(n_estimators={}, learning_rate={}, objective='{}', is_fitted=False)",
+                self.n_estimators, self.learning_rate, self.objective
+            )
+        }
     }
 }
 
 impl PyGBDTBooster {
-    fn params_to_trainer_params(params: &PyGBDTParams) -> GBDTParams {
-        GBDTParams {
-            n_trees: params.n_estimators as u32,
-            learning_rate: params.learning_rate,
-            gain: GainParams {
-                reg_lambda: params.reg_lambda,
-                reg_alpha: params.reg_alpha,
-                min_child_weight: params.min_child_weight,
-                min_gain: params.gamma,
-                min_samples_leaf: 1,
-            },
-            ..Default::default()
-        }
-    }
-
-    /// Train with the appropriate objective and metric based on the objective string.
-    fn train_with_objective(
+    /// Internal training method with objective dispatch.
+    fn train_internal(
         dataset: &boosters::data::BinnedDataset,
         labels: &[f32],
         weights: Option<&[f32]>,
@@ -350,12 +536,9 @@ impl PyGBDTBooster {
         // Get matching default metric
         let metric = MetricFunction::from_objective_str(objective_str);
 
-        // Train model
-        let model = if let Some(w) = weights {
-            GBDTModel::train_with_weights(dataset, labels, w, objective, metric, params)
-        } else {
-            GBDTModel::train(dataset, labels, objective, metric, params)
-        };
+        // Train model (use empty slice for no weights)
+        let weights_slice = weights.unwrap_or(&[]);
+        let model = GBDTModel::train(dataset, labels, weights_slice, objective, metric, params);
 
         model.ok_or_else(|| PyBoostersError::Training("Training failed".into()).into())
     }

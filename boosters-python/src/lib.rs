@@ -2,6 +2,26 @@
 //!
 //! This crate provides PyO3-based bindings for training and inference
 //! with gradient boosted models.
+//!
+//! # sklearn-style API
+//!
+//! Models follow the sklearn convention:
+//! - Constructor takes hyperparameters
+//! - `fit(X, y)` takes training data
+//! - `predict(X)` makes predictions
+//!
+//! ```python
+//! from boosters_python import GBDTBooster
+//!
+//! # Create model with hyperparameters
+//! model = GBDTBooster(n_estimators=100, learning_rate=0.1, max_depth=6)
+//!
+//! # Fit on training data
+//! model.fit(X_train, y_train)
+//!
+//! # Make predictions
+//! predictions = model.predict(X_test)
+//! ```
 
 use pyo3::prelude::*;
 
@@ -23,14 +43,10 @@ fn boosters_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(wrap_pyfunction!(version, m)?)?;
 
-    // Dataset
+    // Dataset (optional - users can pass X, y directly to fit())
     m.add_class::<dataset::PyDataset>()?;
 
-    // Parameters
-    m.add_class::<params::PyGBDTParams>()?;
-    m.add_class::<params::PyGBLinearParams>()?;
-
-    // Models
+    // Models (sklearn-style: constructor takes params, fit takes data)
     m.add_class::<gbdt::PyGBDTBooster>()?;
     m.add_class::<linear::PyGBLinearBooster>()?;
 
