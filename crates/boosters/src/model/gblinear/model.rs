@@ -1,12 +1,21 @@
 //! GBLinear model implementation.
 //!
 //! High-level wrapper around LinearModel with training, prediction, and serialization.
+//!
+//! # Access Pattern
+//!
+//! Use accessors to access model components:
+//! - `model.linear()` - underlying linear model (weights, biases)
+//! - `model.meta()` - model metadata (n_features, n_groups, task)
+//! - `model.config()` - training configuration (if available)
 
 #[cfg(feature = "storage")]
 use std::path::Path;
 
 use crate::model::meta::{ModelMeta, TaskKind};
 use crate::repr::gblinear::LinearModel;
+
+use super::GBLinearConfig;
 
 #[cfg(feature = "storage")]
 use crate::io::native::{DeserializeError, SerializeError};
@@ -15,16 +24,30 @@ use crate::io::native::{DeserializeError, SerializeError};
 ///
 /// Combines training, prediction, and serialization into a unified interface.
 ///
+/// # Access Pattern
+///
+/// Use accessors to access model components:
+/// - [`linear()`](Self::linear) - underlying linear model
+/// - [`meta()`](Self::meta) - model metadata (n_features, n_groups, task)
+/// - [`config()`](Self::config) - training configuration (if available)
+///
 /// # Example
 ///
 /// ```ignore
 /// use boosters::model::GBLinearModel;
+/// use boosters::model::gblinear::GBLinearConfig;
 ///
 /// // Train
-/// let model = GBLinearModel::train(&dataset, &labels, params)?;
+/// let config = GBLinearConfig::builder().n_rounds(200).build().unwrap();
+/// let model = GBLinearModel::train(&dataset, &labels, &[], config)?;
+///
+/// // Access components
+/// let n_features = model.meta().n_features;
+/// let n_groups = model.meta().n_groups;
+/// let lr = model.config().map(|c| c.learning_rate);
 ///
 /// // Predict
-/// let predictions = model.predict(&features);
+/// let predictions = model.predict_batch(&features, n_rows);
 ///
 /// // Save/Load
 /// model.save("model.bstr")?;
@@ -35,78 +58,73 @@ pub struct GBLinearModel {
     model: LinearModel,
     /// Model metadata.
     meta: ModelMeta,
-    /// Number of training rounds.
-    n_rounds: u32,
+    /// Training configuration (if available).
+    ///
+    /// This is `Some` when trained with the new API or loaded from a format
+    /// that includes config. May be `None` for models loaded from legacy
+    /// formats or created with `from_linear_model()`.
+    config: Option<GBLinearConfig>,
 }
 
 impl GBLinearModel {
     /// Create a model from an existing LinearModel.
-    pub fn from_linear_model(model: LinearModel, meta: ModelMeta, n_rounds: u32) -> Self {
-        Self { model, meta, n_rounds }
+    ///
+    /// Config will be `None` since the training parameters are unknown.
+    pub fn from_linear_model(model: LinearModel, meta: ModelMeta) -> Self {
+        Self { model, meta, config: None }
     }
 
+    /// Create a model from all its parts.
+    ///
+    /// Used when loading from a format that includes config, or after training
+    /// with the new config-based API.
+    pub fn from_parts(
+        model: LinearModel,
+        meta: ModelMeta,
+        config: Option<GBLinearConfig>,
+    ) -> Self {
+        Self { model, meta, config }
+    }
+
+    // =========================================================================
+    // Accessors
+    // =========================================================================
+
     /// Get reference to the underlying linear model.
-    pub fn linear_model(&self) -> &LinearModel {
+    ///
+    /// Use this to access linear model details:
+    /// - `model.linear().n_features()` - number of features
+    /// - `model.linear().n_groups()` - number of output groups
+    /// - `model.linear().weight(f, g)` - weight for feature f, group g
+    /// - `model.linear().bias(g)` - bias for group g
+    pub fn linear(&self) -> &LinearModel {
         &self.model
     }
 
     /// Get reference to model metadata.
+    ///
+    /// Use this to access metadata:
+    /// - `model.meta().n_features` - number of input features
+    /// - `model.meta().n_groups` - number of output groups
+    /// - `model.meta().task` - task type (regression, classification)
+    /// - `model.meta().feature_names` - feature names (if set)
     pub fn meta(&self) -> &ModelMeta {
         &self.meta
     }
 
-    /// Number of training rounds.
-    pub fn n_rounds(&self) -> u32 {
-        self.n_rounds
-    }
-
-    /// Number of input features.
-    pub fn n_features(&self) -> usize {
-        self.model.n_features()
-    }
-
-    /// Number of output groups.
-    pub fn n_groups(&self) -> usize {
-        self.model.n_groups()
-    }
-
-    /// Task type.
-    pub fn task(&self) -> TaskKind {
-        self.meta.task
-    }
-
-    /// Feature names (if set).
-    pub fn feature_names(&self) -> Option<&[String]> {
-        self.meta.feature_names.as_deref()
-    }
-
-    /// Get weight for a feature in a group.
-    pub fn weight(&self, feature: usize, group: usize) -> f32 {
-        self.model.weight(feature, group)
-    }
-
-    /// Get bias for a group.
+    /// Get reference to training configuration (if available).
     ///
-    /// For bulk access, use [`biases()`](Self::biases) instead.
-    pub fn bias(&self, group: usize) -> f32 {
-        self.model.bias(group)
-    }
-
-    /// Get all biases as a slice.
-    ///
-    /// Returns a slice of length `n_groups`.
-    pub fn biases(&self) -> &[f32] {
-        self.model.biases()
-    }
-
-    /// Get all weights as a flat array.
-    ///
-    /// Layout: `weights[feature * n_groups + group]`
-    pub fn weights(&self) -> &[f32] {
-        self.model.weights()
+    /// Returns `Some` if the model was trained with the new config-based API
+    /// or loaded from a format that includes config. Returns `None` for models
+    /// loaded from legacy formats or created with `from_linear_model()`.
+    pub fn config(&self) -> Option<&GBLinearConfig> {
+        self.config.as_ref()
     }
 
     /// Set feature names.
+    ///
+    /// This mutates the metadata. For new models, prefer setting feature names
+    /// during training.
     pub fn with_feature_names(mut self, names: Vec<String>) -> Self {
         self.meta.feature_names = Some(names);
         self
@@ -120,14 +138,15 @@ impl GBLinearModel {
     ///
     /// Returns raw margin scores (before any transform).
     pub fn predict_row(&self, features: &[f32]) -> Vec<f32> {
-        let n_groups = self.n_groups();
+        let n_groups = self.meta.n_groups;
+        let n_features = self.meta.n_features;
         let mut output = vec![0.0f32; n_groups];
 
         for g in 0..n_groups {
-            let mut sum = self.bias(g);
+            let mut sum = self.model.bias(g);
             for (f, &x) in features.iter().enumerate() {
-                if f < self.n_features() {
-                    sum += self.weight(f, g) * x;
+                if f < n_features {
+                    sum += self.model.weight(f, g) * x;
                 }
             }
             output[g] = sum;
@@ -147,8 +166,8 @@ impl GBLinearModel {
     ///
     /// Predictions, length = n_rows × n_groups
     pub fn predict_batch(&self, features: &[f32], n_rows: usize) -> Vec<f32> {
-        let n_features = self.n_features();
-        let n_groups = self.n_groups();
+        let n_features = self.meta.n_features;
+        let n_groups = self.meta.n_groups;
         let mut output = vec![0.0f32; n_rows * n_groups];
 
         for (row_idx, row) in features.chunks(n_features).enumerate() {
@@ -191,7 +210,7 @@ impl GBLinearModel {
         n_samples: usize,
         feature_means: Option<Vec<f64>>,
     ) -> Result<crate::explainability::ShapValues, crate::explainability::ExplainError> {
-        let means = feature_means.unwrap_or_else(|| vec![0.0; self.n_features()]);
+        let means = feature_means.unwrap_or_else(|| vec![0.0; self.meta.n_features]);
         let explainer = crate::explainability::LinearExplainer::new(&self.model, means)?;
         Ok(explainer.shap_values(features, n_samples))
     }
@@ -203,7 +222,8 @@ impl GBLinearModel {
     /// Save the model to a file.
     #[cfg(feature = "storage")]
     pub fn save(&self, path: impl AsRef<Path>) -> Result<(), SerializeError> {
-        self.model.save(path, self.n_rounds)
+        let n_rounds = self.config.as_ref().map(|c| c.n_rounds).unwrap_or(0);
+        self.model.save(path, n_rounds)
     }
 
     /// Load a model from a file.
@@ -227,14 +247,15 @@ impl GBLinearModel {
         Ok(Self {
             model,
             meta,
-            n_rounds: 0, // Not stored in current format
+            config: None,
         })
     }
 
     /// Serialize the model to bytes.
     #[cfg(feature = "storage")]
     pub fn to_bytes(&self) -> Result<Vec<u8>, SerializeError> {
-        self.model.to_bytes(self.n_rounds)
+        let n_rounds = self.config.as_ref().map(|c| c.n_rounds).unwrap_or(0);
+        self.model.to_bytes(n_rounds)
     }
 
     /// Deserialize a model from bytes.
@@ -258,7 +279,7 @@ impl GBLinearModel {
         Ok(Self {
             model,
             meta,
-            n_rounds: 0,
+            config: None,
         })
     }
 }
@@ -266,10 +287,10 @@ impl GBLinearModel {
 impl std::fmt::Debug for GBLinearModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GBLinearModel")
-            .field("n_features", &self.n_features())
-            .field("n_groups", &self.n_groups())
-            .field("n_rounds", &self.n_rounds())
-            .field("task", &self.task())
+            .field("n_features", &self.meta.n_features)
+            .field("n_groups", &self.meta.n_groups)
+            .field("n_rounds", &self.config.as_ref().map(|c| c.n_rounds))
+            .field("task", &self.meta.task)
             .finish()
     }
 }
@@ -288,18 +309,29 @@ mod tests {
     fn from_linear_model() {
         let linear = make_simple_model();
         let meta = ModelMeta::for_regression(2);
-        let model = GBLinearModel::from_linear_model(linear, meta, 100);
+        let model = GBLinearModel::from_linear_model(linear, meta);
 
-        assert_eq!(model.n_features(), 2);
-        assert_eq!(model.n_groups(), 1);
-        assert_eq!(model.n_rounds(), 100);
+        assert_eq!(model.linear().n_features(), 2);
+        assert_eq!(model.linear().n_groups(), 1);
+        assert!(model.config().is_none());
+    }
+
+    #[test]
+    fn from_parts_with_config() {
+        let linear = make_simple_model();
+        let meta = ModelMeta::for_regression(2);
+        let config = GBLinearConfig::builder().n_rounds(200).build().unwrap();
+        let model = GBLinearModel::from_parts(linear, meta, Some(config));
+
+        assert!(model.config().is_some());
+        assert_eq!(model.config().unwrap().n_rounds, 200);
     }
 
     #[test]
     fn predict_row() {
         let linear = make_simple_model();
         let meta = ModelMeta::for_regression(2);
-        let model = GBLinearModel::from_linear_model(linear, meta, 100);
+        let model = GBLinearModel::from_linear_model(linear, meta);
 
         // y = 0.5*1.0 + 0.3*2.0 + 0.1 = 0.5 + 0.6 + 0.1 = 1.2
         let pred = model.predict_row(&[1.0, 2.0]);
@@ -310,7 +342,7 @@ mod tests {
     fn predict_batch() {
         let linear = make_simple_model();
         let meta = ModelMeta::for_regression(2);
-        let model = GBLinearModel::from_linear_model(linear, meta, 100);
+        let model = GBLinearModel::from_linear_model(linear, meta);
 
         let features = vec![
             1.0, 2.0, // row 0: 0.5 + 0.6 + 0.1 = 1.2
@@ -323,14 +355,14 @@ mod tests {
     }
 
     #[test]
-    fn weights_and_bias() {
+    fn weights_and_bias_via_accessor() {
         let linear = make_simple_model();
         let meta = ModelMeta::for_regression(2);
-        let model = GBLinearModel::from_linear_model(linear, meta, 100);
+        let model = GBLinearModel::from_linear_model(linear, meta);
 
-        assert_eq!(model.weight(0, 0), 0.5);
-        assert_eq!(model.weight(1, 0), 0.3);
-        assert_eq!(model.bias(0), 0.1);
+        assert_eq!(model.linear().weight(0, 0), 0.5);
+        assert_eq!(model.linear().weight(1, 0), 0.3);
+        assert_eq!(model.linear().bias(0), 0.1);
     }
 
     #[cfg(feature = "storage")]
@@ -338,7 +370,7 @@ mod tests {
     fn save_load_roundtrip() {
         let linear = make_simple_model();
         let meta = ModelMeta::for_regression(2);
-        let model = GBLinearModel::from_linear_model(linear, meta, 100);
+        let model = GBLinearModel::from_linear_model(linear, meta);
 
         let path = std::env::temp_dir().join("boosters_gblinear_model_test.bstr");
 
@@ -347,7 +379,7 @@ mod tests {
 
         std::fs::remove_file(&path).ok();
 
-        assert_eq!(model.n_features(), loaded.n_features());
+        assert_eq!(model.linear().n_features(), loaded.linear().n_features());
         assert_eq!(model.predict_row(&[1.0, 2.0]), loaded.predict_row(&[1.0, 2.0]));
     }
 
@@ -356,19 +388,19 @@ mod tests {
     fn bytes_roundtrip() {
         let linear = make_simple_model();
         let meta = ModelMeta::for_regression(2);
-        let model = GBLinearModel::from_linear_model(linear, meta, 100);
+        let model = GBLinearModel::from_linear_model(linear, meta);
 
         let bytes = model.to_bytes().unwrap();
         let loaded = GBLinearModel::from_bytes(&bytes).unwrap();
 
-        assert_eq!(model.n_features(), loaded.n_features());
+        assert_eq!(model.linear().n_features(), loaded.linear().n_features());
     }
 
     #[test]
     fn shap_values() {
         let linear = make_simple_model();
         let meta = ModelMeta::for_regression(2);
-        let model = GBLinearModel::from_linear_model(linear, meta, 100);
+        let model = GBLinearModel::from_linear_model(linear, meta);
 
         // Test with means
         let features = vec![1.0, 2.0];
@@ -389,7 +421,7 @@ mod tests {
     fn shap_values_zero_means() {
         let linear = make_simple_model();
         let meta = ModelMeta::for_regression(2);
-        let model = GBLinearModel::from_linear_model(linear, meta, 100);
+        let model = GBLinearModel::from_linear_model(linear, meta);
 
         let features = vec![1.0, 2.0];
         // Use None for zero means (centered data assumption)

@@ -481,10 +481,12 @@ New signature accepting Dataset, GBDTConfig, and eval_sets.
 
 Apply same patterns as GBDTModel.
 
+> Note: don't forget to address stakeholder feedback in tmp/stakeholder_feedback.md.
+
 **Tasks**:
 
-- [ ] 4.3.1: Add `config: GBLinearConfig` field
-- [ ] 4.3.2: Add accessors: `linear()`, `meta()`, `config()`
+- [x] 4.3.1: Add `config: GBLinearConfig` field
+- [x] 4.3.2: Add accessors: `linear()`, `meta()`, `config()`
 - [ ] 4.3.3: Update `train()` signature with eval_sets
 - [ ] 4.3.4: Implement early stopping for linear models
 - [ ] 4.3.5: Update serialization
