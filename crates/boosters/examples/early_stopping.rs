@@ -68,8 +68,8 @@ fn main() {
     println!("Trees trained: {} (max was 200)", actual_trees);
 
     // Evaluate
-    let preds = model.predict_batch(&features, n_samples);
-    let rmse = compute_rmse(&preds, &labels);
+    let preds = model.predict(&row_matrix);
+    let rmse = compute_rmse(preds.as_slice(), &labels);
 
     println!("Training RMSE: {:.4}", rmse);
 

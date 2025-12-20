@@ -55,16 +55,17 @@ fn main() {
     // =========================================================================
     // 3. Make Predictions
     // =========================================================================
-    // predict_row returns a Vec<f32> (one value per output group)
-    let sample = &features[0..n_features];
-    let pred = model.predict_row(sample);
-    println!("Sample prediction: {:.4}", pred[0]);
+    // Predict on single sample (wrap slice in a 1-row matrix)
+    let sample: DenseMatrix<f32, RowMajor> =
+        DenseMatrix::from_vec(features[0..n_features].to_vec(), 1, n_features);
+    let pred = model.predict(&sample);
+    println!("Sample prediction: {:.4}", pred.as_slice()[0]);
 
-    // predict_batch is more efficient for multiple samples
-    let all_preds = model.predict_batch(&features, n_samples);
+    // Predict on full dataset (returns ColMatrix)
+    let all_preds = model.predict(&row_matrix);
 
     // Compute RMSE manually
-    let rmse = compute_rmse(&all_preds, &labels);
+    let rmse = compute_rmse(all_preds.as_slice(), &labels);
 
     // =========================================================================
     // 4. Inspect Model
