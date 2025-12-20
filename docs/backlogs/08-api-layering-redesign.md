@@ -6,6 +6,8 @@
 
 ---
 
+> Note: don't forget to address stakeholder feedback in tmp/stakeholder_feedback.md.
+
 ## Overview
 
 Comprehensive API redesign establishing clear abstraction layers, consistent naming, and improved usability. This refactor is foundational for all future work including Python bindings.
@@ -272,6 +274,8 @@ Ensure single source of truth for TaskKind.
 ## Epic 3: Configuration Layer
 
 Establish nested parameter groups and builder pattern with `bon`.
+
+> Note: don't forget to address stakeholder feedback in tmp/stakeholder_feedback.md.
 
 **Effort**: Medium (3-4 days)
 
