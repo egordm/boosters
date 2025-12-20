@@ -329,6 +329,64 @@ impl QuantileMetric {
     pub fn median() -> Self {
         Self { alphas: vec![0.5] }
     }
+
+    /// Compute pinball loss for a single quantile level without allocation.
+    /// 
+    /// This avoids the Vec allocation in [`Self::new`] for the common single-quantile case.
+    pub fn compute_single(
+        alpha: f32,
+        n_rows: usize,
+        predictions: &[f32],
+        targets: &[f32],
+        weights: &[f32],
+    ) -> f64 {
+        if n_rows == 0 {
+            return 0.0;
+        }
+
+        let labels = &targets[..n_rows];
+        let alpha_f64 = alpha as f64;
+
+        if weights.is_empty() {
+            let total_loss: f64 = labels
+                .iter()
+                .zip(predictions.iter())
+                .map(|(&y, &pred)| {
+                    let residual = y as f64 - pred as f64;
+                    if residual >= 0.0 {
+                        alpha_f64 * residual
+                    } else {
+                        (1.0 - alpha_f64) * (-residual)
+                    }
+                })
+                .sum();
+
+            total_loss / n_rows as f64
+        } else {
+            debug_assert_eq!(weights.len(), n_rows);
+
+            let (weighted_loss, weight_sum): (f64, f64) = labels
+                .iter()
+                .zip(predictions.iter())
+                .zip(weights.iter())
+                .fold((0.0, 0.0), |(acc_loss, acc_w), ((&y, &pred), &wt)| {
+                    let residual = y as f64 - pred as f64;
+                    let wt = wt as f64;
+                    let loss = if residual >= 0.0 {
+                        alpha_f64 * residual
+                    } else {
+                        (1.0 - alpha_f64) * (-residual)
+                    };
+                    (acc_loss + wt * loss, acc_w + wt)
+                });
+
+            if weight_sum == 0.0 {
+                return 0.0;
+            }
+
+            weighted_loss / weight_sum
+        }
+    }
 }
 
 impl Default for QuantileMetric {

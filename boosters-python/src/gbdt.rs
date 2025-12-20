@@ -79,6 +79,14 @@ pub struct PyGBDTBooster {
     /// Random seed. Default: 0
     #[pyo3(get, set)]
     pub random_state: u64,
+    
+    // === Objective-specific parameters ===
+    /// Quantile for quantile regression (0-1). Default: 0.5
+    #[pyo3(get, set)]
+    pub quantile_alpha: f32,
+    /// Delta parameter for Huber loss. Default: 1.0
+    #[pyo3(get, set)]
+    pub huber_delta: f32,
 }
 
 #[pymethods]
@@ -89,7 +97,7 @@ impl PyGBDTBooster {
     /// * `n_estimators` - Number of boosting rounds (default: 100)
     /// * `learning_rate` - Learning rate/shrinkage (default: 0.3)
     /// * `max_depth` - Maximum tree depth (default: 6)
-    /// * `objective` - Loss function: "squared_error", "binary:logistic", "multi:softmax", etc.
+    /// * `objective` - Loss function: "squared_error", "binary:logistic", "multi:softmax", "quantile", "huber", etc.
     /// * `reg_lambda` - L2 regularization (default: 1.0)
     /// * `reg_alpha` - L1 regularization (default: 0.0)
     /// * `gamma` - Minimum loss reduction for split (default: 0.0)
@@ -99,6 +107,8 @@ impl PyGBDTBooster {
     /// * `max_bin` - Maximum histogram bins (default: 256)
     /// * `num_class` - Number of classes for multiclass (default: auto-detect)
     /// * `random_state` - Random seed (default: 0)
+    /// * `quantile_alpha` - Quantile for quantile regression, 0-1 (default: 0.5)
+    /// * `huber_delta` - Delta for Huber/pseudo-Huber loss (default: 1.0)
     #[new]
     #[pyo3(signature = (
         n_estimators = 100,
@@ -114,6 +124,8 @@ impl PyGBDTBooster {
         max_bin = 256,
         num_class = None,
         random_state = 0,
+        quantile_alpha = 0.5,
+        huber_delta = 1.0,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -130,6 +142,8 @@ impl PyGBDTBooster {
         max_bin: usize,
         num_class: Option<usize>,
         random_state: u64,
+        quantile_alpha: f32,
+        huber_delta: f32,
     ) -> Self {
         Self {
             model: None,
@@ -146,6 +160,8 @@ impl PyGBDTBooster {
             colsample_bytree,
             num_class,
             random_state,
+            quantile_alpha,
+            huber_delta,
         }
     }
 
@@ -193,8 +209,16 @@ impl PyGBDTBooster {
             }
         }
         
-        // Create matrix from input
-        let features = x.as_slice()?.to_vec();
+        // Create matrix from input - handles both C-contiguous (NumPy default) 
+        // and Fortran-contiguous (pandas DataFrame) arrays
+        let features: Vec<f32> = if x.is_c_contiguous() {
+            // Fast path: C-contiguous array, can use slice directly
+            x.as_slice()?.to_vec()
+        } else {
+            // Slow path: non-contiguous array (e.g., Fortran-order from pandas)
+            // Use as_array() to get ndarray view that handles strides
+            x.as_array().iter().copied().collect()
+        };
         let matrix: DenseMatrix<f32, RowMajor, _> = DenseMatrix::from_vec(features, n_rows, n_cols);
         
         // Build binned dataset
@@ -238,6 +262,8 @@ impl PyGBDTBooster {
             weights.as_deref(),
             &slf.objective,
             slf.num_class,
+            slf.quantile_alpha,
+            slf.huber_delta,
             trainer_params,
         )?;
         
@@ -272,9 +298,18 @@ impl PyGBDTBooster {
         
         let shape = x.shape();
         let n_samples = shape[0];
-        let features = x.as_slice()?;
+        
+        // Handle both C-contiguous and Fortran-contiguous arrays
+        let features: Vec<f32>;
+        let features_slice = if x.is_c_contiguous() {
+            x.as_slice()?
+        } else {
+            // Non-contiguous: copy via ndarray view
+            features = x.as_array().iter().copied().collect();
+            &features
+        };
 
-        let predictions = model.predict_batch(features, n_samples);
+        let predictions = model.predict_batch(features_slice, n_samples);
         Ok(PyArray1::from_vec_bound(py, predictions))
     }
 
@@ -355,10 +390,18 @@ impl PyGBDTBooster {
         let shape = x.shape();
         let n_samples = shape[0];
         let n_features = shape[1];
-        let features = x.as_slice()?;
+        
+        // Handle both C-contiguous and Fortran-contiguous arrays
+        let features: Vec<f32>;
+        let features_slice = if x.is_c_contiguous() {
+            x.as_slice()?
+        } else {
+            features = x.as_array().iter().copied().collect();
+            &features
+        };
 
         let shap = model
-            .shap_values(features, n_samples)
+            .shap_values(features_slice, n_samples)
             .map_err(PyBoostersError::from)?;
 
         // Convert to 2D array (n_samples, n_features)
@@ -437,7 +480,8 @@ impl PyGBDTBooster {
         // Create booster with default params (TODO: save/load params with model)
         let mut booster = Self::new(
             100, 0.3, 6, "squared_error".to_string(),
-            1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 256, None, 0
+            1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 256, None, 0,
+            0.5, 1.0  // quantile_alpha, huber_delta
         );
         booster.model = Some(model);
         Ok(booster)
@@ -462,7 +506,8 @@ impl PyGBDTBooster {
         
         let mut booster = Self::new(
             100, 0.3, 6, "squared_error".to_string(),
-            1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 256, None, 0
+            1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 256, None, 0,
+            0.5, 1.0  // quantile_alpha, huber_delta
         );
         booster.model = Some(model);
         Ok(booster)
@@ -503,6 +548,8 @@ impl PyGBDTBooster {
         weights: Option<&[f32]>,
         objective_str: &str,
         num_class: Option<usize>,
+        quantile_alpha: f32,
+        huber_delta: f32,
         params: GBDTParams,
     ) -> PyResult<GBDTModel> {
         // Parse objective string to ObjectiveFunction enum
@@ -521,8 +568,8 @@ impl PyGBDTBooster {
                 })?;
                 ObjectiveFunction::Softmax { num_classes: n_classes }
             }
-            "reg:quantile" | "quantile" => ObjectiveFunction::Quantile { alpha: 0.5 },
-            "reg:pseudohuber" | "huber" => ObjectiveFunction::PseudoHuber { delta: 1.0 },
+            "reg:quantile" | "quantile" => ObjectiveFunction::Quantile { alpha: quantile_alpha },
+            "reg:pseudohuber" | "huber" => ObjectiveFunction::PseudoHuber { delta: huber_delta },
             "poisson" | "count:poisson" => ObjectiveFunction::Poisson,
             _ => {
                 return Err(PyBoostersError::InvalidParameter(format!(

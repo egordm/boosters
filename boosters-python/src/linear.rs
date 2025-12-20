@@ -105,7 +105,14 @@ impl PyGBLinearBooster {
         let shape = x.shape();
         let n_rows = shape[0];
         let n_cols = shape[1];
-        let features = x.as_slice()?.to_vec();
+        
+        // Handle both C-contiguous and Fortran-contiguous arrays
+        let features: Vec<f32> = if x.is_c_contiguous() {
+            x.as_slice()?.to_vec()
+        } else {
+            // Non-contiguous: copy via ndarray view
+            x.as_array().iter().copied().collect()
+        };
         let targets = y.as_slice()?.to_vec();
 
         if targets.len() != n_rows {
@@ -206,9 +213,17 @@ impl PyGBLinearBooster {
 
         let shape = x.shape();
         let n_samples = shape[0];
-        let features = x.as_slice()?;
+        
+        // Handle both C-contiguous and Fortran-contiguous arrays
+        let features: Vec<f32>;
+        let features_slice = if x.is_c_contiguous() {
+            x.as_slice()?
+        } else {
+            features = x.as_array().iter().copied().collect();
+            &features
+        };
 
-        let predictions = model.predict_batch(features, n_samples);
+        let predictions = model.predict_batch(features_slice, n_samples);
 
         Ok(PyArray1::from_vec_bound(py, predictions))
     }
@@ -236,11 +251,19 @@ impl PyGBLinearBooster {
         let shape = x.shape();
         let n_samples = shape[0];
         let n_features = shape[1];
-        let features = x.as_slice()?;
+        
+        // Handle both C-contiguous and Fortran-contiguous arrays
+        let features: Vec<f32>;
+        let features_slice = if x.is_c_contiguous() {
+            x.as_slice()?
+        } else {
+            features = x.as_array().iter().copied().collect();
+            &features
+        };
         let means = feature_means.as_slice()?.to_vec();
 
         let shap = model
-            .shap_values(features, n_samples, means)
+            .shap_values(features_slice, n_samples, means)
             .map_err(PyBoostersError::from)?;
 
         // Convert to 2D array (n_samples, n_features)

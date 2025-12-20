@@ -90,6 +90,13 @@ impl GBLinearModel {
         self.model.bias(group)
     }
 
+    /// Get all biases as a slice.
+    ///
+    /// Returns a slice of length `n_groups`.
+    pub fn biases(&self) -> &[f32] {
+        self.model.biases()
+    }
+
     /// Get all weights as a flat array.
     ///
     /// Layout: `weights[feature * n_groups + group]`
