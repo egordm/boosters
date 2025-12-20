@@ -95,7 +95,7 @@ fn train_multioutput_classification() {
     );
 
     // Compute training accuracy (argmax over logits).
-    use boosters::training::{Metric, MulticlassAccuracy};
+    use boosters::training::{MetricFn, MulticlassAccuracy};
 
     let output = model.predict(&data, &vec![0.0; num_class]);
     let n_rows = output.num_rows();

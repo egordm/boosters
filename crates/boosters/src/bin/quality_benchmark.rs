@@ -52,7 +52,7 @@ use boosters::testing::data::{
 };
 use boosters::training::{
 	Accuracy, GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, LinearLeafConfig, LogLoss, LogisticLoss, Mae,
-	Metric, MulticlassAccuracy, MulticlassLogLoss, Objective, Rmse, SoftmaxLoss, SquaredLoss,
+	MetricFn, MulticlassAccuracy, MulticlassLogLoss, ObjectiveFn, Rmse, SoftmaxLoss, SquaredLoss,
 };
 
 #[cfg(feature = "io-parquet")]

@@ -2,7 +2,7 @@
 //!
 //! Metrics for evaluating classification model quality.
 
-use super::Metric;
+use super::MetricFn;
 use crate::inference::common::PredictionKind;
 
 // =============================================================================
@@ -23,7 +23,7 @@ use crate::inference::common::PredictionKind;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LogLoss;
 
-impl Metric for LogLoss {
+impl MetricFn for LogLoss {
     fn compute(
         &self,
         n_rows: usize,
@@ -123,7 +123,7 @@ impl Accuracy {
     }
 }
 
-impl Metric for Accuracy {
+impl MetricFn for Accuracy {
     fn compute(
         &self,
         n_rows: usize,
@@ -218,7 +218,7 @@ impl MarginAccuracy {
     }
 }
 
-impl Metric for MarginAccuracy {
+impl MetricFn for MarginAccuracy {
     fn compute(
         &self,
         n_rows: usize,
@@ -302,7 +302,7 @@ impl Metric for MarginAccuracy {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MulticlassAccuracy;
 
-impl Metric for MulticlassAccuracy {
+impl MetricFn for MulticlassAccuracy {
     fn compute(
         &self,
         n_rows: usize,
@@ -437,7 +437,7 @@ impl Metric for MulticlassAccuracy {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Auc;
 
-impl Metric for Auc {
+impl MetricFn for Auc {
     fn compute(
         &self,
         n_rows: usize,
@@ -632,7 +632,7 @@ fn compute_auc_weighted(predictions: &[f32], labels: &[f32], weights: &[f32]) ->
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MulticlassLogLoss;
 
-impl Metric for MulticlassLogLoss {
+impl MetricFn for MulticlassLogLoss {
     fn compute(
         &self,
         n_rows: usize,

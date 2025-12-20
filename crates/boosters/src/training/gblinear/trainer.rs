@@ -40,7 +40,7 @@ use crate::data::{ColMatrix, Dataset};
 use crate::repr::gblinear::LinearModel;
 use crate::training::eval;
 use crate::training::{
-    EarlyStopping, EarlyStopAction, EvalSet, Gradients, Metric, Objective, ObjectiveExt, TrainingLogger, Verbosity,
+    EarlyStopping, EarlyStopAction, EvalSet, Gradients, MetricFn, ObjectiveFn, ObjectiveFnExt, TrainingLogger, Verbosity,
 };
 
 use super::selector::FeatureSelectorKind;
@@ -154,13 +154,13 @@ impl Default for GBLinearParams {
 /// let model = trainer.train(&data, &labels, None, &[]);
 /// ```
 #[derive(Clone, Debug)]
-pub struct GBLinearTrainer<O: Objective, M: Metric> {
+pub struct GBLinearTrainer<O: ObjectiveFn, M: MetricFn> {
     objective: O,
     metric: M,
     params: GBLinearParams,
 }
 
-impl<O: Objective, M: Metric> GBLinearTrainer<O, M> {
+impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
     /// Create a new trainer with the given objective and parameters.
     pub fn new(objective: O, metric: M, params: GBLinearParams) -> Self {
         Self {

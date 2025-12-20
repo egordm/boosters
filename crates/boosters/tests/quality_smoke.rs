@@ -5,8 +5,8 @@ use boosters::testing::data::{
 	synthetic_multiclass_targets_from_linear_scores, synthetic_regression_targets_linear,
 };
 use boosters::training::{
-	Accuracy, GainParams, GBDTParams, GBDTTrainer, GrowthStrategy, LogLoss, Mae, Metric,
-	MulticlassAccuracy, MulticlassLogLoss, Objective, Rmse, LogisticLoss, SoftmaxLoss, SquaredLoss,
+	Accuracy, GainParams, GBDTParams, GBDTTrainer, GrowthStrategy, LogLoss, Mae, MetricFn,
+	MulticlassAccuracy, MulticlassLogLoss, ObjectiveFn, Rmse, LogisticLoss, SoftmaxLoss, SquaredLoss,
 	LinearLeafConfig,
 };
 

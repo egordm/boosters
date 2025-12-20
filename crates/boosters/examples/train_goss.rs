@@ -15,7 +15,7 @@ use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
 use boosters::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
 use boosters::training::{
-    GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Metric, Rmse, RowSamplingParams,
+    GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, MetricFn, Rmse, RowSamplingParams,
     SquaredLoss,
 };
 

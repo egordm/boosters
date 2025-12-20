@@ -53,7 +53,7 @@ fn train_all_selectors_regression() {
     };
     let shuffle_trainer = GBLinearTrainer::new(SquaredLoss, Rmse, shuffle_params);
     let shuffle_model = shuffle_trainer.train(&train, &[]).unwrap();
-    use boosters::training::Metric;
+    use boosters::training::MetricFn;
     let shuffle_output = shuffle_model.predict(&test_data, &[]);
     let shuffle_rmse = Rmse.compute(test_labels.len(), 1, shuffle_output.as_slice(), &test_labels, &[]);
 
@@ -123,7 +123,7 @@ fn train_all_selectors_multiclass() {
     let shuffle_trainer =
         GBLinearTrainer::new(SoftmaxLoss::new(num_classes), MulticlassLogLoss, shuffle_params);
     let shuffle_model = shuffle_trainer.train(&train, &[]).unwrap();
-    use boosters::training::{Metric, MulticlassAccuracy};
+    use boosters::training::{MetricFn, MulticlassAccuracy};
     let shuffle_output = shuffle_model.predict(&test_data, &[]);
     let n_rows = shuffle_output.num_rows();
     let shuffle_pred_classes: Vec<f32> = (0..n_rows)
@@ -274,7 +274,7 @@ fn train_thrifty_selector_convergence() {
 
     let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
     let model = trainer.train(&train, &[]).unwrap();
-    use boosters::training::Metric;
+    use boosters::training::MetricFn;
     let output = model.predict(&test_data, &[]);
     let rmse = Rmse.compute(test_labels.len(), 1, output.as_slice(), &test_labels, &[]);
 

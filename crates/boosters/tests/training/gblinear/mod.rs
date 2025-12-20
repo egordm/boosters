@@ -165,6 +165,6 @@ pub use boosters::testing::pearson_correlation;
 
 /// Root mean squared error - uses library Rmse metric.
 pub fn rmse(predictions: &[f32], labels: &[f32]) -> f64 {
-    use boosters::training::Metric;
+    use boosters::training::MetricFn;
     Rmse.compute(labels.len(), 1, predictions, labels, &[])
 }
