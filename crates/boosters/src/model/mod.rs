@@ -33,8 +33,8 @@
 
 mod meta;
 mod gbdt;
-mod linear;
+mod gblinear;
 
 pub use meta::{ModelMeta, TaskKind, FeatureType};
 pub use gbdt::GBDTModel;
-pub use linear::GBLinearModel;
+pub use gblinear::GBLinearModel;
