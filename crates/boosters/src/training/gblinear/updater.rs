@@ -244,7 +244,7 @@ where
     S: AsRef<[f32]>,
     Sel: FeatureSelector,
 {
-    selector.reset(model.num_features());
+    selector.reset(model.n_features());
     let mut deltas = Vec::new();
 
     while let Some(feature) = selector.next() {
@@ -275,7 +275,7 @@ where
     S: AsRef<[f32]> + Sync,
     Sel: FeatureSelector,
 {
-    selector.reset(model.num_features());
+    selector.reset(model.n_features());
     let features = selector.all_indices();
 
     // Compute all deltas in parallel

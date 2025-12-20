@@ -27,7 +27,7 @@ impl<'a> LinearExplainer<'a> {
     /// # Errors
     /// Returns error if feature_means length doesn't match model features.
     pub fn new(model: &'a LinearModel, feature_means: Vec<f64>) -> Result<Self, ExplainError> {
-        if feature_means.len() != model.num_features() {
+        if feature_means.len() != model.n_features() {
             return Err(ExplainError::MissingNodeStats(
                 "feature_means length must match number of features"
             ));
@@ -39,7 +39,7 @@ impl<'a> LinearExplainer<'a> {
     ///
     /// This is useful when the data is already centered.
     pub fn with_zero_means(model: &'a LinearModel) -> Self {
-        let feature_means = vec![0.0; model.num_features()];
+        let feature_means = vec![0.0; model.n_features()];
         Self { model, feature_means }
     }
 
@@ -48,8 +48,8 @@ impl<'a> LinearExplainer<'a> {
     /// For linear models: E[f(x)] = sum(w[i] * mean[i]) + bias
     pub fn base_value(&self, output: usize) -> f64 {
         let weights = self.model.weights();
-        let n_features = self.model.num_features();
-        let n_groups = self.model.num_groups();
+        let n_features = self.model.n_features();
+        let n_groups = self.model.n_groups();
 
         let mut base = self.model.bias(output) as f64;
         
@@ -70,8 +70,8 @@ impl<'a> LinearExplainer<'a> {
     /// # Returns
     /// ShapValues container with per-sample, per-feature SHAP contributions.
     pub fn shap_values(&self, data: &[f32], n_samples: usize) -> ShapValues {
-        let n_features = self.model.num_features();
-        let n_outputs = self.model.num_groups();
+        let n_features = self.model.n_features();
+        let n_outputs = self.model.n_groups();
         let mut shap = ShapValues::new(n_samples, n_features, n_outputs);
 
         let weights = self.model.weights();

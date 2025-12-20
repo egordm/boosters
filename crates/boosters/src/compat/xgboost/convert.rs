@@ -429,8 +429,8 @@ mod tests {
         assert!(model.is_linear());
         match booster {
             Booster::Linear(linear) => {
-                assert_eq!(linear.num_features(), 5);
-                assert_eq!(linear.num_groups(), 1);
+                assert_eq!(linear.n_features(), 5);
+                assert_eq!(linear.n_groups(), 1);
             }
             _ => panic!("Expected Booster::Linear"),
         }
@@ -444,8 +444,8 @@ mod tests {
         assert!(model.is_linear());
         match booster {
             Booster::Linear(linear) => {
-                assert_eq!(linear.num_features(), 4);
-                assert_eq!(linear.num_groups(), 1); // Binary is single output
+                assert_eq!(linear.n_features(), 4);
+                assert_eq!(linear.n_groups(), 1); // Binary is single output
             }
             _ => panic!("Expected Booster::Linear"),
         }
@@ -459,8 +459,8 @@ mod tests {
         assert!(model.is_linear());
         match booster {
             Booster::Linear(linear) => {
-                assert_eq!(linear.num_features(), 4);
-                assert_eq!(linear.num_groups(), 3); // 3-class multiclass
+                assert_eq!(linear.n_features(), 4);
+                assert_eq!(linear.n_groups(), 3); // 3-class multiclass
             }
             _ => panic!("Expected Booster::Linear"),
         }

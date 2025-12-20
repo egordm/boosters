@@ -250,9 +250,9 @@ impl Payload {
         };
 
         let metadata = ModelMetadata {
-            num_features: model.num_features() as u32,
-            num_groups: model.num_groups() as u32,
-            base_scores: vec![0.0; model.num_groups()], // Linear model has bias in weights
+            num_features: model.n_features() as u32,
+            num_groups: model.n_groups() as u32,
+            base_scores: vec![0.0; model.n_groups()], // Linear model has bias in weights
             objective: None,
             feature_names: None,
             attributes: Vec::new(),
@@ -717,8 +717,8 @@ mod tests {
         let payload = Payload::from_linear_model(&model, 100);
         let restored = payload.into_linear_model().unwrap();
 
-        assert_eq!(restored.num_features(), 2);
-        assert_eq!(restored.num_groups(), 1);
+        assert_eq!(restored.n_features(), 2);
+        assert_eq!(restored.n_groups(), 1);
         assert_eq!(restored.weight(0, 0), 0.5);
         assert_eq!(restored.weight(1, 0), 0.3);
         assert_eq!(restored.bias(0), 0.1);
@@ -772,8 +772,8 @@ mod tests {
         // Deserialize from bytes
         let restored = LinearModel::from_bytes(&bytes).unwrap();
 
-        assert_eq!(restored.num_features(), 2);
-        assert_eq!(restored.num_groups(), 1);
+        assert_eq!(restored.n_features(), 2);
+        assert_eq!(restored.n_groups(), 1);
         assert_eq!(restored.weight(0, 0), 0.5);
     }
 
