@@ -354,13 +354,15 @@ Create `TreeParams`, `RegularizationParams`, `SamplingParams` structs.
 
 Create high-level config using bon builder pattern.
 
+> Note: don't forget to address stakeholder feedback in tmp/stakeholder_feedback.md.
+
 **Tasks**:
 
-- [ ] 3.4.1: Create `GBDTConfig` struct composing param groups
-- [ ] 3.4.2: Add `#[bon] impl GBDTConfig` with `#[builder(finish_fn = build)]`
-- [ ] 3.4.3: Add all fields per RFC
-- [ ] 3.4.4: Implement validation in `build()` returning `Result<Self, ConfigError>`
-- [ ] 3.4.5: Define `ConfigError` enum with variants:
+- [x] 3.4.1: Create `GBDTConfig` struct composing param groups
+- [x] 3.4.2: Add `#[bon] impl GBDTConfig` with `#[builder(finish_fn = build)]`
+- [x] 3.4.3: Add all fields per RFC
+- [x] 3.4.4: Implement validation in `build()` returning `Result<Self, ConfigError>`
+- [x] 3.4.5: Define `ConfigError` enum with variants:
   - `InvalidLearningRate(f32)` - learning_rate <= 0
   - `InvalidNTrees` - n_trees == 0
   - `InvalidSamplingRatio { field: &'static str, value: f32 }` - sampling ratios out of range
