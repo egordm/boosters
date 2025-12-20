@@ -98,8 +98,10 @@ pub enum MetricKind {
 /// ```ignore
 /// use boosters::training::Metric;
 ///
-/// let metric = Metric::from_objective_str("binary:logistic");
-/// // metric is Metric::LogLoss(LogLoss)
+/// // Use convenience constructors
+/// let rmse = Metric::rmse();
+/// let logloss = Metric::logloss();
+/// let accuracy = Metric::accuracy_with_threshold(0.7);
 /// ```
 #[derive(Clone)]
 pub enum Metric {
@@ -240,21 +242,6 @@ impl Metric {
     // =========================================================================
     // Factory Methods
     // =========================================================================
-
-    /// Get the default metric for an objective string.
-    pub fn from_objective_str(objective: &str) -> Self {
-        match objective {
-            "squared_error" | "reg:squared_error" | "reg:squarederror" => Self::rmse(),
-            "absolute_error" | "reg:absoluteerror" | "mae" => Self::mae(),
-            "binary:logistic" | "binary_logistic" | "logistic" => Self::logloss(),
-            "binary:hinge" => Self::margin_accuracy(),
-            "multi:softmax" | "multiclass" | "softmax" | "multi:softprob" => Self::multiclass_logloss(),
-            "reg:quantile" | "quantile" => Self::quantile(0.5),
-            "reg:pseudohuber" | "huber" => Self::huber(1.0),
-            "poisson" | "count:poisson" => Self::poisson_deviance(),
-            _ => Self::rmse(),
-        }
-    }
 
     /// Get the default metric for a MetricKind.
     pub fn from_kind(kind: MetricKind) -> Self {

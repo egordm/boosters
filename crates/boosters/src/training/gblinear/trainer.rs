@@ -40,7 +40,7 @@ use crate::data::{ColMatrix, Dataset};
 use crate::repr::gblinear::LinearModel;
 use crate::training::eval;
 use crate::training::{
-    EarlyStopping, EarlyStopAction, EvalSet, Gradients, MetricFn, ObjectiveFn, ObjectiveFnExt, TrainingLogger, Verbosity,
+    EarlyStopping, EarlyStopAction, EvalSet, Gradients, MetricFn, ObjectiveFn, TrainingLogger, Verbosity,
 };
 
 use super::selector::FeatureSelectorKind;
