@@ -599,7 +599,7 @@ impl<L: LeafValue> Tree<L> {
     /// Generic batch predict using any feature accessor.
     ///
     /// This is the unified prediction method that works with any data source
-    /// implementing [`FeatureAccessor`]: RowMatrix, ColMatrix, BinnedAccessor, etc.
+    /// implementing `FeatureAccessor`: RowMatrix, ColMatrix, BinnedAccessor, etc.
     ///
     /// Leaf values are **added** to the existing predictions (accumulate pattern).
     ///

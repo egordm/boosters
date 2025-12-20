@@ -266,7 +266,7 @@ impl GBDTModel {
     ///
     /// Compute feature importance with a specific importance type.
     ///
-    /// Returns a [`FeatureImportance`] object with the importance scores.
+    /// Returns a `FeatureImportance` object with the importance scores.
     /// Use `.values()` for raw scores, `.normalized()` for normalized scores,
     /// or `.top_k(n)` for the top n features.
     ///

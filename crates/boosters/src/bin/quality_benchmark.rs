@@ -4,17 +4,17 @@
 //! aggregating results with confidence intervals.
 //!
 //! Usage:
-//!   cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm,io-parquet" -- [options]
+//!   cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm,io-parquet" -- \[options\]
 //!
 //! Options:
-//!   --seeds <n>          Number of seeds to run (default: 5)
-//!   --out <path>         Output markdown file (default: stdout)
+//!   --seeds N            Number of seeds to run (default: 5)
+//!   --out PATH           Output markdown file (default: stdout)
 //!   --quick              Quick mode: fewer rows, fewer trees
-//!   --mode <mode>        Benchmark mode: all (default), synthetic, real
+//!   --mode MODE          Benchmark mode: all (default), synthetic, real
 //!   --no-real            Alias for --mode synthetic (deprecated)
-//!   --libsvm <path>      Add libsvm regression dataset (label + index:value, 1-based)
-//!   --uci-machine <path> Add UCI machine.data regression dataset
-//!   --label0 <path>      Add label0 dataset (tab/space-separated: label first)
+//!   --libsvm PATH        Add libsvm regression dataset (label + index:value, 1-based)
+//!   --uci-machine PATH   Add UCI machine.data regression dataset
+//!   --label0 PATH        Add label0 dataset (tab/space-separated: label first)
 //!
 //! Real-world Datasets:
 //!   By default, if parquet files exist in packages/boosters-datagen/data/, they are included:

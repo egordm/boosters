@@ -1,7 +1,7 @@
 //! Linear leaf coefficient storage for trees.
 //!
 //! Stores feature indices and coefficients for linear leaves in a packed format.
-//! Follows the same pattern as [`CategoriesStorage`] for efficient inference.
+//! Follows the same pattern as `CategoriesStorage` for efficient inference.
 //!
 //! See RFC-0015 for design rationale.
 

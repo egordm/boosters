@@ -149,7 +149,7 @@ pub struct FeatureBundle {
     pub feature_indices: Vec<usize>,
 
     /// Bin offset for each feature in the bundle.
-    /// Bundle bin = bin_offsets[i] + feature_bin[i].
+    /// Bundle bin = `bin_offsets[i] + feature_bin[i]`.
     /// Only populated after `finalize()` is called.
     pub bin_offsets: Vec<u32>,
 
