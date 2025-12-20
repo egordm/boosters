@@ -53,6 +53,7 @@ impl GBDTModel {
     ///
     /// * `dataset` - Binned training dataset
     /// * `targets` - Target values (length = n_rows × n_outputs)
+    /// * `weights` - Optional sample weights (empty slice for uniform)
     /// * `objective` - Objective function for training
     /// * `metric` - Evaluation metric
     /// * `params` - Training parameters
@@ -61,21 +62,6 @@ impl GBDTModel {
     ///
     /// Trained model, or `None` if training fails.
     pub fn train<O, M>(
-        dataset: &BinnedDataset,
-        targets: &[f32],
-        objective: O,
-        metric: M,
-        params: GBDTParams,
-    ) -> Option<Self>
-    where
-        O: Objective,
-        M: Metric,
-    {
-        Self::train_with_weights(dataset, targets, &[], objective, metric, params)
-    }
-
-    /// Train with sample weights.
-    pub fn train_with_weights<O, M>(
         dataset: &BinnedDataset,
         targets: &[f32],
         weights: &[f32],

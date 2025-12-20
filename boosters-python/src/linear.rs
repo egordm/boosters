@@ -1,8 +1,6 @@
 //! GBLinear booster Python bindings.
 
-use crate::dataset::PyDataset;
 use crate::error::PyBoostersError;
-use crate::params::PyGBLinearParams;
 use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArrayMethods};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
@@ -12,49 +10,131 @@ use boosters::data::{ColMatrix, Dataset as BoostersDataset, DenseMatrix};
 use boosters::model::{GBLinearModel, ModelMeta, TaskKind};
 use boosters::training::{GBLinearParams, GBLinearTrainer, MetricFunction, ObjectiveFunction};
 
-/// Gradient Boosted Linear model.
+/// Gradient Boosted Linear model with sklearn-style interface.
 ///
 /// This class provides training and prediction for linear booster models.
+/// Use the constructor to set hyperparameters, then call `fit()` with data.
 ///
 /// # Example
 /// ```python
 /// import numpy as np
-/// from boosters_python import GBLinearBooster, GBLinearParams, Dataset
+/// from boosters_python import GBLinearBooster
 ///
 /// X = np.random.randn(1000, 10).astype(np.float32)
 /// y = np.random.randn(1000).astype(np.float32)
 ///
-/// dataset = Dataset(X, y)
-/// params = GBLinearParams(n_estimators=100)
-///
-/// model = GBLinearBooster.train(params, dataset)
+/// model = GBLinearBooster(n_estimators=100, learning_rate=0.5)
+/// model.fit(X, y)
 /// predictions = model.predict(X)
 /// ```
 #[pyclass(name = "GBLinearBooster")]
 pub struct PyGBLinearBooster {
-    model: GBLinearModel,
-    params: PyGBLinearParams,
+    // Model (None until fitted)
+    model: Option<GBLinearModel>,
+    
+    // Hyperparameters
+    learning_rate: f32,
+    n_estimators: usize,
+    objective: String,
+    reg_lambda: f32,
+    reg_alpha: f32,
+    num_class: Option<usize>,
+    
+    // Metadata
+    feature_names_: Option<Vec<String>>,
 }
 
 #[pymethods]
 impl PyGBLinearBooster {
-    /// Train a new GBLinear model.
+    /// Create a new GBLinearBooster with the given hyperparameters.
     ///
     /// # Arguments
-    /// * `params` - Training parameters
-    /// * `train_data` - Training dataset
-    #[staticmethod]
-    fn train(params: PyGBLinearParams, train_data: PyDataset) -> PyResult<Self> {
-        let labels = train_data
-            .labels()
-            .ok_or_else(|| PyBoostersError::InvalidData("Labels required for training".into()))?;
+    /// * `learning_rate` - Step size shrinkage. Default: 0.5
+    /// * `n_estimators` - Number of boosting rounds. Default: 100
+    /// * `objective` - Objective function. Default: "squared_error"
+    /// * `reg_lambda` - L2 regularization. Default: 0.0
+    /// * `reg_alpha` - L1 regularization. Default: 0.0
+    /// * `num_class` - Number of classes for multiclass. Default: None
+    #[new]
+    #[pyo3(signature = (
+        learning_rate = 0.5,
+        n_estimators = 100,
+        objective = "squared_error".to_string(),
+        reg_lambda = 0.0,
+        reg_alpha = 0.0,
+        num_class = None,
+    ))]
+    fn new(
+        learning_rate: f32,
+        n_estimators: usize,
+        objective: String,
+        reg_lambda: f32,
+        reg_alpha: f32,
+        num_class: Option<usize>,
+    ) -> Self {
+        Self {
+            model: None,
+            learning_rate,
+            n_estimators,
+            objective,
+            reg_lambda,
+            reg_alpha,
+            num_class,
+            feature_names_: None,
+        }
+    }
 
-        // Create ColMatrix from the data (GBLinear requires column-major layout)
-        let n_rows = train_data.num_samples();
-        let n_cols = train_data.num_features();
-        let features = train_data.features().to_vec();
-        
-        // Convert from row-major to column-major
+    /// Fit the model to training data.
+    ///
+    /// # Arguments
+    /// * `x` - Feature matrix of shape (n_samples, n_features)
+    /// * `y` - Target values of shape (n_samples,)
+    /// * `sample_weight` - Sample weights. Default: None
+    /// * `feature_names` - Feature names. Default: None
+    ///
+    /// # Returns
+    /// Self for method chaining
+    #[pyo3(signature = (x, y, sample_weight = None, feature_names = None))]
+    fn fit<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        x: PyReadonlyArray2<'py, f32>,
+        y: PyReadonlyArray1<'py, f32>,
+        sample_weight: Option<PyReadonlyArray1<'py, f32>>,
+        feature_names: Option<Vec<String>>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        let shape = x.shape();
+        let n_rows = shape[0];
+        let n_cols = shape[1];
+        let features = x.as_slice()?.to_vec();
+        let targets = y.as_slice()?.to_vec();
+
+        if targets.len() != n_rows {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "x has {} samples but y has {} samples",
+                n_rows,
+                targets.len()
+            )));
+        }
+
+        // Get weights if provided
+        let weights: Vec<f32> = if let Some(w) = sample_weight {
+            let w_slice = w.as_slice()?;
+            if w_slice.len() != n_rows {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "x has {} samples but sample_weight has {} samples",
+                    n_rows,
+                    w_slice.len()
+                )));
+            }
+            w_slice.to_vec()
+        } else {
+            vec![]
+        };
+
+        // Store feature names
+        slf.feature_names_ = feature_names.clone();
+
+        // Convert from row-major to column-major (GBLinear requires column-major layout)
         let mut col_major_data = vec![0.0f32; n_rows * n_cols];
         for row in 0..n_rows {
             for col in 0..n_cols {
@@ -62,59 +142,73 @@ impl PyGBLinearBooster {
             }
         }
         let col_matrix: ColMatrix<f32, Vec<f32>> = DenseMatrix::new(col_major_data, n_rows, n_cols);
-        
+
         // Create boosters Dataset from ColMatrix
-        let targets = labels.to_vec();
         let dataset = BoostersDataset::from_numeric(&col_matrix, targets)
             .map_err(|e| PyBoostersError::Training(format!("Failed to create dataset: {}", e)))?;
 
         // Create training params
-        let trainer_params = Self::params_to_trainer_params(&params);
+        let trainer_params = GBLinearParams {
+            n_rounds: slf.n_estimators as u32,
+            learning_rate: slf.learning_rate,
+            alpha: slf.reg_alpha,
+            lambda: slf.reg_lambda,
+            ..Default::default()
+        };
 
-        // Train with appropriate objective based on params
-        let (linear_model, n_groups) = Self::train_with_objective(
-            &dataset,
-            &params.objective,
-            trainer_params,
-        )?;
+        // Train with appropriate objective
+        let (linear_model, n_groups) = slf.train_with_objective(&dataset, &weights, trainer_params)?;
 
         // Create metadata
-        let task = match params.objective.as_str() {
+        let task = match slf.objective.as_str() {
             "squared_error" | "reg:squared_error" | "reg:squarederror" => TaskKind::Regression,
             "binary:logistic" | "binary:logitraw" => TaskKind::BinaryClassification,
             _ => TaskKind::Regression,
         };
 
         let meta = ModelMeta {
-            n_features: train_data.num_features(),
+            n_features: n_cols,
             n_groups,
             task,
-            feature_names: train_data.get_feature_names(),
+            feature_names: feature_names,
             ..Default::default()
         };
 
-        let model = GBLinearModel::from_linear_model(linear_model, meta, params.n_estimators as u32);
+        let model = GBLinearModel::from_linear_model(linear_model, meta, slf.n_estimators as u32);
+        slf.model = Some(model);
 
-        Ok(Self { model, params })
+        Ok(slf)
+    }
+
+    /// Whether the model has been fitted.
+    #[getter]
+    fn is_fitted(&self) -> bool {
+        self.model.is_some()
     }
 
     /// Make predictions on input data.
     ///
     /// # Arguments
-    /// * `data` - Feature matrix of shape (n_samples, n_features)
+    /// * `x` - Feature matrix of shape (n_samples, n_features)
     ///
     /// # Returns
     /// Predictions as a NumPy array
     fn predict<'py>(
         &self,
         py: Python<'py>,
-        data: PyReadonlyArray2<f32>,
+        x: PyReadonlyArray2<'py, f32>,
     ) -> PyResult<Bound<'py, PyArray1<f32>>> {
-        let shape = data.shape();
-        let n_samples = shape[0];
-        let features = data.as_slice()?;
+        let model = self.model.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "Model not fitted. Call fit() before predict()."
+            )
+        })?;
 
-        let predictions = self.model.predict_batch(features, n_samples);
+        let shape = x.shape();
+        let n_samples = shape[0];
+        let features = x.as_slice()?;
+
+        let predictions = model.predict_batch(features, n_samples);
 
         Ok(PyArray1::from_vec_bound(py, predictions))
     }
@@ -122,7 +216,7 @@ impl PyGBLinearBooster {
     /// Compute SHAP values for explaining predictions.
     ///
     /// # Arguments
-    /// * `data` - Feature matrix of shape (n_samples, n_features)
+    /// * `x` - Feature matrix of shape (n_samples, n_features)
     /// * `feature_means` - Mean value for each feature (background distribution)
     ///
     /// # Returns
@@ -130,17 +224,22 @@ impl PyGBLinearBooster {
     fn shap_values<'py>(
         &self,
         py: Python<'py>,
-        data: PyReadonlyArray2<f32>,
-        feature_means: PyReadonlyArray1<f64>,
+        x: PyReadonlyArray2<'py, f32>,
+        feature_means: PyReadonlyArray1<'py, f64>,
     ) -> PyResult<Bound<'py, PyArray2<f64>>> {
-        let shape = data.shape();
+        let model = self.model.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "Model not fitted. Call fit() before shap_values()."
+            )
+        })?;
+
+        let shape = x.shape();
         let n_samples = shape[0];
         let n_features = shape[1];
-        let features = data.as_slice()?;
+        let features = x.as_slice()?;
         let means = feature_means.as_slice()?.to_vec();
 
-        let shap = self
-            .model
+        let shap = model
             .shap_values(features, n_samples, means)
             .map_err(PyBoostersError::from)?;
 
@@ -165,56 +264,94 @@ impl PyGBLinearBooster {
     ///
     /// For linear models, this is the bias term.
     #[getter]
-    fn expected_value(&self) -> f64 {
-        self.model.bias(0) as f64
+    fn expected_value(&self) -> PyResult<f64> {
+        let model = self.model.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "Model not fitted. Call fit() first."
+            )
+        })?;
+        Ok(model.bias(0) as f64)
     }
 
     /// Number of features.
     #[getter]
-    fn n_features(&self) -> usize {
-        self.model.n_features()
+    fn n_features(&self) -> PyResult<usize> {
+        let model = self.model.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "Model not fitted. Call fit() first."
+            )
+        })?;
+        Ok(model.n_features())
     }
 
     /// Number of output groups.
     #[getter]
-    fn n_groups(&self) -> usize {
-        self.model.n_groups()
+    fn n_groups(&self) -> PyResult<usize> {
+        let model = self.model.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "Model not fitted. Call fit() first."
+            )
+        })?;
+        Ok(model.n_groups())
     }
 
     /// Number of training rounds.
     #[getter]
-    fn n_rounds(&self) -> usize {
-        self.model.n_rounds() as usize
+    fn n_rounds(&self) -> PyResult<usize> {
+        let model = self.model.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "Model not fitted. Call fit() first."
+            )
+        })?;
+        Ok(model.n_rounds() as usize)
     }
 
     /// Get model weights as a NumPy array.
     ///
     /// Returns array of shape (n_features,) for single-output,
     /// or (n_features, n_groups) for multi-output.
-    fn weights<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f32>> {
-        let n_features = self.model.n_features();
-        let n_groups = self.model.n_groups();
+    fn weights<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f32>>> {
+        let model = self.model.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "Model not fitted. Call fit() first."
+            )
+        })?;
+
+        let n_features = model.n_features();
+        let n_groups = model.n_groups();
 
         let mut weights = Vec::with_capacity(n_features * n_groups);
         for group in 0..n_groups {
             for feature in 0..n_features {
-                weights.push(self.model.weight(feature, group));
+                weights.push(model.weight(feature, group));
             }
         }
 
-        PyArray1::from_vec_bound(py, weights)
+        Ok(PyArray1::from_vec_bound(py, weights))
     }
 
     /// Get model bias as a NumPy array.
-    fn bias<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f32>> {
-        let n_groups = self.model.n_groups();
-        let bias: Vec<f32> = (0..n_groups).map(|g| self.model.bias(g)).collect();
-        PyArray1::from_vec_bound(py, bias)
+    fn bias<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f32>>> {
+        let model = self.model.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "Model not fitted. Call fit() first."
+            )
+        })?;
+
+        let n_groups = model.n_groups();
+        let bias: Vec<f32> = (0..n_groups).map(|g| model.bias(g)).collect();
+        Ok(PyArray1::from_vec_bound(py, bias))
     }
 
     /// Save the model to a file.
     fn save(&self, path: PathBuf) -> PyResult<()> {
-        self.model
+        let model = self.model.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "Model not fitted. Call fit() first."
+            )
+        })?;
+
+        model
             .save(&path)
             .map_err(|e| PyBoostersError::Serialization(e.to_string()))?;
         Ok(())
@@ -226,15 +363,27 @@ impl PyGBLinearBooster {
         let model = GBLinearModel::load(&path)
             .map_err(|e| PyBoostersError::Deserialization(e.to_string()))?;
 
-        let params = PyGBLinearParams::default();
-
-        Ok(Self { model, params })
+        Ok(Self {
+            model: Some(model),
+            learning_rate: 0.5,
+            n_estimators: 100,
+            objective: "squared_error".to_string(),
+            reg_lambda: 0.0,
+            reg_alpha: 0.0,
+            num_class: None,
+            feature_names_: None,
+        })
     }
 
     /// Serialize the model to bytes.
     fn to_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-        let bytes = self
-            .model
+        let model = self.model.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "Model not fitted. Call fit() first."
+            )
+        })?;
+
+        let bytes = model
             .to_bytes()
             .map_err(|e| PyBoostersError::Serialization(e.to_string()))?;
 
@@ -247,9 +396,16 @@ impl PyGBLinearBooster {
         let model = GBLinearModel::from_bytes(data)
             .map_err(|e| PyBoostersError::Deserialization(e.to_string()))?;
 
-        let params = PyGBLinearParams::default();
-
-        Ok(Self { model, params })
+        Ok(Self {
+            model: Some(model),
+            learning_rate: 0.5,
+            n_estimators: 100,
+            objective: "squared_error".to_string(),
+            reg_lambda: 0.0,
+            reg_alpha: 0.0,
+            num_class: None,
+            feature_names_: None,
+        })
     }
 
     /// Support for Python pickling.
@@ -261,38 +417,43 @@ impl PyGBLinearBooster {
     fn __setstate__(&mut self, state: &[u8]) -> PyResult<()> {
         let loaded = Self::from_bytes(state)?;
         self.model = loaded.model;
-        self.params = loaded.params;
+        self.learning_rate = loaded.learning_rate;
+        self.n_estimators = loaded.n_estimators;
+        self.objective = loaded.objective;
+        self.reg_lambda = loaded.reg_lambda;
+        self.reg_alpha = loaded.reg_alpha;
+        self.num_class = loaded.num_class;
+        self.feature_names_ = loaded.feature_names_;
         Ok(())
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "GBLinearBooster(n_features={}, n_groups={})",
-            self.n_features(),
-            self.n_groups()
-        )
+        if let Some(ref model) = self.model {
+            format!(
+                "GBLinearBooster(n_features={}, n_groups={}, n_estimators={})",
+                model.n_features(),
+                model.n_groups(),
+                self.n_estimators
+            )
+        } else {
+            format!(
+                "GBLinearBooster(n_estimators={}, learning_rate={}, objective='{}', fitted=False)",
+                self.n_estimators, self.learning_rate, self.objective
+            )
+        }
     }
 }
 
 impl PyGBLinearBooster {
-    fn params_to_trainer_params(params: &PyGBLinearParams) -> GBLinearParams {
-        GBLinearParams {
-            n_rounds: params.n_estimators as u32,
-            learning_rate: params.learning_rate,
-            alpha: params.reg_alpha,
-            lambda: params.reg_lambda,
-            ..Default::default()
-        }
-    }
-
     /// Train with the appropriate objective and metric based on the objective string.
     fn train_with_objective(
+        &self,
         dataset: &boosters::data::Dataset,
-        objective_str: &str,
+        _weights: &[f32],
         params: GBLinearParams,
     ) -> PyResult<(boosters::repr::gblinear::LinearModel, usize)> {
         // Parse objective string to ObjectiveFunction enum
-        let (objective, n_groups) = match objective_str {
+        let (objective, n_groups) = match self.objective.as_str() {
             // Regression objectives
             "squared_error" | "reg:squared_error" | "reg:squarederror" => {
                 (ObjectiveFunction::SquaredError, 1)
@@ -304,14 +465,14 @@ impl PyGBLinearBooster {
             _ => {
                 return Err(PyBoostersError::InvalidParameter(format!(
                     "Unknown objective: '{}'. Supported: squared_error, binary:logistic",
-                    objective_str
+                    self.objective
                 ))
                 .into());
             }
         };
 
         // Get matching default metric
-        let metric = MetricFunction::from_objective_str(objective_str);
+        let metric = MetricFunction::from_objective_str(&self.objective);
 
         let trainer = GBLinearTrainer::new(objective, metric, params);
         let model = trainer
