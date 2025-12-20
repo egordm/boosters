@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use boosters::data::{BinnedDatasetBuilder, DenseMatrix, RowMajor};
 use boosters::model::GBDTModel;
-use boosters::training::{GBDTParams, GainParams, Rmse, SquaredLoss};
+use boosters::training::{GBDTParams, GainParams, MetricFunction, ObjectiveFunction};
 
 /// Gradient Boosted Decision Trees model.
 ///
@@ -72,26 +72,15 @@ impl PyGBDTBooster {
         // Create training params
         let trainer_params = Self::params_to_trainer_params(&params);
 
-        // For now, only support squared error (regression)
-        // TODO: Add support for other objectives
-        let objective = SquaredLoss;
-        let metric = Rmse;
-
-        // Train model
-        let model = if let Some(weights) = train_data.weights() {
-            GBDTModel::train_with_weights(
-                &binned_dataset,
-                labels,
-                weights,
-                objective,
-                metric,
-                trainer_params,
-            )
-        } else {
-            GBDTModel::train(&binned_dataset, labels, objective, metric, trainer_params)
-        };
-
-        let model = model.ok_or_else(|| PyBoostersError::Training("Training failed".into()))?;
+        // Train with appropriate objective based on params
+        let model = Self::train_with_objective(
+            &binned_dataset,
+            labels,
+            train_data.weights(),
+            &params.objective,
+            params.num_class,
+            trainer_params,
+        )?;
 
         Ok(Self { model, params })
     }
@@ -295,5 +284,55 @@ impl PyGBDTBooster {
             },
             ..Default::default()
         }
+    }
+
+    /// Train with the appropriate objective and metric based on the objective string.
+    fn train_with_objective(
+        dataset: &boosters::data::BinnedDataset,
+        labels: &[f32],
+        weights: Option<&[f32]>,
+        objective_str: &str,
+        num_class: Option<usize>,
+        params: GBDTParams,
+    ) -> PyResult<GBDTModel> {
+        // Parse objective string to ObjectiveFunction enum
+        let objective = match objective_str {
+            "squared_error" | "reg:squared_error" | "reg:squarederror" => {
+                ObjectiveFunction::SquaredError
+            }
+            "absolute_error" | "reg:absoluteerror" | "mae" => ObjectiveFunction::AbsoluteError,
+            "binary:logistic" | "binary_logistic" | "logistic" => ObjectiveFunction::Logistic,
+            "binary:hinge" => ObjectiveFunction::Hinge,
+            "multi:softmax" | "multiclass" | "softmax" | "multi:softprob" => {
+                let n_classes = num_class.ok_or_else(|| {
+                    PyBoostersError::InvalidParameter(
+                        "num_class required for multiclass objective".into(),
+                    )
+                })?;
+                ObjectiveFunction::Softmax { num_classes: n_classes }
+            }
+            "reg:quantile" | "quantile" => ObjectiveFunction::Quantile { alpha: 0.5 },
+            "reg:pseudohuber" | "huber" => ObjectiveFunction::PseudoHuber { delta: 1.0 },
+            "poisson" | "count:poisson" => ObjectiveFunction::Poisson,
+            _ => {
+                return Err(PyBoostersError::InvalidParameter(format!(
+                    "Unknown objective: '{}'. Supported: squared_error, absolute_error, binary:logistic, binary:hinge, multi:softmax, quantile, huber, poisson",
+                    objective_str
+                ))
+                .into());
+            }
+        };
+
+        // Get matching default metric
+        let metric = MetricFunction::from_objective_str(objective_str);
+
+        // Train model
+        let model = if let Some(w) = weights {
+            GBDTModel::train_with_weights(dataset, labels, w, objective, metric, params)
+        } else {
+            GBDTModel::train(dataset, labels, objective, metric, params)
+        };
+
+        model.ok_or_else(|| PyBoostersError::Training("Training failed".into()).into())
     }
 }

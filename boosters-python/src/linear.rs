@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use boosters::data::{ColMatrix, Dataset as BoostersDataset, DenseMatrix};
 use boosters::model::{GBLinearModel, ModelMeta, TaskKind};
-use boosters::training::{GBLinearParams, GBLinearTrainer, Rmse, SquaredLoss};
+use boosters::training::{GBLinearParams, GBLinearTrainer, MetricFunction, ObjectiveFunction};
 
 /// Gradient Boosted Linear model.
 ///
@@ -71,28 +71,23 @@ impl PyGBLinearBooster {
         // Create training params
         let trainer_params = Self::params_to_trainer_params(&params);
 
-        // For now, only support squared error (regression)
-        let objective = SquaredLoss;
-        let metric = Rmse;
-
-        // Create trainer and train
-        let trainer = GBLinearTrainer::new(objective, metric, trainer_params);
-        let linear_model = trainer.train(&dataset, &[])
-            .ok_or_else(|| PyBoostersError::Training("Training failed".into()))?;
+        // Train with appropriate objective based on params
+        let (linear_model, n_groups) = Self::train_with_objective(
+            &dataset,
+            &params.objective,
+            trainer_params,
+        )?;
 
         // Create metadata
         let task = match params.objective.as_str() {
             "squared_error" | "reg:squared_error" | "reg:squarederror" => TaskKind::Regression,
             "binary:logistic" | "binary:logitraw" => TaskKind::BinaryClassification,
-            "multi:softmax" | "multi:softprob" => TaskKind::MulticlassClassification {
-                n_classes: params.num_class.unwrap_or(1),
-            },
             _ => TaskKind::Regression,
         };
 
         let meta = ModelMeta {
             n_features: train_data.num_features(),
-            n_groups: 1, // SquaredLoss is single-output
+            n_groups,
             task,
             feature_names: train_data.get_feature_names(),
             ..Default::default()
@@ -288,5 +283,41 @@ impl PyGBLinearBooster {
             lambda: params.reg_lambda,
             ..Default::default()
         }
+    }
+
+    /// Train with the appropriate objective and metric based on the objective string.
+    fn train_with_objective(
+        dataset: &boosters::data::Dataset,
+        objective_str: &str,
+        params: GBLinearParams,
+    ) -> PyResult<(boosters::repr::gblinear::LinearModel, usize)> {
+        // Parse objective string to ObjectiveFunction enum
+        let (objective, n_groups) = match objective_str {
+            // Regression objectives
+            "squared_error" | "reg:squared_error" | "reg:squarederror" => {
+                (ObjectiveFunction::SquaredError, 1)
+            }
+            // Binary classification
+            "binary:logistic" | "binary_logistic" | "logistic" => {
+                (ObjectiveFunction::Logistic, 1)
+            }
+            _ => {
+                return Err(PyBoostersError::InvalidParameter(format!(
+                    "Unknown objective: '{}'. Supported: squared_error, binary:logistic",
+                    objective_str
+                ))
+                .into());
+            }
+        };
+
+        // Get matching default metric
+        let metric = MetricFunction::from_objective_str(objective_str);
+
+        let trainer = GBLinearTrainer::new(objective, metric, params);
+        let model = trainer
+            .train(dataset, &[])
+            .ok_or_else(|| PyBoostersError::Training("Training failed".into()))?;
+        
+        Ok((model, n_groups))
     }
 }
