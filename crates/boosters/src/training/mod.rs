@@ -61,8 +61,8 @@ pub use metrics::{
     MulticlassAccuracy, MulticlassLogLoss, PoissonDeviance, QuantileMetric, Rmse,
 };
 pub use objectives::{
-    AbsoluteLoss, HingeLoss, LambdaRankLoss, LogisticLoss, Objective, ObjectiveExt,
-    ObjectiveFunction, PinballLoss, PoissonLoss, PseudoHuberLoss, SoftmaxLoss, SquaredLoss,
+    AbsoluteLoss, HingeLoss, LambdaRankLoss, LogisticLoss, Objective, ObjectiveFn, ObjectiveFnExt,
+    PinballLoss, PoissonLoss, PseudoHuberLoss, SoftmaxLoss, SquaredLoss,
     TargetSchema, TaskKind,
 };
 

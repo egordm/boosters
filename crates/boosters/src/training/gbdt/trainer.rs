@@ -27,7 +27,7 @@ use crate::training::callback::{EarlyStopping, EarlyStopAction};
 use crate::training::eval::{self, EvalSet};
 use crate::training::logger::TrainingLogger;
 use crate::training::metrics::Metric;
-use crate::training::objectives::Objective;
+use crate::training::objectives::ObjectiveFn;
 use crate::training::sampling::{ColSamplingParams, RowSampler, RowSamplingParams};
 use crate::training::Gradients;
 use crate::training::Verbosity;
@@ -151,7 +151,7 @@ impl GBDTParams {
 /// let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
 /// let forest = trainer.train(&dataset, &targets, &[]);
 /// ```
-pub struct GBDTTrainer<O: Objective, M: Metric> {
+pub struct GBDTTrainer<O: ObjectiveFn, M: Metric> {
     /// Objective function.
     objective: O,
     /// Evaluation metric.
@@ -160,7 +160,7 @@ pub struct GBDTTrainer<O: Objective, M: Metric> {
     params: GBDTParams,
 }
 
-impl<O: Objective, M: Metric> GBDTTrainer<O, M> {
+impl<O: ObjectiveFn, M: Metric> GBDTTrainer<O, M> {
     /// Create a new GBDT trainer.
     pub fn new(objective: O, metric: M, params: GBDTParams) -> Self {
         Self { objective, metric, params }

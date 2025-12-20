@@ -137,7 +137,7 @@ fn validate_objective_inputs(
 ///
 /// The `weights` slice can be empty for unweighted training.
 /// When non-empty, it must have length `n_rows`.
-pub trait Objective: Send + Sync {
+pub trait ObjectiveFn: Send + Sync {
     /// Number of outputs (predictions per sample).
     ///
     /// For most objectives this is 1 (single-output).
@@ -300,7 +300,7 @@ use crate::training::Gradients;
 ///
 /// This provides a convenient interface for trainers that use Gradients
 /// for gradient storage.
-pub trait ObjectiveExt: Objective {
+pub trait ObjectiveFnExt: ObjectiveFn {
     /// Compute gradients into a Gradients.
     ///
     /// This is a convenience wrapper that extracts the mutable slices from
@@ -327,10 +327,10 @@ pub trait ObjectiveExt: Objective {
 }
 
 // Implement ObjectiveExt for all Objective types
-impl<T: Objective + ?Sized> ObjectiveExt for T {}
+impl<T: ObjectiveFn + ?Sized> ObjectiveFnExt for T {}
 
 // =============================================================================
-// ObjectiveFunction Enum (Convenience wrapper)
+// Objective Enum (Convenience wrapper)
 // =============================================================================
 
 /// Objective function enum for easy configuration.
@@ -342,15 +342,15 @@ impl<T: Objective + ?Sized> ObjectiveExt for T {}
 /// # Example
 ///
 /// ```ignore
-/// use boosters::training::{GBTreeTrainer, ObjectiveFunction};
+/// use boosters::training::{GBTreeTrainer, Objective};
 ///
 /// let trainer = GBTreeTrainer::builder()
-///     .objective(ObjectiveFunction::Logistic)
+///     .objective(Objective::Logistic)
 ///     .build()
 ///     .unwrap();
 /// ```
 #[derive(Debug, Clone, PartialEq)]
-pub enum ObjectiveFunction {
+pub enum Objective {
     /// Squared error loss (L2) for regression.
     SquaredError,
     /// Absolute error loss (L1) for robust regression.
@@ -371,13 +371,61 @@ pub enum ObjectiveFunction {
     Poisson,
 }
 
-impl Default for ObjectiveFunction {
+/// Convenience constructors for common objectives.
+impl Objective {
+    /// Squared error (L2) loss for regression.
+    pub fn squared() -> Self {
+        Self::SquaredError
+    }
+    
+    /// Absolute error (L1) loss for robust regression.
+    pub fn absolute() -> Self {
+        Self::AbsoluteError
+    }
+    
+    /// Binary logistic loss for classification.
+    pub fn logistic() -> Self {
+        Self::Logistic
+    }
+    
+    /// Hinge loss for SVM-style classification.
+    pub fn hinge() -> Self {
+        Self::Hinge
+    }
+    
+    /// Softmax loss for multiclass classification.
+    pub fn softmax(num_classes: usize) -> Self {
+        Self::Softmax { num_classes }
+    }
+    
+    /// Pinball loss for single quantile regression.
+    pub fn quantile(alpha: f32) -> Self {
+        Self::Quantile { alpha }
+    }
+    
+    /// Pinball loss for multiple quantile regression.
+    pub fn multi_quantile(alphas: Vec<f32>) -> Self {
+        Self::MultiQuantile { alphas }
+    }
+    
+    /// Pseudo-Huber loss for robust regression.
+    pub fn pseudo_huber(delta: f32) -> Self {
+        Self::PseudoHuber { delta }
+    }
+    
+    /// Poisson loss for count data regression.
+    pub fn poisson() -> Self {
+        Self::Poisson
+    }
+}
+
+impl Default for Objective {
     fn default() -> Self {
         Self::SquaredError
     }
 }
 
-impl Objective for ObjectiveFunction {
+impl ObjectiveFn for Objective {
     fn n_outputs(&self) -> usize {
         match self {
             Self::SquaredError => 1,

@@ -1,6 +1,6 @@
 //! Classification objective functions.
 
-use super::{validate_objective_inputs, Objective, TargetSchema, TaskKind};
+use super::{validate_objective_inputs, ObjectiveFn, TargetSchema, TaskKind};
 use crate::inference::common::{PredictionKind, PredictionOutput};
 use crate::training::GradsTuple;
 use crate::training::metrics::MetricKind;
@@ -90,7 +90,7 @@ impl LogisticLoss {
     }
 }
 
-impl Objective for LogisticLoss {
+impl ObjectiveFn for LogisticLoss {
     fn compute_gradients(
         &self,
         n_rows: usize,
@@ -202,7 +202,7 @@ impl Objective for LogisticLoss {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct HingeLoss;
 
-impl Objective for HingeLoss {
+impl ObjectiveFn for HingeLoss {
     fn compute_gradients(
         &self,
         n_rows: usize,
@@ -320,7 +320,7 @@ impl SoftmaxLoss {
     }
 }
 
-impl Objective for SoftmaxLoss {
+impl ObjectiveFn for SoftmaxLoss {
     fn n_outputs(&self) -> usize {
         self.num_classes
     }
@@ -515,7 +515,7 @@ impl LambdaRankLoss {
     }
 }
 
-impl Objective for LambdaRankLoss {
+impl ObjectiveFn for LambdaRankLoss {
     fn compute_gradients(
         &self,
         n_rows: usize,

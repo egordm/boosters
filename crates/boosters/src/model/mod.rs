@@ -14,14 +14,14 @@
 //! ```ignore
 //! use boosters::model::{GBDTModel, TaskKind};
 //! use boosters::training::GBDTParams;
-//! use boosters::training::ObjectiveFunction;
+//! use boosters::training::Objective;
 //!
 //! // Train a model
 //! let params = GBDTParams {
 //!     n_trees: 50,
 //!     ..Default::default()
 //! };
-//! let model = GBDTModel::train(&data, ObjectiveFunction::SquaredError, params)?;
+//! let model = GBDTModel::train(&data, Objective::SquaredError, params)?;
 //!
 //! // Make predictions
 //! let predictions = model.predict(&new_data);

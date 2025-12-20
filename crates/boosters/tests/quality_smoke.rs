@@ -6,7 +6,7 @@ use boosters::testing::data::{
 };
 use boosters::training::{
 	Accuracy, GainParams, GBDTParams, GBDTTrainer, GrowthStrategy, LogLoss, Mae, Metric,
-	MulticlassAccuracy, MulticlassLogLoss, Objective, Rmse, LogisticLoss, SoftmaxLoss, SquaredLoss,
+	MulticlassAccuracy, MulticlassLogLoss, ObjectiveFn, Rmse, LogisticLoss, SoftmaxLoss, SquaredLoss,
 	LinearLeafConfig,
 };
 
