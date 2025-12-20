@@ -386,26 +386,26 @@ Create high-level config using bon builder pattern.
 
 ---
 
-### Story 3.5: Implement GBLinearConfig
+### Story 3.5: Implement GBLinearConfig ✅
 
 Create parallel config for linear models.
 
 **Tasks**:
 
-- [ ] 3.5.1: Create `GBLinearConfig` struct
-- [ ] 3.5.2: Create `model::gblinear::RegularizationParams` (lambda, alpha only - no tree params)
-- [ ] 3.5.3: Add bon builder with validation
-- [ ] 3.5.4: Define GBLinear-specific `ConfigError` if needed
+- [x] 3.5.1: Create `GBLinearConfig` struct
+- [x] 3.5.2: Create `model::gblinear::RegularizationParams` (lambda, alpha only - no tree params)
+- [x] 3.5.3: Add bon builder with validation
+- [x] 3.5.4: Define GBLinear-specific `ConfigError` if needed
 
 **Definition of Done**:
 
-- `GBLinearConfig` exists with builder
-- Tests pass
+- `GBLinearConfig` exists with builder ✓
+- Tests pass (15 tests) ✓
 
 **Testing Criteria**:
 
-- Builder works with defaults
-- Validation catches invalid params
+- Builder works with defaults ✓
+- Validation catches invalid params ✓
 
 ---
 
