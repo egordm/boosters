@@ -77,13 +77,13 @@ Create empty module structure per RFC layout (files can be empty or have placeho
 
 **Tasks**:
 
-- [ ] 1.1.1: Create all new module directories and files:
+- [x] 1.1.1: Create all new module directories and files:
   - `model/mod.rs`, `model/gbdt.rs`, `model/gblinear.rs`
   - `training/mod.rs`, `training/objectives/mod.rs`, `training/metrics/mod.rs`
   - `training/gbdt/mod.rs`, `training/gblinear/mod.rs`
   - `inference/mod.rs`, `inference/gbdt/mod.rs`, `inference/gblinear/mod.rs`
   - `repr/mod.rs`
-- [ ] 1.1.2: Update `lib.rs` to declare new modules (can be empty initially)
+- [x] 1.1.2: Update `lib.rs` to declare new modules (can be empty initially)
 
 **Note**: `inference/` module may remain empty initially; created for future compatibility.
 
@@ -104,8 +104,8 @@ Rename `Objective` trait → `ObjectiveFn`, `ObjectiveFunction` enum → `Object
 
 **Tasks**:
 
-- [ ] 1.2.1: Rename trait and enum, update all implementations and usages
-- [ ] 1.2.2: Add convenience constructors to `Objective` enum
+- [x] 1.2.1: Rename trait and enum, update all implementations and usages
+- [x] 1.2.2: Add convenience constructors to `Objective` enum
 
 **Definition of Done**:
 
@@ -126,8 +126,8 @@ Apply same pattern: `Metric` trait → `MetricFn`, `MetricFunction` enum → `Me
 
 **Tasks**:
 
-- [ ] 1.3.1: Rename trait and enum, update all implementations and usages
-- [ ] 1.3.2: Add convenience constructors to `Metric` enum
+- [x] 1.3.1: Rename trait and enum, update all implementations and usages
+- [x] 1.3.2: Add convenience constructors to `Metric` enum
 
 **Definition of Done**:
 
@@ -146,9 +146,9 @@ Rename task-based names to loss-based names where applicable.
 
 **Tasks**:
 
-- [ ] 1.4.1: Audit existing loss/objective names in `training/objectives/` - identify any needing rename (e.g., `Quantile` → `PinballLoss`)
-- [ ] 1.4.2: Rename identified types to `FooLoss` pattern
-- [ ] 1.4.3: Update enum variants and usages
+- [x] 1.4.1: Audit existing loss/objective names in `training/objectives/` - identify any needing rename (e.g., `Quantile` → `PinballLoss`)
+- [x] 1.4.2: Rename identified types to `FooLoss` pattern
+- [x] 1.4.3: Update enum variants and usages
 
 **Definition of Done**:
 

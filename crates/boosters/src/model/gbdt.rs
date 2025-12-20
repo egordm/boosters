@@ -10,7 +10,7 @@ use crate::inference::gbdt::UnrolledPredictor6;
 use crate::model::meta::{ModelMeta, TaskKind};
 use crate::repr::gbdt::{Forest, ScalarLeaf};
 use crate::training::gbdt::{GBDTParams, GBDTTrainer};
-use crate::training::{Metric, Objective};
+use crate::training::{MetricFn, ObjectiveFn};
 
 #[cfg(feature = "storage")]
 use crate::repr::gbdt::tree::TreeView;
@@ -70,8 +70,8 @@ impl GBDTModel {
         params: GBDTParams,
     ) -> Option<Self>
     where
-        O: Objective,
-        M: Metric,
+        O: ObjectiveFn,
+        M: MetricFn,
     {
         let n_features = dataset.n_features();
         let n_outputs = objective.n_outputs();

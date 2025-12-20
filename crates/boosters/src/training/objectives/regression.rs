@@ -1,6 +1,6 @@
 //! Regression objective functions.
 
-use super::{validate_objective_inputs, Objective, TargetSchema, TaskKind};
+use super::{validate_objective_inputs, ObjectiveFn, TargetSchema, TaskKind};
 use crate::inference::common::{PredictionKind, PredictionOutput};
 use crate::training::GradsTuple;
 use crate::training::metrics::MetricKind;
@@ -25,7 +25,7 @@ use crate::utils::weight_iter;
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SquaredLoss;
 
-impl Objective for SquaredLoss {
+impl ObjectiveFn for SquaredLoss {
     fn compute_gradients(
         &self,
         n_rows: usize,
@@ -183,7 +183,7 @@ impl PinballLoss {
     }
 }
 
-impl Objective for PinballLoss {
+impl ObjectiveFn for PinballLoss {
     fn n_outputs(&self) -> usize {
         self.alphas.len()
     }
@@ -333,7 +333,7 @@ impl PseudoHuberLoss {
     }
 }
 
-impl Objective for PseudoHuberLoss {
+impl ObjectiveFn for PseudoHuberLoss {
     fn compute_gradients(
         &self,
         n_rows: usize,
@@ -454,7 +454,7 @@ impl Objective for PseudoHuberLoss {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AbsoluteLoss;
 
-impl Objective for AbsoluteLoss {
+impl ObjectiveFn for AbsoluteLoss {
     fn compute_gradients(
         &self,
         n_rows: usize,
@@ -573,7 +573,7 @@ impl Objective for AbsoluteLoss {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PoissonLoss;
 
-impl Objective for PoissonLoss {
+impl ObjectiveFn for PoissonLoss {
     fn compute_gradients(
         &self,
         n_rows: usize,
