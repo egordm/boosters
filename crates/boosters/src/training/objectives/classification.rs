@@ -445,8 +445,8 @@ impl ObjectiveFn for SoftmaxLoss {
 #[derive(Debug, Clone)]
 pub struct LambdaRankLoss {
     /// Query group boundaries (indices into the data).
-    /// query_groups[i] is the start index of query i.
-    /// query_groups.len() - 1 is the number of queries.
+    /// `query_groups[i]` is the start index of query i.
+    /// `query_groups.len() - 1` is the number of queries.
     pub query_groups: Vec<usize>,
     /// Sigma parameter for sigmoid (default: 1.0).
     pub sigma: f32,

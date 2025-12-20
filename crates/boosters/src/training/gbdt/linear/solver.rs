@@ -227,7 +227,7 @@ impl WeightedLeastSquaresSolver {
 
     /// Add L2 regularization to the diagonal (not on intercept).
     ///
-    /// Adds λ to XᵀHX[i,i] for i = 1..n_features.
+    /// Adds λ to `XᵀHX[i,i]` for i = 1..n_features.
     pub fn add_regularization(&mut self, lambda: f64) {
         let n_features = self.current_features;
         let size = n_features + 1;

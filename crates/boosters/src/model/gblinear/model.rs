@@ -248,7 +248,7 @@ impl GBLinearModel {
 
     /// Compute SHAP values for a batch of samples.
     ///
-    /// Linear SHAP has a closed-form solution: shap[i] = w[i] * (x[i] - mean[i])
+    /// Linear SHAP has a closed-form solution: `shap[i] = w[i] * (x[i] - mean[i])`
     ///
     /// # Arguments
     /// * `features` - Feature matrix, row-major [n_samples × n_features]

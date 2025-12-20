@@ -45,7 +45,7 @@ impl<'a> LinearExplainer<'a> {
 
     /// Get the expected value (base value).
     ///
-    /// For linear models: E[f(x)] = sum(w[i] * mean[i]) + bias
+    /// For linear models: `E[f(x)] = sum(w[i] * mean[i]) + bias`
     pub fn base_value(&self, output: usize) -> f64 {
         let weights = self.model.weights();
         let n_features = self.model.n_features();

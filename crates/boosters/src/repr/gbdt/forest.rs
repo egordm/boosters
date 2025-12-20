@@ -189,7 +189,7 @@ impl Forest<ScalarLeaf> {
     /// Batch predict using any feature accessor, writing into a flat output buffer.
     ///
     /// This is the unified batch prediction method that works with any data source
-    /// implementing [`FeatureAccessor`].
+    /// implementing `FeatureAccessor`.
     ///
     /// # Note on Linear Leaves
     ///
