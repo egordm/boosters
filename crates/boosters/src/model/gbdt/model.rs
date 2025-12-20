@@ -14,9 +14,8 @@
 //! # Prediction
 //!
 //! - [`predict()`](GBDTModel::predict) - Returns probabilities for classification,
-//!   raw values for regression
+//!   raw values for regression. Automatically parallelized for large batches.
 //! - [`predict_raw()`](GBDTModel::predict_raw) - Returns raw margin scores (no transform)
-//! - [`predict_row()`](GBDTModel::predict_row) - Single row prediction
 
 use crate::data::binned::BinnedDataset;
 use crate::data::{ColMatrix, DataMatrix, DenseMatrix, ColMajor};
@@ -27,6 +26,10 @@ use crate::training::gbdt::GBDTTrainer;
 use crate::training::{Metric, ObjectiveFn};
 
 use super::GBDTConfig;
+
+/// Threshold for switching from serial to parallel prediction.
+/// Below this, parallel overhead isn't worth it.
+const PARALLEL_THRESHOLD_ROWS: usize = 1000;
 
 /// High-level GBDT model.
 ///
@@ -45,6 +48,7 @@ use super::GBDTConfig;
 /// ```ignore
 /// use boosters::model::GBDTModel;
 /// use boosters::model::gbdt::GBDTConfig;
+/// use boosters::data::RowMatrix;
 ///
 /// // Train
 /// let config = GBDTConfig::builder()
@@ -60,7 +64,8 @@ use super::GBDTConfig;
 /// let lr = model.config().map(|c| c.learning_rate);
 ///
 /// // Predict
-/// let predictions = model.predict_batch(&features, n_rows);
+/// let features = RowMatrix::from_vec(data, n_rows, n_features);
+/// let predictions = model.predict(&features);
 /// ```
 pub struct GBDTModel {
     /// The underlying forest.
@@ -220,17 +225,6 @@ impl GBDTModel {
     // Prediction
     // =========================================================================
 
-    /// Predict for a single row, returning raw margins.
-    ///
-    /// Returns raw margin scores before any transform (no sigmoid/softmax).
-    /// For transformed predictions, use [`predict()`](Self::predict) on a batch.
-    ///
-    /// **Note**: For batch prediction, prefer [`predict()`](Self::predict) or
-    /// [`predict_raw()`](Self::predict_raw) which are more efficient.
-    pub fn predict_row(&self, features: &[f32]) -> Vec<f32> {
-        self.forest.predict_row(features)
-    }
-
     /// Predict for multiple rows, returning transformed predictions.
     ///
     /// Returns probabilities for classification objectives (sigmoid for binary,
@@ -239,6 +233,11 @@ impl GBDTModel {
     /// The transformation is determined by the objective used during training.
     /// For models loaded from external formats without objective info, returns
     /// raw margins.
+    ///
+    /// # Performance
+    ///
+    /// Uses optimized batch prediction with automatic parallelization for
+    /// large batches (1000+ rows).
     ///
     /// # Arguments
     ///
@@ -260,29 +259,25 @@ impl GBDTModel {
     /// // Access predictions for first output group
     /// let probs = predictions.col_slice(0);
     /// ```
-    pub fn predict<M: DataMatrix<Element = f32>>(&self, features: &M) -> ColMatrix<f32> {
+    pub fn predict<M: DataMatrix<Element = f32> + Sync>(&self, features: &M) -> ColMatrix<f32> {
         let n_rows = features.num_rows();
         let n_groups = self.meta.n_groups;
         
-        // Get raw predictions
-        let mut raw = self.predict_matrix(features);
+        // Get raw predictions using optimized batch predictor
+        let predictor = UnrolledPredictor6::new(&self.forest);
+        let mut output = if n_rows >= PARALLEL_THRESHOLD_ROWS {
+            predictor.par_predict(features, 0) // auto threads
+        } else {
+            predictor.predict(features)
+        };
         
         // Apply transformation if we have config with objective
         if let Some(config) = &self.config {
-            config.objective.transform_predictions(&mut raw, n_rows, n_groups);
+            config.objective.transform_predictions(output.as_mut_slice(), n_rows, n_groups);
         }
         
-        // Convert to column-major matrix
-        // Raw predictions are in row-major order (n_rows × n_groups)
-        // Need to transpose to column-major
-        let mut col_data = vec![0.0f32; n_rows * n_groups];
-        for row in 0..n_rows {
-            for group in 0..n_groups {
-                col_data[group * n_rows + row] = raw[row * n_groups + group];
-            }
-        }
-        
-        DenseMatrix::<f32, ColMajor>::from_vec(col_data, n_rows, n_groups)
+        // PredictionOutput is already column-major, so we can directly use its data
+        DenseMatrix::<f32, ColMajor>::from_vec(output.into_vec(), n_rows, n_groups)
     }
 
     /// Predict for multiple rows, returning raw margin scores.
@@ -291,6 +286,11 @@ impl GBDTModel {
     /// Use this when you need the untransformed model output, or when doing
     /// custom post-processing.
     ///
+    /// # Performance
+    ///
+    /// Uses optimized batch prediction with automatic parallelization for
+    /// large batches (1000+ rows).
+    ///
     /// # Arguments
     ///
     /// * `features` - Feature matrix (any layout implementing [`DataMatrix`])
@@ -298,75 +298,20 @@ impl GBDTModel {
     /// # Returns
     ///
     /// Column-major matrix of raw predictions (n_rows × n_groups).
-    pub fn predict_raw<M: DataMatrix<Element = f32>>(&self, features: &M) -> ColMatrix<f32> {
+    pub fn predict_raw<M: DataMatrix<Element = f32> + Sync>(&self, features: &M) -> ColMatrix<f32> {
         let n_rows = features.num_rows();
         let n_groups = self.meta.n_groups;
         
-        let raw = self.predict_matrix(features);
-        
-        // Convert to column-major matrix
-        let mut col_data = vec![0.0f32; n_rows * n_groups];
-        for row in 0..n_rows {
-            for group in 0..n_groups {
-                col_data[group * n_rows + row] = raw[row * n_groups + group];
-            }
-        }
-        
-        DenseMatrix::<f32, ColMajor>::from_vec(col_data, n_rows, n_groups)
-    }
-
-    /// Predict for multiple rows using slice input.
-    ///
-    /// **Legacy API**: For most use cases, prefer [`predict()`](Self::predict)
-    /// or [`predict_raw()`](Self::predict_raw) which accept structured matrix input.
-    ///
-    /// # Arguments
-    ///
-    /// * `features` - Feature slice, row-major (n_rows × n_features)
-    /// * `n_rows` - Number of rows
-    ///
-    /// # Returns
-    ///
-    /// Raw predictions as flat slice, length = n_rows × n_groups
-    pub fn predict_batch(&self, features: &[f32], n_rows: usize) -> Vec<f32> {
-        self.predict_raw_slice(features, n_rows)
-    }
-
-    /// Internal prediction from a DataMatrix.
-    fn predict_matrix<M: DataMatrix<Element = f32>>(&self, features: &M) -> Vec<f32> {
+        // Get raw predictions using optimized batch predictor
         let predictor = UnrolledPredictor6::new(&self.forest);
-        let n_rows = features.num_rows();
-        let n_features = self.meta.n_features;
-        let n_groups = self.meta.n_groups;
-
-        let mut output = vec![0.0f32; n_rows * n_groups];
-        let mut row_buf = vec![0.0f32; n_features];
-
-        for row_idx in 0..n_rows {
-            features.copy_row(row_idx, &mut row_buf);
-            let preds = predictor.predict_row(&row_buf);
-            let offset = row_idx * n_groups;
-            output[offset..offset + n_groups].copy_from_slice(&preds);
-        }
-
-        output
-    }
-
-    /// Internal prediction that returns raw margins as Vec (slice-based).
-    fn predict_raw_slice(&self, features: &[f32], n_rows: usize) -> Vec<f32> {
-        let predictor = UnrolledPredictor6::new(&self.forest);
-        let n_features = self.meta.n_features;
-        let n_groups = self.meta.n_groups;
-
-        let mut output = vec![0.0f32; n_rows * n_groups];
-
-        for (row_idx, row) in features.chunks(n_features).enumerate() {
-            let preds = predictor.predict_row(row);
-            let offset = row_idx * n_groups;
-            output[offset..offset + n_groups].copy_from_slice(&preds);
-        }
-
-        output
+        let output = if n_rows >= PARALLEL_THRESHOLD_ROWS {
+            predictor.par_predict(features, 0) // auto threads
+        } else {
+            predictor.predict(features)
+        };
+        
+        // PredictionOutput is already column-major, so we can directly use its data
+        DenseMatrix::<f32, ColMajor>::from_vec(output.into_vec(), n_rows, n_groups)
     }
 
     // =========================================================================
@@ -452,6 +397,7 @@ impl std::fmt::Debug for GBDTModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::RowMatrix;
     use crate::scalar_tree;
 
     fn make_simple_forest() -> Forest<ScalarLeaf> {
@@ -492,30 +438,35 @@ mod tests {
     }
 
     #[test]
-    fn predict_row() {
+    fn predict_basic() {
         let forest = make_simple_forest();
         let meta = ModelMeta::for_regression(2);
         let model = GBDTModel::from_forest(forest, meta);
 
         // x0 < 0.5 → leaf 1.0
-        assert_eq!(model.predict_row(&[0.3, 0.5]), vec![1.0]);
+        let features1 = RowMatrix::from_vec(vec![0.3, 0.5], 1, 2);
+        let preds1 = model.predict(&features1);
+        assert_eq!(preds1.col_slice(0), &[1.0]);
+
         // x0 >= 0.5, x1 >= 0.3 → leaf 3.0
-        assert_eq!(model.predict_row(&[0.7, 0.5]), vec![3.0]);
+        let features2 = RowMatrix::from_vec(vec![0.7, 0.5], 1, 2);
+        let preds2 = model.predict(&features2);
+        assert_eq!(preds2.col_slice(0), &[3.0]);
     }
 
     #[test]
-    fn predict_batch() {
+    fn predict_batch_rows() {
         let forest = make_simple_forest();
         let meta = ModelMeta::for_regression(2);
         let model = GBDTModel::from_forest(forest, meta);
 
-        let features = vec![
+        let features = RowMatrix::from_vec(vec![
             0.3, 0.5, // row 0
             0.7, 0.5, // row 1
-        ];
-        let preds = model.predict_batch(&features, 2);
+        ], 2, 2);
+        let preds = model.predict(&features);
 
-        assert_eq!(preds, vec![1.0, 3.0]);
+        assert_eq!(preds.col_slice(0), &[1.0, 3.0]);
     }
 
     #[test]
