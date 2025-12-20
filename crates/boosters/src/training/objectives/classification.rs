@@ -412,7 +412,7 @@ impl ObjectiveFn for SoftmaxLoss {
     }
 
     fn task_kind(&self) -> TaskKind {
-        TaskKind::MulticlassClassification
+        TaskKind::MulticlassClassification { n_classes: self.num_classes }
     }
 
     fn target_schema(&self) -> TargetSchema {
