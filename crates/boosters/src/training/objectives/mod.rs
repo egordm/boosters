@@ -237,7 +237,9 @@ pub trait ObjectiveFn: Send + Sync {
     }
 
     /// Name of the objective (for logging).
-    fn name(&self) -> &'static str;
+    fn name(&self) -> &'static str {
+        "objective"
+    }
 
     // =========================================================================
     // Convenience methods for trainer integration
@@ -336,107 +338,131 @@ impl<T: ObjectiveFn + ?Sized> ObjectiveFnExt for T {}
 /// Objective function enum for easy configuration.
 ///
 /// This enum wraps all available objective types and provides a unified
-/// interface for trainers. It implements `Objective` by delegating to the
+/// interface for trainers. It implements `ObjectiveFn` by delegating to the
 /// underlying concrete type.
+///
+/// Each variant stores a pre-constructed instance of the underlying loss type,
+/// avoiding allocation on each method call (newtype pattern).
 ///
 /// # Example
 ///
 /// ```ignore
-/// use boosters::training::{GBTreeTrainer, Objective};
+/// use boosters::training::{GBDTTrainer, Objective};
 ///
-/// let trainer = GBTreeTrainer::builder()
-///     .objective(Objective::Logistic)
+/// let trainer = GBDTTrainer::builder()
+///     .objective(Objective::logistic())
 ///     .build()
 ///     .unwrap();
 /// ```
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone)]
 pub enum Objective {
     /// Squared error loss (L2) for regression.
-    SquaredLoss,
+    SquaredLoss(SquaredLoss),
     /// Absolute error loss (L1) for robust regression.
-    AbsoluteLoss,
+    AbsoluteLoss(AbsoluteLoss),
     /// Logistic loss for binary classification.
-    LogisticLoss,
+    LogisticLoss(LogisticLoss),
     /// Hinge loss for SVM-style classification.
-    HingeLoss,
+    HingeLoss(HingeLoss),
     /// Softmax loss for multiclass classification.
-    SoftmaxLoss { num_classes: usize },
-    /// Pinball loss for quantile regression.
-    PinballLoss { alpha: f32 },
-    /// Multi-pinball loss for multi-quantile regression.
-    MultiPinballLoss { alphas: Vec<f32> },
+    SoftmaxLoss(SoftmaxLoss),
+    /// Pinball loss for quantile regression (single or multi-quantile).
+    PinballLoss(PinballLoss),
     /// Pseudo-Huber loss for robust regression.
-    PseudoHuberLoss { delta: f32 },
+    PseudoHuberLoss(PseudoHuberLoss),
     /// Poisson loss for count data regression.
-    PoissonLoss,
+    PoissonLoss(PoissonLoss),
+    /// Custom objective (user-provided implementation).
+    Custom(std::sync::Arc<dyn ObjectiveFn>),
+}
+
+impl std::fmt::Debug for Objective {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SquaredLoss(inner) => f.debug_tuple("SquaredLoss").field(inner).finish(),
+            Self::AbsoluteLoss(inner) => f.debug_tuple("AbsoluteLoss").field(inner).finish(),
+            Self::LogisticLoss(inner) => f.debug_tuple("LogisticLoss").field(inner).finish(),
+            Self::HingeLoss(inner) => f.debug_tuple("HingeLoss").field(inner).finish(),
+            Self::SoftmaxLoss(inner) => f.debug_tuple("SoftmaxLoss").field(inner).finish(),
+            Self::PinballLoss(inner) => f.debug_tuple("PinballLoss").field(inner).finish(),
+            Self::PseudoHuberLoss(inner) => f.debug_tuple("PseudoHuberLoss").field(inner).finish(),
+            Self::PoissonLoss(inner) => f.debug_tuple("PoissonLoss").field(inner).finish(),
+            Self::Custom(_) => f.debug_tuple("Custom").field(&"<dyn ObjectiveFn>").finish(),
+        }
+    }
 }
 
 /// Convenience constructors for common objectives.
 impl Objective {
     /// Squared error (L2) loss for regression.
     pub fn squared() -> Self {
-        Self::SquaredLoss
+        Self::SquaredLoss(SquaredLoss)
     }
     
     /// Absolute error (L1) loss for robust regression.
     pub fn absolute() -> Self {
-        Self::AbsoluteLoss
+        Self::AbsoluteLoss(AbsoluteLoss)
     }
     
     /// Binary logistic loss for classification.
     pub fn logistic() -> Self {
-        Self::LogisticLoss
+        Self::LogisticLoss(LogisticLoss)
     }
     
     /// Hinge loss for SVM-style classification.
     pub fn hinge() -> Self {
-        Self::HingeLoss
+        Self::HingeLoss(HingeLoss)
     }
     
     /// Softmax loss for multiclass classification.
     pub fn softmax(num_classes: usize) -> Self {
-        Self::SoftmaxLoss { num_classes }
+        Self::SoftmaxLoss(SoftmaxLoss::new(num_classes))
     }
     
     /// Pinball loss for single quantile regression.
     pub fn quantile(alpha: f32) -> Self {
-        Self::PinballLoss { alpha }
+        Self::PinballLoss(PinballLoss::new(alpha))
     }
     
     /// Pinball loss for multiple quantile regression.
     pub fn multi_quantile(alphas: Vec<f32>) -> Self {
-        Self::MultiPinballLoss { alphas }
+        Self::PinballLoss(PinballLoss::with_quantiles(alphas))
     }
     
     /// Pseudo-Huber loss for robust regression.
     pub fn pseudo_huber(delta: f32) -> Self {
-        Self::PseudoHuberLoss { delta }
+        Self::PseudoHuberLoss(PseudoHuberLoss::new(delta))
     }
     
     /// Poisson loss for count data regression.
     pub fn poisson() -> Self {
-        Self::PoissonLoss
+        Self::PoissonLoss(PoissonLoss)
+    }
+
+    /// Custom objective with user-provided implementation.
+    pub fn custom<O: ObjectiveFn + 'static>(objective: O) -> Self {
+        Self::Custom(std::sync::Arc::new(objective))
     }
 }
 
 impl Default for Objective {
     fn default() -> Self {
-        Self::SquaredLoss
+        Self::SquaredLoss(SquaredLoss)
     }
 }
 
 impl ObjectiveFn for Objective {
     fn n_outputs(&self) -> usize {
         match self {
-            Self::SquaredLoss => 1,
-            Self::AbsoluteLoss => 1,
-            Self::LogisticLoss => 1,
-            Self::HingeLoss => 1,
-            Self::SoftmaxLoss { num_classes } => *num_classes,
-            Self::PinballLoss { .. } => 1,
-            Self::MultiPinballLoss { alphas } => alphas.len(),
-            Self::PseudoHuberLoss { .. } => 1,
-            Self::PoissonLoss => 1,
+            Self::SquaredLoss(inner) => inner.n_outputs(),
+            Self::AbsoluteLoss(inner) => inner.n_outputs(),
+            Self::LogisticLoss(inner) => inner.n_outputs(),
+            Self::HingeLoss(inner) => inner.n_outputs(),
+            Self::SoftmaxLoss(inner) => inner.n_outputs(),
+            Self::PinballLoss(inner) => inner.n_outputs(),
+            Self::PseudoHuberLoss(inner) => inner.n_outputs(),
+            Self::PoissonLoss(inner) => inner.n_outputs(),
+            Self::Custom(inner) => inner.n_outputs(),
         }
     }
 
@@ -450,33 +476,15 @@ impl ObjectiveFn for Objective {
         grad_hess: &mut [GradsTuple],
     ) {
         match self {
-            Self::SquaredLoss => {
-                SquaredLoss.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess)
-            }
-            Self::AbsoluteLoss => {
-                AbsoluteLoss.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess)
-            }
-            Self::LogisticLoss => {
-                LogisticLoss.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess)
-            }
-            Self::HingeLoss => {
-                HingeLoss.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess)
-            }
-            Self::SoftmaxLoss { num_classes } => {
-                SoftmaxLoss::new(*num_classes).compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess)
-            }
-            Self::PinballLoss { alpha } => {
-                PinballLoss::new(*alpha).compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess)
-            }
-            Self::MultiPinballLoss { alphas } => {
-                PinballLoss::with_quantiles(alphas.clone()).compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess)
-            }
-            Self::PseudoHuberLoss { delta } => {
-                PseudoHuberLoss::new(*delta).compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess)
-            }
-            Self::PoissonLoss => {
-                PoissonLoss.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess)
-            }
+            Self::SquaredLoss(inner) => inner.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess),
+            Self::AbsoluteLoss(inner) => inner.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess),
+            Self::LogisticLoss(inner) => inner.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess),
+            Self::HingeLoss(inner) => inner.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess),
+            Self::SoftmaxLoss(inner) => inner.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess),
+            Self::PinballLoss(inner) => inner.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess),
+            Self::PseudoHuberLoss(inner) => inner.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess),
+            Self::PoissonLoss(inner) => inner.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess),
+            Self::Custom(inner) => inner.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess),
         }
     }
 
@@ -489,103 +497,85 @@ impl ObjectiveFn for Objective {
         outputs: &mut [f32],
     ) {
         match self {
-            Self::SquaredLoss => {
-                SquaredLoss.compute_base_score(n_rows, n_outputs, targets, weights, outputs)
-            }
-            Self::AbsoluteLoss => {
-                AbsoluteLoss.compute_base_score(n_rows, n_outputs, targets, weights, outputs)
-            }
-            Self::LogisticLoss => {
-                LogisticLoss.compute_base_score(n_rows, n_outputs, targets, weights, outputs)
-            }
-            Self::HingeLoss => {
-                HingeLoss.compute_base_score(n_rows, n_outputs, targets, weights, outputs)
-            }
-            Self::SoftmaxLoss { num_classes } => {
-                SoftmaxLoss::new(*num_classes).compute_base_score(n_rows, n_outputs, targets, weights, outputs)
-            }
-            Self::PinballLoss { alpha } => {
-                PinballLoss::new(*alpha).compute_base_score(n_rows, n_outputs, targets, weights, outputs)
-            }
-            Self::MultiPinballLoss { alphas } => {
-                PinballLoss::with_quantiles(alphas.clone()).compute_base_score(n_rows, n_outputs, targets, weights, outputs)
-            }
-            Self::PseudoHuberLoss { delta } => {
-                PseudoHuberLoss::new(*delta).compute_base_score(n_rows, n_outputs, targets, weights, outputs)
-            }
-            Self::PoissonLoss => {
-                PoissonLoss.compute_base_score(n_rows, n_outputs, targets, weights, outputs)
-            }
+            Self::SquaredLoss(inner) => inner.compute_base_score(n_rows, n_outputs, targets, weights, outputs),
+            Self::AbsoluteLoss(inner) => inner.compute_base_score(n_rows, n_outputs, targets, weights, outputs),
+            Self::LogisticLoss(inner) => inner.compute_base_score(n_rows, n_outputs, targets, weights, outputs),
+            Self::HingeLoss(inner) => inner.compute_base_score(n_rows, n_outputs, targets, weights, outputs),
+            Self::SoftmaxLoss(inner) => inner.compute_base_score(n_rows, n_outputs, targets, weights, outputs),
+            Self::PinballLoss(inner) => inner.compute_base_score(n_rows, n_outputs, targets, weights, outputs),
+            Self::PseudoHuberLoss(inner) => inner.compute_base_score(n_rows, n_outputs, targets, weights, outputs),
+            Self::PoissonLoss(inner) => inner.compute_base_score(n_rows, n_outputs, targets, weights, outputs),
+            Self::Custom(inner) => inner.compute_base_score(n_rows, n_outputs, targets, weights, outputs),
         }
     }
 
     fn name(&self) -> &'static str {
         match self {
-            Self::SquaredLoss => "squared",
-            Self::AbsoluteLoss => "absolute",
-            Self::LogisticLoss => "logistic",
-            Self::HingeLoss => "hinge",
-            Self::SoftmaxLoss { .. } => "softmax",
-            Self::PinballLoss { .. } => "quantile",
-            Self::MultiPinballLoss { .. } => "multi_quantile",
-            Self::PseudoHuberLoss { .. } => "pseudo_huber",
-            Self::PoissonLoss => "poisson",
+            Self::SquaredLoss(inner) => inner.name(),
+            Self::AbsoluteLoss(inner) => inner.name(),
+            Self::LogisticLoss(inner) => inner.name(),
+            Self::HingeLoss(inner) => inner.name(),
+            Self::SoftmaxLoss(inner) => inner.name(),
+            Self::PinballLoss(inner) => inner.name(),
+            Self::PseudoHuberLoss(inner) => inner.name(),
+            Self::PoissonLoss(inner) => inner.name(),
+            Self::Custom(inner) => inner.name(),
         }
     }
 
     fn task_kind(&self) -> TaskKind {
         match self {
-            Self::SquaredLoss => SquaredLoss.task_kind(),
-            Self::AbsoluteLoss => AbsoluteLoss.task_kind(),
-            Self::LogisticLoss => LogisticLoss.task_kind(),
-            Self::HingeLoss => HingeLoss.task_kind(),
-            Self::SoftmaxLoss { num_classes } => SoftmaxLoss::new(*num_classes).task_kind(),
-            Self::PinballLoss { alpha } => PinballLoss::new(*alpha).task_kind(),
-            Self::MultiPinballLoss { alphas } => PinballLoss::with_quantiles(alphas.clone()).task_kind(),
-            Self::PseudoHuberLoss { delta } => PseudoHuberLoss::new(*delta).task_kind(),
-            Self::PoissonLoss => PoissonLoss.task_kind(),
+            Self::SquaredLoss(inner) => inner.task_kind(),
+            Self::AbsoluteLoss(inner) => inner.task_kind(),
+            Self::LogisticLoss(inner) => inner.task_kind(),
+            Self::HingeLoss(inner) => inner.task_kind(),
+            Self::SoftmaxLoss(inner) => inner.task_kind(),
+            Self::PinballLoss(inner) => inner.task_kind(),
+            Self::PseudoHuberLoss(inner) => inner.task_kind(),
+            Self::PoissonLoss(inner) => inner.task_kind(),
+            Self::Custom(inner) => inner.task_kind(),
         }
     }
 
     fn target_schema(&self) -> TargetSchema {
         match self {
-            Self::SquaredLoss => SquaredLoss.target_schema(),
-            Self::AbsoluteLoss => AbsoluteLoss.target_schema(),
-            Self::LogisticLoss => LogisticLoss.target_schema(),
-            Self::HingeLoss => HingeLoss.target_schema(),
-            Self::SoftmaxLoss { num_classes } => SoftmaxLoss::new(*num_classes).target_schema(),
-            Self::PinballLoss { alpha } => PinballLoss::new(*alpha).target_schema(),
-            Self::MultiPinballLoss { alphas } => PinballLoss::with_quantiles(alphas.clone()).target_schema(),
-            Self::PseudoHuberLoss { delta } => PseudoHuberLoss::new(*delta).target_schema(),
-            Self::PoissonLoss => PoissonLoss.target_schema(),
+            Self::SquaredLoss(inner) => inner.target_schema(),
+            Self::AbsoluteLoss(inner) => inner.target_schema(),
+            Self::LogisticLoss(inner) => inner.target_schema(),
+            Self::HingeLoss(inner) => inner.target_schema(),
+            Self::SoftmaxLoss(inner) => inner.target_schema(),
+            Self::PinballLoss(inner) => inner.target_schema(),
+            Self::PseudoHuberLoss(inner) => inner.target_schema(),
+            Self::PoissonLoss(inner) => inner.target_schema(),
+            Self::Custom(inner) => inner.target_schema(),
         }
     }
 
     fn default_metric(&self) -> MetricKind {
         match self {
-            Self::SquaredLoss => SquaredLoss.default_metric(),
-            Self::AbsoluteLoss => AbsoluteLoss.default_metric(),
-            Self::LogisticLoss => LogisticLoss.default_metric(),
-            Self::HingeLoss => HingeLoss.default_metric(),
-            Self::SoftmaxLoss { num_classes } => SoftmaxLoss::new(*num_classes).default_metric(),
-            Self::PinballLoss { alpha } => PinballLoss::new(*alpha).default_metric(),
-            Self::MultiPinballLoss { alphas } => PinballLoss::with_quantiles(alphas.clone()).default_metric(),
-            Self::PseudoHuberLoss { delta } => PseudoHuberLoss::new(*delta).default_metric(),
-            Self::PoissonLoss => PoissonLoss.default_metric(),
+            Self::SquaredLoss(inner) => inner.default_metric(),
+            Self::AbsoluteLoss(inner) => inner.default_metric(),
+            Self::LogisticLoss(inner) => inner.default_metric(),
+            Self::HingeLoss(inner) => inner.default_metric(),
+            Self::SoftmaxLoss(inner) => inner.default_metric(),
+            Self::PinballLoss(inner) => inner.default_metric(),
+            Self::PseudoHuberLoss(inner) => inner.default_metric(),
+            Self::PoissonLoss(inner) => inner.default_metric(),
+            Self::Custom(inner) => inner.default_metric(),
         }
     }
 
     fn transform_predictions(&self, predictions: &mut [f32], n_rows: usize, n_outputs: usize) -> PredictionKind {
         match self {
-            Self::SquaredLoss => SquaredLoss.transform_predictions(predictions, n_rows, n_outputs),
-            Self::AbsoluteLoss => AbsoluteLoss.transform_predictions(predictions, n_rows, n_outputs),
-            Self::LogisticLoss => LogisticLoss.transform_predictions(predictions, n_rows, n_outputs),
-            Self::HingeLoss => HingeLoss.transform_predictions(predictions, n_rows, n_outputs),
-            Self::SoftmaxLoss { num_classes } => SoftmaxLoss::new(*num_classes).transform_predictions(predictions, n_rows, n_outputs),
-            Self::PinballLoss { alpha } => PinballLoss::new(*alpha).transform_predictions(predictions, n_rows, n_outputs),
-            Self::MultiPinballLoss { alphas } => PinballLoss::with_quantiles(alphas.clone()).transform_predictions(predictions, n_rows, n_outputs),
-            Self::PseudoHuberLoss { delta } => PseudoHuberLoss::new(*delta).transform_predictions(predictions, n_rows, n_outputs),
-            Self::PoissonLoss => PoissonLoss.transform_predictions(predictions, n_rows, n_outputs),
+            Self::SquaredLoss(inner) => inner.transform_predictions(predictions, n_rows, n_outputs),
+            Self::AbsoluteLoss(inner) => inner.transform_predictions(predictions, n_rows, n_outputs),
+            Self::LogisticLoss(inner) => inner.transform_predictions(predictions, n_rows, n_outputs),
+            Self::HingeLoss(inner) => inner.transform_predictions(predictions, n_rows, n_outputs),
+            Self::SoftmaxLoss(inner) => inner.transform_predictions(predictions, n_rows, n_outputs),
+            Self::PinballLoss(inner) => inner.transform_predictions(predictions, n_rows, n_outputs),
+            Self::PseudoHuberLoss(inner) => inner.transform_predictions(predictions, n_rows, n_outputs),
+            Self::PoissonLoss(inner) => inner.transform_predictions(predictions, n_rows, n_outputs),
+            Self::Custom(inner) => inner.transform_predictions(predictions, n_rows, n_outputs),
         }
     }
 }
