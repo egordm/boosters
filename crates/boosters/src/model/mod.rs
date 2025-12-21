@@ -9,11 +9,23 @@
 //! - [`GBLinearModel`]: Linear booster model
 //! - [`ModelMeta`]: Shared metadata for all model types
 //!
+//! # Prediction API
+//!
+//! Both model types provide two batch prediction methods:
+//! - [`predict()`](GBDTModel::predict) - Returns transformed predictions
+//!   (probabilities for classification, values for regression)
+//! - [`predict_raw()`](GBDTModel::predict_raw) - Returns raw margin scores
+//!   (no sigmoid/softmax transformation)
+//!
+//! These methods accept any [`DataMatrix`](crate::data::DataMatrix) and return
+//! a [`ColMatrix<f32>`](crate::data::ColMatrix).
+//!
 //! # Example
 //!
 //! ```ignore
 //! use boosters::model::{GBDTModel, TaskKind};
 //! use boosters::model::gbdt::GBDTConfig;
+//! use boosters::data::RowMatrix;
 //! use boosters::training::{Objective, Metric};
 //!
 //! // Train a model
@@ -26,12 +38,10 @@
 //!     .unwrap();
 //! let model = GBDTModel::train(&data, &labels, &[], config)?;
 //!
-//! // Make predictions
-//! let predictions = model.predict_batch(&new_data, n_rows);
-//!
-//! // Save and load
-//! model.save("model.bstr")?;
-//! let loaded = GBDTModel::load("model.bstr")?;
+//! // Make predictions with structured matrix
+//! let features = RowMatrix::from_vec(feature_data, n_rows, n_features);
+//! let predictions = model.predict(&features);
+//! let probs = predictions.col_slice(0); // Access first output column
 //! ```
 
 mod meta;

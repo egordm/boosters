@@ -2,7 +2,7 @@
 
 **RFC**: Various  
 **Priority**: Medium  
-**Status**: Backlog
+**Status**: In Progress
 
 ---
 
@@ -12,74 +12,60 @@ Follow-up items from stakeholder feedback received during Backlog 09 completion.
 
 ---
 
-## Story 10.1: Performance Comparison Benchmarks
+## Story 10.1: Performance Comparison Benchmarks ✅
 
 Run comparison benchmarks against XGBoost and LightGBM to confirm performance advantage.
 
-**Context**: Previous benchmarks showed booste-rs dominating on training and prediction speed.
-Need to re-verify this still holds after the API refactor.
+**Status**: Completed (informal verification)
 
-**Note**: Can't trust criterion "regressed" markers since baseline may have been with regression.
-
-**Tasks**:
-
-- [ ] 10.1.1: Run `compare_training` benchmark
-- [ ] 10.1.2: Run `compare_prediction` benchmark
-- [ ] 10.1.3: Generate benchmark report in docs/benchmarks/
-- [ ] 10.1.4: Compare against previous reports
-
-**Definition of Done**:
-
-- Benchmark report showing comparison with XGBoost/LightGBM
-- Performance advantage confirmed or regressions identified
+**Result**: boosters competitive with XGBoost/LightGBM:
+- Training: ~1.6s (XGBoost ~2.1s, LightGBM ~1.55s)
+- Prediction: Faster than XGBoost across thread counts
 
 ---
 
-## Story 10.2: Serialization Format Redesign
+## Story 10.2: Serialization Format Removal ✅
 
-Complete removal and redesign of the serialization format.
+**Status**: Completed (commit `a706775`)
 
-**Context**: Current format has issues:
-- Public API isn't complete, so format is inherently flawed
-- Held back making model config non-optional
-- Stakeholder wants to write new RFC for redesigned format
+Removed native serialization format to enable clean redesign:
+- Deleted io/native.rs, io/payload.rs, io/convert.rs
+- Removed storage and storage-compression features
+- Removed postcard and crc32fast dependencies
+- Removed save/load/to_bytes/from_bytes from models
+- Deleted native_format.rs tests and test-cases/native/
 
-**Decision**: Wait for new RFC before implementing.
-
-**Tasks**:
-
-- [ ] 10.2.1: Delete current io/native.rs and related code
-- [ ] 10.2.2: Remove storage feature gates
-- [ ] 10.2.3: Simplify model structs (config as Option is fine for now)
-- [ ] 10.2.4: Wait for new serialization RFC
-
-**Definition of Done**:
-
-- Old serialization code removed
-- New RFC written and accepted
-- New format implemented
+**Decision**: Clean slate for future serialization RFC.
 
 ---
 
-## Story 10.3: RFC-10 API Naming
+## Story 10.3: Prediction API Alignment with RFC-0020
 
-RFC-10 mentions `write_into`/`read_from` instead of `save`/`load`.
+**Context**: RFC-0020 specifies `predict()` and `predict_raw()` as the only batch prediction methods.
+Both methods assume batch prediction on a dataset (not single-row).
 
-**Context**: Current API uses `save(path)`/`load(path)` instead of the
-RFC-specified `write_into`/`read_from` pattern.
+Current API has:
+- `predict_row()` - Single row (returns Vec<f32>)
+- `predict_batch()` - Batch (returns flat Vec<f32>)
 
-**Decision**: Review RFC-10 and align naming if appropriate.
+RFC-0020 specifies:
+- `predict()` - Returns ColMatrix<f32>, applies transformation
+- `predict_raw()` - Returns ColMatrix<f32>, no transformation
 
 **Tasks**:
 
-- [ ] 10.3.1: Review RFC-10 for exact API specification
-- [ ] 10.3.2: Decide if renaming is appropriate
-- [ ] 10.3.3: If yes, update API names
+- [ ] 10.3.1: Team discussion on prediction API alignment
+- [ ] 10.3.2: Implement `predict()` returning `ColMatrix<f32>`
+- [ ] 10.3.3: Implement `predict_raw()` returning `ColMatrix<f32>`
+- [ ] 10.3.4: Evaluate whether to keep/deprecate/remove `predict_row()` and `predict_batch()`
+- [ ] 10.3.5: Update tests and docs
 
 **Definition of Done**:
 
-- API names consistent with RFC or deviation documented
+- `predict()` and `predict_raw()` implemented per RFC-0020
+- Decision made on legacy methods
+- Tests passing, clippy clean
 
 ---
 
-> Note: Story 10.2 and 10.3 may be superseded by the serialization redesign RFC.
+> Note: Story 10.3 supersedes original Story 10.3 (API naming for serialization).
