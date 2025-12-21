@@ -35,10 +35,6 @@ zstd = { version = "0.13", optional = true }
 arrow = { version = "54", optional = true, default-features = false, features = ["ipc"] }
 parquet = { version = "54", optional = true, default-features = false, features = ["arrow", "snap"] }
 
-# Optional: Native storage format (RFC-0021)
-postcard = { version = "1.1", optional = true, features = ["alloc"] }
-crc32fast = { version = "1.4", optional = true }
-
 # Optional: XGBoost C++ bindings for benchmark comparison
 # Fork with reset() method for accurate benchmarking (clears internal caches)
 # Requires: libclang-dev (Debian/Ubuntu), clang (Arch), or Xcode (macOS)
@@ -60,7 +56,7 @@ rand_chacha = "0.3"  # For reproducible RNG in benchmarks
 tempfile = "3.20"  # For Arrow/Parquet I/O tests
 
 [features]
-default = ["xgboost-compat", "storage"]
+default = ["xgboost-compat"]
 xgboost-compat = ["dep:serde", "dep:serde_json", "dep:serde_with"]
 lightgbm-compat = ["dep:serde", "dep:serde_json"]
 # Unified comparison feature - enables both XGBoost and LightGBM bindings
@@ -71,9 +67,6 @@ bench-training = []
 testing-utils = ["dep:serde", "dep:serde_json", "dep:zstd"]
 io-arrow = ["dep:arrow"]
 io-parquet = ["dep:parquet", "dep:arrow"]
-# Native storage format (RFC-0021) - enabled by default for save/load functionality
-storage = ["dep:postcard", "dep:crc32fast", "dep:serde"]
-storage-compression = ["storage", "dep:zstd"]
 
 [[bench]]
 name = "prediction_core"
