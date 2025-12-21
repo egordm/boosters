@@ -2,7 +2,7 @@
 
 **RFC**: Various  
 **Priority**: Medium  
-**Status**: In Progress
+**Status**: Complete
 
 ---
 
@@ -39,33 +39,11 @@ Removed native serialization format to enable clean redesign:
 
 ---
 
-## Story 10.3: Prediction API Alignment with RFC-0020
+## Story 10.3: Prediction API Alignment with RFC-0020 ✅
 
-**Context**: RFC-0020 specifies `predict()` and `predict_raw()` as the only batch prediction methods.
-Both methods assume batch prediction on a dataset (not single-row).
+**Status**: Completed (commit `9c7cd23`)
 
-Current API has:
-- `predict_row()` - Single row (returns Vec<f32>)
-- `predict_batch()` - Batch (returns flat Vec<f32>)
-
-RFC-0020 specifies:
-- `predict()` - Returns ColMatrix<f32>, applies transformation
-- `predict_raw()` - Returns ColMatrix<f32>, no transformation
-
-**Tasks**:
-
-- [ ] 10.3.1: Team discussion on prediction API alignment
-- [ ] 10.3.2: Implement `predict()` returning `ColMatrix<f32>`
-- [ ] 10.3.3: Implement `predict_raw()` returning `ColMatrix<f32>`
-- [ ] 10.3.4: Evaluate whether to keep/deprecate/remove `predict_row()` and `predict_batch()`
-- [ ] 10.3.5: Update tests and docs
-
-**Definition of Done**:
-
-- `predict()` and `predict_raw()` implemented per RFC-0020
-- Decision made on legacy methods
-- Tests passing, clippy clean
-
----
-
-> Note: Story 10.3 supersedes original Story 10.3 (API naming for serialization).
+**Result**: `predict()` and `predict_raw()` now accept `impl DataMatrix<Element = f32>`:
+- Both return `ColMatrix<f32>` (unchanged)
+- Works with any matrix layout (RowMatrix, ColMatrix, etc.)
+- `predict_row()` and `predict_batch()` marked as legacy in docs
