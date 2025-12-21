@@ -16,9 +16,6 @@
 //! - [`predict_raw()`](GBLinearModel::predict_raw) - Returns raw margin scores
 //! - [`predict_row()`](GBLinearModel::predict_row) - Single row prediction
 
-#[cfg(feature = "storage")]
-use std::path::Path;
-
 use crate::data::{ColMatrix, DenseMatrix, RowMajor, ColMajor};
 use crate::data::Dataset;
 use crate::model::meta::ModelMeta;
@@ -27,9 +24,6 @@ use crate::training::gblinear::GBLinearTrainer;
 use crate::training::{Metric, ObjectiveFn};
 
 use super::GBLinearConfig;
-
-#[cfg(feature = "storage")]
-use crate::io::native::{DeserializeError, SerializeError};
 
 /// High-level GBLinear model.
 ///
@@ -59,10 +53,6 @@ use crate::io::native::{DeserializeError, SerializeError};
 ///
 /// // Predict
 /// let predictions = model.predict_batch(&features, n_rows);
-///
-/// // Save/Load
-/// model.save("model.bstr")?;
-/// let loaded = GBLinearModel::load("model.bstr")?;
 /// ```
 pub struct GBLinearModel {
     /// The underlying linear model.
@@ -356,77 +346,6 @@ impl GBLinearModel {
         let explainer = crate::explainability::LinearExplainer::new(&self.model, means)?;
         Ok(explainer.shap_values(features, n_samples))
     }
-
-    // =========================================================================
-    // Serialization (requires 'storage' feature)
-    // =========================================================================
-
-    /// Save the model to a file.
-    #[cfg(feature = "storage")]
-    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), SerializeError> {
-        let n_rounds = self.config.as_ref().map(|c| c.n_rounds).unwrap_or(0);
-        self.model.save(path, n_rounds)
-    }
-
-    /// Load a model from a file.
-    #[cfg(feature = "storage")]
-    pub fn load(path: impl AsRef<Path>) -> Result<Self, DeserializeError> {
-        let bytes = std::fs::read(path)?;
-        Self::from_bytes(&bytes)
-    }
-
-    /// Serialize the model to bytes.
-    #[cfg(feature = "storage")]
-    pub fn to_bytes(&self) -> Result<Vec<u8>, SerializeError> {
-        use crate::io::native::{ModelType, NativeCodec};
-        use crate::io::payload::Payload;
-
-        let n_rounds = self.config.as_ref().map(|c| c.n_rounds).unwrap_or(0);
-
-        // Create payload with explicit task kind
-        let payload = Payload::from_linear_model(&self.model, n_rounds, self.meta.task);
-        let codec = NativeCodec::new();
-        codec.serialize(
-            ModelType::GbLinear,
-            payload.num_features(),
-            payload.num_groups(),
-            &payload,
-        )
-    }
-
-    /// Deserialize a model from bytes.
-    #[cfg(feature = "storage")]
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, DeserializeError> {
-        use crate::io::native::{ModelType, NativeCodec};
-        use crate::io::payload::Payload;
-
-        let codec = NativeCodec::new();
-        let (header, payload): (_, Payload) = codec.deserialize(bytes)?;
-        
-        if header.model_type != ModelType::GbLinear {
-            return Err(DeserializeError::TypeMismatch {
-                expected: ModelType::GbLinear,
-                actual: header.model_type,
-            });
-        }
-
-        // Extract task kind before consuming payload
-        let task = payload.task_kind();
-        let model = payload.into_linear_model()?;
-
-        let meta = ModelMeta {
-            n_features: model.n_features(),
-            n_groups: model.n_groups(),
-            task,
-            ..Default::default()
-        };
-
-        Ok(Self {
-            model,
-            meta,
-            config: None,
-        })
-    }
 }
 
 impl std::fmt::Debug for GBLinearModel {
@@ -508,37 +427,6 @@ mod tests {
         assert_eq!(model.linear().weight(0, 0), 0.5);
         assert_eq!(model.linear().weight(1, 0), 0.3);
         assert_eq!(model.linear().bias(0), 0.1);
-    }
-
-    #[cfg(feature = "storage")]
-    #[test]
-    fn save_load_roundtrip() {
-        let linear = make_simple_model();
-        let meta = ModelMeta::for_regression(2);
-        let model = GBLinearModel::from_linear_model(linear, meta);
-
-        let path = std::env::temp_dir().join("boosters_gblinear_model_test.bstr");
-
-        model.save(&path).unwrap();
-        let loaded = GBLinearModel::load(&path).unwrap();
-
-        std::fs::remove_file(&path).ok();
-
-        assert_eq!(model.linear().n_features(), loaded.linear().n_features());
-        assert_eq!(model.predict_row(&[1.0, 2.0]), loaded.predict_row(&[1.0, 2.0]));
-    }
-
-    #[cfg(feature = "storage")]
-    #[test]
-    fn bytes_roundtrip() {
-        let linear = make_simple_model();
-        let meta = ModelMeta::for_regression(2);
-        let model = GBLinearModel::from_linear_model(linear, meta);
-
-        let bytes = model.to_bytes().unwrap();
-        let loaded = GBLinearModel::from_bytes(&bytes).unwrap();
-
-        assert_eq!(model.linear().n_features(), loaded.linear().n_features());
     }
 
     #[test]

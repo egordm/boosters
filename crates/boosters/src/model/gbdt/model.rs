@@ -18,9 +18,6 @@
 //! - [`predict_raw()`](GBDTModel::predict_raw) - Returns raw margin scores (no transform)
 //! - [`predict_row()`](GBDTModel::predict_row) - Single row prediction
 
-#[cfg(feature = "storage")]
-use std::path::Path;
-
 use crate::data::binned::BinnedDataset;
 use crate::data::{ColMatrix, DenseMatrix, RowMajor, ColMajor};
 use crate::inference::gbdt::UnrolledPredictor6;
@@ -30,11 +27,6 @@ use crate::training::gbdt::GBDTTrainer;
 use crate::training::{Metric, ObjectiveFn};
 
 use super::GBDTConfig;
-
-#[cfg(feature = "storage")]
-use crate::repr::gbdt::tree::TreeView;
-#[cfg(feature = "storage")]
-use crate::io::native::{DeserializeError, SerializeError};
 
 /// High-level GBDT model.
 ///
@@ -69,10 +61,6 @@ use crate::io::native::{DeserializeError, SerializeError};
 ///
 /// // Predict
 /// let predictions = model.predict_batch(&features, n_rows);
-///
-/// // Save/Load
-/// model.save("model.bstr")?;
-/// let loaded = GBDTModel::load("model.bstr")?;
 /// ```
 pub struct GBDTModel {
     /// The underlying forest.
@@ -415,114 +403,6 @@ impl GBDTModel {
         let explainer = crate::explainability::TreeExplainer::new(&self.forest)?;
         Ok(explainer.shap_values(features, n_samples, self.meta.n_features))
     }
-
-    // =========================================================================
-    // Serialization (requires 'storage' feature)
-    // =========================================================================
-
-    /// Infer the number of features from the maximum split index in trees.
-    #[cfg(feature = "storage")]
-    fn infer_n_features(forest: &Forest<ScalarLeaf>) -> usize {
-        let mut max_feature = 0u32;
-        for tree in forest.trees() {
-            for node_idx in 0..tree.n_nodes() as u32 {
-                if !tree.is_leaf(node_idx) {
-                    max_feature = max_feature.max(tree.split_index(node_idx));
-                }
-            }
-        }
-        // +1 because features are 0-indexed
-        (max_feature + 1) as usize
-    }
-
-    /// Save the model to a file.
-    #[cfg(feature = "storage")]
-    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), SerializeError> {
-        let bytes = self.to_bytes()?;
-        std::fs::write(path, bytes)?;
-        Ok(())
-    }
-
-    /// Load a model from a file.
-    #[cfg(feature = "storage")]
-    pub fn load(path: impl AsRef<Path>) -> Result<Self, DeserializeError> {
-        let bytes = std::fs::read(path)?;
-        Self::from_bytes(&bytes)
-    }
-
-    /// Serialize the model to bytes.
-    ///
-    /// This properly includes `n_features` and `feature_names` in the serialized payload,
-    /// ensuring they survive roundtrip even if not all features are used in splits.
-    #[cfg(feature = "storage")]
-    pub fn to_bytes(&self) -> Result<Vec<u8>, SerializeError> {
-        use crate::io::native::{ModelType, NativeCodec};
-        use crate::io::payload::Payload;
-
-        // Update forest base scores from meta
-        let mut forest = self.forest.clone();
-        forest = forest.with_base_score(self.meta.base_scores.clone());
-
-        // Create payload with explicit metadata from model
-        let payload = Payload::from_forest_with_meta(
-            &forest,
-            self.meta.n_features as u32,
-            self.meta.feature_names.clone(),
-            self.meta.task,  // Include task kind for correct deserialization
-        );
-        let codec = NativeCodec::new();
-        codec.serialize(
-            ModelType::Gbdt,
-            self.meta.n_features as u32,
-            self.meta.n_groups as u32,
-            &payload,
-        )
-    }
-
-    /// Deserialize a model from bytes.
-    ///
-    /// This uses `n_features`, `feature_names`, and `task_kind` from the serialized payload
-    /// rather than inferring from trees, ensuring they match what was originally saved.
-    #[cfg(feature = "storage")]
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, DeserializeError> {
-        use crate::io::native::{ModelType, NativeCodec};
-        use crate::io::payload::Payload;
-
-        let codec = NativeCodec::new();
-        let (header, payload): (_, Payload) = codec.deserialize(bytes)?;
-        
-        if header.model_type != ModelType::Gbdt {
-            return Err(DeserializeError::TypeMismatch {
-                expected: ModelType::Gbdt,
-                actual: header.model_type,
-            });
-        }
-
-        // Extract metadata before consuming payload
-        let feature_names = payload.feature_names().cloned();
-        let task = payload.task_kind();  // Use stored task kind, not inferred
-        
-        let forest = payload.into_forest()?;
-
-        // Use n_features from header if available, otherwise infer
-        let n_features = if header.num_features > 0 {
-            header.num_features as usize
-        } else {
-            Self::infer_n_features(&forest)
-        };
-
-        // Reconstruct metadata from forest, header, and payload
-        let meta = ModelMeta {
-            n_features,
-            n_groups: forest.n_groups() as usize,
-            task,
-            base_scores: forest.base_score().to_vec(),
-            feature_names,
-            ..Default::default()
-        };
-
-        Ok(Self { forest, meta, config: None })
-    }
 }
 
 impl std::fmt::Debug for GBDTModel {
@@ -675,44 +555,6 @@ mod tests {
             model.meta().feature_names.as_deref(),
             Some(&["a".to_string(), "b".to_string()][..])
         );
-    }
-
-    #[cfg(feature = "storage")]
-    #[test]
-    fn save_load_roundtrip() {
-        let forest = make_simple_forest();
-        // Use base_scores matching the forest (0.0)
-        let meta = ModelMeta::for_regression(2).with_base_scores(vec![0.0]);
-        let model = GBDTModel::from_forest(forest, meta);
-
-        let path = std::env::temp_dir().join("boosters_gbdt_model_test.bstr");
-
-        model.save(&path).unwrap();
-        let loaded = GBDTModel::load(&path).unwrap();
-
-        std::fs::remove_file(&path).ok();
-
-        assert_eq!(model.forest().n_trees(), loaded.forest().n_trees());
-        assert_eq!(model.predict_row(&[0.3, 0.5]), loaded.predict_row(&[0.3, 0.5]));
-
-        // Batch prediction
-        let features = vec![0.3, 0.5, 0.7, 0.5];
-        let preds_orig = model.forest().predict_row(&features[0..2]);
-        let preds_loaded = loaded.predict_batch(&features, 2);
-        assert_eq!(preds_orig[0], preds_loaded[0]);
-    }
-
-    #[cfg(feature = "storage")]
-    #[test]
-    fn bytes_roundtrip() {
-        let forest = make_simple_forest();
-        let meta = ModelMeta::for_regression(2);
-        let model = GBDTModel::from_forest(forest, meta);
-
-        let bytes = model.to_bytes().unwrap();
-        let loaded = GBDTModel::from_bytes(&bytes).unwrap();
-
-        assert_eq!(model.forest().n_trees(), loaded.forest().n_trees());
     }
 
     #[test]
