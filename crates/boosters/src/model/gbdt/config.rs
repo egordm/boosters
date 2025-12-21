@@ -24,8 +24,6 @@
 //!     .unwrap();
 //! ```
 
-use std::num::NonZeroUsize;
-
 use bon::Builder;
 
 use super::{RegularizationParams, SamplingParams, TreeParams};
@@ -155,9 +153,6 @@ pub struct GBDTConfig {
     pub early_stopping_rounds: Option<u32>,
 
     // === Resource control ===
-    /// Number of threads. `None` uses all available cores.
-    pub n_threads: Option<NonZeroUsize>,
-
     /// Histogram cache size (number of slots). Default: 8.
     #[builder(default = 8)]
     pub cache_size: usize,
@@ -306,7 +301,6 @@ impl GBDTConfig {
             gain,
             row_sampling,
             col_sampling,
-            n_threads: self.n_threads.map(|n| n.get()).unwrap_or(0),
             cache_size: self.cache_size,
             early_stopping_rounds: self.early_stopping_rounds.unwrap_or(0),
             early_stopping_eval_set: 0, // Always use first eval set
@@ -510,15 +504,6 @@ mod tests {
     }
 
     #[test]
-    fn test_threads_customization() {
-        let config = GBDTConfig::builder()
-            .n_threads(NonZeroUsize::new(4).unwrap())
-            .build()
-            .unwrap();
-        assert_eq!(config.n_threads, Some(NonZeroUsize::new(4).unwrap()));
-    }
-
-    #[test]
     fn test_config_default_trait() {
         let config = GBDTConfig::default();
         assert_eq!(config.n_trees, 100);
@@ -546,7 +531,6 @@ mod tests {
             .tree(TreeParams::depth_wise(10))
             .seed(123)
             .early_stopping_rounds(10)
-            .n_threads(NonZeroUsize::new(4).unwrap())
             .build()
             .unwrap();
 
@@ -557,7 +541,7 @@ mod tests {
         assert!((params.learning_rate - 0.1).abs() < 1e-6);
         assert_eq!(params.seed, 123);
         assert_eq!(params.early_stopping_rounds, 10);
-        assert_eq!(params.n_threads, 4);
+        // n_threads is not part of GBDTParams anymore - it's passed at runtime via Parallelism
 
         // Check regularization/gain params
         assert!((params.gain.reg_lambda - 2.0).abs() < 1e-6);

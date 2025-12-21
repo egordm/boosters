@@ -7,6 +7,7 @@
 //!
 //! ```ignore
 //! use boosters::training::{GBDTTrainer, GBDTParams, SquaredLoss, Rmse, GainParams};
+//! use boosters::Parallelism;
 //!
 //! let params = GBDTParams {
 //!     n_trees: 100,
@@ -16,10 +17,8 @@
 //! };
 //!
 //! let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-//! let forest = trainer.train(&dataset, &targets, &[], &[]);
+//! let forest = trainer.train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL);
 //! ```
-
-use rayon::ThreadPoolBuilder;
 
 use crate::data::{BinnedDataset, RowMatrix};
 use crate::inference::gbdt::BinnedAccessor;
@@ -35,7 +34,7 @@ use crate::training::Verbosity;
 use super::expansion::GrowthStrategy;
 use super::grower::{GrowerParams, TreeGrower};
 use super::linear::{LeafLinearTrainer, LinearLeafConfig};
-use super::parallelism::Parallelism;
+use crate::utils::Parallelism;
 use super::split::GainParams;
 
 use crate::repr::gbdt::{Forest, ScalarLeaf};
@@ -71,16 +70,6 @@ pub struct GBDTParams {
     /// Column sampling configuration.
     pub col_sampling: ColSamplingParams,
 
-    // --- Resource control ---
-    /// Number of threads to use for parallel operations.
-    ///
-    /// - `0`: Use rayon's global thread pool (default, uses all available cores)
-    /// - `1`: Sequential execution (no parallelism)
-    /// - `n > 1`: Parallel execution with up to `n` threads
-    ///
-    /// Parallelism is applied to both histogram building and split finding.
-    /// Algorithms self-correct if the workload is too small to benefit.
-    pub n_threads: usize,
     /// Histogram cache size (number of slots).
     pub cache_size: usize,
 
@@ -115,7 +104,6 @@ impl Default for GBDTParams {
             gain: GainParams::default(),
             row_sampling: RowSamplingParams::None,
             col_sampling: ColSamplingParams::None,
-            n_threads: 0,
             cache_size: 8,
             early_stopping_rounds: 0,
             early_stopping_eval_set: 0,
@@ -183,12 +171,22 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
 
     /// Train a forest.
     ///
+    /// **Note:** This method does NOT create a thread pool. The caller (typically the
+    /// model layer) is responsible for setting up parallelism by calling this within
+    /// `rayon::ThreadPool::install()` if parallel execution is desired.
+    ///
+    /// The `parallelism` argument is a *hint* that controls whether internal algorithms
+    /// (histogram building, split finding) use parallel iterators. Even with
+    /// `Parallelism::PARALLEL`, no new threads are spawned here—the caller must
+    /// provide the thread pool.
+    ///
     /// # Arguments
     ///
     /// * `dataset` - Binned dataset created with [`BinnedDatasetBuilder`]
     /// * `targets` - Target values (length = n_rows × n_outputs)
     /// * `weights` - Sample weights for each row. Pass `&[]` for uniform weights.
     /// * `eval_sets` - Validation sets for early stopping/monitoring. Pass `&[]` to skip.
+    /// * `parallelism` - Hint for internal parallel iteration (Sequential or Parallel)
     ///
     /// # Returns
     ///
@@ -197,51 +195,18 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
     /// # Example
     ///
     /// ```ignore
-    /// // Basic training (no sample weights, no validation)
-    /// let forest = trainer.train(&dataset, &targets, &[], &[])?;
+    /// // Sequential training
+    /// let forest = trainer.train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL)?;
     ///
-    /// // With sample weights
-    /// let weights = vec![1.0; n_samples]; // or custom weights
-    /// let forest = trainer.train(&dataset, &targets, &weights, &[])?;
-    ///
-    /// // With validation set for monitoring
-    /// let eval = EvalSet::new(&valid_dataset, &valid_targets, "validation");
-    /// let forest = trainer.train(&dataset, &targets, &[], &[eval])?;
+    /// // Parallel training (caller sets up thread pool)
+    /// let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+    /// let forest = pool.install(|| {
+    ///     trainer.train(&dataset, &targets, &[], &[], Parallelism::PARALLEL)
+    /// })?;
     /// ```
-    ///
-    /// # Panics
-    ///
-    /// Panics if `n_threads > 0` and the thread pool cannot be created.
     ///
     /// [`BinnedDatasetBuilder`]: crate::data::BinnedDatasetBuilder
     pub fn train(
-        &self,
-        dataset: &BinnedDataset,
-        targets: &[f32],
-        weights: &[f32],
-        eval_sets: &[EvalSet<'_>],
-    ) -> Option<Forest<ScalarLeaf>> {
-        // Threading contract:
-        // - n_threads == 0: use rayon's global pool
-        // - n_threads == 1: run strictly sequential (no dedicated pool, no thread spawn)
-        // - n_threads > 1: create a dedicated pool for this training session
-        let parallelism = Parallelism::from_threads(self.params.n_threads);
-
-        match self.params.n_threads {
-            0 | 1 => self.train_impl(dataset, targets, weights, eval_sets, parallelism),
-            _ => {
-                let pool = ThreadPoolBuilder::new()
-                    .num_threads(self.params.n_threads)
-                    .build()
-                    .expect("Failed to create thread pool");
-
-                pool.install(|| self.train_impl(dataset, targets, weights, eval_sets, parallelism))
-            }
-        }
-    }
-
-    /// Internal training implementation.
-    fn train_impl(
         &self,
         dataset: &BinnedDataset,
         targets: &[f32],
@@ -586,7 +551,7 @@ mod tests {
         let params = GBDTParams { n_trees: 1, ..Default::default() };
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let forest = trainer.train(&dataset, &targets, &[], &[]).unwrap();
+        let forest = trainer.train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL).unwrap();
 
         assert_eq!(forest.n_trees(), 1);
         assert_eq!(forest.n_groups(), 1);
@@ -604,7 +569,7 @@ mod tests {
         };
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let forest = trainer.train(&dataset, &targets, &[], &[]).unwrap();
+        let forest = trainer.train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL).unwrap();
 
         assert_eq!(forest.n_trees(), 10);
     }
@@ -625,7 +590,7 @@ mod tests {
         };
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let forest = trainer.train(&dataset, &targets, &[], &[]).unwrap();
+        let forest = trainer.train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL).unwrap();
 
         assert_eq!(forest.n_trees(), 5);
     }
@@ -639,7 +604,7 @@ mod tests {
         let params = GBDTParams { n_trees: 5, ..Default::default() };
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let forest = trainer.train(&dataset, &targets, &weights, &[]).unwrap();
+        let forest = trainer.train(&dataset, &targets, &weights, &[], Parallelism::SEQUENTIAL).unwrap();
 
         assert_eq!(forest.n_trees(), 5);
     }
@@ -656,7 +621,9 @@ mod tests {
         };
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let forest = trainer.train(&dataset, &targets, &[], &[]).unwrap();
+        let forest = trainer
+            .train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL)
+            .unwrap();
 
         assert_eq!(forest.n_trees(), 3);
     }
@@ -669,7 +636,7 @@ mod tests {
         let params = GBDTParams::default();
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let result = trainer.train(&dataset, &targets, &[], &[]);
+        let result = trainer.train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL);
 
         assert!(result.is_none());
     }
@@ -688,7 +655,9 @@ mod tests {
         };
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let forest = trainer.train(&dataset, &targets, &[], &[]).unwrap();
+        let forest = trainer
+            .train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL)
+            .unwrap();
 
         assert_eq!(forest.n_trees(), 5);
 
@@ -711,7 +680,9 @@ mod tests {
         };
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let forest = trainer.train(&dataset, &targets, &[], &[]).unwrap();
+        let forest = trainer
+            .train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL)
+            .unwrap();
 
         // First tree should NOT have linear leaves (round 0 is skipped)
         let first_tree = forest.tree(0);
@@ -732,7 +703,9 @@ mod tests {
         };
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let forest = trainer.train(&dataset, &targets, &[], &[]).unwrap();
+        let forest = trainer
+            .train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL)
+            .unwrap();
 
         // All trained trees should have gains and covers
         for i in 0..forest.n_trees() {

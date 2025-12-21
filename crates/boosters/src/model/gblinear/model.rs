@@ -15,8 +15,7 @@
 //!   raw values for regression
 //! - [`predict_raw()`](GBLinearModel::predict_raw) - Returns raw margin scores
 
-use crate::data::{ColMatrix, DataMatrix, DenseMatrix, ColMajor};
-use crate::data::Dataset;
+use crate::data::{ColMajor, ColMatrix, DataMatrix, Dataset, DenseMatrix};
 use crate::model::meta::ModelMeta;
 use crate::repr::gblinear::LinearModel;
 use crate::training::gblinear::GBLinearTrainer;
@@ -44,14 +43,14 @@ use super::GBLinearConfig;
 ///
 /// // Train
 /// let config = GBLinearConfig::builder().n_rounds(200).build().unwrap();
-/// let model = GBLinearModel::train(&dataset, config)?;
+/// let model = GBLinearModel::train(&dataset, config, 0)?; // auto threads
 ///
 /// // Access components
 /// let n_features = model.meta().n_features;
 /// let n_groups = model.meta().n_groups;
 /// let lr = model.config().map(|c| c.learning_rate);
 ///
-/// // Predict (uses batch prediction internally)
+/// // Predict
 /// let features = RowMatrix::from_vec(vec![...], n_rows, n_features);
 /// let predictions = model.predict(&features);
 /// ```
@@ -75,10 +74,17 @@ impl GBLinearModel {
     ///
     /// * `dataset` - Training dataset (features, targets, optional weights)
     /// * `config` - Training configuration (objective, metric, hyperparameters)
+    /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
     ///
     /// # Returns
     ///
     /// Trained model, or `None` if training fails.
+    ///
+    /// # Threading
+    ///
+    /// - `0` = Use all available CPU cores (auto-detect)
+    /// - `1` = Sequential execution (no parallelism)
+    /// - `n > 1` = Use exactly `n` threads
     ///
     /// # Example
     ///
@@ -89,15 +95,28 @@ impl GBLinearModel {
     ///
     /// let config = GBLinearConfig::builder()
     ///     .objective(Objective::logistic())
-    ///     .metric(Metric::auc())
     ///     .n_rounds(100)
-    ///     .learning_rate(0.5)
     ///     .build()
     ///     .unwrap();
     ///
-    /// let model = GBLinearModel::train(&dataset, config)?;
+    /// // Sequential training
+    /// let model = GBLinearModel::train(&dataset, config.clone(), 1)?;
+    ///
+    /// // Auto-detect threads
+    /// let model = GBLinearModel::train(&dataset, config.clone(), 0)?;
+    ///
+    /// // Parallel training with 4 threads
+    /// let model = GBLinearModel::train(&dataset, config, 4)?;
     /// ```
-    pub fn train(dataset: &Dataset, config: GBLinearConfig) -> Option<Self> {
+    pub fn train(dataset: &Dataset, config: GBLinearConfig, n_threads: usize) -> Option<Self> {
+        crate::run_with_threads(n_threads, || Self::train_inner(dataset, config))
+    }
+
+    /// Internal training implementation (no thread pool management).
+    ///
+    /// This method assumes the caller has already set up any necessary thread pool.
+    /// Use `train()` for the public API that handles threading automatically.
+    fn train_inner(dataset: &Dataset, config: GBLinearConfig) -> Option<Self> {
         let n_features = dataset.n_features();
         let n_outputs = config.objective.n_outputs();
         
@@ -201,6 +220,8 @@ impl GBLinearModel {
     /// Returns probabilities for classification objectives (sigmoid for binary,
     /// softmax for multiclass) and raw values for regression objectives.
     ///
+    /// Linear model prediction is fast enough to not benefit from parallelism.
+    ///
     /// # Arguments
     ///
     /// * `features` - Feature matrix (any layout implementing [`DataMatrix`])
@@ -222,16 +243,15 @@ impl GBLinearModel {
         let n_rows = features.num_rows();
         let n_groups = self.meta.n_groups;
 
-        // Compute raw predictions directly (avoids allocation)
-        let raw = self.compute_predictions_raw(features);
+        // Compute raw predictions
+        let mut raw = self.compute_predictions_raw(features);
 
         // Apply transformation if we have config with objective
-        let mut col_data = raw;
         if let Some(config) = &self.config {
-            config.objective.transform_predictions(&mut col_data, n_rows, n_groups);
+            config.objective.transform_predictions(&mut raw, n_rows, n_groups);
         }
 
-        DenseMatrix::<f32, ColMajor>::from_vec(col_data, n_rows, n_groups)
+        DenseMatrix::<f32, ColMajor>::from_vec(raw, n_rows, n_groups)
     }
 
     /// Predict for multiple rows, returning raw margin scores.

@@ -15,6 +15,7 @@ use common::threading::with_rayon_threads;
 use boosters::data::{binned::BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMajor};
 use boosters::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
+use boosters::Parallelism;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
@@ -85,7 +86,6 @@ fn bench_multithreading(c: &mut Criterion) {
                 reg_lambda: 1.0,
                 ..Default::default()
             },
-            n_threads,
             cache_size: 32,
             ..Default::default()
         };
@@ -96,7 +96,7 @@ fn bench_multithreading(c: &mut Criterion) {
                 with_rayon_threads(n_threads, || {
                     black_box(
                         trainer
-                            .train(black_box(&binned), black_box(&targets), &[], &[])
+                            .train(black_box(&binned), black_box(&targets), &[], &[], Parallelism::PARALLEL)
                             .unwrap(),
                     )
                 })

@@ -22,6 +22,7 @@
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
 use boosters::training::{Accuracy, GBDTParams, GBDTTrainer, GrowthStrategy, LogLoss, LogisticLoss, MetricFn};
+use boosters::Parallelism;
 
 fn main() {
     // =========================================================================
@@ -91,7 +92,9 @@ fn main() {
     // Train WITHOUT weights (baseline)
     // =========================================================================
     println!("--- Training WITHOUT weights ---");
-    let forest_unweighted = trainer.train(&dataset, &labels, &[], &[]).unwrap();
+    let forest_unweighted = trainer
+        .train(&dataset, &labels, &[], &[], Parallelism::SEQUENTIAL)
+        .unwrap();
 
     // Convert logits to probabilities and compute accuracy + recall
     let probs_uw: Vec<f32> = features
@@ -111,7 +114,9 @@ fn main() {
     // Train WITH class weights
     // =========================================================================
     println!("--- Training WITH class weights ---");
-    let forest_weighted = trainer.train(&dataset, &labels, &class_weights, &[]).unwrap();
+    let forest_weighted = trainer
+        .train(&dataset, &labels, &class_weights, &[], Parallelism::SEQUENTIAL)
+        .unwrap();
 
     let probs_w: Vec<f32> = features
         .chunks(n_features)

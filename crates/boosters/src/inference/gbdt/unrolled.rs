@@ -333,7 +333,7 @@ impl<D: UnrollDepth> UnrolledTreeLayout<D> {
 
     /// Traverse the array layout for a single row, returning the exit index.
     #[inline]
-    pub fn traverse_to_exit(&self, features: &[f32]) -> usize {
+    pub fn traverse_to_exit(&self, features: &[f32]) -> usize { // TODO: traverse_to_exit and process_block have inconsistent names.
         let mut idx = 0usize;
         let split_indices = self.split_indices.as_ref();
         let split_thresholds = self.split_thresholds.as_ref();

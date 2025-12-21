@@ -10,6 +10,7 @@
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
 use boosters::training::{GBDTParams, GBDTTrainer, GrowthStrategy, MetricFn, Rmse, SquaredLoss};
+use boosters::Parallelism;
 
 fn main() {
     // =========================================================================
@@ -63,7 +64,9 @@ fn main() {
     println!("  Growth: {:?}\n", params.growth_strategy);
 
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-    let forest = trainer.train(&dataset, &labels, &[], &[]).unwrap();
+    let forest = trainer
+        .train(&dataset, &labels, &[], &[], Parallelism::SEQUENTIAL)
+        .unwrap();
 
     // =========================================================================
     // Evaluate

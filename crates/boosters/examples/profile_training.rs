@@ -9,6 +9,7 @@
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
+use boosters::Parallelism;
 
 fn main() {
     // Large synthetic dataset for profiling
@@ -58,7 +59,6 @@ fn main() {
             min_gain: 0.0,
             ..Default::default()
         },
-        n_threads: 1, // Single thread for cleaner profiling
         cache_size: 64,
         ..Default::default()
     };
@@ -68,8 +68,9 @@ fn main() {
     println!("  Depth: {}", max_depth);
     
     let start = std::time::Instant::now();
+    // Use Sequential for cleaner profiling (single thread)
     let forest = GBDTTrainer::new(SquaredLoss, Rmse, params)
-        .train(&dataset, &labels, &[], &[])
+        .train(&dataset, &labels, &[], &[], Parallelism::SEQUENTIAL)
         .unwrap();
     let train_time = start.elapsed();
 

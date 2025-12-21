@@ -20,6 +20,7 @@ use common::criterion_config::default_criterion;
 use boosters::data::binned::{BinnedDatasetBuilder, BundlingConfig};
 use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
+use boosters::Parallelism;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
@@ -202,7 +203,6 @@ fn bench_boosters_training(c: &mut Criterion) {
             learning_rate: 0.1,
             growth_strategy: GrowthStrategy::DepthWise { max_depth },
             gain: GainParams { reg_lambda: 1.0, ..Default::default() },
-            n_threads: 1,
             cache_size: 32,
             ..Default::default()
         };
@@ -225,14 +225,14 @@ fn bench_boosters_training(c: &mut Criterion) {
         // WITHOUT bundling (training only)
         group.bench_function(BenchmarkId::new("no_bundling", config.name), |b| {
             b.iter(|| {
-                black_box(trainer.train(black_box(&binned_no_bundle), black_box(&targets), &[], &[]).unwrap())
+                black_box(trainer.train(black_box(&binned_no_bundle), black_box(&targets), &[], &[], Parallelism::SEQUENTIAL).unwrap())
             })
         });
 
         // WITH bundling (training only)
         group.bench_function(BenchmarkId::new("with_bundling", config.name), |b| {
             b.iter(|| {
-                black_box(trainer.train(black_box(&binned_with_bundle), black_box(&targets), &[], &[]).unwrap())
+                black_box(trainer.train(black_box(&binned_with_bundle), black_box(&targets), &[], &[], Parallelism::SEQUENTIAL).unwrap())
             })
         });
     }

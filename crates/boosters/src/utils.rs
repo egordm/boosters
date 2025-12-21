@@ -1,7 +1,135 @@
 //! Common utilities used across the crate.
 //!
-//! This module provides slice utilities and iterator helpers that are used
-//! by various subsystems.
+//! This module provides slice utilities, parallelism configuration, and
+//! iterator helpers that are used by various subsystems.
+
+use rayon::prelude::*;
+
+// =============================================================================
+// Parallelism Configuration
+// =============================================================================
+
+/// Whether parallel execution is allowed.
+///
+/// This is a simple boolean flag passed through training components.
+/// When `true`, components may use `rayon` parallel iterators.
+/// When `false`, components must use sequential iteration.
+///
+/// The actual thread pool is set up at the model API level via `n_threads`.
+/// Components don't manage thread pools - they just respect this flag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Parallelism {
+    Sequential,
+    Parallel,
+}
+
+impl Parallelism {
+    /// Create from thread count semantics.
+    ///
+    /// - 0 = auto (parallel)
+    /// - 1 = sequential
+    /// - >1 = parallel
+    #[inline]
+    pub fn from_threads(n_threads: usize) -> Self {
+        if n_threads == 1 {
+            Parallelism::Sequential
+        } else if n_threads == 0 && rayon::current_num_threads() == 1 {
+            Parallelism::Sequential
+        } else {
+            Parallelism::Parallel
+        }
+    }
+
+    /// Returns `true` if parallel execution is allowed.
+    #[inline]
+    pub fn is_parallel(self) -> bool {
+        matches!(self, Parallelism::Parallel)
+    }
+
+    #[inline]
+    fn maybe_par_for_each<T, I, F>(self, iter: I, f: F)
+    where
+        T: Send,
+        I: IntoIterator<Item = T> + IntoParallelIterator<Item = T>,
+        F: Fn(T) + Sync + Send,
+    {
+        if self.is_parallel() {
+            iter.into_par_iter().for_each(f);
+        } else {
+            iter.into_iter().for_each(f);
+        }
+    }
+
+    #[inline]
+    pub fn maybe_par_bridge_for_each<T, I, F>(self, iter: I, f: F)
+    where
+        T: Send,
+        I: Iterator<Item = T> + Send,
+        F: Fn(T) + Sync + Send,
+    {
+        if self.is_parallel() {
+            iter.par_bridge().for_each(f);
+        } else {
+            iter.for_each(f);
+        }
+    }
+
+    #[inline]
+    fn maybe_par_map<T, B, I, F>(self, iter: I, f: F) -> Vec<B>
+    where
+        T: Send,
+        B: Send,
+        I: IntoIterator<Item = T> + IntoParallelIterator<Item = T>,
+        F: Fn(T) -> B + Sync + Send,
+    {
+        if self.is_parallel() {
+            iter.into_par_iter().map(f).collect()
+        } else {
+            iter.into_iter().map(f).collect()
+        }
+    }
+}
+
+// =============================================================================
+// Thread Pool Setup
+// =============================================================================
+
+/// Run a closure with the appropriate thread pool.
+///
+/// Thread count semantics:
+/// - `0` = auto (use all available cores)
+/// - `1` = sequential (no thread pool)
+/// - `n > 1` = use exactly `n` threads
+///
+/// # Example
+///
+/// ```ignore
+/// use boosters::run_with_threads;
+///
+/// // Auto-detect threads
+/// let result = run_with_threads(0, || expensive_computation());
+///
+/// // Sequential
+/// let result = run_with_threads(1, || expensive_computation());
+///
+/// // Exactly 4 threads
+/// let result = run_with_threads(4, || expensive_computation());
+/// ```
+#[inline]
+pub fn run_with_threads<T: Send>(n_threads: usize, f: impl FnOnce(Parallelism) -> T + Send) -> T {
+    let parallelism = Parallelism::from_threads(n_threads);
+
+    match parallelism {
+        Parallelism::Sequential => f(Parallelism::Sequential),
+        Parallelism::Parallel => {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(n_threads)
+                .build()
+                .expect("Failed to create thread pool");
+            pool.install(|| f(Parallelism::Parallel))
+        }
+    }
+}
 
 // =============================================================================
 // Slice Utilities
@@ -102,5 +230,63 @@ mod tests {
         let (a, b) = disjoint_slices_mut(&mut data, 6, 2, 3);
         assert_eq!(a, &mut [6, 7, 8]);
         assert_eq!(b, &[2, 3, 4]);
+    }
+
+    #[test]
+    fn test_parallelism_from_threads() {
+        assert!(Parallelism::from_threads(0).is_parallel()); // auto = parallel
+        assert!(!Parallelism::from_threads(1).is_parallel()); // 1 = sequential
+        assert!(Parallelism::from_threads(2).is_parallel()); // >1 = parallel
+        assert!(Parallelism::from_threads(8).is_parallel());
+    }
+
+    #[test]
+    fn test_parallelism_constants() {
+        assert!(Parallelism::PARALLEL.is_parallel());
+        assert!(!Parallelism::SEQUENTIAL.is_parallel());
+    }
+
+    #[test]
+    fn test_run_with_threads_sequential() {
+        let result = run_with_threads(1, || 42);
+        assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn test_run_with_threads_auto() {
+        let result = run_with_threads(0, || 42);
+        assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn test_run_with_threads_explicit() {
+        let result = run_with_threads(2, || rayon::current_num_threads());
+        assert_eq!(result, 2);
+    }
+
+    #[test]
+    fn test_maybe_par_for_each() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        
+        let sum = AtomicUsize::new(0);
+        maybe_par_for_each(Parallelism::SEQUENTIAL, 0..10usize, |i| {
+            sum.fetch_add(i, Ordering::Relaxed);
+        });
+        assert_eq!(sum.load(Ordering::Relaxed), 45);
+
+        sum.store(0, Ordering::Relaxed);
+        maybe_par_for_each(Parallelism::PARALLEL, 0..10usize, |i| {
+            sum.fetch_add(i, Ordering::Relaxed);
+        });
+        assert_eq!(sum.load(Ordering::Relaxed), 45);
+    }
+
+    #[test]
+    fn test_maybe_par_map() {
+        let result: Vec<_> = maybe_par_map(Parallelism::SEQUENTIAL, 0..5usize, |i| i * 2);
+        assert_eq!(result, vec![0, 2, 4, 6, 8]);
+
+        let result: Vec<_> = maybe_par_map(Parallelism::PARALLEL, 0..5usize, |i| i * 2);
+        assert_eq!(result, vec![0, 2, 4, 6, 8]);
     }
 }

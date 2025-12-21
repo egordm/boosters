@@ -23,8 +23,6 @@
 //!     .unwrap();
 //! ```
 
-use std::num::NonZeroUsize;
-
 use bon::Builder;
 
 use crate::training::gblinear::FeatureSelectorKind;
@@ -192,10 +190,6 @@ pub struct GBLinearConfig {
     /// `None` disables early stopping.
     pub early_stopping_rounds: Option<u32>,
 
-    // === Resource control ===
-    /// Number of threads. `None` uses all available cores.
-    pub n_threads: Option<NonZeroUsize>,
-
     // === Reproducibility ===
     /// Random seed. Default: 42.
     #[builder(default = 42)]
@@ -280,7 +274,6 @@ impl GBLinearConfig {
             early_stopping_rounds: self.early_stopping_rounds.unwrap_or(0),
             early_stopping_eval_set: 0, // Always use first eval set
             verbosity: self.verbosity,
-            n_threads: self.n_threads.map(|n| n.get()).unwrap_or(0),
         }
     }
 }
@@ -403,15 +396,6 @@ mod tests {
     }
 
     #[test]
-    fn test_threads_customization() {
-        let config = GBLinearConfig::builder()
-            .n_threads(NonZeroUsize::new(4).unwrap())
-            .build()
-            .unwrap();
-        assert_eq!(config.n_threads, Some(NonZeroUsize::new(4).unwrap()));
-    }
-
-    #[test]
     fn test_config_default_trait() {
         let config = GBLinearConfig::default();
         assert_eq!(config.n_rounds, 100);
@@ -427,7 +411,6 @@ mod tests {
             .parallel(false)
             .seed(123)
             .early_stopping_rounds(10)
-            .n_threads(NonZeroUsize::new(4).unwrap())
             .build()
             .unwrap();
 
@@ -441,7 +424,6 @@ mod tests {
         assert!(!params.parallel);
         assert_eq!(params.seed, 123);
         assert_eq!(params.early_stopping_rounds, 10);
-        assert_eq!(params.n_threads, 4);
     }
 
     #[test]

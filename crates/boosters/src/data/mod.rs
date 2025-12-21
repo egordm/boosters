@@ -31,6 +31,7 @@ pub mod binned;
 mod dataset;
 mod matrix;
 mod traits;
+mod ndarray;
 
 #[cfg(any(feature = "io-arrow", feature = "io-parquet"))]
 pub mod io;
@@ -38,6 +39,8 @@ pub mod io;
 pub use matrix::{ColMajor, DenseColumnIter, DenseMatrix, Layout, RowMajor, StridedIter};
 pub use dataset::{Dataset, DatasetError, FeatureColumn};
 pub use traits::{DataMatrix, FeatureAccessor, RowView};
+
+pub use ndarray::axes;
 
 // Re-export binned types for convenience
 pub use binned::{

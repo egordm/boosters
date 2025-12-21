@@ -13,6 +13,7 @@ use common::criterion_config::default_criterion;
 use boosters::data::{binned::BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMajor};
 use boosters::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
+use boosters::Parallelism;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
@@ -85,7 +86,6 @@ fn bench_row_scaling(c: &mut Criterion) {
                 reg_lambda: 1.0,
                 ..Default::default()
             },
-            n_threads: 1,
             cache_size: 32,
             ..Default::default()
         };
@@ -95,7 +95,7 @@ fn bench_row_scaling(c: &mut Criterion) {
             b.iter(|| {
                 black_box(
                     trainer
-                        .train(black_box(&binned), black_box(&targets), &[], &[])
+                        .train(black_box(&binned), black_box(&targets), &[], &[], Parallelism::SEQUENTIAL)
                         .unwrap(),
                 )
             })
@@ -229,7 +229,6 @@ fn bench_feature_scaling(c: &mut Criterion) {
                 reg_lambda: 1.0,
                 ..Default::default()
             },
-            n_threads: 1,
             cache_size: 32,
             ..Default::default()
         };
@@ -239,7 +238,7 @@ fn bench_feature_scaling(c: &mut Criterion) {
             b.iter(|| {
                 black_box(
                     trainer
-                        .train(black_box(&binned), black_box(&targets), &[], &[])
+                        .train(black_box(&binned), black_box(&targets), &[], &[], Parallelism::SEQUENTIAL)
                         .unwrap(),
                 )
             })

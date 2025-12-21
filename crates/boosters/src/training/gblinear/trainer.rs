@@ -34,8 +34,6 @@
 //! let model = trainer.train(&data, &labels, None, &[]);
 //! ```
 
-use rayon::ThreadPoolBuilder;
-
 use crate::data::{ColMatrix, Dataset};
 use crate::repr::gblinear::LinearModel;
 use crate::training::eval;
@@ -103,13 +101,6 @@ pub struct GBLinearParams {
     // --- Logging ---
     /// Verbosity level for training output.
     pub verbosity: Verbosity,
-
-    // --- Resource control ---
-    /// Number of threads to use for rayon-based parallel operations.
-    ///
-    /// - `0`: Use rayon's global thread pool (default)
-    /// - `n > 0`: Create a dedicated thread pool with exactly `n` threads
-    pub n_threads: usize,
 }
 
 impl Default for GBLinearParams {
@@ -125,7 +116,6 @@ impl Default for GBLinearParams {
             early_stopping_rounds: 0,
             early_stopping_eval_set: 0,
             verbosity: Verbosity::default(),
-            n_threads: 0,
         }
     }
 }
@@ -172,49 +162,30 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
 
     /// Train a linear model on column-accessible data.
     ///
+    /// **Note:** This method does NOT create a thread pool. The caller (typically the
+    /// model layer) is responsible for setting up parallelism by calling this within
+    /// `rayon::ThreadPool::install()` if parallel execution is desired.
+    ///
     /// # Arguments
     ///
-    /// * `train_data` - Training features (column-major `ColMatrix`)
-    /// * `train_labels` - Training labels
-    /// * `weights` - Optional sample weights (None = uniform)
+    /// * `train` - Training dataset (features, targets, optional weights)
     /// * `eval_sets` - Evaluation sets for monitoring (pass `&[]` if not needed)
     ///
     /// # Example
     ///
     /// ```ignore
-    /// use boosters::data::ColMatrix;
-    /// use boosters::training::{GBLinearTrainer, GBLinearParams, SquaredLoss};
+    /// use boosters::training::{GBLinearTrainer, GBLinearParams, SquaredLoss, Rmse};
     ///
-    /// // Regression (unweighted)
+    /// // Sequential training
     /// let params = GBLinearParams::default();
-    /// let trainer = GBLinearTrainer::new(SquaredLoss, params);
-    /// let model = trainer.train(&data, &labels, None, &[]);
+    /// let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
+    /// let model = trainer.train(&dataset, &[])?;
     ///
-    /// // With sample weights
-    /// let weights: Vec<f32> = labels.iter()
-    ///     .map(|&label| if label > 0.5 { 10.0 } else { 1.0 })
-    ///     .collect();
-    /// let model = trainer.train(&data, &labels, Some(&weights), &[]);
+    /// // Parallel training (caller sets up thread pool)
+    /// let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+    /// let model = pool.install(|| trainer.train(&dataset, &[]))?;
     /// ```
-    ///
-    /// # Panics
-    ///
-    /// - Panics if `weights.len() != labels.len()` when weights are provided.
-    /// - Panics if `n_threads > 0` and the thread pool cannot be created (rare OS-level failure).
     pub fn train(&self, train: &Dataset, eval_sets: &[EvalSet<'_>]) -> Option<LinearModel> {
-        if self.params.n_threads == 0 {
-            return self.train_impl(train, eval_sets);
-        }
-
-        let pool = ThreadPoolBuilder::new()
-            .num_threads(self.params.n_threads)
-            .build()
-            .expect("Failed to create thread pool");
-
-        pool.install(|| self.train_impl(train, eval_sets))
-    }
-
-    fn train_impl(&self, train: &Dataset, eval_sets: &[EvalSet<'_>]) -> Option<LinearModel> {
         let train_data = train.for_gblinear().ok()?;
         let train_labels = train.targets();
         let weights = train.weights();

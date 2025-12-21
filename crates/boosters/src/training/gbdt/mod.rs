@@ -17,7 +17,6 @@ pub mod expansion;
 pub mod grower;
 pub mod histograms;
 pub mod linear;
-pub mod parallelism;
 pub mod partition;
 pub mod split;
 pub mod trainer;
@@ -31,7 +30,6 @@ pub use histograms::{
     HistogramSlotMut,
 };
 pub use linear::{LeafFeatureBuffer, LinearLeafConfig, WeightedLeastSquaresSolver};
-pub use parallelism::Parallelism;
 pub use partition::{LeafId, RowPartitioner};
 pub use split::{GainParams, GreedySplitter, SplitInfo, SplitType, DEFAULT_MAX_ONEHOT_CATS};
 pub use trainer::{GBDTParams, GBDTTrainer};

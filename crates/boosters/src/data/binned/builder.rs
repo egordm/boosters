@@ -1,5 +1,6 @@
 //! Builder for BinnedDataset.
 
+use bon::Builder;
 use rayon::prelude::*;
 
 use super::bundling::{create_bundle_plan, BundlePlan, BundlingConfig};
@@ -29,84 +30,50 @@ pub enum BinningStrategy {
     Quantile,
 }
 
-/// Number of samples used for computing bin boundaries.
-/// Matches LightGBM's default `bin_construct_sample_cnt` parameter.
-/// Using a sample reduces memory and compute for large datasets while
-/// maintaining good bin boundary quality.
-pub const BIN_CONSTRUCT_SAMPLE_CNT: usize = 200_000;
-
 /// Configuration for feature binning.
 ///
-/// This controls how many bins are used for each feature during quantization.
-/// You can set a global default and override for specific features.
+/// Controls how features are binned during quantization. Use the builder pattern
+/// for configuration:
 ///
 /// # Example
 ///
 /// ```ignore
-/// let config = BinningConfig::new(256)
-///     .with_feature_bins(0, 64)   // Feature 0 uses 64 bins
-///     .with_feature_bins(5, 512); // Feature 5 uses 512 bins
+/// use boosters::data::BinningConfig;
+///
+/// // Simple: just max bins
+/// let config = BinningConfig::builder().max_bins(256).build();
+///
+/// // Full control
+/// let config = BinningConfig::builder()
+///     .max_bins(256)
+///     .strategy(BinningStrategy::Quantile)
+///     .sample_cnt(100_000)  // For faster binning on large datasets
+///     .build();
 /// ```
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Builder)]
+#[builder(derive(Clone, Debug))]
 pub struct BinningConfig {
-    /// Default max bins for all features.
-    pub default_max_bins: u32,
-    /// Per-feature overrides: (feature_index, max_bins).
-    pub feature_overrides: Vec<(usize, u32)>,
+    /// Maximum bins per feature (default: 256).
+    #[builder(default = 256)]
+    pub max_bins: u32,
     /// Binning strategy (default: Quantile).
+    #[builder(default)]
     pub strategy: BinningStrategy,
+    /// Number of samples for computing bin boundaries (default: 200K, matching LightGBM).
+    /// For datasets larger than this, uses sampling for approximate quantiles.
+    #[builder(default = 200_000)]
+    pub sample_cnt: usize,
 }
 
 impl Default for BinningConfig {
     fn default() -> Self {
-        Self {
-            default_max_bins: 256,
-            feature_overrides: Vec::new(),
-            strategy: BinningStrategy::default(),
-        }
-    }
-}
-
-impl BinningConfig {
-    /// Create a new binning configuration with the given default max bins.
-    pub fn new(default_max_bins: u32) -> Self {
-        Self {
-            default_max_bins,
-            feature_overrides: Vec::new(),
-            strategy: BinningStrategy::default(),
-        }
-    }
-
-    /// Set the binning strategy.
-    pub fn with_strategy(mut self, strategy: BinningStrategy) -> Self {
-        self.strategy = strategy;
-        self
-    }
-
-    /// Set max bins for a specific feature.
-    ///
-    /// This overrides the default for features that need more or fewer bins.
-    /// For example, high-cardinality features may benefit from more bins,
-    /// while low-cardinality features can use fewer.
-    pub fn with_feature_bins(mut self, feature_idx: usize, max_bins: u32) -> Self {
-        self.feature_overrides.push((feature_idx, max_bins));
-        self
-    }
-
-    /// Get the max bins for a specific feature.
-    pub fn max_bins_for_feature(&self, feature_idx: usize) -> u32 {
-        for &(idx, bins) in &self.feature_overrides {
-            if idx == feature_idx {
-                return bins;
-            }
-        }
-        self.default_max_bins
+        Self::builder().build()
     }
 }
 
 impl From<u32> for BinningConfig {
     fn from(max_bins: u32) -> Self {
-        Self::new(max_bins)
+        Self::builder().max_bins(max_bins).build()
     }
 }
 
@@ -362,8 +329,9 @@ impl BinnedDatasetBuilder {
 
     /// Create a builder from a column-major matrix with automatic binning.
     ///
-    /// This is a convenience method that automatically bins all features
-    /// using quantile binning with 256 bins by default.
+    /// Simple convenience method using default config and parallel binning.
+    /// For explicit control over threading or binning config, use
+    /// [`from_matrix_with_options`](Self::from_matrix_with_options).
     ///
     /// # Arguments
     /// * `data` - Column-major matrix (each column is a feature)
@@ -372,87 +340,51 @@ impl BinnedDatasetBuilder {
     /// # Example
     ///
     /// ```ignore
-    /// let col_matrix = ColMatrix::from_vec(features, n_samples, n_features);
     /// let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 256).build()?;
     /// ```
     pub fn from_matrix<S: AsRef<[f32]> + Sync>(
         data: &crate::data::DenseMatrix<f32, crate::data::ColMajor, S>,
         max_bins: u32,
     ) -> Self {
-        Self::from_matrix_with_config_threaded(data, BinningConfig::new(max_bins), 0)
+        Self::from_matrix_with_options(
+            data,
+            BinningConfig::builder().max_bins(max_bins).build(),
+            crate::utils::Parallelism::Parallel,
+        )
     }
 
-    /// Create a builder from a row-major matrix with automatic binning.
+    /// Create a builder from a column-major matrix with full control.
     ///
-    /// This is a convenience method for users who have row-major data.
-    /// Internally converts to column-major layout for binning.
-    ///
-    /// # Arguments
-    /// * `data` - Row-major matrix (each row is a sample)
-    /// * `max_bins` - Maximum number of bins per feature (typically 256)
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use boosters::data::{BinnedDatasetBuilder, DenseMatrix, RowMajor};
-    ///
-    /// let row_matrix: DenseMatrix<f32, RowMajor> = DenseMatrix::from_vec(features, n_samples, n_features);
-    /// let dataset = BinnedDatasetBuilder::from_row_matrix(&row_matrix, 256).build()?;
-    /// ```
-    pub fn from_row_matrix<S: AsRef<[f32]> + Sync>(
-        data: &crate::data::DenseMatrix<f32, crate::data::RowMajor, S>,
-        max_bins: u32,
-    ) -> Self {
-        let col_matrix = data.to_layout::<crate::data::ColMajor>();
-        Self::from_matrix(&col_matrix, max_bins)
-    }
-
-    /// Create a builder from a column-major matrix with custom binning configuration.
-    ///
-    /// This allows per-feature bin count customization for optimal memory usage
-    /// and split quality. Uses all available threads for parallel binning.
+    /// Use this method when you need explicit control over:
+    /// - Per-feature bin counts via `BinningConfig`
+    /// - Binning strategy (quantile vs equal-width)
+    /// - Threading strategy (sequential vs parallel)
+    /// - Sample count for large dataset binning
     ///
     /// # Arguments
     /// * `data` - Column-major matrix (each column is a feature)
-    /// * `config` - Binning configuration with global default and per-feature overrides
+    /// * `config` - Binning configuration (use `BinningConfig::builder()`)
+    /// * `parallelism` - Threading strategy (Sequential or Parallel)
     ///
     /// # Example
     ///
     /// ```ignore
-    /// let config = BinningConfig::new(256)
-    ///     .with_feature_bins(0, 64)   // Low-cardinality feature
-    ///     .with_feature_bins(5, 512); // High-cardinality feature
+    /// use boosters::{Parallelism, data::{BinnedDatasetBuilder, BinningConfig}};
     ///
-    /// let dataset = BinnedDatasetBuilder::from_matrix_with_config(&matrix, config)
-    ///     .build()?;
+    /// let config = BinningConfig::builder()
+    ///     .max_bins(256)
+    ///     .build();
+    ///
+    /// let dataset = BinnedDatasetBuilder::from_matrix_with_options(
+    ///     &col_matrix,
+    ///     config,
+    ///     Parallelism::SEQUENTIAL,  // For fair benchmarks
+    /// ).build()?;
     /// ```
-    pub fn from_matrix_with_config<S: AsRef<[f32]> + Sync>(
+    pub fn from_matrix_with_options<S: AsRef<[f32]> + Sync>(
         data: &crate::data::DenseMatrix<f32, crate::data::ColMajor, S>,
         config: BinningConfig,
-    ) -> Self {
-        Self::from_matrix_with_config_threaded(data, config, 0)
-    }
-
-    /// Create a builder from a column-major matrix with custom binning configuration
-    /// and explicit thread control.
-    ///
-    /// # Arguments
-    /// * `data` - Column-major matrix (each column is a feature)
-    /// * `config` - Binning configuration with global default and per-feature overrides
-    /// * `n_threads` - Number of threads: 0 = all available, 1 = sequential (no rayon), N = use N threads
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let config = BinningConfig::new(256);
-    /// // Single-threaded binning for fair benchmarks
-    /// let dataset = BinnedDatasetBuilder::from_matrix_with_config_threaded(&matrix, config, 1)
-    ///     .build()?;
-    /// ```
-    pub fn from_matrix_with_config_threaded<S: AsRef<[f32]> + Sync>(
-        data: &crate::data::DenseMatrix<f32, crate::data::ColMajor, S>,
-        config: BinningConfig,
-        n_threads: usize,
+        parallelism: crate::utils::Parallelism,
     ) -> Self {
         let n_cols = data.num_cols();
         let n_rows = data.num_rows();
@@ -462,26 +394,12 @@ impl BinnedDatasetBuilder {
             Self::bin_feature_column(data, col_idx, n_rows, &config)
         };
 
-        // Process features - parallel or sequential based on n_threads
-        // When n_threads == 1, we use pure sequential iteration (no rayon overhead)
-        let feature_results: Vec<(Vec<u32>, BinMapper)> = match n_threads {
-            1 => {
-                // Single-threaded: process sequentially without touching rayon
-                (0..n_cols).map(process_feature).collect()
-            }
-            0 => {
-                // Use rayon's global pool (all available threads)
-                (0..n_cols).into_par_iter().map(process_feature).collect()
-            }
-            n => {
-                // Use a custom thread pool with specific thread count
-                // Note: Creating a pool has overhead, only useful for explicit control
-                let pool = rayon::ThreadPoolBuilder::new()
-                    .num_threads(n)
-                    .build()
-                    .expect("Failed to create thread pool for binning");
-                pool.install(|| (0..n_cols).into_par_iter().map(process_feature).collect())
-            }
+        // Process features - parallel or sequential based on parallelism
+        // When Sequential, we use pure iteration (no rayon overhead)
+        let feature_results: Vec<(Vec<u32>, BinMapper)> = if parallelism.is_parallel() {
+            (0..n_cols).into_par_iter().map(process_feature).collect()
+        } else {
+            (0..n_cols).map(process_feature).collect()
         };
 
         // Add all features to builder
@@ -504,7 +422,7 @@ impl BinnedDatasetBuilder {
     ) -> (Vec<u32>, BinMapper) {
         use super::MissingType;
 
-        let max_bins = config.max_bins_for_feature(col_idx);
+        let max_bins = config.max_bins;
         let col_data = data.col_slice(col_idx);
 
         // Collect non-NaN values and compute min/max
@@ -553,9 +471,8 @@ impl BinnedDatasetBuilder {
                     .collect()
             }
             BinningStrategy::Quantile => {
-                // Optimized quantile binning using partial sort (select_nth_unstable)
-                // Instead of full O(n log n) sort, we use O(n) selection for each quantile
-                Self::compute_quantile_bounds(&mut values, n_bins)
+                // Quantile binning with optional sampling for large datasets
+                Self::compute_quantile_bounds(&mut values, n_bins, config.sample_cnt)
             }
         };
 
@@ -589,22 +506,21 @@ impl BinnedDatasetBuilder {
 
     /// Compute quantile boundaries using LightGBM-style sampling.
     ///
-    /// For datasets larger than `BIN_CONSTRUCT_SAMPLE_CNT` (200K, matching LightGBM),
-    /// uses uniform sampling to compute approximate quantiles. This significantly
-    /// reduces memory and compute cost while maintaining good bin boundary quality.
+    /// For datasets larger than `sample_cnt`, uses uniform sampling to compute
+    /// approximate quantiles. This significantly reduces memory and compute cost
+    /// while maintaining good bin boundary quality.
     ///
     /// For smaller datasets, computes exact quantiles via full sort.
-    fn compute_quantile_bounds(values: &mut [f32], n_bins: u32) -> Vec<f64> {
+    fn compute_quantile_bounds(values: &mut [f32], n_bins: u32, sample_cnt: usize) -> Vec<f64> {
         let n = values.len();
         if n == 0 {
             return vec![f64::MAX];
         }
 
         // Use LightGBM-style sampling for large datasets
-        // BIN_CONSTRUCT_SAMPLE_CNT = 200,000 matches LightGBM's default
-        if n > BIN_CONSTRUCT_SAMPLE_CNT {
+        if n > sample_cnt && sample_cnt > 0 {
             // Uniform sampling: take evenly-spaced samples
-            let step = n / BIN_CONSTRUCT_SAMPLE_CNT;
+            let step = n / sample_cnt;
             let mut sample: Vec<f32> = values.iter().step_by(step.max(1)).copied().collect();
             sample.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
@@ -1295,8 +1211,9 @@ mod tests {
     }
 
     #[test]
-    fn test_from_row_matrix_matches_manual_conversion() {
+    fn test_row_matrix_conversion() {
         use crate::data::{ColMajor, DenseMatrix, RowMajor};
+        use crate::utils::Parallelism;
 
         // Create row-major data: 4 samples, 3 features
         let row_data = vec![
@@ -1308,16 +1225,20 @@ mod tests {
         let row_matrix: DenseMatrix<f32, RowMajor> =
             DenseMatrix::from_vec(row_data.clone(), 4, 3);
 
-        // Method 1: from_row_matrix (convenience)
-        let dataset1 = BinnedDatasetBuilder::from_row_matrix(&row_matrix, 256).build().unwrap();
+        let config = BinningConfig::builder().max_bins(256).build();
 
-        // Method 2: manual conversion
+        // Convert to col-major first, then build
         let col_matrix: DenseMatrix<f32, ColMajor, _> = row_matrix.to_layout();
-        let dataset2 = BinnedDatasetBuilder::from_matrix(&col_matrix, 256).build().unwrap();
+        let dataset = BinnedDatasetBuilder::from_matrix_with_options(
+            &col_matrix,
+            config,
+            Parallelism::SEQUENTIAL,
+        )
+        .build()
+        .unwrap();
 
-        // Verify they produce identical structure
-        assert_eq!(dataset1.n_rows(), dataset2.n_rows());
-        assert_eq!(dataset1.n_features(), dataset2.n_features());
-        assert_eq!(dataset1.n_groups(), dataset2.n_groups());
+        // Verify structure
+        assert_eq!(dataset.n_rows(), 4);
+        assert_eq!(dataset.n_features(), 3);
     }
 }

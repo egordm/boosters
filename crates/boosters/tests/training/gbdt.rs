@@ -5,6 +5,7 @@
 use boosters::data::{BinMapper, BinnedDatasetBuilder, ColMatrix, GroupLayout, GroupStrategy, MissingType};
 use boosters::repr::gbdt::{TreeView, SplitType};
 use boosters::training::{GBDTParams, GBDTTrainer, GrowthStrategy, Rmse, SquaredLoss};
+use boosters::Parallelism;
 
 #[test]
 fn train_rejects_invalid_targets_len() {
@@ -17,7 +18,7 @@ fn train_rejects_invalid_targets_len() {
         .expect("Failed to build binned dataset");
 
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, GBDTParams::default());
-    let result = trainer.train(&dataset, &targets, &[], &[]);
+    let result = trainer.train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL);
 
     assert!(result.is_none());
 }
@@ -42,7 +43,7 @@ fn trained_model_improves_over_base_score_on_simple_problem() {
     };
 
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-    let forest = trainer.train(&dataset, &targets, &[], &[]).unwrap();
+    let forest = trainer.train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL).unwrap();
 
     forest
         .validate()
@@ -100,7 +101,7 @@ fn trained_model_improves_over_base_score_on_medium_problem() {
     };
 
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-    let forest = trainer.train(&dataset, &targets, &[], &[]).unwrap();
+    let forest = trainer.train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL).unwrap();
 
     forest
         .validate()
@@ -181,7 +182,7 @@ fn train_with_categorical_features_produces_categorical_splits() {
     };
 
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-    let forest = trainer.train(&dataset, &targets, &[], &[]).unwrap();
+    let forest = trainer.train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL).unwrap();
 
     forest
         .validate()

@@ -56,6 +56,7 @@ use boosters::training::{
 	Accuracy, GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, LinearLeafConfig, LogLoss, LogisticLoss, Mae,
 	MetricFn, MulticlassAccuracy, MulticlassLogLoss, ObjectiveFn, Rmse, SoftmaxLoss, SquaredLoss,
 };
+use boosters::Parallelism;
 
 #[cfg(feature = "io-parquet")]
 use boosters::data::io::parquet::load_parquet_xy_row_major_f32;
@@ -661,7 +662,6 @@ fn train_boosters(
 		learning_rate: 0.1,
 		growth_strategy: GrowthStrategy::DepthWise { max_depth: config.depth },
 		gain: GainParams { reg_lambda: 1.0, ..Default::default() },
-		n_threads: 1,
 		cache_size: 256,
 		seed,
 		linear_leaves,
@@ -671,7 +671,7 @@ fn train_boosters(
 	match config.task {
 		Task::Regression => {
 			let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-			let forest = trainer.train(&binned_train, y_train, &[], &[]).unwrap();
+			let forest = trainer.train(&binned_train, y_train, &[], &[], Parallelism::SEQUENTIAL).unwrap();
 			let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
 			let pred = predictor.predict(&row_valid);
 			let pred0 = extract_group(&pred, 0);
@@ -682,7 +682,7 @@ fn train_boosters(
 		Task::Binary => {
 			let objective = LogisticLoss;
 			let trainer = GBDTTrainer::new(objective, LogLoss, params);
-			let forest = trainer.train(&binned_train, y_train, &[], &[]).unwrap();
+			let forest = trainer.train(&binned_train, y_train, &[], &[], Parallelism::SEQUENTIAL).unwrap();
 			let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
 			let mut raw = predictor.predict(&row_valid);
 			objective.transform_prediction_inplace(&mut raw);
@@ -695,7 +695,7 @@ fn train_boosters(
 			let num_classes = config.classes.unwrap_or(3);
 			let objective = SoftmaxLoss::new(num_classes);
 			let trainer = GBDTTrainer::new(objective, MulticlassLogLoss, params);
-			let forest = trainer.train(&binned_train, y_train, &[], &[]).unwrap();
+			let forest = trainer.train(&binned_train, y_train, &[], &[], Parallelism::SEQUENTIAL).unwrap();
 			let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
 			let mut raw = predictor.predict(&row_valid);
 			// Apply softmax to column-major output

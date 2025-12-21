@@ -20,6 +20,7 @@
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
 use boosters::training::{Accuracy, GBDTParams, GBDTTrainer, GrowthStrategy, LogLoss, LogisticLoss, MetricFn};
+use boosters::Parallelism;
 
 fn main() {
     // =========================================================================
@@ -73,7 +74,9 @@ fn main() {
     };
 
     let trainer_depth = GBDTTrainer::new(LogisticLoss, LogLoss, params_depth);
-    let forest_depth = trainer_depth.train(&dataset, &labels, &[], &[]).unwrap();
+    let forest_depth = trainer_depth
+        .train(&dataset, &labels, &[], &[], Parallelism::SEQUENTIAL)
+        .unwrap();
 
     // Predict: apply sigmoid to convert logits to probabilities
     let predictions: Vec<f32> = features
@@ -102,7 +105,9 @@ fn main() {
     };
 
     let trainer_leaf = GBDTTrainer::new(LogisticLoss, LogLoss, params_leaf);
-    let forest_leaf = trainer_leaf.train(&dataset, &labels, &[], &[]).unwrap();
+    let forest_leaf = trainer_leaf
+        .train(&dataset, &labels, &[], &[], Parallelism::SEQUENTIAL)
+        .unwrap();
 
     let predictions: Vec<f32> = features
         .chunks(n_features)
@@ -132,7 +137,9 @@ fn main() {
         })
         .collect();
 
-    let forest_weighted = trainer_depth.train(&dataset, &labels, &weights, &[]).unwrap();
+    let forest_weighted = trainer_depth
+        .train(&dataset, &labels, &weights, &[], Parallelism::SEQUENTIAL)
+        .unwrap();
 
     let predictions: Vec<f32> = features
         .chunks(n_features)

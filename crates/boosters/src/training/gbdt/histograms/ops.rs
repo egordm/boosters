@@ -23,7 +23,7 @@
 use super::pool::FeatureMeta;
 use super::slices::HistogramFeatureIter;
 use crate::data::binned::FeatureView;
-use crate::training::gbdt::parallelism::Parallelism;
+use crate::utils::Parallelism;
 use crate::training::GradsTuple;
 
 /// A histogram bin storing accumulated (gradient_sum, hessian_sum).
@@ -55,7 +55,7 @@ pub struct HistogramBuilder {
 
 impl Default for HistogramBuilder {
     fn default() -> Self {
-        Self::new(Parallelism::Sequential)
+        Self::new(Parallelism::SEQUENTIAL)
     }
 }
 
@@ -79,10 +79,10 @@ impl HistogramBuilder {
     ) {
         debug_assert_eq!(ordered_grad_hess.len(), indices.len());
 
-        let parallelism = self.correct_parallelism(indices.len(), feature_metas.len());
+        let parallelism = self.suggest_parallelism(indices.len(), feature_metas.len());
         let iter = HistogramFeatureIter::new(histogram, feature_metas);
 
-        if parallelism.allows_parallel() {
+        if parallelism.is_parallel() {
             iter.par_for_each_mut(feature_metas, |f, hist_slice| {
                 build_feature_gathered(hist_slice, ordered_grad_hess, indices, &bin_views[f]);
             });
@@ -105,10 +105,10 @@ impl HistogramBuilder {
         feature_metas: &[FeatureMeta],
     ) {
         let n_rows = ordered_grad_hess.len();
-        let parallelism = self.correct_parallelism(n_rows, feature_metas.len());
+        let parallelism = self.suggest_parallelism(n_rows, feature_metas.len());
         let iter = HistogramFeatureIter::new(histogram, feature_metas);
 
-        if parallelism.allows_parallel() {
+        if parallelism.is_parallel() {
             iter.par_for_each_mut(feature_metas, |f, hist_slice| {
                 build_feature_contiguous(hist_slice, ordered_grad_hess, start_row, &bin_views[f]);
             });
@@ -119,14 +119,20 @@ impl HistogramBuilder {
         }
     }
 
-    /// Correct parallelism based on workload.
+    /// Suggest parallelism based on workload (may downgrade to sequential).
     #[inline]
-    fn correct_parallelism(&self, n_rows: usize, n_features: usize) -> Parallelism {
+    fn suggest_parallelism(&self, n_rows: usize, n_features: usize) -> Parallelism {
+        if !self.parallelism.is_parallel() {
+            return Parallelism::SEQUENTIAL;
+        }
         if n_features < MIN_FEATURES_PARALLEL {
-            return Parallelism::Sequential;
+            return Parallelism::SEQUENTIAL;
         }
         let work = n_rows.saturating_mul(n_features);
-        self.parallelism.correct_for_workload(work, MIN_WORK_PER_THREAD)
+        if work < MIN_WORK_PER_THREAD {
+            return Parallelism::SEQUENTIAL;
+        }
+        self.parallelism
     }
 }
 
@@ -462,7 +468,7 @@ mod tests {
             .map(|(&g, &h)| GradsTuple { grad: g, hess: h })
             .collect();
 
-        let builder = HistogramBuilder::new(Parallelism::Sequential);
+        let builder = HistogramBuilder::new(Parallelism::SEQUENTIAL);
         builder.build_contiguous(&mut histogram, &ordered_grad_hess, 0, &bin_views, &features);
 
         assert!((histogram[0].0 - 10.0).abs() < 1e-10); // 1+3+6
@@ -489,7 +495,7 @@ mod tests {
             })
             .collect();
 
-        let builder = HistogramBuilder::new(Parallelism::Sequential);
+        let builder = HistogramBuilder::new(Parallelism::SEQUENTIAL);
         builder.build_gathered(&mut histogram, &ordered_grad_hess, &indices, &bin_views, &features);
 
         assert!((histogram[0].0 - 1.0).abs() < 1e-10);
@@ -525,7 +531,7 @@ mod tests {
             .map(|(&g, &h)| GradsTuple { grad: g, hess: h })
             .collect();
 
-        let builder = HistogramBuilder::new(Parallelism::Sequential);
+        let builder = HistogramBuilder::new(Parallelism::SEQUENTIAL);
         builder.build_contiguous(&mut histogram, &ordered_grad_hess, 0, &bin_views, &features);
 
         assert!((histogram[0].0 - 3.0).abs() < 1e-10); // row 2
@@ -557,7 +563,7 @@ mod tests {
             .map(|(&g, &h)| GradsTuple { grad: g, hess: h })
             .collect();
 
-        let builder = HistogramBuilder::new(Parallelism::Sequential);
+        let builder = HistogramBuilder::new(Parallelism::SEQUENTIAL);
         builder.build_contiguous(&mut histogram, &ordered_grad_hess, 0, &bin_views, &features);
 
         let f0_bin0_grad: f64 = (0..n_samples)
@@ -636,7 +642,7 @@ mod tests {
 
         // Parallel
         let mut hist_par = vec![(0.0, 0.0); 16];
-        let builder_par = HistogramBuilder::new(Parallelism::Parallel(4));
+        let builder_par = HistogramBuilder::new(Parallelism::Parallel);
         builder_par.build_contiguous(&mut hist_par, &ordered_grad_hess, 0, &bin_views, &features);
 
         // Should match

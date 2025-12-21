@@ -9,6 +9,7 @@ use boosters::data::{binned::BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMa
 use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
 use boosters::testing::data::{random_dense_f32, split_indices, synthetic_regression_targets_linear};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
+use boosters::Parallelism;
 
 use common::select::{select_rows_row_major, select_targets};
 
@@ -38,7 +39,6 @@ fn bench_train_then_predict_regression(c: &mut Criterion) {
 		learning_rate: 0.1,
 		growth_strategy: GrowthStrategy::DepthWise { max_depth: 6 },
 		gain: GainParams { reg_lambda: 1.0, ..Default::default() },
-		n_threads: 1,
 		cache_size: 256,
 		..Default::default()
 	};
@@ -46,7 +46,7 @@ fn bench_train_then_predict_regression(c: &mut Criterion) {
 
 	group.bench_function("train_then_predict", |b| {
 		b.iter(|| {
-			let forest = trainer.train(black_box(&binned_train), black_box(&y_train), &[], &[]).unwrap();
+			let forest = trainer.train(black_box(&binned_train), black_box(&y_train), &[], &[], Parallelism::SEQUENTIAL).unwrap();
 			let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
 			let preds = predictor.predict(black_box(&row_valid));
 			black_box(preds)

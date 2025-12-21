@@ -14,6 +14,7 @@ use boosters::data::{
 };
 use boosters::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
+use boosters::Parallelism;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
@@ -75,7 +76,6 @@ fn bench_train_regression(c: &mut Criterion) {
 			learning_rate: 0.1,
 			growth_strategy: GrowthStrategy::DepthWise { max_depth },
 			gain: GainParams { reg_lambda: 1.0, ..Default::default() },
-			n_threads: 1,
 			cache_size: 32,
 			..Default::default()
 		};
@@ -83,16 +83,16 @@ fn bench_train_regression(c: &mut Criterion) {
 
 		group.bench_function(BenchmarkId::new("boosters/cold_full", name), |b| {
 			b.iter(|| {
-				// Use single-threaded binning (n_threads=1) to match training n_threads=1
+				// Use single-threaded binning to match training parallelism
 				// This mirrors how LightGBM's num_threads=1 affects its entire pipeline
-				let binned = BinnedDatasetBuilder::from_matrix_with_config_threaded(
+				let binned = BinnedDatasetBuilder::from_matrix_with_options(
 					&col_matrix,
 					256.into(),
-					1, // single-threaded
+					Parallelism::SEQUENTIAL,
 				)
 				.build()
 				.unwrap();
-				black_box(trainer.train(black_box(&binned), black_box(&targets), &[], &[]).unwrap())
+				black_box(trainer.train(black_box(&binned), black_box(&targets), &[], &[], Parallelism::SEQUENTIAL).unwrap())
 			})
 		});
 

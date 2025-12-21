@@ -4,7 +4,7 @@ use super::gain::{GainParams, NodeGainContext};
 use super::types::SplitInfo;
 use super::super::categorical::CatBitset;
 use super::super::histograms::{HistogramBin, HistogramSlot};
-use super::super::parallelism::Parallelism;
+use crate::utils::Parallelism;
 
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
@@ -119,10 +119,14 @@ impl GreedySplitter {
         feature_has_missing: &[bool],
         features: &[u32],
     ) -> SplitInfo {
-        // Self-correct parallelism based on workload
-        let parallelism = self.parallelism.correct_for_workload(features.len(), MIN_FEATURES_PARALLEL);
+        // Use sequential for small workloads
+        let parallelism = if features.len() < MIN_FEATURES_PARALLEL {
+            Parallelism::SEQUENTIAL
+        } else {
+            self.parallelism
+        };
 
-        if parallelism.allows_parallel() {
+        if parallelism.is_parallel() {
             self.find_split_parallel(
                 histogram,
                 parent_grad,

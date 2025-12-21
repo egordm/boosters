@@ -12,6 +12,7 @@ use boosters::testing::data::{random_dense_f32, split_indices, synthetic_regress
 use boosters::training::{
     GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, LinearLeafConfig, Rmse, SquaredLoss,
 };
+use boosters::Parallelism;
 
 use common::select::{select_rows_row_major, select_targets};
 
@@ -39,7 +40,6 @@ fn bench_linear_training_overhead(c: &mut Criterion) {
         learning_rate: 0.1,
         growth_strategy: GrowthStrategy::DepthWise { max_depth: 4 },
         gain: GainParams { reg_lambda: 1.0, ..Default::default() },
-        n_threads: 1,
         cache_size: 256,
         linear_leaves: None,
         ..Default::default()
@@ -50,7 +50,7 @@ fn bench_linear_training_overhead(c: &mut Criterion) {
     group.bench_function("baseline", |b| {
         b.iter(|| {
             let forest = trainer_baseline
-                .train(black_box(&binned_train), black_box(&y_train), &[], &[])
+                .train(black_box(&binned_train), black_box(&y_train), &[], &[], Parallelism::SEQUENTIAL)
                 .unwrap();
             black_box(forest)
         })
@@ -65,7 +65,7 @@ fn bench_linear_training_overhead(c: &mut Criterion) {
     group.bench_function("linear_leaves", |b| {
         b.iter(|| {
             let forest = trainer_linear
-                .train(black_box(&binned_train), black_box(&y_train), &[], &[])
+                .train(black_box(&binned_train), black_box(&y_train), &[], &[], Parallelism::SEQUENTIAL)
                 .unwrap();
             black_box(forest)
         })

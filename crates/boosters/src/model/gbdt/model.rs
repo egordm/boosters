@@ -18,12 +18,13 @@
 //! - [`predict_raw()`](GBDTModel::predict_raw) - Returns raw margin scores (no transform)
 
 use crate::data::binned::BinnedDataset;
-use crate::data::{ColMatrix, DataMatrix, DenseMatrix, ColMajor};
+use crate::data::{ColMajor, ColMatrix, DataMatrix, DenseMatrix};
 use crate::inference::gbdt::UnrolledPredictor6;
 use crate::model::meta::ModelMeta;
 use crate::repr::gbdt::{Forest, ScalarLeaf};
 use crate::training::gbdt::GBDTTrainer;
 use crate::training::{Metric, ObjectiveFn};
+use crate::utils::Parallelism;
 
 use super::GBDTConfig;
 
@@ -89,10 +90,17 @@ impl GBDTModel {
     /// * `targets` - Target values (length = n_rows × n_outputs)
     /// * `weights` - Optional sample weights (empty slice for uniform)
     /// * `config` - Training configuration (objective, metric, hyperparameters)
+    /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
     ///
     /// # Returns
     ///
     /// Trained model, or `None` if training fails.
+    ///
+    /// # Threading
+    ///
+    /// - `0` = Use all available CPU cores (auto-detect)
+    /// - `1` = Sequential execution (no parallelism)
+    /// - `n > 1` = Use exactly `n` threads
     ///
     /// # Example
     ///
@@ -102,19 +110,41 @@ impl GBDTModel {
     ///
     /// let config = GBDTConfig::builder()
     ///     .objective(Objective::logistic())
-    ///     .metric(Metric::auc())
     ///     .n_trees(100)
-    ///     .learning_rate(0.1)
     ///     .build()
     ///     .unwrap();
     ///
-    /// let model = GBDTModel::train(&dataset, &targets, &[], config);
+    /// // Sequential training
+    /// let model = GBDTModel::train(&dataset, &targets, &[], config.clone(), 1)?;
+    ///
+    /// // Auto-detect threads
+    /// let model = GBDTModel::train(&dataset, &targets, &[], config.clone(), 0)?;
+    ///
+    /// // Parallel training with 4 threads
+    /// let model = GBDTModel::train(&dataset, &targets, &[], config, 4)?;
     /// ```
     pub fn train(
         dataset: &BinnedDataset,
         targets: &[f32],
         weights: &[f32],
         config: GBDTConfig,
+        n_threads: usize,
+    ) -> Option<Self> {
+        crate::run_with_threads(n_threads, |parallelism| {
+            Self::train_inner(dataset, targets, weights, config, parallelism)
+        })
+    }
+
+    /// Internal training implementation (no thread pool management).
+    ///
+    /// This method assumes the caller has already set up any necessary thread pool.
+    /// Use `train()` for the public API that handles threading automatically.
+    fn train_inner(
+        dataset: &BinnedDataset,
+        targets: &[f32],
+        weights: &[f32],
+        config: GBDTConfig,
+        parallelism: Parallelism,
     ) -> Option<Self> {
         let n_features = dataset.n_features();
         let n_outputs = config.objective.n_outputs();
@@ -135,7 +165,9 @@ impl GBDTModel {
             metric,
             params,
         );
-        let forest = trainer.train(dataset, targets, weights, &[])?;
+        
+        // Components receive parallelism flag; thread pool is already set up
+        let forest = trainer.train(dataset, targets, weights, &[], parallelism)?;
 
         let meta = ModelMeta {
             n_features,
@@ -242,6 +274,7 @@ impl GBDTModel {
     /// # Arguments
     ///
     /// * `features` - Feature matrix (any layout implementing [`DataMatrix`])
+    /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
     ///
     /// # Returns
     ///
@@ -255,27 +288,34 @@ impl GBDTModel {
     /// use boosters::data::RowMatrix;
     ///
     /// let features = RowMatrix::from_vec(vec![0.5, 1.0, 0.3, 2.0], 2, 2);
-    /// let predictions = model.predict(&features);
+    /// let predictions = model.predict(&features, 0); // Auto-detect threads
     /// // Access predictions for first output group
     /// let probs = predictions.col_slice(0);
     /// ```
-    pub fn predict<M: DataMatrix<Element = f32> + Sync>(&self, features: &M) -> ColMatrix<f32> {
+    pub fn predict<M: DataMatrix<Element = f32> + Sync>(
+        &self,
+        features: &M,
+        n_threads: usize,
+    ) -> ColMatrix<f32> {
         let n_rows = features.num_rows();
         let n_groups = self.meta.n_groups;
-        
+        // 0 = auto, 1 = sequential, >1 = parallel
+        let use_parallel = n_threads != 1 && n_rows >= PARALLEL_THRESHOLD_ROWS;
+
         // Get raw predictions using optimized batch predictor
         let predictor = UnrolledPredictor6::new(&self.forest);
-        let mut output = if n_rows >= PARALLEL_THRESHOLD_ROWS {
-            predictor.par_predict(features, 0) // auto threads
+        let mut output = if use_parallel {
+            let threads = if n_threads == 0 { rayon::current_num_threads() } else { n_threads };
+            predictor.par_predict(features, threads)
         } else {
             predictor.predict(features)
         };
-        
+
         // Apply transformation if we have config with objective
         if let Some(config) = &self.config {
             config.objective.transform_predictions(output.as_mut_slice(), n_rows, n_groups);
         }
-        
+
         // PredictionOutput is already column-major, so we can directly use its data
         DenseMatrix::<f32, ColMajor>::from_vec(output.into_vec(), n_rows, n_groups)
     }
@@ -294,22 +334,29 @@ impl GBDTModel {
     /// # Arguments
     ///
     /// * `features` - Feature matrix (any layout implementing [`DataMatrix`])
+    /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
     ///
     /// # Returns
     ///
     /// Column-major matrix of raw predictions (n_rows × n_groups).
-    pub fn predict_raw<M: DataMatrix<Element = f32> + Sync>(&self, features: &M) -> ColMatrix<f32> {
+    pub fn predict_raw<M: DataMatrix<Element = f32> + Sync>(
+        &self,
+        features: &M,
+        n_threads: usize,
+    ) -> ColMatrix<f32> {
         let n_rows = features.num_rows();
         let n_groups = self.meta.n_groups;
-        
+        let use_parallel = n_threads != 1 && n_rows >= PARALLEL_THRESHOLD_ROWS;
+
         // Get raw predictions using optimized batch predictor
         let predictor = UnrolledPredictor6::new(&self.forest);
-        let output = if n_rows >= PARALLEL_THRESHOLD_ROWS {
-            predictor.par_predict(features, 0) // auto threads
+        let output = if use_parallel {
+            let threads = if n_threads == 0 { rayon::current_num_threads() } else { n_threads };
+            predictor.par_predict(features, threads)
         } else {
             predictor.predict(features)
         };
-        
+
         // PredictionOutput is already column-major, so we can directly use its data
         DenseMatrix::<f32, ColMajor>::from_vec(output.into_vec(), n_rows, n_groups)
     }
@@ -445,12 +492,12 @@ mod tests {
 
         // x0 < 0.5 → leaf 1.0
         let features1 = RowMatrix::from_vec(vec![0.3, 0.5], 1, 2);
-        let preds1 = model.predict(&features1);
+        let preds1 = model.predict(&features1, 1);
         assert_eq!(preds1.col_slice(0), &[1.0]);
 
         // x0 >= 0.5, x1 >= 0.3 → leaf 3.0
         let features2 = RowMatrix::from_vec(vec![0.7, 0.5], 1, 2);
-        let preds2 = model.predict(&features2);
+        let preds2 = model.predict(&features2, 1);
         assert_eq!(preds2.col_slice(0), &[3.0]);
     }
 
@@ -464,7 +511,7 @@ mod tests {
             0.3, 0.5, // row 0
             0.7, 0.5, // row 1
         ], 2, 2);
-        let preds = model.predict(&features);
+        let preds = model.predict(&features, 1);
 
         assert_eq!(preds.col_slice(0), &[1.0, 3.0]);
     }

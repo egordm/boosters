@@ -8,7 +8,7 @@
 //! - [`StandardTraversal`]: Direct node-by-node traversal (simple, good for single rows)
 //! - [`UnrolledTraversal`]: Uses [`UnrolledTreeLayout`] for cache-friendly batch traversal
 
-use crate::repr::gbdt::{float_to_category, LeafValue, ScalarLeaf, SplitType, Tree, TreeView};
+use crate::repr::gbdt::{LeafValue, NodeId, ScalarLeaf, SplitType, Tree, TreeView, float_to_category};
 use super::{Depth6, UnrollDepth, UnrolledTreeLayout};
 
 // =============================================================================
@@ -42,7 +42,7 @@ pub trait TreeTraversal<L: LeafValue>: Clone {
     fn build_tree_state(tree: &Tree<L>) -> Self::TreeState;
 
     /// Traverse a tree with given features, returning the leaf value.
-    fn traverse_tree(tree: &Tree<L>, state: &Self::TreeState, features: &[f32]) -> L;
+    fn traverse_tree(tree: &Tree<L>, state: &Self::TreeState, features: &[f32]) -> NodeId;
 
     /// Traverse a tree for a block of rows, accumulating results.
     ///
@@ -56,16 +56,13 @@ pub trait TreeTraversal<L: LeafValue>: Clone {
     /// - `state`: Pre-computed state for this tree
     /// - `feature_buffer`: Contiguous buffer of features, `block_size * num_features`
     /// - `num_features`: Number of features per row
-    /// - `output`: Slice to accumulate leaf values into (one per row)
-    /// - `weight`: Optional weight to multiply leaf values by
     #[inline]
     fn traverse_block(
         tree: &Tree<L>,
         state: &Self::TreeState,
         feature_buffer: &[f32],
         num_features: usize,
-        output: &mut [f32],
-        weight: f32,
+        output: &mut [NodeId],
     ) where
         L: Into<f32>,
     {
@@ -73,8 +70,7 @@ pub trait TreeTraversal<L: LeafValue>: Clone {
         for (row_idx, out) in output.iter_mut().enumerate() {
             let row_offset = row_idx * num_features;
             let row_features = &feature_buffer[row_offset..][..num_features];
-            let leaf_value: f32 = Self::traverse_tree(tree, state, row_features).into();
-            *out += leaf_value * weight;
+            *out = Self::traverse_tree(tree, state, row_features);
         }
     }
 }
@@ -99,7 +95,7 @@ pub trait TreeTraversal<L: LeafValue>: Clone {
 ///
 /// The leaf node index reached.
 #[inline]
-pub fn traverse_from_node(tree: &Tree<ScalarLeaf>, start_node: u32, features: &[f32]) -> u32 {
+pub fn traverse_from_node(tree: &Tree<ScalarLeaf>, start_node: u32, features: &[f32]) -> NodeId {
     let mut idx = start_node;
 
     while !tree.is_leaf(idx) {
@@ -166,7 +162,7 @@ impl TreeTraversal<ScalarLeaf> for StandardTraversal {
         tree: &Tree<ScalarLeaf>,
         _state: &Self::TreeState,
         features: &[f32],
-    ) -> ScalarLeaf {
+    ) -> NodeId {
         let mut idx = 0u32;
 
         while !tree.is_leaf(idx) {
@@ -201,7 +197,7 @@ impl TreeTraversal<ScalarLeaf> for StandardTraversal {
             };
         }
 
-        *tree.leaf_value(idx)
+       idx
     }
 }
 
@@ -258,15 +254,13 @@ impl<D: UnrollDepth> TreeTraversal<ScalarLeaf> for UnrolledTraversal<D> {
         tree: &Tree<ScalarLeaf>,
         state: &Self::TreeState,
         features: &[f32],
-    ) -> ScalarLeaf {
+    ) -> NodeId {
         // Phase 1: Traverse unrolled levels
         let exit_idx = state.traverse_to_exit(features);
         let node_idx = state.exit_node_idx(exit_idx);
 
         // Phase 2: Continue to leaf if not already there
-        let leaf_idx = traverse_from_node(tree, node_idx, features);
-
-        *tree.leaf_value(leaf_idx)
+        traverse_from_node(tree, node_idx, features)
     }
 
     /// Optimized block traversal using level-by-level processing.
@@ -278,19 +272,18 @@ impl<D: UnrollDepth> TreeTraversal<ScalarLeaf> for UnrolledTraversal<D> {
         state: &Self::TreeState,
         feature_buffer: &[f32],
         num_features: usize,
-        output: &mut [f32],
-        weight: f32,
+        output: &mut [NodeId],
     ) {
         let block_size = output.len();
 
         // Phase 2 logic: continue from exit nodes to leaves
-        let mut accumulate_from_exits = |indices: &[usize]| {
+        let mut traverse_from_exits = |indices: &[usize]| {
             for (row_idx, &exit_idx) in indices.iter().enumerate() {
                 let node_idx = state.exit_node_idx(exit_idx);
                 let row_offset = row_idx * num_features;
                 let row_features = &feature_buffer[row_offset..][..num_features];
                 let leaf_idx = traverse_from_node(tree, node_idx, row_features);
-                output[row_idx] += tree.leaf_value(leaf_idx).0 * weight;
+                output[row_idx] = leaf_idx;
             }
         };
 
@@ -299,11 +292,11 @@ impl<D: UnrollDepth> TreeTraversal<ScalarLeaf> for UnrolledTraversal<D> {
             let mut indices = [0usize; 256];
             let indices = &mut indices[..block_size];
             state.process_block(feature_buffer, num_features, indices);
-            accumulate_from_exits(indices);
+            traverse_from_exits(indices);
         } else {
             let mut indices = vec![0usize; block_size];
             state.process_block(feature_buffer, num_features, &mut indices);
-            accumulate_from_exits(&indices);
+            traverse_from_exits(&indices);
         }
     }
 }

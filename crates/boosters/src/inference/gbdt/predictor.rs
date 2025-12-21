@@ -40,11 +40,11 @@
 //!
 //! See [`TreeTraversal`] for implementing custom strategies.
 
-use crate::data::DataMatrix;
+use crate::Parallelism;
+use crate::data::axes;
 use crate::repr::gbdt::{Forest, ScalarLeaf, Tree, TreeView};
-use rayon::prelude::*;
+use ndarray::{ArrayView2, ArrayViewMut2};
 
-use crate::inference::common::PredictionOutput;
 use super::TreeTraversal;
 
 /// Default block size for batch processing (matches XGBoost).
@@ -156,447 +156,112 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
         self.forest.n_groups() as usize
     }
 
-    /// Predict for a batch of features.
-    ///
-    /// Returns a [`PredictionOutput`] with shape `(num_rows, num_groups)`.
-    #[inline]
-    pub fn predict<M: DataMatrix<Element = f32>>(&self, features: &M) -> PredictionOutput {
-        self.predict_internal(features, None)
-    }
-
-    /// Predict with per-tree weights (for DART).
-    ///
-    /// Each tree's contribution is multiplied by its corresponding weight.
-    /// This matches XGBoost's DART inference where `weight_drop[i]` scales tree `i`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `weights.len() != forest.n_trees()`.
-    #[inline]
-    pub fn predict_weighted<M: DataMatrix<Element = f32>>(
+    pub fn predict_row_into(
         &self,
-        features: &M,
-        weights: &[f32],
-    ) -> PredictionOutput {
-        assert_eq!(
-            weights.len(),
-            self.forest.n_trees(),
-            "weights length must match number of trees"
-        );
-        self.predict_internal(features, Some(weights))
-    }
-
-    /// Parallel prediction for a batch of features.
-    ///
-    /// Uses Rayon to parallelize block processing across available CPU cores.
-    /// Each block is processed independently, enabling work-stealing load balancing.
-    ///
-    /// Returns a [`PredictionOutput`] with shape `(num_rows, num_groups)`.
-    ///
-    /// # Arguments
-    /// * `features` - Input feature matrix
-    /// * `n_threads` - Number of threads to use:
-    ///   - `0`: Auto-detect (use Rayon default based on available cores)
-    ///   - `1`: Serial execution (no parallelism, avoids Rayon overhead)
-    ///   - `>1`: Use exactly this many threads
-    ///
-    /// # Performance
-    ///
-    /// Best for large batches (1000+ rows) on multi-core systems. For small batches
-    /// or single-core systems, use `n_threads=1` to avoid parallelism overhead.
-    #[inline]
-    pub fn par_predict<M: DataMatrix<Element = f32> + Sync>(
-        &self,
-        features: &M,
-        n_threads: usize,
-    ) -> PredictionOutput {
-        self.par_predict_internal(features, None, n_threads)
-    }
-
-    /// Parallel prediction with per-tree weights (for DART).
-    ///
-    /// Uses Rayon to parallelize block processing. Each tree's contribution
-    /// is multiplied by its corresponding weight.
-    ///
-    /// # Arguments
-    /// * `features` - Input feature matrix
-    /// * `weights` - Per-tree weights (length must equal number of trees)
-    /// * `n_threads` - Number of threads (0=auto, 1=serial, >1=exact)
-    ///
-    /// # Panics
-    ///
-    /// Panics if `weights.len() != forest.n_trees()`.
-    #[inline]
-    pub fn par_predict_weighted<M: DataMatrix<Element = f32> + Sync>(
-        &self,
-        features: &M,
-        weights: &[f32],
-        n_threads: usize,
-    ) -> PredictionOutput {
-        assert_eq!(
-            weights.len(),
-            self.forest.n_trees(),
-            "weights length must match number of trees"
-        );
-        self.par_predict_internal(features, Some(weights), n_threads)
-    }
-
-    /// Internal parallel prediction with optional weights and thread control.
-    fn par_predict_internal<M: DataMatrix<Element = f32> + Sync>(
-        &self,
-        features: &M,
+        features: &[f32],
         weights: Option<&[f32]>,
-        n_threads: usize,
-    ) -> PredictionOutput {
-        let num_rows = features.num_rows();
-        let num_groups = self.n_groups();
-        let num_features = features.num_features();
-
-        if num_rows == 0 {
-            return PredictionOutput::zeros(0, num_groups);
+        output: &mut [f32],
+    ) {
+        assert_eq!(output.len(), self.n_groups(), "output length must equal n_groups");
+        if let Some(w) = weights {
+            assert_eq!(w.len(), self.forest.n_trees(), "weights length must match number of trees");
         }
 
-        let base_score = self.forest.base_score();
+        // Initialize with base scores
+        output.copy_from_slice(self.forest.base_score());
 
-        // n_threads == 1 means serial execution
-        if n_threads == 1 {
-            return self.predict_internal(features, weights);
+        // Accumulate tree contributions
+        for (tree_idx, (tree, group)) in self.forest.trees_with_groups().enumerate() {
+            let state = &self.tree_states[tree_idx];
+
+            let leaf_idx = T::traverse_tree(tree, state, features);
+
+            let leaf_value = if tree.has_linear_leaves() {
+                compute_linear_leaf_value(tree, leaf_idx, features)
+            } else {
+                tree.leaf_value(leaf_idx).0
+            };
+
+            let weighted_value = weights
+                .map(|w| leaf_value * w[tree_idx])
+                .unwrap_or(leaf_value);
+            
+            output[group as usize] += weighted_value;
         }
-
-        // Split rows into blocks and process in parallel
-        let blocks: Vec<_> = (0..num_rows)
-            .step_by(self.block_size)
-            .map(|block_start| {
-                let block_end = (block_start + self.block_size).min(num_rows);
-                (block_start, block_end)
-            })
-            .collect();
-
-        // Closure to process blocks in parallel
-        let process_blocks = || {
-            blocks
-                .par_iter()
-                .map(|&(block_start, block_end)| {
-                    let current_block_size = block_end - block_start;
-                    self.process_block_parallel(
-                        features,
-                        block_start,
-                        current_block_size,
-                        num_features,
-                        num_groups,
-                        base_score,
-                        weights,
-                    )
-                })
-                .collect::<Vec<_>>()
-        };
-
-        // Process blocks with optional thread pool
-        // n_threads == 0 means auto (use Rayon default)
-        let block_outputs = if n_threads == 0 {
-            process_blocks()
-        } else {
-            let pool = rayon::ThreadPoolBuilder::new()
-                .num_threads(n_threads)
-                .build()
-                .expect("Failed to create thread pool");
-            pool.install(process_blocks)
-        };
-
-        // Combine results
-        let mut output = PredictionOutput::zeros(num_rows, num_groups);
-        for (block_idx, &(block_start, block_end)) in blocks.iter().enumerate() {
-            let block_output = &block_outputs[block_idx];
-            let block_size = block_end - block_start;
-            for group_idx in 0..num_groups {
-                let out_col = output.column_mut(group_idx);
-                let blk_col = block_output.column(group_idx);
-                out_col[block_start..block_end].copy_from_slice(&blk_col[..block_size]);
-            }
-        }
-
-        output
     }
 
-    /// Process a single block of rows for parallel prediction.
-    ///
-    /// Uses block-optimized traversal (`traverse_block`), which is most efficient for
-    /// `UnrolledTraversal`. For `StandardTraversal`, the default `traverse_block`
-    /// implementation falls back to per-row traversal.
-    fn process_block_parallel<M: DataMatrix<Element = f32>>(
+    pub fn predict_into<S: AsRef<[f32]>>(
         &self,
-        features: &M,
-        block_start: usize,
-        block_size: usize,
-        num_features: usize,
-        num_groups: usize,
-        base_score: &[f32],
+        features: ArrayView2<f32>,
         weights: Option<&[f32]>,
-    ) -> PredictionOutput {
-        let mut block_output = PredictionOutput::zeros(block_size, num_groups);
-
-        // Initialize with base scores (column-major: efficient fill per group)
-        for (group_idx, &score) in base_score.iter().enumerate() {
-            block_output.column_mut(group_idx).fill(score);
+        parallelism: Parallelism,
+        mut output: ArrayViewMut2<f32>,
+    ) {
+        // features: [n_samples, n_features]
+        // output: [n_groups, n_samples]
+        let n_samples = features.nrows();
+        let n_groups = self.n_groups();
+        assert_eq!(output.shape(), &[n_groups, n_samples], "output shape must match (n_groups, n_samples)");
+        if let Some(w) = weights {
+            assert_eq!(w.len(), self.forest.n_trees(), "weights length must match number of trees");
         }
 
-        // Load features for this block into contiguous buffer
-        let mut feature_buffer = vec![f32::NAN; block_size * num_features];
-        for i in 0..block_size {
-            let buf_offset = i * num_features;
-            features.copy_row(
-                block_start + i,
-                &mut feature_buffer[buf_offset..][..num_features],
-            );
+        if n_samples == 0 {
+            return;
         }
 
-        // Use block-optimized traversal
-        let mut group_buffer = vec![0.0f32; block_size];
+        // Initialize with base scores (TODO: can create a helper for this pattern)
+        ndarray::Zip::from(output.axis_iter_mut(axes::ROWS))
+            .and(self.forest.base_score())
+            .for_each(|mut col, &score| col.fill(score));
+
+        // Process in blocks
+        let feature_chunks = features.axis_chunks_iter(axes::ROWS, self.block_size);
+        let output_chunks = output.axis_chunks_iter_mut(axes::COLS, self.block_size);
+        let chunks_iter = feature_chunks.zip(output_chunks);
+
+        parallelism.maybe_par_bridge_for_each(chunks_iter, |(feat_chunk, output_chunk)| {
+            self.predict_block_into(feat_chunk, weights, output_chunk);
+        });
+    }
+
+
+    fn predict_block_into(
+        &self,
+        features: ArrayView2<f32>,
+        weights: Option<&[f32]>,
+        mut output: ArrayViewMut2<f32>,
+    ) {
+        let feature_data = features.as_slice().expect("features must be contiguous");
+        let n_features = features.ncols();
+        let mut leaf_indices = vec![0u32; self.block_size];
 
         for (tree_idx, (tree, group)) in self.forest.trees_with_groups().enumerate() {
             let state = &self.tree_states[tree_idx];
             let group_idx = group as usize;
             let weight = weights.map(|w| w[tree_idx]).unwrap_or(1.0);
 
-            group_buffer[..block_size].fill(0.0);
+            // Step 1: Get leaf indices
+            T::traverse_block(tree, state, feature_data, n_features, &mut leaf_indices);
 
-            T::traverse_block(
-                tree,
-                state,
-                &feature_buffer[..block_size * num_features],
-                num_features,
-                &mut group_buffer[..block_size],
-                weight,
-            );
-
-            // Column-major: add to output column (contiguous in memory)
-            let out_col = block_output.column_mut(group_idx);
-            for i in 0..block_size {
-                out_col[i] += group_buffer[i];
-            }
-        }
-
-        block_output
-    }
-
-    /// Internal prediction with optional weights.
-    #[inline]
-    fn predict_internal<M: DataMatrix<Element = f32>>(
-        &self,
-        features: &M,
-        weights: Option<&[f32]>,
-    ) -> PredictionOutput {
-        // Use block-optimized path only for traversals that benefit from it
-        if T::USES_BLOCK_OPTIMIZATION {
-            self.predict_block_optimized(features, weights)
-        } else {
-            self.predict_simple(features, weights)
-        }
-    }
-
-    /// Simple per-row prediction (for StandardTraversal).
-    #[inline]
-    fn predict_simple<M: DataMatrix<Element = f32>>(
-        &self,
-        features: &M,
-        weights: Option<&[f32]>,
-    ) -> PredictionOutput {
-        let num_rows = features.num_rows();
-        let num_groups = self.n_groups();
-        let num_features = features.num_features();
-
-        let mut output = PredictionOutput::zeros(num_rows, num_groups);
-
-        // Initialize with base scores (column-major: efficient fill per group)
-        let base_score = self.forest.base_score();
-        for (group_idx, &score) in base_score.iter().enumerate() {
-            output.column_mut(group_idx).fill(score);
-        }
-
-        if num_rows == 0 {
-            return output;
-        }
-
-        // Pre-allocate feature buffer for block processing
-        let actual_block_size = self.block_size.min(num_rows);
-        let mut feature_buffer = vec![f32::NAN; actual_block_size * num_features];
-
-        // Process in blocks for cache efficiency
-        for block_start in (0..num_rows).step_by(self.block_size) {
-            let block_end = (block_start + self.block_size).min(num_rows);
-            let current_block_size = block_end - block_start;
-
-            // Load features for this block into contiguous buffer
-            for i in 0..current_block_size {
-                let buf_offset = i * num_features;
-                features.copy_row(
-                    block_start + i,
-                    &mut feature_buffer[buf_offset..][..num_features],
-                );
-            }
-
-            // Process all trees for this block - simple per-row accumulation
-            for (tree_idx, (tree, group)) in self.forest.trees_with_groups().enumerate() {
-                let state = &self.tree_states[tree_idx];
-                let group_idx = group as usize;
-
-                for i in 0..current_block_size {
-                    let buf_offset = i * num_features;
-                    let row_features = &feature_buffer[buf_offset..][..num_features];
-
-                    let leaf_value = if tree.has_linear_leaves() {
-                        // Linear tree: compute linear value
-                        let leaf_idx = super::traversal::traverse_from_node(tree, 0, row_features);
-                        compute_linear_leaf_value(tree, leaf_idx, row_features)
-                    } else {
-                        // Standard: use traversal result
-                        T::traverse_tree(tree, state, row_features).0
-                    };
-
-                    let value = match weights {
-                        Some(w) => leaf_value * w[tree_idx],
-                        None => leaf_value,
-                    };
-                    output.add(block_start + i, group_idx, value);
-                }
-            }
-        }
-
-        output
-    }
-
-    /// Block-optimized prediction (for UnrolledTraversal).
-    #[inline]
-    fn predict_block_optimized<M: DataMatrix<Element = f32>>(
-        &self,
-        features: &M,
-        weights: Option<&[f32]>,
-    ) -> PredictionOutput {
-        let num_rows = features.num_rows();
-        let num_groups = self.n_groups();
-        let num_features = features.num_features();
-
-        let mut output = PredictionOutput::zeros(num_rows, num_groups);
-
-        // Initialize with base scores (column-major: efficient fill per group)
-        let base_score = self.forest.base_score();
-        for (group_idx, &score) in base_score.iter().enumerate() {
-            output.column_mut(group_idx).fill(score);
-        }
-
-        if num_rows == 0 {
-            return output;
-        }
-
-        // Pre-allocate buffers for block processing
-        let actual_block_size = self.block_size.min(num_rows);
-        let mut feature_buffer = vec![f32::NAN; actual_block_size * num_features];
-        // Temporary buffer for accumulating one group's results
-        let mut group_buffer = vec![0.0f32; actual_block_size];
-
-        // Process in blocks for cache efficiency
-        for block_start in (0..num_rows).step_by(self.block_size) {
-            let block_end = (block_start + self.block_size).min(num_rows);
-            let current_block_size = block_end - block_start;
-
-            // Load features for this block into contiguous buffer
-            for i in 0..current_block_size {
-                let buf_offset = i * num_features;
-                features.copy_row(
-                    block_start + i,
-                    &mut feature_buffer[buf_offset..][..num_features],
-                );
-            }
-
-            // Process all trees for this block using traverse_block
-            for (tree_idx, (tree, group)) in self.forest.trees_with_groups().enumerate() {
-                let state = &self.tree_states[tree_idx];
-                let group_idx = group as usize;
-                let weight = weights.map(|w| w[tree_idx]).unwrap_or(1.0);
-
-                // Reset group buffer
-                group_buffer[..current_block_size].fill(0.0);
-
-                if tree.has_linear_leaves() {
-                    // Linear tree path: traverse to get leaf index, then compute linear value
-                    for i in 0..current_block_size {
-                        let row_offset = i * num_features;
-                        let row_features = &feature_buffer[row_offset..][..num_features];
-                        let leaf_idx = super::traversal::traverse_from_node(tree, 0, row_features);
-                        let value = compute_linear_leaf_value(tree, leaf_idx, row_features);
-                        group_buffer[i] = value * weight;
-                    }
-                } else {
-                    // Standard path: use optimized traversal
-                    T::traverse_block(
+            // Step 2: Extract values and accumulate into group row
+            let mut group_row = output.row_mut(group_idx);
+            if tree.has_linear_leaves() {
+                for (i, feat_row) in features.axis_iter(axes::ROWS).enumerate() {
+                    let value = compute_linear_leaf_value(
                         tree,
-                        state,
-                        &feature_buffer[..current_block_size * num_features],
-                        num_features,
-                        &mut group_buffer[..current_block_size],
-                        weight,
+                        leaf_indices[i],
+                        feat_row.as_slice().unwrap(),
                     );
+                    group_row[i] += value * weight;
                 }
-
-                // Scatter results into output (column-major: contiguous writes)
-                let out_col = output.column_mut(group_idx);
-                for i in 0..current_block_size {
-                    out_col[block_start + i] += group_buffer[i];
+            } else {
+                for i in 0..self.block_size {
+                    group_row[i] += tree.leaf_value(leaf_indices[i]).0 * weight;
                 }
             }
+
         }
-
-        output
-    }
-
-    /// Predict for a single row of features.
-    ///
-    /// Returns a vector with one value per output group.
-    #[inline]
-    pub fn predict_row(&self, features: &[f32]) -> Vec<f32> {
-        let mut output: Vec<f32> = self.forest.base_score().to_vec();
-
-        for (tree_idx, (tree, group)) in self.forest.trees_with_groups().enumerate() {
-            let state = &self.tree_states[tree_idx];
-            let leaf_value = if tree.has_linear_leaves() {
-                let leaf_idx = super::traversal::traverse_from_node(tree, 0, features);
-                compute_linear_leaf_value(tree, leaf_idx, features)
-            } else {
-                T::traverse_tree(tree, state, features).0
-            };
-            output[group as usize] += leaf_value;
-        }
-
-        output
-    }
-
-    /// Predict for a single row with per-tree weights (for DART).
-    ///
-    /// # Panics
-    ///
-    /// Panics if `weights.len() != forest.n_trees()`.
-    #[inline]
-    pub fn predict_row_weighted(&self, features: &[f32], weights: &[f32]) -> Vec<f32> {
-        assert_eq!(
-            weights.len(),
-            self.forest.n_trees(),
-            "weights length must match number of trees"
-        );
-
-        let mut output: Vec<f32> = self.forest.base_score().to_vec();
-
-        for (tree_idx, (tree, group)) in self.forest.trees_with_groups().enumerate() {
-            let state = &self.tree_states[tree_idx];
-            let leaf_value = if tree.has_linear_leaves() {
-                let leaf_idx = super::traversal::traverse_from_node(tree, 0, features);
-                compute_linear_leaf_value(tree, leaf_idx, features)
-            } else {
-                T::traverse_tree(tree, state, features).0
-            };
-            output[group as usize] += leaf_value * weights[tree_idx];
-        }
-
-        output
     }
 }
 

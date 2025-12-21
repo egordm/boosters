@@ -12,7 +12,7 @@ use super::expansion::{GrowthState, GrowthStrategy, NodeCandidate};
 use super::histograms::{
     FeatureMeta, FeatureView, HistogramBuilder, HistogramPool,
 };
-use super::parallelism::Parallelism;
+use crate::utils::Parallelism;
 use super::partition::RowPartitioner;
 use super::split::{GainParams, GreedySplitter, SplitInfo, SplitType};
 
@@ -866,7 +866,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut grower = TreeGrower::new(&dataset, params, 4, Parallelism::Sequential);
+        let mut grower = TreeGrower::new(&dataset, params, 4, Parallelism::SEQUENTIAL);
 
         // All same gradient: no good splits
         let grad: Vec<f32> = vec![1.0; 10];
@@ -896,7 +896,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut grower = TreeGrower::new(&dataset, params, 4, Parallelism::Sequential);
+        let mut grower = TreeGrower::new(&dataset, params, 4, Parallelism::SEQUENTIAL);
 
         // Gradients that suggest a split
         let grad: Vec<f32> = vec![1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0];
@@ -927,7 +927,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut grower = TreeGrower::new(&dataset, params, 8, Parallelism::Sequential);
+        let mut grower = TreeGrower::new(&dataset, params, 8, Parallelism::SEQUENTIAL);
 
         let grad: Vec<f32> = vec![2.0, 1.0, -1.0, -2.0, 2.0, 1.0, -1.0, -2.0];
         let hess: Vec<f32> = vec![1.0; 8];
@@ -1000,7 +1000,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut grower = TreeGrower::new(&dataset, params, 4, Parallelism::Sequential);
+        let mut grower = TreeGrower::new(&dataset, params, 4, Parallelism::SEQUENTIAL);
 
         let grad_f32: Vec<f32> = vec![1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0];
         let hess_f32: Vec<f32> = vec![1.0; 10];
@@ -1034,7 +1034,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut grower = TreeGrower::new(&dataset, params, 8, Parallelism::Sequential);
+        let mut grower = TreeGrower::new(&dataset, params, 8, Parallelism::SEQUENTIAL);
 
         let grad: Vec<f32> = vec![2.0, 1.0, -1.0, -2.0, 2.0, 1.0, -1.0, -2.0];
         let hess: Vec<f32> = vec![1.0; 8];
@@ -1091,7 +1091,7 @@ mod tests {
             &dataset,
             params_no_sampling,
             8,
-            Parallelism::Sequential,
+            Parallelism::SEQUENTIAL,
         );
         let tree_all = grower_all.grow(&dataset, &gradients, 0, None).freeze();
 
@@ -1100,7 +1100,7 @@ mod tests {
             &dataset,
             params_with_sampling,
             8,
-            Parallelism::Sequential,
+            Parallelism::SEQUENTIAL,
         );
         let tree_sampled = grower_sampled.grow(&dataset, &gradients, 0, None).freeze();
 
@@ -1118,7 +1118,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut grower = TreeGrower::new(&dataset, params, 4, Parallelism::Sequential);
+        let mut grower = TreeGrower::new(&dataset, params, 4, Parallelism::SEQUENTIAL);
 
         let grad_f32: Vec<f32> = vec![1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0];
         let hess_f32: Vec<f32> = vec![1.0; 10];
@@ -1147,7 +1147,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut grower = TreeGrower::new(&dataset, params, 4, Parallelism::Sequential);
+        let mut grower = TreeGrower::new(&dataset, params, 4, Parallelism::SEQUENTIAL);
 
         // Create gradients that produce a simple left/right split
         let grad: Vec<f32> = vec![1.0, 1.0, 1.0, 1.0, 1.0, -1.0, -1.0, -1.0, -1.0, -1.0];

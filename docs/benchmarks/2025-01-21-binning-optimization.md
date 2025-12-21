@@ -18,39 +18,48 @@ During performance investigation, we discovered that:
 
 ## Changes Made
 
-### 1. Removed `n_threads` from BinningConfig
+### 1. Simplified BinnedDatasetBuilder API
 
-Instead of storing `n_threads` in the config (which requires users to set it twice), 
-the thread count is now passed at runtime to `from_matrix_with_config_threaded()`:
+The builder now has two constructor patterns:
+- **Simple**: `from_matrix(&data, max_bins)` - uses all threads and default config
+- **Full control**: `from_matrix_with_options(&data, config, parallelism)` - explicit threading and config
 
 ```rust
-// Single-threaded binning - no rayon overhead
-let binned = BinnedDatasetBuilder::from_matrix_with_config_threaded(
+use boosters::{Parallelism, data::{BinnedDatasetBuilder, BinningConfig}};
+
+// Simple: parallel with defaults
+let binned = BinnedDatasetBuilder::from_matrix(&col_matrix, 256).build()?;
+
+// Full control: single-threaded for benchmarks
+let config = BinningConfig::new(256)
+    .with_sample_cnt(200_000);  // LightGBM-style sampling
+let binned = BinnedDatasetBuilder::from_matrix_with_options(
     &col_matrix,
-    BinningConfig::new(256),
-    1,  // n_threads: 1 = sequential, 0 = all available
+    config,
+    Parallelism::Sequential,
 ).build()?;
 ```
 
-When `n_threads == 1`, we use pure sequential iteration without touching rayon at all,
+When `Parallelism::Sequential`, we use pure iteration without touching rayon,
 avoiding any thread pool overhead.
 
-### 2. LightGBM-style Sampling for Quantile Binning
+### 2. Configurable Sample Count
 
-For datasets larger than 200K rows (matching LightGBM's `bin_construct_sample_cnt` default),
-we use uniform sampling to compute approximate quantiles:
+The `bin_construct_sample_cnt` is now configurable in `BinningConfig`:
 
 ```rust
-pub const BIN_CONSTRUCT_SAMPLE_CNT: usize = 200_000;
+// Default: 200K samples (matches LightGBM)
+let config = BinningConfig::new(256);
+
+// Custom sample count
+let config = BinningConfig::new(256)
+    .with_sample_cnt(100_000);  // Lower for faster binning
 ```
 
-This reduces memory and compute cost while maintaining good bin boundary quality.
-Smaller datasets still use exact quantiles via full sort.
+### 3. Parallelism Moved to Utils
 
-### 3. Fair Benchmark Configuration
-
-- Data layout conversions moved **outside** the benchmark loop (users store data in optimal format)
-- Single-threaded binning when `n_threads: 1` for training (mirrors LightGBM behavior)
+`Parallelism` enum is now in `crate::utils` and re-exported at crate root.
+Components receive `Parallelism` and self-correct based on workload size.
 
 ## Training Performance Results
 
@@ -97,18 +106,19 @@ Smaller datasets still use exact quantiles via full sort.
 
 ## Files Changed
 
-- [crates/boosters/src/data/binned/builder.rs](../../crates/boosters/src/data/binned/builder.rs): 
-  - Removed `n_threads` from `BinningConfig`
-  - Added `from_matrix_with_config_threaded()` with runtime `n_threads` parameter
-  - When `n_threads == 1`, uses pure sequential iteration (no rayon)
-  - Added `BIN_CONSTRUCT_SAMPLE_CNT` constant (200K, matching LightGBM)
-  - Updated `compute_quantile_bounds()` to use sampling for large datasets
-- [crates/boosters/src/data/binned/mod.rs](../../crates/boosters/src/data/binned/mod.rs): Export `BIN_CONSTRUCT_SAMPLE_CNT`
-- [crates/boosters/benches/suites/compare/gbdt_training.rs](../../crates/boosters/benches/suites/compare/gbdt_training.rs): Use new threaded API
+- [crates/boosters/src/data/binned/builder.rs](../../crates/boosters/src/data/binned/builder.rs):
+  - Added `bin_construct_sample_cnt` to `BinningConfig` with default 200K
+  - Simplified to two constructors: `from_matrix()` and `from_matrix_with_options()`
+  - Accepts `Parallelism` instead of raw `n_threads`
+  - When `Parallelism::Sequential`, uses pure iteration (no rayon)
+- [crates/boosters/src/utils.rs](../../crates/boosters/src/utils.rs): Added `Parallelism` enum
+- [crates/boosters/src/training/gbdt/parallelism.rs](../../crates/boosters/src/training/gbdt/parallelism.rs): Re-exports `Parallelism` from utils
+- [crates/boosters/src/data/binned/mod.rs](../../crates/boosters/src/data/binned/mod.rs): Export `DEFAULT_BIN_CONSTRUCT_SAMPLE_CNT`
+- [crates/boosters/benches/suites/compare/gbdt_training.rs](../../crates/boosters/benches/suites/compare/gbdt_training.rs): Use new `from_matrix_with_options()` API
 
 ## Recommendations
 
 1. Use quantile binning (default) for best quality
-2. For single-threaded training, pass `n_threads=1` to binning for fair measurement
-3. For production, use `n_threads=0` for parallel binning regardless of training threads
-4. Future work: Consider moving thread pool management to a higher level (model/session)
+2. For single-threaded benchmarks, use `Parallelism::Sequential` for binning
+3. For production, use `Parallelism::from_threads(0)` for parallel binning
+4. Thread pool management is at model level; components receive `Parallelism` hints

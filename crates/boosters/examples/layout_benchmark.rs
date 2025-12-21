@@ -6,6 +6,7 @@
 use boosters::data::binned::{BinnedDatasetBuilder, GroupLayout, GroupStrategy};
 use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
+use boosters::Parallelism;
 use std::time::Instant;
 
 fn main() {
@@ -70,7 +71,6 @@ fn main() {
             min_gain: 0.0,
             ..Default::default()
         },
-        n_threads: 1, // Single thread for accurate comparison
         cache_size: 64,
         ..Default::default()
     };
@@ -80,8 +80,9 @@ fn main() {
     let mut row_times = Vec::new();
     for _ in 0..n_runs {
         let start = Instant::now();
+        // Single thread for accurate comparison
         let _ = GBDTTrainer::new(SquaredLoss, Rmse, params.clone())
-            .train(&row_major_dataset, &labels, &[], &[])
+            .train(&row_major_dataset, &labels, &[], &[], Parallelism::SEQUENTIAL)
             .unwrap();
         row_times.push(start.elapsed());
     }
@@ -93,7 +94,7 @@ fn main() {
     for _ in 0..n_runs {
         let start = Instant::now();
         let _ = GBDTTrainer::new(SquaredLoss, Rmse, params.clone())
-            .train(&col_major_dataset, &labels, &[], &[])
+            .train(&col_major_dataset, &labels, &[], &[], Parallelism::SEQUENTIAL)
             .unwrap();
         col_times.push(start.elapsed());
     }

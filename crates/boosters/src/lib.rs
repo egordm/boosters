@@ -33,8 +33,8 @@
 //!
 //! // Predict with DataMatrix
 //! let features = RowMatrix::from_vec(data, n_rows, n_features);
-//! let predictions = model.predict(&features);  // ColMatrix<f32>
-//! let probs = predictions.col_slice(0);        // First output column
+//! let predictions = model.predict(&features, None);  // ColMatrix<f32>, sequential
+//! let probs = predictions.col_slice(0);              // First output column
 //! ```
 //!
 //! # Advanced: Direct Trainer Access
@@ -43,10 +43,11 @@
 //!
 //! ```ignore
 //! use boosters::training::{GBDTTrainer, GBDTParams, SquaredLoss, Rmse};
+//! use boosters::Parallelism;
 //!
 //! let params = GBDTParams { n_trees: 100, ..Default::default() };
 //! let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-//! let forest = trainer.train(&binned_dataset, &targets, &[], &[])?;
+//! let forest = trainer.train(&binned_dataset, &targets, &[], &[], Parallelism::SEQUENTIAL)?;
 //! ```
 //!
 //! # Loading XGBoost Models
@@ -94,4 +95,7 @@ pub use training::{Metric, MetricFn, Objective, ObjectiveFn};
 
 // Data types (for preparing training data)
 pub use data::{ColMatrix, Dataset, DenseMatrix, RowMatrix};
+
+// Shared utilities
+pub use utils::{Parallelism, run_with_threads};
 

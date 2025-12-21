@@ -9,6 +9,7 @@ use boosters::training::{
 	MulticlassAccuracy, MulticlassLogLoss, ObjectiveFn, Rmse, LogisticLoss, SoftmaxLoss, SquaredLoss,
 	LinearLeafConfig,
 };
+use boosters::Parallelism;
 
 fn select_rows_row_major(features_row_major: &[f32], rows: usize, cols: usize, row_indices: &[usize]) -> Vec<f32> {
 	assert_eq!(features_row_major.len(), rows * cols);
@@ -35,7 +36,6 @@ fn default_params(trees: u32, growth_strategy: GrowthStrategy, seed: u64) -> GBD
 		learning_rate: 0.1,
 		growth_strategy,
 		gain: GainParams { reg_lambda: 1.0, ..Default::default() },
-		n_threads: 0,
 		cache_size: 64,
 		seed,
 		..Default::default()
@@ -59,7 +59,7 @@ fn run_synthetic_regression(rows: usize, cols: usize, trees: u32, depth: u32, se
 
 	let params = default_params(trees, GrowthStrategy::DepthWise { max_depth: depth }, seed);
 	let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-	let forest = trainer.train(&binned_train, &y_train, &[], &[]).unwrap();
+	let forest = trainer.train(&binned_train, &y_train, &[], &[], Parallelism::SEQUENTIAL).unwrap();
 	let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
 	let pred = predictor.predict(&row_valid);
 	let pred0: Vec<f32> = pred.column(0).to_vec();
@@ -88,7 +88,7 @@ fn run_synthetic_binary(rows: usize, cols: usize, trees: u32, depth: u32, seed: 
 	let params = default_params(trees, GrowthStrategy::DepthWise { max_depth: depth }, seed);
 	let objective = LogisticLoss;
 	let trainer = GBDTTrainer::new(objective, LogLoss, params);
-	let forest = trainer.train(&binned_train, &y_train, &[], &[]).unwrap();
+	let forest = trainer.train(&binned_train, &y_train, &[], &[], Parallelism::SEQUENTIAL).unwrap();
 	let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
 	let mut raw = predictor.predict(&row_valid);
 	objective.transform_prediction_inplace(&mut raw);
@@ -125,7 +125,7 @@ fn run_synthetic_multiclass(
 	let params = default_params(trees, GrowthStrategy::DepthWise { max_depth: depth }, seed);
 	let objective = SoftmaxLoss::new(classes);
 	let trainer = GBDTTrainer::new(objective, MulticlassLogLoss, params);
-	let forest = trainer.train(&binned_train, &y_train, &[], &[]).unwrap();
+	let forest = trainer.train(&binned_train, &y_train, &[], &[], Parallelism::SEQUENTIAL).unwrap();
 	let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
 
 	let n_rows = row_valid.num_rows();
@@ -250,7 +250,7 @@ fn test_quality_improvement_linear_leaves() {
 	};
 
 	let trainer = GBDTTrainer::new(SquaredLoss, Rmse, base_params.clone());
-	let forest_baseline = trainer.train(&binned_train, &y_train, &[], &[]).unwrap();
+	let forest_baseline = trainer.train(&binned_train, &y_train, &[], &[], Parallelism::SEQUENTIAL).unwrap();
 	let predictor = Predictor::<UnrolledTraversal6>::new(&forest_baseline);
 	let pred_baseline = predictor.predict(&row_valid);
 	let pred_baseline_slice: Vec<f32> = pred_baseline.column(0).to_vec();
@@ -264,7 +264,7 @@ fn test_quality_improvement_linear_leaves() {
 
 	eprintln!("Training with linear leaves...");
 	let trainer = GBDTTrainer::new(SquaredLoss, Rmse, linear_params);
-	let forest_linear = trainer.train(&binned_train, &y_train, &[], &[]).unwrap();
+	let forest_linear = trainer.train(&binned_train, &y_train, &[], &[], Parallelism::SEQUENTIAL).unwrap();
 
 	let predictor = Predictor::<UnrolledTraversal6>::new(&forest_linear);
 	let pred_linear = predictor.predict(&row_valid);

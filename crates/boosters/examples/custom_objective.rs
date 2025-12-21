@@ -11,7 +11,7 @@
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
 use boosters::training::{GBDTParams, GBDTTrainer, GradsTuple, GrowthStrategy, Rmse};
-use boosters::{ObjectiveFn, TaskKind};
+use boosters::{ObjectiveFn, Parallelism, TaskKind};
 
 /// A custom objective: Huber loss with delta=1.0
 ///
@@ -125,7 +125,9 @@ fn main() {
 
     let huber = HuberLoss::new(1.0);
     let trainer = GBDTTrainer::new(huber, Rmse, params);
-    let forest = trainer.train(&dataset, &labels, &[], &[]).unwrap();
+    let forest = trainer
+        .train(&dataset, &labels, &[], &[], Parallelism::SEQUENTIAL)
+        .unwrap();
 
     // =========================================================================
     // 3. Evaluate

@@ -18,6 +18,7 @@ use boosters::training::{
     GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, MetricFn, Rmse, RowSamplingParams,
     SquaredLoss,
 };
+use boosters::Parallelism;
 
 fn main() {
     // =========================================================================
@@ -65,7 +66,6 @@ fn main() {
             ..Default::default()
         },
         row_sampling: RowSamplingParams::None,
-        n_threads: 1,
         cache_size: 32,
         ..Default::default()
     };
@@ -73,7 +73,9 @@ fn main() {
     let trainer_baseline = GBDTTrainer::new(SquaredLoss, Rmse, params_baseline);
 
     let start = Instant::now();
-    let forest_baseline = trainer_baseline.train(&dataset, &train_labels, &[], &[]).unwrap();
+    let forest_baseline = trainer_baseline
+        .train(&dataset, &train_labels, &[], &[], Parallelism::SEQUENTIAL)
+        .unwrap();
     let time_baseline = start.elapsed();
 
     let preds_baseline: Vec<f32> = test_features
@@ -99,7 +101,6 @@ fn main() {
             ..Default::default()
         },
         row_sampling: RowSamplingParams::goss(0.2, 0.1),
-        n_threads: 1,
         cache_size: 32,
         ..Default::default()
     };
@@ -107,7 +108,9 @@ fn main() {
     let trainer_goss = GBDTTrainer::new(SquaredLoss, Rmse, params_goss);
 
     let start = Instant::now();
-    let forest_goss = trainer_goss.train(&dataset, &train_labels, &[], &[]).unwrap();
+    let forest_goss = trainer_goss
+        .train(&dataset, &train_labels, &[], &[], Parallelism::SEQUENTIAL)
+        .unwrap();
     let time_goss = start.elapsed();
 
     let preds_goss: Vec<f32> = test_features
@@ -134,7 +137,6 @@ fn main() {
             ..Default::default()
         },
         row_sampling: RowSamplingParams::uniform(0.3),
-        n_threads: 1,
         cache_size: 32,
         ..Default::default()
     };
@@ -142,7 +144,9 @@ fn main() {
     let trainer_uniform = GBDTTrainer::new(SquaredLoss, Rmse, params_uniform);
 
     let start = Instant::now();
-    let forest_uniform = trainer_uniform.train(&dataset, &train_labels, &[], &[]).unwrap();
+    let forest_uniform = trainer_uniform
+        .train(&dataset, &train_labels, &[], &[], Parallelism::SEQUENTIAL)
+        .unwrap();
     let time_uniform = start.elapsed();
 
     let preds_uniform: Vec<f32> = test_features

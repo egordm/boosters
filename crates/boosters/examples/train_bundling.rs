@@ -16,6 +16,7 @@ use std::time::Instant;
 use boosters::data::binned::{BinnedDatasetBuilder, BundlingConfig};
 use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
 use boosters::training::{GBDTParams, GBDTTrainer, GrowthStrategy, MetricFn, Rmse, SquaredLoss};
+use boosters::Parallelism;
 
 fn main() {
     // =========================================================================
@@ -151,12 +152,12 @@ fn main() {
     // Train without bundling
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params.clone());
     let forest_no_bundle = trainer
-        .train(&dataset_no_bundle, &labels, &[], &[])
+        .train(&dataset_no_bundle, &labels, &[], &[], Parallelism::SEQUENTIAL)
         .unwrap();
 
     // Train with bundling
     let forest_bundled = trainer
-        .train(&dataset_bundled, &labels, &[], &[])
+        .train(&dataset_bundled, &labels, &[], &[], Parallelism::SEQUENTIAL)
         .unwrap();
 
     // Evaluate both

@@ -4,6 +4,7 @@
 mod common;
 
 use common::criterion_config::default_criterion;
+use common::threading::with_rayon_threads;
 
 use boosters::data::{binned::BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMajor};
 use boosters::testing::data::{
@@ -14,6 +15,7 @@ use boosters::training::{
 	GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, LogLoss, LogisticLoss, MulticlassLogLoss,
 	Rmse, SoftmaxLoss, SquaredLoss,
 };
+use boosters::Parallelism;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
@@ -60,7 +62,6 @@ fn bench_gbdt_train_regression(c: &mut Criterion) {
 			learning_rate: 0.3,
 			growth_strategy: GrowthStrategy::DepthWise { max_depth },
 			gain: GainParams { reg_lambda: 1.0, ..Default::default() },
-			n_threads: 1,
 			cache_size: 256,
 			..Default::default()
 		};
@@ -68,7 +69,7 @@ fn bench_gbdt_train_regression(c: &mut Criterion) {
 
 		group.throughput(Throughput::Elements((rows * cols) as u64));
 		group.bench_function(BenchmarkId::new("train", name), |b| {
-			b.iter(|| black_box(trainer.train(black_box(&binned), black_box(&targets), &[], &[]).unwrap()))
+			b.iter(|| black_box(trainer.train(black_box(&binned), black_box(&targets), &[], &[], Parallelism::SEQUENTIAL).unwrap()))
 		});
 	}
 
@@ -90,7 +91,6 @@ fn bench_gbdt_train_binary(c: &mut Criterion) {
 		learning_rate: 0.3,
 		growth_strategy: GrowthStrategy::DepthWise { max_depth },
 		gain: GainParams { reg_lambda: 1.0, ..Default::default() },
-		n_threads: 1,
 		cache_size: 256,
 		..Default::default()
 	};
@@ -98,7 +98,7 @@ fn bench_gbdt_train_binary(c: &mut Criterion) {
 
 	group.throughput(Throughput::Elements((rows * cols) as u64));
 	group.bench_function("train_binary", |b| {
-		b.iter(|| black_box(trainer.train(black_box(&binned), black_box(&targets), &[], &[]).unwrap()))
+		b.iter(|| black_box(trainer.train(black_box(&binned), black_box(&targets), &[], &[], Parallelism::SEQUENTIAL).unwrap()))
 	});
 	group.finish();
 }
@@ -118,7 +118,6 @@ fn bench_gbdt_train_multiclass(c: &mut Criterion) {
 		learning_rate: 0.3,
 		growth_strategy: GrowthStrategy::DepthWise { max_depth },
 		gain: GainParams { reg_lambda: 1.0, ..Default::default() },
-		n_threads: 1,
 		cache_size: 256,
 		..Default::default()
 	};
@@ -126,7 +125,7 @@ fn bench_gbdt_train_multiclass(c: &mut Criterion) {
 
 	group.throughput(Throughput::Elements((rows * cols) as u64));
 	group.bench_function("train_multiclass", |b| {
-		b.iter(|| black_box(trainer.train(black_box(&binned), black_box(&targets), &[], &[]).unwrap()))
+		b.iter(|| black_box(trainer.train(black_box(&binned), black_box(&targets), &[], &[], Parallelism::SEQUENTIAL).unwrap()))
 	});
 	group.finish();
 }
@@ -147,14 +146,17 @@ fn bench_gbdt_thread_scaling(c: &mut Criterion) {
 			learning_rate: 0.3,
 			growth_strategy: GrowthStrategy::DepthWise { max_depth },
 			gain: GainParams { reg_lambda: 1.0, ..Default::default() },
-			n_threads,
 			cache_size: 256,
 			..Default::default()
 		};
 		let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
 		group.throughput(Throughput::Elements((rows * cols) as u64));
 		group.bench_function(BenchmarkId::new("train", n_threads), |b| {
-			b.iter(|| black_box(trainer.train(black_box(&binned), black_box(&targets), &[], &[]).unwrap()))
+			b.iter(|| {
+				with_rayon_threads(n_threads, || {
+					black_box(trainer.train(black_box(&binned), black_box(&targets), &[], &[], Parallelism::PARALLEL).unwrap())
+				})
+			})
 		});
 	}
 
@@ -177,7 +179,6 @@ fn bench_gbdt_growth_strategy(c: &mut Criterion) {
 		n_trees,
 		learning_rate: 0.1,
 		gain: GainParams { reg_lambda: 1.0, ..Default::default() },
-		n_threads: 1,
 		cache_size: 256,
 		..Default::default()
 	};
@@ -201,10 +202,10 @@ fn bench_gbdt_growth_strategy(c: &mut Criterion) {
 
 	group.throughput(Throughput::Elements((rows * cols) as u64));
 	group.bench_function(BenchmarkId::new("depthwise", format!("{rows}x{cols}")), |b| {
-		b.iter(|| black_box(depthwise.train(black_box(&binned), black_box(&targets), &[], &[]).unwrap()))
+		b.iter(|| black_box(depthwise.train(black_box(&binned), black_box(&targets), &[], &[], Parallelism::SEQUENTIAL).unwrap()))
 	});
 	group.bench_function(BenchmarkId::new("leafwise", format!("{rows}x{cols}")), |b| {
-		b.iter(|| black_box(leafwise.train(black_box(&binned), black_box(&targets), &[], &[]).unwrap()))
+		b.iter(|| black_box(leafwise.train(black_box(&binned), black_box(&targets), &[], &[], Parallelism::SEQUENTIAL).unwrap()))
 	});
 
 	group.finish();
