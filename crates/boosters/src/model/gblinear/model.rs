@@ -16,7 +16,7 @@
 //! - [`predict_raw()`](GBLinearModel::predict_raw) - Returns raw margin scores
 //! - [`predict_row()`](GBLinearModel::predict_row) - Single row prediction
 
-use crate::data::{ColMatrix, DenseMatrix, RowMajor, ColMajor};
+use crate::data::{ColMatrix, DataMatrix, DenseMatrix, ColMajor};
 use crate::data::Dataset;
 use crate::model::meta::ModelMeta;
 use crate::repr::gblinear::LinearModel;
@@ -198,6 +198,9 @@ impl GBLinearModel {
     /// Predict for a single row, returning raw margins.
     ///
     /// Returns raw margin scores before any transform (no sigmoid/softmax).
+    ///
+    /// **Note**: For batch prediction, prefer [`predict()`](Self::predict) or
+    /// [`predict_raw()`](Self::predict_raw) which are more efficient.
     pub fn predict_row(&self, features: &[f32]) -> Vec<f32> {
         let n_groups = self.meta.n_groups;
         let n_features = self.meta.n_features;
@@ -223,17 +226,27 @@ impl GBLinearModel {
     ///
     /// # Arguments
     ///
-    /// * `features` - Feature matrix in row-major layout (n_rows × n_features)
+    /// * `features` - Feature matrix (any layout implementing [`DataMatrix`])
     ///
     /// # Returns
     ///
     /// Column-major matrix of predictions (n_rows × n_groups).
-    pub fn predict(&self, features: &DenseMatrix<f32, RowMajor>) -> ColMatrix<f32> {
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use boosters::data::RowMatrix;
+    ///
+    /// let features = RowMatrix::from_vec(vec![0.5, 1.0, 0.3, 2.0], 2, 2);
+    /// let predictions = model.predict(&features);
+    /// let probs = predictions.col_slice(0);
+    /// ```
+    pub fn predict<M: DataMatrix<Element = f32>>(&self, features: &M) -> ColMatrix<f32> {
         let n_rows = features.num_rows();
         let n_groups = self.meta.n_groups;
         
         // Get raw predictions
-        let mut raw = self.predict_raw_slice(features.as_slice(), n_rows);
+        let mut raw = self.predict_matrix(features);
         
         // Apply transformation if we have config with objective
         if let Some(config) = &self.config {
@@ -257,16 +270,16 @@ impl GBLinearModel {
     ///
     /// # Arguments
     ///
-    /// * `features` - Feature matrix in row-major layout (n_rows × n_features)
+    /// * `features` - Feature matrix (any layout implementing [`DataMatrix`])
     ///
     /// # Returns
     ///
     /// Column-major matrix of raw predictions (n_rows × n_groups).
-    pub fn predict_raw(&self, features: &DenseMatrix<f32, RowMajor>) -> ColMatrix<f32> {
+    pub fn predict_raw<M: DataMatrix<Element = f32>>(&self, features: &M) -> ColMatrix<f32> {
         let n_rows = features.num_rows();
         let n_groups = self.meta.n_groups;
         
-        let raw = self.predict_raw_slice(features.as_slice(), n_rows);
+        let raw = self.predict_matrix(features);
         
         // Convert to column-major matrix
         let mut col_data = vec![0.0f32; n_rows * n_groups];
@@ -281,8 +294,8 @@ impl GBLinearModel {
 
     /// Predict for multiple rows using slice input.
     ///
-    /// This is the original low-level API. For most use cases, prefer
-    /// [`predict()`](Self::predict) or [`predict_raw()`](Self::predict_raw).
+    /// **Legacy API**: For most use cases, prefer [`predict()`](Self::predict)
+    /// or [`predict_raw()`](Self::predict_raw) which accept structured matrix input.
     ///
     /// # Arguments
     ///
@@ -296,7 +309,25 @@ impl GBLinearModel {
         self.predict_raw_slice(features, n_rows)
     }
 
-    /// Internal prediction that returns raw margins as Vec.
+    /// Internal prediction from a DataMatrix.
+    fn predict_matrix<M: DataMatrix<Element = f32>>(&self, features: &M) -> Vec<f32> {
+        let n_rows = features.num_rows();
+        let n_features = self.meta.n_features;
+        let n_groups = self.meta.n_groups;
+        let mut output = vec![0.0f32; n_rows * n_groups];
+        let mut row_buf = vec![0.0f32; n_features];
+
+        for row_idx in 0..n_rows {
+            features.copy_row(row_idx, &mut row_buf);
+            let preds = self.predict_row(&row_buf);
+            let offset = row_idx * n_groups;
+            output[offset..offset + n_groups].copy_from_slice(&preds);
+        }
+
+        output
+    }
+
+    /// Internal prediction that returns raw margins as Vec (slice-based).
     fn predict_raw_slice(&self, features: &[f32], n_rows: usize) -> Vec<f32> {
         let n_features = self.meta.n_features;
         let n_groups = self.meta.n_groups;

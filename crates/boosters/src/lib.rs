@@ -17,6 +17,7 @@
 //! ```ignore
 //! use boosters::model::GBDTModel;
 //! use boosters::model::gbdt::GBDTConfig;
+//! use boosters::data::RowMatrix;
 //! use boosters::training::{Objective, Metric};
 //!
 //! // Build configuration
@@ -30,12 +31,10 @@
 //! // Train model
 //! let model = GBDTModel::train(&dataset, &targets, &[], config)?;
 //!
-//! // Predict
-//! let predictions = model.predict_batch(&features, n_rows);
-//!
-//! // Save/Load
-//! model.save("model.bstr")?;
-//! let loaded = GBDTModel::load("model.bstr")?;
+//! // Predict with DataMatrix
+//! let features = RowMatrix::from_vec(data, n_rows, n_features);
+//! let predictions = model.predict(&features);  // ColMatrix<f32>
+//! let probs = predictions.col_slice(0);        // First output column
 //! ```
 //!
 //! # Advanced: Direct Trainer Access
