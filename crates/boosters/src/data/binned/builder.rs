@@ -1,5 +1,7 @@
 //! Builder for BinnedDataset.
 
+use rayon::prelude::*;
+
 use super::bundling::{create_bundle_plan, BundlePlan, BundlingConfig};
 use super::dataset::BinnedDataset;
 use super::feature_analysis::FeatureInfo;
@@ -367,7 +369,7 @@ impl BinnedDatasetBuilder {
     /// let col_matrix = ColMatrix::from_vec(features, n_samples, n_features);
     /// let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 256).build()?;
     /// ```
-    pub fn from_matrix<S: AsRef<[f32]>>(
+    pub fn from_matrix<S: AsRef<[f32]> + Sync>(
         data: &crate::data::DenseMatrix<f32, crate::data::ColMajor, S>,
         max_bins: u32,
     ) -> Self {
@@ -418,7 +420,7 @@ impl BinnedDatasetBuilder {
     /// let dataset = BinnedDatasetBuilder::from_matrix_with_config(&matrix, config)
     ///     .build()?;
     /// ```
-    pub fn from_matrix_with_config<S: AsRef<[f32]>>(
+    pub fn from_matrix_with_config<S: AsRef<[f32]> + Sync>(
         data: &crate::data::DenseMatrix<f32, crate::data::ColMajor, S>,
         config: BinningConfig,
     ) -> Self {
@@ -427,113 +429,119 @@ impl BinnedDatasetBuilder {
         let n_rows = data.num_rows();
         let n_cols = data.num_cols();
 
-        let mut builder = Self::new();
+        // Process all features in parallel
+        let feature_results: Vec<(Vec<u32>, BinMapper)> = (0..n_cols)
+            .into_par_iter()
+            .map(|col_idx| {
+                let max_bins = config.max_bins_for_feature(col_idx);
 
-        for col_idx in 0..n_cols {
-            let max_bins = config.max_bins_for_feature(col_idx);
+                // Get column slice directly (O(1) for column-major layout)
+                let col_data = data.col_slice(col_idx);
 
-            // Get column slice directly (O(1) for column-major layout)
-            let col_data = data.col_slice(col_idx);
+                // Collect non-NaN values for this column
+                let mut values: Vec<f32> = Vec::with_capacity(n_rows);
+                let mut min_val = f32::MAX;
+                let mut max_val = f32::MIN;
 
-            // Collect non-NaN values for this column
-            let mut values: Vec<f32> = Vec::with_capacity(n_rows);
-            let mut min_val = f32::MAX;
-            let mut max_val = f32::MIN;
-
-            for &val in col_data {
-                if val.is_finite() {
-                    values.push(val);
-                    min_val = min_val.min(val);
-                    max_val = max_val.max(val);
+                for &val in col_data {
+                    if val.is_finite() {
+                        values.push(val);
+                        min_val = min_val.min(val);
+                        max_val = max_val.max(val);
+                    }
                 }
-            }
 
-            // Handle degenerate cases
-            if values.is_empty() || min_val >= max_val {
-                // All missing or constant - use single bin
-                let bins: Vec<u32> = vec![0; n_rows];
+                // Handle degenerate cases
+                if values.is_empty() || min_val >= max_val {
+                    // All missing or constant - use single bin
+                    let bins: Vec<u32> = vec![0; n_rows];
+                    let mapper = BinMapper::numerical(
+                        vec![f64::MAX],
+                        MissingType::None,
+                        0,
+                        0,
+                        0.0,
+                        0.0,
+                        0.0,
+                    );
+                    return (bins, mapper);
+                }
+
+                let n_bins = max_bins.min(values.len() as u32);
+
+                // Compute bin boundaries based on strategy
+                let bounds: Vec<f64> = match config.strategy {
+                    BinningStrategy::EqualWidth => {
+                        // Equal-width: divide [min, max] into equal intervals
+                        let width = (max_val - min_val) / n_bins as f32;
+                        (1..=n_bins)
+                            .map(|i| {
+                                if i == n_bins {
+                                    f64::MAX
+                                } else {
+                                    (min_val + width * i as f32) as f64
+                                }
+                            })
+                            .collect()
+                    }
+                    BinningStrategy::Quantile => {
+                        // Quantile: each bin has approximately equal sample count
+                        // This matches LightGBM/XGBoost behavior
+                        values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+                        let mut bounds = Vec::with_capacity(n_bins as usize);
+                        for i in 1..n_bins {
+                            // Quantile index: i/n_bins percentile
+                            let q = i as f64 / n_bins as f64;
+                            let idx = ((q * (values.len() - 1) as f64).round() as usize)
+                                .min(values.len() - 1);
+                            let bound = values[idx] as f64;
+
+                            // Avoid duplicate boundaries
+                            if bounds.is_empty() || bound > *bounds.last().unwrap() {
+                                bounds.push(bound);
+                            }
+                        }
+                        bounds.push(f64::MAX); // Last bin catches everything
+                        bounds
+                    }
+                };
+
+                // Bin each value using binary search on bounds
+                // Use column slice directly for better cache efficiency
+                let bins: Vec<u32> = col_data
+                    .iter()
+                    .map(|&val| {
+                        if !val.is_finite() {
+                            0 // Map NaN to bin 0
+                        } else {
+                            // Binary search for first bound >= val
+                            match bounds.binary_search_by(|b| b.partial_cmp(&(val as f64)).unwrap())
+                            {
+                                Ok(i) => i as u32,
+                                Err(i) => i as u32,
+                            }
+                        }
+                    })
+                    .collect();
+
                 let mapper = BinMapper::numerical(
-                    vec![f64::MAX],
+                    bounds,
                     MissingType::None,
                     0,
                     0,
                     0.0,
-                    0.0,
-                    0.0,
+                    min_val as f64,
+                    max_val as f64,
                 );
-                builder = builder.add_binned(bins, mapper);
-                continue;
-            }
 
-            let n_bins = max_bins.min(values.len() as u32);
+                (bins, mapper)
+            })
+            .collect();
 
-            // Compute bin boundaries based on strategy
-            let bounds: Vec<f64> = match config.strategy {
-                BinningStrategy::EqualWidth => {
-                    // Equal-width: divide [min, max] into equal intervals
-                    let width = (max_val - min_val) / n_bins as f32;
-                    (1..=n_bins)
-                        .map(|i| {
-                            if i == n_bins {
-                                f64::MAX
-                            } else {
-                                (min_val + width * i as f32) as f64
-                            }
-                        })
-                        .collect()
-                }
-                BinningStrategy::Quantile => {
-                    // Quantile: each bin has approximately equal sample count
-                    // This matches LightGBM/XGBoost behavior
-                    values.sort_by(|a, b| a.partial_cmp(b).unwrap());
-
-                    let mut bounds = Vec::with_capacity(n_bins as usize);
-                    for i in 1..n_bins {
-                        // Quantile index: i/n_bins percentile
-                        let q = i as f64 / n_bins as f64;
-                        let idx = ((q * (values.len() - 1) as f64).round() as usize)
-                            .min(values.len() - 1);
-                        let bound = values[idx] as f64;
-
-                        // Avoid duplicate boundaries
-                        if bounds.is_empty() || bound > *bounds.last().unwrap() {
-                            bounds.push(bound);
-                        }
-                    }
-                    bounds.push(f64::MAX); // Last bin catches everything
-                    bounds
-                }
-            };
-
-            // Bin each value using binary search on bounds
-            // Use column slice directly for better cache efficiency
-            let bins: Vec<u32> = col_data
-                .iter()
-                .map(|&val| {
-                    if !val.is_finite() {
-                        0 // Map NaN to bin 0
-                    } else {
-                        // Binary search for first bound >= val
-                        match bounds.binary_search_by(|b| {
-                            b.partial_cmp(&(val as f64)).unwrap()
-                        }) {
-                            Ok(i) => i as u32,
-                            Err(i) => i as u32,
-                        }
-                    }
-                })
-                .collect();
-
-            let mapper = BinMapper::numerical(
-                bounds,
-                MissingType::None,
-                0,
-                0,
-                0.0,
-                min_val as f64,
-                max_val as f64,
-            );
-
+        // Add all features to builder (sequential, but fast since work is done)
+        let mut builder = Self::new();
+        for (bins, mapper) in feature_results {
             builder = builder.add_binned(bins, mapper);
         }
 
