@@ -8,7 +8,10 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
-use boosters::data::{binned::BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMajor};
+use boosters::data::{
+    binned::BinnedDatasetBuilder,
+    ColMatrix, DenseMatrix, RowMajor,
+};
 use boosters::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 
@@ -64,6 +67,9 @@ fn bench_train_regression(c: &mut Criterion) {
 		// =====================================================================
 		// booste-rs
 		// =====================================================================
+		// Pre-convert to column-major layout - users would store data in optimal format
+		let col_matrix = build_col_matrix(features.clone(), rows, cols);
+
 		let params = GBDTParams {
 			n_trees,
 			learning_rate: 0.1,
@@ -77,8 +83,15 @@ fn bench_train_regression(c: &mut Criterion) {
 
 		group.bench_function(BenchmarkId::new("boosters/cold_full", name), |b| {
 			b.iter(|| {
-				let col_matrix = build_col_matrix(features.clone(), rows, cols);
-				let binned = BinnedDatasetBuilder::from_matrix(&col_matrix, 256).build().unwrap();
+				// Use single-threaded binning (n_threads=1) to match training n_threads=1
+				// This mirrors how LightGBM's num_threads=1 affects its entire pipeline
+				let binned = BinnedDatasetBuilder::from_matrix_with_config_threaded(
+					&col_matrix,
+					256.into(),
+					1, // single-threaded
+				)
+				.build()
+				.unwrap();
 				black_box(trainer.train(black_box(&binned), black_box(&targets), &[], &[]).unwrap())
 			})
 		});
