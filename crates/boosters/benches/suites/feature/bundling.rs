@@ -22,6 +22,12 @@ use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
 
+use ndarray::ArrayView1;
+
+fn empty_weights() -> ArrayView1<'static, f32> {
+    ArrayView1::from(&[][..])
+}
+
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 #[cfg(feature = "bench-lightgbm")]
@@ -225,14 +231,14 @@ fn bench_boosters_training(c: &mut Criterion) {
         // WITHOUT bundling (training only)
         group.bench_function(BenchmarkId::new("no_bundling", config.name), |b| {
             b.iter(|| {
-                black_box(trainer.train(black_box(&binned_no_bundle), black_box(&targets), &[], &[], Parallelism::SEQUENTIAL).unwrap())
+                black_box(trainer.train(black_box(&binned_no_bundle), ArrayView1::from(black_box(&targets[..])), empty_weights(), &[], Parallelism::Sequential).unwrap())
             })
         });
 
         // WITH bundling (training only)
         group.bench_function(BenchmarkId::new("with_bundling", config.name), |b| {
             b.iter(|| {
-                black_box(trainer.train(black_box(&binned_with_bundle), black_box(&targets), &[], &[], Parallelism::SEQUENTIAL).unwrap())
+                black_box(trainer.train(black_box(&binned_with_bundle), ArrayView1::from(black_box(&targets[..])), empty_weights(), &[], Parallelism::Sequential).unwrap())
             })
         });
     }

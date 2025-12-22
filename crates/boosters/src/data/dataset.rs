@@ -109,15 +109,15 @@ impl Dataset {
         data: &ColMatrix<f32, S>,
         targets: Vec<f32>,
     ) -> Result<Self, DatasetError> {
-        if targets.len() != data.num_rows() {
+        if targets.len() != data.n_rows() {
             return Err(DatasetError::TargetLenMismatch {
-                rows: data.num_rows(),
+                rows: data.n_rows(),
                 targets: targets.len(),
             });
         }
 
-        let mut features = Vec::with_capacity(data.num_cols());
-        for col in 0..data.num_cols() {
+        let mut features = Vec::with_capacity(data.n_cols());
+        for col in 0..data.n_cols() {
             features.push(FeatureColumn::Numeric {
                 name: None,
                 values: data.col_slice(col).to_vec(),
@@ -369,8 +369,8 @@ mod tests {
         let ds = Dataset::new(features, vec![0.0, 1.0, 0.0]).unwrap();
         let m = ds.for_gblinear().unwrap();
 
-        assert_eq!(m.num_rows(), 3);
-        assert_eq!(m.num_cols(), 2);
+        assert_eq!(m.n_rows(), 3);
+        assert_eq!(m.n_cols(), 2);
         assert_eq!(m.col_slice(0), &[1.0, 2.0, 3.0]);
         assert_eq!(m.col_slice(1), &[10.0, 20.0, 30.0]);
     }

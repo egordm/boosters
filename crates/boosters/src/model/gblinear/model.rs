@@ -64,7 +64,7 @@ pub struct GBLinearModel {
     /// This is `Some` when trained with the new API or loaded from a format
     /// that includes config. May be `None` for models loaded from legacy
     /// formats or created with `from_linear_model()`.
-    config: Option<GBLinearConfig>,
+    config: GBLinearConfig,
 }
 
 impl GBLinearModel {
@@ -109,7 +109,7 @@ impl GBLinearModel {
     /// let model = GBLinearModel::train(&dataset, config, 4)?;
     /// ```
     pub fn train(dataset: &Dataset, config: GBLinearConfig, n_threads: usize) -> Option<Self> {
-        crate::run_with_threads(n_threads, || Self::train_inner(dataset, config))
+        crate::run_with_threads(n_threads, |_parallelism| Self::train_inner(dataset, config))
     }
 
     /// Internal training implementation (no thread pool management).
@@ -145,14 +145,18 @@ impl GBLinearModel {
             ..Default::default()
         };
 
-        Some(Self { model: linear_model, meta, config: Some(config) })
+        Some(Self { model: linear_model, meta, config })
     }
 
-    /// Create a model from an existing LinearModel.
+    /// Create a model from a linear model and metadata.
     ///
-    /// Config will be `None` since the training parameters are unknown.
-    pub fn from_linear_model(model: LinearModel, meta: ModelMeta) -> Self {
-        Self { model, meta, config: None }
+    /// Use this when loading models from formats that don't include config,
+    /// or for quick testing. For training new models, prefer [`GBLinearModel::train`].
+    pub fn from_linear_model(
+        model: LinearModel,
+        meta: ModelMeta,
+    ) -> Self {
+        Self { model, meta, config: GBLinearConfig::default() }
     }
 
     /// Create a model from all its parts.
@@ -162,7 +166,7 @@ impl GBLinearModel {
     pub fn from_parts(
         model: LinearModel,
         meta: ModelMeta,
-        config: Option<GBLinearConfig>,
+        config: GBLinearConfig,
     ) -> Self {
         Self { model, meta, config }
     }
@@ -198,8 +202,8 @@ impl GBLinearModel {
     /// Returns `Some` if the model was trained with the new config-based API
     /// or loaded from a format that includes config. Returns `None` for models
     /// loaded from legacy formats or created with `from_linear_model()`.
-    pub fn config(&self) -> Option<&GBLinearConfig> {
-        self.config.as_ref()
+    pub fn config(&self) -> &GBLinearConfig {
+        &self.config
     }
 
     /// Set feature names.
@@ -247,9 +251,9 @@ impl GBLinearModel {
         let mut raw = self.compute_predictions_raw(features);
 
         // Apply transformation if we have config with objective
-        if let Some(config) = &self.config {
-            config.objective.transform_predictions(&mut raw, n_rows, n_groups);
-        }
+        let view = ndarray::ArrayViewMut2::from_shape((n_groups, n_rows), &mut raw)
+            .expect("prediction buffer shape mismatch");
+        self.config.objective.transform_predictions(view);
 
         DenseMatrix::<f32, ColMajor>::from_vec(raw, n_rows, n_groups)
     }
@@ -345,7 +349,7 @@ impl std::fmt::Debug for GBLinearModel {
         f.debug_struct("GBLinearModel")
             .field("n_features", &self.meta.n_features)
             .field("n_groups", &self.meta.n_groups)
-            .field("n_rounds", &self.config.as_ref().map(|c| c.n_rounds))
+            .field("n_rounds", &self.config.n_rounds)
             .field("task", &self.meta.task)
             .finish()
     }
@@ -370,7 +374,8 @@ mod tests {
 
         assert_eq!(model.linear().n_features(), 2);
         assert_eq!(model.linear().n_groups(), 1);
-        assert!(model.config().is_none());
+        // from_linear_model uses default config
+        assert_eq!(model.config().n_rounds, GBLinearConfig::default().n_rounds);
     }
 
     #[test]
@@ -378,10 +383,9 @@ mod tests {
         let linear = make_simple_model();
         let meta = ModelMeta::for_regression(2);
         let config = GBLinearConfig::builder().n_rounds(200).build().unwrap();
-        let model = GBLinearModel::from_parts(linear, meta, Some(config));
+        let model = GBLinearModel::from_parts(linear, meta, config);
 
-        assert!(model.config().is_some());
-        assert_eq!(model.config().unwrap().n_rounds, 200);
+        assert_eq!(model.config().n_rounds, 200);
     }
 
     #[test]

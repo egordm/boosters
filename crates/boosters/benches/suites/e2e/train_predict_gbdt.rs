@@ -5,11 +5,17 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
-use boosters::data::{binned::BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMajor, RowMatrix};
+use boosters::data::{binned::BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMajor};
 use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
 use boosters::testing::data::{random_dense_f32, split_indices, synthetic_regression_targets_linear};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
+
+use ndarray::{Array2, ArrayView1};
+
+fn empty_weights() -> ArrayView1<'static, f32> {
+	ArrayView1::from(&[][..])
+}
 
 use common::select::{select_rows_row_major, select_targets};
 
@@ -32,7 +38,7 @@ fn bench_train_then_predict_regression(c: &mut Criterion) {
 	let col_train: ColMatrix<f32> = row_train.to_layout();
 	let binned_train = BinnedDatasetBuilder::from_matrix(&col_train, 256).build().unwrap();
 
-	let row_valid: RowMatrix<f32> = RowMatrix::from_vec(x_valid, valid_idx.len(), cols);
+	let valid_array = Array2::from_shape_vec((valid_idx.len(), cols), x_valid).unwrap();
 
 	let params = GBDTParams {
 		n_trees: 50,
@@ -46,9 +52,9 @@ fn bench_train_then_predict_regression(c: &mut Criterion) {
 
 	group.bench_function("train_then_predict", |b| {
 		b.iter(|| {
-			let forest = trainer.train(black_box(&binned_train), black_box(&y_train), &[], &[], Parallelism::SEQUENTIAL).unwrap();
+			let forest = trainer.train(black_box(&binned_train), ArrayView1::from(black_box(&y_train[..])), empty_weights(), &[], Parallelism::Sequential).unwrap();
 			let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
-			let preds = predictor.predict(black_box(&row_valid));
+			let preds = predictor.predict(black_box(valid_array.view()), Parallelism::Sequential);
 			black_box(preds)
 		})
 	});

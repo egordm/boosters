@@ -11,6 +11,11 @@
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, TreeParams};
+use ndarray::ArrayView1;
+
+fn empty_weights() -> ArrayView1<'static, f32> {
+    ArrayView1::from(&[][..])
+}
 
 fn main() {
     // =========================================================================
@@ -50,7 +55,7 @@ fn main() {
     println!("  Metric: {:?}\n", config.metric);
 
     // Train using GBDTModel (high-level API)
-    let model = GBDTModel::train(&dataset, &labels, &[], config).expect("Training failed");
+    let model = GBDTModel::train(&dataset, ArrayView1::from(&labels[..]), empty_weights(), config, 1).expect("Training failed");
 
     // =========================================================================
     // 3. Make Predictions
@@ -58,11 +63,11 @@ fn main() {
     // Predict on single sample (wrap slice in a 1-row matrix)
     let sample: DenseMatrix<f32, RowMajor> =
         DenseMatrix::from_vec(features[0..n_features].to_vec(), 1, n_features);
-    let pred = model.predict(&sample);
+    let pred = model.predict(&sample, 1);
     println!("Sample prediction: {:.4}", pred.as_slice()[0]);
 
     // Predict on full dataset (returns ColMatrix)
-    let all_preds = model.predict(&row_matrix);
+    let all_preds = model.predict(&row_matrix, 1);
 
     // Compute RMSE manually
     let rmse = compute_rmse(all_preds.as_slice(), &labels);
@@ -76,10 +81,9 @@ fn main() {
     println!("Task: {:?}", model.meta().task);
     println!("Train RMSE: {:.4}", rmse);
 
-    // Access training config if available
-    if let Some(config) = model.config() {
-        println!("Learning rate used: {}", config.learning_rate);
-    }
+    // Access training config
+    let config = model.config();
+    println!("Learning rate used: {}", config.learning_rate);
 
     println!("\nNote: For production, split data into train/validation/test sets!");
 }

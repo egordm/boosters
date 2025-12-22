@@ -16,6 +16,12 @@ use boosters::testing::data::{random_dense_f32, synthetic_regression_targets_lin
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
 
+use ndarray::ArrayView1;
+
+fn empty_weights() -> ArrayView1<'static, f32> {
+	ArrayView1::from(&[][..])
+}
+
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 #[cfg(feature = "bench-xgboost")]
@@ -88,11 +94,11 @@ fn bench_train_regression(c: &mut Criterion) {
 				let binned = BinnedDatasetBuilder::from_matrix_with_options(
 					&col_matrix,
 					256.into(),
-					Parallelism::SEQUENTIAL,
+					Parallelism::Sequential,
 				)
 				.build()
 				.unwrap();
-				black_box(trainer.train(black_box(&binned), black_box(&targets), &[], &[], Parallelism::SEQUENTIAL).unwrap())
+				black_box(trainer.train(black_box(&binned), ArrayView1::from(black_box(&targets[..])), empty_weights(), &[], Parallelism::Sequential).unwrap())
 			})
 		});
 

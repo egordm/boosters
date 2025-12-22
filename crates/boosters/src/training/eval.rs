@@ -3,6 +3,8 @@
 //! Provides the [`Evaluator`] component for computing metrics during training,
 //! and [`MetricValue`] for wrapping computed metrics with metadata.
 
+use ndarray::{Array2, ArrayView1, ArrayView2};
+
 use crate::data::Dataset;
 use crate::inference::common::PredictionKind;
 
@@ -157,53 +159,70 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
     /// Compute a single metric value.
     ///
     /// Handles transformation if the metric requires it.
+    ///
+    /// # Arguments
+    ///
+    /// * `predictions` - Prediction array, shape `[n_outputs, n_samples]`
+    /// * `targets` - Target values, length `n_samples`
+    /// * `weights` - Sample weights, empty for uniform
     pub fn compute(
         &mut self,
-        predictions: &[f32],
-        targets: &[f32],
-        weights: &[f32],
-        n_rows: usize,
+        predictions: ArrayView2<f32>,
+        targets: ArrayView1<f32>,
+        weights: ArrayView1<f32>,
     ) -> f64 {
         let needs_transform =
             self.metric.expected_prediction_kind() != PredictionKind::Margin;
 
+        let n_samples = targets.len();
+
         if needs_transform {
             // Ensure buffer is large enough
-            let required = n_rows * self.n_outputs;
+            let required = n_samples * self.n_outputs;
             if self.transform_buffer.len() < required {
                 self.transform_buffer.resize(required, 0.0);
             }
 
-            self.transform_buffer[..required]
-                .copy_from_slice(&predictions[..required]);
-            self.objective.transform_predictions(
+            // Copy predictions to buffer for in-place transformation
+            let pred_slice = predictions.as_slice()
+                .expect("predictions must be contiguous");
+            self.transform_buffer[..required].copy_from_slice(&pred_slice[..required]);
+            
+            let mut view = ndarray::ArrayViewMut2::from_shape(
+                (self.n_outputs, n_samples),
                 &mut self.transform_buffer[..required],
-                n_rows,
-                self.n_outputs,
-            );
-            self.metric.compute(
-                n_rows,
-                self.n_outputs,
-                &self.transform_buffer[..required],
-                targets,
-                weights,
             )
+            .expect("transform buffer shape mismatch");
+            self.objective.transform_predictions(view.view_mut());
+
+            let preds_view = ArrayView2::from_shape(
+                (self.n_outputs, n_samples),
+                &self.transform_buffer[..required],
+            )
+            .expect("predictions shape mismatch");
+
+            self.metric.compute(preds_view, targets, weights)
         } else {
-            self.metric
-                .compute(n_rows, self.n_outputs, predictions, targets, weights)
+            self.metric.compute(predictions, targets, weights)
         }
     }
 
     /// Compute metric and wrap in MetricValue.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Name for the metric (e.g., "train-rmse")
+    /// * `predictions` - Prediction array, shape `[n_outputs, n_samples]`
+    /// * `targets` - Target values, length `n_samples`
+    /// * `weights` - Sample weights, empty for uniform
     pub fn compute_metric(
         &mut self,
         name: impl Into<String>,
-        predictions: &[f32],
-        targets: &[f32],
-        weights: &[f32],
-        n_rows: usize,
+        predictions: ArrayView2<f32>,
+        targets: ArrayView1<f32>,
+        weights: ArrayView1<f32>,
     ) -> MetricValue {
-        let value = self.compute(predictions, targets, weights, n_rows);
+        let value = self.compute(predictions, targets, weights);
         MetricValue::new(name, value, self.higher_is_better())
     }
 
@@ -211,14 +230,21 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
     ///
     /// Returns a vector of metric values for all datasets.
     /// If the metric is not enabled (e.g., `Metric::None`), returns an empty vector.
+    ///
+    /// # Arguments
+    ///
+    /// * `train_predictions` - Training predictions, shape `[n_outputs, n_train_samples]`
+    /// * `train_targets` - Training targets, length `n_train_samples`
+    /// * `train_weights` - Training weights, empty for uniform
+    /// * `eval_sets` - Evaluation datasets
+    /// * `eval_predictions` - Predictions for each eval set, same shape convention
     pub fn evaluate_round(
         &mut self,
-        train_predictions: &[f32],
-        train_targets: &[f32],
-        train_weights: &[f32],
-        train_n_rows: usize,
+        train_predictions: ArrayView2<f32>,
+        train_targets: ArrayView1<f32>,
+        train_weights: ArrayView1<f32>,
         eval_sets: &[EvalSet<'_>],
-        eval_predictions: &[Vec<f32>],
+        eval_predictions: &[Array2<f32>],
     ) -> Vec<MetricValue> {
         // Skip evaluation entirely if metric is not enabled
         if !self.metric.is_enabled() {
@@ -233,23 +259,22 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
             train_predictions,
             train_targets,
             train_weights,
-            train_n_rows,
         );
         metrics.push(train_metric);
 
         // Compute eval set metrics
         for (set_idx, eval_set) in eval_sets.iter().enumerate() {
-            let raw_preds = &eval_predictions[set_idx];
-            let eval_rows = raw_preds.len() / self.n_outputs;
+            let preds = &eval_predictions[set_idx];
             let targets = eval_set.dataset.targets();
-            let weights = eval_set.dataset.weights().unwrap_or(&[]);
+            let weights_slice = eval_set.dataset.weights().unwrap_or(&[]);
+            let targets_view = ArrayView1::from(targets);
+            let weights_view = ArrayView1::from(weights_slice);
 
             let metric = self.compute_metric(
                 format!("{}-{}", eval_set.name, self.metric_name()),
-                raw_preds,
-                targets,
-                weights,
-                eval_rows,
+                preds.view(),
+                targets_view,
+                weights_view,
             );
             metrics.push(metric);
         }

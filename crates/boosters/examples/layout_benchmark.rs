@@ -7,7 +7,12 @@ use boosters::data::binned::{BinnedDatasetBuilder, GroupLayout, GroupStrategy};
 use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
+use ndarray::ArrayView1;
 use std::time::Instant;
+
+fn empty_weights() -> ArrayView1<'static, f32> {
+    ArrayView1::from(&[][..])
+}
 
 fn main() {
     // Medium dataset for meaningful comparison
@@ -82,7 +87,7 @@ fn main() {
         let start = Instant::now();
         // Single thread for accurate comparison
         let _ = GBDTTrainer::new(SquaredLoss, Rmse, params.clone())
-            .train(&row_major_dataset, &labels, &[], &[], Parallelism::SEQUENTIAL)
+            .train(&row_major_dataset, ArrayView1::from(&labels[..]), empty_weights(), &[], Parallelism::Sequential)
             .unwrap();
         row_times.push(start.elapsed());
     }
@@ -94,7 +99,7 @@ fn main() {
     for _ in 0..n_runs {
         let start = Instant::now();
         let _ = GBDTTrainer::new(SquaredLoss, Rmse, params.clone())
-            .train(&col_major_dataset, &labels, &[], &[], Parallelism::SEQUENTIAL)
+            .train(&col_major_dataset, ArrayView1::from(&labels[..]), empty_weights(), &[], Parallelism::Sequential)
             .unwrap();
         col_times.push(start.elapsed());
     }

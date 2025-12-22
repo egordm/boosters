@@ -14,6 +14,12 @@ use boosters::training::{
 };
 use boosters::Parallelism;
 
+use ndarray::ArrayView1;
+
+fn empty_weights() -> ArrayView1<'static, f32> {
+    ArrayView1::from(&[][..])
+}
+
 use common::select::{select_rows_row_major, select_targets};
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
@@ -50,7 +56,7 @@ fn bench_linear_training_overhead(c: &mut Criterion) {
     group.bench_function("baseline", |b| {
         b.iter(|| {
             let forest = trainer_baseline
-                .train(black_box(&binned_train), black_box(&y_train), &[], &[], Parallelism::SEQUENTIAL)
+                .train(black_box(&binned_train), ArrayView1::from(black_box(&y_train[..])), empty_weights(), &[], Parallelism::Sequential)
                 .unwrap();
             black_box(forest)
         })
@@ -65,7 +71,7 @@ fn bench_linear_training_overhead(c: &mut Criterion) {
     group.bench_function("linear_leaves", |b| {
         b.iter(|| {
             let forest = trainer_linear
-                .train(black_box(&binned_train), black_box(&y_train), &[], &[], Parallelism::SEQUENTIAL)
+                .train(black_box(&binned_train), ArrayView1::from(black_box(&y_train[..])), empty_weights(), &[], Parallelism::Sequential)
                 .unwrap();
             black_box(forest)
         })

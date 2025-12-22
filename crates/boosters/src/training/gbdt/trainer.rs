@@ -17,10 +17,10 @@
 //! };
 //!
 //! let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-//! let forest = trainer.train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL);
+//! let forest = trainer.train(&dataset, targets.view(), weights.view(), &[], Parallelism::Sequential);
 //! ```
 
-use crate::data::{BinnedDataset, RowMatrix};
+use crate::data::{init_predictions, BinnedDataset, RowMatrix};
 use crate::inference::gbdt::BinnedAccessor;
 use crate::training::callback::{EarlyStopping, EarlyStopAction};
 use crate::training::eval::{self, EvalSet};
@@ -38,6 +38,7 @@ use crate::utils::Parallelism;
 use super::split::GainParams;
 
 use crate::repr::gbdt::{Forest, ScalarLeaf};
+use ndarray::{Array2, ArrayView1, ArrayView2};
 
 // =============================================================================
 // GBDTParams
@@ -177,7 +178,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
     ///
     /// The `parallelism` argument is a *hint* that controls whether internal algorithms
     /// (histogram building, split finding) use parallel iterators. Even with
-    /// `Parallelism::PARALLEL`, no new threads are spawned here—the caller must
+    /// `Parallelism::Parallel`, no new threads are spawned here—the caller must
     /// provide the thread pool.
     ///
     /// # Arguments
@@ -196,12 +197,12 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
     ///
     /// ```ignore
     /// // Sequential training
-    /// let forest = trainer.train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL)?;
+    /// let forest = trainer.train(&dataset, &targets, &[], &[], Parallelism::Sequential)?;
     ///
     /// // Parallel training (caller sets up thread pool)
     /// let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap();
     /// let forest = pool.install(|| {
-    ///     trainer.train(&dataset, &targets, &[], &[], Parallelism::PARALLEL)
+    ///     trainer.train(&dataset, &targets, &[], &[], Parallelism::Parallel)
     /// })?;
     /// ```
     ///
@@ -209,8 +210,8 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
     pub fn train(
         &self,
         dataset: &BinnedDataset,
-        targets: &[f32],
-        weights: &[f32],
+        targets: ArrayView1<f32>,
+        weights: ArrayView1<f32>,
         eval_sets: &[EvalSet<'_>],
         parallelism: Parallelism,
     ) -> Option<Forest<ScalarLeaf>> {
@@ -255,21 +256,30 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
 
         let mut gradients = Gradients::new(n_rows, n_outputs);
 
+        // Create 1D views of targets and weights for objectives
+        // Targets is a 1D slice of length n_rows
+        let targets_1d = ArrayView1::from(targets);
+        let weights_1d = ArrayView1::from(weights);
+
         // Compute base scores
-        let mut base_scores = vec![0.0f32; n_outputs];
-        self.objective
-            .compute_base_score(n_rows, n_outputs, targets, weights, &mut base_scores);
+        let mut base_scores = Array2::<f32>::zeros((n_outputs, 1));
+        self.objective.compute_base_score(
+            targets_1d.view(),
+            weights_1d.view(),
+            base_scores.view_mut(),
+        );
+        let base_scores_vec: Vec<f32> = base_scores.iter().copied().collect();
 
         // Initialize predictions (column-major: [output0_all_rows, output1_all_rows, ...])
         let mut predictions = vec![0.0f32; n_rows * n_outputs];
-        for (output, &base_score) in base_scores.iter().enumerate() {
+        for (output, &base_score) in base_scores_vec.iter().enumerate() {
             let start = output * n_rows;
             predictions[start..start + n_rows].fill(base_score);
         }
 
         // Create inference forest directly (Phase 2: no conversion needed)
         let mut forest = Forest::<ScalarLeaf>::new(n_outputs as u32)
-            .with_base_score(base_scores.clone());
+            .with_base_score(base_scores_vec.clone());
 
         // Check if we need evaluation (metric is enabled)
         let needs_evaluation = self.metric.is_enabled();
@@ -285,21 +295,13 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
             Vec::new()
         };
 
-        // Initialize eval predictions with base scores (column-major like training predictions)
-        // Layout: [out0_row0, out0_row1, ..., out0_rowN, out1_row0, ...]
+        // Initialize eval predictions with base scores
+        // Shape: [n_outputs, n_eval_samples] for each eval set
         // Only allocate if evaluation is needed
-        let mut eval_predictions: Vec<Vec<f32>> = if needs_evaluation {
+        let mut eval_predictions: Vec<Array2<f32>> = if needs_evaluation {
             eval_data
                 .iter()
-                .map(|m| {
-                    let eval_rows = m.num_rows();
-                    let mut preds = vec![0.0f32; eval_rows * n_outputs];
-                    for (output, &base_score) in base_scores.iter().enumerate() {
-                        let start = output * eval_rows;
-                        preds[start..start + eval_rows].fill(base_score);
-                    }
-                    preds
-                })
+                .map(|m| init_predictions(&base_scores_vec, m.n_rows()))
                 .collect()
         } else {
             Vec::new()
@@ -321,11 +323,13 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
 
         for round in 0..self.params.n_trees {
             // Compute gradients for all outputs
-            self.objective.compute_gradients_buffer(
-                &predictions,
-                targets,
-                weights,
-                &mut gradients,
+            let predictions_view = ArrayView2::from_shape((n_outputs, n_rows), &predictions)
+                .expect("predictions shape mismatch");
+            self.objective.compute_gradients(
+                predictions_view,
+                targets_1d.view(),
+                weights_1d.view(),
+                gradients.pairs_array_mut(),
             );
 
             // Grow one tree per output
@@ -383,13 +387,13 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
                 }
 
                 // Incremental eval set prediction: add this tree's contribution
-                // eval_predictions is column-major, so we can pass a contiguous slice
+                // eval_predictions shape is [n_outputs, n_eval_samples] for each set
                 // Only compute if evaluation is needed
                 if needs_evaluation {
                     for (set_idx, matrix) in eval_data.iter().enumerate() {
-                        let eval_rows = matrix.num_rows();
-                        let start = output * eval_rows;
-                        let pred_slice = &mut eval_predictions[set_idx][start..start + eval_rows];
+                        let mut pred_row = eval_predictions[set_idx].row_mut(output);
+                        let pred_slice = pred_row.as_slice_mut()
+                            .expect("eval prediction row should be contiguous");
                         tree.predict_batch(matrix, pred_slice);
                     }
                 }
@@ -400,11 +404,13 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
             // Evaluate on eval sets (using accumulated predictions)
             // Only evaluate if metric is enabled
             let (round_metrics, early_stop_value) = if needs_evaluation {
+                // Create ArrayView2 from predictions Vec
+                let predictions_view = ArrayView2::from_shape((n_outputs, n_rows), &predictions)
+                    .expect("predictions shape mismatch");
                 let metrics = evaluator.evaluate_round(
-                    &predictions,
-                    targets,
-                    weights,
-                    n_rows,
+                    predictions_view,
+                    targets_1d.view(),
+                    weights_1d.view(),
                     eval_sets,
                     &eval_predictions,
                 );
@@ -483,6 +489,7 @@ mod tests {
     };
     use crate::training::metrics::Rmse;
     use crate::training::objectives::SquaredLoss;
+    use ndarray::{arr1, ArrayView1};
 
     fn make_simple_mapper(n_bins: u32) -> BinMapper {
         let bounds: Vec<f64> = (0..n_bins).map(|i| i as f64 + 0.5).collect();
@@ -546,12 +553,13 @@ mod tests {
     #[test]
     fn test_train_single_tree() {
         let dataset = make_test_dataset();
-        let targets: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5];
+        let targets = arr1(&[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]);
+        let no_weights = ArrayView1::<f32>::from(&[][..]);
 
         let params = GBDTParams { n_trees: 1, ..Default::default() };
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let forest = trainer.train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL).unwrap();
+        let forest = trainer.train(&dataset, targets.view(), no_weights, &[], Parallelism::Sequential).unwrap();
 
         assert_eq!(forest.n_trees(), 1);
         assert_eq!(forest.n_groups(), 1);
@@ -560,7 +568,8 @@ mod tests {
     #[test]
     fn test_train_multiple_trees() {
         let dataset = make_test_dataset();
-        let targets: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5];
+        let targets = arr1(&[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]);
+        let no_weights = ArrayView1::<f32>::from(&[][..]);
 
         let params = GBDTParams {
             n_trees: 10,
@@ -569,7 +578,7 @@ mod tests {
         };
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let forest = trainer.train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL).unwrap();
+        let forest = trainer.train(&dataset, targets.view(), no_weights, &[], Parallelism::Sequential).unwrap();
 
         assert_eq!(forest.n_trees(), 10);
     }
@@ -577,7 +586,8 @@ mod tests {
     #[test]
     fn test_train_with_regularization() {
         let dataset = make_test_dataset();
-        let targets: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5];
+        let targets = arr1(&[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]);
+        let no_weights = ArrayView1::<f32>::from(&[][..]);
 
         let params = GBDTParams {
             n_trees: 5,
@@ -590,7 +600,7 @@ mod tests {
         };
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let forest = trainer.train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL).unwrap();
+        let forest = trainer.train(&dataset, targets.view(), no_weights, &[], Parallelism::Sequential).unwrap();
 
         assert_eq!(forest.n_trees(), 5);
     }
@@ -598,13 +608,13 @@ mod tests {
     #[test]
     fn test_train_weighted() {
         let dataset = make_test_dataset();
-        let targets: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5];
-        let weights: Vec<f32> = vec![1.0, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0, 2.0];
+        let targets = arr1(&[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]);
+        let weights = arr1(&[1.0f32, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0, 2.0]);
 
         let params = GBDTParams { n_trees: 5, ..Default::default() };
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let forest = trainer.train(&dataset, &targets, &weights, &[], Parallelism::SEQUENTIAL).unwrap();
+        let forest = trainer.train(&dataset, targets.view(), weights.view(), &[], Parallelism::Sequential).unwrap();
 
         assert_eq!(forest.n_trees(), 5);
     }
@@ -612,7 +622,8 @@ mod tests {
     #[test]
     fn test_leaf_wise_growth() {
         let dataset = make_test_dataset();
-        let targets: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5];
+        let targets = arr1(&[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]);
+        let no_weights = ArrayView1::<f32>::from(&[][..]);
 
         let params = GBDTParams {
             n_trees: 3,
@@ -622,7 +633,7 @@ mod tests {
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
         let forest = trainer
-            .train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL)
+            .train(&dataset, targets.view(), no_weights, &[], Parallelism::Sequential)
             .unwrap();
 
         assert_eq!(forest.n_trees(), 3);
@@ -631,12 +642,13 @@ mod tests {
     #[test]
     fn test_train_invalid_targets() {
         let dataset = make_test_dataset();
-        let targets: Vec<f32> = vec![1.0, 2.0]; // Too few targets
+        let targets = arr1(&[1.0f32, 2.0]); // Too few targets
+        let no_weights = ArrayView1::<f32>::from(&[][..]);
 
         let params = GBDTParams::default();
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let result = trainer.train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL);
+        let result = trainer.train(&dataset, targets.view(), no_weights, &[], Parallelism::Sequential);
 
         assert!(result.is_none());
     }
@@ -645,7 +657,8 @@ mod tests {
     fn test_train_with_linear_leaves() {
         let dataset = make_test_dataset();
         // Targets have a linear pattern on feature 0
-        let targets: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5];
+        let targets = arr1(&[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]);
+        let no_weights = ArrayView1::<f32>::from(&[][..]);
 
         let params = GBDTParams {
             n_trees: 5,
@@ -656,7 +669,7 @@ mod tests {
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
         let forest = trainer
-            .train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL)
+            .train(&dataset, targets.view(), no_weights, &[], Parallelism::Sequential)
             .unwrap();
 
         assert_eq!(forest.n_trees(), 5);
@@ -671,7 +684,8 @@ mod tests {
     #[test]
     fn test_first_tree_no_linear_coefficients() {
         let dataset = make_test_dataset();
-        let targets: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5];
+        let targets = arr1(&[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]);
+        let no_weights = ArrayView1::<f32>::from(&[][..]);
 
         let params = GBDTParams {
             n_trees: 3,
@@ -681,7 +695,7 @@ mod tests {
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
         let forest = trainer
-            .train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL)
+            .train(&dataset, targets.view(), no_weights, &[], Parallelism::Sequential)
             .unwrap();
 
         // First tree should NOT have linear leaves (round 0 is skipped)
@@ -694,7 +708,8 @@ mod tests {
         use crate::repr::gbdt::TreeView;
 
         let dataset = make_test_dataset();
-        let targets: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5];
+        let targets = arr1(&[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]);
+        let no_weights = ArrayView1::<f32>::from(&[][..]);
 
         let params = GBDTParams {
             n_trees: 3,
@@ -704,7 +719,7 @@ mod tests {
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
         let forest = trainer
-            .train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL)
+            .train(&dataset, targets.view(), no_weights, &[], Parallelism::Sequential)
             .unwrap();
 
         // All trained trees should have gains and covers

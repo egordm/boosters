@@ -10,6 +10,11 @@ use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
+use ndarray::ArrayView1;
+
+fn empty_weights() -> ArrayView1<'static, f32> {
+    ArrayView1::from(&[][..])
+}
 
 fn main() {
     // Large synthetic dataset for profiling
@@ -70,7 +75,7 @@ fn main() {
     let start = std::time::Instant::now();
     // Use Sequential for cleaner profiling (single thread)
     let forest = GBDTTrainer::new(SquaredLoss, Rmse, params)
-        .train(&dataset, &labels, &[], &[], Parallelism::SEQUENTIAL)
+        .train(&dataset, ArrayView1::from(&labels[..]), empty_weights(), &[], Parallelism::Sequential)
         .unwrap();
     let train_time = start.elapsed();
 

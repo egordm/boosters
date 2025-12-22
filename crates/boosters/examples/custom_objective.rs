@@ -10,8 +10,14 @@
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
-use boosters::training::{GBDTParams, GBDTTrainer, GradsTuple, GrowthStrategy, Rmse};
+use boosters::training::{GBDTParams, GBDTTrainer, GradsTuple, GrowthStrategy, Rmse, TargetSchema};
 use boosters::{ObjectiveFn, Parallelism, TaskKind};
+use boosters::inference::common::PredictionKind;
+use ndarray::{ArrayView1, ArrayView2, ArrayViewMut2};
+
+fn empty_weights() -> ArrayView1<'static, f32> {
+    ArrayView1::from(&[][..])
+}
 
 /// A custom objective: Huber loss with delta=1.0
 ///
@@ -34,55 +40,63 @@ impl HuberLoss {
 }
 
 impl ObjectiveFn for HuberLoss {
+    fn n_outputs(&self) -> usize {
+        1
+    }
+
     fn compute_gradients(
         &self,
-        n_rows: usize,
-        n_outputs: usize,
-        predictions: &[f32],
-        targets: &[f32],
-        _weights: &[f32],
-        out_grad_hess: &mut [GradsTuple],
+        predictions: ArrayView2<f32>,
+        targets: ArrayView1<f32>,
+        weights: ArrayView1<f32>,
+        mut grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
-        debug_assert_eq!(predictions.len(), n_rows * n_outputs);
-        debug_assert_eq!(targets.len(), n_rows * n_outputs);
+        let (n_outputs, _n_rows) = predictions.dim();
+        let weights_slice = weights.as_slice().unwrap_or(&[]);
+        let targets_slice = targets.as_slice().unwrap_or(&[]);
 
-        for output in 0..n_outputs {
-            for row in 0..n_rows {
-                let idx = output * n_rows + row;
-                let pred = predictions[idx];
-                let target = targets[idx];
+        for out_idx in 0..n_outputs {
+            let preds_row = predictions.row(out_idx);
+            let preds_slice = preds_row.as_slice().unwrap();
+            let mut gh_row = grad_hess.row_mut(out_idx);
+            let gh_slice = gh_row.as_slice_mut().unwrap();
+
+            for (i, (gh, &pred)) in gh_slice.iter_mut().zip(preds_slice.iter()).enumerate() {
+                let target = targets_slice[i];
+                let w = if weights_slice.is_empty() { 1.0 } else { weights_slice[i] };
                 let error = pred - target;
 
                 let (grad, hess) = if error.abs() <= self.delta {
                     // Quadratic region
-                    (error, 1.0)
+                    (w * error, w)
                 } else {
                     // Linear region
-                    (self.delta * error.signum(), 1e-6) // Small hess for stability
+                    (w * self.delta * error.signum(), w * 1e-6) // Small hess for stability
                 };
 
-                out_grad_hess[idx].grad = grad;
-                out_grad_hess[idx].hess = hess;
+                gh.grad = grad;
+                gh.hess = hess;
             }
         }
     }
 
     fn compute_base_score(
         &self,
-        n_rows: usize,
-        n_outputs: usize,
-        targets: &[f32],
-        _weights: &[f32],
-        out_base_scores: &mut [f32],
+        targets: ArrayView1<f32>,
+        _weights: ArrayView1<f32>,
+        mut outputs: ArrayViewMut2<f32>,
     ) {
         // Use median for Huber (more robust than mean)
         // For simplicity, using mean here
-        for output in 0..n_outputs {
-            let start = output * n_rows;
-            let end = start + n_rows;
-            let sum: f32 = targets[start..end].iter().sum();
-            out_base_scores[output] = sum / n_rows as f32;
+        let n_rows = targets.len();
+        if n_rows == 0 {
+            outputs.fill(0.0);
+            return;
         }
+
+        let targets_slice = targets.as_slice().unwrap_or(&[]);
+        let sum: f32 = targets_slice.iter().sum();
+        outputs.fill(sum / n_rows as f32);
     }
 
     fn name(&self) -> &'static str {
@@ -91,6 +105,14 @@ impl ObjectiveFn for HuberLoss {
 
     fn task_kind(&self) -> TaskKind {
         TaskKind::Regression
+    }
+
+    fn target_schema(&self) -> TargetSchema {
+        TargetSchema::Continuous
+    }
+
+    fn transform_predictions(&self, _predictions: ArrayViewMut2<f32>) -> PredictionKind {
+        PredictionKind::Value
     }
 }
 
@@ -126,7 +148,7 @@ fn main() {
     let huber = HuberLoss::new(1.0);
     let trainer = GBDTTrainer::new(huber, Rmse, params);
     let forest = trainer
-        .train(&dataset, &labels, &[], &[], Parallelism::SEQUENTIAL)
+        .train(&dataset, ArrayView1::from(&labels[..]), empty_weights(), &[], Parallelism::Sequential)
         .unwrap();
 
     // =========================================================================

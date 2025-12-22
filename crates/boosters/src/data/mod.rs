@@ -40,7 +40,11 @@ pub use matrix::{ColMajor, DenseColumnIter, DenseMatrix, Layout, RowMajor, Strid
 pub use dataset::{Dataset, DatasetError, FeatureColumn};
 pub use traits::{DataMatrix, FeatureAccessor, RowView};
 
-pub use ndarray::axes;
+pub use ndarray::{
+    axis, init_predictions, init_predictions_vec,
+    FeatureMajorFeatures, FeatureMajorFeaturesView,
+    SampleMajorFeatures, SampleMajorFeaturesView,
+};
 
 // Re-export binned types for convenience
 pub use binned::{

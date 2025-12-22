@@ -41,9 +41,9 @@
 //! See [`TreeTraversal`] for implementing custom strategies.
 
 use crate::Parallelism;
-use crate::data::axes;
+use crate::data::axis;
 use crate::repr::gbdt::{Forest, ScalarLeaf, Tree, TreeView};
-use ndarray::{ArrayView2, ArrayViewMut2};
+use ndarray::{Array2, ArrayView2, ArrayViewMut2};
 
 use super::TreeTraversal;
 
@@ -190,7 +190,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
         }
     }
 
-    pub fn predict_into<S: AsRef<[f32]>>(
+    pub fn predict_into(
         &self,
         features: ArrayView2<f32>,
         weights: Option<&[f32]>,
@@ -211,18 +211,39 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
         }
 
         // Initialize with base scores (TODO: can create a helper for this pattern)
-        ndarray::Zip::from(output.axis_iter_mut(axes::ROWS))
+        ndarray::Zip::from(output.axis_iter_mut(axis::ROWS))
             .and(self.forest.base_score())
             .for_each(|mut col, &score| col.fill(score));
 
         // Process in blocks
-        let feature_chunks = features.axis_chunks_iter(axes::ROWS, self.block_size);
-        let output_chunks = output.axis_chunks_iter_mut(axes::COLS, self.block_size);
+        let feature_chunks = features.axis_chunks_iter(axis::ROWS, self.block_size);
+        let output_chunks = output.axis_chunks_iter_mut(axis::COLS, self.block_size);
         let chunks_iter = feature_chunks.zip(output_chunks);
 
         parallelism.maybe_par_bridge_for_each(chunks_iter, |(feat_chunk, output_chunk)| {
             self.predict_block_into(feat_chunk, weights, output_chunk);
         });
+    }
+
+    /// Convenience method: predict with allocation.
+    ///
+    /// Allocates output buffer and calls `predict_into`. For maximum performance
+    /// when reusing buffers, use `predict_into` directly.
+    ///
+    /// # Arguments
+    ///
+    /// * `features` - Feature matrix [n_samples, n_features]
+    /// * `parallelism` - Whether to use parallel execution
+    ///
+    /// # Returns
+    ///
+    /// Prediction matrix [n_groups, n_samples]
+    pub fn predict(&self, features: ArrayView2<f32>, parallelism: Parallelism) -> Array2<f32> {
+        let n_samples = features.nrows();
+        let n_groups = self.n_groups();
+        let mut output = Array2::<f32>::zeros((n_groups, n_samples));
+        self.predict_into(features, None, parallelism, output.view_mut());
+        output
     }
 
 
@@ -234,7 +255,8 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
     ) {
         let feature_data = features.as_slice().expect("features must be contiguous");
         let n_features = features.ncols();
-        let mut leaf_indices = vec![0u32; self.block_size];
+        let n_rows = features.nrows();
+        let mut leaf_indices = vec![0u32; n_rows];
 
         for (tree_idx, (tree, group)) in self.forest.trees_with_groups().enumerate() {
             let state = &self.tree_states[tree_idx];
@@ -247,7 +269,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
             // Step 2: Extract values and accumulate into group row
             let mut group_row = output.row_mut(group_idx);
             if tree.has_linear_leaves() {
-                for (i, feat_row) in features.axis_iter(axes::ROWS).enumerate() {
+                for (i, feat_row) in features.axis_iter(axis::ROWS).enumerate() {
                     let value = compute_linear_leaf_value(
                         tree,
                         leaf_indices[i],
@@ -256,7 +278,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
                     group_row[i] += value * weight;
                 }
             } else {
-                for i in 0..self.block_size {
+                for i in 0..n_rows {
                     group_row[i] += tree.leaf_value(leaf_indices[i]).0 * weight;
                 }
             }
@@ -290,7 +312,7 @@ pub type UnrolledPredictor8<'f> = Predictor<'f, UnrolledTraversal<Depth8>>;
 mod tests {
     use super::*;
     use approx::assert_abs_diff_eq;
-    use crate::data::RowMatrix;
+    use ndarray::Array2;
     use crate::repr::gbdt::{Forest, ScalarLeaf, Tree};
 
     fn build_simple_tree(
@@ -317,8 +339,13 @@ mod tests {
         }
     }
 
+    /// Helper: create ArrayView2 from row-major data
+    fn features_view(data: &[f32], n_rows: usize, n_cols: usize) -> ArrayView2<'_, f32> {
+        ArrayView2::from_shape((n_rows, n_cols), data).unwrap()
+    }
+
     // =========================================================================
-    // SimplePredictor tests
+    // Single-row prediction tests
     // =========================================================================
 
     #[test]
@@ -328,24 +355,12 @@ mod tests {
 
         let predictor = SimplePredictor::new(&forest);
 
-        assert_eq!(predictor.predict_row(&[0.3]), vec![1.0]);
-        assert_eq!(predictor.predict_row(&[0.7]), vec![2.0]);
-    }
+        let mut output = vec![0.0];
+        predictor.predict_row_into(&[0.3], None, &mut output);
+        assert_eq!(output, vec![1.0]);
 
-    #[test]
-    fn simple_predictor_batch() {
-        let mut forest = Forest::for_regression();
-        forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
-
-        let predictor = SimplePredictor::new(&forest);
-
-        let features = RowMatrix::from_vec(vec![0.3, 0.7, 0.5], 3, 1);
-        let output = predictor.predict(&features);
-
-        assert_eq!(output.shape(), (3, 1));
-        assert_eq!(output.row_vec(0), vec![1.0]);
-        assert_eq!(output.row_vec(1), vec![2.0]);
-        assert_eq!(output.row_vec(2), vec![2.0]);
+        predictor.predict_row_into(&[0.7], None, &mut output);
+        assert_eq!(output, vec![2.0]);
     }
 
     #[test]
@@ -355,7 +370,55 @@ mod tests {
 
         let predictor = SimplePredictor::new(&forest);
 
-        assert_eq!(predictor.predict_row(&[0.3]), vec![1.5]);
+        let mut output = vec![0.0];
+        predictor.predict_row_into(&[0.3], None, &mut output);
+        assert_eq!(output, vec![1.5]);
+    }
+
+    #[test]
+    fn simple_predictor_weighted() {
+        let mut forest = Forest::for_regression();
+        forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
+        forest.push_tree(build_simple_tree(0.5, 1.5, 0.5), 0);
+
+        let predictor = SimplePredictor::new(&forest);
+
+        let mut output = vec![0.0];
+        predictor.predict_row_into(&[0.3], Some(&[1.0, 0.5]), &mut output);
+        assert!((output[0] - 1.25).abs() < 1e-6);
+    }
+
+    #[test]
+    #[should_panic(expected = "weights length must match number of trees")]
+    fn weighted_wrong_length_panics() {
+        let mut forest = Forest::for_regression();
+        forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
+        forest.push_tree(build_simple_tree(0.5, 1.5, 0.5), 0);
+
+        let predictor = SimplePredictor::new(&forest);
+        let mut output = vec![0.0];
+        predictor.predict_row_into(&[0.3], Some(&[1.0]), &mut output); // only 1 weight
+    }
+
+    // =========================================================================
+    // Batch prediction tests
+    // =========================================================================
+
+    #[test]
+    fn simple_predictor_batch() {
+        let mut forest = Forest::for_regression();
+        forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
+
+        let predictor = SimplePredictor::new(&forest);
+
+        let features = features_view(&[0.3, 0.7, 0.5], 3, 1);
+        let output = predictor.predict(features, Parallelism::Sequential);
+
+        // Output shape: [n_groups, n_samples] = [1, 3]
+        assert_eq!(output.shape(), &[1, 3]);
+        assert_eq!(output[[0, 0]], 1.0);
+        assert_eq!(output[[0, 1]], 2.0);
+        assert_eq!(output[[0, 2]], 2.0);
     }
 
     #[test]
@@ -367,24 +430,34 @@ mod tests {
 
         let predictor = SimplePredictor::new(&forest);
 
-        let features = RowMatrix::from_vec(vec![0.3, 0.7], 2, 1);
-        let output = predictor.predict(&features);
+        let features = features_view(&[0.3, 0.7], 2, 1);
+        let output = predictor.predict(features, Parallelism::Sequential);
 
-        assert_eq!(output.shape(), (2, 3));
-        assert_eq!(output.row_vec(0), vec![0.1, 0.2, 0.3]);
-        assert_eq!(output.row_vec(1), vec![0.9, 0.8, 0.7]);
+        // Output shape: [n_groups, n_samples] = [3, 2]
+        assert_eq!(output.shape(), &[3, 2]);
+        // Sample 0 (feature=0.3, goes left)
+        assert_abs_diff_eq!(output[[0, 0]], 0.1, epsilon = 1e-6);
+        assert_abs_diff_eq!(output[[1, 0]], 0.2, epsilon = 1e-6);
+        assert_abs_diff_eq!(output[[2, 0]], 0.3, epsilon = 1e-6);
+        // Sample 1 (feature=0.7, goes right)
+        assert_abs_diff_eq!(output[[0, 1]], 0.9, epsilon = 1e-6);
+        assert_abs_diff_eq!(output[[1, 1]], 0.8, epsilon = 1e-6);
+        assert_abs_diff_eq!(output[[2, 1]], 0.7, epsilon = 1e-6);
     }
 
     #[test]
-    fn simple_predictor_weighted() {
+    fn multiple_trees_sum() {
         let mut forest = Forest::for_regression();
         forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
         forest.push_tree(build_simple_tree(0.5, 1.5, 0.5), 0);
 
         let predictor = SimplePredictor::new(&forest);
 
-        let result = predictor.predict_row_weighted(&[0.3], &[1.0, 0.5]);
-        assert!((result[0] - 1.25).abs() < 1e-6);
+        let features = features_view(&[0.3, 0.7], 2, 1);
+        let output = predictor.predict(features, Parallelism::Sequential);
+
+        assert_eq!(output[[0, 0]], 1.5); // 1.0 + 0.5
+        assert_eq!(output[[0, 1]], 3.5); // 2.0 + 1.5
     }
 
     // =========================================================================
@@ -404,16 +477,12 @@ mod tests {
             let data: Vec<f32> = (0..num_rows)
                 .map(|i| (i as f32) / (num_rows as f32))
                 .collect();
-            let features = RowMatrix::from_vec(data, num_rows, 1);
+            let features = features_view(&data, num_rows, 1);
 
-            let simple_output = simple.predict(&features);
-            let unrolled_output = unrolled.predict(&features);
+            let simple_output = simple.predict(features, Parallelism::Sequential);
+            let unrolled_output = unrolled.predict(features, Parallelism::Sequential);
 
-            assert_abs_diff_eq!(
-                simple_output,
-                unrolled_output,
-                epsilon = 1e-6,
-            );
+            assert_abs_diff_eq!(simple_output, unrolled_output, epsilon = 1e-6);
         }
     }
 
@@ -425,26 +494,22 @@ mod tests {
         let simple = SimplePredictor::new(&forest);
         let unrolled = UnrolledPredictor4::new(&forest);
 
-        let features = RowMatrix::from_vec(
-            vec![
-                0.2, 0.1, // leaf 1.0
-                0.2, 0.5, // leaf 2.0
-                0.6, 0.5, // leaf 3.0
-                0.6, 0.9, // leaf 4.0
-            ],
-            4,
-            2,
-        );
+        let data = vec![
+            0.2, 0.1, // leaf 1.0
+            0.2, 0.5, // leaf 2.0
+            0.6, 0.5, // leaf 3.0
+            0.6, 0.9, // leaf 4.0
+        ];
+        let features = features_view(&data, 4, 2);
 
-        let simple_output = simple.predict(&features);
-        let unrolled_output = unrolled.predict(&features);
+        let simple_output = simple.predict(features, Parallelism::Sequential);
+        let unrolled_output = unrolled.predict(features, Parallelism::Sequential);
 
-        for row_idx in 0..4 {
-            assert_eq!(
-                simple_output.row_vec(row_idx),
-                unrolled_output.row_vec(row_idx),
-                "Mismatch at row {}",
-                row_idx
+        for sample in 0..4 {
+            assert_abs_diff_eq!(
+                simple_output[[0, sample]],
+                unrolled_output[[0, sample]],
+                epsilon = 1e-6
             );
         }
     }
@@ -458,11 +523,15 @@ mod tests {
         let simple = SimplePredictor::new(&forest);
         let unrolled = UnrolledPredictor6::new(&forest);
 
-        let features = RowMatrix::from_vec(vec![0.3, 0.7], 2, 1);
+        let data = vec![0.3, 0.7];
+        let features = features_view(&data, 2, 1);
         let weights = &[1.0, 0.5];
 
-        let simple_output = simple.predict_weighted(&features, weights);
-        let unrolled_output = unrolled.predict_weighted(&features, weights);
+        let mut simple_output = Array2::<f32>::zeros((1, 2));
+        let mut unrolled_output = Array2::<f32>::zeros((1, 2));
+
+        simple.predict_into(features, Some(weights), Parallelism::Sequential, simple_output.view_mut());
+        unrolled.predict_into(features, Some(weights), Parallelism::Sequential, unrolled_output.view_mut());
 
         assert_abs_diff_eq!(simple_output, unrolled_output, epsilon = 1e-6);
     }
@@ -479,12 +548,13 @@ mod tests {
         let predictor = SimplePredictor::new(&forest).with_block_size(16);
         assert_eq!(predictor.block_size(), 16);
 
-        let features = RowMatrix::from_vec(vec![0.3; 100], 100, 1);
-        let output = predictor.predict(&features);
+        let data = vec![0.3f32; 100];
+        let features = features_view(&data, 100, 1);
+        let output = predictor.predict(features, Parallelism::Sequential);
 
-        assert_eq!(output.shape(), (100, 1));
-        for row_idx in 0..100 {
-            assert_eq!(output.get(row_idx, 0), 1.0);
+        assert_eq!(output.shape(), &[1, 100]);
+        for sample in 0..100 {
+            assert_eq!(output[[0, sample]], 1.0);
         }
     }
 
@@ -495,15 +565,15 @@ mod tests {
         forest.push_tree(build_simple_tree(0.5, 1.5, 0.5), 0);
 
         let data: Vec<f32> = (0..200).map(|i| (i as f32) / 200.0).collect();
-        let features = RowMatrix::from_vec(data, 200, 1);
+        let features = features_view(&data, 200, 1);
 
         let p16 = SimplePredictor::new(&forest).with_block_size(16);
         let p64 = SimplePredictor::new(&forest).with_block_size(64);
         let p128 = SimplePredictor::new(&forest).with_block_size(128);
 
-        let o16 = p16.predict(&features);
-        let o64 = p64.predict(&features);
-        let o128 = p128.predict(&features);
+        let o16 = p16.predict(features, Parallelism::Sequential);
+        let o64 = p64.predict(features, Parallelism::Sequential);
+        let o128 = p128.predict(features, Parallelism::Sequential);
 
         assert_abs_diff_eq!(o16, o64, epsilon = 1e-6);
         assert_abs_diff_eq!(o64, o128, epsilon = 1e-6);
@@ -520,36 +590,10 @@ mod tests {
 
         let predictor = SimplePredictor::new(&forest);
 
-        let features = RowMatrix::from_vec(vec![], 0, 1);
-        let output = predictor.predict(&features);
+        let features = features_view(&[], 0, 1);
+        let output = predictor.predict(features, Parallelism::Sequential);
 
-        assert_eq!(output.shape(), (0, 1));
-    }
-
-    #[test]
-    fn multiple_trees_sum() {
-        let mut forest = Forest::for_regression();
-        forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
-        forest.push_tree(build_simple_tree(0.5, 1.5, 0.5), 0);
-
-        let predictor = SimplePredictor::new(&forest);
-
-        let features = RowMatrix::from_vec(vec![0.3, 0.7], 2, 1);
-        let output = predictor.predict(&features);
-
-        assert_eq!(output.row_vec(0), vec![1.5]); // 1.0 + 0.5
-        assert_eq!(output.row_vec(1), vec![3.5]); // 2.0 + 1.5
-    }
-
-    #[test]
-    #[should_panic(expected = "weights length must match number of trees")]
-    fn weighted_wrong_length_panics() {
-        let mut forest = Forest::for_regression();
-        forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
-        forest.push_tree(build_simple_tree(0.5, 1.5, 0.5), 0);
-
-        let predictor = SimplePredictor::new(&forest);
-        predictor.predict_row_weighted(&[0.3], &[1.0]); // only 1 weight for 2 trees
+        assert_eq!(output.shape(), &[1, 0]);
     }
 
     // =========================================================================
@@ -557,7 +601,7 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn par_predict_matches_sequential() {
+    fn parallel_matches_sequential() {
         let mut forest = Forest::for_regression();
         forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
         forest.push_tree(build_simple_tree(0.5, 1.5, 0.5), 0);
@@ -570,13 +614,13 @@ mod tests {
             let data: Vec<f32> = (0..num_rows * 2)
                 .map(|i| (i as f32) / (num_rows as f32 * 2.0))
                 .collect();
-            let features = RowMatrix::from_vec(data, num_rows, 2);
+            let features = features_view(&data, num_rows, 2);
 
-            let seq_simple = simple.predict(&features);
-            let par_simple = simple.par_predict(&features, 0); // 0 = auto threads
+            let seq_simple = simple.predict(features, Parallelism::Sequential);
+            let par_simple = simple.predict(features, Parallelism::Parallel);
 
-            let seq_unrolled = unrolled.predict(&features);
-            let par_unrolled = unrolled.par_predict(&features, 0);
+            let seq_unrolled = unrolled.predict(features, Parallelism::Sequential);
+            let par_unrolled = unrolled.predict(features, Parallelism::Parallel);
 
             assert_abs_diff_eq!(seq_simple, par_simple, epsilon = 1e-6);
             assert_abs_diff_eq!(seq_unrolled, par_unrolled, epsilon = 1e-6);
@@ -584,7 +628,7 @@ mod tests {
     }
 
     #[test]
-    fn par_predict_weighted_matches_sequential() {
+    fn parallel_weighted_matches_sequential() {
         let mut forest = Forest::for_regression();
         forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
         forest.push_tree(build_simple_tree(0.5, 1.5, 0.5), 0);
@@ -593,16 +637,19 @@ mod tests {
         let weights = &[1.0, 0.5];
 
         let data: Vec<f32> = (0..100).map(|i| (i as f32) / 100.0).collect();
-        let features = RowMatrix::from_vec(data, 100, 1);
+        let features = features_view(&data, 100, 1);
 
-        let seq_output = predictor.predict_weighted(&features, weights);
-        let par_output = predictor.par_predict_weighted(&features, weights, 0);
+        let mut seq_output = Array2::<f32>::zeros((1, 100));
+        let mut par_output = Array2::<f32>::zeros((1, 100));
+
+        predictor.predict_into(features, Some(weights), Parallelism::Sequential, seq_output.view_mut());
+        predictor.predict_into(features, Some(weights), Parallelism::Parallel, par_output.view_mut());
 
         assert_abs_diff_eq!(seq_output, par_output, epsilon = 1e-6);
     }
 
     #[test]
-    fn par_predict_multiclass() {
+    fn parallel_multiclass() {
         let mut forest = Forest::new(3);
         forest.push_tree(build_simple_tree(0.1, 0.9, 0.5), 0);
         forest.push_tree(build_simple_tree(0.2, 0.8, 0.5), 1);
@@ -610,41 +657,24 @@ mod tests {
 
         let predictor = UnrolledPredictor6::new(&forest);
 
-        let features = RowMatrix::from_vec(vec![0.3, 0.7, 0.4, 0.6], 4, 1);
+        let features = features_view(&[0.3, 0.7, 0.4, 0.6], 4, 1);
 
-        let seq_output = predictor.predict(&features);
-        let par_output = predictor.par_predict(&features, 0);
+        let seq_output = predictor.predict(features, Parallelism::Sequential);
+        let par_output = predictor.predict(features, Parallelism::Parallel);
 
         assert_abs_diff_eq!(seq_output, par_output, epsilon = 1e-6);
     }
 
     #[test]
-    fn par_predict_empty_input() {
+    fn parallel_empty_input() {
         let mut forest = Forest::for_regression();
         forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
 
         let predictor = UnrolledPredictor6::new(&forest);
 
-        let features = RowMatrix::from_vec(vec![], 0, 1);
-        let output = predictor.par_predict(&features, 0);
+        let features = features_view(&[], 0, 1);
+        let output = predictor.predict(features, Parallelism::Parallel);
 
-        assert_eq!(output.shape(), (0, 1));
-    }
-
-    #[test]
-    fn par_predict_serial_matches_parallel() {
-        let mut forest = Forest::for_regression();
-        forest.push_tree(build_deeper_tree(), 0);
-
-        let predictor = UnrolledPredictor6::new(&forest);
-        let data: Vec<f32> = (0..200).map(|i| (i as f32) / 200.0).collect();
-        let features = RowMatrix::from_vec(data, 100, 2);
-
-        let parallel = predictor.par_predict(&features, 0);  // auto
-        let serial = predictor.par_predict(&features, 1);    // serial
-        let two_threads = predictor.par_predict(&features, 2); // exact
-
-        assert_abs_diff_eq!(parallel, serial, epsilon = 1e-6);
-        assert_abs_diff_eq!(parallel, two_threads, epsilon = 1e-6);
+        assert_eq!(output.shape(), &[1, 0]);
     }
 }

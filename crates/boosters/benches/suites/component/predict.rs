@@ -6,10 +6,11 @@ mod common;
 use common::criterion_config::default_criterion;
 use common::models::load_boosters_model;
 
-use boosters::data::RowMatrix;
 use boosters::inference::gbdt::{Predictor, StandardTraversal, UnrolledTraversal6};
 use boosters::testing::data::random_dense_f32;
+use boosters::Parallelism;
 
+use ndarray::Array2;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 fn bench_gbtree_batch_sizes(c: &mut Criterion) {
@@ -21,12 +22,12 @@ fn bench_gbtree_batch_sizes(c: &mut Criterion) {
 
 	for batch_size in [1usize, 10, 100, 1_000, 10_000] {
 		let input_data = random_dense_f32(batch_size, num_features, 42, -5.0, 5.0);
-		let matrix = RowMatrix::from_vec(input_data, batch_size, num_features);
+		let matrix = Array2::from_shape_vec((batch_size, num_features), input_data).unwrap();
 
 		group.throughput(Throughput::Elements(batch_size as u64));
 		group.bench_with_input(BenchmarkId::new("medium", batch_size), &matrix, |b, matrix| {
 			b.iter(|| {
-				let output = predictor.predict(black_box(matrix));
+				let output = predictor.predict(black_box(matrix.view()), Parallelism::Sequential);
 				black_box(output)
 			});
 		});
@@ -52,12 +53,12 @@ fn bench_gbtree_model_sizes(c: &mut Criterion) {
 
 		let predictor = Predictor::<UnrolledTraversal6>::new(&model.forest);
 		let input_data = random_dense_f32(batch_size, model.num_features, 42, -5.0, 5.0);
-		let matrix = RowMatrix::from_vec(input_data, batch_size, model.num_features);
+		let matrix = Array2::from_shape_vec((batch_size, model.num_features), input_data).unwrap();
 
 		group.throughput(Throughput::Elements(batch_size as u64));
 		group.bench_with_input(BenchmarkId::new(label, batch_size), &matrix, |b, matrix| {
 			b.iter(|| {
-				let output = predictor.predict(black_box(matrix));
+				let output = predictor.predict(black_box(matrix.view()), Parallelism::Sequential);
 				black_box(output)
 			});
 		});
@@ -71,11 +72,11 @@ fn bench_gbtree_single_row(c: &mut Criterion) {
 	let predictor = Predictor::<UnrolledTraversal6>::new(&model.forest);
 
 	let input_data = random_dense_f32(1, model.num_features, 42, -5.0, 5.0);
-	let matrix = RowMatrix::from_vec(input_data, 1, model.num_features);
+	let matrix = Array2::from_shape_vec((1, model.num_features), input_data).unwrap();
 
 	c.bench_function("component/predict/single_row/medium", |b| {
 		b.iter(|| {
-			let output = predictor.predict(black_box(&matrix));
+			let output = predictor.predict(black_box(matrix.view()), Parallelism::Sequential);
 			black_box(output)
 		})
 	});
@@ -88,7 +89,7 @@ fn bench_traversal_strategies(c: &mut Criterion) {
 	
 	let batch_size = 10_000usize;
 	let input_data = random_dense_f32(batch_size, num_features, 42, -5.0, 5.0);
-	let matrix = RowMatrix::from_vec(input_data, batch_size, num_features);
+	let matrix = Array2::from_shape_vec((batch_size, num_features), input_data).unwrap();
 
 	let mut group = c.benchmark_group("component/predict/traversal");
 	group.throughput(Throughput::Elements(batch_size as u64));
@@ -96,13 +97,13 @@ fn bench_traversal_strategies(c: &mut Criterion) {
 	// Standard traversal (baseline)
 	let standard = Predictor::<StandardTraversal>::new(&model.forest).with_block_size(64);
 	group.bench_with_input(BenchmarkId::new("standard", batch_size), &matrix, |b, m| {
-		b.iter(|| black_box(standard.predict(black_box(m))))
+		b.iter(|| black_box(standard.predict(black_box(m.view()), Parallelism::Sequential)))
 	});
 
 	// Unrolled traversal (6 levels)
 	let unrolled = Predictor::<UnrolledTraversal6>::new(&model.forest).with_block_size(64);
 	group.bench_with_input(BenchmarkId::new("unrolled6", batch_size), &matrix, |b, m| {
-		b.iter(|| black_box(unrolled.predict(black_box(m))))
+		b.iter(|| black_box(unrolled.predict(black_box(m.view()), Parallelism::Sequential)))
 	});
 
 	group.finish();

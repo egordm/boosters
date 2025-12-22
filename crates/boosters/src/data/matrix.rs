@@ -222,8 +222,8 @@ impl<T> FusedIterator for StridedIter<'_, T> {}
 #[derive(Debug, Clone)]
 pub struct DenseMatrix<T = f32, L: Layout = RowMajor, S: AsRef<[T]> = Box<[T]>> {
     data: S,
-    num_rows: usize,
-    num_cols: usize,
+    n_rows: usize,
+    n_cols: usize,
     _marker: PhantomData<(T, L)>,
 }
 
@@ -252,8 +252,8 @@ impl<T, L: Layout> DenseMatrix<T, L, Box<[T]>> {
         );
         Self {
             data: data.into_boxed_slice(),
-            num_rows,
-            num_cols,
+            n_rows: num_rows,
+            n_cols: num_cols,
             _marker: PhantomData,
         }
     }
@@ -276,8 +276,8 @@ impl<T, L: Layout, S: AsRef<[T]>> DenseMatrix<T, L, S> {
         );
         Self {
             data: storage,
-            num_rows,
-            num_cols,
+            n_rows: num_rows,
+            n_cols: num_cols,
             _marker: PhantomData,
         }
     }
@@ -294,14 +294,14 @@ impl<T, L: Layout, S: AsRef<[T]>> DenseMatrix<T, L, S> {
 
     /// Number of rows.
     #[inline]
-    pub fn num_rows(&self) -> usize {
-        self.num_rows
+    pub fn n_rows(&self) -> usize {
+        self.n_rows
     }
 
     /// Number of columns (features).
     #[inline]
-    pub fn num_cols(&self) -> usize {
-        self.num_cols
+    pub fn n_cols(&self) -> usize {
+        self.n_cols
     }
 
     /// Get element at (row, col).
@@ -309,10 +309,10 @@ impl<T, L: Layout, S: AsRef<[T]>> DenseMatrix<T, L, S> {
     /// Returns `None` if out of bounds.
     #[inline]
     pub fn get(&self, row: usize, col: usize) -> Option<&T> {
-        if row >= self.num_rows || col >= self.num_cols {
+        if row >= self.n_rows || col >= self.n_cols {
             return None;
         }
-        let idx = L::index(row, col, self.num_rows, self.num_cols);
+        let idx = L::index(row, col, self.n_rows, self.n_cols);
         Some(&self.data.as_ref()[idx])
     }
 }
@@ -323,10 +323,10 @@ impl<T, L: Layout, S: AsRef<[T]> + AsMut<[T]>> DenseMatrix<T, L, S> {
     /// Returns `None` if out of bounds.
     #[inline]
     pub fn get_mut(&mut self, row: usize, col: usize) -> Option<&mut T> {
-        if row >= self.num_rows || col >= self.num_cols {
+        if row >= self.n_rows || col >= self.n_cols {
             return None;
         }
-        let idx = L::index(row, col, self.num_rows, self.num_cols);
+        let idx = L::index(row, col, self.n_rows, self.n_cols);
         Some(&mut self.data.as_mut()[idx])
     }
 
@@ -356,8 +356,8 @@ impl<T, L: Layout> DenseMatrix<T, L, &[T]> {
         );
         DenseMatrix {
             data,
-            num_rows,
-            num_cols,
+            n_rows: num_rows,
+            n_cols: num_cols,
             _marker: PhantomData,
         }
     }
@@ -383,26 +383,26 @@ impl<T: Copy, L: Layout, S: AsRef<[T]>> DenseMatrix<T, L, S> {
     /// assert_eq!(cm.col_slice(0), &[1.0, 3.0]);
     /// ```
     pub fn to_layout<L2: Layout>(&self) -> DenseMatrix<T, L2, Box<[T]>> {
-        let mut data = Vec::with_capacity(self.num_rows * self.num_cols);
+        let mut data = Vec::with_capacity(self.n_rows * self.n_cols);
 
         // Iterate in target layout order
-        for i in 0..(self.num_rows * self.num_cols) {
+        for i in 0..(self.n_rows * self.n_cols) {
             // Find (row, col) for position i in target layout
             let (row, col) = if std::any::TypeId::of::<L2>() == std::any::TypeId::of::<RowMajor>() {
-                (i / self.num_cols, i % self.num_cols)
+                (i / self.n_cols, i % self.n_cols)
             } else {
-                (i % self.num_rows, i / self.num_rows)
+                (i % self.n_rows, i / self.n_rows)
             };
 
             // Get from source using source layout indexing
-            let src_idx = L::index(row, col, self.num_rows, self.num_cols);
+            let src_idx = L::index(row, col, self.n_rows, self.n_cols);
             data.push(self.data.as_ref()[src_idx]);
         }
 
         DenseMatrix {
             data: data.into_boxed_slice(),
-            num_rows: self.num_rows,
-            num_cols: self.num_cols,
+            n_rows: self.n_rows,
+            n_cols: self.n_cols,
             _marker: PhantomData,
         }
     }
@@ -438,9 +438,9 @@ impl<T, S: AsRef<[T]>> DenseMatrix<T, RowMajor, S> {
     /// Panics if `row >= num_rows`.
     #[inline]
     pub fn row_slice(&self, row: usize) -> &[T] {
-        assert!(row < self.num_rows, "Row index {} out of bounds", row);
-        let start = row * self.num_cols;
-        let end = start + self.num_cols;
+        assert!(row < self.n_rows, "Row index {} out of bounds", row);
+        let start = row * self.n_cols;
+        let end = start + self.n_cols;
         &self.data.as_ref()[start..end]
     }
 
@@ -449,8 +449,8 @@ impl<T, S: AsRef<[T]>> DenseMatrix<T, RowMajor, S> {
     /// This is slower than `row_slice()` due to non-contiguous memory access.
     #[inline]
     pub fn col_iter(&self, col: usize) -> StridedIter<'_, T> {
-        assert!(col < self.num_cols, "Column index {} out of bounds", col);
-        StridedIter::new(self.data.as_ref(), col, self.num_cols, self.num_rows)
+        assert!(col < self.n_cols, "Column index {} out of bounds", col);
+        StridedIter::new(self.data.as_ref(), col, self.n_cols, self.n_rows)
     }
 
     /// Get a contiguous slice of multiple rows. O(1).
@@ -464,14 +464,14 @@ impl<T, S: AsRef<[T]>> DenseMatrix<T, RowMajor, S> {
     #[inline]
     pub fn rows_slice(&self, row_start: usize, row_count: usize) -> &[T] {
         assert!(
-            row_start + row_count <= self.num_rows,
+            row_start + row_count <= self.n_rows,
             "Row range {}..{} out of bounds for {} rows",
             row_start,
             row_start + row_count,
-            self.num_rows
+            self.n_rows
         );
-        let start = row_start * self.num_cols;
-        let len = row_count * self.num_cols;
+        let start = row_start * self.n_cols;
+        let len = row_count * self.n_cols;
         &self.data.as_ref()[start..start + len]
     }
 }
@@ -480,9 +480,9 @@ impl<T, S: AsRef<[T]> + AsMut<[T]>> DenseMatrix<T, RowMajor, S> {
     /// Get a mutable row slice. O(1).
     #[inline]
     pub fn row_slice_mut(&mut self, row: usize) -> &mut [T] {
-        assert!(row < self.num_rows, "Row index {} out of bounds", row);
-        let start = row * self.num_cols;
-        let end = start + self.num_cols;
+        assert!(row < self.n_rows, "Row index {} out of bounds", row);
+        let start = row * self.n_cols;
+        let end = start + self.n_cols;
         &mut self.data.as_mut()[start..end]
     }
 }
@@ -520,8 +520,8 @@ impl<T: Copy + Default> DenseMatrix<T, ColMajor, Box<[T]>> {
 
         DenseMatrix {
             data: data.into_boxed_slice(),
-            num_rows,
-            num_cols,
+            n_rows: num_rows,
+            n_cols: num_cols,
             _marker: PhantomData,
         }
     }
@@ -535,9 +535,9 @@ impl<T, S: AsRef<[T]>> DenseMatrix<T, ColMajor, S> {
     /// Panics if `col >= num_cols`.
     #[inline]
     pub fn col_slice(&self, col: usize) -> &[T] {
-        assert!(col < self.num_cols, "Column index {} out of bounds", col);
-        let start = col * self.num_rows;
-        let end = start + self.num_rows;
+        assert!(col < self.n_cols, "Column index {} out of bounds", col);
+        let start = col * self.n_rows;
+        let end = start + self.n_rows;
         &self.data.as_ref()[start..end]
     }
 
@@ -546,8 +546,8 @@ impl<T, S: AsRef<[T]>> DenseMatrix<T, ColMajor, S> {
     /// This is slower than `col_slice()` due to non-contiguous memory access.
     #[inline]
     pub fn row_iter(&self, row: usize) -> StridedIter<'_, T> {
-        assert!(row < self.num_rows, "Row index {} out of bounds", row);
-        StridedIter::new(self.data.as_ref(), row, self.num_rows, self.num_cols)
+        assert!(row < self.n_rows, "Row index {} out of bounds", row);
+        StridedIter::new(self.data.as_ref(), row, self.n_rows, self.n_cols)
     }
 }
 
@@ -555,9 +555,9 @@ impl<T, S: AsRef<[T]> + AsMut<[T]>> DenseMatrix<T, ColMajor, S> {
     /// Get a mutable column slice. O(1).
     #[inline]
     pub fn col_slice_mut(&mut self, col: usize) -> &mut [T] {
-        assert!(col < self.num_cols, "Column index {} out of bounds", col);
-        let start = col * self.num_rows;
-        let end = start + self.num_rows;
+        assert!(col < self.n_cols, "Column index {} out of bounds", col);
+        let start = col * self.n_rows;
+        let end = start + self.n_rows;
         &mut self.data.as_mut()[start..end]
     }
 }
@@ -575,12 +575,12 @@ impl<T: Copy, S: AsRef<[T]>> DataMatrix for DenseMatrix<T, RowMajor, S> {
 
     #[inline]
     fn num_rows(&self) -> usize {
-        self.num_rows
+        self.n_rows
     }
 
     #[inline]
     fn num_features(&self) -> usize {
-        self.num_cols
+        self.n_cols
     }
 
     #[inline]
@@ -592,10 +592,10 @@ impl<T: Copy, S: AsRef<[T]>> DataMatrix for DenseMatrix<T, RowMajor, S> {
 
     #[inline]
     fn get(&self, row: usize, col: usize) -> Option<T> {
-        if row >= self.num_rows || col >= self.num_cols {
+        if row >= self.n_rows || col >= self.n_cols {
             return None;
         }
-        Some(self.data.as_ref()[row * self.num_cols + col])
+        Some(self.data.as_ref()[row * self.n_cols + col])
     }
 
     #[inline]
@@ -605,12 +605,12 @@ impl<T: Copy, S: AsRef<[T]>> DataMatrix for DenseMatrix<T, RowMajor, S> {
 
     fn copy_row(&self, i: usize, buf: &mut [T]) {
         assert!(
-            buf.len() >= self.num_cols,
+            buf.len() >= self.n_cols,
             "Buffer too small: {} < {}",
             buf.len(),
-            self.num_cols
+            self.n_cols
         );
-        buf[..self.num_cols].copy_from_slice(self.row_slice(i));
+        buf[..self.n_cols].copy_from_slice(self.row_slice(i));
     }
 
     #[allow(clippy::eq_op)]
@@ -626,10 +626,10 @@ impl<T: Copy, S: AsRef<[T]>> DataMatrix for DenseMatrix<T, RowMajor, S> {
     where
         Self::Element: PartialEq,
     {
-        if self.num_rows == 0 || self.num_cols == 0 {
+        if self.n_rows == 0 || self.n_cols == 0 {
             return 1.0;
         }
-        let total = self.num_rows * self.num_cols;
+        let total = self.n_rows * self.n_cols;
         let non_missing = self.data.as_ref().iter().filter(|&&x| x == x).count();
         non_missing as f64 / total as f64
     }
@@ -645,31 +645,31 @@ impl<T: Copy, S: AsRef<[T]>> DataMatrix for DenseMatrix<T, ColMajor, S> {
 
     #[inline]
     fn num_rows(&self) -> usize {
-        self.num_rows
+        self.n_rows
     }
 
     #[inline]
     fn num_features(&self) -> usize {
-        self.num_cols
+        self.n_cols
     }
 
     #[inline]
     fn row(&self, i: usize) -> Self::Row<'_> {
-        assert!(i < self.num_rows, "Row index {} out of bounds", i);
+        assert!(i < self.n_rows, "Row index {} out of bounds", i);
         StridedRowView {
             data: self.data.as_ref(),
             start: i,
-            stride: self.num_rows,
-            len: self.num_cols,
+            stride: self.n_rows,
+            len: self.n_cols,
         }
     }
 
     #[inline]
     fn get(&self, row: usize, col: usize) -> Option<T> {
-        if row >= self.num_rows || col >= self.num_cols {
+        if row >= self.n_rows || col >= self.n_cols {
             return None;
         }
-        let idx = ColMajor::index(row, col, self.num_rows, self.num_cols);
+        let idx = ColMajor::index(row, col, self.n_rows, self.n_cols);
         Some(self.data.as_ref()[idx])
     }
 
@@ -679,16 +679,16 @@ impl<T: Copy, S: AsRef<[T]>> DataMatrix for DenseMatrix<T, ColMajor, S> {
     }
 
     fn copy_row(&self, i: usize, buf: &mut [T]) {
-        assert!(i < self.num_rows, "Row index {} out of bounds", i);
+        assert!(i < self.n_rows, "Row index {} out of bounds", i);
         assert!(
-            buf.len() >= self.num_cols,
+            buf.len() >= self.n_cols,
             "Buffer too small: {} < {}",
             buf.len(),
-            self.num_cols
+            self.n_cols
         );
         // Strided copy
-        for (col, dst) in buf[..self.num_cols].iter_mut().enumerate() {
-            let idx = ColMajor::index(i, col, self.num_rows, self.num_cols);
+        for (col, dst) in buf[..self.n_cols].iter_mut().enumerate() {
+            let idx = ColMajor::index(i, col, self.n_rows, self.n_cols);
             *dst = self.data.as_ref()[idx];
         }
     }
@@ -706,10 +706,10 @@ impl<T: Copy, S: AsRef<[T]>> DataMatrix for DenseMatrix<T, ColMajor, S> {
     where
         Self::Element: PartialEq,
     {
-        if self.num_rows == 0 || self.num_cols == 0 {
+        if self.n_rows == 0 || self.n_cols == 0 {
             return 1.0;
         }
-        let total = self.num_rows * self.num_cols;
+        let total = self.n_rows * self.n_cols;
         let non_missing = self.data.as_ref().iter().filter(|&&x| x == x).count();
         non_missing as f64 / total as f64
     }
@@ -729,12 +729,12 @@ impl<S: AsRef<[f32]>> FeatureAccessor for DenseMatrix<f32, RowMajor, S> {
 
     #[inline]
     fn num_rows(&self) -> usize {
-        self.num_rows
+        self.n_rows
     }
 
     #[inline]
     fn num_features(&self) -> usize {
-        self.num_cols
+        self.n_cols
     }
 }
 
@@ -746,12 +746,12 @@ impl<S: AsRef<[f32]>> FeatureAccessor for DenseMatrix<f32, ColMajor, S> {
 
     #[inline]
     fn num_rows(&self) -> usize {
-        self.num_rows
+        self.n_rows
     }
 
     #[inline]
     fn num_features(&self) -> usize {
-        self.num_cols
+        self.n_cols
     }
 }
 
@@ -949,7 +949,7 @@ impl<T: Copy, S: AsRef<[T]>> DenseMatrix<T, ColMajor, S> {
     /// Number of columns (features).
     #[inline]
     pub fn num_columns(&self) -> usize {
-        self.num_cols
+        self.n_cols
     }
 
     /// Iterate over (row_index, value) pairs in the given column.
@@ -984,8 +984,8 @@ mod tests {
         let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
         let matrix = RowMatrix::from_vec(data, 2, 3);
 
-        assert_eq!(matrix.num_rows(), 2);
-        assert_eq!(matrix.num_cols(), 3);
+        assert_eq!(matrix.n_rows(), 2);
+        assert_eq!(matrix.n_cols(), 3);
     }
 
     #[test]
@@ -993,8 +993,8 @@ mod tests {
         let data: [f32; 6] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
         let matrix: DenseMatrix<f32, RowMajor, &[f32]> = DenseMatrix::from_slice(&data, 2, 3);
 
-        assert_eq!(matrix.num_rows(), 2);
-        assert_eq!(matrix.num_cols(), 3);
+        assert_eq!(matrix.n_rows(), 2);
+        assert_eq!(matrix.n_cols(), 3);
     }
 
     #[test]
@@ -1144,8 +1144,8 @@ mod tests {
         let data = vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0];
         let matrix = DenseMatrix::<f32, ColMajor>::from_vec(data, 2, 3);
 
-        assert_eq!(matrix.num_rows(), 2);
-        assert_eq!(matrix.num_cols(), 3);
+        assert_eq!(matrix.n_rows(), 2);
+        assert_eq!(matrix.n_cols(), 3);
     }
 
     #[test]

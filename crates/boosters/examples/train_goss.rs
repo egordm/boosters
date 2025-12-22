@@ -19,6 +19,11 @@ use boosters::training::{
     SquaredLoss,
 };
 use boosters::Parallelism;
+use ndarray::{Array2, ArrayView1};
+
+fn empty_weights() -> ArrayView1<'static, f32> {
+    ArrayView1::from(&[][..])
+}
 
 fn main() {
     // =========================================================================
@@ -74,7 +79,7 @@ fn main() {
 
     let start = Instant::now();
     let forest_baseline = trainer_baseline
-        .train(&dataset, &train_labels, &[], &[], Parallelism::SEQUENTIAL)
+        .train(&dataset, ArrayView1::from(&train_labels[..]), empty_weights(), &[], Parallelism::Sequential)
         .unwrap();
     let time_baseline = start.elapsed();
 
@@ -82,7 +87,8 @@ fn main() {
         .chunks(n_features)
         .map(|row| forest_baseline.predict_row(row)[0])
         .collect();
-    let rmse_baseline = Rmse.compute(n_test, 1, &preds_baseline, &test_labels, &[]);
+    let pred_arr_baseline = Array2::from_shape_vec((1, preds_baseline.len()), preds_baseline.to_vec()).unwrap();
+    let rmse_baseline = Rmse.compute(pred_arr_baseline.view(), ArrayView1::from(&test_labels[..]), empty_weights());
 
     println!("  Training time: {:?}", time_baseline);
     println!("  Test RMSE: {:.6}", rmse_baseline);
@@ -109,7 +115,7 @@ fn main() {
 
     let start = Instant::now();
     let forest_goss = trainer_goss
-        .train(&dataset, &train_labels, &[], &[], Parallelism::SEQUENTIAL)
+        .train(&dataset, ArrayView1::from(&train_labels[..]), empty_weights(), &[], Parallelism::Sequential)
         .unwrap();
     let time_goss = start.elapsed();
 
@@ -117,7 +123,8 @@ fn main() {
         .chunks(n_features)
         .map(|row| forest_goss.predict_row(row)[0])
         .collect();
-    let rmse_goss = Rmse.compute(n_test, 1, &preds_goss, &test_labels, &[]);
+    let pred_arr_goss = Array2::from_shape_vec((1, preds_goss.len()), preds_goss.to_vec()).unwrap();
+    let rmse_goss = Rmse.compute(pred_arr_goss.view(), ArrayView1::from(&test_labels[..]), empty_weights());
 
     println!("  Training time: {:?}", time_goss);
     println!("  Test RMSE: {:.6}", rmse_goss);
@@ -145,7 +152,7 @@ fn main() {
 
     let start = Instant::now();
     let forest_uniform = trainer_uniform
-        .train(&dataset, &train_labels, &[], &[], Parallelism::SEQUENTIAL)
+        .train(&dataset, ArrayView1::from(&train_labels[..]), empty_weights(), &[], Parallelism::Sequential)
         .unwrap();
     let time_uniform = start.elapsed();
 
@@ -153,7 +160,8 @@ fn main() {
         .chunks(n_features)
         .map(|row| forest_uniform.predict_row(row)[0])
         .collect();
-    let rmse_uniform = Rmse.compute(n_test, 1, &preds_uniform, &test_labels, &[]);
+    let pred_arr_uniform = Array2::from_shape_vec((1, preds_uniform.len()), preds_uniform.to_vec()).unwrap();
+    let rmse_uniform = Rmse.compute(pred_arr_uniform.view(), ArrayView1::from(&test_labels[..]), empty_weights());
 
     println!("  Training time: {:?}", time_uniform);
     println!("  Test RMSE: {:.6}", rmse_uniform);

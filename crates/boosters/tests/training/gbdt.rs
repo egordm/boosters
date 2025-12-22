@@ -6,6 +6,7 @@ use boosters::data::{BinMapper, BinnedDatasetBuilder, ColMatrix, GroupLayout, Gr
 use boosters::repr::gbdt::{TreeView, SplitType};
 use boosters::training::{GBDTParams, GBDTTrainer, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
+use ndarray::ArrayView1;
 
 #[test]
 fn train_rejects_invalid_targets_len() {
@@ -18,7 +19,9 @@ fn train_rejects_invalid_targets_len() {
         .expect("Failed to build binned dataset");
 
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, GBDTParams::default());
-    let result = trainer.train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL);
+    let targets_view = ArrayView1::from(&targets[..]);
+    let empty_weights: ArrayView1<f32> = ArrayView1::from(&[][..]);
+    let result = trainer.train(&dataset, targets_view, empty_weights, &[], Parallelism::Sequential);
 
     assert!(result.is_none());
 }
@@ -43,7 +46,9 @@ fn trained_model_improves_over_base_score_on_simple_problem() {
     };
 
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-    let forest = trainer.train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL).unwrap();
+    let targets_view = ArrayView1::from(&targets[..]);
+    let empty_weights: ArrayView1<f32> = ArrayView1::from(&[][..]);
+    let forest = trainer.train(&dataset, targets_view, empty_weights, &[], Parallelism::Sequential).unwrap();
 
     forest
         .validate()
@@ -101,7 +106,9 @@ fn trained_model_improves_over_base_score_on_medium_problem() {
     };
 
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-    let forest = trainer.train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL).unwrap();
+    let targets_view = ArrayView1::from(&targets[..]);
+    let empty_weights: ArrayView1<f32> = ArrayView1::from(&[][..]);
+    let forest = trainer.train(&dataset, targets_view, empty_weights, &[], Parallelism::Sequential).unwrap();
 
     forest
         .validate()
@@ -182,7 +189,9 @@ fn train_with_categorical_features_produces_categorical_splits() {
     };
 
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-    let forest = trainer.train(&dataset, &targets, &[], &[], Parallelism::SEQUENTIAL).unwrap();
+    let targets_view = ArrayView1::from(&targets[..]);
+    let empty_weights: ArrayView1<f32> = ArrayView1::from(&[][..]);
+    let forest = trainer.train(&dataset, targets_view, empty_weights, &[], Parallelism::Sequential).unwrap();
 
     forest
         .validate()

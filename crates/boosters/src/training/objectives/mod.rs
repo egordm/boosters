@@ -40,8 +40,9 @@ mod regression;
 pub use classification::{HingeLoss, LambdaRankLoss, LogisticLoss, SoftmaxLoss};
 pub use regression::{AbsoluteLoss, PinballLoss, PoissonLoss, PseudoHuberLoss, SquaredLoss};
 
-use crate::inference::common::{PredictionKind, PredictionOutput, Predictions};
-use crate::training::{Gradients, GradsTuple};
+use crate::inference::common::PredictionKind;
+use crate::training::GradsTuple;
+use ndarray::{ArrayView1, ArrayView2, ArrayViewMut2};
 
 // Re-export TaskKind from model module for unified usage
 pub use crate::model::TaskKind;
@@ -63,47 +64,6 @@ pub enum TargetSchema {
     MulticlassIndex,
     /// Non-negative counts (Poisson-style).
     CountNonNegative,
-}
-
-// =============================================================================
-// Helpers
-// =============================================================================
-/// Validate objective input parameters.
-///
-/// Panics with a descriptive message if inputs are invalid.
-#[inline]
-fn validate_objective_inputs(
-    n_rows: usize,
-    n_outputs: usize,
-    predictions_len: usize,
-    grad_hess_len: usize,
-    weights: &[f32],
-) {
-    assert!(
-        n_rows > 0 && n_outputs > 0,
-        "n_rows ({}) and n_outputs ({}) must be positive",
-        n_rows,
-        n_outputs
-    );
-    let required = n_rows * n_outputs;
-    assert!(
-        predictions_len >= required,
-        "predictions.len() ({}) < n_rows * n_outputs ({})",
-        predictions_len,
-        required
-    );
-    assert!(
-        grad_hess_len >= required,
-        "grad_hess.len() ({}) < n_rows * n_outputs ({})",
-        grad_hess_len,
-        required
-    );
-    assert!(
-        weights.is_empty() || weights.len() >= n_rows,
-        "weights.len() ({}) < n_rows ({})",
-        weights.len(),
-        n_rows
-    );
 }
 
 // =============================================================================
@@ -136,9 +96,7 @@ pub trait ObjectiveFn: Send + Sync {
     /// For most objectives this is 1 (single-output).
     /// For multiclass (SoftmaxLoss) this is num_classes.
     /// For multi-quantile this is the number of quantiles.
-    fn n_outputs(&self) -> usize {
-        1
-    }
+    fn n_outputs(&self) -> usize;
 
     /// Compute gradients and hessians for the given predictions.
     ///
@@ -152,12 +110,10 @@ pub trait ObjectiveFn: Send + Sync {
     /// * `grad_hess` - Interleaved (grad, hess) pairs, column-major `[n_outputs * n_rows]`
     fn compute_gradients(
         &self,
-        n_rows: usize,
-        n_outputs: usize,
-        predictions: &[f32],
-        targets: &[f32],
-        weights: &[f32],
-        grad_hess: &mut [GradsTuple],
+        predictions: ArrayView2<f32>,
+        targets: ArrayView1<f32>,
+        weights: ArrayView1<f32>,
+        grad_hess: ArrayViewMut2<GradsTuple>,
     );
 
     /// Compute the initial base score (bias) from targets.
@@ -173,11 +129,9 @@ pub trait ObjectiveFn: Send + Sync {
     /// * `outputs` - Output base scores, length `n_outputs`
     fn compute_base_score(
         &self,
-        n_rows: usize,
-        n_outputs: usize,
-        targets: &[f32],
-        weights: &[f32],
-        outputs: &mut [f32],
+        targets: ArrayView1<f32>,
+        weights: ArrayView1<f32>,
+        outputs: ArrayViewMut2<f32>,
     );
 
     // =========================================================================
@@ -185,14 +139,10 @@ pub trait ObjectiveFn: Send + Sync {
     // =========================================================================
 
     /// High-level task kind implied by this objective.
-    fn task_kind(&self) -> TaskKind {
-        TaskKind::Regression
-    }
+    fn task_kind(&self) -> TaskKind;
 
     /// Target encoding/schema expected by this objective.
-    fn target_schema(&self) -> TargetSchema {
-        TargetSchema::Continuous
-    }
+    fn target_schema(&self) -> TargetSchema;
 
     /// Transform raw predictions in-place (column-major layout).
     ///
@@ -203,109 +153,10 @@ pub trait ObjectiveFn: Send + Sync {
     ///
     /// Most regression objectives are no-ops. Classification objectives apply
     /// sigmoid (binary) or softmax (multiclass).
-    fn transform_predictions(&self, _predictions: &mut [f32], _n_rows: usize, _n_outputs: usize) -> PredictionKind {
-        PredictionKind::Value
-    }
-
-    /// Transform a [`PredictionOutput`] in-place.
-    ///
-    /// Convenience wrapper around [`transform_predictions`](Self::transform_predictions).
-    fn transform_prediction_inplace(&self, raw: &mut PredictionOutput) -> PredictionKind {
-        let n_rows = raw.num_rows();
-        let n_groups = raw.num_groups();
-        self.transform_predictions(raw.as_mut_slice(), n_rows, n_groups)
-    }
-
-    /// Transform raw model outputs (margins/logits) into semantic predictions.
-    ///
-    /// This consumes `raw` and returns an explicitly-labeled prediction output.
-    fn transform_prediction(&self, mut raw: PredictionOutput) -> Predictions {
-        let kind = self.transform_prediction_inplace(&mut raw);
-        Predictions { kind, output: raw }
-    }
+    fn transform_predictions(&self, predictions: ArrayViewMut2<f32>) -> PredictionKind;
 
     /// Name of the objective (for logging).
-    fn name(&self) -> &'static str {
-        "objective"
-    }
-
-    // =========================================================================
-    // Convenience methods for trainer integration
-    // =========================================================================
-
-    /// Convenience alias for n_outputs().
-    #[inline]
-    fn num_outputs(&self) -> usize {
-        self.n_outputs()
-    }
-
-    /// Compute initial base scores (optimal constant prediction).
-    ///
-    /// Convenience wrapper around `compute_base_score` that allocates the output.
-    ///
-    /// # Arguments
-    ///
-    /// * `n_rows` - Number of samples
-    /// * `targets` - Ground truth labels
-    /// * `weights` - Sample weights (empty slice for unweighted)
-    fn base_scores(&self, n_rows: usize, targets: &[f32], weights: &[f32]) -> Vec<f32> {
-        let n_outputs = self.n_outputs();
-        let mut output = vec![0.0f32; n_outputs];
-        self.compute_base_score(n_rows, n_outputs, targets, weights, &mut output);
-        output
-    }
-
-    /// Fill a column-major prediction buffer with computed base scores.
-    ///
-    /// Useful for initializing prediction buffers before tree accumulation.
-    ///
-    /// # Arguments
-    ///
-    /// * `predictions` - Column-major buffer to fill `[n_outputs * n_rows]`
-    /// * `n_rows` - Number of samples
-    /// * `targets` - Ground truth labels
-    /// * `weights` - Sample weights (empty slice for unweighted)
-    fn fill_base_scores(
-        &self,
-        predictions: &mut [f32],
-        n_rows: usize,
-        targets: &[f32],
-        weights: &[f32],
-    ) {
-        let n_outputs = self.n_outputs();
-        let mut base_scores = vec![0.0f32; n_outputs];
-        self.compute_base_score(n_rows, n_outputs, targets, weights, &mut base_scores);
-
-        // Fill column-major: each output column gets its base score
-        for (out_idx, &score) in base_scores.iter().enumerate() {
-            let start = out_idx * n_rows;
-            predictions[start..start + n_rows].fill(score);
-        }
-    }
-
-    /// Compute gradients into a Gradients buffer.
-    ///
-    /// This is a convenience wrapper that extracts the mutable slices from
-    /// the buffer and calls the underlying compute_gradients.
-    ///
-    /// # Arguments
-    ///
-    /// * `predictions` - Model predictions
-    /// * `targets` - Ground truth labels
-    /// * `weights` - Sample weights (empty slice for unweighted)
-    /// * `buffer` - Gradient buffer to fill
-    fn compute_gradients_buffer(
-        &self,
-        predictions: &[f32],
-        targets: &[f32],
-        weights: &[f32],
-        buffer: &mut Gradients,
-    ) {
-        let n_rows = buffer.n_samples();
-        let n_outputs = buffer.n_outputs();
-        let grad_hess = buffer.pairs_mut();
-        self.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess);
-    }
+    fn name(&self) -> &'static str;
 }
 
 // =============================================================================
@@ -445,44 +296,40 @@ impl ObjectiveFn for Objective {
 
     fn compute_gradients(
         &self,
-        n_rows: usize,
-        n_outputs: usize,
-        predictions: &[f32],
-        targets: &[f32],
-        weights: &[f32],
-        grad_hess: &mut [GradsTuple],
+        predictions: ArrayView2<f32>,
+        targets: ArrayView1<f32>,
+        weights: ArrayView1<f32>,
+        grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         match self {
-            Self::SquaredLoss(inner) => inner.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess),
-            Self::AbsoluteLoss(inner) => inner.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess),
-            Self::LogisticLoss(inner) => inner.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess),
-            Self::HingeLoss(inner) => inner.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess),
-            Self::SoftmaxLoss(inner) => inner.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess),
-            Self::PinballLoss(inner) => inner.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess),
-            Self::PseudoHuberLoss(inner) => inner.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess),
-            Self::PoissonLoss(inner) => inner.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess),
-            Self::Custom(inner) => inner.compute_gradients(n_rows, n_outputs, predictions, targets, weights, grad_hess),
+            Self::SquaredLoss(inner) => inner.compute_gradients(predictions, targets, weights, grad_hess),
+            Self::AbsoluteLoss(inner) => inner.compute_gradients(predictions, targets, weights, grad_hess),
+            Self::LogisticLoss(inner) => inner.compute_gradients(predictions, targets, weights, grad_hess),
+            Self::HingeLoss(inner) => inner.compute_gradients(predictions, targets, weights, grad_hess),
+            Self::SoftmaxLoss(inner) => inner.compute_gradients(predictions, targets, weights, grad_hess),
+            Self::PinballLoss(inner) => inner.compute_gradients(predictions, targets, weights, grad_hess),
+            Self::PseudoHuberLoss(inner) => inner.compute_gradients(predictions, targets, weights, grad_hess),
+            Self::PoissonLoss(inner) => inner.compute_gradients(predictions, targets, weights, grad_hess),
+            Self::Custom(inner) => inner.compute_gradients(predictions, targets, weights, grad_hess),
         }
     }
 
     fn compute_base_score(
         &self,
-        n_rows: usize,
-        n_outputs: usize,
-        targets: &[f32],
-        weights: &[f32],
-        outputs: &mut [f32],
+        targets: ArrayView1<f32>,
+        weights: ArrayView1<f32>,
+        outputs: ArrayViewMut2<f32>,
     ) {
         match self {
-            Self::SquaredLoss(inner) => inner.compute_base_score(n_rows, n_outputs, targets, weights, outputs),
-            Self::AbsoluteLoss(inner) => inner.compute_base_score(n_rows, n_outputs, targets, weights, outputs),
-            Self::LogisticLoss(inner) => inner.compute_base_score(n_rows, n_outputs, targets, weights, outputs),
-            Self::HingeLoss(inner) => inner.compute_base_score(n_rows, n_outputs, targets, weights, outputs),
-            Self::SoftmaxLoss(inner) => inner.compute_base_score(n_rows, n_outputs, targets, weights, outputs),
-            Self::PinballLoss(inner) => inner.compute_base_score(n_rows, n_outputs, targets, weights, outputs),
-            Self::PseudoHuberLoss(inner) => inner.compute_base_score(n_rows, n_outputs, targets, weights, outputs),
-            Self::PoissonLoss(inner) => inner.compute_base_score(n_rows, n_outputs, targets, weights, outputs),
-            Self::Custom(inner) => inner.compute_base_score(n_rows, n_outputs, targets, weights, outputs),
+            Self::SquaredLoss(inner) => inner.compute_base_score(targets, weights, outputs),
+            Self::AbsoluteLoss(inner) => inner.compute_base_score(targets, weights, outputs),
+            Self::LogisticLoss(inner) => inner.compute_base_score(targets, weights, outputs),
+            Self::HingeLoss(inner) => inner.compute_base_score(targets, weights, outputs),
+            Self::SoftmaxLoss(inner) => inner.compute_base_score(targets, weights, outputs),
+            Self::PinballLoss(inner) => inner.compute_base_score(targets, weights, outputs),
+            Self::PseudoHuberLoss(inner) => inner.compute_base_score(targets, weights, outputs),
+            Self::PoissonLoss(inner) => inner.compute_base_score(targets, weights, outputs),
+            Self::Custom(inner) => inner.compute_base_score(targets, weights, outputs),
         }
     }
 
@@ -528,17 +375,17 @@ impl ObjectiveFn for Objective {
         }
     }
 
-    fn transform_predictions(&self, predictions: &mut [f32], n_rows: usize, n_outputs: usize) -> PredictionKind {
+    fn transform_predictions(&self, predictions: ArrayViewMut2<f32>) -> PredictionKind {
         match self {
-            Self::SquaredLoss(inner) => inner.transform_predictions(predictions, n_rows, n_outputs),
-            Self::AbsoluteLoss(inner) => inner.transform_predictions(predictions, n_rows, n_outputs),
-            Self::LogisticLoss(inner) => inner.transform_predictions(predictions, n_rows, n_outputs),
-            Self::HingeLoss(inner) => inner.transform_predictions(predictions, n_rows, n_outputs),
-            Self::SoftmaxLoss(inner) => inner.transform_predictions(predictions, n_rows, n_outputs),
-            Self::PinballLoss(inner) => inner.transform_predictions(predictions, n_rows, n_outputs),
-            Self::PseudoHuberLoss(inner) => inner.transform_predictions(predictions, n_rows, n_outputs),
-            Self::PoissonLoss(inner) => inner.transform_predictions(predictions, n_rows, n_outputs),
-            Self::Custom(inner) => inner.transform_predictions(predictions, n_rows, n_outputs),
+            Self::SquaredLoss(inner) => inner.transform_predictions(predictions),
+            Self::AbsoluteLoss(inner) => inner.transform_predictions(predictions),
+            Self::LogisticLoss(inner) => inner.transform_predictions(predictions),
+            Self::HingeLoss(inner) => inner.transform_predictions(predictions),
+            Self::SoftmaxLoss(inner) => inner.transform_predictions(predictions),
+            Self::PinballLoss(inner) => inner.transform_predictions(predictions),
+            Self::PseudoHuberLoss(inner) => inner.transform_predictions(predictions),
+            Self::PoissonLoss(inner) => inner.transform_predictions(predictions),
+            Self::Custom(inner) => inner.transform_predictions(predictions),
         }
     }
 }
@@ -550,58 +397,68 @@ impl ObjectiveFn for Objective {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ndarray::{Array1, Array2, array};
+
+    fn make_grad_hess_array(n_outputs: usize, n_samples: usize) -> Array2<GradsTuple> {
+        Array2::from_elem((n_outputs, n_samples), GradsTuple { grad: 0.0, hess: 0.0 })
+    }
+
+    fn empty_weights() -> Array1<f32> {
+        Array1::from_vec(vec![])
+    }
 
     #[test]
     fn squared_loss_gradients() {
         let obj = SquaredLoss;
-        let preds = [1.0f32, 2.0, 3.0];
-        let targets = [0.5f32, 2.5, 2.5];
-        let mut grad_hess = [GradsTuple { grad: 0.0, hess: 0.0 }; 3];
+        let preds = array![[1.0, 2.0, 3.0]];
+        let targets = array![0.5, 2.5, 2.5];
+        let weights = array![];
+        let mut grad_hess = make_grad_hess_array(1, 3);
 
-        obj.compute_gradients(3, 1, &preds, &targets, &[], &mut grad_hess);
+        obj.compute_gradients(preds.view(), targets.view(), weights.view(), grad_hess.view_mut());
 
         // grad = pred - target
-        assert!((grad_hess[0].grad - 0.5).abs() < 1e-6);
-        assert!((grad_hess[1].grad - -0.5).abs() < 1e-6);
-        assert!((grad_hess[2].grad - 0.5).abs() < 1e-6);
+        assert!((grad_hess[[0, 0]].grad - 0.5).abs() < 1e-6);
+        assert!((grad_hess[[0, 1]].grad - -0.5).abs() < 1e-6);
+        assert!((grad_hess[[0, 2]].grad - 0.5).abs() < 1e-6);
 
         // hess = 1.0
-        assert!((grad_hess[0].hess - 1.0).abs() < 1e-6);
-        assert!((grad_hess[1].hess - 1.0).abs() < 1e-6);
-        assert!((grad_hess[2].hess - 1.0).abs() < 1e-6);
+        assert!((grad_hess[[0, 0]].hess - 1.0).abs() < 1e-6);
+        assert!((grad_hess[[0, 1]].hess - 1.0).abs() < 1e-6);
+        assert!((grad_hess[[0, 2]].hess - 1.0).abs() < 1e-6);
     }
 
     #[test]
     fn weighted_squared_loss() {
         let obj = SquaredLoss;
-        let preds = [1.0f32, 2.0];
-        let targets = [0.5f32, 2.5];
-        let weights = [2.0f32, 0.5];
-        let mut grad_hess = [GradsTuple { grad: 0.0, hess: 0.0 }; 2];
+        let preds = array![[1.0, 2.0]];
+        let targets = array![0.5, 2.5];
+        let weights = array![2.0, 0.5];
+        let mut grad_hess = make_grad_hess_array(1, 2);
 
-        obj.compute_gradients(2, 1, &preds, &targets, &weights, &mut grad_hess);
+        obj.compute_gradients(preds.view(), targets.view(), weights.view(), grad_hess.view_mut());
 
         // grad = weight * (pred - target)
-        assert!((grad_hess[0].grad - 1.0).abs() < 1e-6); // 2.0 * 0.5
-        assert!((grad_hess[1].grad - -0.25).abs() < 1e-6); // 0.5 * -0.5
+        assert!((grad_hess[[0, 0]].grad - 1.0).abs() < 1e-6); // 2.0 * 0.5
+        assert!((grad_hess[[0, 1]].grad - -0.25).abs() < 1e-6); // 0.5 * -0.5
 
         // hess = weight
-        assert!((grad_hess[0].hess - 2.0).abs() < 1e-6);
-        assert!((grad_hess[1].hess - 0.5).abs() < 1e-6);
+        assert!((grad_hess[[0, 0]].hess - 2.0).abs() < 1e-6);
+        assert!((grad_hess[[0, 1]].hess - 0.5).abs() < 1e-6);
     }
 
     #[test]
     fn pinball_loss_median() {
         let obj = PinballLoss::new(0.5);
-        let preds = [1.0f32, 2.0, 3.0];
-        let targets = [0.5f32, 2.5, 2.5];
-        let mut grad_hess = [GradsTuple { grad: 0.0, hess: 0.0 }; 3];
+        let preds = array![[1.0, 2.0, 3.0]];
+        let targets = array![0.5, 2.5, 2.5];
+        let mut grad_hess = make_grad_hess_array(1, 3);
 
-        obj.compute_gradients(3, 1, &preds, &targets, &[], &mut grad_hess);
+        obj.compute_gradients(preds.view(), targets.view(), empty_weights().view(), grad_hess.view_mut());
 
         // For alpha=0.5: grad = 0.5 if pred > target, -0.5 if pred < target
-        assert!((grad_hess[0].grad - 0.5).abs() < 1e-6); // pred > target
-        assert!((grad_hess[1].grad - -0.5).abs() < 1e-6); // pred < target
-        assert!((grad_hess[2].grad - 0.5).abs() < 1e-6); // pred > target
+        assert!((grad_hess[[0, 0]].grad - 0.5).abs() < 1e-6); // pred > target
+        assert!((grad_hess[[0, 1]].grad - -0.5).abs() < 1e-6); // pred < target
+        assert!((grad_hess[[0, 2]].grad - 0.5).abs() < 1e-6); // pred > target
     }
 }

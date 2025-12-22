@@ -584,7 +584,7 @@ impl<L: LeafValue> Tree<L> {
     {
         use crate::data::DataMatrix;
         
-        let n_rows = matrix.num_rows();
+        let n_rows = matrix.n_rows();
         let n_features = matrix.num_features();
         debug_assert_eq!(predictions.len(), n_rows);
 

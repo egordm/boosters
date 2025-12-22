@@ -45,6 +45,7 @@ mod classification;
 mod regression;
 
 pub use classification::{Accuracy, Auc, LogLoss, MarginAccuracy, MulticlassAccuracy, MulticlassLogLoss};
+use ndarray::{ArrayView1, ArrayView2};
 pub use regression::{HuberMetric, Mae, Mape, PoissonDeviance, QuantileMetric, Rmse};
 
 use crate::inference::common::PredictionKind;
@@ -235,27 +236,25 @@ impl Metric {
 impl MetricFn for Metric {
     fn compute(
         &self,
-        n_rows: usize,
-        n_outputs: usize,
-        predictions: &[f32],
-        targets: &[f32],
-        weights: &[f32],
+        predictions: ArrayView2<f32>,
+        targets: ArrayView1<f32>,
+        weights: ArrayView1<f32>,
     ) -> f64 {
         match self {
             Self::None => f64::NAN,
-            Self::Rmse(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
-            Self::Mae(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
-            Self::Mape(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
-            Self::LogLoss(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
-            Self::Accuracy(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
-            Self::MarginAccuracy(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
-            Self::Auc(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
-            Self::MulticlassLogLoss(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
-            Self::MulticlassAccuracy(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
-            Self::Quantile(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
-            Self::Huber(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
-            Self::PoissonDeviance(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
-            Self::Custom(inner) => inner.compute(n_rows, n_outputs, predictions, targets, weights),
+            Self::Rmse(inner) => inner.compute(predictions, targets, weights),
+            Self::Mae(inner) => inner.compute(predictions, targets, weights),
+            Self::Mape(inner) => inner.compute(predictions, targets, weights),
+            Self::LogLoss(inner) => inner.compute(predictions, targets, weights),
+            Self::Accuracy(inner) => inner.compute(predictions, targets, weights),
+            Self::MarginAccuracy(inner) => inner.compute(predictions, targets, weights),
+            Self::Auc(inner) => inner.compute(predictions, targets, weights),
+            Self::MulticlassLogLoss(inner) => inner.compute(predictions, targets, weights),
+            Self::MulticlassAccuracy(inner) => inner.compute(predictions, targets, weights),
+            Self::Quantile(inner) => inner.compute(predictions, targets, weights),
+            Self::Huber(inner) => inner.compute(predictions, targets, weights),
+            Self::PoissonDeviance(inner) => inner.compute(predictions, targets, weights),
+            Self::Custom(inner) => inner.compute(predictions, targets, weights),
         }
     }
 
@@ -354,11 +353,9 @@ pub trait MetricFn: Send + Sync {
     /// Pass an empty `weights` slice for unweighted computation.
     fn compute(
         &self,
-        n_rows: usize,
-        n_outputs: usize,
-        predictions: &[f32],
-        targets: &[f32],
-        weights: &[f32],
+        predictions: ArrayView2<f32>,
+        targets: ArrayView1<f32>,
+        weights: ArrayView1<f32>,
     ) -> f64;
 
     /// What prediction space does this metric expect?

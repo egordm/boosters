@@ -190,8 +190,8 @@ mod tests {
 		let file = create_wide_columns_ipc();
 		let matrix = load_ipc_to_row_matrix_f32(file.path()).unwrap();
 
-		assert_eq!(matrix.num_rows(), 3);
-		assert_eq!(matrix.num_cols(), 2);
+		assert_eq!(matrix.n_rows(), 3);
+		assert_eq!(matrix.n_cols(), 2);
 		assert_eq!(matrix.row_slice(0), &[1.0, 4.0]);
 		assert_eq!(matrix.row_slice(1), &[2.0, 5.0]);
 		assert_eq!(matrix.row_slice(2), &[3.0, 6.0]);
@@ -202,8 +202,8 @@ mod tests {
 		let file = create_wide_columns_ipc();
 		let matrix = load_ipc_to_col_matrix_f32(file.path()).unwrap();
 
-		assert_eq!(matrix.num_rows(), 3);
-		assert_eq!(matrix.num_cols(), 2);
+		assert_eq!(matrix.n_rows(), 3);
+		assert_eq!(matrix.n_cols(), 2);
 		assert_eq!(matrix.col_slice(0), &[1.0, 2.0, 3.0]);
 		assert_eq!(matrix.col_slice(1), &[4.0, 5.0, 6.0]);
 	}
@@ -223,8 +223,8 @@ mod tests {
 		let file = create_fixed_list_ipc();
 		let matrix = load_ipc_to_row_matrix_f32(file.path()).unwrap();
 
-		assert_eq!(matrix.num_rows(), 3);
-		assert_eq!(matrix.num_cols(), 2);
+		assert_eq!(matrix.n_rows(), 3);
+		assert_eq!(matrix.n_cols(), 2);
 		assert_eq!(matrix.row_slice(0), &[1.0, 4.0]);
 		assert_eq!(matrix.row_slice(1), &[2.0, 5.0]);
 		assert_eq!(matrix.row_slice(2), &[3.0, 6.0]);

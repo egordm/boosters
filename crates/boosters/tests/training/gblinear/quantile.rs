@@ -213,8 +213,8 @@ fn train_multi_quantile_regression() {
 
     // Get predictions on test set
     let output = model.predict(&test_data, &vec![0.0; num_quantiles]);
-    let mut our_predictions: Vec<Vec<f32>> = vec![vec![0.0; test_data.num_rows()]; num_quantiles];
-    for i in 0..test_data.num_rows() {
+    let mut our_predictions: Vec<Vec<f32>> = vec![vec![0.0; test_data.n_rows()]; num_quantiles];
+    for i in 0..test_data.n_rows() {
         for q in 0..num_quantiles {
             our_predictions[q][i] = output.get(i, q);
         }
@@ -238,7 +238,7 @@ fn train_multi_quantile_regression() {
 
     // Verify quantile ordering: q0.1 < q0.5 < q0.9 for most samples
     let mut ordered_count = 0;
-    for i in 0..test_data.num_rows() {
+    for i in 0..test_data.n_rows() {
         let low = our_predictions[0][i];
         let med = our_predictions[1][i];
         let high = our_predictions[2][i];
@@ -246,7 +246,7 @@ fn train_multi_quantile_regression() {
             ordered_count += 1;
         }
     }
-    let ordered_fraction = ordered_count as f64 / test_data.num_rows() as f64;
+    let ordered_fraction = ordered_count as f64 / test_data.n_rows() as f64;
     assert!(
         ordered_fraction > 0.7,
         "Quantile predictions should be ordered for most samples (got {:.2})",
@@ -297,9 +297,9 @@ fn multi_quantile_vs_separate_models() {
         let multi_output = multi_model.predict(&data, &[0.0; 3]);
         let single_output = single_model.predict(&data, &[0.0]);
 
-        let mut multi_preds = Vec::with_capacity(data.num_rows());
-        let mut single_preds = Vec::with_capacity(data.num_rows());
-        for i in 0..data.num_rows() {
+        let mut multi_preds = Vec::with_capacity(data.n_rows());
+        let mut single_preds = Vec::with_capacity(data.n_rows());
+        for i in 0..data.n_rows() {
             multi_preds.push(multi_output.get(i, q));
             single_preds.push(single_output.get(i, 0));
         }

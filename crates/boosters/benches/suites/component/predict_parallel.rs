@@ -7,10 +7,11 @@ use common::criterion_config::default_criterion;
 use common::models::load_boosters_model;
 use common::threading::with_rayon_threads;
 
-use boosters::data::RowMatrix;
 use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
 use boosters::testing::data::random_dense_f32;
+use boosters::Parallelism;
 
+use ndarray::Array2;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 fn bench_gbtree_thread_scaling(c: &mut Criterion) {
@@ -19,7 +20,7 @@ fn bench_gbtree_thread_scaling(c: &mut Criterion) {
 
 	let batch_size = 10_000usize;
 	let input_data = random_dense_f32(batch_size, model.num_features, 42, -5.0, 5.0);
-	let matrix = RowMatrix::from_vec(input_data, batch_size, model.num_features);
+	let matrix = Array2::from_shape_vec((batch_size, model.num_features), input_data).unwrap();
 
 	let mut group = c.benchmark_group("component/predict/thread_scaling/medium");
 	group.throughput(Throughput::Elements(batch_size as u64));
@@ -27,14 +28,14 @@ fn bench_gbtree_thread_scaling(c: &mut Criterion) {
 	for &n_threads in common::matrix::THREAD_COUNTS {
 		group.bench_with_input(BenchmarkId::new("par_predict", n_threads), &matrix, |b, m| {
 			b.iter(|| {
-				with_rayon_threads(n_threads, || black_box(predictor.par_predict(black_box(m), n_threads)))
+				with_rayon_threads(n_threads, || black_box(predictor.predict(black_box(m.view()), Parallelism::Parallel)))
 			})
 		});
 	}
 
 	// Sequential baseline
 	group.bench_with_input(BenchmarkId::new("predict", 1), &matrix, |b, m| {
-		b.iter(|| black_box(predictor.predict(black_box(m))))
+		b.iter(|| black_box(predictor.predict(black_box(m.view()), Parallelism::Sequential)))
 	});
 
 	group.finish();

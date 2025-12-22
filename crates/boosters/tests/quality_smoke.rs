@@ -1,15 +1,27 @@
 use boosters::data::{binned::BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMajor, RowMatrix};
-use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
+use boosters::model::gbdt::{GBDTConfig, GBDTModel, RegularizationParams, TreeParams};
 use boosters::testing::data::{
 	random_dense_f32, split_indices, synthetic_binary_targets_from_linear_score,
 	synthetic_multiclass_targets_from_linear_scores, synthetic_regression_targets_linear,
 };
 use boosters::training::{
-	Accuracy, GainParams, GBDTParams, GBDTTrainer, GrowthStrategy, LogLoss, Mae, MetricFn,
-	MulticlassAccuracy, MulticlassLogLoss, ObjectiveFn, Rmse, LogisticLoss, SoftmaxLoss, SquaredLoss,
-	LinearLeafConfig,
+	Accuracy, LogLoss, Mae, MetricFn,
+	MulticlassAccuracy, MulticlassLogLoss, Objective, Rmse, LinearLeafConfig,
 };
-use boosters::Parallelism;
+use ndarray::{Array2, ArrayView1};
+
+/// Create an empty weights view
+fn empty_weights() -> ArrayView1<'static, f32> {
+	ArrayView1::from(&[][..])
+}
+
+/// Create predictions Array2 from ColMatrix for metric evaluation
+fn preds_array(pred: &ColMatrix<f32>) -> Array2<f32> {
+	let n_samples = pred.n_rows();
+	let n_groups = pred.n_cols();
+	// predictions layout: [n_groups, n_samples]
+	Array2::from_shape_fn((n_groups, n_samples), |(g, s)| *pred.get(s, g).unwrap())
+}
 
 fn select_rows_row_major(features_row_major: &[f32], rows: usize, cols: usize, row_indices: &[usize]) -> Vec<f32> {
 	assert_eq!(features_row_major.len(), rows * cols);
@@ -30,18 +42,6 @@ fn select_targets(targets: &[f32], row_indices: &[usize]) -> Vec<f32> {
 	out
 }
 
-fn default_params(trees: u32, growth_strategy: GrowthStrategy, seed: u64) -> GBDTParams {
-	GBDTParams {
-		n_trees: trees,
-		learning_rate: 0.1,
-		growth_strategy,
-		gain: GainParams { reg_lambda: 1.0, ..Default::default() },
-		cache_size: 64,
-		seed,
-		..Default::default()
-	}
-}
-
 fn run_synthetic_regression(rows: usize, cols: usize, trees: u32, depth: u32, seed: u64) -> (f64, f64) {
 	let x_all = random_dense_f32(rows, cols, seed, -1.0, 1.0);
 	let y_all = synthetic_regression_targets_linear(&x_all, rows, cols, seed ^ 0x0BAD_5EED, 0.05).0;
@@ -55,18 +55,26 @@ fn run_synthetic_regression(rows: usize, cols: usize, trees: u32, depth: u32, se
 	let row_train: DenseMatrix<f32, RowMajor> = DenseMatrix::from_vec(x_train, train_idx.len(), cols);
 	let col_train: ColMatrix<f32> = row_train.to_layout();
 	let binned_train = BinnedDatasetBuilder::from_matrix(&col_train, 256).build().unwrap();
-	let row_valid: RowMatrix<f32> = RowMatrix::from_vec(x_valid, valid_idx.len(), cols);
+	let row_valid: RowMatrix<f32> = DenseMatrix::from_vec(x_valid, valid_idx.len(), cols);
 
-	let params = default_params(trees, GrowthStrategy::DepthWise { max_depth: depth }, seed);
-	let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-	let forest = trainer.train(&binned_train, &y_train, &[], &[], Parallelism::SEQUENTIAL).unwrap();
-	let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
-	let pred = predictor.predict(&row_valid);
-	let pred0: Vec<f32> = pred.column(0).to_vec();
+	let config = GBDTConfig::builder()
+		.objective(Objective::squared())
+		.n_trees(trees)
+		.learning_rate(0.1)
+		.tree(TreeParams::depth_wise(depth))
+		.regularization(RegularizationParams { lambda: 1.0, ..Default::default() })
+		.cache_size(64)
+		.seed(seed)
+		.build()
+		.unwrap();
 
-	let n_rows = y_valid.len();
-	let rmse = Rmse.compute(n_rows, 1, &pred0, &y_valid, &[]);
-	let mae = Mae.compute(n_rows, 1, &pred0, &y_valid, &[]);
+	let model = GBDTModel::train(&binned_train, ArrayView1::from(&y_train[..]), empty_weights(), config, 1).unwrap();
+	let pred = model.predict(&row_valid, 1);
+	let pred_arr = preds_array(&pred);
+	let targets_arr = ArrayView1::from(&y_valid[..]);
+
+	let rmse = Rmse.compute(pred_arr.view(), targets_arr, empty_weights());
+	let mae = Mae.compute(pred_arr.view(), targets_arr, empty_weights());
 	(rmse, mae)
 }
 
@@ -83,20 +91,29 @@ fn run_synthetic_binary(rows: usize, cols: usize, trees: u32, depth: u32, seed: 
 	let row_train: DenseMatrix<f32, RowMajor> = DenseMatrix::from_vec(x_train, train_idx.len(), cols);
 	let col_train: ColMatrix<f32> = row_train.to_layout();
 	let binned_train = BinnedDatasetBuilder::from_matrix(&col_train, 256).build().unwrap();
-	let row_valid: RowMatrix<f32> = RowMatrix::from_vec(x_valid, valid_idx.len(), cols);
+	let row_valid: RowMatrix<f32> = DenseMatrix::from_vec(x_valid, valid_idx.len(), cols);
 
-	let params = default_params(trees, GrowthStrategy::DepthWise { max_depth: depth }, seed);
-	let objective = LogisticLoss;
-	let trainer = GBDTTrainer::new(objective, LogLoss, params);
-	let forest = trainer.train(&binned_train, &y_train, &[], &[], Parallelism::SEQUENTIAL).unwrap();
-	let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
-	let mut raw = predictor.predict(&row_valid);
-	objective.transform_prediction_inplace(&mut raw);
-	let prob = raw.column(0);
+	let config = GBDTConfig::builder()
+		.objective(Objective::logistic())
+		.n_trees(trees)
+		.learning_rate(0.1)
+		.tree(TreeParams::depth_wise(depth))
+		.regularization(RegularizationParams { lambda: 1.0, ..Default::default() })
+		.cache_size(64)
+		.seed(seed)
+		.build()
+		.unwrap();
 
-	let n_rows = y_valid.len();
-	let ll = LogLoss.compute(n_rows, 1, prob, &y_valid, &[]);
-	let acc = Accuracy::default().compute(n_rows, 1, prob, &y_valid, &[]);
+	let model =
+		GBDTModel::train(&binned_train, ArrayView1::from(&y_train[..]), empty_weights(), config, 1)
+			.unwrap();
+	// predict() returns probabilities automatically
+	let pred = model.predict(&row_valid, 1);
+	let pred_arr = preds_array(&pred);
+	let targets_arr = ArrayView1::from(&y_valid[..]);
+
+	let ll = LogLoss.compute(pred_arr.view(), targets_arr, empty_weights());
+	let acc = Accuracy::default().compute(pred_arr.view(), targets_arr, empty_weights());
 	(ll, acc)
 }
 
@@ -120,23 +137,29 @@ fn run_synthetic_multiclass(
 	let row_train: DenseMatrix<f32, RowMajor> = DenseMatrix::from_vec(x_train, train_idx.len(), cols);
 	let col_train: ColMatrix<f32> = row_train.to_layout();
 	let binned_train = BinnedDatasetBuilder::from_matrix(&col_train, 256).build().unwrap();
-	let row_valid: RowMatrix<f32> = RowMatrix::from_vec(x_valid, valid_idx.len(), cols);
+	let row_valid: RowMatrix<f32> = DenseMatrix::from_vec(x_valid, valid_idx.len(), cols);
 
-	let params = default_params(trees, GrowthStrategy::DepthWise { max_depth: depth }, seed);
-	let objective = SoftmaxLoss::new(classes);
-	let trainer = GBDTTrainer::new(objective, MulticlassLogLoss, params);
-	let forest = trainer.train(&binned_train, &y_train, &[], &[], Parallelism::SEQUENTIAL).unwrap();
-	let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
+	let config = GBDTConfig::builder()
+		.objective(Objective::softmax(classes))
+		.n_trees(trees)
+		.learning_rate(0.1)
+		.tree(TreeParams::depth_wise(depth))
+		.regularization(RegularizationParams { lambda: 1.0, ..Default::default() })
+		.cache_size(64)
+		.seed(seed)
+		.build()
+		.unwrap();
 
-	let n_rows = row_valid.num_rows();
-	// Apply softmax directly to column-major output
-	let mut raw = predictor.predict(&row_valid);
-	objective.transform_prediction_inplace(&mut raw);
-	// raw is already column-major: predictions[class * n_rows + row]
-	let prob_col_major = raw.as_slice();
+	let model =
+		GBDTModel::train(&binned_train, ArrayView1::from(&y_train[..]), empty_weights(), config, 1)
+			.unwrap();
+	// predict() returns softmax probabilities, column-major layout
+	let pred = model.predict(&row_valid, 1);
+	let pred_arr = preds_array(&pred);
+	let targets_arr = ArrayView1::from(&y_valid[..]);
 
-	let ll = MulticlassLogLoss.compute(n_rows, classes, prob_col_major, &y_valid, &[]);
-	let acc = MulticlassAccuracy.compute(n_rows, classes, &prob_col_major, &y_valid, &[]);
+	let ll = MulticlassLogLoss.compute(pred_arr.view(), targets_arr, empty_weights());
+	let acc = MulticlassAccuracy.compute(pred_arr.view(), targets_arr, empty_weights());
 	(ll, acc)
 }
 
@@ -236,40 +259,51 @@ fn test_quality_improvement_linear_leaves() {
 	let row_train: DenseMatrix<f32, RowMajor> = DenseMatrix::from_vec(x_train, train_idx.len(), 2);
 	let col_train: ColMatrix<f32> = row_train.to_layout();
 	let binned_train = BinnedDatasetBuilder::from_matrix(&col_train, 256).build().unwrap();
-	let row_valid: RowMatrix<f32> = RowMatrix::from_vec(x_valid, valid_idx.len(), 2);
+	let row_valid: RowMatrix<f32> = DenseMatrix::from_vec(x_valid, valid_idx.len(), 2);
 
 	// --- Train without linear leaves ---
-	let base_params = GBDTParams {
-		n_trees: N_TREES,
-		learning_rate: 0.1,
-		growth_strategy: GrowthStrategy::DepthWise { max_depth: MAX_DEPTH },
-		gain: GainParams { reg_lambda: 1.0, ..Default::default() },
-		seed: SEED,
-		linear_leaves: None,
-		..Default::default()
-	};
+	let base_config = GBDTConfig::builder()
+		.objective(Objective::squared())
+		.n_trees(N_TREES)
+		.learning_rate(0.1)
+		.tree(TreeParams::depth_wise(MAX_DEPTH))
+		.regularization(RegularizationParams { lambda: 1.0, ..Default::default() })
+		.seed(SEED)
+		.build()
+		.unwrap();
 
-	let trainer = GBDTTrainer::new(SquaredLoss, Rmse, base_params.clone());
-	let forest_baseline = trainer.train(&binned_train, &y_train, &[], &[], Parallelism::SEQUENTIAL).unwrap();
-	let predictor = Predictor::<UnrolledTraversal6>::new(&forest_baseline);
-	let pred_baseline = predictor.predict(&row_valid);
-	let pred_baseline_slice: Vec<f32> = pred_baseline.column(0).to_vec();
-	let rmse_baseline = Rmse.compute(y_valid.len(), 1, &pred_baseline_slice, &y_valid, &[]);
+	let model_baseline =
+		GBDTModel::train(&binned_train, ArrayView1::from(&y_train[..]), empty_weights(), base_config, 1)
+			.unwrap();
+	let pred_baseline = model_baseline.predict(&row_valid, 1);
+	let pred_baseline_arr = preds_array(&pred_baseline);
+	let targets_arr = ArrayView1::from(&y_valid[..]);
+	let rmse_baseline = Rmse.compute(pred_baseline_arr.view(), targets_arr, empty_weights());
 
 	// --- Train with linear leaves ---
-	let linear_params = GBDTParams {
-		linear_leaves: Some(LinearLeafConfig::default().with_min_samples(10)),
-		..base_params
-	};
+	let linear_config = GBDTConfig::builder()
+		.objective(Objective::squared())
+		.n_trees(N_TREES)
+		.learning_rate(0.1)
+		.tree(TreeParams::depth_wise(MAX_DEPTH))
+		.regularization(RegularizationParams { lambda: 1.0, ..Default::default() })
+		.linear_leaves(LinearLeafConfig::default().with_min_samples(10))
+		.seed(SEED)
+		.build()
+		.unwrap();
 
 	eprintln!("Training with linear leaves...");
-	let trainer = GBDTTrainer::new(SquaredLoss, Rmse, linear_params);
-	let forest_linear = trainer.train(&binned_train, &y_train, &[], &[], Parallelism::SEQUENTIAL).unwrap();
-
-	let predictor = Predictor::<UnrolledTraversal6>::new(&forest_linear);
-	let pred_linear = predictor.predict(&row_valid);
-	let pred_linear_slice: Vec<f32> = pred_linear.column(0).to_vec();
-	let rmse_linear = Rmse.compute(y_valid.len(), 1, &pred_linear_slice, &y_valid, &[]);
+	let model_linear = GBDTModel::train(
+		&binned_train,
+		ArrayView1::from(&y_train[..]),
+		empty_weights(),
+		linear_config,
+		1,
+	)
+	.unwrap();
+	let pred_linear = model_linear.predict(&row_valid, 1);
+	let pred_linear_arr = preds_array(&pred_linear);
+	let rmse_linear = Rmse.compute(pred_linear_arr.view(), targets_arr, empty_weights());
 
 	// Assert: linear leaves should improve RMSE by at least 5%
 	let improvement = (rmse_baseline - rmse_linear) / rmse_baseline;

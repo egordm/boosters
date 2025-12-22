@@ -12,6 +12,11 @@
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, TreeParams};
+use ndarray::ArrayView1;
+
+fn empty_weights() -> ArrayView1<'static, f32> {
+    ArrayView1::from(&[][..])
+}
 
 fn main() {
     println!("=== Early Stopping Example ===\n");
@@ -58,7 +63,7 @@ fn main() {
     println!("Training with early stopping (monitoring training loss)...\n");
 
     let model =
-        GBDTModel::train(&dataset, &labels, &[], config).expect("Training failed");
+        GBDTModel::train(&dataset, ArrayView1::from(&labels[..]), empty_weights(), config, 1).expect("Training failed");
 
     // =========================================================================
     // 4. Results
@@ -68,7 +73,7 @@ fn main() {
     println!("Trees trained: {} (max was 200)", actual_trees);
 
     // Evaluate
-    let preds = model.predict(&row_matrix);
+    let preds = model.predict(&row_matrix, 1);
     let rmse = compute_rmse(preds.as_slice(), &labels);
 
     println!("Training RMSE: {:.4}", rmse);

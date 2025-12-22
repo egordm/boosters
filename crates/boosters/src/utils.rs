@@ -242,25 +242,25 @@ mod tests {
 
     #[test]
     fn test_parallelism_constants() {
-        assert!(Parallelism::PARALLEL.is_parallel());
-        assert!(!Parallelism::SEQUENTIAL.is_parallel());
+        assert!(Parallelism::Parallel.is_parallel());
+        assert!(!Parallelism::Sequential.is_parallel());
     }
 
     #[test]
     fn test_run_with_threads_sequential() {
-        let result = run_with_threads(1, || 42);
+        let result = run_with_threads(1, |_| 42);
         assert_eq!(result, 42);
     }
 
     #[test]
     fn test_run_with_threads_auto() {
-        let result = run_with_threads(0, || 42);
+        let result = run_with_threads(0, |_| 42);
         assert_eq!(result, 42);
     }
 
     #[test]
     fn test_run_with_threads_explicit() {
-        let result = run_with_threads(2, || rayon::current_num_threads());
+        let result = run_with_threads(2, |_| rayon::current_num_threads());
         assert_eq!(result, 2);
     }
 
@@ -269,13 +269,13 @@ mod tests {
         use std::sync::atomic::{AtomicUsize, Ordering};
         
         let sum = AtomicUsize::new(0);
-        maybe_par_for_each(Parallelism::SEQUENTIAL, 0..10usize, |i| {
+        Parallelism::Sequential.maybe_par_for_each(0..10usize, |i| {
             sum.fetch_add(i, Ordering::Relaxed);
         });
         assert_eq!(sum.load(Ordering::Relaxed), 45);
 
         sum.store(0, Ordering::Relaxed);
-        maybe_par_for_each(Parallelism::PARALLEL, 0..10usize, |i| {
+        Parallelism::Parallel.maybe_par_for_each(0..10usize, |i| {
             sum.fetch_add(i, Ordering::Relaxed);
         });
         assert_eq!(sum.load(Ordering::Relaxed), 45);
@@ -283,10 +283,10 @@ mod tests {
 
     #[test]
     fn test_maybe_par_map() {
-        let result: Vec<_> = maybe_par_map(Parallelism::SEQUENTIAL, 0..5usize, |i| i * 2);
+        let result: Vec<_> = Parallelism::Sequential.maybe_par_map(0..5usize, |i| i * 2);
         assert_eq!(result, vec![0, 2, 4, 6, 8]);
 
-        let result: Vec<_> = maybe_par_map(Parallelism::PARALLEL, 0..5usize, |i| i * 2);
+        let result: Vec<_> = Parallelism::Parallel.maybe_par_map(0..5usize, |i| i * 2);
         assert_eq!(result, vec![0, 2, 4, 6, 8]);
     }
 }

@@ -11,6 +11,21 @@ use boosters::training::{
     Accuracy, GBLinearParams, GBLinearTrainer, HingeLoss, LogLoss, LogisticLoss, MarginAccuracy,
     ObjectiveFn, PseudoHuberLoss, Rmse, SquaredLoss, Verbosity,
 };
+use ndarray::{Array2, ArrayView1};
+
+/// Helper to create empty weights view.
+fn empty_weights() -> ArrayView1<'static, f32> {
+    ArrayView1::from(&[][..])
+}
+
+/// Helper to create predictions array from PredictionOutput
+fn pred_to_array2(output: &boosters::inference::common::PredictionOutput) -> Array2<f32> {
+    // PredictionOutput stores data column-major: [g0_s0, g0_s1, ..., g1_s0, g1_s1, ...]
+    // We need Array2 with shape [n_groups, n_samples]
+    let n_samples = output.num_rows();
+    let n_groups = output.num_groups();
+    Array2::from_shape_vec((n_groups, n_samples), output.as_slice().to_vec()).unwrap()
+}
 
 // =============================================================================
 // PseudoHuberLoss Integration Tests
@@ -73,8 +88,12 @@ fn train_pseudo_huber_regression() {
     let ph_output = model.predict(&test_data, &[]);
     let sq_output = sq_model.predict(&test_data, &[]);
 
-    let ph_rmse = Rmse.compute(test_labels.len(), 1, ph_output.as_slice(), &test_labels, &[]);
-    let sq_rmse = Rmse.compute(test_labels.len(), 1, sq_output.as_slice(), &test_labels, &[]);
+    let ph_arr = pred_to_array2(&ph_output);
+    let sq_arr = pred_to_array2(&sq_output);
+    let targets_arr = ArrayView1::from(&test_labels[..]);
+
+    let ph_rmse = Rmse.compute(ph_arr.view(), targets_arr, empty_weights());
+    let sq_rmse = Rmse.compute(sq_arr.view(), targets_arr, empty_weights());
 
     // Both should have reasonable RMSE
     assert!(ph_rmse < 20.0, "PseudoHuber RMSE too high: {}", ph_rmse);
@@ -129,9 +148,14 @@ fn train_pseudo_huber_with_delta() {
     let large_output = large_model.predict(&test_data, &[]);
     let sq_output = sq_model.predict(&test_data, &[]);
 
-    let moderate_rmse = Rmse.compute(test_labels.len(), 1, moderate_output.as_slice(), &test_labels, &[]);
-    let large_rmse = Rmse.compute(test_labels.len(), 1, large_output.as_slice(), &test_labels, &[]);
-    let sq_rmse = Rmse.compute(test_labels.len(), 1, sq_output.as_slice(), &test_labels, &[]);
+    let moderate_arr = pred_to_array2(&moderate_output);
+    let large_arr = pred_to_array2(&large_output);
+    let sq_arr = pred_to_array2(&sq_output);
+    let targets_arr = ArrayView1::from(&test_labels[..]);
+
+    let moderate_rmse = Rmse.compute(moderate_arr.view(), targets_arr, empty_weights());
+    let large_rmse = Rmse.compute(large_arr.view(), targets_arr, empty_weights());
+    let sq_rmse = Rmse.compute(sq_arr.view(), targets_arr, empty_weights());
 
     // All should produce reasonable models
     assert!(
@@ -200,20 +224,18 @@ fn train_hinge_binary_classification() {
     use boosters::training::MetricFn;
 
     let hinge_output = hinge_model.predict(&test_data, &[]);
+    let hinge_arr = pred_to_array2(&hinge_output);
+    let targets_arr = ArrayView1::from(&test_labels[..]);
     let hinge_acc = MarginAccuracy::default()
-        .compute(test_labels.len(), 1, hinge_output.as_slice(), &test_labels, &[])
+        .compute(hinge_arr.view(), targets_arr, empty_weights())
         as f32;
 
-    let mut logistic_output = logistic_model.predict(&test_data, &[]);
-    LogisticLoss.transform_prediction_inplace(&mut logistic_output);
+    let logistic_output = logistic_model.predict(&test_data, &[]);
+    // Convert to Array2, apply transform, then use for metrics
+    let mut logistic_arr = pred_to_array2(&logistic_output);
+    LogisticLoss.transform_predictions(logistic_arr.view_mut());
     let logistic_acc = Accuracy::with_threshold(0.5)
-        .compute(
-            test_labels.len(),
-            1,
-            logistic_output.as_slice(),
-            &test_labels,
-            &[],
-        ) as f32;
+        .compute(logistic_arr.view(), targets_arr, empty_weights()) as f32;
 
     // Both should achieve reasonable accuracy (better than random = 50%)
     assert!(

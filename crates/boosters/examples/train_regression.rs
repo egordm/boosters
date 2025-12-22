@@ -11,6 +11,11 @@ use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
 use boosters::training::{GBDTParams, GBDTTrainer, GrowthStrategy, MetricFn, Rmse, SquaredLoss};
 use boosters::Parallelism;
+use ndarray::{Array2, ArrayView1};
+
+fn empty_weights() -> ArrayView1<'static, f32> {
+    ArrayView1::from(&[][..])
+}
 
 fn main() {
     // =========================================================================
@@ -65,7 +70,7 @@ fn main() {
 
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
     let forest = trainer
-        .train(&dataset, &labels, &[], &[], Parallelism::SEQUENTIAL)
+        .train(&dataset, ArrayView1::from(&labels[..]), empty_weights(), &[], Parallelism::Sequential)
         .unwrap();
 
     // =========================================================================
@@ -76,7 +81,8 @@ fn main() {
         .map(|row| forest.predict_row(row)[0])
         .collect();
 
-    let rmse = Rmse.compute(n_samples, 1, &predictions, &labels, &[]);
+    let pred_arr = Array2::from_shape_vec((1, predictions.len()), predictions.to_vec()).unwrap();
+    let rmse = Rmse.compute(pred_arr.view(), ArrayView1::from(&labels[..]), empty_weights());
 
     println!("=== Results ===");
     println!("Trees: {}", forest.n_trees());

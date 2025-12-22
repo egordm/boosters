@@ -6,10 +6,11 @@ mod common;
 use common::criterion_config::default_criterion;
 use common::models::load_boosters_model;
 
-use boosters::data::RowMatrix;
 use boosters::inference::gbdt::{Predictor, StandardTraversal, UnrolledTraversal6};
 use boosters::testing::data::random_dense_f32;
+use boosters::Parallelism;
 
+use ndarray::Array2;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 fn bench_gbtree_traversal_strategies(c: &mut Criterion) {
@@ -26,21 +27,21 @@ fn bench_gbtree_traversal_strategies(c: &mut Criterion) {
 
 	for batch_size in [1_000usize, 10_000] {
 		let input_data = random_dense_f32(batch_size, model.num_features, 42, -5.0, 5.0);
-		let matrix = RowMatrix::from_vec(input_data, batch_size, model.num_features);
+		let matrix = Array2::from_shape_vec((batch_size, model.num_features), input_data).unwrap();
 		group.throughput(Throughput::Elements(batch_size as u64));
 
 		group.bench_with_input(BenchmarkId::new("std_no_block", batch_size), &matrix, |b, m| {
-			b.iter(|| black_box(std_no_block.predict(black_box(m))))
+			b.iter(|| black_box(std_no_block.predict(black_box(m.view()), Parallelism::Sequential)))
 		});
 		group.bench_with_input(BenchmarkId::new("std_block64", batch_size), &matrix, |b, m| {
-			b.iter(|| black_box(std_block64.predict(black_box(m))))
+			b.iter(|| black_box(std_block64.predict(black_box(m.view()), Parallelism::Sequential)))
 		});
 
 		group.bench_with_input(BenchmarkId::new("unroll_no_block", batch_size), &matrix, |b, m| {
-			b.iter(|| black_box(unroll_no_block.predict(black_box(m))))
+			b.iter(|| black_box(unroll_no_block.predict(black_box(m.view()), Parallelism::Sequential)))
 		});
 		group.bench_with_input(BenchmarkId::new("unroll_block64", batch_size), &matrix, |b, m| {
-			b.iter(|| black_box(unroll_block64.predict(black_box(m))))
+			b.iter(|| black_box(unroll_block64.predict(black_box(m.view()), Parallelism::Sequential)))
 		});
 	}
 

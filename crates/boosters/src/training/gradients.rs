@@ -30,6 +30,8 @@
 //! This layout keeps per-output slices contiguous (important for training), while
 //! improving locality in hot loops that need both gradient and hessian together.
 
+use ndarray::{ArrayView2, ArrayViewMut2, ShapeBuilder};
+
 /// Structure-of-Arrays gradient buffer with column-major layout.
 ///
 /// Stores gradients and hessians in separate contiguous arrays, organized
@@ -81,7 +83,7 @@ pub struct Gradients {
     data: Vec<GradsTuple>,
     /// Number of samples.
     n_samples: usize,
-    /// Number of outputs per sample (1 for regression, K for K-class).
+    /// Number of outputs per sample.
     n_outputs: usize,
 }
 
@@ -175,6 +177,30 @@ impl Gradients {
     #[inline]
     pub fn pairs_mut(&mut self) -> &mut [GradsTuple] {
         &mut self.data
+    }
+
+    /// Get the gradient buffer as a 2D array view.
+    ///
+    /// Shape: `[n_outputs, n_samples]` (column-major data viewed as row-major array)
+    #[inline]
+    pub fn pairs_array(&self) -> ArrayView2<'_, GradsTuple> {
+        ArrayView2::from_shape(
+            (self.n_outputs, self.n_samples).strides((self.n_samples, 1)),
+            &self.data,
+        )
+        .unwrap()
+    }
+
+    /// Get the gradient buffer as a mutable 2D array view.
+    ///
+    /// Shape: `[n_outputs, n_samples]` (column-major data viewed as row-major array)
+    #[inline]
+    pub fn pairs_array_mut(&mut self) -> ArrayViewMut2<'_, GradsTuple> {
+        ArrayViewMut2::from_shape(
+            (self.n_outputs, self.n_samples).strides((self.n_samples, 1)),
+            &mut self.data,
+        )
+        .unwrap()
     }
 
     // =========================================================================

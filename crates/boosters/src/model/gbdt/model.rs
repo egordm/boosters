@@ -24,13 +24,11 @@ use crate::model::meta::ModelMeta;
 use crate::repr::gbdt::{Forest, ScalarLeaf};
 use crate::training::gbdt::GBDTTrainer;
 use crate::training::{Metric, ObjectiveFn};
-use crate::utils::Parallelism;
+use crate::utils::{Parallelism, run_with_threads};
+
+use ndarray::{Array2, ArrayView1};
 
 use super::GBDTConfig;
-
-/// Threshold for switching from serial to parallel prediction.
-/// Below this, parallel overhead isn't worth it.
-const PARALLEL_THRESHOLD_ROWS: usize = 1000;
 
 /// High-level GBDT model.
 ///
@@ -78,11 +76,87 @@ pub struct GBDTModel {
     /// This is `Some` when trained with the new API or loaded from a format
     /// that includes config. May be `None` for models loaded from legacy
     /// formats or created with `from_forest()`.
-    config: Option<GBDTConfig>,
+    config: GBDTConfig,
 }
 
 impl GBDTModel {
-    /// Train a new GBDT model.
+    /// Create a model from a forest and metadata.
+    ///
+    /// Use this when loading models from formats that don't include config,
+    /// or for quick testing. For training new models, prefer [`GBDTModel::train`].
+    pub fn from_forest(
+        forest: Forest<ScalarLeaf>,
+        meta: ModelMeta,
+    ) -> Self {
+        Self { forest, meta, config: GBDTConfig::default() }
+    }
+
+    /// Create a model from all its parts.
+    ///
+    /// Used when loading from a format that includes config, or after training
+    /// with the new config-based API.
+    pub fn from_parts(
+        forest: Forest<ScalarLeaf>,
+        meta: ModelMeta,
+        config: GBDTConfig,
+    ) -> Self {
+        Self { forest, meta, config }
+    }
+
+    // =========================================================================
+    // Accessors
+    // =========================================================================
+
+    /// Get reference to the underlying forest.
+    ///
+    /// Use this to access tree-level information:
+    /// - `model.forest().n_trees()` - number of trees
+    /// - `model.forest().n_groups()` - number of output groups
+    /// - `model.forest().trees()` - iterate over trees
+    pub fn forest(&self) -> &Forest<ScalarLeaf> {
+        &self.forest
+    }
+
+    /// Get reference to model metadata.
+    ///
+    /// Use this to access metadata:
+    /// - `model.meta().n_features` - number of input features
+    /// - `model.meta().n_groups` - number of output groups
+    /// - `model.meta().task` - task type (regression, classification)
+    /// - `model.meta().feature_names` - feature names (if set)
+    pub fn meta(&self) -> &ModelMeta {
+        &self.meta
+    }
+
+    /// Get reference to training configuration (if available).
+    ///
+    /// Returns `Some` if the model was trained with the new config-based API
+    /// or loaded from a format that includes config. Returns `None` for models
+    /// loaded from legacy formats or created with `from_forest()`.
+    ///
+    /// Use this to access training parameters:
+    /// - `model.config().map(|c| c.learning_rate)`
+    /// - `model.config().map(|c| c.n_trees)`
+    pub fn config(&self) -> &GBDTConfig {
+        &self.config
+    }
+
+    /// Set feature names.
+    ///
+    /// This mutates the metadata. For new models, prefer setting feature names
+    /// during training.
+    pub fn with_feature_names(mut self, names: Vec<String>) -> Self {
+        self.meta.feature_names = Some(names);
+        self
+    }
+
+    /// Set best iteration (from early stopping).
+    pub fn with_best_iteration(mut self, iter: usize) -> Self {
+        self.meta.best_iteration = Some(iter);
+        self
+    }
+
+     /// Train a new GBDT model.
     ///
     /// # Arguments
     ///
@@ -125,8 +199,8 @@ impl GBDTModel {
     /// ```
     pub fn train(
         dataset: &BinnedDataset,
-        targets: &[f32],
-        weights: &[f32],
+        targets: ArrayView1<f32>,
+        weights: ArrayView1<f32>,
         config: GBDTConfig,
         n_threads: usize,
     ) -> Option<Self> {
@@ -141,8 +215,8 @@ impl GBDTModel {
     /// Use `train()` for the public API that handles threading automatically.
     fn train_inner(
         dataset: &BinnedDataset,
-        targets: &[f32],
-        weights: &[f32],
+        targets: ArrayView1<f32>,
+        weights: ArrayView1<f32>,
         config: GBDTConfig,
         parallelism: Parallelism,
     ) -> Option<Self> {
@@ -177,81 +251,9 @@ impl GBDTModel {
             ..Default::default()
         };
 
-        Some(Self { forest, meta, config: Some(config) })
+        Some(Self { forest, meta, config })
     }
 
-    /// Create a model from an existing forest and metadata.
-    ///
-    /// Useful for wrapping forests loaded from other sources (e.g., XGBoost).
-    /// Config will be `None` since the training parameters are unknown.
-    pub fn from_forest(forest: Forest<ScalarLeaf>, meta: ModelMeta) -> Self {
-        Self { forest, meta, config: None }
-    }
-
-    /// Create a model from all its parts.
-    ///
-    /// Used when loading from a format that includes config, or after training
-    /// with the new config-based API.
-    pub fn from_parts(
-        forest: Forest<ScalarLeaf>,
-        meta: ModelMeta,
-        config: Option<GBDTConfig>,
-    ) -> Self {
-        Self { forest, meta, config }
-    }
-
-    // =========================================================================
-    // Accessors
-    // =========================================================================
-
-    /// Get reference to the underlying forest.
-    ///
-    /// Use this to access tree-level information:
-    /// - `model.forest().n_trees()` - number of trees
-    /// - `model.forest().n_groups()` - number of output groups
-    /// - `model.forest().trees()` - iterate over trees
-    pub fn forest(&self) -> &Forest<ScalarLeaf> {
-        &self.forest
-    }
-
-    /// Get reference to model metadata.
-    ///
-    /// Use this to access metadata:
-    /// - `model.meta().n_features` - number of input features
-    /// - `model.meta().n_groups` - number of output groups
-    /// - `model.meta().task` - task type (regression, classification)
-    /// - `model.meta().feature_names` - feature names (if set)
-    pub fn meta(&self) -> &ModelMeta {
-        &self.meta
-    }
-
-    /// Get reference to training configuration (if available).
-    ///
-    /// Returns `Some` if the model was trained with the new config-based API
-    /// or loaded from a format that includes config. Returns `None` for models
-    /// loaded from legacy formats or created with `from_forest()`.
-    ///
-    /// Use this to access training parameters:
-    /// - `model.config().map(|c| c.learning_rate)`
-    /// - `model.config().map(|c| c.n_trees)`
-    pub fn config(&self) -> Option<&GBDTConfig> {
-        self.config.as_ref()
-    }
-
-    /// Set feature names.
-    ///
-    /// This mutates the metadata. For new models, prefer setting feature names
-    /// during training.
-    pub fn with_feature_names(mut self, names: Vec<String>) -> Self {
-        self.meta.feature_names = Some(names);
-        self
-    }
-
-    /// Set best iteration (from early stopping).
-    pub fn with_best_iteration(mut self, iter: usize) -> Self {
-        self.meta.best_iteration = Some(iter);
-        self
-    }
 
     // =========================================================================
     // Prediction
@@ -298,26 +300,38 @@ impl GBDTModel {
         n_threads: usize,
     ) -> ColMatrix<f32> {
         let n_rows = features.num_rows();
+        let n_features = features.num_features();
         let n_groups = self.meta.n_groups;
-        // 0 = auto, 1 = sequential, >1 = parallel
-        let use_parallel = n_threads != 1 && n_rows >= PARALLEL_THRESHOLD_ROWS;
 
-        // Get raw predictions using optimized batch predictor
-        let predictor = UnrolledPredictor6::new(&self.forest);
-        let mut output = if use_parallel {
-            let threads = if n_threads == 0 { rayon::current_num_threads() } else { n_threads };
-            predictor.par_predict(features, threads)
-        } else {
-            predictor.predict(features)
-        };
-
-        // Apply transformation if we have config with objective
-        if let Some(config) = &self.config {
-            config.objective.transform_predictions(output.as_mut_slice(), n_rows, n_groups);
+        if n_rows == 0 {
+            return DenseMatrix::<f32, ColMajor>::from_vec(vec![], 0, n_groups);
         }
 
-        // PredictionOutput is already column-major, so we can directly use its data
-        DenseMatrix::<f32, ColMajor>::from_vec(output.into_vec(), n_rows, n_groups)
+        // Copy features into contiguous row-major buffer for ndarray
+        let mut feature_buf = vec![0.0f32; n_rows * n_features];
+        for i in 0..n_rows {
+            let row_start = i * n_features;
+            features.copy_row(i, &mut feature_buf[row_start..row_start + n_features]);
+        }
+        let features_array = ndarray::ArrayView2::from_shape((n_rows, n_features), &feature_buf)
+            .expect("feature buffer shape mismatch");
+
+        // Allocate output [n_groups, n_samples]
+        let mut output_array = Array2::<f32>::zeros((n_groups, n_rows));
+
+        // Run prediction with thread pool management
+        run_with_threads(n_threads, |parallelism| {
+            let predictor = UnrolledPredictor6::new(&self.forest);
+            predictor.predict_into(features_array, None, parallelism, output_array.view_mut());
+        });
+
+        // Apply transformation if we have config with objective
+        // transform_predictions expects [n_outputs, n_rows] which matches our array shape
+        self.config.objective.transform_predictions(output_array.view_mut());
+
+        // Convert from ndarray [n_groups, n_rows] to ColMatrix (n_rows, n_groups)
+        // Both layouts have the same memory representation: group-contiguous
+        DenseMatrix::<f32, ColMajor>::from_vec(output_array.into_raw_vec_and_offset().0, n_rows, n_groups)
     }
 
     /// Predict for multiple rows, returning raw margin scores.
@@ -345,20 +359,38 @@ impl GBDTModel {
         n_threads: usize,
     ) -> ColMatrix<f32> {
         let n_rows = features.num_rows();
+        let n_features = features.num_features();
         let n_groups = self.meta.n_groups;
-        let use_parallel = n_threads != 1 && n_rows >= PARALLEL_THRESHOLD_ROWS;
 
-        // Get raw predictions using optimized batch predictor
-        let predictor = UnrolledPredictor6::new(&self.forest);
-        let output = if use_parallel {
-            let threads = if n_threads == 0 { rayon::current_num_threads() } else { n_threads };
-            predictor.par_predict(features, threads)
-        } else {
-            predictor.predict(features)
-        };
+        if n_rows == 0 {
+            return DenseMatrix::<f32, ColMajor>::from_vec(vec![], 0, n_groups);
+        }
 
-        // PredictionOutput is already column-major, so we can directly use its data
-        DenseMatrix::<f32, ColMajor>::from_vec(output.into_vec(), n_rows, n_groups)
+        // Copy features into contiguous row-major buffer for ndarray
+        let mut feature_buf = vec![0.0f32; n_rows * n_features];
+        for i in 0..n_rows {
+            let row_start = i * n_features;
+            features.copy_row(i, &mut feature_buf[row_start..row_start + n_features]);
+        }
+        let features_array = ndarray::ArrayView2::from_shape((n_rows, n_features), &feature_buf)
+            .expect("feature buffer shape mismatch");
+
+        // Allocate output [n_groups, n_samples]
+        let mut output_array = Array2::<f32>::zeros((n_groups, n_rows));
+
+        // Run prediction with thread pool management
+        run_with_threads(n_threads, |parallelism| {
+            let predictor = UnrolledPredictor6::new(&self.forest);
+            predictor.predict_into(features_array, None, parallelism, output_array.view_mut());
+        });
+
+        // Convert from [n_groups, n_samples] to ColMatrix [n_samples, n_groups]
+        let transposed = output_array.reversed_axes();
+        DenseMatrix::<f32, ColMajor>::from_vec(
+            transposed.as_standard_layout().into_owned().into_raw_vec_and_offset().0,
+            n_rows,
+            n_groups,
+        )
     }
 
     // =========================================================================
@@ -470,7 +502,8 @@ mod tests {
         assert_eq!(model.forest().n_trees(), 1);
         assert_eq!(model.meta().n_features, 2);
         assert_eq!(model.meta().n_groups, 1);
-        assert!(model.config().is_none()); // No config for from_forest
+        // from_forest uses default config
+        assert_eq!(model.config().n_trees, GBDTConfig::default().n_trees);
     }
 
     #[test]
@@ -478,10 +511,9 @@ mod tests {
         let forest = make_simple_forest();
         let meta = ModelMeta::for_regression(2);
         let config = GBDTConfig::builder().n_trees(100).build().unwrap();
-        let model = GBDTModel::from_parts(forest, meta, Some(config.clone()));
+        let model = GBDTModel::from_parts(forest, meta, config);
 
-        assert!(model.config().is_some());
-        assert_eq!(model.config().unwrap().n_trees, 100);
+        assert_eq!(model.config().n_trees, 100);
     }
 
     #[test]

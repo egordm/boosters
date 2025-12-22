@@ -121,7 +121,7 @@ impl GreedySplitter {
     ) -> SplitInfo {
         // Use sequential for small workloads
         let parallelism = if features.len() < MIN_FEATURES_PARALLEL {
-            Parallelism::SEQUENTIAL
+            Parallelism::Sequential
         } else {
             self.parallelism
         };

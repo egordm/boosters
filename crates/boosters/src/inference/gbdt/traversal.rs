@@ -371,7 +371,7 @@ mod tests {
         let state = StandardTraversal::build_tree_state(&tree_storage);
         let result = StandardTraversal::traverse_tree(&tree, &state, &[0.3]);
 
-        assert_eq!(result.0, 1.0);
+        assert_eq!(tree.leaf_value(result).0, 1.0);
     }
 
     #[test]
@@ -384,7 +384,7 @@ mod tests {
         let state = StandardTraversal::build_tree_state(&tree_storage);
         let result = StandardTraversal::traverse_tree(&tree, &state, &[0.7]);
 
-        assert_eq!(result.0, 2.0);
+        assert_eq!(tree.leaf_value(result).0, 2.0);
     }
 
     #[test]
@@ -398,7 +398,7 @@ mod tests {
         let result = StandardTraversal::traverse_tree(&tree, &state, &[f32::NAN]);
 
         // default_left=true, so goes left
-        assert_eq!(result.0, 1.0);
+        assert_eq!(tree.leaf_value(result).0, 1.0);
     }
 
     #[test]
@@ -408,7 +408,7 @@ mod tests {
         let result = StandardTraversal::traverse_tree(&tree_storage, &state, &[0.5]);
 
         // Spec: numeric split goes left iff value < threshold; equality goes right.
-        assert_eq!(result.0, 2.0);
+        assert_eq!(tree_storage.leaf_value(result).0, 2.0);
     }
 
     #[test]
@@ -417,7 +417,7 @@ mod tests {
         let state = StandardTraversal::build_tree_state(&tree_storage);
         let result = StandardTraversal::traverse_tree(&tree_storage, &state, &[f32::NAN]);
 
-        assert_eq!(result.0, 2.0);
+        assert_eq!(tree_storage.leaf_value(result).0, 2.0);
     }
 
     #[test]
@@ -427,15 +427,15 @@ mod tests {
 
         // In-set categories go RIGHT.
         let in_set = StandardTraversal::traverse_tree(&tree_storage, &state, &[1.0]);
-        assert_eq!(in_set.0, 20.0);
+        assert_eq!(tree_storage.leaf_value(in_set).0, 20.0);
 
         // Not-in-set goes LEFT.
         let not_in_set = StandardTraversal::traverse_tree(&tree_storage, &state, &[2.0]);
-        assert_eq!(not_in_set.0, 10.0);
+        assert_eq!(tree_storage.leaf_value(not_in_set).0, 10.0);
 
         // Beyond stored bitset defaults to not-in-set => LEFT.
         let unknown = StandardTraversal::traverse_tree(&tree_storage, &state, &[64.0]);
-        assert_eq!(unknown.0, 10.0);
+        assert_eq!(tree_storage.leaf_value(unknown).0, 10.0);
     }
 
     #[test]
@@ -445,7 +445,7 @@ mod tests {
         let result = StandardTraversal::traverse_tree(&tree_storage, &state, &[f32::NAN]);
 
         // default_left=false, so missing goes right.
-        assert_eq!(result.0, 20.0);
+        assert_eq!(tree_storage.leaf_value(result).0, 20.0);
     }
 
     #[test]
@@ -467,8 +467,9 @@ mod tests {
                     &[fval],
                 );
 
+            // Both traversals should return the same leaf index
             assert_eq!(
-                std_result.0, unrolled_result.0,
+                std_result, unrolled_result,
                 "Mismatch for feature value {:?}",
                 fval
             );
@@ -512,8 +513,9 @@ mod tests {
             &unrolled_state,
             &left_cat_left,
         );
-        assert_eq!(std_left.0, 10.0);
-        assert_eq!(std_left.0, unrolled_left.0);
+        // Traversal returns leaf index, get value from tree
+        assert_eq!(tree_storage.leaf_value(std_left).0, 10.0);
+        assert_eq!(std_left, unrolled_left);
 
         let std_right = StandardTraversal::traverse_tree(&tree_storage, &std_state, &left_cat_right);
         let unrolled_right = <UnrolledTraversal4 as TreeTraversal<ScalarLeaf>>::traverse_tree(
@@ -521,8 +523,8 @@ mod tests {
             &unrolled_state,
             &left_cat_right,
         );
-        assert_eq!(std_right.0, 20.0);
-        assert_eq!(std_right.0, unrolled_right.0);
+        assert_eq!(tree_storage.leaf_value(std_right).0, 20.0);
+        assert_eq!(std_right, unrolled_right);
     }
 
     #[test]

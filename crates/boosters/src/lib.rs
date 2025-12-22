@@ -47,7 +47,7 @@
 //!
 //! let params = GBDTParams { n_trees: 100, ..Default::default() };
 //! let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-//! let forest = trainer.train(&binned_dataset, &targets, &[], &[], Parallelism::SEQUENTIAL)?;
+//! let forest = trainer.train(&binned_dataset, targets.view(), weights.view(), &[], Parallelism::Sequential)?;
 //! ```
 //!
 //! # Loading XGBoost Models

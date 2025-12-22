@@ -17,6 +17,11 @@ use boosters::data::binned::{BinnedDatasetBuilder, BundlingConfig};
 use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
 use boosters::training::{GBDTParams, GBDTTrainer, GrowthStrategy, MetricFn, Rmse, SquaredLoss};
 use boosters::Parallelism;
+use ndarray::{Array2, ArrayView1};
+
+fn empty_weights() -> ArrayView1<'static, f32> {
+    ArrayView1::from(&[][..])
+}
 
 fn main() {
     // =========================================================================
@@ -152,12 +157,12 @@ fn main() {
     // Train without bundling
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params.clone());
     let forest_no_bundle = trainer
-        .train(&dataset_no_bundle, &labels, &[], &[], Parallelism::SEQUENTIAL)
+        .train(&dataset_no_bundle, ArrayView1::from(&labels[..]), empty_weights(), &[], Parallelism::Sequential)
         .unwrap();
 
     // Train with bundling
     let forest_bundled = trainer
-        .train(&dataset_bundled, &labels, &[], &[], Parallelism::SEQUENTIAL)
+        .train(&dataset_bundled, ArrayView1::from(&labels[..]), empty_weights(), &[], Parallelism::Sequential)
         .unwrap();
 
     // Evaluate both
@@ -171,8 +176,10 @@ fn main() {
         .map(|row| forest_bundled.predict_row(row)[0])
         .collect();
 
-    let rmse_no_bundle = Rmse.compute(n_samples, 1, &predictions_no_bundle, &labels, &[]);
-    let rmse_bundled = Rmse.compute(n_samples, 1, &predictions_bundled, &labels, &[]);
+    let pred_arr_no_bundle = Array2::from_shape_vec((1, predictions_no_bundle.len()), predictions_no_bundle.to_vec()).unwrap();
+    let rmse_no_bundle = Rmse.compute(pred_arr_no_bundle.view(), ArrayView1::from(&labels[..]), empty_weights());
+    let pred_arr_bundled = Array2::from_shape_vec((1, predictions_bundled.len()), predictions_bundled.to_vec()).unwrap();
+    let rmse_bundled = Rmse.compute(pred_arr_bundled.view(), ArrayView1::from(&labels[..]), empty_weights());
 
     println!("=== Results ===");
     println!("Without bundling - RMSE: {:.4}", rmse_no_bundle);

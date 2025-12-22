@@ -11,10 +11,11 @@ use common::models::load_boosters_model;
 #[cfg(any(feature = "bench-xgboost", feature = "bench-lightgbm"))]
 use common::models::bench_models_dir;
 
-use boosters::data::RowMatrix;
 use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
 use boosters::testing::data::random_dense_f32;
+use boosters::Parallelism;
 
+use ndarray::Array2;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 #[cfg(feature = "bench-xgboost")]
@@ -91,13 +92,13 @@ fn bench_predict_batch_sizes(c: &mut Criterion) {
 
 	for batch_size in [SMALL_BATCH, MEDIUM_BATCH, LARGE_BATCH] {
 		let input_data = random_dense_f32(batch_size, num_features, 42, -5.0, 5.0);
-		let matrix = RowMatrix::from_vec(input_data.clone(), batch_size, num_features);
+		let matrix = Array2::from_shape_vec((batch_size, num_features), input_data.clone()).unwrap();
 
 		group.throughput(Throughput::Elements(batch_size as u64));
 
 		// booste-rs
 		group.bench_with_input(BenchmarkId::new("boosters", batch_size), &matrix, |b, m| {
-			b.iter(|| black_box(predictor.predict(black_box(m))))
+			b.iter(|| black_box(predictor.predict(black_box(m.view()), Parallelism::Sequential)))
 		});
 
 		// XGBoost
@@ -159,13 +160,13 @@ fn bench_predict_single_row(c: &mut Criterion) {
 	let lgb_booster = load_native_lgb_booster("bench_medium");
 
 	let input_data = random_dense_f32(1, num_features, 42, -5.0, 5.0);
-	let matrix = RowMatrix::from_vec(input_data.clone(), 1, num_features);
+	let matrix = Array2::from_shape_vec((1, num_features), input_data.clone()).unwrap();
 
 	let mut group = c.benchmark_group("compare/predict/single_row/medium");
 
 	// booste-rs
 	group.bench_function("boosters", |b| {
-		b.iter(|| black_box(predictor.predict(black_box(&matrix))))
+		b.iter(|| black_box(predictor.predict(black_box(matrix.view()), Parallelism::Sequential)))
 	});
 
 	// XGBoost
@@ -226,7 +227,7 @@ fn bench_predict_thread_scaling(c: &mut Criterion) {
 
 	let batch_size = LARGE_BATCH;
 	let input_data = random_dense_f32(batch_size, num_features, 42, -5.0, 5.0);
-	let matrix = RowMatrix::from_vec(input_data.clone(), batch_size, num_features);
+	let matrix = Array2::from_shape_vec((batch_size, num_features), input_data.clone()).unwrap();
 
 	let mut group = c.benchmark_group("compare/predict/thread_scaling/medium");
 	group.throughput(Throughput::Elements(batch_size as u64));
@@ -234,7 +235,7 @@ fn bench_predict_thread_scaling(c: &mut Criterion) {
 	for &n_threads in common::matrix::THREAD_COUNTS {
 		// booste-rs
 		group.bench_with_input(BenchmarkId::new("boosters", n_threads), &matrix, |b, m| {
-			b.iter(|| black_box(predictor.par_predict(black_box(m), n_threads)))
+			b.iter(|| black_box(predictor.predict(black_box(m.view()), Parallelism::Parallel)))
 		});
 
 		// XGBoost

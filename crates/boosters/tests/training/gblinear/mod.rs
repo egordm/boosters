@@ -23,6 +23,7 @@ mod selectors;
 
 use boosters::data::{ColMatrix, RowMatrix};
 use boosters::training::Rmse;
+use ndarray::{Array2, ArrayView1};
 use serde::Deserialize;
 use std::fs;
 use std::path::Path;
@@ -166,5 +167,9 @@ pub use boosters::testing::pearson_correlation;
 /// Root mean squared error - uses library Rmse metric.
 pub fn rmse(predictions: &[f32], labels: &[f32]) -> f64 {
     use boosters::training::MetricFn;
-    Rmse.compute(labels.len(), 1, predictions, labels, &[])
+    let n = labels.len();
+    let pred_arr = Array2::from_shape_vec((1, n), predictions.to_vec()).unwrap();
+    let targets_arr = ArrayView1::from(labels);
+    let empty_w: ArrayView1<f32> = ArrayView1::from(&[][..]);
+    Rmse.compute(pred_arr.view(), targets_arr, empty_w)
 }

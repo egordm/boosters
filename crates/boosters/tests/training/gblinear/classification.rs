@@ -13,6 +13,7 @@ use boosters::training::{
     GBLinearParams, GBLinearTrainer, LogLoss, LogisticLoss, MulticlassLogLoss, SoftmaxLoss,
     Verbosity,
 };
+use ndarray::{Array2, ArrayView1};
 
 /// Test binary classification training produces reasonable predictions.
 #[test]
@@ -114,7 +115,11 @@ fn train_multioutput_classification() {
         })
         .collect();
 
-    let accuracy = MulticlassAccuracy.compute(n_rows, 1, &pred_classes, &labels, &[]);
+    // Metrics expect shape [n_groups, n_samples] - for class predictions, n_groups=1
+    let pred_arr = Array2::from_shape_vec((1, n_rows), pred_classes).unwrap();
+    let targets_arr = ArrayView1::from(&labels[..]);
+    let empty_w: ArrayView1<f32> = ArrayView1::from(&[][..]);
+    let accuracy = MulticlassAccuracy.compute(pred_arr.view(), targets_arr, empty_w);
 
     // Training accuracy should be reasonable for linear model
     // (better than random = 33.3% for 3 classes)

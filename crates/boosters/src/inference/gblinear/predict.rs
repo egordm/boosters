@@ -41,7 +41,7 @@ pub trait LinearModelPredict {
 
 impl LinearModelPredict for LinearModel {
     fn predict_col_major(&self, data: &crate::data::ColMatrix<f32>, output: &mut [f32]) {
-        let num_rows = data.num_rows();
+        let num_rows = data.n_rows();
         let num_groups = self.n_groups();
         let num_features = self.n_features();
         debug_assert_eq!(output.len(), num_rows * num_groups);

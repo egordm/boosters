@@ -378,7 +378,7 @@ impl BinnedDatasetBuilder {
     /// let dataset = BinnedDatasetBuilder::from_matrix_with_options(
     ///     &col_matrix,
     ///     config,
-    ///     Parallelism::SEQUENTIAL,  // For fair benchmarks
+    ///     Parallelism::Sequential,  // For fair benchmarks
     /// ).build()?;
     /// ```
     pub fn from_matrix_with_options<S: AsRef<[f32]> + Sync>(
@@ -386,8 +386,8 @@ impl BinnedDatasetBuilder {
         config: BinningConfig,
         parallelism: crate::utils::Parallelism,
     ) -> Self {
-        let n_cols = data.num_cols();
-        let n_rows = data.num_rows();
+        let n_cols = data.n_cols();
+        let n_rows = data.n_rows();
 
         // Helper to process a single feature column
         let process_feature = |col_idx: usize| -> (Vec<u32>, BinMapper) {
@@ -1232,7 +1232,7 @@ mod tests {
         let dataset = BinnedDatasetBuilder::from_matrix_with_options(
             &col_matrix,
             config,
-            Parallelism::SEQUENTIAL,
+            Parallelism::Sequential,
         )
         .build()
         .unwrap();

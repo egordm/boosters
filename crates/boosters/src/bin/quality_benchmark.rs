@@ -46,7 +46,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::data::{ColMatrix, DenseMatrix, RowMajor, RowMatrix};
+use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
 use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
 use boosters::testing::data::{
 	random_dense_f32, split_indices, synthetic_binary_targets_from_linear_score,
@@ -57,6 +57,12 @@ use boosters::training::{
 	MetricFn, MulticlassAccuracy, MulticlassLogLoss, ObjectiveFn, Rmse, SoftmaxLoss, SquaredLoss,
 };
 use boosters::Parallelism;
+use ndarray::{ArrayView1, ArrayView2};
+
+/// Helper to create empty weights view.
+fn empty_weights() -> ArrayView1<'static, f32> {
+	ArrayView1::from(&[][..])
+}
 
 #[cfg(feature = "io-parquet")]
 use boosters::data::io::parquet::load_parquet_xy_row_major_f32;
@@ -411,16 +417,6 @@ fn select_targets(targets: &[f32], row_indices: &[usize]) -> Vec<f32> {
 	out
 }
 
-fn extract_group(output: &boosters::inference::common::PredictionOutput, group: usize) -> Vec<f32> {
-	let num_groups = output.num_groups();
-	assert!(group < num_groups);
-	if num_groups == 1 {
-		return output.as_slice().to_vec();
-	}
-	// Column-major: column(group) is contiguous
-	output.column(group).to_vec()
-}
-
 // =============================================================================
 // Result structures
 // =============================================================================
@@ -649,7 +645,8 @@ fn train_boosters(
 	let row_train: DenseMatrix<f32, RowMajor> = DenseMatrix::from_vec(x_train.to_vec(), rows_train, cols);
 	let col_train: ColMatrix<f32> = row_train.to_layout();
 	let binned_train = BinnedDatasetBuilder::from_matrix(&col_train, 256).build().unwrap();
-	let row_valid: RowMatrix<f32> = RowMatrix::from_vec(x_valid.to_vec(), rows_valid, cols);
+	// Create ArrayView2 for prediction - shape is (rows, cols)
+	let features_valid = ArrayView2::from_shape((rows_valid, cols), x_valid).expect("valid features must be contiguous");
 
 	let linear_leaves = if config.linear_leaves {
 		Some(LinearLeafConfig::default())
@@ -671,39 +668,45 @@ fn train_boosters(
 	match config.task {
 		Task::Regression => {
 			let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-			let forest = trainer.train(&binned_train, y_train, &[], &[], Parallelism::SEQUENTIAL).unwrap();
+			let targets = ArrayView1::from(y_train);
+			let weights = ArrayView1::from(&[] as &[f32]);
+			let forest = trainer.train(&binned_train, targets, weights, &[], Parallelism::Sequential).unwrap();
 			let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
-			let pred = predictor.predict(&row_valid);
-			let pred0 = extract_group(&pred, 0);
-			let rmse = Rmse.compute(rows_valid, 1, &pred0, y_valid, &[]);
-			let mae = Mae.compute(rows_valid, 1, &pred0, y_valid, &[]);
+			let pred = predictor.predict(features_valid, Parallelism::Sequential);
+			let targets_arr = ArrayView1::from(y_valid);
+			let rmse = Rmse.compute(pred.view(), targets_arr, empty_weights());
+			let mae = Mae.compute(pred.view(), targets_arr, empty_weights());
 			LibraryMetrics { metrics: MetricsJson { rmse: Some(rmse), mae: Some(mae), ..Default::default() } }
 		}
 		Task::Binary => {
 			let objective = LogisticLoss;
 			let trainer = GBDTTrainer::new(objective, LogLoss, params);
-			let forest = trainer.train(&binned_train, y_train, &[], &[], Parallelism::SEQUENTIAL).unwrap();
+			let targets = ArrayView1::from(y_train);
+			let weights = ArrayView1::from(&[] as &[f32]);
+			let forest = trainer.train(&binned_train, targets, weights, &[], Parallelism::Sequential).unwrap();
 			let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
-			let mut raw = predictor.predict(&row_valid);
-			objective.transform_prediction_inplace(&mut raw);
-			let prob = raw.column(0);
-			let ll = LogLoss.compute(rows_valid, 1, prob, y_valid, &[]);
-			let acc = Accuracy::default().compute(rows_valid, 1, prob, y_valid, &[]);
+			let mut raw = predictor.predict(features_valid, Parallelism::Sequential);
+			objective.transform_predictions(raw.view_mut());
+			let targets_arr = ArrayView1::from(y_valid);
+			let ll = LogLoss.compute(raw.view(), targets_arr, empty_weights());
+			let acc = Accuracy::default().compute(raw.view(), targets_arr, empty_weights());
 			LibraryMetrics { metrics: MetricsJson { logloss: Some(ll), acc: Some(acc), ..Default::default() } }
 		}
 		Task::Multiclass => {
 			let num_classes = config.classes.unwrap_or(3);
 			let objective = SoftmaxLoss::new(num_classes);
 			let trainer = GBDTTrainer::new(objective, MulticlassLogLoss, params);
-			let forest = trainer.train(&binned_train, y_train, &[], &[], Parallelism::SEQUENTIAL).unwrap();
+			let targets = ArrayView1::from(y_train);
+			let weights = ArrayView1::from(&[] as &[f32]);
+			let forest = trainer.train(&binned_train, targets, weights, &[], Parallelism::Sequential).unwrap();
 			let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
-			let mut raw = predictor.predict(&row_valid);
+			let mut raw = predictor.predict(features_valid, Parallelism::Sequential);
 			// Apply softmax to column-major output
-			objective.transform_prediction_inplace(&mut raw);
+			objective.transform_predictions(raw.view_mut());
 			// Metrics can now use column-major directly
-			let prob_col_major = raw.as_slice();
-			let ll = MulticlassLogLoss.compute(rows_valid, num_classes, prob_col_major, y_valid, &[]);
-			let acc = MulticlassAccuracy.compute(rows_valid, num_classes, prob_col_major, y_valid, &[]);
+			let targets_arr = ArrayView1::from(y_valid);
+			let ll = MulticlassLogLoss.compute(raw.view(), targets_arr, empty_weights());
+			let acc = MulticlassAccuracy.compute(raw.view(), targets_arr, empty_weights());
 			LibraryMetrics { metrics: MetricsJson { mlogloss: Some(ll), acc: Some(acc), ..Default::default() } }
 		}
 	}
@@ -770,14 +773,18 @@ fn train_xgboost(
 	match config.task {
 		Task::Regression => {
 			let pred_f32: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
-			let rmse = Rmse.compute(rows_valid, 1, &pred_f32, y_valid, &[]);
-			let mae = Mae.compute(rows_valid, 1, &pred_f32, y_valid, &[]);
+			let pred_arr = make_preds_array(&pred_f32, 1, rows_valid);
+			let targets_arr = ArrayView1::from(y_valid);
+			let rmse = Rmse.compute(pred_arr.view(), targets_arr, empty_weights());
+			let mae = Mae.compute(pred_arr.view(), targets_arr, empty_weights());
 			LibraryMetrics { metrics: MetricsJson { rmse: Some(rmse), mae: Some(mae), ..Default::default() } }
 		}
 		Task::Binary => {
 			let pred_f32: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
-			let ll = LogLoss.compute(rows_valid, 1, &pred_f32, y_valid, &[]);
-			let acc = Accuracy::default().compute(rows_valid, 1, &pred_f32, y_valid, &[]);
+			let pred_arr = make_preds_array(&pred_f32, 1, rows_valid);
+			let targets_arr = ArrayView1::from(y_valid);
+			let ll = LogLoss.compute(pred_arr.view(), targets_arr, empty_weights());
+			let acc = Accuracy::default().compute(pred_arr.view(), targets_arr, empty_weights());
 			LibraryMetrics { metrics: MetricsJson { logloss: Some(ll), acc: Some(acc), ..Default::default() } }
 		}
 		Task::Multiclass => {
@@ -785,8 +792,10 @@ fn train_xgboost(
 			// Our metrics expect column-major: [class0_row0, class0_row1, ..., class1_row0, ...]
 			let prob_row_major: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
 			let prob_col_major = transpose_row_to_col_major(&prob_row_major, rows_valid, num_classes);
-			let ll = MulticlassLogLoss.compute(rows_valid, num_classes, &prob_col_major, y_valid, &[]);
-			let acc = MulticlassAccuracy.compute(rows_valid, num_classes, &prob_col_major, y_valid, &[]);
+			let pred_arr = make_preds_array(&prob_col_major, num_classes, rows_valid);
+			let targets_arr = ArrayView1::from(y_valid);
+			let ll = MulticlassLogLoss.compute(pred_arr.view(), targets_arr, empty_weights());
+			let acc = MulticlassAccuracy.compute(pred_arr.view(), targets_arr, empty_weights());
 			LibraryMetrics { metrics: MetricsJson { mlogloss: Some(ll), acc: Some(acc), ..Default::default() } }
 		}
 	}
@@ -837,14 +846,18 @@ fn train_lightgbm(
 	match config.task {
 		Task::Regression => {
 			let pred_f32: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
-			let rmse = Rmse.compute(rows_valid, 1, &pred_f32, y_valid, &[]);
-			let mae = Mae.compute(rows_valid, 1, &pred_f32, y_valid, &[]);
+			let pred_arr = make_preds_array(&pred_f32, 1, rows_valid);
+			let targets_arr = ArrayView1::from(y_valid);
+			let rmse = Rmse.compute(pred_arr.view(), targets_arr, empty_weights());
+			let mae = Mae.compute(pred_arr.view(), targets_arr, empty_weights());
 			LibraryMetrics { metrics: MetricsJson { rmse: Some(rmse), mae: Some(mae), ..Default::default() } }
 		}
 		Task::Binary => {
 			let pred_f32: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
-			let ll = LogLoss.compute(rows_valid, 1, &pred_f32, y_valid, &[]);
-			let acc = Accuracy::default().compute(rows_valid, 1, &pred_f32, y_valid, &[]);
+			let pred_arr = make_preds_array(&pred_f32, 1, rows_valid);
+			let targets_arr = ArrayView1::from(y_valid);
+			let ll = LogLoss.compute(pred_arr.view(), targets_arr, empty_weights());
+			let acc = Accuracy::default().compute(pred_arr.view(), targets_arr, empty_weights());
 			LibraryMetrics { metrics: MetricsJson { logloss: Some(ll), acc: Some(acc), ..Default::default() } }
 		}
 		Task::Multiclass => {
@@ -852,8 +865,10 @@ fn train_lightgbm(
 			// Our metrics expect column-major: [class0_row0, class0_row1, ..., class1_row0, ...]
 			let prob_row_major: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
 			let prob_col_major = transpose_row_to_col_major(&prob_row_major, rows_valid, num_classes);
-			let ll = MulticlassLogLoss.compute(rows_valid, num_classes, &prob_col_major, y_valid, &[]);
-			let acc = MulticlassAccuracy.compute(rows_valid, num_classes, &prob_col_major, y_valid, &[]);
+			let pred_arr = make_preds_array(&prob_col_major, num_classes, rows_valid);
+			let targets_arr = ArrayView1::from(y_valid);
+			let ll = MulticlassLogLoss.compute(pred_arr.view(), targets_arr, empty_weights());
+			let acc = MulticlassAccuracy.compute(pred_arr.view(), targets_arr, empty_weights());
 			LibraryMetrics { metrics: MetricsJson { mlogloss: Some(ll), acc: Some(acc), ..Default::default() } }
 		}
 	}
