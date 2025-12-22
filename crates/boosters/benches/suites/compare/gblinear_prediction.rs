@@ -11,7 +11,6 @@ use common::models::load_linear_model;
 use common::models::bench_models_dir;
 
 use boosters::data::RowMatrix;
-use boosters::inference::LinearModelPredict;
 use boosters::testing::data::random_dense_f32;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};

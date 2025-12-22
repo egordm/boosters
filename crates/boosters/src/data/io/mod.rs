@@ -5,20 +5,16 @@
 //!
 //! # Feature gates
 //!
-//! - `io-arrow`: Arrow IPC (Feather) file loading
-//! - `io-parquet`: Parquet file loading (also enables `io-arrow`)
-
-#[cfg(feature = "io-arrow")]
-pub mod arrow;
+//! - `io-parquet`: Parquet file loading
 
 #[cfg(feature = "io-parquet")]
 pub mod parquet;
 
-#[cfg(any(feature = "io-arrow", feature = "io-parquet"))]
+#[cfg(feature = "io-parquet")]
 mod record_batches;
 
-#[cfg(any(feature = "io-arrow", feature = "io-parquet"))]
+#[cfg(feature = "io-parquet")]
 mod error;
 
-#[cfg(any(feature = "io-arrow", feature = "io-parquet"))]
+#[cfg(feature = "io-parquet")]
 pub use error::DatasetLoadError;

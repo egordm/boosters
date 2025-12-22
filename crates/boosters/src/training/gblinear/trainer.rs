@@ -381,7 +381,6 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inference::gblinear::LinearModelPredict;
     use crate::training::{LogLoss, MulticlassLogLoss, Rmse, SquaredLoss, LogisticLoss, SoftmaxLoss};
 
     /// Helper to transpose row-major data to feature-major for FeaturesView.

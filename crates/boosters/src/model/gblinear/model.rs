@@ -5,7 +5,6 @@
 //! and [`config()`](GBLinearModel::config).
 
 use crate::data::{transpose_to_c_order, Dataset, SamplesView};
-use crate::inference::gblinear::LinearModelPredict;
 use crate::model::meta::ModelMeta;
 use crate::repr::gblinear::LinearModel;
 use crate::training::gblinear::GBLinearTrainer;
@@ -196,11 +195,11 @@ impl GBLinearModel {
         self.compute_predictions_raw(features)
     }
 
-    /// Internal: Compute raw predictions using LinearModelPredict trait.
+    /// Internal: Compute raw predictions using dot product.
     ///
     /// Output shape: `[n_groups, n_rows]` - predictions for group g are in row g.
     fn compute_predictions_raw(&self, features: ArrayView2<f32>) -> Array2<f32> {
-        // Use LinearModelPredict::predict which returns [n_samples, n_groups]
+        // LinearModel::predict returns [n_samples, n_groups]
         // Then transpose to [n_groups, n_samples] for consistent API
         let data = SamplesView::from_array(features);
         let output = self.model.predict(data, &[]);

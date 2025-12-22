@@ -10,13 +10,13 @@ use common::criterion_config::default_criterion;
 
 use boosters::data::{
     binned::BinnedDatasetBuilder,
-    ColMatrix, DenseMatrix, RowMajor,
+    FeaturesView,
 };
 use boosters::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
 
-use ndarray::ArrayView1;
+use ndarray::{Array2, ArrayView1};
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
@@ -45,9 +45,16 @@ const MEDIUM: (usize, usize) = (50_000, 100);
 // Helpers
 // =============================================================================
 
-fn build_col_matrix(features_row_major: Vec<f32>, rows: usize, cols: usize) -> ColMatrix<f32> {
-	let row: DenseMatrix<f32, RowMajor> = DenseMatrix::from_vec(features_row_major, rows, cols);
-	row.to_layout()
+/// Convert row-major features to column-major ndarray for FeaturesView.
+fn to_feature_major(features_row_major: &[f32], rows: usize, cols: usize) -> Array2<f32> {
+    // Row-major [rows, cols] → Feature-major [cols, rows]
+    let mut arr = Array2::zeros((cols, rows));
+    for r in 0..rows {
+        for c in 0..cols {
+            arr[[c, r]] = features_row_major[r * cols + c];
+        }
+    }
+    arr
 }
 
 // =============================================================================
@@ -70,8 +77,9 @@ fn bench_train_regression(c: &mut Criterion) {
 		// =====================================================================
 		// booste-rs
 		// =====================================================================
-		// Pre-convert to column-major layout - users would store data in optimal format
-		let col_matrix = build_col_matrix(features.clone(), rows, cols);
+		// Pre-convert to feature-major layout - users would store data in optimal format
+		let features_fm = to_feature_major(&features, rows, cols);
+		let features_view = FeaturesView::from_array(features_fm.view());
 
 		let params = GBDTParams {
 			n_trees,
@@ -88,7 +96,7 @@ fn bench_train_regression(c: &mut Criterion) {
 				// Use single-threaded binning to match training parallelism
 				// This mirrors how LightGBM's num_threads=1 affects its entire pipeline
 				let binned = BinnedDatasetBuilder::from_matrix_with_options(
-					&col_matrix,
+					&features_view,
 					256.into(),
 					Parallelism::Sequential,
 				)

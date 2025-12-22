@@ -31,7 +31,7 @@ mod dataset;
 mod traits;
 mod ndarray;
 
-#[cfg(any(feature = "io-arrow", feature = "io-parquet"))]
+#[cfg(feature = "io-parquet")]
 pub mod io;
 
 pub use dataset::{Dataset, DatasetError, FeatureColumn};

@@ -8,7 +8,6 @@
 use super::{load_config, load_test_data, load_train_data, pearson_correlation, transpose_to_samples, TEST_CASES_DIR};
 use approx::assert_relative_eq;
 use boosters::data::{Dataset, FeaturesView, SamplesView};
-use boosters::inference::LinearModelPredict;
 use boosters::training::{GBLinearParams, GBLinearTrainer, PinballLoss, Rmse, Verbosity};
 use rstest::rstest;
 use serde::Deserialize;

@@ -6,7 +6,6 @@
 
 use super::{load_config, load_train_data, transpose_to_samples};
 use boosters::data::{Dataset, FeaturesView, SamplesView};
-use boosters::inference::LinearModelPredict;
 use boosters::training::{
     GBLinearParams, GBLinearTrainer, LogLoss, LogisticLoss, MulticlassLogLoss, SoftmaxLoss,
     Verbosity,

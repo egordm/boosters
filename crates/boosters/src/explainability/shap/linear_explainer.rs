@@ -102,7 +102,6 @@ impl<'a> LinearExplainer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inference::gblinear::LinearModelPredict;
 
     fn make_simple_model() -> LinearModel {
         // 2 features, 1 output: y = 2*x0 + 3*x1 + 0.5 (bias)

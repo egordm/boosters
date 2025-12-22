@@ -6,7 +6,6 @@
 
 use super::{load_test_data, load_train_data};
 use boosters::data::{transpose_to_c_order, Dataset, FeaturesView, SamplesView};
-use boosters::inference::LinearModelPredict;
 use boosters::training::{
     Accuracy, GBLinearParams, GBLinearTrainer, HingeLoss, LogLoss, LogisticLoss, MarginAccuracy,
     ObjectiveFn, PseudoHuberLoss, Rmse, SquaredLoss, Verbosity,

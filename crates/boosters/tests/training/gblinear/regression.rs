@@ -10,7 +10,6 @@
 use super::{load_config, load_train_data, load_xgb_weights};
 use approx::assert_relative_eq;
 use boosters::data::{transpose_to_c_order, Dataset, FeaturesView, SamplesView};
-use boosters::inference::LinearModelPredict;
 use boosters::training::{GBLinearParams, GBLinearTrainer, Rmse, SquaredLoss, Verbosity};
 use ndarray::{Array2, ArrayView1};
 use rstest::rstest;
