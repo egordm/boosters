@@ -2,7 +2,9 @@
 //!
 //! This module provides:
 //! - [`BinnedAccessor`]: Converts binned data to midpoint values for traversal
+//! - [`SingleRowSlice`]: Wraps a `&[f32]` slice for single-row traversal
 //! - [`traverse_to_leaf`]: Generic traversal function for any tree/accessor combination
+//! - [`traverse_to_leaf_from`]: Same as above, but starting from a given node
 //!
 //! # Design
 //!
@@ -14,6 +16,45 @@
 use crate::data::binned::BinMapper;
 use crate::data::{BinnedDataset, FeatureAccessor};
 use crate::repr::gbdt::{float_to_category, NodeId, SplitType, TreeView};
+
+// ============================================================================
+// SingleRowSlice Accessor
+// ============================================================================
+
+/// Feature accessor wrapping a single row of features as a slice.
+///
+/// This adapter allows using `&[f32]` with the generic [`traverse_to_leaf`]
+/// function. The slice represents features for exactly one row, so `row` 
+/// parameter must be 0.
+///
+/// # Example
+///
+/// ```ignore
+/// use boosters::inference::gbdt::{SingleRowSlice, traverse_to_leaf};
+///
+/// let features = [0.5f32, 1.2, -0.3];
+/// let accessor = SingleRowSlice(&features);
+/// let leaf = traverse_to_leaf(&tree, &accessor, 0);
+/// ```
+pub struct SingleRowSlice<'a>(pub &'a [f32]);
+
+impl FeatureAccessor for SingleRowSlice<'_> {
+    #[inline]
+    fn get_feature(&self, row: usize, feature: usize) -> f32 {
+        debug_assert_eq!(row, 0, "SingleRowSlice only supports row 0");
+        self.0.get(feature).copied().unwrap_or(f32::NAN)
+    }
+
+    #[inline]
+    fn num_rows(&self) -> usize {
+        1
+    }
+
+    #[inline]
+    fn num_features(&self) -> usize {
+        self.0.len()
+    }
+}
 
 // ============================================================================
 // BinnedAccessor
@@ -85,7 +126,8 @@ impl FeatureAccessor for BinnedAccessor<'_> {
 /// Traverse a tree to find the leaf node for a given row.
 ///
 /// This is the unified traversal function that works with any `TreeView`
-/// and `FeatureAccessor` combination.
+/// and `FeatureAccessor` combination. Use [`traverse_to_leaf_from`] if you
+/// need to start from a specific node.
 ///
 /// # Arguments
 ///
@@ -106,12 +148,39 @@ impl FeatureAccessor for BinnedAccessor<'_> {
 /// let features = RowMatrix::from_vec(vec![0.5, 1.0], 1, 2);
 /// let leaf_id = traverse_to_leaf(&tree, &features, 0);
 /// ```
+#[inline]
 pub fn traverse_to_leaf<T: TreeView, A: FeatureAccessor>(
     tree: &T,
     accessor: &A,
     row: usize,
 ) -> NodeId {
-    let mut node: NodeId = 0; // Start at root
+    traverse_to_leaf_from(tree, 0, accessor, row)
+}
+
+/// Traverse a tree to find the leaf node, starting from a specific node.
+///
+/// This is the core traversal function used by both [`traverse_to_leaf`] and
+/// [`traverse_from_node`]. It supports starting from any node, useful for
+/// resuming traversal after unrolled levels.
+///
+/// # Arguments
+///
+/// * `tree` - Tree to traverse (implements [`TreeView`])
+/// * `start_node` - Node ID to start traversal from
+/// * `accessor` - Feature value source (implements [`FeatureAccessor`])
+/// * `row` - Row index in the accessor
+///
+/// # Returns
+///
+/// The `NodeId` of the reached leaf node.
+#[inline]
+pub fn traverse_to_leaf_from<T: TreeView, A: FeatureAccessor>(
+    tree: &T,
+    start_node: NodeId,
+    accessor: &A,
+    row: usize,
+) -> NodeId {
+    let mut node = start_node;
 
     while !tree.is_leaf(node) {
         let feat_idx = tree.split_index(node) as usize;

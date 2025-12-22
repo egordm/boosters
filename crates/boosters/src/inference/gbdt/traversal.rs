@@ -8,7 +8,7 @@
 //! - [`StandardTraversal`]: Direct node-by-node traversal (simple, good for single rows)
 //! - [`UnrolledTraversal`]: Uses [`UnrolledTreeLayout`] for cache-friendly batch traversal
 
-use crate::repr::gbdt::{LeafValue, NodeId, ScalarLeaf, SplitType, Tree, TreeView, float_to_category};
+use crate::repr::gbdt::{LeafValue, NodeId, ScalarLeaf, Tree};
 use super::{Depth6, UnrollDepth, UnrolledTreeLayout};
 
 // =============================================================================
@@ -81,56 +81,24 @@ pub trait TreeTraversal<L: LeafValue>: Clone {
 
 /// Continue traversal from a given node to a leaf.
 ///
-/// This is the core traversal loop used by multiple implementations.
-/// Handles numeric splits and missing values. For categorical splits,
-/// use the full tree visitor.
+/// This is a convenience wrapper around [`traverse_to_leaf_from`] for slice-based
+/// feature access. It wraps the slice in a [`SingleRowSlice`] adapter.
 ///
 /// # Arguments
 ///
 /// - `tree`: The tree view
 /// - `start_node`: Node index to start from
-/// - `features`: Feature values
+/// - `features`: Feature values for a single row
 ///
 /// # Returns
 ///
 /// The leaf node index reached.
+///
+/// [`traverse_to_leaf_from`]: super::traverse_to_leaf_from
+/// [`SingleRowSlice`]: super::SingleRowSlice
 #[inline]
 pub fn traverse_from_node(tree: &Tree<ScalarLeaf>, start_node: u32, features: &[f32]) -> NodeId {
-    let mut idx = start_node;
-
-    while !tree.is_leaf(idx) {
-        let feat_idx = tree.split_index(idx) as usize;
-        let fvalue = features.get(feat_idx).copied().unwrap_or(f32::NAN);
-
-        idx = if fvalue.is_nan() {
-            // Missing value: use default direction
-            if tree.default_left(idx) {
-                tree.left_child(idx)
-            } else {
-                tree.right_child(idx)
-            }
-        } else {
-            match tree.split_type(idx) {
-                SplitType::Numeric => {
-                    if fvalue < tree.split_threshold(idx) {
-                        tree.left_child(idx)
-                    } else {
-                        tree.right_child(idx)
-                    }
-                }
-                SplitType::Categorical => {
-                    let category = float_to_category(fvalue);
-                    if tree.categories().category_goes_right(idx, category) {
-                        tree.right_child(idx)
-                    } else {
-                        tree.left_child(idx)
-                    }
-                }
-            }
-        };
-    }
-
-    idx
+    super::traverse_to_leaf_from(tree, start_node, &super::SingleRowSlice(features), 0)
 }
 
 // =============================================================================
@@ -286,7 +254,7 @@ mod tests {
     #![allow(clippy::let_unit_value)]
 
     use super::*;
-    use crate::repr::gbdt::Forest;
+    use crate::repr::gbdt::{Forest, TreeView};
 
     fn build_simple_tree(
         left_val: f32,

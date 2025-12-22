@@ -57,4 +57,4 @@ pub use traversal::{
 };
 
 // Re-export accessor types (traits are in their home modules)
-pub use accessor::{BinnedAccessor, traverse_to_leaf};
+pub use accessor::{BinnedAccessor, SingleRowSlice, traverse_to_leaf, traverse_to_leaf_from};

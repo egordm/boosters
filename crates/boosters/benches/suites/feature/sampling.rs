@@ -10,14 +10,11 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
-use boosters::data::{binned::BinnedDatasetBuilder, transpose_to_c_order, FeaturesView};
-use boosters::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
+use boosters::testing::data::synthetic_regression;
 use boosters::training::{
     GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, RowSamplingParams, SquaredLoss,
 };
 use boosters::Parallelism;
-
-use ndarray::{ArrayView1, ArrayView2};
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
@@ -30,23 +27,6 @@ const N_TREES: u32 = 100;
 const MAX_DEPTH: u32 = 6;
 
 // =============================================================================
-// Helpers
-// =============================================================================
-
-fn build_binned_dataset(
-    features_row_major: &[f32],
-    rows: usize,
-    cols: usize,
-) -> boosters::data::binned::BinnedDataset {
-    let sample_major_view = ArrayView2::from_shape((rows, cols), features_row_major).unwrap();
-    let features_fm = transpose_to_c_order(sample_major_view);
-    let features_view = FeaturesView::from_array(features_fm.view());
-    BinnedDatasetBuilder::from_matrix(&features_view, 256)
-        .build()
-        .unwrap()
-}
-
-// =============================================================================
 // Sampling Strategies Benchmark
 // =============================================================================
 
@@ -55,13 +35,11 @@ fn bench_sampling_strategies(c: &mut Criterion) {
     group.sample_size(10);
 
     let (rows, cols) = DATASET;
-    let features = random_dense_f32(rows, cols, 42, -1.0, 1.0);
-    let (targets, _w, _b) = synthetic_regression_targets_linear(&features, rows, cols, 1337, 0.05);
+    let dataset = synthetic_regression(rows, cols, 42, 0.05);
+    let binned = dataset.to_binned(256);
+    let targets = dataset.targets.view();
 
     group.throughput(Throughput::Elements((rows * cols) as u64));
-
-    // Pre-build binned dataset
-    let binned = build_binned_dataset(&features, rows, cols);
 
     // Sampling configurations to test
     let configs: Vec<(&str, RowSamplingParams)> = vec![
@@ -95,7 +73,7 @@ fn bench_sampling_strategies(c: &mut Criterion) {
             b.iter(|| {
                 black_box(
                     trainer
-                        .train(black_box(&binned), ArrayView1::from(black_box(&targets[..])), None, &[], Parallelism::Sequential)
+                        .train(black_box(&binned), black_box(targets), None, &[], Parallelism::Sequential)
                         .unwrap(),
                 )
             })
