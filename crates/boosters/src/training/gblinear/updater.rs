@@ -9,14 +9,9 @@
 //!
 //! # Data Format
 //!
-//! The updaters require column-major matrices for efficient column iteration:
+//! The updaters require feature-major layout for efficient feature iteration:
 //!
-//! - [`ColMatrix`](crate::data::ColMatrix): Column-major dense matrix
-//!
-//! For row-major data, convert first:
-//! ```ignore
-//! let col_matrix: ColMatrix = row_matrix.to_layout();
-//! ```
+//! - [`FeaturesView`](crate::data::FeaturesView): Feature-major view `[n_features, n_samples]`
 //!
 //! # Gradient Storage
 //!
@@ -26,7 +21,7 @@
 
 use rayon::prelude::*;
 
-use crate::data::ColMatrix;
+use crate::data::FeaturesView;
 use crate::repr::gblinear::LinearModel;
 use crate::training::Gradients;
 
@@ -101,14 +96,10 @@ impl Updater {
     /// Returns a vector of (feature_idx, delta) pairs for weight updates that were applied.
     /// These deltas can be used to incrementally update predictions instead of recomputing them.
     ///
-    /// # Type Parameters
-    ///
-    /// * `S` - Storage type for the column-major matrix
-    ///
     /// # Arguments
     ///
     /// * `model` - Linear model to update
-    /// * `data` - Training data (column-major matrix)
+    /// * `data` - Training data as FeaturesView `[n_features, n_samples]`
     /// * `buffer` - Gradient buffer with shape `[n_samples, n_outputs]`
     /// * `selector` - Feature selection strategy
     /// * `output` - Which output (group) to update (0 to n_outputs-1)
@@ -116,16 +107,15 @@ impl Updater {
     /// # Returns
     ///
     /// Vector of (feature_idx, weight_delta) pairs for all non-zero updates
-    pub fn update_round<S, Sel>(
+    pub fn update_round<Sel>(
         &self,
         model: &mut LinearModel,
-        data: &ColMatrix<f32, S>,
+        data: &FeaturesView<'_>,
         buffer: &Gradients,
         selector: &mut Sel,
         output: usize,
     ) -> Vec<(usize, f32)>
     where
-        S: AsRef<[f32]> + Sync,
         Sel: FeatureSelector,
     {
         match self.kind {
@@ -176,14 +166,14 @@ impl Updater {
     ///
     /// # Arguments
     ///
-    /// * `data` - Training data (column-major matrix)
+    /// * `data` - Training data as FeaturesView `[n_features, n_samples]`
     /// * `deltas` - Weight deltas from coordinate descent: (feature_idx, delta) pairs
     /// * `output` - Which output group these deltas apply to
     /// * `n_rows` - Number of samples
     /// * `predictions` - Prediction buffer in column-major layout: `[group * n_rows + row]`
-    pub fn apply_weight_deltas_to_predictions<S: AsRef<[f32]>>(
+    pub fn apply_weight_deltas_to_predictions(
         &self,
-        data: &ColMatrix<f32, S>,
+        data: &FeaturesView<'_>,
         deltas: &[(usize, f32)],
         output: usize,
         n_rows: usize,
@@ -192,7 +182,8 @@ impl Updater {
         let offset = output * n_rows;
 
         for &(feature, delta) in deltas {
-            for (row, value) in data.column(feature) {
+            let feature_values = data.feature(feature);
+            for (row, &value) in feature_values.iter().enumerate() {
                 predictions[offset + row] += value * delta;
             }
         }
@@ -232,16 +223,15 @@ impl Updater {
 ///
 /// Updates features one at a time with exact gradient computation.
 /// Returns deltas for incremental prediction updates.
-fn sequential_update<S, Sel>(
+fn sequential_update<Sel>(
     model: &mut LinearModel,
-    data: &ColMatrix<f32, S>,
+    data: &FeaturesView<'_>,
     buffer: &Gradients,
     selector: &mut Sel,
     output: usize,
     config: &UpdateConfig,
 ) -> Vec<(usize, f32)>
 where
-    S: AsRef<[f32]>,
     Sel: FeatureSelector,
 {
     selector.reset(model.n_features());
@@ -263,16 +253,15 @@ where
 /// Updates all features in parallel. Race conditions in residual updates
 /// are tolerable with reasonable learning rates.
 /// Returns deltas for incremental prediction updates.
-fn parallel_update<S, Sel>(
+fn parallel_update<Sel>(
     model: &mut LinearModel,
-    data: &ColMatrix<f32, S>,
+    data: &FeaturesView<'_>,
     buffer: &Gradients,
     selector: &mut Sel,
     output: usize,
     config: &UpdateConfig,
 ) -> Vec<(usize, f32)>
 where
-    S: AsRef<[f32]> + Sync,
     Sel: FeatureSelector,
 {
     selector.reset(model.n_features());
@@ -304,9 +293,9 @@ where
 /// hess_l2 = Σ(hessian × feature²) + lambda
 /// delta = soft_threshold(-grad_l2 / hess_l2, alpha / hess_l2) × learning_rate
 /// ```
-fn compute_weight_update<S: AsRef<[f32]>>(
+fn compute_weight_update(
     model: &LinearModel,
-    data: &ColMatrix<f32, S>,
+    data: &FeaturesView<'_>,
     buffer: &Gradients,
     feature: usize,
     output: usize,
@@ -314,14 +303,15 @@ fn compute_weight_update<S: AsRef<[f32]>>(
 ) -> f32 {
     let current_weight = model.weight(feature, output);
 
-    // Column-major: use output-specific slices for direct indexing by row
+    // Feature-major: use output-specific slices for direct indexing by row
     let grad_hess = buffer.output_pairs(output);
 
     // Accumulate gradient and hessian for this feature
     let mut sum_grad = 0.0f32;
     let mut sum_hess = 0.0f32;
 
-    for (row, value) in data.column(feature) {
+    let feature_values = data.feature(feature);
+    for (row, &value) in feature_values.iter().enumerate() {
         sum_grad += grad_hess[row].grad * value;
         sum_hess += grad_hess[row].hess * value * value;
     }
@@ -376,22 +366,17 @@ fn soft_threshold(x: f32, threshold: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{ColMatrix, RowMatrix};
+    use crate::data::FeaturesView;
     use super::super::selector::CyclicSelector;
 
-    fn make_test_data() -> (ColMatrix<f32>, Gradients) {
-        // Simple 4x2 dataset
-        let dense = RowMatrix::from_vec(
-            vec![
-                1.0, 0.0, // row 0
-                0.0, 1.0, // row 1
-                1.0, 1.0, // row 2
-                2.0, 0.5, // row 3
-            ],
-            4,
-            2,
-        );
-        let col_matrix: ColMatrix = dense.to_layout();
+    fn make_test_data() -> (Vec<f32>, Gradients) {
+        // Simple 4x2 dataset in feature-major layout
+        // Feature 0: [1.0, 0.0, 1.0, 2.0] (samples 0-3)
+        // Feature 1: [0.0, 1.0, 1.0, 0.5] (samples 0-3)
+        let feature_data = vec![
+            1.0, 0.0, 1.0, 2.0, // feature 0
+            0.0, 1.0, 1.0, 0.5, // feature 1
+        ];
 
         // Gradients (simulating squared error loss)
         let mut buffer = Gradients::new(4, 1);
@@ -400,7 +385,7 @@ mod tests {
         buffer.set(2, 0, 0.2, 1.0);
         buffer.set(3, 0, -0.1, 1.0);
 
-        (col_matrix, buffer)
+        (feature_data, buffer)
     }
 
     #[test]
@@ -421,7 +406,8 @@ mod tests {
 
     #[test]
     fn sequential_updater_changes_weights() {
-        let (data, buffer) = make_test_data();
+        let (feature_data, buffer) = make_test_data();
+        let data = FeaturesView::from_slice(&feature_data, 4, 2).unwrap();
         let mut model = LinearModel::zeros(2, 1);
         let mut selector = CyclicSelector::new();
 
@@ -448,7 +434,8 @@ mod tests {
 
     #[test]
     fn parallel_updater_changes_weights() {
-        let (data, buffer) = make_test_data();
+        let (feature_data, buffer) = make_test_data();
+        let data = FeaturesView::from_slice(&feature_data, 4, 2).unwrap();
         let mut model = LinearModel::zeros(2, 1);
         let mut selector = CyclicSelector::new();
 
@@ -475,7 +462,8 @@ mod tests {
 
     #[test]
     fn l2_regularization_shrinks_weights() {
-        let (data, buffer) = make_test_data();
+        let (feature_data, buffer) = make_test_data();
+        let data = FeaturesView::from_slice(&feature_data, 4, 2).unwrap();
 
         // No regularization
         let mut model1 = LinearModel::zeros(2, 1);

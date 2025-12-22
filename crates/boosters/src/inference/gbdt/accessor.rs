@@ -155,7 +155,7 @@ pub fn traverse_to_leaf<T: TreeView, A: FeatureAccessor>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{ColMatrix, RowMatrix};
+    use crate::data::{FeaturesView, SamplesView};
     use crate::repr::gbdt::{ScalarLeaf, Tree};
 
     /// Build a simple 3-node tree:
@@ -179,29 +179,32 @@ mod tests {
     fn test_feature_accessors_all_types() {
         let tree = build_simple_tree();
 
-        // Row-major data: 3 rows, 2 features
-        let row_data = RowMatrix::from_vec(vec![0.3, 0.0, 0.7, 0.0, f32::NAN, 0.0], 3, 2);
+        // Sample-major data: 3 rows, 2 features (row-major order)
+        let row_data = [0.3f32, 0.0, 0.7, 0.0, f32::NAN, 0.0];
+        let samples_view = SamplesView::from_slice(&row_data, 3, 2).unwrap();
 
-        // Column-major data: same values
-        let col_data = ColMatrix::from_vec(vec![0.3, 0.7, f32::NAN, 0.0, 0.0, 0.0], 3, 2);
+        // Feature-major data: same logical values but in feature-major order
+        // [f0_s0, f0_s1, f0_s2, f1_s0, f1_s1, f1_s2] = [0.3, 0.7, NaN, 0.0, 0.0, 0.0]
+        let col_data = [0.3f32, 0.7, f32::NAN, 0.0, 0.0, 0.0];
+        let features_view = FeaturesView::from_slice(&col_data, 3, 2).unwrap();
 
-        // Test RowMatrix accessor
-        let leaf_row_0 = traverse_to_leaf(&tree, &row_data, 0);
-        let leaf_row_1 = traverse_to_leaf(&tree, &row_data, 1);
-        let leaf_row_2 = traverse_to_leaf(&tree, &row_data, 2);
+        // Test SamplesView accessor
+        let leaf_row_0 = traverse_to_leaf(&tree, &samples_view, 0);
+        let leaf_row_1 = traverse_to_leaf(&tree, &samples_view, 1);
+        let leaf_row_2 = traverse_to_leaf(&tree, &samples_view, 2);
 
         assert_eq!(leaf_row_0, 1, "0.3 < 0.5 should go left");
         assert_eq!(leaf_row_1, 2, "0.7 >= 0.5 should go right");
         assert_eq!(leaf_row_2, 1, "NaN with default_left=true should go left");
 
-        // Test ColMatrix accessor - should reach same leaves
-        let leaf_col_0 = traverse_to_leaf(&tree, &col_data, 0);
-        let leaf_col_1 = traverse_to_leaf(&tree, &col_data, 1);
-        let leaf_col_2 = traverse_to_leaf(&tree, &col_data, 2);
+        // Test FeaturesView accessor - should reach same leaves
+        let leaf_col_0 = traverse_to_leaf(&tree, &features_view, 0);
+        let leaf_col_1 = traverse_to_leaf(&tree, &features_view, 1);
+        let leaf_col_2 = traverse_to_leaf(&tree, &features_view, 2);
 
-        assert_eq!(leaf_col_0, leaf_row_0, "ColMatrix should match RowMatrix");
-        assert_eq!(leaf_col_1, leaf_row_1, "ColMatrix should match RowMatrix");
-        assert_eq!(leaf_col_2, leaf_row_2, "ColMatrix should match RowMatrix");
+        assert_eq!(leaf_col_0, leaf_row_0, "FeaturesView should match SamplesView");
+        assert_eq!(leaf_col_1, leaf_row_1, "FeaturesView should match SamplesView");
+        assert_eq!(leaf_col_2, leaf_row_2, "FeaturesView should match SamplesView");
     }
 
     #[test]
@@ -235,6 +238,8 @@ mod tests {
     #[test]
     fn test_treeview_mutable_tree() {
         use crate::repr::gbdt::MutableTree;
+        use ndarray::Array2;
+        use crate::data::SamplesView;
 
         let mut tree = MutableTree::<ScalarLeaf>::new();
         let _root = tree.init_root();
@@ -252,7 +257,9 @@ mod tests {
         assert_eq!(TreeView::split_threshold(&tree, 0), 0.5);
 
         // Test traversal with MutableTree
-        let row_data = RowMatrix::from_vec(vec![0.3, 0.7], 2, 1);
+        // 2 samples, 1 feature each: [[0.3], [0.7]]
+        let arr = Array2::from_shape_vec((2, 1), vec![0.3, 0.7]).unwrap();
+        let row_data = SamplesView::from_array(arr.view());
         let leaf_0 = traverse_to_leaf(&tree, &row_data, 0);
         let leaf_1 = traverse_to_leaf(&tree, &row_data, 1);
 

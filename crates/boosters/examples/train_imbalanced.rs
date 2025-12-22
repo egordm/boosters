@@ -20,9 +20,9 @@
 //! ```
 
 use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
+use boosters::data::{transpose_to_c_order, FeaturesView};
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, TreeParams};
-use ndarray::ArrayView1;
+use ndarray::{Array1, Array2, ArrayView1};
 
 fn main() {
     // =========================================================================
@@ -35,32 +35,35 @@ fn main() {
     let n_features = 2;
     let n_samples = n_majority + n_minority;
 
-    let mut features = Vec::with_capacity(n_samples * n_features);
-    let mut labels = Vec::with_capacity(n_samples);
+    // Generate feature-major data [n_features, n_samples]
+    let mut features = Array2::<f32>::zeros((n_features, n_samples));
+    let mut labels = Array1::<f32>::zeros(n_samples);
 
     for i in 0..n_majority {
         let noise1 = ((i * 17) % 200) as f32 / 40.0 - 2.5;
         let noise2 = ((i * 31) % 200) as f32 / 40.0 - 2.5;
-        features.push(3.0 + noise1);
-        features.push(3.0 + noise2);
-        labels.push(0.0);
+        features[(0, i)] = 3.0 + noise1;
+        features[(1, i)] = 3.0 + noise2;
+        labels[i] = 0.0;
     }
 
     for i in 0..n_minority {
+        let sample_idx = n_majority + i;
         let noise1 = ((i * 23) % 200) as f32 / 40.0 - 2.5;
         let noise2 = ((i * 37) % 200) as f32 / 40.0 - 2.5;
-        features.push(5.0 + noise1);
-        features.push(5.0 + noise2);
-        labels.push(1.0);
+        features[(0, sample_idx)] = 5.0 + noise1;
+        features[(1, sample_idx)] = 5.0 + noise2;
+        labels[sample_idx] = 1.0;
     }
 
     // Create binned dataset
-    let row_matrix: DenseMatrix<f32, RowMajor> =
-        DenseMatrix::from_vec(features.clone(), n_samples, n_features);
-    let col_matrix: ColMatrix<f32> = row_matrix.to_layout();
-    let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 256)
+    let features_view = FeaturesView::from_array(features.view());
+    let dataset = BinnedDatasetBuilder::from_matrix(&features_view, 256)
         .build()
         .expect("Failed to build binned dataset");
+
+    // Create sample-major view for prediction (C-order)
+    let samples = transpose_to_c_order(features.view());
 
     // =========================================================================
     // Compute Class Weights (inverse frequency)
@@ -94,7 +97,7 @@ fn main() {
     println!("--- Training WITHOUT weights ---");
     let model_unweighted = GBDTModel::train(
         &dataset,
-        ArrayView1::from(&labels[..]),
+        labels.view(),
         None,
         config.clone(),
         1,
@@ -102,10 +105,10 @@ fn main() {
     .expect("Training failed");
 
     // GBDTModel::predict() returns probabilities for logistic objective
-    let probs_uw = model_unweighted.predict(&row_matrix, 1);
+    let probs_uw = model_unweighted.predict(samples.view(), 1);
 
-    let acc_uw = compute_accuracy(probs_uw.as_slice(), &labels);
-    let recall_1_uw = compute_recall(probs_uw.as_slice(), &labels, 1.0);
+    let acc_uw = compute_accuracy(probs_uw.as_slice().unwrap(), labels.as_slice().unwrap());
+    let recall_1_uw = compute_recall(probs_uw.as_slice().unwrap(), labels.as_slice().unwrap(), 1.0);
     println!("  Accuracy: {:.1}%", acc_uw * 100.0);
     println!("  Minority recall: {:.1}%\n", recall_1_uw * 100.0);
 
@@ -115,17 +118,17 @@ fn main() {
     println!("--- Training WITH class weights ---");
     let model_weighted = GBDTModel::train(
         &dataset,
-        ArrayView1::from(&labels[..]),
+        labels.view(),
         Some(ArrayView1::from(&class_weights[..])),
         config,
         1,
     )
     .expect("Training failed");
 
-    let probs_w = model_weighted.predict(&row_matrix, 1);
+    let probs_w = model_weighted.predict(samples.view(), 1);
 
-    let acc_w = compute_accuracy(probs_w.as_slice(), &labels);
-    let recall_1_w = compute_recall(probs_w.as_slice(), &labels, 1.0);
+    let acc_w = compute_accuracy(probs_w.as_slice().unwrap(), labels.as_slice().unwrap());
+    let recall_1_w = compute_recall(probs_w.as_slice().unwrap(), labels.as_slice().unwrap(), 1.0);
     println!("  Accuracy: {:.1}%", acc_w * 100.0);
     println!("  Minority recall: {:.1}%\n", recall_1_w * 100.0);
 

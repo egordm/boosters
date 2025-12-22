@@ -13,13 +13,41 @@
 //! See RFC-0017 for detailed design rationale.
 
 use super::FeatureInfo;
-use crate::data::DataMatrix;
+use crate::data::FeaturesView;
 use fixedbitset::FixedBitSet;
 use rand::prelude::*;
 use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use rayon::prelude::*;
 use std::collections::HashMap;
+
+// =============================================================================
+// Trait for bundling feature access
+// =============================================================================
+
+/// Trait for accessing feature values during bundling conflict detection.
+///
+/// This abstracts over different data representations:
+/// - `FeaturesView` for raw float features
+/// - `FeatureBinAccessor` for already-binned data
+pub trait BundlingFeatures: Sync {
+    /// Number of samples (rows).
+    fn n_samples(&self) -> usize;
+    
+    /// Get the value at (sample, feature) as f32.
+    /// Used for conflict detection (non-zero check).
+    fn get(&self, sample: usize, feature: usize) -> f32;
+}
+
+impl BundlingFeatures for FeaturesView<'_> {
+    fn n_samples(&self) -> usize {
+        self.n_samples()
+    }
+    
+    fn get(&self, sample: usize, feature: usize) -> f32 {
+        FeaturesView::get(self, sample, feature)
+    }
+}
 
 /// Configuration for feature bundling.
 ///
@@ -405,11 +433,11 @@ impl ConflictGraph {
     /// Build a conflict graph from sampled rows.
     ///
     /// # Arguments
-    /// * `matrix` - The data matrix
+    /// * `features` - Feature data implementing `BundlingFeatures`
     /// * `sparse_features` - Indices of sparse features to analyze
     /// * `sampled_rows` - Row indices to check for conflicts
-    fn build<M: DataMatrix<Element = f32> + Sync>(
-        matrix: &M,
+    fn build<F: BundlingFeatures>(
+        features: &F,
         sparse_features: &[usize],
         sampled_rows: &[usize],
     ) -> Self {
@@ -429,7 +457,7 @@ impl ConflictGraph {
             .map(|&feat_idx| {
                 let mut bits = FixedBitSet::with_capacity(n_sampled);
                 for (row_pos, &row_idx) in sampled_rows.iter().enumerate() {
-                    if matrix.get(row_idx, feat_idx).is_some_and(|val| val != 0.0) {
+                    if features.get(row_idx, feat_idx) != 0.0 {
                         bits.insert(row_pos);
                     }
                 }
@@ -632,14 +660,14 @@ fn assign_bundles(
 /// This is the main entry point for feature bundling.
 ///
 /// # Arguments
-/// * `matrix` - The data matrix
+/// * `features` - Feature data implementing `BundlingFeatures`
 /// * `feature_infos` - Results from `analyze_features()`
 /// * `config` - Bundling configuration
 ///
 /// # Returns
 /// A `BundlePlan` describing how features should be bundled.
-pub fn create_bundle_plan<M: DataMatrix<Element = f32> + Sync>(
-    matrix: &M,
+pub fn create_bundle_plan<F: BundlingFeatures>(
+    features: &F,
     feature_infos: &[FeatureInfo],
     config: &BundlingConfig,
 ) -> BundlePlan {
@@ -715,7 +743,7 @@ pub fn create_bundle_plan<M: DataMatrix<Element = f32> + Sync>(
     }
 
     // Sample rows for conflict detection
-    let n_rows = matrix.num_rows();
+    let n_rows = features.n_samples();
     let sampled_rows = sample_rows(n_rows, config.max_sample_rows, config.seed);
     let n_sampled = sampled_rows.len();
 
@@ -723,7 +751,7 @@ pub fn create_bundle_plan<M: DataMatrix<Element = f32> + Sync>(
     let sparse_original_indices: Vec<usize> = sparse_features.iter().map(|f| f.original_idx).collect();
 
     // Build conflict graph
-    let conflict_graph = ConflictGraph::build(matrix, &sparse_original_indices, &sampled_rows);
+    let conflict_graph = ConflictGraph::build(features, &sparse_original_indices, &sampled_rows);
 
     // Check for high conflict rate (early termination)
     if conflict_graph.conflict_rate() > 0.5 {
@@ -788,7 +816,7 @@ pub fn create_bundle_plan<M: DataMatrix<Element = f32> + Sync>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::ColMatrix;
+    use crate::data::FeaturesView;
 
     #[test]
     fn test_bundling_config_defaults() {
@@ -896,14 +924,15 @@ mod tests {
         // Two mutually exclusive features (one-hot style)
         // Feature 0: [1, 0, 0, 0]
         // Feature 1: [0, 1, 0, 0]
-        // ColMatrix is column-major, so we flatten by column
-        // Col 0: [1, 0, 0, 0], Col 1: [0, 1, 0, 0]
-        let matrix = ColMatrix::from_vec(vec![1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0], 4, 2);
+        // FeaturesView is feature-major: [n_features, n_samples]
+        // Data layout: [f0_s0, f0_s1, f0_s2, f0_s3, f1_s0, f1_s1, f1_s2, f1_s3]
+        let data = vec![1.0f32, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+        let view = FeaturesView::from_slice(&data, 4, 2).unwrap();
 
         let sparse_features = vec![0, 1];
         let sampled_rows: Vec<usize> = (0..4).collect();
 
-        let graph = ConflictGraph::build(&matrix, &sparse_features, &sampled_rows);
+        let graph = ConflictGraph::build(&view, &sparse_features, &sampled_rows);
 
         assert_eq!(graph.get_conflict(0, 1), 0);
         assert_eq!(graph.conflict_pair_count(), 0);
@@ -914,13 +943,14 @@ mod tests {
         // Two features that conflict on row 0
         // Feature 0: [1, 0, 0, 0]
         // Feature 1: [1, 1, 0, 0]
-        // ColMatrix is column-major
-        let matrix = ColMatrix::from_vec(vec![1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0], 4, 2);
+        // FeaturesView is feature-major
+        let data = vec![1.0f32, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0];
+        let view = FeaturesView::from_slice(&data, 4, 2).unwrap();
 
         let sparse_features = vec![0, 1];
         let sampled_rows: Vec<usize> = (0..4).collect();
 
-        let graph = ConflictGraph::build(&matrix, &sparse_features, &sampled_rows);
+        let graph = ConflictGraph::build(&view, &sparse_features, &sampled_rows);
 
         assert_eq!(graph.get_conflict(0, 1), 1);
         assert_eq!(graph.conflict_pair_count(), 1);
@@ -928,8 +958,9 @@ mod tests {
 
     #[test]
     fn test_bundle_plan_disabled() {
-        // 2 rows, 2 cols. Col 0: [1, 0], Col 1: [0, 1]
-        let matrix = ColMatrix::from_vec(vec![1.0, 0.0, 0.0, 1.0], 2, 2);
+        // 2 samples, 2 features. Feature 0: [1, 0], Feature 1: [0, 1]
+        let data = vec![1.0f32, 0.0, 0.0, 1.0];
+        let view = FeaturesView::from_slice(&data, 2, 2).unwrap();
         let feature_infos = vec![
             FeatureInfo {
                 original_idx: 0,
@@ -946,7 +977,7 @@ mod tests {
         ];
 
         let config = BundlingConfig::disabled();
-        let plan = create_bundle_plan(&matrix, &feature_infos, &config);
+        let plan = create_bundle_plan(&view, &feature_infos, &config);
 
         assert!(plan.skipped);
         assert_eq!(plan.skip_reason, Some("Bundling disabled".to_string()));
@@ -955,8 +986,9 @@ mod tests {
     #[test]
     fn test_bundle_plan_too_few_sparse() {
         // Only 1 sparse feature - not enough to bundle
-        // 2 rows, 2 cols. Col 0: [1, 0], Col 1: [0, 0]
-        let matrix = ColMatrix::from_vec(vec![1.0, 0.0, 0.0, 0.0], 2, 2);
+        // 2 samples, 2 features. Feature 0: [1, 0], Feature 1: [0, 0]
+        let data = vec![1.0f32, 0.0, 0.0, 0.0];
+        let view = FeaturesView::from_slice(&data, 2, 2).unwrap();
         let feature_infos = vec![
             FeatureInfo {
                 original_idx: 0,
@@ -973,7 +1005,7 @@ mod tests {
         ];
 
         let config = BundlingConfig::auto();
-        let plan = create_bundle_plan(&matrix, &feature_infos, &config);
+        let plan = create_bundle_plan(&view, &feature_infos, &config);
 
         assert!(plan.skipped);
         assert!(plan
@@ -986,18 +1018,18 @@ mod tests {
     #[test]
     fn test_bundle_plan_exclusive_features() {
         // 4 mutually exclusive features (one-hot encoding)
-        // 10 rows, 4 cols
-        // Each feature has 1 non-zero value in different rows
-        // Col 0: [1,0,0,0,0,0,0,0,0,0]
-        // Col 1: [0,1,0,0,0,0,0,0,0,0]
-        // Col 2: [0,0,1,0,0,0,0,0,0,0]
-        // Col 3: [0,0,0,1,0,0,0,0,0,0]
-        let mut data = vec![0.0f32; 40]; // 10 rows * 4 cols
-        data[0] = 1.0;  // col 0, row 0
-        data[11] = 1.0; // col 1, row 1
-        data[22] = 1.0; // col 2, row 2
-        data[33] = 1.0; // col 3, row 3
-        let matrix = ColMatrix::from_vec(data, 10, 4);
+        // 10 samples, 4 features
+        // Each feature has 1 non-zero value in different samples
+        // Feature 0: [1,0,0,0,0,0,0,0,0,0]
+        // Feature 1: [0,1,0,0,0,0,0,0,0,0]
+        // Feature 2: [0,0,1,0,0,0,0,0,0,0]
+        // Feature 3: [0,0,0,1,0,0,0,0,0,0]
+        let mut data = vec![0.0f32; 40]; // 4 features * 10 samples
+        data[0] = 1.0;  // feature 0, sample 0
+        data[11] = 1.0; // feature 1, sample 1
+        data[22] = 1.0; // feature 2, sample 2
+        data[33] = 1.0; // feature 3, sample 3
+        let view = FeaturesView::from_slice(&data, 10, 4).unwrap();
 
         // density = 0.1 for each feature (1 non-zero out of 10)
         let feature_infos: Vec<FeatureInfo> = (0..4)
@@ -1010,7 +1042,7 @@ mod tests {
             .collect();
 
         let config = BundlingConfig::auto();
-        let plan = create_bundle_plan(&matrix, &feature_infos, &config);
+        let plan = create_bundle_plan(&view, &feature_infos, &config);
 
         assert!(!plan.skipped, "Plan should not be skipped");
         assert_eq!(plan.sparse_feature_count, 4);
@@ -1028,17 +1060,17 @@ mod tests {
     fn test_bundle_plan_conflicting_features() {
         // 3 features where 2 conflict but 1 doesn't
         // This tests that conflicting features end up in separate bundles
-        // 10 rows, 3 cols
-        // Col 0: [1,1,0,0,0,0,0,0,0,0] - conflicts with col 1
-        // Col 1: [1,1,0,0,0,0,0,0,0,0] - conflicts with col 0
-        // Col 2: [0,0,1,0,0,0,0,0,0,0] - doesn't conflict with anyone
+        // 10 samples, 3 features
+        // Feature 0: [1,1,0,0,0,0,0,0,0,0] - conflicts with feature 1
+        // Feature 1: [1,1,0,0,0,0,0,0,0,0] - conflicts with feature 0
+        // Feature 2: [0,0,1,0,0,0,0,0,0,0] - doesn't conflict with anyone
         let mut data = vec![0.0f32; 30];
-        data[0] = 1.0;  // col 0, row 0
-        data[1] = 1.0;  // col 0, row 1
-        data[10] = 1.0; // col 1, row 0
-        data[11] = 1.0; // col 1, row 1
-        data[22] = 1.0; // col 2, row 2
-        let matrix = ColMatrix::from_vec(data, 10, 3);
+        data[0] = 1.0;  // feature 0, sample 0
+        data[1] = 1.0;  // feature 0, sample 1
+        data[10] = 1.0; // feature 1, sample 0
+        data[11] = 1.0; // feature 1, sample 1
+        data[22] = 1.0; // feature 2, sample 2
+        let view = FeaturesView::from_slice(&data, 10, 3).unwrap();
 
         // strict() uses min_sparsity = 0.95, so sparse_threshold = 0.05
         let feature_infos = vec![
@@ -1063,7 +1095,7 @@ mod tests {
         ];
 
         let config = BundlingConfig::strict(); // 0 conflicts allowed
-        let plan = create_bundle_plan(&matrix, &feature_infos, &config);
+        let plan = create_bundle_plan(&view, &feature_infos, &config);
 
         assert!(!plan.skipped, "skip_reason: {:?}", plan.skip_reason);
         // Feature 2 can bundle with either 0 or 1, but 0 and 1 must be separate
@@ -1076,11 +1108,11 @@ mod tests {
         // 2 features that conflict on every non-zero row
         // This should trigger early termination due to high conflict rate (>50%)
         let mut data = vec![0.0f32; 20];
-        data[0] = 1.0;  // col 0, row 0
-        data[1] = 1.0;  // col 0, row 1
-        data[10] = 1.0; // col 1, row 0
-        data[11] = 1.0; // col 1, row 1
-        let matrix = ColMatrix::from_vec(data, 10, 2);
+        data[0] = 1.0;  // feature 0, sample 0
+        data[1] = 1.0;  // feature 0, sample 1
+        data[10] = 1.0; // feature 1, sample 0
+        data[11] = 1.0; // feature 1, sample 1
+        let view = FeaturesView::from_slice(&data, 10, 2).unwrap();
 
         let feature_infos = vec![
             FeatureInfo {
@@ -1098,7 +1130,7 @@ mod tests {
         ];
 
         let config = BundlingConfig::strict();
-        let plan = create_bundle_plan(&matrix, &feature_infos, &config);
+        let plan = create_bundle_plan(&view, &feature_infos, &config);
 
         // With only 2 features, the only pair conflicts = 100% conflict rate
         // Should be skipped due to high conflict rate
@@ -1235,17 +1267,17 @@ mod tests {
 
     #[test]
     fn test_bundle_plan_feature_mapping() {
-        // 10 rows, 3 cols - 2 sparse (mutually exclusive) + 1 dense
-        // Col 0: [1,0,0,0,0,0,0,0,0,0] - sparse
-        // Col 1: [0,1,0,0,0,0,0,0,0,0] - sparse
-        // Col 2: [1,1,1,1,1,1,1,1,1,1] - dense
+        // 10 samples, 3 features - 2 sparse (mutually exclusive) + 1 dense
+        // Feature 0: [1,0,0,0,0,0,0,0,0,0] - sparse
+        // Feature 1: [0,1,0,0,0,0,0,0,0,0] - sparse
+        // Feature 2: [1,1,1,1,1,1,1,1,1,1] - dense
         let mut data = vec![0.0f32; 30];
-        data[0] = 1.0;  // col 0, row 0
-        data[11] = 1.0; // col 1, row 1
+        data[0] = 1.0;  // feature 0, sample 0
+        data[11] = 1.0; // feature 1, sample 1
         for i in 0..10 {
-            data[20 + i] = 1.0; // col 2, all rows
+            data[20 + i] = 1.0; // feature 2, all samples
         }
-        let matrix = ColMatrix::from_vec(data, 10, 3);
+        let view = FeaturesView::from_slice(&data, 10, 3).unwrap();
 
         let feature_infos = vec![
             FeatureInfo {
@@ -1269,7 +1301,7 @@ mod tests {
         ];
 
         let config = BundlingConfig::auto();
-        let plan = create_bundle_plan(&matrix, &feature_infos, &config);
+        let plan = create_bundle_plan(&view, &feature_infos, &config);
 
         assert!(!plan.skipped);
 

@@ -9,17 +9,15 @@
 
 use super::{load_config, load_train_data, load_xgb_weights};
 use approx::assert_relative_eq;
-use boosters::data::{ColMatrix, DataMatrix, Dataset, RowMatrix};
+use boosters::data::{Dataset, FeaturesView, SamplesView};
 use boosters::inference::LinearModelPredict;
 use boosters::training::{GBLinearParams, GBLinearTrainer, Rmse, SquaredLoss, Verbosity};
 use ndarray::{Array2, ArrayView1};
 use rstest::rstest;
 
-/// Helper to create predictions array from PredictionOutput
-fn pred_to_array2(output: &boosters::inference::common::PredictionOutput) -> Array2<f32> {
-    let n_samples = output.num_rows();
-    let n_groups = output.num_groups();
-    Array2::from_shape_vec((n_groups, n_samples), output.as_slice().to_vec()).unwrap()
+/// Transpose predictions from (n_samples, n_groups) to (n_groups, n_samples) for metrics.
+fn transpose_predictions(output: &Array2<f32>) -> Array2<f32> {
+    output.t().to_owned()
 }
 
 /// Test that we can train a simple linear regression and get similar weights to XGBoost.
@@ -28,7 +26,8 @@ fn pred_to_array2(output: &boosters::inference::common::PredictionOutput) -> Arr
 #[case("regression_multifeature")]
 fn train_regression_matches_xgboost(#[case] name: &str) {
     let (data, labels) = load_train_data(name);
-    let train = Dataset::from_numeric(&data, labels.clone()).unwrap();
+    let view = FeaturesView::from_array(data.view());
+    let train = Dataset::from_numeric(&view, labels.clone()).unwrap();
     let xgb_weights = load_xgb_weights(name);
     let config = load_config(name);
 
@@ -69,7 +68,9 @@ fn train_regression_matches_xgboost(#[case] name: &str) {
 #[test]
 fn train_l2_regularization_shrinks_weights() {
     let (data, labels) = load_train_data("regression_l2");
-    let train = Dataset::from_numeric(&data, labels.clone()).unwrap();
+    let view = FeaturesView::from_array(data.view());
+    let n_features = data.nrows();
+    let train = Dataset::from_numeric(&view, labels.clone()).unwrap();
     let config = load_config("regression_l2");
 
     // Train without regularization
@@ -99,10 +100,10 @@ fn train_l2_regularization_shrinks_weights() {
     let l2_model = trainer_l2.train(&train, &[]).unwrap();
 
     // L2 should produce smaller weights on average
-    let no_reg_l2_norm: f32 = (0..data.num_features())
+    let no_reg_l2_norm: f32 = (0..n_features)
         .map(|i| no_reg_model.weight(i, 0).powi(2))
         .sum();
-    let l2_norm: f32 = (0..data.num_features())
+    let l2_norm: f32 = (0..n_features)
         .map(|i| l2_model.weight(i, 0).powi(2))
         .sum();
 
@@ -116,10 +117,11 @@ fn train_l2_regularization_shrinks_weights() {
 #[test]
 fn trained_model_predictions_reasonable() {
     // Simple test: y = 2x + 1
-    let row_data = RowMatrix::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], 5, 1);
-    let data: ColMatrix = row_data.to_layout();
+    // Feature-major: [n_features=1, n_samples=5]
+    let data = Array2::from_shape_vec((1, 5), vec![1.0, 2.0, 3.0, 4.0, 5.0]).unwrap();
+    let view = FeaturesView::from_array(data.view());
     let labels = vec![3.0, 5.0, 7.0, 9.0, 11.0];
-    let train = Dataset::from_numeric(&data, labels.clone()).unwrap();
+    let train = Dataset::from_numeric(&view, labels.clone()).unwrap();
 
     let params = GBLinearParams {
         n_rounds: 100,
@@ -154,14 +156,15 @@ fn trained_model_predictions_reasonable() {
 /// Test parallel and sequential training produce similar results.
 #[test]
 fn parallel_vs_sequential_similar() {
-    let row_data = RowMatrix::from_vec(
-        vec![1.0, 1.0, 2.0, 1.0, 1.0, 2.0, 2.0, 2.0],
-        4,
-        2,
-    );
-    let data: ColMatrix = row_data.to_layout();
+    // Feature-major: [n_features=2, n_samples=4]
+    // Converting from row-major: [[1,1], [2,1], [1,2], [2,2]] -> feature 0: [1,2,1,2], feature 1: [1,1,2,2]
+    let data = Array2::from_shape_vec((2, 4), vec![
+        1.0, 2.0, 1.0, 2.0,  // feature 0
+        1.0, 1.0, 2.0, 2.0,  // feature 1
+    ]).unwrap();
+    let view = FeaturesView::from_array(data.view());
     let labels = vec![3.0, 4.0, 5.0, 6.0]; // y = x0 + 2*x1
-    let train = Dataset::from_numeric(&data, labels.clone()).unwrap();
+    let train = Dataset::from_numeric(&view, labels.clone()).unwrap();
 
     let params_seq = GBLinearParams {
         n_rounds: 50,
@@ -204,7 +207,8 @@ fn weight_correlation_with_xgboost(#[case] name: &str) {
     use super::pearson_correlation;
 
     let (data, labels) = load_train_data(name);
-    let train = Dataset::from_numeric(&data, labels.clone()).unwrap();
+    let view = FeaturesView::from_array(data.view());
+    let train = Dataset::from_numeric(&view, labels.clone()).unwrap();
     let xgb_weights = load_xgb_weights(name);
     let config = load_config(name);
 
@@ -247,7 +251,8 @@ fn test_set_prediction_quality(#[case] name: &str) {
     use super::{load_test_data, load_xgb_predictions, rmse};
 
     let (train_data, train_labels) = load_train_data(name);
-    let train = Dataset::from_numeric(&train_data, train_labels.clone()).unwrap();
+    let train_view = FeaturesView::from_array(train_data.view());
+    let train = Dataset::from_numeric(&train_view, train_labels.clone()).unwrap();
     let config = load_config(name);
 
     // Skip if no test data
@@ -271,8 +276,11 @@ fn test_set_prediction_quality(#[case] name: &str) {
     let base_scores = vec![0.0f32];
 
     use boosters::training::MetricFn;
-    let output = model.predict(&test_data, &base_scores);
-    let pred_arr = pred_to_array2(&output);
+    // test_data is sample-major [n_samples, n_features]
+    let test_view = SamplesView::from_array(test_data.view());
+    let output = model.predict(test_view, &base_scores);
+    // Transpose from (n_samples, n_groups) to (n_groups, n_samples) for metrics
+    let pred_arr = transpose_predictions(&output);
     let targets_arr = ArrayView1::from(&test_labels[..]);
     let our_rmse = Rmse.compute(pred_arr.view(), targets_arr, None);
 

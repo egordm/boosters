@@ -7,9 +7,9 @@
 //! ```
 
 use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
+use boosters::data::FeaturesView;
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, RegularizationParams, TreeParams};
-use ndarray::ArrayView1;
+use ndarray::{Array2, ArrayView1};
 
 fn main() {
     // Large synthetic dataset for profiling
@@ -22,7 +22,8 @@ fn main() {
     println!("  Samples: {}", n_samples);
     println!("  Features: {}", n_features);
     
-    let mut features = Vec::with_capacity(n_samples * n_features);
+    // Generate feature-major data [n_features, n_samples]
+    let mut features = Array2::<f32>::zeros((n_features, n_samples));
     let mut labels = Vec::with_capacity(n_samples);
 
     // Simple synthetic function with noise
@@ -30,7 +31,7 @@ fn main() {
         let mut sum = 0.0f32;
         for f in 0..n_features {
             let val = (((i * (f + 7)) % 1000) as f32) / 100.0;
-            features.push(val);
+            features[(f, i)] = val;
             sum += val * (1.0 / ((f + 1) as f32).sqrt());
         }
         let noise = ((i * 31) % 100) as f32 / 100.0 - 0.5;
@@ -38,12 +39,10 @@ fn main() {
     }
 
     println!("Building binned dataset...");
-    let row_matrix: DenseMatrix<f32, RowMajor> =
-        DenseMatrix::from_vec(features, n_samples, n_features);
-    let col_matrix: ColMatrix<f32> = row_matrix.to_layout();
+    let features_view = FeaturesView::from_array(features.view());
     
     let start = std::time::Instant::now();
-    let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 256)
+    let dataset = BinnedDatasetBuilder::from_matrix(&features_view, 256)
         .build()
         .expect("Failed to build binned dataset");
     println!("  Binning took: {:?}", start.elapsed());

@@ -4,10 +4,10 @@
 //! cargo run --release --example layout_benchmark
 
 use boosters::data::binned::{BinnedDatasetBuilder, GroupLayout, GroupStrategy};
-use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
+use boosters::data::FeaturesView;
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
-use ndarray::ArrayView1;
+use ndarray::{Array2, ArrayView1};
 use std::time::Instant;
 
 fn main() {
@@ -23,33 +23,31 @@ fn main() {
         n_samples, n_features, n_trees, max_depth);
     println!();
 
-    // Generate synthetic data
-    let mut features = Vec::with_capacity(n_samples * n_features);
+    // Generate synthetic feature-major data [n_features, n_samples]
+    let mut features = Array2::<f32>::zeros((n_features, n_samples));
     let mut labels = Vec::with_capacity(n_samples);
 
     for i in 0..n_samples {
         let mut sum = 0.0f32;
         for f in 0..n_features {
             let val = (((i * (f + 7)) % 1000) as f32) / 100.0;
-            features.push(val);
+            features[(f, i)] = val;
             sum += val * (1.0 / ((f + 1) as f32).sqrt());
         }
         labels.push(sum + ((i * 31) % 100) as f32 / 100.0 - 0.5);
     }
 
-    let row_matrix: DenseMatrix<f32, RowMajor> =
-        DenseMatrix::from_vec(features.clone(), n_samples, n_features);
-    let col_matrix: ColMatrix<f32> = row_matrix.to_layout();
+    let features_view = FeaturesView::from_array(features.view());
 
     // Build datasets with different layouts
     println!("Building RowMajor dataset...");
-    let row_major_dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 256)
+    let row_major_dataset = BinnedDatasetBuilder::from_matrix(&features_view, 256)
         .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::RowMajor })
         .build()
         .unwrap();
 
     println!("Building ColumnMajor dataset...");
-    let col_major_dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 256)
+    let col_major_dataset = BinnedDatasetBuilder::from_matrix(&features_view, 256)
         .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
         .build()
         .unwrap();

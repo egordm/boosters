@@ -18,9 +18,9 @@
 //! ```
 
 use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
+use boosters::data::{transpose_to_c_order, FeaturesView};
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, TreeParams};
-use ndarray::ArrayView1;
+use ndarray::{Array1, Array2, ArrayView1};
 
 fn main() {
     // =========================================================================
@@ -30,8 +30,9 @@ fn main() {
     let n_samples = 400;
     let n_features = 4;
 
-    let mut features = Vec::with_capacity(n_samples * n_features);
-    let mut labels = Vec::with_capacity(n_samples);
+    // Feature-major data [n_features, n_samples]
+    let mut features = Array2::<f32>::zeros((n_features, n_samples));
+    let mut labels = Array1::<f32>::zeros(n_samples);
 
     for i in 0..n_samples {
         let class = (i % 2) as f32;
@@ -42,23 +43,24 @@ fn main() {
         let noise3 = ((i * 31) % 100) as f32 / 50.0 - 1.0;
         let noise4 = ((i * 37) % 100) as f32 / 50.0 - 1.0;
 
-        features.push(offset + noise1);
-        features.push(offset + noise2);
-        features.push(noise3 * 2.0);
-        features.push(noise4 * 2.0);
+        features[(0, i)] = offset + noise1;
+        features[(1, i)] = offset + noise2;
+        features[(2, i)] = noise3 * 2.0;
+        features[(3, i)] = noise4 * 2.0;
 
-        labels.push(class);
+        labels[i] = class;
     }
 
     // Create binned dataset for training
-    let row_matrix: DenseMatrix<f32, RowMajor> =
-        DenseMatrix::from_vec(features.clone(), n_samples, n_features);
-    let col_matrix: ColMatrix<f32> = row_matrix.to_layout();
+    let features_view = FeaturesView::from_array(features.view());
 
     // Create binned dataset
-    let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 256)
+    let dataset = BinnedDatasetBuilder::from_matrix(&features_view, 256)
         .build()
         .expect("Failed to build binned dataset");
+
+    // For prediction we need sample-major (C-order)
+    let samples = transpose_to_c_order(features.view());
 
     // =========================================================================
     // Train with depth-wise growth (XGBoost style)
@@ -75,13 +77,13 @@ fn main() {
         .build()
         .expect("Invalid configuration");
 
-    let model_depth = GBDTModel::train(&dataset, ArrayView1::from(&labels[..]), None, config_depth, 1)
+    let model_depth = GBDTModel::train(&dataset, labels.view(), None, config_depth, 1)
         .expect("Training failed");
 
     // Predict: GBDTModel::predict() returns probabilities for logistic objective
-    let predictions = model_depth.predict(&row_matrix, 1);
+    let predictions = model_depth.predict(samples.view(), 1);
 
-    let acc = compute_accuracy(predictions.as_slice(), &labels);
+    let acc = compute_accuracy(predictions.as_slice().unwrap(), labels.as_slice().unwrap());
     println!("Depth-wise: {} trees", model_depth.forest().n_trees());
     println!("Accuracy: {:.2}%", acc * 100.0);
 
@@ -100,12 +102,12 @@ fn main() {
         .build()
         .expect("Invalid configuration");
 
-    let model_leaf = GBDTModel::train(&dataset, ArrayView1::from(&labels[..]), None, config_leaf, 1)
+    let model_leaf = GBDTModel::train(&dataset, labels.view(), None, config_leaf, 1)
         .expect("Training failed");
 
-    let predictions = model_leaf.predict(&row_matrix, 1);
+    let predictions = model_leaf.predict(samples.view(), 1);
 
-    let acc = compute_accuracy(predictions.as_slice(), &labels);
+    let acc = compute_accuracy(predictions.as_slice().unwrap(), labels.as_slice().unwrap());
     println!("Leaf-wise: {} trees", model_leaf.forest().n_trees());
     println!("Accuracy: {:.2}%", acc * 100.0);
 
@@ -115,11 +117,10 @@ fn main() {
     println!("\n=== Training with Sample Weights ===\n");
 
     // Give higher weights to samples near decision boundary
-    let weights: Vec<f32> = features
-        .chunks(n_features)
-        .map(|row| {
-            let dx = row[0] - 5.0;
-            let dy = row[1] - 5.0;
+    let weights: Vec<f32> = (0..n_samples)
+        .map(|i| {
+            let dx = features[(0, i)] - 5.0;
+            let dy = features[(1, i)] - 5.0;
             let dist = (dx * dx + dy * dy).sqrt();
             if dist >= 2.0 && dist <= 4.0 { 3.0 } else { 1.0 }
         })
@@ -137,16 +138,16 @@ fn main() {
 
     let model_weighted = GBDTModel::train(
         &dataset,
-        ArrayView1::from(&labels[..]),
+        labels.view(),
         Some(ArrayView1::from(&weights[..])),
         config_weighted,
         1,
     )
     .expect("Training failed");
 
-    let predictions = model_weighted.predict(&row_matrix, 1);
+    let predictions = model_weighted.predict(samples.view(), 1);
 
-    let acc = compute_accuracy(predictions.as_slice(), &labels);
+    let acc = compute_accuracy(predictions.as_slice().unwrap(), labels.as_slice().unwrap());
     println!("Weighted training: {} trees", model_weighted.forest().n_trees());
     println!("Accuracy: {:.2}%", acc * 100.0);
     println!("\nNote: See train_imbalanced.rs for class imbalance handling.");

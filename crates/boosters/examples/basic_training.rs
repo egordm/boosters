@@ -9,9 +9,9 @@
 //! ```
 
 use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
+use boosters::data::{transpose_to_c_order, FeaturesView};
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, TreeParams};
-use ndarray::ArrayView1;
+use ndarray::{Array1, Array2};
 
 fn main() {
     // =========================================================================
@@ -23,11 +23,9 @@ fn main() {
 
     let (features, labels) = generate_regression_data(n_samples, n_features);
 
-    // Create binned dataset for training
-    let row_matrix: DenseMatrix<f32, RowMajor> =
-        DenseMatrix::from_vec(features.clone(), n_samples, n_features);
-    let col_matrix: ColMatrix<f32> = row_matrix.to_layout();
-    let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 256)
+    // Create binned dataset for training (using feature-major data)
+    let features_view = FeaturesView::from_array(features.view());
+    let dataset = BinnedDatasetBuilder::from_matrix(&features_view, 256)
         .build()
         .expect("Failed to build binned dataset");
 
@@ -51,22 +49,23 @@ fn main() {
     println!("  Metric: {:?}\n", config.metric);
 
     // Train using GBDTModel (high-level API)
-    let model = GBDTModel::train(&dataset, ArrayView1::from(&labels[..]), None, config, 1).expect("Training failed");
+    let model = GBDTModel::train(&dataset, labels.view(), None, config, 1).expect("Training failed");
 
     // =========================================================================
     // 3. Make Predictions
     // =========================================================================
-    // Predict on single sample (wrap slice in a 1-row matrix)
-    let sample: DenseMatrix<f32, RowMajor> =
-        DenseMatrix::from_vec(features[0..n_features].to_vec(), 1, n_features);
-    let pred = model.predict(&sample, 1);
-    println!("Sample prediction: {:.4}", pred.as_slice()[0]);
+    // Predict on single sample (create a 1-row sample-major array)
+    let first_sample_data: Vec<f32> = (0..n_features).map(|f| features[(f, 0)]).collect();
+    let sample_arr = Array2::from_shape_vec((1, n_features), first_sample_data).unwrap();
+    let pred = model.predict(sample_arr.view(), 1);
+    println!("Sample prediction: {:.4}", pred.as_slice().unwrap()[0]);
 
-    // Predict on full dataset (returns ColMatrix)
-    let all_preds = model.predict(&row_matrix, 1);
+    // Predict on full dataset (transpose feature-major to sample-major with C-order)
+    let samples = transpose_to_c_order(features.view());
+    let all_preds = model.predict(samples.view(), 1);
 
     // Compute RMSE manually
-    let rmse = compute_rmse(all_preds.as_slice(), &labels);
+    let rmse = compute_rmse(all_preds.as_slice().unwrap(), labels.as_slice().unwrap());
 
     // =========================================================================
     // 4. Inspect Model
@@ -85,9 +84,10 @@ fn main() {
 }
 
 // Helper functions
-fn generate_regression_data(n_samples: usize, n_features: usize) -> (Vec<f32>, Vec<f32>) {
-    let mut features = Vec::with_capacity(n_samples * n_features);
-    let mut labels = Vec::with_capacity(n_samples);
+fn generate_regression_data(n_samples: usize, n_features: usize) -> (Array2<f32>, Array1<f32>) {
+    // Generate feature-major data [n_features, n_samples]
+    let mut features = Array2::<f32>::zeros((n_features, n_samples));
+    let mut labels = Array1::<f32>::zeros(n_samples);
 
     for i in 0..n_samples {
         let x0 = (i as f32) / (n_samples as f32) * 10.0;
@@ -96,14 +96,14 @@ fn generate_regression_data(n_samples: usize, n_features: usize) -> (Vec<f32>, V
         let x3 = ((i * 17) % 100) as f32 / 10.0;
         let x4 = ((i * 23) % 100) as f32 / 10.0;
 
-        features.push(x0);
-        features.push(x1);
-        features.push(x2);
-        features.push(x3);
-        features.push(x4);
+        features[(0, i)] = x0;
+        features[(1, i)] = x1;
+        features[(2, i)] = x2;
+        features[(3, i)] = x3;
+        features[(4, i)] = x4;
 
         let noise = ((i * 31) % 100) as f32 / 500.0 - 0.1;
-        labels.push(x0 + 0.5 * x1 + 0.25 * x2 + noise);
+        labels[i] = x0 + 0.5 * x1 + 0.25 * x2 + noise;
     }
 
     (features, labels)

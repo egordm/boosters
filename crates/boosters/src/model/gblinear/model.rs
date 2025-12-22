@@ -4,11 +4,13 @@
 //! Access components via [`linear()`](GBLinearModel::linear), [`meta()`](GBLinearModel::meta),
 //! and [`config()`](GBLinearModel::config).
 
-use crate::data::{ColMajor, ColMatrix, DataMatrix, Dataset, DenseMatrix};
+use crate::data::Dataset;
 use crate::model::meta::ModelMeta;
 use crate::repr::gblinear::LinearModel;
 use crate::training::gblinear::GBLinearTrainer;
 use crate::training::{Metric, ObjectiveFn};
+
+use ndarray::{Array2, ArrayView2};
 
 use super::GBLinearConfig;
 
@@ -137,57 +139,70 @@ impl GBLinearModel {
     /// Returns probabilities for classification (sigmoid/softmax) or raw values
     /// for regression.
     ///
+    /// # Arguments
+    ///
+    /// * `features` - Feature matrix with shape `[n_samples, n_features]` (sample-major)
+    ///
     /// # Returns
     ///
-    /// Column-major matrix (n_rows × n_groups).
-    pub fn predict<M: DataMatrix<Element = f32>>(&self, features: &M) -> ColMatrix<f32> {
-        let n_rows = features.num_rows();
+    /// Array2 with shape `[n_groups, n_samples]`. Access group predictions via `.row(group_idx)`.
+    pub fn predict(&self, features: ArrayView2<f32>) -> Array2<f32> {
+        let n_rows = features.nrows();
         let n_groups = self.meta.n_groups;
 
-        // Compute raw predictions
-        let mut raw = self.compute_predictions_raw(features);
+        if n_rows == 0 {
+            return Array2::zeros((n_groups, 0));
+        }
+
+        // Compute raw predictions into array
+        let mut output = self.compute_predictions_raw(features);
 
         // Apply transformation if we have config with objective
-        let view = ndarray::ArrayViewMut2::from_shape((n_groups, n_rows), &mut raw)
-            .expect("prediction buffer shape mismatch");
-        self.config.objective.transform_predictions(view);
+        self.config.objective.transform_predictions(output.view_mut());
 
-        DenseMatrix::<f32, ColMajor>::from_vec(raw, n_rows, n_groups)
+        output
     }
 
     /// Predict for multiple rows, returning raw margin scores (no transform).
-    pub fn predict_raw<M: DataMatrix<Element = f32>>(&self, features: &M) -> ColMatrix<f32> {
-        let n_rows = features.num_rows();
+    ///
+    /// # Arguments
+    ///
+    /// * `features` - Feature matrix with shape `[n_samples, n_features]` (sample-major)
+    ///
+    /// # Returns
+    ///
+    /// Array2 with shape `[n_groups, n_samples]`. Access group predictions via `.row(group_idx)`.
+    pub fn predict_raw(&self, features: ArrayView2<f32>) -> Array2<f32> {
+        let n_rows = features.nrows();
         let n_groups = self.meta.n_groups;
 
-        let raw = self.compute_predictions_raw(features);
-        DenseMatrix::<f32, ColMajor>::from_vec(raw, n_rows, n_groups)
+        if n_rows == 0 {
+            return Array2::zeros((n_groups, 0));
+        }
+
+        self.compute_predictions_raw(features)
     }
 
-    /// Internal: Compute raw predictions in column-major layout.
+    /// Internal: Compute raw predictions.
     ///
-    /// Output layout: column-major [n_groups × n_rows], so predictions[g * n_rows + row]
-    fn compute_predictions_raw<M: DataMatrix<Element = f32>>(&self, features: &M) -> Vec<f32> {
-        let n_rows = features.num_rows();
+    /// Output shape: `[n_groups, n_rows]` - predictions for group g are in row g.
+    fn compute_predictions_raw(&self, features: ArrayView2<f32>) -> Array2<f32> {
+        let n_rows = features.nrows();
         let n_features = self.meta.n_features;
         let n_groups = self.meta.n_groups;
 
-        // Column-major output: [n_groups × n_rows]
-        let mut output = vec![0.0f32; n_rows * n_groups];
-        let mut row_buf = vec![0.0f32; n_features];
+        // Output shape: [n_groups, n_rows]
+        let mut output = Array2::<f32>::zeros((n_groups, n_rows));
 
         for row_idx in 0..n_rows {
-            features.copy_row(row_idx, &mut row_buf);
+            let row = features.row(row_idx);
 
             for g in 0..n_groups {
                 let mut sum = self.model.bias(g);
-                for (f, &x) in row_buf.iter().enumerate() {
-                    if f < n_features {
-                        sum += self.model.weight(f, g) * x;
-                    }
+                for f in 0..n_features.min(row.len()) {
+                    sum += self.model.weight(f, g) * row[f];
                 }
-                // Column-major: predictions for group g are contiguous
-                output[g * n_rows + row_idx] = sum;
+                output[[g, row_idx]] = sum;
             }
         }
 
@@ -228,7 +243,7 @@ impl std::fmt::Debug for GBLinearModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::RowMatrix;
+    use ndarray::arr2;
 
     fn make_simple_model() -> LinearModel {
         // y = 0.5*x0 + 0.3*x1 + 0.1
@@ -265,9 +280,9 @@ mod tests {
         let model = GBLinearModel::from_linear_model(linear, meta);
 
         // y = 0.5*1.0 + 0.3*2.0 + 0.1 = 0.5 + 0.6 + 0.1 = 1.2
-        let features = RowMatrix::from_vec(vec![1.0, 2.0], 1, 2);
-        let preds = model.predict_raw(&features);
-        assert!((preds.col_slice(0)[0] - 1.2).abs() < 1e-6);
+        let features = arr2(&[[1.0, 2.0]]);
+        let preds = model.predict_raw(features.view());
+        assert!((preds[[0, 0]] - 1.2).abs() < 1e-6);
     }
 
     #[test]
@@ -276,15 +291,15 @@ mod tests {
         let meta = ModelMeta::for_regression(2);
         let model = GBLinearModel::from_linear_model(linear, meta);
 
-        let features = RowMatrix::from_vec(vec![
-            1.0, 2.0, // row 0: 0.5 + 0.6 + 0.1 = 1.2
-            0.0, 0.0, // row 1: 0 + 0 + 0.1 = 0.1
-        ], 2, 2);
-        let preds = model.predict_raw(&features);
-        let col = preds.col_slice(0);
+        let features = arr2(&[
+            [1.0, 2.0], // row 0: 0.5 + 0.6 + 0.1 = 1.2
+            [0.0, 0.0], // row 1: 0 + 0 + 0.1 = 0.1
+        ]);
+        let preds = model.predict_raw(features.view());
 
-        assert!((col[0] - 1.2).abs() < 1e-6);
-        assert!((col[1] - 0.1).abs() < 1e-6);
+        // Shape is [n_groups, n_samples] = [1, 2]
+        assert!((preds[[0, 0]] - 1.2).abs() < 1e-6);
+        assert!((preds[[0, 1]] - 0.1).abs() < 1e-6);
     }
 
     #[test]

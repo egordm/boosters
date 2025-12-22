@@ -1,6 +1,6 @@
 //! Semantic prediction wrappers.
 
-use super::PredictionOutput;
+use ndarray::Array2;
 
 /// What do the prediction values represent?
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,15 +25,17 @@ pub enum PredictionKind {
 }
 
 /// A prediction with explicit semantic meaning.
+///
+/// The output is stored as `Array2<f32>` with shape `(n_samples, n_groups)`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Predictions {
     pub kind: PredictionKind,
-    pub output: PredictionOutput,
+    pub output: Array2<f32>,
 }
 
 impl Predictions {
     #[inline]
-    pub fn raw_margin(output: PredictionOutput) -> Self {
+    pub fn raw_margin(output: Array2<f32>) -> Self {
         Self {
             kind: PredictionKind::Margin,
             output,
@@ -41,7 +43,7 @@ impl Predictions {
     }
 
     #[inline]
-    pub fn value(output: PredictionOutput) -> Self {
+    pub fn value(output: Array2<f32>) -> Self {
         Self {
             kind: PredictionKind::Value,
             output,
@@ -49,7 +51,7 @@ impl Predictions {
     }
 
     #[inline]
-    pub fn probability(output: PredictionOutput) -> Self {
+    pub fn probability(output: Array2<f32>) -> Self {
         Self {
             kind: PredictionKind::Probability,
             output,
@@ -57,7 +59,7 @@ impl Predictions {
     }
 
     #[inline]
-    pub fn class_index(output: PredictionOutput) -> Self {
+    pub fn class_index(output: Array2<f32>) -> Self {
         Self {
             kind: PredictionKind::ClassIndex,
             output,
@@ -65,7 +67,7 @@ impl Predictions {
     }
 
     #[inline]
-    pub fn rank_score(output: PredictionOutput) -> Self {
+    pub fn rank_score(output: Array2<f32>) -> Self {
         Self {
             kind: PredictionKind::RankScore,
             output,

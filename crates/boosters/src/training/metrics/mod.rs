@@ -51,13 +51,6 @@ pub use regression::{HuberMetric, Mae, Mape, PoissonDeviance, QuantileMetric, Rm
 use crate::inference::common::PredictionKind;
 
 // =============================================================================
-// Helpers
-// =============================================================================
-
-// Re-export weight_iter from utils for internal use
-pub(super) use crate::utils::weight_iter;
-
-// =============================================================================
 // Metric Enum (Convenience wrapper)
 // =============================================================================
 

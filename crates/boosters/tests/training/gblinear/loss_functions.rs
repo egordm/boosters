@@ -5,7 +5,7 @@
 //! - HingeLoss (SVM-style binary classification)
 
 use super::{load_test_data, load_train_data};
-use boosters::data::Dataset;
+use boosters::data::{Dataset, FeaturesView, SamplesView};
 use boosters::inference::LinearModelPredict;
 use boosters::training::{
     Accuracy, GBLinearParams, GBLinearTrainer, HingeLoss, LogLoss, LogisticLoss, MarginAccuracy,
@@ -14,13 +14,9 @@ use boosters::training::{
 use ndarray::{Array2, ArrayView1};
 use rstest::rstest;
 
-/// Helper to create predictions array from PredictionOutput
-fn pred_to_array2(output: &boosters::inference::common::PredictionOutput) -> Array2<f32> {
-    // PredictionOutput stores data column-major: [g0_s0, g0_s1, ..., g1_s0, g1_s1, ...]
-    // We need Array2 with shape [n_groups, n_samples]
-    let n_samples = output.num_rows();
-    let n_groups = output.num_groups();
-    Array2::from_shape_vec((n_groups, n_samples), output.as_slice().to_vec()).unwrap()
+/// Transpose predictions from (n_samples, n_groups) to (n_groups, n_samples) for metrics.
+fn transpose_predictions(output: &Array2<f32>) -> Array2<f32> {
+    output.t().to_owned()
 }
 
 // =============================================================================
@@ -43,7 +39,8 @@ fn pred_to_array2(output: &boosters::inference::common::PredictionOutput) -> Arr
 #[case(10.0, 20.0)]  // Large delta: similar to squared loss
 fn train_pseudo_huber_with_delta(#[case] delta: f32, #[case] max_rmse: f64) {
     let (data, labels) = load_train_data("regression_l2");
-    let train = Dataset::from_numeric(&data, labels).unwrap();
+    let view = FeaturesView::from_array(data.view());
+    let train = Dataset::from_numeric(&view, labels).unwrap();
     let (test_data, test_labels) = match load_test_data("regression_l2") {
         Some(d) => d,
         None => {
@@ -68,8 +65,9 @@ fn train_pseudo_huber_with_delta(#[case] delta: f32, #[case] max_rmse: f64) {
 
     use boosters::training::MetricFn;
 
-    let output = model.predict(&test_data, &[]);
-    let pred_arr = pred_to_array2(&output);
+    let test_view = SamplesView::from_array(test_data.view());
+    let output = model.predict(test_view, &[]);
+    let pred_arr = transpose_predictions(&output);
     let targets_arr = ArrayView1::from(&test_labels[..]);
     let rmse = Rmse.compute(pred_arr.view(), targets_arr, None);
 
@@ -86,7 +84,8 @@ fn train_pseudo_huber_with_delta(#[case] delta: f32, #[case] max_rmse: f64) {
 #[test]
 fn pseudo_huber_large_delta_matches_squared() {
     let (data, labels) = load_train_data("regression_l2");
-    let train = Dataset::from_numeric(&data, labels).unwrap();
+    let view = FeaturesView::from_array(data.view());
+    let train = Dataset::from_numeric(&view, labels).unwrap();
     let (test_data, test_labels) = match load_test_data("regression_l2") {
         Some(d) => d,
         None => {
@@ -116,11 +115,12 @@ fn pseudo_huber_large_delta_matches_squared() {
 
     use boosters::training::MetricFn;
 
-    let ph_output = ph_model.predict(&test_data, &[]);
-    let sq_output = sq_model.predict(&test_data, &[]);
+    let test_view = SamplesView::from_array(test_data.view());
+    let ph_output = ph_model.predict(test_view, &[]);
+    let sq_output = sq_model.predict(test_view, &[]);
 
-    let ph_arr = pred_to_array2(&ph_output);
-    let sq_arr = pred_to_array2(&sq_output);
+    let ph_arr = transpose_predictions(&ph_output);
+    let sq_arr = transpose_predictions(&sq_output);
     let targets_arr = ArrayView1::from(&test_labels[..]);
 
     let ph_rmse = Rmse.compute(ph_arr.view(), targets_arr, None);
@@ -148,7 +148,8 @@ fn pseudo_huber_large_delta_matches_squared() {
 #[test]
 fn train_hinge_binary_classification() {
     let (data, labels) = load_train_data("binary_classification");
-    let train = Dataset::from_numeric(&data, labels).unwrap();
+    let view = FeaturesView::from_array(data.view());
+    let train = Dataset::from_numeric(&view, labels).unwrap();
     let (test_data, test_labels) = match load_test_data("binary_classification") {
         Some(d) => d,
         None => {
@@ -182,16 +183,17 @@ fn train_hinge_binary_classification() {
     // - Logistic: transform logits to probabilities via objective transform, then threshold at 0.5.
     use boosters::training::MetricFn;
 
-    let hinge_output = hinge_model.predict(&test_data, &[]);
-    let hinge_arr = pred_to_array2(&hinge_output);
+    let test_view = SamplesView::from_array(test_data.view());
+    let hinge_output = hinge_model.predict(test_view, &[]);
+    let hinge_arr = transpose_predictions(&hinge_output);
     let targets_arr = ArrayView1::from(&test_labels[..]);
     let hinge_acc = MarginAccuracy::default()
         .compute(hinge_arr.view(), targets_arr, None)
         as f32;
 
-    let logistic_output = logistic_model.predict(&test_data, &[]);
+    let logistic_output = logistic_model.predict(test_view, &[]);
     // Convert to Array2, apply transform, then use for metrics
-    let mut logistic_arr = pred_to_array2(&logistic_output);
+    let mut logistic_arr = transpose_predictions(&logistic_output);
     LogisticLoss.transform_predictions(logistic_arr.view_mut());
     let logistic_acc = Accuracy::with_threshold(0.5)
         .compute(logistic_arr.view(), targets_arr, None) as f32;

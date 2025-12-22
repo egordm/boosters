@@ -9,11 +9,11 @@
 //! ```
 
 use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
+use boosters::data::FeaturesView;
 use boosters::training::{GBDTParams, GBDTTrainer, GradsTuple, GrowthStrategy, Rmse, TargetSchema};
 use boosters::{ObjectiveFn, Parallelism, TaskKind};
 use boosters::inference::common::PredictionKind;
-use ndarray::{ArrayView1, ArrayView2, ArrayViewMut2};
+use ndarray::{Array2, ArrayView1, ArrayView2, ArrayViewMut2};
 
 /// A custom objective: Huber loss with delta=1.0
 ///
@@ -80,7 +80,7 @@ impl ObjectiveFn for HuberLoss {
         &self,
         targets: ArrayView1<f32>,
         _weights: Option<ArrayView1<f32>>,
-        mut outputs: ArrayViewMut2<f32>,
+        outputs: &mut [f32],
     ) {
         // Use median for Huber (more robust than mean)
         // For simplicity, using mean here
@@ -90,8 +90,7 @@ impl ObjectiveFn for HuberLoss {
             return;
         }
 
-        let targets_slice = targets.as_slice().unwrap_or(&[]);
-        let sum: f32 = targets_slice.iter().sum();
+        let sum: f32 = targets.iter().sum();
         outputs.fill(sum / n_rows as f32);
     }
 
@@ -122,10 +121,8 @@ fn main() {
     let (features, labels) = generate_data_with_outliers(n_samples, n_features);
 
     // Create binned dataset
-    let row_matrix: DenseMatrix<f32, RowMajor> =
-        DenseMatrix::from_vec(features.clone(), n_samples, n_features);
-    let col_matrix: ColMatrix<f32> = row_matrix.to_layout();
-    let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 256)
+    let features_view = FeaturesView::from_array(features.view());
+    let dataset = BinnedDatasetBuilder::from_matrix(&features_view, 256)
         .build()
         .expect("Failed to build binned dataset");
 
@@ -150,9 +147,12 @@ fn main() {
     // =========================================================================
     // 3. Evaluate
     // =========================================================================
-    let predictions: Vec<f32> = features
-        .chunks(n_features)
-        .map(|row| forest.predict_row(row)[0])
+    // Predict row by row (features is feature-major, need to access columns as samples)
+    let predictions: Vec<f32> = (0..n_samples)
+        .map(|i| {
+            let row: Vec<f32> = (0..n_features).map(|f| features[(f, i)]).collect();
+            forest.predict_row(&row)[0]
+        })
         .collect();
 
     let rmse = compute_rmse(&predictions, &labels);
@@ -166,8 +166,9 @@ fn main() {
 }
 
 // Helper: generate data with outliers
-fn generate_data_with_outliers(n_samples: usize, n_features: usize) -> (Vec<f32>, Vec<f32>) {
-    let mut features = Vec::with_capacity(n_samples * n_features);
+fn generate_data_with_outliers(n_samples: usize, n_features: usize) -> (Array2<f32>, Vec<f32>) {
+    // Feature-major data [n_features, n_samples]
+    let mut features = Array2::<f32>::zeros((n_features, n_samples));
     let mut labels = Vec::with_capacity(n_samples);
 
     for i in 0..n_samples {
@@ -177,11 +178,11 @@ fn generate_data_with_outliers(n_samples: usize, n_features: usize) -> (Vec<f32>
         let x3 = ((i * 17) % 100) as f32 / 10.0;
         let x4 = ((i * 23) % 100) as f32 / 10.0;
 
-        features.push(x0);
-        features.push(x1);
-        features.push(x2);
-        features.push(x3);
-        features.push(x4);
+        features[(0, i)] = x0;
+        features[(1, i)] = x1;
+        features[(2, i)] = x2;
+        features[(3, i)] = x3;
+        features[(4, i)] = x4;
 
         // Add outliers every 50 samples
         let label = if i % 50 == 0 {

@@ -158,21 +158,22 @@ impl LeafFeatureBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::ColMatrix;
+    use crate::data::FeaturesView;
 
     #[test]
     fn test_leaf_buffer_gather() {
-        // Create a 10x3 column-major matrix
-        // ColMatrix stores data as: [col0_row0..col0_row9, col1_row0..col1_row9, col2_row0..col2_row9]
+        // Create a 10x3 feature-major matrix
+        // FeaturesView has shape [n_features, n_samples]
+        // Data layout: [f0_s0..f0_s9, f1_s0..f1_s9, f2_s0..f2_s9]
         let data: Vec<f32> = (0..30).map(|i| i as f32).collect();
-        let matrix = ColMatrix::from_vec(data, 10, 3);
+        let view = FeaturesView::from_slice(&data, 10, 3).unwrap();
 
         let mut buffer = LeafFeatureBuffer::new(10, 5);
 
         // Gather rows [1, 3, 5] for features [0, 2]
         let rows = vec![1, 3, 5];
         let features = vec![0, 2];
-        buffer.gather(&rows, &matrix, &features);
+        buffer.gather(&rows, &view, &features);
 
         assert_eq!(buffer.n_rows(), 3);
         assert_eq!(buffer.n_features(), 2);
@@ -189,17 +190,17 @@ mod tests {
     #[test]
     fn test_leaf_buffer_reuse() {
         let data: Vec<f32> = (0..20).map(|i| i as f32).collect();
-        let matrix = ColMatrix::from_vec(data, 5, 4);
+        let view = FeaturesView::from_slice(&data, 5, 4).unwrap();
 
         let mut buffer = LeafFeatureBuffer::new(10, 5);
 
         // First gather
-        buffer.gather(&[0, 1], &matrix, &[0, 1]);
+        buffer.gather(&[0, 1], &view, &[0, 1]);
         assert_eq!(buffer.n_rows(), 2);
         assert_eq!(buffer.feature_slice(0), &[0.0, 1.0]);
 
         // Second gather - should overwrite
-        buffer.gather(&[2, 3, 4], &matrix, &[2, 3]);
+        buffer.gather(&[2, 3, 4], &view, &[2, 3]);
         assert_eq!(buffer.n_rows(), 3);
         assert_eq!(buffer.n_features(), 2);
 
@@ -212,24 +213,24 @@ mod tests {
     #[should_panic(expected = "Too many rows")]
     fn test_leaf_buffer_overflow_rows() {
         let data: Vec<f32> = (0..30).map(|i| i as f32).collect();
-        let matrix = ColMatrix::from_vec(data, 10, 3);
+        let view = FeaturesView::from_slice(&data, 10, 3).unwrap();
 
         let mut buffer = LeafFeatureBuffer::new(5, 3); // Only 5 rows capacity
 
         // Try to gather 10 rows - should panic
         let rows: Vec<u32> = (0..10).collect();
-        buffer.gather(&rows, &matrix, &[0]);
+        buffer.gather(&rows, &view, &[0]);
     }
 
     #[test]
     #[should_panic(expected = "Too many features")]
     fn test_leaf_buffer_overflow_features() {
         let data: Vec<f32> = (0..30).map(|i| i as f32).collect();
-        let matrix = ColMatrix::from_vec(data, 10, 3);
+        let view = FeaturesView::from_slice(&data, 10, 3).unwrap();
 
         let mut buffer = LeafFeatureBuffer::new(10, 2); // Only 2 features capacity
 
         // Try to gather 3 features - should panic
-        buffer.gather(&[0, 1], &matrix, &[0, 1, 2]);
+        buffer.gather(&[0, 1], &view, &[0, 1, 2]);
     }
 }

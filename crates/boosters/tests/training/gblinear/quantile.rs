@@ -5,9 +5,9 @@
 //! - Multi-quantile regression (joint training)
 //! - Quantile ordering validation
 
-use super::{load_config, load_test_data, load_train_data, pearson_correlation, TEST_CASES_DIR};
+use super::{load_config, load_test_data, load_train_data, pearson_correlation, transpose_to_samples, TEST_CASES_DIR};
 use approx::assert_relative_eq;
-use boosters::data::Dataset;
+use boosters::data::{Dataset, FeaturesView, SamplesView};
 use boosters::inference::LinearModelPredict;
 use boosters::training::{GBLinearParams, GBLinearTrainer, PinballLoss, Rmse, Verbosity};
 use rstest::rstest;
@@ -30,7 +30,8 @@ fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
     let (data, labels) = load_train_data(name);
     let config = load_config(name);
     let (test_data, test_labels) = load_test_data(name).expect("Test data should exist");
-    let train = Dataset::from_numeric(&data, labels).unwrap();
+    let view = FeaturesView::from_array(data.view());
+    let train = Dataset::from_numeric(&view, labels).unwrap();
 
     // Verify config has correct quantile alpha
     let alpha = config.quantile_alpha.expect("Config should have quantile_alpha");
@@ -50,8 +51,9 @@ fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
     let trainer = GBLinearTrainer::new(PinballLoss::new(alpha), Rmse, params);
     let model = trainer.train(&train, &[]).unwrap();
 
-    // Compute predictions on test set
-    let output = model.predict(&test_data, &[0.0]);
+    // Compute predictions on test set (sample-major)
+    let test_view = SamplesView::from_array(test_data.view());
+    let output = model.predict(test_view, &[0.0]);
     let test_preds: Vec<f32> = output.column(0).to_vec();
 
     // Compute pinball loss on test set
@@ -100,7 +102,8 @@ fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
 fn quantile_regression_predictions_differ() {
     let (data, labels) = load_train_data("quantile_regression");
     let config = load_config("quantile_regression");
-    let train = Dataset::from_numeric(&data, labels).unwrap();
+    let view = FeaturesView::from_array(data.view());
+    let train = Dataset::from_numeric(&view, labels).unwrap();
 
     let base_params = GBLinearParams {
         n_rounds: config.num_boost_round as u32,
@@ -122,10 +125,15 @@ fn quantile_regression_predictions_differ() {
     let model_med = trainer_med.train(&train, &[]).unwrap();
     let model_high = trainer_high.train(&train, &[]).unwrap();
 
+    // For prediction we need sample-major data
+    let samples = transpose_to_samples(&data);
+    let samples_view = SamplesView::from_array(samples.view());
+
     // Get predictions for first sample
-    let pred_low = model_low.predict(&data, &[0.0]).get(0, 0);
-    let pred_med = model_med.predict(&data, &[0.0]).get(0, 0);
-    let pred_high = model_high.predict(&data, &[0.0]).get(0, 0);
+    // Array2 uses [[row, col]] indexing
+    let pred_low = model_low.predict(samples_view, &[0.0])[[0, 0]];
+    let pred_med = model_med.predict(samples_view, &[0.0])[[0, 0]];
+    let pred_high = model_high.predict(samples_view, &[0.0])[[0, 0]];
 
     // Lower quantile should produce lower predictions.
     assert!(
@@ -187,7 +195,8 @@ fn train_multi_quantile_regression() {
     let (test_data, _test_labels) = load_test_data("multi_quantile").expect("Test data required");
     let config = load_multi_quantile_config();
     let xgb_preds = load_multi_quantile_xgb_predictions();
-    let train = Dataset::from_numeric(&data, labels).unwrap();
+    let view = FeaturesView::from_array(data.view());
+    let train = Dataset::from_numeric(&view, labels).unwrap();
 
     let quantile_alphas = config.quantile_alpha.clone();
     let num_quantiles = quantile_alphas.len();
@@ -211,12 +220,14 @@ fn train_multi_quantile_regression() {
     // Verify model has correct number of output groups
     assert_eq!(model.n_groups(), num_quantiles);
 
-    // Get predictions on test set
-    let output = model.predict(&test_data, &vec![0.0; num_quantiles]);
-    let mut our_predictions: Vec<Vec<f32>> = vec![vec![0.0; test_data.n_rows()]; num_quantiles];
-    for i in 0..test_data.n_rows() {
+    // Get predictions on test set (test_data is sample-major)
+    let test_view = SamplesView::from_array(test_data.view());
+    let n_test_samples = test_data.nrows();
+    let output = model.predict(test_view, &vec![0.0; num_quantiles]);
+    let mut our_predictions: Vec<Vec<f32>> = vec![vec![0.0; n_test_samples]; num_quantiles];
+    for i in 0..n_test_samples {
         for q in 0..num_quantiles {
-            our_predictions[q][i] = output.get(i, q);
+            our_predictions[q][i] = output[[i, q]];
         }
     }
 
@@ -238,7 +249,7 @@ fn train_multi_quantile_regression() {
 
     // Verify quantile ordering: q0.1 < q0.5 < q0.9 for most samples
     let mut ordered_count = 0;
-    for i in 0..test_data.n_rows() {
+    for i in 0..n_test_samples {
         let low = our_predictions[0][i];
         let med = our_predictions[1][i];
         let high = our_predictions[2][i];
@@ -246,7 +257,7 @@ fn train_multi_quantile_regression() {
             ordered_count += 1;
         }
     }
-    let ordered_fraction = ordered_count as f64 / test_data.n_rows() as f64;
+    let ordered_fraction = ordered_count as f64 / n_test_samples as f64;
     assert!(
         ordered_fraction > 0.7,
         "Quantile predictions should be ordered for most samples (got {:.2})",
@@ -260,7 +271,8 @@ fn multi_quantile_vs_separate_models() {
     let (data, labels) = load_train_data("multi_quantile");
     let config = load_multi_quantile_config();
     let quantile_alphas = config.quantile_alpha.clone();
-    let train = Dataset::from_numeric(&data, labels).unwrap();
+    let view = FeaturesView::from_array(data.view());
+    let train = Dataset::from_numeric(&view, labels).unwrap();
 
     let base_params = GBLinearParams {
         n_rounds: config.num_boost_round as u32,
@@ -291,17 +303,21 @@ fn multi_quantile_vs_separate_models() {
         .collect();
 
     // Compare predictions on training set (used later for correlation checks)
+    // For prediction, we need sample-major data: transpose feature-major data
+    let samples = transpose_to_samples(&data);
+    let samples_view = SamplesView::from_array(samples.view());
+    let n_samples = samples.nrows();
 
     // Predictions should be correlated
     for (q, single_model) in single_models.iter().enumerate() {
-        let multi_output = multi_model.predict(&data, &[0.0; 3]);
-        let single_output = single_model.predict(&data, &[0.0]);
+        let multi_output = multi_model.predict(samples_view, &[0.0; 3]);
+        let single_output = single_model.predict(samples_view, &[0.0]);
 
-        let mut multi_preds = Vec::with_capacity(data.n_rows());
-        let mut single_preds = Vec::with_capacity(data.n_rows());
-        for i in 0..data.n_rows() {
-            multi_preds.push(multi_output.get(i, q));
-            single_preds.push(single_output.get(i, 0));
+        let mut multi_preds = Vec::with_capacity(n_samples);
+        let mut single_preds = Vec::with_capacity(n_samples);
+        for i in 0..n_samples {
+            multi_preds.push(multi_output[[i, q]]);
+            single_preds.push(single_output[[i, 0]]);
         }
 
         let correlation = pearson_correlation(&multi_preds, &single_preds);

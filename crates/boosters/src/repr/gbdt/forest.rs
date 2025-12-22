@@ -197,7 +197,7 @@ impl Forest<ScalarLeaf> {
     /// linear leaves, use [`Predictor`](crate::inference::gbdt::Predictor) instead.
     ///
     /// # Arguments
-    /// * `accessor` - Feature value source (RowMatrix, ColMatrix, BinnedAccessor, etc.)
+    /// * `accessor` - Feature value source (SamplesView, FeaturesView, BinnedAccessor, etc.)
     /// * `output` - Pre-allocated output buffer, must have length `n_rows * n_groups`.
     ///   Layout: row-major `[row0_g0, row0_g1, ..., row1_g0, row1_g1, ...]`
     ///
@@ -208,12 +208,13 @@ impl Forest<ScalarLeaf> {
     ///
     /// ```ignore
     /// use boosters::repr::gbdt::{Forest, ScalarLeaf};
-    /// use boosters::data::RowMatrix;
+    /// use boosters::data::SamplesView;
     ///
     /// let forest: Forest<ScalarLeaf> = /* ... */;
-    /// let data = RowMatrix::from_vec(vec![0.1, 0.2, 0.3, 0.4], 2, 2);
+    /// let data = [0.1f32, 0.2, 0.3, 0.4];
+    /// let view = SamplesView::from_slice(&data, 2, 2).unwrap();
     /// let mut output = vec![0.0; 2 * forest.n_groups()];
-    /// forest.predict_into(&data, &mut output);
+    /// forest.predict_into(&view, &mut output);
     /// ```
     pub fn predict_into<A: crate::data::FeatureAccessor>(
         &self,
@@ -302,18 +303,19 @@ mod tests {
 
     #[test]
     fn test_predict_into_matches_predict_row() {
-        use crate::data::RowMatrix;
+        use crate::data::SamplesView;
 
         let mut forest = Forest::for_regression().with_base_score(vec![0.1]);
         forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
         forest.push_tree(build_simple_tree(0.5, 1.0, 0.5), 0);
 
         // Test data: 3 rows, 1 feature
-        let data = RowMatrix::from_vec(vec![0.3, 0.7, 0.5], 3, 1);
+        let data = [0.3f32, 0.7, 0.5];
+        let view = SamplesView::from_slice(&data, 3, 1).unwrap();
         
         // predict_into
         let mut batch_output = vec![0.0; 3];
-        forest.predict_into(&data, &mut batch_output);
+        forest.predict_into(&view, &mut batch_output);
 
         // predict_row for comparison
         let row0 = forest.predict_row(&[0.3])[0];

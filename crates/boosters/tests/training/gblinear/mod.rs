@@ -21,9 +21,9 @@ mod quantile;
 mod regression;
 mod selectors;
 
-use boosters::data::{ColMatrix, RowMatrix};
+use boosters::data::transpose_to_c_order;
 use boosters::training::Rmse;
-use ndarray::{Array2, ArrayView1};
+use ndarray::{Array2, ArrayView1, ArrayView2};
 use serde::Deserialize;
 use std::fs;
 use std::path::Path;
@@ -73,7 +73,8 @@ pub struct TrainConfig {
 // Data Loading Functions
 // =============================================================================
 
-pub fn load_train_data(name: &str) -> (ColMatrix<f32>, Vec<f32>) {
+/// Load training data, returning owned Array2 in feature-major layout and labels.
+pub fn load_train_data(name: &str) -> (Array2<f32>, Vec<f32>) {
     let data_path = Path::new(TEST_CASES_DIR).join(format!("{}.train_data.json", name));
     let labels_path = Path::new(TEST_CASES_DIR).join(format!("{}.train_labels.json", name));
 
@@ -93,8 +94,9 @@ pub fn load_train_data(name: &str) -> (ColMatrix<f32>, Vec<f32>) {
         .map(|v| v.unwrap_or(f32::NAN))
         .collect();
 
-    let row_matrix = RowMatrix::from_vec(features, data.num_rows, data.num_features);
-    let col_matrix: ColMatrix = row_matrix.to_layout();
+    // Data is row-major [n_samples, n_features], convert to feature-major [n_features, n_samples]
+    let row_view = ArrayView2::from_shape((data.num_rows, data.num_features), &features).unwrap();
+    let col_matrix = transpose_to_c_order(row_view.view());
     (col_matrix, labels.labels)
 }
 
@@ -112,7 +114,8 @@ pub fn load_config(name: &str) -> TrainConfig {
     serde_json::from_str(&json).expect("Failed to parse config")
 }
 
-pub fn load_test_data(name: &str) -> Option<(ColMatrix<f32>, Vec<f32>)> {
+/// Load test data, returning owned Array2 in sample-major layout and labels.
+pub fn load_test_data(name: &str) -> Option<(Array2<f32>, Vec<f32>)> {
     let data_path = Path::new(TEST_CASES_DIR).join(format!("{}.test_data.json", name));
     let labels_path = Path::new(TEST_CASES_DIR).join(format!("{}.test_labels.json", name));
 
@@ -135,9 +138,11 @@ pub fn load_test_data(name: &str) -> Option<(ColMatrix<f32>, Vec<f32>)> {
         .map(|v| v.unwrap_or(f32::NAN))
         .collect();
 
-    let row_matrix = RowMatrix::from_vec(features, data.num_rows, data.num_features);
-    let col_matrix: ColMatrix = row_matrix.to_layout();
-    Some((col_matrix, labels.labels))
+    // Test data returned as sample-major [n_samples, n_features] for prediction
+    let samples_matrix = ArrayView2::from_shape((data.num_rows, data.num_features), &features)
+        .unwrap()
+        .to_owned();
+    Some((samples_matrix, labels.labels))
 }
 
 /// XGBoost predictions wrapper for JSON deserialization.
@@ -163,6 +168,15 @@ pub fn load_xgb_predictions(name: &str) -> Option<Vec<f32>> {
 
 // Re-export from library
 pub use boosters::testing::pearson_correlation;
+
+/// Transpose a feature-major Array2 to sample-major Array2, ensuring C-order.
+///
+/// Input: [n_features, n_samples] (feature-major)
+/// Output: [n_samples, n_features] (sample-major, C-order)
+#[inline]
+pub fn transpose_to_samples(features: &Array2<f32>) -> Array2<f32> {
+    transpose_to_c_order(features.view())
+}
 
 /// Root mean squared error - uses library Rmse metric.
 pub fn rmse(predictions: &[f32], labels: &[f32]) -> f64 {

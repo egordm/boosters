@@ -4,8 +4,9 @@
 
 use ndarray::{ArrayView1, ArrayView2};
 
-use super::{weight_iter, MetricFn};
+use super::MetricFn;
 use crate::inference::common::PredictionKind;
+use crate::utils::weight_iter;
 
 // =============================================================================
 // LogLoss (Binary Cross-Entropy)
@@ -32,15 +33,12 @@ impl MetricFn for LogLoss {
 
         const EPS: f64 = 1e-15;
 
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-        let targets_slice = targets.as_slice().expect("targets should be contiguous");
         let preds_row = predictions.row(0);
-        let preds_slice = preds_row.as_slice().expect("predictions row should be contiguous");
 
-        let (sum_loss, sum_w) = preds_slice
+        let (sum_loss, sum_w) = preds_row
             .iter()
-            .zip(targets_slice.iter())
-            .zip(weight_iter(weights_slice, n_rows))
+            .zip(targets.iter())
+            .zip(weight_iter(weights, n_rows))
             .fold((0.0f64, 0.0f64), |(sl, sw), ((&p, &l), w)| {
                 let p = (p as f64).clamp(EPS, 1.0 - EPS);
                 let l = l as f64;
@@ -100,15 +98,12 @@ impl MetricFn for Accuracy {
             return 0.0;
         }
 
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-        let targets_slice = targets.as_slice().expect("targets should be contiguous");
         let preds_row = predictions.row(0);
-        let preds_slice = preds_row.as_slice().expect("predictions row should be contiguous");
 
-        let (sum_correct, sum_w) = preds_slice
+        let (sum_correct, sum_w) = preds_row
             .iter()
-            .zip(targets_slice.iter())
-            .zip(weight_iter(weights_slice, n_rows))
+            .zip(targets.iter())
+            .zip(weight_iter(weights, n_rows))
             .fold((0.0f64, 0.0f64), |(sc, sw), ((&p, &l), w)| {
                 let pred_class = if p >= self.threshold { 1.0 } else { 0.0 };
                 let correct = if (pred_class - l).abs() < 0.5 { 1.0 } else { 0.0 };
@@ -168,15 +163,12 @@ impl MetricFn for MarginAccuracy {
             return 0.0;
         }
 
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-        let targets_slice = targets.as_slice().expect("targets should be contiguous");
         let preds_row = predictions.row(0);
-        let preds_slice = preds_row.as_slice().expect("predictions row should be contiguous");
 
-        let (sum_correct, sum_w) = preds_slice
+        let (sum_correct, sum_w) = preds_row
             .iter()
-            .zip(targets_slice.iter())
-            .zip(weight_iter(weights_slice, n_rows))
+            .zip(targets.iter())
+            .zip(weight_iter(weights, n_rows))
             .fold((0.0f64, 0.0f64), |(sc, sw), ((&p, &l), w)| {
                 let pred_class = if p >= self.threshold { 1.0 } else { 0.0 };
                 let correct = if (pred_class - l).abs() < 0.5 { 1.0 } else { 0.0 };
@@ -224,18 +216,14 @@ impl MetricFn for MulticlassAccuracy {
             return 0.0;
         }
 
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-        let targets_slice = targets.as_slice().expect("targets should be contiguous");
-
         // Single output: predictions are class indices
         if n_outputs == 1 {
             let preds_row = predictions.row(0);
-            let preds_slice = preds_row.as_slice().expect("predictions row should be contiguous");
 
-            let (sum_correct, sum_w) = preds_slice
+            let (sum_correct, sum_w) = preds_row
                 .iter()
-                .zip(targets_slice.iter())
-                .zip(weight_iter(weights_slice, n_rows))
+                .zip(targets.iter())
+                .zip(weight_iter(weights, n_rows))
                 .fold((0.0f64, 0.0f64), |(sc, sw), ((&p, &l), w)| {
                     let correct = if (p.round() - l).abs() < 0.5 { 1.0 } else { 0.0 };
                     (sc + (w as f64) * correct, sw + w as f64)
@@ -255,10 +243,10 @@ impl MetricFn for MulticlassAccuracy {
                 .unwrap_or(0)
         };
 
-        let (sum_correct, sum_w) = targets_slice
+        let (sum_correct, sum_w) = targets
             .iter()
             .enumerate()
-            .zip(weight_iter(weights_slice, n_rows))
+            .zip(weight_iter(weights, n_rows))
             .fold((0.0f64, 0.0f64), |(sc, sw), ((i, &l), w)| {
                 let pred_class = argmax(i) as f32;
                 let correct = if (pred_class - l).abs() < 0.5 { 1.0 } else { 0.0 };
@@ -306,12 +294,10 @@ impl MetricFn for Auc {
         let preds_row = predictions.row(0);
         let preds_slice = preds_row.as_slice().expect("predictions row should be contiguous");
         let targets_slice = targets.as_slice().expect("targets should be contiguous");
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
 
-        if weights_slice.is_empty() {
-            compute_auc_unweighted(preds_slice, targets_slice)
-        } else {
-            compute_auc_weighted(preds_slice, targets_slice, weights_slice)
+        match weights.as_ref().and_then(|w| w.as_slice()) {
+            None => compute_auc_unweighted(preds_slice, targets_slice),
+            Some(weights_slice) => compute_auc_weighted(preds_slice, targets_slice, weights_slice),
         }
     }
 
@@ -452,13 +438,10 @@ impl MetricFn for MulticlassLogLoss {
 
         const EPS: f64 = 1e-15;
 
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-        let targets_slice = targets.as_slice().expect("targets should be contiguous");
-
-        let (sum_loss, sum_w) = targets_slice
+        let (sum_loss, sum_w) = targets
             .iter()
             .enumerate()
-            .zip(weight_iter(weights_slice, n_rows))
+            .zip(weight_iter(weights, n_rows))
             .fold((0.0f64, 0.0f64), |(sl, sw), ((i, &label), w)| {
                 let class_idx = label.round() as usize;
                 debug_assert!(class_idx < n_outputs, "label out of bounds");

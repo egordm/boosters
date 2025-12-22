@@ -8,8 +8,9 @@
 
 use ndarray::{ArrayView1, ArrayView2};
 
-use super::{weight_iter, MetricFn};
+use super::MetricFn;
 use crate::inference::common::PredictionKind;
+use crate::utils::weight_iter;
 
 // =============================================================================
 // RMSE (Root Mean Squared Error)
@@ -33,18 +34,14 @@ impl MetricFn for Rmse {
             return 0.0;
         }
 
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-        let targets_slice = targets.as_slice().expect("targets should be contiguous");
-
         let mut sum_rmse = 0.0f64;
         for out_idx in 0..n_outputs {
             let preds_row = predictions.row(out_idx);
-            let preds_slice = preds_row.as_slice().expect("predictions row should be contiguous");
 
-            let (sum_sq, sum_w) = preds_slice
+            let (sum_sq, sum_w) = preds_row
                 .iter()
-                .zip(targets_slice.iter())
-                .zip(weight_iter(weights_slice, n_rows))
+                .zip(targets.iter())
+                .zip(weight_iter(weights, n_rows))
                 .fold((0.0f64, 0.0f64), |(ss, sw), ((&p, &l), w)| {
                     let diff = (p as f64) - (l as f64);
                     (ss + (w as f64) * diff * diff, sw + w as f64)
@@ -91,18 +88,14 @@ impl MetricFn for Mae {
             return 0.0;
         }
 
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-        let targets_slice = targets.as_slice().expect("targets should be contiguous");
-
         let mut sum_mae = 0.0f64;
         for out_idx in 0..n_outputs {
             let preds_row = predictions.row(out_idx);
-            let preds_slice = preds_row.as_slice().expect("predictions row should be contiguous");
 
-            let (sum_ae, sum_w) = preds_slice
+            let (sum_ae, sum_w) = preds_row
                 .iter()
-                .zip(targets_slice.iter())
-                .zip(weight_iter(weights_slice, n_rows))
+                .zip(targets.iter())
+                .zip(weight_iter(weights, n_rows))
                 .fold((0.0f64, 0.0f64), |(sa, sw), ((&p, &l), w)| {
                     let ae = ((p as f64) - (l as f64)).abs();
                     (sa + (w as f64) * ae, sw + w as f64)
@@ -151,15 +144,12 @@ impl MetricFn for Mape {
 
         const EPS: f64 = 1e-15;
 
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-        let targets_slice = targets.as_slice().expect("targets should be contiguous");
         let preds_row = predictions.row(0);
-        let preds_slice = preds_row.as_slice().expect("predictions row should be contiguous");
 
-        let (sum_ape, sum_w) = preds_slice
+        let (sum_ape, sum_w) = preds_row
             .iter()
-            .zip(targets_slice.iter())
-            .zip(weight_iter(weights_slice, n_rows))
+            .zip(targets.iter())
+            .zip(weight_iter(weights, n_rows))
             .fold((0.0f64, 0.0f64), |(sa, sw), ((&p, &l), w)| {
                 let p = p as f64;
                 let l = l as f64;
@@ -231,9 +221,6 @@ impl MetricFn for QuantileMetric {
         let n_quantiles = self.alphas.len();
         debug_assert_eq!(n_outputs, n_quantiles);
 
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-        let targets_slice = targets.as_slice().expect("targets should be contiguous");
-
         let (total_loss, total_weight) = self
             .alphas
             .iter()
@@ -241,12 +228,11 @@ impl MetricFn for QuantileMetric {
             .map(|(q, &alpha)| {
                 let alpha_f64 = alpha as f64;
                 let preds_row = predictions.row(q);
-                let preds_slice = preds_row.as_slice().expect("predictions row should be contiguous");
 
-                preds_slice
+                preds_row
                     .iter()
-                    .zip(targets_slice.iter())
-                    .zip(weight_iter(weights_slice, n_rows))
+                    .zip(targets.iter())
+                    .zip(weight_iter(weights, n_rows))
                     .fold((0.0f64, 0.0f64), |(acc_loss, acc_w), ((&pred, &y), w)| {
                         let residual = y as f64 - pred as f64;
                         let w = w as f64;
@@ -304,15 +290,12 @@ impl MetricFn for PoissonDeviance {
 
         const EPSILON: f64 = 1e-9;
 
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-        let targets_slice = targets.as_slice().expect("targets should be contiguous");
         let preds_row = predictions.row(0);
-        let preds_slice = preds_row.as_slice().expect("predictions row should be contiguous");
 
-        let (sum_wdev, sum_w) = preds_slice
+        let (sum_wdev, sum_w) = preds_row
             .iter()
-            .zip(targets_slice.iter())
-            .zip(weight_iter(weights_slice, n_rows))
+            .zip(targets.iter())
+            .zip(weight_iter(weights, n_rows))
             .fold((0.0f64, 0.0f64), |(swd, sw), ((&p, &l), w)| {
                 let y = l as f64;
                 let mu = (p as f64).max(EPSILON);
@@ -385,16 +368,12 @@ impl MetricFn for HuberMetric {
         }
 
         let delta = self.delta;
-
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-        let targets_slice = targets.as_slice().expect("targets should be contiguous");
         let preds_row = predictions.row(0);
-        let preds_slice = preds_row.as_slice().expect("predictions row should be contiguous");
 
-        let (sum_wloss, sum_w) = preds_slice
+        let (sum_wloss, sum_w) = preds_row
             .iter()
-            .zip(targets_slice.iter())
-            .zip(weight_iter(weights_slice, n_rows))
+            .zip(targets.iter())
+            .zip(weight_iter(weights, n_rows))
             .fold((0.0f64, 0.0f64), |(swl, sw), ((&p, &l), w)| {
                 let r = ((p as f64) - (l as f64)).abs();
                 let w = w as f64;

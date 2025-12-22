@@ -48,7 +48,7 @@ pub use model::gblinear::GBLinearConfig;
 pub use training::{Metric, MetricFn, Objective, ObjectiveFn};
 
 // Data types (for preparing training data)
-pub use data::{ColMatrix, Dataset, DenseMatrix, RowMatrix};
+pub use data::Dataset;
 
 // Shared utilities
 pub use utils::{Parallelism, run_with_threads};

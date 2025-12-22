@@ -14,9 +14,9 @@
 use std::time::Instant;
 
 use boosters::data::binned::{BinnedDatasetBuilder, BundlingConfig};
-use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
+use boosters::data::{transpose_to_c_order, FeaturesView};
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, TreeParams};
-use ndarray::ArrayView1;
+use ndarray::{Array1, Array2};
 
 fn main() {
     // =========================================================================
@@ -36,34 +36,35 @@ fn main() {
     let n_cat2 = 15; // 15 categories → ~93% sparse
     let n_features = 2 + n_cat1 + n_cat2; // 27 total
 
-    let mut features = Vec::with_capacity(n_samples * n_features);
-    let mut labels = Vec::with_capacity(n_samples);
+    // Feature-major data [n_features, n_samples]
+    let mut features = Array2::<f32>::zeros((n_features, n_samples));
+    let mut labels = Array1::<f32>::zeros(n_samples);
 
     for i in 0..n_samples {
         // Numerical features
         let x0 = (i as f32) / (n_samples as f32) * 10.0;
         let x1 = ((i * 7) % 100) as f32 / 10.0;
 
-        features.push(x0);
-        features.push(x1);
+        features[(0, i)] = x0;
+        features[(1, i)] = x1;
 
         // Categorical 1: 10 categories (one-hot encoded)
         let cat1 = i % n_cat1;
         for c in 0..n_cat1 {
-            features.push(if c == cat1 { 1.0 } else { 0.0 });
+            features[(2 + c, i)] = if c == cat1 { 1.0 } else { 0.0 };
         }
 
         // Categorical 2: 15 categories (one-hot encoded)
         let cat2 = i % n_cat2;
         for c in 0..n_cat2 {
-            features.push(if c == cat2 { 1.0 } else { 0.0 });
+            features[(2 + n_cat1 + c, i)] = if c == cat2 { 1.0 } else { 0.0 };
         }
 
         // Target: combination of numerical and categorical effects
         let cat1_effect = (cat1 as f32 - 5.0) * 0.2;
         let cat2_effect = (cat2 as f32 - 7.5) * 0.1;
         let noise = ((i * 31) % 100) as f32 / 500.0 - 0.1;
-        labels.push(x0 * 0.3 + x1 * 0.2 + cat1_effect + cat2_effect + noise);
+        labels[i] = x0 * 0.3 + x1 * 0.2 + cat1_effect + cat2_effect + noise;
     }
 
     println!("Dataset: {} samples × {} features", n_samples, n_features);
@@ -71,17 +72,19 @@ fn main() {
     println!("  - 1 categorical with {} categories (one-hot)", n_cat1);
     println!("  - 1 categorical with {} categories (one-hot)\n", n_cat2);
 
+    // Create FeaturesView for training
+    let features_view = FeaturesView::from_array(features.view());
+
+    // For prediction, transpose to sample-major with C-order
+    let samples = transpose_to_c_order(features.view());
+
     // =========================================================================
     // Train WITHOUT bundling (baseline)
     // =========================================================================
     println!("=== Training WITHOUT bundling ===\n");
 
-    let row_matrix: DenseMatrix<f32, RowMajor> =
-        DenseMatrix::from_vec(features.clone(), n_samples, n_features);
-    let col_matrix: ColMatrix<f32> = row_matrix.to_layout();
-
     let start = Instant::now();
-    let dataset_no_bundle = BinnedDatasetBuilder::from_matrix(&col_matrix, 256)
+    let dataset_no_bundle = BinnedDatasetBuilder::from_matrix(&features_view, 256)
         .with_bundling(BundlingConfig::disabled())
         .build()
         .expect("Failed to build dataset");
@@ -102,7 +105,7 @@ fn main() {
     println!("\n=== Training WITH bundling ===\n");
 
     let start = Instant::now();
-    let dataset_bundled = BinnedDatasetBuilder::from_matrix(&col_matrix, 256)
+    let dataset_bundled = BinnedDatasetBuilder::from_matrix(&features_view, 256)
         .with_bundling(BundlingConfig::auto())
         .build()
         .expect("Failed to build dataset");
@@ -154,7 +157,7 @@ fn main() {
     // Train without bundling
     let model_no_bundle = GBDTModel::train(
         &dataset_no_bundle,
-        ArrayView1::from(&labels[..]),
+        labels.view(),
         None,
         config.clone(),
         1,
@@ -164,7 +167,7 @@ fn main() {
     // Train with bundling
     let model_bundled = GBDTModel::train(
         &dataset_bundled,
-        ArrayView1::from(&labels[..]),
+        labels.view(),
         None,
         config,
         1,
@@ -172,11 +175,11 @@ fn main() {
     .expect("Training failed");
 
     // Evaluate both
-    let predictions_no_bundle = model_no_bundle.predict(&row_matrix, 1);
-    let predictions_bundled = model_bundled.predict(&row_matrix, 1);
+    let predictions_no_bundle = model_no_bundle.predict(samples.view(), 1);
+    let predictions_bundled = model_bundled.predict(samples.view(), 1);
 
-    let rmse_no_bundle = compute_rmse(predictions_no_bundle.as_slice(), &labels);
-    let rmse_bundled = compute_rmse(predictions_bundled.as_slice(), &labels);
+    let rmse_no_bundle = compute_rmse(predictions_no_bundle.as_slice().unwrap(), labels.as_slice().unwrap());
+    let rmse_bundled = compute_rmse(predictions_bundled.as_slice().unwrap(), labels.as_slice().unwrap());
 
     println!("=== Results ===");
     println!("Without bundling - RMSE: {:.4}", rmse_no_bundle);

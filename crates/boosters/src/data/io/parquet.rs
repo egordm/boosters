@@ -9,10 +9,11 @@ use std::sync::Arc;
 
 use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
+use ndarray::Array2;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
 use super::error::DatasetLoadError;
-use crate::data::{ColMatrix, Dataset, RowMatrix};
+use crate::data::Dataset;
 
 // =============================================================================
 // Public API
@@ -25,15 +26,15 @@ pub fn load_parquet_to_dataset(path: impl AsRef<Path>) -> Result<Dataset, Datase
 	loaded.to_dataset()
 }
 
-/// Load a Parquet file into a row-major [`RowMatrix`].
-pub fn load_parquet_to_row_matrix_f32(path: impl AsRef<Path>) -> Result<RowMatrix<f32>, DatasetLoadError> {
+/// Load a Parquet file into a row-major Array2<f32> with shape (n_samples, n_features).
+pub fn load_parquet_to_row_matrix_f32(path: impl AsRef<Path>) -> Result<Array2<f32>, DatasetLoadError> {
 	let (batches, schema) = read_parquet_file(path)?;
 	let loaded = super::record_batches::LoadedBatches::new(schema, batches)?;
 	loaded.to_row_matrix_f32()
 }
 
-/// Load a Parquet file into a column-major [`ColMatrix`].
-pub fn load_parquet_to_col_matrix_f32(path: impl AsRef<Path>) -> Result<ColMatrix<f32>, DatasetLoadError> {
+/// Load a Parquet file into a column-major Array2<f32> with shape (n_features, n_samples).
+pub fn load_parquet_to_col_matrix_f32(path: impl AsRef<Path>) -> Result<Array2<f32>, DatasetLoadError> {
 	let (batches, schema) = read_parquet_file(path)?;
 	let loaded = super::record_batches::LoadedBatches::new(schema, batches)?;
 	loaded.to_col_matrix_f32()

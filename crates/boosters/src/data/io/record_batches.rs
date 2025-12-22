@@ -7,9 +7,10 @@ use std::sync::Arc;
 use arrow::array::{Array, FixedSizeListArray, Float32Array, Int32Array};
 use arrow::datatypes::{DataType, Schema};
 use arrow::record_batch::RecordBatch;
+use ndarray::Array2;
 
 use super::error::DatasetLoadError;
-use crate::data::{ColMatrix, Dataset, DenseMatrix, FeatureColumn, RowMatrix};
+use crate::data::{Dataset, FeatureColumn};
 
 pub(super) struct LoadedBatches {
 	schema: Arc<Schema>,
@@ -33,11 +34,13 @@ impl LoadedBatches {
 		batches_to_dataset(&self.batches, &self.schema, self.rows, self.cols)
 	}
 
-	pub(super) fn to_row_matrix_f32(&self) -> Result<RowMatrix<f32>, DatasetLoadError> {
+	/// Convert to row-major Array2<f32> with shape (n_samples, n_features).
+	pub(super) fn to_row_matrix_f32(&self) -> Result<Array2<f32>, DatasetLoadError> {
 		batches_to_row_matrix(&self.batches, &self.schema, self.rows, self.cols)
 	}
 
-	pub(super) fn to_col_matrix_f32(&self) -> Result<ColMatrix<f32>, DatasetLoadError> {
+	/// Convert to column-major Array2<f32> with shape (n_features, n_samples).
+	pub(super) fn to_col_matrix_f32(&self) -> Result<Array2<f32>, DatasetLoadError> {
 		batches_to_col_matrix(&self.batches, &self.schema, self.rows, self.cols)
 	}
 
@@ -254,22 +257,25 @@ fn extract_features_row_major(
 	Ok(result)
 }
 
+/// Convert record batches to row-major Array2 with shape (n_samples, n_features).
 fn batches_to_row_matrix(
 	batches: &[RecordBatch],
 	schema: &Schema,
 	rows: usize,
 	cols: usize,
-) -> Result<RowMatrix<f32>, DatasetLoadError> {
+) -> Result<Array2<f32>, DatasetLoadError> {
 	let features = extract_features_row_major(batches, schema, rows, cols)?;
-	Ok(DenseMatrix::from_vec(features, rows, cols))
+	Array2::from_shape_vec((rows, cols), features)
+		.map_err(|e| DatasetLoadError::Schema(format!("Shape error: {}", e)))
 }
 
+/// Convert record batches to column-major Array2 with shape (n_features, n_samples).
 fn batches_to_col_matrix(
 	batches: &[RecordBatch],
 	schema: &Schema,
 	rows: usize,
 	cols: usize,
-) -> Result<ColMatrix<f32>, DatasetLoadError> {
+) -> Result<Array2<f32>, DatasetLoadError> {
 	if schema.field_with_name("x").ok().is_some() {
 		// FixedSizeList: read row-major and transpose
 		let row_major = extract_features_row_major(batches, schema, rows, cols)?;
@@ -279,7 +285,8 @@ fn batches_to_col_matrix(
 				col_major[col * rows + row] = row_major[row * cols + col];
 			}
 		}
-		return Ok(DenseMatrix::from_vec(col_major, rows, cols));
+		return Array2::from_shape_vec((cols, rows), col_major)
+			.map_err(|e| DatasetLoadError::Schema(format!("Shape error: {}", e)));
 	}
 
 	// Wide columns: each column is already contiguous in Arrow
@@ -289,5 +296,6 @@ fn batches_to_col_matrix(
 		let col_values = extract_float32_column(batches, &col_name)?;
 		col_major.extend(col_values);
 	}
-	Ok(DenseMatrix::from_vec(col_major, rows, cols))
+	Array2::from_shape_vec((cols, rows), col_major)
+		.map_err(|e| DatasetLoadError::Schema(format!("Shape error: {}", e)))
 }

@@ -5,7 +5,6 @@
 //! and [`config()`](GBDTModel::config).
 
 use crate::data::binned::BinnedDataset;
-use crate::data::{ColMajor, ColMatrix, DataMatrix, DenseMatrix};
 use crate::inference::gbdt::UnrolledPredictor6;
 use crate::model::meta::ModelMeta;
 use crate::repr::gbdt::{Forest, ScalarLeaf};
@@ -13,7 +12,7 @@ use crate::training::gbdt::GBDTTrainer;
 use crate::training::{Metric, ObjectiveFn};
 use crate::utils::{Parallelism, run_with_threads};
 
-use ndarray::{Array2, ArrayView1};
+use ndarray::{Array2, ArrayView1, ArrayView2};
 
 use super::GBDTConfig;
 
@@ -170,33 +169,23 @@ impl GBDTModel {
     ///
     /// # Arguments
     ///
-    /// * `features` - Feature matrix (any layout implementing [`DataMatrix`])
+    /// * `features` - Feature matrix with shape `[n_samples, n_features]` (sample-major)
     /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
     ///
     /// # Returns
     ///
-    /// Column-major matrix (n_rows × n_groups). Use `col_slice(group)` to access.
-    pub fn predict<M: DataMatrix<Element = f32> + Sync>(
+    /// Array2 with shape `[n_groups, n_samples]`. Access group predictions via `.row(group_idx)`.
+    pub fn predict(
         &self,
-        features: &M,
+        features: ArrayView2<f32>,
         n_threads: usize,
-    ) -> ColMatrix<f32> {
-        let n_rows = features.num_rows();
-        let n_features = features.num_features();
+    ) -> Array2<f32> {
+        let n_rows = features.nrows();
         let n_groups = self.meta.n_groups;
 
         if n_rows == 0 {
-            return DenseMatrix::<f32, ColMajor>::from_vec(vec![], 0, n_groups);
+            return Array2::zeros((n_groups, 0));
         }
-
-        // Copy features into contiguous row-major buffer for ndarray
-        let mut feature_buf = vec![0.0f32; n_rows * n_features];
-        for i in 0..n_rows {
-            let row_start = i * n_features;
-            features.copy_row(i, &mut feature_buf[row_start..row_start + n_features]);
-        }
-        let features_array = ndarray::ArrayView2::from_shape((n_rows, n_features), &feature_buf)
-            .expect("feature buffer shape mismatch");
 
         // Allocate output [n_groups, n_samples]
         let mut output_array = Array2::<f32>::zeros((n_groups, n_rows));
@@ -204,40 +193,37 @@ impl GBDTModel {
         // Run prediction with thread pool management
         run_with_threads(n_threads, |parallelism| {
             let predictor = UnrolledPredictor6::new(&self.forest);
-            predictor.predict_into(features_array, None, parallelism, output_array.view_mut());
+            predictor.predict_into(features, None, parallelism, output_array.view_mut());
         });
 
         // Apply transformation if we have config with objective
         // transform_predictions expects [n_outputs, n_rows] which matches our array shape
         self.config.objective.transform_predictions(output_array.view_mut());
 
-        // Convert from ndarray [n_groups, n_rows] to ColMatrix (n_rows, n_groups)
-        // Both layouts have the same memory representation: group-contiguous
-        DenseMatrix::<f32, ColMajor>::from_vec(output_array.into_raw_vec_and_offset().0, n_rows, n_groups)
+        output_array
     }
 
     /// Predict for multiple rows, returning raw margin scores (no transform).
-    pub fn predict_raw<M: DataMatrix<Element = f32> + Sync>(
+    ///
+    /// # Arguments
+    ///
+    /// * `features` - Feature matrix with shape `[n_samples, n_features]` (sample-major)
+    /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
+    ///
+    /// # Returns
+    ///
+    /// Array2 with shape `[n_groups, n_samples]`. Access group predictions via `.row(group_idx)`.
+    pub fn predict_raw(
         &self,
-        features: &M,
+        features: ArrayView2<f32>,
         n_threads: usize,
-    ) -> ColMatrix<f32> {
-        let n_rows = features.num_rows();
-        let n_features = features.num_features();
+    ) -> Array2<f32> {
+        let n_rows = features.nrows();
         let n_groups = self.meta.n_groups;
 
         if n_rows == 0 {
-            return DenseMatrix::<f32, ColMajor>::from_vec(vec![], 0, n_groups);
+            return Array2::zeros((n_groups, 0));
         }
-
-        // Copy features into contiguous row-major buffer for ndarray
-        let mut feature_buf = vec![0.0f32; n_rows * n_features];
-        for i in 0..n_rows {
-            let row_start = i * n_features;
-            features.copy_row(i, &mut feature_buf[row_start..row_start + n_features]);
-        }
-        let features_array = ndarray::ArrayView2::from_shape((n_rows, n_features), &feature_buf)
-            .expect("feature buffer shape mismatch");
 
         // Allocate output [n_groups, n_samples]
         let mut output_array = Array2::<f32>::zeros((n_groups, n_rows));
@@ -245,16 +231,10 @@ impl GBDTModel {
         // Run prediction with thread pool management
         run_with_threads(n_threads, |parallelism| {
             let predictor = UnrolledPredictor6::new(&self.forest);
-            predictor.predict_into(features_array, None, parallelism, output_array.view_mut());
+            predictor.predict_into(features, None, parallelism, output_array.view_mut());
         });
 
-        // Convert from [n_groups, n_samples] to ColMatrix [n_samples, n_groups]
-        let transposed = output_array.reversed_axes();
-        DenseMatrix::<f32, ColMajor>::from_vec(
-            transposed.as_standard_layout().into_owned().into_raw_vec_and_offset().0,
-            n_rows,
-            n_groups,
-        )
+        output_array
     }
 
     // =========================================================================
@@ -304,8 +284,8 @@ impl std::fmt::Debug for GBDTModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::RowMatrix;
     use crate::scalar_tree;
+    use ndarray::arr2;
 
     fn make_simple_forest() -> Forest<ScalarLeaf> {
         let tree = scalar_tree! {
@@ -351,14 +331,14 @@ mod tests {
         let model = GBDTModel::from_forest(forest, meta);
 
         // x0 < 0.5 → leaf 1.0
-        let features1 = RowMatrix::from_vec(vec![0.3, 0.5], 1, 2);
-        let preds1 = model.predict(&features1, 1);
-        assert_eq!(preds1.col_slice(0), &[1.0]);
+        let features1 = arr2(&[[0.3, 0.5]]);
+        let preds1 = model.predict(features1.view(), 1);
+        assert_eq!(preds1.row(0).as_slice().unwrap(), &[1.0]);
 
         // x0 >= 0.5, x1 >= 0.3 → leaf 3.0
-        let features2 = RowMatrix::from_vec(vec![0.7, 0.5], 1, 2);
-        let preds2 = model.predict(&features2, 1);
-        assert_eq!(preds2.col_slice(0), &[3.0]);
+        let features2 = arr2(&[[0.7, 0.5]]);
+        let preds2 = model.predict(features2.view(), 1);
+        assert_eq!(preds2.row(0).as_slice().unwrap(), &[3.0]);
     }
 
     #[test]
@@ -367,13 +347,14 @@ mod tests {
         let meta = ModelMeta::for_regression(2);
         let model = GBDTModel::from_forest(forest, meta);
 
-        let features = RowMatrix::from_vec(vec![
-            0.3, 0.5, // row 0
-            0.7, 0.5, // row 1
-        ], 2, 2);
-        let preds = model.predict(&features, 1);
+        let features = arr2(&[
+            [0.3, 0.5], // row 0
+            [0.7, 0.5], // row 1
+        ]);
+        let preds = model.predict(features.view(), 1);
 
-        assert_eq!(preds.col_slice(0), &[1.0, 3.0]);
+        // Shape is [n_groups, n_samples] = [1, 2]
+        assert_eq!(preds.row(0).as_slice().unwrap(), &[1.0, 3.0]);
     }
 
     #[test]

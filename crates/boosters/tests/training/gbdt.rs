@@ -2,19 +2,24 @@
 //!
 //! Focused on behavior and invariants (not default params or superficial shapes).
 
-use boosters::data::{BinMapper, BinnedDatasetBuilder, ColMatrix, GroupLayout, GroupStrategy, MissingType};
+use boosters::data::{transpose_to_c_order, BinMapper, BinnedDatasetBuilder, FeaturesView, GroupLayout, GroupStrategy, MissingType};
 use boosters::repr::gbdt::{TreeView, SplitType};
 use boosters::training::{GBDTParams, GBDTTrainer, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
-use ndarray::ArrayView1;
+use ndarray::{Array2, ArrayView1, ArrayView2};
 
 #[test]
 fn train_rejects_invalid_targets_len() {
-    let features = vec![0.0, 1.0, 2.0, 3.0, 1.0, 2.0, 3.0, 4.0];
-    let col_matrix = ColMatrix::from_vec(features, 4, 2);
+    // Data is feature-major: [n_features, n_samples]
+    // 2 features, 4 samples
+    let features = Array2::from_shape_vec((2, 4), vec![
+        0.0, 1.0, 2.0, 3.0,  // feature 0
+        1.0, 2.0, 3.0, 4.0,  // feature 1
+    ]).unwrap();
+    let view = FeaturesView::from_array(features.view());
     let targets: Vec<f32> = vec![1.0, 2.0]; // Too few targets
 
-    let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 16)
+    let dataset = BinnedDatasetBuilder::from_matrix(&view, 16)
         .build()
         .expect("Failed to build binned dataset");
 
@@ -29,11 +34,13 @@ fn train_rejects_invalid_targets_len() {
 fn trained_model_improves_over_base_score_on_simple_problem() {
     // Simple linear relationship: y = x + 0.5
     let n_samples = 100;
-    let features: Vec<f32> = (0..n_samples).map(|i| i as f32 / 10.0).collect();
-    let targets: Vec<f32> = features.iter().map(|&x| x + 0.5).collect();
+    let features_raw: Vec<f32> = (0..n_samples).map(|i| i as f32 / 10.0).collect();
+    let targets: Vec<f32> = features_raw.iter().map(|&x| x + 0.5).collect();
 
-    let col_matrix = ColMatrix::from_vec(features.clone(), n_samples, 1);
-    let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 64)
+    // Feature-major: shape [1, n_samples]
+    let features = Array2::from_shape_vec((1, n_samples), features_raw.clone()).unwrap();
+    let view = FeaturesView::from_array(features.view());
+    let dataset = BinnedDatasetBuilder::from_matrix(&view, 64)
         .build()
         .expect("Failed to build binned dataset");
 
@@ -58,7 +65,7 @@ fn trained_model_improves_over_base_score_on_simple_problem() {
     let mut pred_error_sum = 0.0f32;
 
     for row in 0..n_samples {
-        let x = col_matrix.col_slice(0)[row];
+        let x = features_raw[row];
         let pred = forest.predict_row(&[x])[0];
         let target = targets[row];
 
@@ -78,20 +85,24 @@ fn trained_model_improves_over_base_score_on_medium_problem() {
     let n_samples = 200;
     let n_features = 3;
 
-    let mut features = Vec::with_capacity(n_samples * n_features);
+    // Build row-major feature data first
+    let mut features_row_major = Vec::with_capacity(n_samples * n_features);
     let mut targets = Vec::with_capacity(n_samples);
 
     for i in 0..n_samples {
         for j in 0..n_features {
-            features.push(((i * (j + 1)) % 100) as f32 / 10.0);
+            features_row_major.push(((i * (j + 1)) % 100) as f32 / 10.0);
         }
         let x0 = ((i * 1) % 100) as f32 / 10.0;
         let x1 = ((i * 2) % 100) as f32 / 10.0;
         targets.push(x0 + 0.5 * x1);
     }
 
-    let col_matrix = ColMatrix::from_vec(features, n_samples, n_features);
-    let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 64)
+    // Convert to feature-major: [n_features, n_samples]
+    let row_view = ArrayView2::from_shape((n_samples, n_features), &features_row_major).unwrap();
+    let features = transpose_to_c_order(row_view.view());
+    let view = FeaturesView::from_array(features.view());
+    let dataset = BinnedDatasetBuilder::from_matrix(&view, 64)
         .build()
         .expect("Failed to build binned dataset");
 
@@ -119,7 +130,7 @@ fn trained_model_improves_over_base_score_on_medium_problem() {
     for row in 0..n_samples {
         let mut row_features = Vec::with_capacity(n_features);
         for f in 0..n_features {
-            row_features.push(col_matrix.col_slice(f)[row]);
+            row_features.push(features[[f, row]]);
         }
 
         let pred = forest.predict_row(&row_features)[0];

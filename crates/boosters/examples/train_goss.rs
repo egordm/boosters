@@ -16,14 +16,14 @@
 use std::time::Instant;
 
 use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
+use boosters::data::FeaturesView;
 use boosters::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
 use boosters::training::{
     GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, RowSamplingParams,
     SquaredLoss,
 };
 use boosters::Parallelism;
-use ndarray::ArrayView1;
+use ndarray::{Array2, ArrayView1};
 
 fn main() {
     // =========================================================================
@@ -35,26 +35,34 @@ fn main() {
     let max_depth = 6;
 
     println!("Generating dataset: {} rows × {} features", n_samples, n_features);
-    let features = random_dense_f32(n_samples, n_features, 42, -1.0, 1.0);
+    let features_row_major = random_dense_f32(n_samples, n_features, 42, -1.0, 1.0);
     let (labels, _weights, _bias) =
-        synthetic_regression_targets_linear(&features, n_samples, n_features, 1337, 0.1);
+        synthetic_regression_targets_linear(&features_row_major, n_samples, n_features, 1337, 0.1);
 
     // Split train/test (80/20)
     let split_idx = (n_samples as f32 * 0.8) as usize;
-    let train_features: Vec<f32> = features[..split_idx * n_features].to_vec();
-    let train_labels: Vec<f32> = labels[..split_idx].to_vec();
-    let test_features: Vec<f32> = features[split_idx * n_features..].to_vec();
-    let test_labels: Vec<f32> = labels[split_idx..].to_vec();
     let n_train = split_idx;
     let n_test = n_samples - split_idx;
 
     println!("Train: {} samples, Test: {} samples\n", n_train, n_test);
 
+    // Convert to feature-major for training
+    // row-major [n_samples, n_features] → feature-major [n_features, n_samples]
+    let mut train_features = Array2::<f32>::zeros((n_features, n_train));
+    for i in 0..n_train {
+        for f in 0..n_features {
+            train_features[(f, i)] = features_row_major[i * n_features + f];
+        }
+    }
+    let train_labels: Vec<f32> = labels[..n_train].to_vec();
+    
+    // Test data can remain as row-major Vec for predict_row
+    let test_features: Vec<f32> = features_row_major[split_idx * n_features..].to_vec();
+    let test_labels: Vec<f32> = labels[split_idx..].to_vec();
+
     // Build binned dataset for training
-    let row_matrix: DenseMatrix<f32, RowMajor> =
-        DenseMatrix::from_vec(train_features.clone(), n_train, n_features);
-    let col_matrix: ColMatrix<f32> = row_matrix.to_layout();
-    let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 256)
+    let features_view = FeaturesView::from_array(train_features.view());
+    let dataset = BinnedDatasetBuilder::from_matrix(&features_view, 256)
         .build()
         .expect("Failed to build binned dataset");
 

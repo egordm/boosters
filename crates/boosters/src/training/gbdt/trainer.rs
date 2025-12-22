@@ -3,7 +3,7 @@
 //! Orchestrates objective computation, tree growing, and prediction updates.
 //! Use [`GBDTTrainer::train`] to train a forest from a binned dataset.
 
-use crate::data::{init_predictions, BinnedDataset, RowMatrix};
+use crate::data::{init_predictions, BinnedDataset, SamplesView};
 use crate::inference::gbdt::BinnedAccessor;
 use crate::training::callback::{EarlyStopping, EarlyStopAction};
 use crate::training::eval::{self, EvalSet};
@@ -208,13 +208,12 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
         let mut gradients = Gradients::new(n_rows, n_outputs);
 
         // Compute base scores
-        let mut base_scores = Array2::<f32>::zeros((n_outputs, 1));
+        let mut base_scores_vec = vec![0.0f32; n_outputs];
         self.objective.compute_base_score(
             targets,
             weights,
-            base_scores.view_mut(),
+            &mut base_scores_vec,
         );
-        let base_scores_vec: Vec<f32> = base_scores.iter().copied().collect();
 
         // Initialize predictions (column-major: [output0_all_rows, output1_all_rows, ...])
         let mut predictions = vec![0.0f32; n_rows * n_outputs];
@@ -232,7 +231,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
 
         // Prepare eval set data and incremental prediction buffers
         // Only allocate if evaluation is needed
-        let eval_data: Vec<RowMatrix<f32>> = if needs_evaluation {
+        let eval_data: Vec<Array2<f32>> = if needs_evaluation {
             eval_sets
                 .iter()
                 .filter_map(|es| es.dataset.for_gbdt().ok())
@@ -247,7 +246,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
         let mut eval_predictions: Vec<Array2<f32>> = if needs_evaluation {
             eval_data
                 .iter()
-                .map(|m| init_predictions(&base_scores_vec, m.n_rows()))
+                .map(|m| init_predictions(&base_scores_vec, m.nrows()))
                 .collect()
         } else {
             Vec::new()
@@ -340,7 +339,8 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
                         let mut pred_row = eval_predictions[set_idx].row_mut(output);
                         let pred_slice = pred_row.as_slice_mut()
                             .expect("eval prediction row should be contiguous");
-                        tree.predict_batch(matrix, pred_slice);
+                        let samples_view = SamplesView::from_array(matrix.view());
+                        tree.predict_batch_accumulate(&samples_view, pred_slice);
                     }
                 }
 

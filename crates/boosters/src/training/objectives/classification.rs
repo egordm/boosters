@@ -44,25 +44,20 @@ impl ObjectiveFn for LogisticLoss {
         debug_assert_eq!(grad_hess.dim(), (n_outputs, n_rows));
         debug_assert_eq!(targets.len(), n_rows);
 
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-        let targets_slice = targets.as_slice().expect("targets should be contiguous");
-
         // Process each output independently
         for out_idx in 0..n_outputs {
             let preds_row = predictions.row(out_idx);
-            let preds_slice = preds_row.as_slice().expect("predictions row should be contiguous");
+            let mut gh_row = grad_hess.row_mut(out_idx);
 
-            let gh_row = grad_hess.row_mut(out_idx);
-            let gh_slice = gh_row.into_slice().expect("grad_hess row should be contiguous");
-
-            for ((gh, &pred), (&target, w)) in gh_slice
-                .iter_mut()
-                .zip(preds_slice.iter())
-                .zip(targets_slice.iter().zip(weight_iter(weights_slice, n_rows)))
+            for (i, ((&pred, &target), w)) in preds_row
+                .iter()
+                .zip(targets.iter())
+                .zip(weight_iter(weights, n_rows))
+                .enumerate()
             {
                 let p = Self::sigmoid(pred);
-                gh.grad = w * (p - target);
-                gh.hess = (w * p * (1.0 - p)).max(HESS_MIN);
+                gh_row[i].grad = w * (p - target);
+                gh_row[i].hess = (w * p * (1.0 - p)).max(HESS_MIN);
             }
         }
     }
@@ -71,7 +66,7 @@ impl ObjectiveFn for LogisticLoss {
         &self,
         targets: ArrayView1<f32>,
         weights: Option<ArrayView1<f32>>,
-        mut outputs: ArrayViewMut2<f32>,
+        outputs: &mut [f32],
     ) {
         let n_rows = targets.len();
 
@@ -80,18 +75,15 @@ impl ObjectiveFn for LogisticLoss {
             return;
         }
 
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-        let targets_slice = targets.as_slice().expect("targets should be contiguous");
-
         // Single output: compute weighted mean of targets, convert to log-odds
-        let (pos_weight, total_weight) = targets_slice
+        let (pos_weight, total_weight) = targets
             .iter()
-            .zip(weight_iter(weights_slice, n_rows))
+            .zip(weight_iter(weights, n_rows))
             .map(|(&t, w)| (w as f64 * t as f64, w as f64))
             .fold((0.0f64, 0.0f64), |(pos, total), (p, w)| (pos + p, total + w));
 
         let p = (pos_weight / total_weight).clamp(1e-7, 1.0 - 1e-7);
-        outputs[[0, 0]] = (p / (1.0 - p)).ln() as f32;
+        outputs[0] = (p / (1.0 - p)).ln() as f32;
     }
 
     fn name(&self) -> &'static str {
@@ -143,27 +135,22 @@ impl ObjectiveFn for HingeLoss {
         debug_assert_eq!(grad_hess.dim(), (n_outputs, n_rows));
         debug_assert_eq!(targets.len(), n_rows);
 
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-        let targets_slice = targets.as_slice().expect("targets should be contiguous");
-
         for out_idx in 0..n_outputs {
             let preds_row = predictions.row(out_idx);
-            let preds_slice = preds_row.as_slice().expect("predictions row should be contiguous");
+            let mut gh_row = grad_hess.row_mut(out_idx);
 
-            let gh_row = grad_hess.row_mut(out_idx);
-            let gh_slice = gh_row.into_slice().expect("grad_hess row should be contiguous");
-
-            for ((gh, &pred), (&target, w)) in gh_slice
-                .iter_mut()
-                .zip(preds_slice.iter())
-                .zip(targets_slice.iter().zip(weight_iter(weights_slice, n_rows)))
+            for (i, ((&pred, &target), w)) in preds_row
+                .iter()
+                .zip(targets.iter())
+                .zip(weight_iter(weights, n_rows))
+                .enumerate()
             {
                 // Convert {0, 1} to {-1, +1}
                 let y = if target > 0.5 { 1.0 } else { -1.0 };
                 let margin = y * pred;
 
-                gh.grad = if margin < 1.0 { -w * y } else { 0.0 };
-                gh.hess = w;
+                gh_row[i].grad = if margin < 1.0 { -w * y } else { 0.0 };
+                gh_row[i].hess = w;
             }
         }
     }
@@ -172,7 +159,7 @@ impl ObjectiveFn for HingeLoss {
         &self,
         _targets: ArrayView1<f32>,
         _weights: Option<ArrayView1<f32>>,
-        mut outputs: ArrayViewMut2<f32>,
+        outputs: &mut [f32],
     ) {
         outputs.fill(0.0);
     }
@@ -244,38 +231,33 @@ impl ObjectiveFn for SoftmaxLoss {
         debug_assert_eq!(grad_hess.dim(), (n_outputs, n_rows));
         debug_assert_eq!(targets.len(), n_rows);
 
-        let k = n_outputs;
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-        let targets_slice = targets.as_slice().expect("targets should be contiguous");
-
         // Process sample by sample (need to compute softmax across classes)
-        for (i, (&target, w)) in targets_slice
+        // Use column views to avoid repeated double-indexing
+        for (i, (&target, w)) in targets
             .iter()
-            .zip(weight_iter(weights_slice, n_rows))
+            .zip(weight_iter(weights, n_rows))
             .enumerate()
         {
             let label = target as usize;
-            debug_assert!(label < k, "label {} >= num_classes {}", label, k);
+            debug_assert!(label < n_outputs, "label {} >= num_classes {}", label, n_outputs);
+
+            // Get column views for this sample
+            let pred_col = predictions.column(i);
+            let mut gh_col = grad_hess.column_mut(i);
 
             // Find max logit for numerical stability
-            let mut max_logit = f32::NEG_INFINITY;
-            for c in 0..k {
-                max_logit = max_logit.max(predictions[[c, i]]);
-            }
+            let max_logit = pred_col.iter().copied().fold(f32::NEG_INFINITY, f32::max);
 
             // Compute sum of exp(logit - max)
-            let mut exp_sum = 0.0f32;
-            for c in 0..k {
-                exp_sum += (predictions[[c, i]] - max_logit).exp();
-            }
+            let exp_sum: f32 = pred_col.iter().map(|&x| (x - max_logit).exp()).sum();
 
             // Compute gradients and hessians for each class
-            for c in 0..k {
-                let p = (predictions[[c, i]] - max_logit).exp() / exp_sum;
+            for (c, (&pred, gh)) in pred_col.iter().zip(gh_col.iter_mut()).enumerate() {
+                let p = (pred - max_logit).exp() / exp_sum;
                 let target_indicator = if c == label { 1.0 } else { 0.0 };
 
-                grad_hess[[c, i]].grad = w * (p - target_indicator);
-                grad_hess[[c, i]].hess = (w * p * (1.0 - p)).max(HESS_MIN);
+                gh.grad = w * (p - target_indicator);
+                gh.hess = (w * p * (1.0 - p)).max(HESS_MIN);
             }
         }
     }
@@ -284,24 +266,21 @@ impl ObjectiveFn for SoftmaxLoss {
         &self,
         targets: ArrayView1<f32>,
         weights: Option<ArrayView1<f32>>,
-        mut outputs: ArrayViewMut2<f32>,
+        outputs: &mut [f32],
     ) {
         let n_rows = targets.len();
-        let n_outputs = outputs.dim().0;
+        let n_outputs = outputs.len();
 
         if n_rows == 0 {
             outputs.fill(0.0);
             return;
         }
 
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-        let targets_slice = targets.as_slice().expect("targets should be contiguous");
-
         // Count class frequencies
         let mut class_weights = vec![0.0f64; n_outputs];
         let mut total_weight = 0.0f64;
 
-        for (&target, w) in targets_slice.iter().zip(weight_iter(weights_slice, n_rows)) {
+        for (&target, w) in targets.iter().zip(weight_iter(weights, n_rows)) {
             let label = target as usize;
             if label < n_outputs {
                 class_weights[label] += w as f64;
@@ -312,7 +291,7 @@ impl ObjectiveFn for SoftmaxLoss {
         // Convert to log-probabilities
         for c in 0..n_outputs {
             let p = (class_weights[c] / total_weight).clamp(1e-7, 1.0 - 1e-7);
-            outputs[[c, 0]] = p.ln() as f32;
+            outputs[c] = p.ln() as f32;
         }
     }
 
@@ -335,22 +314,26 @@ impl ObjectiveFn for SoftmaxLoss {
         }
 
         // Apply softmax column-by-column (each column is a sample)
+        // Using column_mut for better performance than double-indexing
         for sample_idx in 0..n_samples {
-            let mut max_val = f32::NEG_INFINITY;
-            for out_idx in 0..n_outputs {
-                max_val = max_val.max(predictions[[out_idx, sample_idx]]);
-            }
+            let mut col = predictions.column_mut(sample_idx);
+            
+            // Find max for numerical stability
+            let max_val = col.iter().copied().fold(f32::NEG_INFINITY, f32::max);
 
+            // Compute exp(x - max) and sum
             let mut sum = 0.0f32;
-            for out_idx in 0..n_outputs {
-                let v = (predictions[[out_idx, sample_idx]] - max_val).exp();
-                predictions[[out_idx, sample_idx]] = v;
+            for x in col.iter_mut() {
+                let v = (*x - max_val).exp();
+                *x = v;
                 sum += v;
             }
 
+            // Normalize
             if sum > 0.0 {
-                for out_idx in 0..n_outputs {
-                    predictions[[out_idx, sample_idx]] /= sum;
+                let inv_sum = 1.0 / sum;
+                for x in col.iter_mut() {
+                    *x *= inv_sum;
                 }
             }
         }
@@ -433,10 +416,9 @@ impl ObjectiveFn for LambdaRankLoss {
         debug_assert_eq!(targets.len(), n_rows);
         debug_assert_eq!(grad_hess.dim(), (1, n_rows));
 
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-        let targets_slice = targets.as_slice().expect("targets should be contiguous");
         let preds_row = predictions.row(0);
         let preds_slice = preds_row.as_slice().expect("predictions row should be contiguous");
+        let targets_slice = targets.as_slice().expect("targets should be contiguous");
 
         // Initialize gradients and hessians to zero
         let gh_row = grad_hess.row_mut(0);
@@ -472,7 +454,7 @@ impl ObjectiveFn for LambdaRankLoss {
             });
 
             // Get weights slice for this group
-            let group_weights: Vec<f32> = weight_iter(weights_slice, n_rows)
+            let group_weights: Vec<f32> = weight_iter(weights, n_rows)
                 .skip(start)
                 .take(group_len)
                 .collect();
@@ -523,7 +505,7 @@ impl ObjectiveFn for LambdaRankLoss {
         &self,
         _targets: ArrayView1<f32>,
         _weights: Option<ArrayView1<f32>>,
-        mut outputs: ArrayViewMut2<f32>,
+        outputs: &mut [f32],
     ) {
         outputs.fill(0.0);
     }
@@ -591,12 +573,12 @@ mod tests {
     fn logistic_base_score() {
         let obj = LogisticLoss;
         let targets = make_targets(&[0.0, 0.0, 1.0, 1.0]);
-        let mut output = Array2::from_elem((1, 1), 0.0f32);
+        let mut output = [0.0f32];
 
-        obj.compute_base_score(targets.view(), None, output.view_mut());
+        obj.compute_base_score(targets.view(), None, &mut output);
 
         // 50% positive: log-odds = log(0.5/0.5) = 0
-        assert_abs_diff_eq!(output[[0, 0]], 0.0, epsilon = DEFAULT_TOLERANCE);
+        assert_abs_diff_eq!(output[0], 0.0, epsilon = DEFAULT_TOLERANCE);
     }
 
     #[test]
@@ -662,13 +644,13 @@ mod tests {
         let obj = SoftmaxLoss::new(3);
         // Class indices
         let targets = make_targets(&[0.0, 0.0, 1.0, 2.0]);
-        let mut outputs = Array2::from_elem((3, 1), 0.0f32);
+        let mut outputs = [0.0f32; 3];
 
-        obj.compute_base_score(targets.view(), None, outputs.view_mut());
+        obj.compute_base_score(targets.view(), None, &mut outputs);
 
         // Class 0: 2/4, Class 1: 1/4, Class 2: 1/4
-        assert!(outputs[[0, 0]] > outputs[[1, 0]]); // Class 0 more frequent
-        assert_abs_diff_eq!(outputs[[1, 0]], outputs[[2, 0]], epsilon = DEFAULT_TOLERANCE);
+        assert!(outputs[0] > outputs[1]); // Class 0 more frequent
+        assert_abs_diff_eq!(outputs[1], outputs[2], epsilon = DEFAULT_TOLERANCE);
     }
 
     #[test]
@@ -709,9 +691,9 @@ mod tests {
         let query_groups = vec![0, 3];
         let obj = LambdaRankLoss::new(query_groups);
         let targets = make_targets(&[0.0, 0.0, 0.0]);
-        let mut output = Array2::from_elem((1, 1), 1.0f32);
+        let mut output = [1.0f32];
 
-        obj.compute_base_score(targets.view(), None, output.view_mut());
-        assert_abs_diff_eq!(output[[0, 0]], 0.0, epsilon = DEFAULT_TOLERANCE);
+        obj.compute_base_score(targets.view(), None, &mut output);
+        assert_abs_diff_eq!(output[0], 0.0, epsilon = DEFAULT_TOLERANCE);
     }
 }

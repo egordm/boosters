@@ -4,9 +4,11 @@
 
 use std::collections::BTreeMap;
 
+use ndarray::Array2;
+
 use crate::data::{
-    BinMapper, BinnedDataset, BinnedDatasetBuilder, BuildError, ColMajor, ColMatrix, GroupStrategy,
-    MissingType, RowMatrix,
+    BinMapper, BinnedDataset, BinnedDatasetBuilder, BuildError, FeaturesView, GroupStrategy,
+    MissingType,
 };
 
 /// A single feature column.
@@ -104,23 +106,25 @@ impl Dataset {
         })
     }
 
-    /// Create a numeric-only dataset from an existing matrix.
-    pub fn from_numeric<S: AsRef<[f32]>>(
-        data: &ColMatrix<f32, S>,
+    /// Create a numeric-only dataset from a feature-major matrix.
+    ///
+    /// The input should have shape `[n_features, n_samples]` (feature-major layout).
+    pub fn from_numeric(
+        data: &FeaturesView<'_>,
         targets: Vec<f32>,
     ) -> Result<Self, DatasetError> {
-        if targets.len() != data.n_rows() {
+        if targets.len() != data.n_samples() {
             return Err(DatasetError::TargetLenMismatch {
-                rows: data.n_rows(),
+                rows: data.n_samples(),
                 targets: targets.len(),
             });
         }
 
-        let mut features = Vec::with_capacity(data.n_cols());
-        for col in 0..data.n_cols() {
+        let mut features = Vec::with_capacity(data.n_features());
+        for f in 0..data.n_features() {
             features.push(FeatureColumn::Numeric {
                 name: None,
-                values: data.col_slice(col).to_vec(),
+                values: data.feature(f).to_vec(),
             });
         }
 
@@ -190,17 +194,20 @@ impl Dataset {
         builder.build()
     }
 
-    /// Convert into a column-major numeric matrix for GBLinear training.
-    pub fn for_gblinear(&self) -> Result<ColMatrix<f32>, DatasetError> {
-        let n_rows = self.n_rows;
+    /// Convert into a feature-major numeric matrix for GBLinear training.
+    ///
+    /// Returns an `Array2<f32>` with shape `[n_features, n_samples]` (feature-major layout).
+    /// This is optimal for coordinate descent where we iterate over features.
+    pub fn for_gblinear(&self) -> Result<Array2<f32>, DatasetError> {
+        let n_samples = self.n_rows;
         let n_features = self.features.len();
 
-        let mut data = Vec::with_capacity(n_rows * n_features);
+        let mut data = Vec::with_capacity(n_samples * n_features);
 
         for (feature_idx, col) in self.features.iter().enumerate() {
             match col {
                 FeatureColumn::Numeric { values, .. } => {
-                    debug_assert_eq!(values.len(), n_rows);
+                    debug_assert_eq!(values.len(), n_samples);
                     data.extend_from_slice(values);
                 }
                 FeatureColumn::Categorical { .. } => {
@@ -209,41 +216,46 @@ impl Dataset {
             }
         }
 
-        Ok(crate::data::DenseMatrix::<f32, ColMajor>::from_vec(
-            data, n_rows, n_features,
-        ))
+        // Shape is [n_features, n_samples] for feature-major layout
+        Ok(Array2::from_shape_vec((n_features, n_samples), data)
+            .expect("data length matches shape"))
     }
 
-    /// Convert into a row-major numeric matrix for GBDT inference.
+    /// Convert into a sample-major numeric matrix for GBDT inference.
+    ///
+    /// Returns an `Array2<f32>` with shape `[n_samples, n_features]` (sample-major layout).
+    /// This is optimal for tree traversal where we iterate over samples.
     ///
     /// Categorical features are encoded as their bin index (0-based integer),
     /// which matches how the trained trees expect category values.
-    pub fn for_gbdt(&self) -> Result<RowMatrix<f32>, DatasetError> {
-        let n_rows = self.n_rows;
+    pub fn for_gbdt(&self) -> Result<Array2<f32>, DatasetError> {
+        let n_samples = self.n_rows;
         let n_features = self.features.len();
 
-        // Pre-allocate row-major: feature values are stored row by row
-        let mut data = vec![0.0f32; n_rows * n_features];
+        // Pre-allocate sample-major: feature values are stored sample by sample
+        let mut data = vec![0.0f32; n_samples * n_features];
 
         for (feature_idx, col) in self.features.iter().enumerate() {
             match col {
                 FeatureColumn::Numeric { values, .. } => {
-                    debug_assert_eq!(values.len(), n_rows);
-                    for (row, &value) in values.iter().enumerate() {
-                        data[row * n_features + feature_idx] = value;
+                    debug_assert_eq!(values.len(), n_samples);
+                    for (sample, &value) in values.iter().enumerate() {
+                        data[sample * n_features + feature_idx] = value;
                     }
                 }
                 FeatureColumn::Categorical { values, .. } => {
-                    debug_assert_eq!(values.len(), n_rows);
-                    for (row, &cat) in values.iter().enumerate() {
+                    debug_assert_eq!(values.len(), n_samples);
+                    for (sample, &cat) in values.iter().enumerate() {
                         // Encode category index as float
-                        data[row * n_features + feature_idx] = cat as f32;
+                        data[sample * n_features + feature_idx] = cat as f32;
                     }
                 }
             }
         }
 
-        Ok(RowMatrix::from_vec(data, n_rows, n_features))
+        // Shape is [n_samples, n_features] for sample-major layout
+        Ok(Array2::from_shape_vec((n_samples, n_features), data)
+            .expect("data length matches shape"))
     }
 }
 
@@ -355,7 +367,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn numeric_dataset_to_gblinear_matrix_is_col_major() {
+    fn numeric_dataset_to_gblinear_matrix_is_feature_major() {
         let features = vec![
             FeatureColumn::Numeric {
                 name: Some("f0".into()),
@@ -369,10 +381,12 @@ mod tests {
         let ds = Dataset::new(features, vec![0.0, 1.0, 0.0]).unwrap();
         let m = ds.for_gblinear().unwrap();
 
-        assert_eq!(m.n_rows(), 3);
-        assert_eq!(m.n_cols(), 2);
-        assert_eq!(m.col_slice(0), &[1.0, 2.0, 3.0]);
-        assert_eq!(m.col_slice(1), &[10.0, 20.0, 30.0]);
+        // Shape is [n_features, n_samples]
+        assert_eq!(m.shape(), &[2, 3]);
+        // Feature 0 values across all samples
+        assert_eq!(m.row(0).as_slice().unwrap(), &[1.0, 2.0, 3.0]);
+        // Feature 1 values across all samples
+        assert_eq!(m.row(1).as_slice().unwrap(), &[10.0, 20.0, 30.0]);
     }
 
     #[test]

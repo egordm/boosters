@@ -5,7 +5,7 @@
 
 use ndarray::{Array2, ArrayView1, ArrayView2};
 
-use crate::data::{ColMatrix, Dataset};
+use crate::data::{Dataset, FeaturesView};
 use crate::repr::gblinear::LinearModel;
 use crate::training::eval;
 use crate::training::{
@@ -115,8 +115,8 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
         let train_labels = train.targets();
         let weights = train.weights();
 
-        let num_features = train_data.num_columns();
-        let num_samples = train_data.n_rows();
+        let num_features = train_data.nrows();
+        let num_samples = train_data.ncols();
         let num_outputs = self.objective.n_outputs();
 
         assert!(
@@ -130,13 +130,12 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
         // Compute base scores from objective (optimal constant prediction)
         let weights_opt = weights.map(ArrayView1::from);
         let targets_1d = ArrayView1::from(train_labels);
-        let mut base_scores_arr = Array2::<f32>::zeros((num_outputs, 1));
+        let mut base_scores = vec![0.0f32; num_outputs];
         self.objective.compute_base_score(
             targets_1d.view(),
             weights_opt,
-            base_scores_arr.view_mut(),
+            &mut base_scores,
         );
-        let base_scores: Vec<f32> = base_scores_arr.iter().copied().collect();
 
         // Initialize model with base scores as biases
         let mut model = LinearModel::zeros(num_features, num_outputs);
@@ -172,7 +171,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
         let needs_evaluation = self.metric.is_enabled();
         
         // Initialize eval predictions with base scores (only if evaluation is needed)
-        let eval_data: Vec<ColMatrix<f32>> = if needs_evaluation {
+        let eval_data: Vec<Array2<f32>> = if needs_evaluation {
             eval_sets
                 .iter()
                 .map(|es| es.dataset.for_gblinear().ok())
@@ -187,7 +186,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
             eval_data
                 .iter()
                 .map(|m| {
-                    let eval_rows = m.n_rows();
+                    let eval_rows = m.ncols();
                     let mut preds = vec![0.0f32; eval_rows * num_outputs];
                     for (group, &base_score) in base_scores.iter().enumerate() {
                         let start = group * eval_rows;
@@ -241,7 +240,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                     // Also update eval predictions (only if evaluation is needed)
                     if needs_evaluation {
                         for (set_idx, matrix) in eval_data.iter().enumerate() {
-                            let eval_rows = matrix.n_rows();
+                            let eval_rows = matrix.ncols();
                             updater.apply_bias_delta_to_predictions(
                                 bias_delta,
                                 output,
@@ -262,9 +261,10 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                     );
                 }
 
+                let train_features = FeaturesView::from_array(train_data.view());
                 selector.setup_round(
                     &model,
-                    &train_data,
+                    &train_features,
                     &gradients,
                     output,
                     self.params.alpha,
@@ -273,7 +273,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
 
                 let weight_deltas = updater.update_round(
                     &mut model,
-                    &train_data,
+                    &train_features,
                     &gradients,
                     &mut selector,
                     output,
@@ -282,7 +282,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                 // Apply weight deltas to predictions incrementally
                 if !weight_deltas.is_empty() {
                     updater.apply_weight_deltas_to_predictions(
-                        &train_data,
+                        &train_features,
                         &weight_deltas,
                         output,
                         num_samples,
@@ -292,9 +292,10 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                     // Also update eval predictions (only if evaluation is needed)
                     if needs_evaluation {
                         for (set_idx, matrix) in eval_data.iter().enumerate() {
-                            let eval_rows = matrix.n_rows();
+                            let eval_rows = matrix.ncols();
+                            let eval_features = FeaturesView::from_array(matrix.view());
                             updater.apply_weight_deltas_to_predictions(
-                                matrix,
+                                &eval_features,
                                 &weight_deltas,
                                 output,
                                 eval_rows,
@@ -315,7 +316,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                 let eval_preds_arrays: Vec<Array2<f32>> = eval_predictions.iter()
                     .zip(eval_data.iter())
                     .map(|(preds, matrix)| {
-                        let eval_rows = matrix.n_rows();
+                        let eval_rows = matrix.ncols();
                         Array2::from_shape_vec((num_outputs, eval_rows), preds.clone())
                             .expect("eval predictions shape mismatch")
                     })
@@ -380,9 +381,21 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{ColMatrix, RowMatrix};
     use crate::inference::gblinear::LinearModelPredict;
     use crate::training::{LogLoss, MulticlassLogLoss, Rmse, SquaredLoss, LogisticLoss, SoftmaxLoss};
+
+    /// Helper to transpose row-major data to feature-major for FeaturesView.
+    /// Input: [s0_f0, s0_f1, s1_f0, s1_f1, ...] (row-major)
+    /// Output: [f0_s0, f0_s1, ..., f1_s0, f1_s1, ...] (feature-major)
+    fn transpose_to_feature_major(data: &[f32], n_samples: usize, n_features: usize) -> Vec<f32> {
+        let mut result = vec![0.0; data.len()];
+        for sample in 0..n_samples {
+            for feature in 0..n_features {
+                result[feature * n_samples + sample] = data[sample * n_features + feature];
+            }
+        }
+        result
+    }
 
     #[test]
     fn test_params_default() {
@@ -411,10 +424,11 @@ mod tests {
     #[test]
     fn train_simple_regression() {
         // y = 2*x + 1
-        let row_data = RowMatrix::from_vec(vec![1.0, 2.0, 3.0, 4.0], 4, 1);
-        let train_data: ColMatrix = (&row_data).into();
+        // 4 samples, 1 feature - already feature-major since single feature
+        let feature_data = vec![1.0, 2.0, 3.0, 4.0];
+        let train_features = FeaturesView::from_slice(&feature_data, 4, 1).unwrap();
         let train_labels = vec![3.0, 5.0, 7.0, 9.0];
-        let train = Dataset::from_numeric(&train_data, train_labels).unwrap();
+        let train = Dataset::from_numeric(&train_features, train_labels).unwrap();
 
         let params = GBLinearParams {
             n_rounds: 100,
@@ -439,10 +453,11 @@ mod tests {
 
     #[test]
     fn train_with_regularization() {
-        let row_data = RowMatrix::from_vec(vec![1.0, 2.0, 3.0, 4.0], 4, 1);
-        let train_data: ColMatrix = (&row_data).into();
+        // 4 samples, 1 feature
+        let feature_data = vec![1.0, 2.0, 3.0, 4.0];
+        let train_features = FeaturesView::from_slice(&feature_data, 4, 1).unwrap();
         let train_labels = vec![3.0, 5.0, 7.0, 9.0];
-        let train = Dataset::from_numeric(&train_data, train_labels).unwrap();
+        let train = Dataset::from_numeric(&train_features, train_labels).unwrap();
 
         // Train without regularization
         let params_no_reg = GBLinearParams {
@@ -475,19 +490,17 @@ mod tests {
     #[test]
     fn train_multifeature() {
         // y = x0 + 2*x1
-        let row_data = RowMatrix::from_vec(
-            vec![
-                1.0, 1.0, // y=3
-                2.0, 1.0, // y=4
-                1.0, 2.0, // y=5
-                2.0, 2.0, // y=6
-            ],
-            4,
-            2,
-        );
-        let train_data: ColMatrix = (&row_data).into();
+        // Row-major: [s0_f0, s0_f1, s1_f0, s1_f1, ...]
+        let row_data = vec![
+            1.0, 1.0, // y=3
+            2.0, 1.0, // y=4
+            1.0, 2.0, // y=5
+            2.0, 2.0, // y=6
+        ];
+        let feature_data = transpose_to_feature_major(&row_data, 4, 2);
+        let train_features = FeaturesView::from_slice(&feature_data, 4, 2).unwrap();
         let train_labels = vec![3.0, 4.0, 5.0, 6.0];
-        let train = Dataset::from_numeric(&train_data, train_labels).unwrap();
+        let train = Dataset::from_numeric(&train_features, train_labels).unwrap();
 
         let params = GBLinearParams {
             n_rounds: 200,
@@ -512,21 +525,19 @@ mod tests {
     #[test]
     fn train_multiclass() {
         // Simple 3-class classification
-        let row_data = RowMatrix::from_vec(
-            vec![
-                2.0, 1.0, // Class 0
-                0.0, 1.0, // Class 1
-                3.0, 1.0, // Class 0
-                1.0, 3.0, // Class 2
-                0.5, 0.5, // Class 1
-                2.0, 2.0, // Class 2
-            ],
-            6,
-            2,
-        );
-        let train_data: ColMatrix = (&row_data).into();
+        // Row-major data
+        let row_data = vec![
+            2.0, 1.0, // Class 0
+            0.0, 1.0, // Class 1
+            3.0, 1.0, // Class 0
+            1.0, 3.0, // Class 2
+            0.5, 0.5, // Class 1
+            2.0, 2.0, // Class 2
+        ];
+        let feature_data = transpose_to_feature_major(&row_data, 6, 2);
+        let train_features = FeaturesView::from_slice(&feature_data, 6, 2).unwrap();
         let train_labels = vec![0.0, 1.0, 0.0, 2.0, 1.0, 2.0];
-        let train = Dataset::from_numeric(&train_data, train_labels).unwrap();
+        let train = Dataset::from_numeric(&train_features, train_labels).unwrap();
 
         let params = GBLinearParams {
             n_rounds: 200,
@@ -557,19 +568,17 @@ mod tests {
 
     #[test]
     fn train_binary_classification() {
-        let row_data = RowMatrix::from_vec(
-            vec![
-                0.0, 1.0, // Class 0
-                1.0, 0.0, // Class 1
-                0.5, 1.0, // Class 0
-                1.0, 0.5, // Class 1
-            ],
-            4,
-            2,
-        );
-        let train_data: ColMatrix = (&row_data).into();
+        // Row-major data
+        let row_data = vec![
+            0.0, 1.0, // Class 0
+            1.0, 0.0, // Class 1
+            0.5, 1.0, // Class 0
+            1.0, 0.5, // Class 1
+        ];
+        let feature_data = transpose_to_feature_major(&row_data, 4, 2);
+        let train_features = FeaturesView::from_slice(&feature_data, 4, 2).unwrap();
         let train_labels = vec![0.0, 1.0, 0.0, 1.0];
-        let train = Dataset::from_numeric(&train_data, train_labels).unwrap();
+        let train = Dataset::from_numeric(&train_features, train_labels).unwrap();
 
         let params = GBLinearParams {
             n_rounds: 50,

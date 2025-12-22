@@ -10,7 +10,7 @@ use super::group::{FeatureGroup, FeatureMeta};
 use super::storage::{BinStorage, BinType, GroupLayout};
 use super::BinMapper;
 
-use crate::data::DataMatrix;
+use crate::data::FeaturesView;
 
 // =============================================================================
 // Binning Configuration
@@ -161,134 +161,48 @@ impl FeatureData {
 /// This allows the bundling algorithm to access bin values (as f32) from the
 /// builder's internal feature data, treating bin 0 as "zero" and other bins
 /// as "non-zero" for conflict detection purposes.
-struct FeatureBinAccessor<'a> {
+pub(crate) struct FeatureBinAccessor<'a> {
     features: &'a [FeatureData],
     n_rows: usize,
 }
 
-/// Row view for FeatureBinAccessor.
-struct FeatureBinRow<'a> {
-    features: &'a [FeatureData],
-    row_idx: usize,
-}
-
-impl<'a> crate::data::RowView for FeatureBinRow<'a> {
-    type Element = f32;
-    type Iter<'b>
-        = FeatureBinRowIter<'b>
-    where
-        Self: 'b;
-
-    fn nnz(&self) -> usize {
-        self.features.len()
-    }
-
-    fn get(&self, col: usize) -> Option<Self::Element> {
-        if col < self.features.len() {
-            Some(self.features[col].bins[self.row_idx] as f32)
-        } else {
-            None
-        }
-    }
-
-    fn iter(&self) -> Self::Iter<'_> {
-        FeatureBinRowIter {
-            features: self.features,
-            row_idx: self.row_idx,
-            col: 0,
-        }
-    }
-}
-
-/// Iterator over a row in FeatureBinAccessor.
-struct FeatureBinRowIter<'a> {
-    features: &'a [FeatureData],
-    row_idx: usize,
-    col: usize,
-}
-
-impl Iterator for FeatureBinRowIter<'_> {
-    type Item = (usize, f32);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.col < self.features.len() {
-            let col = self.col;
-            let val = self.features[col].bins[self.row_idx] as f32;
-            self.col += 1;
-            Some((col, val))
-        } else {
-            None
-        }
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.features.len() - self.col;
-        (remaining, Some(remaining))
-    }
-}
-
-impl std::iter::FusedIterator for FeatureBinRowIter<'_> {}
-impl ExactSizeIterator for FeatureBinRowIter<'_> {}
-
-impl<'a> DataMatrix for FeatureBinAccessor<'a> {
-    type Element = f32;
-    type Row<'b>
-        = FeatureBinRow<'b>
-    where
-        Self: 'b;
-
-    fn num_rows(&self) -> usize {
+impl<'a> FeatureBinAccessor<'a> {
+    /// Number of rows (samples).
+    pub fn num_rows(&self) -> usize {
         self.n_rows
     }
 
-    fn num_features(&self) -> usize {
+    /// Number of features.
+    pub fn num_features(&self) -> usize {
         self.features.len()
     }
 
-    fn row(&self, i: usize) -> Self::Row<'_> {
-        assert!(i < self.n_rows, "Row index out of bounds");
-        FeatureBinRow {
-            features: self.features,
-            row_idx: i,
-        }
-    }
-
-    fn get(&self, row: usize, col: usize) -> Option<Self::Element> {
+    /// Get bin value at (row, col) as f32.
+    ///
+    /// Returns bin value as f32 - bin 0 is "zero", others are "non-zero".
+    pub fn get(&self, row: usize, col: usize) -> Option<f32> {
         if row < self.n_rows && col < self.features.len() {
-            // Return bin value as f32 - bin 0 is "zero", others are "non-zero"
             Some(self.features[col].bins[row] as f32)
         } else {
             None
         }
-    }
-
-    fn is_dense(&self) -> bool {
-        true
-    }
-
-    fn copy_row(&self, i: usize, buf: &mut [Self::Element]) {
-        assert!(i < self.n_rows, "Row index out of bounds");
-        assert!(
-            buf.len() >= self.features.len(),
-            "Buffer too small"
-        );
-        for (col, f) in self.features.iter().enumerate() {
-            buf[col] = f.bins[i] as f32;
-        }
-    }
-
-    fn has_missing(&self) -> bool {
-        false // Binned data doesn't have NaN
-    }
-
-    fn density(&self) -> f64 {
-        1.0 // All elements are present
     }
 }
 
 // FeatureBinAccessor is safe to share between threads because it only
 // reads from the immutable feature data
 unsafe impl Sync for FeatureBinAccessor<'_> {}
+
+// Implement BundlingFeatures for FeatureBinAccessor
+impl super::bundling::BundlingFeatures for FeatureBinAccessor<'_> {
+    fn n_samples(&self) -> usize {
+        self.n_rows
+    }
+    
+    fn get(&self, sample: usize, feature: usize) -> f32 {
+        self.features[feature].bins[sample] as f32
+    }
+}
 
 /// Builder for `BinnedDataset`.
 ///
@@ -327,25 +241,23 @@ impl BinnedDatasetBuilder {
         Self::default()
     }
 
-    /// Create a builder from a column-major matrix with automatic binning.
+    /// Create a builder from a feature-major view with automatic binning.
     ///
     /// Simple convenience method using default config and parallel binning.
     /// For explicit control over threading or binning config, use
     /// [`from_matrix_with_options`](Self::from_matrix_with_options).
     ///
     /// # Arguments
-    /// * `data` - Column-major matrix (each column is a feature)
+    /// * `data` - Feature-major view `[n_features, n_samples]` (each row is a feature)
     /// * `max_bins` - Maximum number of bins per feature (typically 256)
     ///
     /// # Example
     ///
     /// ```ignore
-    /// let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 256).build()?;
+    /// let view = FeaturesView::from_slice(&data, n_samples, n_features).unwrap();
+    /// let dataset = BinnedDatasetBuilder::from_matrix(&view, 256).build()?;
     /// ```
-    pub fn from_matrix<S: AsRef<[f32]> + Sync>(
-        data: &crate::data::DenseMatrix<f32, crate::data::ColMajor, S>,
-        max_bins: u32,
-    ) -> Self {
+    pub fn from_matrix(data: &FeaturesView<'_>, max_bins: u32) -> Self {
         Self::from_matrix_with_options(
             data,
             BinningConfig::builder().max_bins(max_bins).build(),
@@ -353,7 +265,7 @@ impl BinnedDatasetBuilder {
         )
     }
 
-    /// Create a builder from a column-major matrix with full control.
+    /// Create a builder from a feature-major view with full control.
     ///
     /// Use this method when you need explicit control over:
     /// - Per-feature bin counts via `BinningConfig`
@@ -362,44 +274,45 @@ impl BinnedDatasetBuilder {
     /// - Sample count for large dataset binning
     ///
     /// # Arguments
-    /// * `data` - Column-major matrix (each column is a feature)
+    /// * `data` - Feature-major view `[n_features, n_samples]` (each row is a feature)
     /// * `config` - Binning configuration (use `BinningConfig::builder()`)
     /// * `parallelism` - Threading strategy (Sequential or Parallel)
     ///
     /// # Example
     ///
     /// ```ignore
-    /// use boosters::{Parallelism, data::{BinnedDatasetBuilder, BinningConfig}};
+    /// use boosters::{Parallelism, data::{BinnedDatasetBuilder, BinningConfig, FeaturesView}};
     ///
     /// let config = BinningConfig::builder()
     ///     .max_bins(256)
     ///     .build();
     ///
+    /// let view = FeaturesView::from_slice(&data, n_samples, n_features).unwrap();
     /// let dataset = BinnedDatasetBuilder::from_matrix_with_options(
-    ///     &col_matrix,
+    ///     &view,
     ///     config,
     ///     Parallelism::Sequential,  // For fair benchmarks
     /// ).build()?;
     /// ```
-    pub fn from_matrix_with_options<S: AsRef<[f32]> + Sync>(
-        data: &crate::data::DenseMatrix<f32, crate::data::ColMajor, S>,
+    pub fn from_matrix_with_options(
+        data: &FeaturesView<'_>,
         config: BinningConfig,
         parallelism: crate::utils::Parallelism,
     ) -> Self {
-        let n_cols = data.n_cols();
-        let n_rows = data.n_rows();
+        let n_features = data.n_features();
+        let n_samples = data.n_samples();
 
-        // Helper to process a single feature column
-        let process_feature = |col_idx: usize| -> (Vec<u32>, BinMapper) {
-            Self::bin_feature_column(data, col_idx, n_rows, &config)
+        // Helper to process a single feature
+        let process_feature = |feat_idx: usize| -> (Vec<u32>, BinMapper) {
+            Self::bin_feature(data, feat_idx, n_samples, &config)
         };
 
         // Process features - parallel or sequential based on parallelism
         // When Sequential, we use pure iteration (no rayon overhead)
         let feature_results: Vec<(Vec<u32>, BinMapper)> = if parallelism.is_parallel() {
-            (0..n_cols).into_par_iter().map(process_feature).collect()
+            (0..n_features).into_par_iter().map(process_feature).collect()
         } else {
-            (0..n_cols).map(process_feature).collect()
+            (0..n_features).map(process_feature).collect()
         };
 
         // Add all features to builder
@@ -411,26 +324,27 @@ impl BinnedDatasetBuilder {
         builder
     }
 
-    /// Bin a single feature column.
+    /// Bin a single feature.
     ///
     /// This is extracted to allow both parallel and sequential processing.
-    fn bin_feature_column<S: AsRef<[f32]>>(
-        data: &crate::data::DenseMatrix<f32, crate::data::ColMajor, S>,
-        col_idx: usize,
-        n_rows: usize,
+    fn bin_feature(
+        data: &FeaturesView<'_>,
+        feat_idx: usize,
+        n_samples: usize,
         config: &BinningConfig,
     ) -> (Vec<u32>, BinMapper) {
         use super::MissingType;
 
         let max_bins = config.max_bins;
-        let col_data = data.col_slice(col_idx);
+        // Get feature values as a contiguous array view
+        let feature_data = data.feature(feat_idx);
 
         // Collect non-NaN values and compute min/max
-        let mut values: Vec<f32> = Vec::with_capacity(n_rows);
+        let mut values: Vec<f32> = Vec::with_capacity(n_samples);
         let mut min_val = f32::MAX;
         let mut max_val = f32::MIN;
 
-        for &val in col_data {
+        for &val in feature_data.iter() {
             if val.is_finite() {
                 values.push(val);
                 min_val = min_val.min(val);
@@ -440,7 +354,7 @@ impl BinnedDatasetBuilder {
 
         // Handle degenerate cases
         if values.is_empty() || min_val >= max_val {
-            let bins: Vec<u32> = vec![0; n_rows];
+            let bins: Vec<u32> = vec![0; n_samples];
             let mapper = BinMapper::numerical(
                 vec![f64::MAX],
                 MissingType::None,
@@ -477,7 +391,7 @@ impl BinnedDatasetBuilder {
         };
 
         // Bin each value using binary search on bounds
-        let bins: Vec<u32> = col_data
+        let bins: Vec<u32> = feature_data
             .iter()
             .map(|&val| {
                 if !val.is_finite() {
@@ -1211,26 +1125,24 @@ mod tests {
     }
 
     #[test]
-    fn test_row_matrix_conversion() {
-        use crate::data::{ColMajor, DenseMatrix, RowMajor};
+    fn test_features_view_binning() {
+        use crate::data::FeaturesView;
         use crate::utils::Parallelism;
 
-        // Create row-major data: 4 samples, 3 features
-        let row_data = vec![
-            1.0, 2.0, 3.0, // row 0
-            4.0, 5.0, 6.0, // row 1
-            7.0, 8.0, 9.0, // row 2
-            0.0, 1.0, 2.0, // row 3
+        // Create feature-major data: 3 features, 4 samples
+        // FeaturesView has shape [n_features, n_samples]
+        // Data layout: [f0_s0, f0_s1, f0_s2, f0_s3, f1_s0, f1_s1, f1_s2, f1_s3, ...]
+        let feature_data = vec![
+            1.0, 4.0, 7.0, 0.0, // feature 0: samples 0-3
+            2.0, 5.0, 8.0, 1.0, // feature 1: samples 0-3
+            3.0, 6.0, 9.0, 2.0, // feature 2: samples 0-3
         ];
-        let row_matrix: DenseMatrix<f32, RowMajor> =
-            DenseMatrix::from_vec(row_data.clone(), 4, 3);
+        let view = FeaturesView::from_slice(&feature_data, 4, 3).unwrap();
 
         let config = BinningConfig::builder().max_bins(256).build();
 
-        // Convert to col-major first, then build
-        let col_matrix: DenseMatrix<f32, ColMajor, _> = row_matrix.to_layout();
         let dataset = BinnedDatasetBuilder::from_matrix_with_options(
-            &col_matrix,
+            &view,
             config,
             Parallelism::Sequential,
         )

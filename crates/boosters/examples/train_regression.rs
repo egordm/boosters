@@ -8,9 +8,9 @@
 //! ```
 
 use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
+use boosters::data::{transpose_to_c_order, FeaturesView};
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, TreeParams};
-use ndarray::ArrayView1;
+use ndarray::{Array1, Array2};
 
 fn main() {
     // =========================================================================
@@ -19,8 +19,9 @@ fn main() {
     let n_samples = 500;
     let n_features = 5;
 
-    let mut features = Vec::with_capacity(n_samples * n_features);
-    let mut labels = Vec::with_capacity(n_samples);
+    // Generate feature-major data [n_features, n_samples]
+    let mut features = Array2::<f32>::zeros((n_features, n_samples));
+    let mut labels = Array1::<f32>::zeros(n_samples);
 
     for i in 0..n_samples {
         let x0 = (i as f32) / (n_samples as f32) * 10.0;
@@ -29,21 +30,19 @@ fn main() {
         let x3 = ((i * 17) % 100) as f32 / 10.0;
         let x4 = ((i * 23) % 100) as f32 / 10.0;
 
-        features.push(x0);
-        features.push(x1);
-        features.push(x2);
-        features.push(x3);
-        features.push(x4);
+        features[(0, i)] = x0;
+        features[(1, i)] = x1;
+        features[(2, i)] = x2;
+        features[(3, i)] = x3;
+        features[(4, i)] = x4;
 
         let noise = ((i * 31) % 100) as f32 / 500.0 - 0.1;
-        labels.push(x0 + 0.5 * x1 + 0.25 * x2 + noise);
+        labels[i] = x0 + 0.5 * x1 + 0.25 * x2 + noise;
     }
 
     // Create binned dataset for training
-    let row_matrix: DenseMatrix<f32, RowMajor> =
-        DenseMatrix::from_vec(features.clone(), n_samples, n_features);
-    let col_matrix: ColMatrix<f32> = row_matrix.to_layout();
-    let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 256)
+    let features_view = FeaturesView::from_array(features.view());
+    let dataset = BinnedDatasetBuilder::from_matrix(&features_view, 256)
         .build()
         .expect("Failed to build binned dataset");
 
@@ -65,15 +64,16 @@ fn main() {
     println!("  Learning rate: {}", config.learning_rate);
     println!("  Growth: {:?}\n", config.tree.growth_strategy);
 
-    let model = GBDTModel::train(&dataset, ArrayView1::from(&labels[..]), None, config, 1)
+    let model = GBDTModel::train(&dataset, labels.view(), None, config, 1)
         .expect("Training failed");
 
     // =========================================================================
-    // Evaluate
+    // Evaluate (need sample-major C-order for prediction)
     // =========================================================================
-    let predictions = model.predict(&row_matrix, 1);
+    let samples = transpose_to_c_order(features.view());
+    let predictions = model.predict(samples.view(), 1);
 
-    let rmse = compute_rmse(predictions.as_slice(), &labels);
+    let rmse = compute_rmse(predictions.as_slice().unwrap(), labels.as_slice().unwrap());
 
     println!("=== Results ===");
     println!("Trees: {}", model.forest().n_trees());

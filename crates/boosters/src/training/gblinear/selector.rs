@@ -24,7 +24,7 @@
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 
-use crate::data::ColMatrix;
+use crate::data::FeaturesView;
 use crate::repr::gblinear::LinearModel;
 use crate::training::Gradients;
 
@@ -104,10 +104,10 @@ impl SelectorState {
     ///
     /// For Greedy/Thrifty, this computes gradient magnitudes for ranking.
     /// For other selectors, this just resets the iteration state.
-    pub fn setup_round<S: AsRef<[f32]>>(
+    pub fn setup_round(
         &mut self,
         model: &LinearModel,
-        data: &ColMatrix<f32, S>,
+        data: &FeaturesView<'_>,
         buffer: &Gradients,
         output: usize,
         alpha: f32,
@@ -392,36 +392,37 @@ impl GreedySelector {
     /// # Arguments
     ///
     /// * `model` - Current model weights
-    /// * `data` - Training data (column-major matrix)
+    /// * `data` - Training data (feature-major view)
     /// * `buffer` - Gradient buffer
     /// * `output` - Which output (group) to compute for
     /// * `alpha` - L1 regularization strength
     /// * `lambda` - L2 regularization strength
-    pub fn setup<S: AsRef<[f32]>>(
+    pub fn setup(
         &mut self,
         model: &LinearModel,
-        data: &ColMatrix<f32, S>,
+        data: &FeaturesView<'_>,
         buffer: &Gradients,
         output: usize,
         alpha: f32,
         lambda: f32,
     ) {
         let num_features = model.n_features();
-        // Column-major: use output-specific slices for direct indexing by row
+        // Feature-major: use output-specific slices for direct indexing by row
         let grad_hess = buffer.output_pairs(output);
 
         // Compute update magnitude for each feature
         self.update_magnitudes.clear();
         self.update_magnitudes.reserve(num_features);
 
-        for feature in 0..num_features {
-            let current_weight = model.weight(feature, output);
+        for feature_idx in 0..num_features {
+            let current_weight = model.weight(feature_idx, output);
 
             // Accumulate gradient and hessian
             let mut sum_grad = 0.0f32;
             let mut sum_hess = 0.0f32;
 
-            for (row, value) in data.column(feature) {
+            let feature_values = data.feature(feature_idx);
+            for (row, &value) in feature_values.iter().enumerate() {
                 sum_grad += grad_hess[row].grad * value;
                 sum_hess += grad_hess[row].hess * value * value;
             }
@@ -543,33 +544,34 @@ impl ThriftySelector {
     /// # Arguments
     ///
     /// * `model` - Current model weights
-    /// * `data` - Training data (column-major matrix)
+    /// * `data` - Training data (feature-major view)
     /// * `buffer` - Gradient buffer
     /// * `output` - Which output (group) to compute for
     /// * `alpha` - L1 regularization strength
     /// * `lambda` - L2 regularization strength
-    pub fn setup<S: AsRef<[f32]>>(
+    pub fn setup(
         &mut self,
         model: &LinearModel,
-        data: &ColMatrix<f32, S>,
+        data: &FeaturesView<'_>,
         buffer: &Gradients,
         output: usize,
         alpha: f32,
         lambda: f32,
     ) {
         let num_features = model.n_features();
-        // Column-major: use output-specific slices for direct indexing by row
+        // Feature-major: use output-specific slices for direct indexing by row
         let grad_hess = buffer.output_pairs(output);
 
         // Compute update magnitude for each feature
         let mut magnitudes: Vec<(usize, f32)> = (0..num_features)
-            .map(|feature| {
-                let current_weight = model.weight(feature, output);
+            .map(|feature_idx| {
+                let current_weight = model.weight(feature_idx, output);
 
                 let mut sum_grad = 0.0f32;
                 let mut sum_hess = 0.0f32;
 
-                for (row, value) in data.column(feature) {
+                let feature_values = data.feature(feature_idx);
+                for (row, &value) in feature_values.iter().enumerate() {
                     sum_grad += grad_hess[row].grad * value;
                     sum_hess += grad_hess[row].hess * value * value;
                 }
@@ -581,7 +583,7 @@ impl ThriftySelector {
                     alpha,
                     lambda,
                 );
-                (feature, magnitude)
+                (feature_idx, magnitude)
             })
             .collect();
 
@@ -812,21 +814,20 @@ mod tests {
 
     #[test]
     fn greedy_selector_with_setup() {
-        use crate::data::{ColMatrix, RowMatrix};
+        use crate::data::FeaturesView;
         use crate::repr::gblinear::LinearModel;
         use crate::training::Gradients;
 
-        // Create simple test data
-        let data = RowMatrix::from_vec(
-            vec![
-                1.0, 0.0, 0.5, // row 0
-                0.0, 1.0, 0.5, // row 1
-                1.0, 1.0, 0.5, // row 2
-            ],
-            3,
-            3,
-        );
-        let col_data: ColMatrix<f32> = data.to_layout();
+        // Create simple test data in feature-major order
+        // 3 features, 3 samples
+        // FeaturesView shape: [n_features, n_samples]
+        // Data: [f0_s0, f0_s1, f0_s2, f1_s0, f1_s1, f1_s2, f2_s0, f2_s1, f2_s2]
+        let data = [
+            1.0, 0.0, 1.0, // feature 0: samples 0,1,2
+            0.0, 1.0, 1.0, // feature 1: samples 0,1,2
+            0.5, 0.5, 0.5, // feature 2: samples 0,1,2
+        ];
+        let features = FeaturesView::from_slice(&data, 3, 3).unwrap();
 
         let model = LinearModel::zeros(3, 1);
 
@@ -837,7 +838,7 @@ mod tests {
         buffer.set(2, 0, 0.2, 1.0);
 
         let mut sel = GreedySelector::new(0);
-        sel.setup(&model, &col_data, &buffer, 0, 0.0, 0.0);
+        sel.setup(&model, &features, &buffer, 0, 0.0, 0.0);
         sel.reset(3);
 
         // Feature 1 should be selected first (largest gradient impact)
@@ -872,21 +873,18 @@ mod tests {
 
     #[test]
     fn thrifty_selector_with_setup() {
-        use crate::data::{ColMatrix, RowMatrix};
+        use crate::data::FeaturesView;
         use crate::repr::gblinear::LinearModel;
         use crate::training::Gradients;
 
         // Same setup as greedy test
-        let data = RowMatrix::from_vec(
-            vec![
-                1.0, 0.0, 0.5,
-                0.0, 1.0, 0.5,
-                1.0, 1.0, 0.5,
-            ],
-            3,
-            3,
-        );
-        let col_data: ColMatrix<f32> = data.to_layout();
+        // 3 features, 3 samples in feature-major order
+        let data = [
+            1.0, 0.0, 1.0, // feature 0: samples 0,1,2
+            0.0, 1.0, 1.0, // feature 1: samples 0,1,2
+            0.5, 0.5, 0.5, // feature 2: samples 0,1,2
+        ];
+        let features = FeaturesView::from_slice(&data, 3, 3).unwrap();
 
         let model = LinearModel::zeros(3, 1);
 
@@ -896,7 +894,7 @@ mod tests {
         buffer.set(2, 0, 0.2, 1.0);
 
         let mut sel = ThriftySelector::new(0);
-        sel.setup(&model, &col_data, &buffer, 0, 0.0, 0.0);
+        sel.setup(&model, &features, &buffer, 0, 0.0, 0.0);
         sel.reset(3);
 
         // Should return all 3 features in sorted order

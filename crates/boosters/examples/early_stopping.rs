@@ -10,9 +10,9 @@
 //! ```
 
 use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
+use boosters::data::{transpose_to_c_order, FeaturesView};
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, TreeParams};
-use ndarray::ArrayView1;
+use ndarray::{Array1, Array2};
 
 fn main() {
     println!("=== Early Stopping Example ===\n");
@@ -25,11 +25,9 @@ fn main() {
 
     let (features, labels) = generate_regression_data(n_samples, n_features, 42);
 
-    // Create binned dataset
-    let row_matrix: DenseMatrix<f32, RowMajor> =
-        DenseMatrix::from_vec(features.clone(), n_samples, n_features);
-    let col_matrix: ColMatrix<f32> = row_matrix.to_layout();
-    let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 256)
+    // Create binned dataset (features is feature-major)
+    let features_view = FeaturesView::from_array(features.view());
+    let dataset = BinnedDatasetBuilder::from_matrix(&features_view, 256)
         .build()
         .expect("Failed to build dataset");
 
@@ -59,7 +57,7 @@ fn main() {
     println!("Training with early stopping (monitoring training loss)...\n");
 
     let model =
-        GBDTModel::train(&dataset, ArrayView1::from(&labels[..]), None, config, 1).expect("Training failed");
+        GBDTModel::train(&dataset, labels.view(), None, config, 1).expect("Training failed");
 
     // =========================================================================
     // 4. Results
@@ -68,9 +66,10 @@ fn main() {
     println!("\n=== Results ===");
     println!("Trees trained: {} (max was 200)", actual_trees);
 
-    // Evaluate
-    let preds = model.predict(&row_matrix, 1);
-    let rmse = compute_rmse(preds.as_slice(), &labels);
+    // Evaluate (need sample-major C-order for prediction)
+    let samples = transpose_to_c_order(features.view());
+    let preds = model.predict(samples.view(), 1);
+    let rmse = compute_rmse(preds.as_slice().unwrap(), labels.as_slice().unwrap());
 
     println!("Training RMSE: {:.4}", rmse);
 
@@ -85,18 +84,20 @@ fn main() {
 }
 
 // Helper functions
-fn generate_regression_data(n_samples: usize, n_features: usize, seed: u64) -> (Vec<f32>, Vec<f32>) {
-    let mut features = Vec::with_capacity(n_samples * n_features);
-    let mut labels = Vec::with_capacity(n_samples);
+fn generate_regression_data(n_samples: usize, n_features: usize, seed: u64) -> (Array2<f32>, Array1<f32>) {
+    // Feature-major data [n_features, n_samples]
+    let mut features = Array2::<f32>::zeros((n_features, n_samples));
+    let mut labels = Array1::<f32>::zeros(n_samples);
 
     // Simple deterministic pseudo-random based on seed
     let mut rng = seed;
 
-    for _ in 0..n_samples {
+    for i in 0..n_samples {
         let mut row = Vec::with_capacity(n_features);
-        for _ in 0..n_features {
+        for f in 0..n_features {
             rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
             let x = ((rng >> 33) as f32) / (u32::MAX as f32) * 10.0;
+            features[(f, i)] = x;
             row.push(x);
         }
 
@@ -105,8 +106,7 @@ fn generate_regression_data(n_samples: usize, n_features: usize, seed: u64) -> (
         let noise = ((rng >> 33) as f32) / (u32::MAX as f32) * 0.5 - 0.25;
         let y = row[0] + 0.5 * row[1] + 0.25 * row[2] + noise;
 
-        features.extend(row);
-        labels.push(y);
+        labels[i] = y;
     }
 
     (features, labels)

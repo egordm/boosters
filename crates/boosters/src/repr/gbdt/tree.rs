@@ -567,35 +567,6 @@ impl<L: LeafValue> Tree<L> {
         });
     }
 
-    /// Batch predict for multiple rows in a row-major matrix.
-    ///
-    /// This is used for evaluation on non-binned data (e.g., eval sets).
-    /// The leaf values are **added** to the existing predictions.
-    ///
-    /// # Arguments
-    /// * `matrix` - Row-major feature matrix
-    /// * `predictions` - Slice to update with leaf values (one per row)
-    pub fn predict_batch(
-        &self,
-        matrix: &crate::data::RowMatrix<f32>,
-        predictions: &mut [f32],
-    ) where
-        L: Into<f32> + Copy,
-    {
-        use crate::data::DataMatrix;
-        
-        let n_rows = matrix.n_rows();
-        let n_features = matrix.num_features();
-        debug_assert_eq!(predictions.len(), n_rows);
-
-        let mut row_buf = vec![0.0f32; n_features];
-        for (row_idx, pred) in predictions.iter_mut().enumerate() {
-            matrix.copy_row(row_idx, &mut row_buf);
-            let leaf = self.predict_row(&row_buf);
-            *pred += (*leaf).into();
-        }
-    }
-
     /// Generic batch predict using any feature accessor.
     ///
     /// This is the unified prediction method that works with any data source
@@ -1212,7 +1183,8 @@ mod tests {
 
     #[test]
     fn test_predict_batch_accumulate() {
-        use crate::data::RowMatrix;
+        use crate::data::SamplesView;
+        use ndarray::Array2;
 
         let tree = crate::scalar_tree! {
             0 => num(0, 0.5, L) -> 1, 2,
@@ -1220,8 +1192,9 @@ mod tests {
             2 => leaf(2.0),
         };
 
-        // 3 rows, 1 feature
-        let data = RowMatrix::from_vec(vec![0.3, 0.7, 0.5], 3, 1);
+        // 3 rows, 1 feature: [[0.3], [0.7], [0.5]]
+        let arr = Array2::from_shape_vec((3, 1), vec![0.3, 0.7, 0.5]).unwrap();
+        let data = SamplesView::from_array(arr.view());
         
         // Test accumulate pattern (starts with existing values)
         let mut predictions = vec![10.0, 20.0, 30.0];
@@ -1291,8 +1264,9 @@ mod tests {
     #[test]
     fn test_linear_prediction_single() {
         use super::MutableTree;
-        use crate::data::RowMatrix;
+        use crate::data::SamplesView;
         use crate::repr::gbdt::ScalarLeaf;
+        use ndarray::Array2;
 
         let mut tree: MutableTree<ScalarLeaf> = MutableTree::new();
 
@@ -1307,11 +1281,12 @@ mod tests {
 
         let frozen = tree.freeze();
 
-        // Test data: 3 rows, 1 feature
+        // Test data: 3 rows, 1 feature: [[0.3], [0.7], [0.1]]
         // Row 0: x=0.3 -> left leaf -> 0.5 + 2.0*0.3 = 1.1
         // Row 1: x=0.7 -> right leaf -> 10.0
         // Row 2: x=0.1 -> left leaf -> 0.5 + 2.0*0.1 = 0.7
-        let data = RowMatrix::from_vec(vec![0.3, 0.7, 0.1], 3, 1);
+        let arr = Array2::from_shape_vec((3, 1), vec![0.3, 0.7, 0.1]).unwrap();
+        let data = SamplesView::from_array(arr.view());
         let mut predictions = vec![0.0; 3];
         frozen.predict_batch_accumulate(&data, &mut predictions);
 
@@ -1323,8 +1298,9 @@ mod tests {
     #[test]
     fn test_linear_prediction_nan_fallback() {
         use super::MutableTree;
-        use crate::data::RowMatrix;
+        use crate::data::SamplesView;
         use crate::repr::gbdt::ScalarLeaf;
+        use ndarray::Array2;
 
         let mut tree: MutableTree<ScalarLeaf> = MutableTree::new();
 
@@ -1335,10 +1311,11 @@ mod tests {
 
         let frozen = tree.freeze();
 
-        // Test data: 2 rows, 1 feature
+        // Test data: 2 rows, 1 feature: [[0.5], [NaN]]
         // Row 0: x=0.5 -> 1.0 + 2.0*0.5 = 2.0
         // Row 1: x=NaN -> fall back to base=5.0
-        let data = RowMatrix::from_vec(vec![0.5, f32::NAN], 2, 1);
+        let arr = Array2::from_shape_vec((2, 1), vec![0.5, f32::NAN]).unwrap();
+        let data = SamplesView::from_array(arr.view());
         let mut predictions = vec![0.0; 2];
         frozen.predict_batch_accumulate(&data, &mut predictions);
 
@@ -1349,8 +1326,9 @@ mod tests {
     #[test]
     fn test_linear_prediction_multivariate() {
         use super::MutableTree;
-        use crate::data::RowMatrix;
+        use crate::data::SamplesView;
         use crate::repr::gbdt::ScalarLeaf;
+        use ndarray::Array2;
 
         let mut tree: MutableTree<ScalarLeaf> = MutableTree::new();
 
@@ -1361,10 +1339,11 @@ mod tests {
 
         let frozen = tree.freeze();
 
-        // Test data: 2 rows, 2 features
+        // Test data: 2 rows, 2 features: [[1.0, 1.0], [0.5, 2.0]]
         // Row 0: [1.0, 1.0] -> 1.0 + 2.0*1.0 + 3.0*1.0 = 6.0
         // Row 1: [0.5, 2.0] -> 1.0 + 2.0*0.5 + 3.0*2.0 = 8.0
-        let data = RowMatrix::from_vec(vec![1.0, 1.0, 0.5, 2.0], 2, 2);
+        let arr = Array2::from_shape_vec((2, 2), vec![1.0, 1.0, 0.5, 2.0]).unwrap();
+        let data = SamplesView::from_array(arr.view());
         let mut predictions = vec![0.0; 2];
         frozen.predict_batch_accumulate(&data, &mut predictions);
 

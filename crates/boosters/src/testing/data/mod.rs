@@ -1,6 +1,6 @@
 use rand::prelude::*;
 
-use crate::data::{DenseMatrix, RowMajor, RowMatrix};
+use ndarray::Array2;
 
 /// Generate random dense features in row-major order.
 ///
@@ -14,10 +14,12 @@ pub fn random_dense_f32(rows: usize, cols: usize, seed: u64, min: f32, max: f32)
 		.collect()
 }
 
-/// Create a [`RowMatrix`] from random dense features.
-pub fn random_row_matrix_f32(rows: usize, cols: usize, seed: u64, min: f32, max: f32) -> RowMatrix<f32> {
+/// Create a sample-major [`Array2<f32>`] from random dense features.
+///
+/// Returns an array with shape `[rows, cols]` (sample-major).
+pub fn random_features_array(rows: usize, cols: usize, seed: u64, min: f32, max: f32) -> Array2<f32> {
 	let data = random_dense_f32(rows, cols, seed, min, max);
-	DenseMatrix::<f32, RowMajor>::from_vec(data, rows, cols)
+	Array2::from_shape_vec((rows, cols), data).expect("shape mismatch")
 }
 
 /// Generate regression targets as a simple linear model of features plus uniform noise.

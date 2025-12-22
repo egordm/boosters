@@ -11,14 +11,14 @@
 //! assert_abs_diff_eq!(1.0f32, 1.0001f32, epsilon = 0.001);
 //! ```
 //!
-//! For `PredictionOutput`, use `approx` directly - it implements `AbsDiffEq`
-//! which checks both shape and values:
+//! For ndarray comparisons, use `approx` directly - Array2<f32> implements
+//! `AbsDiffEq` which checks both shape and values:
 //! ```ignore
 //! use approx::assert_abs_diff_eq;
-//! use boosters::inference::PredictionOutput;
+//! use ndarray::arr2;
 //!
-//! let actual = PredictionOutput::new(vec![1.0, 2.0], 2, 1);
-//! let expected = PredictionOutput::new(vec![1.0, 2.0], 2, 1);
+//! let actual = arr2(&[[1.0, 2.0], [3.0, 4.0]]);
+//! let expected = arr2(&[[1.0, 2.0], [3.0, 4.0]]);
 //! assert_abs_diff_eq!(actual, expected, epsilon = 1e-5);
 //! ```
 //!

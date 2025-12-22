@@ -36,22 +36,19 @@ impl ObjectiveFn for SquaredLoss {
         mut grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         let (n_outputs, n_rows) = predictions.dim();
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-        let targets_slice = targets.as_slice().unwrap_or(&[]);
 
         for out_idx in 0..n_outputs {
             let preds_row = predictions.row(out_idx);
-            let preds_slice = preds_row.as_slice().unwrap();
             let mut gh_row = grad_hess.row_mut(out_idx);
-            let gh_slice = gh_row.as_slice_mut().unwrap();
 
-            for ((gh, &pred), (target, w)) in gh_slice
-                .iter_mut()
-                .zip(preds_slice.iter())
-                .zip(targets_slice.iter().zip(weight_iter(weights_slice, n_rows)))
+            for (i, ((&pred, &target), w)) in preds_row
+                .iter()
+                .zip(targets.iter())
+                .zip(weight_iter(weights, n_rows))
+                .enumerate()
             {
-                gh.grad = w * (pred - target);
-                gh.hess = w;
+                gh_row[i].grad = w * (pred - target);
+                gh_row[i].hess = w;
             }
         }
     }
@@ -60,7 +57,7 @@ impl ObjectiveFn for SquaredLoss {
         &self,
         targets: ArrayView1<f32>,
         weights: Option<ArrayView1<f32>>,
-        mut outputs: ArrayViewMut2<f32>,
+        outputs: &mut [f32],
     ) {
         let n_rows = targets.len();
         if n_rows == 0 {
@@ -68,13 +65,10 @@ impl ObjectiveFn for SquaredLoss {
             return;
         }
 
-        let targets_slice = targets.as_slice().unwrap_or(&[]);
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-
         // Compute weighted mean
-        let (sum_w, sum_wy) = targets_slice
+        let (sum_w, sum_wy) = targets
             .iter()
-            .zip(weight_iter(weights_slice, n_rows))
+            .zip(weight_iter(weights, n_rows))
             .fold((0.0f64, 0.0f64), |(sw, swy), (&y, w)| {
                 (sw + w as f64, swy + w as f64 * y as f64)
             });
@@ -127,23 +121,20 @@ impl ObjectiveFn for AbsoluteLoss {
         mut grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         let (n_outputs, n_rows) = predictions.dim();
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-        let targets_slice = targets.as_slice().unwrap_or(&[]);
 
         for out_idx in 0..n_outputs {
             let preds_row = predictions.row(out_idx);
-            let preds_slice = preds_row.as_slice().unwrap();
             let mut gh_row = grad_hess.row_mut(out_idx);
-            let gh_slice = gh_row.as_slice_mut().unwrap();
 
-            for ((gh, &pred), (&target, w)) in gh_slice
-                .iter_mut()
-                .zip(preds_slice.iter())
-                .zip(targets_slice.iter().zip(weight_iter(weights_slice, n_rows)))
+            for (i, ((&pred, &target), w)) in preds_row
+                .iter()
+                .zip(targets.iter())
+                .zip(weight_iter(weights, n_rows))
+                .enumerate()
             {
                 let diff = pred - target;
-                gh.grad = w * diff.signum();
-                gh.hess = w;
+                gh_row[i].grad = w * diff.signum();
+                gh_row[i].hess = w;
             }
         }
     }
@@ -152,19 +143,15 @@ impl ObjectiveFn for AbsoluteLoss {
         &self,
         targets: ArrayView1<f32>,
         weights: Option<ArrayView1<f32>>,
-        mut outputs: ArrayViewMut2<f32>,
+        outputs: &mut [f32],
     ) {
         // Use weighted median as base score (optimal for L1 loss)
-        let n_rows = targets.len();
-        if n_rows == 0 {
+        if targets.is_empty() {
             outputs.fill(0.0);
             return;
         }
 
-        let targets_slice = targets.as_slice().unwrap_or(&[]);
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-
-        let median = compute_weighted_quantile(targets_slice, weights_slice, 0.5);
+        let median = compute_weighted_quantile(targets, weights, 0.5);
         outputs.fill(median);
     }
 
@@ -236,24 +223,21 @@ impl ObjectiveFn for PinballLoss {
         mut grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         let (_, n_rows) = predictions.dim();
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-        let targets_slice = targets.as_slice().unwrap_or(&[]);
 
         for (out_idx, &alpha) in self.alphas.iter().enumerate() {
             let preds_row = predictions.row(out_idx);
-            let preds_slice = preds_row.as_slice().unwrap();
             let mut gh_row = grad_hess.row_mut(out_idx);
-            let gh_slice = gh_row.as_slice_mut().unwrap();
 
-            for ((gh, &pred), (&target, w)) in gh_slice
-                .iter_mut()
-                .zip(preds_slice.iter())
-                .zip(targets_slice.iter().zip(weight_iter(weights_slice, n_rows)))
+            for (i, ((&pred, &target), w)) in preds_row
+                .iter()
+                .zip(targets.iter())
+                .zip(weight_iter(weights, n_rows))
+                .enumerate()
             {
                 let diff = pred - target;
                 let g = if diff < 0.0 { alpha - 1.0 } else { alpha };
-                gh.grad = w * g;
-                gh.hess = w;
+                gh_row[i].grad = w * g;
+                gh_row[i].hess = w;
             }
         }
     }
@@ -262,20 +246,16 @@ impl ObjectiveFn for PinballLoss {
         &self,
         targets: ArrayView1<f32>,
         weights: Option<ArrayView1<f32>>,
-        mut outputs: ArrayViewMut2<f32>,
+        outputs: &mut [f32],
     ) {
-        let n_rows = targets.len();
-        if n_rows == 0 {
+        if targets.is_empty() {
             outputs.fill(0.0);
             return;
         }
 
-        let targets_slice = targets.as_slice().unwrap_or(&[]);
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-
         for (out_idx, &alpha) in self.alphas.iter().enumerate() {
-            let quantile = compute_weighted_quantile(targets_slice, weights_slice, alpha);
-            outputs[[out_idx, 0]] = quantile;
+            let quantile = compute_weighted_quantile(targets, weights, alpha);
+            outputs[out_idx] = quantile;
         }
     }
 
@@ -331,28 +311,25 @@ impl ObjectiveFn for PseudoHuberLoss {
         mut grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         let (n_outputs, n_rows) = predictions.dim();
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-        let targets_slice = targets.as_slice().unwrap_or(&[]);
         let inv_delta_sq = 1.0 / (self.delta * self.delta);
 
         for out_idx in 0..n_outputs {
             let preds_row = predictions.row(out_idx);
-            let preds_slice = preds_row.as_slice().unwrap();
             let mut gh_row = grad_hess.row_mut(out_idx);
-            let gh_slice = gh_row.as_slice_mut().unwrap();
 
-            for ((gh, &pred), (&target, w)) in gh_slice
-                .iter_mut()
-                .zip(preds_slice.iter())
-                .zip(targets_slice.iter().zip(weight_iter(weights_slice, n_rows)))
+            for (i, ((&pred, &target), w)) in preds_row
+                .iter()
+                .zip(targets.iter())
+                .zip(weight_iter(weights, n_rows))
+                .enumerate()
             {
                 let residual = pred - target;
                 let r_sq = residual * residual;
                 let factor = 1.0 + r_sq * inv_delta_sq;
                 let sqrt_factor = factor.sqrt();
 
-                gh.grad = w * residual / sqrt_factor;
-                gh.hess = w / (factor * sqrt_factor);
+                gh_row[i].grad = w * residual / sqrt_factor;
+                gh_row[i].hess = w / (factor * sqrt_factor);
             }
         }
     }
@@ -361,19 +338,15 @@ impl ObjectiveFn for PseudoHuberLoss {
         &self,
         targets: ArrayView1<f32>,
         weights: Option<ArrayView1<f32>>,
-        mut outputs: ArrayViewMut2<f32>,
+        outputs: &mut [f32],
     ) {
         // Use median as robust base score
-        let n_rows = targets.len();
-        if n_rows == 0 {
+        if targets.is_empty() {
             outputs.fill(0.0);
             return;
         }
 
-        let targets_slice = targets.as_slice().unwrap_or(&[]);
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-
-        let median = compute_weighted_quantile(targets_slice, weights_slice, 0.5);
+        let median = compute_weighted_quantile(targets, weights, 0.5);
         outputs.fill(median);
     }
 
@@ -424,24 +397,21 @@ impl ObjectiveFn for PoissonLoss {
         const HESS_MIN: f32 = 1e-6;
 
         let (n_outputs, n_rows) = predictions.dim();
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-        let targets_slice = targets.as_slice().unwrap_or(&[]);
 
         for out_idx in 0..n_outputs {
             let preds_row = predictions.row(out_idx);
-            let preds_slice = preds_row.as_slice().unwrap();
             let mut gh_row = grad_hess.row_mut(out_idx);
-            let gh_slice = gh_row.as_slice_mut().unwrap();
 
-            for ((gh, &pred), (&target, w)) in gh_slice
-                .iter_mut()
-                .zip(preds_slice.iter())
-                .zip(targets_slice.iter().zip(weight_iter(weights_slice, n_rows)))
+            for (i, ((&pred, &target), w)) in preds_row
+                .iter()
+                .zip(targets.iter())
+                .zip(weight_iter(weights, n_rows))
+                .enumerate()
             {
                 let pred_clamped = pred.clamp(-MAX_EXP, MAX_EXP);
                 let exp_pred = pred_clamped.exp();
-                gh.grad = w * (exp_pred - target);
-                gh.hess = (w * exp_pred).max(HESS_MIN);
+                gh_row[i].grad = w * (exp_pred - target);
+                gh_row[i].hess = (w * exp_pred).max(HESS_MIN);
             }
         }
     }
@@ -450,7 +420,7 @@ impl ObjectiveFn for PoissonLoss {
         &self,
         targets: ArrayView1<f32>,
         weights: Option<ArrayView1<f32>>,
-        mut outputs: ArrayViewMut2<f32>,
+        outputs: &mut [f32],
     ) {
         let n_rows = targets.len();
         if n_rows == 0 {
@@ -458,13 +428,10 @@ impl ObjectiveFn for PoissonLoss {
             return;
         }
 
-        let targets_slice = targets.as_slice().unwrap_or(&[]);
-        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-
         // Base score is log of weighted mean target
-        let (sum_w, sum_wy) = targets_slice
+        let (sum_w, sum_wy) = targets
             .iter()
-            .zip(weight_iter(weights_slice, n_rows))
+            .zip(weight_iter(weights, n_rows))
             .fold((0.0f64, 0.0f64), |(sw, swy), (&y, w)| {
                 (sw + w as f64, swy + w as f64 * y as f64)
             });
@@ -498,16 +465,19 @@ impl ObjectiveFn for PoissonLoss {
 /// 
 /// Note: This requires sorting which is O(n log n). For `compute_base_score` this
 /// is acceptable as it's called once per training run, not in the hot path.
-fn compute_weighted_quantile(values: &[f32], weights: &[f32], alpha: f32) -> f32 {
+fn compute_weighted_quantile(
+    values: ArrayView1<f32>,
+    weights: Option<ArrayView1<f32>>,
+    alpha: f32,
+) -> f32 {
     if values.is_empty() {
         return 0.0;
     }
 
     // Collect (value, weight) pairs and sort by value
-    let mut sorted: Vec<(f32, f32)> = if weights.is_empty() {
-        values.iter().map(|&v| (v, 1.0)).collect()
-    } else {
-        values.iter().zip(weights.iter()).map(|(&v, &w)| (v, w)).collect()
+    let mut sorted: Vec<(f32, f32)> = match weights {
+        Some(w) => values.iter().zip(w.iter()).map(|(&v, &w)| (v, w)).collect(),
+        None => values.iter().map(|&v| (v, 1.0)).collect(),
     };
     sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
@@ -585,10 +555,10 @@ mod tests {
     fn squared_loss_base_score() {
         let obj = SquaredLoss;
         let targets = make_targets(&[1.0, 2.0, 3.0, 4.0]);
-        let mut output = Array2::from_elem((1, 1), 0.0f32);
+        let mut output = [0.0f32];
 
-        obj.compute_base_score(targets.view(), None, output.view_mut());
-        assert!((output[[0, 0]] - 2.5).abs() < 1e-6);
+        obj.compute_base_score(targets.view(), None, &mut output);
+        assert!((output[0] - 2.5).abs() < 1e-6);
     }
 
     #[test]
@@ -652,12 +622,12 @@ mod tests {
     fn poisson_loss_base_score() {
         let obj = PoissonLoss;
         let targets = make_targets(&[1.0, 2.0, 3.0, 4.0]);
-        let mut output = Array2::from_elem((1, 1), 0.0f32);
+        let mut output = [0.0f32];
 
-        obj.compute_base_score(targets.view(), None, output.view_mut());
+        obj.compute_base_score(targets.view(), None, &mut output);
 
         // Base score = log(mean) = log(2.5)
         let expected = (2.5f32).ln();
-        assert!((output[[0, 0]] - expected).abs() < 1e-6);
+        assert!((output[0] - expected).abs() < 1e-6);
     }
 }

@@ -122,16 +122,14 @@ pub trait ObjectiveFn: Send + Sync {
     ///
     /// # Arguments
     ///
-    /// * `n_rows` - Number of samples
-    /// * `n_outputs` - Number of outputs
-    /// * `targets` - Ground truth labels, column-major
+    /// * `targets` - Ground truth labels
     /// * `weights` - Sample weights (`None` for unweighted)
-    /// * `outputs` - Output base scores, length `n_outputs`
+    /// * `outputs` - Output buffer of length `n_outputs()`
     fn compute_base_score(
         &self,
         targets: ArrayView1<f32>,
         weights: Option<ArrayView1<f32>>,
-        outputs: ArrayViewMut2<f32>,
+        outputs: &mut [f32],
     );
 
     // =========================================================================
@@ -318,7 +316,7 @@ impl ObjectiveFn for Objective {
         &self,
         targets: ArrayView1<f32>,
         weights: Option<ArrayView1<f32>>,
-        outputs: ArrayViewMut2<f32>,
+        outputs: &mut [f32],
     ) {
         match self {
             Self::SquaredLoss(inner) => inner.compute_base_score(targets, weights, outputs),
