@@ -1,24 +1,7 @@
 //! GBDT Trainer for gradient boosting.
 //!
-//! This module provides the main training loop for gradient boosted decision trees.
-//! It orchestrates objective computation, tree growing, and prediction updates.
-//!
-//! # Example
-//!
-//! ```ignore
-//! use boosters::training::{GBDTTrainer, GBDTParams, SquaredLoss, Rmse, GainParams};
-//! use boosters::Parallelism;
-//!
-//! let params = GBDTParams {
-//!     n_trees: 100,
-//!     learning_rate: 0.1,
-//!     gain: GainParams { reg_lambda: 1.0, ..Default::default() },
-//!     ..Default::default()
-//! };
-//!
-//! let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-//! let forest = trainer.train(&dataset, targets.view(), weights.view(), &[], Parallelism::Sequential);
-//! ```
+//! Orchestrates objective computation, tree growing, and prediction updates.
+//! Use [`GBDTTrainer::train`] to train a forest from a binned dataset.
 
 use crate::data::{init_predictions, BinnedDataset, RowMatrix};
 use crate::inference::gbdt::BinnedAccessor;
@@ -45,8 +28,6 @@ use ndarray::{Array2, ArrayView1, ArrayView2};
 // =============================================================================
 
 /// Parameters for GBDT training.
-///
-/// Use struct construction with `..Default::default()` for convenient configuration.
 #[derive(Clone, Debug)]
 pub struct GBDTParams {
     // --- Boosting parameters ---
@@ -133,13 +114,6 @@ impl GBDTParams {
 // =============================================================================
 
 /// GBDT Trainer.
-///
-/// # Example
-///
-/// ```ignore
-/// let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-/// let forest = trainer.train(&dataset, &targets, &[]);
-/// ```
 pub struct GBDTTrainer<O: ObjectiveFn, M: MetricFn> {
     /// Objective function.
     objective: O,
@@ -172,39 +146,16 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
 
     /// Train a forest.
     ///
-    /// **Note:** This method does NOT create a thread pool. The caller (typically the
-    /// model layer) is responsible for setting up parallelism by calling this within
-    /// `rayon::ThreadPool::install()` if parallel execution is desired.
-    ///
-    /// The `parallelism` argument is a *hint* that controls whether internal algorithms
-    /// (histogram building, split finding) use parallel iterators. Even with
-    /// `Parallelism::Parallel`, no new threads are spawned here—the caller must
-    /// provide the thread pool.
+    /// **Note:** This method does NOT create a thread pool. The caller must set up
+    /// parallelism via `rayon::ThreadPool::install()` if desired.
     ///
     /// # Arguments
     ///
     /// * `dataset` - Binned dataset created with [`BinnedDatasetBuilder`]
     /// * `targets` - Target values (length = n_rows × n_outputs)
-    /// * `weights` - Sample weights for each row. Pass `&[]` for uniform weights.
-    /// * `eval_sets` - Validation sets for early stopping/monitoring. Pass `&[]` to skip.
-    /// * `parallelism` - Hint for internal parallel iteration (Sequential or Parallel)
-    ///
-    /// # Returns
-    ///
-    /// Trained forest, or `None` if training fails (e.g., invalid input).
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// // Sequential training
-    /// let forest = trainer.train(&dataset, &targets, &[], &[], Parallelism::Sequential)?;
-    ///
-    /// // Parallel training (caller sets up thread pool)
-    /// let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap();
-    /// let forest = pool.install(|| {
-    ///     trainer.train(&dataset, &targets, &[], &[], Parallelism::Parallel)
-    /// })?;
-    /// ```
+    /// * `weights` - Sample weights (None for uniform)
+    /// * `eval_sets` - Validation sets for early stopping (`&[]` to skip)
+    /// * `parallelism` - Sequential or Parallel iteration hint
     ///
     /// [`BinnedDatasetBuilder`]: crate::data::BinnedDatasetBuilder
     pub fn train(

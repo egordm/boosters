@@ -1,42 +1,7 @@
 //! Gradient boosting trainer for linear models.
 //!
-//! This module implements coordinate descent training for GBLinear models.
-//! It supports both single-output (regression, binary classification) and
-//! multi-output (multiclass) training through the `Objective` trait.
-//!
-//! # Example
-//!
-//! ```ignore
-//! use boosters::training::{GBLinearTrainer, GBLinearParams, SquaredLoss, Rmse};
-//! use boosters::data::Dataset;
-//!
-//! let params = GBLinearParams {
-//!     n_rounds: 100,
-//!     learning_rate: 0.5,
-//!     lambda: 1.0,
-//!     ..Default::default()
-//! };
-//!
-//! let dataset = Dataset::new(data, targets.view(), weights.view());
-//! let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
-//! let model = trainer.train(&dataset, &[]);
-//! ```
-//!
-//! For multiclass training:
-//!
-//! ```ignore
-//! use boosters::training::{GBLinearTrainer, GBLinearParams, SoftmaxLoss};
-//! use boosters::data::Dataset;
-//!
-//! let params = GBLinearParams {
-//!     n_rounds: 100,
-//!     ..Default::default()
-//! };
-//!
-//! let dataset = Dataset::new(data, targets.view(), weights.view());
-//! let trainer = GBLinearTrainer::new(SoftmaxLoss::new(3), Metric::multi_logloss(), params);
-//! let model = trainer.train(&dataset, &[]);
-//! ```
+//! Implements coordinate descent training for GBLinear models.
+//! Supports single-output and multi-output objectives.
 
 use ndarray::{Array2, ArrayView1, ArrayView2};
 
@@ -55,21 +20,6 @@ use super::updater::{Updater, UpdateConfig, UpdaterKind};
 // ============================================================================
 
 /// Parameters for GBLinear training.
-///
-/// Use struct construction with `..Default::default()` for convenient configuration.
-///
-/// # Example
-///
-/// ```ignore
-/// use boosters::training::GBLinearParams;
-///
-/// let params = GBLinearParams {
-///     n_rounds: 200,
-///     learning_rate: 0.3,
-///     lambda: 2.0,
-///     ..Default::default()
-/// };
-/// ```
 #[derive(Clone, Debug)]
 pub struct GBLinearParams {
     // --- Training parameters ---
@@ -131,26 +81,6 @@ impl Default for GBLinearParams {
 // ============================================================================
 
 /// Gradient boosted linear model trainer.
-///
-/// Generic over the objective function `O`, which determines the loss
-/// and gradient computation strategy.
-///
-/// # Example
-///
-/// ```ignore
-/// use boosters::training::{GBLinearTrainer, GBLinearParams, SquaredLoss, LogisticLoss, Rmse, LogLoss};
-/// use boosters::data::Dataset;
-///
-/// // Regression
-/// let params = GBLinearParams::default();
-/// let dataset = Dataset::new(data, targets.view(), weights.view());
-/// let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
-/// let model = trainer.train(&dataset, &[]);
-///
-/// // Binary classification
-/// let trainer = GBLinearTrainer::new(LogisticLoss, LogLoss, GBLinearParams::default());
-/// let model = trainer.train(&dataset, &[]);
-/// ```
 #[derive(Clone, Debug)]
 pub struct GBLinearTrainer<O: ObjectiveFn, M: MetricFn> {
     objective: O,
@@ -168,31 +98,15 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
         }
     }
 
-    /// Train a linear model on column-accessible data.
+    /// Train a linear model.
     ///
-    /// **Note:** This method does NOT create a thread pool. The caller (typically the
-    /// model layer) is responsible for setting up parallelism by calling this within
-    /// `rayon::ThreadPool::install()` if parallel execution is desired.
+    /// **Note:** This method does NOT create a thread pool. The caller must set up
+    /// parallelism via `rayon::ThreadPool::install()` if desired.
     ///
     /// # Arguments
     ///
     /// * `train` - Training dataset (features, targets, optional weights)
-    /// * `eval_sets` - Evaluation sets for monitoring (pass `&[]` if not needed)
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use boosters::training::{GBLinearTrainer, GBLinearParams, SquaredLoss, Rmse};
-    ///
-    /// // Sequential training
-    /// let params = GBLinearParams::default();
-    /// let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
-    /// let model = trainer.train(&dataset, &[])?;
-    ///
-    /// // Parallel training (caller sets up thread pool)
-    /// let pool = rayon::ThreadPoolBuilder::new().num_threads(4).build().unwrap();
-    /// let model = pool.install(|| trainer.train(&dataset, &[]))?;
-    /// ```
+    /// * `eval_sets` - Evaluation sets for monitoring (`&[]` if not needed)
     pub fn train(
         &self, 
         train: &Dataset, eval_sets: &[EvalSet<'_>]

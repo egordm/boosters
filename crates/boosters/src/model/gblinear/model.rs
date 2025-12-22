@@ -1,19 +1,8 @@
 //! GBLinear model implementation.
 //!
-//! High-level wrapper around LinearModel with training, prediction, and serialization.
-//!
-//! # Access Pattern
-//!
-//! Use accessors to access model components:
-//! - `model.linear()` - underlying linear model (weights, biases)
-//! - `model.meta()` - model metadata (n_features, n_groups, task)
-//! - `model.config()` - training configuration (if available)
-//!
-//! # Prediction
-//!
-//! - [`predict()`](GBLinearModel::predict) - Returns probabilities for classification,
-//!   raw values for regression
-//! - [`predict_raw()`](GBLinearModel::predict_raw) - Returns raw margin scores
+//! High-level wrapper around [`LinearModel`] with training and prediction.
+//! Access components via [`linear()`](GBLinearModel::linear), [`meta()`](GBLinearModel::meta),
+//! and [`config()`](GBLinearModel::config).
 
 use crate::data::{ColMajor, ColMatrix, DataMatrix, Dataset, DenseMatrix};
 use crate::model::meta::ModelMeta;
@@ -23,37 +12,10 @@ use crate::training::{Metric, ObjectiveFn};
 
 use super::GBLinearConfig;
 
-/// High-level GBLinear model.
+/// High-level GBLinear model with training, prediction, and explainability.
 ///
-/// Combines training, prediction, and serialization into a unified interface.
-///
-/// # Access Pattern
-///
-/// Use accessors to access model components:
-/// - [`linear()`](Self::linear) - underlying linear model
-/// - [`meta()`](Self::meta) - model metadata (n_features, n_groups, task)
-/// - [`config()`](Self::config) - training configuration (if available)
-///
-/// # Example
-///
-/// ```ignore
-/// use boosters::model::GBLinearModel;
-/// use boosters::model::gblinear::GBLinearConfig;
-/// use boosters::data::RowMatrix;
-///
-/// // Train
-/// let config = GBLinearConfig::builder().n_rounds(200).build().unwrap();
-/// let model = GBLinearModel::train(&dataset, config, 0)?; // auto threads
-///
-/// // Access components
-/// let n_features = model.meta().n_features;
-/// let n_groups = model.meta().n_groups;
-/// let lr = model.config().map(|c| c.learning_rate);
-///
-/// // Predict
-/// let features = RowMatrix::from_vec(vec![...], n_rows, n_features);
-/// let predictions = model.predict(&features);
-/// ```
+/// Access components via [`linear()`](Self::linear), [`meta()`](Self::meta),
+/// and [`config()`](Self::config).
 pub struct GBLinearModel {
     /// The underlying linear model.
     model: LinearModel,
@@ -73,41 +35,8 @@ impl GBLinearModel {
     /// # Arguments
     ///
     /// * `dataset` - Training dataset (features, targets, optional weights)
-    /// * `config` - Training configuration (objective, metric, hyperparameters)
+    /// * `config` - Training configuration
     /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
-    ///
-    /// # Returns
-    ///
-    /// Trained model, or `None` if training fails.
-    ///
-    /// # Threading
-    ///
-    /// - `0` = Use all available CPU cores (auto-detect)
-    /// - `1` = Sequential execution (no parallelism)
-    /// - `n > 1` = Use exactly `n` threads
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use boosters::model::gblinear::{GBLinearConfig, GBLinearModel};
-    /// use boosters::training::{Objective, Metric};
-    /// use boosters::data::Dataset;
-    ///
-    /// let config = GBLinearConfig::builder()
-    ///     .objective(Objective::logistic())
-    ///     .n_rounds(100)
-    ///     .build()
-    ///     .unwrap();
-    ///
-    /// // Sequential training
-    /// let model = GBLinearModel::train(&dataset, config.clone(), 1)?;
-    ///
-    /// // Auto-detect threads
-    /// let model = GBLinearModel::train(&dataset, config.clone(), 0)?;
-    ///
-    /// // Parallel training with 4 threads
-    /// let model = GBLinearModel::train(&dataset, config, 4)?;
-    /// ```
     pub fn train(dataset: &Dataset, config: GBLinearConfig, n_threads: usize) -> Option<Self> {
         crate::run_with_threads(n_threads, |_parallelism| Self::train_inner(dataset, config))
     }
@@ -176,32 +105,16 @@ impl GBLinearModel {
     // =========================================================================
 
     /// Get reference to the underlying linear model.
-    ///
-    /// Use this to access linear model details:
-    /// - `model.linear().n_features()` - number of features
-    /// - `model.linear().n_groups()` - number of output groups
-    /// - `model.linear().weight(f, g)` - weight for feature f, group g
-    /// - `model.linear().bias(g)` - bias for group g
     pub fn linear(&self) -> &LinearModel {
         &self.model
     }
 
     /// Get reference to model metadata.
-    ///
-    /// Use this to access metadata:
-    /// - `model.meta().n_features` - number of input features
-    /// - `model.meta().n_groups` - number of output groups
-    /// - `model.meta().task` - task type (regression, classification)
-    /// - `model.meta().feature_names` - feature names (if set)
     pub fn meta(&self) -> &ModelMeta {
         &self.meta
     }
 
-    /// Get reference to training configuration (if available).
-    ///
-    /// Returns `Some` if the model was trained with the new config-based API
-    /// or loaded from a format that includes config. Returns `None` for models
-    /// loaded from legacy formats or created with `from_linear_model()`.
+    /// Get reference to training configuration.
     pub fn config(&self) -> &GBLinearConfig {
         &self.config
     }
@@ -221,28 +134,12 @@ impl GBLinearModel {
 
     /// Predict for multiple rows, returning transformed predictions.
     ///
-    /// Returns probabilities for classification objectives (sigmoid for binary,
-    /// softmax for multiclass) and raw values for regression objectives.
-    ///
-    /// Linear model prediction is fast enough to not benefit from parallelism.
-    ///
-    /// # Arguments
-    ///
-    /// * `features` - Feature matrix (any layout implementing [`DataMatrix`])
+    /// Returns probabilities for classification (sigmoid/softmax) or raw values
+    /// for regression.
     ///
     /// # Returns
     ///
-    /// Column-major matrix of predictions (n_rows × n_groups).
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use boosters::data::RowMatrix;
-    ///
-    /// let features = RowMatrix::from_vec(vec![0.5, 1.0, 0.3, 2.0], 2, 2);
-    /// let predictions = model.predict(&features);
-    /// let probs = predictions.col_slice(0);
-    /// ```
+    /// Column-major matrix (n_rows × n_groups).
     pub fn predict<M: DataMatrix<Element = f32>>(&self, features: &M) -> ColMatrix<f32> {
         let n_rows = features.num_rows();
         let n_groups = self.meta.n_groups;
@@ -258,17 +155,7 @@ impl GBLinearModel {
         DenseMatrix::<f32, ColMajor>::from_vec(raw, n_rows, n_groups)
     }
 
-    /// Predict for multiple rows, returning raw margin scores.
-    ///
-    /// Returns raw margin scores before any transformation (no sigmoid/softmax).
-    ///
-    /// # Arguments
-    ///
-    /// * `features` - Feature matrix (any layout implementing [`DataMatrix`])
-    ///
-    /// # Returns
-    ///
-    /// Column-major matrix of raw predictions (n_rows × n_groups).
+    /// Predict for multiple rows, returning raw margin scores (no transform).
     pub fn predict_raw<M: DataMatrix<Element = f32>>(&self, features: &M) -> ColMatrix<f32> {
         let n_rows = features.num_rows();
         let n_groups = self.meta.n_groups;
@@ -313,25 +200,8 @@ impl GBLinearModel {
 
     /// Compute SHAP values for a batch of samples.
     ///
-    /// Linear SHAP has a closed-form solution: `shap[i] = w[i] * (x[i] - mean[i])`
-    ///
-    /// # Arguments
-    /// * `features` - Feature matrix, row-major [n_samples × n_features]
-    /// * `n_samples` - Number of samples
-    /// * `feature_means` - Mean value for each feature (background distribution).
-    ///   If `None`, assumes features are centered (zero means).
-    ///   For accurate base values, pass training data means.
-    ///
-    /// # Example
-    /// ```ignore
-    /// // Option 1: Use centered data assumption (no means needed)
-    /// let shap = model.shap_values(&features, n_samples, None)?;
-    ///
-    /// // Option 2: Use actual feature means for accurate base values
-    /// let means = compute_feature_means(&training_data);
-    /// let shap = model.shap_values(&features, n_samples, Some(means))?;
-    /// // sum(shap) + base_value = prediction
-    /// ```
+    /// Linear SHAP: `shap[i] = w[i] * (x[i] - mean[i])`.
+    /// Pass `None` for `feature_means` to assume centered data (zero means).
     pub fn shap_values(
         &self,
         features: &[f32],
