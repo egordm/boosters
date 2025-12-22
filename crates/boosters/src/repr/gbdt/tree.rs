@@ -14,6 +14,9 @@
 // Allow many constructor arguments for creating trees with all their fields.
 #![allow(clippy::too_many_arguments)]
 
+use crate::Parallelism;
+use crate::data::{BinnedDataset, BinnedRowView};
+
 use super::categories::{float_to_category, CategoriesStorage};
 use super::coefficients::{LeafCoefficients, LeafCoefficientsBuilder};
 use super::leaf::LeafValue;
@@ -472,8 +475,8 @@ impl<L: LeafValue> Tree<L> {
     /// are treated as canonical category indices (0..K-1).
     pub fn predict_binned_row(
         &self,
-        row: &crate::data::binned::RowView<'_>,
-        dataset: &crate::data::BinnedDataset,
+        row: &BinnedRowView<'_>,
+        dataset: &BinnedDataset,
     ) -> &L {
         let mut idx: NodeId = 0;
 
@@ -514,36 +517,6 @@ impl<L: LeafValue> Tree<L> {
         self.leaf_value(idx)
     }
 
-    /// Batch predict for multiple rows in a binned dataset.
-    ///
-    /// This is more efficient than calling `predict_binned_row` in a loop because:
-    /// - Better memory access patterns (processes all rows through same tree path)
-    /// - Reduces function call overhead
-    /// - Can be parallelized with Rayon
-    ///
-    /// # Arguments
-    /// * `dataset` - The binned dataset containing the rows
-    /// * `predictions` - Slice to update with leaf values (one per row)
-    ///
-    /// The leaf values are **added** to the existing predictions.
-    #[deprecated(since = "0.2.0", note = "use predict_binned_into with Parallelism::Sequential instead")]
-    pub fn predict_binned_batch(
-        &self,
-        dataset: &crate::data::BinnedDataset,
-        predictions: &mut [f32],
-    ) where
-        L: Into<f32> + Copy,
-    {
-        let n_rows = dataset.n_rows();
-        debug_assert_eq!(predictions.len(), n_rows);
-
-        for (row_idx, pred) in predictions.iter_mut().enumerate() {
-            if let Some(row) = dataset.row_view(row_idx) {
-                let leaf = self.predict_binned_row(&row, dataset);
-                *pred += (*leaf).into();
-            }
-        }
-    }
 
 
     /// Unified batch prediction for binned datasets.
@@ -557,9 +530,9 @@ impl<L: LeafValue> Tree<L> {
     /// * `parallelism` - Whether to use parallel execution
     pub fn predict_binned_into(
         &self,
-        dataset: &crate::data::BinnedDataset,
+        dataset: &BinnedDataset,
         predictions: &mut [f32],
-        parallelism: crate::utils::Parallelism,
+        parallelism: Parallelism,
     ) where
         L: Into<f32> + Copy + Send + Sync,
     {
@@ -575,56 +548,6 @@ impl<L: LeafValue> Tree<L> {
                 }
             },
         );
-    }
-
-    /// Generic batch predict using any feature accessor.
-    ///
-    /// This is the unified prediction method that works with any data source
-    /// implementing `FeatureAccessor`: RowMatrix, ColMatrix, BinnedAccessor, etc.
-    ///
-    /// Leaf values are **added** to the existing predictions (accumulate pattern).
-    ///
-    /// # Arguments
-    /// * `accessor` - Feature value source
-    /// * `predictions` - Slice to update with leaf values (one per row)
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use boosters::repr::gbdt::{Tree, ScalarLeaf};
-    /// use boosters::data::RowMatrix;
-    ///
-    /// let tree: Tree<ScalarLeaf> = /* ... */;
-    /// let data = RowMatrix::from_vec(vec![0.1, 0.2, 0.3, 0.4], 2, 2);
-    /// let mut predictions = vec![0.0; 2];
-    /// tree.predict_batch_accumulate(&data, &mut predictions);
-    /// ```
-    #[deprecated(since = "0.2.0", note = "use predict_into with Parallelism::Sequential instead")]
-    pub fn predict_batch_accumulate<A: crate::data::FeatureAccessor>(
-        &self,
-        accessor: &A,
-        predictions: &mut [f32],
-    ) where
-        L: Into<f32> + Copy,
-    {
-        use crate::inference::gbdt::traverse_to_leaf;
-
-        let n_rows = accessor.num_rows();
-        debug_assert_eq!(predictions.len(), n_rows);
-
-        if self.has_linear_leaves() {
-            for (row_idx, pred) in predictions.iter_mut().enumerate() {
-                let leaf_idx = traverse_to_leaf(self, accessor, row_idx);
-                let value = self.compute_leaf_value(leaf_idx, accessor, row_idx);
-                *pred += value;
-            }
-        } else {
-            for (row_idx, pred) in predictions.iter_mut().enumerate() {
-                let leaf_idx = traverse_to_leaf(self, accessor, row_idx);
-                let leaf = self.leaf_value(leaf_idx);
-                *pred += (*leaf).into();
-            }
-        }
     }
 
     /// Unified batch prediction using any feature accessor.

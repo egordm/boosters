@@ -7,14 +7,14 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
-use boosters::data::{binned::BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMajor};
+use boosters::data::{binned::BinnedDatasetBuilder, transpose_to_c_order, FeaturesView};
 use boosters::testing::data::{random_dense_f32, split_indices, synthetic_regression_targets_linear};
 use boosters::training::{
     GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, LinearLeafConfig, Rmse, SquaredLoss,
 };
 use boosters::Parallelism;
 
-use ndarray::ArrayView1;
+use ndarray::{ArrayView1, ArrayView2};
 
 use common::select::{select_rows_row_major, select_targets};
 
@@ -33,9 +33,11 @@ fn bench_linear_training_overhead(c: &mut Criterion) {
     let x_train = select_rows_row_major(&features, rows, cols, &train_idx);
     let y_train = select_targets(&targets, &train_idx);
 
-    let row_train: DenseMatrix<f32, RowMajor> = DenseMatrix::from_vec(x_train, train_idx.len(), cols);
-    let col_train: ColMatrix<f32> = row_train.to_layout();
-    let binned_train = BinnedDatasetBuilder::from_matrix(&col_train, 256).build().unwrap();
+    // Convert to feature-major format for binning
+    let sample_major_view = ArrayView2::from_shape((train_idx.len(), cols), &x_train).unwrap();
+    let features_fm = transpose_to_c_order(sample_major_view);
+    let features_view = FeaturesView::from_array(features_fm.view());
+    let binned_train = BinnedDatasetBuilder::from_matrix(&features_view, 256).build().unwrap();
 
     let base_params = GBDTParams {
         n_trees: 20,

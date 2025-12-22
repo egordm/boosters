@@ -18,11 +18,11 @@ mod common;
 use common::criterion_config::default_criterion;
 
 use boosters::data::binned::{BinnedDatasetBuilder, BundlingConfig};
-use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
+use boosters::data::{transpose_to_c_order, FeaturesView};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
 
-use ndarray::ArrayView1;
+use ndarray::{ArrayView1, ArrayView2};
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
@@ -139,15 +139,16 @@ fn bench_boosters_binning(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements((config.rows * n_features) as u64));
 
-        // Pre-convert to column layout (not part of bundling)
-        let row: DenseMatrix<f32, RowMajor> = DenseMatrix::from_vec(features.clone(), config.rows, n_features);
-        let col: ColMatrix<f32> = row.to_layout();
+        // Pre-convert to feature-major layout
+        let sample_major_view = ArrayView2::from_shape((config.rows, n_features), &features).unwrap();
+        let features_fm = transpose_to_c_order(sample_major_view);
+        let features_view = FeaturesView::from_array(features_fm.view());
 
         // WITHOUT bundling
         group.bench_function(BenchmarkId::new("no_bundling", config.name), |b| {
             b.iter(|| {
                 black_box(
-                    BinnedDatasetBuilder::from_matrix(&col, 256)
+                    BinnedDatasetBuilder::from_matrix(&features_view, 256)
                         .with_bundling(BundlingConfig::disabled())
                         .build()
                         .unwrap(),
@@ -159,7 +160,7 @@ fn bench_boosters_binning(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("with_bundling", config.name), |b| {
             b.iter(|| {
                 black_box(
-                    BinnedDatasetBuilder::from_matrix(&col, 256)
+                    BinnedDatasetBuilder::from_matrix(&features_view, 256)
                         .with_bundling(BundlingConfig::auto())
                         .build()
                         .unwrap(),
@@ -168,7 +169,7 @@ fn bench_boosters_binning(c: &mut Criterion) {
         });
 
         // Report bundling statistics
-        let binned = BinnedDatasetBuilder::from_matrix(&col, 256)
+        let binned = BinnedDatasetBuilder::from_matrix(&features_view, 256)
             .with_bundling(BundlingConfig::auto())
             .build()
             .unwrap();
@@ -210,16 +211,17 @@ fn bench_boosters_training(c: &mut Criterion) {
         };
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
 
-        // Pre-convert to column layout
-        let row: DenseMatrix<f32, RowMajor> = DenseMatrix::from_vec(features.clone(), config.rows, n_features);
-        let col: ColMatrix<f32> = row.to_layout();
+        // Pre-convert to feature-major layout
+        let sample_major_view = ArrayView2::from_shape((config.rows, n_features), &features).unwrap();
+        let features_fm = transpose_to_c_order(sample_major_view);
+        let features_view = FeaturesView::from_array(features_fm.view());
 
         // Pre-build binned datasets
-        let binned_no_bundle = BinnedDatasetBuilder::from_matrix(&col, 256)
+        let binned_no_bundle = BinnedDatasetBuilder::from_matrix(&features_view, 256)
             .with_bundling(BundlingConfig::disabled())
             .build()
             .unwrap();
-        let binned_with_bundle = BinnedDatasetBuilder::from_matrix(&col, 256)
+        let binned_with_bundle = BinnedDatasetBuilder::from_matrix(&features_view, 256)
             .with_bundling(BundlingConfig::auto())
             .build()
             .unwrap();

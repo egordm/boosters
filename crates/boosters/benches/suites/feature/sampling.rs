@@ -10,14 +10,14 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
-use boosters::data::{binned::BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMajor};
+use boosters::data::{binned::BinnedDatasetBuilder, transpose_to_c_order, FeaturesView};
 use boosters::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
 use boosters::training::{
     GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, RowSamplingParams, SquaredLoss,
 };
 use boosters::Parallelism;
 
-use ndarray::ArrayView1;
+use ndarray::{ArrayView1, ArrayView2};
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
@@ -33,9 +33,17 @@ const MAX_DEPTH: u32 = 6;
 // Helpers
 // =============================================================================
 
-fn build_col_matrix(features_row_major: Vec<f32>, rows: usize, cols: usize) -> ColMatrix<f32> {
-    let row: DenseMatrix<f32, RowMajor> = DenseMatrix::from_vec(features_row_major, rows, cols);
-    row.to_layout()
+fn build_binned_dataset(
+    features_row_major: &[f32],
+    rows: usize,
+    cols: usize,
+) -> boosters::data::binned::BinnedDataset {
+    let sample_major_view = ArrayView2::from_shape((rows, cols), features_row_major).unwrap();
+    let features_fm = transpose_to_c_order(sample_major_view);
+    let features_view = FeaturesView::from_array(features_fm.view());
+    BinnedDatasetBuilder::from_matrix(&features_view, 256)
+        .build()
+        .unwrap()
 }
 
 // =============================================================================
@@ -53,10 +61,7 @@ fn bench_sampling_strategies(c: &mut Criterion) {
     group.throughput(Throughput::Elements((rows * cols) as u64));
 
     // Pre-build binned dataset
-    let col_matrix = build_col_matrix(features.clone(), rows, cols);
-    let binned = BinnedDatasetBuilder::from_matrix(&col_matrix, 256)
-        .build()
-        .unwrap();
+    let binned = build_binned_dataset(&features, rows, cols);
 
     // Sampling configurations to test
     let configs: Vec<(&str, RowSamplingParams)> = vec![

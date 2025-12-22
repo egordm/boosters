@@ -6,7 +6,7 @@ mod common;
 use common::criterion_config::default_criterion;
 use common::threading::with_rayon_threads;
 
-use boosters::data::{binned::BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMajor};
+use boosters::data::{binned::BinnedDatasetBuilder, transpose_to_c_order, FeaturesView};
 use boosters::testing::data::{
 	random_dense_f32, synthetic_binary_targets_from_linear_score,
 	synthetic_multiclass_targets_from_linear_scores, synthetic_regression_targets_linear,
@@ -17,13 +17,21 @@ use boosters::training::{
 };
 use boosters::Parallelism;
 
-use ndarray::ArrayView1;
+use ndarray::{ArrayView1, ArrayView2};
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
-fn build_col_matrix(features_row_major: Vec<f32>, rows: usize, cols: usize) -> ColMatrix<f32> {
-	let row: DenseMatrix<f32, RowMajor> = DenseMatrix::from_vec(features_row_major, rows, cols);
-	row.to_layout()
+fn build_binned_dataset(
+	features_row_major: &[f32],
+	rows: usize,
+	cols: usize,
+) -> boosters::data::binned::BinnedDataset {
+	let sample_major_view = ArrayView2::from_shape((rows, cols), features_row_major).unwrap();
+	let features_fm = transpose_to_c_order(sample_major_view);
+	let features_view = FeaturesView::from_array(features_fm.view());
+	BinnedDatasetBuilder::from_matrix(&features_view, 256)
+		.build()
+		.unwrap()
 }
 
 fn bench_gbdt_quantize(c: &mut Criterion) {
@@ -32,10 +40,12 @@ fn bench_gbdt_quantize(c: &mut Criterion) {
 
 	for (rows, cols) in [(10_000usize, 50usize), (50_000, 100), (100_000, 20)] {
 		let features = random_dense_f32(rows, cols, 42, -1.0, 1.0);
-		let col_matrix = build_col_matrix(features, rows, cols);
+		let sample_major_view = ArrayView2::from_shape((rows, cols), &features).unwrap();
+		let features_fm = transpose_to_c_order(sample_major_view);
+		let features_view = FeaturesView::from_array(features_fm.view());
 
 		group.throughput(Throughput::Elements((rows * cols) as u64));
-		group.bench_with_input(BenchmarkId::new("to_binned/max_bins=256", format!("{rows}x{cols}")), &col_matrix, |b, m| {
+		group.bench_with_input(BenchmarkId::new("to_binned/max_bins=256", format!("{rows}x{cols}")), &features_view, |b, m| {
 			b.iter(|| black_box(BinnedDatasetBuilder::from_matrix(black_box(m), 256).build().unwrap()))
 		});
 	}
@@ -56,8 +66,7 @@ fn bench_gbdt_train_regression(c: &mut Criterion) {
 	for (name, rows, cols, n_trees, max_depth) in configs {
 		let features = random_dense_f32(rows, cols, 42, -1.0, 1.0);
 		let (targets, _w, _b) = synthetic_regression_targets_linear(&features, rows, cols, 1337, 0.05);
-		let col_matrix = build_col_matrix(features, rows, cols);
-		let binned = BinnedDatasetBuilder::from_matrix(&col_matrix, 256).build().unwrap();
+		let binned = build_binned_dataset(&features, rows, cols);
 
 		let params = GBDTParams {
 			n_trees,
@@ -85,8 +94,7 @@ fn bench_gbdt_train_binary(c: &mut Criterion) {
 	let (rows, cols, n_trees, max_depth) = (50_000usize, 100usize, 50u32, 6u32);
 	let features = random_dense_f32(rows, cols, 42, -1.0, 1.0);
 	let targets = synthetic_binary_targets_from_linear_score(&features, rows, cols, 7, 0.2);
-	let col_matrix = build_col_matrix(features, rows, cols);
-	let binned = BinnedDatasetBuilder::from_matrix(&col_matrix, 256).build().unwrap();
+	let binned = build_binned_dataset(&features, rows, cols);
 
 	let params = GBDTParams {
 		n_trees,
@@ -112,8 +120,7 @@ fn bench_gbdt_train_multiclass(c: &mut Criterion) {
 	let (rows, cols, n_trees, max_depth, num_classes) = (20_000usize, 50usize, 30u32, 6u32, 10usize);
 	let features = random_dense_f32(rows, cols, 42, -1.0, 1.0);
 	let targets = synthetic_multiclass_targets_from_linear_scores(&features, rows, cols, num_classes, 99, 0.1);
-	let col_matrix = build_col_matrix(features, rows, cols);
-	let binned = BinnedDatasetBuilder::from_matrix(&col_matrix, 256).build().unwrap();
+	let binned = build_binned_dataset(&features, rows, cols);
 
 	let params = GBDTParams {
 		n_trees,
@@ -139,8 +146,7 @@ fn bench_gbdt_thread_scaling(c: &mut Criterion) {
 	let (rows, cols, n_trees, max_depth) = (50_000usize, 100usize, 30u32, 6u32);
 	let features = random_dense_f32(rows, cols, 42, -1.0, 1.0);
 	let (targets, _w, _b) = synthetic_regression_targets_linear(&features, rows, cols, 1337, 0.05);
-	let col_matrix = build_col_matrix(features, rows, cols);
-	let binned = BinnedDatasetBuilder::from_matrix(&col_matrix, 256).build().unwrap();
+	let binned = build_binned_dataset(&features, rows, cols);
 
 	for &n_threads in common::matrix::THREAD_COUNTS {
 		let params = GBDTParams {
@@ -174,8 +180,7 @@ fn bench_gbdt_growth_strategy(c: &mut Criterion) {
 
 	let features = random_dense_f32(rows, cols, 42, -1.0, 1.0);
 	let (targets, _w, _b) = synthetic_regression_targets_linear(&features, rows, cols, 1337, 0.05);
-	let col_matrix = build_col_matrix(features, rows, cols);
-	let binned = BinnedDatasetBuilder::from_matrix(&col_matrix, 256).build().unwrap();
+	let binned = build_binned_dataset(&features, rows, cols);
 
 	let common = GBDTParams {
 		n_trees,

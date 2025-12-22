@@ -10,7 +10,7 @@ use common::models::load_linear_model;
 #[cfg(feature = "bench-xgboost")]
 use common::models::bench_models_dir;
 
-use boosters::data::RowMatrix;
+use boosters::data::SamplesView;
 use boosters::testing::data::random_dense_f32;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
@@ -67,13 +67,13 @@ fn bench_predict_batch_sizes(c: &mut Criterion) {
 
 	for batch_size in [SMALL_BATCH, MEDIUM_BATCH, LARGE_BATCH] {
 		let input_data = random_dense_f32(batch_size, num_features, 42, -5.0, 5.0);
-		let matrix = RowMatrix::from_vec(input_data.clone(), batch_size, num_features);
+		let samples_view = SamplesView::from_slice(&input_data, batch_size, num_features).unwrap();
 
 		group.throughput(Throughput::Elements(batch_size as u64));
 
 		// booste-rs
-		group.bench_with_input(BenchmarkId::new("boosters", batch_size), &matrix, |b, m| {
-			b.iter(|| black_box(boosters_model.model.predict(black_box(m), &[])))
+		group.bench_function(BenchmarkId::new("boosters", batch_size), |b| {
+			b.iter(|| black_box(boosters_model.model.predict(black_box(samples_view), &[])))
 		});
 
 		// XGBoost
@@ -110,13 +110,13 @@ fn bench_predict_single_row(c: &mut Criterion) {
 	let xgb_model = new_xgb_booster(&xgb_model_bytes);
 
 	let input_data = random_dense_f32(1, num_features, 42, -5.0, 5.0);
-	let matrix = RowMatrix::from_vec(input_data.clone(), 1, num_features);
+	let samples_view = SamplesView::from_slice(&input_data, 1, num_features).unwrap();
 
 	let mut group = c.benchmark_group("compare/predict/gblinear/single_row/medium");
 
 	// booste-rs
 	group.bench_function("boosters", |b| {
-		b.iter(|| black_box(boosters_model.model.predict(black_box(&matrix), &[])))
+		b.iter(|| black_box(boosters_model.model.predict(black_box(samples_view), &[])))
 	});
 
 	// XGBoost
@@ -163,13 +163,13 @@ fn bench_model_sizes(c: &mut Criterion) {
 	for (name, model) in &models {
 		let num_features = model.num_features;
 		let input_data = random_dense_f32(batch_size, num_features, 42, -5.0, 5.0);
-		let matrix = RowMatrix::from_vec(input_data.clone(), batch_size, num_features);
+		let samples_view = SamplesView::from_slice(&input_data, batch_size, num_features).unwrap();
 
 		group.throughput(Throughput::Elements(batch_size as u64));
 
 		// booste-rs
-		group.bench_with_input(BenchmarkId::new("boosters", name), &matrix, |b, m| {
-			b.iter(|| black_box(model.model.predict(black_box(m), &[])))
+		group.bench_function(BenchmarkId::new("boosters", name), |b| {
+			b.iter(|| black_box(model.model.predict(black_box(samples_view), &[])))
 		});
 
 		// XGBoost

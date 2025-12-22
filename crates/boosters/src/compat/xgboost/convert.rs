@@ -1,5 +1,7 @@
 //! Conversion from XGBoost JSON types to native boosters types.
 
+use ndarray::Array2;
+
 use crate::repr::gbdt::{categories_to_bitset, Forest, MutableTree, ScalarLeaf, Tree};
 use crate::repr::gblinear::LinearModel;
 
@@ -122,9 +124,8 @@ impl XgbModel {
 
     /// Convert gblinear weights to LinearModel.
     ///
-    /// XGBoost stores weights in column-major order: all weights for feature 0 across
-    /// all groups, then all weights for feature 1, etc., followed by biases.
-    /// Layout: [w(f0,g0), w(f0,g1), ..., w(fn,g0), w(fn,g1), ..., bias(g0), bias(g1), ...]
+    /// XGBoost stores weights in row-major order: `[n_features + 1, n_groups]`
+    /// where the last row contains biases.
     fn convert_linear_model(&self, weights: &[f32]) -> Result<LinearModel, ConversionError> {
         let num_features = self.learner.learner_model_param.num_feature as usize;
         let num_class = self.learner.learner_model_param.num_class;
@@ -138,12 +139,10 @@ impl XgbModel {
             });
         }
 
-        // XGBoost uses the same layout as our LinearModel: feature × group + bias
-        Ok(LinearModel::from_flat(
-            weights,
-            num_features,
-            num_groups,
-        ))
+        // Reshape flat weights into [n_features + 1, n_groups] array
+        let arr = Array2::from_shape_vec((num_features + 1, num_groups), weights.to_vec())
+            .expect("shape and weights length match");
+        Ok(LinearModel::new(arr))
     }
 
     /// Internal: Convert to forest with optional DART weights.

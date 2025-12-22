@@ -70,34 +70,6 @@ impl LinearModel {
         }
     }
 
-    /// Create a linear model from a flat slice.
-    ///
-    /// This is used for loading models from formats that store weights as
-    /// contiguous arrays (e.g., XGBoost JSON).
-    ///
-    /// # Arguments
-    ///
-    /// * `weights` - Flat weight slice in row-major order `[n_features+1, n_groups]`
-    /// * `n_features` - Number of input features
-    /// * `n_groups` - Number of output groups
-    ///
-    /// # Panics
-    ///
-    /// Panics if `weights.len() != (n_features + 1) * n_groups`.
-    pub fn from_flat(weights: &[f32], n_features: usize, n_groups: usize) -> Self {
-        let expected_len = (n_features + 1) * n_groups;
-        assert_eq!(
-            weights.len(),
-            expected_len,
-            "weights length mismatch: expected {}, got {}",
-            expected_len,
-            weights.len()
-        );
-        let arr = Array2::from_shape_vec((n_features + 1, n_groups), weights.to_vec())
-            .expect("shape and weights length match");
-        Self::new(arr)
-    }
-
     /// Number of input features.
     #[inline]
     pub fn n_features(&self) -> usize {

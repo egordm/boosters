@@ -7,9 +7,11 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
-use boosters::data::{ColMatrix, Dataset, DenseMatrix, RowMajor};
+use boosters::data::{transpose_to_c_order, Dataset, FeaturesView};
 use boosters::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
 use boosters::training::{GBLinearParams, GBLinearTrainer, Rmse, SquaredLoss, Verbosity};
+
+use ndarray::ArrayView2;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
@@ -38,9 +40,15 @@ const LARGE: (usize, usize) = (100_000, 200);
 // Helpers
 // =============================================================================
 
-fn build_col_matrix(features_row_major: Vec<f32>, rows: usize, cols: usize) -> ColMatrix<f32> {
-    let row: DenseMatrix<f32, RowMajor> = DenseMatrix::from_vec(features_row_major, rows, cols);
-    row.to_layout()
+fn build_features_array(features_row_major: &[f32], rows: usize, cols: usize) -> ndarray::Array2<f32> {
+    let sample_major_view = ArrayView2::from_shape((rows, cols), features_row_major).unwrap();
+    transpose_to_c_order(sample_major_view)
+}
+
+fn build_dataset(features_row_major: &[f32], rows: usize, cols: usize, targets: Vec<f32>) -> Dataset {
+    let features_fm = build_features_array(features_row_major, rows, cols);
+    let features_view = FeaturesView::from_array(features_fm.view());
+    Dataset::from_numeric(&features_view, targets).unwrap()
 }
 
 // =============================================================================
@@ -68,8 +76,7 @@ fn bench_gblinear_regression(c: &mut Criterion) {
         // =====================================================================
         // booste-rs GBLinear
         // =====================================================================
-        let col_matrix = build_col_matrix(features.clone(), rows, cols);
-        let dataset = Dataset::from_numeric(&col_matrix, targets.clone()).unwrap();
+        let dataset = build_dataset(&features, rows, cols, targets.clone());
 
         let params = GBLinearParams {
             n_rounds,
@@ -157,8 +164,7 @@ fn bench_gblinear_classification(c: &mut Criterion) {
     // =========================================================================
     // booste-rs GBLinear (binary classification)
     // =========================================================================
-    let col_matrix = build_col_matrix(features.clone(), rows, cols);
-    let dataset = Dataset::from_numeric(&col_matrix, targets.clone()).unwrap();
+    let dataset = build_dataset(&features, rows, cols, targets.clone());
 
     let params = GBLinearParams {
         n_rounds,

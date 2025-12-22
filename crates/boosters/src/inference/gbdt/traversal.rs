@@ -163,41 +163,8 @@ impl TreeTraversal<ScalarLeaf> for StandardTraversal {
         _state: &Self::TreeState,
         features: &[f32],
     ) -> NodeId {
-        let mut idx = 0u32;
-
-        while !tree.is_leaf(idx) {
-            let feat_idx = tree.split_index(idx) as usize;
-            let fvalue = features.get(feat_idx).copied().unwrap_or(f32::NAN);
-
-            idx = if fvalue.is_nan() {
-                // Missing value: use default direction
-                if tree.default_left(idx) {
-                    tree.left_child(idx)
-                } else {
-                    tree.right_child(idx)
-                }
-            } else {
-                match tree.split_type(idx) {
-                    SplitType::Numeric => {
-                        if fvalue < tree.split_threshold(idx) {
-                            tree.left_child(idx)
-                        } else {
-                            tree.right_child(idx)
-                        }
-                    }
-                    SplitType::Categorical => {
-                        let category = float_to_category(fvalue);
-                        if tree.categories().category_goes_right(idx, category) {
-                            tree.right_child(idx)
-                        } else {
-                            tree.left_child(idx)
-                        }
-                    }
-                }
-            };
-        }
-
-       idx
+        // Delegate to the shared traversal helper
+        traverse_from_node(tree, 0, features)
     }
 }
 

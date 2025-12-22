@@ -5,13 +5,13 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
-use boosters::data::{binned::BinnedDatasetBuilder, ColMatrix, DenseMatrix, RowMajor};
+use boosters::data::{binned::BinnedDatasetBuilder, transpose_to_c_order, FeaturesView};
 use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
 use boosters::testing::data::{random_dense_f32, split_indices, synthetic_regression_targets_linear};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
 
-use ndarray::{Array2, ArrayView1};
+use ndarray::{Array2, ArrayView1, ArrayView2};
 
 use common::select::{select_rows_row_major, select_targets};
 
@@ -30,9 +30,11 @@ fn bench_train_then_predict_regression(c: &mut Criterion) {
 	let y_train = select_targets(&targets, &train_idx);
 	let x_valid = select_rows_row_major(&features, rows, cols, &valid_idx);
 
-	let row_train: DenseMatrix<f32, RowMajor> = DenseMatrix::from_vec(x_train, train_idx.len(), cols);
-	let col_train: ColMatrix<f32> = row_train.to_layout();
-	let binned_train = BinnedDatasetBuilder::from_matrix(&col_train, 256).build().unwrap();
+	// Build binned dataset for training
+	let sample_major_view = ArrayView2::from_shape((train_idx.len(), cols), &x_train).unwrap();
+	let features_fm = transpose_to_c_order(sample_major_view);
+	let features_view = FeaturesView::from_array(features_fm.view());
+	let binned_train = BinnedDatasetBuilder::from_matrix(&features_view, 256).build().unwrap();
 
 	let valid_array = Array2::from_shape_vec((valid_idx.len(), cols), x_valid).unwrap();
 

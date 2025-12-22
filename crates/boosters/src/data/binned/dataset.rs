@@ -416,11 +416,11 @@ impl BinnedDataset {
     /// }
     /// ```
     #[inline]
-    pub fn row_view(&self, row: usize) -> Option<RowView<'_>> {
+    pub fn row_view(&self, row: usize) -> Option<BinnedSampleSlice<'_>> {
         if row >= self.n_rows {
             return None;
         }
-        Some(RowView { dataset: self, row })
+        Some(BinnedSampleSlice { dataset: self, row })
     }
 }
 
@@ -441,12 +441,12 @@ impl BinnedDataset {
 /// let is_missing = row_view.is_missing(feature_idx);
 /// ```
 #[derive(Clone, Copy, Debug)]
-pub struct RowView<'a> {
+pub struct BinnedSampleSlice<'a> {
     dataset: &'a BinnedDataset,
     row: usize,
 }
 
-impl<'a> RowView<'a> {
+impl<'a> BinnedSampleSlice<'a> {
     /// Get the bin value for a feature.
     ///
     /// Returns `Some(bin)` for dense features, `None` for sparse features
