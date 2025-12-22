@@ -3,6 +3,7 @@
 //! SHAP values for linear models have a closed-form solution:
 //! shap[i] = weight[i] * (x[i] - mean[i])
 
+use crate::data::SamplesView;
 use crate::explainability::shap::ShapValues;
 use crate::explainability::ExplainError;
 use crate::repr::gblinear::LinearModel;
@@ -47,7 +48,7 @@ impl<'a> LinearExplainer<'a> {
     ///
     /// For linear models: `E[f(x)] = sum(w[i] * mean[i]) + bias`
     pub fn base_value(&self, output: usize) -> f64 {
-        let weights = self.model.weights();
+        let weights = self.model.as_slice();
         let n_features = self.model.n_features();
         let n_groups = self.model.n_groups();
 
@@ -64,20 +65,21 @@ impl<'a> LinearExplainer<'a> {
     /// Compute SHAP values for a batch of samples.
     ///
     /// # Arguments
-    /// * `data` - Feature matrix, row-major [n_samples × n_features]
-    /// * `n_samples` - Number of samples
+    /// * `data` - Feature matrix with shape `[n_samples, n_features]` (sample-major layout)
     ///
     /// # Returns
-    /// ShapValues container with per-sample, per-feature SHAP contributions.
-    pub fn shap_values(&self, data: &[f32], n_samples: usize) -> ShapValues {
+    /// ShapValues container with shape `[n_samples, n_features + 1, n_outputs]`.
+    pub fn shap_values(&self, data: SamplesView<'_>) -> ShapValues {
+        let n_samples = data.n_samples();
         let n_features = self.model.n_features();
         let n_outputs = self.model.n_groups();
         let mut shap = ShapValues::new(n_samples, n_features, n_outputs);
 
-        let weights = self.model.weights();
+        let weights = self.model.as_slice();
+        let data_arr = data.as_array();
 
         for sample_idx in 0..n_samples {
-            let features = &data[sample_idx * n_features..(sample_idx + 1) * n_features];
+            let features = data_arr.row(sample_idx);
 
             for output in 0..n_outputs {
                 // Set base value
@@ -150,9 +152,10 @@ mod tests {
         let means = vec![1.0, 2.0];
         let explainer = LinearExplainer::new(&model, means).unwrap();
 
-        // Sample: x = [3.0, 4.0]
+        // Sample: x = [3.0, 4.0] - sample-major layout [n_samples=1, n_features=2]
         let data = vec![3.0f32, 4.0f32];
-        let shap = explainer.shap_values(&data, 1);
+        let view = SamplesView::from_slice(&data, 1, 2).unwrap();
+        let shap = explainer.shap_values(view);
 
         // shap[0] = 2 * (3 - 1) = 4
         // shap[1] = 3 * (4 - 2) = 6
@@ -169,7 +172,8 @@ mod tests {
         // Sample: x = [3.0, 4.0]
         // Prediction: 2*3 + 3*4 + 0.5 = 18.5
         let data = vec![3.0f32, 4.0f32];
-        let shap = explainer.shap_values(&data, 1);
+        let view = SamplesView::from_slice(&data, 1, 2).unwrap();
+        let shap = explainer.shap_values(view);
 
         let sum: f64 = (0..2).map(|f| shap.get(0, f, 0)).sum();
         let base = shap.base_value(0, 0);
@@ -194,11 +198,14 @@ mod tests {
         let explainer = LinearExplainer::new(&model, means).unwrap();
 
         let data = vec![3.0f32, 4.0f32];
-        let shap = explainer.shap_values(&data, 1);
+        let view = SamplesView::from_slice(&data, 1, 2).unwrap();
+        let shap = explainer.shap_values(view);
 
         // The prediction from model (base_score = 0.0)
         let base_score = vec![0.0f32];
-        let prediction = model.predict_row(&data, &base_score)[0] as f64;
+        let mut output = [0.0f32; 1];
+        model.predict_row_into(&data, &base_score, &mut output);
+        let prediction = output[0] as f64;
 
         // Verify the sum property
         let predictions = vec![prediction];

@@ -3,74 +3,73 @@
 //! Stores SHAP values for a batch of samples with proper indexing
 //! and verification utilities.
 
+use ndarray::{Array3, ArrayView3, ArrayViewMut3, s};
+
 /// Container for SHAP values.
 ///
-/// Stores per-sample, per-feature, per-output SHAP contributions.
-/// Layout is [samples × (features + 1) × outputs] where +1 is for base value.
+/// Wraps a 3D array with shape `[n_samples, n_features + 1, n_outputs]`.
+/// The last feature slot (index `n_features`) stores the base value.
+///
+/// # Data Layout
+///
+/// - Axis 0: Samples (batch dimension)
+/// - Axis 1: Features + base value (n_features slots, then 1 base value slot)
+/// - Axis 2: Outputs (1 for regression, n_classes for multiclass)
 #[derive(Clone, Debug)]
-pub struct ShapValues {
-    /// Flat storage: [sample][feature + base][output]
-    values: Vec<f64>,
-    /// Number of samples
-    n_samples: usize,
-    /// Number of features (not including base value)
-    n_features: usize,
-    /// Number of outputs (1 for regression, n_classes for multiclass)
-    n_outputs: usize,
-}
+pub struct ShapValues(Array3<f64>);
 
 impl ShapValues {
     /// Create a new ShapValues container initialized to zeros.
+    ///
+    /// # Arguments
+    /// * `n_samples` - Number of samples
+    /// * `n_features` - Number of features (not including base value)
+    /// * `n_outputs` - Number of outputs (1 for regression, n_classes for multiclass)
     pub fn new(n_samples: usize, n_features: usize, n_outputs: usize) -> Self {
-        // Layout: features first, then base value at the end
-        let values = vec![0.0; n_samples * (n_features + 1) * n_outputs];
-        Self { values, n_samples, n_features, n_outputs }
+        Self(Array3::zeros((n_samples, n_features + 1, n_outputs)))
+    }
+
+    /// Create ShapValues from an existing array.
+    ///
+    /// Shape must be `[n_samples, n_features + 1, n_outputs]`.
+    pub fn from_array(arr: Array3<f64>) -> Self {
+        Self(arr)
     }
 
     /// Number of samples.
     #[inline]
     pub fn n_samples(&self) -> usize {
-        self.n_samples
+        self.0.dim().0
     }
 
     /// Number of features (not including base value).
     #[inline]
     pub fn n_features(&self) -> usize {
-        self.n_features
+        self.0.dim().1 - 1
     }
 
     /// Number of outputs.
     #[inline]
     pub fn n_outputs(&self) -> usize {
-        self.n_outputs
-    }
-
-    /// Get the index into the flat array.
-    #[inline]
-    fn index(&self, sample: usize, feature: usize, output: usize) -> usize {
-        sample * (self.n_features + 1) * self.n_outputs
-            + feature * self.n_outputs
-            + output
+        self.0.dim().2
     }
 
     /// Get SHAP value for a specific sample, feature, and output.
     #[inline]
     pub fn get(&self, sample: usize, feature: usize, output: usize) -> f64 {
-        self.values[self.index(sample, feature, output)]
+        self.0[[sample, feature, output]]
     }
 
     /// Set SHAP value for a specific sample, feature, and output.
     #[inline]
     pub fn set(&mut self, sample: usize, feature: usize, output: usize, value: f64) {
-        let idx = self.index(sample, feature, output);
-        self.values[idx] = value;
+        self.0[[sample, feature, output]] = value;
     }
 
     /// Add to SHAP value for a specific sample, feature, and output.
     #[inline]
     pub fn add(&mut self, sample: usize, feature: usize, output: usize, delta: f64) {
-        let idx = self.index(sample, feature, output);
-        self.values[idx] += delta;
+        self.0[[sample, feature, output]] += delta;
     }
 
     /// Get the base value (expected value) for a sample and output.
@@ -78,29 +77,29 @@ impl ShapValues {
     /// Base value is stored at feature index = n_features.
     #[inline]
     pub fn base_value(&self, sample: usize, output: usize) -> f64 {
-        self.get(sample, self.n_features, output)
+        self.get(sample, self.n_features(), output)
     }
 
     /// Set the base value for a sample and output.
     #[inline]
     pub fn set_base_value(&mut self, sample: usize, output: usize, value: f64) {
-        self.set(sample, self.n_features, output, value);
+        let n_features = self.n_features();
+        self.set(sample, n_features, output, value);
     }
 
     /// Get all SHAP values for a single sample (including base).
     ///
-    /// Returns a slice of length (n_features + 1) * n_outputs.
-    pub fn sample(&self, sample_idx: usize) -> &[f64] {
-        let start = sample_idx * (self.n_features + 1) * self.n_outputs;
-        let end = start + (self.n_features + 1) * self.n_outputs;
-        &self.values[start..end]
+    /// Returns a view of shape `[n_features + 1, n_outputs]`.
+    pub fn sample(&self, sample_idx: usize) -> ndarray::ArrayView2<'_, f64> {
+        self.0.slice(s![sample_idx, .., ..])
     }
 
     /// Get feature SHAP values only (excluding base) for a sample and output.
     ///
     /// Returns a Vec since values are not contiguous.
     pub fn feature_shap(&self, sample_idx: usize, output: usize) -> Vec<f64> {
-        (0..self.n_features)
+        let n_features = self.n_features();
+        (0..n_features)
             .map(|f| self.get(sample_idx, f, output))
             .collect()
     }
@@ -111,18 +110,22 @@ impl ShapValues {
     ///
     /// Returns `true` if all samples are within tolerance.
     pub fn verify(&self, predictions: &[f64], tolerance: f64) -> bool {
-        if predictions.len() != self.n_samples * self.n_outputs {
+        let n_samples = self.n_samples();
+        let n_features = self.n_features();
+        let n_outputs = self.n_outputs();
+
+        if predictions.len() != n_samples * n_outputs {
             return false;
         }
 
-        for sample in 0..self.n_samples {
-            for output in 0..self.n_outputs {
+        for sample in 0..n_samples {
+            for output in 0..n_outputs {
                 let mut sum = self.base_value(sample, output);
-                for feature in 0..self.n_features {
+                for feature in 0..n_features {
                     sum += self.get(sample, feature, output);
                 }
 
-                let pred = predictions[sample * self.n_outputs + output];
+                let pred = predictions[sample * n_outputs + output];
                 if (sum - pred).abs() > tolerance {
                     return false;
                 }
@@ -131,22 +134,31 @@ impl ShapValues {
         true
     }
 
-    /// Get the raw values slice.
-    pub fn values(&self) -> &[f64] {
-        &self.values
+    /// Get the underlying array view.
+    pub fn as_array(&self) -> ArrayView3<'_, f64> {
+        self.0.view()
     }
 
-    /// Convert to a 3D representation for Python/NumPy.
-    ///
-    /// Returns (data, shape) where shape is (n_samples, n_features + 1, n_outputs).
-    pub fn to_3d(&self) -> (&[f64], (usize, usize, usize)) {
-        (&self.values, (self.n_samples, self.n_features + 1, self.n_outputs))
+    /// Get mutable access to the underlying array.
+    pub fn as_array_mut(&mut self) -> ArrayViewMut3<'_, f64> {
+        self.0.view_mut()
+    }
+
+    /// Get the raw values slice (if contiguous).
+    pub fn as_slice(&self) -> Option<&[f64]> {
+        self.0.as_slice()
+    }
+
+    /// Get shape as (n_samples, n_features + 1, n_outputs).
+    pub fn shape(&self) -> (usize, usize, usize) {
+        self.0.dim()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ndarray::array;
 
     #[test]
     fn test_new() {
@@ -154,7 +166,7 @@ mod tests {
         assert_eq!(shap.n_samples(), 10);
         assert_eq!(shap.n_features(), 5);
         assert_eq!(shap.n_outputs(), 1);
-        assert_eq!(shap.values().len(), 10 * 6 * 1);
+        assert_eq!(shap.shape(), (10, 6, 1)); // 5 features + 1 base
     }
 
     #[test]
@@ -193,7 +205,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sample_slice() {
+    fn test_sample_view() {
         let mut shap = ShapValues::new(2, 2, 1);
         
         // Sample 0: features [1.0, 2.0], base 3.0
@@ -202,7 +214,8 @@ mod tests {
         shap.set_base_value(0, 0, 3.0);
         
         let sample = shap.sample(0);
-        assert_eq!(sample, &[1.0, 2.0, 3.0]);
+        let expected = array![[1.0], [2.0], [3.0]];
+        assert_eq!(sample, expected);
     }
 
     #[test]
@@ -268,11 +281,8 @@ mod tests {
     }
 
     #[test]
-    fn test_to_3d() {
+    fn test_shape() {
         let shap = ShapValues::new(2, 3, 1);
-        let (data, shape) = shap.to_3d();
-        
-        assert_eq!(shape, (2, 4, 1));  // 3 features + 1 base
-        assert_eq!(data.len(), 2 * 4 * 1);
+        assert_eq!(shap.shape(), (2, 4, 1)); // 3 features + 1 base
     }
 }

@@ -3,7 +3,7 @@
 use ndarray::{ArrayView1, ArrayView2, ArrayViewMut2};
 
 use super::{ObjectiveFn, TargetSchema, TaskKind};
-use crate::inference::common::PredictionKind;
+use crate::inference::PredictionKind;
 use crate::training::GradsTuple;
 use crate::utils::weight_iter;
 

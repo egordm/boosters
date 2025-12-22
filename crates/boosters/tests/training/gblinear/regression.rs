@@ -134,7 +134,9 @@ fn trained_model_predictions_reasonable() {
     for i in 0..5 {
         let x = (i + 1) as f32;
         let expected = 2.0 * x + 1.0;
-        let pred = model.predict_row(&[x], &[0.0])[0];
+        let mut output = [0.0f32; 1];
+        model.predict_row_into(&[x], &[0.0], &mut output);
+        let pred = output[0];
         let diff = (pred - expected).abs();
         assert!(
             diff < 0.5,
@@ -181,8 +183,12 @@ fn parallel_vs_sequential_similar() {
     let par_model = trainer_par.train(&train, &[]).unwrap();
 
     // Predictions should be similar
-    let seq_pred = seq_model.predict_row(&[2.0, 2.0], &[0.0])[0];
-    let par_pred = par_model.predict_row(&[2.0, 2.0], &[0.0])[0];
+    let mut seq_output = [0.0f32; 1];
+    let mut par_output = [0.0f32; 1];
+    seq_model.predict_row_into(&[2.0, 2.0], &[0.0], &mut seq_output);
+    par_model.predict_row_into(&[2.0, 2.0], &[0.0], &mut par_output);
+    let seq_pred = seq_output[0];
+    let par_pred = par_output[0];
 
     let diff = (seq_pred - par_pred).abs();
     assert!(

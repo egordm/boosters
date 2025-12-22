@@ -12,7 +12,7 @@ use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::FeaturesView;
 use boosters::training::{GBDTParams, GBDTTrainer, GradsTuple, GrowthStrategy, Rmse, TargetSchema};
 use boosters::{ObjectiveFn, Parallelism, TaskKind};
-use boosters::inference::common::PredictionKind;
+use boosters::inference::PredictionKind;
 use ndarray::{Array2, ArrayView1, ArrayView2, ArrayViewMut2};
 
 /// A custom objective: Huber loss with delta=1.0

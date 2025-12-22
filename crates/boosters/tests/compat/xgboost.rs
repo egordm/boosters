@@ -309,7 +309,8 @@ fn predict_gblinear_regression() {
 
     let expected_preds = expected.as_flat();
     for (i, features) in input.to_f32_rows().iter().enumerate() {
-        let pred = linear.predict_row(features, &[base_score]);
+        let mut pred = [0.0f32; 1];
+        linear.predict_row_into(features, &[base_score], &mut pred);
         assert_preds_match(&pred, &[expected_preds[i]], DEFAULT_TOLERANCE_F64, &format!("row {i}"));
     }
 }
@@ -330,7 +331,8 @@ fn predict_gblinear_binary() {
 
     let expected_preds = expected.as_flat();
     for (i, features) in input.to_f32_rows().iter().enumerate() {
-        let pred = linear.predict_row(features, &[margin_base_score]);
+        let mut pred = [0.0f32; 1];
+        linear.predict_row_into(features, &[margin_base_score], &mut pred);
         assert_preds_match(&pred, &[expected_preds[i]], DEFAULT_TOLERANCE_F64, &format!("row {i}"));
     }
 }
@@ -351,7 +353,8 @@ fn predict_gblinear_multiclass() {
 
     let expected_preds = expected.as_nested();
     for (i, features) in input.to_f32_rows().iter().enumerate() {
-        let pred = linear.predict_row(features, &base_scores);
+        let mut pred = vec![0.0f32; num_class];
+        linear.predict_row_into(features, &base_scores, &mut pred);
         assert_eq!(pred.len(), num_class);
         assert_preds_match(&pred, &expected_preds[i], DEFAULT_TOLERANCE_F64, &format!("row {i}"));
     }

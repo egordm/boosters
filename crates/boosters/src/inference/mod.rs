@@ -5,7 +5,7 @@
 //!
 //! # Module Structure
 //!
-//! - [`common`]: Shared types (`PredictionKind`, `Predictions`)
+//! - [`predictions`]: Semantic prediction wrappers (`PredictionKind`, `Predictions`)
 //! - [`gbdt`]: Tree ensemble inference (predictors, traversal strategies)
 //!
 //! # Quick Start
@@ -24,11 +24,11 @@
 //! let output = predictor.predict(&features);
 //! ```
 
-pub mod common;
+mod predictions;
 pub mod gbdt;
 
 // Re-export commonly used inference types
-pub use common::{PredictionKind, Predictions};
+pub use predictions::{PredictionKind, Predictions};
 pub use gbdt::{
     Predictor, SimplePredictor, UnrolledPredictor6,
     StandardTraversal, UnrolledTraversal, UnrolledTraversal6, TreeTraversal,

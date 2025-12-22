@@ -216,15 +216,21 @@ impl GBLinearModel {
     ///
     /// Linear SHAP: `shap[i] = w[i] * (x[i] - mean[i])`.
     /// Pass `None` for `feature_means` to assume centered data (zero means).
+    ///
+    /// # Arguments
+    /// * `features` - Feature matrix with shape `[n_samples, n_features]` (sample-major layout)
+    /// * `feature_means` - Optional feature means for background distribution
+    ///
+    /// # Returns
+    /// ShapValues container with shape `[n_samples, n_features + 1, n_outputs]`.
     pub fn shap_values(
         &self,
-        features: &[f32],
-        n_samples: usize,
+        features: SamplesView<'_>,
         feature_means: Option<Vec<f64>>,
     ) -> Result<crate::explainability::ShapValues, crate::explainability::ExplainError> {
         let means = feature_means.unwrap_or_else(|| vec![0.0; self.meta.n_features]);
         let explainer = crate::explainability::LinearExplainer::new(&self.model, means)?;
-        Ok(explainer.shap_values(features, n_samples))
+        Ok(explainer.shap_values(features))
     }
 }
 
@@ -318,10 +324,11 @@ mod tests {
         let meta = ModelMeta::for_regression(2);
         let model = GBLinearModel::from_linear_model(linear, meta);
 
-        // Test with means
+        // Test with means - sample-major layout [n_samples=1, n_features=2]
         let features = vec![1.0, 2.0];
+        let view = SamplesView::from_slice(&features, 1, 2).unwrap();
         let means = vec![0.5, 1.0]; // Centered around different values
-        let shap = model.shap_values(&features, 1, Some(means)).unwrap();
+        let shap = model.shap_values(view, Some(means)).unwrap();
 
         assert_eq!(shap.n_samples(), 1);
         assert_eq!(shap.n_features(), 2);
@@ -340,8 +347,9 @@ mod tests {
         let model = GBLinearModel::from_linear_model(linear, meta);
 
         let features = vec![1.0, 2.0];
+        let view = SamplesView::from_slice(&features, 1, 2).unwrap();
         // Use None for zero means (centered data assumption)
-        let shap = model.shap_values(&features, 1, None).unwrap();
+        let shap = model.shap_values(view, None).unwrap();
 
         assert_eq!(shap.n_samples(), 1);
         assert_eq!(shap.n_features(), 2);

@@ -48,7 +48,7 @@ pub use classification::{Accuracy, Auc, LogLoss, MarginAccuracy, MulticlassAccur
 use ndarray::{ArrayView1, ArrayView2};
 pub use regression::{HuberMetric, Mae, Mape, PoissonDeviance, QuantileMetric, Rmse};
 
-use crate::inference::common::PredictionKind;
+use crate::inference::PredictionKind;
 
 // =============================================================================
 // Metric Enum (Convenience wrapper)

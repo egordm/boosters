@@ -3,6 +3,7 @@
 //! Implements the TreeSHAP algorithm from Lundberg et al. (2020):
 //! "From local explanations to global understanding with explainable AI for trees"
 
+use crate::data::SamplesView;
 use crate::explainability::shap::{PathState, ShapValues};
 use crate::explainability::ExplainError;
 use crate::repr::gbdt::tree::TreeView;
@@ -63,18 +64,13 @@ impl<'a> TreeExplainer<'a> {
     /// Compute SHAP values for a batch of samples.
     ///
     /// # Arguments
-    /// * `data` - Feature matrix, row-major [n_samples × n_features]
-    /// * `n_samples` - Number of samples
-    /// * `n_features` - Number of features
+    /// * `data` - Feature matrix with shape `[n_samples, n_features]` (sample-major layout)
     ///
     /// # Returns
-    /// ShapValues container with per-sample, per-feature SHAP contributions.
-    pub fn shap_values(
-        &self,
-        data: &[f32],
-        n_samples: usize,
-        n_features: usize,
-    ) -> ShapValues {
+    /// ShapValues container with shape `[n_samples, n_features + 1, n_outputs]`.
+    pub fn shap_values(&self, data: SamplesView<'_>) -> ShapValues {
+        let n_samples = data.n_samples();
+        let n_features = data.n_features();
         let n_outputs = self.forest.n_groups() as usize;
         let mut shap = ShapValues::new(n_samples, n_features, n_outputs);
 
@@ -86,10 +82,12 @@ impl<'a> TreeExplainer<'a> {
             .max()
             .unwrap_or(10);
 
+        let data_arr = data.as_array();
+
         // Process each sample
         for sample_idx in 0..n_samples {
-            let features = &data[sample_idx * n_features..(sample_idx + 1) * n_features];
-            self.shap_for_sample(&mut shap, sample_idx, features, max_depth);
+            let features = data_arr.row(sample_idx);
+            self.shap_for_sample(&mut shap, sample_idx, features.as_slice().unwrap(), max_depth);
         }
 
         // Set base values
@@ -277,13 +275,14 @@ mod tests {
         let forest = make_simple_forest_with_stats();
         let explainer = TreeExplainer::new(&forest).unwrap();
 
-        // 2 samples, 3 features
+        // 2 samples, 3 features - sample-major layout
         let data = vec![
             0.3, 0.5, 0.7, // sample 0 (goes left, leaf=-1)
             0.7, 0.3, 0.1, // sample 1 (goes right, leaf=1)
         ];
+        let view = SamplesView::from_slice(&data, 2, 3).unwrap();
 
-        let shap = explainer.shap_values(&data, 2, 3);
+        let shap = explainer.shap_values(view);
 
         assert_eq!(shap.n_samples(), 2);
         assert_eq!(shap.n_features(), 3);
@@ -297,7 +296,8 @@ mod tests {
 
         // Single sample, goes left (feature 0 = 0.3 < 0.5)
         let data = vec![0.3, 0.5, 0.7];
-        let shap = explainer.shap_values(&data, 1, 3);
+        let view = SamplesView::from_slice(&data, 1, 3).unwrap();
+        let shap = explainer.shap_values(view);
 
         // Sum SHAP values + base should equal prediction (-1.0)
         let sum: f64 = (0..3).map(|f| shap.get(0, f, 0)).sum();

@@ -40,7 +40,7 @@ mod regression;
 pub use classification::{HingeLoss, LambdaRankLoss, LogisticLoss, SoftmaxLoss};
 pub use regression::{AbsoluteLoss, PinballLoss, PoissonLoss, PseudoHuberLoss, SquaredLoss};
 
-use crate::inference::common::PredictionKind;
+use crate::inference::PredictionKind;
 use crate::training::GradsTuple;
 use ndarray::{ArrayView1, ArrayView2, ArrayViewMut2};
 

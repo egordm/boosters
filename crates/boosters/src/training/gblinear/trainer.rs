@@ -443,8 +443,11 @@ mod tests {
         let model = trainer.train(&train, &[]).unwrap();
 
         // Check predictions
-        let pred1 = model.predict_row(&[1.0], &[0.0])[0];
-        let pred2 = model.predict_row(&[2.0], &[0.0])[0];
+        let mut output = [0.0f32; 1];
+        model.predict_row_into(&[1.0], &[0.0], &mut output);
+        let pred1 = output[0];
+        model.predict_row_into(&[2.0], &[0.0], &mut output);
+        let pred2 = output[0];
 
         assert!((pred1 - 3.0).abs() < 0.5);
         assert!((pred2 - 5.0).abs() < 0.5);
@@ -554,8 +557,10 @@ mod tests {
         assert_eq!(model.n_groups(), 3);
 
         // Verify model produces different outputs for different classes
-        let preds0 = model.predict_row(&[2.0, 1.0], &[0.0, 0.0, 0.0]);
-        let preds1 = model.predict_row(&[0.0, 1.0], &[0.0, 0.0, 0.0]);
+        let mut preds0 = [0.0f32; 3];
+        let mut preds1 = [0.0f32; 3];
+        model.predict_row_into(&[2.0, 1.0], &[0.0, 0.0, 0.0], &mut preds0);
+        model.predict_row_into(&[0.0, 1.0], &[0.0, 0.0, 0.0], &mut preds1);
 
         let diff: f32 = preds0
             .iter()

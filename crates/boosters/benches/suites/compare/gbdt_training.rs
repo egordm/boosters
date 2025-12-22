@@ -10,13 +10,14 @@ use common::criterion_config::default_criterion;
 
 use boosters::data::{
     binned::BinnedDatasetBuilder,
+    transpose_to_c_order,
     FeaturesView,
 };
 use boosters::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
 
-use ndarray::{Array2, ArrayView1};
+use ndarray::{ArrayView1, ArrayView2};
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
@@ -42,22 +43,6 @@ const SMALL: (usize, usize) = (5_000, 50);
 const MEDIUM: (usize, usize) = (50_000, 100);
 
 // =============================================================================
-// Helpers
-// =============================================================================
-
-/// Convert row-major features to column-major ndarray for FeaturesView.
-fn to_feature_major(features_row_major: &[f32], rows: usize, cols: usize) -> Array2<f32> {
-    // Row-major [rows, cols] → Feature-major [cols, rows]
-    let mut arr = Array2::zeros((cols, rows));
-    for r in 0..rows {
-        for c in 0..cols {
-            arr[[c, r]] = features_row_major[r * cols + c];
-        }
-    }
-    arr
-}
-
-// =============================================================================
 // Training Comparison Benchmarks
 // =============================================================================
 
@@ -77,8 +62,9 @@ fn bench_train_regression(c: &mut Criterion) {
 		// =====================================================================
 		// booste-rs
 		// =====================================================================
-		// Pre-convert to feature-major layout - users would store data in optimal format
-		let features_fm = to_feature_major(&features, rows, cols);
+		// Create sample-major view from flat slice, then transpose to feature-major
+		let sample_major_view = ArrayView2::from_shape((rows, cols), &features).unwrap();
+		let features_fm = transpose_to_c_order(sample_major_view);
 		let features_view = FeaturesView::from_array(features_fm.view());
 
 		let params = GBDTParams {

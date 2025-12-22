@@ -6,7 +6,7 @@
 use ndarray::{Array2, ArrayView1, ArrayView2};
 
 use crate::data::Dataset;
-use crate::inference::common::PredictionKind;
+use crate::inference::PredictionKind;
 
 use super::metrics::MetricFn;
 use super::objectives::ObjectiveFn;

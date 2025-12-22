@@ -5,7 +5,7 @@
 use ndarray::{ArrayView1, ArrayView2};
 
 use super::MetricFn;
-use crate::inference::common::PredictionKind;
+use crate::inference::PredictionKind;
 use crate::utils::weight_iter;
 
 // =============================================================================

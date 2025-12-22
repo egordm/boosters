@@ -263,13 +263,18 @@ impl GBDTModel {
     /// Compute SHAP values for a batch of samples.
     ///
     /// Requires cover statistics (returns `ExplainError::MissingNodeStats` if missing).
+    ///
+    /// # Arguments
+    /// * `features` - Feature matrix with shape `[n_samples, n_features]` (sample-major layout)
+    ///
+    /// # Returns
+    /// ShapValues container with shape `[n_samples, n_features + 1, n_outputs]`.
     pub fn shap_values(
         &self,
-        features: &[f32],
-        n_samples: usize,
+        features: crate::data::SamplesView<'_>,
     ) -> Result<crate::explainability::ShapValues, crate::explainability::ExplainError> {
         let explainer = crate::explainability::TreeExplainer::new(&self.forest)?;
-        Ok(explainer.shap_values(features, n_samples, self.meta.n_features))
+        Ok(explainer.shap_values(features))
     }
 }
 
@@ -434,6 +439,7 @@ mod tests {
 
     #[test]
     fn shap_values() {
+        use crate::data::SamplesView;
         use crate::explainability::ExplainError;
 
         // Forest with covers
@@ -452,7 +458,8 @@ mod tests {
 
         // Compute SHAP values
         let features = vec![0.3, 0.7]; // goes left
-        let shap = model.shap_values(&features, 1);
+        let view = SamplesView::from_slice(&features, 1, 2).unwrap();
+        let shap = model.shap_values(view);
         assert!(shap.is_ok());
 
         let shap = shap.unwrap();
@@ -469,8 +476,9 @@ mod tests {
         forest2.push_tree(tree2, 0);
         let model2 = GBDTModel::from_forest(forest2, ModelMeta::for_regression(2));
 
+        let view2 = SamplesView::from_slice(&features, 1, 2).unwrap();
         assert!(matches!(
-            model2.shap_values(&features, 1),
+            model2.shap_values(view2),
             Err(ExplainError::MissingNodeStats(_))
         ));
     }

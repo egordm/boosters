@@ -1,6 +1,6 @@
 //! Linear model data structure.
 
-use ndarray::{s, Array2, ArrayView1, ArrayView2, ArrayViewMut2};
+use ndarray::{s, Array2, ArrayView1, ArrayViewMut2};
 
 use crate::data::{FeaturesView, SamplesView};
 use crate::utils::Parallelism;
@@ -138,57 +138,25 @@ impl LinearModel {
 
     /// Get all biases as a view.
     ///
-    /// Returns a view of length `num_groups`.
+    /// Returns a view of length `n_groups`.
     #[inline]
     pub fn biases(&self) -> ArrayView1<'_, f32> {
         self.weights.row(self.n_features())
     }
 
-    /// Get the weight matrix (excluding bias row).
+    /// Raw access to weights as a flat slice.
     ///
-    /// Returns a view with shape `[n_features, n_groups]`.
+    /// Layout: `[n_features + 1, n_groups]` in row-major order.
+    /// Last row contains biases.
     #[inline]
-    pub fn weight_matrix(&self) -> ArrayView2<'_, f32> {
-        self.weights.slice(s![..self.n_features(), ..])
+    pub fn as_slice(&self) -> &[f32] {
+        self.weights.as_slice().expect("weights should be contiguous")
     }
 
-    /// Get mutable access to the weight matrix (excluding bias row).
-    ///
-    /// Returns a mutable view with shape `[n_features, n_groups]`.
+    /// Mutable access to weights as a flat slice.
     #[inline]
-    pub fn weight_matrix_mut(&mut self) -> ArrayViewMut2<'_, f32> {
-        let n_features = self.n_features();
-        self.weights.slice_mut(s![..n_features, ..])
-    }
-
-    /// Get the underlying array (for serialization, etc.).
-    #[inline]
-    pub fn as_array(&self) -> ArrayView2<'_, f32> {
-        self.weights.view()
-    }
-
-    /// Get mutable access to the underlying array.
-    #[inline]
-    pub fn as_array_mut(&mut self) -> ArrayViewMut2<'_, f32> {
-        self.weights.view_mut()
-    }
-
-    /// Raw access to weights as a flat slice (for compatibility).
-    ///
-    /// Returns weights in row-major order (feature-major, group-minor).
-    #[inline]
-    pub fn weights(&self) -> &[f32] {
-        self.weights
-            .as_slice()
-            .expect("weights should be contiguous")
-    }
-
-    /// Mutable access to weights as a flat slice (for training compatibility).
-    #[inline]
-    pub fn weights_mut(&mut self) -> &mut [f32] {
-        self.weights
-            .as_slice_mut()
-            .expect("weights should be contiguous")
+    pub fn as_slice_mut(&mut self) -> &mut [f32] {
+        self.weights.as_slice_mut().expect("weights should be contiguous")
     }
 
     /// Set weight for a feature and group.
@@ -223,48 +191,51 @@ impl LinearModel {
 
     /// Predict for a batch of rows.
     ///
-    /// Returns predictions as `Array2<f32>` with shape `(n_samples, n_groups)`.
+    /// Allocates and returns predictions as `Array2<f32>` with shape `[n_samples, n_groups]`.
     ///
     /// # Arguments
     ///
-    /// * `data` - Feature matrix (sample-major layout)
+    /// * `data` - Feature matrix with shape `[n_samples, n_features]` (sample-major)
     /// * `base_score` - Base score to add per group
     pub fn predict(&self, data: SamplesView<'_>, base_score: &[f32]) -> Array2<f32> {
-        self.predict_into(data, base_score, Parallelism::Sequential)
+        let mut output = Array2::zeros((data.n_samples(), self.n_groups()));
+        self.predict_into(data, base_score, Parallelism::Sequential, output.view_mut());
+        output
     }
 
-    /// Predict with explicit parallelism control.
+    /// Predict into a provided output buffer.
     ///
-    /// Returns predictions as `Array2<f32>` with shape `(n_samples, n_groups)`.
+    /// Writes predictions to `output` with shape `[n_samples, n_groups]`.
     ///
     /// # Arguments
     ///
-    /// * `data` - Feature matrix (sample-major layout)
+    /// * `data` - Feature matrix with shape `[n_samples, n_features]` (sample-major)
     /// * `base_score` - Base score to add per group
     /// * `parallelism` - Whether to use parallel execution
+    /// * `output` - Mutable view with shape `[n_samples, n_groups]` to write predictions into
     pub fn predict_into(
         &self,
         data: SamplesView<'_>,
         base_score: &[f32],
         parallelism: Parallelism,
-    ) -> Array2<f32> {
-        // Use ndarray dot product: data [n_samples, n_features] · weights [n_features, n_groups]
-        // → output [n_samples, n_groups]
-        let mut output = data.as_array().dot(&self.weight_matrix());
+        mut output: ArrayViewMut2<'_, f32>,
+    ) {
+        debug_assert_eq!(output.dim(), (data.n_samples(), self.n_groups()));
+
+        // Compute dot product: data [n_samples, n_features] · weights [n_features, n_groups]
+        // ndarray doesn't have in-place gemm, so we compute and assign
+        let weights = self.weights.slice(s![..self.n_features(), ..]);
+        ndarray::linalg::general_mat_mul(1.0, &data.as_array(), &weights, 0.0, &mut output);
 
         // Add biases: output[row, group] += bias[group] + base_score[group]
         let biases = self.biases();
-
         let add_bias = |mut row: ndarray::ArrayViewMut1<f32>| {
             for (group, val) in row.iter_mut().enumerate() {
                 let base = base_score.get(group).copied().unwrap_or(0.0);
                 *val += biases[group] + base;
             }
         };
-
         parallelism.maybe_par_bridge_for_each(output.rows_mut().into_iter(), add_bias);
-
-        output
     }
 
     /// Predict into a column-major buffer.
@@ -295,34 +266,30 @@ impl LinearModel {
         }
     }
 
-    /// Predict for a single row.
+    /// Predict for a single row into a provided buffer.
     ///
-    /// Returns a vector of length `num_groups`.
-    pub fn predict_row(&self, features: &[f32], base_score: &[f32]) -> Vec<f32> {
-        let num_features = self.n_features();
-        let num_groups = self.n_groups();
+    /// Writes `n_groups` predictions to `output`.
+    ///
+    /// # Arguments
+    ///
+    /// * `features` - Feature values for one sample (length >= n_features)
+    /// * `base_score` - Base score to add per group
+    /// * `output` - Buffer to write predictions into (length >= n_groups)
+    pub fn predict_row_into(&self, features: &[f32], base_score: &[f32], output: &mut [f32]) {
+        let n_features = self.n_features();
+        let n_groups = self.n_groups();
 
-        debug_assert!(
-            features.len() >= num_features,
-            "not enough features: got {}, need {}",
-            features.len(),
-            num_features
-        );
+        debug_assert!(features.len() >= n_features);
+        debug_assert!(output.len() >= n_groups);
 
-        let mut outputs = Vec::with_capacity(num_groups);
-
-        for group in 0..num_groups {
+        for group in 0..n_groups {
             let base = base_score.get(group).copied().unwrap_or(0.0);
             let mut sum = base + self.bias(group);
-
-            for (feat_idx, &value) in features.iter().take(num_features).enumerate() {
+            for (feat_idx, &value) in features.iter().take(n_features).enumerate() {
                 sum += value * self.weight(feat_idx, group);
             }
-
-            outputs.push(sum);
+            output[group] = sum;
         }
-
-        outputs
     }
 }
 
@@ -403,8 +370,8 @@ mod tests {
 
         assert_eq!(model.n_features(), 3);
         assert_eq!(model.n_groups(), 2);
-        assert_eq!(model.weights().len(), 8); // (3+1) * 2
-        assert!(model.weights().iter().all(|&w| w == 0.0));
+        assert_eq!(model.as_slice().len(), 8); // (3+1) * 2
+        assert!(model.as_slice().iter().all(|&w| w == 0.0));
     }
 
     #[test]
@@ -427,21 +394,7 @@ mod tests {
     }
 
     #[test]
-    fn weight_matrix_view() {
-        let weights = array![
-            [0.1, 0.2],
-            [0.3, 0.4],
-            [0.5, 0.6], // bias
-        ];
-        let model = LinearModel::from_array(weights);
 
-        let weight_mat = model.weight_matrix();
-        assert_eq!(weight_mat.dim(), (2, 2));
-        assert_eq!(weight_mat[[0, 0]], 0.1);
-        assert_eq!(weight_mat[[1, 1]], 0.4);
-    }
-
-    #[test]
     fn biases_view() {
         let weights = array![
             [0.1, 0.2],
@@ -465,25 +418,26 @@ mod tests {
     // Prediction tests
 
     #[test]
-    fn predict_row_regression() {
+    fn predict_row_into_regression() {
         // y = 0.5 * x0 + 0.3 * x1 + 0.1
         let weights = vec![0.5, 0.3, 0.1].into_boxed_slice();
         let model = LinearModel::new(weights, 2, 1);
 
         let features = vec![2.0, 3.0]; // 0.5*2 + 0.3*3 + 0.1 = 1.0 + 0.9 + 0.1 = 2.0
-        let output = model.predict_row(&features, &[0.0]);
+        let mut output = [0.0f32; 1];
+        model.predict_row_into(&features, &[0.0], &mut output);
 
-        assert_eq!(output.len(), 1);
         assert!((output[0] - 2.0).abs() < 1e-6);
     }
 
     #[test]
-    fn predict_row_with_base_score() {
+    fn predict_row_into_with_base_score() {
         let weights = vec![0.5, 0.3, 0.1].into_boxed_slice();
         let model = LinearModel::new(weights, 2, 1);
 
         let features = vec![2.0, 3.0];
-        let output = model.predict_row(&features, &[0.5]); // base_score = 0.5
+        let mut output = [0.0f32; 1];
+        model.predict_row_into(&features, &[0.5], &mut output); // base_score = 0.5
 
         // 0.5 + 0.5*2 + 0.3*3 + 0.1 = 2.5
         assert!((output[0] - 2.5).abs() < 1e-6);
@@ -541,14 +495,16 @@ mod tests {
         let view = SamplesView::from_slice(&data, 2, 2).unwrap();
 
         // Test parallel prediction
-        let output = model.predict_into(view, &[0.0], Parallelism::Parallel);
+        let mut output = Array2::<f32>::zeros((2, 1));
+        model.predict_into(view, &[0.0], Parallelism::Parallel, output.view_mut());
 
         assert_eq!(output.dim(), (2, 1));
         assert!((output[[0, 0]] - 2.0).abs() < 1e-6);
         assert!((output[[1, 0]] - 0.9).abs() < 1e-6);
 
         // Sequential should give same results
-        let seq_output = model.predict_into(view, &[0.0], Parallelism::Sequential);
+        let mut seq_output = Array2::<f32>::zeros((2, 1));
+        model.predict_into(view, &[0.0], Parallelism::Sequential, seq_output.view_mut());
         assert_eq!(output, seq_output);
     }
 }
