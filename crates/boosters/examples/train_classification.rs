@@ -19,9 +19,8 @@
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
-use boosters::training::{Accuracy, GBDTParams, GBDTTrainer, GrowthStrategy, LogLoss, LogisticLoss, MetricFn};
-use boosters::Parallelism;
-use ndarray::{Array2, ArrayView1};
+use boosters::{GBDTConfig, GBDTModel, Metric, Objective, TreeParams};
+use ndarray::ArrayView1;
 
 fn main() {
     // =========================================================================
@@ -66,31 +65,24 @@ fn main() {
     // =========================================================================
     println!("=== Depth-wise Growth (XGBoost style) ===\n");
 
-    let params_depth = GBDTParams {
-        n_trees: 30,
-        learning_rate: 0.1,
-        growth_strategy: GrowthStrategy::DepthWise { max_depth: 3 },
-        cache_size: 32,
-        ..Default::default()
-    };
+    let config_depth = GBDTConfig::builder()
+        .objective(Objective::logistic())
+        .metric(Metric::logloss())
+        .n_trees(30)
+        .learning_rate(0.1)
+        .tree(TreeParams::depth_wise(3))
+        .cache_size(32)
+        .build()
+        .expect("Invalid configuration");
 
-    let trainer_depth = GBDTTrainer::new(LogisticLoss, LogLoss, params_depth);
-    let forest_depth = trainer_depth
-        .train(&dataset, ArrayView1::from(&labels[..]), None, &[], Parallelism::Sequential)
-        .unwrap();
+    let model_depth = GBDTModel::train(&dataset, ArrayView1::from(&labels[..]), None, config_depth, 1)
+        .expect("Training failed");
 
-    // Predict: apply sigmoid to convert logits to probabilities
-    let predictions: Vec<f32> = features
-        .chunks(n_features)
-        .map(|row| {
-            let logit = forest_depth.predict_row(row)[0];
-            1.0 / (1.0 + (-logit).exp())
-        })
-        .collect();
+    // Predict: GBDTModel::predict() returns probabilities for logistic objective
+    let predictions = model_depth.predict(&row_matrix, 1);
 
-    let pred_arr = Array2::from_shape_vec((1, predictions.len()), predictions.to_vec()).unwrap();
-    let acc = Accuracy::default().compute(pred_arr.view(), ArrayView1::from(&labels[..]), None);
-    println!("Depth-wise: {} trees", forest_depth.n_trees());
+    let acc = compute_accuracy(predictions.as_slice(), &labels);
+    println!("Depth-wise: {} trees", model_depth.forest().n_trees());
     println!("Accuracy: {:.2}%", acc * 100.0);
 
     // =========================================================================
@@ -98,30 +90,23 @@ fn main() {
     // =========================================================================
     println!("\n=== Leaf-wise Growth (LightGBM style) ===\n");
 
-    let params_leaf = GBDTParams {
-        n_trees: 30,
-        learning_rate: 0.1,
-        growth_strategy: GrowthStrategy::LeafWise { max_leaves: 8 },
-        cache_size: 32,
-        ..Default::default()
-    };
+    let config_leaf = GBDTConfig::builder()
+        .objective(Objective::logistic())
+        .metric(Metric::logloss())
+        .n_trees(30)
+        .learning_rate(0.1)
+        .tree(TreeParams::leaf_wise(8))
+        .cache_size(32)
+        .build()
+        .expect("Invalid configuration");
 
-    let trainer_leaf = GBDTTrainer::new(LogisticLoss, LogLoss, params_leaf);
-    let forest_leaf = trainer_leaf
-        .train(&dataset, ArrayView1::from(&labels[..]), None, &[], Parallelism::Sequential)
-        .unwrap();
+    let model_leaf = GBDTModel::train(&dataset, ArrayView1::from(&labels[..]), None, config_leaf, 1)
+        .expect("Training failed");
 
-    let predictions: Vec<f32> = features
-        .chunks(n_features)
-        .map(|row| {
-            let logit = forest_leaf.predict_row(row)[0];
-            1.0 / (1.0 + (-logit).exp())
-        })
-        .collect();
+    let predictions = model_leaf.predict(&row_matrix, 1);
 
-    let pred_arr = Array2::from_shape_vec((1, predictions.len()), predictions.to_vec()).unwrap();
-    let acc = Accuracy::default().compute(pred_arr.view(), ArrayView1::from(&labels[..]), None);
-    println!("Leaf-wise: {} trees", forest_leaf.n_trees());
+    let acc = compute_accuracy(predictions.as_slice(), &labels);
+    println!("Leaf-wise: {} trees", model_leaf.forest().n_trees());
     println!("Accuracy: {:.2}%", acc * 100.0);
 
     // =========================================================================
@@ -140,21 +125,42 @@ fn main() {
         })
         .collect();
 
-    let forest_weighted = trainer_depth
-        .train(&dataset, ArrayView1::from(&labels[..]), Some(ArrayView1::from(&weights[..])), &[], Parallelism::Sequential)
-        .unwrap();
+    let config_weighted = GBDTConfig::builder()
+        .objective(Objective::logistic())
+        .metric(Metric::logloss())
+        .n_trees(30)
+        .learning_rate(0.1)
+        .tree(TreeParams::depth_wise(3))
+        .cache_size(32)
+        .build()
+        .expect("Invalid configuration");
 
-    let predictions: Vec<f32> = features
-        .chunks(n_features)
-        .map(|row| {
-            let logit = forest_weighted.predict_row(row)[0];
-            1.0 / (1.0 + (-logit).exp())
-        })
-        .collect();
+    let model_weighted = GBDTModel::train(
+        &dataset,
+        ArrayView1::from(&labels[..]),
+        Some(ArrayView1::from(&weights[..])),
+        config_weighted,
+        1,
+    )
+    .expect("Training failed");
 
-    let pred_arr = Array2::from_shape_vec((1, predictions.len()), predictions.to_vec()).unwrap();
-    let acc = Accuracy::default().compute(pred_arr.view(), ArrayView1::from(&labels[..]), None);
-    println!("Weighted training: {} trees", forest_weighted.n_trees());
+    let predictions = model_weighted.predict(&row_matrix, 1);
+
+    let acc = compute_accuracy(predictions.as_slice(), &labels);
+    println!("Weighted training: {} trees", model_weighted.forest().n_trees());
     println!("Accuracy: {:.2}%", acc * 100.0);
     println!("\nNote: See train_imbalanced.rs for class imbalance handling.");
+}
+
+/// Compute classification accuracy.
+fn compute_accuracy(probs: &[f32], labels: &[f32]) -> f32 {
+    let correct: usize = probs
+        .iter()
+        .zip(labels.iter())
+        .filter(|(prob, label)| {
+            let pred = if **prob >= 0.5 { 1.0 } else { 0.0 };
+            (pred - **label).abs() < 0.5
+        })
+        .count();
+    correct as f32 / labels.len() as f32
 }

@@ -15,9 +15,8 @@ use std::time::Instant;
 
 use boosters::data::binned::{BinnedDatasetBuilder, BundlingConfig};
 use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
-use boosters::training::{GBDTParams, GBDTTrainer, GrowthStrategy, MetricFn, Rmse, SquaredLoss};
-use boosters::Parallelism;
-use ndarray::{Array2, ArrayView1};
+use boosters::{GBDTConfig, GBDTModel, Metric, Objective, TreeParams};
+use ndarray::ArrayView1;
 
 fn main() {
     // =========================================================================
@@ -141,41 +140,43 @@ fn main() {
     // =========================================================================
     // Train and compare
     // =========================================================================
-    let params = GBDTParams {
-        n_trees: 20,
-        learning_rate: 0.1,
-        growth_strategy: GrowthStrategy::DepthWise { max_depth: 4 },
-        ..Default::default()
-    };
+    let config = GBDTConfig::builder()
+        .objective(Objective::squared())
+        .metric(Metric::rmse())
+        .n_trees(20)
+        .learning_rate(0.1)
+        .tree(TreeParams::depth_wise(4))
+        .build()
+        .expect("Invalid configuration");
 
     println!("\n=== Training Models ===\n");
 
     // Train without bundling
-    let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params.clone());
-    let forest_no_bundle = trainer
-        .train(&dataset_no_bundle, ArrayView1::from(&labels[..]), None, &[], Parallelism::Sequential)
-        .unwrap();
+    let model_no_bundle = GBDTModel::train(
+        &dataset_no_bundle,
+        ArrayView1::from(&labels[..]),
+        None,
+        config.clone(),
+        1,
+    )
+    .expect("Training failed");
 
     // Train with bundling
-    let forest_bundled = trainer
-        .train(&dataset_bundled, ArrayView1::from(&labels[..]), None, &[], Parallelism::Sequential)
-        .unwrap();
+    let model_bundled = GBDTModel::train(
+        &dataset_bundled,
+        ArrayView1::from(&labels[..]),
+        None,
+        config,
+        1,
+    )
+    .expect("Training failed");
 
     // Evaluate both
-    let predictions_no_bundle: Vec<f32> = features
-        .chunks(n_features)
-        .map(|row| forest_no_bundle.predict_row(row)[0])
-        .collect();
+    let predictions_no_bundle = model_no_bundle.predict(&row_matrix, 1);
+    let predictions_bundled = model_bundled.predict(&row_matrix, 1);
 
-    let predictions_bundled: Vec<f32> = features
-        .chunks(n_features)
-        .map(|row| forest_bundled.predict_row(row)[0])
-        .collect();
-
-    let pred_arr_no_bundle = Array2::from_shape_vec((1, predictions_no_bundle.len()), predictions_no_bundle.to_vec()).unwrap();
-    let rmse_no_bundle = Rmse.compute(pred_arr_no_bundle.view(), ArrayView1::from(&labels[..]), None);
-    let pred_arr_bundled = Array2::from_shape_vec((1, predictions_bundled.len()), predictions_bundled.to_vec()).unwrap();
-    let rmse_bundled = Rmse.compute(pred_arr_bundled.view(), ArrayView1::from(&labels[..]), None);
+    let rmse_no_bundle = compute_rmse(predictions_no_bundle.as_slice(), &labels);
+    let rmse_bundled = compute_rmse(predictions_bundled.as_slice(), &labels);
 
     println!("=== Results ===");
     println!("Without bundling - RMSE: {:.4}", rmse_no_bundle);
@@ -204,4 +205,17 @@ fn main() {
     println!("  BundlingConfig::disabled()   - Disable bundling");
     println!("  BundlingConfig::aggressive() - Bundle more aggressively (higher conflict tolerance)");
     println!("  BundlingConfig::strict()     - Only bundle truly exclusive features");
+}
+
+fn compute_rmse(predictions: &[f32], labels: &[f32]) -> f64 {
+    let mse: f64 = predictions
+        .iter()
+        .zip(labels.iter())
+        .map(|(p, l)| {
+            let diff = *p as f64 - *l as f64;
+            diff * diff
+        })
+        .sum::<f64>()
+        / labels.len() as f64;
+    mse.sqrt()
 }

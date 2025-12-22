@@ -4,6 +4,10 @@
 //! - No sampling (baseline)
 //! - GOSS sampling (top_rate=0.2, other_rate=0.1)
 //!
+//! **Note:** GOSS is an advanced feature that requires the lower-level
+//! `GBDTTrainer` API. For most use cases, use `GBDTModel` with uniform
+//! subsampling via `SamplingParams`.
+//!
 //! Run with:
 //! ```bash
 //! cargo run --example train_goss --release
@@ -15,11 +19,11 @@ use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
 use boosters::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
 use boosters::training::{
-    GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, MetricFn, Rmse, RowSamplingParams,
+    GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, RowSamplingParams,
     SquaredLoss,
 };
 use boosters::Parallelism;
-use ndarray::{Array2, ArrayView1};
+use ndarray::ArrayView1;
 
 fn main() {
     // =========================================================================
@@ -59,7 +63,7 @@ fn main() {
     // =========================================================================
     println!("=== No Sampling (Baseline) ===");
     let params_baseline = GBDTParams {
-        n_trees,
+        n_trees: n_trees as u32,
         learning_rate: 0.1,
         growth_strategy: GrowthStrategy::DepthWise { max_depth },
         gain: GainParams {
@@ -83,8 +87,7 @@ fn main() {
         .chunks(n_features)
         .map(|row| forest_baseline.predict_row(row)[0])
         .collect();
-    let pred_arr_baseline = Array2::from_shape_vec((1, preds_baseline.len()), preds_baseline.to_vec()).unwrap();
-    let rmse_baseline = Rmse.compute(pred_arr_baseline.view(), ArrayView1::from(&test_labels[..]), None);
+    let rmse_baseline = compute_rmse(&preds_baseline, &test_labels);
 
     println!("  Training time: {:?}", time_baseline);
     println!("  Test RMSE: {:.6}", rmse_baseline);
@@ -95,7 +98,7 @@ fn main() {
     // =========================================================================
     println!("=== GOSS Sampling (top=0.2, other=0.1) ===");
     let params_goss = GBDTParams {
-        n_trees,
+        n_trees: n_trees as u32,
         learning_rate: 0.1,
         growth_strategy: GrowthStrategy::DepthWise { max_depth },
         gain: GainParams {
@@ -119,8 +122,7 @@ fn main() {
         .chunks(n_features)
         .map(|row| forest_goss.predict_row(row)[0])
         .collect();
-    let pred_arr_goss = Array2::from_shape_vec((1, preds_goss.len()), preds_goss.to_vec()).unwrap();
-    let rmse_goss = Rmse.compute(pred_arr_goss.view(), ArrayView1::from(&test_labels[..]), None);
+    let rmse_goss = compute_rmse(&preds_goss, &test_labels);
 
     println!("  Training time: {:?}", time_goss);
     println!("  Test RMSE: {:.6}", rmse_goss);
@@ -132,7 +134,7 @@ fn main() {
     // =========================================================================
     println!("=== Uniform Sampling (30%) ===");
     let params_uniform = GBDTParams {
-        n_trees,
+        n_trees: n_trees as u32,
         learning_rate: 0.1,
         growth_strategy: GrowthStrategy::DepthWise { max_depth },
         gain: GainParams {
@@ -156,8 +158,7 @@ fn main() {
         .chunks(n_features)
         .map(|row| forest_uniform.predict_row(row)[0])
         .collect();
-    let pred_arr_uniform = Array2::from_shape_vec((1, preds_uniform.len()), preds_uniform.to_vec()).unwrap();
-    let rmse_uniform = Rmse.compute(pred_arr_uniform.view(), ArrayView1::from(&test_labels[..]), None);
+    let rmse_uniform = compute_rmse(&preds_uniform, &test_labels);
 
     println!("  Training time: {:?}", time_uniform);
     println!("  Test RMSE: {:.6}", rmse_uniform);
@@ -207,4 +208,17 @@ fn main() {
             (1.0 - rmse_goss / rmse_uniform) * 100.0
         );
     }
+}
+
+fn compute_rmse(predictions: &[f32], labels: &[f32]) -> f64 {
+    let mse: f64 = predictions
+        .iter()
+        .zip(labels.iter())
+        .map(|(p, l)| {
+            let diff = *p as f64 - *l as f64;
+            diff * diff
+        })
+        .sum::<f64>()
+        / labels.len() as f64;
+    mse.sqrt()
 }

@@ -8,8 +8,7 @@
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
-use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
-use boosters::Parallelism;
+use boosters::{GBDTConfig, GBDTModel, Metric, Objective, RegularizationParams, TreeParams};
 use ndarray::ArrayView1;
 
 fn main() {
@@ -50,34 +49,35 @@ fn main() {
     println!("  Binning took: {:?}", start.elapsed());
 
     // Training
-    let params = GBDTParams {
-        n_trees: n_trees as u32,
-        learning_rate: 0.1,
-        growth_strategy: GrowthStrategy::DepthWise { max_depth },
-        gain: GainParams {
-            reg_lambda: 1.0,
+    let config = GBDTConfig::builder()
+        .objective(Objective::squared())
+        .metric(Metric::rmse())
+        .n_trees(n_trees as u32)
+        .learning_rate(0.1)
+        .tree(TreeParams::depth_wise(max_depth))
+        .regularization(RegularizationParams {
+            lambda: 1.0,
             min_child_weight: 1.0,
             min_gain: 0.0,
             ..Default::default()
-        },
-        cache_size: 64,
-        ..Default::default()
-    };
+        })
+        .cache_size(64)
+        .build()
+        .expect("Invalid configuration");
 
     println!("\nTraining...");
-    println!("  Trees: {}", params.n_trees);
+    println!("  Trees: {}", config.n_trees);
     println!("  Depth: {}", max_depth);
     
     let start = std::time::Instant::now();
-    // Use Sequential for cleaner profiling (single thread)
-    let forest = GBDTTrainer::new(SquaredLoss, Rmse, params)
-        .train(&dataset, ArrayView1::from(&labels[..]), None, &[], Parallelism::Sequential)
-        .unwrap();
+    // Use n_threads=1 for cleaner profiling (single thread)
+    let model = GBDTModel::train(&dataset, ArrayView1::from(&labels[..]), None, config, 1)
+        .expect("Training failed");
     let train_time = start.elapsed();
 
     println!("\n=== Results ===");
     println!("Training time: {:?}", train_time);
-    println!("Trees: {}", forest.n_trees());
+    println!("Trees: {}", model.forest().n_trees());
     println!("Throughput: {:.2} Melem/s", 
         (n_samples * n_features * n_trees) as f64 / train_time.as_secs_f64() / 1_000_000.0);
 }

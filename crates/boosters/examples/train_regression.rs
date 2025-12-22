@@ -9,9 +9,8 @@
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
-use boosters::training::{GBDTParams, GBDTTrainer, GrowthStrategy, MetricFn, Rmse, SquaredLoss};
-use boosters::Parallelism;
-use ndarray::{Array2, ArrayView1};
+use boosters::{GBDTConfig, GBDTModel, Metric, Objective, TreeParams};
+use ndarray::ArrayView1;
 
 fn main() {
     // =========================================================================
@@ -51,37 +50,46 @@ fn main() {
     // =========================================================================
     // Train
     // =========================================================================
-    let params = GBDTParams {
-        n_trees: 50,
-        learning_rate: 0.1,
-        growth_strategy: GrowthStrategy::DepthWise { max_depth: 4 },
-        cache_size: 64,
-        ..Default::default()
-    };
+    let config = GBDTConfig::builder()
+        .objective(Objective::squared())
+        .metric(Metric::rmse())
+        .n_trees(50)
+        .learning_rate(0.1)
+        .tree(TreeParams::depth_wise(4))
+        .cache_size(64)
+        .build()
+        .expect("Invalid configuration");
 
     println!("Training GBTree regression model...");
-    println!("  Trees: {}", params.n_trees);
-    println!("  Learning rate: {}", params.learning_rate);
-    println!("  Growth: {:?}\n", params.growth_strategy);
+    println!("  Trees: {}", config.n_trees);
+    println!("  Learning rate: {}", config.learning_rate);
+    println!("  Growth: {:?}\n", config.tree.growth_strategy);
 
-    let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-    let forest = trainer
-        .train(&dataset, ArrayView1::from(&labels[..]), None, &[], Parallelism::Sequential)
-        .unwrap();
+    let model = GBDTModel::train(&dataset, ArrayView1::from(&labels[..]), None, config, 1)
+        .expect("Training failed");
 
     // =========================================================================
     // Evaluate
     // =========================================================================
-    let predictions: Vec<f32> = features
-        .chunks(n_features)
-        .map(|row| forest.predict_row(row)[0])
-        .collect();
+    let predictions = model.predict(&row_matrix, 1);
 
-    let pred_arr = Array2::from_shape_vec((1, predictions.len()), predictions.to_vec()).unwrap();
-    let rmse = Rmse.compute(pred_arr.view(), ArrayView1::from(&labels[..]), None);
+    let rmse = compute_rmse(predictions.as_slice(), &labels);
 
     println!("=== Results ===");
-    println!("Trees: {}", forest.n_trees());
+    println!("Trees: {}", model.forest().n_trees());
     println!("Train RMSE: {:.4}", rmse);
     println!("\nNote: For production, split data into train/validation/test sets!");
+}
+
+fn compute_rmse(predictions: &[f32], labels: &[f32]) -> f64 {
+    let mse: f64 = predictions
+        .iter()
+        .zip(labels.iter())
+        .map(|(p, l)| {
+            let diff = *p as f64 - *l as f64;
+            diff * diff
+        })
+        .sum::<f64>()
+        / labels.len() as f64;
+    mse.sqrt()
 }

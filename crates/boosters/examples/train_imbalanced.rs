@@ -21,9 +21,8 @@
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
-use boosters::training::{Accuracy, GBDTParams, GBDTTrainer, GrowthStrategy, LogLoss, LogisticLoss, MetricFn};
-use boosters::Parallelism;
-use ndarray::{Array2, ArrayView1};
+use boosters::{GBDTConfig, GBDTModel, Metric, Objective, TreeParams};
+use ndarray::ArrayView1;
 
 fn main() {
     // =========================================================================
@@ -79,36 +78,34 @@ fn main() {
         n_majority, n_minority, n_majority as f32 / n_minority as f32);
     println!("Class weights: majority={:.2}, minority={:.2}\n", weight_class_0, weight_class_1);
 
-    let params = GBDTParams {
-        n_trees: 30,
-        learning_rate: 0.1,
-        growth_strategy: GrowthStrategy::DepthWise { max_depth: 4 },
-        cache_size: 32,
-        ..Default::default()
-    };
-
-    let trainer = GBDTTrainer::new(LogisticLoss, LogLoss, params);
+    let config = GBDTConfig::builder()
+        .objective(Objective::logistic())
+        .metric(Metric::logloss())
+        .n_trees(30)
+        .learning_rate(0.1)
+        .tree(TreeParams::depth_wise(4))
+        .cache_size(32)
+        .build()
+        .expect("Invalid configuration");
 
     // =========================================================================
     // Train WITHOUT weights (baseline)
     // =========================================================================
     println!("--- Training WITHOUT weights ---");
-    let forest_unweighted = trainer
-        .train(&dataset, ArrayView1::from(&labels[..]), None, &[], Parallelism::Sequential)
-        .unwrap();
+    let model_unweighted = GBDTModel::train(
+        &dataset,
+        ArrayView1::from(&labels[..]),
+        None,
+        config.clone(),
+        1,
+    )
+    .expect("Training failed");
 
-    // Convert logits to probabilities and compute accuracy + recall
-    let probs_uw: Vec<f32> = features
-        .chunks(n_features)
-        .map(|row| {
-            let logit = forest_unweighted.predict_row(row)[0];
-            1.0 / (1.0 + (-logit).exp())
-        })
-        .collect();
+    // GBDTModel::predict() returns probabilities for logistic objective
+    let probs_uw = model_unweighted.predict(&row_matrix, 1);
 
-    let pred_arr_uw = Array2::from_shape_vec((1, probs_uw.len()), probs_uw.to_vec()).unwrap();
-    let acc_uw = Accuracy::default().compute(pred_arr_uw.view(), ArrayView1::from(&labels[..]), None);
-    let recall_1_uw = compute_recall(&probs_uw, &labels, 1.0);
+    let acc_uw = compute_accuracy(probs_uw.as_slice(), &labels);
+    let recall_1_uw = compute_recall(probs_uw.as_slice(), &labels, 1.0);
     println!("  Accuracy: {:.1}%", acc_uw * 100.0);
     println!("  Minority recall: {:.1}%\n", recall_1_uw * 100.0);
 
@@ -116,21 +113,19 @@ fn main() {
     // Train WITH class weights
     // =========================================================================
     println!("--- Training WITH class weights ---");
-    let forest_weighted = trainer
-        .train(&dataset, ArrayView1::from(&labels[..]), Some(ArrayView1::from(&class_weights[..])), &[], Parallelism::Sequential)
-        .unwrap();
+    let model_weighted = GBDTModel::train(
+        &dataset,
+        ArrayView1::from(&labels[..]),
+        Some(ArrayView1::from(&class_weights[..])),
+        config,
+        1,
+    )
+    .expect("Training failed");
 
-    let probs_w: Vec<f32> = features
-        .chunks(n_features)
-        .map(|row| {
-            let logit = forest_weighted.predict_row(row)[0];
-            1.0 / (1.0 + (-logit).exp())
-        })
-        .collect();
+    let probs_w = model_weighted.predict(&row_matrix, 1);
 
-    let pred_arr_w = Array2::from_shape_vec((1, probs_w.len()), probs_w.to_vec()).unwrap();
-    let acc_w = Accuracy::default().compute(pred_arr_w.view(), ArrayView1::from(&labels[..]), None);
-    let recall_1_w = compute_recall(&probs_w, &labels, 1.0);
+    let acc_w = compute_accuracy(probs_w.as_slice(), &labels);
+    let recall_1_w = compute_recall(probs_w.as_slice(), &labels, 1.0);
     println!("  Accuracy: {:.1}%", acc_w * 100.0);
     println!("  Minority recall: {:.1}%\n", recall_1_w * 100.0);
 
@@ -143,6 +138,19 @@ fn main() {
     if recall_1_w > recall_1_uw {
         println!("✓ Weighted training improved minority class recall!");
     }
+}
+
+/// Compute classification accuracy.
+fn compute_accuracy(probs: &[f32], labels: &[f32]) -> f32 {
+    let correct: usize = probs
+        .iter()
+        .zip(labels.iter())
+        .filter(|(prob, label)| {
+            let pred = if **prob >= 0.5 { 1.0 } else { 0.0 };
+            (pred - **label).abs() < 0.5
+        })
+        .count();
+    correct as f32 / labels.len() as f32
 }
 
 /// Compute recall for a specific class.
