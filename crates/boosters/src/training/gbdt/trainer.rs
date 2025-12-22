@@ -292,9 +292,9 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
 
                 // Fit linear models in leaves (skip round 0: homogeneous gradients)
                 // Only fit if linear_leaves config is set and we're past round 0
-                if round > 0 && let Some(ref mut trainer) = linear_trainer {
+                if round > 0 && let Some(ref mut linear_trainer) = linear_trainer {
                     let accessor = BinnedAccessor::new(dataset, &bin_mappers);
-                    let fitted = trainer.train(
+                    let fitted = linear_trainer.train(
                         &mutable_tree,
                         &accessor,
                         grower.partitioner(),
@@ -328,7 +328,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
                 } else {
                     // Fallback: row sampling trains on a subset; we must still apply the
                     // trained tree to all rows to keep predictions correct.
-                    tree.predict_binned_batch(dataset, &mut predictions[pred_offset..pred_offset + n_rows]);
+                    tree.predict_binned_into(dataset, &mut predictions[pred_offset..pred_offset + n_rows], parallelism);
                 }
 
                 // Incremental eval set prediction: add this tree's contribution
@@ -340,7 +340,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
                         let pred_slice = pred_row.as_slice_mut()
                             .expect("eval prediction row should be contiguous");
                         let samples_view = SamplesView::from_array(matrix.view());
-                        tree.predict_batch_accumulate(&samples_view, pred_slice);
+                        tree.predict_into(&samples_view, pred_slice, parallelism);
                     }
                 }
 

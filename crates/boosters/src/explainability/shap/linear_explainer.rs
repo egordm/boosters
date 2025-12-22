@@ -73,7 +73,7 @@ impl<'a> LinearExplainer<'a> {
         let n_samples = data.n_samples();
         let n_features = self.model.n_features();
         let n_outputs = self.model.n_groups();
-        let mut shap = ShapValues::new(n_samples, n_features, n_outputs);
+        let mut shap = ShapValues::zeros(n_samples, n_features, n_outputs);
 
         let weights = self.model.as_slice();
         let data_arr = data.as_array();
@@ -103,13 +103,13 @@ impl<'a> LinearExplainer<'a> {
 
 #[cfg(test)]
 mod tests {
+    use ndarray::array;
+
     use super::*;
 
     fn make_simple_model() -> LinearModel {
         // 2 features, 1 output: y = 2*x0 + 3*x1 + 0.5 (bias)
-        // weights layout: [w0_g0, w1_g0, bias_g0] = [2, 3, 0.5]
-        let weights = vec![2.0f32, 3.0, 0.5].into_boxed_slice();
-        LinearModel::new(weights, 2, 1)
+        LinearModel::new(array![[2.0f32], [3.0], [0.5]])
     }
 
     #[test]

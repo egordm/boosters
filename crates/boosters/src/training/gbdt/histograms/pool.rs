@@ -3,10 +3,9 @@
 //! This module provides a fixed-size cache for histogram arrays that maps logical
 //! node IDs to physical storage slots using an LRU eviction policy.
 
-use super::ops::{clear_histogram, subtract_histogram, HistogramBin};
+use crate::repr::gbdt::NodeId;
 
-/// Type alias for tree node indices.
-pub type NodeId = u32;
+use super::ops::{clear_histogram, subtract_histogram, HistogramBin};
 
 /// Physical slot index in the histogram cache.
 pub type SlotId = u32;

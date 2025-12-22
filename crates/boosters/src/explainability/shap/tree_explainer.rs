@@ -72,7 +72,7 @@ impl<'a> TreeExplainer<'a> {
         let n_samples = data.n_samples();
         let n_features = data.n_features();
         let n_outputs = self.forest.n_groups() as usize;
-        let mut shap = ShapValues::new(n_samples, n_features, n_outputs);
+        let mut shap = ShapValues::zeros(n_samples, n_features, n_outputs);
 
         // Compute max depth for PathState allocation
         let max_depth = self

@@ -526,6 +526,7 @@ impl<L: LeafValue> Tree<L> {
     /// * `predictions` - Slice to update with leaf values (one per row)
     ///
     /// The leaf values are **added** to the existing predictions.
+    #[deprecated(since = "0.2.0", note = "use predict_binned_into with Parallelism::Sequential instead")]
     pub fn predict_binned_batch(
         &self,
         dataset: &crate::data::BinnedDataset,
@@ -544,27 +545,36 @@ impl<L: LeafValue> Tree<L> {
         }
     }
 
-    /// Parallel batch predict for multiple rows in a binned dataset.
+
+    /// Unified batch prediction for binned datasets.
     ///
-    /// Uses Rayon for parallel execution across rows.
-    pub fn par_predict_binned_batch(
+    /// Traverses the tree for each row and **adds** leaf values to the predictions
+    /// buffer (accumulate pattern). Supports both sequential and parallel execution.
+    ///
+    /// # Arguments
+    /// * `dataset` - The binned dataset containing the rows
+    /// * `predictions` - Pre-allocated buffer to update (length = `dataset.n_rows()`)
+    /// * `parallelism` - Whether to use parallel execution
+    pub fn predict_binned_into(
         &self,
         dataset: &crate::data::BinnedDataset,
         predictions: &mut [f32],
+        parallelism: crate::utils::Parallelism,
     ) where
         L: Into<f32> + Copy + Send + Sync,
     {
-        use rayon::prelude::*;
-
         let n_rows = dataset.n_rows();
         debug_assert_eq!(predictions.len(), n_rows);
 
-        predictions.par_iter_mut().enumerate().for_each(|(row_idx, pred)| {
-            if let Some(row) = dataset.row_view(row_idx) {
-                let leaf = self.predict_binned_row(&row, dataset);
-                *pred += (*leaf).into();
-            }
-        });
+        parallelism.maybe_par_for_each(
+            predictions.iter_mut().enumerate().collect::<Vec<_>>(),
+            |(row_idx, pred)| {
+                if let Some(row) = dataset.row_view(row_idx) {
+                    let leaf = self.predict_binned_row(&row, dataset);
+                    *pred += (*leaf).into();
+                }
+            },
+        );
     }
 
     /// Generic batch predict using any feature accessor.
@@ -589,6 +599,7 @@ impl<L: LeafValue> Tree<L> {
     /// let mut predictions = vec![0.0; 2];
     /// tree.predict_batch_accumulate(&data, &mut predictions);
     /// ```
+    #[deprecated(since = "0.2.0", note = "use predict_into with Parallelism::Sequential instead")]
     pub fn predict_batch_accumulate<A: crate::data::FeatureAccessor>(
         &self,
         accessor: &A,
@@ -602,19 +613,75 @@ impl<L: LeafValue> Tree<L> {
         debug_assert_eq!(predictions.len(), n_rows);
 
         if self.has_linear_leaves() {
-            // Linear leaf path: need to compute linear contribution
             for (row_idx, pred) in predictions.iter_mut().enumerate() {
                 let leaf_idx = traverse_to_leaf(self, accessor, row_idx);
                 let value = self.compute_leaf_value(leaf_idx, accessor, row_idx);
                 *pred += value;
             }
         } else {
-            // Standard path: just use leaf values
             for (row_idx, pred) in predictions.iter_mut().enumerate() {
                 let leaf_idx = traverse_to_leaf(self, accessor, row_idx);
                 let leaf = self.leaf_value(leaf_idx);
                 *pred += (*leaf).into();
             }
+        }
+    }
+
+    /// Unified batch prediction using any feature accessor.
+    ///
+    /// Traverses the tree for each row and **adds** leaf values to the predictions
+    /// buffer (accumulate pattern). Supports both sequential and parallel execution.
+    ///
+    /// # Arguments
+    /// * `accessor` - Feature value source (SamplesView, FeaturesView, BinnedAccessor, etc.)
+    /// * `predictions` - Pre-allocated buffer to update (length = `accessor.num_rows()`)
+    /// * `parallelism` - Whether to use parallel execution
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use boosters::repr::gbdt::{Tree, ScalarLeaf};
+    /// use boosters::data::RowMatrix;
+    /// use boosters::utils::Parallelism;
+    ///
+    /// let tree: Tree<ScalarLeaf> = /* ... */;
+    /// let data = RowMatrix::from_vec(vec![0.1, 0.2, 0.3, 0.4], 2, 2);
+    /// let mut predictions = vec![0.0; 2];
+    /// tree.predict_into(&data, &mut predictions, Parallelism::Parallel);
+    /// ```
+    pub fn predict_into<A: crate::data::FeatureAccessor + Sync>(
+        &self,
+        accessor: &A,
+        predictions: &mut [f32],
+        parallelism: crate::utils::Parallelism,
+    ) where
+        L: Into<f32> + Copy + Send + Sync,
+    {
+        use crate::inference::gbdt::traverse_to_leaf;
+
+        let n_rows = accessor.num_rows();
+        debug_assert_eq!(predictions.len(), n_rows);
+
+        if self.has_linear_leaves() {
+            // Linear leaf path: need to compute linear contribution
+            parallelism.maybe_par_for_each(
+                predictions.iter_mut().enumerate().collect::<Vec<_>>(),
+                |(row_idx, pred)| {
+                    let leaf_idx = traverse_to_leaf(self, accessor, row_idx);
+                    let value = self.compute_leaf_value(leaf_idx, accessor, row_idx);
+                    *pred += value;
+                },
+            );
+        } else {
+            // Standard path: just use leaf values
+            parallelism.maybe_par_for_each(
+                predictions.iter_mut().enumerate().collect::<Vec<_>>(),
+                |(row_idx, pred)| {
+                    let leaf_idx = traverse_to_leaf(self, accessor, row_idx);
+                    let leaf = self.leaf_value(leaf_idx);
+                    *pred += (*leaf).into();
+                },
+            );
         }
     }
 
@@ -1198,7 +1265,7 @@ mod tests {
         
         // Test accumulate pattern (starts with existing values)
         let mut predictions = vec![10.0, 20.0, 30.0];
-        tree.predict_batch_accumulate(&data, &mut predictions);
+        tree.predict_into(&data, &mut predictions, crate::utils::Parallelism::Sequential);
 
         // Row 0: 0.3 < 0.5 -> left (1.0), 10.0 + 1.0 = 11.0
         // Row 1: 0.7 >= 0.5 -> right (2.0), 20.0 + 2.0 = 22.0
@@ -1288,7 +1355,7 @@ mod tests {
         let arr = Array2::from_shape_vec((3, 1), vec![0.3, 0.7, 0.1]).unwrap();
         let data = SamplesView::from_array(arr.view());
         let mut predictions = vec![0.0; 3];
-        frozen.predict_batch_accumulate(&data, &mut predictions);
+        frozen.predict_into(&data, &mut predictions, crate::utils::Parallelism::Sequential);
 
         assert!((predictions[0] - 1.1).abs() < 1e-5, "got {}", predictions[0]);
         assert!((predictions[1] - 10.0).abs() < 1e-5, "got {}", predictions[1]);
@@ -1317,7 +1384,7 @@ mod tests {
         let arr = Array2::from_shape_vec((2, 1), vec![0.5, f32::NAN]).unwrap();
         let data = SamplesView::from_array(arr.view());
         let mut predictions = vec![0.0; 2];
-        frozen.predict_batch_accumulate(&data, &mut predictions);
+        frozen.predict_into(&data, &mut predictions, crate::utils::Parallelism::Sequential);
 
         assert!((predictions[0] - 2.0).abs() < 1e-5, "got {}", predictions[0]);
         assert!((predictions[1] - 5.0).abs() < 1e-5, "got {}", predictions[1]);
@@ -1345,7 +1412,7 @@ mod tests {
         let arr = Array2::from_shape_vec((2, 2), vec![1.0, 1.0, 0.5, 2.0]).unwrap();
         let data = SamplesView::from_array(arr.view());
         let mut predictions = vec![0.0; 2];
-        frozen.predict_batch_accumulate(&data, &mut predictions);
+        frozen.predict_into(&data, &mut predictions, crate::utils::Parallelism::Sequential);
 
         assert!((predictions[0] - 6.0).abs() < 1e-5, "got {}", predictions[0]);
         assert!((predictions[1] - 8.0).abs() < 1e-5, "got {}", predictions[1]);

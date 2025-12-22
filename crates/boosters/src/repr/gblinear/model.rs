@@ -31,7 +31,7 @@ use crate::utils::Parallelism;
 ///     [0.5, 0.6],  // feature 2
 ///     [0.0, 0.0],  // bias
 /// ];
-/// let model = LinearModel::from_array(weights);
+/// let model = LinearModel::new(weights);
 ///
 /// assert_eq!(model.weight(0, 0), 0.1);
 /// assert_eq!(model.weight(0, 1), 0.2);
@@ -45,40 +45,6 @@ pub struct LinearModel {
 }
 
 impl LinearModel {
-    /// Create a new linear model from a flat weight slice.
-    ///
-    /// This is a compatibility constructor for code that uses the old flat layout.
-    /// Prefer [`from_array`](Self::from_array) for new code.
-    ///
-    /// # Arguments
-    ///
-    /// * `weights` - Flat weight array of size `(num_features + 1) * num_groups`
-    ///               in row-major order (feature-major, group-minor)
-    /// * `num_features` - Number of input features
-    /// * `num_groups` - Number of output groups
-    ///
-    /// # Panics
-    ///
-    /// Panics if weights length doesn't match `(num_features + 1) * num_groups`.
-    pub fn new(weights: Box<[f32]>, num_features: usize, num_groups: usize) -> Self {
-        let expected_len = (num_features + 1) * num_groups;
-        assert_eq!(
-            weights.len(),
-            expected_len,
-            "weights length {} doesn't match (num_features + 1) * num_groups = {}",
-            weights.len(),
-            expected_len
-        );
-
-        // Convert flat array to Array2 with shape [n_features + 1, n_groups]
-        let weights_vec = weights.into_vec();
-        let weights_arr =
-            Array2::from_shape_vec((num_features + 1, num_groups), weights_vec)
-                .expect("shape mismatch");
-
-        Self { weights: weights_arr }
-    }
-
     /// Create a linear model from an ndarray.
     ///
     /// # Arguments
@@ -89,7 +55,7 @@ impl LinearModel {
     /// # Panics
     ///
     /// Panics if the array has fewer than 1 row (need at least bias row).
-    pub fn from_array(weights: Array2<f32>) -> Self {
+    pub fn new(weights: Array2<f32>) -> Self {
         assert!(
             weights.nrows() >= 1,
             "weights must have at least 1 row (bias)"
@@ -102,6 +68,34 @@ impl LinearModel {
         Self {
             weights: Array2::zeros((num_features + 1, num_groups)),
         }
+    }
+
+    /// Create a linear model from a flat slice.
+    ///
+    /// This is used for loading models from formats that store weights as
+    /// contiguous arrays (e.g., XGBoost JSON).
+    ///
+    /// # Arguments
+    ///
+    /// * `weights` - Flat weight slice in row-major order `[n_features+1, n_groups]`
+    /// * `n_features` - Number of input features
+    /// * `n_groups` - Number of output groups
+    ///
+    /// # Panics
+    ///
+    /// Panics if `weights.len() != (n_features + 1) * n_groups`.
+    pub fn from_flat(weights: &[f32], n_features: usize, n_groups: usize) -> Self {
+        let expected_len = (n_features + 1) * n_groups;
+        assert_eq!(
+            weights.len(),
+            expected_len,
+            "weights length mismatch: expected {}, got {}",
+            expected_len,
+            weights.len()
+        );
+        let arr = Array2::from_shape_vec((n_features + 1, n_groups), weights.to_vec())
+            .expect("shape and weights length match");
+        Self::new(arr)
     }
 
     /// Number of input features.
@@ -157,6 +151,14 @@ impl LinearModel {
     #[inline]
     pub fn as_slice_mut(&mut self) -> &mut [f32] {
         self.weights.as_slice_mut().expect("weights should be contiguous")
+    }
+
+    /// Get the weight matrix (excluding bias row) as an ArrayView2.
+    ///
+    /// Returns a view of shape `[n_features, n_groups]` for use in matrix operations.
+    #[inline]
+    pub fn weight_view(&self) -> ndarray::ArrayView2<'_, f32> {
+        self.weights.slice(s![..self.n_features(), ..])
     }
 
     /// Set weight for a feature and group.
@@ -302,24 +304,12 @@ mod tests {
     #[test]
     fn linear_model_new() {
         // 2 features, 1 group (regression)
-        let weights = vec![0.5, 0.3, 0.1].into_boxed_slice(); // w0, w1, bias
-        let model = LinearModel::new(weights, 2, 1);
-
-        assert_eq!(model.n_features(), 2);
-        assert_eq!(model.n_groups(), 1);
-        assert_eq!(model.weight(0, 0), 0.5);
-        assert_eq!(model.weight(1, 0), 0.3);
-        assert_eq!(model.bias(0), 0.1);
-    }
-
-    #[test]
-    fn linear_model_from_array() {
         let weights = array![
             [0.5],
             [0.3],
             [0.1], // bias
         ];
-        let model = LinearModel::from_array(weights);
+        let model = LinearModel::new(weights);
 
         assert_eq!(model.n_features(), 2);
         assert_eq!(model.n_groups(), 1);
@@ -331,30 +321,12 @@ mod tests {
     #[test]
     fn linear_model_multigroup() {
         // 2 features, 2 groups (binary classification)
-        let weights = vec![
-            0.1, 0.2, // feature 0: group 0, group 1
-            0.3, 0.4, // feature 1
-            0.5, 0.6, // bias
-        ]
-        .into_boxed_slice();
-        let model = LinearModel::new(weights, 2, 2);
-
-        assert_eq!(model.weight(0, 0), 0.1);
-        assert_eq!(model.weight(0, 1), 0.2);
-        assert_eq!(model.weight(1, 0), 0.3);
-        assert_eq!(model.weight(1, 1), 0.4);
-        assert_eq!(model.bias(0), 0.5);
-        assert_eq!(model.bias(1), 0.6);
-    }
-
-    #[test]
-    fn linear_model_multigroup_from_array() {
         let weights = array![
             [0.1, 0.2], // feature 0
             [0.3, 0.4], // feature 1
             [0.5, 0.6], // bias
         ];
-        let model = LinearModel::from_array(weights);
+        let model = LinearModel::new(weights);
 
         assert_eq!(model.weight(0, 0), 0.1);
         assert_eq!(model.weight(0, 1), 0.2);
@@ -394,13 +366,12 @@ mod tests {
     }
 
     #[test]
-
     fn biases_view() {
         let weights = array![
             [0.1, 0.2],
             [0.5, 0.6], // bias
         ];
-        let model = LinearModel::from_array(weights);
+        let model = LinearModel::new(weights);
 
         let biases = model.biases();
         assert_eq!(biases.len(), 2);
@@ -409,10 +380,10 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "weights length")]
-    fn linear_model_wrong_weights_length() {
-        let weights = vec![0.5, 0.3].into_boxed_slice(); // Should be 3 for 2 features + bias
-        LinearModel::new(weights, 2, 1);
+    #[should_panic(expected = "at least 1 row")]
+    fn linear_model_wrong_weights_shape() {
+        let weights = Array2::<f32>::zeros((0, 1)); // Empty - must have at least 1 row
+        LinearModel::new(weights);
     }
 
     // Prediction tests
@@ -420,8 +391,8 @@ mod tests {
     #[test]
     fn predict_row_into_regression() {
         // y = 0.5 * x0 + 0.3 * x1 + 0.1
-        let weights = vec![0.5, 0.3, 0.1].into_boxed_slice();
-        let model = LinearModel::new(weights, 2, 1);
+        let weights = array![[0.5], [0.3], [0.1]];
+        let model = LinearModel::new(weights);
 
         let features = vec![2.0, 3.0]; // 0.5*2 + 0.3*3 + 0.1 = 1.0 + 0.9 + 0.1 = 2.0
         let mut output = [0.0f32; 1];
@@ -432,8 +403,8 @@ mod tests {
 
     #[test]
     fn predict_row_into_with_base_score() {
-        let weights = vec![0.5, 0.3, 0.1].into_boxed_slice();
-        let model = LinearModel::new(weights, 2, 1);
+        let weights = array![[0.5], [0.3], [0.1]];
+        let model = LinearModel::new(weights);
 
         let features = vec![2.0, 3.0];
         let mut output = [0.0f32; 1];
@@ -445,8 +416,8 @@ mod tests {
 
     #[test]
     fn predict_batch() {
-        let weights = vec![0.5, 0.3, 0.1].into_boxed_slice();
-        let model = LinearModel::new(weights, 2, 1);
+        let weights = array![[0.5], [0.3], [0.1]];
+        let model = LinearModel::new(weights);
 
         let data = [
             2.0f32, 3.0, // row 0: 0.5*2 + 0.3*3 + 0.1 = 2.0
@@ -464,13 +435,12 @@ mod tests {
     #[test]
     fn predict_batch_multigroup() {
         // 2 features, 2 groups
-        let weights = vec![
-            0.1, 0.2, // feature 0
-            0.3, 0.4, // feature 1
-            0.0, 0.0, // bias
-        ]
-        .into_boxed_slice();
-        let model = LinearModel::new(weights, 2, 2);
+        let weights = array![
+            [0.1, 0.2], // feature 0
+            [0.3, 0.4], // feature 1
+            [0.0, 0.0], // bias
+        ];
+        let model = LinearModel::new(weights);
 
         let data = [1.0f32, 1.0];
         let view = SamplesView::from_slice(&data, 1, 2).unwrap();
@@ -485,8 +455,8 @@ mod tests {
 
     #[test]
     fn predict_with_parallelism() {
-        let weights = vec![0.5, 0.3, 0.1].into_boxed_slice();
-        let model = LinearModel::new(weights, 2, 1);
+        let weights = array![[0.5], [0.3], [0.1]];
+        let model = LinearModel::new(weights);
 
         let data = [
             2.0f32, 3.0, // row 0

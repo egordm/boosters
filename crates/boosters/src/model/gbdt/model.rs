@@ -5,6 +5,11 @@
 //! and [`config()`](GBDTModel::config).
 
 use crate::data::binned::BinnedDataset;
+use crate::data::SamplesView;
+use crate::explainability::{
+    compute_forest_importance, ExplainError, FeatureImportance, ImportanceType, ShapValues,
+    TreeExplainer,
+};
 use crate::inference::gbdt::UnrolledPredictor6;
 use crate::model::meta::ModelMeta;
 use crate::repr::gbdt::{Forest, ScalarLeaf};
@@ -250,9 +255,9 @@ impl GBDTModel {
     /// Gain/Cover types require node statistics (returns `ExplainError::MissingNodeStats` if missing).
     pub fn feature_importance(
         &self,
-        importance_type: crate::explainability::ImportanceType,
-    ) -> Result<crate::explainability::FeatureImportance, crate::explainability::ExplainError> {
-        crate::explainability::compute_forest_importance(
+        importance_type: ImportanceType,
+    ) -> Result<FeatureImportance, ExplainError> {
+        compute_forest_importance(
             &self.forest,
             self.meta.n_features,
             importance_type,
@@ -269,11 +274,8 @@ impl GBDTModel {
     ///
     /// # Returns
     /// ShapValues container with shape `[n_samples, n_features + 1, n_outputs]`.
-    pub fn shap_values(
-        &self,
-        features: crate::data::SamplesView<'_>,
-    ) -> Result<crate::explainability::ShapValues, crate::explainability::ExplainError> {
-        let explainer = crate::explainability::TreeExplainer::new(&self.forest)?;
+    pub fn shap_values(&self, features: SamplesView<'_>) -> Result<ShapValues, ExplainError> {
+        let explainer = TreeExplainer::new(&self.forest)?;
         Ok(explainer.shap_values(features))
     }
 }

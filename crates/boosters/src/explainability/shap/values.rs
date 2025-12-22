@@ -19,21 +19,21 @@ use ndarray::{Array3, ArrayView3, ArrayViewMut3, s};
 pub struct ShapValues(Array3<f64>);
 
 impl ShapValues {
-    /// Create a new ShapValues container initialized to zeros.
+    /// Create ShapValues from an existing array.
+    ///
+    /// Shape must be `[n_samples, n_features + 1, n_outputs]`.
+    pub fn new(arr: Array3<f64>) -> Self {
+        Self(arr)
+    }
+
+    /// Create a zero-initialized ShapValues container.
     ///
     /// # Arguments
     /// * `n_samples` - Number of samples
     /// * `n_features` - Number of features (not including base value)
     /// * `n_outputs` - Number of outputs (1 for regression, n_classes for multiclass)
-    pub fn new(n_samples: usize, n_features: usize, n_outputs: usize) -> Self {
+    pub fn zeros(n_samples: usize, n_features: usize, n_outputs: usize) -> Self {
         Self(Array3::zeros((n_samples, n_features + 1, n_outputs)))
-    }
-
-    /// Create ShapValues from an existing array.
-    ///
-    /// Shape must be `[n_samples, n_features + 1, n_outputs]`.
-    pub fn from_array(arr: Array3<f64>) -> Self {
-        Self(arr)
     }
 
     /// Number of samples.
@@ -161,8 +161,8 @@ mod tests {
     use ndarray::array;
 
     #[test]
-    fn test_new() {
-        let shap = ShapValues::new(10, 5, 1);
+    fn test_zeros() {
+        let shap = ShapValues::zeros(10, 5, 1);
         assert_eq!(shap.n_samples(), 10);
         assert_eq!(shap.n_features(), 5);
         assert_eq!(shap.n_outputs(), 1);
@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn test_get_set() {
-        let mut shap = ShapValues::new(2, 3, 1);
+        let mut shap = ShapValues::zeros(2, 3, 1);
         
         shap.set(0, 0, 0, 1.0);
         shap.set(0, 1, 0, 2.0);
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn test_add() {
-        let mut shap = ShapValues::new(1, 2, 1);
+        let mut shap = ShapValues::zeros(1, 2, 1);
         
         shap.add(0, 0, 0, 1.5);
         shap.add(0, 0, 0, 2.5);
@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn test_base_value() {
-        let mut shap = ShapValues::new(2, 3, 1);
+        let mut shap = ShapValues::zeros(2, 3, 1);
         
         shap.set_base_value(0, 0, 0.5);
         shap.set_base_value(1, 0, 0.3);
@@ -206,7 +206,7 @@ mod tests {
 
     #[test]
     fn test_sample_view() {
-        let mut shap = ShapValues::new(2, 2, 1);
+        let mut shap = ShapValues::zeros(2, 2, 1);
         
         // Sample 0: features [1.0, 2.0], base 3.0
         shap.set(0, 0, 0, 1.0);
@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn test_feature_shap() {
-        let mut shap = ShapValues::new(1, 3, 1);
+        let mut shap = ShapValues::zeros(1, 3, 1);
         
         shap.set(0, 0, 0, 1.0);
         shap.set(0, 1, 0, 2.0);
@@ -233,7 +233,7 @@ mod tests {
 
     #[test]
     fn test_verify_correct() {
-        let mut shap = ShapValues::new(2, 2, 1);
+        let mut shap = ShapValues::zeros(2, 2, 1);
         
         // Sample 0: shap = [1.0, 2.0], base = 0.5 → sum = 3.5
         shap.set(0, 0, 0, 1.0);
@@ -251,7 +251,7 @@ mod tests {
 
     #[test]
     fn test_verify_incorrect() {
-        let mut shap = ShapValues::new(1, 2, 1);
+        let mut shap = ShapValues::zeros(1, 2, 1);
         
         shap.set(0, 0, 0, 1.0);
         shap.set(0, 1, 0, 2.0);
@@ -264,7 +264,7 @@ mod tests {
 
     #[test]
     fn test_multi_output() {
-        let mut shap = ShapValues::new(1, 2, 2);
+        let mut shap = ShapValues::zeros(1, 2, 2);
         
         // Output 0
         shap.set(0, 0, 0, 1.0);
@@ -282,7 +282,7 @@ mod tests {
 
     #[test]
     fn test_shape() {
-        let shap = ShapValues::new(2, 3, 1);
+        let shap = ShapValues::zeros(2, 3, 1);
         assert_eq!(shap.shape(), (2, 4, 1)); // 3 features + 1 base
     }
 }

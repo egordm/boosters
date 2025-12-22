@@ -5,6 +5,7 @@
 //! and [`config()`](GBLinearModel::config).
 
 use crate::data::{transpose_to_c_order, Dataset, SamplesView};
+use crate::explainability::{ExplainError, LinearExplainer, ShapValues};
 use crate::model::meta::ModelMeta;
 use crate::repr::gblinear::LinearModel;
 use crate::training::gblinear::GBLinearTrainer;
@@ -227,9 +228,9 @@ impl GBLinearModel {
         &self,
         features: SamplesView<'_>,
         feature_means: Option<Vec<f64>>,
-    ) -> Result<crate::explainability::ShapValues, crate::explainability::ExplainError> {
+    ) -> Result<ShapValues, ExplainError> {
         let means = feature_means.unwrap_or_else(|| vec![0.0; self.meta.n_features]);
-        let explainer = crate::explainability::LinearExplainer::new(&self.model, means)?;
+        let explainer = LinearExplainer::new(&self.model, means)?;
         Ok(explainer.shap_values(features))
     }
 }
@@ -248,12 +249,11 @@ impl std::fmt::Debug for GBLinearModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::arr2;
+    use ndarray::{arr2, array};
 
     fn make_simple_model() -> LinearModel {
         // y = 0.5*x0 + 0.3*x1 + 0.1
-        let weights = vec![0.5, 0.3, 0.1].into_boxed_slice();
-        LinearModel::new(weights, 2, 1)
+        LinearModel::new(array![[0.5], [0.3], [0.1]])
     }
 
     #[test]

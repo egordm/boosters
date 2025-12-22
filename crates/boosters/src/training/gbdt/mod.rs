@@ -34,5 +34,3 @@ pub use partition::{LeafId, RowPartitioner};
 pub use split::{GainParams, GreedySplitter, SplitInfo, SplitType, DEFAULT_MAX_ONEHOT_CATS};
 pub use trainer::{GBDTParams, GBDTTrainer};
 
-// Re-export NodeId from expansion (was previously in tree module)
-pub use expansion::NodeId;

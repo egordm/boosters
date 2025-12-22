@@ -47,7 +47,7 @@ impl Parallelism {
     }
 
     #[inline]
-    fn maybe_par_for_each<T, I, F>(self, iter: I, f: F)
+    pub fn maybe_par_for_each<T, I, F>(self, iter: I, f: F)
     where
         T: Send,
         I: IntoIterator<Item = T> + IntoParallelIterator<Item = T>,
@@ -75,7 +75,7 @@ impl Parallelism {
     }
 
     #[inline]
-    fn maybe_par_map<T, B, I, F>(self, iter: I, f: F) -> Vec<B>
+    pub fn maybe_par_map<T, B, I, F>(self, iter: I, f: F) -> Vec<B>
     where
         T: Send,
         B: Send,

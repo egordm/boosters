@@ -139,8 +139,8 @@ impl XgbModel {
         }
 
         // XGBoost uses the same layout as our LinearModel: feature × group + bias
-        Ok(LinearModel::new(
-            weights.to_vec().into_boxed_slice(),
+        Ok(LinearModel::from_flat(
+            weights,
             num_features,
             num_groups,
         ))

@@ -30,10 +30,9 @@
 
 use std::collections::BinaryHeap;
 
-use super::split::SplitInfo;
+use crate::repr::gbdt::NodeId;
 
-/// Type alias for tree node indices.
-pub type NodeId = u32;
+use super::split::SplitInfo;
 
 // ============================================================================
 // GrowthStrategy enum (config only)
