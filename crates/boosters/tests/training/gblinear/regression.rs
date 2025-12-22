@@ -9,16 +9,11 @@
 
 use super::{load_config, load_train_data, load_xgb_weights};
 use approx::assert_relative_eq;
-use boosters::data::{Dataset, FeaturesView, SamplesView};
+use boosters::data::{transpose_to_c_order, Dataset, FeaturesView, SamplesView};
 use boosters::inference::LinearModelPredict;
 use boosters::training::{GBLinearParams, GBLinearTrainer, Rmse, SquaredLoss, Verbosity};
 use ndarray::{Array2, ArrayView1};
 use rstest::rstest;
-
-/// Transpose predictions from (n_samples, n_groups) to (n_groups, n_samples) for metrics.
-fn transpose_predictions(output: &Array2<f32>) -> Array2<f32> {
-    output.t().to_owned()
-}
 
 /// Test that we can train a simple linear regression and get similar weights to XGBoost.
 #[rstest]
@@ -280,7 +275,7 @@ fn test_set_prediction_quality(#[case] name: &str) {
     let test_view = SamplesView::from_array(test_data.view());
     let output = model.predict(test_view, &base_scores);
     // Transpose from (n_samples, n_groups) to (n_groups, n_samples) for metrics
-    let pred_arr = transpose_predictions(&output);
+    let pred_arr = transpose_to_c_order(output.view());
     let targets_arr = ArrayView1::from(&test_labels[..]);
     let our_rmse = Rmse.compute(pred_arr.view(), targets_arr, None);
 

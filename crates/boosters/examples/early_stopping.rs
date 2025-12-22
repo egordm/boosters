@@ -57,7 +57,7 @@ fn main() {
     println!("Training with early stopping (monitoring training loss)...\n");
 
     let model =
-        GBDTModel::train(&dataset, labels.view(), None, config, 1).expect("Training failed");
+        GBDTModel::train(&dataset, labels.view(), None, &[], config, 1).expect("Training failed");
 
     // =========================================================================
     // 4. Results

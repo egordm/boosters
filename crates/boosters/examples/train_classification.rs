@@ -77,7 +77,7 @@ fn main() {
         .build()
         .expect("Invalid configuration");
 
-    let model_depth = GBDTModel::train(&dataset, labels.view(), None, config_depth, 1)
+    let model_depth = GBDTModel::train(&dataset, labels.view(), None, &[], config_depth, 1)
         .expect("Training failed");
 
     // Predict: GBDTModel::predict() returns probabilities for logistic objective
@@ -102,7 +102,7 @@ fn main() {
         .build()
         .expect("Invalid configuration");
 
-    let model_leaf = GBDTModel::train(&dataset, labels.view(), None, config_leaf, 1)
+    let model_leaf = GBDTModel::train(&dataset, labels.view(), None, &[], config_leaf, 1)
         .expect("Training failed");
 
     let predictions = model_leaf.predict(samples.view(), 1);
@@ -140,6 +140,7 @@ fn main() {
         &dataset,
         labels.view(),
         Some(ArrayView1::from(&weights[..])),
+        &[],
         config_weighted,
         1,
     )

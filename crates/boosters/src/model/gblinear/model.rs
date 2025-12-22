@@ -4,11 +4,12 @@
 //! Access components via [`linear()`](GBLinearModel::linear), [`meta()`](GBLinearModel::meta),
 //! and [`config()`](GBLinearModel::config).
 
-use crate::data::Dataset;
+use crate::data::{transpose_to_c_order, Dataset, SamplesView};
+use crate::inference::gblinear::LinearModelPredict;
 use crate::model::meta::ModelMeta;
 use crate::repr::gblinear::LinearModel;
 use crate::training::gblinear::GBLinearTrainer;
-use crate::training::{Metric, ObjectiveFn};
+use crate::training::{EvalSet, Metric, ObjectiveFn};
 
 use ndarray::{Array2, ArrayView2};
 
@@ -37,17 +38,29 @@ impl GBLinearModel {
     /// # Arguments
     ///
     /// * `dataset` - Training dataset (features, targets, optional weights)
+    /// * `eval_sets` - Evaluation sets for monitoring (`&[]` if not needed)
     /// * `config` - Training configuration
     /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
-    pub fn train(dataset: &Dataset, config: GBLinearConfig, n_threads: usize) -> Option<Self> {
-        crate::run_with_threads(n_threads, |_parallelism| Self::train_inner(dataset, config))
+    pub fn train(
+        dataset: &Dataset,
+        eval_sets: &[EvalSet<'_>],
+        config: GBLinearConfig,
+        n_threads: usize,
+    ) -> Option<Self> {
+        crate::run_with_threads(n_threads, |_parallelism| {
+            Self::train_inner(dataset, eval_sets, config)
+        })
     }
 
     /// Internal training implementation (no thread pool management).
     ///
     /// This method assumes the caller has already set up any necessary thread pool.
     /// Use `train()` for the public API that handles threading automatically.
-    fn train_inner(dataset: &Dataset, config: GBLinearConfig) -> Option<Self> {
+    fn train_inner(
+        dataset: &Dataset,
+        eval_sets: &[EvalSet<'_>],
+        config: GBLinearConfig,
+    ) -> Option<Self> {
         let n_features = dataset.n_features();
         let n_outputs = config.objective.n_outputs();
         
@@ -67,7 +80,7 @@ impl GBLinearModel {
             metric,
             params,
         );
-        let linear_model = trainer.train(dataset, &[])?;
+        let linear_model = trainer.train(dataset, eval_sets)?;
 
         let meta = ModelMeta {
             n_features,
@@ -183,30 +196,17 @@ impl GBLinearModel {
         self.compute_predictions_raw(features)
     }
 
-    /// Internal: Compute raw predictions.
+    /// Internal: Compute raw predictions using LinearModelPredict trait.
     ///
     /// Output shape: `[n_groups, n_rows]` - predictions for group g are in row g.
     fn compute_predictions_raw(&self, features: ArrayView2<f32>) -> Array2<f32> {
-        let n_rows = features.nrows();
-        let n_features = self.meta.n_features;
-        let n_groups = self.meta.n_groups;
+        // Use LinearModelPredict::predict which returns [n_samples, n_groups]
+        // Then transpose to [n_groups, n_samples] for consistent API
+        let data = SamplesView::from_array(features);
+        let output = self.model.predict(data, &[]);
 
-        // Output shape: [n_groups, n_rows]
-        let mut output = Array2::<f32>::zeros((n_groups, n_rows));
-
-        for row_idx in 0..n_rows {
-            let row = features.row(row_idx);
-
-            for g in 0..n_groups {
-                let mut sum = self.model.bias(g);
-                for f in 0..n_features.min(row.len()) {
-                    sum += self.model.weight(f, g) * row[f];
-                }
-                output[[g, row_idx]] = sum;
-            }
-        }
-
-        output
+        // Transpose to [n_groups, n_samples]
+        transpose_to_c_order(output.view())
     }
 
     // =========================================================================

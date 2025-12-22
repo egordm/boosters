@@ -7,6 +7,7 @@ use rayon::prelude::*;
 
 use crate::data::{FeaturesView, SamplesView};
 use crate::repr::gblinear::LinearModel;
+use crate::utils::Parallelism;
 
 /// Extension trait for LinearModel prediction.
 pub trait LinearModelPredict {
@@ -26,13 +27,28 @@ pub trait LinearModelPredict {
     /// Predict for a batch of rows.
     ///
     /// Returns predictions as `Array2<f32>` with shape `(num_rows, num_groups)`.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Feature matrix (sample-major layout)
+    /// * `base_score` - Base score to add per group
     fn predict(&self, data: SamplesView<'_>, base_score: &[f32]) -> Array2<f32>;
 
-    /// Parallel prediction for a batch of rows.
+    /// Predict with explicit parallelism control.
     ///
-    /// Uses Rayon to parallelize over rows.
     /// Returns predictions as `Array2<f32>` with shape `(num_rows, num_groups)`.
-    fn par_predict(&self, data: SamplesView<'_>, base_score: &[f32]) -> Array2<f32>;
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Feature matrix (sample-major layout)
+    /// * `base_score` - Base score to add per group
+    /// * `parallelism` - Whether to use parallel execution
+    fn predict_with(
+        &self,
+        data: SamplesView<'_>,
+        base_score: &[f32],
+        parallelism: Parallelism,
+    ) -> Array2<f32>;
 }
 
 impl LinearModelPredict for LinearModel {
@@ -86,64 +102,45 @@ impl LinearModelPredict for LinearModel {
     }
 
     fn predict(&self, data: SamplesView<'_>, base_score: &[f32]) -> Array2<f32> {
-        let num_rows = data.n_samples();
-        let num_features = self.n_features();
-        let num_groups = self.n_groups();
+        self.predict_with(data, base_score, Parallelism::Sequential)
+    }
 
-        // Build predictions in row-major layout: (num_rows, num_groups)
-        let mut output = Array2::zeros((num_rows, num_groups));
+    fn predict_with(
+        &self,
+        data: SamplesView<'_>,
+        base_score: &[f32],
+        parallelism: Parallelism,
+    ) -> Array2<f32> {
+        // Use ndarray dot product: data [n_samples, n_features] · weights [n_features, n_groups]
+        // → output [n_samples, n_groups]
+        let mut output = data.as_array().dot(&self.weight_matrix());
 
-        for row_idx in 0..num_rows {
-            let row = data.sample(row_idx);
+        // Add biases: output[row, group] += bias[group] + base_score[group]
+        let biases = self.biases();
 
-            for group in 0..num_groups {
-                let base = base_score.get(group).copied().unwrap_or(0.0);
-                let mut sum = base + self.bias(group);
-
-                for feat_idx in 0..num_features {
-                    let value = row.get(feat_idx).copied().unwrap_or(0.0);
-                    sum += value * self.weight(feat_idx, group);
+        match parallelism {
+            Parallelism::Sequential => {
+                for mut row in output.rows_mut() {
+                    for (group, val) in row.iter_mut().enumerate() {
+                        let base = base_score.get(group).copied().unwrap_or(0.0);
+                        *val += biases[group] + base;
+                    }
                 }
-
-                output[[row_idx, group]] = sum;
+            }
+            Parallelism::Parallel => {
+                output
+                    .axis_iter_mut(ndarray::Axis(0))
+                    .into_par_iter()
+                    .for_each(|mut row| {
+                        for (group, val) in row.iter_mut().enumerate() {
+                            let base = base_score.get(group).copied().unwrap_or(0.0);
+                            *val += biases[group] + base;
+                        }
+                    });
             }
         }
 
         output
-    }
-
-    fn par_predict(&self, data: SamplesView<'_>, base_score: &[f32]) -> Array2<f32> {
-        let num_rows = data.n_samples();
-        let num_features = self.n_features();
-        let num_groups = self.n_groups();
-
-        // Collect row-major results per row (each row returns its groups)
-        let row_outputs: Vec<Vec<f32>> = (0..num_rows)
-            .into_par_iter()
-            .map(|row_idx| {
-                let row = data.sample(row_idx);
-                let mut row_output = Vec::with_capacity(num_groups);
-
-                for group in 0..num_groups {
-                    let base = base_score.get(group).copied().unwrap_or(0.0);
-                    let mut sum = base + self.bias(group);
-
-                    for feat_idx in 0..num_features {
-                        let value = row.get(feat_idx).copied().unwrap_or(0.0);
-                        sum += value * self.weight(feat_idx, group);
-                    }
-
-                    row_output.push(sum);
-                }
-
-                row_output
-            })
-            .collect();
-
-        // Flatten into row-major layout
-        let flat: Vec<f32> = row_outputs.into_iter().flatten().collect();
-        Array2::from_shape_vec((num_rows, num_groups), flat)
-            .expect("row_outputs shape mismatch")
     }
 }
 
@@ -151,6 +148,7 @@ impl LinearModelPredict for LinearModel {
 mod tests {
     use super::*;
     use crate::data::SamplesView;
+    use crate::utils::Parallelism;
 
     #[test]
     fn predict_row_regression() {
@@ -218,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn par_predict_batch() {
+    fn predict_with_parallelism() {
         let weights = vec![0.5, 0.3, 0.1].into_boxed_slice();
         let model = LinearModel::new(weights, 2, 1);
 
@@ -228,11 +226,16 @@ mod tests {
         ];
         let view = SamplesView::from_slice(&data, 2, 2).unwrap();
 
-        let output = model.par_predict(view, &[0.0]);
+        // Test parallel prediction
+        let output = model.predict_with(view, &[0.0], Parallelism::Parallel);
 
         assert_eq!(output.dim(), (2, 1));
         assert!((output[[0, 0]] - 2.0).abs() < 1e-6);
         assert!((output[[1, 0]] - 0.9).abs() < 1e-6);
+
+        // Sequential should give same results
+        let seq_output = model.predict_with(view, &[0.0], Parallelism::Sequential);
+        assert_eq!(output, seq_output);
     }
 }
 

@@ -89,6 +89,7 @@ fn run_synthetic_regression(
 		&binned_train,
 		ArrayView1::from(&y_train[..]),
 		None,
+		&[],
 		config,
 		1,
 	)
@@ -143,6 +144,7 @@ fn run_synthetic_binary(
 		&binned_train,
 		ArrayView1::from(&y_train[..]),
 		None,
+		&[],
 		config,
 		1,
 	)
@@ -205,6 +207,7 @@ fn run_synthetic_multiclass(
 		&binned_train,
 		ArrayView1::from(&y_train[..]),
 		None,
+		&[],
 		config,
 		1,
 	)
@@ -336,6 +339,7 @@ fn test_quality_improvement_linear_leaves() {
 		&binned_train,
 		ArrayView1::from(&y_train[..]),
 		None,
+		&[],
 		base_config,
 		1,
 	)
@@ -364,6 +368,7 @@ fn test_quality_improvement_linear_leaves() {
 		&binned_train,
 		ArrayView1::from(&y_train[..]),
 		None,
+		&[],
 		linear_config,
 		1,
 	)

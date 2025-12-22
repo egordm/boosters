@@ -99,6 +99,7 @@ fn main() {
         &dataset,
         labels.view(),
         None,
+        &[],
         config.clone(),
         1,
     )
@@ -120,6 +121,7 @@ fn main() {
         &dataset,
         labels.view(),
         Some(ArrayView1::from(&class_weights[..])),
+        &[],
         config,
         1,
     )

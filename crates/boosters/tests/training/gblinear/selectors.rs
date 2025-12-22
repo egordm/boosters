@@ -8,18 +8,13 @@
 //! - Thrifty (cached greedy)
 
 use super::{load_test_data, load_train_data};
-use boosters::data::{Dataset, FeaturesView, SamplesView};
+use boosters::data::{transpose_to_c_order, Dataset, FeaturesView, SamplesView};
 use boosters::inference::LinearModelPredict;
 use boosters::training::gblinear::FeatureSelectorKind;
 use boosters::training::{
     GBLinearParams, GBLinearTrainer, MulticlassLogLoss, Rmse, SoftmaxLoss, SquaredLoss, Verbosity,
 };
 use ndarray::{Array2, ArrayView1};
-
-/// Transpose predictions from (n_samples, n_groups) to (n_groups, n_samples) for metrics.
-fn transpose_predictions(output: &Array2<f32>) -> Array2<f32> {
-    output.t().to_owned()
-}
 
 // =============================================================================
 // Feature Selector Integration Tests
@@ -63,7 +58,7 @@ fn train_all_selectors_regression() {
     let shuffle_model = shuffle_trainer.train(&train, &[]).unwrap();
     use boosters::training::MetricFn;
     let shuffle_output = shuffle_model.predict(test_view, &[]);
-    let shuffle_arr = transpose_predictions(&shuffle_output);
+    let shuffle_arr = transpose_to_c_order(shuffle_output.view());
     let targets_arr = ArrayView1::from(&test_labels[..]);
     let shuffle_rmse = Rmse.compute(shuffle_arr.view(), targets_arr, None);
 
@@ -83,7 +78,7 @@ fn train_all_selectors_regression() {
         let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
         let model = trainer.train(&train, &[]).unwrap();
         let output = model.predict(test_view, &[]);
-        let pred_arr = transpose_predictions(&output);
+        let pred_arr = transpose_to_c_order(output.view());
         let rmse = Rmse.compute(pred_arr.view(), targets_arr, None);
 
         // All selectors should produce reasonable models
@@ -296,7 +291,7 @@ fn train_thrifty_selector_convergence() {
     let model = trainer.train(&train, &[]).unwrap();
     use boosters::training::MetricFn;
     let output = model.predict(test_view, &[]);
-    let pred_arr = transpose_predictions(&output);
+    let pred_arr = transpose_to_c_order(output.view());
     let targets_arr = ArrayView1::from(&test_labels[..]);
     let rmse = Rmse.compute(pred_arr.view(), targets_arr, None);
 

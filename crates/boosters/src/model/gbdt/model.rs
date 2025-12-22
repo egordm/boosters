@@ -9,7 +9,7 @@ use crate::inference::gbdt::UnrolledPredictor6;
 use crate::model::meta::ModelMeta;
 use crate::repr::gbdt::{Forest, ScalarLeaf};
 use crate::training::gbdt::GBDTTrainer;
-use crate::training::{Metric, ObjectiveFn};
+use crate::training::{EvalSet, Metric, ObjectiveFn};
 use crate::utils::{Parallelism, run_with_threads};
 
 use ndarray::{Array2, ArrayView1, ArrayView2};
@@ -98,17 +98,19 @@ impl GBDTModel {
     /// * `dataset` - Binned training dataset
     /// * `targets` - Target values (length = n_rows × n_outputs)
     /// * `weights` - Optional sample weights (None for uniform)
+    /// * `eval_sets` - Evaluation sets for monitoring and early stopping (`&[]` if not needed)
     /// * `config` - Training configuration
     /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
     pub fn train(
         dataset: &BinnedDataset,
         targets: ArrayView1<f32>,
         weights: Option<ArrayView1<f32>>,
+        eval_sets: &[EvalSet<'_>],
         config: GBDTConfig,
         n_threads: usize,
     ) -> Option<Self> {
         crate::run_with_threads(n_threads, |parallelism| {
-            Self::train_inner(dataset, targets, weights, config, parallelism)
+            Self::train_inner(dataset, targets, weights, eval_sets, config, parallelism)
         })
     }
 
@@ -120,6 +122,7 @@ impl GBDTModel {
         dataset: &BinnedDataset,
         targets: ArrayView1<f32>,
         weights: Option<ArrayView1<f32>>,
+        eval_sets: &[EvalSet<'_>],
         config: GBDTConfig,
         parallelism: Parallelism,
     ) -> Option<Self> {
@@ -144,7 +147,7 @@ impl GBDTModel {
         );
         
         // Components receive parallelism flag; thread pool is already set up
-        let forest = trainer.train(dataset, targets, weights, &[], parallelism)?;
+        let forest = trainer.train(dataset, targets, weights, eval_sets, parallelism)?;
 
         let meta = ModelMeta {
             n_features,

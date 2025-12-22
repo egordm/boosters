@@ -159,6 +159,7 @@ fn main() {
         &dataset_no_bundle,
         labels.view(),
         None,
+        &[],
         config.clone(),
         1,
     )
@@ -169,6 +170,7 @@ fn main() {
         &dataset_bundled,
         labels.view(),
         None,
+        &[],
         config,
         1,
     )

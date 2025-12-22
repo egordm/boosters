@@ -5,19 +5,14 @@
 //! - HingeLoss (SVM-style binary classification)
 
 use super::{load_test_data, load_train_data};
-use boosters::data::{Dataset, FeaturesView, SamplesView};
+use boosters::data::{transpose_to_c_order, Dataset, FeaturesView, SamplesView};
 use boosters::inference::LinearModelPredict;
 use boosters::training::{
     Accuracy, GBLinearParams, GBLinearTrainer, HingeLoss, LogLoss, LogisticLoss, MarginAccuracy,
     ObjectiveFn, PseudoHuberLoss, Rmse, SquaredLoss, Verbosity,
 };
-use ndarray::{Array2, ArrayView1};
+use ndarray::ArrayView1;
 use rstest::rstest;
-
-/// Transpose predictions from (n_samples, n_groups) to (n_groups, n_samples) for metrics.
-fn transpose_predictions(output: &Array2<f32>) -> Array2<f32> {
-    output.t().to_owned()
-}
 
 // =============================================================================
 // PseudoHuberLoss Integration Tests
@@ -67,7 +62,7 @@ fn train_pseudo_huber_with_delta(#[case] delta: f32, #[case] max_rmse: f64) {
 
     let test_view = SamplesView::from_array(test_data.view());
     let output = model.predict(test_view, &[]);
-    let pred_arr = transpose_predictions(&output);
+    let pred_arr = transpose_to_c_order(output.view());
     let targets_arr = ArrayView1::from(&test_labels[..]);
     let rmse = Rmse.compute(pred_arr.view(), targets_arr, None);
 
@@ -119,8 +114,8 @@ fn pseudo_huber_large_delta_matches_squared() {
     let ph_output = ph_model.predict(test_view, &[]);
     let sq_output = sq_model.predict(test_view, &[]);
 
-    let ph_arr = transpose_predictions(&ph_output);
-    let sq_arr = transpose_predictions(&sq_output);
+    let ph_arr = transpose_to_c_order(ph_output.view());
+    let sq_arr = transpose_to_c_order(sq_output.view());
     let targets_arr = ArrayView1::from(&test_labels[..]);
 
     let ph_rmse = Rmse.compute(ph_arr.view(), targets_arr, None);
@@ -185,7 +180,7 @@ fn train_hinge_binary_classification() {
 
     let test_view = SamplesView::from_array(test_data.view());
     let hinge_output = hinge_model.predict(test_view, &[]);
-    let hinge_arr = transpose_predictions(&hinge_output);
+    let hinge_arr = transpose_to_c_order(hinge_output.view());
     let targets_arr = ArrayView1::from(&test_labels[..]);
     let hinge_acc = MarginAccuracy::default()
         .compute(hinge_arr.view(), targets_arr, None)
@@ -193,7 +188,7 @@ fn train_hinge_binary_classification() {
 
     let logistic_output = logistic_model.predict(test_view, &[]);
     // Convert to Array2, apply transform, then use for metrics
-    let mut logistic_arr = transpose_predictions(&logistic_output);
+    let mut logistic_arr = transpose_to_c_order(logistic_output.view());
     LogisticLoss.transform_predictions(logistic_arr.view_mut());
     let logistic_acc = Accuracy::with_threshold(0.5)
         .compute(logistic_arr.view(), targets_arr, None) as f32;

@@ -695,7 +695,7 @@ fn train_boosters(
 
 	// Train using model API
 	let targets = ArrayView1::from(y_train);
-	let model = GBDTModel::train(&binned_train, targets, None, gbdt_config, 1)
+	let model = GBDTModel::train(&binned_train, targets, None, &[], gbdt_config, 1)
 		.expect("training should succeed");
 
 	// Predict using model API (applies transform automatically)
