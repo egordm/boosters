@@ -13,10 +13,6 @@ use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, TreeParams};
 use ndarray::ArrayView1;
 
-fn empty_weights() -> ArrayView1<'static, f32> {
-    ArrayView1::from(&[][..])
-}
-
 fn main() {
     // =========================================================================
     // 1. Prepare Data
@@ -55,7 +51,7 @@ fn main() {
     println!("  Metric: {:?}\n", config.metric);
 
     // Train using GBDTModel (high-level API)
-    let model = GBDTModel::train(&dataset, ArrayView1::from(&labels[..]), empty_weights(), config, 1).expect("Training failed");
+    let model = GBDTModel::train(&dataset, ArrayView1::from(&labels[..]), None, config, 1).expect("Training failed");
 
     // =========================================================================
     // 3. Make Predictions

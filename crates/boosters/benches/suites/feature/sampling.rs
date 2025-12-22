@@ -19,10 +19,6 @@ use boosters::Parallelism;
 
 use ndarray::ArrayView1;
 
-fn empty_weights() -> ArrayView1<'static, f32> {
-    ArrayView1::from(&[][..])
-}
-
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 // =============================================================================
@@ -94,7 +90,7 @@ fn bench_sampling_strategies(c: &mut Criterion) {
             b.iter(|| {
                 black_box(
                     trainer
-                        .train(black_box(&binned), ArrayView1::from(black_box(&targets[..])), empty_weights(), &[], Parallelism::Sequential)
+                        .train(black_box(&binned), ArrayView1::from(black_box(&targets[..])), None, &[], Parallelism::Sequential)
                         .unwrap(),
                 )
             })

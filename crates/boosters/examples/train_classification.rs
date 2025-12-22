@@ -23,10 +23,6 @@ use boosters::training::{Accuracy, GBDTParams, GBDTTrainer, GrowthStrategy, LogL
 use boosters::Parallelism;
 use ndarray::{Array2, ArrayView1};
 
-fn empty_weights() -> ArrayView1<'static, f32> {
-    ArrayView1::from(&[][..])
-}
-
 fn main() {
     // =========================================================================
     // Generate synthetic binary classification data
@@ -80,7 +76,7 @@ fn main() {
 
     let trainer_depth = GBDTTrainer::new(LogisticLoss, LogLoss, params_depth);
     let forest_depth = trainer_depth
-        .train(&dataset, ArrayView1::from(&labels[..]), empty_weights(), &[], Parallelism::Sequential)
+        .train(&dataset, ArrayView1::from(&labels[..]), None, &[], Parallelism::Sequential)
         .unwrap();
 
     // Predict: apply sigmoid to convert logits to probabilities
@@ -93,7 +89,7 @@ fn main() {
         .collect();
 
     let pred_arr = Array2::from_shape_vec((1, predictions.len()), predictions.to_vec()).unwrap();
-    let acc = Accuracy::default().compute(pred_arr.view(), ArrayView1::from(&labels[..]), empty_weights());
+    let acc = Accuracy::default().compute(pred_arr.view(), ArrayView1::from(&labels[..]), None);
     println!("Depth-wise: {} trees", forest_depth.n_trees());
     println!("Accuracy: {:.2}%", acc * 100.0);
 
@@ -112,7 +108,7 @@ fn main() {
 
     let trainer_leaf = GBDTTrainer::new(LogisticLoss, LogLoss, params_leaf);
     let forest_leaf = trainer_leaf
-        .train(&dataset, ArrayView1::from(&labels[..]), empty_weights(), &[], Parallelism::Sequential)
+        .train(&dataset, ArrayView1::from(&labels[..]), None, &[], Parallelism::Sequential)
         .unwrap();
 
     let predictions: Vec<f32> = features
@@ -124,7 +120,7 @@ fn main() {
         .collect();
 
     let pred_arr = Array2::from_shape_vec((1, predictions.len()), predictions.to_vec()).unwrap();
-    let acc = Accuracy::default().compute(pred_arr.view(), ArrayView1::from(&labels[..]), empty_weights());
+    let acc = Accuracy::default().compute(pred_arr.view(), ArrayView1::from(&labels[..]), None);
     println!("Leaf-wise: {} trees", forest_leaf.n_trees());
     println!("Accuracy: {:.2}%", acc * 100.0);
 
@@ -145,7 +141,7 @@ fn main() {
         .collect();
 
     let forest_weighted = trainer_depth
-        .train(&dataset, ArrayView1::from(&labels[..]), ArrayView1::from(&weights[..]), &[], Parallelism::Sequential)
+        .train(&dataset, ArrayView1::from(&labels[..]), Some(ArrayView1::from(&weights[..])), &[], Parallelism::Sequential)
         .unwrap();
 
     let predictions: Vec<f32> = features
@@ -157,7 +153,7 @@ fn main() {
         .collect();
 
     let pred_arr = Array2::from_shape_vec((1, predictions.len()), predictions.to_vec()).unwrap();
-    let acc = Accuracy::default().compute(pred_arr.view(), ArrayView1::from(&labels[..]), empty_weights());
+    let acc = Accuracy::default().compute(pred_arr.view(), ArrayView1::from(&labels[..]), None);
     println!("Weighted training: {} trees", forest_weighted.n_trees());
     println!("Accuracy: {:.2}%", acc * 100.0);
     println!("\nNote: See train_imbalanced.rs for class imbalance handling.");

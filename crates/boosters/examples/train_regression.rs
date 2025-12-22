@@ -13,10 +13,6 @@ use boosters::training::{GBDTParams, GBDTTrainer, GrowthStrategy, MetricFn, Rmse
 use boosters::Parallelism;
 use ndarray::{Array2, ArrayView1};
 
-fn empty_weights() -> ArrayView1<'static, f32> {
-    ArrayView1::from(&[][..])
-}
-
 fn main() {
     // =========================================================================
     // Generate synthetic regression data: y = x0 + 0.5*x1 + 0.25*x2 + noise
@@ -70,7 +66,7 @@ fn main() {
 
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
     let forest = trainer
-        .train(&dataset, ArrayView1::from(&labels[..]), empty_weights(), &[], Parallelism::Sequential)
+        .train(&dataset, ArrayView1::from(&labels[..]), None, &[], Parallelism::Sequential)
         .unwrap();
 
     // =========================================================================
@@ -82,7 +78,7 @@ fn main() {
         .collect();
 
     let pred_arr = Array2::from_shape_vec((1, predictions.len()), predictions.to_vec()).unwrap();
-    let rmse = Rmse.compute(pred_arr.view(), ArrayView1::from(&labels[..]), empty_weights());
+    let rmse = Rmse.compute(pred_arr.view(), ArrayView1::from(&labels[..]), None);
 
     println!("=== Results ===");
     println!("Trees: {}", forest.n_trees());

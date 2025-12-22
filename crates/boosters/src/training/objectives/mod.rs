@@ -88,8 +88,8 @@ pub enum TargetSchema {
 ///
 /// # Weighted Training
 ///
-/// The `weights` slice can be empty for unweighted training.
-/// When non-empty, it must have length `n_rows`.
+/// Pass `None` for `weights` for unweighted training.
+/// When `Some`, the slice must have length `n_rows`.
 pub trait ObjectiveFn: Send + Sync {
     /// Number of outputs (predictions per sample).
     ///
@@ -106,13 +106,13 @@ pub trait ObjectiveFn: Send + Sync {
     /// * `n_outputs` - Number of outputs (predictions per sample)
     /// * `predictions` - Model predictions, column-major `[n_outputs * n_rows]`
     /// * `targets` - Ground truth labels, column-major `[n_targets * n_rows]`
-    /// * `weights` - Sample weights (empty slice for unweighted)
+    /// * `weights` - Sample weights (`None` for unweighted)
     /// * `grad_hess` - Interleaved (grad, hess) pairs, column-major `[n_outputs * n_rows]`
     fn compute_gradients(
         &self,
         predictions: ArrayView2<f32>,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
         grad_hess: ArrayViewMut2<GradsTuple>,
     );
 
@@ -125,12 +125,12 @@ pub trait ObjectiveFn: Send + Sync {
     /// * `n_rows` - Number of samples
     /// * `n_outputs` - Number of outputs
     /// * `targets` - Ground truth labels, column-major
-    /// * `weights` - Sample weights (empty slice for unweighted)
+    /// * `weights` - Sample weights (`None` for unweighted)
     /// * `outputs` - Output base scores, length `n_outputs`
     fn compute_base_score(
         &self,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
         outputs: ArrayViewMut2<f32>,
     );
 
@@ -298,7 +298,7 @@ impl ObjectiveFn for Objective {
         &self,
         predictions: ArrayView2<f32>,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
         grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         match self {
@@ -317,7 +317,7 @@ impl ObjectiveFn for Objective {
     fn compute_base_score(
         &self,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
         outputs: ArrayViewMut2<f32>,
     ) {
         match self {
@@ -397,25 +397,22 @@ impl ObjectiveFn for Objective {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::{Array1, Array2, array};
+    use ndarray::{Array2, array};
 
     fn make_grad_hess_array(n_outputs: usize, n_samples: usize) -> Array2<GradsTuple> {
         Array2::from_elem((n_outputs, n_samples), GradsTuple { grad: 0.0, hess: 0.0 })
     }
 
-    fn empty_weights() -> Array1<f32> {
-        Array1::from_vec(vec![])
-    }
+
 
     #[test]
     fn squared_loss_gradients() {
         let obj = SquaredLoss;
         let preds = array![[1.0, 2.0, 3.0]];
         let targets = array![0.5, 2.5, 2.5];
-        let weights = array![];
         let mut grad_hess = make_grad_hess_array(1, 3);
 
-        obj.compute_gradients(preds.view(), targets.view(), weights.view(), grad_hess.view_mut());
+        obj.compute_gradients(preds.view(), targets.view(), None, grad_hess.view_mut());
 
         // grad = pred - target
         assert!((grad_hess[[0, 0]].grad - 0.5).abs() < 1e-6);
@@ -436,7 +433,7 @@ mod tests {
         let weights = array![2.0, 0.5];
         let mut grad_hess = make_grad_hess_array(1, 2);
 
-        obj.compute_gradients(preds.view(), targets.view(), weights.view(), grad_hess.view_mut());
+        obj.compute_gradients(preds.view(), targets.view(), Some(weights.view()), grad_hess.view_mut());
 
         // grad = weight * (pred - target)
         assert!((grad_hess[[0, 0]].grad - 1.0).abs() < 1e-6); // 2.0 * 0.5
@@ -454,7 +451,7 @@ mod tests {
         let targets = array![0.5, 2.5, 2.5];
         let mut grad_hess = make_grad_hess_array(1, 3);
 
-        obj.compute_gradients(preds.view(), targets.view(), empty_weights().view(), grad_hess.view_mut());
+        obj.compute_gradients(preds.view(), targets.view(), None, grad_hess.view_mut());
 
         // For alpha=0.5: grad = 0.5 if pred > target, -0.5 if pred < target
         assert!((grad_hess[[0, 0]].grad - 0.5).abs() < 1e-6); // pred > target

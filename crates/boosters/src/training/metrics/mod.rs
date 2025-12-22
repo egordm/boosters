@@ -238,7 +238,7 @@ impl MetricFn for Metric {
         &self,
         predictions: ArrayView2<f32>,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
     ) -> f64 {
         match self {
             Self::None => f64::NAN,
@@ -350,12 +350,12 @@ pub trait MetricFn: Send + Sync {
     ///
     /// Predictions are expected in **column-major** layout: `predictions[output * n_rows + row]`.
     ///
-    /// Pass an empty `weights` slice for unweighted computation.
+    /// Pass `None` for weights for unweighted computation.
     fn compute(
         &self,
         predictions: ArrayView2<f32>,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
     ) -> f64;
 
     /// What prediction space does this metric expect?

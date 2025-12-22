@@ -162,7 +162,7 @@ impl GBDTModel {
     ///
     /// * `dataset` - Binned training dataset
     /// * `targets` - Target values (length = n_rows × n_outputs)
-    /// * `weights` - Optional sample weights (empty slice for uniform)
+    /// * `weights` - Optional sample weights (None for uniform)
     /// * `config` - Training configuration (objective, metric, hyperparameters)
     /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
     ///
@@ -200,7 +200,7 @@ impl GBDTModel {
     pub fn train(
         dataset: &BinnedDataset,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
         config: GBDTConfig,
         n_threads: usize,
     ) -> Option<Self> {
@@ -216,7 +216,7 @@ impl GBDTModel {
     fn train_inner(
         dataset: &BinnedDataset,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
         config: GBDTConfig,
         parallelism: Parallelism,
     ) -> Option<Self> {

@@ -14,10 +14,6 @@ use boosters::data::{ColMatrix, DenseMatrix, RowMajor};
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, TreeParams};
 use ndarray::ArrayView1;
 
-fn empty_weights() -> ArrayView1<'static, f32> {
-    ArrayView1::from(&[][..])
-}
-
 fn main() {
     println!("=== Early Stopping Example ===\n");
 
@@ -63,7 +59,7 @@ fn main() {
     println!("Training with early stopping (monitoring training loss)...\n");
 
     let model =
-        GBDTModel::train(&dataset, ArrayView1::from(&labels[..]), empty_weights(), config, 1).expect("Training failed");
+        GBDTModel::train(&dataset, ArrayView1::from(&labels[..]), None, config, 1).expect("Training failed");
 
     // =========================================================================
     // 4. Results

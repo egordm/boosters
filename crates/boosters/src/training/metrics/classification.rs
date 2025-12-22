@@ -23,7 +23,7 @@ impl MetricFn for LogLoss {
         &self,
         predictions: ArrayView2<f32>,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
     ) -> f64 {
         let (_, n_rows) = predictions.dim();
         if n_rows == 0 {
@@ -32,7 +32,7 @@ impl MetricFn for LogLoss {
 
         const EPS: f64 = 1e-15;
 
-        let weights_slice = weights.as_slice().unwrap_or(&[]);
+        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
         let targets_slice = targets.as_slice().expect("targets should be contiguous");
         let preds_row = predictions.row(0);
         let preds_slice = preds_row.as_slice().expect("predictions row should be contiguous");
@@ -93,14 +93,14 @@ impl MetricFn for Accuracy {
         &self,
         predictions: ArrayView2<f32>,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
     ) -> f64 {
         let (_, n_rows) = predictions.dim();
         if n_rows == 0 {
             return 0.0;
         }
 
-        let weights_slice = weights.as_slice().unwrap_or(&[]);
+        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
         let targets_slice = targets.as_slice().expect("targets should be contiguous");
         let preds_row = predictions.row(0);
         let preds_slice = preds_row.as_slice().expect("predictions row should be contiguous");
@@ -161,14 +161,14 @@ impl MetricFn for MarginAccuracy {
         &self,
         predictions: ArrayView2<f32>,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
     ) -> f64 {
         let (_, n_rows) = predictions.dim();
         if n_rows == 0 {
             return 0.0;
         }
 
-        let weights_slice = weights.as_slice().unwrap_or(&[]);
+        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
         let targets_slice = targets.as_slice().expect("targets should be contiguous");
         let preds_row = predictions.row(0);
         let preds_slice = preds_row.as_slice().expect("predictions row should be contiguous");
@@ -217,14 +217,14 @@ impl MetricFn for MulticlassAccuracy {
         &self,
         predictions: ArrayView2<f32>,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
     ) -> f64 {
         let (n_outputs, n_rows) = predictions.dim();
         if n_rows == 0 {
             return 0.0;
         }
 
-        let weights_slice = weights.as_slice().unwrap_or(&[]);
+        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
         let targets_slice = targets.as_slice().expect("targets should be contiguous");
 
         // Single output: predictions are class indices
@@ -296,7 +296,7 @@ impl MetricFn for Auc {
         &self,
         predictions: ArrayView2<f32>,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
     ) -> f64 {
         let (_, n_rows) = predictions.dim();
         if n_rows == 0 {
@@ -306,7 +306,7 @@ impl MetricFn for Auc {
         let preds_row = predictions.row(0);
         let preds_slice = preds_row.as_slice().expect("predictions row should be contiguous");
         let targets_slice = targets.as_slice().expect("targets should be contiguous");
-        let weights_slice = weights.as_slice().unwrap_or(&[]);
+        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
 
         if weights_slice.is_empty() {
             compute_auc_unweighted(preds_slice, targets_slice)
@@ -443,7 +443,7 @@ impl MetricFn for MulticlassLogLoss {
         &self,
         predictions: ArrayView2<f32>,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
     ) -> f64 {
         let (n_outputs, n_rows) = predictions.dim();
         if n_rows == 0 || n_outputs == 0 {
@@ -452,7 +452,7 @@ impl MetricFn for MulticlassLogLoss {
 
         const EPS: f64 = 1e-15;
 
-        let weights_slice = weights.as_slice().unwrap_or(&[]);
+        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
         let targets_slice = targets.as_slice().expect("targets should be contiguous");
 
         let (sum_loss, sum_w) = targets_slice
@@ -509,10 +509,6 @@ mod tests {
         Array1::from_vec(data.to_vec())
     }
 
-    fn empty_weights() -> Array1<f32> {
-        Array1::from_vec(vec![])
-    }
-
     // =========================================================================
     // LogLoss tests
     // =========================================================================
@@ -521,7 +517,7 @@ mod tests {
     fn logloss_perfect() {
         let preds = make_preds(1, 2, &[0.9999, 0.0001]);
         let labels = make_targets(&[1.0, 0.0]);
-        let ll = LogLoss.compute(preds.view(), labels.view(), empty_weights().view());
+        let ll = LogLoss.compute(preds.view(), labels.view(), None);
         assert!(ll < 0.01);
     }
 
@@ -529,7 +525,7 @@ mod tests {
     fn logloss_random() {
         let preds = make_preds(1, 2, &[0.5, 0.5]);
         let labels = make_targets(&[1.0, 0.0]);
-        let ll = LogLoss.compute(preds.view(), labels.view(), empty_weights().view());
+        let ll = LogLoss.compute(preds.view(), labels.view(), None);
         assert_abs_diff_eq!(ll as f32, 0.693, epsilon = 0.01);
     }
 
@@ -538,11 +534,11 @@ mod tests {
         let preds = make_preds(1, 2, &[0.9, 0.1]);
         let labels = make_targets(&[1.0, 1.0]);
         
-        let unweighted = LogLoss.compute(preds.view(), labels.view(), empty_weights().view());
+        let unweighted = LogLoss.compute(preds.view(), labels.view(), None);
         
         // High weight on good prediction → lower loss
         let weights = make_weights(&[10.0, 1.0]);
-        let weighted = LogLoss.compute(preds.view(), labels.view(), weights.view());
+        let weighted = LogLoss.compute(preds.view(), labels.view(), Some(weights.view()));
         assert!(weighted < unweighted);
     }
 
@@ -554,7 +550,7 @@ mod tests {
     fn accuracy_perfect() {
         let preds = make_preds(1, 4, &[0.9, 0.1, 0.8, 0.2]);
         let labels = make_targets(&[1.0, 0.0, 1.0, 0.0]);
-        let acc = Accuracy::default().compute(preds.view(), labels.view(), empty_weights().view());
+        let acc = Accuracy::default().compute(preds.view(), labels.view(), None);
         assert_abs_diff_eq!(acc as f32, 1.0, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -562,7 +558,7 @@ mod tests {
     fn accuracy_half() {
         let preds = make_preds(1, 4, &[0.9, 0.9, 0.1, 0.1]);
         let labels = make_targets(&[1.0, 0.0, 1.0, 0.0]);
-        let acc = Accuracy::default().compute(preds.view(), labels.view(), empty_weights().view());
+        let acc = Accuracy::default().compute(preds.view(), labels.view(), None);
         assert_abs_diff_eq!(acc as f32, 0.5, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -573,7 +569,7 @@ mod tests {
         
         // High weight on correct sample
         let weights = make_weights(&[10.0, 1.0]);
-        let weighted = Accuracy::default().compute(preds.view(), labels.view(), weights.view());
+        let weighted = Accuracy::default().compute(preds.view(), labels.view(), Some(weights.view()));
         assert_abs_diff_eq!(weighted as f32, 10.0 / 11.0, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -590,7 +586,7 @@ mod tests {
             0.0, 1.0, 3.0, 1.0,  // class 2
         ]);
         let labels = make_targets(&[0.0, 1.0, 2.0, 0.0]); // Last one wrong
-        let acc = MulticlassAccuracy.compute(preds.view(), labels.view(), empty_weights().view());
+        let acc = MulticlassAccuracy.compute(preds.view(), labels.view(), None);
         assert_abs_diff_eq!(acc as f32, 0.75, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -602,7 +598,7 @@ mod tests {
     fn auc_perfect() {
         let preds = make_preds(1, 4, &[0.9, 0.8, 0.3, 0.2]);
         let labels = make_targets(&[1.0, 1.0, 0.0, 0.0]);
-        let auc = Auc.compute(preds.view(), labels.view(), empty_weights().view());
+        let auc = Auc.compute(preds.view(), labels.view(), None);
         assert_abs_diff_eq!(auc as f32, 1.0, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -610,7 +606,7 @@ mod tests {
     fn auc_random() {
         let preds = make_preds(1, 4, &[0.5, 0.5, 0.5, 0.5]);
         let labels = make_targets(&[1.0, 0.0, 1.0, 0.0]);
-        let auc = Auc.compute(preds.view(), labels.view(), empty_weights().view());
+        let auc = Auc.compute(preds.view(), labels.view(), None);
         assert_abs_diff_eq!(auc as f32, 0.5, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -618,7 +614,7 @@ mod tests {
     fn auc_worst() {
         let preds = make_preds(1, 4, &[0.2, 0.3, 0.8, 0.9]);
         let labels = make_targets(&[1.0, 1.0, 0.0, 0.0]);
-        let auc = Auc.compute(preds.view(), labels.view(), empty_weights().view());
+        let auc = Auc.compute(preds.view(), labels.view(), None);
         assert!(auc < 0.01);
     }
 
@@ -635,7 +631,7 @@ mod tests {
             0.005, 0.005,  // class 2
         ]);
         let labels = make_targets(&[0.0, 1.0]);
-        let mlogloss = MulticlassLogLoss.compute(preds.view(), labels.view(), empty_weights().view());
+        let mlogloss = MulticlassLogLoss.compute(preds.view(), labels.view(), None);
         assert!(mlogloss < 0.02);
     }
 
@@ -648,7 +644,7 @@ mod tests {
             0.334, 0.334, 0.334,  // class 2
         ]);
         let labels = make_targets(&[0.0, 1.0, 2.0]);
-        let mlogloss = MulticlassLogLoss.compute(preds.view(), labels.view(), empty_weights().view());
+        let mlogloss = MulticlassLogLoss.compute(preds.view(), labels.view(), None);
         assert_abs_diff_eq!(mlogloss as f32, 1.099, epsilon = 0.01);
     }
 

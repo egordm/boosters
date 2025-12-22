@@ -164,12 +164,12 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
     ///
     /// * `predictions` - Prediction array, shape `[n_outputs, n_samples]`
     /// * `targets` - Target values, length `n_samples`
-    /// * `weights` - Sample weights, empty for uniform
+    /// * `weights` - Sample weights, `None` for uniform
     pub fn compute(
         &mut self,
         predictions: ArrayView2<f32>,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
     ) -> f64 {
         let needs_transform =
             self.metric.expected_prediction_kind() != PredictionKind::Margin;
@@ -214,13 +214,13 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
     /// * `name` - Name for the metric (e.g., "train-rmse")
     /// * `predictions` - Prediction array, shape `[n_outputs, n_samples]`
     /// * `targets` - Target values, length `n_samples`
-    /// * `weights` - Sample weights, empty for uniform
+    /// * `weights` - Sample weights, `None` for uniform
     pub fn compute_metric(
         &mut self,
         name: impl Into<String>,
         predictions: ArrayView2<f32>,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
     ) -> MetricValue {
         let value = self.compute(predictions, targets, weights);
         MetricValue::new(name, value, self.higher_is_better())
@@ -235,14 +235,14 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
     ///
     /// * `train_predictions` - Training predictions, shape `[n_outputs, n_train_samples]`
     /// * `train_targets` - Training targets, length `n_train_samples`
-    /// * `train_weights` - Training weights, empty for uniform
+    /// * `train_weights` - Training weights, `None` for uniform
     /// * `eval_sets` - Evaluation datasets
     /// * `eval_predictions` - Predictions for each eval set, same shape convention
     pub fn evaluate_round(
         &mut self,
         train_predictions: ArrayView2<f32>,
         train_targets: ArrayView1<f32>,
-        train_weights: ArrayView1<f32>,
+        train_weights: Option<ArrayView1<f32>>,
         eval_sets: &[EvalSet<'_>],
         eval_predictions: &[Array2<f32>],
     ) -> Vec<MetricValue> {
@@ -266,15 +266,14 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
         for (set_idx, eval_set) in eval_sets.iter().enumerate() {
             let preds = &eval_predictions[set_idx];
             let targets = eval_set.dataset.targets();
-            let weights_slice = eval_set.dataset.weights().unwrap_or(&[]);
+            let weights_opt = eval_set.dataset.weights().map(ArrayView1::from);
             let targets_view = ArrayView1::from(targets);
-            let weights_view = ArrayView1::from(weights_slice);
 
             let metric = self.compute_metric(
                 format!("{}-{}", eval_set.name, self.metric_name()),
                 preds.view(),
                 targets_view,
-                weights_view,
+                weights_opt,
             );
             metrics.push(metric);
         }

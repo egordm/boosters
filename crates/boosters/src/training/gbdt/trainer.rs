@@ -211,7 +211,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
         &self,
         dataset: &BinnedDataset,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
         eval_sets: &[EvalSet<'_>],
         parallelism: Parallelism,
     ) -> Option<Forest<ScalarLeaf>> {
@@ -256,16 +256,11 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
 
         let mut gradients = Gradients::new(n_rows, n_outputs);
 
-        // Create 1D views of targets and weights for objectives
-        // Targets is a 1D slice of length n_rows
-        let targets_1d = ArrayView1::from(targets);
-        let weights_1d = ArrayView1::from(weights);
-
         // Compute base scores
         let mut base_scores = Array2::<f32>::zeros((n_outputs, 1));
         self.objective.compute_base_score(
-            targets_1d.view(),
-            weights_1d.view(),
+            targets,
+            weights,
             base_scores.view_mut(),
         );
         let base_scores_vec: Vec<f32> = base_scores.iter().copied().collect();
@@ -327,8 +322,8 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
                 .expect("predictions shape mismatch");
             self.objective.compute_gradients(
                 predictions_view,
-                targets_1d.view(),
-                weights_1d.view(),
+                targets,
+                weights,
                 gradients.pairs_array_mut(),
             );
 
@@ -409,8 +404,8 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
                     .expect("predictions shape mismatch");
                 let metrics = evaluator.evaluate_round(
                     predictions_view,
-                    targets_1d.view(),
-                    weights_1d.view(),
+                    targets,
+                    weights,
                     eval_sets,
                     &eval_predictions,
                 );
@@ -489,7 +484,7 @@ mod tests {
     };
     use crate::training::metrics::Rmse;
     use crate::training::objectives::SquaredLoss;
-    use ndarray::{arr1, ArrayView1};
+    use ndarray::arr1;
 
     fn make_simple_mapper(n_bins: u32) -> BinMapper {
         let bounds: Vec<f64> = (0..n_bins).map(|i| i as f64 + 0.5).collect();
@@ -554,12 +549,11 @@ mod tests {
     fn test_train_single_tree() {
         let dataset = make_test_dataset();
         let targets = arr1(&[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]);
-        let no_weights = ArrayView1::<f32>::from(&[][..]);
 
         let params = GBDTParams { n_trees: 1, ..Default::default() };
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let forest = trainer.train(&dataset, targets.view(), no_weights, &[], Parallelism::Sequential).unwrap();
+        let forest = trainer.train(&dataset, targets.view(), None, &[], Parallelism::Sequential).unwrap();
 
         assert_eq!(forest.n_trees(), 1);
         assert_eq!(forest.n_groups(), 1);
@@ -569,7 +563,6 @@ mod tests {
     fn test_train_multiple_trees() {
         let dataset = make_test_dataset();
         let targets = arr1(&[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]);
-        let no_weights = ArrayView1::<f32>::from(&[][..]);
 
         let params = GBDTParams {
             n_trees: 10,
@@ -578,7 +571,7 @@ mod tests {
         };
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let forest = trainer.train(&dataset, targets.view(), no_weights, &[], Parallelism::Sequential).unwrap();
+        let forest = trainer.train(&dataset, targets.view(), None, &[], Parallelism::Sequential).unwrap();
 
         assert_eq!(forest.n_trees(), 10);
     }
@@ -587,7 +580,6 @@ mod tests {
     fn test_train_with_regularization() {
         let dataset = make_test_dataset();
         let targets = arr1(&[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]);
-        let no_weights = ArrayView1::<f32>::from(&[][..]);
 
         let params = GBDTParams {
             n_trees: 5,
@@ -600,7 +592,7 @@ mod tests {
         };
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let forest = trainer.train(&dataset, targets.view(), no_weights, &[], Parallelism::Sequential).unwrap();
+        let forest = trainer.train(&dataset, targets.view(), None, &[], Parallelism::Sequential).unwrap();
 
         assert_eq!(forest.n_trees(), 5);
     }
@@ -614,7 +606,7 @@ mod tests {
         let params = GBDTParams { n_trees: 5, ..Default::default() };
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let forest = trainer.train(&dataset, targets.view(), weights.view(), &[], Parallelism::Sequential).unwrap();
+        let forest = trainer.train(&dataset, targets.view(), Some(weights.view()), &[], Parallelism::Sequential).unwrap();
 
         assert_eq!(forest.n_trees(), 5);
     }
@@ -623,7 +615,6 @@ mod tests {
     fn test_leaf_wise_growth() {
         let dataset = make_test_dataset();
         let targets = arr1(&[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]);
-        let no_weights = ArrayView1::<f32>::from(&[][..]);
 
         let params = GBDTParams {
             n_trees: 3,
@@ -633,7 +624,7 @@ mod tests {
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
         let forest = trainer
-            .train(&dataset, targets.view(), no_weights, &[], Parallelism::Sequential)
+            .train(&dataset, targets.view(), None, &[], Parallelism::Sequential)
             .unwrap();
 
         assert_eq!(forest.n_trees(), 3);
@@ -643,12 +634,11 @@ mod tests {
     fn test_train_invalid_targets() {
         let dataset = make_test_dataset();
         let targets = arr1(&[1.0f32, 2.0]); // Too few targets
-        let no_weights = ArrayView1::<f32>::from(&[][..]);
 
         let params = GBDTParams::default();
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let result = trainer.train(&dataset, targets.view(), no_weights, &[], Parallelism::Sequential);
+        let result = trainer.train(&dataset, targets.view(), None, &[], Parallelism::Sequential);
 
         assert!(result.is_none());
     }
@@ -658,7 +648,6 @@ mod tests {
         let dataset = make_test_dataset();
         // Targets have a linear pattern on feature 0
         let targets = arr1(&[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]);
-        let no_weights = ArrayView1::<f32>::from(&[][..]);
 
         let params = GBDTParams {
             n_trees: 5,
@@ -669,7 +658,7 @@ mod tests {
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
         let forest = trainer
-            .train(&dataset, targets.view(), no_weights, &[], Parallelism::Sequential)
+            .train(&dataset, targets.view(), None, &[], Parallelism::Sequential)
             .unwrap();
 
         assert_eq!(forest.n_trees(), 5);
@@ -685,7 +674,6 @@ mod tests {
     fn test_first_tree_no_linear_coefficients() {
         let dataset = make_test_dataset();
         let targets = arr1(&[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]);
-        let no_weights = ArrayView1::<f32>::from(&[][..]);
 
         let params = GBDTParams {
             n_trees: 3,
@@ -695,7 +683,7 @@ mod tests {
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
         let forest = trainer
-            .train(&dataset, targets.view(), no_weights, &[], Parallelism::Sequential)
+            .train(&dataset, targets.view(), None, &[], Parallelism::Sequential)
             .unwrap();
 
         // First tree should NOT have linear leaves (round 0 is skipped)
@@ -709,7 +697,6 @@ mod tests {
 
         let dataset = make_test_dataset();
         let targets = arr1(&[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]);
-        let no_weights = ArrayView1::<f32>::from(&[][..]);
 
         let params = GBDTParams {
             n_trees: 3,
@@ -719,7 +706,7 @@ mod tests {
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
         let forest = trainer
-            .train(&dataset, targets.view(), no_weights, &[], Parallelism::Sequential)
+            .train(&dataset, targets.view(), None, &[], Parallelism::Sequential)
             .unwrap();
 
         // All trained trees should have gains and covers

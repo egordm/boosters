@@ -25,10 +25,6 @@ use boosters::training::{Accuracy, GBDTParams, GBDTTrainer, GrowthStrategy, LogL
 use boosters::Parallelism;
 use ndarray::{Array2, ArrayView1};
 
-fn empty_weights() -> ArrayView1<'static, f32> {
-    ArrayView1::from(&[][..])
-}
-
 fn main() {
     // =========================================================================
     // Generate Imbalanced Dataset (10:1 ratio)
@@ -98,7 +94,7 @@ fn main() {
     // =========================================================================
     println!("--- Training WITHOUT weights ---");
     let forest_unweighted = trainer
-        .train(&dataset, ArrayView1::from(&labels[..]), empty_weights(), &[], Parallelism::Sequential)
+        .train(&dataset, ArrayView1::from(&labels[..]), None, &[], Parallelism::Sequential)
         .unwrap();
 
     // Convert logits to probabilities and compute accuracy + recall
@@ -111,7 +107,7 @@ fn main() {
         .collect();
 
     let pred_arr_uw = Array2::from_shape_vec((1, probs_uw.len()), probs_uw.to_vec()).unwrap();
-    let acc_uw = Accuracy::default().compute(pred_arr_uw.view(), ArrayView1::from(&labels[..]), empty_weights());
+    let acc_uw = Accuracy::default().compute(pred_arr_uw.view(), ArrayView1::from(&labels[..]), None);
     let recall_1_uw = compute_recall(&probs_uw, &labels, 1.0);
     println!("  Accuracy: {:.1}%", acc_uw * 100.0);
     println!("  Minority recall: {:.1}%\n", recall_1_uw * 100.0);
@@ -121,7 +117,7 @@ fn main() {
     // =========================================================================
     println!("--- Training WITH class weights ---");
     let forest_weighted = trainer
-        .train(&dataset, ArrayView1::from(&labels[..]), ArrayView1::from(&class_weights[..]), &[], Parallelism::Sequential)
+        .train(&dataset, ArrayView1::from(&labels[..]), Some(ArrayView1::from(&class_weights[..])), &[], Parallelism::Sequential)
         .unwrap();
 
     let probs_w: Vec<f32> = features
@@ -133,7 +129,7 @@ fn main() {
         .collect();
 
     let pred_arr_w = Array2::from_shape_vec((1, probs_w.len()), probs_w.to_vec()).unwrap();
-    let acc_w = Accuracy::default().compute(pred_arr_w.view(), ArrayView1::from(&labels[..]), empty_weights());
+    let acc_w = Accuracy::default().compute(pred_arr_w.view(), ArrayView1::from(&labels[..]), None);
     let recall_1_w = compute_recall(&probs_w, &labels, 1.0);
     println!("  Accuracy: {:.1}%", acc_w * 100.0);
     println!("  Minority recall: {:.1}%\n", recall_1_w * 100.0);

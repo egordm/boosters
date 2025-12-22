@@ -13,10 +13,6 @@ use boosters::Parallelism;
 
 use ndarray::{Array2, ArrayView1};
 
-fn empty_weights() -> ArrayView1<'static, f32> {
-	ArrayView1::from(&[][..])
-}
-
 use common::select::{select_rows_row_major, select_targets};
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
@@ -52,7 +48,7 @@ fn bench_train_then_predict_regression(c: &mut Criterion) {
 
 	group.bench_function("train_then_predict", |b| {
 		b.iter(|| {
-			let forest = trainer.train(black_box(&binned_train), ArrayView1::from(black_box(&y_train[..])), empty_weights(), &[], Parallelism::Sequential).unwrap();
+			let forest = trainer.train(black_box(&binned_train), ArrayView1::from(black_box(&y_train[..])), None, &[], Parallelism::Sequential).unwrap();
 			let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
 			let preds = predictor.predict(black_box(valid_array.view()), Parallelism::Sequential);
 			black_box(preds)

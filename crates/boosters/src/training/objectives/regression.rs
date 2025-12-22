@@ -32,11 +32,11 @@ impl ObjectiveFn for SquaredLoss {
         &self,
         predictions: ArrayView2<f32>,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
         mut grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         let (n_outputs, n_rows) = predictions.dim();
-        let weights_slice = weights.as_slice().unwrap_or(&[]);
+        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
         let targets_slice = targets.as_slice().unwrap_or(&[]);
 
         for out_idx in 0..n_outputs {
@@ -59,7 +59,7 @@ impl ObjectiveFn for SquaredLoss {
     fn compute_base_score(
         &self,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
         mut outputs: ArrayViewMut2<f32>,
     ) {
         let n_rows = targets.len();
@@ -69,7 +69,7 @@ impl ObjectiveFn for SquaredLoss {
         }
 
         let targets_slice = targets.as_slice().unwrap_or(&[]);
-        let weights_slice = weights.as_slice().unwrap_or(&[]);
+        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
 
         // Compute weighted mean
         let (sum_w, sum_wy) = targets_slice
@@ -123,11 +123,11 @@ impl ObjectiveFn for AbsoluteLoss {
         &self,
         predictions: ArrayView2<f32>,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
         mut grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         let (n_outputs, n_rows) = predictions.dim();
-        let weights_slice = weights.as_slice().unwrap_or(&[]);
+        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
         let targets_slice = targets.as_slice().unwrap_or(&[]);
 
         for out_idx in 0..n_outputs {
@@ -151,7 +151,7 @@ impl ObjectiveFn for AbsoluteLoss {
     fn compute_base_score(
         &self,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
         mut outputs: ArrayViewMut2<f32>,
     ) {
         // Use weighted median as base score (optimal for L1 loss)
@@ -162,7 +162,7 @@ impl ObjectiveFn for AbsoluteLoss {
         }
 
         let targets_slice = targets.as_slice().unwrap_or(&[]);
-        let weights_slice = weights.as_slice().unwrap_or(&[]);
+        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
 
         let median = compute_weighted_quantile(targets_slice, weights_slice, 0.5);
         outputs.fill(median);
@@ -232,11 +232,11 @@ impl ObjectiveFn for PinballLoss {
         &self,
         predictions: ArrayView2<f32>,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
         mut grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         let (_, n_rows) = predictions.dim();
-        let weights_slice = weights.as_slice().unwrap_or(&[]);
+        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
         let targets_slice = targets.as_slice().unwrap_or(&[]);
 
         for (out_idx, &alpha) in self.alphas.iter().enumerate() {
@@ -261,7 +261,7 @@ impl ObjectiveFn for PinballLoss {
     fn compute_base_score(
         &self,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
         mut outputs: ArrayViewMut2<f32>,
     ) {
         let n_rows = targets.len();
@@ -271,7 +271,7 @@ impl ObjectiveFn for PinballLoss {
         }
 
         let targets_slice = targets.as_slice().unwrap_or(&[]);
-        let weights_slice = weights.as_slice().unwrap_or(&[]);
+        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
 
         for (out_idx, &alpha) in self.alphas.iter().enumerate() {
             let quantile = compute_weighted_quantile(targets_slice, weights_slice, alpha);
@@ -327,11 +327,11 @@ impl ObjectiveFn for PseudoHuberLoss {
         &self,
         predictions: ArrayView2<f32>,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
         mut grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         let (n_outputs, n_rows) = predictions.dim();
-        let weights_slice = weights.as_slice().unwrap_or(&[]);
+        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
         let targets_slice = targets.as_slice().unwrap_or(&[]);
         let inv_delta_sq = 1.0 / (self.delta * self.delta);
 
@@ -360,7 +360,7 @@ impl ObjectiveFn for PseudoHuberLoss {
     fn compute_base_score(
         &self,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
         mut outputs: ArrayViewMut2<f32>,
     ) {
         // Use median as robust base score
@@ -371,7 +371,7 @@ impl ObjectiveFn for PseudoHuberLoss {
         }
 
         let targets_slice = targets.as_slice().unwrap_or(&[]);
-        let weights_slice = weights.as_slice().unwrap_or(&[]);
+        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
 
         let median = compute_weighted_quantile(targets_slice, weights_slice, 0.5);
         outputs.fill(median);
@@ -417,14 +417,14 @@ impl ObjectiveFn for PoissonLoss {
         &self,
         predictions: ArrayView2<f32>,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
         mut grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         const MAX_EXP: f32 = 30.0;
         const HESS_MIN: f32 = 1e-6;
 
         let (n_outputs, n_rows) = predictions.dim();
-        let weights_slice = weights.as_slice().unwrap_or(&[]);
+        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
         let targets_slice = targets.as_slice().unwrap_or(&[]);
 
         for out_idx in 0..n_outputs {
@@ -449,7 +449,7 @@ impl ObjectiveFn for PoissonLoss {
     fn compute_base_score(
         &self,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
         mut outputs: ArrayViewMut2<f32>,
     ) {
         let n_rows = targets.len();
@@ -459,7 +459,7 @@ impl ObjectiveFn for PoissonLoss {
         }
 
         let targets_slice = targets.as_slice().unwrap_or(&[]);
-        let weights_slice = weights.as_slice().unwrap_or(&[]);
+        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
 
         // Base score is log of weighted mean target
         let (sum_w, sum_wy) = targets_slice
@@ -546,10 +546,6 @@ mod tests {
         Array1::from_vec(data.to_vec())
     }
 
-    fn empty_weights() -> Array1<f32> {
-        Array1::from_vec(vec![])
-    }
-
     fn make_grad_hess(n_outputs: usize, n_samples: usize) -> Array2<GradsTuple> {
         Array2::from_elem((n_outputs, n_samples), GradsTuple::default())
     }
@@ -561,7 +557,7 @@ mod tests {
         let targets = make_targets(&[0.5, 2.5, 2.5]);
         let mut gh = make_grad_hess(1, 3);
 
-        obj.compute_gradients(preds.view(), targets.view(), empty_weights().view(), gh.view_mut());
+        obj.compute_gradients(preds.view(), targets.view(), None, gh.view_mut());
 
         assert!((gh[[0, 0]].grad - 0.5).abs() < 1e-6);  // 1.0 - 0.5
         assert!((gh[[0, 1]].grad - -0.5).abs() < 1e-6); // 2.0 - 2.5
@@ -577,7 +573,7 @@ mod tests {
         let weights = make_weights(&[2.0, 0.5]);
         let mut gh = make_grad_hess(1, 2);
 
-        obj.compute_gradients(preds.view(), targets.view(), weights.view(), gh.view_mut());
+        obj.compute_gradients(preds.view(), targets.view(), Some(weights.view()), gh.view_mut());
 
         assert!((gh[[0, 0]].grad - 1.0).abs() < 1e-6);   // 2.0 * 0.5
         assert!((gh[[0, 1]].grad - -0.25).abs() < 1e-6); // 0.5 * -0.5
@@ -591,7 +587,7 @@ mod tests {
         let targets = make_targets(&[1.0, 2.0, 3.0, 4.0]);
         let mut output = Array2::from_elem((1, 1), 0.0f32);
 
-        obj.compute_base_score(targets.view(), empty_weights().view(), output.view_mut());
+        obj.compute_base_score(targets.view(), None, output.view_mut());
         assert!((output[[0, 0]] - 2.5).abs() < 1e-6);
     }
 
@@ -602,7 +598,7 @@ mod tests {
         let targets = make_targets(&[0.5, 2.5, 2.5]);
         let mut gh = make_grad_hess(1, 3);
 
-        obj.compute_gradients(preds.view(), targets.view(), empty_weights().view(), gh.view_mut());
+        obj.compute_gradients(preds.view(), targets.view(), None, gh.view_mut());
 
         assert!((gh[[0, 0]].grad - 0.5).abs() < 1e-6);  // pred > target
         assert!((gh[[0, 1]].grad - -0.5).abs() < 1e-6); // pred < target
@@ -616,7 +612,7 @@ mod tests {
         let targets = make_targets(&[0.5, 2.5, 2.5]);
         let mut gh = make_grad_hess(1, 3);
 
-        obj.compute_gradients(preds.view(), targets.view(), empty_weights().view(), gh.view_mut());
+        obj.compute_gradients(preds.view(), targets.view(), None, gh.view_mut());
 
         assert!((gh[[0, 0]].grad - 1.0).abs() < 1e-6);  // sign(0.5) = 1
         assert!((gh[[0, 1]].grad - -1.0).abs() < 1e-6); // sign(-0.5) = -1
@@ -630,7 +626,7 @@ mod tests {
         let targets = make_targets(&[0.0]);
         let mut gh = make_grad_hess(1, 1);
 
-        obj.compute_gradients(preds.view(), targets.view(), empty_weights().view(), gh.view_mut());
+        obj.compute_gradients(preds.view(), targets.view(), None, gh.view_mut());
 
         // Near zero, should be approximately linear (grad ≈ residual)
         assert!((gh[[0, 0]].grad - 0.01).abs() < 0.001);
@@ -644,7 +640,7 @@ mod tests {
         let targets = make_targets(&[2.0]);
         let mut gh = make_grad_hess(1, 1);
 
-        obj.compute_gradients(preds.view(), targets.view(), empty_weights().view(), gh.view_mut());
+        obj.compute_gradients(preds.view(), targets.view(), None, gh.view_mut());
 
         // grad = exp(0) - 2 = 1 - 2 = -1
         assert!((gh[[0, 0]].grad - -1.0).abs() < 1e-6);
@@ -658,7 +654,7 @@ mod tests {
         let targets = make_targets(&[1.0, 2.0, 3.0, 4.0]);
         let mut output = Array2::from_elem((1, 1), 0.0f32);
 
-        obj.compute_base_score(targets.view(), empty_weights().view(), output.view_mut());
+        obj.compute_base_score(targets.view(), None, output.view_mut());
 
         // Base score = log(mean) = log(2.5)
         let expected = (2.5f32).ln();

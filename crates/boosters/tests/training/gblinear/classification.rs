@@ -118,8 +118,7 @@ fn train_multioutput_classification() {
     // Metrics expect shape [n_groups, n_samples] - for class predictions, n_groups=1
     let pred_arr = Array2::from_shape_vec((1, n_rows), pred_classes).unwrap();
     let targets_arr = ArrayView1::from(&labels[..]);
-    let empty_w: ArrayView1<f32> = ArrayView1::from(&[][..]);
-    let accuracy = MulticlassAccuracy.compute(pred_arr.view(), targets_arr, empty_w);
+    let accuracy = MulticlassAccuracy.compute(pred_arr.view(), targets_arr, None);
 
     // Training accuracy should be reasonable for linear model
     // (better than random = 33.3% for 3 classes)

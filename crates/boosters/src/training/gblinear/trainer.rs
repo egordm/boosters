@@ -214,13 +214,12 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
         debug_assert!(weights.is_none_or(|w| w.len() == num_samples));
 
         // Compute base scores from objective (optimal constant prediction)
-        let w = weights.unwrap_or(&[]);
+        let weights_opt = weights.map(ArrayView1::from);
         let targets_1d = ArrayView1::from(train_labels);
-        let weights_1d = ArrayView1::from(w);
         let mut base_scores_arr = Array2::<f32>::zeros((num_outputs, 1));
         self.objective.compute_base_score(
             targets_1d.view(),
-            weights_1d.view(),
+            weights_opt,
             base_scores_arr.view_mut(),
         );
         let base_scores: Vec<f32> = base_scores_arr.iter().copied().collect();
@@ -313,7 +312,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
             self.objective.compute_gradients(
                 predictions_view,
                 targets_1d.view(),
-                weights_1d.view(),
+                weights_opt,
                 gradients.pairs_array_mut(),
             );
 
@@ -344,7 +343,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                     self.objective.compute_gradients(
                         predictions_view,
                         targets_1d.view(),
-                        weights_1d.view(),
+                        weights_opt,
                         gradients.pairs_array_mut(),
                     );
                 }
@@ -411,7 +410,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                 let metrics = evaluator.evaluate_round(
                     predictions_view,
                     targets_1d.view(),
-                    weights_1d.view(),
+                    weights_opt,
                     eval_sets,
                     &eval_preds_arrays,
                 );

@@ -10,10 +10,6 @@ use boosters::Parallelism;
 use ndarray::ArrayView1;
 use std::time::Instant;
 
-fn empty_weights() -> ArrayView1<'static, f32> {
-    ArrayView1::from(&[][..])
-}
-
 fn main() {
     // Medium dataset for meaningful comparison
     let n_samples: usize = 50_000;
@@ -87,7 +83,7 @@ fn main() {
         let start = Instant::now();
         // Single thread for accurate comparison
         let _ = GBDTTrainer::new(SquaredLoss, Rmse, params.clone())
-            .train(&row_major_dataset, ArrayView1::from(&labels[..]), empty_weights(), &[], Parallelism::Sequential)
+            .train(&row_major_dataset, ArrayView1::from(&labels[..]), None, &[], Parallelism::Sequential)
             .unwrap();
         row_times.push(start.elapsed());
     }
@@ -99,7 +95,7 @@ fn main() {
     for _ in 0..n_runs {
         let start = Instant::now();
         let _ = GBDTTrainer::new(SquaredLoss, Rmse, params.clone())
-            .train(&col_major_dataset, ArrayView1::from(&labels[..]), empty_weights(), &[], Parallelism::Sequential)
+            .train(&col_major_dataset, ArrayView1::from(&labels[..]), None, &[], Parallelism::Sequential)
             .unwrap();
         col_times.push(start.elapsed());
     }

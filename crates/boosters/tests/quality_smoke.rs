@@ -10,11 +10,6 @@ use boosters::training::{
 };
 use ndarray::{Array2, ArrayView1};
 
-/// Create an empty weights view
-fn empty_weights() -> ArrayView1<'static, f32> {
-	ArrayView1::from(&[][..])
-}
-
 /// Create predictions Array2 from ColMatrix for metric evaluation
 fn preds_array(pred: &ColMatrix<f32>) -> Array2<f32> {
 	let n_samples = pred.n_rows();
@@ -68,13 +63,13 @@ fn run_synthetic_regression(rows: usize, cols: usize, trees: u32, depth: u32, se
 		.build()
 		.unwrap();
 
-	let model = GBDTModel::train(&binned_train, ArrayView1::from(&y_train[..]), empty_weights(), config, 1).unwrap();
+	let model = GBDTModel::train(&binned_train, ArrayView1::from(&y_train[..]), None, config, 1).unwrap();
 	let pred = model.predict(&row_valid, 1);
 	let pred_arr = preds_array(&pred);
 	let targets_arr = ArrayView1::from(&y_valid[..]);
 
-	let rmse = Rmse.compute(pred_arr.view(), targets_arr, empty_weights());
-	let mae = Mae.compute(pred_arr.view(), targets_arr, empty_weights());
+	let rmse = Rmse.compute(pred_arr.view(), targets_arr, None);
+	let mae = Mae.compute(pred_arr.view(), targets_arr, None);
 	(rmse, mae)
 }
 
@@ -105,15 +100,15 @@ fn run_synthetic_binary(rows: usize, cols: usize, trees: u32, depth: u32, seed: 
 		.unwrap();
 
 	let model =
-		GBDTModel::train(&binned_train, ArrayView1::from(&y_train[..]), empty_weights(), config, 1)
+		GBDTModel::train(&binned_train, ArrayView1::from(&y_train[..]), None, config, 1)
 			.unwrap();
 	// predict() returns probabilities automatically
 	let pred = model.predict(&row_valid, 1);
 	let pred_arr = preds_array(&pred);
 	let targets_arr = ArrayView1::from(&y_valid[..]);
 
-	let ll = LogLoss.compute(pred_arr.view(), targets_arr, empty_weights());
-	let acc = Accuracy::default().compute(pred_arr.view(), targets_arr, empty_weights());
+	let ll = LogLoss.compute(pred_arr.view(), targets_arr, None);
+	let acc = Accuracy::default().compute(pred_arr.view(), targets_arr, None);
 	(ll, acc)
 }
 
@@ -151,15 +146,15 @@ fn run_synthetic_multiclass(
 		.unwrap();
 
 	let model =
-		GBDTModel::train(&binned_train, ArrayView1::from(&y_train[..]), empty_weights(), config, 1)
+		GBDTModel::train(&binned_train, ArrayView1::from(&y_train[..]), None, config, 1)
 			.unwrap();
 	// predict() returns softmax probabilities, column-major layout
 	let pred = model.predict(&row_valid, 1);
 	let pred_arr = preds_array(&pred);
 	let targets_arr = ArrayView1::from(&y_valid[..]);
 
-	let ll = MulticlassLogLoss.compute(pred_arr.view(), targets_arr, empty_weights());
-	let acc = MulticlassAccuracy.compute(pred_arr.view(), targets_arr, empty_weights());
+	let ll = MulticlassLogLoss.compute(pred_arr.view(), targets_arr, None);
+	let acc = MulticlassAccuracy.compute(pred_arr.view(), targets_arr, None);
 	(ll, acc)
 }
 
@@ -273,12 +268,12 @@ fn test_quality_improvement_linear_leaves() {
 		.unwrap();
 
 	let model_baseline =
-		GBDTModel::train(&binned_train, ArrayView1::from(&y_train[..]), empty_weights(), base_config, 1)
+		GBDTModel::train(&binned_train, ArrayView1::from(&y_train[..]), None, base_config, 1)
 			.unwrap();
 	let pred_baseline = model_baseline.predict(&row_valid, 1);
 	let pred_baseline_arr = preds_array(&pred_baseline);
 	let targets_arr = ArrayView1::from(&y_valid[..]);
-	let rmse_baseline = Rmse.compute(pred_baseline_arr.view(), targets_arr, empty_weights());
+	let rmse_baseline = Rmse.compute(pred_baseline_arr.view(), targets_arr, None);
 
 	// --- Train with linear leaves ---
 	let linear_config = GBDTConfig::builder()
@@ -296,14 +291,14 @@ fn test_quality_improvement_linear_leaves() {
 	let model_linear = GBDTModel::train(
 		&binned_train,
 		ArrayView1::from(&y_train[..]),
-		empty_weights(),
+		None,
 		linear_config,
 		1,
 	)
 	.unwrap();
 	let pred_linear = model_linear.predict(&row_valid, 1);
 	let pred_linear_arr = preds_array(&pred_linear);
-	let rmse_linear = Rmse.compute(pred_linear_arr.view(), targets_arr, empty_weights());
+	let rmse_linear = Rmse.compute(pred_linear_arr.view(), targets_arr, None);
 
 	// Assert: linear leaves should improve RMSE by at least 5%
 	let improvement = (rmse_baseline - rmse_linear) / rmse_baseline;

@@ -170,6 +170,5 @@ pub fn rmse(predictions: &[f32], labels: &[f32]) -> f64 {
     let n = labels.len();
     let pred_arr = Array2::from_shape_vec((1, n), predictions.to_vec()).unwrap();
     let targets_arr = ArrayView1::from(labels);
-    let empty_w: ArrayView1<f32> = ArrayView1::from(&[][..]);
-    Rmse.compute(pred_arr.view(), targets_arr, empty_w)
+    Rmse.compute(pred_arr.view(), targets_arr, None)
 }

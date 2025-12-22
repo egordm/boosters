@@ -15,10 +15,6 @@ use boosters::{ObjectiveFn, Parallelism, TaskKind};
 use boosters::inference::common::PredictionKind;
 use ndarray::{ArrayView1, ArrayView2, ArrayViewMut2};
 
-fn empty_weights() -> ArrayView1<'static, f32> {
-    ArrayView1::from(&[][..])
-}
-
 /// A custom objective: Huber loss with delta=1.0
 ///
 /// Huber loss combines the best of MSE (smooth near zero) and MAE (robust to outliers).
@@ -48,11 +44,11 @@ impl ObjectiveFn for HuberLoss {
         &self,
         predictions: ArrayView2<f32>,
         targets: ArrayView1<f32>,
-        weights: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
         mut grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         let (n_outputs, _n_rows) = predictions.dim();
-        let weights_slice = weights.as_slice().unwrap_or(&[]);
+        let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
         let targets_slice = targets.as_slice().unwrap_or(&[]);
 
         for out_idx in 0..n_outputs {
@@ -83,7 +79,7 @@ impl ObjectiveFn for HuberLoss {
     fn compute_base_score(
         &self,
         targets: ArrayView1<f32>,
-        _weights: ArrayView1<f32>,
+        _weights: Option<ArrayView1<f32>>,
         mut outputs: ArrayViewMut2<f32>,
     ) {
         // Use median for Huber (more robust than mean)
@@ -148,7 +144,7 @@ fn main() {
     let huber = HuberLoss::new(1.0);
     let trainer = GBDTTrainer::new(huber, Rmse, params);
     let forest = trainer
-        .train(&dataset, ArrayView1::from(&labels[..]), empty_weights(), &[], Parallelism::Sequential)
+        .train(&dataset, ArrayView1::from(&labels[..]), None, &[], Parallelism::Sequential)
         .unwrap();
 
     // =========================================================================

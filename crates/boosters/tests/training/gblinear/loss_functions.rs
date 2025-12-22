@@ -13,11 +13,6 @@ use boosters::training::{
 };
 use ndarray::{Array2, ArrayView1};
 
-/// Helper to create empty weights view.
-fn empty_weights() -> ArrayView1<'static, f32> {
-    ArrayView1::from(&[][..])
-}
-
 /// Helper to create predictions array from PredictionOutput
 fn pred_to_array2(output: &boosters::inference::common::PredictionOutput) -> Array2<f32> {
     // PredictionOutput stores data column-major: [g0_s0, g0_s1, ..., g1_s0, g1_s1, ...]
@@ -92,8 +87,8 @@ fn train_pseudo_huber_regression() {
     let sq_arr = pred_to_array2(&sq_output);
     let targets_arr = ArrayView1::from(&test_labels[..]);
 
-    let ph_rmse = Rmse.compute(ph_arr.view(), targets_arr, empty_weights());
-    let sq_rmse = Rmse.compute(sq_arr.view(), targets_arr, empty_weights());
+    let ph_rmse = Rmse.compute(ph_arr.view(), targets_arr, None);
+    let sq_rmse = Rmse.compute(sq_arr.view(), targets_arr, None);
 
     // Both should have reasonable RMSE
     assert!(ph_rmse < 20.0, "PseudoHuber RMSE too high: {}", ph_rmse);
@@ -153,9 +148,9 @@ fn train_pseudo_huber_with_delta() {
     let sq_arr = pred_to_array2(&sq_output);
     let targets_arr = ArrayView1::from(&test_labels[..]);
 
-    let moderate_rmse = Rmse.compute(moderate_arr.view(), targets_arr, empty_weights());
-    let large_rmse = Rmse.compute(large_arr.view(), targets_arr, empty_weights());
-    let sq_rmse = Rmse.compute(sq_arr.view(), targets_arr, empty_weights());
+    let moderate_rmse = Rmse.compute(moderate_arr.view(), targets_arr, None);
+    let large_rmse = Rmse.compute(large_arr.view(), targets_arr, None);
+    let sq_rmse = Rmse.compute(sq_arr.view(), targets_arr, None);
 
     // All should produce reasonable models
     assert!(
@@ -227,7 +222,7 @@ fn train_hinge_binary_classification() {
     let hinge_arr = pred_to_array2(&hinge_output);
     let targets_arr = ArrayView1::from(&test_labels[..]);
     let hinge_acc = MarginAccuracy::default()
-        .compute(hinge_arr.view(), targets_arr, empty_weights())
+        .compute(hinge_arr.view(), targets_arr, None)
         as f32;
 
     let logistic_output = logistic_model.predict(&test_data, &[]);
@@ -235,7 +230,7 @@ fn train_hinge_binary_classification() {
     let mut logistic_arr = pred_to_array2(&logistic_output);
     LogisticLoss.transform_predictions(logistic_arr.view_mut());
     let logistic_acc = Accuracy::with_threshold(0.5)
-        .compute(logistic_arr.view(), targets_arr, empty_weights()) as f32;
+        .compute(logistic_arr.view(), targets_arr, None) as f32;
 
     // Both should achieve reasonable accuracy (better than random = 50%)
     assert!(

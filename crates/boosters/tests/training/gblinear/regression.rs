@@ -15,11 +15,6 @@ use boosters::training::{GBLinearParams, GBLinearTrainer, Rmse, SquaredLoss, Ver
 use ndarray::{Array2, ArrayView1};
 use rstest::rstest;
 
-/// Helper to create empty weights view.
-fn empty_weights() -> ArrayView1<'static, f32> {
-    ArrayView1::from(&[][..])
-}
-
 /// Helper to create predictions array from PredictionOutput
 fn pred_to_array2(output: &boosters::inference::common::PredictionOutput) -> Array2<f32> {
     let n_samples = output.num_rows();
@@ -279,7 +274,7 @@ fn test_set_prediction_quality(#[case] name: &str) {
     let output = model.predict(&test_data, &base_scores);
     let pred_arr = pred_to_array2(&output);
     let targets_arr = ArrayView1::from(&test_labels[..]);
-    let our_rmse = Rmse.compute(pred_arr.view(), targets_arr, empty_weights());
+    let our_rmse = Rmse.compute(pred_arr.view(), targets_arr, None);
 
     // Compare to XGBoost if available
     if let Some(xgb_preds) = load_xgb_predictions(name) {
