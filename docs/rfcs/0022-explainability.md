@@ -1,9 +1,9 @@
-# RFC-0020: Explainability
+# RFC-0022: Explainability
 
 - **Status**: Draft
 - **Created**: 2025-12-19
-- **Updated**: 2025-12-19
-- **Depends on**: RFC-0002, RFC-0014, RFC-0015, RFC-0019
+- **Updated**: 2025-01-21
+- **Depends on**: RFC-0002, RFC-0014, RFC-0015
 - **Scope**: Feature importance and SHAP value computation
 
 ## Summary

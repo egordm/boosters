@@ -1,8 +1,10 @@
 # RFC-0016: Prediction Architecture
 
-- **Status**: Draft
+- **Status**: Implemented
 - **Created**: 2025-12-17
+- **Updated**: 2025-01-21
 - **Depends on**: RFC-0002 (Forest and Tree Structures)
+- **Scope**: Unified prediction API and TreeView trait
 
 ## Summary
 
@@ -80,7 +82,7 @@ Abstract over data sources—enables single traversal implementation:
 
 ```rust
 pub trait FeatureAccessor: Sync {
-    fn n_rows(&self) -> usize;
+    fn n_samples(&self) -> usize;
     fn get(&self, row: usize, feature: usize) -> f32;
 }
 ```
@@ -148,7 +150,7 @@ impl<L: LeafValue> Tree<L> {
         accessor: &A,
         predictions: &mut [f32],
     ) {
-        for row in 0..accessor.n_rows() {
+        for row in 0..accessor.n_samples() {
             let leaf_idx = traverse_to_leaf(self, accessor, row);
             predictions[row] += self.leaf_value(leaf_idx).as_f32();
         }
@@ -174,7 +176,7 @@ leaf training. Full prediction happens after `freeze()`.
 impl<L: LeafValue> Forest<L> {
     /// Predict and return new Vec (allocates)
     pub fn predict_into<A: FeatureAccessor>(&self, accessor: &A) -> Vec<f32> {
-        let mut preds = vec![0.0; accessor.n_rows()];
+        let mut preds = vec![0.0; accessor.n_samples()];
         self.predict(accessor, &mut preds);
         preds
     }
@@ -216,3 +218,8 @@ Accumulate pattern matches training loop. Caller controls allocation.
 |-----|-------------|
 | RFC-0015 | Fits coefficients on MutableTree before freeze |
 | RFC-0002 | TreeView for Tree/MutableTree |
+
+## Changelog
+
+- 2025-01-21: Status changed to Implemented — TreeView trait now in production
+- 2025-01-21: Terminology update — `n_rows()`→`n_samples()` in FeatureAccessor

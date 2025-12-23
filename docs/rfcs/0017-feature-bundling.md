@@ -1,8 +1,8 @@
 # RFC-0017: Feature Bundling and Sparse Optimization
 
-- **Status**: Draft
+- **Status**: Implemented
 - **Created**: 2025-12-18
-- **Updated**: 2025-12-18
+- **Updated**: 2025-01-21
 - **Depends on**: RFC-0004 (Quantization and Binning)
 - **Scope**: Dataset construction, histogram building, split finding
 
@@ -256,11 +256,11 @@ Single-pass, O(1) memory per feature. Detects binary features without full cardi
 ```text
 ALGORITHM: AnalyzeFeatures(matrix)
 ----------------------------------
-INPUT: matrix[n_rows × n_cols] of f32 values
+INPUT: matrix[n_samples × n_features] of f32 values
 OUTPUT: Vec<FeatureInfo>
 
 1. infos = []
-2. PARALLEL FOR col IN 0..n_cols:
+2. PARALLEL FOR col IN 0..n_features:
 3.     stats = FeatureStats {
 4.         min: f32::MAX, max: f32::MIN,
 5.         non_zero_count: 0,
@@ -268,7 +268,7 @@ OUTPUT: Vec<FeatureInfo>
 7.         first_value: None, second_value: None
 8.     }
 9.     
-10.    FOR row IN 0..n_rows:
+10.    FOR row IN 0..n_samples:
 11.        val = matrix[row, col]
 12.        IF val.is_nan(): CONTINUE
 13.        IF val != 0.0:
@@ -292,7 +292,7 @@ OUTPUT: Vec<FeatureInfo>
 31.    
 32.    info = FeatureInfo {
 33.        original_idx: col,
-34.        density: stats.non_zero_count / n_rows,
+34.        density: stats.non_zero_count / n_samples,
 35.        is_binary: is_binary,
 36.        is_trivial: is_trivial,
 37.    }
@@ -373,7 +373,7 @@ INPUT:
 OUTPUT:
   bundles: Vec<Vec<usize>>
 
-1. max_conflicts = config.max_conflict_rate * n_rows
+1. max_conflicts = config.max_conflict_rate * n_samples
 2. bundles = []
 3. bundle_conflicts = []  // Track cumulative conflicts per bundle
 
@@ -436,14 +436,14 @@ OUTPUT:
 
 | Phase | Time Complexity | Space Complexity | Parallelizable |
 |-------|-----------------|------------------|----------------|
-| 1. Feature Analysis | O(n_rows × n_cols) | O(n_cols) | Yes |
+| 1. Feature Analysis | O(n_samples × n_features) | O(n_features) | Yes |
 | 2. Conflict Graph | O(sample_size × n_sparse²) | O(n_sparse² / 8) bits | Yes |
 | 3. Greedy Bundling | O(n_sparse² × n_bundles) | O(n_bundles) | No |
-| 4. Bundle Encoding | O(n_rows × n_bundles) | O(1) per row | Yes |
+| 4. Bundle Encoding | O(n_samples × n_bundles) | O(1) per row | Yes |
 
 Where:
-- `n_rows` = dataset rows
-- `n_cols` = original features
+- `n_samples` = dataset samples
+- `n_features` = original features
 - `n_sparse` = sparse features (typically << n_cols)
 - `sample_size` = min(n_rows, 10000) for conflict detection
 
@@ -800,7 +800,7 @@ This section describes how bundling integrates with existing boosters structures
 ```rust
 // Current structure - unchanged
 pub struct BinnedDataset {
-    n_rows: usize,
+    n_samples: usize,
     features: Box<[FeatureMeta]>,     // One per ORIGINAL feature
     groups: Vec<FeatureGroup>,         // Feature groups (dense/sparse)
     global_bin_offsets: Box<[u32]>,    // For histogram indexing
@@ -816,7 +816,7 @@ pub struct FeatureMeta {
 pub struct FeatureGroup {
     feature_indices: Box<[u32]>,       // Original feature indices
     layout: GroupLayout,               // RowMajor/ColumnMajor
-    n_rows: usize,
+    n_samples: usize,
     storage: BinStorage,               // DenseU8/U16, SparseU8/U16
     bin_counts: Box<[u32]>,            // Bins per feature in group
     bin_offsets: Box<[u32]>,           // Cumulative offsets
@@ -1267,3 +1267,4 @@ let dataset = BinnedDatasetBuilder::new()
   - 4-19% binning overhead for bundling analysis (one-time cost)
   - Quality identical (bundling is lossless)
   - See benchmark report: `docs/benchmarks/2025-12-19-0f8c2b2-efb-performance.md`
+- 2025-01-21: Terminology update — `n_rows`→`n_samples`, `n_cols`→`n_features`

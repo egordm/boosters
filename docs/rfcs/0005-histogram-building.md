@@ -1,6 +1,10 @@
 # RFC-0005: Histogram Building
 
-**Status**: Implemented
+- **Status**: Implemented
+- **Created**: 2024-11-01
+- **Updated**: 2025-01-21
+- **Depends on**: RFC-0004
+- **Scope**: Gradient/hessian histogram accumulation for split finding
 
 ## Summary
 
@@ -114,3 +118,7 @@ Benchmarks showed:
 - Row-parallel was 2.8x slower due to merge overhead
 
 The simple scalar feature-parallel approach with subtraction trick outperforms complex alternatives.
+
+## Changelog
+
+- 2025-01-21: Updated terminology to match refactored implementation; standardized header format

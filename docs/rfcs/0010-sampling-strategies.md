@@ -1,6 +1,9 @@
 # RFC-0010: Sampling Strategies
 
-**Status**: Implemented
+- **Status**: Implemented
+- **Created**: 2024-12-15
+- **Updated**: 2025-01-21
+- **Scope**: Row and column sampling for regularization
 
 ## Summary
 
@@ -113,3 +116,7 @@ Row sampling and sample weights are orthogonal:
 - Sample weights affect gradient/hessian computation in objectives
 - Row sampling operates on the resulting gradients
 - GOSS amplification multiplies both grad and hess, preserving weight ratios
+
+## Changelog
+
+- 2025-01-21: Updated header format to match RFC conventions

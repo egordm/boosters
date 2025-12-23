@@ -1,6 +1,9 @@
 # RFC-0012: Model Compatibility
 
-**Status**: Implemented
+- **Status**: Implemented
+- **Created**: 2024-12-15
+- **Updated**: 2025-01-21
+- **Scope**: XGBoost and LightGBM model loading
 
 ## Summary
 
@@ -79,9 +82,9 @@ LgbModel.to_forest() → Forest<ScalarLeaf>
 | Type | Description |
 |------|-------------|
 | `LgbModel` | Parsed model (header + trees) |
-| `LgbHeader` | Metadata: num_class, feature_names, objective, version |
+| `LgbHeader` | Metadata: n_classes, feature_names, objective, version |
 | `LgbTree` | Tree structure: split_feature, threshold, decision_type, leaf_value |
-| `LgbObjective` | Parsed objective: `Regression`, `Binary{sigmoid}`, `Multiclass{num_class}` |
+| `LgbObjective` | Parsed objective: `Regression`, `Binary{sigmoid}`, `Multiclass{n_classes}` |
 | `DecisionType` | Decoded bitfield: is_categorical, default_left, missing_type |
 | `ParseError` | IO, missing field, invalid value, array mismatch |
 | `ConversionError` | Empty tree, invalid child, linear trees unsupported |
@@ -128,3 +131,7 @@ let model = LgbModel::from_file("model.txt")?;
 let forest = model.to_forest()?;
 let pred = forest.predict_row(&features);
 ```
+
+## Changelog
+
+- 2025-01-21: Updated terminology (n_classes) to match codebase conventions

@@ -1,6 +1,9 @@
 # RFC-0008: Objectives and Losses
 
-**Status**: Implemented
+- **Status**: Implemented
+- **Created**: 2024-12-15
+- **Updated**: 2025-01-21
+- **Scope**: Loss functions for gradient computation
 
 ## Summary
 
@@ -18,10 +21,10 @@ pub trait Objective: Send + Sync {
     /// Compute gradients and hessians for given predictions.
     fn compute_gradients(
         &self,
-        n_rows: usize,
+        n_samples: usize,
         n_outputs: usize,
-        predictions: &[f32],    // column-major [n_outputs * n_rows]
-        targets: &[f32],        // column-major [n_targets * n_rows]
+        predictions: &[f32],    // column-major [n_outputs * n_samples]
+        targets: &[f32],        // column-major [n_targets * n_samples]
         weights: &[f32],        // sample weights (empty for unweighted)
         grad_hess: &mut [GradsTuple],
     );
@@ -29,7 +32,7 @@ pub trait Objective: Send + Sync {
     /// Compute initial base score (bias) from targets.
     fn compute_base_score(
         &self,
-        n_rows: usize,
+        n_samples: usize,
         n_outputs: usize,
         targets: &[f32],
         weights: &[f32],
@@ -77,12 +80,12 @@ pub trait Objective: Send + Sync {
 
 ### Multi-Output Layout
 
-All data uses **column-major** order: `[output0_row0, output0_row1, ..., output0_rowN, output1_row0, ...]`
+All data uses **column-major** order: `[output0_sample0, output0_sample1, ..., output0_sampleN, output1_sample0, ...]`
 
 ```
-predictions: [n_outputs * n_rows]
-targets:     [n_targets * n_rows]  
-grad_hess:   [n_outputs * n_rows]
+predictions: [n_outputs * n_samples]
+targets:     [n_targets * n_samples]  
+grad_hess:   [n_outputs * n_samples]
 ```
 
 Relationship between outputs and targets:
@@ -96,10 +99,10 @@ Each objective computes the optimal constant prediction before trees. Two conven
 
 ```rust
 /// Compute base scores and return as Vec.
-fn base_scores(&self, n_rows: usize, targets: &[f32], weights: &[f32]) -> Vec<f32>;
+fn base_scores(&self, n_samples: usize, targets: &[f32], weights: &[f32]) -> Vec<f32>;
 
 /// Fill column-major prediction buffer with computed base scores.
-fn fill_base_scores(&self, predictions: &mut [f32], n_rows: usize, targets: &[f32], weights: &[f32]);
+fn fill_base_scores(&self, predictions: &mut [f32], n_samples: usize, targets: &[f32], weights: &[f32]);
 ```
 
 | Objective | Base Score Strategy |
@@ -119,9 +122,9 @@ All objectives support per-sample weights via the `weights` parameter:
 
 ```rust
 // Helper used internally
-fn weight_iter(weights: &[f32], n_rows: usize) -> impl Iterator<Item = f32> {
+fn weight_iter(weights: &[f32], n_samples: usize) -> impl Iterator<Item = f32> {
     let use_weights = !weights.is_empty();
-    (0..n_rows).map(move |i| if use_weights { weights[i] } else { 1.0 })
+    (0..n_samples).map(move |i| if use_weights { weights[i] } else { 1.0 })
 }
 ```
 
@@ -135,7 +138,7 @@ pub enum ObjectiveFunction {
     AbsoluteError,
     Logistic,
     Hinge,
-    Softmax { num_classes: usize },
+    Softmax { n_classes: usize },
     Quantile { alpha: f32 },
     MultiQuantile { alphas: Vec<f32> },
     PseudoHuber { delta: f32 },
@@ -182,7 +185,7 @@ pub struct PseudoHuberLoss { pub delta: f32 }
 pub struct PoissonLoss;
 pub struct LogisticLoss;
 pub struct HingeLoss;
-pub struct SoftmaxLoss { pub num_classes: usize }
+pub struct SoftmaxLoss { pub n_classes: usize }
 pub struct LambdaRankLoss { pub query_groups: Vec<usize>, pub sigma: f32 }
 
 // Gradient storage
@@ -190,3 +193,7 @@ pub struct GradsTuple { pub grad: f32, pub hess: f32 }
 pub struct Gradients { ... }
 pub enum ObjectiveFunction { ... }
 ```
+
+## Changelog
+
+- 2025-01-21: Updated terminology (n_samples, n_classes) to match codebase conventions

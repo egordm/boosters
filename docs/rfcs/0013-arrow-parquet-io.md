@@ -1,6 +1,9 @@
 # RFC-0013: Arrow and Parquet I/O
 
-**Status**: Implemented
+- **Status**: Implemented
+- **Created**: 2024-12-15
+- **Updated**: 2025-01-21
+- **Scope**: Data loading from Arrow and Parquet files
 
 ## Summary
 
@@ -42,8 +45,8 @@ pub(super) struct LoadedBatches {
 
 Conversion methods:
 - `to_dataset()` → `Dataset` (feature columns + targets)
-- `to_row_matrix_f32()` → `RowMatrix<f32>` (features only)
-- `to_col_matrix_f32()` → `ColMatrix<f32>` (features only)
+- `to_row_matrix_f32()` → `SamplesView<f32>` (features only)
+- `to_col_matrix_f32()` → `FeaturesView<f32>` (features only)
 - `to_raw_f32()` → `(Vec<f32>, Vec<f32>, rows, cols)` (row-major features + targets)
 
 ### Missing Value Handling
@@ -78,8 +81,8 @@ fn read_parquet_file(path: impl AsRef<Path>) -> Result<(Vec<RecordBatch>, Arc<Sc
 | Function | Returns |
 |----------|---------|
 | `load_ipc_to_dataset(path)` | `Dataset` |
-| `load_ipc_to_row_matrix_f32(path)` | `RowMatrix<f32>` |
-| `load_ipc_to_col_matrix_f32(path)` | `ColMatrix<f32>` |
+| `load_ipc_to_row_matrix_f32(path)` | `SamplesView<f32>` |
+| `load_ipc_to_col_matrix_f32(path)` | `FeaturesView<f32>` |
 | `load_ipc_xy_row_major_f32(path)` | `(Vec<f32>, Vec<f32>, rows, cols)` |
 | `load_ipc_raw_f32(path)` | Alias for above |
 
@@ -88,8 +91,8 @@ fn read_parquet_file(path: impl AsRef<Path>) -> Result<(Vec<RecordBatch>, Arc<Sc
 | Function | Returns |
 |----------|---------|
 | `load_parquet_to_dataset(path)` | `Dataset` |
-| `load_parquet_to_row_matrix_f32(path)` | `RowMatrix<f32>` |
-| `load_parquet_to_col_matrix_f32(path)` | `ColMatrix<f32>` |
+| `load_parquet_to_row_matrix_f32(path)` | `SamplesView<f32>` |
+| `load_parquet_to_col_matrix_f32(path)` | `FeaturesView<f32>` |
 | `load_parquet_xy_row_major_f32(path)` | `(Vec<f32>, Vec<f32>, rows, cols)` |
 | `load_parquet_raw_f32(path)` | Alias for above |
 
@@ -118,3 +121,7 @@ parquet = { version = "54", optional = true, default-features = false, features 
 - Rust-only usage
 - Internal benchmarking (quality benchmarks currently use Parquet)
 - Testing data fixtures
+
+## Changelog
+
+- 2025-01-21: Updated terminology (SamplesView, FeaturesView) to match codebase conventions

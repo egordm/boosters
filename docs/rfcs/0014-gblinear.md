@@ -1,6 +1,9 @@
 # RFC-0014: GBLinear
 
-**Status**: Implemented
+- **Status**: Implemented
+- **Created**: 2025-12-17
+- **Updated**: 2025-01-21
+- **Scope**: Linear booster with coordinate descent
 
 ## Summary
 
@@ -13,11 +16,11 @@ GBLinear is a linear booster using coordinate descent with elastic net regulariz
 `LinearModel` stores weights in a flat `Box<[f32]>` array with feature-major, group-minor layout:
 
 ```text
-weights[feature * num_groups + group] → coefficient
-weights[num_features * num_groups + group] → bias (last row)
+weights[feature * n_groups + group] → coefficient
+weights[n_features * n_groups + group] → bias (last row)
 ```
 
-Total size: `(num_features + 1) × num_groups`
+Total size: `(n_features + 1) × n_groups`
 
 **Example** (2 features, 2 groups):
 ```rust
@@ -69,9 +72,9 @@ Both single-row and batch prediction supported. `par_predict` uses Rayon for par
 ```rust
 // Model storage (inference/gblinear/model.rs)
 pub struct LinearModel {
-    weights: Box<[f32]>,      // (num_features + 1) × num_groups
-    num_features: usize,
-    num_groups: usize,
+    weights: Box<[f32]>,      // (n_features + 1) × n_groups
+    n_features: usize,
+    n_groups: usize,
 }
 
 // Trainer (training/gblinear/trainer.rs)
@@ -114,3 +117,7 @@ pub enum FeatureSelectorKind {
 - Gradients computed fresh each round (not truly "stale" like some implementations)
 - Parallel mode computes all deltas from same gradient state, applies sequentially
 - `top_k` in Greedy/Thrifty limits features updated per round
+
+## Changelog
+
+- 2025-01-21: Terminology update — `num_features`→`n_features`, `num_groups`→`n_groups`

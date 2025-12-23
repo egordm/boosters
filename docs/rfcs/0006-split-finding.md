@@ -1,6 +1,10 @@
 # RFC-0006: Split Finding
 
-**Status**: Implemented
+- **Status**: Implemented
+- **Created**: 2024-11-01
+- **Updated**: 2025-01-21
+- **Depends on**: RFC-0005
+- **Scope**: Greedy split enumeration with gain computation
 
 ## Summary
 
@@ -112,3 +116,7 @@ pub struct GreedySplitter {
 - `NodeGainContext` provides ~7% speedup by precomputing parent score
 - Categorical scratch buffer capped at 256 categories to bound memory
 - Missing value handling integrated into numerical scan (no separate bin)
+
+## Changelog
+
+- 2025-01-21: Updated terminology to match refactored implementation; standardized header format

@@ -2,8 +2,10 @@
 
 - **Status**: Implemented
 - **Created**: 2025-12-17
+- **Updated**: 2025-01-21
 - **Implemented**: 2025-12-18
 - **Depends on**: RFC-0002, RFC-0007, RFC-0014, RFC-0016
+- **Scope**: Linear model fitting at tree leaves
 
 ## Summary
 
@@ -625,3 +627,4 @@ apply to MutableTree after parallel phase (avoids mutable sharing).
   trees (LightGBM achieves ~1.75x). Future optimization story created.
 - **2025-12-18**: LightGBM loader completed — Parses `is_linear`, `leaf_const`,
   `leaf_features`, `leaf_coeff` fields. Predictions match exactly.
+- **2025-01-21**: Terminology update — standardized naming conventions

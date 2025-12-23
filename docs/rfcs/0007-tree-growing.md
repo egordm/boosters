@@ -1,6 +1,10 @@
 # RFC-0007: Tree Growing
 
-**Status**: Implemented
+- **Status**: Implemented
+- **Created**: 2024-11-01
+- **Updated**: 2025-01-21
+- **Depends on**: RFC-0005, RFC-0006
+- **Scope**: Decision tree construction with depth-wise and leaf-wise strategies
 
 ## Summary
 
@@ -79,3 +83,7 @@ gain = 0.5 × [G_L²/(H_L + λ) + G_R²/(H_R + λ) - G_P²/(H_P + λ)] - γ
 | `GainParams` | `split/gain.rs` | Regularization params: `reg_lambda`, `reg_alpha`, `min_gain`, `min_child_weight` |
 | `SplitInfo` | `split/types.rs` | Split result: feature, threshold/categories, gain, default_left |
 | `HistogramPool` | `histograms/` | LRU-cached histogram slots with subtraction support |
+
+## Changelog
+
+- 2025-01-21: Updated terminology to match refactored implementation; standardized header format

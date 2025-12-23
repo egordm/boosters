@@ -1,6 +1,10 @@
 # RFC-0004: Quantization and Binning
 
-**Status**: Implemented
+- **Status**: Implemented
+- **Created**: 2024-11-01
+- **Updated**: 2025-01-21
+- **Depends on**: RFC-0001
+- **Scope**: Feature discretization for histogram-based GBDT
 
 ## Summary
 
@@ -89,3 +93,7 @@ The `default_bin` field specifies which bin receives missing values during binni
 - **Auto-grouping**: `GroupStrategy::Auto` separates features by bin count and sparsity
 - **Global bin offsets**: Pre-computed for flat histogram indexing across all features
 - **Bin type selection**: `BinType::for_max_bins(n)` selects smallest type that fits
+
+## Changelog
+
+- 2025-01-21: Updated terminology to match refactored implementation (`n_bins`, `n_features`, `n_samples`)

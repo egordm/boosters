@@ -1,6 +1,9 @@
 # RFC-0011: Multi-Output Training
 
-**Status**: Implemented
+- **Status**: Implemented
+- **Created**: 2024-12-15
+- **Updated**: 2025-01-21
+- **Scope**: Multi-output training strategy
 
 ## Summary
 
@@ -46,8 +49,8 @@ for round in 0..n_trees {
         let tree = grower.grow(dataset, &gradients, output, sampled);
         
         // Update predictions for this output
-        for row in 0..n_rows {
-            predictions[output * n_rows + row] += tree.predict(&row);
+        for row in 0..n_samples {
+            predictions[output * n_samples + row] += tree.predict(&row);
         }
         
         forest.push_tree(tree, output as u32);
@@ -128,7 +131,7 @@ Objectives declare their output count via `n_outputs()`:
 ```rust
 impl Objective for SoftmaxLoss {
     fn n_outputs(&self) -> usize {
-        self.num_classes  // K classes = K outputs
+        self.n_classes  // K classes = K outputs
     }
 }
 
@@ -154,3 +157,7 @@ The trainer queries this to determine how many trees to grow per round.
 ## Compatibility
 
 `VectorLeaf` exists in `repr::gbdt` for loading XGBoost/LightGBM models that use vector-leaf encoding (e.g., multi-target regression). The `Forest<VectorLeaf>` type supports these models for inference, but training always produces `Forest<ScalarLeaf>`.
+
+## Changelog
+
+- 2025-01-21: Updated terminology (n_samples, n_classes, n_groups) to match codebase conventions

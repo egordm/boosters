@@ -1,150 +1,256 @@
 # RFC-0001: Data Matrix
 
-**Status**: Implemented
+- **Status**: Implemented
+- **Created**: 2024-11-15
+- **Updated**: 2025-01-21
+- **Scope**: Feature matrix types and access patterns
 
 ## Summary
 
-A unified abstraction for feature matrix access that supports multiple memory layouts (row-major, column-major), flexible storage backends, and clean integration with both inference and training pipelines.
+This RFC defines the data abstraction layer for feature matrices in boosters. The design uses `ndarray` for matrix storage with semantic wrapper types (`SamplesView`, `FeaturesView`) that make layout semantics explicit. A minimal `FeatureAccessor` trait provides uniform access for tree traversal.
 
 ## Motivation
 
 GBDT systems require different access patterns at different stages:
-- **Inference**: Row-by-row traversal through trees → row-major optimal
-- **Training**: Column iteration for histogram building → column-major optimal
 
-Rather than forcing one layout, we parameterize storage layout at the type level, enabling zero-overhead abstraction where the compiler monomorphizes all layout-dependent code. Missing values use `f32::NAN`, the modern standard shared with XGBoost.
+- **Inference**: Row-by-row traversal through trees → sample-contiguous optimal
+- **Training**: Column iteration for histogram building → feature-contiguous optimal
+
+Rather than implementing custom matrix types, we leverage `ndarray` (the standard Rust matrix library) and provide thin semantic wrappers that clarify axis meanings.
+
+### Design Goals
+
+1. **Zero-copy views**: Wrapper types hold `ArrayView2`, not owned data
+2. **Explicit semantics**: Type names (`SamplesView`, `FeaturesView`) make layout clear
+3. **Minimal abstraction**: Only `FeatureAccessor` trait, not a full matrix trait
+4. **ndarray ecosystem**: Compatible with Arrow, polars, and Python via numpy
 
 ## Design
 
-### Core Trait: `DataMatrix`
+### Terminology Convention
 
-The `DataMatrix` trait provides a uniform interface regardless of underlying storage:
+| Term | Meaning |
+| ---- | ------- |
+| `n_samples` | Number of training/inference samples |
+| `n_features` | Number of input features |
+| `n_groups` | Number of output groups (1=regression, K=multiclass) |
+| Sample-major | Samples on axis 0: `[n_samples, n_features]` |
+| Feature-major | Features on axis 0: `[n_features, n_samples]` |
+
+### Core Types
+
+The `data` module provides these types:
 
 ```rust
-pub trait DataMatrix {
-    type Element: Copy;
-    type Row<'a>: RowView<Element = Self::Element> where Self: 'a;
+use ndarray::{ArrayView2, ArrayView1};
 
-    fn num_rows(&self) -> usize;
-    fn num_features(&self) -> usize;
-    fn row(&self, i: usize) -> Self::Row<'_>;
-    fn get(&self, row: usize, col: usize) -> Option<Self::Element>;
-    fn is_dense(&self) -> bool;
-    fn copy_row(&self, i: usize, buf: &mut [Self::Element]);
-    fn has_missing(&self) -> bool where Self::Element: PartialEq;
-    fn density(&self) -> f64 where Self::Element: PartialEq;
+/// Sample-major view: [n_samples, n_features]
+/// Each sample's features are contiguous in memory.
+pub struct SamplesView<'a>(ArrayView2<'a, f32>);
+
+/// Feature-major view: [n_features, n_samples]
+/// Each feature's values across samples are contiguous.
+pub struct FeaturesView<'a>(ArrayView2<'a, f32>);
+
+/// Uniform access trait for tree traversal.
+pub trait FeatureAccessor {
+    fn get_feature(&self, row: usize, feature: usize) -> f32;
+    fn n_rows(&self) -> usize;
+    fn n_features(&self) -> usize;
 }
 ```
 
-### Layout Abstraction
+### SamplesView
 
-Layout is a sealed trait with two implementations:
-
-```rust
-pub trait Layout: sealed::Sealed + Copy + Default + 'static {
-    fn index(row: usize, col: usize, num_rows: usize, num_cols: usize) -> usize;
-    fn stride(num_rows: usize, num_cols: usize) -> usize;
-    fn contiguous_len(num_rows: usize, num_cols: usize) -> usize;
-}
-
-pub struct RowMajor;  // index = row * num_cols + col
-pub struct ColMajor;  // index = col * num_rows + row
-```
-
-### Dense Matrix
-
-`DenseMatrix<T, L, S>` is generic over:
-- `T`: Element type (default `f32`)
-- `L`: Layout (default `RowMajor`)
-- `S`: Storage backend implementing `AsRef<[T]>` (default `Box<[T]>`)
+Sample-major layout with shape `[n_samples, n_features]`. This is the standard layout for inference where we iterate over samples:
 
 ```rust
-pub struct DenseMatrix<T = f32, L: Layout = RowMajor, S: AsRef<[T]> = Box<[T]>> {
-    data: S,
-    num_rows: usize,
-    num_cols: usize,
-    _marker: PhantomData<(T, L)>,
+impl<'a> SamplesView<'a> {
+    /// Create from a slice in sample-major order (zero-copy).
+    pub fn from_slice(data: &'a [f32], n_samples: usize, n_features: usize) -> Option<Self>;
+    
+    /// Create from an ndarray view.
+    pub fn from_array(view: ArrayView2<'a, f32>) -> Self;
+    
+    /// Get a sample's features as a contiguous slice.
+    pub fn sample(&self, idx: usize) -> ArrayView1<'_, f32>;
+    
+    /// Access (sample, feature) element.
+    pub fn get(&self, sample: usize, feature: usize) -> f32;
 }
 ```
 
-Layout-specific methods are available only on the appropriate type:
-- `RowMajor`: `row_slice()` O(1), `col_iter()` strided
-- `ColMajor`: `col_slice()` O(1), `row_iter()` strided
+### FeaturesView
 
-### Type Aliases
+Feature-major layout with shape `[n_features, n_samples]`. This is optimal for training operations that iterate over features (histogram building, coordinate descent):
 
 ```rust
-pub type RowMatrix<T = f32, S = Box<[T]>> = DenseMatrix<T, RowMajor, S>;
-pub type ColMatrix<T = f32, S = Box<[T]>> = DenseMatrix<T, ColMajor, S>;
+impl<'a> FeaturesView<'a> {
+    /// Create from a slice in feature-major order (zero-copy).
+    pub fn from_slice(data: &'a [f32], n_samples: usize, n_features: usize) -> Option<Self>;
+    
+    /// Create from an ndarray view.
+    pub fn from_array(view: ArrayView2<'a, f32>) -> Self;
+    
+    /// Get a feature's values across all samples as a contiguous slice.
+    pub fn feature(&self, idx: usize) -> ArrayView1<'_, f32>;
+    
+    /// Access (sample, feature) element.
+    pub fn get(&self, sample: usize, feature: usize) -> f32;
+}
 ```
 
-## Key Types
+### FeatureAccessor Trait
 
-| Type | Description |
-|------|-------------|
-| `DataMatrix` | Core trait for uniform feature access |
-| `RowView` | View of a single row, iterable over `(feature_idx, value)` |
-| `DenseMatrix<T, L, S>` | Dense storage with configurable layout |
-| `RowMajor` / `ColMajor` | Layout types determining memory order |
-| `RowMatrix<T>` | Alias for `DenseMatrix<T, RowMajor>` |
-| `ColMatrix<T>` | Alias for `DenseMatrix<T, ColMajor>` |
-| `StridedIter<T>` | Iterator for non-contiguous dimension access |
-| `Dataset` | User-facing wrapper with targets, weights, feature names |
-| `BinnedDataset` | Quantized features for histogram-based training |
-
-### Missing Value Handling
-
-Missing values are represented as `f32::NAN`. Detection uses `x != x` (NaN self-inequality):
+The minimal trait for tree traversal. Implemented for both wrapper types and `BinnedAccessor`:
 
 ```rust
-fn has_missing(&self) -> bool {
-    self.data.as_ref().iter().any(|&x| x != x)
+pub trait FeatureAccessor {
+    /// Get feature value at (row, feature_index).
+    /// Returns f32::NAN for missing values.
+    fn get_feature(&self, row: usize, feature: usize) -> f32;
+    
+    /// Number of rows (samples).
+    fn n_rows(&self) -> usize;
+    
+    /// Number of features.
+    fn n_features(&self) -> usize;
 }
 
-fn density(&self) -> f64 {
-    let non_missing = self.data.iter().filter(|&&x| x == x).count();
-    non_missing as f64 / total as f64
-}
+// Implemented for:
+impl FeatureAccessor for SamplesView<'_> { ... }
+impl FeatureAccessor for FeaturesView<'_> { ... }
+impl FeatureAccessor for BinnedAccessor<'_> { ... }
 ```
+
+**Design note**: We intentionally do NOT implement `FeatureAccessor` for raw `Array2<f32>` because the axis semantics (samples vs features) depend on context. The wrapper types make the layout explicit.
 
 ### Layout Conversion
 
-Matrices can be converted between layouts in O(n):
+Use `transpose_to_c_order` to convert between layouts:
 
 ```rust
-let row_major = RowMatrix::from_vec(vec![1.0, 2.0, 3.0, 4.0], 2, 2);
-let col_major: ColMatrix = row_major.to_layout();
-// Or via From trait
-let col_major: ColMatrix = (&row_major).into();
+/// Transpose a 2D array and return an owned C-order Array2.
+pub fn transpose_to_c_order<S>(arr: ArrayBase<S, Ix2>) -> Array2<f32>
+where
+    S: Data<Elem = f32>;
 ```
 
-## Usage Example
+Example:
 
 ```rust
-use boosters::data::{DataMatrix, RowMatrix, ColMatrix, Dataset, FeatureColumn};
+use boosters::data::{SamplesView, FeaturesView, transpose_to_c_order};
+use ndarray::Array2;
 
-// Create row-major matrix (optimal for inference)
-let features = RowMatrix::from_vec(vec![
-    1.0, 2.0, 3.0,   // row 0
-    4.0, 5.0, 6.0,   // row 1
-], 2, 3);
+// Feature-major data [n_features, n_samples]
+let features = Array2::from_shape_vec((2, 3), vec![1.0, 2.0, 3.0, 10.0, 20.0, 30.0]).unwrap();
 
-// Access rows efficiently
-assert_eq!(features.row_slice(0), &[1.0, 2.0, 3.0]);
+// Transpose to sample-major [n_samples, n_features]
+let samples = transpose_to_c_order(features.view());
+assert_eq!(samples.shape(), &[3, 2]);
+assert!(samples.is_standard_layout());
+```
 
-// Convert to column-major for training
-let col_features: ColMatrix = features.to_layout();
-assert_eq!(col_features.col_slice(0), &[1.0, 4.0]);
+### Missing Value Handling
 
-// Use DataMatrix trait for generic code
-fn count_missing<M: DataMatrix<Element = f32>>(m: &M) -> usize {
-    (0..m.num_rows())
-        .flat_map(|r| m.row(r).iter())
-        .filter(|(_, v)| v.is_nan())
-        .count()
+Missing values are represented as `f32::NAN`. This is the modern standard used by XGBoost and other libraries.
+
+```rust
+// Detection uses NaN self-inequality
+fn has_missing(data: &[f32]) -> bool {
+    data.iter().any(|&x| x.is_nan())
 }
 
-// High-level Dataset API with feature columns
+// Tree traversal handles NaN via default_left
+if fvalue.is_nan() {
+    if tree.default_left(node) { left } else { right }
+}
+```
+
+### Prediction Layout
+
+Predictions use shape `[n_groups, n_samples]` with each group's values contiguous. This optimizes:
+
+- Base score initialization: `output.row_mut(g).fill(base_score[g])`
+- Tree accumulation: Adding to group values is contiguous
+- Metric computation: Operating on a group is contiguous
+
+```rust
+/// Initialize predictions with base scores.
+pub fn init_predictions(base_scores: &[f32], n_samples: usize) -> Array2<f32> {
+    let n_groups = base_scores.len();
+    let mut predictions = Array2::zeros((n_groups, n_samples));
+    for (group, &base_score) in base_scores.iter().enumerate() {
+        predictions.row_mut(group).fill(base_score);
+    }
+    predictions
+}
+```
+
+## Key Types Summary
+
+| Type | Shape | Use Case |
+| ---- | ----- | -------- |
+| `SamplesView<'a>` | `[n_samples, n_features]` | Inference, row iteration |
+| `FeaturesView<'a>` | `[n_features, n_samples]` | Training, column iteration |
+| `FeatureAccessor` | trait | Uniform tree traversal |
+| `Array2<f32>` predictions | `[n_groups, n_samples]` | Model output |
+| `BinnedDataset` | packed bins | Histogram-based training |
+| `Dataset` | high-level | User-facing with targets, weights |
+
+## Usage Examples
+
+### Basic Matrix Access
+
+```rust
+use boosters::data::SamplesView;
+use ndarray::Array2;
+
+// Create from ndarray (common path)
+let arr = Array2::from_shape_vec((100, 10), data).unwrap();
+let features = SamplesView::from_array(arr.view());
+
+// Access a sample's features
+let sample_5 = features.sample(5); // ArrayView1<f32>
+
+// Use with tree prediction
+tree.predict_into(&features, &mut predictions, Parallelism::Sequential);
+```
+
+### Feature-Major for Training
+
+```rust
+use boosters::data::FeaturesView;
+use ndarray::Array2;
+
+// Feature-major layout for GBLinear coordinate descent
+let arr = Array2::from_shape_vec((10, 100), data).unwrap(); // [n_features, n_samples]
+let features = FeaturesView::from_array(arr.view());
+
+// Iterate features efficiently
+for f in 0..features.n_features() {
+    let values = features.feature(f); // Contiguous slice
+    // ... histogram building or coordinate descent ...
+}
+```
+
+### From Raw Slice (Zero-Copy)
+
+```rust
+use boosters::data::SamplesView;
+
+// Data in sample-major order
+let data: &[f32] = &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+let features = SamplesView::from_slice(data, 2, 3).unwrap();
+// 2 samples × 3 features, zero-copy view
+```
+
+### Dataset for Training
+
+```rust
+use boosters::data::{Dataset, FeatureColumn};
+
+// High-level API with metadata
 let dataset = Dataset::new(
     vec![
         FeatureColumn::Numeric { name: Some("age".into()), values: vec![25.0, 30.0] },
@@ -153,15 +259,82 @@ let dataset = Dataset::new(
     vec![0.0, 1.0],  // targets
 )?;
 
-// Convert to binned for tree training
-let binned = dataset.to_binned(256)?;
+// Convert to binned for GBDT training
+let binned = BinnedDatasetBuilder::default()
+    .max_bins(256)
+    .build(&dataset)?;
 ```
 
-## Integration with Training Pipeline
+## Design Decisions
 
-1. **User creates `Dataset`** with `FeatureColumn`s (numeric or categorical)
-2. **For tree training**: `dataset.to_binned(max_bins)` → `BinnedDataset`
-3. **For linear training**: `dataset.for_gblinear()` → `ColMatrix`
-4. **For inference**: Use `RowMatrix` with tree traversal (optimal cache locality)
+### DD-1: ndarray Over Custom Types
 
-The `BinnedDataset` organizes features into groups with optimal layouts per group, supporting both row-parallel histogram building (row-major groups) and column-based access (column-major groups).
+**Context**: Should we use custom `DenseMatrix<T, L, S>` or standard `ndarray`?
+
+**Decision**: Use `ndarray` with semantic wrappers.
+
+**Rationale**:
+
+- ndarray is the standard Rust matrix library
+- Provides parallel iteration (`par_azip!`), views, slicing
+- Compatible with numpy for Python bindings
+- Reduces ~600 lines of custom matrix code
+- Wrappers add semantic clarity without overhead
+
+### DD-2: Wrapper Types vs Raw ndarray
+
+**Context**: Use raw `ArrayView2` everywhere, or provide wrapper types?
+
+**Decision**: Provide `SamplesView` and `FeaturesView` wrappers.
+
+**Rationale**:
+
+- Type names clarify axis semantics
+- Prevents accidental misuse (passing feature-major where sample-major expected)
+- Wrappers are zero-cost (`#[repr(transparent)]` pattern)
+- `FeatureAccessor` trait only implemented for explicit types
+
+### DD-3: Minimal FeatureAccessor Trait
+
+**Context**: Should we have a full `DataMatrix` trait or minimal accessor?
+
+**Decision**: Minimal `FeatureAccessor` trait.
+
+**Rationale**:
+
+- Only tree traversal needs a trait (generic over data source)
+- Other operations use concrete types with type-specific methods
+- Fewer methods = simpler implementations
+- `BinnedAccessor` only needs `get_feature`, not full matrix API
+
+### DD-4: Prediction Layout [n_groups, n_samples]
+
+**Context**: Should predictions be `[n_samples, n_groups]` or `[n_groups, n_samples]`?
+
+**Decision**: `[n_groups, n_samples]` (group-major).
+
+**Rationale**:
+
+- Base score init is contiguous per group
+- Tree accumulation is contiguous per group
+- Matches gradient layout for training loop efficiency
+- Metrics operate on one group at a time
+
+## Integration
+
+| Component | Integration Point |
+| --------- | ----------------- |
+| RFC-0002 (Trees) | `TreeView::traverse_to_leaf<A: FeatureAccessor>` |
+| RFC-0003 (Inference) | `Predictor::predict_into(features: &impl FeatureAccessor, ...)` |
+| RFC-0004 (Binning) | `BinnedDataset` built from `Dataset` |
+| RFC-0014 (GBLinear) | `FeaturesView` for column-wise coordinate descent |
+
+## Non-Goals
+
+- **Sparse matrices**: This RFC covers dense feature matrices only. Sparse data should be densified before use, or handled via feature bundling (RFC-0017).
+- **GPU tensors**: ndarray is CPU-only. GPU support would require additional abstractions.
+
+## Changelog
+
+- 2025-01-21: Major rewrite for ndarray migration. Replaced `DenseMatrix`, `RowMatrix`, `ColMatrix` with `SamplesView`, `FeaturesView`. Replaced `DataMatrix` trait with minimal `FeatureAccessor`. Absorbed content from RFC-0021. Added Non-Goals section.
+- 2024-11-15: Initial RFC with custom matrix types

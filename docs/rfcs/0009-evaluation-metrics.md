@@ -1,6 +1,9 @@
 # RFC-0009: Evaluation Metrics
 
-**Status**: Implemented
+- **Status**: Implemented
+- **Created**: 2024-12-15
+- **Updated**: 2025-01-21
+- **Scope**: Metrics for model quality monitoring
 
 ## Summary
 
@@ -15,10 +18,10 @@ The core `Metric` trait defines how quality is measured:
 ```rust
 pub trait Metric: Send + Sync {
     /// Compute metric value.
-    /// Predictions: row-major (n_rows, n_outputs). Empty weights = unweighted.
+    /// Predictions: row-major (n_samples, n_outputs). Empty weights = unweighted.
     fn compute(
         &self,
-        n_rows: usize,
+        n_samples: usize,
         n_outputs: usize,
         predictions: &[f32],
         targets: &[f32],
@@ -73,7 +76,7 @@ Pass empty slice `&[]` for unweighted computation.
 
 ### Multi-Output Support
 
-For multiclass or multi-quantile models, predictions have shape `(n_rows, n_outputs)` in row-major order. The metric computes across all outputs appropriately (e.g., `MulticlassLogLoss` extracts probability of true class).
+For multiclass or multi-quantile models, predictions have shape `(n_samples, n_outputs)` in row-major order. The metric computes across all outputs appropriately (e.g., `MulticlassLogLoss` extracts probability of true class).
 
 ### Early Stopping
 
@@ -142,15 +145,15 @@ impl<'a, O: Objective, M: Metric> Evaluator<'a, O, M> {
     
     /// Compute metric on single dataset
     pub fn compute(&mut self, predictions: &[f32], targets: &[f32], 
-                   weights: &[f32], n_rows: usize) -> f64;
+                   weights: &[f32], n_samples: usize) -> f64;
     
     /// Compute and wrap as MetricValue
     pub fn compute_metric(&mut self, name: impl Into<String>, predictions: &[f32],
-                          targets: &[f32], weights: &[f32], n_rows: usize) -> MetricValue;
+                          targets: &[f32], weights: &[f32], n_samples: usize) -> MetricValue;
     
     /// Evaluate on training + eval sets for one round
     pub fn evaluate_round(&mut self, train_predictions: &[f32], train_targets: &[f32],
-                          train_weights: &[f32], train_n_rows: usize,
+                          train_weights: &[f32], train_n_samples: usize,
                           eval_sets: &[EvalSet<'_>], eval_predictions: &[Vec<f32>]) 
                           -> Vec<MetricValue>;
     
@@ -197,3 +200,7 @@ impl MetricValue {
 - Epsilon clipping (1e-15) prevents log(0) in LogLoss/MulticlassLogLoss  
 - MAPE uses epsilon denominator to handle zero labels
 - All metrics implement `Send + Sync` for parallel evaluation
+
+## Changelog
+
+- 2025-01-21: Updated terminology (n_samples) to match codebase conventions

@@ -1,7 +1,10 @@
 # RFC-0018: Native Categorical Feature Support
 
-**Status**: Draft  
-**Created**: 2025-12-18
+- **Status**: Implemented
+- **Created**: 2025-12-18
+- **Updated**: 2025-01-21
+- **Depends on**: RFC-0004 (Quantization and Binning)
+- **Scope**: Native categorical feature handling with optimal partitioning
 
 ## Summary
 
@@ -724,3 +727,4 @@ For very high cardinality (>100K), consider limiting `max_cat_threshold`.
   | boosters | 86.57% | 0.926+ |
   | LightGBM | 86.6% | 0.927 |
   | XGBoost | 86.5% | 0.926 |
+- 2025-01-21: Terminology update — standardized header format
