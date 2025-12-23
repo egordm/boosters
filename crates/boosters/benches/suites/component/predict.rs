@@ -14,13 +14,13 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 
 fn bench_gbtree_batch_sizes(c: &mut Criterion) {
 	let model = load_boosters_model("bench_medium");
-	let num_features = model.num_features;
+	let n_features = model.n_features;
 	let predictor = Predictor::<UnrolledTraversal6>::new(&model.forest);
 
 	let mut group = c.benchmark_group("component/predict/batch_size");
 
 	for batch_size in [1usize, 10, 100, 1_000, 10_000] {
-		let matrix = random_features_array(batch_size, num_features, 42, -5.0, 5.0);
+		let matrix = random_features_array(batch_size, n_features, 42, -5.0, 5.0);
 
 		group.throughput(Throughput::Elements(batch_size as u64));
 		group.bench_with_input(BenchmarkId::new("medium", batch_size), &matrix, |b, matrix| {
@@ -50,7 +50,7 @@ fn bench_gbtree_model_sizes(c: &mut Criterion) {
 		};
 
 		let predictor = Predictor::<UnrolledTraversal6>::new(&model.forest);
-		let matrix = random_features_array(batch_size, model.num_features, 42, -5.0, 5.0);
+		let matrix = random_features_array(batch_size, model.n_features, 42, -5.0, 5.0);
 
 		group.throughput(Throughput::Elements(batch_size as u64));
 		group.bench_with_input(BenchmarkId::new(label, batch_size), &matrix, |b, matrix| {
@@ -68,7 +68,7 @@ fn bench_gbtree_single_row(c: &mut Criterion) {
 	let model = load_boosters_model("bench_medium");
 	let predictor = Predictor::<UnrolledTraversal6>::new(&model.forest);
 
-	let matrix = random_features_array(1, model.num_features, 42, -5.0, 5.0);
+	let matrix = random_features_array(1, model.n_features, 42, -5.0, 5.0);
 
 	c.bench_function("component/predict/single_row/medium", |b| {
 		b.iter(|| {
@@ -81,10 +81,10 @@ fn bench_gbtree_single_row(c: &mut Criterion) {
 /// Compare traversal strategies: Standard vs Unrolled
 fn bench_traversal_strategies(c: &mut Criterion) {
 	let model = load_boosters_model("bench_medium");
-	let num_features = model.num_features;
+	let n_features = model.n_features;
 	
 	let batch_size = 10_000usize;
-	let matrix = random_features_array(batch_size, num_features, 42, -5.0, 5.0);
+	let matrix = random_features_array(batch_size, n_features, 42, -5.0, 5.0);
 
 	let mut group = c.benchmark_group("component/predict/traversal");
 	group.throughput(Throughput::Elements(batch_size as u64));

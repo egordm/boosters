@@ -141,13 +141,13 @@ impl SelectorState {
 }
 
 impl FeatureSelector for SelectorState {
-    fn reset(&mut self, num_features: usize) {
+    fn reset(&mut self, n_features: usize) {
         match self {
-            Self::Cyclic(s) => s.reset(num_features),
-            Self::Shuffle(s) => s.reset(num_features),
-            Self::Random(s) => s.reset(num_features),
-            Self::Greedy(s) => s.reset(num_features),
-            Self::Thrifty(s) => s.reset(num_features),
+            Self::Cyclic(s) => s.reset(n_features),
+            Self::Shuffle(s) => s.reset(n_features),
+            Self::Random(s) => s.reset(n_features),
+            Self::Greedy(s) => s.reset(n_features),
+            Self::Thrifty(s) => s.reset(n_features),
         }
     }
 
@@ -179,7 +179,7 @@ impl FeatureSelector for SelectorState {
 /// Trait for selecting features during coordinate descent.
 pub trait FeatureSelector: Send + Sync {
     /// Reset the selector for a new round.
-    fn reset(&mut self, num_features: usize);
+    fn reset(&mut self, n_features: usize);
 
     /// Get the next feature index to update.
     ///
@@ -195,7 +195,7 @@ pub trait FeatureSelector: Send + Sync {
 /// Simple and deterministic. Good baseline for debugging.
 #[derive(Debug, Clone, Default)]
 pub struct CyclicSelector {
-    num_features: usize,
+    n_features: usize,
     current: usize,
 }
 
@@ -207,13 +207,13 @@ impl CyclicSelector {
 }
 
 impl FeatureSelector for CyclicSelector {
-    fn reset(&mut self, num_features: usize) {
-        self.num_features = num_features;
+    fn reset(&mut self, n_features: usize) {
+        self.n_features = n_features;
         self.current = 0;
     }
 
     fn next(&mut self) -> Option<usize> {
-        if self.current < self.num_features {
+        if self.current < self.n_features {
             let idx = self.current;
             self.current += 1;
             Some(idx)
@@ -223,8 +223,8 @@ impl FeatureSelector for CyclicSelector {
     }
 
     fn all_indices(&mut self) -> Vec<usize> {
-        self.current = self.num_features;
-        (0..self.num_features).collect()
+        self.current = self.n_features;
+        (0..self.n_features).collect()
     }
 }
 
@@ -256,8 +256,8 @@ impl Default for ShuffleSelector {
 }
 
 impl FeatureSelector for ShuffleSelector {
-    fn reset(&mut self, num_features: usize) {
-        self.indices = (0..num_features).collect();
+    fn reset(&mut self, n_features: usize) {
+        self.indices = (0..n_features).collect();
         self.indices.shuffle(&mut self.rng);
         self.current = 0;
     }
@@ -291,7 +291,7 @@ impl FeatureSelector for ShuffleSelector {
 /// This matches XGBoost's `feature_selector='random'` option.
 #[derive(Debug, Clone)]
 pub struct RandomSelector {
-    num_features: usize,
+    n_features: usize,
     remaining: usize,
     rng: rand::rngs::StdRng,
 }
@@ -300,7 +300,7 @@ impl RandomSelector {
     /// Create a new random selector with the given seed.
     pub fn new(seed: u64) -> Self {
         Self {
-            num_features: 0,
+            n_features: 0,
             remaining: 0,
             rng: rand::rngs::StdRng::seed_from_u64(seed),
         }
@@ -314,23 +314,23 @@ impl Default for RandomSelector {
 }
 
 impl FeatureSelector for RandomSelector {
-    fn reset(&mut self, num_features: usize) {
-        self.num_features = num_features;
-        self.remaining = num_features;
+    fn reset(&mut self, n_features: usize) {
+        self.n_features = n_features;
+        self.remaining = n_features;
     }
 
     fn next(&mut self) -> Option<usize> {
-        if self.remaining > 0 && self.num_features > 0 {
+        if self.remaining > 0 && self.n_features > 0 {
             self.remaining -= 1;
-            Some(self.rng.gen_range(0..self.num_features))
+            Some(self.rng.gen_range(0..self.n_features))
         } else {
             None
         }
     }
 
     fn all_indices(&mut self) -> Vec<usize> {
-        let indices: Vec<usize> = (0..self.num_features)
-            .map(|_| self.rng.gen_range(0..self.num_features))
+        let indices: Vec<usize> = (0..self.n_features)
+            .map(|_| self.rng.gen_range(0..self.n_features))
             .collect();
         self.remaining = 0;
         indices
@@ -406,15 +406,15 @@ impl GreedySelector {
         alpha: f32,
         lambda: f32,
     ) {
-        let num_features = model.n_features();
+        let n_features = model.n_features();
         // Feature-major: use output-specific slices for direct indexing by row
         let grad_hess = buffer.output_pairs(output);
 
         // Compute update magnitude for each feature
         self.update_magnitudes.clear();
-        self.update_magnitudes.reserve(num_features);
+        self.update_magnitudes.reserve(n_features);
 
-        for feature_idx in 0..num_features {
+        for feature_idx in 0..n_features {
             let current_weight = model.weight(feature_idx, output);
 
             // Accumulate gradient and hessian
@@ -439,7 +439,7 @@ impl GreedySelector {
         }
 
         // Sort features by descending magnitude
-        self.sorted_features = (0..num_features).collect();
+        self.sorted_features = (0..n_features).collect();
         self.sorted_features
             .sort_by(|&a, &b| {
                 self.update_magnitudes[b]
@@ -458,12 +458,12 @@ impl Default for GreedySelector {
 }
 
 impl FeatureSelector for GreedySelector {
-    fn reset(&mut self, num_features: usize) {
+    fn reset(&mut self, n_features: usize) {
         // Just reset position; actual setup is done via setup()
         self.current = 0;
         if self.sorted_features.is_empty() {
             // Fallback to cyclic if setup wasn't called
-            self.sorted_features = (0..num_features).collect();
+            self.sorted_features = (0..n_features).collect();
         }
     }
 
@@ -558,12 +558,12 @@ impl ThriftySelector {
         alpha: f32,
         lambda: f32,
     ) {
-        let num_features = model.n_features();
+        let n_features = model.n_features();
         // Feature-major: use output-specific slices for direct indexing by row
         let grad_hess = buffer.output_pairs(output);
 
         // Compute update magnitude for each feature
-        let mut magnitudes: Vec<(usize, f32)> = (0..num_features)
+        let mut magnitudes: Vec<(usize, f32)> = (0..n_features)
             .map(|feature_idx| {
                 let current_weight = model.weight(feature_idx, output);
 
@@ -604,11 +604,11 @@ impl Default for ThriftySelector {
 }
 
 impl FeatureSelector for ThriftySelector {
-    fn reset(&mut self, num_features: usize) {
+    fn reset(&mut self, n_features: usize) {
         self.current = 0;
         if self.sorted_features.is_empty() {
             // Fallback to cyclic if setup wasn't called
-            self.sorted_features = (0..num_features).collect();
+            self.sorted_features = (0..n_features).collect();
         }
     }
 
@@ -756,7 +756,7 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn random_selector_returns_num_features() {
+    fn random_selector_returns_n_features() {
         let mut sel = RandomSelector::new(42);
         sel.reset(5);
 

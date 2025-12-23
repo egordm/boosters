@@ -535,10 +535,12 @@ impl Objective {
 pub struct LearnerModelParam {
     #[serde(deserialize_with = "deserialize_base_score")]
     pub base_score: f32,
+    #[serde(rename = "num_class")]
     #[serde_as(as = "DisplayFromStr")]
-    pub num_class: i64,
+    pub n_class: i64,
+    #[serde(rename = "num_feature")]
     #[serde_as(as = "DisplayFromStr")]
-    pub num_feature: i64,
+    pub n_features: i64,
     #[serde_as(as = "DisplayFromStr")]
     #[serde(default = "default_num_target")]
     pub num_target: i64,
@@ -551,8 +553,8 @@ impl Default for LearnerModelParam {
     fn default() -> Self {
         Self {
             base_score: 0.5,
-            num_class: 1,
-            num_feature: 0,
+            n_class: 1,
+            n_features: 0,
             num_target: 1,
             boost_from_average: true,
         }

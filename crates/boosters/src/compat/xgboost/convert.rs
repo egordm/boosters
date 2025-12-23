@@ -127,8 +127,8 @@ impl XgbModel {
     /// XGBoost stores weights in row-major order: `[n_features + 1, n_groups]`
     /// where the last row contains biases.
     fn convert_linear_model(&self, weights: &[f32]) -> Result<LinearModel, ConversionError> {
-        let num_features = self.learner.learner_model_param.num_feature as usize;
-        let num_class = self.learner.learner_model_param.num_class;
+        let num_features = self.learner.learner_model_param.n_features as usize;
+        let num_class = self.learner.learner_model_param.n_class;
         let num_groups = if num_class <= 1 { 1 } else { num_class as usize };
 
         let expected_len = (num_features + 1) * num_groups;
@@ -161,7 +161,7 @@ impl XgbModel {
         };
 
         // Determine number of groups (1 for regression, num_class for multiclass)
-        let num_class = self.learner.learner_model_param.num_class;
+        let num_class = self.learner.learner_model_param.n_class;
         let num_groups = if num_class <= 1 { 1 } else { num_class as u32 };
 
         // Build the forest
@@ -200,7 +200,7 @@ fn convert_tree(xgb_tree: &XgbTree, tree_idx: usize) -> Result<Tree<ScalarLeaf>,
     let categorical_map = build_categorical_map(xgb_tree);
 
     let mut tree = MutableTree::<ScalarLeaf>::with_capacity(num_nodes);
-    tree.init_root_with_num_nodes(num_nodes);
+    tree.init_root_with_n_nodes(num_nodes);
 
     // XGBoost stores nodes in BFS order, which matches our expected layout.
     // We need to iterate and add nodes in order.

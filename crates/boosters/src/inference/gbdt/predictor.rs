@@ -610,11 +610,11 @@ mod tests {
         let simple = SimplePredictor::new(&forest);
         let unrolled = UnrolledPredictor6::new(&forest);
 
-        for num_rows in [1, 10, 64, 100, 128, 200, 1000] {
-            let data: Vec<f32> = (0..num_rows * 2)
-                .map(|i| (i as f32) / (num_rows as f32 * 2.0))
+        for n_rows in [1, 10, 64, 100, 128, 200, 1000] {
+            let data: Vec<f32> = (0..n_rows * 2)
+                .map(|i| (i as f32) / (n_rows as f32 * 2.0))
                 .collect();
-            let features = features_view(&data, num_rows, 2);
+            let features = features_view(&data, n_rows, 2);
 
             let seq_simple = simple.predict(features, Parallelism::Sequential);
             let par_simple = simple.predict(features, Parallelism::Parallel);

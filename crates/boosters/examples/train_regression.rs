@@ -64,7 +64,7 @@ fn main() {
     println!("  Learning rate: {}", config.learning_rate);
     println!("  Growth: {:?}\n", config.tree.growth_strategy);
 
-    let model = GBDTModel::train(&dataset, labels.view(), None, &[], config, 1)
+    let model = GBDTModel::train_binned(&dataset, labels.view(), None, &[], config, 1)
         .expect("Training failed");
 
     // =========================================================================

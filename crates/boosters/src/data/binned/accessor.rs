@@ -59,12 +59,12 @@ impl FeatureAccessor for BinnedAccessor<'_> {
     }
 
     #[inline]
-    fn num_rows(&self) -> usize {
+    fn n_rows(&self) -> usize {
         self.dataset.n_rows()
     }
 
     #[inline]
-    fn num_features(&self) -> usize {
+    fn n_features(&self) -> usize {
         self.dataset.n_features()
     }
 }

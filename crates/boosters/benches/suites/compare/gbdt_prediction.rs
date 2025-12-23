@@ -58,8 +58,8 @@ fn reset_xgb_prediction_cache(booster: &mut Booster) {
 }
 
 #[cfg(feature = "bench-xgboost")]
-fn create_dmatrix(data: &[f32], num_rows: usize) -> DMatrix {
-	DMatrix::from_dense(data, num_rows).expect("Failed to create DMatrix")
+fn create_dmatrix(data: &[f32], n_rows: usize) -> DMatrix {
+	DMatrix::from_dense(data, n_rows).expect("Failed to create DMatrix")
 }
 
 // =============================================================================
@@ -78,7 +78,7 @@ fn load_native_lgb_booster(name: &str) -> lightgbm3::Booster {
 
 fn bench_predict_batch_sizes(c: &mut Criterion) {
 	let boosters_model = load_boosters_model("bench_medium");
-	let num_features = boosters_model.num_features;
+	let n_features = boosters_model.n_features;
 	let predictor = Predictor::<UnrolledTraversal6>::new(&boosters_model.forest).with_block_size(64);
 
 	#[cfg(feature = "bench-xgboost")]
@@ -90,7 +90,7 @@ fn bench_predict_batch_sizes(c: &mut Criterion) {
 	let mut group = c.benchmark_group("compare/predict/batch_size/medium");
 
 	for batch_size in [SMALL_BATCH, MEDIUM_BATCH, LARGE_BATCH] {
-		let input_array = random_features_array(batch_size, num_features, 42, -5.0, 5.0);
+		let input_array = random_features_array(batch_size, n_features, 42, -5.0, 5.0);
 
 		group.throughput(Throughput::Elements(batch_size as u64));
 
@@ -128,13 +128,13 @@ fn bench_predict_batch_sizes(c: &mut Criterion) {
 			if let Some(first) = input_f64_b.first_mut() {
 				*first = f64::from_bits(first.to_bits().wrapping_add(1));
 			}
-			let num_feat = num_features as i32;
+			let n_feat = n_features as i32;
 			group.bench_function(BenchmarkId::new("lightgbm", batch_size), |b| {
 				let mut flip = false;
 				b.iter(|| {
 					flip = !flip;
 					let input = if flip { &input_f64_a } else { &input_f64_b };
-					let output = lgb_booster.predict(black_box(input), num_feat, true).unwrap();
+					let output = lgb_booster.predict(black_box(input), n_feat, true).unwrap();
 					black_box(output)
 				})
 			});
@@ -150,7 +150,7 @@ fn bench_predict_batch_sizes(c: &mut Criterion) {
 
 fn bench_predict_single_row(c: &mut Criterion) {
 	let boosters_model = load_boosters_model("bench_medium");
-	let num_features = boosters_model.num_features;
+	let n_features = boosters_model.n_features;
 	let predictor = Predictor::<UnrolledTraversal6>::new(&boosters_model.forest).with_block_size(64);
 
 	#[cfg(feature = "bench-xgboost")]
@@ -161,7 +161,7 @@ fn bench_predict_single_row(c: &mut Criterion) {
 	#[cfg(feature = "bench-lightgbm")]
 	let lgb_booster = load_native_lgb_booster("bench_medium");
 
-	let input_array = random_features_array(1, num_features, 42, -5.0, 5.0);
+	let input_array = random_features_array(1, n_features, 42, -5.0, 5.0);
 
 	#[cfg(any(feature = "bench-xgboost", feature = "bench-lightgbm"))]
 	let input_data: &[f32] = input_array.as_slice().unwrap();
@@ -197,13 +197,13 @@ fn bench_predict_single_row(c: &mut Criterion) {
 		if let Some(first) = input_f64_b.first_mut() {
 			*first = f64::from_bits(first.to_bits().wrapping_add(1));
 		}
-		let num_feat = num_features as i32;
+		let n_feat = n_features as i32;
 		group.bench_function("lightgbm", |b| {
 			let mut flip = false;
 			b.iter(|| {
 				flip = !flip;
 				let input = if flip { &input_f64_a } else { &input_f64_b };
-				let output = lgb_booster.predict(black_box(input), num_feat, true).unwrap();
+				let output = lgb_booster.predict(black_box(input), n_feat, true).unwrap();
 				black_box(output)
 			})
 		});
@@ -218,7 +218,7 @@ fn bench_predict_single_row(c: &mut Criterion) {
 
 fn bench_predict_thread_scaling(c: &mut Criterion) {
 	let boosters_model = load_boosters_model("bench_medium");
-	let num_features = boosters_model.num_features;
+	let n_features = boosters_model.n_features;
 	let predictor = Predictor::<UnrolledTraversal6>::new(&boosters_model.forest).with_block_size(64);
 
 	#[cfg(feature = "bench-xgboost")]
@@ -230,7 +230,7 @@ fn bench_predict_thread_scaling(c: &mut Criterion) {
 	let lgb_booster = load_native_lgb_booster("bench_medium");
 
 	let batch_size = LARGE_BATCH;
-	let input_array = random_features_array(batch_size, num_features, 42, -5.0, 5.0);
+	let input_array = random_features_array(batch_size, n_features, 42, -5.0, 5.0);
 
 	#[cfg(any(feature = "bench-xgboost", feature = "bench-lightgbm"))]
 	let input_data: &[f32] = input_array.as_slice().unwrap();
@@ -269,13 +269,13 @@ fn bench_predict_thread_scaling(c: &mut Criterion) {
 			if let Some(first) = input_f64_b.first_mut() {
 				*first = f64::from_bits(first.to_bits().wrapping_add(1));
 			}
-			let num_feat = num_features as i32;
+			let n_feat = n_features as i32;
 			group.bench_function(BenchmarkId::new("lightgbm", "default"), |b| {
 				let mut flip = false;
 				b.iter(|| {
 					flip = !flip;
 					let input = if flip { &input_f64_a } else { &input_f64_b };
-					let output = lgb_booster.predict(black_box(input), num_feat, true).unwrap();
+					let output = lgb_booster.predict(black_box(input), n_feat, true).unwrap();
 					black_box(output)
 				})
 			});

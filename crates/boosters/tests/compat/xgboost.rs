@@ -343,8 +343,8 @@ fn predict_gblinear_multiclass() {
     let booster = model.to_booster().expect("conversion failed");
 
     let base_score_single = model.learner.learner_model_param.base_score;
-    let num_class = model.learner.learner_model_param.num_class as usize;
-    let base_scores = vec![base_score_single; num_class];
+    let n_class = model.learner.learner_model_param.n_class as usize;
+    let base_scores = vec![base_score_single; n_class];
 
     let linear = match booster {
         Booster::Linear(l) => l,
@@ -353,9 +353,9 @@ fn predict_gblinear_multiclass() {
 
     let expected_preds = expected.as_nested();
     for (i, features) in input.to_f32_rows().iter().enumerate() {
-        let mut pred = vec![0.0f32; num_class];
+        let mut pred = vec![0.0f32; n_class];
         linear.predict_row_into(features, &base_scores, &mut pred);
-        assert_eq!(pred.len(), num_class);
+        assert_eq!(pred.len(), n_class);
         assert_preds_match(&pred, &expected_preds[i], DEFAULT_TOLERANCE_F64, &format!("row {i}"));
     }
 }

@@ -90,9 +90,9 @@ impl<L: LeafValue> MutableTree<L> {
     ///
     /// This is useful for model loaders where node indices and child references
     /// are already known (e.g. XGBoost JSON). Returns the root node ID (0).
-    pub fn init_root_with_num_nodes(&mut self, num_nodes: usize) -> NodeId {
+    pub fn init_root_with_n_nodes(&mut self, n_nodes: usize) -> NodeId {
         self.reset();
-        for _ in 0..num_nodes {
+        for _ in 0..n_nodes {
             self.allocate_node();
         }
         0

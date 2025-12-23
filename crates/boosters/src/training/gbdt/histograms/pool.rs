@@ -78,7 +78,7 @@ impl AcquireResult {
 /// - On eviction, we find the slot with the minimum timestamp
 ///
 /// This is O(cache_size) for eviction but simpler and has better cache locality
-/// than a linked list. Since cache sizes are typically small (e.g., num_leaves),
+/// than a linked list. Since cache sizes are typically small (e.g., n_leaves),
 /// this is efficient in practice.
 pub struct HistogramPool {
     /// Per-slot histogram data. Each slot stores `total_bins` bins.

@@ -199,7 +199,7 @@ impl Forest<ScalarLeaf> {
             "predict_into does not support linear leaves; use Predictor instead"
         );
 
-        let n_rows = accessor.num_rows();
+        let n_rows = accessor.n_rows();
         let n_groups = self.n_groups() as usize;
         assert_eq!(
             output.len(),

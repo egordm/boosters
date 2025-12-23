@@ -55,22 +55,22 @@ pub trait TreeTraversal<L: LeafValue>: Clone {
     ///
     /// - `tree`: The tree to traverse
     /// - `state`: Pre-computed state for this tree
-    /// - `feature_buffer`: Contiguous buffer of features, `block_size * num_features`
-    /// - `num_features`: Number of features per row
+    /// - `feature_buffer`: Contiguous buffer of features, `block_size * n_features`
+    /// - `n_features`: Number of features per row
     #[inline]
     fn traverse_block(
         tree: &Tree<L>,
         state: &Self::TreeState,
         feature_buffer: &[f32],
-        num_features: usize,
+        n_features: usize,
         output: &mut [NodeId],
     ) where
         L: Into<f32>,
     {
         // Default: per-row traversal
         for (row_idx, out) in output.iter_mut().enumerate() {
-            let row_offset = row_idx * num_features;
-            let row_features = &feature_buffer[row_offset..][..num_features];
+            let row_offset = row_idx * n_features;
+            let row_features = &feature_buffer[row_offset..][..n_features];
             *out = Self::traverse_tree(tree, state, row_features);
         }
     }
@@ -185,7 +185,7 @@ impl<D: UnrollDepth> TreeTraversal<ScalarLeaf> for UnrolledTraversal<D> {
         tree: &Tree<ScalarLeaf>,
         state: &Self::TreeState,
         feature_buffer: &[f32],
-        num_features: usize,
+        n_features: usize,
         output: &mut [NodeId],
     ) {
         let block_size = output.len();
@@ -194,9 +194,9 @@ impl<D: UnrollDepth> TreeTraversal<ScalarLeaf> for UnrolledTraversal<D> {
         let mut traverse_from_exits = |indices: &[usize]| {
             for (row_idx, &exit_idx) in indices.iter().enumerate() {
                 let node_idx = state.exit_node_idx(exit_idx);
-                let row_offset = row_idx * num_features;
-                let row_features = &feature_buffer[row_offset..][..num_features];
-                let view = SamplesView::from_slice(row_features, 1, num_features)
+                let row_offset = row_idx * n_features;
+                let row_features = &feature_buffer[row_offset..][..n_features];
+                let view = SamplesView::from_slice(row_features, 1, n_features)
                     .expect("row features slice must be valid");
                 let leaf_idx = tree.traverse_to_leaf_from(node_idx, &view, 0);
                 output[row_idx] = leaf_idx;
@@ -207,11 +207,11 @@ impl<D: UnrollDepth> TreeTraversal<ScalarLeaf> for UnrolledTraversal<D> {
         if block_size <= 256 {
             let mut indices = [0usize; 256];
             let indices = &mut indices[..block_size];
-            state.process_block(feature_buffer, num_features, indices);
+            state.process_block(feature_buffer, n_features, indices);
             traverse_from_exits(indices);
         } else {
             let mut indices = vec![0usize; block_size];
-            state.process_block(feature_buffer, num_features, &mut indices);
+            state.process_block(feature_buffer, n_features, &mut indices);
             traverse_from_exits(&indices);
         }
     }

@@ -95,7 +95,7 @@ impl GrowthStrategy {
             GrowthStrategy::LeafWise { max_leaves } => GrowthState::LeafWise {
                 max_leaves,
                 candidates: BinaryHeap::new(),
-                num_leaves: 1, // Start with root as single leaf
+                n_leaves: 1, // Start with root as single leaf
             },
         }
     }
@@ -128,7 +128,7 @@ pub enum GrowthState {
         /// Priority queue of candidate leaves (max-heap by gain).
         candidates: BinaryHeap<NodeCandidate>,
         /// Current number of leaves in the tree.
-        num_leaves: u32,
+        n_leaves: u32,
     },
 }
 
@@ -145,8 +145,8 @@ impl GrowthState {
             GrowthState::LeafWise {
                 max_leaves,
                 candidates,
-                num_leaves,
-            } => *num_leaves < *max_leaves && !candidates.is_empty(),
+                n_leaves,
+            } => *n_leaves < *max_leaves && !candidates.is_empty(),
         }
     }
 
@@ -161,12 +161,12 @@ impl GrowthState {
             }
             GrowthState::LeafWise {
                 candidates,
-                num_leaves,
+                n_leaves,
                 ..
             } => {
                 if let Some(best) = candidates.pop() {
                     // Splitting a leaf: removes 1 leaf, adds 2 = net +1
-                    *num_leaves += 1;
+                    *n_leaves += 1;
                     vec![best]
                 } else {
                     vec![]
@@ -224,10 +224,10 @@ impl GrowthState {
     }
 
     /// Get current number of leaves.
-    pub fn num_leaves(&self) -> u32 {
+    pub fn n_leaves(&self) -> u32 {
         match self {
             GrowthState::DepthWise { .. } => 0, // Not tracked for depth-wise
-            GrowthState::LeafWise { num_leaves, .. } => *num_leaves,
+            GrowthState::LeafWise { n_leaves, .. } => *n_leaves,
         }
     }
 }
@@ -374,11 +374,11 @@ mod tests {
         match state {
             GrowthState::LeafWise {
                 max_leaves,
-                num_leaves,
+                n_leaves,
                 candidates,
             } => {
                 assert_eq!(max_leaves, 31);
-                assert_eq!(num_leaves, 1);
+                assert_eq!(n_leaves, 1);
                 assert!(candidates.is_empty());
             }
             _ => panic!("Expected LeafWise state"),
@@ -468,12 +468,12 @@ mod tests {
         state.push_root(make_candidate(0, 1.0));
         assert!(state.should_continue()); // 1 < 3 leaves
 
-        // Pop (num_leaves becomes 2)
+        // Pop (n_leaves becomes 2)
         state.pop_next();
         state.push(make_candidate(1, 0.5));
         assert!(state.should_continue()); // 2 < 3 leaves
 
-        // Pop (num_leaves becomes 3)
+        // Pop (n_leaves becomes 3)
         state.pop_next();
         state.push(make_candidate(2, 0.3));
         assert!(!state.should_continue()); // 3 >= 3 leaves

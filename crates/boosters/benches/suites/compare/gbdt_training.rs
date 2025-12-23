@@ -147,14 +147,14 @@ fn bench_train_regression(c: &mut Criterion) {
 		{
 			let features_f64: Vec<f64> = features.iter().map(|&x| x as f64).collect();
 			let labels_f32: Vec<f32> = targets.clone();
-			let num_features = cols as i32;
+			let n_features = cols as i32;
 
 			group.bench_function(BenchmarkId::new("lightgbm/cold_full", name), |b| {
 				b.iter(|| {
 					let dataset = lightgbm3::Dataset::from_slice(
 						black_box(&features_f64),
 						black_box(&labels_f32),
-						num_features,
+						n_features,
 						true,
 					)
 					.unwrap();

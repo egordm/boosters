@@ -71,18 +71,18 @@ pub trait UnrollDepth: private::Sealed + core::fmt::Debug + Clone + Copy {
     /// The unroll depth.
     const DEPTH: usize;
     /// Number of nodes: `2^DEPTH - 1`
-    const NUM_NODES: usize;
+    const N_NODES: usize;
     /// Number of exits: `2^DEPTH`
-    const NUM_EXITS: usize;
+    const N_EXITS: usize;
 
-    /// Type for the node array (sized to NUM_NODES).
+    /// Type for the node array (sized to N_NODES).
     type NodeArray<T: Copy + core::fmt::Debug + Send + Sync>: AsRef<[T]>
         + AsMut<[T]>
         + Clone
         + core::fmt::Debug
         + Send
         + Sync;
-    /// Type for the exit array (sized to NUM_EXITS).
+    /// Type for the exit array (sized to N_EXITS).
     type ExitArray<T: Copy + core::fmt::Debug + Send + Sync>: AsRef<[T]>
         + AsMut<[T]>
         + Clone
@@ -102,7 +102,7 @@ mod private {
 
 /// Macro to implement UnrollDepth for a given depth.
 macro_rules! impl_unroll_depth {
-    ($name:ident, $depth:expr, $num_nodes:expr, $num_exits:expr, $doc:expr) => {
+    ($name:ident, $depth:expr, $n_nodes:expr, $n_exits:expr, $doc:expr) => {
         #[doc = $doc]
         #[derive(Debug, Clone, Copy)]
         pub struct $name;
@@ -110,22 +110,22 @@ macro_rules! impl_unroll_depth {
         impl private::Sealed for $name {}
         impl UnrollDepth for $name {
             const DEPTH: usize = $depth;
-            const NUM_NODES: usize = $num_nodes;
-            const NUM_EXITS: usize = $num_exits;
-            type NodeArray<T: Copy + core::fmt::Debug + Send + Sync> = [T; $num_nodes];
-            type ExitArray<T: Copy + core::fmt::Debug + Send + Sync> = [T; $num_exits];
+            const N_NODES: usize = $n_nodes;
+            const N_EXITS: usize = $n_exits;
+            type NodeArray<T: Copy + core::fmt::Debug + Send + Sync> = [T; $n_nodes];
+            type ExitArray<T: Copy + core::fmt::Debug + Send + Sync> = [T; $n_exits];
 
             #[inline]
             fn node_array_fill<T: Copy + core::fmt::Debug + Send + Sync>(
                 val: T,
             ) -> Self::NodeArray<T> {
-                [val; $num_nodes]
+                [val; $n_nodes]
             }
             #[inline]
             fn exit_array_fill<T: Copy + core::fmt::Debug + Send + Sync>(
                 val: T,
             ) -> Self::ExitArray<T> {
-                [val; $num_exits]
+                [val; $n_exits]
             }
         }
     };
@@ -240,14 +240,14 @@ impl<D: UnrollDepth> UnrolledTreeLayout<D> {
 
     /// Number of nodes in the array layout.
     #[inline]
-    pub const fn num_nodes(&self) -> usize {
-        D::NUM_NODES
+    pub const fn n_nodes(&self) -> usize {
+        D::N_NODES
     }
 
     /// Number of exit points.
     #[inline]
-    pub const fn num_exits(&self) -> usize {
-        D::NUM_EXITS
+    pub const fn n_exits(&self) -> usize {
+        D::N_EXITS
     }
 
     /// Get split feature index for an array node.
@@ -364,7 +364,7 @@ impl<D: UnrollDepth> UnrolledTreeLayout<D> {
     ///
     /// This is the key optimization: all rows traverse the same levels together,
     /// which keeps the array data in cache.
-    pub fn process_block(&self, features: &[f32], num_features: usize, exit_indices: &mut [usize]) {
+    pub fn process_block(&self, features: &[f32], n_features: usize, exit_indices: &mut [usize]) {
         let split_indices = self.split_indices.as_ref();
         let split_thresholds = self.split_thresholds.as_ref();
         let default_left = self.default_left.as_ref();
@@ -383,7 +383,7 @@ impl<D: UnrollDepth> UnrolledTreeLayout<D> {
                 let array_idx = level_start + *pos;
 
                 let feat_idx = split_indices[array_idx] as usize;
-                let row_offset = row_idx * num_features;
+                let row_offset = row_idx * n_features;
                 let fvalue = features
                     .get(row_offset + feat_idx)
                     .copied()
@@ -568,8 +568,8 @@ mod tests {
         let layout = UnrolledTreeLayout4::from_tree(&tree);
 
         assert_eq!(layout.depth(), 4);
-        assert_eq!(layout.num_nodes(), 15);
-        assert_eq!(layout.num_exits(), 16);
+        assert_eq!(layout.n_nodes(), 15);
+        assert_eq!(layout.n_exits(), 16);
         assert_eq!(layout.split_index(0), 0);
         assert!((layout.split_threshold(0) - 0.5).abs() < 1e-6);
     }
@@ -603,8 +603,8 @@ mod tests {
         let layout = UnrolledTreeLayout4::from_tree(&tree);
 
         assert_eq!(layout.depth(), 4);
-        assert_eq!(layout.num_nodes(), 15);
-        assert_eq!(layout.num_exits(), 16);
+        assert_eq!(layout.n_nodes(), 15);
+        assert_eq!(layout.n_exits(), 16);
     }
 
     #[test]
@@ -659,8 +659,8 @@ mod tests {
         let layout = UnrolledTreeLayout6::from_tree(&tree);
 
         assert_eq!(layout.depth(), 6);
-        assert_eq!(layout.num_nodes(), 63);
-        assert_eq!(layout.num_exits(), 64);
+        assert_eq!(layout.n_nodes(), 63);
+        assert_eq!(layout.n_exits(), 64);
     }
 
     #[test]
@@ -669,7 +669,7 @@ mod tests {
         let layout = UnrolledTreeLayout8::from_tree(&tree);
 
         assert_eq!(layout.depth(), 8);
-        assert_eq!(layout.num_nodes(), 255);
-        assert_eq!(layout.num_exits(), 256);
+        assert_eq!(layout.n_nodes(), 255);
+        assert_eq!(layout.n_exits(), 256);
     }
 }

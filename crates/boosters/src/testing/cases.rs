@@ -19,8 +19,10 @@ use serde::Deserialize;
 pub struct TestInput {
     /// Features matrix, where None represents NaN (missing value)
     pub features: Vec<Vec<Option<f64>>>,
-    pub num_rows: usize,
-    pub num_features: usize,
+    #[serde(rename = "num_rows")]
+    pub n_rows: usize,
+    #[serde(rename = "num_features")]
+    pub n_features: usize,
     /// Optional feature types (for categorical features)
     #[serde(default)]
     pub feature_types: Vec<String>,
@@ -67,7 +69,7 @@ pub struct TestExpected {
     pub objective: Option<String>,
     /// Number of classes (for multiclass)
     #[serde(default)]
-    pub num_class: Option<u32>,
+    pub n_class: Option<u32>,
 }
 
 impl TestExpected {

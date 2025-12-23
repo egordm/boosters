@@ -32,25 +32,25 @@ impl LgbModel {
     pub fn to_forest(&self) -> Result<Forest<ScalarLeaf>, ConversionError> {
         // Check for unsupported features
         for (idx, tree) in self.trees.iter().enumerate() {
-            if tree.num_leaves == 0 {
+            if tree.n_leaves == 0 {
                 return Err(ConversionError::EmptyTree(idx));
             }
         }
 
-        let num_groups = self.num_groups() as u32;
-        let mut forest = Forest::new(num_groups);
+        let n_groups = self.n_groups() as u32;
+        let mut forest = Forest::new(n_groups);
 
         // LightGBM doesn't store base_score the same way XGBoost does.
         // The initial prediction is typically 0 for regression, or learned from data.
         // For now, we use 0 as the base score.
-        let base_scores = vec![0.0f32; num_groups as usize];
+        let base_scores = vec![0.0f32; n_groups as usize];
         forest = forest.with_base_score(base_scores);
 
         // Convert each tree
         for (tree_idx, lgb_tree) in self.trees.iter().enumerate() {
             // Determine which group this tree belongs to
             // Trees are organized as: tree[iteration * num_groups + group_idx]
-            let tree_group = (tree_idx % num_groups as usize) as u32;
+            let tree_group = (tree_idx % n_groups as usize) as u32;
 
             let native_tree = convert_tree(lgb_tree, tree_idx)?;
             forest.push_tree(native_tree, tree_group);
@@ -66,10 +66,10 @@ fn convert_tree(
     _tree_idx: usize,
 ) -> Result<Tree<ScalarLeaf>, ConversionError> {
     // Special case: single-leaf tree
-    if lgb_tree.num_leaves == 1 {
+    if lgb_tree.n_leaves == 1 {
         let leaf_value = lgb_tree.leaf_value.first().copied().unwrap_or(0.0) as f32;
         let mut t = MutableTree::<ScalarLeaf>::with_capacity(1);
-        let root = t.init_root_with_num_nodes(1);
+        let root = t.init_root_with_n_nodes(1);
         t.make_leaf(root, ScalarLeaf(leaf_value));
         return Ok(t.freeze());
     }
@@ -82,13 +82,13 @@ fn convert_tree(
     // We need to convert to our BFS layout where nodes and leaves are
     // laid out in traversal order.
 
-    let num_internal = lgb_tree.num_leaves - 1;
-    let total_nodes = num_internal + lgb_tree.num_leaves;
+    let n_internal = lgb_tree.n_leaves - 1;
+    let total_nodes = n_internal + lgb_tree.n_leaves;
 
     let mut tree = MutableTree::<ScalarLeaf>::with_capacity(total_nodes);
-    tree.init_root_with_num_nodes(total_nodes);
+    tree.init_root_with_n_nodes(total_nodes);
 
-    for node_idx in 0..num_internal {
+    for node_idx in 0..n_internal {
         let left = lgb_tree.left_child[node_idx];
         let right = lgb_tree.right_child[node_idx];
         let dt = DecisionType::from_i8(lgb_tree.decision_type[node_idx]);
@@ -97,8 +97,8 @@ fn convert_tree(
         // - If child < 0: it's a leaf with index ~child
         // - If child >= 0: it's an internal node with that index
 
-        let left_child = convert_child_ref(left, num_internal)?;
-        let right_child = convert_child_ref(right, num_internal)?;
+        let left_child = convert_child_ref(left, n_internal)?;
+        let right_child = convert_child_ref(right, n_internal)?;
 
         let feature_index = lgb_tree.split_feature[node_idx] as u32;
 
@@ -133,15 +133,15 @@ fn convert_tree(
     // Add leaf nodes
     // Note: leaf_value already has shrinkage applied during training
     // The shrinkage field in the model is just for informational purposes
-    for leaf_idx in 0..lgb_tree.num_leaves {
-        let node_idx = num_internal + leaf_idx;
+    for leaf_idx in 0..lgb_tree.n_leaves {
+        let node_idx = n_internal + leaf_idx;
         tree.make_leaf(node_idx as u32, ScalarLeaf(lgb_tree.leaf_value[leaf_idx] as f32));
     }
 
     // Add linear coefficients if this is a linear tree
     if lgb_tree.is_linear {
-        for leaf_idx in 0..lgb_tree.num_leaves {
-            let node_idx = (num_internal + leaf_idx) as u32;
+        for leaf_idx in 0..lgb_tree.n_leaves {
+            let node_idx = (n_internal + leaf_idx) as u32;
             
             // Get linear model data for this leaf
             let intercept = lgb_tree.leaf_const.get(leaf_idx).copied().unwrap_or(0.0) as f32;

@@ -95,7 +95,7 @@ fn main() {
     // Train WITHOUT weights (baseline)
     // =========================================================================
     println!("--- Training WITHOUT weights ---");
-    let model_unweighted = GBDTModel::train(
+    let model_unweighted = GBDTModel::train_binned(
         &dataset,
         labels.view(),
         None,
@@ -117,7 +117,7 @@ fn main() {
     // Train WITH class weights
     // =========================================================================
     println!("--- Training WITH class weights ---");
-    let model_weighted = GBDTModel::train(
+    let model_weighted = GBDTModel::train_binned(
         &dataset,
         labels.view(),
         Some(ArrayView1::from(&class_weights[..])),

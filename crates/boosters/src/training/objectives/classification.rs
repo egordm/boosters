@@ -187,36 +187,36 @@ impl ObjectiveFn for HingeLoss {
 
 /// Softmax cross-entropy loss for multiclass classification.
 ///
-/// Expects labels as class indices (0 to num_classes-1) stored as f32.
+/// Expects labels as class indices (0 to n_classes-1) stored as f32.
 /// Predictions are K raw logits per sample.
 ///
 /// # Layout
 ///
-/// - `n_outputs` = num_classes
-/// - `predictions`: `[num_classes, n_samples]`
+/// - `n_outputs` = n_classes
+/// - `predictions`: `[n_classes, n_samples]`
 /// - `targets`: class indices `[n_samples]` (single target column)
-/// - `gradients/hessians`: `[num_classes, n_samples]`
+/// - `gradients/hessians`: `[n_classes, n_samples]`
 #[derive(Debug, Clone, Copy)]
 pub struct SoftmaxLoss {
-    pub num_classes: usize,
+    pub n_classes: usize,
 }
 
 impl Default for SoftmaxLoss {
     fn default() -> Self {
-        Self { num_classes: 2 }
+        Self { n_classes: 2 }
     }
 }
 
 impl SoftmaxLoss {
-    pub fn new(num_classes: usize) -> Self {
-        debug_assert!(num_classes >= 2, "num_classes must be >= 2");
-        Self { num_classes }
+    pub fn new(n_classes: usize) -> Self {
+        debug_assert!(n_classes >= 2, "n_classes must be >= 2");
+        Self { n_classes }
     }
 }
 
 impl ObjectiveFn for SoftmaxLoss {
     fn n_outputs(&self) -> usize {
-        self.num_classes
+        self.n_classes
     }
 
     fn compute_gradients(
@@ -239,7 +239,7 @@ impl ObjectiveFn for SoftmaxLoss {
             .enumerate()
         {
             let label = target as usize;
-            debug_assert!(label < n_outputs, "label {} >= num_classes {}", label, n_outputs);
+            debug_assert!(label < n_outputs, "label {} >= n_classes {}", label, n_outputs);
 
             // Get column views for this sample
             let pred_col = predictions.column(i);
@@ -300,7 +300,7 @@ impl ObjectiveFn for SoftmaxLoss {
     }
 
     fn task_kind(&self) -> TaskKind {
-        TaskKind::MulticlassClassification { n_classes: self.num_classes }
+        TaskKind::MulticlassClassification { n_classes: self.n_classes }
     }
 
     fn target_schema(&self) -> TargetSchema {

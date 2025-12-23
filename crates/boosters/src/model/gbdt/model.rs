@@ -106,7 +106,7 @@ impl GBDTModel {
     /// * `eval_sets` - Evaluation sets for monitoring and early stopping (`&[]` if not needed)
     /// * `config` - Training configuration
     /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
-    pub fn train(
+    pub fn train_binned(
         dataset: &BinnedDataset,
         targets: ArrayView1<f32>,
         weights: Option<ArrayView1<f32>>,

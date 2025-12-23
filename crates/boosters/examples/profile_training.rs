@@ -70,7 +70,7 @@ fn main() {
     
     let start = std::time::Instant::now();
     // Use n_threads=1 for cleaner profiling (single thread)
-    let model = GBDTModel::train(&dataset, ArrayView1::from(&labels[..]), None, &[], config, 1)
+    let model = GBDTModel::train_binned(&dataset, ArrayView1::from(&labels[..]), None, &[], config, 1)
         .expect("Training failed");
     let train_time = start.elapsed();
 

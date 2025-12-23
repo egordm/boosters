@@ -155,7 +155,7 @@ fn main() {
     println!("\n=== Training Models ===\n");
 
     // Train without bundling
-    let model_no_bundle = GBDTModel::train(
+    let model_no_bundle = GBDTModel::train_binned(
         &dataset_no_bundle,
         labels.view(),
         None,
@@ -166,7 +166,7 @@ fn main() {
     .expect("Training failed");
 
     // Train with bundling
-    let model_bundled = GBDTModel::train(
+    let model_bundled = GBDTModel::train_binned(
         &dataset_bundled,
         labels.view(),
         None,

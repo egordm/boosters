@@ -68,7 +68,7 @@ fn run_synthetic_regression(
 		.build()
 		.unwrap();
 
-	let model = GBDTModel::train(
+	let model = GBDTModel::train_binned(
 		&binned_train,
 		ArrayView1::from(&y_train[..]),
 		None,
@@ -124,7 +124,7 @@ fn run_synthetic_binary(
 		.build()
 		.unwrap();
 
-	let model = GBDTModel::train(
+	let model = GBDTModel::train_binned(
 		&binned_train,
 		ArrayView1::from(&y_train[..]),
 		None,
@@ -182,7 +182,7 @@ fn run_synthetic_multiclass(
 		.build()
 		.unwrap();
 
-	let model = GBDTModel::train(
+	let model = GBDTModel::train_binned(
 		&binned_train,
 		ArrayView1::from(&y_train[..]),
 		None,
@@ -313,7 +313,7 @@ fn test_quality_improvement_linear_leaves() {
 		.build()
 		.unwrap();
 
-	let model_baseline = GBDTModel::train(
+	let model_baseline = GBDTModel::train_binned(
 		&binned_train,
 		ArrayView1::from(&y_train[..]),
 		None,
@@ -342,7 +342,7 @@ fn test_quality_improvement_linear_leaves() {
 		.unwrap();
 
 	eprintln!("Training with linear leaves...");
-	let model_linear = GBDTModel::train(
+	let model_linear = GBDTModel::train_binned(
 		&binned_train,
 		ArrayView1::from(&y_train[..]),
 		None,

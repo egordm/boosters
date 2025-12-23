@@ -184,12 +184,12 @@ impl<'a> FeatureAccessor for SamplesView<'a> {
     }
 
     #[inline]
-    fn num_rows(&self) -> usize {
+    fn n_rows(&self) -> usize {
         self.0.nrows()
     }
 
     #[inline]
-    fn num_features(&self) -> usize {
+    fn n_features(&self) -> usize {
         self.0.ncols()
     }
 }
@@ -308,12 +308,12 @@ impl<'a> FeatureAccessor for FeaturesView<'a> {
     }
 
     #[inline]
-    fn num_rows(&self) -> usize {
+    fn n_rows(&self) -> usize {
         self.0.ncols() // n_samples
     }
 
     #[inline]
-    fn num_features(&self) -> usize {
+    fn n_features(&self) -> usize {
         self.0.nrows() // n_features
     }
 }

@@ -11,13 +11,13 @@ use boosters::repr::gblinear::LinearModel;
 /// Benchmarks typically need only the parsed tree ensemble plus metadata like feature count.
 pub struct LoadedForestModel {
 	pub forest: Forest<ScalarLeaf>,
-	pub num_features: usize,
+	pub n_features: usize,
 }
 
 /// GBLinear model wrapper for benchmarks.
 pub struct LoadedLinearModel {
 	pub model: LinearModel,
-	pub num_features: usize,
+	pub n_features: usize,
 }
 
 /// Path to benchmark models directory.
@@ -34,9 +34,9 @@ pub fn load_boosters_model(name: &str) -> LoadedForestModel {
 	let xgb_model: XgbModel = serde_json::from_reader(file).expect("Failed to parse model");
 
 	let forest = xgb_model.to_forest().expect("Failed to convert model to Forest");
-	let num_features = xgb_model.learner.learner_model_param.num_feature as usize;
+	let n_features = xgb_model.learner.learner_model_param.n_features as usize;
 
-	LoadedForestModel { forest, num_features }
+	LoadedForestModel { forest, n_features }
 }
 
 /// Load a booste-rs GBLinear model from JSON file.
@@ -50,7 +50,7 @@ pub fn load_linear_model(name: &str) -> LoadedLinearModel {
 		Booster::Linear(linear) => linear,
 		_ => panic!("Expected GBLinear model but got tree-based model"),
 	};
-	let num_features = xgb_model.learner.learner_model_param.num_feature as usize;
+	let n_features = xgb_model.learner.learner_model_param.n_features as usize;
 
-	LoadedLinearModel { model, num_features }
+	LoadedLinearModel { model, n_features }
 }

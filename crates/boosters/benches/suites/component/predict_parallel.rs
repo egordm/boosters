@@ -18,7 +18,7 @@ fn bench_gbtree_thread_scaling(c: &mut Criterion) {
 	let predictor = Predictor::<UnrolledTraversal6>::new(&model.forest).with_block_size(64);
 
 	let batch_size = 10_000usize;
-	let matrix = random_features_array(batch_size, model.num_features, 42, -5.0, 5.0);
+	let matrix = random_features_array(batch_size, model.n_features, 42, -5.0, 5.0);
 
 	let mut group = c.benchmark_group("component/predict/thread_scaling/medium");
 	group.throughput(Throughput::Elements(batch_size as u64));

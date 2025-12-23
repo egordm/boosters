@@ -559,8 +559,8 @@ fn load_data(
 				Task::Regression => synthetic_regression(*rows, *cols, seed ^ 0x0BAD_5EED, 0.05).targets,
 				Task::Binary => synthetic_binary(*rows, *cols, seed ^ 0xB1A2_0001, 0.2).targets,
 				Task::Multiclass => {
-					let num_classes = config.classes.unwrap_or(3);
-					synthetic_multiclass(*rows, *cols, num_classes, seed ^ 0x00C1_A550, 0.1).targets
+					let n_classes = config.classes.unwrap_or(3);
+					synthetic_multiclass(*rows, *cols, n_classes, seed ^ 0x00C1_A550, 0.1).targets
 				}
 			};
 			let y_vec: Vec<f32> = y.to_vec();
@@ -667,8 +667,8 @@ fn train_boosters(
 		Task::Regression => (Objective::squared(), Metric::rmse()),
 		Task::Binary => (Objective::logistic(), Metric::logloss()),
 		Task::Multiclass => {
-			let num_classes = config.classes.unwrap_or(3);
-			(Objective::softmax(num_classes), Metric::multiclass_logloss())
+			let n_classes = config.classes.unwrap_or(3);
+			(Objective::softmax(n_classes), Metric::multiclass_logloss())
 		}
 	};
 
@@ -697,7 +697,7 @@ fn train_boosters(
 
 	// Train using model API
 	let targets = ArrayView1::from(y_train);
-	let model = GBDTModel::train(&binned_train, targets, None, &[], gbdt_config, 1)
+	let model = GBDTModel::train_binned(&binned_train, targets, None, &[], gbdt_config, 1)
 		.expect("training should succeed");
 
 	// Predict using model API (applies transform automatically)
@@ -749,11 +749,11 @@ fn train_xgboost(
 		.build()
 		.unwrap();
 
-	let num_classes = config.classes.unwrap_or(3);
+	let n_classes = config.classes.unwrap_or(3);
 	let xgb_objective = match config.task {
 		Task::Regression => XgbObjective::RegLinear,
 		Task::Binary => XgbObjective::BinaryLogistic,
-		Task::Multiclass => XgbObjective::MultiSoftprob(num_classes as u32),
+		Task::Multiclass => XgbObjective::MultiSoftprob(n_classes as u32),
 	};
 	let learning_params = LearningTaskParametersBuilder::default().objective(xgb_objective).build().unwrap();
 
@@ -803,8 +803,8 @@ fn train_xgboost(
 			// XGBoost outputs row-major: [row0_class0, row0_class1, ..., row1_class0, ...]
 			// Our metrics expect column-major: [class0_row0, class0_row1, ..., class1_row0, ...]
 			let prob_row_major: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
-			let prob_col_major = transpose_row_to_col_major(&prob_row_major, rows_valid, num_classes);
-			let pred_arr = make_preds_array(&prob_col_major, num_classes, rows_valid);
+			let prob_col_major = transpose_row_to_col_major(&prob_row_major, rows_valid, n_classes);
+			let pred_arr = make_preds_array(&prob_col_major, n_classes, rows_valid);
 			let targets_arr = ArrayView1::from(y_valid);
 			let ll = MulticlassLogLoss.compute(pred_arr.view(), targets_arr, None);
 			let acc = MulticlassAccuracy.compute(pred_arr.view(), targets_arr, None);
@@ -827,18 +827,18 @@ fn train_lightgbm(
 	let x_train_f64: Vec<f64> = x_train.iter().map(|&x| x as f64).collect();
 	let x_valid_f64: Vec<f64> = x_valid.iter().map(|&x| x as f64).collect();
 
-	let num_classes = config.classes.unwrap_or(3);
+	let n_classes = config.classes.unwrap_or(3);
 	let mut params = match config.task {
 		Task::Regression => serde_json::json!({"objective":"regression","metric":"l2"}),
 		Task::Binary => serde_json::json!({"objective":"binary","metric":"binary_logloss"}),
-		Task::Multiclass => serde_json::json!({"objective":"multiclass","metric":"multi_logloss","num_class": num_classes}),
+		Task::Multiclass => serde_json::json!({"objective":"multiclass","metric":"multi_logloss","num_class": n_classes}),
 	};
 	params["num_iterations"] = serde_json::Value::from(config.trees as i64);
 	params["learning_rate"] = serde_json::Value::from(0.1f64);
 	params["max_bin"] = serde_json::Value::from(256i64);
 	params["max_depth"] = serde_json::Value::from(config.depth as i64);
-	let num_leaves = (1u64.checked_shl(config.depth).unwrap_or(u64::MAX)).max(2) as i64;
-	params["num_leaves"] = serde_json::Value::from(num_leaves);
+	let n_leaves = (1u64.checked_shl(config.depth).unwrap_or(u64::MAX)).max(2) as i64;
+	params["num_leaves"] = serde_json::Value::from(n_leaves);
 	params["min_data_in_leaf"] = serde_json::Value::from(1i64);
 	params["lambda_l2"] = serde_json::Value::from(1.0f64);
 	params["feature_fraction"] = serde_json::Value::from(1.0f64);
@@ -876,8 +876,8 @@ fn train_lightgbm(
 			// LightGBM outputs row-major: [row0_class0, row0_class1, ..., row1_class0, ...]
 			// Our metrics expect column-major: [class0_row0, class0_row1, ..., class1_row0, ...]
 			let prob_row_major: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
-			let prob_col_major = transpose_row_to_col_major(&prob_row_major, rows_valid, num_classes);
-			let pred_arr = make_preds_array(&prob_col_major, num_classes, rows_valid);
+			let prob_col_major = transpose_row_to_col_major(&prob_row_major, rows_valid, n_classes);
+			let pred_arr = make_preds_array(&prob_col_major, n_classes, rows_valid);
 			let targets_arr = ArrayView1::from(y_valid);
 			let ll = MulticlassLogLoss.compute(pred_arr.view(), targets_arr, None);
 			let acc = MulticlassAccuracy.compute(pred_arr.view(), targets_arr, None);
@@ -1168,7 +1168,7 @@ enum BenchmarkMode {
 }
 
 struct Args {
-	num_seeds: usize,
+	n_seeds: usize,
 	out: Option<PathBuf>,
 	quick: bool,
 	mode: BenchmarkMode,
@@ -1178,7 +1178,7 @@ struct Args {
 }
 
 fn parse_args() -> Args {
-	let mut num_seeds = 5usize;
+	let mut n_seeds = 5usize;
 	let mut out: Option<PathBuf> = None;
 	let mut quick = false;
 	let mut mode = BenchmarkMode::All;
@@ -1189,7 +1189,7 @@ fn parse_args() -> Args {
 	let mut it = std::env::args().skip(1);
 	while let Some(arg) = it.next() {
 		match arg.as_str() {
-			"--seeds" => num_seeds = it.next().expect("--seeds value").parse().unwrap(),
+			"--seeds" => n_seeds = it.next().expect("--seeds value").parse().unwrap(),
 			"--out" => out = Some(PathBuf::from(it.next().expect("--out path"))),
 			"--quick" => quick = true,
 			"--mode" => {
@@ -1216,14 +1216,14 @@ fn parse_args() -> Args {
 		}
 	}
 
-	Args { num_seeds, out, quick, mode, libsvm_paths, uci_machine_paths, label0_paths }
+	Args { n_seeds, out, quick, mode, libsvm_paths, uci_machine_paths, label0_paths }
 }
 
 fn main() {
 	let args = parse_args();
 
 	// Generate seeds
-	let seeds: Vec<u64> = (0..args.num_seeds).map(|i| 42 + i as u64 * 1337).collect();
+	let seeds: Vec<u64> = (0..args.n_seeds).map(|i| 42 + i as u64 * 1337).collect();
 
 	let mut configs = Vec::new();
 	

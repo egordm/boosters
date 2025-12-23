@@ -84,7 +84,7 @@ pub enum TargetSchema {
 /// The relationship between `n_outputs` and `n_targets` depends on the objective:
 /// - SquaredLoss: `n_outputs == n_targets` (1:1 mapping)
 /// - PinballLoss: `n_outputs` quantiles, `n_targets` can be 1 (shared) or `n_outputs`
-/// - SoftmaxLoss: `n_outputs` = num_classes, `n_targets` = 1 (class indices)
+/// - SoftmaxLoss: `n_outputs` = n_classes, `n_targets` = 1 (class indices)
 ///
 /// # Weighted Training
 ///
@@ -94,7 +94,7 @@ pub trait ObjectiveFn: Send + Sync {
     /// Number of outputs (predictions per sample).
     ///
     /// For most objectives this is 1 (single-output).
-    /// For multiclass (SoftmaxLoss) this is num_classes.
+    /// For multiclass (SoftmaxLoss) this is n_classes.
     /// For multi-quantile this is the number of quantiles.
     fn n_outputs(&self) -> usize;
 
@@ -241,8 +241,8 @@ impl Objective {
     }
     
     /// Softmax loss for multiclass classification.
-    pub fn softmax(num_classes: usize) -> Self {
-        Self::SoftmaxLoss(SoftmaxLoss::new(num_classes))
+    pub fn softmax(n_classes: usize) -> Self {
+        Self::SoftmaxLoss(SoftmaxLoss::new(n_classes))
     }
     
     /// Pinball loss for single quantile regression.

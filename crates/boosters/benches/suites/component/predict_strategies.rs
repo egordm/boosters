@@ -25,7 +25,7 @@ fn bench_gbtree_traversal_strategies(c: &mut Criterion) {
 	let mut group = c.benchmark_group("component/predict/traversal/medium");
 
 	for batch_size in [1_000usize, 10_000] {
-		let matrix = random_features_array(batch_size, model.num_features, 42, -5.0, 5.0);
+		let matrix = random_features_array(batch_size, model.n_features, 42, -5.0, 5.0);
 		group.throughput(Throughput::Elements(batch_size as u64));
 
 		group.bench_with_input(BenchmarkId::new("std_no_block", batch_size), &matrix, |b, m| {

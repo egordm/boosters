@@ -48,8 +48,8 @@ fn new_xgb_booster(model_bytes: &[u8]) -> Booster {
 }
 
 #[cfg(feature = "bench-xgboost")]
-fn create_dmatrix(data: &[f32], num_rows: usize) -> DMatrix {
-	DMatrix::from_dense(data, num_rows).expect("Failed to create DMatrix")
+fn create_dmatrix(data: &[f32], n_rows: usize) -> DMatrix {
+	DMatrix::from_dense(data, n_rows).expect("Failed to create DMatrix")
 }
 
 // =============================================================================
@@ -58,7 +58,7 @@ fn create_dmatrix(data: &[f32], num_rows: usize) -> DMatrix {
 
 fn bench_predict_batch_sizes(c: &mut Criterion) {
 	let boosters_model = load_linear_model("bench_gblinear_medium");
-	let num_features = boosters_model.num_features;
+	let n_features = boosters_model.n_features;
 
 	#[cfg(feature = "bench-xgboost")]
 	let xgb_model_bytes = load_xgb_model_bytes("bench_gblinear_medium");
@@ -66,7 +66,7 @@ fn bench_predict_batch_sizes(c: &mut Criterion) {
 	let mut group = c.benchmark_group("compare/predict/gblinear/batch_size/medium");
 
 	for batch_size in [SMALL_BATCH, MEDIUM_BATCH, LARGE_BATCH] {
-		let input_array = random_features_array(batch_size, num_features, 42, -5.0, 5.0);
+		let input_array = random_features_array(batch_size, n_features, 42, -5.0, 5.0);
 		let samples_view = SamplesView::from_array(input_array.view());
 
 		group.throughput(Throughput::Elements(batch_size as u64));
@@ -103,14 +103,14 @@ fn bench_predict_batch_sizes(c: &mut Criterion) {
 
 fn bench_predict_single_row(c: &mut Criterion) {
 	let boosters_model = load_linear_model("bench_gblinear_medium");
-	let num_features = boosters_model.num_features;
+	let n_features = boosters_model.n_features;
 
 	#[cfg(feature = "bench-xgboost")]
 	let xgb_model_bytes = load_xgb_model_bytes("bench_gblinear_medium");
 	#[cfg(feature = "bench-xgboost")]
 	let xgb_model = new_xgb_booster(&xgb_model_bytes);
 
-	let input_array = random_features_array(1, num_features, 42, -5.0, 5.0);
+	let input_array = random_features_array(1, n_features, 42, -5.0, 5.0);
 	let samples_view = SamplesView::from_array(input_array.view());
 
 	#[cfg(feature = "bench-xgboost")]
@@ -165,8 +165,8 @@ fn bench_model_sizes(c: &mut Criterion) {
 	let batch_size = MEDIUM_BATCH;
 
 	for (name, model) in &models {
-		let num_features = model.num_features;
-		let input_array = random_features_array(batch_size, num_features, 42, -5.0, 5.0);
+		let n_features = model.n_features;
+		let input_array = random_features_array(batch_size, n_features, 42, -5.0, 5.0);
 		let samples_view = SamplesView::from_array(input_array.view());
 
 		#[cfg(feature = "bench-xgboost")]

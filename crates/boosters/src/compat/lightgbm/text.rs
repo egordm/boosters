@@ -97,41 +97,41 @@ impl DecisionType {
 #[derive(Debug, Clone)]
 pub struct LgbTree {
     /// Number of leaves in this tree
-    pub num_leaves: usize,
+    pub n_leaves: usize,
     /// Number of categorical features used in splits
-    pub num_cat: usize,
-    /// Feature index for each internal node (size: num_leaves - 1)
+    pub n_cat: usize,
+    /// Feature index for each internal node (size: n_leaves - 1)
     pub split_feature: Vec<i32>,
-    /// Split gain for each internal node (size: num_leaves - 1)
+    /// Split gain for each internal node (size: n_leaves - 1)
     pub split_gain: Vec<f32>,
-    /// Threshold for each internal node (size: num_leaves - 1)
+    /// Threshold for each internal node (size: n_leaves - 1)
     pub threshold: Vec<f64>,
-    /// Decision type bitfield for each internal node (size: num_leaves - 1)
+    /// Decision type bitfield for each internal node (size: n_leaves - 1)
     pub decision_type: Vec<i8>,
-    /// Left child index for each internal node (negative = leaf) (size: num_leaves - 1)
+    /// Left child index for each internal node (negative = leaf) (size: n_leaves - 1)
     pub left_child: Vec<i32>,
-    /// Right child index for each internal node (negative = leaf) (size: num_leaves - 1)
+    /// Right child index for each internal node (negative = leaf) (size: n_leaves - 1)
     pub right_child: Vec<i32>,
-    /// Output value for each leaf (size: num_leaves)
+    /// Output value for each leaf (size: n_leaves)
     pub leaf_value: Vec<f64>,
-    /// Sample count for each leaf (size: num_leaves)
+    /// Sample count for each leaf (size: n_leaves)
     pub leaf_count: Vec<i32>,
-    /// Weight (sum of hessians) for each leaf (size: num_leaves)
+    /// Weight (sum of hessians) for each leaf (size: n_leaves)
     pub leaf_weight: Vec<f64>,
     /// Shrinkage (learning rate) applied to this tree
     pub shrinkage: f64,
     /// Whether this tree has linear models at leaves
     pub is_linear: bool,
-    /// Categorical split boundaries (size: num_cat + 1 if num_cat > 0)
+    /// Categorical split boundaries (size: n_cat + 1 if n_cat > 0)
     pub cat_boundaries: Vec<i32>,
     /// Categorical split threshold bitset
     pub cat_threshold: Vec<u32>,
     
     // Linear tree fields (only populated when is_linear=true)
-    /// Intercept for each leaf's linear model (size: num_leaves)
+    /// Intercept for each leaf's linear model (size: n_leaves)
     pub leaf_const: Vec<f64>,
-    /// Number of features used in each leaf's linear model (size: num_leaves)
-    pub num_features_per_leaf: Vec<i32>,
+    /// Number of features used in each leaf's linear model (size: n_leaves)
+    pub n_features_per_leaf: Vec<i32>,
     /// Feature indices used in each leaf's linear model (flattened, grouped by leaf)
     pub leaf_features: Vec<Vec<i32>>,
     /// Coefficients for each leaf's linear model (flattened, grouped by leaf)
@@ -141,8 +141,8 @@ pub struct LgbTree {
 impl Default for LgbTree {
     fn default() -> Self {
         Self {
-            num_leaves: 0,
-            num_cat: 0,
+            n_leaves: 0,
+            n_cat: 0,
             split_feature: Vec::new(),
             split_gain: Vec::new(),
             threshold: Vec::new(),
@@ -158,7 +158,7 @@ impl Default for LgbTree {
             cat_threshold: Vec::new(),
             // Linear tree fields
             leaf_const: Vec::new(),
-            num_features_per_leaf: Vec::new(),
+            n_features_per_leaf: Vec::new(),
             leaf_features: Vec::new(),
             leaf_coeff: Vec::new(),
         }
@@ -246,9 +246,9 @@ pub struct LgbHeader {
     /// Model format version (e.g., "v4")
     pub version: String,
     /// Number of classes (1 for regression, 2+ for classification)
-    pub num_class: usize,
+    pub n_class: usize,
     /// Number of trees per boosting iteration
-    pub num_tree_per_iteration: usize,
+    pub n_tree_per_iteration: usize,
     /// Label column index
     pub label_index: i32,
     /// Maximum feature index used (0-based)
@@ -267,8 +267,8 @@ impl Default for LgbHeader {
     fn default() -> Self {
         Self {
             version: String::new(),
-            num_class: 1,
-            num_tree_per_iteration: 1,
+            n_class: 1,
+            n_tree_per_iteration: 1,
             label_index: 0,
             max_feature_idx: 0,
             objective: None,
@@ -324,21 +324,21 @@ impl LgbModel {
     }
 
     /// Number of trees in the model.
-    pub fn num_trees(&self) -> usize {
+    pub fn n_trees(&self) -> usize {
         self.trees.len()
     }
 
     /// Number of classes (1 for regression/binary, k for k-class multiclass).
-    pub fn num_class(&self) -> usize {
-        self.header.num_class
+    pub fn n_class(&self) -> usize {
+        self.header.n_class
     }
 
     /// Number of output groups (1 for regression/binary, num_class for multiclass).
-    pub fn num_groups(&self) -> usize {
-        if self.header.num_class <= 1 {
+    pub fn n_groups(&self) -> usize {
+        if self.header.n_class <= 1 {
             1
         } else {
-            self.header.num_class
+            self.header.n_class
         }
     }
 
@@ -391,15 +391,15 @@ fn parse_header(
     // Extract required fields
     header.version = kv.get("version").cloned().unwrap_or_default();
 
-    header.num_class = kv
+    header.n_class = kv
         .get("num_class")
         .and_then(|v| v.parse().ok())
         .ok_or(ParseError::MissingField("num_class"))?;
 
-    header.num_tree_per_iteration = kv
+    header.n_tree_per_iteration = kv
         .get("num_tree_per_iteration")
         .and_then(|v| v.parse().ok())
-        .unwrap_or(header.num_class.max(1));
+        .unwrap_or(header.n_class.max(1));
 
     header.label_index = kv
         .get("label_index")
@@ -447,12 +447,12 @@ fn parse_tree(lines: &mut std::iter::Peekable<std::str::Lines>) -> Result<LgbTre
     }
 
     // Parse required fields
-    tree.num_leaves = kv
+    tree.n_leaves = kv
         .get("num_leaves")
         .and_then(|v| v.parse().ok())
         .ok_or(ParseError::MissingField("num_leaves"))?;
 
-    tree.num_cat = kv
+    tree.n_cat = kv
         .get("num_cat")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
@@ -469,7 +469,7 @@ fn parse_tree(lines: &mut std::iter::Peekable<std::str::Lines>) -> Result<LgbTre
         .unwrap_or(false);
 
     // Single-leaf tree has no splits
-    if tree.num_leaves <= 1 {
+    if tree.n_leaves <= 1 {
         tree.leaf_value = kv
             .get("leaf_value")
             .map(|v| parse_double_array(v))
@@ -478,7 +478,7 @@ fn parse_tree(lines: &mut std::iter::Peekable<std::str::Lines>) -> Result<LgbTre
         return Ok(tree);
     }
 
-    let num_splits = tree.num_leaves - 1;
+    let num_splits = tree.n_leaves - 1;
 
     // Parse arrays
     tree.split_feature = kv
@@ -526,22 +526,22 @@ fn parse_tree(lines: &mut std::iter::Peekable<std::str::Lines>) -> Result<LgbTre
         .map(|v| parse_double_array(v))
         .transpose()?
         .ok_or(ParseError::MissingField("leaf_value"))?;
-    validate_array_size("leaf_value", &tree.leaf_value, tree.num_leaves)?;
+    validate_array_size("leaf_value", &tree.leaf_value, tree.n_leaves)?;
 
     tree.leaf_count = kv
         .get("leaf_count")
         .map(|v| parse_int_array(v))
         .transpose()?
-        .unwrap_or_else(|| vec![0; tree.num_leaves]);
+        .unwrap_or_else(|| vec![0; tree.n_leaves]);
 
     tree.leaf_weight = kv
         .get("leaf_weight")
         .map(|v| parse_double_array(v))
         .transpose()?
-        .unwrap_or_else(|| vec![0.0; tree.num_leaves]);
+        .unwrap_or_else(|| vec![0.0; tree.n_leaves]);
 
     // Parse categorical data if present
-    if tree.num_cat > 0 {
+    if tree.n_cat > 0 {
         tree.cat_boundaries = kv
             .get("cat_boundaries")
             .map(|v| parse_int_array(v))
@@ -561,31 +561,31 @@ fn parse_tree(lines: &mut std::iter::Peekable<std::str::Lines>) -> Result<LgbTre
             .get("leaf_const")
             .map(|v| parse_double_array(v))
             .transpose()?
-            .unwrap_or_else(|| vec![0.0; tree.num_leaves]);
-        validate_array_size("leaf_const", &tree.leaf_const, tree.num_leaves)?;
+            .unwrap_or_else(|| vec![0.0; tree.n_leaves]);
+        validate_array_size("leaf_const", &tree.leaf_const, tree.n_leaves)?;
 
-        tree.num_features_per_leaf = kv
+        tree.n_features_per_leaf = kv
             .get("num_features")
             .map(|v| parse_int_array(v))
             .transpose()?
-            .unwrap_or_else(|| vec![0; tree.num_leaves]);
-        validate_array_size("num_features", &tree.num_features_per_leaf, tree.num_leaves)?;
+            .unwrap_or_else(|| vec![0; tree.n_leaves]);
+        validate_array_size("num_features", &tree.n_features_per_leaf, tree.n_leaves)?;
 
         // Parse leaf_features: grouped by leaf, separated by spaces
         // Format: "0 1  2  0 1 2" where groups are based on num_features_per_leaf
         if let Some(features_str) = kv.get("leaf_features") {
             tree.leaf_features =
-                parse_grouped_int_array(features_str, &tree.num_features_per_leaf)?;
+                parse_grouped_int_array(features_str, &tree.n_features_per_leaf)?;
         } else {
-            tree.leaf_features = vec![Vec::new(); tree.num_leaves];
+            tree.leaf_features = vec![Vec::new(); tree.n_leaves];
         }
 
         // Parse leaf_coeff: same grouping as leaf_features
         if let Some(coeff_str) = kv.get("leaf_coeff") {
             tree.leaf_coeff =
-                parse_grouped_double_array(coeff_str, &tree.num_features_per_leaf)?;
+                parse_grouped_double_array(coeff_str, &tree.n_features_per_leaf)?;
         } else {
-            tree.leaf_coeff = vec![Vec::new(); tree.num_leaves];
+            tree.leaf_coeff = vec![Vec::new(); tree.n_leaves];
         }
     }
 
@@ -775,14 +775,14 @@ mod tests {
         let model = LgbModel::from_file(&path).expect("Failed to parse model");
         
         assert_eq!(model.header.version, "v4");
-        assert_eq!(model.header.num_class, 1);
-        assert_eq!(model.num_trees(), 3);
+        assert_eq!(model.header.n_class, 1);
+        assert_eq!(model.n_trees(), 3);
         assert_eq!(model.num_features(), 5);
 
         // Check first tree structure
         let tree0 = &model.trees[0];
-        assert_eq!(tree0.num_leaves, 4);
-        assert_eq!(tree0.num_cat, 0);
+        assert_eq!(tree0.n_leaves, 4);
+        assert_eq!(tree0.n_cat, 0);
         assert_eq!(tree0.split_feature.len(), 3);
         assert_eq!(tree0.leaf_value.len(), 4);
         assert!((tree0.shrinkage - 1.0).abs() < 1e-6);
@@ -795,9 +795,9 @@ mod tests {
         
         let model = LgbModel::from_file(&path).expect("Failed to parse model");
         
-        assert_eq!(model.header.num_class, 1); // Binary uses num_class=1
+        assert_eq!(model.header.n_class, 1); // Binary uses num_class=1
         assert!(matches!(model.header.objective, Some(LgbObjective::Binary { .. })));
-        assert!(model.num_trees() > 0);
+        assert!(model.n_trees() > 0);
     }
 
     #[test]
@@ -807,12 +807,12 @@ mod tests {
         
         let model = LgbModel::from_file(&path).expect("Failed to parse model");
         
-        assert_eq!(model.header.num_class, 3);
-        assert_eq!(model.header.num_tree_per_iteration, 3);
+        assert_eq!(model.header.n_class, 3);
+        assert_eq!(model.header.n_tree_per_iteration, 3);
         assert!(matches!(model.header.objective, Some(LgbObjective::Multiclass { num_class: 3 })));
-        assert!(model.num_trees() > 0);
+        assert!(model.n_trees() > 0);
         // Should have trees % 3 == 0 for multiclass
-        assert_eq!(model.num_trees() % 3, 0);
+        assert_eq!(model.n_trees() % 3, 0);
     }
 
     #[test]

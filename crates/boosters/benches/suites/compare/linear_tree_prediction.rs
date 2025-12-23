@@ -32,8 +32,8 @@ fn load_lgb_linear_model(name: &str) -> (Forest<ScalarLeaf>, usize) {
         .unwrap_or_else(|_| panic!("Failed to parse LightGBM model: {path:?}"));
     let forest = lgb_model.to_forest()
         .expect("Failed to convert to forest");
-    let num_features = lgb_model.header.max_feature_idx as usize + 1;
-    (forest, num_features)
+    let n_features = lgb_model.header.max_feature_idx as usize + 1;
+    (forest, n_features)
 }
 
 // =============================================================================
@@ -42,7 +42,7 @@ fn load_lgb_linear_model(name: &str) -> (Forest<ScalarLeaf>, usize) {
 
 fn bench_linear_gbdt_prediction(c: &mut Criterion) {
     // Load linear GBDT model
-    let (linear_forest, num_features) = load_lgb_linear_model("bench_linear_medium");
+    let (linear_forest, n_features) = load_lgb_linear_model("bench_linear_medium");
     let linear_predictor = Predictor::<UnrolledTraversal6>::new(&linear_forest).with_block_size(64);
     
     // Load standard model for comparison
@@ -65,7 +65,7 @@ fn bench_linear_gbdt_prediction(c: &mut Criterion) {
     let mut group = c.benchmark_group("compare/predict/linear_gbdt");
     
     for batch_size in batch_sizes {
-        let input_array = random_features_array(batch_size, num_features, 42, -1.0, 1.0);
+        let input_array = random_features_array(batch_size, n_features, 42, -1.0, 1.0);
         
         group.throughput(Throughput::Elements(batch_size as u64));
         
@@ -92,14 +92,14 @@ fn bench_linear_gbdt_prediction(c: &mut Criterion) {
             if let Some(first) = input_f64_b.first_mut() {
                 *first = f64::from_bits(first.to_bits().wrapping_add(1));
             }
-            let num_feat = num_features as i32;
+            let n_feat = n_features as i32;
             
             group.bench_function(BenchmarkId::new("lightgbm/linear", batch_size), |b| {
                 let mut flip = false;
                 b.iter(|| {
                     flip = !flip;
                     let input = if flip { &input_f64_a } else { &input_f64_b };
-                    let output = lgb_linear.predict(black_box(input), num_feat, true).unwrap();
+                    let output = lgb_linear.predict(black_box(input), n_feat, true).unwrap();
                     black_box(output)
                 })
             });
@@ -109,7 +109,7 @@ fn bench_linear_gbdt_prediction(c: &mut Criterion) {
                 b.iter(|| {
                     flip = !flip;
                     let input = if flip { &input_f64_a } else { &input_f64_b };
-                    let output = lgb_standard.predict(black_box(input), num_feat, true).unwrap();
+                    let output = lgb_standard.predict(black_box(input), n_feat, true).unwrap();
                     black_box(output)
                 })
             });
@@ -124,14 +124,14 @@ fn bench_linear_gbdt_prediction(c: &mut Criterion) {
 // =============================================================================
 
 fn bench_linear_gbdt_overhead(c: &mut Criterion) {
-    let (linear_forest, num_features) = load_lgb_linear_model("bench_linear_medium");
+    let (linear_forest, n_features) = load_lgb_linear_model("bench_linear_medium");
     let linear_predictor = Predictor::<UnrolledTraversal6>::new(&linear_forest).with_block_size(64);
     
     let (standard_forest, _) = load_lgb_linear_model("bench_standard_medium");
     let standard_predictor = Predictor::<UnrolledTraversal6>::new(&standard_forest).with_block_size(64);
     
     let batch_size = 10_000;
-    let input_array = random_features_array(batch_size, num_features, 42, -1.0, 1.0);
+    let input_array = random_features_array(batch_size, n_features, 42, -1.0, 1.0);
     
     let mut group = c.benchmark_group("overhead/linear_gbdt");
     group.throughput(Throughput::Elements(batch_size as u64));

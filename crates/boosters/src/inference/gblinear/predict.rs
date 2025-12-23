@@ -13,7 +13,7 @@ use crate::utils::Parallelism;
 pub trait LinearModelPredict {
     /// Predict into a column-major buffer.
     ///
-    /// Output layout: `output[group * num_rows + row]`
+    /// Output layout: `output[group * n_rows + row]`
     ///
     /// This is the preferred method for training where predictions are stored
     /// in column-major layout for efficient gradient computation.
@@ -21,12 +21,12 @@ pub trait LinearModelPredict {
 
     /// Predict for a single row.
     ///
-    /// Returns a vector of length `num_groups`.
+    /// Returns a vector of length `n_groups`.
     fn predict_row(&self, features: &[f32], base_score: &[f32]) -> Vec<f32>;
 
     /// Predict for a batch of rows.
     ///
-    /// Returns predictions as `Array2<f32>` with shape `(num_rows, num_groups)`.
+    /// Returns predictions as `Array2<f32>` with shape `(n_rows, n_groups)`.
     ///
     /// # Arguments
     ///
@@ -36,7 +36,7 @@ pub trait LinearModelPredict {
 
     /// Predict with explicit parallelism control.
     ///
-    /// Returns predictions as `Array2<f32>` with shape `(num_rows, num_groups)`.
+    /// Returns predictions as `Array2<f32>` with shape `(n_rows, n_groups)`.
     ///
     /// # Arguments
     ///

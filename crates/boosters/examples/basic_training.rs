@@ -49,7 +49,7 @@ fn main() {
     println!("  Metric: {:?}\n", config.metric);
 
     // Train using GBDTModel (high-level API)
-    let model = GBDTModel::train(&dataset, labels.view(), None, &[], config, 1).expect("Training failed");
+    let model = GBDTModel::train_binned(&dataset, labels.view(), None, &[], config, 1).expect("Training failed");
 
     // =========================================================================
     // 3. Make Predictions

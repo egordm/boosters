@@ -116,8 +116,8 @@ fn bench_gbdt_train_multiclass(c: &mut Criterion) {
 	let mut group = c.benchmark_group("component/train/gbdt/train_multiclass");
 	group.sample_size(10);
 
-	let (rows, cols, n_trees, max_depth, num_classes) = (20_000usize, 50usize, 30u32, 6u32, 10usize);
-	let dataset = synthetic_multiclass(rows, cols, num_classes, 42, 0.1);
+	let (rows, cols, n_trees, max_depth, n_classes) = (20_000usize, 50usize, 30u32, 6u32, 10usize);
+	let dataset = synthetic_multiclass(rows, cols, n_classes, 42, 0.1);
 	let targets: Vec<f32> = dataset.targets.to_vec();
 	let features_view = FeaturesView::from_array(dataset.features.view());
 	let binned = BinnedDatasetBuilder::from_matrix(&features_view, 256)
@@ -132,7 +132,7 @@ fn bench_gbdt_train_multiclass(c: &mut Criterion) {
 		cache_size: 256,
 		..Default::default()
 	};
-	let trainer = GBDTTrainer::new(SoftmaxLoss::new(num_classes), MulticlassLogLoss, params);
+	let trainer = GBDTTrainer::new(SoftmaxLoss::new(n_classes), MulticlassLogLoss, params);
 
 	group.throughput(Throughput::Elements((rows * cols) as u64));
 	group.bench_function("train_multiclass", |b| {

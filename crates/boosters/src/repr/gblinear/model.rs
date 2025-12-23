@@ -64,16 +64,16 @@ impl LinearModel {
     }
 
     /// Create a zero-initialized linear model.
-    pub fn zeros(num_features: usize, num_groups: usize) -> Self {
+    pub fn zeros(n_features: usize, n_groups: usize) -> Self {
         Self {
-            weights: Array2::zeros((num_features + 1, num_groups)),
+            weights: Array2::zeros((n_features + 1, n_groups)),
         }
     }
 
     /// Number of input features.
     #[inline]
     pub fn n_features(&self) -> usize {
-        // Last row is bias, so num_features = nrows - 1
+        // Last row is bias, so n_features = nrows - 1
         self.weights.nrows() - 1
     }
 
@@ -87,8 +87,8 @@ impl LinearModel {
     ///
     /// # Arguments
     ///
-    /// * `feature` - Feature index (0..num_features)
-    /// * `group` - Output group index (0..num_groups)
+    /// * `feature` - Feature index (0..n_features)
+    /// * `group` - Output group index (0..n_groups)
     #[inline]
     pub fn weight(&self, feature: usize, group: usize) -> f32 {
         self.weights[[feature, group]]
@@ -214,27 +214,27 @@ impl LinearModel {
 
     /// Predict into a column-major buffer.
     ///
-    /// Output layout: `output[group * num_rows + row]`
+    /// Output layout: `output[group * n_rows + row]`
     ///
     /// This is the preferred method for training where predictions are stored
     /// in column-major layout for efficient gradient computation.
     pub fn predict_col_major(&self, data: FeaturesView<'_>, output: &mut [f32]) {
-        let num_rows = data.n_samples();
-        let num_groups = self.n_groups();
-        let num_features = self.n_features();
-        debug_assert_eq!(output.len(), num_rows * num_groups);
+        let n_rows = data.n_samples();
+        let n_groups = self.n_groups();
+        let n_features = self.n_features();
+        debug_assert_eq!(output.len(), n_rows * n_groups);
 
         // Initialize with bias (column-major: group-first)
-        for group in 0..num_groups {
-            output[group * num_rows..(group + 1) * num_rows].fill(self.bias(group));
+        for group in 0..n_groups {
+            output[group * n_rows..(group + 1) * n_rows].fill(self.bias(group));
         }
 
         // Add weighted features - iterate over features (rows in FeaturesView)
-        for feat_idx in 0..num_features {
+        for feat_idx in 0..n_features {
             let feature_values = data.feature(feat_idx);
             for (row_idx, &value) in feature_values.iter().enumerate() {
-                for group in 0..num_groups {
-                    output[group * num_rows + row_idx] += value * self.weight(feat_idx, group);
+                for group in 0..n_groups {
+                    output[group * n_rows + row_idx] += value * self.weight(feat_idx, group);
                 }
             }
         }

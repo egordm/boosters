@@ -252,14 +252,14 @@ impl<L: LeafValue> Tree<L> {
         categories: CategoriesStorage,
         leaf_coefficients: LeafCoefficients,
     ) -> Self {
-        let num_nodes = split_indices.len();
-        debug_assert_eq!(num_nodes, split_thresholds.len());
-        debug_assert_eq!(num_nodes, left_children.len());
-        debug_assert_eq!(num_nodes, right_children.len());
-        debug_assert_eq!(num_nodes, default_left.len());
-        debug_assert_eq!(num_nodes, is_leaf.len());
-        debug_assert_eq!(num_nodes, leaf_values.len());
-        debug_assert_eq!(num_nodes, split_types.len());
+        let n_nodes = split_indices.len();
+        debug_assert_eq!(n_nodes, split_thresholds.len());
+        debug_assert_eq!(n_nodes, left_children.len());
+        debug_assert_eq!(n_nodes, right_children.len());
+        debug_assert_eq!(n_nodes, default_left.len());
+        debug_assert_eq!(n_nodes, is_leaf.len());
+        debug_assert_eq!(n_nodes, leaf_values.len());
+        debug_assert_eq!(n_nodes, split_types.len());
 
         Self {
             split_indices: split_indices.into_boxed_slice(),
@@ -593,7 +593,7 @@ impl<L: LeafValue> Tree<L> {
     ) where
         L: Into<f32> + Copy + Send + Sync,
     {
-        let n_rows = accessor.num_rows();
+        let n_rows = accessor.n_rows();
         debug_assert_eq!(predictions.len(), n_rows);
 
         if self.has_linear_leaves() {

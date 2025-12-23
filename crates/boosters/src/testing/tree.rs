@@ -32,10 +32,10 @@ macro_rules! scalar_tree {
         use $crate::repr::gbdt::{MutableTree, ScalarLeaf, categories_to_bitset};
 
         let max_id: u32 = [$($node_id as u32),+].into_iter().max().unwrap_or(0);
-        let num_nodes = (max_id + 1) as usize;
+        let n_nodes = (max_id + 1) as usize;
 
-        let mut tree = MutableTree::<ScalarLeaf>::with_capacity(num_nodes);
-        tree.init_root_with_num_nodes(num_nodes);
+        let mut tree = MutableTree::<ScalarLeaf>::with_capacity(n_nodes);
+        tree.init_root_with_n_nodes(n_nodes);
 
         $(
             $crate::scalar_tree!(@node tree, $node_id, $kind $args $(-> $left, $right)?);

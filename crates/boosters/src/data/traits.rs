@@ -33,8 +33,8 @@ pub trait FeatureAccessor {
     fn get_feature(&self, row: usize, feature: usize) -> f32;
 
     /// Number of rows (samples) in the dataset.
-    fn num_rows(&self) -> usize;
+    fn n_rows(&self) -> usize;
 
     /// Number of features.
-    fn num_features(&self) -> usize;
+    fn n_features(&self) -> usize;
 }
