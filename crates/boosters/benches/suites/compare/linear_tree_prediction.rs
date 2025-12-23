@@ -14,9 +14,9 @@ use common::criterion_config::default_criterion;
 use common::models::bench_models_dir;
 
 use boosters::compat::lightgbm::LgbModel;
-use boosters::data::RowMatrix;
 use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
-use boosters::testing::data::random_dense_f32;
+use boosters::testing::data::random_features_array;
+use boosters::Parallelism;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
@@ -65,28 +65,28 @@ fn bench_linear_gbdt_prediction(c: &mut Criterion) {
     let mut group = c.benchmark_group("compare/predict/linear_gbdt");
     
     for batch_size in batch_sizes {
-        let input_data = random_dense_f32(batch_size, num_features, 42, -1.0, 1.0);
-        let matrix = RowMatrix::from_vec(input_data.clone(), batch_size, num_features);
+        let input_array = random_features_array(batch_size, num_features, 42, -1.0, 1.0);
         
         group.throughput(Throughput::Elements(batch_size as u64));
         
         // booste-rs linear GBDT
         group.bench_with_input(
             BenchmarkId::new("boosters/linear", batch_size), 
-            &matrix, 
-            |b, m| b.iter(|| black_box(linear_predictor.predict(black_box(m))))
+            &input_array, 
+            |b, m| b.iter(|| black_box(linear_predictor.predict(black_box(m.view()), Parallelism::Sequential)))
         );
         
         // booste-rs standard (baseline)
         group.bench_with_input(
             BenchmarkId::new("boosters/standard", batch_size), 
-            &matrix, 
-            |b, m| b.iter(|| black_box(standard_predictor.predict(black_box(m))))
+            &input_array, 
+            |b, m| b.iter(|| black_box(standard_predictor.predict(black_box(m.view()), Parallelism::Sequential)))
         );
         
         // LightGBM linear GBDT
         #[cfg(feature = "bench-lightgbm")]
         {
+            let input_data: &[f32] = input_array.as_slice().unwrap();
             let input_f64_a: Vec<f64> = input_data.iter().map(|&x| x as f64).collect();
             let mut input_f64_b = input_f64_a.clone();
             if let Some(first) = input_f64_b.first_mut() {
@@ -131,18 +131,17 @@ fn bench_linear_gbdt_overhead(c: &mut Criterion) {
     let standard_predictor = Predictor::<UnrolledTraversal6>::new(&standard_forest).with_block_size(64);
     
     let batch_size = 10_000;
-    let input_data = random_dense_f32(batch_size, num_features, 42, -1.0, 1.0);
-    let matrix = RowMatrix::from_vec(input_data, batch_size, num_features);
+    let input_array = random_features_array(batch_size, num_features, 42, -1.0, 1.0);
     
     let mut group = c.benchmark_group("overhead/linear_gbdt");
     group.throughput(Throughput::Elements(batch_size as u64));
     
     group.bench_function("standard", |b| {
-        b.iter(|| black_box(standard_predictor.predict(black_box(&matrix))))
+        b.iter(|| black_box(standard_predictor.predict(black_box(input_array.view()), Parallelism::Sequential)))
     });
     
     group.bench_function("linear", |b| {
-        b.iter(|| black_box(linear_predictor.predict(black_box(&matrix))))
+        b.iter(|| black_box(linear_predictor.predict(black_box(input_array.view()), Parallelism::Sequential)))
     });
     
     group.finish();

@@ -11,7 +11,7 @@ mod common;
 use common::criterion_config::default_criterion;
 
 use boosters::data::{binned::BinnedDatasetBuilder, transpose_to_c_order, FeaturesView};
-use boosters::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
+use boosters::testing::data::synthetic_regression;
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
 
@@ -72,9 +72,19 @@ fn bench_row_scaling(c: &mut Criterion) {
         let cols = N_FEATURES;
         let row_label = format!("{}k_rows", rows / 1000);
 
-        let features = random_dense_f32(rows, cols, 42, -1.0, 1.0);
-        let (targets, _w, _b) =
-            synthetic_regression_targets_linear(&features, rows, cols, 1337, 0.05);
+        let dataset = synthetic_regression(rows, cols, 42, 0.05);
+        // Get row-major features for XGBoost/LightGBM compatibility
+        let features_fm = dataset.features.view();
+        let features: Vec<f32> = {
+            let mut v = Vec::with_capacity(rows * cols);
+            for r in 0..rows {
+                for f in 0..cols {
+                    v.push(features_fm[(f, r)]);
+                }
+            }
+            v
+        };
+        let targets: Vec<f32> = dataset.targets.to_vec();
 
         group.throughput(Throughput::Elements((rows * cols) as u64));
 
@@ -212,9 +222,19 @@ fn bench_feature_scaling(c: &mut Criterion) {
         let rows = SCALING_ROWS;
         let feat_label = format!("{}_features", cols);
 
-        let features = random_dense_f32(rows, cols, 42, -1.0, 1.0);
-        let (targets, _w, _b) =
-            synthetic_regression_targets_linear(&features, rows, cols, 1337, 0.05);
+        let dataset = synthetic_regression(rows, cols, 42, 0.05);
+        // Get row-major features for XGBoost/LightGBM compatibility
+        let features_fm = dataset.features.view();
+        let features: Vec<f32> = {
+            let mut v = Vec::with_capacity(rows * cols);
+            for r in 0..rows {
+                for f in 0..cols {
+                    v.push(features_fm[(f, r)]);
+                }
+            }
+            v
+        };
+        let targets: Vec<f32> = dataset.targets.to_vec();
 
         group.throughput(Throughput::Elements((rows * cols) as u64));
 

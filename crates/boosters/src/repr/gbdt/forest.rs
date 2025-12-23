@@ -1,6 +1,7 @@
 //! Canonical forest representation (collection of trees).
 
-use crate::inference::gbdt::{traverse_from_node, traverse_to_leaf};
+use crate::data::SamplesView;
+use crate::inference::gbdt::traverse_to_leaf;
 
 use super::{tree::TreeValidationError, LeafValue, ScalarLeaf, Tree, TreeView};
 
@@ -135,46 +136,18 @@ impl<L: LeafValue> Forest<L> {
 
 /// Prediction methods for forests with scalar leaves.
 impl Forest<ScalarLeaf> {
-    /// Compute the prediction value for a leaf, handling linear coefficients if present.
-    ///
-    /// Returns `intercept + Σ(coef × feature)` for linear leaves, or the base leaf value
-    /// if no linear terms or if any linear feature is NaN.
-    #[inline]
-    fn compute_leaf_value(tree: &Tree<ScalarLeaf>, leaf_idx: u32, features: &[f32]) -> f32 {
-        let base = tree.leaf_value(leaf_idx).0;
-
-        if let Some((feat_indices, coefs)) = tree.leaf_terms(leaf_idx) {
-            // Check for NaN in any linear feature
-            for &feat_idx in feat_indices {
-                let val = features.get(feat_idx as usize).copied().unwrap_or(f32::NAN);
-                if val.is_nan() {
-                    return base; // Fall back to constant leaf
-                }
-            }
-
-            // Compute linear prediction: intercept + Σ(coef × feature)
-            let intercept = tree.leaf_intercept(leaf_idx);
-            let linear_sum: f32 = feat_indices
-                .iter()
-                .zip(coefs.iter())
-                .map(|(&f, &c)| c * features.get(f as usize).copied().unwrap_or(0.0))
-                .sum();
-
-            intercept + linear_sum
-        } else {
-            base
-        }
-    }
-
     /// Predict for a single row of features.
     ///
     /// Handles linear leaf coefficients if present, computing `intercept + Σ(coef × feature)`.
     pub fn predict_row(&self, features: &[f32]) -> Vec<f32> {
         let mut output = self.base_score.clone();
 
+        let view = SamplesView::from_slice(features, 1, features.len())
+            .expect("features slice must be valid");
+
         for (tree, group) in self.trees_with_groups() {
-            let leaf_idx = traverse_from_node(tree, 0, features);
-            let leaf_val = Self::compute_leaf_value(tree, leaf_idx, features);
+            let leaf_idx = traverse_to_leaf(tree, &view, 0);
+            let leaf_val = tree.compute_leaf_value(leaf_idx, &view, 0);
             output[group as usize] += leaf_val;
         }
 

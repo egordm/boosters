@@ -1,51 +1,32 @@
 use boosters::data::{binned::BinnedDatasetBuilder, transpose_to_c_order, FeaturesView};
 use boosters::model::gbdt::{GBDTConfig, GBDTModel, RegularizationParams, TreeParams};
 use boosters::testing::data::{
-	random_dense_f32, split_indices, synthetic_binary_targets_from_linear_score,
-	synthetic_multiclass_targets_from_linear_scores, synthetic_regression_targets_linear,
+	random_features_array, split_indices, synthetic_binary, synthetic_multiclass,
+	synthetic_regression,
 };
 use boosters::training::{
 	Accuracy, LinearLeafConfig, LogLoss, Mae, MetricFn, MulticlassAccuracy, MulticlassLogLoss,
 	Objective, Rmse,
 };
-use ndarray::{Array2, ArrayView1, ArrayView2};
+use ndarray::{Array2, ArrayView1};
 
-fn select_rows_row_major(
-	features_row_major: &[f32],
-	rows: usize,
-	cols: usize,
-	row_indices: &[usize],
-) -> Vec<f32> {
-	assert_eq!(features_row_major.len(), rows * cols);
-	let mut out = Vec::with_capacity(row_indices.len() * cols);
-	for &r in row_indices {
-		assert!(r < rows);
-		let start = r * cols;
-		out.extend_from_slice(&features_row_major[start..start + cols]);
+/// Select samples from Array2 by indices, returns sample-major Array2.
+fn select_samples(features: &Array2<f32>, indices: &[usize]) -> Array2<f32> {
+	let n_features = features.ncols();
+	let mut out = Array2::zeros((indices.len(), n_features));
+	for (i, &idx) in indices.iter().enumerate() {
+		out.row_mut(i).assign(&features.row(idx));
 	}
 	out
 }
 
+/// Select targets by indices.
 fn select_targets(targets: &[f32], row_indices: &[usize]) -> Vec<f32> {
 	let mut out = Vec::with_capacity(row_indices.len());
 	for &r in row_indices {
 		out.push(targets[r]);
 	}
 	out
-}
-
-/// Create a feature-major array from row-major data (C-order)
-fn to_features_view(row_major: &[f32], n_samples: usize, n_features: usize) -> Array2<f32> {
-	let row_view =
-		ArrayView2::from_shape((n_samples, n_features), row_major).expect("Invalid shape");
-	transpose_to_c_order(row_view.view())
-}
-
-/// Create a sample-major array from row-major data
-fn to_samples_view(row_major: &[f32], n_samples: usize, n_features: usize) -> Array2<f32> {
-	ArrayView2::from_shape((n_samples, n_features), row_major)
-		.expect("Invalid shape")
-		.to_owned()
 }
 
 fn run_synthetic_regression(
@@ -55,21 +36,23 @@ fn run_synthetic_regression(
 	depth: u32,
 	seed: u64,
 ) -> (f64, f64) {
-	let x_all = random_dense_f32(rows, cols, seed, -1.0, 1.0);
-	let y_all = synthetic_regression_targets_linear(&x_all, rows, cols, seed ^ 0x0BAD_5EED, 0.05).0;
+	let dataset = synthetic_regression(rows, cols, seed, 0.05);
+	let x_all = random_features_array(rows, cols, seed, -1.0, 1.0);
+	let y_all = dataset.targets_slice();
 	let (train_idx, valid_idx) = split_indices(rows, 0.2, seed ^ 0x51EED);
 
-	let x_train = select_rows_row_major(&x_all, rows, cols, &train_idx);
-	let y_train = select_targets(&y_all, &train_idx);
-	let x_valid = select_rows_row_major(&x_all, rows, cols, &valid_idx);
-	let y_valid = select_targets(&y_all, &valid_idx);
+	let x_train = select_samples(&x_all, &train_idx);
+	let y_train = select_targets(y_all, &train_idx);
+	let x_valid = select_samples(&x_all, &valid_idx);
+	let y_valid = select_targets(y_all, &valid_idx);
 
-	let col_train = to_features_view(&x_train, train_idx.len(), cols);
+	// Transpose to feature-major for training
+	let col_train = transpose_to_c_order(x_train.view());
 	let view_train = FeaturesView::from_array(col_train.view());
 	let binned_train = BinnedDatasetBuilder::from_matrix(&view_train, 256)
 		.build()
 		.unwrap();
-	let row_valid = to_samples_view(&x_valid, valid_idx.len(), cols);
+	let row_valid = x_valid;
 
 	let config = GBDTConfig::builder()
 		.objective(Objective::squared())
@@ -109,22 +92,23 @@ fn run_synthetic_binary(
 	depth: u32,
 	seed: u64,
 ) -> (f64, f64) {
-	let x_all = random_dense_f32(rows, cols, seed, -1.0, 1.0);
-	let y_all =
-		synthetic_binary_targets_from_linear_score(&x_all, rows, cols, seed ^ 0xB1A2_0001, 0.2);
+	let dataset = synthetic_binary(rows, cols, seed, 0.2);
+	let x_all = random_features_array(rows, cols, seed, -1.0, 1.0);
+	let y_all = dataset.targets_slice();
 	let (train_idx, valid_idx) = split_indices(rows, 0.2, seed ^ 0x51EED);
 
-	let x_train = select_rows_row_major(&x_all, rows, cols, &train_idx);
-	let y_train = select_targets(&y_all, &train_idx);
-	let x_valid = select_rows_row_major(&x_all, rows, cols, &valid_idx);
-	let y_valid = select_targets(&y_all, &valid_idx);
+	let x_train = select_samples(&x_all, &train_idx);
+	let y_train = select_targets(y_all, &train_idx);
+	let x_valid = select_samples(&x_all, &valid_idx);
+	let y_valid = select_targets(y_all, &valid_idx);
 
-	let col_train = to_features_view(&x_train, train_idx.len(), cols);
+	// Transpose to feature-major for training
+	let col_train = transpose_to_c_order(x_train.view());
 	let view_train = FeaturesView::from_array(col_train.view());
 	let binned_train = BinnedDatasetBuilder::from_matrix(&view_train, 256)
 		.build()
 		.unwrap();
-	let row_valid = to_samples_view(&x_valid, valid_idx.len(), cols);
+	let row_valid = x_valid;
 
 	let config = GBDTConfig::builder()
 		.objective(Objective::logistic())
@@ -166,28 +150,23 @@ fn run_synthetic_multiclass(
 	depth: u32,
 	seed: u64,
 ) -> (f64, f64) {
-	let x_all = random_dense_f32(rows, cols, seed, -1.0, 1.0);
-	let y_all = synthetic_multiclass_targets_from_linear_scores(
-		&x_all,
-		rows,
-		cols,
-		classes,
-		seed ^ 0x00C1_A550,
-		0.1,
-	);
+	let dataset = synthetic_multiclass(rows, cols, classes, seed, 0.1);
+	let x_all = random_features_array(rows, cols, seed, -1.0, 1.0);
+	let y_all = dataset.targets_slice();
 	let (train_idx, valid_idx) = split_indices(rows, 0.2, seed ^ 0x51EED);
 
-	let x_train = select_rows_row_major(&x_all, rows, cols, &train_idx);
-	let y_train = select_targets(&y_all, &train_idx);
-	let x_valid = select_rows_row_major(&x_all, rows, cols, &valid_idx);
-	let y_valid = select_targets(&y_all, &valid_idx);
+	let x_train = select_samples(&x_all, &train_idx);
+	let y_train = select_targets(y_all, &train_idx);
+	let x_valid = select_samples(&x_all, &valid_idx);
+	let y_valid = select_targets(y_all, &valid_idx);
 
-	let col_train = to_features_view(&x_train, train_idx.len(), cols);
+	// Transpose to feature-major for training
+	let col_train = transpose_to_c_order(x_train.view());
 	let view_train = FeaturesView::from_array(col_train.view());
 	let binned_train = BinnedDatasetBuilder::from_matrix(&view_train, 256)
 		.build()
 		.unwrap();
-	let row_valid = to_samples_view(&x_valid, valid_idx.len(), cols);
+	let row_valid = x_valid;
 
 	let config = GBDTConfig::builder()
 		.objective(Objective::softmax(classes))
@@ -290,36 +269,35 @@ fn test_quality_improvement_linear_leaves() {
 	const VALID_FRACTION: f32 = 0.2;
 
 	// Generate synthetic data: y = 3*x1 + 2*x2 + noise
-	let mut rng = StdRng::seed_from_u64(SEED);
-	let mut features: Vec<f32> = Vec::with_capacity(N_SAMPLES * 2);
-	let mut targets: Vec<f32> = Vec::with_capacity(N_SAMPLES);
-
-	for _ in 0..N_SAMPLES {
-		let x1: f32 = rng.r#gen(); // uniform [0, 1]
-		let x2: f32 = rng.r#gen(); // uniform [0, 1]
-		let noise: f32 = (rng.r#gen::<f32>() * 2.0 - 1.0) * NOISE_AMPLITUDE;
-		let y = 3.0 * x1 + 2.0 * x2 + noise;
-
-		features.push(x1);
-		features.push(x2);
-		targets.push(y);
-	}
+	// Using random_features_array for consistent API
+	let features = random_features_array(N_SAMPLES, 2, SEED, 0.0, 1.0);
+	
+	// Generate targets with known linear relationship
+	let mut rng = StdRng::seed_from_u64(SEED ^ 0xDEAD);
+	let targets: Vec<f32> = (0..N_SAMPLES)
+		.map(|i| {
+			let x1 = features[[i, 0]];
+			let x2 = features[[i, 1]];
+			let noise = (rng.r#gen::<f32>() * 2.0 - 1.0) * NOISE_AMPLITUDE;
+			3.0 * x1 + 2.0 * x2 + noise
+		})
+		.collect();
 
 	// Train/valid split
 	let (train_idx, valid_idx) = split_indices(N_SAMPLES, VALID_FRACTION, SEED ^ 0x51EED);
 
-	let x_train = select_rows_row_major(&features, N_SAMPLES, 2, &train_idx);
+	let x_train = select_samples(&features, &train_idx);
 	let y_train = select_targets(&targets, &train_idx);
-	let x_valid = select_rows_row_major(&features, N_SAMPLES, 2, &valid_idx);
+	let x_valid = select_samples(&features, &valid_idx);
 	let y_valid = select_targets(&targets, &valid_idx);
 
-	// Convert to matrices
-	let col_train = to_features_view(&x_train, train_idx.len(), 2);
+	// Convert to matrices - transpose to feature-major for training
+	let col_train = transpose_to_c_order(x_train.view());
 	let view_train = FeaturesView::from_array(col_train.view());
 	let binned_train = BinnedDatasetBuilder::from_matrix(&view_train, 256)
 		.build()
 		.unwrap();
-	let row_valid = to_samples_view(&x_valid, valid_idx.len(), 2);
+	let row_valid = x_valid;
 
 	// --- Train without linear leaves ---
 	let base_config = GBDTConfig::builder()

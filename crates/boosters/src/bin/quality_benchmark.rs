@@ -49,8 +49,8 @@ use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::FeaturesView;
 use boosters::model::gbdt::{GBDTConfig, GBDTModel, TreeParams};
 use boosters::testing::data::{
-	random_dense_f32, split_indices, synthetic_binary_targets_from_linear_score,
-	synthetic_multiclass_targets_from_linear_scores, synthetic_regression_targets_linear,
+	random_features_array, split_indices, synthetic_binary, synthetic_multiclass,
+	synthetic_regression,
 };
 use boosters::training::{
 	Accuracy, LinearLeafConfig, LogLoss, Mae,
@@ -554,20 +554,22 @@ fn load_data(
 ) -> (Vec<f32>, Vec<f32>, usize, Vec<f32>, Vec<f32>, usize, usize) {
 	match &config.data_source {
 		DataSource::Synthetic { rows, cols } => {
-			let x = random_dense_f32(*rows, *cols, seed, -1.0, 1.0);
+			let x = random_features_array(*rows, *cols, seed, -1.0, 1.0);
 			let y = match config.task {
-				Task::Regression => synthetic_regression_targets_linear(&x, *rows, *cols, seed ^ 0x0BAD_5EED, 0.05).0,
-				Task::Binary => synthetic_binary_targets_from_linear_score(&x, *rows, *cols, seed ^ 0xB1A2_0001, 0.2),
+				Task::Regression => synthetic_regression(*rows, *cols, seed ^ 0x0BAD_5EED, 0.05).targets,
+				Task::Binary => synthetic_binary(*rows, *cols, seed ^ 0xB1A2_0001, 0.2).targets,
 				Task::Multiclass => {
 					let num_classes = config.classes.unwrap_or(3);
-					synthetic_multiclass_targets_from_linear_scores(&x, *rows, *cols, num_classes, seed ^ 0x00C1_A550, 0.1)
+					synthetic_multiclass(*rows, *cols, num_classes, seed ^ 0x00C1_A550, 0.1).targets
 				}
 			};
+			let y_vec: Vec<f32> = y.to_vec();
+			let x_vec: Vec<f32> = x.as_slice().unwrap().to_vec();
 			let (train_idx, valid_idx) = split_indices(*rows, valid_fraction, seed ^ 0x51EED);
-			let x_train = select_rows_row_major(&x, *rows, *cols, &train_idx);
-			let y_train = select_targets(&y, &train_idx);
-			let x_valid = select_rows_row_major(&x, *rows, *cols, &valid_idx);
-			let y_valid = select_targets(&y, &valid_idx);
+			let x_train = select_rows_row_major(&x_vec, *rows, *cols, &train_idx);
+			let y_train = select_targets(&y_vec, &train_idx);
+			let x_valid = select_rows_row_major(&x_vec, *rows, *cols, &valid_idx);
+			let y_valid = select_targets(&y_vec, &valid_idx);
 			(x_train, y_train, train_idx.len(), x_valid, y_valid, valid_idx.len(), *cols)
 		}
 		#[cfg(feature = "io-parquet")]

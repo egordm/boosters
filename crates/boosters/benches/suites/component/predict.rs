@@ -7,10 +7,9 @@ use common::criterion_config::default_criterion;
 use common::models::load_boosters_model;
 
 use boosters::inference::gbdt::{Predictor, StandardTraversal, UnrolledTraversal6};
-use boosters::testing::data::random_dense_f32;
+use boosters::testing::data::random_features_array;
 use boosters::Parallelism;
 
-use ndarray::Array2;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 fn bench_gbtree_batch_sizes(c: &mut Criterion) {
@@ -21,8 +20,7 @@ fn bench_gbtree_batch_sizes(c: &mut Criterion) {
 	let mut group = c.benchmark_group("component/predict/batch_size");
 
 	for batch_size in [1usize, 10, 100, 1_000, 10_000] {
-		let input_data = random_dense_f32(batch_size, num_features, 42, -5.0, 5.0);
-		let matrix = Array2::from_shape_vec((batch_size, num_features), input_data).unwrap();
+		let matrix = random_features_array(batch_size, num_features, 42, -5.0, 5.0);
 
 		group.throughput(Throughput::Elements(batch_size as u64));
 		group.bench_with_input(BenchmarkId::new("medium", batch_size), &matrix, |b, matrix| {
@@ -52,8 +50,7 @@ fn bench_gbtree_model_sizes(c: &mut Criterion) {
 		};
 
 		let predictor = Predictor::<UnrolledTraversal6>::new(&model.forest);
-		let input_data = random_dense_f32(batch_size, model.num_features, 42, -5.0, 5.0);
-		let matrix = Array2::from_shape_vec((batch_size, model.num_features), input_data).unwrap();
+		let matrix = random_features_array(batch_size, model.num_features, 42, -5.0, 5.0);
 
 		group.throughput(Throughput::Elements(batch_size as u64));
 		group.bench_with_input(BenchmarkId::new(label, batch_size), &matrix, |b, matrix| {
@@ -71,8 +68,7 @@ fn bench_gbtree_single_row(c: &mut Criterion) {
 	let model = load_boosters_model("bench_medium");
 	let predictor = Predictor::<UnrolledTraversal6>::new(&model.forest);
 
-	let input_data = random_dense_f32(1, model.num_features, 42, -5.0, 5.0);
-	let matrix = Array2::from_shape_vec((1, model.num_features), input_data).unwrap();
+	let matrix = random_features_array(1, model.num_features, 42, -5.0, 5.0);
 
 	c.bench_function("component/predict/single_row/medium", |b| {
 		b.iter(|| {
@@ -88,8 +84,7 @@ fn bench_traversal_strategies(c: &mut Criterion) {
 	let num_features = model.num_features;
 	
 	let batch_size = 10_000usize;
-	let input_data = random_dense_f32(batch_size, num_features, 42, -5.0, 5.0);
-	let matrix = Array2::from_shape_vec((batch_size, num_features), input_data).unwrap();
+	let matrix = random_features_array(batch_size, num_features, 42, -5.0, 5.0);
 
 	let mut group = c.benchmark_group("component/predict/traversal");
 	group.throughput(Throughput::Elements(batch_size as u64));

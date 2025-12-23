@@ -15,7 +15,7 @@
 #![allow(clippy::too_many_arguments)]
 
 use crate::Parallelism;
-use crate::data::{BinnedDataset, BinnedRowView};
+use crate::data::{BinnedDataset, BinnedRowView, FeatureAccessor};
 
 use super::categories::{float_to_category, CategoriesStorage};
 use super::coefficients::{LeafCoefficients, LeafCoefficientsBuilder};
@@ -85,6 +85,93 @@ pub trait TreeView {
     /// Check if the tree has any categorical splits.
     fn has_categorical(&self) -> bool {
         !self.categories().is_empty()
+    }
+
+    /// Traverse the tree to find the leaf node for a given row.
+    ///
+    /// This is the primary traversal method that works with any `FeatureAccessor`.
+    /// The traversal handles NaN values using the tree's default direction,
+    /// and supports both numeric and categorical splits.
+    ///
+    /// # Arguments
+    ///
+    /// * `accessor` - Feature value source (implements [`FeatureAccessor`])
+    /// * `row` - Row index in the accessor
+    ///
+    /// # Returns
+    ///
+    /// The `NodeId` of the reached leaf node.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use boosters::repr::gbdt::TreeView;
+    /// use boosters::data::SamplesView;
+    ///
+    /// let features = SamplesView::from_slice(&[0.5, 1.0], 1, 2).unwrap();
+    /// let leaf_id = tree.traverse_to_leaf(&features, 0);
+    /// ```
+    #[inline]
+    fn traverse_to_leaf<A: FeatureAccessor>(&self, accessor: &A, row: usize) -> NodeId {
+        self.traverse_to_leaf_from(0, accessor, row)
+    }
+
+    /// Traverse the tree starting from a specific node.
+    ///
+    /// This is useful for resuming traversal after unrolled levels or
+    /// partial tree traversal.
+    ///
+    /// # Arguments
+    ///
+    /// * `start_node` - Node ID to start traversal from
+    /// * `accessor` - Feature value source (implements [`FeatureAccessor`])
+    /// * `row` - Row index in the accessor
+    ///
+    /// # Returns
+    ///
+    /// The `NodeId` of the reached leaf node.
+    #[inline]
+    fn traverse_to_leaf_from<A: FeatureAccessor>(
+        &self,
+        start_node: NodeId,
+        accessor: &A,
+        row: usize,
+    ) -> NodeId {
+        let mut node = start_node;
+
+        while !self.is_leaf(node) {
+            let feat_idx = self.split_index(node) as usize;
+            let fvalue = accessor.get_feature(row, feat_idx);
+
+            node = if fvalue.is_nan() {
+                // Missing value: use default direction
+                if self.default_left(node) {
+                    self.left_child(node)
+                } else {
+                    self.right_child(node)
+                }
+            } else {
+                match self.split_type(node) {
+                    SplitType::Numeric => {
+                        if fvalue < self.split_threshold(node) {
+                            self.left_child(node)
+                        } else {
+                            self.right_child(node)
+                        }
+                    }
+                    SplitType::Categorical => {
+                        let category = float_to_category(fvalue);
+                        if self.categories().category_goes_right(node, category) {
+                            self.right_child(node)
+                        } else {
+                            self.left_child(node)
+                        }
+                    }
+                }
+            };
+        }
+
+        node
     }
 }
 
@@ -614,7 +701,7 @@ impl<L: LeafValue> Tree<L> {
     /// For linear leaves, returns `intercept + Σ(coef × feature)`.
     /// If any linear feature is NaN, falls back to the base leaf value.
     #[inline]
-    fn compute_leaf_value<A: crate::data::FeatureAccessor>(
+    pub(crate) fn compute_leaf_value<A: crate::data::FeatureAccessor>(
         &self,
         leaf_idx: NodeId,
         accessor: &A,

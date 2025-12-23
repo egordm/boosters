@@ -11,7 +11,7 @@ use common::models::load_linear_model;
 use common::models::bench_models_dir;
 
 use boosters::data::SamplesView;
-use boosters::testing::data::random_dense_f32;
+use boosters::testing::data::random_features_array;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
@@ -66,8 +66,8 @@ fn bench_predict_batch_sizes(c: &mut Criterion) {
 	let mut group = c.benchmark_group("compare/predict/gblinear/batch_size/medium");
 
 	for batch_size in [SMALL_BATCH, MEDIUM_BATCH, LARGE_BATCH] {
-		let input_data = random_dense_f32(batch_size, num_features, 42, -5.0, 5.0);
-		let samples_view = SamplesView::from_slice(&input_data, batch_size, num_features).unwrap();
+		let input_array = random_features_array(batch_size, num_features, 42, -5.0, 5.0);
+		let samples_view = SamplesView::from_array(input_array.view());
 
 		group.throughput(Throughput::Elements(batch_size as u64));
 
@@ -79,10 +79,11 @@ fn bench_predict_batch_sizes(c: &mut Criterion) {
 		// XGBoost
 		#[cfg(feature = "bench-xgboost")]
 		{
+			let input_data: &[f32] = input_array.as_slice().unwrap();
 			group.bench_function(BenchmarkId::new("xgboost/cold_dmatrix", batch_size), |b| {
 				let booster = new_xgb_booster(&xgb_model_bytes);
 				b.iter_batched(
-					|| create_dmatrix(&input_data, batch_size),
+					|| create_dmatrix(input_data, batch_size),
 					|dmatrix| {
 						let out = booster.predict(black_box(&dmatrix)).unwrap();
 						black_box(out)
@@ -109,8 +110,11 @@ fn bench_predict_single_row(c: &mut Criterion) {
 	#[cfg(feature = "bench-xgboost")]
 	let xgb_model = new_xgb_booster(&xgb_model_bytes);
 
-	let input_data = random_dense_f32(1, num_features, 42, -5.0, 5.0);
-	let samples_view = SamplesView::from_slice(&input_data, 1, num_features).unwrap();
+	let input_array = random_features_array(1, num_features, 42, -5.0, 5.0);
+	let samples_view = SamplesView::from_array(input_array.view());
+
+	#[cfg(feature = "bench-xgboost")]
+	let input_data: &[f32] = input_array.as_slice().unwrap();
 
 	let mut group = c.benchmark_group("compare/predict/gblinear/single_row/medium");
 
@@ -124,7 +128,7 @@ fn bench_predict_single_row(c: &mut Criterion) {
 	{
 		group.bench_function("xgboost/cold_dmatrix", |b| {
 			b.iter_batched(
-				|| create_dmatrix(&input_data, 1),
+				|| create_dmatrix(input_data, 1),
 				|dmatrix| {
 					let out = xgb_model.predict(black_box(&dmatrix)).unwrap();
 					black_box(out)
@@ -162,8 +166,11 @@ fn bench_model_sizes(c: &mut Criterion) {
 
 	for (name, model) in &models {
 		let num_features = model.num_features;
-		let input_data = random_dense_f32(batch_size, num_features, 42, -5.0, 5.0);
-		let samples_view = SamplesView::from_slice(&input_data, batch_size, num_features).unwrap();
+		let input_array = random_features_array(batch_size, num_features, 42, -5.0, 5.0);
+		let samples_view = SamplesView::from_array(input_array.view());
+
+		#[cfg(feature = "bench-xgboost")]
+		let input_data: &[f32] = input_array.as_slice().unwrap();
 
 		group.throughput(Throughput::Elements(batch_size as u64));
 
@@ -178,7 +185,7 @@ fn bench_model_sizes(c: &mut Criterion) {
 			if let Some((_, xgb_model)) = xgb_models.iter().find(|(n, _)| n == name) {
 				group.bench_function(BenchmarkId::new("xgboost/cold_dmatrix", name), |b| {
 					b.iter_batched(
-						|| create_dmatrix(&input_data, batch_size),
+						|| create_dmatrix(input_data, batch_size),
 						|dmatrix| {
 							let out = xgb_model.predict(black_box(&dmatrix)).unwrap();
 							black_box(out)

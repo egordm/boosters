@@ -53,8 +53,11 @@ pub use predictor::{
 // Re-export traversal types
 pub use traversal::{
     StandardTraversal, TreeTraversal, UnrolledTraversal, UnrolledTraversal4, UnrolledTraversal6,
-    UnrolledTraversal8, traverse_from_node,
+    UnrolledTraversal8,
 };
 
-// Re-export accessor types (traits are in their home modules)
-pub use accessor::{BinnedAccessor, SingleRowSlice, traverse_to_leaf, traverse_to_leaf_from};
+// Re-export traversal functions
+pub use accessor::{traverse_to_leaf, traverse_to_leaf_from};
+
+// Re-export BinnedAccessor from its home in data::binned
+pub use crate::data::binned::BinnedAccessor;

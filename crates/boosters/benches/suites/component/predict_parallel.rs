@@ -8,10 +8,9 @@ use common::models::load_boosters_model;
 use common::threading::with_rayon_threads;
 
 use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
-use boosters::testing::data::random_dense_f32;
+use boosters::testing::data::random_features_array;
 use boosters::Parallelism;
 
-use ndarray::Array2;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 fn bench_gbtree_thread_scaling(c: &mut Criterion) {
@@ -19,8 +18,7 @@ fn bench_gbtree_thread_scaling(c: &mut Criterion) {
 	let predictor = Predictor::<UnrolledTraversal6>::new(&model.forest).with_block_size(64);
 
 	let batch_size = 10_000usize;
-	let input_data = random_dense_f32(batch_size, model.num_features, 42, -5.0, 5.0);
-	let matrix = Array2::from_shape_vec((batch_size, model.num_features), input_data).unwrap();
+	let matrix = random_features_array(batch_size, model.num_features, 42, -5.0, 5.0);
 
 	let mut group = c.benchmark_group("component/predict/thread_scaling/medium");
 	group.throughput(Throughput::Elements(batch_size as u64));

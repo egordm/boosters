@@ -12,10 +12,9 @@ use common::models::load_boosters_model;
 use common::models::bench_models_dir;
 
 use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
-use boosters::testing::data::random_dense_f32;
+use boosters::testing::data::random_features_array;
 use boosters::Parallelism;
 
-use ndarray::Array2;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
 #[cfg(feature = "bench-xgboost")]
@@ -91,15 +90,18 @@ fn bench_predict_batch_sizes(c: &mut Criterion) {
 	let mut group = c.benchmark_group("compare/predict/batch_size/medium");
 
 	for batch_size in [SMALL_BATCH, MEDIUM_BATCH, LARGE_BATCH] {
-		let input_data = random_dense_f32(batch_size, num_features, 42, -5.0, 5.0);
-		let matrix = Array2::from_shape_vec((batch_size, num_features), input_data.clone()).unwrap();
+		let input_array = random_features_array(batch_size, num_features, 42, -5.0, 5.0);
 
 		group.throughput(Throughput::Elements(batch_size as u64));
 
 		// booste-rs
-		group.bench_with_input(BenchmarkId::new("boosters", batch_size), &matrix, |b, m| {
+		group.bench_with_input(BenchmarkId::new("boosters", batch_size), &input_array, |b, m| {
 			b.iter(|| black_box(predictor.predict(black_box(m.view()), Parallelism::Sequential)))
 		});
+
+		// Get raw slice for XGBoost/LightGBM
+		#[cfg(any(feature = "bench-xgboost", feature = "bench-lightgbm"))]
+		let input_data: &[f32] = input_array.as_slice().unwrap();
 
 		// XGBoost
 		#[cfg(feature = "bench-xgboost")]
@@ -107,7 +109,7 @@ fn bench_predict_batch_sizes(c: &mut Criterion) {
 			group.bench_function(BenchmarkId::new("xgboost/cold_dmatrix", batch_size), |b| {
 				let mut booster = new_xgb_booster(&xgb_model_bytes);
 				b.iter_batched(
-					|| create_dmatrix(&input_data, batch_size),
+					|| create_dmatrix(input_data, batch_size),
 					|dmatrix| {
 						reset_xgb_prediction_cache(&mut booster);
 						let out = booster.predict(black_box(&dmatrix)).unwrap();
@@ -159,14 +161,16 @@ fn bench_predict_single_row(c: &mut Criterion) {
 	#[cfg(feature = "bench-lightgbm")]
 	let lgb_booster = load_native_lgb_booster("bench_medium");
 
-	let input_data = random_dense_f32(1, num_features, 42, -5.0, 5.0);
-	let matrix = Array2::from_shape_vec((1, num_features), input_data.clone()).unwrap();
+	let input_array = random_features_array(1, num_features, 42, -5.0, 5.0);
+
+	#[cfg(any(feature = "bench-xgboost", feature = "bench-lightgbm"))]
+	let input_data: &[f32] = input_array.as_slice().unwrap();
 
 	let mut group = c.benchmark_group("compare/predict/single_row/medium");
 
 	// booste-rs
 	group.bench_function("boosters", |b| {
-		b.iter(|| black_box(predictor.predict(black_box(matrix.view()), Parallelism::Sequential)))
+		b.iter(|| black_box(predictor.predict(black_box(input_array.view()), Parallelism::Sequential)))
 	});
 
 	// XGBoost
@@ -174,7 +178,7 @@ fn bench_predict_single_row(c: &mut Criterion) {
 	{
 		group.bench_function("xgboost/cold_dmatrix", |b| {
 			b.iter_batched(
-				|| create_dmatrix(&input_data, 1),
+				|| create_dmatrix(input_data, 1),
 				|dmatrix| {
 					reset_xgb_prediction_cache(&mut xgb_model);
 					let out = xgb_model.predict(black_box(&dmatrix)).unwrap();
@@ -226,22 +230,24 @@ fn bench_predict_thread_scaling(c: &mut Criterion) {
 	let lgb_booster = load_native_lgb_booster("bench_medium");
 
 	let batch_size = LARGE_BATCH;
-	let input_data = random_dense_f32(batch_size, num_features, 42, -5.0, 5.0);
-	let matrix = Array2::from_shape_vec((batch_size, num_features), input_data.clone()).unwrap();
+	let input_array = random_features_array(batch_size, num_features, 42, -5.0, 5.0);
+
+	#[cfg(any(feature = "bench-xgboost", feature = "bench-lightgbm"))]
+	let input_data: &[f32] = input_array.as_slice().unwrap();
 
 	let mut group = c.benchmark_group("compare/predict/thread_scaling/medium");
 	group.throughput(Throughput::Elements(batch_size as u64));
 
 	for &n_threads in common::matrix::THREAD_COUNTS {
 		// booste-rs
-		group.bench_with_input(BenchmarkId::new("boosters", n_threads), &matrix, |b, m| {
+		group.bench_with_input(BenchmarkId::new("boosters", n_threads), &input_array, |b, m| {
 			b.iter(|| black_box(predictor.predict(black_box(m.view()), Parallelism::Parallel)))
 		});
 
 		// XGBoost
 		#[cfg(feature = "bench-xgboost")]
 		{
-			let dmatrix = create_dmatrix(&input_data, batch_size);
+			let dmatrix = create_dmatrix(input_data, batch_size);
 			let threads = n_threads.to_string();
 			xgb_model.set_param("nthread", &threads).expect("Failed to set nthread");
 			reset_xgb_prediction_cache(&mut xgb_model);

@@ -32,6 +32,7 @@ mod dataset;
 mod builder;
 mod feature_analysis;
 mod bundling;
+mod accessor;
 
 pub use bin_mapper::{BinMapper, FeatureType, MissingType};
 pub use storage::{FeatureView, BinStorage, BinType, GroupLayout};
@@ -41,3 +42,4 @@ pub use builder::{BinnedDatasetBuilder, GroupStrategy, GroupSpec, BuildError, Bi
 pub use feature_analysis::{FeatureInfo, analyze_features, analyze_features_sequential};
 pub use bundling::BundlingFeatures;
 pub use bundling::{BundlingConfig, FeatureBundle, FeatureLocation, BundlePlan, create_bundle_plan};
+pub use accessor::BinnedAccessor;

@@ -1,133 +1,31 @@
-//! Binned data accessor and generic tree traversal.
+//! Generic tree traversal functions.
 //!
-//! This module provides:
-//! - [`BinnedAccessor`]: Converts binned data to midpoint values for traversal
-//! - [`SingleRowSlice`]: Wraps a `&[f32]` slice for single-row traversal
+//! This module provides backward-compatible free functions for tree traversal:
 //! - [`traverse_to_leaf`]: Generic traversal function for any tree/accessor combination
 //! - [`traverse_to_leaf_from`]: Same as above, but starting from a given node
 //!
-//! # Design
+//! # Note
 //!
-//! The core traits [`TreeView`](crate::repr::gbdt::TreeView) and
-//! [`FeatureAccessor`](crate::data::FeatureAccessor) are defined in their
-//! respective modules (`repr::gbdt` and `data`). This module provides
-//! the inference-specific utilities that use those traits.
+//! These functions are convenience wrappers around the [`TreeView`] trait methods.
+//! For new code, prefer calling the trait methods directly on tree types:
+//!
+//! ```ignore
+//! use boosters::repr::gbdt::TreeView;
+//!
+//! let leaf = tree.traverse_to_leaf(&accessor, row);
+//! ```
 
-use crate::data::binned::BinMapper;
-use crate::data::{BinnedDataset, FeatureAccessor};
-use crate::repr::gbdt::{float_to_category, NodeId, SplitType, TreeView};
-
-// ============================================================================
-// SingleRowSlice Accessor
-// ============================================================================
-
-/// Feature accessor wrapping a single row of features as a slice.
-///
-/// This adapter allows using `&[f32]` with the generic [`traverse_to_leaf`]
-/// function. The slice represents features for exactly one row, so `row` 
-/// parameter must be 0.
-///
-/// # Example
-///
-/// ```ignore
-/// use boosters::inference::gbdt::{SingleRowSlice, traverse_to_leaf};
-///
-/// let features = [0.5f32, 1.2, -0.3];
-/// let accessor = SingleRowSlice(&features);
-/// let leaf = traverse_to_leaf(&tree, &accessor, 0);
-/// ```
-pub struct SingleRowSlice<'a>(pub &'a [f32]);
-
-impl FeatureAccessor for SingleRowSlice<'_> {
-    #[inline]
-    fn get_feature(&self, row: usize, feature: usize) -> f32 {
-        debug_assert_eq!(row, 0, "SingleRowSlice only supports row 0");
-        self.0.get(feature).copied().unwrap_or(f32::NAN)
-    }
-
-    #[inline]
-    fn num_rows(&self) -> usize {
-        1
-    }
-
-    #[inline]
-    fn num_features(&self) -> usize {
-        self.0.len()
-    }
-}
+use crate::data::FeatureAccessor;
+use crate::repr::gbdt::{NodeId, TreeView};
 
 // ============================================================================
-// BinnedAccessor
-// ============================================================================
-
-/// Feature accessor that converts binned data to midpoint values.
-///
-/// For each bin, returns the midpoint between lower and upper bounds:
-/// - Bin 0: `(min_val + upper_bound[0]) / 2`
-/// - Bin n: `(upper_bound[n-1] + upper_bound[n]) / 2`
-///
-/// For categorical features, returns the category value as f32.
-/// For missing bins, returns `f32::NAN`.
-///
-/// # Panics
-///
-/// The constructor panics if `bin_mappers.len() != dataset.n_features()`.
-pub struct BinnedAccessor<'a> {
-    dataset: &'a BinnedDataset,
-    bin_mappers: &'a [BinMapper],
-}
-
-impl<'a> BinnedAccessor<'a> {
-    /// Create a new binned accessor.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the number of bin mappers doesn't match the dataset's feature count.
-    pub fn new(dataset: &'a BinnedDataset, bin_mappers: &'a [BinMapper]) -> Self {
-        assert_eq!(
-            dataset.n_features(),
-            bin_mappers.len(),
-            "BinMapper count ({}) must match feature count ({})",
-            bin_mappers.len(),
-            dataset.n_features()
-        );
-        Self {
-            dataset,
-            bin_mappers,
-        }
-    }
-}
-
-impl FeatureAccessor for BinnedAccessor<'_> {
-    #[inline]
-    fn get_feature(&self, row: usize, feature: usize) -> f32 {
-        let bin = self.dataset.get_bin(row, feature);
-        match bin {
-            Some(b) => self.bin_mappers[feature].bin_to_midpoint(b) as f32,
-            None => f32::NAN,
-        }
-    }
-
-    #[inline]
-    fn num_rows(&self) -> usize {
-        self.dataset.n_rows()
-    }
-
-    #[inline]
-    fn num_features(&self) -> usize {
-        self.dataset.n_features()
-    }
-}
-
-// ============================================================================
-// Generic Traversal Function
+// Generic Traversal Functions (Backward-Compatible Wrappers)
 // ============================================================================
 
 /// Traverse a tree to find the leaf node for a given row.
 ///
-/// This is the unified traversal function that works with any `TreeView`
-/// and `FeatureAccessor` combination. Use [`traverse_to_leaf_from`] if you
-/// need to start from a specific node.
+/// This is a convenience wrapper around [`TreeView::traverse_to_leaf`].
+/// For new code, prefer calling the trait method directly.
 ///
 /// # Arguments
 ///
@@ -138,30 +36,19 @@ impl FeatureAccessor for BinnedAccessor<'_> {
 /// # Returns
 ///
 /// The `NodeId` of the reached leaf node.
-///
-/// # Example
-///
-/// ```ignore
-/// use boosters::inference::gbdt::traverse_to_leaf;
-/// use boosters::data::RowMatrix;
-///
-/// let features = RowMatrix::from_vec(vec![0.5, 1.0], 1, 2);
-/// let leaf_id = traverse_to_leaf(&tree, &features, 0);
-/// ```
 #[inline]
 pub fn traverse_to_leaf<T: TreeView, A: FeatureAccessor>(
     tree: &T,
     accessor: &A,
     row: usize,
 ) -> NodeId {
-    traverse_to_leaf_from(tree, 0, accessor, row)
+    tree.traverse_to_leaf(accessor, row)
 }
 
 /// Traverse a tree to find the leaf node, starting from a specific node.
 ///
-/// This is the core traversal function used by both [`traverse_to_leaf`] and
-/// [`traverse_from_node`]. It supports starting from any node, useful for
-/// resuming traversal after unrolled levels.
+/// This is a convenience wrapper around [`TreeView::traverse_to_leaf_from`].
+/// For new code, prefer calling the trait method directly.
 ///
 /// # Arguments
 ///
@@ -180,41 +67,7 @@ pub fn traverse_to_leaf_from<T: TreeView, A: FeatureAccessor>(
     accessor: &A,
     row: usize,
 ) -> NodeId {
-    let mut node = start_node;
-
-    while !tree.is_leaf(node) {
-        let feat_idx = tree.split_index(node) as usize;
-        let fvalue = accessor.get_feature(row, feat_idx);
-
-        node = if fvalue.is_nan() {
-            // Missing value: use default direction
-            if tree.default_left(node) {
-                tree.left_child(node)
-            } else {
-                tree.right_child(node)
-            }
-        } else {
-            match tree.split_type(node) {
-                SplitType::Numeric => {
-                    if fvalue < tree.split_threshold(node) {
-                        tree.left_child(node)
-                    } else {
-                        tree.right_child(node)
-                    }
-                }
-                SplitType::Categorical => {
-                    let category = float_to_category(fvalue);
-                    if tree.categories().category_goes_right(node, category) {
-                        tree.right_child(node)
-                    } else {
-                        tree.left_child(node)
-                    }
-                }
-            }
-        };
-    }
-
-    node
+    tree.traverse_to_leaf_from(start_node, accessor, row)
 }
 
 // ============================================================================

@@ -17,7 +17,7 @@ use std::time::Instant;
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::FeaturesView;
-use boosters::testing::data::{random_dense_f32, synthetic_regression_targets_linear};
+use boosters::testing::data::synthetic_regression;
 use boosters::training::{
     GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, RowSamplingParams,
     SquaredLoss,
@@ -35,9 +35,7 @@ fn main() {
     let max_depth = 6;
 
     println!("Generating dataset: {} rows × {} features", n_samples, n_features);
-    let features_row_major = random_dense_f32(n_samples, n_features, 42, -1.0, 1.0);
-    let (labels, _weights, _bias) =
-        synthetic_regression_targets_linear(&features_row_major, n_samples, n_features, 1337, 0.1);
+    let dataset = synthetic_regression(n_samples, n_features, 42, 0.1);
 
     // Split train/test (80/20)
     let split_idx = (n_samples as f32 * 0.8) as usize;
@@ -46,18 +44,27 @@ fn main() {
 
     println!("Train: {} samples, Test: {} samples\n", n_train, n_test);
 
-    // Convert to feature-major for training
-    // row-major [n_samples, n_features] → feature-major [n_features, n_samples]
+    // Get train features from the dataset's feature-major layout
+    // The dataset has feature-major: [n_features, n_samples]
+    let features_fm = dataset.features.view();
+    let labels = dataset.targets_slice();
+    
+    // Extract train/test splits
     let mut train_features = Array2::<f32>::zeros((n_features, n_train));
-    for i in 0..n_train {
-        for f in 0..n_features {
-            train_features[(f, i)] = features_row_major[i * n_features + f];
+    for f in 0..n_features {
+        for i in 0..n_train {
+            train_features[(f, i)] = features_fm[(f, i)];
         }
     }
     let train_labels: Vec<f32> = labels[..n_train].to_vec();
     
-    // Test data can remain as row-major Vec for predict_row
-    let test_features: Vec<f32> = features_row_major[split_idx * n_features..].to_vec();
+    // For test data: create sample-major array for predict_row
+    let mut test_features: Vec<f32> = Vec::with_capacity(n_test * n_features);
+    for i in split_idx..n_samples {
+        for f in 0..n_features {
+            test_features.push(features_fm[(f, i)]);
+        }
+    }
     let test_labels: Vec<f32> = labels[split_idx..].to_vec();
 
     // Build binned dataset for training
