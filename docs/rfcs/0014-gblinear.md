@@ -13,19 +13,26 @@ GBLinear is a linear booster using coordinate descent with elastic net regulariz
 
 ### Model Structure
 
-`LinearModel` stores weights in a flat `Box<[f32]>` array with feature-major, group-minor layout:
+`LinearModel` stores weights in an `Array2<f32>` with shape `[n_features + 1, n_groups]`:
 
 ```text
-weights[feature * n_groups + group] → coefficient
-weights[n_features * n_groups + group] → bias (last row)
+weights[[feature, group]] → coefficient
+weights[[n_features, group]] → bias (last row)
 ```
 
 Total size: `(n_features + 1) × n_groups`
 
-**Example** (2 features, 2 groups):
+**Example** (3 features, 2 groups):
+
 ```rust
-// [feat0_g0, feat0_g1, feat1_g0, feat1_g1, bias_g0, bias_g1]
-let weights = vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6];
+use ndarray::array;
+let weights = array![
+    [0.1, 0.2],  // feature 0: group 0, group 1
+    [0.3, 0.4],  // feature 1
+    [0.5, 0.6],  // feature 2
+    [0.0, 0.0],  // bias
+];
+let model = LinearModel::new(weights);
 ```
 
 ### Training
@@ -69,14 +76,58 @@ Both single-row and batch prediction supported. `par_predict` uses Rayon for par
 
 ## Key Types
 
+### High-Level API (model layer)
+
+For most users, the `GBLinearModel` in `model::gblinear` provides the primary interface:
+
 ```rust
-// Model storage (inference/gblinear/model.rs)
-pub struct LinearModel {
-    weights: Box<[f32]>,      // (n_features + 1) × n_groups
-    n_features: usize,
-    n_groups: usize,
+// High-level model (model/gblinear/model.rs)
+pub struct GBLinearModel {
+    linear: LinearModel,      // Weight storage
+    meta: ModelMeta,          // n_features, n_groups
+    config: GBLinearConfig,   // Objective, defaults
 }
 
+impl GBLinearModel {
+    pub fn predict(&self, features: ArrayView2<f32>) -> Array2<f32>;
+    pub fn predict_raw(&self, features: ArrayView2<f32>) -> Array2<f32>;
+    pub fn n_features(&self) -> usize;
+    pub fn n_groups(&self) -> usize;
+}
+```
+
+### Low-Level API (repr layer)
+
+For advanced use (custom training loops, model surgery):
+
+```rust
+// Model storage (repr/gblinear/model.rs)
+pub struct LinearModel {
+    weights: Array2<f32>,  // Shape [n_features + 1, n_groups]
+}
+
+impl LinearModel {
+    pub fn new(weights: Array2<f32>) -> Self;
+    pub fn zeros(n_features: usize, n_groups: usize) -> Self;
+    pub fn n_features(&self) -> usize;
+    pub fn n_groups(&self) -> usize;
+    pub fn weight(&self, feature: usize, group: usize) -> f32;
+    pub fn bias(&self, group: usize) -> f32;
+    pub fn predict(&self, data: SamplesView<'_>, base_score: &[f32]) -> Array2<f32>;
+    pub fn predict_into(
+        &self,
+        data: SamplesView<'_>,
+        base_score: &[f32],
+        parallelism: Parallelism,
+        output: ArrayViewMut2<'_, f32>,
+    );
+    pub fn predict_row_into(&self, features: &[f32], base_score: &[f32], output: &mut [f32]);
+}
+```
+
+### Training Types
+
+```rust
 // Trainer (training/gblinear/trainer.rs)
 pub struct GBLinearTrainer<O: Objective, M: Metric> {
     objective: O,
@@ -113,11 +164,13 @@ pub enum FeatureSelectorKind {
 
 ## Notes
 
-- Requires column-major data (`ColMatrix`) for efficient feature iteration
+- Requires feature-major data (`FeaturesView`) for efficient feature iteration
 - Gradients computed fresh each round (not truly "stale" like some implementations)
 - Parallel mode computes all deltas from same gradient state, applies sequentially
 - `top_k` in Greedy/Thrifty limits features updated per round
 
 ## Changelog
 
+- 2025-01-23: Added dual-layer API documentation (model vs repr), added predict_row_into, fixed storage type
+- 2025-01-23: Fixed `ColMatrix` → `FeaturesView` to match current implementation
 - 2025-01-21: Terminology update — `num_features`→`n_features`, `num_groups`→`n_groups`

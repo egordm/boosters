@@ -11,31 +11,37 @@ Objectives define loss functions that compute gradients and hessians for gradien
 
 ## Design
 
-### Objective Trait
+### ObjectiveFn Trait
+
+The core trait uses ndarray views for type-safe multi-dimensional access:
 
 ```rust
-pub trait Objective: Send + Sync {
+use ndarray::{ArrayView1, ArrayView2, ArrayViewMut2};
+
+pub trait ObjectiveFn: Send + Sync {
     /// Number of outputs per sample (1 for regression, K for multiclass).
-    fn n_outputs(&self) -> usize { 1 }
+    fn n_outputs(&self) -> usize;
 
     /// Compute gradients and hessians for given predictions.
+    ///
+    /// # Arguments
+    /// - `predictions`: Shape `[n_outputs, n_samples]`, model outputs
+    /// - `targets`: Shape `[n_samples]`, ground truth (single target column)
+    /// - `weights`: Optional per-sample weights
+    /// - `grad_hess`: Shape `[n_outputs, n_samples]`, output buffer for (grad, hess) pairs
     fn compute_gradients(
         &self,
-        n_samples: usize,
-        n_outputs: usize,
-        predictions: &[f32],    // column-major [n_outputs * n_samples]
-        targets: &[f32],        // column-major [n_targets * n_samples]
-        weights: &[f32],        // sample weights (empty for unweighted)
-        grad_hess: &mut [GradsTuple],
+        predictions: ArrayView2<f32>,
+        targets: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
+        grad_hess: ArrayViewMut2<GradsTuple>,
     );
 
     /// Compute initial base score (bias) from targets.
     fn compute_base_score(
         &self,
-        n_samples: usize,
-        n_outputs: usize,
-        targets: &[f32],
-        weights: &[f32],
+        targets: ArrayView1<f32>,
+        weights: Option<ArrayView1<f32>>,
         outputs: &mut [f32],
     );
 
@@ -45,11 +51,8 @@ pub trait Objective: Send + Sync {
     /// Expected target encoding (Continuous, Binary01, MulticlassIndex, etc.).
     fn target_schema(&self) -> TargetSchema;
 
-    /// Default evaluation metric for this objective.
-    fn default_metric(&self) -> MetricKind;
-
     /// Transform raw margins to semantic predictions (in-place).
-    fn transform_prediction_inplace(&self, raw: &mut PredictionOutput) -> PredictionKind;
+    fn transform_predictions(&self, predictions: ArrayViewMut2<f32>) -> PredictionKind;
 
     fn name(&self) -> &'static str;
 }
@@ -80,13 +83,15 @@ pub trait Objective: Send + Sync {
 
 ### Multi-Output Layout
 
-All data uses **column-major** order: `[output0_sample0, output0_sample1, ..., output0_sampleN, output1_sample0, ...]`
+All data uses **group-major (row-major by group)** order via ndarray:
 
 ```
-predictions: [n_outputs * n_samples]
-targets:     [n_targets * n_samples]  
-grad_hess:   [n_outputs * n_samples]
+predictions: ArrayView2<f32>        // Shape [n_outputs, n_samples]
+targets:     ArrayView1<f32>        // Shape [n_samples]
+grad_hess:   ArrayViewMut2<GradsTuple>  // Shape [n_outputs, n_samples]
 ```
+
+Each output's values are contiguous in memory (group-major layout).
 
 Relationship between outputs and targets:
 - `SquaredLoss`: `n_outputs == n_targets` (1:1 mapping)
@@ -117,8 +122,9 @@ fn fill_base_scores(&self, predictions: &mut [f32], n_samples: usize, targets: &
 ### Sample Weight Support
 
 All objectives support per-sample weights via the `weights` parameter:
-- Empty slice `&[]` = unweighted (all weights = 1.0)
-- Non-empty = weights applied to both gradient and hessian
+
+- `None` = unweighted (all weights = 1.0)
+- `Some(weights)` = weights applied to both gradient and hessian
 
 ```rust
 // Helper used internally
@@ -158,7 +164,10 @@ pub struct GradsTuple {
 }
 ```
 
-`Gradients` buffer provides column-major storage optimized for histogram building:
+**Precision strategy**: Gradients are stored as f32 for memory efficiency (2× savings vs f64). However, histogram accumulation uses f64 internally to prevent numerical drift when summing many small values. This provides a good balance between memory usage and numerical stability.
+
+`Gradients` buffer provides group-major storage optimized for histogram building:
+
 - `output_pairs(k)` returns contiguous slice for output k (zero-copy)
 - `sum(output, rows)` computes gradient/hessian sums with f64 accumulation
 
@@ -196,4 +205,5 @@ pub enum ObjectiveFunction { ... }
 
 ## Changelog
 
+- 2025-01-23: Updated trait to use ndarray views (`ArrayView2`, `ArrayView1`, `ArrayViewMut2`) instead of slices. Renamed trait to `ObjectiveFn`. Clarified group-major layout.
 - 2025-01-21: Updated terminology (n_samples, n_classes) to match codebase conventions

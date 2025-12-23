@@ -27,6 +27,27 @@ Rather than implementing custom matrix types, we leverage `ndarray` (the standar
 
 ## Design
 
+### Memory Layout: C-Contiguous Requirement
+
+All matrices in boosters **must be C-contiguous (row-major)**. This is enforced at construction time via `debug_assert!` checks:
+
+```rust
+// From SamplesView::from_array()
+debug_assert!(view.is_standard_layout(), "Array must be in C-order");
+```
+
+**Why C-contiguous?**
+
+| Reason | Explanation |
+| ------ | ----------- |
+| **Cache efficiency** | Row iteration is contiguous memory access |
+| **SIMD-friendly** | Contiguous data enables vectorization |
+| **NumPy compatibility** | NumPy defaults to C-order; zero-copy FFI |
+| **Predictable slicing** | `as_slice()` always succeeds for contiguous data |
+| **Parallel safety** | Block processing assumes contiguous row chunks |
+
+ndarray supports both C-order (row-major) and Fortran-order (column-major), but **Fortran-order arrays will fail validation**. Use `transpose_to_c_order()` to convert if needed.
+
 ### Terminology Convention
 
 | Term | Meaning |
@@ -36,6 +57,7 @@ Rather than implementing custom matrix types, we leverage `ndarray` (the standar
 | `n_groups` | Number of output groups (1=regression, K=multiclass) |
 | Sample-major | Samples on axis 0: `[n_samples, n_features]` |
 | Feature-major | Features on axis 0: `[n_features, n_samples]` |
+| C-contiguous | Row-major memory layout (standard layout) |
 
 ### Core Types
 
@@ -67,9 +89,11 @@ Sample-major layout with shape `[n_samples, n_features]`. This is the standard l
 ```rust
 impl<'a> SamplesView<'a> {
     /// Create from a slice in sample-major order (zero-copy).
+    /// Returns None if `data.len() != n_samples * n_features`.
     pub fn from_slice(data: &'a [f32], n_samples: usize, n_features: usize) -> Option<Self>;
     
     /// Create from an ndarray view.
+    /// Debug-asserts that the array is C-contiguous.
     pub fn from_array(view: ArrayView2<'a, f32>) -> Self;
     
     /// Get a sample's features as a contiguous slice.
@@ -281,7 +305,32 @@ let binned = BinnedDatasetBuilder::default()
 - Reduces ~600 lines of custom matrix code
 - Wrappers add semantic clarity without overhead
 
-### DD-2: Wrapper Types vs Raw ndarray
+### DD-2: Non-Allocating API Convention (`_into` suffix)
+
+**Context**: How should APIs handle output allocation?
+
+**Decision**: Provide both allocating and non-allocating variants using the `_into` suffix pattern.
+
+**Rationale**:
+
+- Follows Rust standard library conventions (e.g., `extend_from_slice`)
+- Allows callers to reuse buffers in hot paths
+- Non-allocating variants take `ArrayViewMut2` or `&mut [T]` as output
+- Allocating variants return `Array2<T>` or `Vec<T>`
+
+**Example pattern**:
+
+```rust
+// Allocating (convenience)
+fn predict(&self, features: ArrayView2<f32>) -> Array2<f32>;
+
+// Non-allocating (performance)
+fn predict_into(&self, features: ArrayView2<f32>, output: ArrayViewMut2<f32>);
+```
+
+This pattern applies across all prediction and transformation APIs.
+
+### DD-3: Wrapper Types vs Raw ndarray
 
 **Context**: Use raw `ArrayView2` everywhere, or provide wrapper types?
 
@@ -294,7 +343,7 @@ let binned = BinnedDatasetBuilder::default()
 - Wrappers are zero-cost (`#[repr(transparent)]` pattern)
 - `FeatureAccessor` trait only implemented for explicit types
 
-### DD-3: Minimal FeatureAccessor Trait
+### DD-4: Minimal FeatureAccessor Trait
 
 **Context**: Should we have a full `DataMatrix` trait or minimal accessor?
 
@@ -307,7 +356,7 @@ let binned = BinnedDatasetBuilder::default()
 - Fewer methods = simpler implementations
 - `BinnedAccessor` only needs `get_feature`, not full matrix API
 
-### DD-4: Prediction Layout [n_groups, n_samples]
+### DD-5: Prediction Layout [n_groups, n_samples]
 
 **Context**: Should predictions be `[n_samples, n_groups]` or `[n_groups, n_samples]`?
 
@@ -319,6 +368,22 @@ let binned = BinnedDatasetBuilder::default()
 - Tree accumulation is contiguous per group
 - Matches gradient layout for training loop efficiency
 - Metrics operate on one group at a time
+
+### DD-6: C-Contiguous Layout Enforcement
+
+**Context**: Should we support both C-order and Fortran-order arrays?
+
+**Decision**: Require C-contiguous (row-major) layout for all matrices.
+
+**Rationale**:
+
+- Simplifies code: `as_slice()` always works on contiguous data
+- Block processing in `Predictor` assumes contiguous row chunks
+- NumPy uses C-order by default, enabling zero-copy Python bindings
+- SIMD optimization requires predictable memory layout
+- Debug assertions catch layout issues early in development
+
+**Enforcement**: `debug_assert!(view.is_standard_layout())` in wrapper constructors. This is debug-only to avoid runtime overhead in release builds. Users must ensure their data is C-contiguous.
 
 ## Integration
 
@@ -336,5 +401,7 @@ let binned = BinnedDatasetBuilder::default()
 
 ## Changelog
 
+- 2025-01-23: Added DD-2 (non-allocating `_into` convention), renumbered DDs to DD-3 through DD-6. Clarified from_slice failure conditions. Clarified debug-only enforcement in DD-6.
+- 2025-01-23: Added DD-5 documenting C-contiguous layout enforcement. Expanded layout documentation.
 - 2025-01-21: Major rewrite for ndarray migration. Replaced `DenseMatrix`, `RowMatrix`, `ColMatrix` with `SamplesView`, `FeaturesView`. Replaced `DataMatrix` trait with minimal `FeatureAccessor`. Absorbed content from RFC-0021. Added Non-Goals section.
 - 2024-11-15: Initial RFC with custom matrix types

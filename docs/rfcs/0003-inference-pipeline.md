@@ -55,33 +55,43 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
     /// Create predictor with pre-computed tree states.
     pub fn new(forest: &'f Forest<ScalarLeaf>) -> Self;
     
-    /// Batch prediction using any FeatureAccessor.
-    pub fn predict<A: FeatureAccessor + Sync>(
+    /// Batch prediction (allocating version).
+    /// 
+    /// Features must be C-contiguous ArrayView2 with shape [n_samples, n_features].
+    pub fn predict(
         &self,
-        features: &A,
+        features: ArrayView2<f32>,
         parallelism: Parallelism,
     ) -> Array2<f32>;
     
     /// Batch prediction into pre-allocated buffer.
-    pub fn predict_into<A: FeatureAccessor + Sync>(
+    /// 
+    /// - `features`: [n_samples, n_features], C-contiguous
+    /// - `output`: [n_groups, n_samples], mutable view
+    /// - `weights`: Optional per-tree weights for DART-style prediction
+    pub fn predict_into(
         &self,
-        features: &A,
-        output: &mut Array2<f32>,
+        features: ArrayView2<f32>,
+        weights: Option<&[f32]>,
         parallelism: Parallelism,
+        output: ArrayViewMut2<f32>,
     );
     
-    /// Single-row prediction.
-    pub fn predict_row(&self, features: &[f32]) -> Vec<f32>;
-    
-    /// Prediction with per-tree weights (DART-style).
-    pub fn predict_weighted<A: FeatureAccessor + Sync>(
+    /// Single-row prediction from a slice.
+    /// 
+    /// Uses slices instead of ndarray for single-row efficiency (avoids view overhead).
+    /// This follows the convention that single-row APIs use `&[f32]` while batch APIs
+    /// use `ArrayView2<f32>`.
+    pub fn predict_row_into(
         &self,
-        features: &A,
-        tree_weights: &[f32],
-        parallelism: Parallelism,
-    ) -> Array2<f32>;
+        features: &[f32],
+        weights: Option<&[f32]>,
+        output: &mut [f32],
+    );
 }
 ```
+
+**Note on FeatureAccessor**: While the `TreeView::traverse_to_leaf` method uses `FeatureAccessor` generically, the `Predictor` takes `ArrayView2<f32>` directly for efficiency. The predictor extracts contiguous row data and passes it to traversal methods as slices.
 
 ### Type Aliases
 
@@ -320,16 +330,22 @@ let output = predictor.predict_weighted(&features, &tree_weights, Parallelism::P
 
 ## Design Decisions
 
-### DD-1: Generic over FeatureAccessor
+### DD-1: Direct ArrayView2 over FeatureAccessor
 
 **Context**: How should predictor access feature data?
 
-**Decision**: Generic over `impl FeatureAccessor`.
+**Decision**: Take `ArrayView2<f32>` directly, not `impl FeatureAccessor`.
 
 **Rationale**:
-- Works with any layout (SamplesView, FeaturesView, BinnedAccessor)
-- Training can use same predictor with binned data
-- Zero-cost abstraction via monomorphization
+
+- Predictor requires C-contiguous data for block processing
+- `as_slice()` must succeed for efficient traversal
+- Type mismatch prevented via explicit ndarray types
+- `TreeView::traverse_to_leaf` still uses `FeatureAccessor` for flexibility at tree level
+
+**Implementation note**: The predictor calls `features.as_slice().expect(...)` internally, which requires C-contiguous data. Non-contiguous arrays will panic. Users should construct `SamplesView` first when data source is uncertain, as it validates contiguity at construction.
+
+**API Layers**: Lower-level representation APIs (e.g., `repr::gblinear::LinearModel`) use `SamplesView` for type safety. Higher-level model APIs (e.g., `model::GBLinearModel`) accept `ArrayView2` for convenience, assuming users provide valid C-contiguous data.
 
 ### DD-2: Pre-computed TreeState
 
@@ -338,6 +354,7 @@ let output = predictor.predict_weighted(&features, &tree_weights, Parallelism::P
 **Decision**: Build at `Predictor::new()`, store in `tree_states`.
 
 **Rationale**:
+
 - One-time cost amortized over many predictions
 - State is immutable, can be shared across threads
 - `Box<[TreeState]>` matches forest size exactly
@@ -349,6 +366,7 @@ let output = predictor.predict_weighted(&features, &tree_weights, Parallelism::P
 **Decision**: Default 64 rows (matches XGBoost).
 
 **Rationale**:
+
 - Fits in L1 cache with reasonable feature counts
 - Good balance between parallelism granularity and overhead
 - Configurable via builder pattern if needed
@@ -360,6 +378,7 @@ let output = predictor.predict_weighted(&features, &tree_weights, Parallelism::P
 **Decision**: `[n_groups, n_samples]` (group-major).
 
 **Rationale**:
+
 - Each tree adds to one group's row (contiguous writes)
 - Base score initialization per group is contiguous
 - Matches gradient layout for consistency
@@ -382,5 +401,7 @@ let output = predictor.predict_weighted(&features, &tree_weights, Parallelism::P
 
 ## Changelog
 
+- 2025-01-23: Added API layering note to DD-1. Documented single-row slice convention. Clarified contiguity requirement.
+- 2025-01-23: Fixed Predictor interface to match implementation (uses `ArrayView2<f32>` not `FeatureAccessor`). Updated method signatures.
 - 2025-01-21: Major update. Added `FeatureAccessor` integration, updated output format to `Array2`, documented `BinnedAccessor`, updated for `TreeView` trait.
 - 2024-11-15: Initial RFC with traversal strategies
