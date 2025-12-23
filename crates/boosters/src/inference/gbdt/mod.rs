@@ -32,7 +32,6 @@
 //!
 //! For large batches (100+ rows), unrolled traversal is 2-3x faster.
 
-mod accessor;
 mod predictor;
 mod traversal;
 mod unrolled;
@@ -55,9 +54,6 @@ pub use traversal::{
     StandardTraversal, TreeTraversal, UnrolledTraversal, UnrolledTraversal4, UnrolledTraversal6,
     UnrolledTraversal8,
 };
-
-// Re-export traversal functions
-pub use accessor::{traverse_to_leaf, traverse_to_leaf_from};
 
 // Re-export BinnedAccessor from its home in data::binned
 pub use crate::data::binned::BinnedAccessor;

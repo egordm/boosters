@@ -8,11 +8,8 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
-use boosters::data::{
-    binned::BinnedDatasetBuilder,
-    transpose_to_c_order,
-    FeaturesView,
-};
+use boosters::data::binned::BinnedDatasetBuilder;
+use boosters::data::{transpose_to_c_order, FeaturesView};
 use boosters::testing::data::synthetic_regression;
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
@@ -56,24 +53,16 @@ fn bench_train_regression(c: &mut Criterion) {
 	for (name, rows, cols) in configs {
 		let dataset = synthetic_regression(rows, cols, 42, 0.05);
 		let targets: Vec<f32> = dataset.targets.to_vec();
-		// Convert feature-major to row-major for XGBoost/LightGBM
-		let features_fm = dataset.features.view();
-		let features: Vec<f32> = {
-			let mut v = Vec::with_capacity(rows * cols);
-			for r in 0..rows {
-				for f in 0..cols {
-					v.push(features_fm[(f, r)]);
-				}
-			}
-			v
-		};
+		// Get row-major features for XGBoost/LightGBM
+		let features_row_major = dataset.features_row_major();
+		let features: Vec<f32> = features_row_major.iter().cloned().collect();
 
 		group.throughput(Throughput::Elements((rows * cols) as u64));
 
 		// =====================================================================
 		// booste-rs
 		// =====================================================================
-		// Create sample-major view from flat slice, then transpose to feature-major
+		// Transpose to feature-major for booste-rs (it expects feature-major)
 		let sample_major_view = ArrayView2::from_shape((rows, cols), &features).unwrap();
 		let features_fm = transpose_to_c_order(sample_major_view);
 		let features_view = FeaturesView::from_array(features_fm.view());

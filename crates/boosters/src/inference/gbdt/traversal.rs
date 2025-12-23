@@ -9,8 +9,8 @@
 //! - [`UnrolledTraversal`]: Uses [`UnrolledTreeLayout`] for cache-friendly batch traversal
 
 use crate::data::SamplesView;
-use crate::repr::gbdt::{LeafValue, NodeId, ScalarLeaf, Tree};
-use super::{Depth6, UnrollDepth, UnrolledTreeLayout, traverse_to_leaf_from};
+use crate::repr::gbdt::{LeafValue, NodeId, ScalarLeaf, Tree, TreeView};
+use super::{Depth6, UnrollDepth, UnrolledTreeLayout};
 
 // =============================================================================
 // TreeTraversal Trait
@@ -109,7 +109,7 @@ impl TreeTraversal<ScalarLeaf> for StandardTraversal {
         // Use SamplesView for single-row access
         let view = SamplesView::from_slice(features, 1, features.len())
             .expect("features slice must be valid");
-        traverse_to_leaf_from(tree, 0, &view, 0)
+        tree.traverse_to_leaf(&view, 0)
     }
 }
 
@@ -174,7 +174,7 @@ impl<D: UnrollDepth> TreeTraversal<ScalarLeaf> for UnrolledTraversal<D> {
         // Phase 2: Continue to leaf if not already there
         let view = SamplesView::from_slice(features, 1, features.len())
             .expect("features slice must be valid");
-        traverse_to_leaf_from(tree, node_idx, &view, 0)
+        tree.traverse_to_leaf_from(node_idx, &view, 0)
     }
 
     /// Optimized block traversal using level-by-level processing.
@@ -198,7 +198,7 @@ impl<D: UnrollDepth> TreeTraversal<ScalarLeaf> for UnrolledTraversal<D> {
                 let row_features = &feature_buffer[row_offset..][..num_features];
                 let view = SamplesView::from_slice(row_features, 1, num_features)
                     .expect("row features slice must be valid");
-                let leaf_idx = traverse_to_leaf_from(tree, node_idx, &view, 0);
+                let leaf_idx = tree.traverse_to_leaf_from(node_idx, &view, 0);
                 output[row_idx] = leaf_idx;
             }
         };
@@ -446,7 +446,6 @@ mod tests {
     #[test]
     fn traverse_to_leaf_from_basic() {
         use crate::data::SamplesView;
-        use super::traverse_to_leaf_from;
         
         let tree_storage = build_simple_tree(1.0, 2.0, 0.5);
         let mut forest = Forest::for_regression();
@@ -456,8 +455,8 @@ mod tests {
         // Starting from root (node 0)
         let view_left = SamplesView::from_slice(&[0.3], 1, 1).unwrap();
         let view_right = SamplesView::from_slice(&[0.7], 1, 1).unwrap();
-        let leaf_left = traverse_to_leaf_from(tree, 0, &view_left, 0);
-        let leaf_right = traverse_to_leaf_from(tree, 0, &view_right, 0);
+        let leaf_left = tree.traverse_to_leaf_from(0, &view_left, 0);
+        let leaf_right = tree.traverse_to_leaf_from(0, &view_right, 0);
 
         assert_eq!(tree.leaf_value(leaf_left).0, 1.0);
         assert_eq!(tree.leaf_value(leaf_right).0, 2.0);

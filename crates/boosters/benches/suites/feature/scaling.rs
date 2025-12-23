@@ -10,13 +10,9 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
-use boosters::data::{binned::BinnedDatasetBuilder, transpose_to_c_order, FeaturesView};
 use boosters::testing::data::synthetic_regression;
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
-
-use ndarray::ArrayView1;
-use ndarray::ArrayView2;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
@@ -44,23 +40,6 @@ const N_TREES: u32 = 50;
 const MAX_DEPTH: u32 = 6;
 
 // =============================================================================
-// Helpers
-// =============================================================================
-
-fn build_binned_dataset(
-    features_row_major: &[f32],
-    rows: usize,
-    cols: usize,
-) -> boosters::data::binned::BinnedDataset {
-    let sample_major_view = ArrayView2::from_shape((rows, cols), features_row_major).unwrap();
-    let features_fm = transpose_to_c_order(sample_major_view);
-    let features_view = FeaturesView::from_array(features_fm.view());
-    BinnedDatasetBuilder::from_matrix(&features_view, 256)
-        .build()
-        .unwrap()
-}
-
-// =============================================================================
 // Row Scaling Benchmark
 // =============================================================================
 
@@ -74,22 +53,13 @@ fn bench_row_scaling(c: &mut Criterion) {
 
         let dataset = synthetic_regression(rows, cols, 42, 0.05);
         // Get row-major features for XGBoost/LightGBM compatibility
-        let features_fm = dataset.features.view();
-        let features: Vec<f32> = {
-            let mut v = Vec::with_capacity(rows * cols);
-            for r in 0..rows {
-                for f in 0..cols {
-                    v.push(features_fm[(f, r)]);
-                }
-            }
-            v
-        };
-        let targets: Vec<f32> = dataset.targets.to_vec();
+        let features = dataset.features_row_major_slice();
+        let targets = dataset.targets.to_vec();
 
         group.throughput(Throughput::Elements((rows * cols) as u64));
 
         // Pre-build binned dataset
-        let binned = build_binned_dataset(&features, rows, cols);
+        let binned = dataset.to_binned(256);
 
         // =====================================================================
         // booste-rs (depth-wise, single-threaded for fair comparison)
@@ -113,7 +83,7 @@ fn bench_row_scaling(c: &mut Criterion) {
             b.iter(|| {
                 black_box(
                     trainer
-                        .train(black_box(&binned), ArrayView1::from(black_box(&targets[..])), None, &[], Parallelism::Sequential)
+                        .train(black_box(&binned), black_box(dataset.targets.view()), None, &[], Parallelism::Sequential)
                         .unwrap(),
                 )
             })
@@ -224,22 +194,13 @@ fn bench_feature_scaling(c: &mut Criterion) {
 
         let dataset = synthetic_regression(rows, cols, 42, 0.05);
         // Get row-major features for XGBoost/LightGBM compatibility
-        let features_fm = dataset.features.view();
-        let features: Vec<f32> = {
-            let mut v = Vec::with_capacity(rows * cols);
-            for r in 0..rows {
-                for f in 0..cols {
-                    v.push(features_fm[(f, r)]);
-                }
-            }
-            v
-        };
-        let targets: Vec<f32> = dataset.targets.to_vec();
+        let features = dataset.features_row_major_slice();
+        let targets = dataset.targets.to_vec();
 
         group.throughput(Throughput::Elements((rows * cols) as u64));
 
         // Pre-build binned dataset
-        let binned = build_binned_dataset(&features, rows, cols);
+        let binned = dataset.to_binned(256);
 
         // =====================================================================
         // booste-rs
@@ -263,7 +224,7 @@ fn bench_feature_scaling(c: &mut Criterion) {
             b.iter(|| {
                 black_box(
                     trainer
-                        .train(black_box(&binned), ArrayView1::from(black_box(&targets[..])), None, &[], Parallelism::Sequential)
+                        .train(black_box(&binned), black_box(dataset.targets.view()), None, &[], Parallelism::Sequential)
                         .unwrap(),
                 )
             })

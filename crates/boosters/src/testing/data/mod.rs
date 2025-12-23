@@ -63,6 +63,22 @@ impl SyntheticDataset {
         self.targets.as_slice().expect("targets not contiguous")
     }
 
+    /// Get features in sample-major (row-major) layout.
+    ///
+    /// Returns an Array2 with shape `[n_samples, n_features]`.
+    /// Useful for XGBoost/LightGBM which expect row-major data.
+    pub fn features_row_major(&self) -> Array2<f32> {
+        transpose_to_c_order(self.features.view())
+    }
+
+    /// Get features in sample-major (row-major) layout as a contiguous slice.
+    ///
+    /// Useful for external libraries that need raw `&[f32]`.
+    pub fn features_row_major_slice(&self) -> Vec<f32> {
+        let row_major = self.features_row_major();
+        row_major.into_raw_vec_and_offset().0
+    }
+
     /// Build a binned dataset from these features.
     pub fn to_binned(&self, max_bins: u32) -> BinnedDataset {
         BinnedDatasetBuilder::from_matrix(&self.features_view(), max_bins)
@@ -229,4 +245,18 @@ pub fn split_indices(rows: usize, valid_fraction: f32, seed: u64) -> (Vec<usize>
 	let valid_len = valid_len.min(rows);
 	let (valid, train) = idx.split_at(valid_len);
 	(train.to_vec(), valid.to_vec())
+}
+
+/// Select rows from a sample-major Array2 by indices.
+///
+/// Returns a new Array2 with shape `[indices.len(), n_features]`.
+pub fn select_rows(features: ArrayView2<'_, f32>, indices: &[usize]) -> Array2<f32> {
+    features.select(ndarray::Axis(0), indices)
+}
+
+/// Select targets by indices.
+///
+/// Returns a new Array1 with length `indices.len()`.
+pub fn select_targets(targets: ndarray::ArrayView1<'_, f32>, indices: &[usize]) -> Array1<f32> {
+    Array1::from_vec(indices.iter().map(|&i| targets[i]).collect())
 }

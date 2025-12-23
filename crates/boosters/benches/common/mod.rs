@@ -5,5 +5,4 @@ pub mod criterion_config;
 pub mod ids;
 pub mod matrix;
 pub mod models;
-pub mod select;
 pub mod threading;

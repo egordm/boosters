@@ -1,7 +1,6 @@
 //! Canonical forest representation (collection of trees).
 
 use crate::data::SamplesView;
-use crate::inference::gbdt::traverse_to_leaf;
 
 use super::{tree::TreeValidationError, LeafValue, ScalarLeaf, Tree, TreeView};
 
@@ -146,7 +145,7 @@ impl Forest<ScalarLeaf> {
             .expect("features slice must be valid");
 
         for (tree, group) in self.trees_with_groups() {
-            let leaf_idx = traverse_to_leaf(tree, &view, 0);
+            let leaf_idx = tree.traverse_to_leaf(&view, 0);
             let leaf_val = tree.compute_leaf_value(leaf_idx, &view, 0);
             output[group as usize] += leaf_val;
         }
@@ -219,7 +218,7 @@ impl Forest<ScalarLeaf> {
         for (tree, group) in self.trees_with_groups() {
             let group_idx = group as usize;
             for row in 0..n_rows {
-                let leaf_idx = traverse_to_leaf(tree, accessor, row);
+                let leaf_idx = tree.traverse_to_leaf(accessor, row);
                 let leaf_val = tree.leaf_value(leaf_idx).0;
                 output[row * n_groups + group_idx] += leaf_val;
             }

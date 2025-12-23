@@ -7,16 +7,12 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
-use boosters::data::{binned::BinnedDatasetBuilder, transpose_to_c_order, FeaturesView};
-use boosters::testing::data::{split_indices, synthetic_regression};
+use boosters::data::{binned::BinnedDatasetBuilder, FeaturesView};
+use boosters::testing::data::{select_rows, select_targets, split_indices, synthetic_regression};
 use boosters::training::{
     GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, LinearLeafConfig, Rmse, SquaredLoss,
 };
 use boosters::Parallelism;
-
-use ndarray::{ArrayView1, ArrayView2};
-
-use common::select::{select_rows_row_major, select_targets};
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
@@ -27,27 +23,14 @@ fn bench_linear_training_overhead(c: &mut Criterion) {
     // Generate synthetic linear data where linear leaves should help
     let (rows, cols) = (50_000usize, 100usize);
     let dataset = synthetic_regression(rows, cols, 42, 0.05);
-    let targets: Vec<f32> = dataset.targets.to_vec();
-    // Convert feature-major to row-major for helper functions
-    let features_fm = dataset.features.view();
-    let features: Vec<f32> = {
-        let mut v = Vec::with_capacity(rows * cols);
-        for r in 0..rows {
-            for f in 0..cols {
-                v.push(features_fm[(f, r)]);
-            }
-        }
-        v
-    };
     let (train_idx, _valid_idx) = split_indices(rows, 0.2, 999);
 
-    let x_train = select_rows_row_major(&features, rows, cols, &train_idx);
-    let y_train = select_targets(&targets, &train_idx);
+    // Select training data using ndarray helpers
+    let x_train = select_rows(dataset.features.view(), &train_idx);
+    let y_train = select_targets(dataset.targets.view(), &train_idx);
 
-    // Convert to feature-major format for binning
-    let sample_major_view = ArrayView2::from_shape((train_idx.len(), cols), &x_train).unwrap();
-    let features_fm = transpose_to_c_order(sample_major_view);
-    let features_view = FeaturesView::from_array(features_fm.view());
+    // Build binned dataset for training (x_train is already feature-major)
+    let features_view = FeaturesView::from_array(x_train.view());
     let binned_train = BinnedDatasetBuilder::from_matrix(&features_view, 256).build().unwrap();
 
     let base_params = GBDTParams {
@@ -65,7 +48,7 @@ fn bench_linear_training_overhead(c: &mut Criterion) {
     group.bench_function("baseline", |b| {
         b.iter(|| {
             let forest = trainer_baseline
-                .train(black_box(&binned_train), ArrayView1::from(black_box(&y_train[..])), None, &[], Parallelism::Sequential)
+                .train(black_box(&binned_train), black_box(y_train.view()), None, &[], Parallelism::Sequential)
                 .unwrap();
             black_box(forest)
         })
@@ -80,7 +63,7 @@ fn bench_linear_training_overhead(c: &mut Criterion) {
     group.bench_function("linear_leaves", |b| {
         b.iter(|| {
             let forest = trainer_linear
-                .train(black_box(&binned_train), ArrayView1::from(black_box(&y_train[..])), None, &[], Parallelism::Sequential)
+                .train(black_box(&binned_train), black_box(y_train.view()), None, &[], Parallelism::Sequential)
                 .unwrap();
             black_box(forest)
         })
