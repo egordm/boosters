@@ -177,8 +177,8 @@ fn main() {
     .expect("Training failed");
 
     // Evaluate both
-    let predictions_no_bundle = model_no_bundle.predict(samples.view(), 1);
-    let predictions_bundled = model_bundled.predict(samples.view(), 1);
+    let predictions_no_bundle = model_no_bundle.predict_array(samples.view(), 1);
+    let predictions_bundled = model_bundled.predict_array(samples.view(), 1);
 
     let rmse_no_bundle = compute_rmse(predictions_no_bundle.as_slice().unwrap(), labels.as_slice().unwrap());
     let rmse_bundled = compute_rmse(predictions_bundled.as_slice().unwrap(), labels.as_slice().unwrap());

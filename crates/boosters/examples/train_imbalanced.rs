@@ -105,8 +105,8 @@ fn main() {
     )
     .expect("Training failed");
 
-    // GBDTModel::predict() returns probabilities for logistic objective
-    let probs_uw = model_unweighted.predict(samples.view(), 1);
+    // GBDTModel::predict_array() returns probabilities for logistic objective
+    let probs_uw = model_unweighted.predict_array(samples.view(), 1);
 
     let acc_uw = compute_accuracy(probs_uw.as_slice().unwrap(), labels.as_slice().unwrap());
     let recall_1_uw = compute_recall(probs_uw.as_slice().unwrap(), labels.as_slice().unwrap(), 1.0);
@@ -127,7 +127,7 @@ fn main() {
     )
     .expect("Training failed");
 
-    let probs_w = model_weighted.predict(samples.view(), 1);
+    let probs_w = model_weighted.predict_array(samples.view(), 1);
 
     let acc_w = compute_accuracy(probs_w.as_slice().unwrap(), labels.as_slice().unwrap());
     let recall_1_w = compute_recall(probs_w.as_slice().unwrap(), labels.as_slice().unwrap(), 1.0);

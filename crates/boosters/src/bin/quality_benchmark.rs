@@ -701,7 +701,7 @@ fn train_boosters(
 		.expect("training should succeed");
 
 	// Predict using model API (applies transform automatically)
-	let pred = model.predict(features_valid, 1);
+	let pred = model.predict_array(features_valid, 1);
 	let targets_arr = ArrayView1::from(y_valid);
 
 	// Compute metrics

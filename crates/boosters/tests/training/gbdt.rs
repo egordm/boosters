@@ -425,10 +425,10 @@ fn predict_from_dataset_with_block_buffering() {
     let pred_dataset = Dataset::new(features.view(), targets.view());
     
     // Predict using Dataset API (feature-major with block buffering)
-    let output_from_dataset = model.predict_dataset(&pred_dataset, 1);
+    let output_from_dataset = model.predict(&pred_dataset, 1);
     
     // Predict using traditional sample-major API for comparison
-    let output_from_array = model.predict(features.view(), 1);
+    let output_from_array = model.predict_array(features.view(), 1);
     
     // Results should match
     assert_eq!(output_from_dataset.shape(), output_from_array.shape());
@@ -496,10 +496,10 @@ fn predict_from_dataset_parallel_matches_sequential() {
     let model = GBDTModel::train(&dataset, config, 1).expect("training should succeed");
     
     // Sequential prediction (n_threads=1)
-    let seq_output = model.predict_dataset(&dataset, 1);
+    let seq_output = model.predict(&dataset, 1);
     
     // Parallel prediction (n_threads=0 = auto)
-    let par_output = model.predict_dataset(&dataset, 0);
+    let par_output = model.predict(&dataset, 0);
     
     // Results should match
     assert_eq!(seq_output.shape(), par_output.shape());

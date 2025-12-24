@@ -240,85 +240,14 @@ impl GBDTModel {
     // Prediction
     // =========================================================================
 
-    /// Predict for multiple rows, returning transformed predictions.
+    /// Predict from a Dataset (feature-major storage).
+    ///
+    /// This is the **preferred** prediction method. It accepts a Dataset with
+    /// feature-major layout and handles the transpose internally using block
+    /// buffering for optimal cache efficiency.
     ///
     /// Returns probabilities for classification (sigmoid/softmax) or raw values
     /// for regression. Uses automatic parallelization for large batches.
-    ///
-    /// # Arguments
-    ///
-    /// * `features` - Feature matrix with shape `[n_samples, n_features]` (sample-major)
-    /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
-    ///
-    /// # Returns
-    ///
-    /// Array2 with shape `[n_groups, n_samples]`. Access group predictions via `.row(group_idx)`.
-    pub fn predict(
-        &self,
-        features: ArrayView2<f32>,
-        n_threads: usize,
-    ) -> Array2<f32> {
-        let n_rows = features.nrows();
-        let n_groups = self.meta.n_groups;
-
-        if n_rows == 0 {
-            return Array2::zeros((n_groups, 0));
-        }
-
-        // Allocate output [n_groups, n_samples]
-        let mut output_array = Array2::<f32>::zeros((n_groups, n_rows));
-
-        // Run prediction with thread pool management
-        run_with_threads(n_threads, |parallelism| {
-            let predictor = UnrolledPredictor6::new(&self.forest);
-            predictor.predict_into(features, None, parallelism, output_array.view_mut());
-        });
-
-        // Apply transformation if we have config with objective
-        // transform_predictions expects [n_outputs, n_rows] which matches our array shape
-        self.config.objective.transform_predictions(output_array.view_mut());
-
-        output_array
-    }
-
-    /// Predict for multiple rows, returning raw margin scores (no transform).
-    ///
-    /// # Arguments
-    ///
-    /// * `features` - Feature matrix with shape `[n_samples, n_features]` (sample-major)
-    /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
-    ///
-    /// # Returns
-    ///
-    /// Array2 with shape `[n_groups, n_samples]`. Access group predictions via `.row(group_idx)`.
-    pub fn predict_raw(
-        &self,
-        features: ArrayView2<f32>,
-        n_threads: usize,
-    ) -> Array2<f32> {
-        let n_rows = features.nrows();
-        let n_groups = self.meta.n_groups;
-
-        if n_rows == 0 {
-            return Array2::zeros((n_groups, 0));
-        }
-
-        // Allocate output [n_groups, n_samples]
-        let mut output_array = Array2::<f32>::zeros((n_groups, n_rows));
-
-        // Run prediction with thread pool management
-        run_with_threads(n_threads, |parallelism| {
-            let predictor = UnrolledPredictor6::new(&self.forest);
-            predictor.predict_into(features, None, parallelism, output_array.view_mut());
-        });
-
-        output_array
-    }
-
-    /// Predict from a Dataset (feature-major storage).
-    ///
-    /// This method accepts the new Dataset type with feature-major layout
-    /// and handles the transpose internally using block buffering for efficiency.
     ///
     /// # Arguments
     ///
@@ -328,7 +257,7 @@ impl GBDTModel {
     /// # Returns
     ///
     /// Array2 with shape `[n_groups, n_samples]`. Access group predictions via `.row(group_idx)`.
-    pub fn predict_dataset(
+    pub fn predict(
         &self,
         dataset: &crate::dataset::Dataset,
         n_threads: usize,
@@ -372,7 +301,7 @@ impl GBDTModel {
     /// # Returns
     ///
     /// Array2 with shape `[n_groups, n_samples]`.
-    pub fn predict_dataset_raw(
+    pub fn predict_raw(
         &self,
         dataset: &crate::dataset::Dataset,
         n_threads: usize,
@@ -397,6 +326,84 @@ impl GBDTModel {
                 parallelism,
                 output_array.view_mut(),
             );
+        });
+
+        output_array
+    }
+
+    /// Predict for a sample-major array, returning transformed predictions.
+    ///
+    /// Prefer [`predict`](Self::predict) with a Dataset for better cache efficiency
+    /// on large batches. This method is provided for convenience when you already
+    /// have sample-major data.
+    ///
+    /// # Arguments
+    ///
+    /// * `features` - Feature matrix with shape `[n_samples, n_features]` (sample-major)
+    /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
+    ///
+    /// # Returns
+    ///
+    /// Array2 with shape `[n_groups, n_samples]`. Access group predictions via `.row(group_idx)`.
+    pub fn predict_array(
+        &self,
+        features: ArrayView2<f32>,
+        n_threads: usize,
+    ) -> Array2<f32> {
+        let n_rows = features.nrows();
+        let n_groups = self.meta.n_groups;
+
+        if n_rows == 0 {
+            return Array2::zeros((n_groups, 0));
+        }
+
+        // Allocate output [n_groups, n_samples]
+        let mut output_array = Array2::<f32>::zeros((n_groups, n_rows));
+
+        // Run prediction with thread pool management
+        run_with_threads(n_threads, |parallelism| {
+            let predictor = UnrolledPredictor6::new(&self.forest);
+            predictor.predict_into(features, None, parallelism, output_array.view_mut());
+        });
+
+        // Apply transformation if we have config with objective
+        // transform_predictions expects [n_outputs, n_rows] which matches our array shape
+        self.config.objective.transform_predictions(output_array.view_mut());
+
+        output_array
+    }
+
+    /// Predict for a sample-major array, returning raw margin scores (no transform).
+    ///
+    /// Prefer [`predict_raw`](Self::predict_raw) with a Dataset for better cache efficiency.
+    ///
+    /// # Arguments
+    ///
+    /// * `features` - Feature matrix with shape `[n_samples, n_features]` (sample-major)
+    /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
+    ///
+    /// # Returns
+    ///
+    /// Array2 with shape `[n_groups, n_samples]`. Access group predictions via `.row(group_idx)`.
+    pub fn predict_raw_array(
+        &self,
+        features: ArrayView2<f32>,
+        n_threads: usize,
+    ) -> Array2<f32> {
+        let n_rows = features.nrows();
+        let n_groups = self.meta.n_groups;
+
+        if n_rows == 0 {
+            return Array2::zeros((n_groups, 0));
+        }
+
+        // Allocate output [n_groups, n_samples]
+        let mut output_array = Array2::<f32>::zeros((n_groups, n_rows));
+
+        // Run prediction with thread pool management
+        run_with_threads(n_threads, |parallelism| {
+            let predictor = UnrolledPredictor6::new(&self.forest);
+            predictor.predict_into(features, None, parallelism, output_array.view_mut());
         });
 
         output_array
@@ -499,12 +506,12 @@ mod tests {
 
         // x0 < 0.5 → leaf 1.0
         let features1 = arr2(&[[0.3, 0.5]]);
-        let preds1 = model.predict(features1.view(), 1);
+        let preds1 = model.predict_array(features1.view(), 1);
         assert_eq!(preds1.row(0).as_slice().unwrap(), &[1.0]);
 
         // x0 >= 0.5, x1 >= 0.3 → leaf 3.0
         let features2 = arr2(&[[0.7, 0.5]]);
-        let preds2 = model.predict(features2.view(), 1);
+        let preds2 = model.predict_array(features2.view(), 1);
         assert_eq!(preds2.row(0).as_slice().unwrap(), &[3.0]);
     }
 
@@ -518,7 +525,7 @@ mod tests {
             [0.3, 0.5], // row 0
             [0.7, 0.5], // row 1
         ]);
-        let preds = model.predict(features.view(), 1);
+        let preds = model.predict_array(features.view(), 1);
 
         // Shape is [n_groups, n_samples] = [1, 2]
         assert_eq!(preds.row(0).as_slice().unwrap(), &[1.0, 3.0]);

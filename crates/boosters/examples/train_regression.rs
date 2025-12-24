@@ -71,7 +71,7 @@ fn main() {
     // Evaluate (need sample-major C-order for prediction)
     // =========================================================================
     let samples = transpose_to_c_order(features.view());
-    let predictions = model.predict(samples.view(), 1);
+    let predictions = model.predict_array(samples.view(), 1);
 
     let rmse = compute_rmse(predictions.as_slice().unwrap(), labels.as_slice().unwrap());
 

@@ -77,7 +77,7 @@ fn run_synthetic_regression(
 		1,
 	)
 	.unwrap();
-	let pred = model.predict(row_valid.view(), 1);
+	let pred = model.predict_array(row_valid.view(), 1);
 	let targets_arr = ArrayView1::from(&y_valid[..]);
 
 	let rmse = Rmse.compute(pred.view(), targets_arr, None);
@@ -133,8 +133,8 @@ fn run_synthetic_binary(
 		1,
 	)
 	.unwrap();
-	// predict() returns probabilities automatically
-	let pred = model.predict(row_valid.view(), 1);
+	// predict_array() returns probabilities automatically
+	let pred = model.predict_array(row_valid.view(), 1);
 	let targets_arr = ArrayView1::from(&y_valid[..]);
 
 	let ll = LogLoss.compute(pred.view(), targets_arr, None);
@@ -191,8 +191,8 @@ fn run_synthetic_multiclass(
 		1,
 	)
 	.unwrap();
-	// predict() returns softmax probabilities
-	let pred = model.predict(row_valid.view(), 1);
+	// predict_array() returns softmax probabilities
+	let pred = model.predict_array(row_valid.view(), 1);
 	let targets_arr = ArrayView1::from(&y_valid[..]);
 
 	let ll = MulticlassLogLoss.compute(pred.view(), targets_arr, None);
@@ -322,7 +322,7 @@ fn test_quality_improvement_linear_leaves() {
 		1,
 	)
 	.unwrap();
-	let pred_baseline = model_baseline.predict(row_valid.view(), 1);
+	let pred_baseline = model_baseline.predict_array(row_valid.view(), 1);
 	let targets_arr = ArrayView1::from(&y_valid[..]);
 	let rmse_baseline = Rmse.compute(pred_baseline.view(), targets_arr, None);
 
@@ -351,7 +351,7 @@ fn test_quality_improvement_linear_leaves() {
 		1,
 	)
 	.unwrap();
-	let pred_linear = model_linear.predict(row_valid.view(), 1);
+	let pred_linear = model_linear.predict_array(row_valid.view(), 1);
 	let rmse_linear = Rmse.compute(pred_linear.view(), targets_arr, None);
 
 	// Assert: linear leaves should improve RMSE by at least 5%

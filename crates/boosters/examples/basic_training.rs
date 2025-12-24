@@ -57,12 +57,12 @@ fn main() {
     // Predict on single sample (create a 1-row sample-major array)
     let first_sample_data: Vec<f32> = (0..n_features).map(|f| features[(f, 0)]).collect();
     let sample_arr = Array2::from_shape_vec((1, n_features), first_sample_data).unwrap();
-    let pred = model.predict(sample_arr.view(), 1);
+    let pred = model.predict_array(sample_arr.view(), 1);
     println!("Sample prediction: {:.4}", pred.as_slice().unwrap()[0]);
 
     // Predict on full dataset (transpose feature-major to sample-major with C-order)
     let samples = transpose_to_c_order(features.view());
-    let all_preds = model.predict(samples.view(), 1);
+    let all_preds = model.predict_array(samples.view(), 1);
 
     // Compute RMSE manually
     let rmse = compute_rmse(all_preds.as_slice().unwrap(), labels.as_slice().unwrap());

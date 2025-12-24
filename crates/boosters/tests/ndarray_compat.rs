@@ -70,8 +70,8 @@ fn predict_regression_shape_and_values() {
         [0.6, 0.1],    // sample 2: goes right-left → 2.0
     ];
 
-    // predict returns Array2 with shape (n_groups, n_samples)
-    let preds = model.predict(features.view(), 1);
+    // predict_array returns Array2 with shape (n_groups, n_samples)
+    let preds = model.predict_array(features.view(), 1);
 
     // Verify shape: [n_groups=1, n_samples=3]
     assert_eq!(preds.nrows(), 1);
@@ -91,7 +91,7 @@ fn predict_raw_shape_and_values() {
 
     let features = array![[0.3f32, 0.5], [0.7, 0.5]];
 
-    let preds = model.predict_raw(features.view(), 1);
+    let preds = model.predict_raw_array(features.view(), 1);
 
     // Verify shape: [n_groups=1, n_samples=2]
     assert_eq!(preds.nrows(), 1);
@@ -117,7 +117,7 @@ fn predict_multiclass_shape() {
         [0.7, 0.5],    // sample 1: goes right
     ];
 
-    let preds = model.predict(features.view(), 1);
+    let preds = model.predict_array(features.view(), 1);
 
     // Array2 shape: (n_groups=3, n_samples=2)
     assert_eq!(preds.nrows(), 3);
@@ -145,7 +145,7 @@ fn array2_row_access_is_contiguous() {
     let model = GBDTModel::from_forest(forest, meta);
 
     let features = array![[0.3f32, 0.5], [0.7, 0.5], [0.4, 0.6]];
-    let preds = model.predict(features.view(), 1);
+    let preds = model.predict_array(features.view(), 1);
 
     // Each row (group) should be contiguous (all samples for one group)
     for group in 0..3 {
@@ -166,7 +166,7 @@ fn predict_empty_input() {
     let model = GBDTModel::from_forest(forest, meta);
 
     let features = ndarray::Array2::<f32>::zeros((0, 2));
-    let preds = model.predict(features.view(), 1);
+    let preds = model.predict_array(features.view(), 1);
 
     // Should have shape (n_groups=1, n_samples=0)
     assert_eq!(preds.nrows(), 1);
@@ -180,7 +180,7 @@ fn predict_single_sample() {
     let model = GBDTModel::from_forest(forest, meta);
 
     let features = array![[0.3f32, 0.5]];
-    let preds = model.predict(features.view(), 1);
+    let preds = model.predict_array(features.view(), 1);
 
     assert_eq!(preds.nrows(), 1);
     assert_eq!(preds.ncols(), 1);

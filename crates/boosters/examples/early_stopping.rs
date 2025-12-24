@@ -68,7 +68,7 @@ fn main() {
 
     // Evaluate (need sample-major C-order for prediction)
     let samples = transpose_to_c_order(features.view());
-    let preds = model.predict(samples.view(), 1);
+    let preds = model.predict_array(samples.view(), 1);
     let rmse = compute_rmse(preds.as_slice().unwrap(), labels.as_slice().unwrap());
 
     println!("Training RMSE: {:.4}", rmse);

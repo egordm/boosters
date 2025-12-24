@@ -80,8 +80,8 @@ fn main() {
     let model_depth = GBDTModel::train_binned(&dataset, labels.view(), None, &[], config_depth, 1)
         .expect("Training failed");
 
-    // Predict: GBDTModel::predict() returns probabilities for logistic objective
-    let predictions = model_depth.predict(samples.view(), 1);
+    // Predict: GBDTModel::predict_array() returns probabilities for logistic objective
+    let predictions = model_depth.predict_array(samples.view(), 1);
 
     let acc = compute_accuracy(predictions.as_slice().unwrap(), labels.as_slice().unwrap());
     println!("Depth-wise: {} trees", model_depth.forest().n_trees());
@@ -105,7 +105,7 @@ fn main() {
     let model_leaf = GBDTModel::train_binned(&dataset, labels.view(), None, &[], config_leaf, 1)
         .expect("Training failed");
 
-    let predictions = model_leaf.predict(samples.view(), 1);
+    let predictions = model_leaf.predict_array(samples.view(), 1);
 
     let acc = compute_accuracy(predictions.as_slice().unwrap(), labels.as_slice().unwrap());
     println!("Leaf-wise: {} trees", model_leaf.forest().n_trees());
@@ -146,7 +146,7 @@ fn main() {
     )
     .expect("Training failed");
 
-    let predictions = model_weighted.predict(samples.view(), 1);
+    let predictions = model_weighted.predict_array(samples.view(), 1);
 
     let acc = compute_accuracy(predictions.as_slice().unwrap(), labels.as_slice().unwrap());
     println!("Weighted training: {} trees", model_weighted.forest().n_trees());
