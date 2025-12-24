@@ -11,7 +11,7 @@
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
-use boosters::dataset::Dataset;
+use boosters::dataset::{Dataset, TargetsView};
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism, TreeParams};
 use ndarray::{Array1, Array2};
 
@@ -58,8 +58,12 @@ fn main() {
     // =========================================================================
     println!("Training with early stopping (monitoring training loss)...\n");
 
+    // Wrap labels in TargetsView (shape [n_outputs=1, n_samples])
+    let targets_2d = labels.clone().insert_axis(ndarray::Axis(0));
+    let targets = TargetsView::new(targets_2d.view());
+
     let model =
-        GBDTModel::train_binned(&dataset, labels.view(), None, &[], config, 1).expect("Training failed");
+        GBDTModel::train_binned(&dataset, targets, None, &[], config, 1).expect("Training failed");
 
     // =========================================================================
     // 4. Results

@@ -5,6 +5,7 @@
 use ndarray::{ArrayView1, ArrayView2};
 
 use super::MetricFn;
+use crate::dataset::TargetsView;
 use crate::inference::PredictionKind;
 use crate::utils::weight_iter;
 
@@ -23,9 +24,10 @@ impl MetricFn for LogLoss {
     fn compute(
         &self,
         predictions: ArrayView2<f32>,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
     ) -> f64 {
+        let targets = targets.output(0);
         let (_, n_rows) = predictions.dim();
         if n_rows == 0 {
             return 0.0;
@@ -90,9 +92,10 @@ impl MetricFn for Accuracy {
     fn compute(
         &self,
         predictions: ArrayView2<f32>,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
     ) -> f64 {
+        let targets = targets.output(0);
         let (_, n_rows) = predictions.dim();
         if n_rows == 0 {
             return 0.0;
@@ -155,9 +158,10 @@ impl MetricFn for MarginAccuracy {
     fn compute(
         &self,
         predictions: ArrayView2<f32>,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
     ) -> f64 {
+        let targets = targets.output(0);
         let (_, n_rows) = predictions.dim();
         if n_rows == 0 {
             return 0.0;
@@ -208,9 +212,10 @@ impl MetricFn for MulticlassAccuracy {
     fn compute(
         &self,
         predictions: ArrayView2<f32>,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
     ) -> f64 {
+        let targets = targets.output(0);
         let (n_outputs, n_rows) = predictions.dim();
         if n_rows == 0 {
             return 0.0;
@@ -283,9 +288,10 @@ impl MetricFn for Auc {
     fn compute(
         &self,
         predictions: ArrayView2<f32>,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
     ) -> f64 {
+        let targets = targets.output(0);
         let (_, n_rows) = predictions.dim();
         if n_rows == 0 {
             return 0.5;
@@ -295,9 +301,12 @@ impl MetricFn for Auc {
         let preds_slice = preds_row.as_slice().expect("predictions row should be contiguous");
         let targets_slice = targets.as_slice().expect("targets should be contiguous");
 
-        match weights.as_ref().and_then(|w| w.as_slice()) {
+        match weights {
             None => compute_auc_unweighted(preds_slice, targets_slice),
-            Some(weights_slice) => compute_auc_weighted(preds_slice, targets_slice, weights_slice),
+            Some(w) => {
+                let weights_slice = w.as_slice().expect("weights should be contiguous");
+                compute_auc_weighted(preds_slice, targets_slice, weights_slice)
+            }
         }
     }
 
@@ -428,9 +437,10 @@ impl MetricFn for MulticlassLogLoss {
     fn compute(
         &self,
         predictions: ArrayView2<f32>,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
     ) -> f64 {
+        let targets = targets.output(0);
         let (n_outputs, n_rows) = predictions.dim();
         if n_rows == 0 || n_outputs == 0 {
             return 0.0;
@@ -478,18 +488,14 @@ mod tests {
     use super::*;
     use approx::assert_abs_diff_eq;
     use crate::testing::DEFAULT_TOLERANCE;
-    use ndarray::{Array1, Array2};
+    use ndarray::Array2;
 
     fn make_preds(n_outputs: usize, n_samples: usize, data: &[f32]) -> Array2<f32> {
         Array2::from_shape_vec((n_outputs, n_samples), data.to_vec()).unwrap()
     }
 
-    fn make_targets(data: &[f32]) -> Array1<f32> {
-        Array1::from_vec(data.to_vec())
-    }
-
-    fn make_weights(data: &[f32]) -> Array1<f32> {
-        Array1::from_vec(data.to_vec())
+    fn make_targets(data: &[f32]) -> Array2<f32> {
+        Array2::from_shape_vec((1, data.len()), data.to_vec()).unwrap()
     }
 
     // =========================================================================
@@ -500,7 +506,7 @@ mod tests {
     fn logloss_perfect() {
         let preds = make_preds(1, 2, &[0.9999, 0.0001]);
         let labels = make_targets(&[1.0, 0.0]);
-        let ll = LogLoss.compute(preds.view(), labels.view(), None);
+        let ll = LogLoss.compute(preds.view(), TargetsView::new(labels.view()), None);
         assert!(ll < 0.01);
     }
 
@@ -508,7 +514,7 @@ mod tests {
     fn logloss_random() {
         let preds = make_preds(1, 2, &[0.5, 0.5]);
         let labels = make_targets(&[1.0, 0.0]);
-        let ll = LogLoss.compute(preds.view(), labels.view(), None);
+        let ll = LogLoss.compute(preds.view(), TargetsView::new(labels.view()), None);
         assert_abs_diff_eq!(ll as f32, 0.693, epsilon = 0.01);
     }
 
@@ -517,11 +523,11 @@ mod tests {
         let preds = make_preds(1, 2, &[0.9, 0.1]);
         let labels = make_targets(&[1.0, 1.0]);
         
-        let unweighted = LogLoss.compute(preds.view(), labels.view(), None);
+        let unweighted = LogLoss.compute(preds.view(), TargetsView::new(labels.view()), None);
         
         // High weight on good prediction → lower loss
-        let weights = make_weights(&[10.0, 1.0]);
-        let weighted = LogLoss.compute(preds.view(), labels.view(), Some(weights.view()));
+        let weights = ndarray::array![10.0f32, 1.0];
+        let weighted = LogLoss.compute(preds.view(), TargetsView::new(labels.view()), Some(weights.view()));
         assert!(weighted < unweighted);
     }
 
@@ -533,7 +539,7 @@ mod tests {
     fn accuracy_perfect() {
         let preds = make_preds(1, 4, &[0.9, 0.1, 0.8, 0.2]);
         let labels = make_targets(&[1.0, 0.0, 1.0, 0.0]);
-        let acc = Accuracy::default().compute(preds.view(), labels.view(), None);
+        let acc = Accuracy::default().compute(preds.view(), TargetsView::new(labels.view()), None);
         assert_abs_diff_eq!(acc as f32, 1.0, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -541,7 +547,7 @@ mod tests {
     fn accuracy_half() {
         let preds = make_preds(1, 4, &[0.9, 0.9, 0.1, 0.1]);
         let labels = make_targets(&[1.0, 0.0, 1.0, 0.0]);
-        let acc = Accuracy::default().compute(preds.view(), labels.view(), None);
+        let acc = Accuracy::default().compute(preds.view(), TargetsView::new(labels.view()), None);
         assert_abs_diff_eq!(acc as f32, 0.5, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -551,8 +557,8 @@ mod tests {
         let labels = make_targets(&[1.0, 0.0]);
         
         // High weight on correct sample
-        let weights = make_weights(&[10.0, 1.0]);
-        let weighted = Accuracy::default().compute(preds.view(), labels.view(), Some(weights.view()));
+        let weights = ndarray::array![10.0f32, 1.0];
+        let weighted = Accuracy::default().compute(preds.view(), TargetsView::new(labels.view()), Some(weights.view()));
         assert_abs_diff_eq!(weighted as f32, 10.0 / 11.0, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -569,7 +575,7 @@ mod tests {
             0.0, 1.0, 3.0, 1.0,  // class 2
         ]);
         let labels = make_targets(&[0.0, 1.0, 2.0, 0.0]); // Last one wrong
-        let acc = MulticlassAccuracy.compute(preds.view(), labels.view(), None);
+        let acc = MulticlassAccuracy.compute(preds.view(), TargetsView::new(labels.view()), None);
         assert_abs_diff_eq!(acc as f32, 0.75, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -581,7 +587,7 @@ mod tests {
     fn auc_perfect() {
         let preds = make_preds(1, 4, &[0.9, 0.8, 0.3, 0.2]);
         let labels = make_targets(&[1.0, 1.0, 0.0, 0.0]);
-        let auc = Auc.compute(preds.view(), labels.view(), None);
+        let auc = Auc.compute(preds.view(), TargetsView::new(labels.view()), None);
         assert_abs_diff_eq!(auc as f32, 1.0, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -589,7 +595,7 @@ mod tests {
     fn auc_random() {
         let preds = make_preds(1, 4, &[0.5, 0.5, 0.5, 0.5]);
         let labels = make_targets(&[1.0, 0.0, 1.0, 0.0]);
-        let auc = Auc.compute(preds.view(), labels.view(), None);
+        let auc = Auc.compute(preds.view(), TargetsView::new(labels.view()), None);
         assert_abs_diff_eq!(auc as f32, 0.5, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -597,7 +603,7 @@ mod tests {
     fn auc_worst() {
         let preds = make_preds(1, 4, &[0.2, 0.3, 0.8, 0.9]);
         let labels = make_targets(&[1.0, 1.0, 0.0, 0.0]);
-        let auc = Auc.compute(preds.view(), labels.view(), None);
+        let auc = Auc.compute(preds.view(), TargetsView::new(labels.view()), None);
         assert!(auc < 0.01);
     }
 
@@ -614,7 +620,7 @@ mod tests {
             0.005, 0.005,  // class 2
         ]);
         let labels = make_targets(&[0.0, 1.0]);
-        let mlogloss = MulticlassLogLoss.compute(preds.view(), labels.view(), None);
+        let mlogloss = MulticlassLogLoss.compute(preds.view(), TargetsView::new(labels.view()), None);
         assert!(mlogloss < 0.02);
     }
 
@@ -627,7 +633,7 @@ mod tests {
             0.334, 0.334, 0.334,  // class 2
         ]);
         let labels = make_targets(&[0.0, 1.0, 2.0]);
-        let mlogloss = MulticlassLogLoss.compute(preds.view(), labels.view(), None);
+        let mlogloss = MulticlassLogLoss.compute(preds.view(), TargetsView::new(labels.view()), None);
         assert_abs_diff_eq!(mlogloss as f32, 1.099, epsilon = 0.01);
     }
 

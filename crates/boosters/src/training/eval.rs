@@ -5,7 +5,7 @@
 
 use ndarray::{Array2, ArrayView1, ArrayView2};
 
-use crate::dataset::Dataset;
+use crate::dataset::{Dataset, TargetsView};
 use crate::inference::PredictionKind;
 
 use super::metrics::MetricFn;
@@ -163,18 +163,18 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
     /// # Arguments
     ///
     /// * `predictions` - Prediction array, shape `[n_outputs, n_samples]`
-    /// * `targets` - Target values, length `n_samples`
+    /// * `targets` - Target values
     /// * `weights` - Sample weights, `None` for uniform
     pub fn compute(
         &mut self,
         predictions: ArrayView2<f32>,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
     ) -> f64 {
         let needs_transform =
             self.metric.expected_prediction_kind() != PredictionKind::Margin;
 
-        let n_samples = targets.len();
+        let n_samples = targets.n_samples();
 
         if needs_transform {
             // Ensure buffer is large enough
@@ -213,14 +213,14 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
     ///
     /// * `name` - Name for the metric (e.g., "train-rmse")
     /// * `predictions` - Prediction array, shape `[n_outputs, n_samples]`
-    /// * `targets` - Target values, length `n_samples`
+    /// * `targets` - Target values
     /// * `weights` - Sample weights, `None` for uniform
     pub fn compute_metric(
         &mut self,
         name: impl Into<String>,
         predictions: ArrayView2<f32>,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
     ) -> MetricValue {
         let value = self.compute(predictions, targets, weights);
         MetricValue::new(name, value, self.higher_is_better())
@@ -234,15 +234,15 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
     /// # Arguments
     ///
     /// * `train_predictions` - Training predictions, shape `[n_outputs, n_train_samples]`
-    /// * `train_targets` - Training targets, length `n_train_samples`
+    /// * `train_targets` - Training targets
     /// * `train_weights` - Training weights, `None` for uniform
     /// * `eval_sets` - Evaluation datasets
     /// * `eval_predictions` - Predictions for each eval set, same shape convention
     pub fn evaluate_round(
         &mut self,
         train_predictions: ArrayView2<f32>,
-        train_targets: ArrayView1<f32>,
-        train_weights: Option<ArrayView1<f32>>,
+        train_targets: TargetsView<'_>,
+        train_weights: Option<ArrayView1<'_, f32>>,
         eval_sets: &[EvalSet<'_>],
         eval_predictions: &[Array2<f32>],
     ) -> Vec<MetricValue> {
@@ -265,15 +265,14 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
         // Compute eval set metrics
         for (set_idx, eval_set) in eval_sets.iter().enumerate() {
             let preds = &eval_predictions[set_idx];
-            let targets_2d = eval_set.dataset.targets().expect("eval set must have targets");
-            let targets_view = targets_2d.as_single_output();
-            let weights_opt = eval_set.dataset.weights();
+            let targets = eval_set.dataset.targets().expect("eval set must have targets");
+            let weights = eval_set.dataset.weights();
 
             let metric = self.compute_metric(
                 format!("{}-{}", eval_set.name, self.metric_name()),
                 preds.view(),
-                targets_view,
-                weights_opt,
+                targets,
+                weights,
             );
             metrics.push(metric);
         }

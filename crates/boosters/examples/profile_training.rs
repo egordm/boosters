@@ -8,9 +8,9 @@
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
-use boosters::dataset::Dataset;
+use boosters::dataset::{Dataset, TargetsView};
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism, RegularizationParams, TreeParams};
-use ndarray::{Array2, ArrayView1};
+use ndarray::Array2;
 
 fn main() {
     // Large synthetic dataset for profiling
@@ -72,7 +72,11 @@ fn main() {
     
     let start = std::time::Instant::now();
     // Use n_threads=1 for cleaner profiling (single thread)
-    let model = GBDTModel::train_binned(&dataset, ArrayView1::from(&labels[..]), None, &[], config, 1)
+    // Wrap labels in TargetsView (shape [n_outputs=1, n_samples])
+    let targets_2d = ndarray::Array2::from_shape_vec((1, labels.len()), labels.clone()).unwrap();
+    let targets = TargetsView::new(targets_2d.view());
+
+    let model = GBDTModel::train_binned(&dataset, targets, None, &[], config, 1)
         .expect("Training failed");
     let train_time = start.elapsed();
 

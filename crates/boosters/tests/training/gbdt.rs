@@ -3,12 +3,12 @@
 //! Focused on behavior and invariants (not default params or superficial shapes).
 
 use boosters::data::{transpose_to_c_order, BinnedDatasetBuilder, BinningConfig, GroupLayout, GroupStrategy};
-use boosters::dataset::Dataset;
+use boosters::dataset::{Dataset, TargetsView};
 use boosters::model::gbdt::{GBDTConfig, GBDTModel};
 use boosters::repr::gbdt::{TreeView, SplitType};
 use boosters::training::{GBDTParams, GBDTTrainer, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
-use ndarray::{Array2, ArrayView1, ArrayView2};
+use ndarray::{Array2, ArrayView2};
 
 #[test]
 fn train_rejects_invalid_targets_len() {
@@ -27,7 +27,8 @@ fn train_rejects_invalid_targets_len() {
         .expect("Failed to build binned dataset");
 
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, GBDTParams::default());
-    let targets_view = ArrayView1::from(&targets[..]);
+    let targets_2d = Array2::from_shape_vec((1, targets.len()), targets).unwrap();
+    let targets_view = TargetsView::new(targets_2d.view());
     let result = trainer.train(&dataset, targets_view, None, &[], Parallelism::Sequential);
 
     assert!(result.is_none());
@@ -56,7 +57,8 @@ fn trained_model_improves_over_base_score_on_simple_problem() {
     };
 
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-    let targets_view = ArrayView1::from(&targets[..]);
+    let targets_2d = Array2::from_shape_vec((1, targets.len()), targets.clone()).unwrap();
+    let targets_view = TargetsView::new(targets_2d.view());
     let forest = trainer.train(&dataset, targets_view, None, &[], Parallelism::Sequential).unwrap();
 
     forest
@@ -120,7 +122,8 @@ fn trained_model_improves_over_base_score_on_medium_problem() {
     };
 
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-    let targets_view = ArrayView1::from(&targets[..]);
+    let targets_2d = Array2::from_shape_vec((1, targets.len()), targets.clone()).unwrap();
+    let targets_view = TargetsView::new(targets_2d.view());
     let forest = trainer.train(&dataset, targets_view, None, &[], Parallelism::Sequential).unwrap();
 
     forest
@@ -202,7 +205,8 @@ fn train_with_categorical_features_produces_categorical_splits() {
     };
 
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-    let targets_view = ArrayView1::from(&targets[..]);
+    let targets_2d = Array2::from_shape_vec((1, targets.len()), targets.clone()).unwrap();
+    let targets_view = TargetsView::new(targets_2d.view());
     let forest = trainer.train(&dataset, targets_view, None, &[], Parallelism::Sequential).unwrap();
 
     forest

@@ -108,6 +108,27 @@ redundant methods, and using standardized view types throughout.
 
 ---
 
+## Epic 9: Consistent FeaturesView Usage ✅
+
+### Story 9.1: Predictor Uses FeaturesView ✅
+- [x] `predict_into` takes `FeaturesView` (not raw `ArrayView2`)
+- [x] Uses `axis_chunks_iter` for clean iteration over feature chunks
+- [x] Thread-local `Array2` buffers with `.assign()` for efficient transpose
+- [x] Added docs clarifying `weights` parameter is for DART tree weighting
+
+### Story 9.2: Explainers Use FeaturesView ✅
+- [x] `TreeExplainer::shap_values(FeaturesView)` - takes public FeaturesView directly
+- [x] `LinearExplainer::shap_values(FeaturesView, ...)` - same pattern
+- [x] Transpose to sample-major handled internally
+
+### Story 9.3: GBDTTrainer Keeps Feature-Major ✅
+- [x] No longer creates sample-major arrays for eval sets
+- [x] Implemented `FeatureAccessor` for public `FeaturesView`
+- [x] `Tree::predict_into` now accepts `FeaturesView` directly
+- [x] Removed unused `transpose_to_c_order` calls
+
+---
+
 ## Quality Gate
 
 - [x] All lib tests pass (556/556)

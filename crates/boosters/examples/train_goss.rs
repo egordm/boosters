@@ -17,14 +17,14 @@ use std::time::Instant;
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
-use boosters::dataset::Dataset;
+use boosters::dataset::{Dataset, TargetsView};
 use boosters::testing::data::synthetic_regression;
 use boosters::training::{
     GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, RowSamplingParams,
     SquaredLoss,
 };
 use boosters::Parallelism;
-use ndarray::{Array2, ArrayView1};
+use ndarray::Array2;
 
 fn main() {
     // =========================================================================
@@ -94,9 +94,13 @@ fn main() {
 
     let trainer_baseline = GBDTTrainer::new(SquaredLoss, Rmse, params_baseline);
 
+    // Wrap labels in TargetsView (shape [n_outputs=1, n_samples])
+    let targets_2d = ndarray::Array2::from_shape_vec((1, train_labels.len()), train_labels.clone()).unwrap();
+    let targets = TargetsView::new(targets_2d.view());
+
     let start = Instant::now();
     let forest_baseline = trainer_baseline
-        .train(&dataset, ArrayView1::from(&train_labels[..]), None, &[], Parallelism::Sequential)
+        .train(&dataset, targets.clone(), None, &[], Parallelism::Sequential)
         .unwrap();
     let time_baseline = start.elapsed();
 
@@ -131,7 +135,7 @@ fn main() {
 
     let start = Instant::now();
     let forest_goss = trainer_goss
-        .train(&dataset, ArrayView1::from(&train_labels[..]), None, &[], Parallelism::Sequential)
+        .train(&dataset, targets.clone(), None, &[], Parallelism::Sequential)
         .unwrap();
     let time_goss = start.elapsed();
 
@@ -167,7 +171,7 @@ fn main() {
 
     let start = Instant::now();
     let forest_uniform = trainer_uniform
-        .train(&dataset, ArrayView1::from(&train_labels[..]), None, &[], Parallelism::Sequential)
+        .train(&dataset, targets, None, &[], Parallelism::Sequential)
         .unwrap();
     let time_uniform = start.elapsed();
 

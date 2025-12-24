@@ -35,7 +35,7 @@ pub mod io;
 pub use traits::FeatureAccessor;
 
 pub use ndarray::{
-    axis, init_predictions, init_predictions_vec, transpose_to_c_order,
+    axis, init_predictions, init_predictions_into, transpose_to_c_order,
     FeaturesView,
 };
 

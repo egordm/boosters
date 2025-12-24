@@ -3,7 +3,7 @@
 //! Implements the TreeSHAP algorithm from Lundberg et al. (2020):
 //! "From local explanations to global understanding with explainable AI for trees"
 
-use crate::data::SamplesView;
+use crate::dataset::FeaturesView;
 use crate::explainability::shap::{PathState, ShapValues};
 use crate::explainability::ExplainError;
 use crate::repr::gbdt::tree::TreeView;
@@ -64,13 +64,13 @@ impl<'a> TreeExplainer<'a> {
     /// Compute SHAP values for a batch of samples.
     ///
     /// # Arguments
-    /// * `data` - Feature matrix with shape `[n_samples, n_features]` (sample-major layout)
+    /// * `features` - Feature matrix with shape `[n_features, n_samples]` (feature-major layout)
     ///
     /// # Returns
     /// ShapValues container with shape `[n_samples, n_features + 1, n_outputs]`.
-    pub fn shap_values(&self, data: SamplesView<'_>) -> ShapValues {
-        let n_samples = data.n_samples();
-        let n_features = data.n_features();
+    pub fn shap_values(&self, features: FeaturesView<'_>) -> ShapValues {
+        let n_samples = features.n_samples();
+        let n_features = features.n_features();
         let n_outputs = self.forest.n_groups() as usize;
         let mut shap = ShapValues::zeros(n_samples, n_features, n_outputs);
 
@@ -82,12 +82,9 @@ impl<'a> TreeExplainer<'a> {
             .max()
             .unwrap_or(10);
 
-        let data_arr = data.view();
-
-        // Process each sample
+        // Process each sample - access feature values directly from FeaturesView
         for sample_idx in 0..n_samples {
-            let features = data_arr.row(sample_idx);
-            self.shap_for_sample(&mut shap, sample_idx, features.as_slice().unwrap(), max_depth);
+            self.shap_for_sample(&mut shap, sample_idx, &features, max_depth);
         }
 
         // Set base values
@@ -105,7 +102,7 @@ impl<'a> TreeExplainer<'a> {
         &self,
         shap: &mut ShapValues,
         sample_idx: usize,
-        features: &[f32],
+        features: &FeaturesView<'_>,
         max_depth: usize,
     ) {
         let mut path = PathState::new(max_depth);
@@ -125,7 +122,7 @@ impl<'a> TreeExplainer<'a> {
         sample_idx: usize,
         group: usize,
         tree: &Tree<ScalarLeaf>,
-        features: &[f32],
+        features: &FeaturesView<'_>,
         path: &mut PathState,
         node: u32,
     ) {
@@ -151,7 +148,12 @@ impl<'a> TreeExplainer<'a> {
         let total_cover = left_cover + right_cover;
 
         // Determine hot/cold paths based on feature value
-        let fvalue = features.get(feature).copied().unwrap_or(f32::NAN);
+        // Access directly from FeaturesView: get(sample_idx, feature_idx)
+        let fvalue = if feature < features.n_features() {
+            features.get(sample_idx, feature)
+        } else {
+            f32::NAN
+        };
         let go_left = if fvalue.is_nan() {
             default_left
         } else {
@@ -275,12 +277,14 @@ mod tests {
         let forest = make_simple_forest_with_stats();
         let explainer = TreeExplainer::new(&forest).unwrap();
 
-        // 2 samples, 3 features - sample-major layout
-        let data = vec![
-            0.3, 0.5, 0.7, // sample 0 (goes left, leaf=-1)
-            0.7, 0.3, 0.1, // sample 1 (goes right, leaf=1)
+        // 2 samples, 3 features - feature-major layout [n_features, n_samples]
+        // Feature 0: [0.3, 0.7], Feature 1: [0.5, 0.3], Feature 2: [0.7, 0.1]
+        let data = ndarray::array![
+            [0.3f32, 0.7], // feature 0 for samples 0, 1
+            [0.5, 0.3],    // feature 1 for samples 0, 1
+            [0.7, 0.1],    // feature 2 for samples 0, 1
         ];
-        let view = SamplesView::from_slice(&data, 2, 3).unwrap();
+        let view = FeaturesView::from_array(data.view());
 
         let shap = explainer.shap_values(view);
 
@@ -295,8 +299,9 @@ mod tests {
         let explainer = TreeExplainer::new(&forest).unwrap();
 
         // Single sample, goes left (feature 0 = 0.3 < 0.5)
-        let data = vec![0.3, 0.5, 0.7];
-        let view = SamplesView::from_slice(&data, 1, 3).unwrap();
+        // Feature-major: [n_features=3, n_samples=1]
+        let data = ndarray::array![[0.3f32], [0.5], [0.7]]; // f0, f1, f2 for one sample
+        let view = FeaturesView::from_array(data.view());
         let shap = explainer.shap_values(view);
 
         // Sum SHAP values + base should equal prediction (-1.0)

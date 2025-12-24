@@ -42,6 +42,7 @@
 
 use crate::Parallelism;
 use crate::data::axis;
+use crate::dataset::FeaturesView;
 use crate::repr::gbdt::{Forest, ScalarLeaf, Tree, TreeView};
 use ndarray::{Array2, ArrayView2, ArrayViewMut2};
 
@@ -156,15 +157,23 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
         self.forest.n_groups() as usize
     }
 
+    /// Predict a single row and write to output buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `features` - Feature values for one sample (length = n_features)
+    /// * `tree_weights` - Optional per-tree weights for DART (length = n_trees).
+    ///   These are tree weights from DART's dropout mechanism, NOT sample weights.
+    /// * `output` - Output buffer (length = n_groups)
     pub fn predict_row_into(
         &self,
         features: &[f32],
-        weights: Option<&[f32]>,
+        tree_weights: Option<&[f32]>,
         output: &mut [f32],
     ) {
         assert_eq!(output.len(), self.n_groups(), "output length must equal n_groups");
-        if let Some(w) = weights {
-            assert_eq!(w.len(), self.forest.n_trees(), "weights length must match number of trees");
+        if let Some(w) = tree_weights {
+            assert_eq!(w.len(), self.forest.n_trees(), "tree_weights length must match number of trees");
         }
 
         // Initialize with base scores
@@ -182,7 +191,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
                 tree.leaf_value(leaf_idx).0
             };
 
-            let weighted_value = weights
+            let weighted_value = tree_weights
                 .map(|w| leaf_value * w[tree_idx])
                 .unwrap_or(leaf_value);
             
@@ -192,45 +201,45 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
 
     /// Predict batch into provided buffer.
     ///
-    /// Takes feature-major data `[n_features, n_samples]` and handles the transpose
-    /// internally using thread-local block buffers for cache efficiency.
+    /// Takes feature-major data and handles the transpose internally using
+    /// block buffers for cache efficiency.
     ///
     /// # Arguments
     ///
-    /// * `features` - Feature matrix `[n_features, n_samples]` (feature-major layout)
-    /// * `weights` - Optional per-tree weights
+    /// * `features` - Feature-major data `[n_features, n_samples]`
+    /// * `tree_weights` - Optional per-tree weights for DART dropout (length = n_trees).
+    ///   These are NOT sample weights - they are tree scaling factors from DART.
     /// * `parallelism` - Whether to use parallel execution
     /// * `output` - Output buffer `[n_groups, n_samples]`
     ///
     /// # Block Buffering
     ///
-    /// Uses thread-local buffers sized at `block_size × n_features`. For 100 features
-    /// and block_size=64, this is ~25KB per thread, fitting comfortably in L2 cache.
+    /// Uses thread-local `Array2` buffers sized at `[block_size, n_features]`.
+    /// For 100 features and block_size=64, this is ~25KB per thread, fitting
+    /// comfortably in L2 cache.
     pub fn predict_into(
         &self,
-        features: ArrayView2<f32>,
-        weights: Option<&[f32]>,
+        features: FeaturesView<'_>,
+        tree_weights: Option<&[f32]>,
         parallelism: Parallelism,
         mut output: ArrayViewMut2<f32>,
     ) {
         use std::cell::RefCell;
-        
-        // features: [n_features, n_samples]
-        // output: [n_groups, n_samples]
-        let n_features = features.nrows();
-        let n_samples = features.ncols();
+
+        let n_features = features.n_features();
+        let n_samples = features.n_samples();
         let n_groups = self.n_groups();
-        
+
         assert_eq!(
             output.shape(),
             &[n_groups, n_samples],
             "output shape must match (n_groups, n_samples)"
         );
-        if let Some(w) = weights {
+        if let Some(w) = tree_weights {
             assert_eq!(
                 w.len(),
                 self.forest.n_trees(),
-                "weights length must match number of trees"
+                "tree_weights length must match number of trees"
             );
         }
 
@@ -241,59 +250,46 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
         // Initialize with base scores
         ndarray::Zip::from(output.axis_iter_mut(axis::ROWS))
             .and(self.forest.base_score())
-            .for_each(|mut col, &score| col.fill(score));
+            .for_each(|mut row, &score| row.fill(score));
 
-        // Thread-local buffer for transposed block
+        // Thread-local Array2 buffer for transposed block [block_size, n_features]
         thread_local! {
-            static BLOCK_BUFFER: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
+            static BLOCK_BUFFER: RefCell<Option<Array2<f32>>> = const { RefCell::new(None) };
         }
 
-        // Helper to process a single block range
-        let process_block = |start: usize, end: usize, output_slice: ArrayViewMut2<f32>| {
-            BLOCK_BUFFER.with(|buf| {
-                let block_size = end - start;
-                let mut buffer = buf.borrow_mut();
-                
-                // Ensure buffer is large enough
-                let required = block_size * n_features;
-                if buffer.len() < required {
-                    buffer.resize(required, 0.0);
-                }
-                
-                // Transpose block: [n_features, block_size] -> [block_size, n_features]
-                for f in 0..n_features {
-                    for s in 0..block_size {
-                        buffer[s * n_features + f] = features[[f, start + s]];
-                    }
-                }
-                
-                // Create view of transposed block
-                let block_view = ArrayView2::from_shape(
-                    (block_size, n_features),
-                    &buffer[..required],
-                ).unwrap();
-                
-                // Predict block directly into output slice
-                self.predict_block_into(block_view, weights, output_slice);
-            });
-        };
-
-        // Create block ranges with output slices
-        let block_ranges: Vec<_> = (0..n_samples)
-            .step_by(self.block_size)
-            .map(|start| {
-                let end = (start + self.block_size).min(n_samples);
-                start..end
-            })
-            .collect();
-
-        // Process blocks - use chunks_mut for non-overlapping mutable access
+        // Process feature chunks and corresponding output chunks in parallel
+        let features_arr = features.view();
+        let feature_chunks = features_arr.axis_chunks_iter(axis::COLS, self.block_size);
         let output_chunks = output.axis_chunks_iter_mut(axis::COLS, self.block_size);
-        let iter = block_ranges.into_iter().zip(output_chunks);
-        
-        parallelism.maybe_par_bridge_for_each(iter, |(range, output_chunk)| {
-            process_block(range.start, range.end, output_chunk);
-        });
+
+        parallelism.maybe_par_bridge_for_each(
+            feature_chunks.zip(output_chunks),
+            |(feature_chunk, output_chunk)| {
+                // feature_chunk: [n_features, block_size]
+                // output_chunk: [n_groups, block_size]
+                let block_size = feature_chunk.ncols();
+
+                BLOCK_BUFFER.with(|buf| {
+                    let mut buffer_ref = buf.borrow_mut();
+
+                    // Get or create buffer with correct size: [block_size, n_features]
+                    let buffer = buffer_ref.get_or_insert_with(|| {
+                        Array2::zeros((block_size, n_features))
+                    });
+
+                    // Resize buffer if shape changed
+                    if buffer.shape() != [block_size, n_features] {
+                        *buffer = Array2::zeros((block_size, n_features));
+                    }
+
+                    // Transpose feature chunk into buffer: [n_features, block_size].T -> [block_size, n_features]
+                    buffer.assign(&feature_chunk.t());
+
+                    // Predict block into output chunk
+                    self.predict_block_into(buffer.view(), tree_weights, output_chunk);
+                });
+            },
+        );
     }
 
     /// Convenience method: predict with allocation.
@@ -303,14 +299,14 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
     ///
     /// # Arguments
     ///
-    /// * `features` - Feature matrix `[n_features, n_samples]` (feature-major layout)
+    /// * `features` - Feature-major data `[n_features, n_samples]`
     /// * `parallelism` - Whether to use parallel execution
     ///
     /// # Returns
     ///
     /// Prediction matrix `[n_groups, n_samples]`
-    pub fn predict(&self, features: ArrayView2<f32>, parallelism: Parallelism) -> Array2<f32> {
-        let n_samples = features.ncols();
+    pub fn predict(&self, features: FeaturesView<'_>, parallelism: Parallelism) -> Array2<f32> {
+        let n_samples = features.n_samples();
         let n_groups = self.n_groups();
         let mut output = Array2::<f32>::zeros((n_groups, n_samples));
         self.predict_into(features, None, parallelism, output.view_mut());
@@ -321,7 +317,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
     fn predict_block_into(
         &self,
         features: ArrayView2<f32>,
-        weights: Option<&[f32]>,
+        tree_weights: Option<&[f32]>,
         mut output: ArrayViewMut2<f32>,
     ) {
         let feature_data = features.as_slice().expect("features must be contiguous");
@@ -332,7 +328,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
         for (tree_idx, (tree, group)) in self.forest.trees_with_groups().enumerate() {
             let state = &self.tree_states[tree_idx];
             let group_idx = group as usize;
-            let weight = weights.map(|w| w[tree_idx]).unwrap_or(1.0);
+            let tree_weight = tree_weights.map(|w| w[tree_idx]).unwrap_or(1.0);
 
             // Step 1: Get leaf indices
             T::traverse_block(tree, state, feature_data, n_features, &mut leaf_indices);
@@ -346,11 +342,11 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
                         leaf_indices[i],
                         feat_row.as_slice().unwrap(),
                     );
-                    group_row[i] += value * weight;
+                    group_row[i] += value * tree_weight;
                 }
             } else {
                 for i in 0..n_rows {
-                    group_row[i] += tree.leaf_value(leaf_indices[i]).0 * weight;
+                    group_row[i] += tree.leaf_value(leaf_indices[i]).0 * tree_weight;
                 }
             }
 
@@ -410,10 +406,10 @@ mod tests {
         }
     }
 
-    /// Helper: create feature-major ArrayView2 [n_features, n_samples]
-    /// from a flat slice where data is laid out as feature-major
-    fn features_view(data: &[f32], n_features: usize, n_samples: usize) -> ArrayView2<'_, f32> {
-        ArrayView2::from_shape((n_features, n_samples), data).unwrap()
+    /// Helper: create FeaturesView from a flat slice in feature-major layout
+    fn features_view(data: &[f32], n_features: usize, n_samples: usize) -> FeaturesView<'_> {
+        let arr = ArrayView2::from_shape((n_features, n_samples), data).unwrap();
+        FeaturesView::from_array(arr)
     }
 
     // =========================================================================
@@ -461,7 +457,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "weights length must match number of trees")]
+    #[should_panic(expected = "tree_weights length must match number of trees")]
     fn weighted_wrong_length_panics() {
         let mut forest = Forest::for_regression();
         forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
@@ -469,7 +465,7 @@ mod tests {
 
         let predictor = SimplePredictor::new(&forest);
         let mut output = vec![0.0];
-        predictor.predict_row_into(&[0.3], Some(&[1.0]), &mut output); // only 1 weight
+        predictor.predict_row_into(&[0.3], Some(&[1.0]), &mut output); // only 1 tree_weight
     }
 
     // =========================================================================

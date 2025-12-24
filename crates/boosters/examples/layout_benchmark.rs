@@ -5,10 +5,10 @@
 
 use boosters::data::binned::{BinnedDatasetBuilder, GroupLayout, GroupStrategy};
 use boosters::data::BinningConfig;
-use boosters::dataset::Dataset;
+use boosters::dataset::{Dataset, TargetsView};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
-use ndarray::{Array2, ArrayView1};
+use ndarray::Array2;
 use std::time::Instant;
 
 fn main() {
@@ -77,6 +77,10 @@ fn main() {
         ..Default::default()
     };
 
+    // Wrap labels in TargetsView (shape [n_outputs=1, n_samples])
+    let targets_2d = ndarray::Array2::from_shape_vec((1, labels.len()), labels.clone()).unwrap();
+    let targets = TargetsView::new(targets_2d.view());
+
     // Benchmark RowMajor
     println!("Benchmarking RowMajor layout ({} runs)...", n_runs);
     let mut row_times = Vec::new();
@@ -84,7 +88,7 @@ fn main() {
         let start = Instant::now();
         // Single thread for accurate comparison
         let _ = GBDTTrainer::new(SquaredLoss, Rmse, params.clone())
-            .train(&row_major_dataset, ArrayView1::from(&labels[..]), None, &[], Parallelism::Sequential)
+            .train(&row_major_dataset, targets.clone(), None, &[], Parallelism::Sequential)
             .unwrap();
         row_times.push(start.elapsed());
     }
@@ -96,7 +100,7 @@ fn main() {
     for _ in 0..n_runs {
         let start = Instant::now();
         let _ = GBDTTrainer::new(SquaredLoss, Rmse, params.clone())
-            .train(&col_major_dataset, ArrayView1::from(&labels[..]), None, &[], Parallelism::Sequential)
+            .train(&col_major_dataset, targets.clone(), None, &[], Parallelism::Sequential)
             .unwrap();
         col_times.push(start.elapsed());
     }

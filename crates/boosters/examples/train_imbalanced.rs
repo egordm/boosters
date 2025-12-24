@@ -21,7 +21,7 @@
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
-use boosters::dataset::Dataset;
+use boosters::dataset::{Dataset, TargetsView};
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism, TreeParams};
 use ndarray::{Array1, Array2, ArrayView1};
 
@@ -90,13 +90,17 @@ fn main() {
         .build()
         .expect("Invalid configuration");
 
+    // Wrap labels in TargetsView (shape [n_outputs=1, n_samples])
+    let targets_2d = labels.clone().insert_axis(ndarray::Axis(0));
+    let targets = TargetsView::new(targets_2d.view());
+
     // =========================================================================
     // Train WITHOUT weights (baseline)
     // =========================================================================
     println!("--- Training WITHOUT weights ---");
     let model_unweighted = GBDTModel::train_binned(
         &dataset,
-        labels.view(),
+        targets.clone(),
         None,
         &[],
         config.clone(),
@@ -118,7 +122,7 @@ fn main() {
     println!("--- Training WITH class weights ---");
     let model_weighted = GBDTModel::train_binned(
         &dataset,
-        labels.view(),
+        targets,
         Some(ArrayView1::from(&class_weights[..])),
         &[],
         config,

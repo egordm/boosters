@@ -40,6 +40,7 @@ mod regression;
 pub use classification::{HingeLoss, LambdaRankLoss, LogisticLoss, SoftmaxLoss};
 pub use regression::{AbsoluteLoss, PinballLoss, PoissonLoss, PseudoHuberLoss, SquaredLoss};
 
+use crate::dataset::TargetsView;
 use crate::inference::PredictionKind;
 use crate::training::GradsTuple;
 use ndarray::{ArrayView1, ArrayView2, ArrayViewMut2};
@@ -89,7 +90,7 @@ pub enum TargetSchema {
 /// # Weighted Training
 ///
 /// Pass `None` for `weights` for unweighted training.
-/// When `Some`, the slice must have length `n_rows`.
+/// When `Some`, the array view must have length `n_rows`.
 pub trait ObjectiveFn: Send + Sync {
     /// Number of outputs (predictions per sample).
     ///
@@ -111,8 +112,8 @@ pub trait ObjectiveFn: Send + Sync {
     fn compute_gradients(
         &self,
         predictions: ArrayView2<f32>,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
         grad_hess: ArrayViewMut2<GradsTuple>,
     );
 
@@ -127,8 +128,8 @@ pub trait ObjectiveFn: Send + Sync {
     /// * `outputs` - Output buffer of length `n_outputs()`
     fn compute_base_score(
         &self,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
         outputs: &mut [f32],
     );
 
@@ -295,8 +296,8 @@ impl ObjectiveFn for Objective {
     fn compute_gradients(
         &self,
         predictions: ArrayView2<f32>,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
         grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         match self {
@@ -314,8 +315,8 @@ impl ObjectiveFn for Objective {
 
     fn compute_base_score(
         &self,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
         outputs: &mut [f32],
     ) {
         match self {
@@ -395,22 +396,25 @@ impl ObjectiveFn for Objective {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::{Array2, array};
+    use crate::dataset::TargetsView;
+    use ndarray::Array2;
 
     fn make_grad_hess_array(n_outputs: usize, n_samples: usize) -> Array2<GradsTuple> {
         Array2::from_elem((n_outputs, n_samples), GradsTuple { grad: 0.0, hess: 0.0 })
     }
 
-
+    fn make_targets(data: &[f32]) -> Array2<f32> {
+        Array2::from_shape_vec((1, data.len()), data.to_vec()).unwrap()
+    }
 
     #[test]
     fn squared_loss_gradients() {
         let obj = SquaredLoss;
-        let preds = array![[1.0, 2.0, 3.0]];
-        let targets = array![0.5, 2.5, 2.5];
+        let preds = Array2::from_shape_vec((1, 3), vec![1.0, 2.0, 3.0]).unwrap();
+        let targets = make_targets(&[0.5, 2.5, 2.5]);
         let mut grad_hess = make_grad_hess_array(1, 3);
 
-        obj.compute_gradients(preds.view(), targets.view(), None, grad_hess.view_mut());
+        obj.compute_gradients(preds.view(), TargetsView::new(targets.view()), None, grad_hess.view_mut());
 
         // grad = pred - target
         assert!((grad_hess[[0, 0]].grad - 0.5).abs() < 1e-6);
@@ -426,12 +430,12 @@ mod tests {
     #[test]
     fn weighted_squared_loss() {
         let obj = SquaredLoss;
-        let preds = array![[1.0, 2.0]];
-        let targets = array![0.5, 2.5];
-        let weights = array![2.0, 0.5];
+        let preds = Array2::from_shape_vec((1, 2), vec![1.0, 2.0]).unwrap();
+        let targets = make_targets(&[0.5, 2.5]);
+        let weights = ndarray::array![2.0f32, 0.5];
         let mut grad_hess = make_grad_hess_array(1, 2);
 
-        obj.compute_gradients(preds.view(), targets.view(), Some(weights.view()), grad_hess.view_mut());
+        obj.compute_gradients(preds.view(), TargetsView::new(targets.view()), Some(weights.view()), grad_hess.view_mut());
 
         // grad = weight * (pred - target)
         assert!((grad_hess[[0, 0]].grad - 1.0).abs() < 1e-6); // 2.0 * 0.5
@@ -445,11 +449,11 @@ mod tests {
     #[test]
     fn pinball_loss_median() {
         let obj = PinballLoss::new(0.5);
-        let preds = array![[1.0, 2.0, 3.0]];
-        let targets = array![0.5, 2.5, 2.5];
+        let preds = Array2::from_shape_vec((1, 3), vec![1.0, 2.0, 3.0]).unwrap();
+        let targets = make_targets(&[0.5, 2.5, 2.5]);
         let mut grad_hess = make_grad_hess_array(1, 3);
 
-        obj.compute_gradients(preds.view(), targets.view(), None, grad_hess.view_mut());
+        obj.compute_gradients(preds.view(), TargetsView::new(targets.view()), None, grad_hess.view_mut());
 
         // For alpha=0.5: grad = 0.5 if pred > target, -0.5 if pred < target
         assert!((grad_hess[[0, 0]].grad - 0.5).abs() < 1e-6); // pred > target

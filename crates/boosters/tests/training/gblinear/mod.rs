@@ -22,9 +22,10 @@ mod regression;
 mod selectors;
 
 use boosters::data::transpose_to_c_order;
+use boosters::dataset::TargetsView;
 use boosters::Dataset;
 use boosters::training::Rmse;
-use ndarray::{Array2, ArrayView1, ArrayView2};
+use ndarray::{Array2, ArrayView2};
 use serde::Deserialize;
 use std::fs;
 use std::path::Path;
@@ -195,6 +196,9 @@ pub fn rmse(predictions: &[f32], labels: &[f32]) -> f64 {
     use boosters::training::MetricFn;
     let n = labels.len();
     let pred_arr = Array2::from_shape_vec((1, n), predictions.to_vec()).unwrap();
-    let targets_arr = ArrayView1::from(labels);
-    Rmse.compute(pred_arr.view(), targets_arr, None)
+    // Wrap labels in TargetsView - shape [n_outputs=1, n_samples]
+    let targets_data: Vec<f32> = labels.to_vec();
+    let targets_2d = Array2::from_shape_vec((1, n), targets_data).unwrap();
+    let targets = TargetsView::new(targets_2d.view());
+    Rmse.compute(pred_arr.view(), targets, None)
 }

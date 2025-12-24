@@ -3,9 +3,9 @@
 //! Implements coordinate descent training for GBLinear models.
 //! Supports single-output and multi-output objectives.
 
-use ndarray::{Array2, ArrayView2};
+use ndarray::Array2;
 
-use crate::data::FeaturesView;
+use crate::data::{init_predictions, FeaturesView};
 use crate::dataset::Dataset;
 use crate::repr::gblinear::LinearModel;
 use crate::training::eval;
@@ -131,10 +131,10 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
 
         // Get feature data as array [n_features, n_samples]
         let train_data = train.features().view();
-        // Get targets as 1D view - panics if no targets or multi-output
-        let train_targets = train.targets().expect("dataset must have targets for training");
-        let targets_1d = train_targets.as_single_output();
-        let weights_opt = train.weights();
+        // Get targets view
+        let targets = train.targets().expect("dataset must have targets for training");
+        // Get weights as ArrayView1 (matching Dataset::weights() return type)
+        let weights = train.weights();
 
         let n_features = train_data.nrows();
         let n_samples = train_data.ncols();
@@ -145,16 +145,12 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
             "Objective must have at least 1 output, got {}",
             n_outputs
         );
-        debug_assert_eq!(targets_1d.len(), n_samples);
-        debug_assert!(weights_opt.is_none_or(|w| w.len() == n_samples));
+        debug_assert_eq!(targets.n_samples(), n_samples);
+        debug_assert!(weights.is_none_or(|w| w.len() == n_samples));
 
-        // Compute base scores from objective (optimal constant prediction)
+        // Compute base scores using objective
         let mut base_scores = vec![0.0f32; n_outputs];
-        self.objective.compute_base_score(
-            targets_1d.view(),
-            weights_opt,
-            &mut base_scores,
-        );
+        self.objective.compute_base_score(targets, weights, &mut base_scores);
 
         // Initialize model with base scores as biases
         let mut model = LinearModel::zeros(n_features, n_outputs);
@@ -179,41 +175,19 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
 
         // Gradient and prediction buffers
         let mut gradients = Gradients::new(n_samples, n_outputs);
-        // Initialize predictions with base scores (column-major)
-        let mut predictions = vec![0.0f32; n_samples * n_outputs];
-        for (group, &base_score) in base_scores.iter().enumerate() {
-            let start = group * n_samples;
-            predictions[start..start + n_samples].fill(base_score);
-        }
+        // Initialize predictions with base scores using helper
+        // Shape: [n_outputs, n_samples] - column-major for efficient group access
+        let mut predictions = init_predictions(&base_scores, n_samples);
         
         // Check if we need evaluation (metric is enabled)
         let needs_evaluation = self.metric.is_enabled();
-        
-        // Get eval feature arrays (only if evaluation is needed)
-        // Each is [n_features, n_samples] feature-major layout
-        let eval_data: Vec<_> = if needs_evaluation {
+
+        // Initialize eval predictions with base scores
+        // Shape: [n_outputs, n_eval_samples] for each eval set
+        let mut eval_predictions: Vec<Array2<f32>> = if needs_evaluation {
             eval_sets
                 .iter()
-                .map(|es| es.dataset.features().view().to_owned())
-                .collect()
-        } else {
-            Vec::new()
-        };
-
-        // TODO: Keep as Vec<Vec<f32>> for compatibility with updater methods
-        // We'll convert to Array2 views when calling evaluator
-        let mut eval_predictions: Vec<Vec<f32>> = if needs_evaluation {
-            eval_data
-                .iter()
-                .map(|m| {
-                    let eval_rows = m.ncols();
-                    let mut preds = vec![0.0f32; eval_rows * n_outputs];
-                    for (group, &base_score) in base_scores.iter().enumerate() {
-                        let start = group * eval_rows;
-                        preds[start..start + eval_rows].fill(base_score);
-                    }
-                    preds
-                })
+                .map(|es| init_predictions(&base_scores, es.dataset.n_samples()))
                 .collect()
         } else {
             Vec::new()
@@ -240,12 +214,10 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
             // On first round (round == 0), predictions are already initialized with base scores.
 
             // Compute gradients from current predictions
-            let predictions_view = ArrayView2::from_shape((n_outputs, n_samples), &predictions)
-                .expect("predictions shape mismatch");
             self.objective.compute_gradients(
-                predictions_view,
-                targets_1d.view(),
-                weights_opt,
+                predictions.view(),
+                targets,
+                weights,
                 gradients.pairs_array_mut(),
             );
 
@@ -255,28 +227,32 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                 
                 // Apply bias delta to predictions incrementally
                 if bias_delta.abs() > 1e-10 {
-                    updater.apply_bias_delta_to_predictions(bias_delta, output, n_samples, &mut predictions);
+                    updater.apply_bias_delta_to_predictions(
+                        bias_delta,
+                        output,
+                        n_samples,
+                        predictions.as_slice_mut().unwrap(),
+                    );
                     
                     // Also update eval predictions (only if evaluation is needed)
                     if needs_evaluation {
-                        for (set_idx, matrix) in eval_data.iter().enumerate() {
-                            let eval_rows = matrix.ncols();
+                        for eval_preds in eval_predictions.iter_mut() {
+                            let eval_rows = eval_preds.ncols();
+                            let eval_preds_slice = eval_preds.as_slice_mut().unwrap();
                             updater.apply_bias_delta_to_predictions(
                                 bias_delta,
                                 output,
                                 eval_rows,
-                                &mut eval_predictions[set_idx],
+                                eval_preds_slice,
                             );
                         }
                     }
                     
                     // Recompute gradients after bias update
-                    let predictions_view = ArrayView2::from_shape((n_outputs, n_samples), &predictions)
-                        .expect("predictions shape mismatch");
                     self.objective.compute_gradients(
-                        predictions_view,
-                        targets_1d.view(),
-                        weights_opt,
+                        predictions.view(),
+                        targets,
+                        weights,
                         gradients.pairs_array_mut(),
                     );
                 }
@@ -306,20 +282,22 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                         &weight_deltas,
                         output,
                         n_samples,
-                        &mut predictions,
+                        predictions.as_slice_mut().unwrap(),
                     );
                     
                     // Also update eval predictions (only if evaluation is needed)
                     if needs_evaluation {
-                        for (set_idx, matrix) in eval_data.iter().enumerate() {
-                            let eval_rows = matrix.ncols();
-                            let eval_features = FeaturesView::new(matrix.view());
+                        for (set_idx, eval_set) in eval_sets.iter().enumerate() {
+                            let eval_rows = eval_predictions[set_idx].ncols();
+                            // Use view() to get ArrayView2, then wrap in data::FeaturesView
+                            let eval_features = FeaturesView::new(eval_set.dataset.features().view());
+                            let eval_preds_slice = eval_predictions[set_idx].as_slice_mut().unwrap();
                             updater.apply_weight_deltas_to_predictions(
                                 &eval_features,
                                 &weight_deltas,
                                 output,
                                 eval_rows,
-                                &mut eval_predictions[set_idx],
+                                eval_preds_slice,
                             );
                         }
                     }
@@ -328,26 +306,12 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
 
             // Evaluation using Evaluator (only if metric is enabled)
             let (round_metrics, early_stop_value) = if needs_evaluation {
-                // Convert predictions Vec to Array2 view
-                let predictions_view = ArrayView2::from_shape((n_outputs, n_samples), &predictions)
-                    .expect("predictions shape mismatch");
-                
-                // Convert eval_predictions Vec<Vec<f32>> to Vec<Array2<f32>>
-                let eval_preds_arrays: Vec<Array2<f32>> = eval_predictions.iter()
-                    .zip(eval_data.iter())
-                    .map(|(preds, matrix)| {
-                        let eval_rows = matrix.ncols();
-                        Array2::from_shape_vec((n_outputs, eval_rows), preds.clone())
-                            .expect("eval predictions shape mismatch")
-                    })
-                    .collect();
-                
                 let metrics = evaluator.evaluate_round(
-                    predictions_view,
-                    targets_1d.view(),
-                    weights_opt,
+                    predictions.view(),
+                    targets,
+                    weights,
                     eval_sets,
-                    &eval_preds_arrays,
+                    &eval_predictions,
                 );
                 let value = eval::Evaluator::<O, M>::early_stop_value(
                     &metrics,

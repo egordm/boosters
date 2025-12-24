@@ -136,6 +136,7 @@ impl<'a> SamplesView<'a> {
 
     /// Get feature value at (sample, feature).
     #[inline]
+    #[allow(dead_code)] // Public API for completeness
     pub fn get(&self, sample: usize, feature: usize) -> f32 {
         self.0[[sample, feature]]
     }
@@ -332,25 +333,42 @@ impl<'a> FeatureAccessor for FeaturesView<'a> {
 pub fn init_predictions(base_scores: &[f32], n_samples: usize) -> Array2<f32> {
     let n_groups = base_scores.len();
     let mut predictions = Array2::zeros((n_groups, n_samples));
-    for (group, &base_score) in base_scores.iter().enumerate() {
-        predictions.row_mut(group).fill(base_score);
-    }
+    init_predictions_into(base_scores, &mut predictions);
     predictions
 }
 
-/// Initialize predictions from base scores into a flat Vec (column-major layout).
+/// Initialize predictions in-place with base scores.
 ///
-/// Layout: `[group0_all_samples, group1_all_samples, ...]`
+/// Fills each row of `predictions` with the corresponding base score.
+/// Does not allocate; writes to the provided buffer.
 ///
-/// This is a convenience for code that still uses Vec<f32> for predictions.
-pub fn init_predictions_vec(base_scores: &[f32], n_samples: usize) -> Vec<f32> {
-    let n_groups = base_scores.len();
-    let mut predictions = vec![0.0f32; n_groups * n_samples];
+/// # Arguments
+///
+/// * `base_scores` - One score per output/group
+/// * `predictions` - Output buffer with shape `[n_groups, n_samples]`
+///
+/// # Panics
+///
+/// Panics if `base_scores.len() != predictions.nrows()`.
+///
+/// # Example
+///
+/// ```
+/// use boosters::data::init_predictions_into;
+/// use ndarray::Array2;
+///
+/// let base_scores = vec![0.5, -0.3];
+/// let mut preds = Array2::zeros((2, 100));
+/// init_predictions_into(&base_scores, &mut preds);
+///
+/// assert_eq!(preds[[0, 0]], 0.5);
+/// assert_eq!(preds[[1, 0]], -0.3);
+/// ```
+pub fn init_predictions_into(base_scores: &[f32], predictions: &mut Array2<f32>) {
+    debug_assert_eq!(base_scores.len(), predictions.nrows());
     for (group, &base_score) in base_scores.iter().enumerate() {
-        let start = group * n_samples;
-        predictions[start..start + n_samples].fill(base_score);
+        predictions.row_mut(group).fill(base_score);
     }
-    predictions
 }
 
 #[cfg(test)]
@@ -421,15 +439,6 @@ mod tests {
             [-0.3, -0.3, -0.3], // group 1
         ]);
         assert_eq!(preds, expected);
-    }
-
-    #[test]
-    fn test_init_predictions_vec() {
-        let base_scores = vec![0.5, -0.3];
-        let preds = init_predictions_vec(&base_scores, 3);
-
-        // Layout: [g0_s0, g0_s1, g0_s2, g1_s0, g1_s1, g1_s2]
-        assert_eq!(preds, vec![0.5, 0.5, 0.5, -0.3, -0.3, -0.3]);
     }
 
     #[test]

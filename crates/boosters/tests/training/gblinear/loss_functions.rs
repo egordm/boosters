@@ -6,12 +6,12 @@
 
 use super::{load_test_data, load_train_data, make_dataset};
 use boosters::data::transpose_to_c_order;
-use boosters::dataset::FeaturesView;
+use boosters::dataset::{FeaturesView, TargetsView};
 use boosters::training::{
     Accuracy, GBLinearParams, GBLinearTrainer, HingeLoss, LogLoss, LogisticLoss, MarginAccuracy,
     ObjectiveFn, PseudoHuberLoss, Rmse, SquaredLoss, Verbosity,
 };
-use ndarray::ArrayView1;
+use ndarray::Array2;
 use rstest::rstest;
 
 // =============================================================================
@@ -64,8 +64,9 @@ fn train_pseudo_huber_with_delta(#[case] delta: f32, #[case] max_rmse: f64) {
     let test_view = FeaturesView::from_array(test_features.view());
     let output = model.predict(test_view);
     // output is [n_groups, n_samples]
-    let targets_arr = ArrayView1::from(&test_labels[..]);
-    let rmse = Rmse.compute(output.view(), targets_arr, None);
+    let targets_2d = Array2::from_shape_vec((1, test_labels.len()), test_labels.clone()).unwrap();
+    let targets = TargetsView::new(targets_2d.view());
+    let rmse = Rmse.compute(output.view(), targets, None);
 
     assert!(
         rmse < max_rmse,
@@ -117,10 +118,11 @@ fn pseudo_huber_large_delta_matches_squared() {
     let sq_output = sq_model.predict(test_view);
 
     // output is [n_groups, n_samples]
-    let targets_arr = ArrayView1::from(&test_labels[..]);
+    let targets_2d = Array2::from_shape_vec((1, test_labels.len()), test_labels.clone()).unwrap();
+    let targets = TargetsView::new(targets_2d.view());
 
-    let ph_rmse = Rmse.compute(ph_output.view(), targets_arr, None);
-    let sq_rmse = Rmse.compute(sq_output.view(), targets_arr, None);
+    let ph_rmse = Rmse.compute(ph_output.view(), targets, None);
+    let sq_rmse = Rmse.compute(sq_output.view(), targets, None);
 
     // Large delta should be very close to squared loss
     let diff = (ph_rmse - sq_rmse).abs();
@@ -182,9 +184,10 @@ fn train_hinge_binary_classification() {
     let test_features = transpose_to_c_order(test_data.view());
     let test_view = FeaturesView::from_array(test_features.view());
     let hinge_output = hinge_model.predict(test_view);
-    let targets_arr = ArrayView1::from(&test_labels[..]);
+    let targets_2d = Array2::from_shape_vec((1, test_labels.len()), test_labels.clone()).unwrap();
+    let targets = TargetsView::new(targets_2d.view());
     let hinge_acc = MarginAccuracy::default()
-        .compute(hinge_output.view(), targets_arr, None)
+        .compute(hinge_output.view(), targets, None)
         as f32;
 
     let logistic_output = logistic_model.predict(test_view);
@@ -192,7 +195,7 @@ fn train_hinge_binary_classification() {
     let mut logistic_arr = logistic_output.clone();
     LogisticLoss.transform_predictions(logistic_arr.view_mut());
     let logistic_acc = Accuracy::with_threshold(0.5)
-        .compute(logistic_arr.view(), targets_arr, None) as f32;
+        .compute(logistic_arr.view(), targets, None) as f32;
 
     // Both should achieve reasonable accuracy (better than random = 50%)
     assert!(

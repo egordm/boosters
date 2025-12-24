@@ -128,6 +128,25 @@ impl<'a> std::fmt::Debug for FeaturesView<'a> {
     }
 }
 
+// Enable tree traversal with FeaturesView (feature-major layout)
+impl<'a> crate::data::FeatureAccessor for FeaturesView<'a> {
+    #[inline]
+    fn get_feature(&self, row: usize, feature: usize) -> f32 {
+        // Transposed access: data is [feature, sample]
+        self.data[[feature, row]]
+    }
+
+    #[inline]
+    fn n_rows(&self) -> usize {
+        self.n_samples()
+    }
+
+    #[inline]
+    fn n_features(&self) -> usize {
+        self.data.nrows()
+    }
+}
+
 /// Read-only view into target values.
 ///
 /// Shape: `[n_outputs, n_samples]` - each output's values are contiguous.

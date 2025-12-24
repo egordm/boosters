@@ -5,7 +5,7 @@
 //! and [`config()`](GBDTModel::config).
 
 use crate::data::binned::BinnedDataset;
-use crate::dataset::Dataset;
+use crate::dataset::{Dataset, TargetsView};
 use crate::explainability::{
     compute_forest_importance, ExplainError, FeatureImportance, ImportanceType, ShapValues,
     TreeExplainer,
@@ -150,8 +150,8 @@ impl GBDTModel {
                 .expect("binning should not fail on valid dataset");
 
             // Get targets - panics if dataset has no targets
-            let targets_view = dataset.targets().expect("dataset must have targets for training");
-            let targets = targets_view.as_single_output();
+            let targets = dataset.targets().expect("dataset must have targets for training");
+            // Get weights as ArrayView1 (matching Dataset::weights() return type)
             let weights = dataset.weights();
 
             Self::train_inner(&binned, targets, weights, eval_sets, config, parallelism)
@@ -165,15 +165,15 @@ impl GBDTModel {
     /// # Arguments
     ///
     /// * `dataset` - Binned training dataset
-    /// * `targets` - Target values (length = n_rows × n_outputs)
+    /// * `targets` - Target values, shape `[n_outputs, n_rows]`
     /// * `weights` - Optional sample weights (None for uniform)
     /// * `eval_sets` - Evaluation sets for monitoring and early stopping (`&[]` if not needed)
     /// * `config` - Training configuration
     /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
     pub fn train_binned(
         dataset: &BinnedDataset,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
         eval_sets: &[EvalSet<'_>],
         config: GBDTConfig,
         n_threads: usize,
@@ -189,8 +189,8 @@ impl GBDTModel {
     /// Use `train()` for the public API that handles threading automatically.
     fn train_inner(
         dataset: &BinnedDataset,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
         eval_sets: &[EvalSet<'_>],
         config: GBDTConfig,
         parallelism: Parallelism,
@@ -302,9 +302,9 @@ impl GBDTModel {
         run_with_threads(n_threads, |parallelism| {
             let predictor = UnrolledPredictor6::new(&self.forest);
             
-            // predict_into now takes feature-major data [n_features, n_samples]
+            // predict_into takes FeaturesView directly
             predictor.predict_into(
-                features.view(),
+                features,
                 None,
                 parallelism,
                 output_array.view_mut(),
@@ -344,16 +344,10 @@ impl GBDTModel {
     /// # Returns
     /// ShapValues container with shape `[n_samples, n_features + 1, n_outputs]`.
     pub fn shap_values(&self, data: &Dataset) -> Result<ShapValues, ExplainError> {
-        use crate::data::{transpose_to_c_order, SamplesView};
-
         let explainer = TreeExplainer::new(&self.forest)?;
         
-        // Transpose feature-major [n_features, n_samples] to sample-major [n_samples, n_features]
-        let features = data.features();
-        let samples_array = transpose_to_c_order(features.view());
-        let samples_view = SamplesView::from_array(samples_array.view());
-        
-        Ok(explainer.shap_values(samples_view))
+        // TreeExplainer now takes FeaturesView directly
+        Ok(explainer.shap_values(data.features()))
     }
 }
 

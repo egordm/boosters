@@ -1,5 +1,5 @@
 use boosters::data::{binned::BinnedDatasetBuilder, transpose_to_c_order, BinningConfig};
-use boosters::dataset::Dataset;
+use boosters::dataset::{Dataset, TargetsView};
 use boosters::model::gbdt::{GBDTConfig, GBDTModel, RegularizationParams, TreeParams};
 use boosters::testing::data::{
 	random_features_array, split_indices, synthetic_binary, synthetic_multiclass,
@@ -10,7 +10,7 @@ use boosters::training::{
 	Objective, Rmse,
 };
 use boosters::Parallelism;
-use ndarray::{Array2, ArrayView1};
+use ndarray::Array2;
 
 /// Select samples from Array2 by indices, returns sample-major Array2.
 fn select_samples(features: &Array2<f32>, indices: &[usize]) -> Array2<f32> {
@@ -71,9 +71,10 @@ fn run_synthetic_regression(
 		.build()
 		.unwrap();
 
+	let y_train_2d = Array2::from_shape_vec((1, y_train.len()), y_train.clone()).unwrap();
 	let model = GBDTModel::train_binned(
 		&binned_train,
-		ArrayView1::from(&y_train[..]),
+		TargetsView::new(y_train_2d.view()),
 		None,
 		&[],
 		config,
@@ -84,10 +85,11 @@ fn run_synthetic_regression(
 	let col_valid = transpose_to_c_order(row_valid.view());
 	let dataset_valid = Dataset::new(col_valid.view(), None, None);
 	let pred = model.predict(&dataset_valid, 1);
-	let targets_arr = ArrayView1::from(&y_valid[..]);
+	let targets_2d = Array2::from_shape_vec((1, y_valid.len()), y_valid).unwrap();
+	let targets = TargetsView::new(targets_2d.view());
 
-	let rmse = Rmse.compute(pred.view(), targets_arr, None);
-	let mae = Mae.compute(pred.view(), targets_arr, None);
+	let rmse = Rmse.compute(pred.view(), targets, None);
+	let mae = Mae.compute(pred.view(), targets, None);
 	(rmse, mae)
 }
 
@@ -131,9 +133,10 @@ fn run_synthetic_binary(
 		.build()
 		.unwrap();
 
+	let y_train_2d = Array2::from_shape_vec((1, y_train.len()), y_train.clone()).unwrap();
 	let model = GBDTModel::train_binned(
 		&binned_train,
-		ArrayView1::from(&y_train[..]),
+		TargetsView::new(y_train_2d.view()),
 		None,
 		&[],
 		config,
@@ -144,10 +147,11 @@ fn run_synthetic_binary(
 	let col_valid = transpose_to_c_order(row_valid.view());
 	let dataset_valid = Dataset::new(col_valid.view(), None, None);
 	let pred = model.predict(&dataset_valid, 1);
-	let targets_arr = ArrayView1::from(&y_valid[..]);
+	let targets_2d = Array2::from_shape_vec((1, y_valid.len()), y_valid).unwrap();
+	let targets = TargetsView::new(targets_2d.view());
 
-	let ll = LogLoss.compute(pred.view(), targets_arr, None);
-	let acc = Accuracy::default().compute(pred.view(), targets_arr, None);
+	let ll = LogLoss.compute(pred.view(), targets, None);
+	let acc = Accuracy::default().compute(pred.view(), targets, None);
 	(ll, acc)
 }
 
@@ -192,9 +196,10 @@ fn run_synthetic_multiclass(
 		.build()
 		.unwrap();
 
+	let y_train_2d = Array2::from_shape_vec((1, y_train.len()), y_train.clone()).unwrap();
 	let model = GBDTModel::train_binned(
 		&binned_train,
-		ArrayView1::from(&y_train[..]),
+		TargetsView::new(y_train_2d.view()),
 		None,
 		&[],
 		config,
@@ -205,10 +210,11 @@ fn run_synthetic_multiclass(
 	let col_valid = transpose_to_c_order(row_valid.view());
 	let dataset_valid = Dataset::new(col_valid.view(), None, None);
 	let pred = model.predict(&dataset_valid, 1);
-	let targets_arr = ArrayView1::from(&y_valid[..]);
+	let targets_2d = Array2::from_shape_vec((1, y_valid.len()), y_valid).unwrap();
+	let targets = TargetsView::new(targets_2d.view());
 
-	let ll = MulticlassLogLoss.compute(pred.view(), targets_arr, None);
-	let acc = MulticlassAccuracy.compute(pred.view(), targets_arr, None);
+	let ll = MulticlassLogLoss.compute(pred.view(), targets, None);
+	let acc = MulticlassAccuracy.compute(pred.view(), targets, None);
 	(ll, acc)
 }
 
@@ -326,9 +332,10 @@ fn test_quality_improvement_linear_leaves() {
 		.build()
 		.unwrap();
 
+	let y_train_2d = Array2::from_shape_vec((1, y_train.len()), y_train.clone()).unwrap();
 	let model_baseline = GBDTModel::train_binned(
 		&binned_train,
-		ArrayView1::from(&y_train[..]),
+		TargetsView::new(y_train_2d.view()),
 		None,
 		&[],
 		base_config,
@@ -339,8 +346,9 @@ fn test_quality_improvement_linear_leaves() {
 	let col_valid = transpose_to_c_order(row_valid.view());
 	let dataset_valid = Dataset::new(col_valid.view(), None, None);
 	let pred_baseline = model_baseline.predict(&dataset_valid, 1);
-	let targets_arr = ArrayView1::from(&y_valid[..]);
-	let rmse_baseline = Rmse.compute(pred_baseline.view(), targets_arr, None);
+	let targets_2d = Array2::from_shape_vec((1, y_valid.len()), y_valid).unwrap();
+	let targets = TargetsView::new(targets_2d.view());
+	let rmse_baseline = Rmse.compute(pred_baseline.view(), targets, None);
 
 	// --- Train with linear leaves ---
 	let linear_config = GBDTConfig::builder()
@@ -360,7 +368,7 @@ fn test_quality_improvement_linear_leaves() {
 	eprintln!("Training with linear leaves...");
 	let model_linear = GBDTModel::train_binned(
 		&binned_train,
-		ArrayView1::from(&y_train[..]),
+		TargetsView::new(y_train_2d.view()),
 		None,
 		&[],
 		linear_config,
@@ -368,7 +376,7 @@ fn test_quality_improvement_linear_leaves() {
 	)
 	.unwrap();
 	let pred_linear = model_linear.predict(&dataset_valid, 1);
-	let rmse_linear = Rmse.compute(pred_linear.view(), targets_arr, None);
+	let rmse_linear = Rmse.compute(pred_linear.view(), targets, None);
 
 	// Assert: linear leaves should improve RMSE by at least 5%
 	let improvement = (rmse_baseline - rmse_linear) / rmse_baseline;

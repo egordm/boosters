@@ -15,7 +15,7 @@ use std::time::Instant;
 
 use boosters::data::binned::{BinnedDatasetBuilder, BundlingConfig};
 use boosters::data::BinningConfig;
-use boosters::dataset::Dataset;
+use boosters::dataset::{Dataset, TargetsView};
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism, TreeParams};
 use ndarray::{Array1, Array2};
 
@@ -154,10 +154,14 @@ fn main() {
 
     println!("\n=== Training Models ===\n");
 
+    // Wrap labels in TargetsView (shape [n_outputs=1, n_samples])
+    let targets_2d = labels.clone().insert_axis(ndarray::Axis(0));
+    let targets = TargetsView::new(targets_2d.view());
+
     // Train without bundling
     let model_no_bundle = GBDTModel::train_binned(
         &dataset_no_bundle,
-        labels.view(),
+        targets.clone(),
         None,
         &[],
         config.clone(),
@@ -168,7 +172,7 @@ fn main() {
     // Train with bundling
     let model_bundled = GBDTModel::train_binned(
         &dataset_bundled,
-        labels.view(),
+        targets,
         None,
         &[],
         config,

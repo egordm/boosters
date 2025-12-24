@@ -48,6 +48,7 @@ pub use classification::{Accuracy, Auc, LogLoss, MarginAccuracy, MulticlassAccur
 use ndarray::{ArrayView1, ArrayView2};
 pub use regression::{HuberMetric, Mae, Mape, PoissonDeviance, QuantileMetric, Rmse};
 
+use crate::dataset::TargetsView;
 use crate::inference::PredictionKind;
 
 // =============================================================================
@@ -230,8 +231,8 @@ impl MetricFn for Metric {
     fn compute(
         &self,
         predictions: ArrayView2<f32>,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
     ) -> f64 {
         match self {
             Self::None => f64::NAN,
@@ -347,8 +348,8 @@ pub trait MetricFn: Send + Sync {
     fn compute(
         &self,
         predictions: ArrayView2<f32>,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
     ) -> f64;
 
     /// What prediction space does this metric expect?

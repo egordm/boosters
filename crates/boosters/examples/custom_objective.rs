@@ -10,7 +10,7 @@
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
-use boosters::dataset::Dataset;
+use boosters::dataset::{Dataset, TargetsView};
 use boosters::training::{GBDTParams, GBDTTrainer, GradsTuple, GrowthStrategy, Rmse, TargetSchema};
 use boosters::{ObjectiveFn, Parallelism, TaskKind};
 use boosters::inference::PredictionKind;
@@ -44,13 +44,15 @@ impl ObjectiveFn for HuberLoss {
     fn compute_gradients(
         &self,
         predictions: ArrayView2<f32>,
-        targets: ArrayView1<f32>,
+        targets: TargetsView<'_>,
         weights: Option<ArrayView1<f32>>,
         mut grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         let (n_outputs, _n_rows) = predictions.dim();
         let weights_slice = weights.as_ref().and_then(|w| w.as_slice()).unwrap_or(&[]);
-        let targets_slice = targets.as_slice().unwrap_or(&[]);
+        // Get targets row for single-output objective
+        let targets_row = targets.output(0);
+        let targets_slice = targets_row.as_slice().unwrap();
 
         for out_idx in 0..n_outputs {
             let preds_row = predictions.row(out_idx);
@@ -79,19 +81,20 @@ impl ObjectiveFn for HuberLoss {
 
     fn compute_base_score(
         &self,
-        targets: ArrayView1<f32>,
+        targets: TargetsView<'_>,
         _weights: Option<ArrayView1<f32>>,
         outputs: &mut [f32],
     ) {
         // Use median for Huber (more robust than mean)
         // For simplicity, using mean here
-        let n_rows = targets.len();
+        let n_rows = targets.n_samples();
         if n_rows == 0 {
             outputs.fill(0.0);
             return;
         }
 
-        let sum: f32 = targets.iter().sum();
+        let targets_row = targets.output(0);
+        let sum: f32 = targets_row.iter().sum();
         outputs.fill(sum / n_rows as f32);
     }
 
@@ -140,10 +143,14 @@ fn main() {
 
     println!("Training with custom Huber loss (delta=1.0)...\n");
 
+    // Wrap labels in TargetsView (shape [n_outputs=1, n_samples])
+    let targets_2d = ndarray::Array2::from_shape_vec((1, labels.len()), labels.clone()).unwrap();
+    let targets = TargetsView::new(targets_2d.view());
+
     let huber = HuberLoss::new(1.0);
     let trainer = GBDTTrainer::new(huber, Rmse, params);
     let forest = trainer
-        .train(&dataset, ArrayView1::from(&labels[..]), None, &[], Parallelism::Sequential)
+        .train(&dataset, targets, None, &[], Parallelism::Sequential)
         .unwrap();
 
     // =========================================================================

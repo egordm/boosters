@@ -3,7 +3,7 @@
 //! SHAP values for linear models have a closed-form solution:
 //! shap[i] = weight[i] * (x[i] - mean[i])
 
-use crate::data::SamplesView;
+use crate::dataset::FeaturesView;
 use crate::explainability::shap::ShapValues;
 use crate::explainability::ExplainError;
 use crate::repr::gblinear::LinearModel;
@@ -65,35 +65,40 @@ impl<'a> LinearExplainer<'a> {
     /// Compute SHAP values for a batch of samples.
     ///
     /// # Arguments
-    /// * `data` - Feature matrix with shape `[n_samples, n_features]` (sample-major layout)
+    /// * `features` - Feature matrix with shape `[n_features, n_samples]` (feature-major layout)
     ///
     /// # Returns
     /// ShapValues container with shape `[n_samples, n_features + 1, n_outputs]`.
-    pub fn shap_values(&self, data: SamplesView<'_>) -> ShapValues {
-        let n_samples = data.n_samples();
+    pub fn shap_values(&self, features: FeaturesView<'_>) -> ShapValues {
+        let n_samples = features.n_samples();
         let n_features = self.model.n_features();
         let n_outputs = self.model.n_groups();
         let mut shap = ShapValues::zeros(n_samples, n_features, n_outputs);
 
         let weights = self.model.as_slice();
-        let data_arr = data.view();
 
-        for sample_idx in 0..n_samples {
-            let features = data_arr.row(sample_idx);
+        // Iterate feature-major: for each feature, compute SHAP for all samples
+        // This is cache-friendly as feature values are contiguous
+        for feature in 0..n_features {
+            let mean = self.feature_means[feature];
+            let feature_values = features.feature(feature);
 
             for output in 0..n_outputs {
-                // Set base value
-                shap.set_base_value(sample_idx, output, self.base_value(output));
+                let weight_idx = feature * n_outputs + output;
+                let weight = weights[weight_idx] as f64;
 
-                // Compute SHAP for each feature: w[i] * (x[i] - mean[i])
-                for (feature, (&x, &mean)) in features.iter().zip(&self.feature_means).enumerate() {
-                    let weight_idx = feature * n_outputs + output;
-                    let weight = weights[weight_idx] as f64;
-                    let x = x as f64;
-
+                for sample_idx in 0..n_samples {
+                    let x = feature_values[sample_idx] as f64;
                     let contribution = weight * (x - mean);
                     shap.set(sample_idx, feature, output, contribution);
                 }
+            }
+        }
+
+        // Set base values for all samples
+        for sample_idx in 0..n_samples {
+            for output in 0..n_outputs {
+                shap.set_base_value(sample_idx, output, self.base_value(output));
             }
         }
 
@@ -152,9 +157,9 @@ mod tests {
         let means = vec![1.0, 2.0];
         let explainer = LinearExplainer::new(&model, means).unwrap();
 
-        // Sample: x = [3.0, 4.0] - sample-major layout [n_samples=1, n_features=2]
-        let data = vec![3.0f32, 4.0f32];
-        let view = SamplesView::from_slice(&data, 1, 2).unwrap();
+        // Sample: x = [3.0, 4.0] - feature-major layout [n_features=2, n_samples=1]
+        let data = array![[3.0f32], [4.0f32]];
+        let view = FeaturesView::from_array(data.view());
         let shap = explainer.shap_values(view);
 
         // shap[0] = 2 * (3 - 1) = 4
@@ -171,8 +176,8 @@ mod tests {
 
         // Sample: x = [3.0, 4.0]
         // Prediction: 2*3 + 3*4 + 0.5 = 18.5
-        let data = vec![3.0f32, 4.0f32];
-        let view = SamplesView::from_slice(&data, 1, 2).unwrap();
+        let data = array![[3.0f32], [4.0f32]];
+        let view = FeaturesView::from_array(data.view());
         let shap = explainer.shap_values(view);
 
         let sum: f64 = (0..2).map(|f| shap.get(0, f, 0)).sum();
@@ -197,13 +202,14 @@ mod tests {
         let means = vec![1.0, 2.0];
         let explainer = LinearExplainer::new(&model, means).unwrap();
 
-        let data = vec![3.0f32, 4.0f32];
-        let view = SamplesView::from_slice(&data, 1, 2).unwrap();
+        let data_row = [3.0f32, 4.0f32];
+        let data = array![[3.0f32], [4.0f32]];
+        let view = FeaturesView::from_array(data.view());
         let shap = explainer.shap_values(view);
 
         // The prediction from model (bias is baked in)
         let mut output = [0.0f32; 1];
-        model.predict_row_into(&data, &mut output);
+        model.predict_row_into(&data_row, &mut output);
         let prediction = output[0] as f64;
 
         // Verify the sum property

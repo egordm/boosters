@@ -5,12 +5,12 @@
 //! - Multiclass classification with softmax loss
 
 use super::{load_config, load_train_data, make_dataset};
-use boosters::dataset::FeaturesView;
+use boosters::dataset::{FeaturesView, TargetsView};
 use boosters::training::{
     GBLinearParams, GBLinearTrainer, LogLoss, LogisticLoss, MulticlassLogLoss, SoftmaxLoss,
     Verbosity,
 };
-use ndarray::{Array2, ArrayView1};
+use ndarray::Array2;
 
 /// Test binary classification training produces reasonable predictions.
 #[test]
@@ -124,8 +124,9 @@ fn train_multioutput_classification() {
 
     // Metrics expect shape [n_groups, n_samples] - for class predictions, n_groups=1
     let pred_arr = Array2::from_shape_vec((1, n_samples), pred_classes).unwrap();
-    let targets_arr = ArrayView1::from(&labels[..]);
-    let accuracy = MulticlassAccuracy.compute(pred_arr.view(), targets_arr, None);
+    let targets_2d = Array2::from_shape_vec((1, labels.len()), labels.clone()).unwrap();
+    let targets = TargetsView::new(targets_2d.view());
+    let accuracy = MulticlassAccuracy.compute(pred_arr.view(), targets, None);
 
     // Training accuracy should be reasonable for linear model
     // (better than random = 33.3% for 3 classes)

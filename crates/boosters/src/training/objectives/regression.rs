@@ -2,11 +2,12 @@
 //!
 //! Performance-focused implementations using iterators and slices.
 //! Data layout: predictions/gradients are `[n_outputs, n_samples]` (row-major within ndarray).
-//! Targets and weights are 1D slices of length `n_samples`.
+//! Targets are TargetsView with shape `[n_outputs, n_samples]`, weights are ArrayView1.
 
 use ndarray::{ArrayView1, ArrayView2, ArrayViewMut2};
 
 use super::{ObjectiveFn, TargetSchema, TaskKind};
+use crate::dataset::TargetsView;
 use crate::inference::PredictionKind;
 use crate::training::GradsTuple;
 use crate::utils::weight_iter;
@@ -31,11 +32,12 @@ impl ObjectiveFn for SquaredLoss {
     fn compute_gradients(
         &self,
         predictions: ArrayView2<f32>,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
         mut grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         let (n_outputs, n_rows) = predictions.dim();
+        let targets = targets.output(0);
 
         for out_idx in 0..n_outputs {
             let preds_row = predictions.row(out_idx);
@@ -55,10 +57,11 @@ impl ObjectiveFn for SquaredLoss {
 
     fn compute_base_score(
         &self,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
         outputs: &mut [f32],
     ) {
+        let targets = targets.output(0);
         let n_rows = targets.len();
         if n_rows == 0 {
             outputs.fill(0.0);
@@ -116,11 +119,12 @@ impl ObjectiveFn for AbsoluteLoss {
     fn compute_gradients(
         &self,
         predictions: ArrayView2<f32>,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
         mut grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         let (n_outputs, n_rows) = predictions.dim();
+        let targets = targets.output(0);
 
         for out_idx in 0..n_outputs {
             let preds_row = predictions.row(out_idx);
@@ -141,10 +145,11 @@ impl ObjectiveFn for AbsoluteLoss {
 
     fn compute_base_score(
         &self,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
         outputs: &mut [f32],
     ) {
+        let targets = targets.output(0);
         // Use weighted median as base score (optimal for L1 loss)
         if targets.is_empty() {
             outputs.fill(0.0);
@@ -218,11 +223,12 @@ impl ObjectiveFn for PinballLoss {
     fn compute_gradients(
         &self,
         predictions: ArrayView2<f32>,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
         mut grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         let (_, n_rows) = predictions.dim();
+        let targets = targets.output(0);
 
         for (out_idx, &alpha) in self.alphas.iter().enumerate() {
             let preds_row = predictions.row(out_idx);
@@ -244,10 +250,11 @@ impl ObjectiveFn for PinballLoss {
 
     fn compute_base_score(
         &self,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
         outputs: &mut [f32],
     ) {
+        let targets = targets.output(0);
         if targets.is_empty() {
             outputs.fill(0.0);
             return;
@@ -306,11 +313,12 @@ impl ObjectiveFn for PseudoHuberLoss {
     fn compute_gradients(
         &self,
         predictions: ArrayView2<f32>,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
         mut grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         let (n_outputs, n_rows) = predictions.dim();
+        let targets = targets.output(0);
         let inv_delta_sq = 1.0 / (self.delta * self.delta);
 
         for out_idx in 0..n_outputs {
@@ -336,10 +344,11 @@ impl ObjectiveFn for PseudoHuberLoss {
 
     fn compute_base_score(
         &self,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
         outputs: &mut [f32],
     ) {
+        let targets = targets.output(0);
         // Use median as robust base score
         if targets.is_empty() {
             outputs.fill(0.0);
@@ -389,14 +398,15 @@ impl ObjectiveFn for PoissonLoss {
     fn compute_gradients(
         &self,
         predictions: ArrayView2<f32>,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
         mut grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         const MAX_EXP: f32 = 30.0;
         const HESS_MIN: f32 = 1e-6;
 
         let (n_outputs, n_rows) = predictions.dim();
+        let targets = targets.output(0);
 
         for out_idx in 0..n_outputs {
             let preds_row = predictions.row(out_idx);
@@ -418,10 +428,11 @@ impl ObjectiveFn for PoissonLoss {
 
     fn compute_base_score(
         &self,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: Option<ArrayView1<'_, f32>>,
         outputs: &mut [f32],
     ) {
+        let targets = targets.output(0);
         let n_rows = targets.len();
         if n_rows == 0 {
             outputs.fill(0.0);
@@ -467,7 +478,7 @@ impl ObjectiveFn for PoissonLoss {
 /// is acceptable as it's called once per training run, not in the hot path.
 fn compute_weighted_quantile(
     values: ArrayView1<f32>,
-    weights: Option<ArrayView1<f32>>,
+    weights: Option<ArrayView1<'_, f32>>,
     alpha: f32,
 ) -> f32 {
     if values.is_empty() {
@@ -502,18 +513,15 @@ fn compute_weighted_quantile(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::{Array1, Array2};
+    use crate::dataset::TargetsView;
+    use ndarray::Array2;
 
     fn make_preds(n_outputs: usize, n_samples: usize, data: &[f32]) -> Array2<f32> {
         Array2::from_shape_vec((n_outputs, n_samples), data.to_vec()).unwrap()
     }
 
-    fn make_targets(data: &[f32]) -> Array1<f32> {
-        Array1::from_vec(data.to_vec())
-    }
-
-    fn make_weights(data: &[f32]) -> Array1<f32> {
-        Array1::from_vec(data.to_vec())
+    fn make_targets_array(data: &[f32]) -> Array2<f32> {
+        Array2::from_shape_vec((1, data.len()), data.to_vec()).unwrap()
     }
 
     fn make_grad_hess(n_outputs: usize, n_samples: usize) -> Array2<GradsTuple> {
@@ -524,10 +532,11 @@ mod tests {
     fn squared_loss_single_output() {
         let obj = SquaredLoss;
         let preds = make_preds(1, 3, &[1.0, 2.0, 3.0]);
-        let targets = make_targets(&[0.5, 2.5, 2.5]);
+        let targets_arr = make_targets_array(&[0.5, 2.5, 2.5]);
+        let targets = TargetsView::new(targets_arr.view());
         let mut gh = make_grad_hess(1, 3);
 
-        obj.compute_gradients(preds.view(), targets.view(), None, gh.view_mut());
+        obj.compute_gradients(preds.view(), targets, None, gh.view_mut());
 
         assert!((gh[[0, 0]].grad - 0.5).abs() < 1e-6);  // 1.0 - 0.5
         assert!((gh[[0, 1]].grad - -0.5).abs() < 1e-6); // 2.0 - 2.5
@@ -539,11 +548,12 @@ mod tests {
     fn squared_loss_weighted() {
         let obj = SquaredLoss;
         let preds = make_preds(1, 2, &[1.0, 2.0]);
-        let targets = make_targets(&[0.5, 2.5]);
-        let weights = make_weights(&[2.0, 0.5]);
+        let targets_arr = make_targets_array(&[0.5, 2.5]);
+        let targets = TargetsView::new(targets_arr.view());
+        let weights = ndarray::array![2.0f32, 0.5];
         let mut gh = make_grad_hess(1, 2);
 
-        obj.compute_gradients(preds.view(), targets.view(), Some(weights.view()), gh.view_mut());
+        obj.compute_gradients(preds.view(), targets, Some(weights.view()), gh.view_mut());
 
         assert!((gh[[0, 0]].grad - 1.0).abs() < 1e-6);   // 2.0 * 0.5
         assert!((gh[[0, 1]].grad - -0.25).abs() < 1e-6); // 0.5 * -0.5
@@ -554,10 +564,11 @@ mod tests {
     #[test]
     fn squared_loss_base_score() {
         let obj = SquaredLoss;
-        let targets = make_targets(&[1.0, 2.0, 3.0, 4.0]);
+        let targets_arr = make_targets_array(&[1.0, 2.0, 3.0, 4.0]);
+        let targets = TargetsView::new(targets_arr.view());
         let mut output = [0.0f32];
 
-        obj.compute_base_score(targets.view(), None, &mut output);
+        obj.compute_base_score(targets, None, &mut output);
         assert!((output[0] - 2.5).abs() < 1e-6);
     }
 
@@ -565,10 +576,11 @@ mod tests {
     fn pinball_loss_median() {
         let obj = PinballLoss::new(0.5);
         let preds = make_preds(1, 3, &[1.0, 2.0, 3.0]);
-        let targets = make_targets(&[0.5, 2.5, 2.5]);
+        let targets_arr = make_targets_array(&[0.5, 2.5, 2.5]);
+        let targets = TargetsView::new(targets_arr.view());
         let mut gh = make_grad_hess(1, 3);
 
-        obj.compute_gradients(preds.view(), targets.view(), None, gh.view_mut());
+        obj.compute_gradients(preds.view(), targets, None, gh.view_mut());
 
         assert!((gh[[0, 0]].grad - 0.5).abs() < 1e-6);  // pred > target
         assert!((gh[[0, 1]].grad - -0.5).abs() < 1e-6); // pred < target
@@ -579,10 +591,11 @@ mod tests {
     fn absolute_loss_basic() {
         let obj = AbsoluteLoss;
         let preds = make_preds(1, 3, &[1.0, 2.0, 3.0]);
-        let targets = make_targets(&[0.5, 2.5, 2.5]);
+        let targets_arr = make_targets_array(&[0.5, 2.5, 2.5]);
+        let targets = TargetsView::new(targets_arr.view());
         let mut gh = make_grad_hess(1, 3);
 
-        obj.compute_gradients(preds.view(), targets.view(), None, gh.view_mut());
+        obj.compute_gradients(preds.view(), targets, None, gh.view_mut());
 
         assert!((gh[[0, 0]].grad - 1.0).abs() < 1e-6);  // sign(0.5) = 1
         assert!((gh[[0, 1]].grad - -1.0).abs() < 1e-6); // sign(-0.5) = -1
@@ -593,10 +606,11 @@ mod tests {
     fn pseudo_huber_near_zero() {
         let obj = PseudoHuberLoss::new(1.0);
         let preds = make_preds(1, 1, &[0.01]);
-        let targets = make_targets(&[0.0]);
+        let targets_arr = make_targets_array(&[0.0]);
+        let targets = TargetsView::new(targets_arr.view());
         let mut gh = make_grad_hess(1, 1);
 
-        obj.compute_gradients(preds.view(), targets.view(), None, gh.view_mut());
+        obj.compute_gradients(preds.view(), targets, None, gh.view_mut());
 
         // Near zero, should be approximately linear (grad ≈ residual)
         assert!((gh[[0, 0]].grad - 0.01).abs() < 0.001);
@@ -607,10 +621,11 @@ mod tests {
     fn poisson_loss_basic() {
         let obj = PoissonLoss;
         let preds = make_preds(1, 1, &[0.0]); // exp(0) = 1
-        let targets = make_targets(&[2.0]);
+        let targets_arr = make_targets_array(&[2.0]);
+        let targets = TargetsView::new(targets_arr.view());
         let mut gh = make_grad_hess(1, 1);
 
-        obj.compute_gradients(preds.view(), targets.view(), None, gh.view_mut());
+        obj.compute_gradients(preds.view(), targets, None, gh.view_mut());
 
         // grad = exp(0) - 2 = 1 - 2 = -1
         assert!((gh[[0, 0]].grad - -1.0).abs() < 1e-6);
@@ -621,10 +636,11 @@ mod tests {
     #[test]
     fn poisson_loss_base_score() {
         let obj = PoissonLoss;
-        let targets = make_targets(&[1.0, 2.0, 3.0, 4.0]);
+        let targets_arr = make_targets_array(&[1.0, 2.0, 3.0, 4.0]);
+        let targets = TargetsView::new(targets_arr.view());
         let mut output = [0.0f32];
 
-        obj.compute_base_score(targets.view(), None, &mut output);
+        obj.compute_base_score(targets, None, &mut output);
 
         // Base score = log(mean) = log(2.5)
         let expected = (2.5f32).ln();

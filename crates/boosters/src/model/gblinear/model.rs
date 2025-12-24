@@ -219,17 +219,11 @@ impl GBLinearModel {
         data: &Dataset,
         feature_means: Option<Vec<f64>>,
     ) -> Result<ShapValues, ExplainError> {
-        use crate::data::{transpose_to_c_order, SamplesView};
-
         let means = feature_means.unwrap_or_else(|| vec![0.0; self.meta.n_features]);
         let explainer = LinearExplainer::new(&self.model, means)?;
         
-        // Transpose feature-major [n_features, n_samples] to sample-major [n_samples, n_features]
-        let features = data.features();
-        let samples_array = transpose_to_c_order(features.view());
-        let samples_view = SamplesView::from_array(samples_array.view());
-        
-        Ok(explainer.shap_values(samples_view))
+        // LinearExplainer now takes FeaturesView directly
+        Ok(explainer.shap_values(data.features()))
     }
 }
 
