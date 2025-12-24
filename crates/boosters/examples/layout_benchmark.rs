@@ -4,7 +4,8 @@
 //! cargo run --release --example layout_benchmark
 
 use boosters::data::binned::{BinnedDatasetBuilder, GroupLayout, GroupStrategy};
-use boosters::data::FeaturesView;
+use boosters::data::BinningConfig;
+use boosters::dataset::Dataset;
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
 use ndarray::{Array2, ArrayView1};
@@ -37,17 +38,25 @@ fn main() {
         labels.push(sum + ((i * 31) % 100) as f32 / 100.0 - 0.5);
     }
 
-    let features_view = FeaturesView::from_array(features.view());
+    let features_dataset = Dataset::new(features.view(), None, None);
 
     // Build datasets with different layouts
     println!("Building RowMajor dataset...");
-    let row_major_dataset = BinnedDatasetBuilder::from_matrix(&features_view, 256)
+    let row_major_dataset = BinnedDatasetBuilder::from_dataset(
+        &features_dataset,
+        BinningConfig::builder().max_bins(256).build(),
+        Parallelism::Parallel,
+    )
         .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::RowMajor })
         .build()
         .unwrap();
 
     println!("Building ColumnMajor dataset...");
-    let col_major_dataset = BinnedDatasetBuilder::from_matrix(&features_view, 256)
+    let col_major_dataset = BinnedDatasetBuilder::from_dataset(
+        &features_dataset,
+        BinningConfig::builder().max_bins(256).build(),
+        Parallelism::Parallel,
+    )
         .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
         .build()
         .unwrap();

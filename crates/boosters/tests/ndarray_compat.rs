@@ -5,6 +5,7 @@
 //! 2. Output shape conventions are correct: Array2 (n_groups, n_samples)
 //! 3. XGBoost compatibility is maintained
 
+use boosters::dataset::Dataset;
 use boosters::model::{GBDTModel, ModelMeta};
 use boosters::repr::gbdt::{Forest, ScalarLeaf};
 use boosters::scalar_tree;
@@ -63,15 +64,16 @@ fn predict_regression_shape_and_values() {
     let meta = ModelMeta::for_regression(2);
     let model = GBDTModel::from_forest(forest, meta);
 
-    // Shape: [n_samples, n_features] = [3, 2]
-    let features = array![
-        [0.3f32, 0.5], // sample 0: goes left → 1.0
-        [0.7, 0.5],    // sample 1: goes right-right → 3.0
-        [0.6, 0.1],    // sample 2: goes right-left → 2.0
+    // Feature-major: [n_features=2, n_samples=3]
+    // sample 0: [0.3, 0.5] → goes left → 1.0
+    // sample 1: [0.7, 0.5] → goes right-right → 3.0
+    // sample 2: [0.6, 0.1] → goes right-left → 2.0
+    let features_fm = array![
+        [0.3f32, 0.7, 0.6], // feature 0 values
+        [0.5, 0.5, 0.1],    // feature 1 values
     ];
-
-    // predict_array returns Array2 with shape (n_groups, n_samples)
-    let preds = model.predict_array(features.view(), 1);
+    let dataset = Dataset::new(features_fm.view(), None, None);
+    let preds = model.predict(dataset.features(), 1);
 
     // Verify shape: [n_groups=1, n_samples=3]
     assert_eq!(preds.nrows(), 1);
@@ -89,9 +91,13 @@ fn predict_raw_shape_and_values() {
     let meta = ModelMeta::for_regression(2);
     let model = GBDTModel::from_forest(forest, meta);
 
-    let features = array![[0.3f32, 0.5], [0.7, 0.5]];
-
-    let preds = model.predict_raw_array(features.view(), 1);
+    // Feature-major: [n_features=2, n_samples=2]
+    let features_fm = array![
+        [0.3f32, 0.7], // feature 0 values
+        [0.5, 0.5],    // feature 1 values
+    ];
+    let dataset = Dataset::new(features_fm.view(), None, None);
+    let preds = model.predict_raw(dataset.features(), 1);
 
     // Verify shape: [n_groups=1, n_samples=2]
     assert_eq!(preds.nrows(), 1);
@@ -112,12 +118,13 @@ fn predict_multiclass_shape() {
     let meta = ModelMeta::for_multiclass(2, 3); // 2 features, 3 classes
     let model = GBDTModel::from_forest(forest, meta);
 
-    let features = array![
-        [0.3f32, 0.5], // sample 0: goes left
-        [0.7, 0.5],    // sample 1: goes right
+    // Feature-major: [n_features=2, n_samples=2]
+    let features_fm = array![
+        [0.3f32, 0.7], // feature 0 values (sample 0: goes left, sample 1: goes right)
+        [0.5, 0.5],    // feature 1 values
     ];
-
-    let preds = model.predict_array(features.view(), 1);
+    let dataset = Dataset::new(features_fm.view(), None, None);
+    let preds = model.predict(dataset.features(), 1);
 
     // Array2 shape: (n_groups=3, n_samples=2)
     assert_eq!(preds.nrows(), 3);
@@ -144,8 +151,13 @@ fn array2_row_access_is_contiguous() {
     let meta = ModelMeta::for_multiclass(2, 3);
     let model = GBDTModel::from_forest(forest, meta);
 
-    let features = array![[0.3f32, 0.5], [0.7, 0.5], [0.4, 0.6]];
-    let preds = model.predict_array(features.view(), 1);
+    // Feature-major: [n_features=2, n_samples=3]
+    let features_fm = array![
+        [0.3f32, 0.7, 0.4], // feature 0 values
+        [0.5, 0.5, 0.6],    // feature 1 values
+    ];
+    let dataset = Dataset::new(features_fm.view(), None, None);
+    let preds = model.predict(dataset.features(), 1);
 
     // Each row (group) should be contiguous (all samples for one group)
     for group in 0..3 {
@@ -165,8 +177,10 @@ fn predict_empty_input() {
     let meta = ModelMeta::for_regression(2);
     let model = GBDTModel::from_forest(forest, meta);
 
-    let features = ndarray::Array2::<f32>::zeros((0, 2));
-    let preds = model.predict_array(features.view(), 1);
+    // Feature-major: [n_features=2, n_samples=0]
+    let features_fm = ndarray::Array2::<f32>::zeros((2, 0));
+    let dataset = Dataset::new(features_fm.view(), None, None);
+    let preds = model.predict(dataset.features(), 1);
 
     // Should have shape (n_groups=1, n_samples=0)
     assert_eq!(preds.nrows(), 1);
@@ -179,8 +193,10 @@ fn predict_single_sample() {
     let meta = ModelMeta::for_regression(2);
     let model = GBDTModel::from_forest(forest, meta);
 
-    let features = array![[0.3f32, 0.5]];
-    let preds = model.predict_array(features.view(), 1);
+    // Feature-major: [n_features=2, n_samples=1]
+    let features_fm = array![[0.3f32], [0.5]];
+    let dataset = Dataset::new(features_fm.view(), None, None);
+    let preds = model.predict(dataset.features(), 1);
 
     assert_eq!(preds.nrows(), 1);
     assert_eq!(preds.ncols(), 1);

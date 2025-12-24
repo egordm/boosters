@@ -164,7 +164,7 @@ impl<'a> SamplesView<'a> {
     }
 
     /// Get the underlying array view.
-    pub fn as_array(&self) -> ArrayView2<'a, f32> {
+    pub fn view(&self) -> ArrayView2<'a, f32> {
         self.0
     }
 }
@@ -382,7 +382,7 @@ mod tests {
         assert_eq!(view.n_samples(), 2);
         assert_eq!(view.n_features(), 3);
         assert_eq!(
-            view.as_array(),
+            view.view(),
             arr2(&[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
         );
     }
@@ -454,7 +454,7 @@ mod tests {
 
         assert_eq!(view.n_samples(), 3);
         assert_eq!(view.n_features(), 2);
-        assert_eq!(view.as_array(), arr.view());
+        assert_eq!(view.view(), arr.view());
     }
 
     #[test]

@@ -7,7 +7,8 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
-use boosters::data::{binned::BinnedDatasetBuilder, FeaturesView};
+use boosters::data::{binned::BinnedDatasetBuilder, BinningConfig};
+use boosters::dataset::Dataset;
 use boosters::testing::data::{select_rows, select_targets, split_indices, synthetic_regression};
 use boosters::training::{
     GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, LinearLeafConfig, Rmse, SquaredLoss,
@@ -30,8 +31,12 @@ fn bench_linear_training_overhead(c: &mut Criterion) {
     let y_train = select_targets(dataset.targets.view(), &train_idx);
 
     // Build binned dataset for training (x_train is already feature-major)
-    let features_view = FeaturesView::from_array(x_train.view());
-    let binned_train = BinnedDatasetBuilder::from_matrix(&features_view, 256).build().unwrap();
+    let x_train_dataset = Dataset::new(x_train.view(), None, None);
+    let binned_train = BinnedDatasetBuilder::from_dataset(
+        &x_train_dataset,
+        BinningConfig::builder().max_bins(256).build(),
+        Parallelism::Parallel,
+    ).build().unwrap();
 
     let base_params = GBDTParams {
         n_trees: 20,

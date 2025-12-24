@@ -17,9 +17,10 @@
 //! cargo run --example train_classification
 //! ```
 
+use boosters::data::BinningConfig;
 use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::data::{transpose_to_c_order, FeaturesView};
-use boosters::{GBDTConfig, GBDTModel, Metric, Objective, TreeParams};
+use boosters::dataset::Dataset;
+use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism, TreeParams};
 use ndarray::{Array1, Array2, ArrayView1};
 
 fn main() {
@@ -52,15 +53,16 @@ fn main() {
     }
 
     // Create binned dataset for training
-    let features_view = FeaturesView::from_array(features.view());
+    let features_dataset = Dataset::new(features.view(), None, None);
 
     // Create binned dataset
-    let dataset = BinnedDatasetBuilder::from_matrix(&features_view, 256)
+    let dataset = BinnedDatasetBuilder::from_dataset(
+        &features_dataset,
+        BinningConfig::builder().max_bins(256).build(),
+        Parallelism::Parallel,
+    )
         .build()
         .expect("Failed to build binned dataset");
-
-    // For prediction we need sample-major (C-order)
-    let samples = transpose_to_c_order(features.view());
 
     // =========================================================================
     // Train with depth-wise growth (XGBoost style)
@@ -80,8 +82,8 @@ fn main() {
     let model_depth = GBDTModel::train_binned(&dataset, labels.view(), None, &[], config_depth, 1)
         .expect("Training failed");
 
-    // Predict: GBDTModel::predict_array() returns probabilities for logistic objective
-    let predictions = model_depth.predict_array(samples.view(), 1);
+    // Predict: features_dataset is already feature-major
+    let predictions = model_depth.predict(features_dataset.features(), 1);
 
     let acc = compute_accuracy(predictions.as_slice().unwrap(), labels.as_slice().unwrap());
     println!("Depth-wise: {} trees", model_depth.forest().n_trees());
@@ -105,7 +107,7 @@ fn main() {
     let model_leaf = GBDTModel::train_binned(&dataset, labels.view(), None, &[], config_leaf, 1)
         .expect("Training failed");
 
-    let predictions = model_leaf.predict_array(samples.view(), 1);
+    let predictions = model_leaf.predict(features_dataset.features(), 1);
 
     let acc = compute_accuracy(predictions.as_slice().unwrap(), labels.as_slice().unwrap());
     println!("Leaf-wise: {} trees", model_leaf.forest().n_trees());
@@ -146,7 +148,7 @@ fn main() {
     )
     .expect("Training failed");
 
-    let predictions = model_weighted.predict_array(samples.view(), 1);
+    let predictions = model_weighted.predict(features_dataset.features(), 1);
 
     let acc = compute_accuracy(predictions.as_slice().unwrap(), labels.as_slice().unwrap());
     println!("Weighted training: {} trees", model_weighted.forest().n_trees());

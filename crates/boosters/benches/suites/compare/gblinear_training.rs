@@ -54,7 +54,7 @@ fn build_dataset(features_row_major: &[f32], rows: usize, cols: usize, targets: 
         (1, targets.len()),
         targets
     ).unwrap();
-    Dataset::new(feature_major.view(), targets_2d.view())
+    Dataset::new(feature_major.view(), Some(targets_2d.view()), None)
 }
 
 // =============================================================================

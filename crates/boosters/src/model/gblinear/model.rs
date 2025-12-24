@@ -4,15 +4,15 @@
 //! Access components via [`linear()`](GBLinearModel::linear), [`meta()`](GBLinearModel::meta),
 //! and [`config()`](GBLinearModel::config).
 
-use crate::data::{transpose_to_c_order, SamplesView};
-use crate::dataset::Dataset;
+use crate::data::SamplesView;
+use crate::dataset::{Dataset, FeaturesView};
 use crate::explainability::{ExplainError, LinearExplainer, ShapValues};
 use crate::model::meta::ModelMeta;
 use crate::repr::gblinear::LinearModel;
 use crate::training::gblinear::GBLinearTrainer;
 use crate::training::{EvalSet, Metric, ObjectiveFn};
 
-use ndarray::{Array2, ArrayView2};
+use ndarray::Array2;
 
 use super::GBLinearConfig;
 
@@ -148,23 +148,34 @@ impl GBLinearModel {
     // Prediction
     // =========================================================================
 
-    /// Predict from a Dataset, returning transformed predictions.
+    /// Predict from feature-major data, returning transformed predictions.
     ///
-    /// This is the **preferred** prediction method. It accepts a Dataset with
-    /// feature-major layout and uses efficient per-feature iteration.
+    /// This is the **preferred** prediction method. It accepts features in
+    /// feature-major layout `[n_features, n_samples]` and uses efficient
+    /// per-feature iteration.
     ///
     /// Returns probabilities for classification (sigmoid/softmax) or raw values
     /// for regression.
     ///
     /// # Arguments
     ///
-    /// * `dataset` - Dataset with feature-major storage
+    /// * `features` - Feature-major data `[n_features, n_samples]`
     ///
     /// # Returns
     ///
     /// Array2 with shape `[n_groups, n_samples]`. Access group predictions via `.row(group_idx)`.
-    pub fn predict(&self, dataset: &Dataset) -> Array2<f32> {
-        let n_samples = dataset.n_samples();
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // From a Dataset
+    /// let preds = model.predict(dataset.features());
+    ///
+    /// // From a FeaturesView
+    /// let preds = model.predict(features_view);
+    /// ```
+    pub fn predict(&self, features: FeaturesView<'_>) -> Array2<f32> {
+        let n_samples = features.n_samples();
         let n_groups = self.meta.n_groups;
 
         if n_samples == 0 {
@@ -172,7 +183,7 @@ impl GBLinearModel {
         }
 
         // Use efficient feature-major prediction
-        let mut output = self.model.predict_feature_major(dataset.features().as_array());
+        let mut output = self.model.predict_feature_major(features.view());
 
         // Apply transformation if we have config with objective
         self.config.objective.transform_predictions(output.view_mut());
@@ -180,88 +191,24 @@ impl GBLinearModel {
         output
     }
 
-    /// Predict from a Dataset, returning raw margin scores (no transform).
+    /// Predict from feature-major data, returning raw margin scores (no transform).
     ///
     /// # Arguments
     ///
-    /// * `dataset` - Dataset with feature-major storage
+    /// * `features` - Feature-major data `[n_features, n_samples]`
     ///
     /// # Returns
     ///
     /// Array2 with shape `[n_groups, n_samples]`.
-    pub fn predict_raw(&self, dataset: &Dataset) -> Array2<f32> {
-        let n_samples = dataset.n_samples();
+    pub fn predict_raw(&self, features: FeaturesView<'_>) -> Array2<f32> {
+        let n_samples = features.n_samples();
         let n_groups = self.meta.n_groups;
 
         if n_samples == 0 {
             return Array2::zeros((n_groups, 0));
         }
 
-        self.model.predict_feature_major(dataset.features().as_array())
-    }
-
-    /// Predict for a sample-major array, returning transformed predictions.
-    ///
-    /// Prefer [`predict`](Self::predict) with a Dataset for better efficiency.
-    /// This method is provided for convenience when you already have sample-major data.
-    ///
-    /// # Arguments
-    ///
-    /// * `features` - Feature matrix with shape `[n_samples, n_features]` (sample-major)
-    ///
-    /// # Returns
-    ///
-    /// Array2 with shape `[n_groups, n_samples]`. Access group predictions via `.row(group_idx)`.
-    pub fn predict_array(&self, features: ArrayView2<f32>) -> Array2<f32> {
-        let n_rows = features.nrows();
-        let n_groups = self.meta.n_groups;
-
-        if n_rows == 0 {
-            return Array2::zeros((n_groups, 0));
-        }
-
-        // Compute raw predictions into array
-        let mut output = self.compute_predictions_raw(features);
-
-        // Apply transformation if we have config with objective
-        self.config.objective.transform_predictions(output.view_mut());
-
-        output
-    }
-
-    /// Predict for a sample-major array, returning raw margin scores (no transform).
-    ///
-    /// Prefer [`predict_raw`](Self::predict_raw) with a Dataset for better efficiency.
-    ///
-    /// # Arguments
-    ///
-    /// * `features` - Feature matrix with shape `[n_samples, n_features]` (sample-major)
-    ///
-    /// # Returns
-    ///
-    /// Array2 with shape `[n_groups, n_samples]`. Access group predictions via `.row(group_idx)`.
-    pub fn predict_raw_array(&self, features: ArrayView2<f32>) -> Array2<f32> {
-        let n_rows = features.nrows();
-        let n_groups = self.meta.n_groups;
-
-        if n_rows == 0 {
-            return Array2::zeros((n_groups, 0));
-        }
-
-        self.compute_predictions_raw(features)
-    }
-
-    /// Internal: Compute raw predictions using dot product.
-    ///
-    /// Output shape: `[n_groups, n_rows]` - predictions for group g are in row g.
-    fn compute_predictions_raw(&self, features: ArrayView2<f32>) -> Array2<f32> {
-        // LinearModel::predict returns [n_samples, n_groups]
-        // Then transpose to [n_groups, n_samples] for consistent API
-        let data = SamplesView::from_array(features);
-        let output = self.model.predict(data, &[]);
-
-        // Transpose to [n_groups, n_samples]
-        transpose_to_c_order(output.view())
+        self.model.predict_feature_major(features.view())
     }
 
     // =========================================================================
@@ -340,8 +287,10 @@ mod tests {
         let model = GBLinearModel::from_linear_model(linear, meta);
 
         // y = 0.5*1.0 + 0.3*2.0 + 0.1 = 0.5 + 0.6 + 0.1 = 1.2
-        let features = arr2(&[[1.0, 2.0]]);
-        let preds = model.predict_raw_array(features.view());
+        // Feature-major: [n_features=2, n_samples=1]
+        let features_fm = arr2(&[[1.0], [2.0]]);
+        let dataset = Dataset::new(features_fm.view(), None, None);
+        let preds = model.predict_raw(dataset.features());
         assert!((preds[[0, 0]] - 1.2).abs() < 1e-6);
     }
 
@@ -351,13 +300,19 @@ mod tests {
         let meta = ModelMeta::for_regression(2);
         let model = GBLinearModel::from_linear_model(linear, meta);
 
-        let features = arr2(&[
-            [1.0, 2.0], // row 0: 0.5 + 0.6 + 0.1 = 1.2
-            [0.0, 0.0], // row 1: 0 + 0 + 0.1 = 0.1
+        // Feature-major: [n_features=2, n_samples=2]
+        // feature 0: [1.0, 0.0]
+        // feature 1: [2.0, 0.0]
+        let features_fm = arr2(&[
+            [1.0, 0.0], // feature 0 values for samples 0, 1
+            [2.0, 0.0], // feature 1 values for samples 0, 1
         ]);
-        let preds = model.predict_raw_array(features.view());
+        let dataset = Dataset::new(features_fm.view(), None, None);
+        let preds = model.predict_raw(dataset.features());
 
         // Shape is [n_groups, n_samples] = [1, 2]
+        // sample 0: 0.5*1.0 + 0.3*2.0 + 0.1 = 1.2
+        // sample 1: 0.5*0.0 + 0.3*0.0 + 0.1 = 0.1
         assert!((preds[[0, 0]] - 1.2).abs() < 1e-6);
         assert!((preds[[0, 1]] - 0.1).abs() < 1e-6);
     }
@@ -418,37 +373,25 @@ mod tests {
     }
 
     #[test]
-    fn predict_dataset_matches_predict_raw_array() {
+    fn predict_from_dataset() {
         let linear = make_simple_model();
         let meta = ModelMeta::for_regression(2);
         let model = GBLinearModel::from_linear_model(linear, meta);
 
-        // Sample-major layout: 2 samples, 2 features
-        // row 0: [1.0, 2.0]
-        // row 1: [0.0, 0.0]
-        let sample_major = array![[1.0, 2.0], [0.0, 0.0]];
-
         // Feature-major layout: [n_features=2, n_samples=2]
         // feature 0: [1.0, 0.0]
         // feature 1: [2.0, 0.0]
-        let feature_major = sample_major.t();
-        let dataset = Dataset::from_column_major_features(feature_major);
+        let feature_major = array![[1.0, 0.0], [2.0, 0.0]];
+        let dataset = Dataset::new(feature_major.view(), None, None);
 
-        // Use new predict (Dataset) method
-        let preds_dataset = model.predict_raw(&dataset);
-
-        // Compare with predict_raw_array using sample-major input
-        let preds_raw = model.predict_raw_array(sample_major.view());
-
-        // Both should give same results
-        assert_eq!(preds_dataset.dim(), preds_raw.dim());
-        assert!((preds_dataset[[0, 0]] - preds_raw[[0, 0]]).abs() < 1e-6);
-        assert!((preds_dataset[[0, 1]] - preds_raw[[0, 1]]).abs() < 1e-6);
+        // Use predict (FeaturesView) method
+        let preds = model.predict_raw(dataset.features());
 
         // Values should be:
         // sample 0: 0.5*1.0 + 0.3*2.0 + 0.1 = 1.2
         // sample 1: 0.5*0.0 + 0.3*0.0 + 0.1 = 0.1
-        assert!((preds_dataset[[0, 0]] - 1.2).abs() < 1e-6);
-        assert!((preds_dataset[[0, 1]] - 0.1).abs() < 1e-6);
+        assert_eq!(preds.dim(), (1, 2));
+        assert!((preds[[0, 0]] - 1.2).abs() < 1e-6);
+        assert!((preds[[0, 1]] - 0.1).abs() < 1e-6);
     }
 }

@@ -1,19 +1,17 @@
 //! Builder for BinnedDataset.
 
 use bon::Builder;
-use rayon::prelude::*;
 
 use super::bundling::{create_bundle_plan, BundlePlan, BundlingConfig};
 use super::dataset::BinnedDataset;
 use super::feature_analysis::FeatureInfo;
 use super::group::{FeatureGroup, FeatureMeta};
 use super::storage::{BinStorage, BinType, GroupLayout};
+use super::MissingType;
 use super::BinMapper;
 
-use crate::data::FeaturesView;
-// Import from the top-level dataset module (not local binned::dataset)
-// Use ::boosters path to avoid shadowing by local dataset module
-type UnifiedDataset = crate::dataset::Dataset;
+use crate::data::binned::BundlingFeatures;
+use crate::dataset::Dataset;
 
 // =============================================================================
 // Binning Configuration
@@ -174,7 +172,7 @@ pub(crate) struct FeatureBinAccessor<'a> {
 unsafe impl Sync for FeatureBinAccessor<'_> {}
 
 // Implement BundlingFeatures for FeatureBinAccessor
-impl super::bundling::BundlingFeatures for FeatureBinAccessor<'_> {
+impl BundlingFeatures for FeatureBinAccessor<'_> {
     fn n_samples(&self) -> usize {
         self.n_rows
     }
@@ -188,23 +186,27 @@ impl super::bundling::BundlingFeatures for FeatureBinAccessor<'_> {
 ///
 /// # Example
 ///
-/// Building from pre-binned data:
+/// Building from a Dataset (the primary API):
 /// ```ignore
-/// let dataset = BinnedDatasetBuilder::new()
-///     .add_binned(bins, mapper)
-///     .group_strategy(GroupStrategy::Auto)
-///     .build()?;
-/// ```
+/// use boosters::{Parallelism, data::{BinnedDatasetBuilder, BinningConfig}};
 ///
-/// Building from a matrix with automatic binning:
-/// ```ignore
-/// let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 256).build()?;
+/// let config = BinningConfig::builder().max_bins(256).build();
+/// let binned = BinnedDatasetBuilder::from_dataset(&dataset, config, Parallelism::Parallel)
+///     .build()?;
 /// ```
 ///
 /// Building with feature bundling:
 /// ```ignore
-/// let dataset = BinnedDatasetBuilder::from_matrix(&col_matrix, 256)
+/// let binned = BinnedDatasetBuilder::from_dataset(&dataset, config, Parallelism::Parallel)
 ///     .with_bundling(BundlingConfig::auto())
+///     .build()?;
+/// ```
+///
+/// Building from pre-binned data (advanced):
+/// ```ignore
+/// let dataset = BinnedDatasetBuilder::new()
+///     .add_binned(bins, mapper)
+///     .group_strategy(GroupStrategy::Auto)
 ///     .build()?;
 /// ```
 #[derive(Debug, Default)]
@@ -216,146 +218,50 @@ pub struct BinnedDatasetBuilder {
 }
 
 impl BinnedDatasetBuilder {
-    /// Create a new builder.
+    /// Create a new empty builder for manual feature addition.
+    ///
+    /// Use this when you want to add pre-binned features individually via
+    /// [`add_binned`](Self::add_binned).
+    ///
+    /// For the common case of binning a Dataset, use [`from_dataset`](Self::from_dataset).
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Create a builder from a feature-major view with automatic binning.
+    /// Create a builder from a Dataset.
     ///
-    /// Simple convenience method using default config and parallel binning.
-    /// For explicit control over threading or binning config, use
-    /// [`from_matrix_with_options`](Self::from_matrix_with_options).
-    ///
-    /// # Arguments
-    /// * `data` - Feature-major view `[n_features, n_samples]` (each row is a feature)
-    /// * `max_bins` - Maximum number of bins per feature (typically 256)
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let view = FeaturesView::from_slice(&data, n_samples, n_features).unwrap();
-    /// let dataset = BinnedDatasetBuilder::from_matrix(&view, 256).build()?;
-    /// ```
-    pub fn from_matrix(data: &FeaturesView<'_>, max_bins: u32) -> Self {
-        Self::from_matrix_with_options(
-            data,
-            BinningConfig::builder().max_bins(max_bins).build(),
-            crate::utils::Parallelism::Parallel,
-        )
-    }
-
-    /// Create a builder from a feature-major view with full control.
-    ///
-    /// Use this method when you need explicit control over:
-    /// - Per-feature bin counts via `BinningConfig`
-    /// - Binning strategy (quantile vs equal-width)
-    /// - Threading strategy (sequential vs parallel)
-    /// - Sample count for large dataset binning
+    /// This is the primary API for creating a binned dataset from user data.
+    /// Categorical features (as indicated in the Dataset's schema) are binned
+    /// as categorical; all others use quantile binning.
     ///
     /// # Arguments
-    /// * `data` - Feature-major view `[n_features, n_samples]` (each row is a feature)
+    /// * `dataset` - Dataset with features and optional schema
     /// * `config` - Binning configuration (use `BinningConfig::builder()`)
     /// * `parallelism` - Threading strategy (Sequential or Parallel)
     ///
     /// # Example
     ///
     /// ```ignore
-    /// use boosters::{Parallelism, data::{BinnedDatasetBuilder, BinningConfig, FeaturesView}};
-    ///
-    /// let config = BinningConfig::builder()
-    ///     .max_bins(256)
-    ///     .build();
-    ///
-    /// let view = FeaturesView::from_slice(&data, n_samples, n_features).unwrap();
-    /// let dataset = BinnedDatasetBuilder::from_matrix_with_options(
-    ///     &view,
-    ///     config,
-    ///     Parallelism::Sequential,  // For fair benchmarks
-    /// ).build()?;
-    /// ```
-    pub fn from_matrix_with_options(
-        data: &FeaturesView<'_>,
-        config: BinningConfig,
-        parallelism: crate::utils::Parallelism,
-    ) -> Self {
-        let n_features = data.n_features();
-        let n_samples = data.n_samples();
-
-        // Helper to process a single feature
-        let process_feature = |feat_idx: usize| -> (Vec<u32>, BinMapper) {
-            Self::bin_feature(data, feat_idx, n_samples, &config)
-        };
-
-        // Process features - parallel or sequential based on parallelism
-        // When Sequential, we use pure iteration (no rayon overhead)
-        let feature_results: Vec<(Vec<u32>, BinMapper)> = if parallelism.is_parallel() {
-            (0..n_features).into_par_iter().map(process_feature).collect()
-        } else {
-            (0..n_features).map(process_feature).collect()
-        };
-
-        // Add all features to builder
-        let mut builder = Self::new();
-        for (bins, mapper) in feature_results {
-            builder = builder.add_binned(bins, mapper);
-        }
-
-        builder
-    }
-
-    /// Create a builder from a Dataset with default binning config.
-    ///
-    /// This is the high-level API for creating a binned dataset from user data.
-    /// Uses quantile binning with 256 bins by default.
-    ///
-    /// Categorical features in the schema are binned as categorical.
-    ///
-    /// # Arguments
-    /// * `dataset` - Dataset with features and optional schema
-    /// * `max_bins` - Maximum number of bins per feature (default: 256)
-    ///
-    /// # Example
-    ///
-    /// ```ignore
+    /// use boosters::{Parallelism, data::{BinnedDatasetBuilder, BinningConfig}};
     /// use boosters::dataset::Dataset;
-    /// use boosters::data::BinnedDatasetBuilder;
     /// use ndarray::array;
     ///
-    /// let features = array![[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]];
-    /// let targets = array![[0.0], [1.0], [0.0]];
-    /// let dataset = Dataset::new(features.view(), targets.view());
+    /// let features = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]; // [n_features, n_samples]
+    /// let targets = array![[0.0, 1.0, 0.0]]; // [n_outputs, n_samples]
+    /// let dataset = Dataset::new(features.view(), Some(targets.view()), None);
     ///
-    /// let binned = BinnedDatasetBuilder::from_dataset(&dataset, 256)
+    /// // Full control over binning
+    /// let config = BinningConfig::builder().max_bins(256).build();
+    /// let binned = BinnedDatasetBuilder::from_dataset(&dataset, config, Parallelism::Parallel)
     ///     .build()
     ///     .expect("binning should succeed");
     /// ```
-    pub fn from_dataset(dataset: &UnifiedDataset, max_bins: u32) -> Self {
-        Self::from_dataset_with_options(
-            dataset,
-            BinningConfig::builder().max_bins(max_bins).build(),
-            crate::utils::Parallelism::Parallel,
-        )
-    }
-
-    /// Create a builder from a Dataset with full control.
-    ///
-    /// Use this method when you need explicit control over:
-    /// - Per-feature bin counts via `BinningConfig`
-    /// - Binning strategy (quantile vs equal-width)
-    /// - Threading strategy (sequential vs parallel)
-    ///
-    /// # Arguments
-    /// * `dataset` - Dataset with features and optional schema
-    /// * `config` - Binning configuration
-    /// * `parallelism` - Threading strategy
-    pub fn from_dataset_with_options(
-        dataset: &UnifiedDataset,
+    pub fn from_dataset(
+        dataset: &Dataset,
         config: BinningConfig,
         parallelism: crate::utils::Parallelism,
     ) -> Self {
         let n_features = dataset.n_features();
-        let n_samples = dataset.n_samples();
         let features_view = dataset.features();
         let schema = dataset.schema();
 
@@ -365,22 +271,14 @@ impl BinnedDatasetBuilder {
             let is_categorical = schema.feature_type(feat_idx).is_categorical();
 
             if is_categorical {
-                Self::bin_categorical_feature(feature_data.as_slice().unwrap(), n_samples)
+                Self::bin_categorical(feature_data.as_slice().unwrap())
             } else {
-                Self::bin_numeric_feature_from_slice(
-                    feature_data.as_slice().unwrap(),
-                    n_samples,
-                    &config,
-                )
+                Self::bin_numeric(feature_data.as_slice().unwrap(), &config)
             }
         };
 
-        // Process features - parallel or sequential based on parallelism
-        let feature_results: Vec<(Vec<u32>, BinMapper)> = if parallelism.is_parallel() {
-            (0..n_features).into_par_iter().map(process_feature).collect()
-        } else {
-            (0..n_features).map(process_feature).collect()
-        };
+        // Process features
+        let feature_results = parallelism.maybe_par_map(0..n_features, process_feature);
 
         // Add all features to builder
         let mut builder = Self::new();
@@ -394,9 +292,7 @@ impl BinnedDatasetBuilder {
     /// Bin a categorical feature from float values.
     ///
     /// Categories are expected to be non-negative integers encoded as floats.
-    fn bin_categorical_feature(data: &[f32], _n_samples: usize) -> (Vec<u32>, BinMapper) {
-        use super::MissingType;
-
+    fn bin_categorical(data: &[f32]) -> (Vec<u32>, BinMapper) {
         // Find unique categories
         let mut categories: Vec<i32> = data
             .iter()
@@ -430,14 +326,9 @@ impl BinnedDatasetBuilder {
         (bins, mapper)
     }
 
-    /// Bin a numeric feature from a slice (for Dataset integration).
-    fn bin_numeric_feature_from_slice(
-        data: &[f32],
-        n_samples: usize,
-        config: &BinningConfig,
-    ) -> (Vec<u32>, BinMapper) {
-        use super::MissingType;
-
+    /// Bin a numeric feature from a slice.
+    fn bin_numeric(data: &[f32], config: &BinningConfig) -> (Vec<u32>, BinMapper) {
+        let n_samples = data.len();
         let max_bins = config.max_bins;
 
         // Collect non-NaN values and compute min/max
@@ -491,100 +382,6 @@ impl BinnedDatasetBuilder {
 
         // Bin each value using binary search on bounds
         let bins: Vec<u32> = data
-            .iter()
-            .map(|&val| {
-                if !val.is_finite() {
-                    0 // Map NaN to bin 0
-                } else {
-                    match bounds.binary_search_by(|b| b.partial_cmp(&(val as f64)).unwrap()) {
-                        Ok(i) => i as u32,
-                        Err(i) => i as u32,
-                    }
-                }
-            })
-            .collect();
-
-        let mapper = BinMapper::numerical(
-            bounds,
-            MissingType::None,
-            0,
-            0,
-            0.0,
-            min_val as f64,
-            max_val as f64,
-        );
-
-        (bins, mapper)
-    }
-
-    /// Bin a single feature.
-    ///
-    /// This is extracted to allow both parallel and sequential processing.
-    fn bin_feature(
-        data: &FeaturesView<'_>,
-        feat_idx: usize,
-        n_samples: usize,
-        config: &BinningConfig,
-    ) -> (Vec<u32>, BinMapper) {
-        use super::MissingType;
-
-        let max_bins = config.max_bins;
-        // Get feature values as a contiguous array view
-        let feature_data = data.feature(feat_idx);
-
-        // Collect non-NaN values and compute min/max
-        let mut values: Vec<f32> = Vec::with_capacity(n_samples);
-        let mut min_val = f32::MAX;
-        let mut max_val = f32::MIN;
-
-        for &val in feature_data.iter() {
-            if val.is_finite() {
-                values.push(val);
-                min_val = min_val.min(val);
-                max_val = max_val.max(val);
-            }
-        }
-
-        // Handle degenerate cases
-        if values.is_empty() || min_val >= max_val {
-            let bins: Vec<u32> = vec![0; n_samples];
-            let mapper = BinMapper::numerical(
-                vec![f64::MAX],
-                MissingType::None,
-                0,
-                0,
-                0.0,
-                0.0,
-                0.0,
-            );
-            return (bins, mapper);
-        }
-
-        let n_bins = max_bins.min(values.len() as u32);
-
-        // Compute bin boundaries based on strategy
-        let bounds: Vec<f64> = match config.strategy {
-            BinningStrategy::EqualWidth => {
-                // Equal-width: divide [min, max] into equal intervals
-                let width = (max_val - min_val) / n_bins as f32;
-                (1..=n_bins)
-                    .map(|i| {
-                        if i == n_bins {
-                            f64::MAX
-                        } else {
-                            (min_val + width * i as f32) as f64
-                        }
-                    })
-                    .collect()
-            }
-            BinningStrategy::Quantile => {
-                // Quantile binning with optional sampling for large datasets
-                Self::compute_quantile_bounds(&mut values, n_bins, config.sample_cnt)
-            }
-        };
-
-        // Bin each value using binary search on bounds
-        let bins: Vec<u32> = feature_data
             .iter()
             .map(|&val| {
                 if !val.is_finite() {
@@ -713,12 +510,12 @@ impl BinnedDatasetBuilder {
     /// # Example
     ///
     /// ```ignore
-    /// let dataset = BinnedDatasetBuilder::from_matrix(&matrix, 256)
+    /// let binned = BinnedDatasetBuilder::from_dataset(&dataset, config, Parallelism::Parallel)
     ///     .with_bundling(BundlingConfig::auto())
     ///     .build()?;
     ///
     /// // Check bundling stats
-    /// if let Some(stats) = dataset.bundling_stats() {
+    /// if let Some(stats) = binned.bundling_stats() {
     ///     println!("Bundles created: {}", stats.bundles_created);
     /// }
     /// ```
@@ -1319,23 +1116,23 @@ mod tests {
 
     #[test]
     fn test_features_view_binning() {
-        use crate::data::FeaturesView;
+        use crate::dataset::Dataset;
         use crate::utils::Parallelism;
+        use ndarray::Array2;
 
         // Create feature-major data: 3 features, 4 samples
-        // FeaturesView has shape [n_features, n_samples]
-        // Data layout: [f0_s0, f0_s1, f0_s2, f0_s3, f1_s0, f1_s1, f1_s2, f1_s3, ...]
-        let feature_data = vec![
+        let feature_data: Vec<f32> = vec![
             1.0, 4.0, 7.0, 0.0, // feature 0: samples 0-3
             2.0, 5.0, 8.0, 1.0, // feature 1: samples 0-3
             3.0, 6.0, 9.0, 2.0, // feature 2: samples 0-3
         ];
-        let view = FeaturesView::from_slice(&feature_data, 4, 3).unwrap();
+        let features = Array2::from_shape_vec((3, 4), feature_data).unwrap();
+        let dataset = Dataset::new(features.view(), None, None);
 
         let config = BinningConfig::builder().max_bins(256).build();
 
-        let dataset = BinnedDatasetBuilder::from_matrix_with_options(
-            &view,
+        let binned = BinnedDatasetBuilder::from_dataset(
+            &dataset,
             config,
             Parallelism::Sequential,
         )
@@ -1343,7 +1140,7 @@ mod tests {
         .unwrap();
 
         // Verify structure
-        assert_eq!(dataset.n_rows(), 4);
-        assert_eq!(dataset.n_features(), 3);
+        assert_eq!(binned.n_rows(), 4);
+        assert_eq!(binned.n_features(), 3);
     }
 }

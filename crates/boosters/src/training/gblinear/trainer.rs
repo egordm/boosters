@@ -130,9 +130,10 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
         }
 
         // Get feature data as array [n_features, n_samples]
-        let train_data = train.features().as_array();
+        let train_data = train.features().view();
         // Get targets as 1D view - panics if no targets or multi-output
-        let targets_1d = train.targets_1d();
+        let train_targets = train.targets().expect("dataset must have targets for training");
+        let targets_1d = train_targets.as_single_output();
         let weights_opt = train.weights();
 
         let n_features = train_data.nrows();
@@ -193,7 +194,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
         let eval_data: Vec<_> = if needs_evaluation {
             eval_sets
                 .iter()
-                .map(|es| es.dataset.features().as_array().to_owned())
+                .map(|es| es.dataset.features().view().to_owned())
                 .collect()
         } else {
             Vec::new()
@@ -402,11 +403,17 @@ mod tests {
     use super::*;
     use ndarray::{array, Array2};
     use crate::training::{LogLoss, MulticlassLogLoss, Rmse, SquaredLoss, LogisticLoss, SoftmaxLoss};
+    use crate::data::transpose_to_c_order;
 
     /// Helper to create a Dataset from row-major feature data.
-    /// Accepts features in [n_samples, n_features] layout (standard numpy format).
+    /// Accepts features in [n_samples, n_features] layout (standard user format)
+    /// and targets in [n_samples, n_outputs], then converts to feature-major internally.
     fn make_dataset(features: Array2<f32>, targets: Array2<f32>) -> Dataset {
-        Dataset::new(features.view(), targets.view())
+        // Transpose features to [n_features, n_samples]
+        let features_fm = transpose_to_c_order(features.view());
+        // Transpose targets to [n_outputs, n_samples]
+        let targets_fm = transpose_to_c_order(targets.view());
+        Dataset::new(features_fm.view(), Some(targets_fm.view()), None)
     }
 
     #[test]

@@ -8,8 +8,9 @@
 //! ```
 
 use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::data::{transpose_to_c_order, FeaturesView};
-use boosters::{GBDTConfig, GBDTModel, Metric, Objective, TreeParams};
+use boosters::data::BinningConfig;
+use boosters::dataset::Dataset;
+use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism, TreeParams};
 use ndarray::{Array1, Array2};
 
 fn main() {
@@ -41,8 +42,12 @@ fn main() {
     }
 
     // Create binned dataset for training
-    let features_view = FeaturesView::from_array(features.view());
-    let dataset = BinnedDatasetBuilder::from_matrix(&features_view, 256)
+    let features_dataset = Dataset::new(features.view(), None, None);
+    let dataset = BinnedDatasetBuilder::from_dataset(
+        &features_dataset,
+        BinningConfig::builder().max_bins(256).build(),
+        Parallelism::Parallel,
+    )
         .build()
         .expect("Failed to build binned dataset");
 
@@ -68,10 +73,9 @@ fn main() {
         .expect("Training failed");
 
     // =========================================================================
-    // Evaluate (need sample-major C-order for prediction)
+    // Evaluate - features_dataset is already feature-major
     // =========================================================================
-    let samples = transpose_to_c_order(features.view());
-    let predictions = model.predict_array(samples.view(), 1);
+    let predictions = model.predict(features_dataset.features(), 1);
 
     let rmse = compute_rmse(predictions.as_slice().unwrap(), labels.as_slice().unwrap());
 

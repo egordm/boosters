@@ -46,7 +46,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::data::FeaturesView;
+use boosters::data::BinningConfig;
+use boosters::dataset::Dataset;
 use boosters::model::gbdt::{GBDTConfig, GBDTModel, TreeParams};
 use boosters::testing::data::{
 	random_features_array, split_indices, synthetic_binary, synthetic_multiclass,
@@ -56,6 +57,7 @@ use boosters::training::{
 	Accuracy, LinearLeafConfig, LogLoss, Mae,
 	MetricFn, Metric, MulticlassAccuracy, MulticlassLogLoss, Objective, Rmse,
 };
+use boosters::Parallelism;
 use ndarray::{ArrayView1, ArrayView2};
 
 #[cfg(feature = "io-parquet")]
@@ -650,11 +652,17 @@ fn train_boosters(
 	let sample_major = ArrayView2::from_shape((rows_train, cols), x_train).expect("train features must be contiguous");
 	// Transpose to feature-major [n_features, n_samples] for training
 	let feature_major = sample_major.t().to_owned();
-	// Wrap in FeaturesView for BinnedDatasetBuilder
-	let features_view = FeaturesView::from_array(feature_major.view());
-	let binned_train = BinnedDatasetBuilder::from_matrix(&features_view, 256).build().unwrap();
-	// Create ArrayView2 for prediction - shape is (rows, cols)
-	let features_valid = ArrayView2::from_shape((rows_valid, cols), x_valid).expect("valid features must be contiguous");
+	// Wrap in Dataset for BinnedDatasetBuilder (feature_major is already feature-major)
+	let dataset_train = Dataset::new(feature_major.view(), None, None);
+	let binned_train = BinnedDatasetBuilder::from_dataset(
+		&dataset_train,
+		BinningConfig::builder().max_bins(256).build(),
+		Parallelism::Parallel,
+	).build().unwrap();
+	// Create feature-major array for validation predictions
+	let sample_major_valid = ArrayView2::from_shape((rows_valid, cols), x_valid).expect("valid features must be contiguous");
+	let feature_major_valid = sample_major_valid.t().to_owned();
+	let dataset_valid = Dataset::new(feature_major_valid.view(), None, None);
 
 	let linear_leaves = if config.linear_leaves {
 		Some(LinearLeafConfig::default())
@@ -701,7 +709,7 @@ fn train_boosters(
 		.expect("training should succeed");
 
 	// Predict using model API (applies transform automatically)
-	let pred = model.predict_array(features_valid, 1);
+	let pred = model.predict(dataset_valid.features(), 1);
 	let targets_arr = ArrayView1::from(y_valid);
 
 	// Compute metrics

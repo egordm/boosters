@@ -6,7 +6,8 @@ mod common;
 use common::criterion_config::default_criterion;
 use common::threading::with_rayon_threads;
 
-use boosters::data::{binned::BinnedDatasetBuilder, transpose_to_c_order, FeaturesView};
+use boosters::data::{binned::BinnedDatasetBuilder, transpose_to_c_order, BinningConfig};
+use boosters::dataset::Dataset;
 use boosters::testing::data::{
 	random_features_array, synthetic_binary, synthetic_multiclass, synthetic_regression,
 };
@@ -25,12 +26,16 @@ fn build_binned_dataset(
 	cols: usize,
 	seed: u64,
 ) -> (boosters::data::binned::BinnedDataset, Vec<f32>) {
-	let dataset = synthetic_regression(rows, cols, seed, 0.05);
-	let features_view = FeaturesView::from_array(dataset.features.view());
-	let binned = BinnedDatasetBuilder::from_matrix(&features_view, 256)
+	let synth_dataset = synthetic_regression(rows, cols, seed, 0.05);
+	let features_dataset = Dataset::new(synth_dataset.features.view(), None, None);
+	let binned = BinnedDatasetBuilder::from_dataset(
+		&features_dataset,
+		BinningConfig::builder().max_bins(256).build(),
+		Parallelism::Parallel,
+	)
 		.build()
 		.unwrap();
-	(binned, dataset.targets.to_vec())
+	(binned, synth_dataset.targets.to_vec())
 }
 
 fn bench_gbdt_quantize(c: &mut Criterion) {
@@ -40,11 +45,15 @@ fn bench_gbdt_quantize(c: &mut Criterion) {
 	for (rows, cols) in [(10_000usize, 50usize), (50_000, 100), (100_000, 20)] {
 		let features = random_features_array(rows, cols, 42, -1.0, 1.0);
 		let features_fm = transpose_to_c_order(features.view());
-		let features_view = FeaturesView::from_array(features_fm.view());
+		let features_dataset = Dataset::new(features_fm.view(), None, None);
 
 		group.throughput(Throughput::Elements((rows * cols) as u64));
-		group.bench_with_input(BenchmarkId::new("to_binned/max_bins=256", format!("{rows}x{cols}")), &features_view, |b, m| {
-			b.iter(|| black_box(BinnedDatasetBuilder::from_matrix(black_box(m), 256).build().unwrap()))
+		group.bench_with_input(BenchmarkId::new("to_binned/max_bins=256", format!("{rows}x{cols}")), &features_dataset, |b, ds| {
+			b.iter(|| black_box(BinnedDatasetBuilder::from_dataset(
+				black_box(ds),
+				BinningConfig::builder().max_bins(256).build(),
+				Parallelism::Parallel,
+			).build().unwrap()))
 		});
 	}
 
@@ -88,10 +97,14 @@ fn bench_gbdt_train_binary(c: &mut Criterion) {
 	group.sample_size(10);
 
 	let (rows, cols, n_trees, max_depth) = (50_000usize, 100usize, 50u32, 6u32);
-	let dataset = synthetic_binary(rows, cols, 42, 0.2);
-	let targets: Vec<f32> = dataset.targets.to_vec();
-	let features_view = FeaturesView::from_array(dataset.features.view());
-	let binned = BinnedDatasetBuilder::from_matrix(&features_view, 256)
+	let synth_dataset = synthetic_binary(rows, cols, 42, 0.2);
+	let targets: Vec<f32> = synth_dataset.targets.to_vec();
+	let features_dataset = Dataset::new(synth_dataset.features.view(), None, None);
+	let binned = BinnedDatasetBuilder::from_dataset(
+		&features_dataset,
+		BinningConfig::builder().max_bins(256).build(),
+		Parallelism::Parallel,
+	)
 		.build()
 		.unwrap();
 
@@ -117,10 +130,14 @@ fn bench_gbdt_train_multiclass(c: &mut Criterion) {
 	group.sample_size(10);
 
 	let (rows, cols, n_trees, max_depth, n_classes) = (20_000usize, 50usize, 30u32, 6u32, 10usize);
-	let dataset = synthetic_multiclass(rows, cols, n_classes, 42, 0.1);
-	let targets: Vec<f32> = dataset.targets.to_vec();
-	let features_view = FeaturesView::from_array(dataset.features.view());
-	let binned = BinnedDatasetBuilder::from_matrix(&features_view, 256)
+	let synth_dataset = synthetic_multiclass(rows, cols, n_classes, 42, 0.1);
+	let targets: Vec<f32> = synth_dataset.targets.to_vec();
+	let features_dataset = Dataset::new(synth_dataset.features.view(), None, None);
+	let binned = BinnedDatasetBuilder::from_dataset(
+		&features_dataset,
+		BinningConfig::builder().max_bins(256).build(),
+		Parallelism::Parallel,
+	)
 		.build()
 		.unwrap();
 

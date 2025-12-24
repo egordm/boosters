@@ -27,6 +27,7 @@
 use bon::Builder;
 
 use super::{RegularizationParams, SamplingParams, TreeParams};
+use crate::data::BinningConfig;
 use crate::training::gbdt::LinearLeafConfig;
 use crate::training::Verbosity;
 use crate::training::{Metric, Objective};
@@ -142,6 +143,12 @@ pub struct GBDTConfig {
     /// Row and column sampling parameters.
     #[builder(default)]
     pub sampling: SamplingParams,
+
+    // === Binning ===
+    /// Binning configuration for quantizing continuous features.
+    /// Default: 256 bins with quantile binning.
+    #[builder(default)]
+    pub binning: BinningConfig,
 
     // === Linear leaves ===
     /// Linear leaf configuration. If set, fit linear models in leaves.

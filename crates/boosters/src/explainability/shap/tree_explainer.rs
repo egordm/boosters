@@ -82,7 +82,7 @@ impl<'a> TreeExplainer<'a> {
             .max()
             .unwrap_or(10);
 
-        let data_arr = data.as_array();
+        let data_arr = data.view();
 
         // Process each sample
         for sample_idx in 0..n_samples {

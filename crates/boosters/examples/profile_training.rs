@@ -7,8 +7,9 @@
 //! ```
 
 use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::data::FeaturesView;
-use boosters::{GBDTConfig, GBDTModel, Metric, Objective, RegularizationParams, TreeParams};
+use boosters::data::BinningConfig;
+use boosters::dataset::Dataset;
+use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism, RegularizationParams, TreeParams};
 use ndarray::{Array2, ArrayView1};
 
 fn main() {
@@ -39,10 +40,14 @@ fn main() {
     }
 
     println!("Building binned dataset...");
-    let features_view = FeaturesView::from_array(features.view());
+    let features_dataset = Dataset::new(features.view(), None, None);
     
     let start = std::time::Instant::now();
-    let dataset = BinnedDatasetBuilder::from_matrix(&features_view, 256)
+    let dataset = BinnedDatasetBuilder::from_dataset(
+        &features_dataset,
+        BinningConfig::builder().max_bins(256).build(),
+        Parallelism::Parallel,
+    )
         .build()
         .expect("Failed to build binned dataset");
     println!("  Binning took: {:?}", start.elapsed());

@@ -235,7 +235,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
         let eval_data: Vec<Array2<f32>> = if needs_evaluation {
             eval_sets
                 .iter()
-                .map(|es| es.dataset.to_sample_major())
+                .map(|es| crate::data::transpose_to_c_order(es.dataset.features().view()))
                 .collect()
         } else {
             Vec::new()

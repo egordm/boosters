@@ -18,7 +18,8 @@ mod common;
 use common::criterion_config::default_criterion;
 
 use boosters::data::binned::{BinnedDatasetBuilder, BundlingConfig};
-use boosters::data::{transpose_to_c_order, FeaturesView};
+use boosters::data::{transpose_to_c_order, BinningConfig};
+use boosters::dataset::Dataset;
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
 
@@ -142,13 +143,17 @@ fn bench_boosters_binning(c: &mut Criterion) {
         // Pre-convert to feature-major layout
         let sample_major_view = ArrayView2::from_shape((config.rows, n_features), &features).unwrap();
         let features_fm = transpose_to_c_order(sample_major_view);
-        let features_view = FeaturesView::from_array(features_fm.view());
+        let features_dataset = Dataset::new(features_fm.view(), None, None);
 
         // WITHOUT bundling
         group.bench_function(BenchmarkId::new("no_bundling", config.name), |b| {
             b.iter(|| {
                 black_box(
-                    BinnedDatasetBuilder::from_matrix(&features_view, 256)
+                    BinnedDatasetBuilder::from_dataset(
+                        &features_dataset,
+                        BinningConfig::builder().max_bins(256).build(),
+                        Parallelism::Parallel,
+                    )
                         .with_bundling(BundlingConfig::disabled())
                         .build()
                         .unwrap(),
@@ -160,7 +165,11 @@ fn bench_boosters_binning(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("with_bundling", config.name), |b| {
             b.iter(|| {
                 black_box(
-                    BinnedDatasetBuilder::from_matrix(&features_view, 256)
+                    BinnedDatasetBuilder::from_dataset(
+                        &features_dataset,
+                        BinningConfig::builder().max_bins(256).build(),
+                        Parallelism::Parallel,
+                    )
                         .with_bundling(BundlingConfig::auto())
                         .build()
                         .unwrap(),
@@ -169,7 +178,11 @@ fn bench_boosters_binning(c: &mut Criterion) {
         });
 
         // Report bundling statistics
-        let binned = BinnedDatasetBuilder::from_matrix(&features_view, 256)
+        let binned = BinnedDatasetBuilder::from_dataset(
+            &features_dataset,
+            BinningConfig::builder().max_bins(256).build(),
+            Parallelism::Parallel,
+        )
             .with_bundling(BundlingConfig::auto())
             .build()
             .unwrap();
@@ -214,14 +227,22 @@ fn bench_boosters_training(c: &mut Criterion) {
         // Pre-convert to feature-major layout
         let sample_major_view = ArrayView2::from_shape((config.rows, n_features), &features).unwrap();
         let features_fm = transpose_to_c_order(sample_major_view);
-        let features_view = FeaturesView::from_array(features_fm.view());
+        let features_dataset = Dataset::new(features_fm.view(), None, None);
 
         // Pre-build binned datasets
-        let binned_no_bundle = BinnedDatasetBuilder::from_matrix(&features_view, 256)
+        let binned_no_bundle = BinnedDatasetBuilder::from_dataset(
+            &features_dataset,
+            BinningConfig::builder().max_bins(256).build(),
+            Parallelism::Parallel,
+        )
             .with_bundling(BundlingConfig::disabled())
             .build()
             .unwrap();
-        let binned_with_bundle = BinnedDatasetBuilder::from_matrix(&features_view, 256)
+        let binned_with_bundle = BinnedDatasetBuilder::from_dataset(
+            &features_dataset,
+            BinningConfig::builder().max_bins(256).build(),
+            Parallelism::Parallel,
+        )
             .with_bundling(BundlingConfig::auto())
             .build()
             .unwrap();

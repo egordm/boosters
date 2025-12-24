@@ -9,7 +9,8 @@ mod common;
 use common::criterion_config::default_criterion;
 
 use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::data::{transpose_to_c_order, FeaturesView};
+use boosters::data::{transpose_to_c_order, BinningConfig};
+use boosters::dataset::Dataset;
 use boosters::testing::data::synthetic_regression;
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
@@ -65,7 +66,7 @@ fn bench_train_regression(c: &mut Criterion) {
 		// Transpose to feature-major for booste-rs (it expects feature-major)
 		let sample_major_view = ArrayView2::from_shape((rows, cols), &features).unwrap();
 		let features_fm = transpose_to_c_order(sample_major_view);
-		let features_view = FeaturesView::from_array(features_fm.view());
+		let features_dataset = Dataset::new(features_fm.view(), None, None);
 
 		let params = GBDTParams {
 			n_trees,
@@ -81,9 +82,9 @@ fn bench_train_regression(c: &mut Criterion) {
 			b.iter(|| {
 				// Use single-threaded binning to match training parallelism
 				// This mirrors how LightGBM's num_threads=1 affects its entire pipeline
-				let binned = BinnedDatasetBuilder::from_matrix_with_options(
-					&features_view,
-					256.into(),
+				let binned = BinnedDatasetBuilder::from_dataset(
+					&features_dataset,
+					BinningConfig::builder().max_bins(256).build(),
 					Parallelism::Sequential,
 				)
 				.build()

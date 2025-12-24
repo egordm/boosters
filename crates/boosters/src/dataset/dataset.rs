@@ -20,8 +20,8 @@ use super::views::{FeaturesView, TargetsView};
 ///
 /// # Construction
 ///
-/// Use [`Dataset::new`] for simple construction from matrices (accepts standard
-/// `[n_samples, n_features]` layout), or [`Dataset::builder`] for complex scenarios.
+/// Use [`Dataset::new`] for construction from feature-major matrices,
+/// or [`Dataset::builder`] for complex scenarios with mixed feature types.
 ///
 /// # Example
 ///
@@ -29,10 +29,10 @@ use super::views::{FeaturesView, TargetsView};
 /// use boosters::dataset::Dataset;
 /// use ndarray::array;
 ///
-/// // Standard format: 3 samples, 2 features
-/// let features = array![[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]]; // [n_samples, n_features]
-/// let targets = array![[0.0], [1.0], [0.0]]; // [n_samples, n_outputs]
-/// let ds = Dataset::new(features.view(), targets.view());
+/// // Feature-major format: 2 features, 3 samples
+/// let features = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]; // [n_features, n_samples]
+/// let targets = array![[0.0, 1.0, 0.0]]; // [n_outputs, n_samples]
+/// let ds = Dataset::new(features.view(), Some(targets.view()), None);
 ///
 /// assert_eq!(ds.n_samples(), 3);
 /// assert_eq!(ds.n_features(), 2);
@@ -53,111 +53,68 @@ pub struct Dataset {
 }
 
 impl Dataset {
-    /// Create a dataset from feature and target matrices.
+    /// Create a dataset from feature-major data.
+    ///
+    /// This is the primary constructor. All data is expected in feature-major layout.
     ///
     /// # Arguments
     ///
-    /// * `features` - Feature matrix `[n_samples, n_features]` (row-major, numpy default)
-    /// * `targets` - Target matrix `[n_samples, n_outputs]`
+    /// * `features` - Feature matrix `[n_features, n_samples]` (feature-major)
+    /// * `targets` - Optional target matrix `[n_outputs, n_samples]`
+    /// * `weights` - Optional sample weights (length = n_samples)
     ///
-    /// The features are transposed internally to feature-major layout for
-    /// efficient training. This is a one-time O(n) overhead.
-    ///
-    /// All features are assumed to be numeric.
+    /// All features are assumed to be numeric. For categorical features or
+    /// mixed types, use [`Dataset::builder`].
     ///
     /// # Panics
     ///
-    /// Debug-asserts that `features.nrows() == targets.nrows()` (sample count match).
-    pub fn new(features: ArrayView2<f32>, targets: ArrayView2<f32>) -> Self {
-        debug_assert_eq!(
-            features.nrows(),
-            targets.nrows(),
-            "features and targets must have same sample count"
-        );
-
-        let n_features = features.ncols();
-        let schema = DatasetSchema::all_numeric(n_features);
-
-        // Transpose features from [n_samples, n_features] to [n_features, n_samples]
-        // Use as_standard_layout() to ensure C-contiguous memory for contiguous rows
-        let features_t = features.t().as_standard_layout().into_owned();
-        // Transpose targets from [n_samples, n_outputs] to [n_outputs, n_samples]
-        let targets_t = targets.t().as_standard_layout().into_owned();
-
-        Self {
-            features: features_t,
-            schema,
-            targets: Some(targets_t),
-            weights: None,
-        }
-    }
-
-    /// Create a dataset from features only (no targets).
+    /// Debug-asserts that sample counts match across features, targets, and weights.
     ///
-    /// # Arguments
+    /// # Example
     ///
-    /// * `features` - Feature matrix `[n_samples, n_features]` (row-major)
+    /// ```
+    /// use boosters::dataset::Dataset;
+    /// use ndarray::array;
     ///
-    /// Use this for prediction datasets.
-    pub fn from_features(features: ArrayView2<f32>) -> Self {
-        let n_features = features.ncols();
-        let schema = DatasetSchema::all_numeric(n_features);
-
-        // Transpose to [n_features, n_samples], ensure C-contiguous
-        let features_t = features.t().as_standard_layout().into_owned();
-
-        Self {
-            features: features_t,
-            schema,
-            targets: None,
-            weights: None,
-        }
-    }
-
-    /// Create a dataset from pre-transposed feature-major data.
+    /// // Training: features with targets
+    /// let features = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+    /// let targets = array![[0.0, 1.0, 0.0]];
+    /// let ds = Dataset::new(features.view(), Some(targets.view()), None);
     ///
-    /// **Note:** Prefer [`Dataset::new`] unless you already have feature-major data.
-    /// This method skips the internal transpose, useful when data comes from
-    /// systems that use column-major layout.
-    ///
-    /// # Arguments
-    ///
-    /// * `features` - Feature matrix `[n_features, n_samples]` (feature-major)
-    /// * `targets` - Target matrix `[n_outputs, n_samples]`
-    pub fn from_column_major(features: ArrayView2<f32>, targets: ArrayView2<f32>) -> Self {
-        debug_assert_eq!(
-            features.ncols(),
-            targets.ncols(),
-            "features and targets must have same sample count"
-        );
-
+    /// // Prediction: features only
+    /// let ds = Dataset::new(features.view(), None, None);
+    /// ```
+    pub fn new(
+        features: ArrayView2<f32>,
+        targets: Option<ArrayView2<f32>>,
+        weights: Option<ArrayView1<f32>>,
+    ) -> Self {
+        let n_samples = features.ncols();
         let n_features = features.nrows();
+
+        // Validate sample counts match
+        if let Some(ref t) = targets {
+            debug_assert_eq!(
+                t.ncols(),
+                n_samples,
+                "targets must have same sample count as features"
+            );
+        }
+        if let Some(ref w) = weights {
+            debug_assert_eq!(
+                w.len(),
+                n_samples,
+                "weights must have same sample count as features"
+            );
+        }
+
         let schema = DatasetSchema::all_numeric(n_features);
 
         Self {
             features: features.to_owned(),
             schema,
-            targets: Some(targets.to_owned()),
-            weights: None,
-        }
-    }
-
-    /// Create a dataset from pre-transposed feature-major data (no targets).
-    ///
-    /// **Note:** Prefer [`Dataset::from_features`] unless you already have feature-major data.
-    ///
-    /// # Arguments
-    ///
-    /// * `features` - Feature matrix `[n_features, n_samples]` (feature-major)
-    pub fn from_column_major_features(features: ArrayView2<f32>) -> Self {
-        let n_features = features.nrows();
-        let schema = DatasetSchema::all_numeric(n_features);
-
-        Self {
-            features: features.to_owned(),
-            schema,
-            targets: None,
-            weights: None,
+            targets: targets.map(|t| t.to_owned()),
+            weights: weights.map(|w| w.to_owned()),
         }
     }
 
@@ -231,27 +188,6 @@ impl Dataset {
     /// Returns `None` if no weights were provided.
     pub fn weights(&self) -> Option<ArrayView1<'_, f32>> {
         self.weights.as_ref().map(|w| w.view())
-    }
-
-    /// Get targets as 1D array for single-output datasets.
-    ///
-    /// # Panics
-    ///
-    /// Panics if no targets or if n_outputs != 1.
-    pub fn targets_1d(&self) -> ArrayView1<'_, f32> {
-        let targets = self.targets.as_ref().expect("dataset has no targets");
-        assert_eq!(targets.nrows(), 1, "targets_1d requires n_outputs == 1");
-        targets.row(0)
-    }
-
-    /// Convert to sample-major layout for algorithms that need row access.
-    ///
-    /// Returns an owned `Array2<f32>` with shape `[n_samples, n_features]`.
-    ///
-    /// This is a one-time O(n) transpose operation. Use sparingly for compatibility
-    /// with legacy code. New code should use feature-major access via `features()`.
-    pub fn to_sample_major(&self) -> Array2<f32> {
-        self.features.t().as_standard_layout().into_owned()
     }
 
     // =========================================================================
@@ -510,10 +446,10 @@ mod tests {
 
     #[test]
     fn dataset_new() {
-        // Standard [n_samples, n_features] format: 3 samples, 2 features
-        let features = array![[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]];
-        let targets = array![[0.0], [1.0], [0.0]]; // [n_samples, n_outputs]
-        let ds = Dataset::new(features.view(), targets.view());
+        // Feature-major [n_features, n_samples] format: 2 features, 3 samples
+        let features = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+        let targets = array![[0.0, 1.0, 0.0]]; // [n_outputs, n_samples]
+        let ds = Dataset::new(features.view(), Some(targets.view()), None);
 
         assert_eq!(ds.n_samples(), 3);
         assert_eq!(ds.n_features(), 2);
@@ -522,20 +458,20 @@ mod tests {
         assert!(!ds.has_weights());
         assert!(!ds.has_categorical());
 
-        // Verify transpose happened correctly
+        // Verify layout is correct (no transpose needed for feature-major)
         let view = ds.features();
-        // Feature 0 should be [1, 2, 3] (first column of input)
+        // Feature 0 should be [1, 2, 3]
         assert_eq!(view.feature(0).to_vec(), vec![1.0, 2.0, 3.0]);
-        // Feature 1 should be [4, 5, 6] (second column of input)
+        // Feature 1 should be [4, 5, 6]
         assert_eq!(view.feature(1).to_vec(), vec![4.0, 5.0, 6.0]);
     }
 
     #[test]
-    fn dataset_from_column_major() {
-        // Already in [n_features, n_samples] format - no transpose
-        let features = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]; // 2 features, 3 samples
+    fn dataset_new_feature_major() {
+        // Feature-major [n_features, n_samples] format: 2 features, 3 samples
+        let features = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
         let targets = array![[0.0, 1.0, 0.0]]; // [n_outputs, n_samples]
-        let ds = Dataset::from_column_major(features.view(), targets.view());
+        let ds = Dataset::new(features.view(), Some(targets.view()), None);
 
         assert_eq!(ds.n_samples(), 3);
         assert_eq!(ds.n_features(), 2);
@@ -546,9 +482,9 @@ mod tests {
     }
 
     #[test]
-    fn dataset_from_features() {
-        let features = array![[1.0, 3.0], [2.0, 4.0]]; // [n_samples, n_features]
-        let ds = Dataset::from_features(features.view());
+    fn dataset_new_features_only() {
+        let features = array![[1.0, 2.0], [3.0, 4.0]]; // [n_features, n_samples]
+        let ds = Dataset::new(features.view(), None, None);
 
         assert_eq!(ds.n_samples(), 2);
         assert_eq!(ds.n_features(), 2);
@@ -558,11 +494,11 @@ mod tests {
 
     #[test]
     fn dataset_with_weights() {
-        let features = array![[1.0], [2.0]]; // 2 samples, 1 feature
-        let targets = array![[0.0], [1.0]]; // 2 samples, 1 output
+        let features = array![[1.0, 2.0]]; // [n_features=1, n_samples=2]
+        let targets = array![[0.0, 1.0]]; // [n_outputs=1, n_samples=2]
         let weights = array![0.5, 1.5];
 
-        let ds = Dataset::new(features.view(), targets.view()).with_weights(weights);
+        let ds = Dataset::new(features.view(), Some(targets.view()), Some(weights.view()));
 
         assert!(ds.has_weights());
         assert_eq!(ds.weights().unwrap().to_vec(), vec![0.5, 1.5]);
@@ -570,9 +506,9 @@ mod tests {
 
     #[test]
     fn dataset_features_view() {
-        let features = array![[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]]; // 3 samples, 2 features
-        let targets = array![[0.0], [1.0], [0.0]];
-        let ds = Dataset::new(features.view(), targets.view());
+        let features = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]; // [n_features=2, n_samples=3]
+        let targets = array![[0.0, 1.0, 0.0]]; // [n_outputs=1, n_samples=3]
+        let ds = Dataset::new(features.view(), Some(targets.view()), None);
 
         let view = ds.features();
         assert_eq!(view.n_features(), 2);
@@ -583,9 +519,9 @@ mod tests {
 
     #[test]
     fn dataset_targets_view() {
-        let features = array![[1.0], [2.0]]; // 2 samples, 1 feature
-        let targets = array![[0.0, 1.0], [1.0, 0.0]]; // 2 samples, 2 outputs
-        let ds = Dataset::new(features.view(), targets.view());
+        let features = array![[1.0, 2.0]]; // [n_features=1, n_samples=2]
+        let targets = array![[0.0, 1.0], [1.0, 0.0]]; // [n_outputs=2, n_samples=2]
+        let ds = Dataset::new(features.view(), Some(targets.view()), None);
 
         let view = ds.targets().unwrap();
         assert_eq!(view.n_outputs(), 2);
@@ -596,9 +532,9 @@ mod tests {
 
     #[test]
     fn dataset_targets_1d() {
-        let features = array![[1.0], [2.0], [3.0]]; // 3 samples, 1 feature
-        let targets = array![[0.0], [1.0], [0.0]]; // 3 samples, 1 output
-        let ds = Dataset::new(features.view(), targets.view());
+        let features = array![[1.0, 2.0, 3.0]]; // [n_features=1, n_samples=3]
+        let targets = array![[0.0, 1.0, 0.0]]; // [n_outputs=1, n_samples=3]
+        let ds = Dataset::new(features.view(), Some(targets.view()), None);
 
         assert_eq!(ds.targets().unwrap().as_single_output().to_vec(), vec![0.0, 1.0, 0.0]);
     }
@@ -716,25 +652,25 @@ mod tests {
     }
 
     #[test]
-    fn features_are_contiguous_after_transpose() {
-        // Create data in user format [n_samples, n_features]
+    fn features_are_contiguous() {
+        // Create data in feature-major format [n_features, n_samples]
         let n_samples = 100;
         let n_features = 5;
-        let mut data = Vec::with_capacity(n_samples * n_features);
-        for i in 0..n_samples {
-            for j in 0..n_features {
-                data.push((i * n_features + j) as f32);
+        let mut data = Vec::with_capacity(n_features * n_samples);
+        for f in 0..n_features {
+            for s in 0..n_samples {
+                data.push((f * n_samples + s) as f32);
             }
         }
 
-        let features = Array2::from_shape_vec((n_samples, n_features), data).unwrap();
+        let features = Array2::from_shape_vec((n_features, n_samples), data).unwrap();
         let targets = Array2::from_shape_vec(
-            (n_samples, 1),
+            (1, n_samples),
             (0..n_samples).map(|i| i as f32).collect(),
         )
         .unwrap();
 
-        let ds = Dataset::new(features.view(), targets.view());
+        let ds = Dataset::new(features.view(), Some(targets.view()), None);
         let view = ds.features();
 
         // Each feature should be contiguous (accessible as slice)

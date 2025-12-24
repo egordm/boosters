@@ -16,7 +16,8 @@
 use std::time::Instant;
 
 use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::data::FeaturesView;
+use boosters::data::BinningConfig;
+use boosters::dataset::Dataset;
 use boosters::testing::data::synthetic_regression;
 use boosters::training::{
     GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, RowSamplingParams,
@@ -68,8 +69,12 @@ fn main() {
     let test_labels: Vec<f32> = labels[split_idx..].to_vec();
 
     // Build binned dataset for training
-    let features_view = FeaturesView::from_array(train_features.view());
-    let dataset = BinnedDatasetBuilder::from_matrix(&features_view, 256)
+    let features_dataset = Dataset::new(train_features.view(), None, None);
+    let dataset = BinnedDatasetBuilder::from_dataset(
+        &features_dataset,
+        BinningConfig::builder().max_bins(256).build(),
+        Parallelism::Parallel,
+    )
         .build()
         .expect("Failed to build binned dataset");
 

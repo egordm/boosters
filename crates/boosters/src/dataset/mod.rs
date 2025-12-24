@@ -27,10 +27,10 @@
 //! use boosters::dataset::{Dataset, DatasetBuilder, FeatureType};
 //! use ndarray::array;
 //!
-//! // Simple construction from dense matrix (row-major: [n_samples, n_features])
-//! let features = array![[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]]; // 3 samples, 2 features
-//! let targets = array![[0.0], [1.0], [0.0]]; // 3 samples, 1 output
-//! let ds = Dataset::new(features.view(), targets.view());
+//! // Simple construction from feature-major matrix: [n_features, n_samples]
+//! let features = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]; // 2 features, 3 samples
+//! let targets = array![[0.0, 1.0, 0.0]]; // 1 output, 3 samples
+//! let ds = Dataset::new(features.view(), Some(targets.view()), None);
 //!
 //! assert_eq!(ds.n_samples(), 3);
 //! assert_eq!(ds.n_features(), 2);

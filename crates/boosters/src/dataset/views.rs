@@ -84,7 +84,7 @@ impl<'a> FeaturesView<'a> {
     /// Get the underlying array view.
     ///
     /// Shape is `[n_features, n_samples]`.
-    pub fn as_array(&self) -> ArrayView2<'a, f32> {
+    pub fn view(&self) -> ArrayView2<'a, f32> {
         self.data
     }
 
@@ -170,7 +170,7 @@ impl<'a> TargetsView<'a> {
     /// Get the underlying array view.
     ///
     /// Shape is `[n_outputs, n_samples]`.
-    pub fn as_array(&self) -> ArrayView2<'a, f32> {
+    pub fn view(&self) -> ArrayView2<'a, f32> {
         self.data
     }
 }

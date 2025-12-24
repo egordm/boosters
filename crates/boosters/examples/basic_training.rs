@@ -9,8 +9,9 @@
 //! ```
 
 use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::data::{transpose_to_c_order, FeaturesView};
-use boosters::{GBDTConfig, GBDTModel, Metric, Objective, TreeParams};
+use boosters::data::BinningConfig;
+use boosters::dataset::Dataset;
+use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism, TreeParams};
 use ndarray::{Array1, Array2};
 
 fn main() {
@@ -24,8 +25,12 @@ fn main() {
     let (features, labels) = generate_regression_data(n_samples, n_features);
 
     // Create binned dataset for training (using feature-major data)
-    let features_view = FeaturesView::from_array(features.view());
-    let dataset = BinnedDatasetBuilder::from_matrix(&features_view, 256)
+    let dataset = Dataset::new(features.view(), None, None);
+    let binned_dataset = BinnedDatasetBuilder::from_dataset(
+        &dataset,
+        BinningConfig::builder().max_bins(256).build(),
+        Parallelism::Parallel,
+    )
         .build()
         .expect("Failed to build binned dataset");
 
@@ -49,20 +54,20 @@ fn main() {
     println!("  Metric: {:?}\n", config.metric);
 
     // Train using GBDTModel (high-level API)
-    let model = GBDTModel::train_binned(&dataset, labels.view(), None, &[], config, 1).expect("Training failed");
+    let model = GBDTModel::train_binned(&binned_dataset, labels.view(), None, &[], config, 1).expect("Training failed");
 
     // =========================================================================
     // 3. Make Predictions
     // =========================================================================
-    // Predict on single sample (create a 1-row sample-major array)
+    // Predict on single sample - create feature-major array [n_features, 1]
     let first_sample_data: Vec<f32> = (0..n_features).map(|f| features[(f, 0)]).collect();
-    let sample_arr = Array2::from_shape_vec((1, n_features), first_sample_data).unwrap();
-    let pred = model.predict_array(sample_arr.view(), 1);
+    let sample_fm = Array2::from_shape_vec((n_features, 1), first_sample_data).unwrap();
+    let sample_dataset = Dataset::new(sample_fm.view(), None, None);
+    let pred = model.predict(sample_dataset.features(), 1);
     println!("Sample prediction: {:.4}", pred.as_slice().unwrap()[0]);
 
-    // Predict on full dataset (transpose feature-major to sample-major with C-order)
-    let samples = transpose_to_c_order(features.view());
-    let all_preds = model.predict_array(samples.view(), 1);
+    // Predict on full dataset - features is already feature-major
+    let all_preds = model.predict(dataset.features(), 1);
 
     // Compute RMSE manually
     let rmse = compute_rmse(all_preds.as_slice().unwrap(), labels.as_slice().unwrap());

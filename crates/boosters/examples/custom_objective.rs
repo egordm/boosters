@@ -9,7 +9,8 @@
 //! ```
 
 use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::data::FeaturesView;
+use boosters::data::BinningConfig;
+use boosters::dataset::Dataset;
 use boosters::training::{GBDTParams, GBDTTrainer, GradsTuple, GrowthStrategy, Rmse, TargetSchema};
 use boosters::{ObjectiveFn, Parallelism, TaskKind};
 use boosters::inference::PredictionKind;
@@ -121,8 +122,12 @@ fn main() {
     let (features, labels) = generate_data_with_outliers(n_samples, n_features);
 
     // Create binned dataset
-    let features_view = FeaturesView::from_array(features.view());
-    let dataset = BinnedDatasetBuilder::from_matrix(&features_view, 256)
+    let features_dataset = Dataset::new(features.view(), None, None);
+    let dataset = BinnedDatasetBuilder::from_dataset(
+        &features_dataset,
+        BinningConfig::builder().max_bins(256).build(),
+        Parallelism::Parallel,
+    )
         .build()
         .expect("Failed to build binned dataset");
 

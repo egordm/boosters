@@ -199,7 +199,7 @@ impl LinearModel {
         // Compute dot product: data [n_samples, n_features] · weights [n_features, n_groups]
         // ndarray doesn't have in-place gemm, so we compute and assign
         let weights = self.weights.slice(s![..self.n_features(), ..]);
-        ndarray::linalg::general_mat_mul(1.0, &data.as_array(), &weights, 0.0, &mut output);
+        ndarray::linalg::general_mat_mul(1.0, &data.view(), &weights, 0.0, &mut output);
 
         // Add biases: output[row, group] += bias[group] + base_score[group]
         let biases = self.biases();

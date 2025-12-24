@@ -10,8 +10,9 @@
 //! ```
 
 use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::data::{transpose_to_c_order, FeaturesView};
-use boosters::{GBDTConfig, GBDTModel, Metric, Objective, TreeParams};
+use boosters::data::BinningConfig;
+use boosters::dataset::Dataset;
+use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism, TreeParams};
 use ndarray::{Array1, Array2};
 
 fn main() {
@@ -26,8 +27,12 @@ fn main() {
     let (features, labels) = generate_regression_data(n_samples, n_features, 42);
 
     // Create binned dataset (features is feature-major)
-    let features_view = FeaturesView::from_array(features.view());
-    let dataset = BinnedDatasetBuilder::from_matrix(&features_view, 256)
+    let features_dataset = Dataset::new(features.view(), None, None);
+    let dataset = BinnedDatasetBuilder::from_dataset(
+        &features_dataset,
+        BinningConfig::builder().max_bins(256).build(),
+        Parallelism::Parallel,
+    )
         .build()
         .expect("Failed to build dataset");
 
@@ -66,9 +71,8 @@ fn main() {
     println!("\n=== Results ===");
     println!("Trees trained: {} (max was 200)", actual_trees);
 
-    // Evaluate (need sample-major C-order for prediction)
-    let samples = transpose_to_c_order(features.view());
-    let preds = model.predict_array(samples.view(), 1);
+    // Evaluate - use the features_dataset for prediction
+    let preds = model.predict(features_dataset.features(), 1);
     let rmse = compute_rmse(preds.as_slice().unwrap(), labels.as_slice().unwrap());
 
     println!("Training RMSE: {:.4}", rmse);

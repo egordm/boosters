@@ -76,7 +76,7 @@ impl<'a> LinearExplainer<'a> {
         let mut shap = ShapValues::zeros(n_samples, n_features, n_outputs);
 
         let weights = self.model.as_slice();
-        let data_arr = data.as_array();
+        let data_arr = data.view();
 
         for sample_idx in 0..n_samples {
             let features = data_arr.row(sample_idx);

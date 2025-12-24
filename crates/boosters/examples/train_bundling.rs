@@ -14,8 +14,9 @@
 use std::time::Instant;
 
 use boosters::data::binned::{BinnedDatasetBuilder, BundlingConfig};
-use boosters::data::{transpose_to_c_order, FeaturesView};
-use boosters::{GBDTConfig, GBDTModel, Metric, Objective, TreeParams};
+use boosters::data::BinningConfig;
+use boosters::dataset::Dataset;
+use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism, TreeParams};
 use ndarray::{Array1, Array2};
 
 fn main() {
@@ -73,10 +74,7 @@ fn main() {
     println!("  - 1 categorical with {} categories (one-hot)\n", n_cat2);
 
     // Create FeaturesView for training
-    let features_view = FeaturesView::from_array(features.view());
-
-    // For prediction, transpose to sample-major with C-order
-    let samples = transpose_to_c_order(features.view());
+    let features_dataset = Dataset::new(features.view(), None, None);
 
     // =========================================================================
     // Train WITHOUT bundling (baseline)
@@ -84,7 +82,11 @@ fn main() {
     println!("=== Training WITHOUT bundling ===\n");
 
     let start = Instant::now();
-    let dataset_no_bundle = BinnedDatasetBuilder::from_matrix(&features_view, 256)
+    let dataset_no_bundle = BinnedDatasetBuilder::from_dataset(
+        &features_dataset,
+        BinningConfig::builder().max_bins(256).build(),
+        Parallelism::Parallel,
+    )
         .with_bundling(BundlingConfig::disabled())
         .build()
         .expect("Failed to build dataset");
@@ -105,7 +107,11 @@ fn main() {
     println!("\n=== Training WITH bundling ===\n");
 
     let start = Instant::now();
-    let dataset_bundled = BinnedDatasetBuilder::from_matrix(&features_view, 256)
+    let dataset_bundled = BinnedDatasetBuilder::from_dataset(
+        &features_dataset,
+        BinningConfig::builder().max_bins(256).build(),
+        Parallelism::Parallel,
+    )
         .with_bundling(BundlingConfig::auto())
         .build()
         .expect("Failed to build dataset");
@@ -176,9 +182,9 @@ fn main() {
     )
     .expect("Training failed");
 
-    // Evaluate both
-    let predictions_no_bundle = model_no_bundle.predict_array(samples.view(), 1);
-    let predictions_bundled = model_bundled.predict_array(samples.view(), 1);
+    // Evaluate both - features_dataset is already feature-major
+    let predictions_no_bundle = model_no_bundle.predict(features_dataset.features(), 1);
+    let predictions_bundled = model_bundled.predict(features_dataset.features(), 1);
 
     let rmse_no_bundle = compute_rmse(predictions_no_bundle.as_slice().unwrap(), labels.as_slice().unwrap());
     let rmse_bundled = compute_rmse(predictions_bundled.as_slice().unwrap(), labels.as_slice().unwrap());

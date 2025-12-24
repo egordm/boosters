@@ -305,74 +305,11 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
             static BLOCK_BUFFER: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
         }
 
-        // Create block ranges
-        let block_ranges: Vec<_> = (0..n_samples)
-            .step_by(self.block_size)
-            .map(|start| {
-                let end = (start + self.block_size).min(n_samples);
-                (start, end)
-            })
-            .collect();
-
-        if parallelism.is_parallel() {
-            // Parallel: each thread has its own buffer
-            use rayon::prelude::*;
-            
-            // We need to split output into mutable non-overlapping slices
-            // Use parallel iterator over blocks with explicit indexing
-            let output_raw = output.as_slice_mut().expect("output must be contiguous");
-            
-            block_ranges.into_par_iter().for_each(|(start, end)| {
-                BLOCK_BUFFER.with(|buf| {
-                    let block_size = end - start;
-                    let mut buffer = buf.borrow_mut();
-                    
-                    // Ensure buffer is large enough
-                    let required = block_size * n_features;
-                    if buffer.len() < required {
-                        buffer.resize(required, 0.0);
-                    }
-                    
-                    // Transpose block: [n_features, block_size] -> [block_size, n_features]
-                    for f in 0..n_features {
-                        for s in 0..block_size {
-                            buffer[s * n_features + f] = features[[f, start + s]];
-                        }
-                    }
-                    
-                    // Create view of transposed block
-                    let block_view = ArrayView2::from_shape(
-                        (block_size, n_features),
-                        &buffer[..required],
-                    ).unwrap();
-                    
-                    // Predict block - accumulate into output
-                    // We need to handle the output slice carefully
-                    let mut block_output = Array2::<f32>::zeros((n_groups, block_size));
-                    self.predict_block_into(block_view, weights, block_output.view_mut());
-                    
-                    // Copy results to output (this is the tricky part with parallel access)
-                    // Output is [n_groups, n_samples], we need to write to columns [start, end)
-                    for g in 0..n_groups {
-                        for s in 0..block_size {
-                            // output[g, start + s] += block_output[g, s]
-                            // But we initialized block_output to 0, so we just add
-                            let idx = g * n_samples + start + s;
-                            // Use atomic add via raw pointer (safe because non-overlapping)
-                            unsafe {
-                                let ptr = output_raw.as_ptr() as *mut f32;
-                                *ptr.add(idx) += block_output[[g, s]];
-                            }
-                        }
-                    }
-                });
-            });
-        } else {
-            // Sequential: reuse single buffer
-            let mut buffer = Vec::new();
-            
-            for (start, end) in block_ranges {
+        // Helper to process a single block range
+        let process_block = |start: usize, end: usize, output_slice: ArrayViewMut2<f32>| {
+            BLOCK_BUFFER.with(|buf| {
                 let block_size = end - start;
+                let mut buffer = buf.borrow_mut();
                 
                 // Ensure buffer is large enough
                 let required = block_size * n_features;
@@ -393,13 +330,27 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
                     &buffer[..required],
                 ).unwrap();
                 
-                // Get output slice for this block
-                let output_slice = output.slice_mut(ndarray::s![.., start..end]);
-                
-                // Predict block
+                // Predict block directly into output slice
                 self.predict_block_into(block_view, weights, output_slice);
-            }
-        }
+            });
+        };
+
+        // Create block ranges with output slices
+        let block_ranges: Vec<_> = (0..n_samples)
+            .step_by(self.block_size)
+            .map(|start| {
+                let end = (start + self.block_size).min(n_samples);
+                start..end
+            })
+            .collect();
+
+        // Process blocks - use chunks_mut for non-overlapping mutable access
+        let output_chunks = output.axis_chunks_iter_mut(axis::COLS, self.block_size);
+        let iter = block_ranges.into_iter().zip(output_chunks);
+        
+        parallelism.maybe_par_bridge_for_each(iter, |(range, output_chunk)| {
+            process_block(range.start, range.end, output_chunk);
+        });
     }
 
 

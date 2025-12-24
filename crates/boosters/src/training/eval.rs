@@ -265,7 +265,8 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
         // Compute eval set metrics
         for (set_idx, eval_set) in eval_sets.iter().enumerate() {
             let preds = &eval_predictions[set_idx];
-            let targets_view = eval_set.dataset.targets_1d();
+            let targets_2d = eval_set.dataset.targets().expect("eval set must have targets");
+            let targets_view = targets_2d.as_single_output();
             let weights_opt = eval_set.dataset.weights();
 
             let metric = self.compute_metric(

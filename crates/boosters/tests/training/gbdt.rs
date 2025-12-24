@@ -2,7 +2,7 @@
 //!
 //! Focused on behavior and invariants (not default params or superficial shapes).
 
-use boosters::data::{transpose_to_c_order, BinMapper, BinnedDatasetBuilder, FeaturesView, GroupLayout, GroupStrategy, MissingType};
+use boosters::data::{transpose_to_c_order, BinMapper, BinnedDatasetBuilder, BinningConfig, GroupLayout, GroupStrategy, MissingType};
 use boosters::dataset::Dataset;
 use boosters::model::gbdt::{GBDTConfig, GBDTModel};
 use boosters::repr::gbdt::{TreeView, SplitType};
@@ -18,10 +18,14 @@ fn train_rejects_invalid_targets_len() {
         0.0, 1.0, 2.0, 3.0,  // feature 0
         1.0, 2.0, 3.0, 4.0,  // feature 1
     ]).unwrap();
-    let view = FeaturesView::from_array(features.view());
+    let features_dataset = Dataset::new(features.view(), None, None);
     let targets: Vec<f32> = vec![1.0, 2.0]; // Too few targets
 
-    let dataset = BinnedDatasetBuilder::from_matrix(&view, 16)
+    let dataset = BinnedDatasetBuilder::from_dataset(
+        &features_dataset,
+        BinningConfig::builder().max_bins(16).build(),
+        Parallelism::Sequential,
+    )
         .build()
         .expect("Failed to build binned dataset");
 
@@ -41,8 +45,12 @@ fn trained_model_improves_over_base_score_on_simple_problem() {
 
     // Feature-major: shape [1, n_samples]
     let features = Array2::from_shape_vec((1, n_samples), features_raw.clone()).unwrap();
-    let view = FeaturesView::from_array(features.view());
-    let dataset = BinnedDatasetBuilder::from_matrix(&view, 64)
+    let features_dataset = Dataset::new(features.view(), None, None);
+    let dataset = BinnedDatasetBuilder::from_dataset(
+        &features_dataset,
+        BinningConfig::builder().max_bins(64).build(),
+        Parallelism::Sequential,
+    )
         .build()
         .expect("Failed to build binned dataset");
 
@@ -103,8 +111,12 @@ fn trained_model_improves_over_base_score_on_medium_problem() {
     // Convert to feature-major: [n_features, n_samples]
     let row_view = ArrayView2::from_shape((n_samples, n_features), &features_row_major).unwrap();
     let features = transpose_to_c_order(row_view.view());
-    let view = FeaturesView::from_array(features.view());
-    let dataset = BinnedDatasetBuilder::from_matrix(&view, 64)
+    let features_dataset = Dataset::new(features.view(), None, None);
+    let dataset = BinnedDatasetBuilder::from_dataset(
+        &features_dataset,
+        BinningConfig::builder().max_bins(64).build(),
+        Parallelism::Sequential,
+    )
         .build()
         .expect("Failed to build binned dataset");
 
@@ -274,10 +286,11 @@ fn train_from_dataset_api() {
         targets_data.push(x0 + 0.5 * x1);
     }
     
-    // Create Dataset using the new API (accepts [n_samples, n_features])
+    // Create Dataset using the new API (feature-major: [n_features, n_samples])
     let features = Array2::from_shape_vec((n_samples, 2), features_data).unwrap();
-    let targets = Array2::from_shape_vec((n_samples, 1), targets_data.clone()).unwrap();
-    let dataset = Dataset::new(features.view(), targets.view());
+    let features_fm = transpose_to_c_order(features.view());
+    let targets_fm = Array2::from_shape_vec((1, n_samples), targets_data.clone()).unwrap();
+    let dataset = Dataset::new(features_fm.view(), Some(targets_fm.view()), None);
     
     assert_eq!(dataset.n_samples(), n_samples);
     assert_eq!(dataset.n_features(), 2);
@@ -349,10 +362,11 @@ fn train_from_dataset_with_eval_set() {
         eval_targets.push(x0 + 0.5 * x1);
     }
     
-    // Create training dataset
+    // Create training dataset (convert to feature-major)
     let train_feat = Array2::from_shape_vec((n_train, 2), train_features).unwrap();
-    let train_targ = Array2::from_shape_vec((n_train, 1), train_targets).unwrap();
-    let train_ds = Dataset::new(train_feat.view(), train_targ.view());
+    let train_feat_fm = transpose_to_c_order(train_feat.view());
+    let train_targ_fm = Array2::from_shape_vec((1, n_train), train_targets).unwrap();
+    let train_ds = Dataset::new(train_feat_fm.view(), Some(train_targ_fm.view()), None);
     
     // Create eval set using binned data (existing API)
     // For now, just test train() works. EvalSet integration will be story 3.3+
@@ -390,7 +404,7 @@ fn train_from_dataset_with_eval_set() {
     );
 }
 
-/// Test GBDTModel::predict_dataset() with feature-major storage.
+/// Test GBDTModel::predict() with feature-major storage.
 #[test]
 fn predict_from_dataset_with_block_buffering() {
     use boosters::model::gbdt::TreeParams;
@@ -409,8 +423,9 @@ fn predict_from_dataset_with_block_buffering() {
     }
     
     let features = Array2::from_shape_vec((n_samples, 2), features_data.clone()).unwrap();
-    let targets = Array2::from_shape_vec((n_samples, 1), targets_data.clone()).unwrap();
-    let train_dataset = Dataset::new(features.view(), targets.view());
+    let features_fm = transpose_to_c_order(features.view());
+    let targets_fm = Array2::from_shape_vec((1, n_samples), targets_data.clone()).unwrap();
+    let train_dataset = Dataset::new(features_fm.view(), Some(targets_fm.view()), None);
     
     let config = GBDTConfig::builder()
         .n_trees(10)
@@ -422,26 +437,10 @@ fn predict_from_dataset_with_block_buffering() {
     let model = GBDTModel::train(&train_dataset, config, 1).expect("training should succeed");
     
     // Create a prediction dataset (same data)
-    let pred_dataset = Dataset::new(features.view(), targets.view());
+    let pred_dataset = Dataset::new(features_fm.view(), Some(targets_fm.view()), None);
     
     // Predict using Dataset API (feature-major with block buffering)
-    let output_from_dataset = model.predict(&pred_dataset, 1);
-    
-    // Predict using traditional sample-major API for comparison
-    let output_from_array = model.predict_array(features.view(), 1);
-    
-    // Results should match
-    assert_eq!(output_from_dataset.shape(), output_from_array.shape());
-    
-    for i in 0..n_samples {
-        let from_dataset = output_from_dataset[[0, i]];
-        let from_array = output_from_array[[0, i]];
-        assert!(
-            (from_dataset - from_array).abs() < 1e-5,
-            "Predictions should match at sample {}: dataset={}, array={}",
-            i, from_dataset, from_array
-        );
-    }
+    let output = model.predict(pred_dataset.features(), 1);
     
     // Verify predictions are reasonable
     let mut pred_error = 0.0f32;
@@ -449,7 +448,7 @@ fn predict_from_dataset_with_block_buffering() {
     let base = model.forest().base_score()[0];
     
     for i in 0..n_samples {
-        let pred = output_from_dataset[[0, i]];
+        let pred = output[[0, i]];
         let target = targets_data[i];
         pred_error += (pred - target).powi(2);
         base_error += (base - target).powi(2);
@@ -483,8 +482,9 @@ fn predict_from_dataset_parallel_matches_sequential() {
     }
     
     let features = Array2::from_shape_vec((n_samples, 3), features_data).unwrap();
-    let targets = Array2::from_shape_vec((n_samples, 1), targets_data).unwrap();
-    let dataset = Dataset::new(features.view(), targets.view());
+    let features_fm = transpose_to_c_order(features.view());
+    let targets_fm = Array2::from_shape_vec((1, n_samples), targets_data).unwrap();
+    let dataset = Dataset::new(features_fm.view(), Some(targets_fm.view()), None);
     
     let config = GBDTConfig::builder()
         .n_trees(10)
@@ -496,10 +496,10 @@ fn predict_from_dataset_parallel_matches_sequential() {
     let model = GBDTModel::train(&dataset, config, 1).expect("training should succeed");
     
     // Sequential prediction (n_threads=1)
-    let seq_output = model.predict(&dataset, 1);
+    let seq_output = model.predict(dataset.features(), 1);
     
     // Parallel prediction (n_threads=0 = auto)
-    let par_output = model.predict(&dataset, 0);
+    let par_output = model.predict(dataset.features(), 0);
     
     // Results should match
     assert_eq!(seq_output.shape(), par_output.shape());
