@@ -3,9 +3,10 @@
 //! Implements coordinate descent training for GBLinear models.
 //! Supports single-output and multi-output objectives.
 
-use ndarray::{Array2, ArrayView1, ArrayView2};
+use ndarray::{Array2, ArrayView2};
 
-use crate::data::{Dataset, FeaturesView};
+use crate::data::FeaturesView;
+use crate::dataset::Dataset;
 use crate::repr::gblinear::LinearModel;
 use crate::training::eval;
 use crate::training::{
@@ -107,13 +108,32 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
     ///
     /// * `train` - Training dataset (features, targets, optional weights)
     /// * `eval_sets` - Evaluation sets for monitoring (`&[]` if not needed)
+    ///
+    /// # Returns
+    ///
+    /// Returns `None` if:
+    /// - Dataset contains categorical features (not supported by GBLinear)
+    /// - Dataset has no targets
+    /// - Evaluation set datasets have categorical features
     pub fn train(
         &self, 
         train: &Dataset, eval_sets: &[EvalSet<'_>]
     ) -> Option<LinearModel> {
-        let train_data = train.for_gblinear().ok()?;
-        let train_labels = train.targets();
-        let weights = train.weights();
+        // Validate: GBLinear doesn't support categorical features
+        if train.has_categorical() {
+            return None;
+        }
+        for es in eval_sets {
+            if es.dataset.has_categorical() {
+                return None;
+            }
+        }
+
+        // Get feature data as array [n_features, n_samples]
+        let train_data = train.features().as_array();
+        // Get targets as 1D view - panics if no targets or multi-output
+        let targets_1d = train.targets_1d();
+        let weights_opt = train.weights();
 
         let n_features = train_data.nrows();
         let n_samples = train_data.ncols();
@@ -124,12 +144,10 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
             "Objective must have at least 1 output, got {}",
             n_outputs
         );
-        debug_assert_eq!(train_labels.len(), n_samples);
-        debug_assert!(weights.is_none_or(|w| w.len() == n_samples));
+        debug_assert_eq!(targets_1d.len(), n_samples);
+        debug_assert!(weights_opt.is_none_or(|w| w.len() == n_samples));
 
         // Compute base scores from objective (optimal constant prediction)
-        let weights_opt = weights.map(ArrayView1::from);
-        let targets_1d = ArrayView1::from(train_labels);
         let mut base_scores = vec![0.0f32; n_outputs];
         self.objective.compute_base_score(
             targets_1d.view(),
@@ -170,12 +188,13 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
         // Check if we need evaluation (metric is enabled)
         let needs_evaluation = self.metric.is_enabled();
         
-        // Initialize eval predictions with base scores (only if evaluation is needed)
-        let eval_data: Vec<Array2<f32>> = if needs_evaluation {
+        // Get eval feature arrays (only if evaluation is needed)
+        // Each is [n_features, n_samples] feature-major layout
+        let eval_data: Vec<_> = if needs_evaluation {
             eval_sets
                 .iter()
-                .map(|es| es.dataset.for_gblinear().ok())
-                .collect::<Option<Vec<_>>>()?
+                .map(|es| es.dataset.features().as_array().to_owned())
+                .collect()
         } else {
             Vec::new()
         };
@@ -381,19 +400,13 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ndarray::{array, Array2};
     use crate::training::{LogLoss, MulticlassLogLoss, Rmse, SquaredLoss, LogisticLoss, SoftmaxLoss};
 
-    /// Helper to transpose row-major data to feature-major for FeaturesView.
-    /// Input: [s0_f0, s0_f1, s1_f0, s1_f1, ...] (row-major)
-    /// Output: [f0_s0, f0_s1, ..., f1_s0, f1_s1, ...] (feature-major)
-    fn transpose_to_feature_major(data: &[f32], n_samples: usize, n_features: usize) -> Vec<f32> {
-        let mut result = vec![0.0; data.len()];
-        for sample in 0..n_samples {
-            for feature in 0..n_features {
-                result[feature * n_samples + sample] = data[sample * n_features + feature];
-            }
-        }
-        result
+    /// Helper to create a Dataset from row-major feature data.
+    /// Accepts features in [n_samples, n_features] layout (standard numpy format).
+    fn make_dataset(features: Array2<f32>, targets: Array2<f32>) -> Dataset {
+        Dataset::new(features.view(), targets.view())
     }
 
     #[test]
@@ -423,11 +436,10 @@ mod tests {
     #[test]
     fn train_simple_regression() {
         // y = 2*x + 1
-        // 4 samples, 1 feature - already feature-major since single feature
-        let feature_data = vec![1.0, 2.0, 3.0, 4.0];
-        let train_features = FeaturesView::from_slice(&feature_data, 4, 1).unwrap();
-        let train_labels = vec![3.0, 5.0, 7.0, 9.0];
-        let train = Dataset::from_numeric(&train_features, train_labels).unwrap();
+        // 4 samples, 1 feature - [n_samples, n_features]
+        let features = array![[1.0], [2.0], [3.0], [4.0]]; // [4, 1]
+        let targets = array![[3.0], [5.0], [7.0], [9.0]];  // [4, 1]
+        let train = make_dataset(features, targets);
 
         let params = GBLinearParams {
             n_rounds: 100,
@@ -456,10 +468,9 @@ mod tests {
     #[test]
     fn train_with_regularization() {
         // 4 samples, 1 feature
-        let feature_data = vec![1.0, 2.0, 3.0, 4.0];
-        let train_features = FeaturesView::from_slice(&feature_data, 4, 1).unwrap();
-        let train_labels = vec![3.0, 5.0, 7.0, 9.0];
-        let train = Dataset::from_numeric(&train_features, train_labels).unwrap();
+        let features = array![[1.0], [2.0], [3.0], [4.0]]; // [4, 1]
+        let targets = array![[3.0], [5.0], [7.0], [9.0]];  // [4, 1]
+        let train = make_dataset(features, targets);
 
         // Train without regularization
         let params_no_reg = GBLinearParams {
@@ -492,17 +503,15 @@ mod tests {
     #[test]
     fn train_multifeature() {
         // y = x0 + 2*x1
-        // Row-major: [s0_f0, s0_f1, s1_f0, s1_f1, ...]
-        let row_data = vec![
-            1.0, 1.0, // y=3
-            2.0, 1.0, // y=4
-            1.0, 2.0, // y=5
-            2.0, 2.0, // y=6
+        // 4 samples, 2 features - [n_samples, n_features]
+        let features = array![
+            [1.0, 1.0], // y=3
+            [2.0, 1.0], // y=4
+            [1.0, 2.0], // y=5
+            [2.0, 2.0], // y=6
         ];
-        let feature_data = transpose_to_feature_major(&row_data, 4, 2);
-        let train_features = FeaturesView::from_slice(&feature_data, 4, 2).unwrap();
-        let train_labels = vec![3.0, 4.0, 5.0, 6.0];
-        let train = Dataset::from_numeric(&train_features, train_labels).unwrap();
+        let targets = array![[3.0], [4.0], [5.0], [6.0]];
+        let train = make_dataset(features, targets);
 
         let params = GBLinearParams {
             n_rounds: 200,
@@ -527,19 +536,17 @@ mod tests {
     #[test]
     fn train_multiclass() {
         // Simple 3-class classification
-        // Row-major data
-        let row_data = vec![
-            2.0, 1.0, // Class 0
-            0.0, 1.0, // Class 1
-            3.0, 1.0, // Class 0
-            1.0, 3.0, // Class 2
-            0.5, 0.5, // Class 1
-            2.0, 2.0, // Class 2
+        // [n_samples, n_features] layout
+        let features = array![
+            [2.0, 1.0], // Class 0
+            [0.0, 1.0], // Class 1
+            [3.0, 1.0], // Class 0
+            [1.0, 3.0], // Class 2
+            [0.5, 0.5], // Class 1
+            [2.0, 2.0], // Class 2
         ];
-        let feature_data = transpose_to_feature_major(&row_data, 6, 2);
-        let train_features = FeaturesView::from_slice(&feature_data, 6, 2).unwrap();
-        let train_labels = vec![0.0, 1.0, 0.0, 2.0, 1.0, 2.0];
-        let train = Dataset::from_numeric(&train_features, train_labels).unwrap();
+        let targets = array![[0.0], [1.0], [0.0], [2.0], [1.0], [2.0]];
+        let train = make_dataset(features, targets);
 
         let params = GBLinearParams {
             n_rounds: 200,
@@ -572,17 +579,15 @@ mod tests {
 
     #[test]
     fn train_binary_classification() {
-        // Row-major data
-        let row_data = vec![
-            0.0, 1.0, // Class 0
-            1.0, 0.0, // Class 1
-            0.5, 1.0, // Class 0
-            1.0, 0.5, // Class 1
+        // [n_samples, n_features] layout
+        let features = array![
+            [0.0, 1.0], // Class 0
+            [1.0, 0.0], // Class 1
+            [0.5, 1.0], // Class 0
+            [1.0, 0.5], // Class 1
         ];
-        let feature_data = transpose_to_feature_major(&row_data, 4, 2);
-        let train_features = FeaturesView::from_slice(&feature_data, 4, 2).unwrap();
-        let train_labels = vec![0.0, 1.0, 0.0, 1.0];
-        let train = Dataset::from_numeric(&train_features, train_labels).unwrap();
+        let targets = array![[0.0], [1.0], [0.0], [1.0]];
+        let train = make_dataset(features, targets);
 
         let params = GBLinearParams {
             n_rounds: 50,

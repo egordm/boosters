@@ -7,9 +7,9 @@
 //! - Prediction accuracy
 //! - Parallel vs sequential training
 
-use super::{load_config, load_train_data, load_xgb_weights};
+use super::{load_config, load_train_data, load_xgb_weights, make_dataset};
 use approx::assert_relative_eq;
-use boosters::data::{transpose_to_c_order, Dataset, FeaturesView, SamplesView};
+use boosters::data::{transpose_to_c_order, SamplesView};
 use boosters::training::{GBLinearParams, GBLinearTrainer, Rmse, SquaredLoss, Verbosity};
 use ndarray::{Array2, ArrayView1};
 use rstest::rstest;
@@ -20,8 +20,7 @@ use rstest::rstest;
 #[case("regression_multifeature")]
 fn train_regression_matches_xgboost(#[case] name: &str) {
     let (data, labels) = load_train_data(name);
-    let view = FeaturesView::from_array(data.view());
-    let train = Dataset::from_numeric(&view, labels.clone()).unwrap();
+    let train = make_dataset(&data, &labels);
     let xgb_weights = load_xgb_weights(name);
     let config = load_config(name);
 
@@ -62,9 +61,8 @@ fn train_regression_matches_xgboost(#[case] name: &str) {
 #[test]
 fn train_l2_regularization_shrinks_weights() {
     let (data, labels) = load_train_data("regression_l2");
-    let view = FeaturesView::from_array(data.view());
     let n_features = data.nrows();
-    let train = Dataset::from_numeric(&view, labels.clone()).unwrap();
+    let train = make_dataset(&data, &labels);
     let config = load_config("regression_l2");
 
     // Train without regularization
@@ -113,9 +111,8 @@ fn trained_model_predictions_reasonable() {
     // Simple test: y = 2x + 1
     // Feature-major: [n_features=1, n_samples=5]
     let data = Array2::from_shape_vec((1, 5), vec![1.0, 2.0, 3.0, 4.0, 5.0]).unwrap();
-    let view = FeaturesView::from_array(data.view());
     let labels = vec![3.0, 5.0, 7.0, 9.0, 11.0];
-    let train = Dataset::from_numeric(&view, labels.clone()).unwrap();
+    let train = make_dataset(&data, &labels);
 
     let params = GBLinearParams {
         n_rounds: 100,
@@ -158,9 +155,8 @@ fn parallel_vs_sequential_similar() {
         1.0, 2.0, 1.0, 2.0,  // feature 0
         1.0, 1.0, 2.0, 2.0,  // feature 1
     ]).unwrap();
-    let view = FeaturesView::from_array(data.view());
     let labels = vec![3.0, 4.0, 5.0, 6.0]; // y = x0 + 2*x1
-    let train = Dataset::from_numeric(&view, labels.clone()).unwrap();
+    let train = make_dataset(&data, &labels);
 
     let params_seq = GBLinearParams {
         n_rounds: 50,
@@ -207,8 +203,7 @@ fn weight_correlation_with_xgboost(#[case] name: &str) {
     use super::pearson_correlation;
 
     let (data, labels) = load_train_data(name);
-    let view = FeaturesView::from_array(data.view());
-    let train = Dataset::from_numeric(&view, labels.clone()).unwrap();
+    let train = make_dataset(&data, &labels);
     let xgb_weights = load_xgb_weights(name);
     let config = load_config(name);
 
@@ -251,8 +246,7 @@ fn test_set_prediction_quality(#[case] name: &str) {
     use super::{load_test_data, load_xgb_predictions, rmse};
 
     let (train_data, train_labels) = load_train_data(name);
-    let train_view = FeaturesView::from_array(train_data.view());
-    let train = Dataset::from_numeric(&train_view, train_labels.clone()).unwrap();
+    let train = make_dataset(&train_data, &train_labels);
     let config = load_config(name);
 
     // Skip if no test data

@@ -22,6 +22,7 @@ mod regression;
 mod selectors;
 
 use boosters::data::transpose_to_c_order;
+use boosters::Dataset;
 use boosters::training::Rmse;
 use ndarray::{Array2, ArrayView1, ArrayView2};
 use serde::Deserialize;
@@ -160,6 +161,17 @@ pub fn load_xgb_predictions(name: &str) -> Option<Vec<f32>> {
     let data: XgbPredictions =
         serde_json::from_str(&json).expect("Failed to parse XGBoost predictions");
     Some(data.predictions)
+}
+
+/// Create a Dataset from feature-major data and labels.
+///
+/// Takes data in `[n_features, n_samples]` format (as returned by load_train_data)
+/// and creates a Dataset for training.
+pub fn make_dataset(features: &Array2<f32>, labels: &[f32]) -> Dataset {
+    let n_samples = features.ncols();
+    let targets = Array2::from_shape_vec((1, n_samples), labels.to_vec())
+        .expect("targets shape mismatch");
+    Dataset::from_column_major(features.view(), targets.view())
 }
 
 // =============================================================================

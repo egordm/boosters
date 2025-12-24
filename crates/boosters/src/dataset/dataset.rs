@@ -242,6 +242,16 @@ impl Dataset {
         targets.row(0)
     }
 
+    /// Convert to sample-major layout for algorithms that need row access.
+    ///
+    /// Returns an owned `Array2<f32>` with shape `[n_samples, n_features]`.
+    ///
+    /// This is a one-time O(n) transpose operation. Use sparingly for compatibility
+    /// with legacy code. New code should use feature-major access via `features()`.
+    pub fn to_sample_major(&self) -> Array2<f32> {
+        self.features.t().as_standard_layout().into_owned()
+    }
+
     // =========================================================================
     // Builder-style methods
     // =========================================================================

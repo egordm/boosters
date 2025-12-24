@@ -7,8 +7,8 @@
 //! - Greedy (gradient-based)
 //! - Thrifty (cached greedy)
 
-use super::{load_test_data, load_train_data};
-use boosters::data::{transpose_to_c_order, Dataset, FeaturesView, SamplesView};
+use super::{load_test_data, load_train_data, make_dataset};
+use boosters::data::{transpose_to_c_order, SamplesView};
 use boosters::training::gblinear::FeatureSelectorKind;
 use boosters::training::{
     GBLinearParams, GBLinearTrainer, MulticlassLogLoss, Rmse, SoftmaxLoss, SquaredLoss, Verbosity,
@@ -23,8 +23,7 @@ use ndarray::{Array2, ArrayView1};
 #[test]
 fn train_all_selectors_regression() {
     let (data, labels) = load_train_data("regression_l2");
-    let view = FeaturesView::from_array(data.view());
-    let train = Dataset::from_numeric(&view, labels).unwrap();
+    let train = make_dataset(&data, &labels);
     let (test_data, test_labels) = match load_test_data("regression_l2") {
         Some(d) => d,
         None => {
@@ -96,8 +95,7 @@ fn train_all_selectors_regression() {
 #[test]
 fn train_all_selectors_multiclass() {
     let (data, labels) = load_train_data("multiclass_classification");
-    let view = FeaturesView::from_array(data.view());
-    let train = Dataset::from_numeric(&view, labels).unwrap();
+    let train = make_dataset(&data, &labels);
     let (test_data, test_labels) = match load_test_data("multiclass_classification") {
         Some(d) => d,
         None => {
@@ -206,8 +204,7 @@ fn train_all_selectors_multiclass() {
 #[test]
 fn train_greedy_selector_feature_priority() {
     let (data, labels) = load_train_data("regression_l2");
-    let view = FeaturesView::from_array(data.view());
-    let train = Dataset::from_numeric(&view, labels).unwrap();
+    let train = make_dataset(&data, &labels);
     let n_features = data.nrows(); // feature-major: rows are features
 
     // Train with greedy selector with small top_k
@@ -262,8 +259,7 @@ fn train_greedy_selector_feature_priority() {
 #[test]
 fn train_thrifty_selector_convergence() {
     let (data, labels) = load_train_data("regression_l2");
-    let view = FeaturesView::from_array(data.view());
-    let train = Dataset::from_numeric(&view, labels).unwrap();
+    let train = make_dataset(&data, &labels);
     let (test_data, test_labels) = match load_test_data("regression_l2") {
         Some(d) => d,
         None => {

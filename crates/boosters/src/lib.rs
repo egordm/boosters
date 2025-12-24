@@ -49,7 +49,11 @@ pub use model::gblinear::GBLinearConfig;
 pub use training::{Metric, MetricFn, Objective, ObjectiveFn};
 
 // Data types (for preparing training data)
-pub use data::Dataset;
+// Re-export the new unified Dataset type at crate root
+pub use dataset::{
+    Column, Dataset, DatasetBuilder, DatasetError, DatasetSchema, FeatureMeta, FeatureType,
+    FeaturesView, SparseColumn, TargetsView,
+};
 
 // Shared utilities
 pub use utils::{Parallelism, run_with_threads};

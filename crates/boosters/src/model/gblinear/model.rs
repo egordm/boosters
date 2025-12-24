@@ -4,7 +4,8 @@
 //! Access components via [`linear()`](GBLinearModel::linear), [`meta()`](GBLinearModel::meta),
 //! and [`config()`](GBLinearModel::config).
 
-use crate::data::{transpose_to_c_order, Dataset, SamplesView};
+use crate::data::{transpose_to_c_order, SamplesView};
+use crate::dataset::Dataset;
 use crate::explainability::{ExplainError, LinearExplainer, ShapValues};
 use crate::model::meta::ModelMeta;
 use crate::repr::gblinear::LinearModel;

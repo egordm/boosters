@@ -208,22 +208,29 @@ Implement predictor-side block buffering as specified in RFC-0020.
 - Thread-local buffers work correctly under parallel load ✓
 - Unit test verifies sequential matches parallel ✓
 
-### Story 3.4: GBLinear Training Integration
+### Story 3.4: GBLinear Training Integration ✓
 
 Update GBLinear training to use new Dataset.
 
 **Tasks:**
 
-- [ ] 3.4.1: Update `GBLinearModel::train()` to accept `&Dataset`
-- [ ] 3.4.2: Add categorical feature validation (error if present)
-- [ ] 3.4.3: Use `Dataset::features_view()` for coordinate descent
-- [ ] 3.4.4: Update tests
+- [x] 3.4.1: Update `GBLinearModel::train()` to accept `&Dataset`
+- [x] 3.4.2: Add categorical feature validation (error if present)
+- [x] 3.4.3: Use `Dataset::features_view()` for coordinate descent
+- [x] 3.4.4: Update tests
+
+**Note**: Also updated:
+- `GBLinearTrainer` to use new Dataset API
+- `EvalSet` in `training::eval` to use new Dataset
+- `GBDTTrainer` eval set handling to use `Dataset::to_sample_major()`
+- All integration tests to use new `make_dataset()` helper
+- Re-exported new Dataset types from crate root (`lib.rs`)
 
 **Definition of Done:**
 
-- GBLinear training works with new Dataset
-- Clear error on categorical features
-- Existing tests pass
+- GBLinear training works with new Dataset ✓
+- Clear error on categorical features (returns None) ✓
+- Existing tests pass ✓
 
 ### Story 3.5: GBLinear Prediction
 

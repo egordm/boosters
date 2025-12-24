@@ -231,10 +231,11 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
 
         // Prepare eval set data and incremental prediction buffers
         // Only allocate if evaluation is needed
+        // Convert to sample-major layout for tree prediction
         let eval_data: Vec<Array2<f32>> = if needs_evaluation {
             eval_sets
                 .iter()
-                .filter_map(|es| es.dataset.for_gbdt().ok())
+                .map(|es| es.dataset.to_sample_major())
                 .collect()
         } else {
             Vec::new()

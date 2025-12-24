@@ -5,7 +5,7 @@
 
 use ndarray::{Array2, ArrayView1, ArrayView2};
 
-use crate::data::Dataset;
+use crate::dataset::Dataset;
 use crate::inference::PredictionKind;
 
 use super::metrics::MetricFn;
@@ -265,9 +265,8 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
         // Compute eval set metrics
         for (set_idx, eval_set) in eval_sets.iter().enumerate() {
             let preds = &eval_predictions[set_idx];
-            let targets = eval_set.dataset.targets();
-            let weights_opt = eval_set.dataset.weights().map(ArrayView1::from);
-            let targets_view = ArrayView1::from(targets);
+            let targets_view = eval_set.dataset.targets_1d();
+            let weights_opt = eval_set.dataset.weights();
 
             let metric = self.compute_metric(
                 format!("{}-{}", eval_set.name, self.metric_name()),

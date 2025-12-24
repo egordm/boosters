@@ -4,8 +4,8 @@
 //! - Binary classification with logistic loss
 //! - Multiclass classification with softmax loss
 
-use super::{load_config, load_train_data, transpose_to_samples};
-use boosters::data::{Dataset, FeaturesView, SamplesView};
+use super::{load_config, load_train_data, make_dataset, transpose_to_samples};
+use boosters::data::SamplesView;
 use boosters::training::{
     GBLinearParams, GBLinearTrainer, LogLoss, LogisticLoss, MulticlassLogLoss, SoftmaxLoss,
     Verbosity,
@@ -17,8 +17,7 @@ use ndarray::{Array2, ArrayView1};
 fn train_binary_classification() {
     let (data, labels) = load_train_data("binary_classification");
     let config = load_config("binary_classification");
-    let view = FeaturesView::from_array(data.view());
-    let train = Dataset::from_numeric(&view, labels.clone()).unwrap();
+    let train = make_dataset(&data, &labels);
 
     let params = GBLinearParams {
         n_rounds: config.num_boost_round as u32,
@@ -63,8 +62,7 @@ fn train_multioutput_classification() {
     let (data, labels) = load_train_data("multiclass_classification");
     let config = load_config("multiclass_classification");
     let num_class = 3;
-    let view = FeaturesView::from_array(data.view());
-    let train = Dataset::from_numeric(&view, labels.clone()).unwrap();
+    let train = make_dataset(&data, &labels);
 
     let params = GBLinearParams {
         n_rounds: config.num_boost_round as u32,

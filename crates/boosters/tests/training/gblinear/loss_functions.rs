@@ -4,8 +4,8 @@
 //! - PseudoHuberLoss (robust regression)
 //! - HingeLoss (SVM-style binary classification)
 
-use super::{load_test_data, load_train_data};
-use boosters::data::{transpose_to_c_order, Dataset, FeaturesView, SamplesView};
+use super::{load_test_data, load_train_data, make_dataset};
+use boosters::data::{transpose_to_c_order, SamplesView};
 use boosters::training::{
     Accuracy, GBLinearParams, GBLinearTrainer, HingeLoss, LogLoss, LogisticLoss, MarginAccuracy,
     ObjectiveFn, PseudoHuberLoss, Rmse, SquaredLoss, Verbosity,
@@ -33,8 +33,7 @@ use rstest::rstest;
 #[case(10.0, 20.0)]  // Large delta: similar to squared loss
 fn train_pseudo_huber_with_delta(#[case] delta: f32, #[case] max_rmse: f64) {
     let (data, labels) = load_train_data("regression_l2");
-    let view = FeaturesView::from_array(data.view());
-    let train = Dataset::from_numeric(&view, labels).unwrap();
+    let train = make_dataset(&data, &labels);
     let (test_data, test_labels) = match load_test_data("regression_l2") {
         Some(d) => d,
         None => {
@@ -78,8 +77,7 @@ fn train_pseudo_huber_with_delta(#[case] delta: f32, #[case] max_rmse: f64) {
 #[test]
 fn pseudo_huber_large_delta_matches_squared() {
     let (data, labels) = load_train_data("regression_l2");
-    let view = FeaturesView::from_array(data.view());
-    let train = Dataset::from_numeric(&view, labels).unwrap();
+    let train = make_dataset(&data, &labels);
     let (test_data, test_labels) = match load_test_data("regression_l2") {
         Some(d) => d,
         None => {
@@ -142,8 +140,7 @@ fn pseudo_huber_large_delta_matches_squared() {
 #[test]
 fn train_hinge_binary_classification() {
     let (data, labels) = load_train_data("binary_classification");
-    let view = FeaturesView::from_array(data.view());
-    let train = Dataset::from_numeric(&view, labels).unwrap();
+    let train = make_dataset(&data, &labels);
     let (test_data, test_labels) = match load_test_data("binary_classification") {
         Some(d) => d,
         None => {

@@ -5,9 +5,9 @@
 //! - Multi-quantile regression (joint training)
 //! - Quantile ordering validation
 
-use super::{load_config, load_test_data, load_train_data, pearson_correlation, transpose_to_samples, TEST_CASES_DIR};
+use super::{load_config, load_test_data, load_train_data, make_dataset, pearson_correlation, transpose_to_samples, TEST_CASES_DIR};
 use approx::assert_relative_eq;
-use boosters::data::{Dataset, FeaturesView, SamplesView};
+use boosters::data::SamplesView;
 use boosters::training::{GBLinearParams, GBLinearTrainer, PinballLoss, Rmse, Verbosity};
 use rstest::rstest;
 use serde::Deserialize;
@@ -29,8 +29,7 @@ fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
     let (data, labels) = load_train_data(name);
     let config = load_config(name);
     let (test_data, test_labels) = load_test_data(name).expect("Test data should exist");
-    let view = FeaturesView::from_array(data.view());
-    let train = Dataset::from_numeric(&view, labels).unwrap();
+    let train = make_dataset(&data, &labels);
 
     // Verify config has correct quantile alpha
     let alpha = config.quantile_alpha.expect("Config should have quantile_alpha");
@@ -101,8 +100,7 @@ fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
 fn quantile_regression_predictions_differ() {
     let (data, labels) = load_train_data("quantile_regression");
     let config = load_config("quantile_regression");
-    let view = FeaturesView::from_array(data.view());
-    let train = Dataset::from_numeric(&view, labels).unwrap();
+    let train = make_dataset(&data, &labels);
 
     let base_params = GBLinearParams {
         n_rounds: config.num_boost_round as u32,
@@ -194,8 +192,7 @@ fn train_multi_quantile_regression() {
     let (test_data, _test_labels) = load_test_data("multi_quantile").expect("Test data required");
     let config = load_multi_quantile_config();
     let xgb_preds = load_multi_quantile_xgb_predictions();
-    let view = FeaturesView::from_array(data.view());
-    let train = Dataset::from_numeric(&view, labels).unwrap();
+    let train = make_dataset(&data, &labels);
 
     let quantile_alphas = config.quantile_alpha.clone();
     let num_quantiles = quantile_alphas.len();
@@ -270,8 +267,7 @@ fn multi_quantile_vs_separate_models() {
     let (data, labels) = load_train_data("multi_quantile");
     let config = load_multi_quantile_config();
     let quantile_alphas = config.quantile_alpha.clone();
-    let view = FeaturesView::from_array(data.view());
-    let train = Dataset::from_numeric(&view, labels).unwrap();
+    let train = make_dataset(&data, &labels);
 
     let base_params = GBLinearParams {
         n_rounds: config.num_boost_round as u32,
