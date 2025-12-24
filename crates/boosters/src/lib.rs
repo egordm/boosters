@@ -25,6 +25,7 @@ pub use approx;
 
 pub mod compat;
 pub mod data;
+pub mod dataset;
 pub mod explainability;
 pub mod inference;
 pub mod model;

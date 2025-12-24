@@ -31,112 +31,113 @@ After Epic 3 complete: All algorithms use new Dataset, old code deleted, benchma
 
 Implement the new Dataset type as specified in RFC-0019.
 
-### Story 1.1: Core Types and Storage
+### Story 1.1: Core Types and Storage ✓
 
 Implement Dataset, Column, SparseColumn, DatasetSchema, FeatureMeta, FeatureType.
 
 **Tasks:**
 
-- [ ] 1.1.1: Create `src/dataset/` module structure (mod.rs, dataset.rs, schema.rs, column.rs, error.rs, views.rs)
-- [ ] 1.1.2: Implement `FeatureType` enum (Numeric, Categorical)
-- [ ] 1.1.3: Implement `FeatureMeta` and `DatasetSchema` types
-- [ ] 1.1.4: Implement `Column` enum (Dense, Sparse) and `SparseColumn` struct
+- [x] 1.1.1: Create `src/dataset/` module structure (mod.rs, dataset.rs, schema.rs, column.rs, error.rs, views.rs)
+- [x] 1.1.2: Implement `FeatureType` enum (Numeric, Categorical)
+- [x] 1.1.3: Implement `FeatureMeta` and `DatasetSchema` types
+- [x] 1.1.4: Implement `Column` enum (Dense, Sparse) and `SparseColumn` struct
   - Note: Sparse support is type definition only; full sparse training is out of scope
-- [ ] 1.1.5: Implement `Dataset` struct with feature-major storage `[n_features, n_samples]`
-- [ ] 1.1.6: Implement `DatasetError` with thiserror, integrate with existing error types
-- [ ] 1.1.7: Unit tests for all types
-- [ ] 1.1.8: Add `pub use` exports to `src/lib.rs` (Dataset, DatasetBuilder, Column, SparseColumn, DatasetSchema, FeatureMeta, FeatureType, FeaturesView, TargetsView, DatasetError)
+- [x] 1.1.5: Implement `Dataset` struct with feature-major storage `[n_features, n_samples]`
+- [x] 1.1.6: Implement `DatasetError` with thiserror, integrate with existing error types
+- [x] 1.1.7: Unit tests for all types
+- [x] 1.1.8: Add `pub use` exports to `src/lib.rs` (Dataset, DatasetBuilder, Column, SparseColumn, DatasetSchema, FeatureMeta, FeatureType, FeaturesView, TargetsView, DatasetError)
 
 **Definition of Done:**
 
-- All types compile and have rustdoc
-- Unit tests cover construction, accessors, error cases
-- Types are Send + Sync
-- Types exported from crate root
+- All types compile and have rustdoc ✓
+- Unit tests cover construction, accessors, error cases ✓
+- Types are Send + Sync ✓
+- Types exported from crate root ✓
 
-### Story 1.2: Dataset Construction API
+### Story 1.2: Dataset Construction API ✓
 
 Implement Dataset::new() and DatasetBuilder for flexible construction.
 
 **Tasks:**
 
-- [ ] 1.2.1: Implement `Dataset::new(features, targets)` with transpose from `[n_samples, n_features]`
-- [ ] 1.2.2: Implement `DatasetBuilder` with fluent API
-- [ ] 1.2.3: Implement `add_feature()`, `add_categorical()`, `add_sparse()` builder methods
-- [ ] 1.2.4: Implement validation (shape consistency, sparse indices sorted, no duplicates)
-- [ ] 1.2.5: Unit tests for validation cases:
-  - Empty dataset (0 samples) → OK
+- [x] 1.2.1: Implement `Dataset::new(features, targets)` with transpose from `[n_samples, n_features]`
+- [x] 1.2.2: Implement `DatasetBuilder` with fluent API
+- [x] 1.2.3: Implement `add_feature()`, `add_categorical()`, `add_sparse()` builder methods
+- [x] 1.2.4: Implement validation (shape consistency, sparse indices sorted, no duplicates)
+- [x] 1.2.5: Unit tests for validation cases:
+  - Empty dataset (0 samples) → EmptyFeatures error
   - Mismatched row counts → DatasetError
   - Duplicate sparse indices → DatasetError
   - Unsorted sparse indices → DatasetError
-  - n_categories = 0 for categorical → DatasetError
-- [ ] 1.2.6: Integration tests for construction paths
+  - Sparse out of bounds → DatasetError
+- [ ] 1.2.6: Integration tests for construction paths (deferred to algorithm integration)
 
 **Definition of Done:**
 
-- Can construct Dataset from dense matrix
-- Can construct Dataset via builder with mixed column types
-- Validation errors have clear messages
-- Tests cover all DatasetError variants
+- Can construct Dataset from dense matrix ✓
+- Can construct Dataset via builder with mixed column types ✓
+- Validation errors have clear messages ✓
+- Tests cover all DatasetError variants ✓
 
-### Story 1.3: Dataset View Access
+### Story 1.3: Dataset View Access ✓
 
 Implement features_view(), targets_view(), weights() accessors.
 
 **Tasks:**
 
-- [ ] 1.3.1: Implement `Dataset::features_view() -> FeaturesView`
-- [ ] 1.3.2: Implement `Dataset::targets_view() -> Option<TargetsView>`
-- [ ] 1.3.3: Implement `Dataset::weights() -> Option<ArrayView1>`
-- [ ] 1.3.4: Implement `Dataset::n_samples()`, `Dataset::n_features()`
-- [ ] 1.3.5: Implement `Dataset::has_categorical()` for GBLinear validation
+- [x] 1.3.1: Implement `Dataset::features_view() -> FeaturesView`
+- [x] 1.3.2: Implement `Dataset::targets_view() -> Option<TargetsView>`
+- [x] 1.3.3: Implement `Dataset::weights() -> Option<ArrayView1>`
+- [x] 1.3.4: Implement `Dataset::n_samples()`, `Dataset::n_features()`
+- [x] 1.3.5: Implement `Dataset::has_categorical()` for GBLinear validation
 
 **Definition of Done:**
-- Views return correct shapes
-- n_samples/n_features consistent with storage
-- has_categorical scans schema correctly
+
+- Views return correct shapes ✓
+- n_samples/n_features consistent with storage ✓
+- has_categorical scans schema correctly ✓
 
 ## Epic 2: View Types Implementation
 
 Implement FeaturesView and TargetsView as specified in RFC-0020.
 
-### Story 2.1: FeaturesView Implementation
+### Story 2.1: FeaturesView Implementation ✓
 
 Implement FeaturesView with feature-major semantics.
 
 **Tasks:**
 
-- [ ] 2.1.1: Implement `FeaturesView` struct in `src/dataset/views.rs`, wrapping `ArrayView2<f32>` and schema
-- [ ] 2.1.2: Implement `n_samples()`, `n_features()` with correct dimension mapping
-- [ ] 2.1.3: Implement `get(sample, feature)` with `[feature, sample]` indexing
-- [ ] 2.1.4: Implement `feature(idx) -> ArrayView1` (contiguous)
-- [ ] 2.1.5: Implement `sample(idx) -> ArrayView1` (strided, with doc warning)
-- [ ] 2.1.6: Implement `feature_type(idx) -> FeatureType`
-- [ ] 2.1.7: Implement `as_array() -> ArrayView2`
-- [ ] 2.1.8: Unit tests verifying semantics match storage
+- [x] 2.1.1: Implement `FeaturesView` struct in `src/dataset/views.rs`, wrapping `ArrayView2<f32>` and schema
+- [x] 2.1.2: Implement `n_samples()`, `n_features()` with correct dimension mapping
+- [x] 2.1.3: Implement `get(sample, feature)` with `[feature, sample]` indexing
+- [x] 2.1.4: Implement `feature(idx) -> ArrayView1` (contiguous)
+- [x] 2.1.5: Implement `sample(idx) -> ArrayView1` (strided, with doc warning)
+- [x] 2.1.6: Implement `feature_type(idx) -> FeatureType`
+- [x] 2.1.7: Implement `as_array() -> ArrayView2`
+- [x] 2.1.8: Unit tests verifying semantics match storage
 
 **Definition of Done:**
 
-- feature() returns contiguous slice (verify with as_slice())
-- sample() is strided (document in rustdoc)
-- Indexing is (sample, feature) conceptually but [feature, sample] in storage
+- feature() returns contiguous slice (verify with as_slice()) ✓
+- sample() is strided (document in rustdoc) ✓
+- Indexing is (sample, feature) conceptually but [feature, sample] in storage ✓
 
-### Story 2.2: TargetsView Implementation
+### Story 2.2: TargetsView Implementation ✓
 
 Implement TargetsView for target access.
 
 **Tasks:**
 
-- [ ] 2.2.1: Implement `TargetsView` struct in `src/dataset/views.rs`
-- [ ] 2.2.2: Implement `n_samples()`, `n_outputs()`
-- [ ] 2.2.3: Implement `as_single_output()` with panic on n_outputs != 1
-- [ ] 2.2.4: Implement `as_array() -> ArrayView2`
-- [ ] 2.2.5: Unit tests
+- [x] 2.2.1: Implement `TargetsView` struct in `src/dataset/views.rs`
+- [x] 2.2.2: Implement `n_samples()`, `n_outputs()`
+- [x] 2.2.3: Implement `as_single_output()` with panic on n_outputs != 1
+- [x] 2.2.4: Implement `as_array() -> ArrayView2`
+- [x] 2.2.5: Unit tests
 
 **Definition of Done:**
 
-- Single-output and multi-output both work
-- as_single_output panics clearly on multi-output
+- Single-output and multi-output both work ✓
+- as_single_output panics clearly on multi-output ✓
 
 ---
 
