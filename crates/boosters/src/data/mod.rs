@@ -27,14 +27,12 @@
 //! See RFC-0004 for design rationale, RFC-0021 for ndarray migration.
 
 pub mod binned;
-mod dataset;
 mod traits;
 mod ndarray;
 
 #[cfg(feature = "io-parquet")]
 pub mod io;
 
-pub use dataset::{Dataset, DatasetError, FeatureColumn};
 pub use traits::FeatureAccessor;
 
 pub use ndarray::{

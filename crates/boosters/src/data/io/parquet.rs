@@ -13,18 +13,10 @@ use ndarray::Array2;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
 use super::error::DatasetLoadError;
-use crate::data::Dataset;
 
 // =============================================================================
 // Public API
 // =============================================================================
-
-/// Load a Parquet file into a [`Dataset`].
-pub fn load_parquet_to_dataset(path: impl AsRef<Path>) -> Result<Dataset, DatasetLoadError> {
-	let (batches, schema) = read_parquet_file(path)?;
-	let loaded = super::record_batches::LoadedBatches::new(schema, batches)?;
-	loaded.to_dataset()
-}
 
 /// Load a Parquet file into a row-major Array2<f32> with shape (n_samples, n_features).
 pub fn load_parquet_to_row_matrix_f32(path: impl AsRef<Path>) -> Result<Array2<f32>, DatasetLoadError> {

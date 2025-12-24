@@ -169,29 +169,6 @@ pub(crate) struct FeatureBinAccessor<'a> {
     n_rows: usize,
 }
 
-impl<'a> FeatureBinAccessor<'a> {
-    /// Number of rows (samples).
-    pub fn num_rows(&self) -> usize {
-        self.n_rows
-    }
-
-    /// Number of features.
-    pub fn num_features(&self) -> usize {
-        self.features.len()
-    }
-
-    /// Get bin value at (row, col) as f32.
-    ///
-    /// Returns bin value as f32 - bin 0 is "zero", others are "non-zero".
-    pub fn get(&self, row: usize, col: usize) -> Option<f32> {
-        if row < self.n_rows && col < self.features.len() {
-            Some(self.features[col].bins[row] as f32)
-        } else {
-            None
-        }
-    }
-}
-
 // FeatureBinAccessor is safe to share between threads because it only
 // reads from the immutable feature data
 unsafe impl Sync for FeatureBinAccessor<'_> {}

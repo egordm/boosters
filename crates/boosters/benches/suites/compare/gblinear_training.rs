@@ -7,7 +7,8 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
-use boosters::data::{transpose_to_c_order, Dataset, FeaturesView};
+use boosters::data::transpose_to_c_order;
+use boosters::dataset::Dataset;
 use boosters::testing::data::synthetic_regression;
 use boosters::training::{GBLinearParams, GBLinearTrainer, Rmse, SquaredLoss, Verbosity};
 
@@ -46,9 +47,14 @@ fn build_features_array(features_row_major: &[f32], rows: usize, cols: usize) ->
 }
 
 fn build_dataset(features_row_major: &[f32], rows: usize, cols: usize, targets: Vec<f32>) -> Dataset {
-    let features_fm = build_features_array(features_row_major, rows, cols);
-    let features_view = FeaturesView::from_array(features_fm.view());
-    Dataset::from_numeric(&features_view, targets).unwrap()
+    // Build feature-major Array2: [n_features, n_samples]
+    let feature_major = build_features_array(features_row_major, rows, cols);
+    // Build targets Array2: [1, n_samples]
+    let targets_2d = ndarray::Array2::from_shape_vec(
+        (1, targets.len()),
+        targets
+    ).unwrap();
+    Dataset::new(feature_major.view(), targets_2d.view())
 }
 
 // =============================================================================

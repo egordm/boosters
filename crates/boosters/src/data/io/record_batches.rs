@@ -10,7 +10,6 @@ use arrow::record_batch::RecordBatch;
 use ndarray::Array2;
 
 use super::error::DatasetLoadError;
-use crate::data::{Dataset, FeatureColumn};
 
 pub(super) struct LoadedBatches {
 	schema: Arc<Schema>,
@@ -28,10 +27,6 @@ impl LoadedBatches {
 			rows,
 			cols,
 		})
-	}
-
-	pub(super) fn to_dataset(&self) -> Result<Dataset, DatasetLoadError> {
-		batches_to_dataset(&self.batches, &self.schema, self.rows, self.cols)
 	}
 
 	/// Convert to row-major Array2<f32> with shape (n_samples, n_features).
@@ -82,91 +77,6 @@ fn count_feature_columns(schema: &Schema) -> Result<usize, DatasetLoadError> {
 			"no feature columns found (expected x_0..x_N or x FixedSizeList)".into(),
 		)),
 	}
-}
-
-fn batches_to_dataset(
-	batches: &[RecordBatch],
-	schema: &Schema,
-	rows: usize,
-	cols: usize,
-) -> Result<Dataset, DatasetLoadError> {
-	let features = extract_feature_columns(batches, schema, rows, cols)?;
-	let targets = extract_targets(batches, schema)?;
-	Dataset::new(features, targets).map_err(|e| DatasetLoadError::Schema(e.to_string()))
-}
-
-fn extract_feature_columns(
-	batches: &[RecordBatch],
-	schema: &Schema,
-	rows: usize,
-	cols: usize,
-) -> Result<Vec<FeatureColumn>, DatasetLoadError> {
-	// Check if we have a FixedSizeList x column
-	if schema.field_with_name("x").ok().is_some() {
-		return extract_features_from_fixed_list(batches, rows, cols);
-	}
-
-	// Wide columns mode
-	let mut columns = Vec::with_capacity(cols);
-	for i in 0..cols {
-		let col_name = format!("x_{}", i);
-		let values = extract_float32_column(batches, &col_name)?;
-		columns.push(FeatureColumn::Numeric {
-			name: Some(col_name),
-			values,
-		});
-	}
-	Ok(columns)
-}
-
-fn extract_features_from_fixed_list(
-	batches: &[RecordBatch],
-	rows: usize,
-	cols: usize,
-) -> Result<Vec<FeatureColumn>, DatasetLoadError> {
-	// For FixedSizeList, read all values (row-major) and transpose into columns.
-	let mut all_values: Vec<f32> = Vec::with_capacity(rows * cols);
-
-	for batch in batches {
-		let col = batch
-			.column_by_name("x")
-			.ok_or_else(|| DatasetLoadError::MissingColumn("x".into()))?;
-
-		let list_array = col
-			.as_any()
-			.downcast_ref::<FixedSizeListArray>()
-			.ok_or_else(|| DatasetLoadError::UnsupportedType {
-				column: "x".into(),
-				expected: "FixedSizeList<Float32>".into(),
-				got: format!("{:?}", col.data_type()),
-			})?;
-
-		let values = list_array
-			.values()
-			.as_any()
-			.downcast_ref::<Float32Array>()
-			.ok_or_else(|| DatasetLoadError::UnsupportedType {
-				column: "x".into(),
-				expected: "Float32".into(),
-				got: "other".into(),
-			})?;
-
-		all_values.extend(values.iter().map(|v| v.unwrap_or(f32::NAN)));
-	}
-
-	// Transpose row-major to column vectors
-	let mut columns = Vec::with_capacity(cols);
-	for col_idx in 0..cols {
-		let mut col_values = Vec::with_capacity(rows);
-		for row_idx in 0..rows {
-			col_values.push(all_values[row_idx * cols + col_idx]);
-		}
-		columns.push(FeatureColumn::Numeric {
-			name: Some(format!("x_{}", col_idx)),
-			values: col_values,
-		});
-	}
-	Ok(columns)
 }
 
 fn extract_targets(batches: &[RecordBatch], schema: &Schema) -> Result<Vec<f32>, DatasetLoadError> {

@@ -19,8 +19,10 @@ fn test_dir() -> PathBuf {
 
 #[derive(Debug, Deserialize)]
 struct TestInput {
-    n_samples: usize,
-    n_features: usize,
+    #[serde(alias = "n_samples")]
+    num_samples: usize,
+    #[serde(alias = "n_features")]
+    num_features: usize,
     data: Vec<Vec<Option<f64>>>,
     #[allow(dead_code)]
     labels: Option<Vec<f64>>,
@@ -100,8 +102,8 @@ mod regression {
             .expect("converted forest should be structurally valid");
 
         assert_eq!(forest.n_groups(), 1);
-        assert_eq!(input.n_samples, 20);
-        assert_eq!(input.n_features, 10);
+        assert_eq!(input.num_samples, 20);
+        assert_eq!(input.num_features, 10);
 
         let expected_raw = match &expected.raw {
             RawPredictions::Flat(v) => v,
@@ -133,7 +135,7 @@ mod binary_classification {
             .expect("converted forest should be structurally valid");
 
         assert_eq!(forest.n_groups(), 1);
-        assert_eq!(input.n_samples, 20);
+        assert_eq!(input.num_samples, 20);
 
         let expected_raw = match &expected.raw {
             RawPredictions::Flat(v) => v,
@@ -188,7 +190,7 @@ mod multiclass {
             .expect("converted forest should be structurally valid");
 
         assert_eq!(forest.n_groups(), 3);
-        assert_eq!(input.n_samples, 20);
+        assert_eq!(input.num_samples, 20);
 
         let expected_raw = match &expected.raw {
             RawPredictions::Multiclass(v) => v,
