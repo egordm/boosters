@@ -5,7 +5,7 @@
 //! and [`config()`](GBLinearModel::config).
 
 use crate::data::SamplesView;
-use crate::dataset::{Dataset, FeaturesView};
+use crate::dataset::Dataset;
 use crate::explainability::{ExplainError, LinearExplainer, ShapValues};
 use crate::model::meta::ModelMeta;
 use crate::repr::gblinear::LinearModel;
@@ -168,22 +168,11 @@ impl GBLinearModel {
     /// # Example
     ///
     /// ```ignore
-    /// // From a Dataset
-    /// let preds = model.predict(dataset.features());
-    ///
-    /// // From a FeaturesView
-    /// let preds = model.predict(features_view);
+    /// let preds = model.predict(dataset);
     /// ```
-    pub fn predict(&self, features: FeaturesView<'_>) -> Array2<f32> {
-        let n_samples = features.n_samples();
-        let n_groups = self.meta.n_groups;
-
-        if n_samples == 0 {
-            return Array2::zeros((n_groups, 0));
-        }
-
+    pub fn predict(&self, dataset: Dataset) -> Array2<f32> {
         // Use efficient feature-major prediction
-        let mut output = self.model.predict_feature_major(features.view());
+        let mut output = self.predict_raw(dataset);
 
         // Apply transformation if we have config with objective
         self.config.objective.transform_predictions(output.view_mut());
@@ -200,15 +189,15 @@ impl GBLinearModel {
     /// # Returns
     ///
     /// Array2 with shape `[n_groups, n_samples]`.
-    pub fn predict_raw(&self, features: FeaturesView<'_>) -> Array2<f32> {
-        let n_samples = features.n_samples();
+    pub fn predict_raw(&self, dataset: Dataset) -> Array2<f32> {
+        let n_samples = dataset.n_samples();
         let n_groups = self.meta.n_groups;
 
         if n_samples == 0 {
             return Array2::zeros((n_groups, 0));
         }
 
-        self.model.predict_feature_major(features.view())
+        self.model.predict(dataset.features())
     }
 
     // =========================================================================
@@ -290,7 +279,7 @@ mod tests {
         // Feature-major: [n_features=2, n_samples=1]
         let features_fm = arr2(&[[1.0], [2.0]]);
         let dataset = Dataset::new(features_fm.view(), None, None);
-        let preds = model.predict_raw(dataset.features());
+        let preds = model.predict_raw(dataset);
         assert!((preds[[0, 0]] - 1.2).abs() < 1e-6);
     }
 
@@ -308,7 +297,7 @@ mod tests {
             [2.0, 0.0], // feature 1 values for samples 0, 1
         ]);
         let dataset = Dataset::new(features_fm.view(), None, None);
-        let preds = model.predict_raw(dataset.features());
+        let preds = model.predict_raw(dataset);
 
         // Shape is [n_groups, n_samples] = [1, 2]
         // sample 0: 0.5*1.0 + 0.3*2.0 + 0.1 = 1.2
@@ -384,8 +373,8 @@ mod tests {
         let feature_major = array![[1.0, 0.0], [2.0, 0.0]];
         let dataset = Dataset::new(feature_major.view(), None, None);
 
-        // Use predict (FeaturesView) method
-        let preds = model.predict_raw(dataset.features());
+        // Use predict method taking Dataset
+        let preds = model.predict_raw(dataset);
 
         // Values should be:
         // sample 0: 0.5*1.0 + 0.3*2.0 + 0.1 = 1.2

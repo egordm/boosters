@@ -51,18 +51,6 @@ fn load_dart(name: &str) -> (XgbModel, TestInput, TestExpected) {
 // Helper functions
 // =============================================================================
 
-/// Convert probability-space base_score to margin space based on objective.
-fn prob_to_margin(base_score: f32, objective: &str) -> f32 {
-    match objective {
-        "binary:logistic" | "reg:logistic" => {
-            let p = base_score.clamp(1e-7, 1.0 - 1e-7);
-            (p / (1.0 - p)).ln()
-        }
-        "reg:gamma" | "reg:tweedie" => base_score.max(1e-7).ln(),
-        _ => base_score,
-    }
-}
-
 /// Assert predictions match expected values within tolerance.
 fn assert_preds_match(actual: &[f32], expected: &[f64], tolerance: f64, context: &str) {
     assert_eq!(
@@ -300,7 +288,6 @@ fn predict_dart() {
 fn predict_gblinear_regression() {
     let (model, input, expected) = load_gblinear("gblinear_regression");
     let booster = model.to_booster().expect("conversion failed");
-    let base_score = model.learner.learner_model_param.base_score;
 
     let linear = match booster {
         Booster::Linear(l) => l,
@@ -310,7 +297,8 @@ fn predict_gblinear_regression() {
     let expected_preds = expected.as_flat();
     for (i, features) in input.to_f32_rows().iter().enumerate() {
         let mut pred = [0.0f32; 1];
-        linear.predict_row_into(features, &[base_score], &mut pred);
+        // base_score is now baked into the model bias during conversion
+        linear.predict_row_into(features, &mut pred);
         assert_preds_match(&pred, &[expected_preds[i]], DEFAULT_TOLERANCE_F64, &format!("row {i}"));
     }
 }
@@ -320,10 +308,6 @@ fn predict_gblinear_binary() {
     let (model, input, expected) = load_gblinear("gblinear_binary");
     let booster = model.to_booster().expect("conversion failed");
 
-    let prob_base_score = model.learner.learner_model_param.base_score;
-    let objective = model.learner.objective.name();
-    let margin_base_score = prob_to_margin(prob_base_score, objective);
-
     let linear = match booster {
         Booster::Linear(l) => l,
         _ => panic!("Expected linear booster"),
@@ -332,7 +316,8 @@ fn predict_gblinear_binary() {
     let expected_preds = expected.as_flat();
     for (i, features) in input.to_f32_rows().iter().enumerate() {
         let mut pred = [0.0f32; 1];
-        linear.predict_row_into(features, &[margin_base_score], &mut pred);
+        // base_score is now baked into the model bias during conversion
+        linear.predict_row_into(features, &mut pred);
         assert_preds_match(&pred, &[expected_preds[i]], DEFAULT_TOLERANCE_F64, &format!("row {i}"));
     }
 }
@@ -342,9 +327,7 @@ fn predict_gblinear_multiclass() {
     let (model, input, expected) = load_gblinear("gblinear_multiclass");
     let booster = model.to_booster().expect("conversion failed");
 
-    let base_score_single = model.learner.learner_model_param.base_score;
     let n_class = model.learner.learner_model_param.n_class as usize;
-    let base_scores = vec![base_score_single; n_class];
 
     let linear = match booster {
         Booster::Linear(l) => l,
@@ -354,7 +337,8 @@ fn predict_gblinear_multiclass() {
     let expected_preds = expected.as_nested();
     for (i, features) in input.to_f32_rows().iter().enumerate() {
         let mut pred = vec![0.0f32; n_class];
-        linear.predict_row_into(features, &base_scores, &mut pred);
+        // base_score is now baked into the model bias during conversion
+        linear.predict_row_into(features, &mut pred);
         assert_eq!(pred.len(), n_class);
         assert_preds_match(&pred, &expected_preds[i], DEFAULT_TOLERANCE_F64, &format!("row {i}"));
     }

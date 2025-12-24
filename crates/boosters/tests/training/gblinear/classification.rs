@@ -4,8 +4,8 @@
 //! - Binary classification with logistic loss
 //! - Multiclass classification with softmax loss
 
-use super::{load_config, load_train_data, make_dataset, transpose_to_samples};
-use boosters::data::SamplesView;
+use super::{load_config, load_train_data, make_dataset};
+use boosters::dataset::FeaturesView;
 use boosters::training::{
     GBLinearParams, GBLinearTrainer, LogLoss, LogisticLoss, MulticlassLogLoss, SoftmaxLoss,
     Verbosity,
@@ -34,14 +34,13 @@ fn train_binary_classification() {
     let model = trainer.train(&train, &[]).unwrap();
 
     // Verify predictions are in reasonable range for logits.
-    // For prediction, we need sample-major data [n_samples, n_features]
-    let samples = transpose_to_samples(&data);
-    let samples_view = SamplesView::from_array(samples.view());
-    let output = model.predict(samples_view, &[0.0]);
-    
-    // output is Array2<f32> with shape (n_samples, n_groups)
+    // Data is feature-major [n_features, n_samples]
+    let features_view = FeaturesView::from_array(data.view());
+    let output = model.predict(features_view);
+
+    // output is Array2<f32> with shape [n_groups, n_samples]
     let predictions: Vec<f32> = output
-        .column(0)
+        .row(0)
         .iter()
         .copied()
         .take(10)
@@ -82,14 +81,13 @@ fn train_multioutput_classification() {
     assert_eq!(model.n_groups(), num_class);
 
     // Verify predictions exist for all classes
-    // For prediction, need sample-major data
-    let samples = transpose_to_samples(&data);
-    let samples_view = SamplesView::from_array(samples.view());
-    let output = model.predict(samples_view, &vec![0.0; num_class]);
-    
-    // output is Array2<f32> with shape (n_samples, n_groups)
-    // Get first row predictions
-    let predictions: Vec<f32> = output.row(0).iter().copied().collect();
+    // Data is feature-major [n_features, n_samples]
+    let features_view = FeaturesView::from_array(data.view());
+    let output = model.predict(features_view);
+
+    // output is Array2<f32> with shape [n_groups, n_samples]
+    // Get first sample's predictions (column 0)
+    let predictions: Vec<f32> = output.column(0).iter().copied().collect();
 
     assert_eq!(predictions.len(), num_class);
     for pred in &predictions {
@@ -106,14 +104,15 @@ fn train_multioutput_classification() {
     // Compute training accuracy (argmax over logits).
     use boosters::training::{MetricFn, MulticlassAccuracy};
 
-    let output = model.predict(samples_view, &vec![0.0; num_class]);
-    let n_rows = output.nrows();
-    let pred_classes: Vec<f32> = (0..n_rows)
-        .map(|row| {
-            let row_preds = output.row(row);
+    let features_view = FeaturesView::from_array(data.view());
+    let output = model.predict(features_view);
+    let n_samples = output.ncols();
+    let pred_classes: Vec<f32> = (0..n_samples)
+        .map(|sample| {
+            let sample_preds = output.column(sample);
             let mut best_idx = 0usize;
             let mut best_val = f32::NEG_INFINITY;
-            for (idx, &v) in row_preds.iter().enumerate() {
+            for (idx, &v) in sample_preds.iter().enumerate() {
                 if v > best_val {
                     best_val = v;
                     best_idx = idx;
@@ -124,7 +123,7 @@ fn train_multioutput_classification() {
         .collect();
 
     // Metrics expect shape [n_groups, n_samples] - for class predictions, n_groups=1
-    let pred_arr = Array2::from_shape_vec((1, n_rows), pred_classes).unwrap();
+    let pred_arr = Array2::from_shape_vec((1, n_samples), pred_classes).unwrap();
     let targets_arr = ArrayView1::from(&labels[..]);
     let accuracy = MulticlassAccuracy.compute(pred_arr.view(), targets_arr, None);
 

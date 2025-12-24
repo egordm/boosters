@@ -425,8 +425,6 @@ mod tests {
 
     #[test]
     fn predict_batch_rows() {
-        use crate::dataset::Dataset;
-        
         let forest = make_simple_forest();
         let meta = ModelMeta::for_regression(2);
         let model = GBDTModel::from_forest(forest, meta);

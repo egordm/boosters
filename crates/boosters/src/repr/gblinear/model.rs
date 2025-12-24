@@ -1,9 +1,8 @@
 //! Linear model data structure.
 
-use ndarray::{s, Array2, ArrayView1, ArrayView2, ArrayViewMut2};
+use ndarray::{s, Array2, ArrayView1, ArrayViewMut2};
 
-use crate::data::{FeaturesView, SamplesView};
-use crate::utils::Parallelism;
+use crate::dataset::FeaturesView;
 
 /// Linear booster model (weights + bias).
 ///
@@ -163,124 +162,58 @@ impl LinearModel {
     // Prediction
     // =========================================================================
 
-    /// Predict for a batch of rows.
+    /// Predict for a batch of samples.
     ///
-    /// Allocates and returns predictions as `Array2<f32>` with shape `[n_samples, n_groups]`.
+    /// Allocates and returns predictions as `Array2<f32>` with shape `[n_groups, n_samples]`.
     ///
     /// # Arguments
     ///
-    /// * `data` - Feature matrix with shape `[n_samples, n_features]` (sample-major)
-    /// * `base_score` - Base score to add per group
-    pub fn predict(&self, data: SamplesView<'_>, base_score: &[f32]) -> Array2<f32> {
-        let mut output = Array2::zeros((data.n_samples(), self.n_groups()));
-        self.predict_into(data, base_score, Parallelism::Sequential, output.view_mut());
+    /// * `features` - Feature matrix with shape `[n_features, n_samples]` (feature-major)
+    pub fn predict(&self, features: FeaturesView<'_>) -> Array2<f32> {
+        let n_samples = features.n_samples();
+        let n_groups = self.n_groups();
+
+        let mut output = Array2::zeros((n_groups, n_samples));
+        self.predict_into(features, output.view_mut());
         output
     }
 
     /// Predict into a provided output buffer.
     ///
-    /// Writes predictions to `output` with shape `[n_samples, n_groups]`.
-    ///
-    /// # Arguments
-    ///
-    /// * `data` - Feature matrix with shape `[n_samples, n_features]` (sample-major)
-    /// * `base_score` - Base score to add per group
-    /// * `parallelism` - Whether to use parallel execution
-    /// * `output` - Mutable view with shape `[n_samples, n_groups]` to write predictions into
-    pub fn predict_into(
-        &self,
-        data: SamplesView<'_>,
-        base_score: &[f32],
-        parallelism: Parallelism,
-        mut output: ArrayViewMut2<'_, f32>,
-    ) {
-        debug_assert_eq!(output.dim(), (data.n_samples(), self.n_groups()));
-
-        // Compute dot product: data [n_samples, n_features] · weights [n_features, n_groups]
-        // ndarray doesn't have in-place gemm, so we compute and assign
-        let weights = self.weights.slice(s![..self.n_features(), ..]);
-        ndarray::linalg::general_mat_mul(1.0, &data.view(), &weights, 0.0, &mut output);
-
-        // Add biases: output[row, group] += bias[group] + base_score[group]
-        let biases = self.biases();
-        let add_bias = |mut row: ndarray::ArrayViewMut1<f32>| {
-            for (group, val) in row.iter_mut().enumerate() {
-                let base = base_score.get(group).copied().unwrap_or(0.0);
-                *val += biases[group] + base;
-            }
-        };
-        parallelism.maybe_par_bridge_for_each(output.rows_mut().into_iter(), add_bias);
-    }
-
-    /// Predict into a column-major buffer.
-    ///
-    /// Output layout: `output[group * n_rows + row]`
-    ///
-    /// This is the preferred method for training where predictions are stored
-    /// in column-major layout for efficient gradient computation.
-    pub fn predict_col_major(&self, data: FeaturesView<'_>, output: &mut [f32]) {
-        let n_rows = data.n_samples();
-        let n_groups = self.n_groups();
-        let n_features = self.n_features();
-        debug_assert_eq!(output.len(), n_rows * n_groups);
-
-        // Initialize with bias (column-major: group-first)
-        for group in 0..n_groups {
-            output[group * n_rows..(group + 1) * n_rows].fill(self.bias(group));
-        }
-
-        // Add weighted features - iterate over features (rows in FeaturesView)
-        for feat_idx in 0..n_features {
-            let feature_values = data.feature(feat_idx);
-            for (row_idx, &value) in feature_values.iter().enumerate() {
-                for group in 0..n_groups {
-                    output[group * n_rows + row_idx] += value * self.weight(feat_idx, group);
-                }
-            }
-        }
-    }
-
-    /// Predict from feature-major data, returning group-major output.
+    /// Writes predictions to `output` with shape `[n_groups, n_samples]`.
     ///
     /// # Arguments
     ///
     /// * `features` - Feature matrix with shape `[n_features, n_samples]` (feature-major)
-    ///
-    /// # Returns
-    ///
-    /// Array2 with shape `[n_groups, n_samples]`.
-    pub fn predict_feature_major(&self, features: ArrayView2<f32>) -> Array2<f32> {
-        let n_features_data = features.nrows();
-        let n_samples = features.ncols();
+    /// * `output` - Mutable view with shape `[n_groups, n_samples]` to write predictions into
+    pub fn predict_into(&self, features: FeaturesView<'_>, mut output: ArrayViewMut2<'_, f32>) {
+        let n_samples = features.n_samples();
         let n_groups = self.n_groups();
         let n_features = self.n_features();
 
+        debug_assert_eq!(output.dim(), (n_groups, n_samples));
         debug_assert_eq!(
-            n_features_data, n_features,
+            features.n_features(),
+            n_features,
             "features has {} features but model expects {}",
-            n_features_data, n_features
+            features.n_features(),
+            n_features
         );
-
-        // Output shape: [n_groups, n_samples]
-        let mut output = Array2::<f32>::zeros((n_groups, n_samples));
 
         // Initialize with bias
         for group in 0..n_groups {
-            let bias = self.bias(group);
-            output.row_mut(group).fill(bias);
+            output.row_mut(group).fill(self.bias(group));
         }
 
         // Add weighted features - iterate over features (rows in feature-major)
         for feat_idx in 0..n_features {
-            let feature_row = features.row(feat_idx);
-            for (sample_idx, &value) in feature_row.iter().enumerate() {
+            let feature_values = features.feature(feat_idx);
+            for (sample_idx, &value) in feature_values.iter().enumerate() {
                 for group in 0..n_groups {
                     output[[group, sample_idx]] += value * self.weight(feat_idx, group);
                 }
             }
         }
-
-        output
     }
 
     /// Predict for a single row into a provided buffer.
@@ -290,9 +223,8 @@ impl LinearModel {
     /// # Arguments
     ///
     /// * `features` - Feature values for one sample (length >= n_features)
-    /// * `base_score` - Base score to add per group
     /// * `output` - Buffer to write predictions into (length >= n_groups)
-    pub fn predict_row_into(&self, features: &[f32], base_score: &[f32], output: &mut [f32]) {
+    pub fn predict_row_into(&self, features: &[f32], output: &mut [f32]) {
         let n_features = self.n_features();
         let n_groups = self.n_groups();
 
@@ -300,8 +232,7 @@ impl LinearModel {
         debug_assert!(output.len() >= n_groups);
 
         for group in 0..n_groups {
-            let base = base_score.get(group).copied().unwrap_or(0.0);
-            let mut sum = base + self.bias(group);
+            let mut sum = self.bias(group);
             for (feat_idx, &value) in features.iter().take(n_features).enumerate() {
                 sum += value * self.weight(feat_idx, group);
             }
@@ -313,8 +244,7 @@ impl LinearModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::SamplesView;
-    use ndarray::array;
+    use ndarray::{array, Array2};
 
     #[test]
     fn linear_model_new() {
@@ -411,21 +341,22 @@ mod tests {
 
         let features = vec![2.0, 3.0]; // 0.5*2 + 0.3*3 + 0.1 = 1.0 + 0.9 + 0.1 = 2.0
         let mut output = [0.0f32; 1];
-        model.predict_row_into(&features, &[0.0], &mut output);
+        model.predict_row_into(&features, &mut output);
 
         assert!((output[0] - 2.0).abs() < 1e-6);
     }
 
     #[test]
-    fn predict_row_into_with_base_score() {
-        let weights = array![[0.5], [0.3], [0.1]];
+    fn predict_row_into_with_bias() {
+        // Bias is built into the model, not passed as base_score
+        let weights = array![[0.5], [0.3], [0.6]]; // bias = 0.6 (was 0.1 + 0.5 base_score)
         let model = LinearModel::new(weights);
 
         let features = vec![2.0, 3.0];
         let mut output = [0.0f32; 1];
-        model.predict_row_into(&features, &[0.5], &mut output); // base_score = 0.5
+        model.predict_row_into(&features, &mut output);
 
-        // 0.5 + 0.5*2 + 0.3*3 + 0.1 = 2.5
+        // 0.5*2 + 0.3*3 + 0.6 = 2.5
         assert!((output[0] - 2.5).abs() < 1e-6);
     }
 
@@ -434,17 +365,23 @@ mod tests {
         let weights = array![[0.5], [0.3], [0.1]];
         let model = LinearModel::new(weights);
 
+        // Feature-major: [n_features=2, n_samples=2]
+        // feature 0: [2.0, 1.0] (samples 0 and 1)
+        // feature 1: [3.0, 1.0]
+        // sample 0: 0.5*2 + 0.3*3 + 0.1 = 2.0
+        // sample 1: 0.5*1 + 0.3*1 + 0.1 = 0.9
         let data = [
-            2.0f32, 3.0, // row 0: 0.5*2 + 0.3*3 + 0.1 = 2.0
-            1.0, 1.0,    // row 1: 0.5*1 + 0.3*1 + 0.1 = 0.9
+            2.0f32, 1.0, // feature 0
+            3.0, 1.0,    // feature 1
         ];
-        let view = SamplesView::from_slice(&data, 2, 2).unwrap();
+        let view = FeaturesView::from_slice(&data, 2, 2).unwrap();
 
-        let output = model.predict(view, &[0.0]);
+        let output = model.predict(view);
 
-        assert_eq!(output.dim(), (2, 1));
+        // Output: [n_groups=1, n_samples=2]
+        assert_eq!(output.dim(), (1, 2));
         assert!((output[[0, 0]] - 2.0).abs() < 1e-6);
-        assert!((output[[1, 0]] - 0.9).abs() < 1e-6);
+        assert!((output[[0, 1]] - 0.9).abs() < 1e-6);
     }
 
     #[test]
@@ -457,71 +394,47 @@ mod tests {
         ];
         let model = LinearModel::new(weights);
 
+        // Feature-major: [2 features, 1 sample]
+        // feature 0: [1.0]
+        // feature 1: [1.0]
         let data = [1.0f32, 1.0];
-        let view = SamplesView::from_slice(&data, 1, 2).unwrap();
-        let output = model.predict(view, &[0.0, 0.0]);
+        // from_slice(data, n_samples, n_features) -> [n_features, n_samples]
+        let view = FeaturesView::from_slice(&data, 1, 2).unwrap();
+        let output = model.predict(view);
 
-        assert_eq!(output.dim(), (1, 2));
+        // Output: [n_groups=2, n_samples=1]
+        assert_eq!(output.dim(), (2, 1));
         // group 0: 0.1*1 + 0.3*1 = 0.4
         // group 1: 0.2*1 + 0.4*1 = 0.6
         assert!((output[[0, 0]] - 0.4).abs() < 1e-6);
-        assert!((output[[0, 1]] - 0.6).abs() < 1e-6);
+        assert!((output[[1, 0]] - 0.6).abs() < 1e-6);
     }
 
     #[test]
-    fn predict_with_parallelism() {
+    fn predict_into_buffer() {
         let weights = array![[0.5], [0.3], [0.1]];
         let model = LinearModel::new(weights);
-
-        let data = [
-            2.0f32, 3.0, // row 0
-            1.0, 1.0,    // row 1
-        ];
-        let view = SamplesView::from_slice(&data, 2, 2).unwrap();
-
-        // Test parallel prediction
-        let mut output = Array2::<f32>::zeros((2, 1));
-        model.predict_into(view, &[0.0], Parallelism::Parallel, output.view_mut());
-
-        assert_eq!(output.dim(), (2, 1));
-        assert!((output[[0, 0]] - 2.0).abs() < 1e-6);
-        assert!((output[[1, 0]] - 0.9).abs() < 1e-6);
-
-        // Sequential should give same results
-        let mut seq_output = Array2::<f32>::zeros((2, 1));
-        model.predict_into(view, &[0.0], Parallelism::Sequential, seq_output.view_mut());
-        assert_eq!(output, seq_output);
-    }
-
-    #[test]
-    fn predict_feature_major_matches_sample_major() {
-        let weights = array![[0.5], [0.3], [0.1]];
-        let model = LinearModel::new(weights);
-
-        // Sample-major: [2 samples, 2 features]
-        // sample 0: [2.0, 3.0] -> 0.5*2 + 0.3*3 + 0.1 = 2.0
-        // sample 1: [1.0, 1.0] -> 0.5*1 + 0.3*1 + 0.1 = 0.9
-        let sample_major = array![
-            [2.0, 3.0],
-            [1.0, 1.0],
-        ];
 
         // Feature-major: [2 features, 2 samples]
         // feature 0: [2.0, 1.0]
         // feature 1: [3.0, 1.0]
-        let feature_major = sample_major.t();
+        let data = [
+            2.0f32, 1.0, // feature 0
+            3.0, 1.0,    // feature 1
+        ];
+        // from_slice(data, n_samples, n_features) -> [n_features, n_samples]
+        let view = FeaturesView::from_slice(&data, 2, 2).unwrap();
 
-        // Predict using feature-major path
-        let output = model.predict_feature_major(feature_major);
+        let mut output = Array2::<f32>::zeros((1, 2)); // [n_groups=1, n_samples=2]
+        model.predict_into(view, output.view_mut());
 
-        // Output should be [n_groups=1, n_samples=2]
         assert_eq!(output.dim(), (1, 2));
         assert!((output[[0, 0]] - 2.0).abs() < 1e-6);
         assert!((output[[0, 1]] - 0.9).abs() < 1e-6);
     }
 
     #[test]
-    fn predict_feature_major_multigroup() {
+    fn predict_multigroup() {
         // 2 features, 2 groups
         let weights = array![
             [0.1, 0.2], // feature 0
@@ -530,16 +443,18 @@ mod tests {
         ];
         let model = LinearModel::new(weights);
 
-        // Sample-major: [2 samples, 2 features]
-        let sample_major = array![
-            [1.0, 2.0], // sample 0
-            [3.0, 4.0], // sample 1
+        // Feature-major: [2 features, 2 samples]
+        // feature 0: [1.0, 3.0]
+        // feature 1: [2.0, 4.0]
+        let feature_major = array![
+            [1.0, 3.0], // feature 0
+            [2.0, 4.0], // feature 1
         ];
-        let feature_major = sample_major.t();
+        let view = FeaturesView::from_array(feature_major.view());
 
-        let output = model.predict_feature_major(feature_major);
+        let output = model.predict(view);
 
-        // Output should be [n_groups=2, n_samples=2]
+        // Output: [n_groups=2, n_samples=2]
         assert_eq!(output.dim(), (2, 2));
 
         // sample 0, group 0: 0.1*1 + 0.3*2 + 0.5 = 0.1 + 0.6 + 0.5 = 1.2

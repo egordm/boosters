@@ -201,10 +201,9 @@ mod tests {
         let view = SamplesView::from_slice(&data, 1, 2).unwrap();
         let shap = explainer.shap_values(view);
 
-        // The prediction from model (base_score = 0.0)
-        let base_score = vec![0.0f32];
+        // The prediction from model (bias is baked in)
         let mut output = [0.0f32; 1];
-        model.predict_row_into(&data, &base_score, &mut output);
+        model.predict_row_into(&data, &mut output);
         let prediction = output[0] as f64;
 
         // Verify the sum property

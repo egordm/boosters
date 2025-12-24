@@ -224,6 +224,18 @@ impl<'a> FeatureAccessor for SamplesView<'a> {
 pub struct FeaturesView<'a>(ArrayView2<'a, f32>);
 
 impl<'a> FeaturesView<'a> {
+    /// Create from an ArrayView2 that is feature-major.
+    ///
+    /// The array should have shape `[n_features, n_samples]` and be in C-order.
+    ///
+    /// # Panics (debug only)
+    ///
+    /// Debug-asserts that the array is in standard (C) layout.
+    pub fn new(view: ArrayView2<'a, f32>) -> Self {
+        debug_assert!(view.is_standard_layout(), "Array must be in C-order");
+        Self(view)
+    }
+
     /// Create from a slice in feature-major order.
     ///
     /// This is zero-copy.
@@ -244,18 +256,6 @@ impl<'a> FeaturesView<'a> {
         ArrayView2::from_shape((n_features, n_samples), data)
             .ok()
             .map(Self)
-    }
-
-    /// Create from an ArrayView2 that is feature-major.
-    ///
-    /// The array should have shape `[n_features, n_samples]` and be in C-order.
-    ///
-    /// # Panics (debug only)
-    ///
-    /// Debug-asserts that the array is in standard (C) layout.
-    pub fn from_array(view: ArrayView2<'a, f32>) -> Self {
-        debug_assert!(view.is_standard_layout(), "Array must be in C-order");
-        Self(view)
     }
 
     /// Number of samples.

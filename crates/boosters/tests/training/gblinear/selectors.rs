@@ -8,7 +8,8 @@
 //! - Thrifty (cached greedy)
 
 use super::{load_test_data, load_train_data, make_dataset};
-use boosters::data::{transpose_to_c_order, SamplesView};
+use boosters::data::transpose_to_c_order;
+use boosters::dataset::FeaturesView;
 use boosters::training::gblinear::FeatureSelectorKind;
 use boosters::training::{
     GBLinearParams, GBLinearTrainer, MulticlassLogLoss, Rmse, SoftmaxLoss, SquaredLoss, Verbosity,
@@ -31,7 +32,9 @@ fn train_all_selectors_regression() {
             return;
         }
     };
-    let test_view = SamplesView::from_array(test_data.view());
+    // Transpose test data from sample-major to feature-major
+    let test_features_fm = transpose_to_c_order(test_data.view());
+    let test_view = FeaturesView::from_array(test_features_fm.view());
 
     let selectors = vec![
         ("Cyclic", FeatureSelectorKind::Cyclic),
@@ -55,10 +58,9 @@ fn train_all_selectors_regression() {
     let shuffle_trainer = GBLinearTrainer::new(SquaredLoss, Rmse, shuffle_params);
     let shuffle_model = shuffle_trainer.train(&train, &[]).unwrap();
     use boosters::training::MetricFn;
-    let shuffle_output = shuffle_model.predict(test_view, &[]);
-    let shuffle_arr = transpose_to_c_order(shuffle_output.view());
+    let shuffle_output = shuffle_model.predict(test_view);
     let targets_arr = ArrayView1::from(&test_labels[..]);
-    let shuffle_rmse = Rmse.compute(shuffle_arr.view(), targets_arr, None);
+    let shuffle_rmse = Rmse.compute(shuffle_output.view(), targets_arr, None);
 
     for (name, selector) in selectors {
         let params = GBLinearParams {
@@ -75,9 +77,8 @@ fn train_all_selectors_regression() {
 
         let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
         let model = trainer.train(&train, &[]).unwrap();
-        let output = model.predict(test_view, &[]);
-        let pred_arr = transpose_to_c_order(output.view());
-        let rmse = Rmse.compute(pred_arr.view(), targets_arr, None);
+        let output = model.predict(test_view);
+        let rmse = Rmse.compute(output.view(), targets_arr, None);
 
         // All selectors should produce reasonable models
         // (within 2x of shuffle baseline)
@@ -103,7 +104,9 @@ fn train_all_selectors_multiclass() {
             return;
         }
     };
-    let test_view = SamplesView::from_array(test_data.view());
+    // Transpose test data from sample-major to feature-major
+    let test_features_fm = transpose_to_c_order(test_data.view());
+    let test_view = FeaturesView::from_array(test_features_fm.view());
     let num_classes = 3;
 
     let selectors = vec![
@@ -129,14 +132,15 @@ fn train_all_selectors_multiclass() {
         GBLinearTrainer::new(SoftmaxLoss::new(num_classes), MulticlassLogLoss, shuffle_params);
     let shuffle_model = shuffle_trainer.train(&train, &[]).unwrap();
     use boosters::training::{MetricFn, MulticlassAccuracy};
-    let shuffle_output = shuffle_model.predict(test_view, &[]);
-    let n_rows = shuffle_output.nrows();
-    let shuffle_pred_classes: Vec<f32> = (0..n_rows)
-        .map(|row| {
-            let row_preds = shuffle_output.row(row);
+    let shuffle_output = shuffle_model.predict(test_view);
+    // output is [n_groups, n_samples] = [3, n_samples]
+    let n_samples = shuffle_output.ncols();
+    let shuffle_pred_classes: Vec<f32> = (0..n_samples)
+        .map(|sample| {
+            let sample_preds = shuffle_output.column(sample);
             let mut best_idx = 0usize;
             let mut best_val = f32::NEG_INFINITY;
-            for (idx, &v) in row_preds.iter().enumerate() {
+            for (idx, &v) in sample_preds.iter().enumerate() {
                 if v > best_val {
                     best_val = v;
                     best_idx = idx;
@@ -145,7 +149,7 @@ fn train_all_selectors_multiclass() {
             best_idx as f32
         })
         .collect();
-    let shuffle_pred_arr = Array2::from_shape_vec((1, n_rows), shuffle_pred_classes).unwrap();
+    let shuffle_pred_arr = Array2::from_shape_vec((1, n_samples), shuffle_pred_classes).unwrap();
     let targets_arr = ArrayView1::from(&test_labels[..]);
     let shuffle_acc = MulticlassAccuracy
         .compute(shuffle_pred_arr.view(), targets_arr, None)
@@ -167,14 +171,15 @@ fn train_all_selectors_multiclass() {
         let trainer =
             GBLinearTrainer::new(SoftmaxLoss::new(num_classes), MulticlassLogLoss, params);
         let model = trainer.train(&train, &[]).unwrap();
-        let output = model.predict(test_view, &[]);
-        let n_rows = output.nrows();
-        let pred_classes: Vec<f32> = (0..n_rows)
-            .map(|row| {
-                let row_preds = output.row(row);
+        let output = model.predict(test_view);
+        // output is [n_groups, n_samples]
+        let n_samples = output.ncols();
+        let pred_classes: Vec<f32> = (0..n_samples)
+            .map(|sample| {
+                let sample_preds = output.column(sample);
                 let mut best_idx = 0usize;
                 let mut best_val = f32::NEG_INFINITY;
-                for (idx, &v) in row_preds.iter().enumerate() {
+                for (idx, &v) in sample_preds.iter().enumerate() {
                     if v > best_val {
                         best_val = v;
                         best_idx = idx;
@@ -183,7 +188,7 @@ fn train_all_selectors_multiclass() {
                 best_idx as f32
             })
             .collect();
-        let pred_arr = Array2::from_shape_vec((1, n_rows), pred_classes).unwrap();
+        let pred_arr = Array2::from_shape_vec((1, n_samples), pred_classes).unwrap();
         let acc = MulticlassAccuracy
             .compute(pred_arr.view(), targets_arr, None)
             as f32;
@@ -267,7 +272,9 @@ fn train_thrifty_selector_convergence() {
             return;
         }
     };
-    let test_view = SamplesView::from_array(test_data.view());
+    // Transpose test data from sample-major to feature-major
+    let test_features_fm = transpose_to_c_order(test_data.view());
+    let test_view = FeaturesView::from_array(test_features_fm.view());
 
     // Train with thrifty selector
     let params = GBLinearParams {
@@ -285,10 +292,9 @@ fn train_thrifty_selector_convergence() {
     let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
     let model = trainer.train(&train, &[]).unwrap();
     use boosters::training::MetricFn;
-    let output = model.predict(test_view, &[]);
-    let pred_arr = transpose_to_c_order(output.view());
+    let output = model.predict(test_view);
     let targets_arr = ArrayView1::from(&test_labels[..]);
-    let rmse = Rmse.compute(pred_arr.view(), targets_arr, None);
+    let rmse = Rmse.compute(output.view(), targets_arr, None);
 
     // Thrifty should converge to a reasonable model
     assert!(rmse < 100.0, "Thrifty should converge: RMSE = {}", rmse);

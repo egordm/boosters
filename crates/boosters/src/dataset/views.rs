@@ -15,15 +15,17 @@ use super::schema::{DatasetSchema, FeatureType};
 /// - `sample(s)` returns all features for sample s (strided)
 ///
 /// The API uses conceptual terms (sample, feature) not array terms (row, col).
+/// Schema is optional - when not provided, all features are assumed numeric.
 #[derive(Clone, Copy)]
 pub struct FeaturesView<'a> {
     /// Shape: [n_features, n_samples] - feature-major
     data: ArrayView2<'a, f32>,
-    schema: &'a DatasetSchema,
+    /// Optional schema. If None, all features are assumed numeric.
+    schema: Option<&'a DatasetSchema>,
 }
 
 impl<'a> FeaturesView<'a> {
-    /// Create a new features view.
+    /// Create a new features view with schema.
     ///
     /// # Arguments
     ///
@@ -35,7 +37,39 @@ impl<'a> FeaturesView<'a> {
             schema.n_features(),
             "data.nrows() must match schema.n_features()"
         );
-        Self { data, schema }
+        Self {
+            data,
+            schema: Some(schema),
+        }
+    }
+
+    /// Create a features view without schema (all features assumed numeric).
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Array with shape `[n_features, n_samples]`
+    pub fn from_array(data: ArrayView2<'a, f32>) -> Self {
+        Self { data, schema: None }
+    }
+
+    /// Create from a slice in feature-major order (all features assumed numeric).
+    ///
+    /// Data layout: `[f0_s0, f0_s1, ..., f1_s0, f1_s1, ...]`
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Slice of length `n_samples * n_features`
+    /// * `n_samples` - Number of samples
+    /// * `n_features` - Number of features
+    pub fn from_slice(
+        data: &'a [f32],
+        n_samples: usize,
+        n_features: usize,
+    ) -> Option<Self> {
+        // Shape is [n_features, n_samples] for feature-major
+        ArrayView2::from_shape((n_features, n_samples), data)
+            .ok()
+            .map(Self::from_array)
     }
 
     /// Number of samples (second dimension).
@@ -76,9 +110,13 @@ impl<'a> FeaturesView<'a> {
     }
 
     /// Get the type of a feature.
+    ///
+    /// Returns `Numeric` if no schema was provided.
     #[inline]
     pub fn feature_type(&self, feature: usize) -> FeatureType {
-        self.schema.feature_type(feature)
+        self.schema
+            .map(|s| s.feature_type(feature))
+            .unwrap_or(FeatureType::Numeric)
     }
 
     /// Get the underlying array view.
@@ -88,14 +126,16 @@ impl<'a> FeaturesView<'a> {
         self.data
     }
 
-    /// Get the schema.
-    pub fn schema(&self) -> &DatasetSchema {
+    /// Get the schema, if available.
+    pub fn schema(&self) -> Option<&DatasetSchema> {
         self.schema
     }
 
     /// Check if any feature is categorical.
+    ///
+    /// Returns `false` if no schema was provided.
     pub fn has_categorical(&self) -> bool {
-        self.schema.has_categorical()
+        self.schema.map(|s| s.has_categorical()).unwrap_or(false)
     }
 }
 

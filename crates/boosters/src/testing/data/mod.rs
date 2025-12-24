@@ -57,7 +57,7 @@ impl SyntheticDataset {
 
     /// Get features as a `FeaturesView` for binning/training.
     pub fn features_view(&self) -> FeaturesView<'_> {
-        FeaturesView::from_array(self.features.view())
+        FeaturesView::new(self.features.view())
     }
 
     /// Get targets as a slice.

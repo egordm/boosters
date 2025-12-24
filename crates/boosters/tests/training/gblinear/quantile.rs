@@ -5,9 +5,10 @@
 //! - Multi-quantile regression (joint training)
 //! - Quantile ordering validation
 
-use super::{load_config, load_test_data, load_train_data, make_dataset, pearson_correlation, transpose_to_samples, TEST_CASES_DIR};
+use super::{load_config, load_test_data, load_train_data, make_dataset, pearson_correlation, TEST_CASES_DIR};
 use approx::assert_relative_eq;
-use boosters::data::SamplesView;
+use boosters::data::transpose_to_c_order;
+use boosters::dataset::FeaturesView;
 use boosters::training::{GBLinearParams, GBLinearTrainer, PinballLoss, Rmse, Verbosity};
 use rstest::rstest;
 use serde::Deserialize;
@@ -49,10 +50,12 @@ fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
     let trainer = GBLinearTrainer::new(PinballLoss::new(alpha), Rmse, params);
     let model = trainer.train(&train, &[]).unwrap();
 
-    // Compute predictions on test set (sample-major)
-    let test_view = SamplesView::from_array(test_data.view());
-    let output = model.predict(test_view, &[0.0]);
-    let test_preds: Vec<f32> = output.column(0).to_vec();
+    // Compute predictions on test set
+    // test_data is sample-major [n_samples, n_features], need feature-major [n_features, n_samples]
+    let test_features = transpose_to_c_order(test_data.view());
+    let test_view = FeaturesView::from_array(test_features.view());
+    let output = model.predict(test_view);
+    let test_preds: Vec<f32> = output.row(0).to_vec();
 
     // Compute pinball loss on test set
     let pinball_loss: f64 = test_preds
@@ -122,15 +125,13 @@ fn quantile_regression_predictions_differ() {
     let model_med = trainer_med.train(&train, &[]).unwrap();
     let model_high = trainer_high.train(&train, &[]).unwrap();
 
-    // For prediction we need sample-major data
-    let samples = transpose_to_samples(&data);
-    let samples_view = SamplesView::from_array(samples.view());
+    // For prediction, data is already feature-major [n_features, n_samples]
+    let features_view = FeaturesView::from_array(data.view());
 
-    // Get predictions for first sample
-    // Array2 uses [[row, col]] indexing
-    let pred_low = model_low.predict(samples_view, &[0.0])[[0, 0]];
-    let pred_med = model_med.predict(samples_view, &[0.0])[[0, 0]];
-    let pred_high = model_high.predict(samples_view, &[0.0])[[0, 0]];
+    // Get predictions for first sample - output is [n_groups, n_samples]
+    let pred_low = model_low.predict(features_view)[[0, 0]];
+    let pred_med = model_med.predict(features_view)[[0, 0]];
+    let pred_high = model_high.predict(features_view)[[0, 0]];
 
     // Lower quantile should produce lower predictions.
     assert!(
@@ -216,14 +217,18 @@ fn train_multi_quantile_regression() {
     // Verify model has correct number of output groups
     assert_eq!(model.n_groups(), num_quantiles);
 
-    // Get predictions on test set (test_data is sample-major)
-    let test_view = SamplesView::from_array(test_data.view());
+    // Get predictions on test set
+    // test_data is sample-major [n_samples, n_features], need feature-major
+    let test_features = transpose_to_c_order(test_data.view());
+    let test_view = FeaturesView::from_array(test_features.view());
     let n_test_samples = test_data.nrows();
-    let output = model.predict(test_view, &vec![0.0; num_quantiles]);
+    let output = model.predict(test_view);
+    
+    // output is [n_groups, n_samples], extract per-quantile predictions
     let mut our_predictions: Vec<Vec<f32>> = vec![vec![0.0; n_test_samples]; num_quantiles];
     for i in 0..n_test_samples {
         for q in 0..num_quantiles {
-            our_predictions[q][i] = output[[i, q]];
+            our_predictions[q][i] = output[[q, i]];
         }
     }
 
@@ -297,22 +302,21 @@ fn multi_quantile_vs_separate_models() {
         })
         .collect();
 
-    // Compare predictions on training set (used later for correlation checks)
-    // For prediction, we need sample-major data: transpose feature-major data
-    let samples = transpose_to_samples(&data);
-    let samples_view = SamplesView::from_array(samples.view());
-    let n_samples = samples.nrows();
+    // Compare predictions on training set (data is already feature-major)
+    let features_view = FeaturesView::from_array(data.view());
+    let n_samples = data.ncols();
 
     // Predictions should be correlated
     for (q, single_model) in single_models.iter().enumerate() {
-        let multi_output = multi_model.predict(samples_view, &[0.0; 3]);
-        let single_output = single_model.predict(samples_view, &[0.0]);
+        let multi_output = multi_model.predict(features_view);
+        let single_output = single_model.predict(features_view);
 
+        // multi_output is [n_groups, n_samples], single_output is [1, n_samples]
         let mut multi_preds = Vec::with_capacity(n_samples);
         let mut single_preds = Vec::with_capacity(n_samples);
         for i in 0..n_samples {
-            multi_preds.push(multi_output[[i, q]]);
-            single_preds.push(single_output[[i, 0]]);
+            multi_preds.push(multi_output[[q, i]]);
+            single_preds.push(single_output[[0, i]]);
         }
 
         let correlation = pearson_correlation(&multi_preds, &single_preds);

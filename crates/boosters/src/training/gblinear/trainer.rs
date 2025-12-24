@@ -281,7 +281,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                     );
                 }
 
-                let train_features = FeaturesView::from_array(train_data.view());
+                let train_features = FeaturesView::new(train_data.view());
                 selector.setup_round(
                     &model,
                     &train_features,
@@ -313,7 +313,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                     if needs_evaluation {
                         for (set_idx, matrix) in eval_data.iter().enumerate() {
                             let eval_rows = matrix.ncols();
-                            let eval_features = FeaturesView::from_array(matrix.view());
+                            let eval_features = FeaturesView::new(matrix.view());
                             updater.apply_weight_deltas_to_predictions(
                                 &eval_features,
                                 &weight_deltas,
@@ -463,9 +463,9 @@ mod tests {
 
         // Check predictions
         let mut output = [0.0f32; 1];
-        model.predict_row_into(&[1.0], &[0.0], &mut output);
+        model.predict_row_into(&[1.0], &mut output);
         let pred1 = output[0];
-        model.predict_row_into(&[2.0], &[0.0], &mut output);
+        model.predict_row_into(&[2.0], &mut output);
         let pred2 = output[0];
 
         assert!((pred1 - 3.0).abs() < 0.5);
@@ -573,8 +573,8 @@ mod tests {
         // Verify model produces different outputs for different classes
         let mut preds0 = [0.0f32; 3];
         let mut preds1 = [0.0f32; 3];
-        model.predict_row_into(&[2.0, 1.0], &[0.0, 0.0, 0.0], &mut preds0);
-        model.predict_row_into(&[0.0, 1.0], &[0.0, 0.0, 0.0], &mut preds1);
+        model.predict_row_into(&[2.0, 1.0], &mut preds0);
+        model.predict_row_into(&[0.0, 1.0], &mut preds1);
 
         let diff: f32 = preds0
             .iter()

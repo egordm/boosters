@@ -53,14 +53,26 @@ redundant methods, and using standardized view types throughout.
 
 ---
 
-## Epic 5: LinearModel Prediction Cleanup
+## Epic 5: LinearModel Prediction Cleanup ✅
 
-### Story 5.1: Consolidate to 3 Methods
-- [ ] Keep: `predict_row_into(row: &[f32], output: &mut [f32])`
-- [ ] Keep: `predict_into(features: FeaturesView, output: ArrayViewMut2)`
-- [ ] Keep: `predict(features: FeaturesView) -> Array2`
-- [ ] Remove: `predict_sample_major_into`, `predict_col_major`
-- [ ] Remove: `predict_feature_major` - merge into predict_into
+### Story 5.1: Unify FeaturesView Types ✅
+- [x] Use single FeaturesView from `dataset::views`
+- [x] Make schema optional (`Option<&DatasetSchema>`)
+- [x] Add `from_array(data)` for schema-less views
+- [x] Add `from_slice(data, n_samples, n_features)` for convenient construction
+- [x] Remove/deprecate `data::ndarray::FeaturesView`
+
+### Story 5.2: Consolidate to 3 Methods ✅
+- [x] Keep: `predict_row_into(row: &[f32], output: &mut [f32])`
+- [x] Keep: `predict_into(features: FeaturesView, output: ArrayViewMut2)`
+- [x] Keep: `predict(features: FeaturesView) -> Array2`
+- [x] Removed: base_score parameter (baked into model bias during XGBoost load)
+
+### Story 5.3: GBLinearModel takes Dataset ✅
+- [x] `predict(dataset: Dataset)` - returns transformed predictions
+- [x] `predict_raw(dataset: Dataset)` - returns raw margins
+- [x] Internally uses `dataset.features()` to get FeaturesView
+- [x] Updated all tests to use new API
 
 ---
 

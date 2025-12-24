@@ -9,7 +9,8 @@
 
 use super::{load_config, load_train_data, load_xgb_weights, make_dataset};
 use approx::assert_relative_eq;
-use boosters::data::{transpose_to_c_order, SamplesView};
+use boosters::data::transpose_to_c_order;
+use boosters::dataset::FeaturesView;
 use boosters::training::{GBLinearParams, GBLinearTrainer, Rmse, SquaredLoss, Verbosity};
 use ndarray::{Array2, ArrayView1};
 use rstest::rstest;
@@ -132,7 +133,7 @@ fn trained_model_predictions_reasonable() {
         let x = (i + 1) as f32;
         let expected = 2.0 * x + 1.0;
         let mut output = [0.0f32; 1];
-        model.predict_row_into(&[x], &[0.0], &mut output);
+        model.predict_row_into(&[x], &mut output);
         let pred = output[0];
         let diff = (pred - expected).abs();
         assert!(
@@ -181,8 +182,8 @@ fn parallel_vs_sequential_similar() {
     // Predictions should be similar
     let mut seq_output = [0.0f32; 1];
     let mut par_output = [0.0f32; 1];
-    seq_model.predict_row_into(&[2.0, 2.0], &[0.0], &mut seq_output);
-    par_model.predict_row_into(&[2.0, 2.0], &[0.0], &mut par_output);
+    seq_model.predict_row_into(&[2.0, 2.0], &mut seq_output);
+    par_model.predict_row_into(&[2.0, 2.0], &mut par_output);
     let seq_pred = seq_output[0];
     let par_pred = par_output[0];
 
@@ -267,16 +268,15 @@ fn test_set_prediction_quality(#[case] name: &str) {
 
     let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
     let model = trainer.train(&train, &[]).unwrap();
-    let base_scores = vec![0.0f32];
 
     use boosters::training::MetricFn;
-    // test_data is sample-major [n_samples, n_features]
-    let test_view = SamplesView::from_array(test_data.view());
-    let output = model.predict(test_view, &base_scores);
-    // Transpose from (n_samples, n_groups) to (n_groups, n_samples) for metrics
-    let pred_arr = transpose_to_c_order(output.view());
+    // test_data is sample-major [n_samples, n_features], need feature-major [n_features, n_samples]
+    let test_features = transpose_to_c_order(test_data.view());
+    let test_view = FeaturesView::from_array(test_features.view());
+    let output = model.predict(test_view);
+    // output is [n_groups, n_samples], metrics expect [n_outputs, n_samples]
     let targets_arr = ArrayView1::from(&test_labels[..]);
-    let our_rmse = Rmse.compute(pred_arr.view(), targets_arr, None);
+    let our_rmse = Rmse.compute(output.view(), targets_arr, None);
 
     // Compare to XGBoost if available
     if let Some(xgb_preds) = load_xgb_predictions(name) {

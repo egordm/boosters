@@ -125,7 +125,8 @@ impl XgbModel {
     /// Convert gblinear weights to LinearModel.
     ///
     /// XGBoost stores weights in row-major order: `[n_features + 1, n_groups]`
-    /// where the last row contains biases.
+    /// where the last row contains biases. We bake the base_score into the
+    /// bias so that prediction requires no additional parameters.
     fn convert_linear_model(&self, weights: &[f32]) -> Result<LinearModel, ConversionError> {
         let num_features = self.learner.learner_model_param.n_features as usize;
         let num_class = self.learner.learner_model_param.n_class;
@@ -139,9 +140,20 @@ impl XgbModel {
             });
         }
 
+        // Get base_score and convert to margin space
+        let raw_base_score = self.learner.learner_model_param.base_score;
+        let objective = self.learner.objective.name();
+        let margin_base_score = prob_to_margin(raw_base_score, objective);
+
         // Reshape flat weights into [n_features + 1, n_groups] array
-        let arr = Array2::from_shape_vec((num_features + 1, num_groups), weights.to_vec())
+        let mut arr = Array2::from_shape_vec((num_features + 1, num_groups), weights.to_vec())
             .expect("shape and weights length match");
+
+        // Bake base_score into bias (last row)
+        for group in 0..num_groups {
+            arr[[num_features, group]] += margin_base_score;
+        }
+
         Ok(LinearModel::new(arr))
     }
 

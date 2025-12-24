@@ -316,13 +316,12 @@ impl BinnedDatasetBuilder {
     /// * `parallelism` - Threading strategy
     pub fn add_features(mut self, features: FeaturesView<'_>, parallelism: Parallelism) -> Self {
         let n_features = features.n_features();
-        let schema = features.schema();
         let config = &self.config;
 
         // Helper to process a single feature
         let process_feature = |feat_idx: usize| -> (Vec<u32>, BinMapper) {
             let feature_data = features.feature(feat_idx);
-            let is_categorical = schema.feature_type(feat_idx).is_categorical();
+            let is_categorical = features.feature_type(feat_idx).is_categorical();
 
             if is_categorical {
                 Self::bin_categorical(feature_data.as_slice().unwrap())
