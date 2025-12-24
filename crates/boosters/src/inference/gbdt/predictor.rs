@@ -246,6 +246,162 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
         output
     }
 
+    /// Predict from feature-major data with internal block buffering.
+    ///
+    /// This method accepts feature-major data `[n_features, n_samples]` and handles
+    /// the transpose internally using thread-local buffers. Each thread transposes
+    /// blocks of data from `[n_features, block_samples]` to `[block_samples, n_features]`.
+    ///
+    /// # Arguments
+    ///
+    /// * `features` - Feature matrix `[n_features, n_samples]` (feature-major)
+    /// * `weights` - Optional per-tree weights
+    /// * `parallelism` - Whether to use parallel execution
+    /// * `output` - Output buffer `[n_groups, n_samples]`
+    ///
+    /// # Block Buffering
+    ///
+    /// Uses thread-local buffers sized at `block_size × n_features`. For 100 features
+    /// and block_size=64, this is ~25KB per thread, fitting comfortably in L2 cache.
+    pub fn predict_from_feature_major_into(
+        &self,
+        features: ArrayView2<f32>,
+        weights: Option<&[f32]>,
+        parallelism: Parallelism,
+        mut output: ArrayViewMut2<f32>,
+    ) {
+        use std::cell::RefCell;
+        
+        // features: [n_features, n_samples]
+        // output: [n_groups, n_samples]
+        let n_features = features.nrows();
+        let n_samples = features.ncols();
+        let n_groups = self.n_groups();
+        
+        assert_eq!(
+            output.shape(),
+            &[n_groups, n_samples],
+            "output shape must match (n_groups, n_samples)"
+        );
+        if let Some(w) = weights {
+            assert_eq!(
+                w.len(),
+                self.forest.n_trees(),
+                "weights length must match number of trees"
+            );
+        }
+
+        if n_samples == 0 {
+            return;
+        }
+
+        // Initialize with base scores
+        ndarray::Zip::from(output.axis_iter_mut(axis::ROWS))
+            .and(self.forest.base_score())
+            .for_each(|mut col, &score| col.fill(score));
+
+        // Thread-local buffer for transposed block
+        thread_local! {
+            static BLOCK_BUFFER: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
+        }
+
+        // Create block ranges
+        let block_ranges: Vec<_> = (0..n_samples)
+            .step_by(self.block_size)
+            .map(|start| {
+                let end = (start + self.block_size).min(n_samples);
+                (start, end)
+            })
+            .collect();
+
+        if parallelism.is_parallel() {
+            // Parallel: each thread has its own buffer
+            use rayon::prelude::*;
+            
+            // We need to split output into mutable non-overlapping slices
+            // Use parallel iterator over blocks with explicit indexing
+            let output_raw = output.as_slice_mut().expect("output must be contiguous");
+            
+            block_ranges.into_par_iter().for_each(|(start, end)| {
+                BLOCK_BUFFER.with(|buf| {
+                    let block_size = end - start;
+                    let mut buffer = buf.borrow_mut();
+                    
+                    // Ensure buffer is large enough
+                    let required = block_size * n_features;
+                    if buffer.len() < required {
+                        buffer.resize(required, 0.0);
+                    }
+                    
+                    // Transpose block: [n_features, block_size] -> [block_size, n_features]
+                    for f in 0..n_features {
+                        for s in 0..block_size {
+                            buffer[s * n_features + f] = features[[f, start + s]];
+                        }
+                    }
+                    
+                    // Create view of transposed block
+                    let block_view = ArrayView2::from_shape(
+                        (block_size, n_features),
+                        &buffer[..required],
+                    ).unwrap();
+                    
+                    // Predict block - accumulate into output
+                    // We need to handle the output slice carefully
+                    let mut block_output = Array2::<f32>::zeros((n_groups, block_size));
+                    self.predict_block_into(block_view, weights, block_output.view_mut());
+                    
+                    // Copy results to output (this is the tricky part with parallel access)
+                    // Output is [n_groups, n_samples], we need to write to columns [start, end)
+                    for g in 0..n_groups {
+                        for s in 0..block_size {
+                            // output[g, start + s] += block_output[g, s]
+                            // But we initialized block_output to 0, so we just add
+                            let idx = g * n_samples + start + s;
+                            // Use atomic add via raw pointer (safe because non-overlapping)
+                            unsafe {
+                                let ptr = output_raw.as_ptr() as *mut f32;
+                                *ptr.add(idx) += block_output[[g, s]];
+                            }
+                        }
+                    }
+                });
+            });
+        } else {
+            // Sequential: reuse single buffer
+            let mut buffer = Vec::new();
+            
+            for (start, end) in block_ranges {
+                let block_size = end - start;
+                
+                // Ensure buffer is large enough
+                let required = block_size * n_features;
+                if buffer.len() < required {
+                    buffer.resize(required, 0.0);
+                }
+                
+                // Transpose block: [n_features, block_size] -> [block_size, n_features]
+                for f in 0..n_features {
+                    for s in 0..block_size {
+                        buffer[s * n_features + f] = features[[f, start + s]];
+                    }
+                }
+                
+                // Create view of transposed block
+                let block_view = ArrayView2::from_shape(
+                    (block_size, n_features),
+                    &buffer[..required],
+                ).unwrap();
+                
+                // Get output slice for this block
+                let output_slice = output.slice_mut(ndarray::s![.., start..end]);
+                
+                // Predict block
+                self.predict_block_into(block_view, weights, output_slice);
+            }
+        }
+    }
+
 
     fn predict_block_into(
         &self,

@@ -315,6 +315,93 @@ impl GBDTModel {
         output_array
     }
 
+    /// Predict from a Dataset (feature-major storage).
+    ///
+    /// This method accepts the new Dataset type with feature-major layout
+    /// and handles the transpose internally using block buffering for efficiency.
+    ///
+    /// # Arguments
+    ///
+    /// * `dataset` - Dataset with feature-major storage
+    /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
+    ///
+    /// # Returns
+    ///
+    /// Array2 with shape `[n_groups, n_samples]`. Access group predictions via `.row(group_idx)`.
+    pub fn predict_dataset(
+        &self,
+        dataset: &crate::dataset::Dataset,
+        n_threads: usize,
+    ) -> Array2<f32> {
+        let n_samples = dataset.n_samples();
+        let n_groups = self.meta.n_groups;
+
+        if n_samples == 0 {
+            return Array2::zeros((n_groups, 0));
+        }
+
+        // Allocate output [n_groups, n_samples]
+        let mut output_array = Array2::<f32>::zeros((n_groups, n_samples));
+
+        // Run prediction with thread pool management
+        run_with_threads(n_threads, |parallelism| {
+            let predictor = UnrolledPredictor6::new(&self.forest);
+            
+            // Use the predictor's block-buffered prediction for feature-major data
+            predictor.predict_from_feature_major_into(
+                dataset.features().as_array(),
+                None,
+                parallelism,
+                output_array.view_mut(),
+            );
+        });
+
+        // Apply transformation if we have config with objective
+        self.config.objective.transform_predictions(output_array.view_mut());
+
+        output_array
+    }
+
+    /// Predict from a Dataset, returning raw margin scores (no transform).
+    ///
+    /// # Arguments
+    ///
+    /// * `dataset` - Dataset with feature-major storage
+    /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
+    ///
+    /// # Returns
+    ///
+    /// Array2 with shape `[n_groups, n_samples]`.
+    pub fn predict_dataset_raw(
+        &self,
+        dataset: &crate::dataset::Dataset,
+        n_threads: usize,
+    ) -> Array2<f32> {
+        let n_samples = dataset.n_samples();
+        let n_groups = self.meta.n_groups;
+
+        if n_samples == 0 {
+            return Array2::zeros((n_groups, 0));
+        }
+
+        // Allocate output [n_groups, n_samples]
+        let mut output_array = Array2::<f32>::zeros((n_groups, n_samples));
+
+        // Run prediction with thread pool management
+        run_with_threads(n_threads, |parallelism| {
+            let predictor = UnrolledPredictor6::new(&self.forest);
+            
+            predictor.predict_from_feature_major_into(
+                dataset.features().as_array(),
+                None,
+                parallelism,
+                output_array.view_mut(),
+            );
+        });
+
+        output_array
+    }
+
     // =========================================================================
     // Feature Importance
     // =========================================================================

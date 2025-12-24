@@ -389,3 +389,128 @@ fn train_from_dataset_with_eval_set() {
         pred_error, base_error
     );
 }
+
+/// Test GBDTModel::predict_dataset() with feature-major storage.
+#[test]
+fn predict_from_dataset_with_block_buffering() {
+    use boosters::model::gbdt::TreeParams;
+    
+    // Train a model first
+    let n_samples = 100;
+    let mut features_data = Vec::with_capacity(n_samples * 2);
+    let mut targets_data = Vec::with_capacity(n_samples);
+    
+    for i in 0..n_samples {
+        let x0 = i as f32 / 10.0;
+        let x1 = (i as f32 * 2.0) % 10.0;
+        features_data.push(x0);
+        features_data.push(x1);
+        targets_data.push(x0 + 0.5 * x1);
+    }
+    
+    let features = Array2::from_shape_vec((n_samples, 2), features_data.clone()).unwrap();
+    let targets = Array2::from_shape_vec((n_samples, 1), targets_data.clone()).unwrap();
+    let train_dataset = Dataset::new(features.view(), targets.view());
+    
+    let config = GBDTConfig::builder()
+        .n_trees(10)
+        .learning_rate(0.3)
+        .tree(TreeParams::depth_wise(3))
+        .build()
+        .unwrap();
+    
+    let model = GBDTModel::train(&train_dataset, config, 1).expect("training should succeed");
+    
+    // Create a prediction dataset (same data)
+    let pred_dataset = Dataset::new(features.view(), targets.view());
+    
+    // Predict using Dataset API (feature-major with block buffering)
+    let output_from_dataset = model.predict_dataset(&pred_dataset, 1);
+    
+    // Predict using traditional sample-major API for comparison
+    let output_from_array = model.predict(features.view(), 1);
+    
+    // Results should match
+    assert_eq!(output_from_dataset.shape(), output_from_array.shape());
+    
+    for i in 0..n_samples {
+        let from_dataset = output_from_dataset[[0, i]];
+        let from_array = output_from_array[[0, i]];
+        assert!(
+            (from_dataset - from_array).abs() < 1e-5,
+            "Predictions should match at sample {}: dataset={}, array={}",
+            i, from_dataset, from_array
+        );
+    }
+    
+    // Verify predictions are reasonable
+    let mut pred_error = 0.0f32;
+    let mut base_error = 0.0f32;
+    let base = model.forest().base_score()[0];
+    
+    for i in 0..n_samples {
+        let pred = output_from_dataset[[0, i]];
+        let target = targets_data[i];
+        pred_error += (pred - target).powi(2);
+        base_error += (base - target).powi(2);
+    }
+    
+    assert!(
+        pred_error < base_error,
+        "Predictions should be better than base: pred_error={}, base_error={}",
+        pred_error, base_error
+    );
+}
+
+/// Test that parallel predict_dataset matches sequential.
+#[test]
+fn predict_from_dataset_parallel_matches_sequential() {
+    use boosters::model::gbdt::TreeParams;
+    
+    // Train a model
+    let n_samples = 200;
+    let mut features_data = Vec::with_capacity(n_samples * 3);
+    let mut targets_data = Vec::with_capacity(n_samples);
+    
+    for i in 0..n_samples {
+        let x0 = i as f32 / 20.0;
+        let x1 = (i as f32 * 2.0) % 10.0;
+        let x2 = (i as f32 * 0.5) % 5.0;
+        features_data.push(x0);
+        features_data.push(x1);
+        features_data.push(x2);
+        targets_data.push(x0 + 0.5 * x1 + 0.2 * x2);
+    }
+    
+    let features = Array2::from_shape_vec((n_samples, 3), features_data).unwrap();
+    let targets = Array2::from_shape_vec((n_samples, 1), targets_data).unwrap();
+    let dataset = Dataset::new(features.view(), targets.view());
+    
+    let config = GBDTConfig::builder()
+        .n_trees(10)
+        .learning_rate(0.3)
+        .tree(TreeParams::depth_wise(4))
+        .build()
+        .unwrap();
+    
+    let model = GBDTModel::train(&dataset, config, 1).expect("training should succeed");
+    
+    // Sequential prediction (n_threads=1)
+    let seq_output = model.predict_dataset(&dataset, 1);
+    
+    // Parallel prediction (n_threads=0 = auto)
+    let par_output = model.predict_dataset(&dataset, 0);
+    
+    // Results should match
+    assert_eq!(seq_output.shape(), par_output.shape());
+    
+    for i in 0..n_samples {
+        let seq = seq_output[[0, i]];
+        let par = par_output[[0, i]];
+        assert!(
+            (seq - par).abs() < 1e-5,
+            "Sequential and parallel should match at sample {}: seq={}, par={}",
+            i, seq, par
+        );
+    }
+}
