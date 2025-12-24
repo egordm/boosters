@@ -10,14 +10,13 @@
 //!
 //! # Storage Types
 //!
-//! - [`SamplesView`]: Sample-major view `[n_samples, n_features]` - samples on rows
 //! - [`FeaturesView`]: Feature-major view `[n_features, n_samples]` - features on rows
 //! - [`binned::BinnedDataset`]: Quantized feature data for GBDT training
 //!
 //! # ndarray Integration
 //!
-//! This module works with ndarray arrays directly. The wrapper types ([`SamplesView`],
-//! [`FeaturesView`]) provide semantic clarity about which axis represents what.
+//! This module works with ndarray arrays directly. The wrapper type [`FeaturesView`]
+//! provides semantic clarity about which axis represents what.
 //!
 //! # Missing Values
 //!
@@ -37,12 +36,19 @@ pub use traits::FeatureAccessor;
 
 pub use ndarray::{
     axis, init_predictions, init_predictions_vec, transpose_to_c_order,
-    FeaturesView, SamplesView,
+    FeaturesView,
 };
+
+// Internal: sample-major view used by explainers
+pub(crate) use ndarray::SamplesView;
 
 // Re-export binned types for convenience
 pub use binned::{
     BinMapper, BinStorage, BinType, BinnedDataset, BinnedDatasetBuilder, BinningConfig,
     BinningStrategy, BuildError, FeatureGroup, FeatureMeta, FeatureType, FeatureView,
-    GroupLayout, GroupSpec, GroupStrategy, MissingType, BinnedSampleSlice as BinnedRowView,
+    GroupLayout, MissingType, BinnedSampleSlice as BinnedRowView,
 };
+
+// Internal types for tests/benchmarks
+#[doc(hidden)]
+pub use binned::{GroupSpec, GroupStrategy};

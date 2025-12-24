@@ -83,7 +83,7 @@ fn main() {
 
     let start = Instant::now();
     let dataset_no_bundle = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
-        .add_dataset(&features_dataset, Parallelism::Parallel)
+        .add_features(features_dataset.features(), Parallelism::Parallel)
         .with_bundling(BundlingConfig::disabled())
         .build()
         .expect("Failed to build dataset");
@@ -105,7 +105,7 @@ fn main() {
 
     let start = Instant::now();
     let dataset_bundled = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
-        .add_dataset(&features_dataset, Parallelism::Parallel)
+        .add_features(features_dataset.features(), Parallelism::Parallel)
         .with_bundling(BundlingConfig::auto())
         .build()
         .expect("Failed to build dataset");

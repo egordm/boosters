@@ -190,71 +190,14 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
         }
     }
 
-    pub fn predict_into(
-        &self,
-        features: ArrayView2<f32>,
-        weights: Option<&[f32]>,
-        parallelism: Parallelism,
-        mut output: ArrayViewMut2<f32>,
-    ) {
-        // features: [n_samples, n_features]
-        // output: [n_groups, n_samples]
-        let n_samples = features.nrows();
-        let n_groups = self.n_groups();
-        assert_eq!(output.shape(), &[n_groups, n_samples], "output shape must match (n_groups, n_samples)");
-        if let Some(w) = weights {
-            assert_eq!(w.len(), self.forest.n_trees(), "weights length must match number of trees");
-        }
-
-        if n_samples == 0 {
-            return;
-        }
-
-        // Initialize with base scores (TODO: can create a helper for this pattern)
-        ndarray::Zip::from(output.axis_iter_mut(axis::ROWS))
-            .and(self.forest.base_score())
-            .for_each(|mut col, &score| col.fill(score));
-
-        // Process in blocks
-        let feature_chunks = features.axis_chunks_iter(axis::ROWS, self.block_size);
-        let output_chunks = output.axis_chunks_iter_mut(axis::COLS, self.block_size);
-        let chunks_iter = feature_chunks.zip(output_chunks);
-
-        parallelism.maybe_par_bridge_for_each(chunks_iter, |(feat_chunk, output_chunk)| {
-            self.predict_block_into(feat_chunk, weights, output_chunk);
-        });
-    }
-
-    /// Convenience method: predict with allocation.
+    /// Predict batch into provided buffer.
     ///
-    /// Allocates output buffer and calls `predict_into`. For maximum performance
-    /// when reusing buffers, use `predict_into` directly.
+    /// Takes feature-major data `[n_features, n_samples]` and handles the transpose
+    /// internally using thread-local block buffers for cache efficiency.
     ///
     /// # Arguments
     ///
-    /// * `features` - Feature matrix [n_samples, n_features]
-    /// * `parallelism` - Whether to use parallel execution
-    ///
-    /// # Returns
-    ///
-    /// Prediction matrix [n_groups, n_samples]
-    pub fn predict(&self, features: ArrayView2<f32>, parallelism: Parallelism) -> Array2<f32> {
-        let n_samples = features.nrows();
-        let n_groups = self.n_groups();
-        let mut output = Array2::<f32>::zeros((n_groups, n_samples));
-        self.predict_into(features, None, parallelism, output.view_mut());
-        output
-    }
-
-    /// Predict from feature-major data with internal block buffering.
-    ///
-    /// This method accepts feature-major data `[n_features, n_samples]` and handles
-    /// the transpose internally using thread-local buffers. Each thread transposes
-    /// blocks of data from `[n_features, block_samples]` to `[block_samples, n_features]`.
-    ///
-    /// # Arguments
-    ///
-    /// * `features` - Feature matrix `[n_features, n_samples]` (feature-major)
+    /// * `features` - Feature matrix `[n_features, n_samples]` (feature-major layout)
     /// * `weights` - Optional per-tree weights
     /// * `parallelism` - Whether to use parallel execution
     /// * `output` - Output buffer `[n_groups, n_samples]`
@@ -263,7 +206,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
     ///
     /// Uses thread-local buffers sized at `block_size × n_features`. For 100 features
     /// and block_size=64, this is ~25KB per thread, fitting comfortably in L2 cache.
-    pub fn predict_from_feature_major_into(
+    pub fn predict_into(
         &self,
         features: ArrayView2<f32>,
         weights: Option<&[f32]>,
@@ -351,6 +294,27 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
         parallelism.maybe_par_bridge_for_each(iter, |(range, output_chunk)| {
             process_block(range.start, range.end, output_chunk);
         });
+    }
+
+    /// Convenience method: predict with allocation.
+    ///
+    /// Allocates output buffer and calls `predict_into`. For maximum performance
+    /// when reusing buffers, use `predict_into` directly.
+    ///
+    /// # Arguments
+    ///
+    /// * `features` - Feature matrix `[n_features, n_samples]` (feature-major layout)
+    /// * `parallelism` - Whether to use parallel execution
+    ///
+    /// # Returns
+    ///
+    /// Prediction matrix `[n_groups, n_samples]`
+    pub fn predict(&self, features: ArrayView2<f32>, parallelism: Parallelism) -> Array2<f32> {
+        let n_samples = features.ncols();
+        let n_groups = self.n_groups();
+        let mut output = Array2::<f32>::zeros((n_groups, n_samples));
+        self.predict_into(features, None, parallelism, output.view_mut());
+        output
     }
 
 
@@ -446,9 +410,10 @@ mod tests {
         }
     }
 
-    /// Helper: create ArrayView2 from row-major data
-    fn features_view(data: &[f32], n_rows: usize, n_cols: usize) -> ArrayView2<'_, f32> {
-        ArrayView2::from_shape((n_rows, n_cols), data).unwrap()
+    /// Helper: create feature-major ArrayView2 [n_features, n_samples]
+    /// from a flat slice where data is laid out as feature-major
+    fn features_view(data: &[f32], n_features: usize, n_samples: usize) -> ArrayView2<'_, f32> {
+        ArrayView2::from_shape((n_features, n_samples), data).unwrap()
     }
 
     // =========================================================================
@@ -518,14 +483,16 @@ mod tests {
 
         let predictor = SimplePredictor::new(&forest);
 
-        let features = features_view(&[0.3, 0.7, 0.5], 3, 1);
+        // Feature-major: [n_features=1, n_samples=3]
+        // Data: feature 0 values for samples [0, 1, 2]
+        let features = features_view(&[0.3, 0.7, 0.5], 1, 3);
         let output = predictor.predict(features, Parallelism::Sequential);
 
         // Output shape: [n_groups, n_samples] = [1, 3]
         assert_eq!(output.shape(), &[1, 3]);
-        assert_eq!(output[[0, 0]], 1.0);
-        assert_eq!(output[[0, 1]], 2.0);
-        assert_eq!(output[[0, 2]], 2.0);
+        assert_eq!(output[[0, 0]], 1.0);  // 0.3 < 0.5 -> left
+        assert_eq!(output[[0, 1]], 2.0);  // 0.7 >= 0.5 -> right
+        assert_eq!(output[[0, 2]], 2.0);  // 0.5 >= 0.5 -> right
     }
 
     #[test]
@@ -537,7 +504,8 @@ mod tests {
 
         let predictor = SimplePredictor::new(&forest);
 
-        let features = features_view(&[0.3, 0.7], 2, 1);
+        // Feature-major: [n_features=1, n_samples=2]
+        let features = features_view(&[0.3, 0.7], 1, 2);
         let output = predictor.predict(features, Parallelism::Sequential);
 
         // Output shape: [n_groups, n_samples] = [3, 2]
@@ -560,7 +528,8 @@ mod tests {
 
         let predictor = SimplePredictor::new(&forest);
 
-        let features = features_view(&[0.3, 0.7], 2, 1);
+        // Feature-major: [n_features=1, n_samples=2]
+        let features = features_view(&[0.3, 0.7], 1, 2);
         let output = predictor.predict(features, Parallelism::Sequential);
 
         assert_eq!(output[[0, 0]], 1.5); // 1.0 + 0.5
@@ -580,11 +549,12 @@ mod tests {
         let simple = SimplePredictor::new(&forest);
         let unrolled = UnrolledPredictor6::new(&forest);
 
-        for num_rows in [1, 10, 64, 100, 128, 200] {
-            let data: Vec<f32> = (0..num_rows)
-                .map(|i| (i as f32) / (num_rows as f32))
+        for n_samples in [1, 10, 64, 100, 128, 200] {
+            let data: Vec<f32> = (0..n_samples)
+                .map(|i| (i as f32) / (n_samples as f32))
                 .collect();
-            let features = features_view(&data, num_rows, 1);
+            // Feature-major: [n_features=1, n_samples]
+            let features = features_view(&data, 1, n_samples);
 
             let simple_output = simple.predict(features, Parallelism::Sequential);
             let unrolled_output = unrolled.predict(features, Parallelism::Sequential);
@@ -601,17 +571,19 @@ mod tests {
         let simple = SimplePredictor::new(&forest);
         let unrolled = UnrolledPredictor4::new(&forest);
 
+        // Feature-major: [n_features=2, n_samples=4]
+        // Feature 0: [0.2, 0.2, 0.6, 0.6]  (split threshold 0.5)
+        // Feature 1: [0.1, 0.5, 0.5, 0.9]  (split threshold 0.3 for left, 0.7 for right)
         let data = vec![
-            0.2, 0.1, // leaf 1.0
-            0.2, 0.5, // leaf 2.0
-            0.6, 0.5, // leaf 3.0
-            0.6, 0.9, // leaf 4.0
+            0.2, 0.2, 0.6, 0.6,  // feature 0 values
+            0.1, 0.5, 0.5, 0.9,  // feature 1 values
         ];
-        let features = features_view(&data, 4, 2);
+        let features = features_view(&data, 2, 4);
 
         let simple_output = simple.predict(features, Parallelism::Sequential);
         let unrolled_output = unrolled.predict(features, Parallelism::Sequential);
 
+        // Expected leaves: [1.0, 2.0, 3.0, 4.0]
         for sample in 0..4 {
             assert_abs_diff_eq!(
                 simple_output[[0, sample]],
@@ -630,8 +602,9 @@ mod tests {
         let simple = SimplePredictor::new(&forest);
         let unrolled = UnrolledPredictor6::new(&forest);
 
+        // Feature-major: [n_features=1, n_samples=2]
         let data = vec![0.3, 0.7];
-        let features = features_view(&data, 2, 1);
+        let features = features_view(&data, 1, 2);
         let weights = &[1.0, 0.5];
 
         let mut simple_output = Array2::<f32>::zeros((1, 2));
@@ -655,8 +628,9 @@ mod tests {
         let predictor = SimplePredictor::new(&forest).with_block_size(16);
         assert_eq!(predictor.block_size(), 16);
 
+        // Feature-major: [n_features=1, n_samples=100]
         let data = vec![0.3f32; 100];
-        let features = features_view(&data, 100, 1);
+        let features = features_view(&data, 1, 100);
         let output = predictor.predict(features, Parallelism::Sequential);
 
         assert_eq!(output.shape(), &[1, 100]);
@@ -671,8 +645,9 @@ mod tests {
         forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
         forest.push_tree(build_simple_tree(0.5, 1.5, 0.5), 0);
 
+        // Feature-major: [n_features=1, n_samples=200]
         let data: Vec<f32> = (0..200).map(|i| (i as f32) / 200.0).collect();
-        let features = features_view(&data, 200, 1);
+        let features = features_view(&data, 1, 200);
 
         let p16 = SimplePredictor::new(&forest).with_block_size(16);
         let p64 = SimplePredictor::new(&forest).with_block_size(64);
@@ -697,7 +672,8 @@ mod tests {
 
         let predictor = SimplePredictor::new(&forest);
 
-        let features = features_view(&[], 0, 1);
+        // Feature-major: [n_features=1, n_samples=0]
+        let features = features_view(&[], 1, 0);
         let output = predictor.predict(features, Parallelism::Sequential);
 
         assert_eq!(output.shape(), &[1, 0]);
@@ -717,11 +693,12 @@ mod tests {
         let simple = SimplePredictor::new(&forest);
         let unrolled = UnrolledPredictor6::new(&forest);
 
-        for n_rows in [1, 10, 64, 100, 128, 200, 1000] {
-            let data: Vec<f32> = (0..n_rows * 2)
-                .map(|i| (i as f32) / (n_rows as f32 * 2.0))
+        for n_samples in [1, 10, 64, 100, 128, 200, 1000] {
+            // Feature-major: [n_features=2, n_samples]
+            let data: Vec<f32> = (0..n_samples * 2)
+                .map(|i| (i as f32) / (n_samples as f32 * 2.0))
                 .collect();
-            let features = features_view(&data, n_rows, 2);
+            let features = features_view(&data, 2, n_samples);
 
             let seq_simple = simple.predict(features, Parallelism::Sequential);
             let par_simple = simple.predict(features, Parallelism::Parallel);
@@ -743,8 +720,9 @@ mod tests {
         let predictor = UnrolledPredictor6::new(&forest);
         let weights = &[1.0, 0.5];
 
+        // Feature-major: [n_features=1, n_samples=100]
         let data: Vec<f32> = (0..100).map(|i| (i as f32) / 100.0).collect();
-        let features = features_view(&data, 100, 1);
+        let features = features_view(&data, 1, 100);
 
         let mut seq_output = Array2::<f32>::zeros((1, 100));
         let mut par_output = Array2::<f32>::zeros((1, 100));
@@ -764,7 +742,8 @@ mod tests {
 
         let predictor = UnrolledPredictor6::new(&forest);
 
-        let features = features_view(&[0.3, 0.7, 0.4, 0.6], 4, 1);
+        // Feature-major: [n_features=1, n_samples=4]
+        let features = features_view(&[0.3, 0.7, 0.4, 0.6], 1, 4);
 
         let seq_output = predictor.predict(features, Parallelism::Sequential);
         let par_output = predictor.predict(features, Parallelism::Parallel);
@@ -779,7 +758,8 @@ mod tests {
 
         let predictor = UnrolledPredictor6::new(&forest);
 
-        let features = features_view(&[], 0, 1);
+        // Feature-major: [n_features=1, n_samples=0]
+        let features = features_view(&[], 1, 0);
         let output = predictor.predict(features, Parallelism::Parallel);
 
         assert_eq!(output.shape(), &[1, 0]);

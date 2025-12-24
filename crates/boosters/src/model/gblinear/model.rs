@@ -4,7 +4,6 @@
 //! Access components via [`linear()`](GBLinearModel::linear), [`meta()`](GBLinearModel::meta),
 //! and [`config()`](GBLinearModel::config).
 
-use crate::data::SamplesView;
 use crate::dataset::Dataset;
 use crate::explainability::{ExplainError, LinearExplainer, ShapValues};
 use crate::model::meta::ModelMeta;
@@ -210,19 +209,27 @@ impl GBLinearModel {
     /// Pass `None` for `feature_means` to assume centered data (zero means).
     ///
     /// # Arguments
-    /// * `features` - Feature matrix with shape `[n_samples, n_features]` (sample-major layout)
+    /// * `data` - Dataset containing features (targets are ignored)
     /// * `feature_means` - Optional feature means for background distribution
     ///
     /// # Returns
     /// ShapValues container with shape `[n_samples, n_features + 1, n_outputs]`.
     pub fn shap_values(
         &self,
-        features: SamplesView<'_>,
+        data: &Dataset,
         feature_means: Option<Vec<f64>>,
     ) -> Result<ShapValues, ExplainError> {
+        use crate::data::{transpose_to_c_order, SamplesView};
+
         let means = feature_means.unwrap_or_else(|| vec![0.0; self.meta.n_features]);
         let explainer = LinearExplainer::new(&self.model, means)?;
-        Ok(explainer.shap_values(features))
+        
+        // Transpose feature-major [n_features, n_samples] to sample-major [n_samples, n_features]
+        let features = data.features();
+        let samples_array = transpose_to_c_order(features.view());
+        let samples_view = SamplesView::from_array(samples_array.view());
+        
+        Ok(explainer.shap_values(samples_view))
     }
 }
 
@@ -323,11 +330,11 @@ mod tests {
         let meta = ModelMeta::for_regression(2);
         let model = GBLinearModel::from_linear_model(linear, meta);
 
-        // Test with means - sample-major layout [n_samples=1, n_features=2]
-        let features = vec![1.0, 2.0];
-        let view = SamplesView::from_slice(&features, 1, 2).unwrap();
+        // Test with means - feature-major layout [n_features=2, n_samples=1]
+        let features = arr2(&[[1.0], [2.0]]);
+        let dataset = Dataset::new(features.view(), None, None);
         let means = vec![0.5, 1.0]; // Centered around different values
-        let shap = model.shap_values(view, Some(means)).unwrap();
+        let shap = model.shap_values(&dataset, Some(means)).unwrap();
 
         assert_eq!(shap.n_samples(), 1);
         assert_eq!(shap.n_features(), 2);
@@ -345,10 +352,11 @@ mod tests {
         let meta = ModelMeta::for_regression(2);
         let model = GBLinearModel::from_linear_model(linear, meta);
 
-        let features = vec![1.0, 2.0];
-        let view = SamplesView::from_slice(&features, 1, 2).unwrap();
+        // Feature-major layout [n_features=2, n_samples=1]
+        let features = arr2(&[[1.0], [2.0]]);
+        let dataset = Dataset::new(features.view(), None, None);
         // Use None for zero means (centered data assumption)
-        let shap = model.shap_values(view, None).unwrap();
+        let shap = model.shap_values(&dataset, None).unwrap();
 
         assert_eq!(shap.n_samples(), 1);
         assert_eq!(shap.n_features(), 2);

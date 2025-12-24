@@ -11,7 +11,7 @@ use super::MissingType;
 use super::BinMapper;
 
 use crate::data::binned::BundlingFeatures;
-use crate::dataset::{Dataset, FeaturesView};
+use crate::dataset::FeaturesView;
 use crate::utils::Parallelism;
 
 // =============================================================================
@@ -187,30 +187,33 @@ impl BundlingFeatures for FeatureBinAccessor<'_> {
 ///
 /// # Example
 ///
-/// Building from a Dataset (the primary API):
+/// Building from a Dataset:
 /// ```ignore
 /// use boosters::data::{BinnedDatasetBuilder, BinningConfig};
 /// use boosters::Parallelism;
 ///
 /// let config = BinningConfig::builder().max_bins(256).build();
 /// let binned = BinnedDatasetBuilder::new(config)
-///     .add_dataset(&dataset, Parallelism::Parallel)
-///     .build()
-///     .expect("binning should succeed");
+///     .add_features(dataset.features(), Parallelism::Parallel)
+///     .build()?;
 /// ```
 ///
 /// Building with feature bundling:
 /// ```ignore
 /// let binned = BinnedDatasetBuilder::new(config)
-///     .add_dataset(&dataset, Parallelism::Parallel)
+///     .add_features(dataset.features(), Parallelism::Parallel)
 ///     .with_bundling(BundlingConfig::auto())
 ///     .build()?;
 /// ```
 ///
-/// Building from FeaturesView only:
+/// Building from raw array (no schema):
 /// ```ignore
+/// use boosters::dataset::FeaturesView;
+/// use ndarray::array;
+///
+/// let features = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
 /// let binned = BinnedDatasetBuilder::new(config)
-///     .add_features(features_view, Parallelism::Parallel)
+///     .add_features(FeaturesView::from_array(features.view()), Parallelism::Parallel)
 ///     .build()?;
 /// ```
 #[derive(Debug)]
@@ -247,73 +250,38 @@ impl BinnedDatasetBuilder {
         }
     }
 
-    /// Add all features from a Dataset.
+    /// Add features from a FeaturesView.
     ///
-    /// This is the primary API for creating a binned dataset from user data.
-    /// Categorical features (as indicated in the Dataset's schema) are binned
-    /// as categorical; all others use quantile binning.
+    /// This is the primary API for creating a binned dataset. The FeaturesView
+    /// contains both feature data and optional schema. Categorical features
+    /// (as indicated in the schema) are binned as categorical; all others use
+    /// quantile binning.
     ///
     /// # Arguments
     ///
-    /// * `dataset` - Dataset with features and optional schema
+    /// * `features` - Feature-major data `[n_features, n_samples]` with optional schema
     /// * `parallelism` - Threading strategy (Sequential or Parallel)
     ///
     /// # Example
     ///
     /// ```ignore
     /// use boosters::data::{BinnedDatasetBuilder, BinningConfig};
-    /// use boosters::dataset::Dataset;
+    /// use boosters::dataset::{Dataset, FeaturesView};
     /// use boosters::Parallelism;
     /// use ndarray::array;
     ///
-    /// let features = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]; // [n_features, n_samples]
-    /// let targets = array![[0.0, 1.0, 0.0]]; // [n_outputs, n_samples]
+    /// // From Dataset
     /// let dataset = Dataset::new(features.view(), Some(targets.view()), None);
-    ///
-    /// let config = BinningConfig::builder().max_bins(256).build();
     /// let binned = BinnedDatasetBuilder::new(config)
-    ///     .add_dataset(&dataset, Parallelism::Parallel)
-    ///     .build()
-    ///     .expect("binning should succeed");
+    ///     .add_features(dataset.features(), Parallelism::Parallel)
+    ///     .build()?;
+    ///
+    /// // From raw array (no schema - all features treated as numeric)
+    /// let features = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]; // [n_features, n_samples]
+    /// let binned = BinnedDatasetBuilder::new(config)
+    ///     .add_features(FeaturesView::from_array(features.view()), Parallelism::Parallel)
+    ///     .build()?;
     /// ```
-    pub fn add_dataset(mut self, dataset: &Dataset, parallelism: Parallelism) -> Self {
-        let n_features = dataset.n_features();
-        let features_view = dataset.features();
-        let schema = dataset.schema();
-
-        // Helper to process a single feature
-        let config = &self.config;
-        let process_feature = |feat_idx: usize| -> (Vec<u32>, BinMapper) {
-            let feature_data = features_view.feature(feat_idx);
-            let is_categorical = schema.feature_type(feat_idx).is_categorical();
-
-            if is_categorical {
-                Self::bin_categorical(feature_data.as_slice().unwrap())
-            } else {
-                Self::bin_numeric(feature_data.as_slice().unwrap(), config)
-            }
-        };
-
-        // Process features
-        let feature_results = parallelism.maybe_par_map(0..n_features, process_feature);
-
-        // Add all features to builder
-        for (bins, mapper) in feature_results {
-            self = self.add_binned(bins, mapper);
-        }
-
-        self
-    }
-
-    /// Add features from a FeaturesView.
-    ///
-    /// Use this when you only have features without targets. All features are
-    /// binned as numeric using the configured strategy.
-    ///
-    /// # Arguments
-    ///
-    /// * `features` - Feature-major data `[n_features, n_samples]`
-    /// * `parallelism` - Threading strategy
     pub fn add_features(mut self, features: FeaturesView<'_>, parallelism: Parallelism) -> Self {
         let n_features = features.n_features();
         let config = &self.config;
@@ -527,7 +495,11 @@ impl BinnedDatasetBuilder {
         self
     }
 
-    /// Set the grouping strategy.
+    /// Set the grouping strategy (internal use only).
+    ///
+    /// Users should rely on the default Auto strategy which uses column-major
+    /// layout for optimal histogram building performance.
+    #[doc(hidden)]
     pub fn group_strategy(mut self, strategy: GroupStrategy) -> Self {
         self.group_strategy = strategy;
         self
@@ -891,36 +863,21 @@ impl std::error::Error for BuildError {}
 mod tests {
     use super::*;
     use crate::data::binned::MissingType;
-    use crate::dataset::Dataset;
-    use ndarray::Array2;
 
-    fn default_config() -> BinningConfig {
-        BinningConfig::builder().max_bins(256).build()
-    }
-
-    fn make_simple_mapper(n_bins: u32) -> BinMapper {
+    /// Create a simple numeric BinMapper for testing.
+    fn make_mapper(n_bins: u32) -> BinMapper {
         let bounds: Vec<f64> = (0..n_bins).map(|i| i as f64 + 0.5).collect();
         BinMapper::numerical(bounds, MissingType::None, 0, 0, 0.0, 0.0, (n_bins - 1) as f64)
     }
 
-    // Helper to create builder with pre-binned features for testing internal logic
-    fn builder_with_binned(features: Vec<(Vec<u32>, BinMapper)>) -> BinnedDatasetBuilder {
-        let mut builder = BinnedDatasetBuilder::new(default_config());
-        for (bins, mapper) in features {
-            builder = builder.add_binned(bins, mapper);
-        }
-        builder
-    }
-
     #[test]
     fn test_builder_single_group_row_major() {
-        let dataset = builder_with_binned(vec![
-            (vec![0, 1, 2, 3], make_simple_mapper(4)),
-            (vec![1, 2, 3, 0], make_simple_mapper(4)),
-        ])
-        .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::RowMajor })
-        .build()
-        .unwrap();
+        let dataset = BinnedDatasetBuilder::new(BinningConfig::default())
+            .add_binned(vec![0, 1, 2, 3], make_mapper(4))
+            .add_binned(vec![1, 2, 3, 0], make_mapper(4))
+            .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::RowMajor })
+            .build()
+            .unwrap();
 
         assert_eq!(dataset.n_rows(), 4);
         assert_eq!(dataset.n_features(), 2);
@@ -945,13 +902,12 @@ mod tests {
 
     #[test]
     fn test_builder_single_group_column_major() {
-        let dataset = builder_with_binned(vec![
-            (vec![0, 1, 2, 3], make_simple_mapper(4)),
-            (vec![10, 11, 12, 13], make_simple_mapper(16)),
-        ])
-        .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
-        .build()
-        .unwrap();
+        let dataset = BinnedDatasetBuilder::new(BinningConfig::default())
+            .add_binned(vec![0, 1, 2, 3], make_mapper(4))
+            .add_binned(vec![10, 11, 12, 13], make_mapper(16))
+            .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
+            .build()
+            .unwrap();
 
         assert_eq!(dataset.n_rows(), 4);
         assert_eq!(dataset.n_groups(), 1);
@@ -976,13 +932,12 @@ mod tests {
     fn test_builder_auto_grouping() {
         // Feature 0: dense numeric (<=256 bins) -> column-major (optimized for histogram building)
         // Feature 1: wide numeric (>256 bins) -> column-major
-        let dataset = builder_with_binned(vec![
-            (vec![0, 1, 2, 3], make_simple_mapper(100)),  // dense
-            (vec![0, 100, 200, 300], make_simple_mapper(500)),  // wide
-        ])
-        .group_strategy(GroupStrategy::Auto)
-        .build()
-        .unwrap();
+        let dataset = BinnedDatasetBuilder::new(BinningConfig::default())
+            .add_binned(vec![0, 1, 2, 3], make_mapper(100))  // dense
+            .add_binned(vec![0, 100, 200, 300], make_mapper(500))  // wide
+            .group_strategy(GroupStrategy::Auto)
+            .build()
+            .unwrap();
 
         assert_eq!(dataset.n_groups(), 2);
 
@@ -998,17 +953,16 @@ mod tests {
 
     #[test]
     fn test_builder_custom_groups() {
-        let dataset = builder_with_binned(vec![
-            (vec![0, 1, 2], make_simple_mapper(4)),
-            (vec![1, 2, 3], make_simple_mapper(4)),
-            (vec![2, 3, 0], make_simple_mapper(4)),
-        ])
-        .group_strategy(GroupStrategy::Custom(vec![
-            GroupSpec::new(vec![0, 2], GroupLayout::RowMajor),
-            GroupSpec::new(vec![1], GroupLayout::ColumnMajor),
-        ]))
-        .build()
-        .unwrap();
+        let dataset = BinnedDatasetBuilder::new(BinningConfig::default())
+            .add_binned(vec![0, 1, 2], make_mapper(4))
+            .add_binned(vec![1, 2, 3], make_mapper(4))
+            .add_binned(vec![2, 3, 0], make_mapper(4))
+            .group_strategy(GroupStrategy::Custom(vec![
+                GroupSpec::new(vec![0, 2], GroupLayout::RowMajor),
+                GroupSpec::new(vec![1], GroupLayout::ColumnMajor),
+            ]))
+            .build()
+            .unwrap();
 
         assert_eq!(dataset.n_groups(), 2);
 
@@ -1023,7 +977,7 @@ mod tests {
 
     #[test]
     fn test_builder_empty() {
-        let dataset = BinnedDatasetBuilder::new(default_config()).build().unwrap();
+        let dataset = BinnedDatasetBuilder::new(BinningConfig::default()).build().unwrap();
         assert_eq!(dataset.n_rows(), 0);
         assert_eq!(dataset.n_features(), 0);
         assert_eq!(dataset.n_groups(), 0);
@@ -1031,30 +985,28 @@ mod tests {
 
     #[test]
     fn test_builder_error_duplicate_feature() {
-        let result = builder_with_binned(vec![
-            (vec![0, 1, 2], make_simple_mapper(4)),
-            (vec![1, 2, 3], make_simple_mapper(4)),
-        ])
-        .group_strategy(GroupStrategy::Custom(vec![
-            GroupSpec::new(vec![0, 1], GroupLayout::RowMajor),
-            GroupSpec::new(vec![1], GroupLayout::ColumnMajor),  // duplicate!
-        ]))
-        .build();
+        let result = BinnedDatasetBuilder::new(BinningConfig::default())
+            .add_binned(vec![0, 1, 2], make_mapper(4))
+            .add_binned(vec![1, 2, 3], make_mapper(4))
+            .group_strategy(GroupStrategy::Custom(vec![
+                GroupSpec::new(vec![0, 1], GroupLayout::RowMajor),
+                GroupSpec::new(vec![1], GroupLayout::ColumnMajor),  // duplicate!
+            ]))
+            .build();
 
         assert!(matches!(result, Err(BuildError::DuplicateFeature(1))));
     }
 
     #[test]
     fn test_builder_error_unassigned_feature() {
-        let result = builder_with_binned(vec![
-            (vec![0, 1, 2], make_simple_mapper(4)),
-            (vec![1, 2, 3], make_simple_mapper(4)),
-        ])
-        .group_strategy(GroupStrategy::Custom(vec![
-            GroupSpec::new(vec![0], GroupLayout::RowMajor),
-            // feature 1 not assigned
-        ]))
-        .build();
+        let result = BinnedDatasetBuilder::new(BinningConfig::default())
+            .add_binned(vec![0, 1, 2], make_mapper(4))
+            .add_binned(vec![1, 2, 3], make_mapper(4))
+            .group_strategy(GroupStrategy::Custom(vec![
+                GroupSpec::new(vec![0], GroupLayout::RowMajor),
+                // feature 1 not assigned
+            ]))
+            .build();
 
         assert!(matches!(result, Err(BuildError::UnassignedFeature(1))));
     }
@@ -1063,7 +1015,7 @@ mod tests {
     fn test_feature_data_sparsity() {
         let f = FeatureData {
             bins: vec![0, 0, 0, 1, 0],
-            mapper: make_simple_mapper(4),
+            mapper: make_mapper(4),
             name: None,
         };
         assert!((f.sparsity() - 0.8).abs() < 0.001);
@@ -1075,13 +1027,12 @@ mod tests {
 
     #[test]
     fn test_builder_with_bundling_disabled() {
-        let dataset = builder_with_binned(vec![
-            (vec![0, 0, 0, 1], make_simple_mapper(2)), // sparse
-            (vec![0, 1, 0, 0], make_simple_mapper(2)), // sparse
-        ])
-        .with_bundling(BundlingConfig::disabled())
-        .build()
-        .unwrap();
+        let dataset = BinnedDatasetBuilder::new(BinningConfig::default())
+            .add_binned(vec![0, 0, 0, 1], make_mapper(2))
+            .add_binned(vec![0, 1, 0, 0], make_mapper(2))
+            .with_bundling(BundlingConfig::disabled())
+            .build()
+            .unwrap();
 
         // Bundling disabled, no bundle plan stored
         assert!(dataset.bundle_plan().is_none());
@@ -1096,16 +1047,15 @@ mod tests {
         let n_rows = 100;
         let n_features = 10;
 
-        let features: Vec<(Vec<u32>, BinMapper)> = (0..n_features)
-            .map(|f| {
-                let bins: Vec<u32> = (0..n_rows)
-                    .map(|r| if r % n_features == f { 1 } else { 0 })
-                    .collect();
-                (bins, make_simple_mapper(2))
-            })
-            .collect();
+        let mut builder = BinnedDatasetBuilder::new(BinningConfig::default());
+        for f in 0..n_features {
+            let bins: Vec<u32> = (0..n_rows)
+                .map(|r| if r % n_features == f { 1 } else { 0 })
+                .collect();
+            builder = builder.add_binned(bins, make_mapper(2));
+        }
 
-        let dataset = builder_with_binned(features)
+        let dataset = builder
             .with_bundling(BundlingConfig::auto())
             .build()
             .unwrap();
@@ -1125,15 +1075,13 @@ mod tests {
 
     #[test]
     fn test_builder_with_bundling_stores_plan() {
-        // Create a few sparse features
-        let dataset = builder_with_binned(vec![
-            (vec![0, 0, 0, 1, 0, 0, 0, 0, 0, 0], make_simple_mapper(2)),
-            (vec![0, 1, 0, 0, 0, 0, 0, 0, 0, 0], make_simple_mapper(2)),
-            (vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1], make_simple_mapper(2)), // dense
-        ])
-        .with_bundling(BundlingConfig::auto())
-        .build()
-        .unwrap();
+        let dataset = BinnedDatasetBuilder::new(BinningConfig::default())
+            .add_binned(vec![0, 0, 0, 1, 0, 0, 0, 0, 0, 0], make_mapper(2))
+            .add_binned(vec![0, 1, 0, 0, 0, 0, 0, 0, 0, 0], make_mapper(2))
+            .add_binned(vec![1, 1, 1, 1, 1, 1, 1, 1, 1, 1], make_mapper(2)) // dense
+            .with_bundling(BundlingConfig::auto())
+            .build()
+            .unwrap();
 
         // Should have a bundle plan stored
         assert!(dataset.bundle_plan().is_some());
@@ -1147,32 +1095,30 @@ mod tests {
 
     #[test]
     fn test_builder_without_bundling_no_plan() {
-        let dataset = builder_with_binned(vec![
-            (vec![0, 0, 0, 1], make_simple_mapper(2)),
-            (vec![0, 1, 0, 0], make_simple_mapper(2)),
-        ])
-        .build() // No with_bundling call
-        .unwrap();
+        let dataset = BinnedDatasetBuilder::new(BinningConfig::default())
+            .add_binned(vec![0, 0, 0, 1], make_mapper(2))
+            .add_binned(vec![0, 1, 0, 0], make_mapper(2))
+            .build()
+            .unwrap();
 
         assert!(dataset.bundle_plan().is_none());
         assert!(!dataset.has_effective_bundling());
     }
 
     #[test]
-    fn test_add_dataset() {
+    fn test_add_features() {
+        use ndarray::array;
+        
         // Create feature-major data: 3 features, 4 samples
-        let feature_data: Vec<f32> = vec![
-            1.0, 4.0, 7.0, 0.0, // feature 0: samples 0-3
-            2.0, 5.0, 8.0, 1.0, // feature 1: samples 0-3
-            3.0, 6.0, 9.0, 2.0, // feature 2: samples 0-3
+        let features = array![
+            [1.0f32, 4.0, 7.0, 0.0],  // feature 0
+            [2.0, 5.0, 8.0, 1.0],  // feature 1
+            [3.0, 6.0, 9.0, 2.0],  // feature 2
         ];
-        let features = Array2::from_shape_vec((3, 4), feature_data).unwrap();
-        let dataset = Dataset::new(features.view(), None, None);
+        let features_view = FeaturesView::from_array(features.view());
 
-        let config = BinningConfig::builder().max_bins(256).build();
-
-        let binned = BinnedDatasetBuilder::new(config)
-            .add_dataset(&dataset, Parallelism::Sequential)
+        let binned = BinnedDatasetBuilder::new(BinningConfig::default())
+            .add_features(features_view, Parallelism::Sequential)
             .build()
             .unwrap();
 
@@ -1182,11 +1128,12 @@ mod tests {
     }
 
     #[test]
-    fn test_add_features() {
+    fn test_add_features_with_schema() {
+        use ndarray::array;
         use crate::dataset::DatasetSchema;
 
         // Create feature-major data: 2 features, 3 samples
-        let feature_data = ndarray::array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+        let feature_data = array![[1.0f32, 2.0, 3.0], [4.0, 5.0, 6.0]];
         let schema = DatasetSchema::all_numeric(2);
         let features = FeaturesView::new(feature_data.view(), &schema);
 

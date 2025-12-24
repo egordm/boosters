@@ -655,7 +655,7 @@ fn train_boosters(
 	// Wrap in Dataset for BinnedDatasetBuilder (feature_major is already feature-major)
 	let dataset_train = Dataset::new(feature_major.view(), None, None);
 	let binned_train = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
-		.add_dataset(&dataset_train, Parallelism::Parallel)
+		.add_features(dataset_train.features(), Parallelism::Parallel)
 		.build()
 		.unwrap();
 	// Create feature-major array for validation predictions

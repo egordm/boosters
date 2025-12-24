@@ -5,7 +5,6 @@
 //! and [`config()`](GBDTModel::config).
 
 use crate::data::binned::BinnedDataset;
-use crate::data::SamplesView;
 use crate::dataset::Dataset;
 use crate::explainability::{
     compute_forest_importance, ExplainError, FeatureImportance, ImportanceType, ShapValues,
@@ -146,7 +145,7 @@ impl GBDTModel {
         run_with_threads(n_threads, |parallelism| {
             // Bin the training dataset using config.binning
             let binned = BinnedDatasetBuilder::new(config.binning.clone())
-                .add_dataset(dataset, parallelism)
+                .add_features(dataset.features(), parallelism)
                 .build()
                 .expect("binning should not fail on valid dataset");
 
@@ -303,7 +302,8 @@ impl GBDTModel {
         run_with_threads(n_threads, |parallelism| {
             let predictor = UnrolledPredictor6::new(&self.forest);
             
-            predictor.predict_from_feature_major_into(
+            // predict_into now takes feature-major data [n_features, n_samples]
+            predictor.predict_into(
                 features.view(),
                 None,
                 parallelism,
@@ -339,13 +339,21 @@ impl GBDTModel {
     /// Requires cover statistics (returns `ExplainError::MissingNodeStats` if missing).
     ///
     /// # Arguments
-    /// * `features` - Feature matrix with shape `[n_samples, n_features]` (sample-major layout)
+    /// * `data` - Dataset containing features (targets are ignored)
     ///
     /// # Returns
     /// ShapValues container with shape `[n_samples, n_features + 1, n_outputs]`.
-    pub fn shap_values(&self, features: SamplesView<'_>) -> Result<ShapValues, ExplainError> {
+    pub fn shap_values(&self, data: &Dataset) -> Result<ShapValues, ExplainError> {
+        use crate::data::{transpose_to_c_order, SamplesView};
+
         let explainer = TreeExplainer::new(&self.forest)?;
-        Ok(explainer.shap_values(features))
+        
+        // Transpose feature-major [n_features, n_samples] to sample-major [n_samples, n_features]
+        let features = data.features();
+        let samples_array = transpose_to_c_order(features.view());
+        let samples_view = SamplesView::from_array(samples_array.view());
+        
+        Ok(explainer.shap_values(samples_view))
     }
 }
 
@@ -516,7 +524,6 @@ mod tests {
 
     #[test]
     fn shap_values() {
-        use crate::data::SamplesView;
         use crate::explainability::ExplainError;
 
         // Forest with covers
@@ -533,10 +540,10 @@ mod tests {
         let meta = ModelMeta::for_regression(2);
         let model = GBDTModel::from_forest(forest, meta);
 
-        // Compute SHAP values
-        let features = vec![0.3, 0.7]; // goes left
-        let view = SamplesView::from_slice(&features, 1, 2).unwrap();
-        let shap = model.shap_values(view);
+        // Compute SHAP values - feature-major: [n_features=2, n_samples=1]
+        let features = arr2(&[[0.3], [0.7]]);
+        let dataset = Dataset::new(features.view(), None, None);
+        let shap = model.shap_values(&dataset);
         assert!(shap.is_ok());
 
         let shap = shap.unwrap();
@@ -553,9 +560,8 @@ mod tests {
         forest2.push_tree(tree2, 0);
         let model2 = GBDTModel::from_forest(forest2, ModelMeta::for_regression(2));
 
-        let view2 = SamplesView::from_slice(&features, 1, 2).unwrap();
         assert!(matches!(
-            model2.shap_values(view2),
+            model2.shap_values(&dataset),
             Err(ExplainError::MissingNodeStats(_))
         ));
     }

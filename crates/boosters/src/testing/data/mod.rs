@@ -86,7 +86,7 @@ impl SyntheticDataset {
         let dataset = Dataset::new(self.features.view(), None, None);
         let config = BinningConfig::builder().max_bins(max_bins).build();
         BinnedDatasetBuilder::new(config)
-            .add_dataset(&dataset, Parallelism::Parallel)
+            .add_features(dataset.features(), Parallelism::Parallel)
             .build()
             .expect("binning failed")
     }

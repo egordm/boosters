@@ -52,26 +52,6 @@ impl<'a> FeaturesView<'a> {
         Self { data, schema: None }
     }
 
-    /// Create from a slice in feature-major order (all features assumed numeric).
-    ///
-    /// Data layout: `[f0_s0, f0_s1, ..., f1_s0, f1_s1, ...]`
-    ///
-    /// # Arguments
-    ///
-    /// * `data` - Slice of length `n_samples * n_features`
-    /// * `n_samples` - Number of samples
-    /// * `n_features` - Number of features
-    pub fn from_slice(
-        data: &'a [f32],
-        n_samples: usize,
-        n_features: usize,
-    ) -> Option<Self> {
-        // Shape is [n_features, n_samples] for feature-major
-        ArrayView2::from_shape((n_features, n_samples), data)
-            .ok()
-            .map(Self::from_array)
-    }
-
     /// Number of samples (second dimension).
     #[inline]
     pub fn n_samples(&self) -> usize {

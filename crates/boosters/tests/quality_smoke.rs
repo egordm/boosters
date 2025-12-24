@@ -52,7 +52,7 @@ fn run_synthetic_regression(
 	let col_train = transpose_to_c_order(x_train.view());
 	let dataset_train = Dataset::new(col_train.view(), None, None);
 	let binned_train = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
-		.add_dataset(&dataset_train, Parallelism::Parallel)
+		.add_features(dataset_train.features(), Parallelism::Parallel)
 		.build()
 		.unwrap();
 	let row_valid = x_valid;
@@ -112,7 +112,7 @@ fn run_synthetic_binary(
 	let col_train = transpose_to_c_order(x_train.view());
 	let dataset_train = Dataset::new(col_train.view(), None, None);
 	let binned_train = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
-		.add_dataset(&dataset_train, Parallelism::Parallel)
+		.add_features(dataset_train.features(), Parallelism::Parallel)
 		.build()
 		.unwrap();
 	let row_valid = x_valid;
@@ -173,7 +173,7 @@ fn run_synthetic_multiclass(
 	let col_train = transpose_to_c_order(x_train.view());
 	let dataset_train = Dataset::new(col_train.view(), None, None);
 	let binned_train = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
-		.add_dataset(&dataset_train, Parallelism::Parallel)
+		.add_features(dataset_train.features(), Parallelism::Parallel)
 		.build()
 		.unwrap();
 	let row_valid = x_valid;
@@ -307,7 +307,7 @@ fn test_quality_improvement_linear_leaves() {
 	let col_train = transpose_to_c_order(x_train.view());
 	let dataset_train = Dataset::new(col_train.view(), None, None);
 	let binned_train = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
-		.add_dataset(&dataset_train, Parallelism::Parallel)
+		.add_features(dataset_train.features(), Parallelism::Parallel)
 		.build()
 		.unwrap();
 	let row_valid = x_valid;

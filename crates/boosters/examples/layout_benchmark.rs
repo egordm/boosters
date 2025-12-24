@@ -43,14 +43,14 @@ fn main() {
     // Build datasets with different layouts
     println!("Building RowMajor dataset...");
     let row_major_dataset = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
-        .add_dataset(&features_dataset, Parallelism::Parallel)
+        .add_features(features_dataset.features(), Parallelism::Parallel)
         .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::RowMajor })
         .build()
         .unwrap();
 
     println!("Building ColumnMajor dataset...");
     let col_major_dataset = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
-        .add_dataset(&features_dataset, Parallelism::Parallel)
+        .add_features(features_dataset.features(), Parallelism::Parallel)
         .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
         .build()
         .unwrap();

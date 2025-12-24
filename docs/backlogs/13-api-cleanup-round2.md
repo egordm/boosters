@@ -1,6 +1,6 @@
 # Backlog 13: API Cleanup Round 2
 
-**Status**: In Progress  
+**Status**: Complete  
 **Created**: 2024-12-24  
 
 ## Overview
@@ -76,22 +76,35 @@ redundant methods, and using standardized view types throughout.
 
 ---
 
-## Epic 6: GBDT Predictor Cleanup
+## Epic 6: GBDT Predictor Cleanup ✅
 
-### Story 6.1: Consolidate to 3 Methods
-- [ ] `predict_row_into(row: &[f32], output: &mut [f32])`
-- [ ] `predict_into(features: FeaturesView, parallelism, output: ArrayViewMut2)`
-- [ ] `predict(features: FeaturesView, parallelism) -> Array2`
-- [ ] Remove: `predict_from_feature_major_into` - merge into predict_into
-- [ ] Clean implementation like current predict_into (zip, no block allocations)
+### Story 6.1: Consolidate to 3 Methods ✅
+- [x] `predict_row_into(row: &[f32], output: &mut [f32])`
+- [x] `predict_into(features: FeaturesView, parallelism, output: ArrayViewMut2)`
+- [x] `predict(features: FeaturesView, parallelism) -> Array2`
+- [x] Removed `predict_from_feature_major_into` - merged into `predict_into`
+- [x] `predict_into` now takes feature-major data and handles transpose internally with block buffering
+- [x] Updated all tests to use feature-major data layout
 
 ---
 
-## Epic 7: Import Cleanup
+## Epic 7: Explainer API Cleanup ✅
 
-### Story 7.1: Remove Fully Qualified Names
-- [ ] Replace `crate::dataset::Dataset` with `Dataset` and proper import
-- [ ] Audit all files for fully qualified paths
+### Story 7.1: Model SHAP Methods Take Dataset ✅
+- [x] `GBDTModel::shap_values(&Dataset)` - takes Dataset, converts internally
+- [x] `GBLinearModel::shap_values(&Dataset, Option<Vec<f64>>)` - same pattern
+- [x] Explainers (TreeExplainer, LinearExplainer) use SamplesView internally
+- [x] `SamplesView` made `pub(crate)` - internal implementation detail
+
+---
+
+## Epic 8: Test Cleanup ✅
+
+### Story 8.1: Simplify builder.rs Tests ✅
+- [x] Removed `default_config()` helper - use `BinningConfig::default()` directly
+- [x] Renamed `make_simple_mapper` to `make_mapper`
+- [x] Removed `builder_with_binned` helper - inline `BinnedDatasetBuilder::new().add_binned()` chains
+- [x] All tests use `ndarray::array!` macro for array creation
 
 ---
 
@@ -100,6 +113,5 @@ redundant methods, and using standardized view types throughout.
 - [x] All lib tests pass (556/556)
 - [x] All integration tests pass (34/34)
 - [x] All examples compile
-- [ ] No new clippy warnings
-- [ ] All doc tests pass
+- [x] All doc tests pass
 

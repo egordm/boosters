@@ -370,11 +370,11 @@ mod tests {
         // feature 1: [3.0, 1.0]
         // sample 0: 0.5*2 + 0.3*3 + 0.1 = 2.0
         // sample 1: 0.5*1 + 0.3*1 + 0.1 = 0.9
-        let data = [
-            2.0f32, 1.0, // feature 0
-            3.0, 1.0,    // feature 1
+        let features = array![
+            [2.0, 1.0], // feature 0
+            [3.0, 1.0], // feature 1
         ];
-        let view = FeaturesView::from_slice(&data, 2, 2).unwrap();
+        let view = FeaturesView::from_array(features.view());
 
         let output = model.predict(view);
 
@@ -397,9 +397,11 @@ mod tests {
         // Feature-major: [2 features, 1 sample]
         // feature 0: [1.0]
         // feature 1: [1.0]
-        let data = [1.0f32, 1.0];
-        // from_slice(data, n_samples, n_features) -> [n_features, n_samples]
-        let view = FeaturesView::from_slice(&data, 1, 2).unwrap();
+        let features = array![
+            [1.0], // feature 0
+            [1.0], // feature 1
+        ];
+        let view = FeaturesView::from_array(features.view());
         let output = model.predict(view);
 
         // Output: [n_groups=2, n_samples=1]
@@ -418,12 +420,11 @@ mod tests {
         // Feature-major: [2 features, 2 samples]
         // feature 0: [2.0, 1.0]
         // feature 1: [3.0, 1.0]
-        let data = [
-            2.0f32, 1.0, // feature 0
-            3.0, 1.0,    // feature 1
+        let features = array![
+            [2.0, 1.0], // feature 0
+            [3.0, 1.0], // feature 1
         ];
-        // from_slice(data, n_samples, n_features) -> [n_features, n_samples]
-        let view = FeaturesView::from_slice(&data, 2, 2).unwrap();
+        let view = FeaturesView::from_array(features.view());
 
         let mut output = Array2::<f32>::zeros((1, 2)); // [n_groups=1, n_samples=2]
         model.predict_into(view, output.view_mut());

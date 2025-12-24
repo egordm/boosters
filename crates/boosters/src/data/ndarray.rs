@@ -85,23 +85,8 @@ pub mod axis {
 ///
 /// Shape: `[n_samples, n_features]` - each sample's features are contiguous in memory.
 ///
-/// This is the standard layout for inference where we iterate over samples.
-/// Compatible with numpy's default C-order arrays.
-///
-/// # Example
-///
-/// ```
-/// use boosters::data::SamplesView;
-///
-/// // 3 samples, 2 features each
-/// let data = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
-/// let view = SamplesView::from_slice(&data, 3, 2).unwrap();
-///
-/// assert_eq!(view.n_samples(), 3);
-/// assert_eq!(view.n_features(), 2);
-/// assert_eq!(view.get(0, 1), 2.0); // sample 0, feature 1
-/// assert_eq!(view.get(2, 0), 5.0); // sample 2, feature 0
-/// ```
+/// This is an internal type used by explainers where we iterate over samples.
+/// Users should use [`FeaturesView`] or [`crate::dataset::Dataset`] instead.
 #[derive(Debug, Clone, Copy)]
 pub struct SamplesView<'a>(ArrayView2<'a, f32>);
 

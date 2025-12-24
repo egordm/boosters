@@ -22,7 +22,7 @@ fn train_rejects_invalid_targets_len() {
     let targets: Vec<f32> = vec![1.0, 2.0]; // Too few targets
 
     let dataset = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(64).build())
-        .add_dataset(&features_dataset, Parallelism::Sequential)
+        .add_features(features_dataset.features(), Parallelism::Sequential)
         .build()
         .expect("Failed to build binned dataset");
 
@@ -44,7 +44,7 @@ fn trained_model_improves_over_base_score_on_simple_problem() {
     let features = Array2::from_shape_vec((1, n_samples), features_raw.clone()).unwrap();
     let features_dataset = Dataset::new(features.view(), None, None);
     let dataset = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(64).build())
-        .add_dataset(&features_dataset, Parallelism::Sequential)
+        .add_features(features_dataset.features(), Parallelism::Sequential)
         .build()
         .expect("Failed to build binned dataset");
 
@@ -107,7 +107,7 @@ fn trained_model_improves_over_base_score_on_medium_problem() {
     let features = transpose_to_c_order(row_view.view());
     let features_dataset = Dataset::new(features.view(), None, None);
     let dataset = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(64).build())
-        .add_dataset(&features_dataset, Parallelism::Sequential)
+        .add_features(features_dataset.features(), Parallelism::Sequential)
         .build()
         .expect("Failed to build binned dataset");
 
@@ -185,7 +185,7 @@ fn train_with_categorical_features_produces_categorical_splits() {
     
     // Build binned dataset - should detect categorical from schema
     let dataset = BinnedDatasetBuilder::new(BinningConfig::default())
-        .add_dataset(&features_dataset, Parallelism::Sequential)
+        .add_features(features_dataset.features(), Parallelism::Sequential)
         .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
         .build()
         .expect("Failed to build binned dataset");
