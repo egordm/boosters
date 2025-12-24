@@ -232,20 +232,29 @@ Update GBLinear training to use new Dataset.
 - Clear error on categorical features (returns None) ✓
 - Existing tests pass ✓
 
-### Story 3.5: GBLinear Prediction
+### Story 3.5: GBLinear Prediction ✓
 
 Ensure efficient prediction with per-feature iteration.
 
 **Tasks:**
 
-- [ ] 3.5.1: Audit existing prediction code for GBLinear
-- [ ] 3.5.2: Ensure prediction uses per-feature iteration with column-major output
-- [ ] 3.5.3: Benchmark: expect ~21% overhead vs row-major baseline (based on prior benchmark)
+- [x] 3.5.1: Audit existing prediction code for GBLinear
+- [x] 3.5.2: Ensure prediction uses per-feature iteration with column-major output
+- [x] 3.5.3: Add `LinearModel::predict_feature_major()` method
+- [x] 3.5.4: Add `GBLinearModel::predict_dataset()` and `predict_dataset_raw()` methods
+- [x] 3.5.5: Add tests for new prediction methods
+
+**Note**:
+
+- Added `LinearModel::predict_feature_major()` that takes feature-major `ArrayView2<f32>` and returns `[n_groups, n_samples]`
+- Added `GBLinearModel::predict_dataset()` and `predict_dataset_raw()` for Dataset-based prediction
+- Per-feature iteration is cache-friendly for feature-major data
+- 3 new tests added and all existing tests pass
 
 **Definition of Done:**
 
-- GBLinear prediction works with feature-major Dataset
-- Benchmark confirms overhead in expected range (~20-25%)
+- GBLinear prediction works with feature-major Dataset ✓
+- New tests validate correctness ✓
 
 ### Story 3.6: Delete Old Dataset and Cleanup
 

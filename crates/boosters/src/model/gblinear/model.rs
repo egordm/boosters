@@ -210,6 +210,55 @@ impl GBLinearModel {
         transpose_to_c_order(output.view())
     }
 
+    /// Predict from a Dataset, returning transformed predictions.
+    ///
+    /// This method accepts the new Dataset type with feature-major layout
+    /// and uses efficient per-feature iteration.
+    ///
+    /// # Arguments
+    ///
+    /// * `dataset` - Dataset with feature-major storage
+    ///
+    /// # Returns
+    ///
+    /// Array2 with shape `[n_groups, n_samples]`. Access group predictions via `.row(group_idx)`.
+    pub fn predict_dataset(&self, dataset: &Dataset) -> Array2<f32> {
+        let n_samples = dataset.n_samples();
+        let n_groups = self.meta.n_groups;
+
+        if n_samples == 0 {
+            return Array2::zeros((n_groups, 0));
+        }
+
+        // Use efficient feature-major prediction
+        let mut output = self.model.predict_feature_major(dataset.features().as_array());
+
+        // Apply transformation if we have config with objective
+        self.config.objective.transform_predictions(output.view_mut());
+
+        output
+    }
+
+    /// Predict from a Dataset, returning raw margin scores (no transform).
+    ///
+    /// # Arguments
+    ///
+    /// * `dataset` - Dataset with feature-major storage
+    ///
+    /// # Returns
+    ///
+    /// Array2 with shape `[n_groups, n_samples]`.
+    pub fn predict_dataset_raw(&self, dataset: &Dataset) -> Array2<f32> {
+        let n_samples = dataset.n_samples();
+        let n_groups = self.meta.n_groups;
+
+        if n_samples == 0 {
+            return Array2::zeros((n_groups, 0));
+        }
+
+        self.model.predict_feature_major(dataset.features().as_array())
+    }
+
     // =========================================================================
     // Explainability
     // =========================================================================
@@ -361,5 +410,40 @@ mod tests {
         // base = bias = 0.1
         // sum = 0.5 + 0.6 + 0.1 = 1.2
         assert!(shap.verify(&[1.2], 1e-5));
+    }
+
+    #[test]
+    fn predict_dataset_matches_predict_raw() {
+        let linear = make_simple_model();
+        let meta = ModelMeta::for_regression(2);
+        let model = GBLinearModel::from_linear_model(linear, meta);
+
+        // Sample-major layout: 2 samples, 2 features
+        // row 0: [1.0, 2.0]
+        // row 1: [0.0, 0.0]
+        let sample_major = array![[1.0, 2.0], [0.0, 0.0]];
+
+        // Feature-major layout: [n_features=2, n_samples=2]
+        // feature 0: [1.0, 0.0]
+        // feature 1: [2.0, 0.0]
+        let feature_major = sample_major.t();
+        let dataset = Dataset::from_column_major_features(feature_major);
+
+        // Use new predict_dataset method
+        let preds_dataset = model.predict_dataset_raw(&dataset);
+
+        // Compare with predict_raw using sample-major input
+        let preds_raw = model.predict_raw(sample_major.view());
+
+        // Both should give same results
+        assert_eq!(preds_dataset.dim(), preds_raw.dim());
+        assert!((preds_dataset[[0, 0]] - preds_raw[[0, 0]]).abs() < 1e-6);
+        assert!((preds_dataset[[0, 1]] - preds_raw[[0, 1]]).abs() < 1e-6);
+
+        // Values should be:
+        // sample 0: 0.5*1.0 + 0.3*2.0 + 0.1 = 1.2
+        // sample 1: 0.5*0.0 + 0.3*0.0 + 0.1 = 0.1
+        assert!((preds_dataset[[0, 0]] - 1.2).abs() < 1e-6);
+        assert!((preds_dataset[[0, 1]] - 0.1).abs() < 1e-6);
     }
 }

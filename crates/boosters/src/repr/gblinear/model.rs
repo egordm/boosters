@@ -1,6 +1,6 @@
 //! Linear model data structure.
 
-use ndarray::{s, Array2, ArrayView1, ArrayViewMut2};
+use ndarray::{s, Array2, ArrayView1, ArrayView2, ArrayViewMut2};
 
 use crate::data::{FeaturesView, SamplesView};
 use crate::utils::Parallelism;
@@ -240,6 +240,49 @@ impl LinearModel {
         }
     }
 
+    /// Predict from feature-major data, returning group-major output.
+    ///
+    /// # Arguments
+    ///
+    /// * `features` - Feature matrix with shape `[n_features, n_samples]` (feature-major)
+    ///
+    /// # Returns
+    ///
+    /// Array2 with shape `[n_groups, n_samples]`.
+    pub fn predict_feature_major(&self, features: ArrayView2<f32>) -> Array2<f32> {
+        let n_features_data = features.nrows();
+        let n_samples = features.ncols();
+        let n_groups = self.n_groups();
+        let n_features = self.n_features();
+
+        debug_assert_eq!(
+            n_features_data, n_features,
+            "features has {} features but model expects {}",
+            n_features_data, n_features
+        );
+
+        // Output shape: [n_groups, n_samples]
+        let mut output = Array2::<f32>::zeros((n_groups, n_samples));
+
+        // Initialize with bias
+        for group in 0..n_groups {
+            let bias = self.bias(group);
+            output.row_mut(group).fill(bias);
+        }
+
+        // Add weighted features - iterate over features (rows in feature-major)
+        for feat_idx in 0..n_features {
+            let feature_row = features.row(feat_idx);
+            for (sample_idx, &value) in feature_row.iter().enumerate() {
+                for group in 0..n_groups {
+                    output[[group, sample_idx]] += value * self.weight(feat_idx, group);
+                }
+            }
+        }
+
+        output
+    }
+
     /// Predict for a single row into a provided buffer.
     ///
     /// Writes `n_groups` predictions to `output`.
@@ -448,5 +491,64 @@ mod tests {
         let mut seq_output = Array2::<f32>::zeros((2, 1));
         model.predict_into(view, &[0.0], Parallelism::Sequential, seq_output.view_mut());
         assert_eq!(output, seq_output);
+    }
+
+    #[test]
+    fn predict_feature_major_matches_sample_major() {
+        let weights = array![[0.5], [0.3], [0.1]];
+        let model = LinearModel::new(weights);
+
+        // Sample-major: [2 samples, 2 features]
+        // sample 0: [2.0, 3.0] -> 0.5*2 + 0.3*3 + 0.1 = 2.0
+        // sample 1: [1.0, 1.0] -> 0.5*1 + 0.3*1 + 0.1 = 0.9
+        let sample_major = array![
+            [2.0, 3.0],
+            [1.0, 1.0],
+        ];
+
+        // Feature-major: [2 features, 2 samples]
+        // feature 0: [2.0, 1.0]
+        // feature 1: [3.0, 1.0]
+        let feature_major = sample_major.t();
+
+        // Predict using feature-major path
+        let output = model.predict_feature_major(feature_major);
+
+        // Output should be [n_groups=1, n_samples=2]
+        assert_eq!(output.dim(), (1, 2));
+        assert!((output[[0, 0]] - 2.0).abs() < 1e-6);
+        assert!((output[[0, 1]] - 0.9).abs() < 1e-6);
+    }
+
+    #[test]
+    fn predict_feature_major_multigroup() {
+        // 2 features, 2 groups
+        let weights = array![
+            [0.1, 0.2], // feature 0
+            [0.3, 0.4], // feature 1
+            [0.5, 0.6], // bias
+        ];
+        let model = LinearModel::new(weights);
+
+        // Sample-major: [2 samples, 2 features]
+        let sample_major = array![
+            [1.0, 2.0], // sample 0
+            [3.0, 4.0], // sample 1
+        ];
+        let feature_major = sample_major.t();
+
+        let output = model.predict_feature_major(feature_major);
+
+        // Output should be [n_groups=2, n_samples=2]
+        assert_eq!(output.dim(), (2, 2));
+
+        // sample 0, group 0: 0.1*1 + 0.3*2 + 0.5 = 0.1 + 0.6 + 0.5 = 1.2
+        // sample 0, group 1: 0.2*1 + 0.4*2 + 0.6 = 0.2 + 0.8 + 0.6 = 1.6
+        // sample 1, group 0: 0.1*3 + 0.3*4 + 0.5 = 0.3 + 1.2 + 0.5 = 2.0
+        // sample 1, group 1: 0.2*3 + 0.4*4 + 0.6 = 0.6 + 1.6 + 0.6 = 2.8
+        assert!((output[[0, 0]] - 1.2).abs() < 1e-6);
+        assert!((output[[1, 0]] - 1.6).abs() < 1e-6);
+        assert!((output[[0, 1]] - 2.0).abs() < 1e-6);
+        assert!((output[[1, 1]] - 2.8).abs() < 1e-6);
     }
 }
