@@ -26,11 +26,8 @@ fn main() {
 
     // Create binned dataset for training (using feature-major data)
     let dataset = Dataset::new(features.view(), None, None);
-    let binned_dataset = BinnedDatasetBuilder::from_dataset(
-        &dataset,
-        BinningConfig::builder().max_bins(256).build(),
-        Parallelism::Parallel,
-    )
+    let binned_dataset = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+        .add_dataset(&dataset, Parallelism::Parallel)
         .build()
         .expect("Failed to build binned dataset");
 
@@ -63,11 +60,11 @@ fn main() {
     let first_sample_data: Vec<f32> = (0..n_features).map(|f| features[(f, 0)]).collect();
     let sample_fm = Array2::from_shape_vec((n_features, 1), first_sample_data).unwrap();
     let sample_dataset = Dataset::new(sample_fm.view(), None, None);
-    let pred = model.predict(sample_dataset.features(), 1);
+    let pred = model.predict(&sample_dataset, 1);
     println!("Sample prediction: {:.4}", pred.as_slice().unwrap()[0]);
 
     // Predict on full dataset - features is already feature-major
-    let all_preds = model.predict(dataset.features(), 1);
+    let all_preds = model.predict(&dataset, 1);
 
     // Compute RMSE manually
     let rmse = compute_rmse(all_preds.as_slice().unwrap(), labels.as_slice().unwrap());

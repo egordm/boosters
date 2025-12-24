@@ -654,11 +654,10 @@ fn train_boosters(
 	let feature_major = sample_major.t().to_owned();
 	// Wrap in Dataset for BinnedDatasetBuilder (feature_major is already feature-major)
 	let dataset_train = Dataset::new(feature_major.view(), None, None);
-	let binned_train = BinnedDatasetBuilder::from_dataset(
-		&dataset_train,
-		BinningConfig::builder().max_bins(256).build(),
-		Parallelism::Parallel,
-	).build().unwrap();
+	let binned_train = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+		.add_dataset(&dataset_train, Parallelism::Parallel)
+		.build()
+		.unwrap();
 	// Create feature-major array for validation predictions
 	let sample_major_valid = ArrayView2::from_shape((rows_valid, cols), x_valid).expect("valid features must be contiguous");
 	let feature_major_valid = sample_major_valid.t().to_owned();
@@ -709,7 +708,7 @@ fn train_boosters(
 		.expect("training should succeed");
 
 	// Predict using model API (applies transform automatically)
-	let pred = model.predict(dataset_valid.features(), 1);
+	let pred = model.predict(&dataset_valid, 1);
 	let targets_arr = ArrayView1::from(y_valid);
 
 	// Compute metrics

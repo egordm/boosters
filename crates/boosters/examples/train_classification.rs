@@ -56,11 +56,8 @@ fn main() {
     let features_dataset = Dataset::new(features.view(), None, None);
 
     // Create binned dataset
-    let dataset = BinnedDatasetBuilder::from_dataset(
-        &features_dataset,
-        BinningConfig::builder().max_bins(256).build(),
-        Parallelism::Parallel,
-    )
+    let dataset = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+        .add_dataset(&features_dataset, Parallelism::Parallel)
         .build()
         .expect("Failed to build binned dataset");
 
@@ -83,7 +80,7 @@ fn main() {
         .expect("Training failed");
 
     // Predict: features_dataset is already feature-major
-    let predictions = model_depth.predict(features_dataset.features(), 1);
+    let predictions = model_depth.predict(&features_dataset, 1);
 
     let acc = compute_accuracy(predictions.as_slice().unwrap(), labels.as_slice().unwrap());
     println!("Depth-wise: {} trees", model_depth.forest().n_trees());
@@ -107,7 +104,7 @@ fn main() {
     let model_leaf = GBDTModel::train_binned(&dataset, labels.view(), None, &[], config_leaf, 1)
         .expect("Training failed");
 
-    let predictions = model_leaf.predict(features_dataset.features(), 1);
+    let predictions = model_leaf.predict(&features_dataset, 1);
 
     let acc = compute_accuracy(predictions.as_slice().unwrap(), labels.as_slice().unwrap());
     println!("Leaf-wise: {} trees", model_leaf.forest().n_trees());
@@ -148,7 +145,7 @@ fn main() {
     )
     .expect("Training failed");
 
-    let predictions = model_weighted.predict(features_dataset.features(), 1);
+    let predictions = model_weighted.predict(&features_dataset, 1);
 
     let acc = compute_accuracy(predictions.as_slice().unwrap(), labels.as_slice().unwrap());
     println!("Weighted training: {} trees", model_weighted.forest().n_trees());

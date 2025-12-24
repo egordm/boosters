@@ -59,11 +59,8 @@ fn main() {
 
     // Create binned dataset
     let features_dataset = Dataset::new(features.view(), None, None);
-    let dataset = BinnedDatasetBuilder::from_dataset(
-        &features_dataset,
-        BinningConfig::builder().max_bins(256).build(),
-        Parallelism::Parallel,
-    )
+    let dataset = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+        .add_dataset(&features_dataset, Parallelism::Parallel)
         .build()
         .expect("Failed to build binned dataset");
 
@@ -108,7 +105,7 @@ fn main() {
     .expect("Training failed");
 
     // Predict: features_dataset is already feature-major
-    let probs_uw = model_unweighted.predict(features_dataset.features(), 1);
+    let probs_uw = model_unweighted.predict(&features_dataset, 1);
 
     let acc_uw = compute_accuracy(probs_uw.as_slice().unwrap(), labels.as_slice().unwrap());
     let recall_1_uw = compute_recall(probs_uw.as_slice().unwrap(), labels.as_slice().unwrap(), 1.0);
@@ -129,7 +126,7 @@ fn main() {
     )
     .expect("Training failed");
 
-    let probs_w = model_weighted.predict(features_dataset.features(), 1);
+    let probs_w = model_weighted.predict(&features_dataset, 1);
 
     let acc_w = compute_accuracy(probs_w.as_slice().unwrap(), labels.as_slice().unwrap());
     let recall_1_w = compute_recall(probs_w.as_slice().unwrap(), labels.as_slice().unwrap(), 1.0);

@@ -28,11 +28,8 @@ fn main() {
 
     // Create binned dataset (features is feature-major)
     let features_dataset = Dataset::new(features.view(), None, None);
-    let dataset = BinnedDatasetBuilder::from_dataset(
-        &features_dataset,
-        BinningConfig::builder().max_bins(256).build(),
-        Parallelism::Parallel,
-    )
+    let dataset = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+        .add_dataset(&features_dataset, Parallelism::Parallel)
         .build()
         .expect("Failed to build dataset");
 
@@ -72,7 +69,7 @@ fn main() {
     println!("Trees trained: {} (max was 200)", actual_trees);
 
     // Evaluate - use the features_dataset for prediction
-    let preds = model.predict(features_dataset.features(), 1);
+    let preds = model.predict(&features_dataset, 1);
     let rmse = compute_rmse(preds.as_slice().unwrap(), labels.as_slice().unwrap());
 
     println!("Training RMSE: {:.4}", rmse);

@@ -43,11 +43,8 @@ fn main() {
     let features_dataset = Dataset::new(features.view(), None, None);
     
     let start = std::time::Instant::now();
-    let dataset = BinnedDatasetBuilder::from_dataset(
-        &features_dataset,
-        BinningConfig::builder().max_bins(256).build(),
-        Parallelism::Parallel,
-    )
+    let dataset = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+        .add_dataset(&features_dataset, Parallelism::Parallel)
         .build()
         .expect("Failed to build binned dataset");
     println!("  Binning took: {:?}", start.elapsed());

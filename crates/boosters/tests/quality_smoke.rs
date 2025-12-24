@@ -51,11 +51,8 @@ fn run_synthetic_regression(
 	// Transpose to feature-major for training
 	let col_train = transpose_to_c_order(x_train.view());
 	let dataset_train = Dataset::new(col_train.view(), None, None);
-	let binned_train = BinnedDatasetBuilder::from_dataset(
-		&dataset_train,
-		BinningConfig::builder().max_bins(256).build(),
-		Parallelism::Parallel,
-	)
+	let binned_train = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+		.add_dataset(&dataset_train, Parallelism::Parallel)
 		.build()
 		.unwrap();
 	let row_valid = x_valid;
@@ -86,7 +83,7 @@ fn run_synthetic_regression(
 	// Transpose validation to feature-major for prediction
 	let col_valid = transpose_to_c_order(row_valid.view());
 	let dataset_valid = Dataset::new(col_valid.view(), None, None);
-	let pred = model.predict(dataset_valid.features(), 1);
+	let pred = model.predict(&dataset_valid, 1);
 	let targets_arr = ArrayView1::from(&y_valid[..]);
 
 	let rmse = Rmse.compute(pred.view(), targets_arr, None);
@@ -114,11 +111,8 @@ fn run_synthetic_binary(
 	// Transpose to feature-major for training
 	let col_train = transpose_to_c_order(x_train.view());
 	let dataset_train = Dataset::new(col_train.view(), None, None);
-	let binned_train = BinnedDatasetBuilder::from_dataset(
-		&dataset_train,
-		BinningConfig::builder().max_bins(256).build(),
-		Parallelism::Parallel,
-	)
+	let binned_train = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+		.add_dataset(&dataset_train, Parallelism::Parallel)
 		.build()
 		.unwrap();
 	let row_valid = x_valid;
@@ -149,7 +143,7 @@ fn run_synthetic_binary(
 	// Transpose validation to feature-major for prediction
 	let col_valid = transpose_to_c_order(row_valid.view());
 	let dataset_valid = Dataset::new(col_valid.view(), None, None);
-	let pred = model.predict(dataset_valid.features(), 1);
+	let pred = model.predict(&dataset_valid, 1);
 	let targets_arr = ArrayView1::from(&y_valid[..]);
 
 	let ll = LogLoss.compute(pred.view(), targets_arr, None);
@@ -178,11 +172,8 @@ fn run_synthetic_multiclass(
 	// Transpose to feature-major for training
 	let col_train = transpose_to_c_order(x_train.view());
 	let dataset_train = Dataset::new(col_train.view(), None, None);
-	let binned_train = BinnedDatasetBuilder::from_dataset(
-		&dataset_train,
-		BinningConfig::builder().max_bins(256).build(),
-		Parallelism::Parallel,
-	)
+	let binned_train = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+		.add_dataset(&dataset_train, Parallelism::Parallel)
 		.build()
 		.unwrap();
 	let row_valid = x_valid;
@@ -213,7 +204,7 @@ fn run_synthetic_multiclass(
 	// Transpose validation to feature-major for prediction
 	let col_valid = transpose_to_c_order(row_valid.view());
 	let dataset_valid = Dataset::new(col_valid.view(), None, None);
-	let pred = model.predict(dataset_valid.features(), 1);
+	let pred = model.predict(&dataset_valid, 1);
 	let targets_arr = ArrayView1::from(&y_valid[..]);
 
 	let ll = MulticlassLogLoss.compute(pred.view(), targets_arr, None);
@@ -315,11 +306,8 @@ fn test_quality_improvement_linear_leaves() {
 	// Convert to matrices - transpose to feature-major for training
 	let col_train = transpose_to_c_order(x_train.view());
 	let dataset_train = Dataset::new(col_train.view(), None, None);
-	let binned_train = BinnedDatasetBuilder::from_dataset(
-		&dataset_train,
-		BinningConfig::builder().max_bins(256).build(),
-		Parallelism::Parallel,
-	)
+	let binned_train = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+		.add_dataset(&dataset_train, Parallelism::Parallel)
 		.build()
 		.unwrap();
 	let row_valid = x_valid;
@@ -350,7 +338,7 @@ fn test_quality_improvement_linear_leaves() {
 	// Transpose validation to feature-major for prediction
 	let col_valid = transpose_to_c_order(row_valid.view());
 	let dataset_valid = Dataset::new(col_valid.view(), None, None);
-	let pred_baseline = model_baseline.predict(dataset_valid.features(), 1);
+	let pred_baseline = model_baseline.predict(&dataset_valid, 1);
 	let targets_arr = ArrayView1::from(&y_valid[..]);
 	let rmse_baseline = Rmse.compute(pred_baseline.view(), targets_arr, None);
 
@@ -379,7 +367,7 @@ fn test_quality_improvement_linear_leaves() {
 		1,
 	)
 	.unwrap();
-	let pred_linear = model_linear.predict(dataset_valid.features(), 1);
+	let pred_linear = model_linear.predict(&dataset_valid, 1);
 	let rmse_linear = Rmse.compute(pred_linear.view(), targets_arr, None);
 
 	// Assert: linear leaves should improve RMSE by at least 5%

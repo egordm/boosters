@@ -2,7 +2,7 @@
 //!
 //! Focused on behavior and invariants (not default params or superficial shapes).
 
-use boosters::data::{transpose_to_c_order, BinMapper, BinnedDatasetBuilder, BinningConfig, GroupLayout, GroupStrategy, MissingType};
+use boosters::data::{transpose_to_c_order, BinnedDatasetBuilder, BinningConfig, GroupLayout, GroupStrategy};
 use boosters::dataset::Dataset;
 use boosters::model::gbdt::{GBDTConfig, GBDTModel};
 use boosters::repr::gbdt::{TreeView, SplitType};
@@ -21,11 +21,8 @@ fn train_rejects_invalid_targets_len() {
     let features_dataset = Dataset::new(features.view(), None, None);
     let targets: Vec<f32> = vec![1.0, 2.0]; // Too few targets
 
-    let dataset = BinnedDatasetBuilder::from_dataset(
-        &features_dataset,
-        BinningConfig::builder().max_bins(16).build(),
-        Parallelism::Sequential,
-    )
+    let dataset = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(64).build())
+        .add_dataset(&features_dataset, Parallelism::Sequential)
         .build()
         .expect("Failed to build binned dataset");
 
@@ -46,11 +43,8 @@ fn trained_model_improves_over_base_score_on_simple_problem() {
     // Feature-major: shape [1, n_samples]
     let features = Array2::from_shape_vec((1, n_samples), features_raw.clone()).unwrap();
     let features_dataset = Dataset::new(features.view(), None, None);
-    let dataset = BinnedDatasetBuilder::from_dataset(
-        &features_dataset,
-        BinningConfig::builder().max_bins(64).build(),
-        Parallelism::Sequential,
-    )
+    let dataset = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(64).build())
+        .add_dataset(&features_dataset, Parallelism::Sequential)
         .build()
         .expect("Failed to build binned dataset");
 
@@ -112,11 +106,8 @@ fn trained_model_improves_over_base_score_on_medium_problem() {
     let row_view = ArrayView2::from_shape((n_samples, n_features), &features_row_major).unwrap();
     let features = transpose_to_c_order(row_view.view());
     let features_dataset = Dataset::new(features.view(), None, None);
-    let dataset = BinnedDatasetBuilder::from_dataset(
-        &features_dataset,
-        BinningConfig::builder().max_bins(64).build(),
-        Parallelism::Sequential,
-    )
+    let dataset = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(64).build())
+        .add_dataset(&features_dataset, Parallelism::Sequential)
         .build()
         .expect("Failed to build binned dataset");
 
@@ -169,6 +160,8 @@ fn trained_model_improves_over_base_score_on_medium_problem() {
 /// 4. Inference correctly handles categorical splits
 #[test]
 fn train_with_categorical_features_produces_categorical_splits() {
+    use boosters::dataset::{DatasetSchema, FeatureMeta};
+    
     // Create a dataset where a categorical feature is the only useful predictor.
     // 4 categories: 0, 1, 2, 3
     // Target: category 0 or 2 → low value (1.0), category 1 or 3 → high value (10.0)
@@ -177,24 +170,22 @@ fn train_with_categorical_features_produces_categorical_splits() {
     // numeric threshold that separates the groups.
     
     let n_samples = 40;
-    let categories: Vec<u32> = (0..n_samples).map(|i| (i % 4) as u32).collect();
+    let categories: Vec<f32> = (0..n_samples).map(|i| (i % 4) as f32).collect();
     let targets: Vec<f32> = categories
         .iter()
-        .map(|&c| if c == 0 || c == 2 { 1.0 } else { 10.0 })
+        .map(|&c| if c == 0.0 || c == 2.0 { 1.0 } else { 10.0 })
         .collect();
 
-    // Build binned dataset with categorical feature
-    let bins: Vec<u32> = categories.iter().map(|&c| c as u32).collect();
-    let mapper = BinMapper::categorical(
-        vec![0, 1, 2, 3],  // category values
-        MissingType::None,
-        0,   // missing bin
-        0,   // zero bin
-        0.0, // zero value
-    );
-
-    let dataset = BinnedDatasetBuilder::new()
-        .add_binned(bins, mapper)
+    // Create feature-major array: [1 feature, n_samples]
+    let features = ndarray::Array2::from_shape_vec((1, n_samples), categories).unwrap();
+    
+    // Create schema marking the feature as categorical
+    let schema = DatasetSchema::from_features(vec![FeatureMeta::categorical()]);
+    let features_dataset = Dataset::new(features.view(), None, None).with_schema(schema);
+    
+    // Build binned dataset - should detect categorical from schema
+    let dataset = BinnedDatasetBuilder::new(BinningConfig::default())
+        .add_dataset(&features_dataset, Parallelism::Sequential)
         .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
         .build()
         .expect("Failed to build binned dataset");
@@ -304,7 +295,7 @@ fn train_from_dataset_api() {
         .build()
         .unwrap();
     
-    let model = GBDTModel::train(&dataset, config, 1).expect("training should succeed");
+    let model = GBDTModel::train(&dataset, &[], config, 1).expect("training should succeed");
     
     // Verify model produces reasonable predictions
     let forest = model.forest();
@@ -378,7 +369,7 @@ fn train_from_dataset_with_eval_set() {
         .unwrap();
     
     // Train without eval set first (eval set integration is future work)
-    let model = GBDTModel::train(&train_ds, config, 1)
+    let model = GBDTModel::train(&train_ds, &[], config, 1)
         .expect("training should succeed");
     
     // Verify predictions are reasonable
@@ -434,13 +425,13 @@ fn predict_from_dataset_with_block_buffering() {
         .build()
         .unwrap();
     
-    let model = GBDTModel::train(&train_dataset, config, 1).expect("training should succeed");
+    let model = GBDTModel::train(&train_dataset, &[], config, 1).expect("training should succeed");
     
     // Create a prediction dataset (same data)
     let pred_dataset = Dataset::new(features_fm.view(), Some(targets_fm.view()), None);
     
     // Predict using Dataset API (feature-major with block buffering)
-    let output = model.predict(pred_dataset.features(), 1);
+    let output = model.predict(&pred_dataset, 1);
     
     // Verify predictions are reasonable
     let mut pred_error = 0.0f32;
@@ -493,13 +484,13 @@ fn predict_from_dataset_parallel_matches_sequential() {
         .build()
         .unwrap();
     
-    let model = GBDTModel::train(&dataset, config, 1).expect("training should succeed");
+    let model = GBDTModel::train(&dataset, &[], config, 1).expect("training should succeed");
     
     // Sequential prediction (n_threads=1)
-    let seq_output = model.predict(dataset.features(), 1);
+    let seq_output = model.predict(&dataset, 1);
     
     // Parallel prediction (n_threads=0 = auto)
-    let par_output = model.predict(dataset.features(), 0);
+    let par_output = model.predict(&dataset, 0);
     
     // Results should match
     assert_eq!(seq_output.shape(), par_output.shape());

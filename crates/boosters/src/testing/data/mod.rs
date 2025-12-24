@@ -84,11 +84,9 @@ impl SyntheticDataset {
     /// Build a binned dataset from these features.
     pub fn to_binned(&self, max_bins: u32) -> BinnedDataset {
         let dataset = Dataset::new(self.features.view(), None, None);
-        BinnedDatasetBuilder::from_dataset(
-            &dataset,
-            BinningConfig::builder().max_bins(max_bins).build(),
-            Parallelism::Parallel,
-        )
+        let config = BinningConfig::builder().max_bins(max_bins).build();
+        BinnedDatasetBuilder::new(config)
+            .add_dataset(&dataset, Parallelism::Parallel)
             .build()
             .expect("binning failed")
     }

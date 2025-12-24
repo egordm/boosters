@@ -6,7 +6,7 @@
 
 use crate::data::binned::BinnedDataset;
 use crate::data::SamplesView;
-use crate::dataset::FeaturesView;
+use crate::dataset::Dataset;
 use crate::explainability::{
     compute_forest_importance, ExplainError, FeatureImportance, ImportanceType, ShapValues,
     TreeExplainer,
@@ -104,18 +104,19 @@ impl GBDTModel {
     /// Train a new GBDT model from a Dataset.
     ///
     /// This is the high-level training API. The dataset is automatically binned
-    /// using quantile binning with 256 bins per feature.
+    /// using quantile binning with config.binning settings.
     ///
     /// # Arguments
     ///
     /// * `dataset` - Training dataset with features and targets
+    /// * `eval_sets` - Evaluation sets for monitoring and early stopping (pass `&[]` if not needed)
     /// * `config` - Training configuration
     /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
     ///
     /// # Example
     ///
     /// ```ignore
-    /// use boosters::{GBDTModel, GBDTConfig, dataset::Dataset, training::Objective};
+    /// use boosters::{GBDTModel, GBDTConfig, dataset::Dataset, training::{Objective, EvalSet}};
     /// use ndarray::array;
     ///
     /// let features = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]; // [n_features, n_samples]
@@ -127,48 +128,35 @@ impl GBDTModel {
     ///     .n_trees(10)
     ///     .build();
     ///
-    /// let model = GBDTModel::train(&dataset, config, 0).unwrap();
+    /// // Without eval sets
+    /// let model = GBDTModel::train(&dataset, &[], config.clone(), 0).unwrap();
+    ///
+    /// // With eval sets
+    /// let eval = EvalSet::new("valid", &val_dataset);
+    /// let model = GBDTModel::train(&dataset, &[eval], config, 0).unwrap();
     /// ```
     pub fn train(
-        dataset: &crate::dataset::Dataset,
-        config: GBDTConfig,
-        n_threads: usize,
-    ) -> Option<Self> {
-        Self::train_with_eval(dataset, &[], config, n_threads)
-    }
-
-    /// Train a new GBDT model with evaluation sets.
-    ///
-    /// # Arguments
-    ///
-    /// * `dataset` - Training dataset with features and targets
-    /// * `eval_sets` - Evaluation sets for monitoring and early stopping
-    /// * `config` - Training configuration
-    /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
-    pub fn train_with_eval(
-        dataset: &crate::dataset::Dataset,
+        dataset: &Dataset,
         eval_sets: &[EvalSet<'_>],
         config: GBDTConfig,
         n_threads: usize,
     ) -> Option<Self> {
         use crate::data::BinnedDatasetBuilder;
-        use crate::utils::Parallelism;
 
-        // Bin the dataset using config.binning
-        let binned = BinnedDatasetBuilder::from_dataset(
-            dataset,
-            config.binning.clone(),
-            Parallelism::Parallel,
-        )
-            .build()
-            .expect("binning should not fail on valid dataset");
+        run_with_threads(n_threads, |parallelism| {
+            // Bin the training dataset using config.binning
+            let binned = BinnedDatasetBuilder::new(config.binning.clone())
+                .add_dataset(dataset, parallelism)
+                .build()
+                .expect("binning should not fail on valid dataset");
 
-        // Get targets - panics if dataset has no targets
-        let targets_view = dataset.targets().expect("dataset must have targets for training");
-        let targets = targets_view.as_single_output();
-        let weights = dataset.weights();
+            // Get targets - panics if dataset has no targets
+            let targets_view = dataset.targets().expect("dataset must have targets for training");
+            let targets = targets_view.as_single_output();
+            let weights = dataset.weights();
 
-        Self::train_binned(&binned, targets, weights, eval_sets, config, n_threads)
+            Self::train_inner(&binned, targets, weights, eval_sets, config, parallelism)
+        })
     }
 
     /// Train a new GBDT model from pre-binned data.
@@ -247,18 +235,19 @@ impl GBDTModel {
     // Prediction
     // =========================================================================
 
-    /// Predict from a Dataset (feature-major storage).
+    /// Predict from a Dataset.
     ///
-    /// This is the **preferred** prediction method. It accepts features in
-    /// feature-major layout `[n_features, n_samples]` and uses block buffering
-    /// for optimal cache efficiency.
+    /// This is the **preferred** prediction method. It extracts features from
+    /// the dataset (feature-major layout `[n_features, n_samples]`) and uses 
+    /// block buffering for optimal cache efficiency. Targets in the dataset
+    /// are ignored.
     ///
     /// Returns probabilities for classification (sigmoid/softmax) or raw values
     /// for regression. Uses automatic parallelization for large batches.
     ///
     /// # Arguments
     ///
-    /// * `features` - Feature-major data `[n_features, n_samples]`
+    /// * `data` - Dataset containing features (targets are ignored)
     /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
     ///
     /// # Returns
@@ -268,51 +257,27 @@ impl GBDTModel {
     /// # Example
     ///
     /// ```ignore
-    /// // From a Dataset
-    /// let preds = model.predict(dataset.features(), 1);
-    ///
-    /// // From a FeaturesView
-    /// let preds = model.predict(features_view, 1);
+    /// let preds = model.predict(&dataset, 0);
     /// ```
     pub fn predict(
         &self,
-        features: FeaturesView<'_>,
+        data: &Dataset,
         n_threads: usize,
     ) -> Array2<f32> {
-        let n_samples = features.n_samples();
-        let n_groups = self.meta.n_groups;
+        // Get raw predictions
+        let mut output = self.predict_raw(data, n_threads);
 
-        if n_samples == 0 {
-            return Array2::zeros((n_groups, 0));
-        }
+        // Apply transformation (sigmoid/softmax for classification)
+        self.config.objective.transform_predictions(output.view_mut());
 
-        // Allocate output [n_groups, n_samples]
-        let mut output_array = Array2::<f32>::zeros((n_groups, n_samples));
-
-        // Run prediction with thread pool management
-        run_with_threads(n_threads, |parallelism| {
-            let predictor = UnrolledPredictor6::new(&self.forest);
-            
-            // Use the predictor's block-buffered prediction for feature-major data
-            predictor.predict_from_feature_major_into(
-                features.view(),
-                None,
-                parallelism,
-                output_array.view_mut(),
-            );
-        });
-
-        // Apply transformation if we have config with objective
-        self.config.objective.transform_predictions(output_array.view_mut());
-
-        output_array
+        output
     }
 
-    /// Predict features, returning raw margin scores (no transform).
+    /// Predict returning raw margin scores (no transform).
     ///
     /// # Arguments
     ///
-    /// * `features` - Feature-major data `[n_features, n_samples]`
+    /// * `data` - Dataset containing features (targets are ignored)
     /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
     ///
     /// # Returns
@@ -320,9 +285,10 @@ impl GBDTModel {
     /// Array2 with shape `[n_groups, n_samples]`.
     pub fn predict_raw(
         &self,
-        features: FeaturesView<'_>,
+        data: &Dataset,
         n_threads: usize,
     ) -> Array2<f32> {
+        let features = data.features();
         let n_samples = features.n_samples();
         let n_groups = self.meta.n_groups;
 
@@ -439,8 +405,6 @@ mod tests {
 
     #[test]
     fn predict_basic() {
-        use crate::dataset::Dataset;
-        
         let forest = make_simple_forest();
         let meta = ModelMeta::for_regression(2);
         let model = GBDTModel::from_forest(forest, meta);
@@ -449,13 +413,13 @@ mod tests {
         // Feature-major: [n_features=2, n_samples=1]
         let features1_fm = arr2(&[[0.3], [0.5]]);
         let dataset1 = Dataset::new(features1_fm.view(), None, None);
-        let preds1 = model.predict(dataset1.features(), 1);
+        let preds1 = model.predict(&dataset1, 1);
         assert_eq!(preds1.row(0).as_slice().unwrap(), &[1.0]);
 
         // x0 >= 0.5, x1 >= 0.3 → leaf 3.0
         let features2_fm = arr2(&[[0.7], [0.5]]);
         let dataset2 = Dataset::new(features2_fm.view(), None, None);
-        let preds2 = model.predict(dataset2.features(), 1);
+        let preds2 = model.predict(&dataset2, 1);
         assert_eq!(preds2.row(0).as_slice().unwrap(), &[3.0]);
     }
 
@@ -474,7 +438,7 @@ mod tests {
             [0.5, 0.5], // feature 1 values
         ]);
         let dataset = Dataset::new(features_fm.view(), None, None);
-        let preds = model.predict(dataset.features(), 1);
+        let preds = model.predict(&dataset, 1);
 
         // Shape is [n_groups, n_samples] = [1, 2]
         assert_eq!(preds.row(0).as_slice().unwrap(), &[1.0, 3.0]);

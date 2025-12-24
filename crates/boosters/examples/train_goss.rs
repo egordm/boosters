@@ -70,11 +70,8 @@ fn main() {
 
     // Build binned dataset for training
     let features_dataset = Dataset::new(train_features.view(), None, None);
-    let dataset = BinnedDatasetBuilder::from_dataset(
-        &features_dataset,
-        BinningConfig::builder().max_bins(256).build(),
-        Parallelism::Parallel,
-    )
+    let dataset = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+        .add_dataset(&features_dataset, Parallelism::Parallel)
         .build()
         .expect("Failed to build binned dataset");
 

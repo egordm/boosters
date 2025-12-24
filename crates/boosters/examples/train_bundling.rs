@@ -82,11 +82,8 @@ fn main() {
     println!("=== Training WITHOUT bundling ===\n");
 
     let start = Instant::now();
-    let dataset_no_bundle = BinnedDatasetBuilder::from_dataset(
-        &features_dataset,
-        BinningConfig::builder().max_bins(256).build(),
-        Parallelism::Parallel,
-    )
+    let dataset_no_bundle = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+        .add_dataset(&features_dataset, Parallelism::Parallel)
         .with_bundling(BundlingConfig::disabled())
         .build()
         .expect("Failed to build dataset");
@@ -107,11 +104,8 @@ fn main() {
     println!("\n=== Training WITH bundling ===\n");
 
     let start = Instant::now();
-    let dataset_bundled = BinnedDatasetBuilder::from_dataset(
-        &features_dataset,
-        BinningConfig::builder().max_bins(256).build(),
-        Parallelism::Parallel,
-    )
+    let dataset_bundled = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+        .add_dataset(&features_dataset, Parallelism::Parallel)
         .with_bundling(BundlingConfig::auto())
         .build()
         .expect("Failed to build dataset");
@@ -183,8 +177,8 @@ fn main() {
     .expect("Training failed");
 
     // Evaluate both - features_dataset is already feature-major
-    let predictions_no_bundle = model_no_bundle.predict(features_dataset.features(), 1);
-    let predictions_bundled = model_bundled.predict(features_dataset.features(), 1);
+    let predictions_no_bundle = model_no_bundle.predict(&features_dataset, 1);
+    let predictions_bundled = model_bundled.predict(&features_dataset, 1);
 
     let rmse_no_bundle = compute_rmse(predictions_no_bundle.as_slice().unwrap(), labels.as_slice().unwrap());
     let rmse_bundled = compute_rmse(predictions_bundled.as_slice().unwrap(), labels.as_slice().unwrap());

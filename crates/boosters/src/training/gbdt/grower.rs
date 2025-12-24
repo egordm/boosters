@@ -713,7 +713,7 @@ impl TreeGrower {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{BinMapper, BinnedDataset, BinnedDatasetBuilder, GroupLayout, GroupStrategy, MissingType};
+    use crate::data::{BinMapper, BinningConfig, BinnedDataset, BinnedDatasetBuilder, GroupLayout, GroupStrategy, MissingType};
     use crate::repr::gbdt::TreeView;
 
     /// Helper to count leaves in a Tree.
@@ -733,7 +733,7 @@ mod tests {
             0.0,
             3.0,
         );
-        BinnedDatasetBuilder::new()
+        BinnedDatasetBuilder::new(BinningConfig::default())
             .add_binned(bins, mapper)
             .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
             .build()
@@ -749,7 +749,7 @@ mod tests {
         let f1_mapper =
             BinMapper::numerical(vec![0.5, 1.5], MissingType::None, 0, 0, 0.0, 0.0, 1.0);
 
-        BinnedDatasetBuilder::new()
+        BinnedDatasetBuilder::new(BinningConfig::default())
             .add_binned(f0_bins, f0_mapper)
             .add_binned(f1_bins, f1_mapper)
             .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
@@ -770,7 +770,7 @@ mod tests {
             0.0,
             1.0,
         );
-        BinnedDatasetBuilder::new()
+        BinnedDatasetBuilder::new(BinningConfig::default())
             .add_binned(bins, mapper)
             .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
             .build()
@@ -789,7 +789,7 @@ mod tests {
             0,
             0.0,
         );
-        BinnedDatasetBuilder::new()
+        BinnedDatasetBuilder::new(BinningConfig::default())
             .add_binned(bins, mapper)
             .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
             .build()

@@ -411,7 +411,7 @@ impl RowPartitioner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{BinMapper, BinnedDataset, BinnedDatasetBuilder, GroupLayout, GroupStrategy, MissingType};
+    use crate::data::{BinMapper, BinningConfig, BinnedDataset, BinnedDatasetBuilder, GroupLayout, GroupStrategy, MissingType};
 
     fn make_test_dataset() -> BinnedDataset {
         // 8 samples, 2 features
@@ -425,7 +425,7 @@ mod tests {
         let f1_mapper =
             BinMapper::numerical(vec![0.5, 1.5], MissingType::None, 0, 0, 0.0, 0.0, 1.0);
 
-        BinnedDatasetBuilder::new()
+        BinnedDatasetBuilder::new(BinningConfig::default())
             .add_binned(f0_bins, f0_mapper)
             .add_binned(f1_bins, f1_mapper)
             .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
