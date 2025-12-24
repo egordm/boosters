@@ -96,7 +96,77 @@ impl GBDTModel {
         self
     }
 
-    /// Train a new GBDT model.
+    // =========================================================================
+    // Training
+    // =========================================================================
+
+    /// Train a new GBDT model from a Dataset.
+    ///
+    /// This is the high-level training API. The dataset is automatically binned
+    /// using quantile binning with 256 bins per feature.
+    ///
+    /// # Arguments
+    ///
+    /// * `dataset` - Training dataset with features and targets
+    /// * `config` - Training configuration
+    /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use boosters::{GBDTModel, GBDTConfig, dataset::Dataset, training::Objective};
+    /// use ndarray::array;
+    ///
+    /// let features = array![[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]];
+    /// let targets = array![[0.0], [1.0], [0.0]];
+    /// let dataset = Dataset::new(features.view(), targets.view());
+    ///
+    /// let config = GBDTConfig::builder()
+    ///     .objective(Objective::squared_loss())
+    ///     .n_trees(10)
+    ///     .build();
+    ///
+    /// let model = GBDTModel::train(&dataset, config, 0).unwrap();
+    /// ```
+    pub fn train(
+        dataset: &crate::dataset::Dataset,
+        config: GBDTConfig,
+        n_threads: usize,
+    ) -> Option<Self> {
+        Self::train_with_eval(dataset, &[], config, n_threads)
+    }
+
+    /// Train a new GBDT model with evaluation sets.
+    ///
+    /// # Arguments
+    ///
+    /// * `dataset` - Training dataset with features and targets
+    /// * `eval_sets` - Evaluation sets for monitoring and early stopping
+    /// * `config` - Training configuration
+    /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
+    pub fn train_with_eval(
+        dataset: &crate::dataset::Dataset,
+        eval_sets: &[EvalSet<'_>],
+        config: GBDTConfig,
+        n_threads: usize,
+    ) -> Option<Self> {
+        use crate::data::BinnedDatasetBuilder;
+
+        // Bin the dataset (256 bins per feature by default)
+        let binned = BinnedDatasetBuilder::from_dataset(dataset, 256)
+            .build()
+            .expect("binning should not fail on valid dataset");
+
+        // Get targets - panics if dataset has no targets
+        let targets = dataset.targets_1d();
+        let weights = dataset.weights();
+
+        Self::train_binned(&binned, targets, weights, eval_sets, config, n_threads)
+    }
+
+    /// Train a new GBDT model from pre-binned data.
+    ///
+    /// Use this for advanced scenarios where you want control over binning.
     ///
     /// # Arguments
     ///

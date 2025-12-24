@@ -11,6 +11,9 @@ use super::storage::{BinStorage, BinType, GroupLayout};
 use super::BinMapper;
 
 use crate::data::FeaturesView;
+// Import from the top-level dataset module (not local binned::dataset)
+// Use ::boosters path to avoid shadowing by local dataset module
+type UnifiedDataset = crate::dataset::Dataset;
 
 // =============================================================================
 // Binning Configuration
@@ -322,6 +325,219 @@ impl BinnedDatasetBuilder {
         }
 
         builder
+    }
+
+    /// Create a builder from a Dataset with default binning config.
+    ///
+    /// This is the high-level API for creating a binned dataset from user data.
+    /// Uses quantile binning with 256 bins by default.
+    ///
+    /// Categorical features in the schema are binned as categorical.
+    ///
+    /// # Arguments
+    /// * `dataset` - Dataset with features and optional schema
+    /// * `max_bins` - Maximum number of bins per feature (default: 256)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use boosters::dataset::Dataset;
+    /// use boosters::data::BinnedDatasetBuilder;
+    /// use ndarray::array;
+    ///
+    /// let features = array![[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]];
+    /// let targets = array![[0.0], [1.0], [0.0]];
+    /// let dataset = Dataset::new(features.view(), targets.view());
+    ///
+    /// let binned = BinnedDatasetBuilder::from_dataset(&dataset, 256)
+    ///     .build()
+    ///     .expect("binning should succeed");
+    /// ```
+    pub fn from_dataset(dataset: &UnifiedDataset, max_bins: u32) -> Self {
+        Self::from_dataset_with_options(
+            dataset,
+            BinningConfig::builder().max_bins(max_bins).build(),
+            crate::utils::Parallelism::Parallel,
+        )
+    }
+
+    /// Create a builder from a Dataset with full control.
+    ///
+    /// Use this method when you need explicit control over:
+    /// - Per-feature bin counts via `BinningConfig`
+    /// - Binning strategy (quantile vs equal-width)
+    /// - Threading strategy (sequential vs parallel)
+    ///
+    /// # Arguments
+    /// * `dataset` - Dataset with features and optional schema
+    /// * `config` - Binning configuration
+    /// * `parallelism` - Threading strategy
+    pub fn from_dataset_with_options(
+        dataset: &UnifiedDataset,
+        config: BinningConfig,
+        parallelism: crate::utils::Parallelism,
+    ) -> Self {
+        let n_features = dataset.n_features();
+        let n_samples = dataset.n_samples();
+        let features_view = dataset.features();
+        let schema = dataset.schema();
+
+        // Helper to process a single feature
+        let process_feature = |feat_idx: usize| -> (Vec<u32>, BinMapper) {
+            let feature_data = features_view.feature(feat_idx);
+            let is_categorical = schema.feature_type(feat_idx).is_categorical();
+
+            if is_categorical {
+                Self::bin_categorical_feature(feature_data.as_slice().unwrap(), n_samples)
+            } else {
+                Self::bin_numeric_feature_from_slice(
+                    feature_data.as_slice().unwrap(),
+                    n_samples,
+                    &config,
+                )
+            }
+        };
+
+        // Process features - parallel or sequential based on parallelism
+        let feature_results: Vec<(Vec<u32>, BinMapper)> = if parallelism.is_parallel() {
+            (0..n_features).into_par_iter().map(process_feature).collect()
+        } else {
+            (0..n_features).map(process_feature).collect()
+        };
+
+        // Add all features to builder
+        let mut builder = Self::new();
+        for (bins, mapper) in feature_results {
+            builder = builder.add_binned(bins, mapper);
+        }
+
+        builder
+    }
+
+    /// Bin a categorical feature from float values.
+    ///
+    /// Categories are expected to be non-negative integers encoded as floats.
+    fn bin_categorical_feature(data: &[f32], _n_samples: usize) -> (Vec<u32>, BinMapper) {
+        use super::MissingType;
+
+        // Find unique categories
+        let mut categories: Vec<i32> = data
+            .iter()
+            .filter(|v| v.is_finite())
+            .map(|&v| v as i32)
+            .collect();
+        categories.sort_unstable();
+        categories.dedup();
+
+        // Map values to bin indices
+        let bins: Vec<u32> = data
+            .iter()
+            .map(|&val| {
+                if !val.is_finite() {
+                    0 // Missing → bin 0
+                } else {
+                    let cat = val as i32;
+                    categories.binary_search(&cat).unwrap_or(0) as u32
+                }
+            })
+            .collect();
+
+        let mapper = BinMapper::categorical(
+            categories,
+            MissingType::None,
+            0,
+            0,
+            0.0,
+        );
+
+        (bins, mapper)
+    }
+
+    /// Bin a numeric feature from a slice (for Dataset integration).
+    fn bin_numeric_feature_from_slice(
+        data: &[f32],
+        n_samples: usize,
+        config: &BinningConfig,
+    ) -> (Vec<u32>, BinMapper) {
+        use super::MissingType;
+
+        let max_bins = config.max_bins;
+
+        // Collect non-NaN values and compute min/max
+        let mut values: Vec<f32> = Vec::with_capacity(n_samples);
+        let mut min_val = f32::MAX;
+        let mut max_val = f32::MIN;
+
+        for &val in data.iter() {
+            if val.is_finite() {
+                values.push(val);
+                min_val = min_val.min(val);
+                max_val = max_val.max(val);
+            }
+        }
+
+        // Handle degenerate cases
+        if values.is_empty() || min_val >= max_val {
+            let bins: Vec<u32> = vec![0; n_samples];
+            let mapper = BinMapper::numerical(
+                vec![f64::MAX],
+                MissingType::None,
+                0,
+                0,
+                0.0,
+                0.0,
+                0.0,
+            );
+            return (bins, mapper);
+        }
+
+        let n_bins = max_bins.min(values.len() as u32);
+
+        // Compute bin boundaries based on strategy
+        let bounds: Vec<f64> = match config.strategy {
+            BinningStrategy::EqualWidth => {
+                let width = (max_val - min_val) / n_bins as f32;
+                (1..=n_bins)
+                    .map(|i| {
+                        if i == n_bins {
+                            f64::MAX
+                        } else {
+                            (min_val + i as f32 * width) as f64
+                        }
+                    })
+                    .collect()
+            }
+            BinningStrategy::Quantile => {
+                Self::compute_quantile_bounds(&mut values, n_bins, config.sample_cnt)
+            }
+        };
+
+        // Bin each value using binary search on bounds
+        let bins: Vec<u32> = data
+            .iter()
+            .map(|&val| {
+                if !val.is_finite() {
+                    0 // Map NaN to bin 0
+                } else {
+                    match bounds.binary_search_by(|b| b.partial_cmp(&(val as f64)).unwrap()) {
+                        Ok(i) => i as u32,
+                        Err(i) => i as u32,
+                    }
+                }
+            })
+            .collect();
+
+        let mapper = BinMapper::numerical(
+            bounds,
+            MissingType::None,
+            0,
+            0,
+            0.0,
+            min_val as f64,
+            max_val as f64,
+        );
+
+        (bins, mapper)
     }
 
     /// Bin a single feature.

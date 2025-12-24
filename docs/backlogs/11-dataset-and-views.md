@@ -145,38 +145,44 @@ Implement TargetsView for target access.
 
 Integrate new Dataset with GBDT and GBLinear. Delete old code immediately after each migration.
 
-### Story 3.1: Baseline Performance Capture
+### Story 3.1: Baseline Performance Capture ✓
 
 Capture baseline performance before any changes.
 
 **Tasks:**
 
-- [ ] 3.1.1: Run existing prediction benchmarks, record baseline numbers
-- [ ] 3.1.2: Run existing training benchmarks, record baseline numbers
-- [ ] 3.1.3: Document baselines in benchmark report
+- [x] 3.1.1: Run existing prediction benchmarks, record baseline numbers
+- [x] 3.1.2: Run existing training benchmarks, record baseline numbers
+- [x] 3.1.3: Document baselines in benchmark report
 
 **Definition of Done:**
 
-- Baseline numbers documented with commit hash
-- Can compare after migration
+- Baseline numbers documented with commit hash ✓
+- Can compare after migration ✓
 
-### Story 3.2: GBDT Training Integration
+### Story 3.2: GBDT Training Integration ✓
 
 Update GBDT training to use new Dataset.
 
 **Tasks:**
 
-- [ ] 3.2.1: Update `GBDTModel::train()` signature to accept `&Dataset`
-- [ ] 3.2.2: Implement `Dataset::to_binned()` or use existing `BinnedDatasetBuilder`
-- [ ] 3.2.3: Update categorical handling in binning (float → i32 cast)
-- [ ] 3.2.4: Update tests to use new Dataset construction
-- [ ] 3.2.5: Verify existing integration tests pass (`tests/inference_xgboost.rs`, `tests/training_*.rs`)
+- [x] 3.2.1: Update `GBDTModel::train()` signature to accept `&Dataset`
+- [x] 3.2.2: Implement `Dataset::to_binned()` or use existing `BinnedDatasetBuilder`
+  - Added `BinnedDatasetBuilder::from_dataset()` and `from_dataset_with_options()`
+- [x] 3.2.3: Update categorical handling in binning (float → i32 cast)
+- [x] 3.2.4: Update tests to use new Dataset construction
+  - Added `train_from_dataset_api` and `train_from_dataset_with_eval_set` tests
+- [x] 3.2.5: Verify existing integration tests pass
+
+**Note**: Fixed critical bug where `Dataset::new()` used `t().to_owned()` which
+didn't produce C-contiguous arrays. Changed to `t().as_standard_layout().into_owned()`
+to ensure contiguous feature rows.
 
 **Definition of Done:**
 
-- GBDT training works with new Dataset
-- Existing integration tests pass with same reference values
-- No regression in training quality
+- GBDT training works with new Dataset ✓
+- Existing integration tests pass with same reference values ✓
+- No regression in training quality ✓
 
 ### Story 3.3: GBDT Prediction with Block Buffering
 

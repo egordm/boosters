@@ -79,9 +79,10 @@ impl Dataset {
         let schema = DatasetSchema::all_numeric(n_features);
 
         // Transpose features from [n_samples, n_features] to [n_features, n_samples]
-        let features_t = features.t().to_owned();
+        // Use as_standard_layout() to ensure C-contiguous memory for contiguous rows
+        let features_t = features.t().as_standard_layout().into_owned();
         // Transpose targets from [n_samples, n_outputs] to [n_outputs, n_samples]
-        let targets_t = targets.t().to_owned();
+        let targets_t = targets.t().as_standard_layout().into_owned();
 
         Self {
             features: features_t,
@@ -102,8 +103,8 @@ impl Dataset {
         let n_features = features.ncols();
         let schema = DatasetSchema::all_numeric(n_features);
 
-        // Transpose to [n_features, n_samples]
-        let features_t = features.t().to_owned();
+        // Transpose to [n_features, n_samples], ensure C-contiguous
+        let features_t = features.t().as_standard_layout().into_owned();
 
         Self {
             features: features_t,
@@ -212,14 +213,14 @@ impl Dataset {
     /// Get a view of the feature data.
     ///
     /// Shape: `[n_features, n_samples]` (feature-major).
-    pub fn features_view(&self) -> FeaturesView<'_> {
+    pub fn features(&self) -> FeaturesView<'_> {
         FeaturesView::new(self.features.view(), &self.schema)
     }
 
     /// Get a view of the target data.
     ///
     /// Returns `None` if no targets were provided.
-    pub fn targets_view(&self) -> Option<TargetsView<'_>> {
+    pub fn targets(&self) -> Option<TargetsView<'_>> {
         self.targets.as_ref().map(|t| TargetsView::new(t.view()))
     }
 
@@ -228,6 +229,17 @@ impl Dataset {
     /// Returns `None` if no weights were provided.
     pub fn weights(&self) -> Option<ArrayView1<'_, f32>> {
         self.weights.as_ref().map(|w| w.view())
+    }
+
+    /// Get targets as 1D array for single-output datasets.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no targets or if n_outputs != 1.
+    pub fn targets_1d(&self) -> ArrayView1<'_, f32> {
+        let targets = self.targets.as_ref().expect("dataset has no targets");
+        assert_eq!(targets.nrows(), 1, "targets_1d requires n_outputs == 1");
+        targets.row(0)
     }
 
     // =========================================================================
@@ -499,7 +511,7 @@ mod tests {
         assert!(!ds.has_categorical());
 
         // Verify transpose happened correctly
-        let view = ds.features_view();
+        let view = ds.features();
         // Feature 0 should be [1, 2, 3] (first column of input)
         assert_eq!(view.feature(0).to_vec(), vec![1.0, 2.0, 3.0]);
         // Feature 1 should be [4, 5, 6] (second column of input)
@@ -516,7 +528,7 @@ mod tests {
         assert_eq!(ds.n_samples(), 3);
         assert_eq!(ds.n_features(), 2);
 
-        let view = ds.features_view();
+        let view = ds.features();
         assert_eq!(view.feature(0).to_vec(), vec![1.0, 2.0, 3.0]);
         assert_eq!(view.feature(1).to_vec(), vec![4.0, 5.0, 6.0]);
     }
@@ -550,7 +562,7 @@ mod tests {
         let targets = array![[0.0], [1.0], [0.0]];
         let ds = Dataset::new(features.view(), targets.view());
 
-        let view = ds.features_view();
+        let view = ds.features();
         assert_eq!(view.n_features(), 2);
         assert_eq!(view.n_samples(), 3);
         assert_eq!(view.feature(0).to_vec(), vec![1.0, 2.0, 3.0]);
@@ -563,7 +575,7 @@ mod tests {
         let targets = array![[0.0, 1.0], [1.0, 0.0]]; // 2 samples, 2 outputs
         let ds = Dataset::new(features.view(), targets.view());
 
-        let view = ds.targets_view().unwrap();
+        let view = ds.targets().unwrap();
         assert_eq!(view.n_outputs(), 2);
         assert_eq!(view.n_samples(), 2);
         assert_eq!(view.output(0).to_vec(), vec![0.0, 1.0]);
@@ -576,7 +588,7 @@ mod tests {
         let targets = array![[0.0], [1.0], [0.0]]; // 3 samples, 1 output
         let ds = Dataset::new(features.view(), targets.view());
 
-        assert_eq!(ds.targets_view().unwrap().as_single_output().to_vec(), vec![0.0, 1.0, 0.0]);
+        assert_eq!(ds.targets().unwrap().as_single_output().to_vec(), vec![0.0, 1.0, 0.0]);
     }
 
     #[test]
@@ -617,7 +629,7 @@ mod tests {
         assert_eq!(ds.n_features(), 1);
         assert_eq!(ds.n_samples(), 5);
 
-        let view = ds.features_view();
+        let view = ds.features();
         assert_eq!(view.get(0, 0), 0.0); // default
         assert_eq!(view.get(1, 0), 10.0);
         assert_eq!(view.get(3, 0), 30.0);
@@ -689,5 +701,38 @@ mod tests {
     fn dataset_is_send_sync() {
         assert_send_sync::<Dataset>();
         assert_send_sync::<DatasetBuilder>();
+    }
+
+    #[test]
+    fn features_are_contiguous_after_transpose() {
+        // Create data in user format [n_samples, n_features]
+        let n_samples = 100;
+        let n_features = 5;
+        let mut data = Vec::with_capacity(n_samples * n_features);
+        for i in 0..n_samples {
+            for j in 0..n_features {
+                data.push((i * n_features + j) as f32);
+            }
+        }
+
+        let features = Array2::from_shape_vec((n_samples, n_features), data).unwrap();
+        let targets = Array2::from_shape_vec(
+            (n_samples, 1),
+            (0..n_samples).map(|i| i as f32).collect(),
+        )
+        .unwrap();
+
+        let ds = Dataset::new(features.view(), targets.view());
+        let view = ds.features();
+
+        // Each feature should be contiguous (accessible as slice)
+        for f in 0..n_features {
+            let feature = view.feature(f);
+            assert!(
+                feature.as_slice().is_some(),
+                "feature {} should be contiguous",
+                f
+            );
+        }
     }
 }

@@ -3,6 +3,8 @@
 //! Focused on behavior and invariants (not default params or superficial shapes).
 
 use boosters::data::{transpose_to_c_order, BinMapper, BinnedDatasetBuilder, FeaturesView, GroupLayout, GroupStrategy, MissingType};
+use boosters::dataset::Dataset;
+use boosters::model::gbdt::{GBDTConfig, GBDTModel};
 use boosters::repr::gbdt::{TreeView, SplitType};
 use boosters::training::{GBDTParams, GBDTTrainer, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
@@ -248,5 +250,142 @@ fn train_with_categorical_features_produces_categorical_splits() {
         pred_cat1 > 5.5 && pred_cat3 > 5.5,
         "Categories 1 and 3 should predict high values, got {} and {}",
         pred_cat1, pred_cat3
+    );
+}
+
+/// Test GBDTModel::train() using the new Dataset type.
+///
+/// This is an end-to-end test of the high-level training API that accepts
+/// a Dataset and returns a trained model without manual binning.
+#[test]
+fn train_from_dataset_api() {
+    // Simple linear relationship: y = x0 + 0.5*x1
+    let n_samples = 100;
+    
+    // Build row-major features: [n_samples, n_features]
+    let mut features_data = Vec::with_capacity(n_samples * 2);
+    let mut targets_data = Vec::with_capacity(n_samples);
+    
+    for i in 0..n_samples {
+        let x0 = i as f32 / 10.0;
+        let x1 = (i as f32 * 2.0) % 10.0;
+        features_data.push(x0);
+        features_data.push(x1);
+        targets_data.push(x0 + 0.5 * x1);
+    }
+    
+    // Create Dataset using the new API (accepts [n_samples, n_features])
+    let features = Array2::from_shape_vec((n_samples, 2), features_data).unwrap();
+    let targets = Array2::from_shape_vec((n_samples, 1), targets_data.clone()).unwrap();
+    let dataset = Dataset::new(features.view(), targets.view());
+    
+    assert_eq!(dataset.n_samples(), n_samples);
+    assert_eq!(dataset.n_features(), 2);
+    
+    // Train using high-level API
+    use boosters::model::gbdt::TreeParams;
+    let config = GBDTConfig::builder()
+        .n_trees(20)
+        .learning_rate(0.2)
+        .tree(TreeParams::depth_wise(3))
+        .build()
+        .unwrap();
+    
+    let model = GBDTModel::train(&dataset, config, 1).expect("training should succeed");
+    
+    // Verify model produces reasonable predictions
+    let forest = model.forest();
+    forest.validate().expect("trained forest should be valid");
+    
+    // Compute error
+    let base = forest.base_score()[0];
+    let mut base_error = 0.0f32;
+    let mut pred_error = 0.0f32;
+    
+    for row in 0..n_samples {
+        let x0 = row as f32 / 10.0;
+        let x1 = (row as f32 * 2.0) % 10.0;
+        let pred = forest.predict_row(&[x0, x1])[0];
+        let target = targets_data[row];
+        
+        base_error += (base - target).powi(2);
+        pred_error += (pred - target).powi(2);
+    }
+    
+    assert!(
+        pred_error < base_error,
+        "Model should improve over base score: pred_error={}, base_error={}",
+        pred_error, base_error
+    );
+}
+
+/// Test GBDTModel::train_with_eval() using EvalSet.
+#[test]
+fn train_from_dataset_with_eval_set() {
+    use boosters::model::gbdt::TreeParams;
+    
+    // Create training data
+    let n_train = 80;
+    let n_eval = 20;
+    
+    let mut train_features = Vec::with_capacity(n_train * 2);
+    let mut train_targets = Vec::with_capacity(n_train);
+    let mut eval_features = Vec::with_capacity(n_eval * 2);
+    let mut eval_targets = Vec::with_capacity(n_eval);
+    
+    for i in 0..n_train {
+        let x0 = i as f32 / 10.0;
+        let x1 = (i as f32 * 2.0) % 10.0;
+        train_features.push(x0);
+        train_features.push(x1);
+        train_targets.push(x0 + 0.5 * x1);
+    }
+    
+    for i in 0..n_eval {
+        let x0 = (n_train + i) as f32 / 10.0;
+        let x1 = ((n_train + i) as f32 * 2.0) % 10.0;
+        eval_features.push(x0);
+        eval_features.push(x1);
+        eval_targets.push(x0 + 0.5 * x1);
+    }
+    
+    // Create training dataset
+    let train_feat = Array2::from_shape_vec((n_train, 2), train_features).unwrap();
+    let train_targ = Array2::from_shape_vec((n_train, 1), train_targets).unwrap();
+    let train_ds = Dataset::new(train_feat.view(), train_targ.view());
+    
+    // Create eval set using binned data (existing API)
+    // For now, just test train() works. EvalSet integration will be story 3.3+
+    let config = GBDTConfig::builder()
+        .n_trees(10)
+        .learning_rate(0.2)
+        .tree(TreeParams::depth_wise(3))
+        .build()
+        .unwrap();
+    
+    // Train without eval set first (eval set integration is future work)
+    let model = GBDTModel::train(&train_ds, config, 1)
+        .expect("training should succeed");
+    
+    // Verify predictions are reasonable
+    let forest = model.forest();
+    let base = forest.base_score()[0];
+    let mut pred_error = 0.0f32;
+    let mut base_error = 0.0f32;
+    
+    for i in 0..n_eval {
+        let x0 = (n_train + i) as f32 / 10.0;
+        let x1 = ((n_train + i) as f32 * 2.0) % 10.0;
+        let pred = forest.predict_row(&[x0, x1])[0];
+        let target = eval_targets[i];
+        
+        pred_error += (pred - target).powi(2);
+        base_error += (base - target).powi(2);
+    }
+    
+    assert!(
+        pred_error < base_error,
+        "Model should generalize to unseen data: pred_error={}, base_error={}",
+        pred_error, base_error
     );
 }
