@@ -116,12 +116,14 @@ impl Dataset {
 
     /// Create a dataset from pre-transposed feature-major data.
     ///
+    /// **Note:** Prefer [`Dataset::new`] unless you already have feature-major data.
+    /// This method skips the internal transpose, useful when data comes from
+    /// systems that use column-major layout.
+    ///
     /// # Arguments
     ///
     /// * `features` - Feature matrix `[n_features, n_samples]` (feature-major)
     /// * `targets` - Target matrix `[n_outputs, n_samples]`
-    ///
-    /// Use this when you already have feature-major data to avoid transpose overhead.
     pub fn from_column_major(features: ArrayView2<f32>, targets: ArrayView2<f32>) -> Self {
         debug_assert_eq!(
             features.ncols(),
@@ -142,11 +144,11 @@ impl Dataset {
 
     /// Create a dataset from pre-transposed feature-major data (no targets).
     ///
+    /// **Note:** Prefer [`Dataset::from_features`] unless you already have feature-major data.
+    ///
     /// # Arguments
     ///
     /// * `features` - Feature matrix `[n_features, n_samples]` (feature-major)
-    ///
-    /// Use this when you already have feature-major data to avoid transpose overhead.
     pub fn from_column_major_features(features: ArrayView2<f32>) -> Self {
         let n_features = features.nrows();
         let schema = DatasetSchema::all_numeric(n_features);
