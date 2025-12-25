@@ -174,6 +174,85 @@ class TestGBDTModelFit:
             model.fit(train)
 
 
+class TestGBDTModelPredict:
+    """Tests for GBDTModel.predict() method."""
+
+    @pytest.fixture
+    def fitted_regression_model(self) -> tuple[GBDTModel, np.ndarray, np.ndarray]:
+        """Return a fitted regression model with test data."""
+        rng = np.random.default_rng(42)
+        X = rng.standard_normal((100, 5)).astype(np.float32)
+        y = (X[:, 0] + 0.5 * X[:, 1] + rng.standard_normal(100) * 0.1).astype(np.float32)
+        train = Dataset(X, y)
+        model = GBDTModel(config=GBDTConfig(n_estimators=10))
+        model.fit(train)
+        return model, X, y
+
+    @pytest.fixture
+    def fitted_classification_model(self) -> tuple[GBDTModel, np.ndarray, np.ndarray]:
+        """Return a fitted classification model with test data."""
+        rng = np.random.default_rng(42)
+        X = rng.standard_normal((100, 5)).astype(np.float32)
+        y = (X[:, 0] + X[:, 1] > 0).astype(np.float32)
+        train = Dataset(X, y)
+        model = GBDTModel(config=GBDTConfig(n_estimators=10, objective=bst.LogisticLoss()))
+        model.fit(train)
+        return model, X, y
+
+    def test_predict_returns_correct_shape(
+        self, fitted_regression_model: tuple[GBDTModel, np.ndarray, np.ndarray]
+    ) -> None:
+        """Test that predict returns correct shape for regression."""
+        model, X, _ = fitted_regression_model
+        predictions = model.predict(X)
+
+        assert predictions.shape == (100,)
+        assert predictions.dtype == np.float32
+
+    def test_predict_with_dataset(
+        self, fitted_regression_model: tuple[GBDTModel, np.ndarray, np.ndarray]
+    ) -> None:
+        """Test that predict works with Dataset input."""
+        model, X, y = fitted_regression_model
+        test_ds = Dataset(X)  # No labels needed for prediction
+        predictions = model.predict(test_ds)
+
+        assert predictions.shape == (100,)
+
+    def test_predict_raw_score(
+        self, fitted_classification_model: tuple[GBDTModel, np.ndarray, np.ndarray]
+    ) -> None:
+        """Test that raw_score=True returns margins."""
+        model, X, _ = fitted_classification_model
+        normal_preds = model.predict(X)
+        raw_preds = model.predict(X, raw_score=True)
+
+        # Raw should be logits (can be any value), normal should be probabilities [0, 1]
+        assert raw_preds.shape == (100,)
+        # Transformed predictions should be in [0, 1] range
+        assert np.all(normal_preds >= 0) and np.all(normal_preds <= 1)
+        # Raw can be outside [0, 1]
+        # Note: they might still be in [0,1] by chance, but relationship differs
+
+    def test_predict_raises_if_not_fitted(self) -> None:
+        """Test that predict raises error if model not fitted."""
+        model = GBDTModel()
+        X = np.random.randn(10, 5).astype(np.float32)
+
+        with pytest.raises(RuntimeError, match="not fitted"):
+            model.predict(X)
+
+    def test_predict_validates_feature_count(
+        self, fitted_regression_model: tuple[GBDTModel, np.ndarray, np.ndarray]
+    ) -> None:
+        """Test that predict validates feature count."""
+        model, _, _ = fitted_regression_model
+        X_wrong = np.random.randn(10, 3).astype(np.float32)  # 3 features, trained on 5
+
+        with pytest.raises((ValueError, RuntimeError)):
+            model.predict(X_wrong)
+
+
 class TestGBDTModelImports:
     """Test that GBDTModel is properly exported."""
 

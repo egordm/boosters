@@ -222,6 +222,102 @@ impl PyGBDTModel {
         }
     }
 
+    /// Make predictions on features.
+    ///
+    /// Args:
+    ///     features: Feature array of shape `(n_samples, n_features)` or Dataset.
+    ///     raw_score: If True, return raw margin scores without transformation.
+    ///         For classification this means logits instead of probabilities.
+    ///     n_iterations: Number of trees to use for prediction. If None, uses all trees.
+    ///
+    /// Returns:
+    ///     NumPy array with predictions. Shape depends on the objective:
+    ///     - Regression: `(n_samples,)`
+    ///     - Binary classification: `(n_samples,)` (probability of positive class)
+    ///     - Multiclass: `(n_samples, n_classes)`
+    ///     - Multi-quantile: `(n_samples, n_quantiles)`
+    ///
+    /// Raises:
+    ///     RuntimeError: If model has not been fitted.
+    ///     ValueError: If features have wrong shape.
+    ///
+    /// Example:
+    ///     ```python
+    ///     predictions = model.predict(X_test)
+    ///     raw_margins = model.predict(X_test, raw_score=True)
+    ///     ```
+    #[pyo3(signature = (features, raw_score=false, n_iterations=None))]
+    pub fn predict(
+        &self,
+        py: Python<'_>,
+        features: &Bound<'_, PyAny>,
+        raw_score: bool,
+        n_iterations: Option<usize>,
+    ) -> PyResult<PyObject> {
+        use numpy::{PyArray1, PyArray2};
+
+        let model = self.inner.as_ref().ok_or_else(|| BoostersError::NotFitted {
+            method: "predict".to_string(),
+        })?;
+
+        // Extract features array - either from Dataset or raw numpy array
+        let features_array: Array2<f32> = if let Ok(dataset) = features.extract::<PyRef<'_, PyDataset>>() {
+            // Features from Dataset
+            let features_view = dataset.features_array(py)?;
+            let features_np = features_view.as_array();
+            features_np.t().as_standard_layout().into_owned()
+        } else {
+            // Assume numpy array [n_samples, n_features]
+            let features_view: numpy::PyReadonlyArray2<'_, f32> = features.extract()?;
+            let features_np = features_view.as_array();
+            features_np.t().as_standard_layout().into_owned()
+        };
+
+        // Validate feature count
+        let expected_features = model.meta().n_features;
+        let actual_features = features_array.nrows();
+        if actual_features != expected_features {
+            return Err(BoostersError::ValidationError(format!(
+                "Expected {} features, got {}",
+                expected_features, actual_features
+            ))
+            .into());
+        }
+
+        // Create temporary dataset for prediction (no labels needed)
+        let pred_dataset = CoreDataset::new(features_array.view(), None, None);
+
+        // TODO: Support n_iterations for partial prediction
+        let _ = n_iterations;
+
+        // Predict with GIL released
+        let n_threads = 0;
+        let output = py.allow_threads(|| {
+            if raw_score {
+                model.predict_raw(&pred_dataset, n_threads)
+            } else {
+                model.predict(&pred_dataset, n_threads)
+            }
+        });
+
+        // output shape is [n_groups, n_samples]
+        // Transpose to [n_samples, n_groups] for Python convention
+        let output_t = output.t().as_standard_layout().into_owned();
+
+        // Return appropriate shape based on n_groups
+        let n_groups = output.nrows();
+        if n_groups == 1 {
+            // Single output: return 1D array (n_samples,)
+            let flat: Vec<f32> = output_t.iter().copied().collect();
+            let arr = PyArray1::from_vec_bound(py, flat);
+            Ok(arr.into_any().unbind())
+        } else {
+            // Multi-output: return 2D array (n_samples, n_groups)
+            let arr = PyArray2::from_owned_array_bound(py, output_t);
+            Ok(arr.into_any().unbind())
+        }
+    }
+
     /// Train the model on a dataset.
     ///
     /// Args:

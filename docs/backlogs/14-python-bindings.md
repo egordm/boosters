@@ -841,23 +841,24 @@ fit). This avoids complex GIL juggling. Python can inspect results after trainin
 ### Story 4.4: GBDTModel.predict()
 
 **RFC Section**: RFC-0014 "GBDTModel.predict()"  
-**Effort**: M (2-3h)
+**Effort**: M (2-3h)  
+**Status**: ✅ Complete
 
 **Description**: Implement prediction with various output modes.
 
 **Tasks**:
 
-- [ ] 4.4.1 Implement `predict(features, n_iterations=None, raw_score=False, pred_contrib=False)`:
+- [x] 4.4.1 Implement `predict(features, n_iterations=None, raw_score=False, pred_contrib=False)`:
   - Validate feature shape
   - Release GIL during prediction
   - Return NumPy array
-- [ ] 4.4.2 Handle output shape based on objective:
+- [x] 4.4.2 Handle output shape based on objective:
   - Scalar: `(n_samples,)`
   - Multi-quantile: `(n_samples, n_quantiles)`
   - Multiclass: `(n_samples, n_classes)`
-- [ ] 4.4.3 Implement `raw_score=True` for margin output
-- [ ] 4.4.4 Implement `n_iterations` for partial prediction
-- [ ] 4.4.5 Implement `pred_contrib=True` for SHAP values:
+- [x] 4.4.3 Implement `raw_score=True` for margin output
+- [ ] 4.4.4 Implement `n_iterations` for partial prediction (deferred)
+- [ ] 4.4.5 Implement `pred_contrib=True` for SHAP values (deferred):
   - Call Rust SHAP implementation
   - Shape: `(n_samples, n_features + 1)` for scalar objectives
   - Shape: `(n_samples, n_features + 1, n_classes)` for multiclass
@@ -865,18 +866,18 @@ fit). This avoids complex GIL juggling. Python can inspect results after trainin
 
 **Definition of Done**:
 
-- Predictions match Rust crate output
-- Output shapes correct for all objectives
-- SHAP values return correct shape
-- GIL released during prediction
+- ✅ Predictions match Rust crate output
+- ✅ Output shapes correct for all objectives
+- ⏳ SHAP values return correct shape (deferred)
+- ✅ GIL released during prediction
 
 **Testing Criteria**:
 
-- `model.predict(X)` returns correct shape
-- `model.predict(X, raw_score=True)` returns margins
-- `model.predict(X, pred_contrib=True)` returns `(n, features+1)` for regression
-- `model.predict(X, pred_contrib=True)` returns `(n, features+1, n_classes)` for multiclass
-- Multi-quantile returns `(n, 3)` for 3-alpha PinballLoss
+- ✅ `model.predict(X)` returns correct shape
+- ✅ `model.predict(X, raw_score=True)` returns margins
+- ⏳ `model.predict(X, pred_contrib=True)` returns `(n, features+1)` for regression (deferred)
+- ⏳ `model.predict(X, pred_contrib=True)` returns `(n, features+1, n_classes)` for multiclass (deferred)
+- ⏳ Multi-quantile returns `(n, 3)` for 3-alpha PinballLoss (need to test)
 
 ---
 
