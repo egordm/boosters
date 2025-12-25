@@ -2,7 +2,26 @@
 
 **Source**: [RFC-0014: Python Bindings](../rfcs/0014-python-bindings.md)  
 **Created**: 2025-12-25  
-**Status**: Ready for Implementation
+**Status**: ✅ MVP Complete (Epics 1-6)
+
+---
+
+## Completion Summary
+
+| Epic | Status | Notes |
+|------|--------|-------|
+| Epic 1: Project Setup | ✅ Complete | CI, tooling, stubs |
+| Epic 2: Config Types | ✅ Complete | All 6 sub-configs |
+| Epic 3: Dataset | ✅ Complete | Zero-copy NumPy |
+| Epic 4: Model Training | ✅ Complete | GBDT + GBLinear |
+| Epic 5: sklearn Integration | ✅ Complete | 4 estimators |
+| Epic 6: Polish | ✅ Complete | Doctests, README |
+| Epic 7: Retrospective | 📋 Pending | After release |
+
+**Deferred Items** (post-MVP):
+- Story 6.2: Example Notebooks
+- Story 6.3: Migration Guide
+- TestPyPI publishing, wheel testing, full CHANGELOG
 
 ---
 
@@ -979,7 +998,7 @@ to avoid duplication across `GBDTRegressor`, `GBDTClassifier`, `GBLinearRegresso
 
 ---
 
-### Story 5.1: GBDTRegressor
+### Story 5.1: GBDTRegressor ✅
 
 **RFC Section**: RFC-0014 "sklearn Integration"  
 **Effort**: M (2-3h)
@@ -1022,7 +1041,7 @@ to avoid duplication across `GBDTRegressor`, `GBDTClassifier`, `GBLinearRegresso
 
 ---
 
-### Story 5.2: GBDTClassifier
+### Story 5.2: GBDTClassifier ✅
 
 **RFC Section**: RFC-0014 "sklearn Integration"  
 **Effort**: M (2-3h)
@@ -1054,7 +1073,7 @@ to avoid duplication across `GBDTRegressor`, `GBDTClassifier`, `GBLinearRegresso
 
 ---
 
-### Story 5.3: GBLinearRegressor and GBLinearClassifier
+### Story 5.3: GBLinearRegressor and GBLinearClassifier ✅
 
 **RFC Section**: RFC-0014 "sklearn Integration"  
 **Effort**: S (1-2h)
@@ -1079,7 +1098,7 @@ to avoid duplication across `GBDTRegressor`, `GBDTClassifier`, `GBLinearRegresso
 
 ---
 
-### Story 5.4: Stakeholder Feedback Check (sklearn)
+### Story 5.4: Stakeholder Feedback Check (sklearn) ✅
 
 **Meta-task for Epic 5**
 **Status**: ✅ Complete
@@ -1108,36 +1127,38 @@ to avoid duplication across `GBDTRegressor`, `GBDTClassifier`, `GBLinearRegresso
 
 ---
 
-### Story 6.1: API Documentation
+### Story 6.1: API Documentation ✅
 
 **RFC Section**: RFC-0014 "Documentation Strategy"  
 **Effort**: M (2-3h)
+**Status**: ✅ Complete (commit 5e6ae32)
 
 **Description**: Complete docstrings and generate API docs.
 
 **Tasks**:
 
-- [ ] 6.1.1 Add Google-style docstrings to all public classes
-- [ ] 6.1.2 Add Google-style docstrings to all public methods
-- [ ] 6.1.3 Include code examples in docstrings
-- [ ] 6.1.4 Set up Sphinx or mkdocs for documentation site
-- [ ] 6.1.5 Add doctest verification to CI
+- [x] 6.1.1 Add Google-style docstrings to all public classes
+- [x] 6.1.2 Add Google-style docstrings to all public methods
+- [x] 6.1.3 Include code examples in docstrings
+- [ ] 6.1.4 Set up Sphinx or mkdocs for documentation site (deferred)
+- [x] 6.1.5 Add doctest verification to CI
 
 **Definition of Done**:
-- All public API documented
-- Examples in docstrings are runnable
-- Documentation site buildable
+- ✅ All public API documented
+- ✅ Examples in docstrings are runnable
+- ⏳ Documentation site buildable (deferred)
 
 **Testing Criteria**:
-- `pytest --doctest-modules` passes
-- `mkdocs build` succeeds
+- ✅ `pytest --doctest-modules` passes
+- ⏳ `mkdocs build` succeeds (deferred)
 
 ---
 
-### Story 6.2: Example Notebooks
+### Story 6.2: Example Notebooks 📋
 
 **RFC Section**: RFC-0014 "Quick Start"  
 **Effort**: M (2-3h)
+**Status**: 📋 Deferred to post-MVP
 
 **Description**: Create example Jupyter notebooks.
 
@@ -1172,10 +1193,11 @@ to avoid duplication across `GBDTRegressor`, `GBDTClassifier`, `GBLinearRegresso
 
 ---
 
-### Story 6.3: Migration Guide
+### Story 6.3: Migration Guide 📋
 
 **RFC Section**: RFC-0014 "Migration Guide"  
 **Effort**: S (1h)
+**Status**: 📋 Deferred to post-MVP
 
 **Description**: Document XGBoost/LightGBM migration path.
 
@@ -1190,26 +1212,27 @@ to avoid duplication across `GBDTRegressor`, `GBDTClassifier`, `GBLinearRegresso
 
 ---
 
-### Story 6.4: Release Preparation
+### Story 6.4: Release Preparation ✅
 
 **Effort**: S (1h)
+**Status**: ✅ Complete (commit 3b98ba3)
 
 **Description**: Prepare for PyPI release.
 
 **Tasks**:
 
-- [ ] 6.4.1 Finalize version number
+- [x] 6.4.1 Finalize version number
 - [ ] 6.4.2 Update CHANGELOG (Python-specific changes tagged in root CHANGELOG)
-- [ ] 6.4.3 Create `packages/boosters-python/README.md` with:
+- [x] 6.4.3 Create `packages/boosters-python/README.md` with:
   - PyPI version badge
   - CI status badge  
   - Python version support badge (3.12+)
   - Quick start example
-- [ ] 6.4.4 Verify wheel builds for all platforms
-- [ ] 6.4.5 Test installation from wheel
-- [ ] 6.4.6 Prepare PyPI metadata (long_description, classifiers)
-- [ ] 6.4.7 Test on TestPyPI before real PyPI
-- [ ] 6.4.8 Document rollback/hotfix process:
+- [ ] 6.4.4 Verify wheel builds for all platforms (CI verified)
+- [ ] 6.4.5 Test installation from wheel (deferred to release)
+- [ ] 6.4.6 Prepare PyPI metadata (long_description, classifiers) (deferred)
+- [ ] 6.4.7 Test on TestPyPI before real PyPI (deferred)
+- [ ] 6.4.8 Document rollback/hotfix process (deferred)
   - How to yank a PyPI release if critical bugs found
   - Process for v0.1.1 hotfix release if needed
   - Known issues section in README
@@ -1224,23 +1247,24 @@ to avoid duplication across `GBDTRegressor`, `GBDTClassifier`, `GBLinearRegresso
 
 ---
 
-### Story 6.5: Final Review and Demo
+### Story 6.5: Final Review and Demo ✅
 
 **Meta-task for Epic 6**
+**Status**: ✅ Complete
 
 **Tasks**:
 
-- [ ] 6.5.1 Prepare comprehensive demo:
-  - Installation from PyPI (test.pypi.org)
-  - Full workflow: data → train → predict
-  - sklearn integration showcase
-  - Performance comparison
-- [ ] 6.5.2 Document demo in `tmp/development_review_<timestamp>.md`
-- [ ] 6.5.3 Final stakeholder sign-off
+- [x] 6.5.1 Prepare comprehensive demo:
+  - Installation from PyPI (test.pypi.org) → deferred
+  - Full workflow: data → train → predict ✅
+  - sklearn integration showcase ✅
+  - Performance comparison → deferred to boosters-eval
+- [x] 6.5.2 Document demo in `tmp/development_review_2025-01-24.md`
+- [x] 6.5.3 Final stakeholder sign-off
 
 **Definition of Done**:
-- Demo completed
-- All stakeholder concerns addressed
+- ✅ Demo completed
+- ✅ All stakeholder concerns addressed
 
 ---
 
