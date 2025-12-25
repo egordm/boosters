@@ -109,19 +109,71 @@ packages/boosters-python/
 ├── pyproject.toml          # Python package metadata
 ├── src/
 │   ├── lib.rs              # PyO3 module registration
-│   ├── dataset.rs          # Dataset wrapper
-│   ├── booster.rs          # Booster (model) wrapper
-│   ├── config.rs           # Configuration types
-│   ├── convert.rs          # Data conversion utilities
+│   ├── dataset.rs          # Dataset/features Rust conversion
+│   ├── model.rs            # Model training/prediction core
+│   ├── convert.rs          # Type conversion utilities
 │   └── error.rs            # Error handling
 └── python/
     └── boosters/
-        ├── __init__.py     # Public API exports
-        ├── basic.py        # Core types (Dataset, Booster)
-        ├── engine.py       # train(), cv() functions
+        ├── __init__.py     # Public API re-exports
+        ├── _boosters_rs.pyi # Type stubs for Rust extension
+        ├── dataset.py      # Dataset, EvalSet
+        ├── config.py       # GBDTConfig, TreeConfig, etc.
+        ├── objectives.py   # Loss classes (SquaredLoss, PinballLoss, ...)
+        ├── metrics.py      # Metric classes (Rmse, Mae, ...)
+        ├── model.py        # GBDTModel, GBLinearModel
+        ├── callbacks.py    # Callback, EarlyStopping, LogEvaluation
         ├── sklearn.py      # scikit-learn estimators
         ├── compat.py       # Optional dependency handling
         └── plotting.py     # Visualization (optional)
+```
+
+### Module Exports
+
+```python
+# boosters/__init__.py
+from boosters._version import __version__
+
+# Data
+from boosters.dataset import Dataset, EvalSet
+
+# Configuration  
+from boosters.config import (
+    GBDTConfig, GBLinearConfig, TreeConfig,
+    RegularizationConfig, SamplingConfig,
+)
+
+# Objectives
+from boosters.objectives import (
+    SquaredLoss, AbsoluteLoss, HuberLoss, PinballLoss, ArctanLoss,
+    PoissonLoss, LogisticLoss, HingeLoss, SoftmaxLoss, LambdaRankLoss,
+    Objective,  # Union type
+)
+
+# Metrics
+from boosters.metrics import (
+    Rmse, Mae, Mape, LogLoss, Auc, Accuracy, Ndcg,
+    Metric,  # Union type
+)
+
+# Models
+from boosters.model import GBDTModel, GBLinearModel
+
+# Callbacks
+from boosters.callbacks import Callback, EarlyStopping, LogEvaluation
+
+__all__ = [
+    "__version__",
+    "Dataset", "EvalSet",
+    "GBDTConfig", "GBLinearConfig", "TreeConfig",
+    "RegularizationConfig", "SamplingConfig",
+    "SquaredLoss", "AbsoluteLoss", "HuberLoss", "PinballLoss", "ArctanLoss",
+    "PoissonLoss", "LogisticLoss", "HingeLoss", "SoftmaxLoss", "LambdaRankLoss",
+    "Objective",
+    "Rmse", "Mae", "Mape", "LogLoss", "Auc", "Accuracy", "Ndcg", "Metric",
+    "GBDTModel", "GBLinearModel",
+    "Callback", "EarlyStopping", "LogEvaluation",
+]
 ```
 
 ---
@@ -137,7 +189,10 @@ packages/boosters-python/
 5. **Google-style docstrings**: Brief, typed, no redundant parameter descriptions
 6. **sklearn-like fit/predict**: Config in `__init__`, data in `fit`/`predict`
 
-### Quick Start
+### Quick Start (Core API)
+
+This is the **core API**, not the sklearn wrapper. The core API uses explicit
+dataclass configuration and `Dataset` objects for maximum type safety and control.
 
 ```python
 import boosters as bst
@@ -148,7 +203,7 @@ X, y = np.random.rand(1000, 10), np.random.rand(1000)
 train = bst.Dataset(features=X[:800], labels=y[:800])
 valid = bst.Dataset(features=X[800:], labels=y[800:])
 
-# Configure and train
+# Configure and train (core API with explicit config)
 config = bst.GBDTConfig(n_estimators=100, learning_rate=0.1)
 model = bst.GBDTModel(config)
 model.fit(train, valid=[bst.EvalSet("valid", valid)])
@@ -156,6 +211,8 @@ model.fit(train, valid=[bst.EvalSet("valid", valid)])
 # Predict
 predictions = model.predict(X[800:])
 ```
+
+For sklearn-style usage, see the [scikit-learn Integration](#scikit-learn-integration) section.
 
 ### Package Version
 
@@ -179,7 +236,12 @@ import numpy as np
 
 @dataclass
 class Dataset:
-    """Training dataset with features, labels, and optional metadata."""
+    """Training dataset with features, labels, and optional metadata.
+    
+    Dataset is a pure Python dataclass that holds references to numpy arrays.
+    When passed to model.fit(), arrays are converted to zero-copy Rust views
+    (if C/F-contiguous float32) or copied once (if conversion needed).
+    """
     
     features: NDArray[np.floating] | pd.DataFrame
     labels: NDArray[np.floating] | None = None
@@ -224,9 +286,22 @@ class HuberLoss:
     delta: float = 1.0
 
 @dataclass(frozen=True)
-class QuantileLoss:
-    """Pinball loss for quantile regression."""
+class PinballLoss:
+    """Pinball loss for quantile regression.
+    
+    Standard piecewise-linear quantile loss. Prefer for most quantile
+    regression tasks. For outlier-robust quantile regression, see ArctanLoss.
+    """
     alpha: float | list[float] = 0.5  # Single or multiple quantiles
+
+@dataclass(frozen=True)
+class ArctanLoss:
+    """Arctan loss for robust quantile regression.
+    
+    Smooth approximation to quantile loss, more robust to outliers than
+    PinballLoss. Use when data has extreme outliers that shouldn't dominate.
+    """
+    alpha: float = 0.5
 
 @dataclass(frozen=True)
 class PoissonLoss:
@@ -255,8 +330,8 @@ class LambdaRankLoss:
 
 # Union type for all objectives
 type Objective = (
-    SquaredLoss | AbsoluteLoss | HuberLoss | QuantileLoss | PoissonLoss |
-    LogisticLoss | HingeLoss | SoftmaxLoss | LambdaRankLoss
+    SquaredLoss | AbsoluteLoss | HuberLoss | PinballLoss | ArctanLoss |
+    PoissonLoss | LogisticLoss | HingeLoss | SoftmaxLoss | LambdaRankLoss
 )
 
 # --- Metrics (parameterized where needed) ---
@@ -305,7 +380,7 @@ Objectives with parameters validate at construction time via `__post_init__`:
 
 ```python
 @dataclass(frozen=True)
-class QuantileLoss:
+class PinballLoss:
     alpha: float | list[float] = 0.5
     
     def __post_init__(self):
@@ -330,8 +405,9 @@ class SoftmaxLoss:
 | Objective | Output Shape | Notes |
 | --------- | ------------ | ----- |
 | `SquaredLoss()` | `(n_samples,)` | Scalar regression |
-| `QuantileLoss(alpha=0.5)` | `(n_samples,)` | Single quantile |
-| `QuantileLoss(alpha=[0.1, 0.5, 0.9])` | `(n_samples, 3)` | Columns in alpha order |
+| `PinballLoss(alpha=0.5)` | `(n_samples,)` | Single quantile |
+| `PinballLoss(alpha=[0.1, 0.5, 0.9])` | `(n_samples, 3)` | Columns in alpha order |
+| `ArctanLoss(alpha=0.5)` | `(n_samples,)` | Robust quantile |
 | `LogisticLoss()` | `(n_samples,)` | Probability [0, 1] |
 | `SoftmaxLoss(n_classes=k)` | `(n_samples, k)` | Probabilities per class |
 
@@ -683,7 +759,8 @@ class LogEvaluation(Callback):
 | `SquaredLoss()` | `SquaredLoss` | — | Default for regression |
 | `AbsoluteLoss()` | `AbsoluteLoss` | — | Robust to outliers (L1) |
 | `HuberLoss(delta=1.0)` | `PseudoHuberLoss` | `delta: float` | Smooth L1/L2 blend |
-| `QuantileLoss(alpha=0.5)` | `PinballLoss` | `alpha: float \| list[float]` | Single or multi-quantile |
+| `PinballLoss(alpha=0.5)` | `PinballLoss` | `alpha: float \| list[float]` | Single or multi-quantile |
+| `ArctanLoss(alpha=0.5)` | `ArctanLoss` | `alpha: float` | Robust quantile |
 | `PoissonLoss()` | `PoissonLoss` | — | For count data |
 | `LogisticLoss()` | `LogisticLoss` | — | Binary classification |
 | `HingeLoss()` | `HingeLoss` | — | SVM-style classification |
@@ -720,11 +797,18 @@ model = GBDTRegressor(
 model.fit(X_train, y_train)
 predictions = model.predict(X_test)
 
-# With validation for early stopping
+# With validation for early stopping (sklearn-style shortcut)
 model.fit(
     X_train, y_train,
     eval_set=[(X_val, y_val)],
-    callbacks=[EarlyStopping(patience=50)],
+    early_stopping_rounds=50,  # Shortcut for EarlyStopping callback
+)
+
+# Or with explicit callbacks
+model.fit(
+    X_train, y_train,
+    eval_set=[(X_val, y_val)],
+    callbacks=[EarlyStopping(patience=50, min_delta=0.001)],
 )
 
 # Cross-validation works
@@ -777,6 +861,7 @@ class GBDTRegressor(BaseEstimator, RegressorMixin):
         *,
         sample_weight: ArrayLike | None = None,
         eval_set: list[tuple[ArrayLike, ArrayLike]] | None = None,
+        early_stopping_rounds: int | None = None,
         callbacks: list[Callback] | None = None,
     ) -> Self: ...
     
@@ -789,7 +874,12 @@ class GBDTRegressor(BaseEstimator, RegressorMixin):
     best_iteration_: int | None
 
 class GBDTClassifier(BaseEstimator, ClassifierMixin):
-    """GBDT classifier with sklearn interface."""
+    """GBDT classifier with sklearn interface.
+    
+    Automatically infers binary vs multiclass from labels:
+    - 2 classes: LogisticLoss()
+    - >2 classes: SoftmaxLoss(n_classes=k)
+    """
     
     def __init__(self, *, **kwargs) -> None: ...  # Same as GBDTRegressor
     
@@ -828,6 +918,47 @@ class GBLinearRegressor(BaseEstimator, RegressorMixin):
 
 class GBLinearClassifier(BaseEstimator, ClassifierMixin):
     """GBLinear classifier with sklearn interface."""
+```
+
+### sklearn Parameter Mapping
+
+sklearn flat parameters map to nested config:
+
+| sklearn param | Core API config path |
+| ------------- | -------------------- |
+| `n_estimators` | `GBDTConfig.n_estimators` |
+| `learning_rate` | `GBDTConfig.learning_rate` |
+| `max_depth` | `GBDTConfig.tree.max_depth` |
+| `n_leaves` | `GBDTConfig.tree.n_leaves` |
+| `min_samples_leaf` | `GBDTConfig.tree.min_samples_leaf` |
+| `l1` | `GBDTConfig.regularization.l1` |
+| `l2` | `GBDTConfig.regularization.l2` |
+| `subsample` | `GBDTConfig.sampling.subsample` |
+| `colsample` | `GBDTConfig.sampling.colsample` |
+| `linear_trees` | `GBDTConfig.linear_trees` |
+
+### sklearn Conversions
+
+```python
+# eval_set conversion (sklearn → core API)
+eval_set = [(X_val1, y_val1), (X_val2, y_val2)]
+# Becomes:
+valid = [
+    EvalSet("valid_0", Dataset(X_val1, y_val1)),
+    EvalSet("valid_1", Dataset(X_val2, y_val2)),
+]
+
+# early_stopping_rounds shortcut
+early_stopping_rounds = 50
+# Becomes:
+callbacks = [EarlyStopping(patience=50, monitor_set="valid_0")]
+
+# Classifier objective inference
+y = [0, 1, 0, 1]  # Binary
+# Infers: LogisticLoss()
+
+y = [0, 1, 2, 0]  # Multiclass
+# Infers: SoftmaxLoss(n_classes=3)
 ```
 
 ---
@@ -923,6 +1054,119 @@ ds = Dataset(df, label=y)  # 'city' automatically categorical
 ---
 
 ## PyO3 Implementation
+
+### Configuration Types: Pure Python vs PyO3
+
+**Key design question**: Where do config types like `GBDTConfig`, `PinballLoss`, `EvalSet` live?
+
+**Decision**: **Hybrid approach** — config types are pure Python dataclasses, models are PyO3.
+
+| Type | Implementation | Rationale |
+| ---- | -------------- | --------- |
+| `GBDTConfig`, `TreeConfig`, etc. | Pure Python `@dataclass` | IDE support, easy validation, Pythonic |
+| `PinballLoss`, `SoftmaxLoss`, etc. | Pure Python `@dataclass` | Parameter validation, IDE autocomplete |
+| `EvalSet`, `Dataset` | Pure Python `@dataclass` | Holds Python objects (numpy arrays) |
+| `GBDTModel`, `GBLinearModel` | PyO3 `#[pyclass]` | Wraps Rust model, owns trained state |
+
+**Why pure Python for configs?**
+
+1. **IDE autocomplete**: Native Python dataclasses have perfect IDE support
+2. **Validation**: `__post_init__` runs before any Rust code
+3. **No FFI overhead**: Config objects are only converted at `fit()` boundary
+4. **Easy extension**: Adding parameters doesn't require Rust recompile
+5. **Type stubs not needed**: Pure Python types are already typed
+
+**Conversion at boundary**:
+
+```python
+# Python side (boosters/config.py)
+@dataclass
+class GBDTConfig:
+    n_estimators: int = 100
+    learning_rate: float = 0.1
+    objective: Objective = field(default_factory=SquaredLoss)
+    tree: TreeConfig = field(default_factory=TreeConfig)
+    # ...
+
+# Python side (boosters/model.py)
+class GBDTModel:
+    def __init__(self, config: GBDTConfig | None = None):
+        self._config = config or GBDTConfig()
+        self._inner = None  # PyO3 model, set after fit
+    
+    def fit(self, train: Dataset, ...) -> Self:
+        # Convert Python config to Rust-compatible dict/struct
+        rust_config = _convert_config(self._config)
+        # Call into PyO3
+        self._inner = _boosters_rs.train_gbdt(rust_config, train._to_rust())
+        return self
+```
+
+```rust
+// Rust side (lib.rs)
+#[pyfunction]
+fn train_gbdt(
+    py: Python<'_>,
+    config: PyObject,  // Python dict or parsed config
+    train: &PyDataset,
+) -> PyResult<PyGBDTModelInner> {
+    let config: GBDTConfig = extract_config(py, config)?;
+    // ... training
+}
+```
+
+### Type Stubs (.pyi Files)
+
+For the PyO3 types (`GBDTModel._inner`, internal functions), we generate `.pyi` stub files.
+
+**Generation options**:
+
+1. **pyo3-stub-gen**: Automatically generates stubs from `#[pyclass]` definitions
+2. **Manual stubs**: Write `_boosters_rs.pyi` by hand for internal API
+3. **Maturin**: Has experimental stub generation support
+
+**Recommended approach**:
+
+```toml
+# pyproject.toml
+[tool.maturin]
+python-source = "python"
+module-name = "boosters._boosters_rs"
+
+# Generate stubs for internal Rust module
+[tool.pyo3-stub-gen]
+output = "python/boosters/_boosters_rs.pyi"
+```
+
+Since config types are pure Python, they don't need generated stubs — they're
+already fully typed. Only the internal `_boosters_rs` module needs stubs.
+
+**Stub example for internal module**:
+
+```python
+# python/boosters/_boosters_rs.pyi (generated or manual)
+from numpy.typing import NDArray
+import numpy as np
+
+class PyGBDTModelInner:
+    """Internal trained model state. Not public API."""
+    @property
+    def n_trees(self) -> int: ...
+    @property
+    def n_features(self) -> int: ...
+    def predict(
+        self,
+        features: NDArray[np.float32],
+        n_iterations: int | None = None,
+    ) -> NDArray[np.float32]: ...
+
+def train_gbdt(
+    config: dict,
+    features: NDArray[np.float32],
+    labels: NDArray[np.float32],
+    # ...
+) -> PyGBDTModelInner: ...
+```
 
 ### Architecture Overview
 
@@ -1186,16 +1430,19 @@ def _validate_feature_count(
 
 **Rationale**: Matches Rust API, clearer type safety, avoid enum dispatch overhead.
 
-### DD-3: Dataclass Configuration
+### DD-3: Pure Python Config, PyO3 Models (Hybrid Architecture)
 
-**Decision**: Use `@dataclass` for configuration, not dict-based params.
+**Decision**: Configuration types (`GBDTConfig`, `PinballLoss`, `EvalSet`) are pure Python
+dataclasses. Model types (`GBDTModel`, `GBLinearModel`) are thin Python wrappers around
+PyO3 `#[pyclass]` internal types.
 
 **Rationale**:
 
-- Full type safety and IDE autocomplete
-- Validation at construction time
-- Nested configs for organization (TreeConfig, RegularizationConfig)
-- Modern Python 3.12+ style
+- **IDE support**: Pure Python dataclasses have perfect autocomplete without stubs
+- **Validation**: `__post_init__` runs in Python before any Rust FFI
+- **No compile overhead**: Adding config params doesn't require Rust recompile
+- **Type stubs only needed for internal module**: `_boosters_rs.pyi` is small
+- **Conversion at boundary**: Config → Rust dict/struct only at `fit()` call
 
 ### DD-4: Pythonic Naming
 
@@ -1305,7 +1552,8 @@ names where practical, as most users interact via Python.
 | Rust Name | Python Name | User-Friendly? |
 | --------- | ----------- | -------------- |
 | `SquaredLoss` | `SquaredLoss` | ✓ Same |
-| `PinballLoss` | `QuantileLoss` | Python preferred |
+| `PinballLoss` | `PinballLoss` | ✓ Same |
+| `ArctanLoss` | `ArctanLoss` | ✓ Same |
 | `PseudoHuberLoss` | `HuberLoss` | Python preferred |
 
 **Synchronization checkpoints**:
@@ -1403,7 +1651,7 @@ preds = model.predict(X)  # (n_samples, n_outputs)
 
 # Quantile regression with multiple quantiles
 config = GBDTConfig(
-    objective=QuantileLoss(alpha=[0.1, 0.5, 0.9]),  # 10th, 50th, 90th percentiles
+    objective=PinballLoss(alpha=[0.1, 0.5, 0.9]),  # 10th, 50th, 90th percentiles
 )
 model = GBDTModel(config)
 model.fit(train)
@@ -1735,7 +1983,7 @@ For each objective type, verify:
 | `SquaredLoss()` | (-∞, ∞) | (n,) | ✓ RMSE | XGBoost correlation > 0.99 |
 | `LogisticLoss()` | [0, 1] | (n,) | ✓ LogLoss | XGBoost AUC within 1% |
 | `SoftmaxLoss(k)` | [0, 1], sum=1 | (n, k) | ✓ LogLoss | XGBoost accuracy within 2% |
-| `QuantileLoss([α])` | (-∞, ∞) | (n, len(α)) | ✓ Pinball | Calibration check |
+| `PinballLoss([α])` | (-∞, ∞) | (n, len(α)) | ✓ Pinball | Calibration check |
 
 ### Edge Case Tests
 
@@ -1849,3 +2097,15 @@ def test_sklearn_compliance():
   - Threading managed at bindings level (Rust core thread-agnostic)
   - Strict typing with Google-style docstrings
   - Serialization deferred until Rust storage format RFC
+- 2025-12-25: Rounds 11-14 - Implementation details review:
+  - Renamed QuantileLoss → PinballLoss (consistency with ArctanLoss)
+  - Added ArctanLoss for robust quantile regression
+  - DD-3 updated: Hybrid architecture (pure Python configs, PyO3 models)
+  - Type stub strategy: Only `_boosters_rs.pyi` needed
+  - Clarified Quick Start as core API (not sklearn)
+  - Reorganized package structure with logical submodules
+  - Added `__all__` exports documentation
+  - sklearn: Added `early_stopping_rounds` shortcut
+  - sklearn: Added parameter mapping table
+  - sklearn: Documented objective inference for classifiers
+  - sklearn: Added eval_set conversion documentation
