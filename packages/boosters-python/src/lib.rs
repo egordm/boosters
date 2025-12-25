@@ -5,6 +5,7 @@
 
 mod config;
 mod error;
+mod objectives;
 
 use pyo3::prelude::*;
 use pyo3_stub_gen::define_stub_info_gatherer;
@@ -12,6 +13,10 @@ use pyo3_stub_gen::define_stub_info_gatherer;
 use config::{
     PyCategoricalConfig, PyEFBConfig, PyGBDTConfig, PyGBLinearConfig, PyLinearLeavesConfig,
     PyRegularizationConfig, PySamplingConfig, PyTreeConfig,
+};
+use objectives::{
+    PyAbsoluteLoss, PyArctanLoss, PyHingeLoss, PyHuberLoss, PyLambdaRankLoss, PyLogisticLoss,
+    PyPinballLoss, PyPoissonLoss, PySoftmaxLoss, PySquaredLoss,
 };
 
 /// Python module for boosters.
@@ -31,6 +36,18 @@ fn _boosters_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLinearLeavesConfig>()?;
     m.add_class::<PyGBDTConfig>()?;
     m.add_class::<PyGBLinearConfig>()?;
+
+    // Objective types
+    m.add_class::<PySquaredLoss>()?;
+    m.add_class::<PyAbsoluteLoss>()?;
+    m.add_class::<PyPoissonLoss>()?;
+    m.add_class::<PyLogisticLoss>()?;
+    m.add_class::<PyHingeLoss>()?;
+    m.add_class::<PyHuberLoss>()?;
+    m.add_class::<PyPinballLoss>()?;
+    m.add_class::<PyArctanLoss>()?;
+    m.add_class::<PySoftmaxLoss>()?;
+    m.add_class::<PyLambdaRankLoss>()?;
 
     Ok(())
 }

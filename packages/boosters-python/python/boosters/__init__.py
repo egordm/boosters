@@ -29,20 +29,40 @@ from boosters.config import (
     TreeConfig,
 )
 
+# Objective types
+from boosters.objectives import (
+    AbsoluteLoss,
+    ArctanLoss,
+    HingeLoss,
+    HuberLoss,
+    LambdaRankLoss,
+    LogisticLoss,
+    Objective,
+    PinballLoss,
+    PoissonLoss,
+    SoftmaxLoss,
+    SquaredLoss,
+)
+
 __all__ = [
-    # Config types (Epic 2 - Story 2.1)
+    "AbsoluteLoss",
+    "ArctanLoss",
     "CategoricalConfig",
     "EFBConfig",
     "GBDTConfig",
     "GBLinearConfig",
+    "HingeLoss",
+    "HuberLoss",
+    "LambdaRankLoss",
     "LinearLeavesConfig",
+    "LogisticLoss",
+    "Objective",
+    "PinballLoss",
+    "PoissonLoss",
     "RegularizationConfig",
     "SamplingConfig",
+    "SoftmaxLoss",
+    "SquaredLoss",
     "TreeConfig",
-    # Version
     "__version__",
-    # Objective types (Epic 2 - Story 2.2)
-    # Metric types (Epic 2 - Story 2.3)
-    # Data types (Epic 3)
-    # Model types (Epic 4)
 ]

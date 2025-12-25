@@ -116,3 +116,80 @@ class GBLinearConfig:
     """Main configuration for GBLinear model (placeholder)."""
 
     def __init__(self) -> None: ...
+
+# =============================================================================
+# Objective Types
+# =============================================================================
+
+class SquaredLoss:
+    """Squared error loss for regression (L2 loss)."""
+
+    def __init__(self) -> None: ...
+
+class AbsoluteLoss:
+    """Absolute error loss for regression (L1 loss)."""
+
+    def __init__(self) -> None: ...
+
+class PoissonLoss:
+    """Poisson regression loss for count data."""
+
+    def __init__(self) -> None: ...
+
+class LogisticLoss:
+    """Logistic loss for binary classification."""
+
+    def __init__(self) -> None: ...
+
+class HingeLoss:
+    """Hinge loss for binary classification (SVM-style)."""
+
+    def __init__(self) -> None: ...
+
+class HuberLoss:
+    """Huber loss for robust regression.
+
+    Combines L2 loss for small errors and L1 for large errors.
+    """
+
+    delta: float
+
+    def __init__(self, delta: float = 1.0) -> None: ...
+
+class PinballLoss:
+    """Pinball loss for quantile regression.
+
+    The alpha parameter can be a single float or a list of floats.
+    Internally, alpha is always stored as a list for consistency.
+    """
+
+    alpha: list[float]
+
+    def __init__(self, alpha: float | list[float] = 0.5) -> None: ...
+
+class ArctanLoss:
+    """Arctan loss for robust regression.
+
+    A smooth approximation to absolute loss.
+    """
+
+    alpha: float
+
+    def __init__(self, alpha: float = 0.5) -> None: ...
+
+class SoftmaxLoss:
+    """Softmax cross-entropy loss for multiclass classification.
+
+    Note: n_classes is required and has no default value.
+    """
+
+    n_classes: int
+
+    def __init__(self, n_classes: int) -> None: ...
+
+class LambdaRankLoss:
+    """LambdaRank loss for learning-to-rank tasks."""
+
+    ndcg_at: int
+
+    def __init__(self, ndcg_at: int = 10) -> None: ...

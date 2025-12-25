@@ -7,6 +7,7 @@ Regression:
     - SquaredLoss: Mean squared error (L2)
     - AbsoluteLoss: Mean absolute error (L1)
     - HuberLoss: Pseudo-Huber loss (robust)
+    - ArctanLoss: Arctan loss (smooth robust)
     - PinballLoss: Quantile regression (single or multi)
     - PoissonLoss: Poisson deviance for count data
 
@@ -22,34 +23,43 @@ Type Aliases:
     - Objective: Union of all objective types
 """
 
-# Re-exports will be added as Epic 2 is implemented
-# from boosters._boosters_rs import (
-#     SquaredLoss,
-#     AbsoluteLoss,
-#     HuberLoss,
-#     PinballLoss,
-#     PoissonLoss,
-#     LogisticLoss,
-#     HingeLoss,
-#     SoftmaxLoss,
-#     LambdaRankLoss,
-# )
+from boosters._boosters_rs import (
+    AbsoluteLoss,
+    ArctanLoss,
+    HingeLoss,
+    HuberLoss,
+    LambdaRankLoss,
+    LogisticLoss,
+    PinballLoss,
+    PoissonLoss,
+    SoftmaxLoss,
+    SquaredLoss,
+)
 
-# Type alias for all objectives (populated after implementation)
-# Objective: TypeAlias = (
-#     SquaredLoss | AbsoluteLoss | HuberLoss | PinballLoss | PoissonLoss |
-#     LogisticLoss | HingeLoss | SoftmaxLoss | LambdaRankLoss
-# )
+# Type alias for all objectives
+type Objective = (
+    SquaredLoss
+    | AbsoluteLoss
+    | HuberLoss
+    | ArctanLoss
+    | PinballLoss
+    | PoissonLoss
+    | LogisticLoss
+    | HingeLoss
+    | SoftmaxLoss
+    | LambdaRankLoss
+)
 
 __all__: list[str] = [
-    # "SquaredLoss",
-    # "AbsoluteLoss",
-    # "HuberLoss",
-    # "PinballLoss",
-    # "PoissonLoss",
-    # "LogisticLoss",
-    # "HingeLoss",
-    # "SoftmaxLoss",
-    # "LambdaRankLoss",
-    # "Objective",
+    "AbsoluteLoss",
+    "ArctanLoss",
+    "HingeLoss",
+    "HuberLoss",
+    "LambdaRankLoss",
+    "LogisticLoss",
+    "Objective",
+    "PinballLoss",
+    "PoissonLoss",
+    "SoftmaxLoss",
+    "SquaredLoss",
 ]
