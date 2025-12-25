@@ -12,6 +12,7 @@ crate-type = ["cdylib"]
 [dependencies]
 boosters = { path = "../../crates/boosters" }
 pyo3 = { version = "0.22", features = ["extension-module"] }
+pyo3-stub-gen = { version = "0.6.2", default-features = false }
 numpy = "0.22"
 ndarray = "0.16"
 thiserror = "2"

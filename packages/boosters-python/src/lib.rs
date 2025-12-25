@@ -6,6 +6,7 @@
 mod error;
 
 use pyo3::prelude::*;
+use pyo3_stub_gen::define_stub_info_gatherer;
 
 /// Python module for boosters.
 ///
@@ -17,3 +18,6 @@ fn _boosters_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     
     Ok(())
 }
+
+// Define stub info gatherer for pyo3-stub-gen
+define_stub_info_gatherer!(stub_info);
