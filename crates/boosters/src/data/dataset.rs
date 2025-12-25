@@ -335,7 +335,7 @@ impl DatasetBuilder {
         self.targets = Some(
             targets
                 .to_owned()
-                .into_shape_with_order((1, n))
+                .into_shape((1, n))
                 .expect("reshape should succeed"),
         );
         self

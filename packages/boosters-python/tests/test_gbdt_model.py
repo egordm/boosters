@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 import boosters as bst
-from boosters import GBDTConfig, GBDTModel
+from boosters import Dataset, EvalSet, GBDTConfig, GBDTModel
 
 
 class TestGBDTModelConstruction:
@@ -70,6 +70,108 @@ class TestGBDTModelRepr:
         model = GBDTModel()
         r = repr(model)
         assert "fitted=False" in r
+
+
+class TestGBDTModelFit:
+    """Tests for GBDTModel.fit() method."""
+
+    @pytest.fixture
+    def regression_data(self) -> tuple[np.ndarray, np.ndarray]:
+        """Generate simple regression data."""
+        rng = np.random.default_rng(42)
+        X = rng.standard_normal((100, 5)).astype(np.float32)
+        y = (X[:, 0] + 0.5 * X[:, 1] + rng.standard_normal(100) * 0.1).astype(np.float32)
+        return X, y
+
+    @pytest.fixture
+    def binary_data(self) -> tuple[np.ndarray, np.ndarray]:
+        """Generate simple binary classification data."""
+        rng = np.random.default_rng(42)
+        X = rng.standard_normal((100, 5)).astype(np.float32)
+        y = (X[:, 0] + X[:, 1] > 0).astype(np.float32)
+        return X, y
+
+    def test_fit_regression(self, regression_data: tuple[np.ndarray, np.ndarray]) -> None:
+        """Test basic regression fit."""
+        X, y = regression_data
+        train = Dataset(X, y)
+        model = GBDTModel(config=GBDTConfig(n_estimators=10))
+        model.fit(train)
+
+        assert model.is_fitted
+        assert model.n_trees == 10
+        assert model.n_features == 5
+
+    def test_fit_binary_classification(
+        self, binary_data: tuple[np.ndarray, np.ndarray]
+    ) -> None:
+        """Test basic binary classification fit."""
+        X, y = binary_data
+        train = Dataset(X, y)
+        model = GBDTModel(config=GBDTConfig(n_estimators=10, objective=bst.LogisticLoss()))
+        model.fit(train)
+
+        assert model.is_fitted
+        assert model.n_trees == 10
+
+    def test_fit_returns_self(
+        self, regression_data: tuple[np.ndarray, np.ndarray]
+    ) -> None:
+        """Test that fit returns self for method chaining."""
+        X, y = regression_data
+        train = Dataset(X, y)
+        model = GBDTModel(config=GBDTConfig(n_estimators=5))
+        result = model.fit(train)
+
+        assert result is model
+
+    def test_fit_with_eval_set(
+        self, regression_data: tuple[np.ndarray, np.ndarray]
+    ) -> None:
+        """Test fit with evaluation set."""
+        X, y = regression_data
+        X_train, X_val = X[:80], X[80:]
+        y_train, y_val = y[:80], y[80:]
+
+        train = Dataset(X_train, y_train)
+        valid = EvalSet("valid", Dataset(X_val, y_val))
+
+        model = GBDTModel(config=GBDTConfig(n_estimators=10))
+        model.fit(train, valid=[valid])
+
+        assert model.is_fitted
+        # eval_results will be populated in story 4.6
+        # For now, just ensure fit doesn't crash
+
+    def test_fit_with_early_stopping(
+        self, regression_data: tuple[np.ndarray, np.ndarray]
+    ) -> None:
+        """Test fit with early stopping configuration."""
+        X, y = regression_data
+        X_train, X_val = X[:80], X[80:]
+        y_train, y_val = y[:80], y[80:]
+
+        train = Dataset(X_train, y_train)
+        valid = EvalSet("valid", Dataset(X_val, y_val))
+
+        model = GBDTModel(
+            config=GBDTConfig(n_estimators=100, early_stopping_rounds=5)
+        )
+        model.fit(train, valid=[valid])
+
+        assert model.is_fitted
+        # May have stopped early
+        assert model.n_trees <= 100
+
+    def test_fit_requires_labels(
+        self, regression_data: tuple[np.ndarray, np.ndarray]
+    ) -> None:
+        """Test that fit raises error if dataset has no labels."""
+        X, _ = regression_data
+        train = Dataset(X)  # No labels
+        model = GBDTModel()
+        with pytest.raises((ValueError, RuntimeError)):
+            model.fit(train)
 
 
 class TestGBDTModelImports:

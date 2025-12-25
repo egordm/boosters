@@ -64,7 +64,7 @@ impl PyTreeConfig {
         if growth_strategy != "depthwise" && growth_strategy != "leafwise" {
             return Err(BoostersError::InvalidParameter {
                 name: "growth_strategy".to_string(),
-                message: format!(
+                reason: format!(
                     "expected 'depthwise' or 'leafwise', got '{}'",
                     growth_strategy
                 ),
@@ -76,7 +76,7 @@ impl PyTreeConfig {
         if min_gain_to_split < 0.0 {
             return Err(BoostersError::InvalidParameter {
                 name: "min_gain_to_split".to_string(),
-                message: "must be non-negative".to_string(),
+                reason: "must be non-negative".to_string(),
             }
             .into());
         }

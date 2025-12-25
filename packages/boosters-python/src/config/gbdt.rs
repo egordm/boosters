@@ -149,7 +149,7 @@ impl PyGBDTConfig {
         if n_estimators == 0 {
             return Err(BoostersError::InvalidParameter {
                 name: "n_estimators".to_string(),
-                message: "must be positive".to_string(),
+                reason: "must be positive".to_string(),
             }
             .into());
         }
@@ -158,7 +158,7 @@ impl PyGBDTConfig {
         if learning_rate <= 0.0 {
             return Err(BoostersError::InvalidParameter {
                 name: "learning_rate".to_string(),
-                message: "must be positive".to_string(),
+                reason: "must be positive".to_string(),
             }
             .into());
         }
@@ -249,5 +249,119 @@ impl Default for PyGBDTConfig {
                 seed: 42,
             }
         })
+    }
+}
+
+impl PyGBDTConfig {
+    /// Convert Python config to core Rust config.
+    ///
+    /// Called at fit-time to create the Rust training configuration.
+    pub fn to_core(&self, py: Python<'_>) -> PyResult<boosters::GBDTConfig> {
+        use boosters::model::gbdt::{RegularizationParams, SamplingParams, TreeParams};
+        use boosters::training::gbdt::GrowthStrategy;
+
+        // Convert objective
+        let objective = self
+            .objective_obj
+            .extract::<PyObjective>(py)?
+            .to_core();
+
+        // Convert metric (optional)
+        let metric = self
+            .metric_obj
+            .as_ref()
+            .map(|m| m.extract::<PyMetric>(py))
+            .transpose()?
+            .map(|m| m.to_core());
+
+        // Convert tree config
+        // Note: PyTreeConfig.max_depth is i32 (-1 means unlimited), core uses u32
+        let growth_strategy = match self.tree.growth_strategy.as_str() {
+            "depthwise" => {
+                let max_depth = if self.tree.max_depth < 0 {
+                    6 // Default depth when unlimited
+                } else {
+                    self.tree.max_depth as u32
+                };
+                GrowthStrategy::DepthWise { max_depth }
+            }
+            "leafwise" => GrowthStrategy::LeafWise {
+                max_leaves: self.tree.n_leaves,
+            },
+            _ => {
+                let max_depth = if self.tree.max_depth < 0 {
+                    6
+                } else {
+                    self.tree.max_depth as u32
+                };
+                GrowthStrategy::DepthWise { max_depth }
+            }
+        };
+
+        let tree = TreeParams {
+            growth_strategy,
+            max_onehot_cats: self.categorical.max_onehot as u32,
+        };
+
+        // Convert regularization config
+        // PyRegularizationConfig.min_hessian -> min_child_weight
+        // PyTreeConfig.min_samples_leaf -> min_samples_leaf
+        // PyTreeConfig.min_gain_to_split -> min_gain
+        let regularization = RegularizationParams {
+            lambda: self.regularization.l2 as f32,
+            alpha: self.regularization.l1 as f32,
+            min_gain: self.tree.min_gain_to_split as f32,
+            min_child_weight: self.regularization.min_hessian as f32,
+            min_samples_leaf: self.tree.min_samples_leaf,
+        };
+
+        // Convert sampling config
+        // PySamplingConfig.colsample -> colsample_bytree
+        let sampling = SamplingParams {
+            subsample: self.sampling.subsample as f32,
+            colsample_bytree: self.sampling.colsample as f32,
+            colsample_bylevel: self.sampling.colsample_bylevel as f32,
+        };
+
+        // Convert linear leaves config (optional)
+        // Only convert if enabled
+        let linear_leaves = self.linear_leaves.as_ref().and_then(|ll| {
+            if ll.enable {
+                Some(boosters::training::gbdt::LinearLeafConfig {
+                    lambda: ll.l2 as f32,
+                    alpha: ll.l1 as f32,
+                    max_iterations: ll.max_iter,
+                    tolerance: ll.tolerance,
+                    min_samples: ll.min_samples as usize,
+                    coefficient_threshold: 1e-6, // Default
+                    max_features: 10,            // Default
+                })
+            } else {
+                None
+            }
+        });
+
+        // Build the core config using builder pattern
+        // Note: bon builder uses type-state, so we need to chain all calls together
+        // without reassignment. For optional fields, we pass the Option value directly.
+        boosters::GBDTConfig::builder()
+            .objective(objective)
+            .maybe_metric(metric)
+            .n_trees(self.n_estimators)
+            .learning_rate(self.learning_rate as f32)
+            .tree(tree)
+            .regularization(regularization)
+            .sampling(sampling)
+            .maybe_linear_leaves(linear_leaves)
+            .maybe_early_stopping_rounds(self.early_stopping_rounds)
+            .seed(self.seed)
+            .build()
+            .map_err(|e| {
+                BoostersError::InvalidParameter {
+                    name: "config".to_string(),
+                    reason: e.to_string(),
+                }
+                .into()
+            })
     }
 }

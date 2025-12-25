@@ -1,10 +1,16 @@
 //! GBDT Model Python bindings.
 
+use ndarray::{Array1, Array2};
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::gen_stub_pyclass;
 
 use crate::config::PyGBDTConfig;
+use crate::data::{PyDataset, PyEvalSet};
 use crate::error::BoostersError;
+use crate::threading::EvalLogger;
+
+use boosters::data::Dataset as CoreDataset;
+use boosters::training::EvalSet as CoreEvalSet;
 
 /// Gradient Boosted Decision Tree model.
 ///
@@ -184,7 +190,7 @@ impl PyGBDTModel {
             other => {
                 return Err(BoostersError::InvalidParameter {
                     name: "importance_type".to_string(),
-                    message: format!(
+                    reason: format!(
                         "expected 'split' or 'gain', got '{}'",
                         other
                     ),
@@ -215,6 +221,113 @@ impl PyGBDTModel {
             "GBDTModel(fitted=False)".to_string()
         }
     }
+
+    /// Train the model on a dataset.
+    ///
+    /// Args:
+    ///     train: Training dataset containing features and labels.
+    ///     valid: Optional validation set(s) for early stopping and evaluation.
+    ///         Can be a single EvalSet or a list of EvalSets.
+    ///
+    /// Returns:
+    ///     Self (for method chaining).
+    ///
+    /// Raises:
+    ///     ValueError: If training data is invalid or labels are missing.
+    ///
+    /// Example:
+    ///     ```python
+    ///     model = GBDTModel().fit(train_dataset)
+    ///     model = GBDTModel().fit(train, valid=[EvalSet("val", val_data)])
+    ///     ```
+    #[pyo3(signature = (train, valid=None))]
+    pub fn fit<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        py: Python<'py>,
+        train: &PyDataset,
+        valid: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        // Validate that training data has labels
+        if !train.has_labels() {
+            return Err(BoostersError::ValidationError(
+                "Training dataset must have labels".to_string(),
+            )
+            .into());
+        }
+
+        // Convert Python config to core config
+        let config = slf.config.bind(py).borrow();
+        let core_config = config.to_core(py)?;
+        drop(config);
+
+        // Extract features [n_samples, n_features] and transpose to [n_features, n_samples]
+        // IMPORTANT: Must use as_standard_layout() to ensure C-order (row-contiguous) layout
+        // Otherwise binning will fail because rows won't be contiguous
+        let features_view = train.features_array(py)?;
+        let features_np = features_view.as_array();
+        let features_transposed: Array2<f32> = features_np.t().as_standard_layout().into_owned();
+
+        // Extract labels [n_samples] and reshape to [1, n_samples]
+        let labels_view = train.labels_array(py)?.expect("labels validated above");
+        let labels_np = labels_view.as_array();
+        let labels_1d: Array1<f32> = labels_np.to_owned();
+        let labels_2d: Array2<f32> =
+            labels_1d.into_shape((1, features_transposed.ncols())).map_err(|_| {
+                BoostersError::ValidationError("Failed to reshape labels".to_string())
+            })?;
+
+        // Extract weights (optional)
+        let weights_view = train.weights_array(py)?;
+        let weights_opt: Option<ndarray::Array1<f32>> =
+            weights_view.map(|w| w.as_array().to_owned());
+
+        // Create core dataset
+        let core_train = CoreDataset::new(
+            features_transposed.view(),
+            Some(labels_2d.view()),
+            weights_opt.as_ref().map(|w| w.view()),
+        );
+
+        // Convert validation sets
+        let eval_sets: Vec<(String, CoreDataset)> = if let Some(valid_obj) = valid {
+            Self::extract_eval_sets(py, valid_obj)?
+        } else {
+            Vec::new()
+        };
+
+        // Create EvalSet references for training
+        let eval_set_refs: Vec<CoreEvalSet<'_>> = eval_sets
+            .iter()
+            .map(|(name, ds)| CoreEvalSet::new(name.as_str(), ds))
+            .collect();
+
+        // Train with GIL released
+        let n_threads = 0; // Auto-detect
+        let trained_model = py.allow_threads(|| {
+            boosters::GBDTModel::train(&core_train, &eval_set_refs, core_config, n_threads)
+        });
+
+        match trained_model {
+            Some(model) => {
+                // Store best iteration/score from model metadata
+                slf.best_iteration = model.meta().best_iteration;
+                // Note: best_score not stored in meta currently
+
+                // Store the trained model
+                slf.inner = Some(model);
+
+                // TODO: Populate eval_results from training logs
+                // For now, leave as None (will be implemented when we add
+                // callback support to capture per-round metrics)
+
+                Ok(slf)
+            }
+            None => Err(BoostersError::TrainingError(
+                "Training failed to produce a model".to_string(),
+            )
+            .into()),
+        }
+    }
 }
 
 // Internal methods for fit/predict (to be implemented in Story 4.3/4.4)
@@ -227,5 +340,77 @@ impl PyGBDTModel {
     /// Get reference to inner model.
     pub fn get_inner(&self) -> Option<&boosters::GBDTModel> {
         self.inner.as_ref()
+    }
+
+    /// Extract evaluation sets from Python input.
+    ///
+    /// Accepts either a single EvalSet or a list of EvalSets.
+    fn extract_eval_sets(
+        py: Python<'_>,
+        valid: &Bound<'_, PyAny>,
+    ) -> PyResult<Vec<(String, CoreDataset)>> {
+        let mut result = Vec::new();
+
+        // Check if it's a list
+        if let Ok(list) = valid.downcast::<pyo3::types::PyList>() {
+            for item in list.iter() {
+                let eval_set: PyRef<'_, PyEvalSet> = item.extract()?;
+                let ds = Self::convert_eval_set(py, &eval_set)?;
+                result.push(ds);
+            }
+        } else {
+            // Try as single EvalSet
+            let eval_set: PyRef<'_, PyEvalSet> = valid.extract()?;
+            let ds = Self::convert_eval_set(py, &eval_set)?;
+            result.push(ds);
+        }
+
+        Ok(result)
+    }
+
+    /// Convert a single PyEvalSet to core types.
+    fn convert_eval_set(
+        py: Python<'_>,
+        eval_set: &PyRef<'_, PyEvalSet>,
+    ) -> PyResult<(String, CoreDataset)> {
+        let name = eval_set.name().to_string();
+        let dataset_ref = eval_set.get_dataset(py);
+        let dataset = &*dataset_ref;
+
+        // Extract features [n_samples, n_features] and transpose to [n_features, n_samples]
+        // IMPORTANT: Must use as_standard_layout() to ensure C-order (row-contiguous) layout
+        let features_view = dataset.features_array(py)?;
+        let features_np = features_view.as_array();
+        let features_transposed: Array2<f32> = features_np.t().as_standard_layout().into_owned();
+
+        // Extract labels [n_samples] and reshape to [1, n_samples]
+        let labels_view = dataset.labels_array(py)?;
+        let labels_2d = if let Some(lv) = labels_view {
+            let labels_np = lv.as_array();
+            let labels_1d: Array1<f32> = labels_np.to_owned();
+            Some(
+                labels_1d
+                    .into_shape((1, features_transposed.ncols()))
+                    .map_err(|_| {
+                        BoostersError::ValidationError("Failed to reshape labels".to_string())
+                    })?,
+            )
+        } else {
+            None
+        };
+
+        // Extract weights (optional)
+        let weights_view = dataset.weights_array(py)?;
+        let weights_opt: Option<ndarray::Array1<f32>> =
+            weights_view.map(|w| w.as_array().to_owned());
+
+        // Create core dataset
+        let core_ds = CoreDataset::new(
+            features_transposed.view(),
+            labels_2d.as_ref().map(|l| l.view()),
+            weights_opt.as_ref().map(|w| w.view()),
+        );
+
+        Ok((name, core_ds))
     }
 }

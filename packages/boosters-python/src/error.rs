@@ -14,8 +14,8 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum BoostersError {
     /// Invalid parameter value.
-    #[error("Invalid parameter '{name}': {message}")]
-    InvalidParameter { name: String, message: String },
+    #[error("Invalid parameter '{name}': {reason}")]
+    InvalidParameter { name: String, reason: String },
 
     /// Type mismatch error.
     #[error("Type error: {0}")]
@@ -33,9 +33,13 @@ pub enum BoostersError {
     #[error("Data conversion error: {0}")]
     DataConversion(String),
 
+    /// Validation error.
+    #[error("Validation error: {0}")]
+    ValidationError(String),
+
     /// Training error.
     #[error("Training error: {0}")]
-    Training(String),
+    TrainingError(String),
 
     /// Prediction error.
     #[error("Prediction error: {0}")]
@@ -58,7 +62,8 @@ impl From<BoostersError> for PyErr {
             BoostersError::ShapeMismatch(_) => PyValueError::new_err(err.to_string()),
             BoostersError::NotFitted { .. } => PyRuntimeError::new_err(err.to_string()),
             BoostersError::DataConversion(_) => PyValueError::new_err(err.to_string()),
-            BoostersError::Training(_) => PyRuntimeError::new_err(err.to_string()),
+            BoostersError::ValidationError(_) => PyValueError::new_err(err.to_string()),
+            BoostersError::TrainingError(_) => PyRuntimeError::new_err(err.to_string()),
             BoostersError::Prediction(_) => PyRuntimeError::new_err(err.to_string()),
             BoostersError::ExplainError(_) => PyRuntimeError::new_err(err.to_string()),
         }

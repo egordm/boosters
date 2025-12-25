@@ -133,7 +133,7 @@ impl PyDataset {
             if idx >= n_features {
                 return Err(BoostersError::InvalidParameter {
                     name: "categorical_features".to_string(),
-                    message: format!(
+                    reason: format!(
                         "index {} out of range for {} features",
                         idx, n_features
                     ),
@@ -359,7 +359,7 @@ impl PyDataset {
         if ndim != 2 {
             return Err(BoostersError::InvalidParameter {
                 name: "features".to_string(),
-                message: format!("expected 2D array, got {}D", ndim),
+                reason: format!("expected 2D array, got {}D", ndim),
             }
             .into());
         }
@@ -372,7 +372,7 @@ impl PyDataset {
         if n_samples == 0 {
             return Err(BoostersError::InvalidParameter {
                 name: "features".to_string(),
-                message: "array must have at least one sample".to_string(),
+                reason: "array must have at least one sample".to_string(),
             }
             .into());
         }
@@ -436,7 +436,7 @@ impl PyDataset {
         if ndim != 1 {
             return Err(BoostersError::InvalidParameter {
                 name: "labels".to_string(),
-                message: format!("expected 1D array, got {}D", ndim),
+                reason: format!("expected 1D array, got {}D", ndim),
             }
             .into());
         }
@@ -449,7 +449,7 @@ impl PyDataset {
         if n_samples != expected_samples {
             return Err(BoostersError::InvalidParameter {
                 name: "labels".to_string(),
-                message: format!(
+                reason: format!(
                     "shape mismatch: expected {} samples, got {}",
                     expected_samples, n_samples
                 ),
@@ -466,7 +466,7 @@ impl PyDataset {
         if !all_finite {
             return Err(BoostersError::InvalidParameter {
                 name: "labels".to_string(),
-                message: "labels contain NaN or Inf values".to_string(),
+                reason: "labels contain NaN or Inf values".to_string(),
             }
             .into());
         }
@@ -501,7 +501,7 @@ impl PyDataset {
         if ndim != 1 {
             return Err(BoostersError::InvalidParameter {
                 name: name.to_string(),
-                message: format!("expected 1D array, got {}D", ndim),
+                reason: format!("expected 1D array, got {}D", ndim),
             }
             .into());
         }
@@ -514,7 +514,7 @@ impl PyDataset {
         if n_samples != expected_samples {
             return Err(BoostersError::InvalidParameter {
                 name: name.to_string(),
-                message: format!(
+                reason: format!(
                     "shape mismatch: expected {} samples, got {}",
                     expected_samples, n_samples
                 ),

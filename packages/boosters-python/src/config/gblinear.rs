@@ -111,7 +111,7 @@ impl PyGBLinearConfig {
         if n_estimators == 0 {
             return Err(BoostersError::InvalidParameter {
                 name: "n_estimators".to_string(),
-                message: "must be positive".to_string(),
+                reason: "must be positive".to_string(),
             }
             .into());
         }
@@ -120,7 +120,7 @@ impl PyGBLinearConfig {
         if learning_rate <= 0.0 {
             return Err(BoostersError::InvalidParameter {
                 name: "learning_rate".to_string(),
-                message: "must be positive".to_string(),
+                reason: "must be positive".to_string(),
             }
             .into());
         }
@@ -129,7 +129,7 @@ impl PyGBLinearConfig {
         if l1 < 0.0 {
             return Err(BoostersError::InvalidParameter {
                 name: "l1".to_string(),
-                message: "must be non-negative".to_string(),
+                reason: "must be non-negative".to_string(),
             }
             .into());
         }
@@ -137,7 +137,7 @@ impl PyGBLinearConfig {
         if l2 < 0.0 {
             return Err(BoostersError::InvalidParameter {
                 name: "l2".to_string(),
-                message: "must be non-negative".to_string(),
+                reason: "must be non-negative".to_string(),
             }
             .into());
         }

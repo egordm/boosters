@@ -64,7 +64,7 @@ impl PySamplingConfig {
         if subsample <= 0.0 || subsample > 1.0 {
             return Err(BoostersError::InvalidParameter {
                 name: "subsample".to_string(),
-                message: "must be in (0, 1]".to_string(),
+                reason: "must be in (0, 1]".to_string(),
             }
             .into());
         }
@@ -72,7 +72,7 @@ impl PySamplingConfig {
         if colsample <= 0.0 || colsample > 1.0 {
             return Err(BoostersError::InvalidParameter {
                 name: "colsample".to_string(),
-                message: "must be in (0, 1]".to_string(),
+                reason: "must be in (0, 1]".to_string(),
             }
             .into());
         }
@@ -80,7 +80,7 @@ impl PySamplingConfig {
         if colsample_bylevel <= 0.0 || colsample_bylevel > 1.0 {
             return Err(BoostersError::InvalidParameter {
                 name: "colsample_bylevel".to_string(),
-                message: "must be in (0, 1]".to_string(),
+                reason: "must be in (0, 1]".to_string(),
             }
             .into());
         }
@@ -88,7 +88,7 @@ impl PySamplingConfig {
         if goss_alpha < 0.0 || goss_alpha >= 1.0 {
             return Err(BoostersError::InvalidParameter {
                 name: "goss_alpha".to_string(),
-                message: "must be in [0, 1)".to_string(),
+                reason: "must be in [0, 1)".to_string(),
             }
             .into());
         }
@@ -96,7 +96,7 @@ impl PySamplingConfig {
         if goss_beta < 0.0 || goss_beta > 1.0 {
             return Err(BoostersError::InvalidParameter {
                 name: "goss_beta".to_string(),
-                message: "must be in [0, 1]".to_string(),
+                reason: "must be in [0, 1]".to_string(),
             }
             .into());
         }

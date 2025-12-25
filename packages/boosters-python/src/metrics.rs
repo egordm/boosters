@@ -172,7 +172,7 @@ impl PyNdcg {
         if at == 0 {
             return Err(BoostersError::InvalidParameter {
                 name: "at".to_string(),
-                message: "must be positive".to_string(),
+                reason: "must be positive".to_string(),
             }
             .into());
         }

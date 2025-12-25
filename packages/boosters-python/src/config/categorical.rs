@@ -47,7 +47,7 @@ impl PyCategoricalConfig {
         if max_categories == 0 {
             return Err(BoostersError::InvalidParameter {
                 name: "max_categories".to_string(),
-                message: "must be positive".to_string(),
+                reason: "must be positive".to_string(),
             }
             .into());
         }

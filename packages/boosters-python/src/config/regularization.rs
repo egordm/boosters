@@ -41,21 +41,21 @@ impl PyRegularizationConfig {
         if l1 < 0.0 {
             return Err(BoostersError::InvalidParameter {
                 name: "l1".to_string(),
-                message: "must be non-negative".to_string(),
+                reason: "must be non-negative".to_string(),
             }
             .into());
         }
         if l2 < 0.0 {
             return Err(BoostersError::InvalidParameter {
                 name: "l2".to_string(),
-                message: "must be non-negative".to_string(),
+                reason: "must be non-negative".to_string(),
             }
             .into());
         }
         if min_hessian < 0.0 {
             return Err(BoostersError::InvalidParameter {
                 name: "min_hessian".to_string(),
-                message: "must be non-negative".to_string(),
+                reason: "must be non-negative".to_string(),
             }
             .into());
         }

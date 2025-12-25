@@ -41,7 +41,7 @@ impl PyEFBConfig {
         if max_conflict_rate < 0.0 || max_conflict_rate >= 1.0 {
             return Err(BoostersError::InvalidParameter {
                 name: "max_conflict_rate".to_string(),
-                message: "must be in [0, 1)".to_string(),
+                reason: "must be in [0, 1)".to_string(),
             }
             .into());
         }

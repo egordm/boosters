@@ -150,7 +150,7 @@ impl PyHuberLoss {
         if delta <= 0.0 {
             return Err(BoostersError::InvalidParameter {
                 name: "delta".to_string(),
-                message: "must be positive".to_string(),
+                reason: "must be positive".to_string(),
             }
             .into());
         }
@@ -214,7 +214,7 @@ impl PyPinballLoss {
             if a <= 0.0 || a >= 1.0 {
                 return Err(BoostersError::InvalidParameter {
                     name: format!("alpha[{}]", i),
-                    message: format!("must be in (0, 1), got {}", a),
+                    reason: format!("must be in (0, 1), got {}", a),
                 }
                 .into());
             }
@@ -263,7 +263,7 @@ impl PyArctanLoss {
         if alpha <= 0.0 || alpha >= 1.0 {
             return Err(BoostersError::InvalidParameter {
                 name: "alpha".to_string(),
-                message: "must be in (0, 1)".to_string(),
+                reason: "must be in (0, 1)".to_string(),
             }
             .into());
         }
@@ -305,7 +305,7 @@ impl PySoftmaxLoss {
         if n_classes < 2 {
             return Err(BoostersError::InvalidParameter {
                 name: "n_classes".to_string(),
-                message: "must be >= 2".to_string(),
+                reason: "must be >= 2".to_string(),
             }
             .into());
         }
@@ -342,7 +342,7 @@ impl PyLambdaRankLoss {
         if ndcg_at == 0 {
             return Err(BoostersError::InvalidParameter {
                 name: "ndcg_at".to_string(),
-                message: "must be positive".to_string(),
+                reason: "must be positive".to_string(),
             }
             .into());
         }
