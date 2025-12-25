@@ -29,6 +29,18 @@ from boosters.config import (
     TreeConfig,
 )
 
+# Metric types
+from boosters.metrics import (
+    Accuracy,
+    Auc,
+    LogLoss,
+    Mae,
+    Mape,
+    Metric,
+    Ndcg,
+    Rmse,
+)
+
 # Objective types
 from boosters.objectives import (
     AbsoluteLoss,
@@ -46,7 +58,9 @@ from boosters.objectives import (
 
 __all__ = [
     "AbsoluteLoss",
+    "Accuracy",
     "ArctanLoss",
+    "Auc",
     "CategoricalConfig",
     "EFBConfig",
     "GBDTConfig",
@@ -55,11 +69,17 @@ __all__ = [
     "HuberLoss",
     "LambdaRankLoss",
     "LinearLeavesConfig",
+    "LogLoss",
     "LogisticLoss",
+    "Mae",
+    "Mape",
+    "Metric",
+    "Ndcg",
     "Objective",
     "PinballLoss",
     "PoissonLoss",
     "RegularizationConfig",
+    "Rmse",
     "SamplingConfig",
     "SoftmaxLoss",
     "SquaredLoss",

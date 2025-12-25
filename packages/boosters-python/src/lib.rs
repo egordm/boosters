@@ -5,6 +5,7 @@
 
 mod config;
 mod error;
+mod metrics;
 mod objectives;
 
 use pyo3::prelude::*;
@@ -14,6 +15,7 @@ use config::{
     PyCategoricalConfig, PyEFBConfig, PyGBDTConfig, PyGBLinearConfig, PyLinearLeavesConfig,
     PyRegularizationConfig, PySamplingConfig, PyTreeConfig,
 };
+use metrics::{PyAccuracy, PyAuc, PyLogLoss, PyMae, PyMape, PyNdcg, PyRmse};
 use objectives::{
     PyAbsoluteLoss, PyArctanLoss, PyHingeLoss, PyHuberLoss, PyLambdaRankLoss, PyLogisticLoss,
     PyPinballLoss, PyPoissonLoss, PySoftmaxLoss, PySquaredLoss,
@@ -48,6 +50,15 @@ fn _boosters_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyArctanLoss>()?;
     m.add_class::<PySoftmaxLoss>()?;
     m.add_class::<PyLambdaRankLoss>()?;
+
+    // Metric types
+    m.add_class::<PyRmse>()?;
+    m.add_class::<PyMae>()?;
+    m.add_class::<PyMape>()?;
+    m.add_class::<PyLogLoss>()?;
+    m.add_class::<PyAuc>()?;
+    m.add_class::<PyAccuracy>()?;
+    m.add_class::<PyNdcg>()?;
 
     Ok(())
 }

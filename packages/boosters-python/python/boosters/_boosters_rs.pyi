@@ -193,3 +193,44 @@ class LambdaRankLoss:
     ndcg_at: int
 
     def __init__(self, ndcg_at: int = 10) -> None: ...
+
+# =============================================================================
+# Metric Types
+# =============================================================================
+
+class Rmse:
+    """Root Mean Squared Error for regression."""
+
+    def __init__(self) -> None: ...
+
+class Mae:
+    """Mean Absolute Error for regression."""
+
+    def __init__(self) -> None: ...
+
+class Mape:
+    """Mean Absolute Percentage Error for regression."""
+
+    def __init__(self) -> None: ...
+
+class LogLoss:
+    """Binary Log Loss (cross-entropy) for classification."""
+
+    def __init__(self) -> None: ...
+
+class Auc:
+    """Area Under ROC Curve for binary classification."""
+
+    def __init__(self) -> None: ...
+
+class Accuracy:
+    """Classification accuracy (binary or multiclass)."""
+
+    def __init__(self) -> None: ...
+
+class Ndcg:
+    """Normalized Discounted Cumulative Gain for ranking."""
+
+    at: int
+
+    def __init__(self, at: int = 10) -> None: ...

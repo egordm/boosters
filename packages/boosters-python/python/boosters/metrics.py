@@ -20,27 +20,26 @@ Type Aliases:
     - Metric: Union of all metric types
 """
 
-# Re-exports will be added as Epic 2 is implemented
-# from boosters._boosters_rs import (
-#     Rmse,
-#     Mae,
-#     Mape,
-#     LogLoss,
-#     Auc,
-#     Accuracy,
-#     Ndcg,
-# )
+from boosters._boosters_rs import (
+    Accuracy,
+    Auc,
+    LogLoss,
+    Mae,
+    Mape,
+    Ndcg,
+    Rmse,
+)
 
-# Type alias for all metrics (populated after implementation)
-# Metric: TypeAlias = Rmse | Mae | Mape | LogLoss | Auc | Accuracy | Ndcg
+# Type alias for all metrics
+type Metric = Rmse | Mae | Mape | LogLoss | Auc | Accuracy | Ndcg
 
 __all__: list[str] = [
-    # "Rmse",
-    # "Mae",
-    # "Mape",
-    # "LogLoss",
-    # "Auc",
-    # "Accuracy",
-    # "Ndcg",
-    # "Metric",
+    "Accuracy",
+    "Auc",
+    "LogLoss",
+    "Mae",
+    "Mape",
+    "Metric",
+    "Ndcg",
+    "Rmse",
 ]
