@@ -54,6 +54,3 @@ pub use traversal::{
     StandardTraversal, TreeTraversal, UnrolledTraversal, UnrolledTraversal4, UnrolledTraversal6,
     UnrolledTraversal8,
 };
-
-// Re-export BinnedSample from data::binned for use with BinnedDataset as DataAccessor
-pub use crate::data::binned::BinnedSample;

@@ -104,6 +104,19 @@ impl<T: AsRef<[f32]> + ?Sized> SampleAccessor for &T {
     }
 }
 
+// Implementation for ndarray ArrayView1 (may be contiguous or strided)
+impl SampleAccessor for ndarray::ArrayView1<'_, f32> {
+    #[inline]
+    fn feature(&self, index: usize) -> f32 {
+        self[index]
+    }
+
+    #[inline]
+    fn n_features(&self) -> usize {
+        self.len()
+    }
+}
+
 // ============================================================================
 // DataAccessor Trait
 // ============================================================================

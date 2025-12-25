@@ -10,7 +10,17 @@ use std::path::PathBuf;
 
 use boosters::assert_slices_approx_eq_f64;
 use boosters::compat::lightgbm::LgbModel;
+use boosters::inference::gbdt::SimplePredictor;
+use boosters::repr::gbdt::Forest;
 use serde::Deserialize;
+
+/// Predict a single row using the predictor.
+fn predict_row(forest: &Forest, features: &[f32]) -> Vec<f32> {
+    let predictor = SimplePredictor::new(forest);
+    let mut output = vec![0.0; predictor.n_groups()];
+    predictor.predict_row_into(features, None, &mut output);
+    output
+}
 
 /// Test directory for LightGBM test cases.
 fn test_dir() -> PathBuf {
@@ -115,7 +125,7 @@ mod regression {
             .iter()
             .map(|row| {
                 let row_f32 = row_to_f32(row);
-                forest.predict_row(&row_f32)[0]
+                predict_row(&forest, &row_f32)[0]
             })
             .collect();
 
@@ -147,7 +157,7 @@ mod binary_classification {
             .iter()
             .map(|row| {
                 let row_f32 = row_to_f32(row);
-                forest.predict_row(&row_f32)[0]
+                predict_row(&forest, &row_f32)[0]
             })
             .collect();
 
@@ -169,7 +179,7 @@ mod binary_classification {
             .iter()
             .map(|row| {
                 let row_f32 = row_to_f32(row);
-                let raw = forest.predict_row(&row_f32)[0];
+                let raw = predict_row(&forest, &row_f32)[0];
                 1.0 / (1.0 + (-raw).exp())
             })
             .collect();
@@ -199,7 +209,7 @@ mod multiclass {
 
         for (i, row) in input.data.iter().enumerate() {
             let row_f32 = row_to_f32(row);
-            let pred = forest.predict_row(&row_f32);
+            let pred = predict_row(&forest, &row_f32);
 
             assert_eq!(pred.len(), 3, "Row {i}: expected 3 outputs");
             assert_slices_approx_eq_f64!(&pred, &expected_raw[i], TOLERANCE, "multiclass row {i}");
@@ -218,7 +228,7 @@ mod multiclass {
 
         for (i, row) in input.data.iter().enumerate() {
             let row_f32 = row_to_f32(row);
-            let raw = forest.predict_row(&row_f32);
+            let raw = predict_row(&forest, &row_f32);
 
             let max_val = raw.iter().copied().fold(f32::NEG_INFINITY, f32::max);
             let exp_sum: f32 = raw.iter().map(|&x| (x - max_val).exp()).sum();
@@ -252,7 +262,7 @@ mod missing_values {
             .iter()
             .map(|row| {
                 let row_f32 = row_to_f32(row);
-                forest.predict_row(&row_f32)[0]
+                predict_row(&forest, &row_f32)[0]
             })
             .collect();
 
@@ -268,7 +278,7 @@ mod missing_values {
         features[3] = f32::NAN;
         features[7] = f32::NAN;
 
-        let pred = forest.predict_row(&features);
+        let pred = predict_row(&forest, &features);
         assert_eq!(pred.len(), 1);
         assert!(pred[0].is_finite(), "Prediction should be finite with NaN inputs");
     }

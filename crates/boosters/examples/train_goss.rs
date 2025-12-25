@@ -18,6 +18,8 @@ use std::time::Instant;
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
 use boosters::dataset::{Dataset, TargetsView};
+use boosters::inference::gbdt::SimplePredictor;
+use boosters::repr::gbdt::Forest;
 use boosters::testing::data::synthetic_regression;
 use boosters::training::{
     GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, RowSamplingParams,
@@ -25,6 +27,14 @@ use boosters::training::{
 };
 use boosters::Parallelism;
 use ndarray::Array2;
+
+/// Predict a single row using the predictor.
+fn predict_row(forest: &Forest, features: &[f32]) -> Vec<f32> {
+    let predictor = SimplePredictor::new(forest);
+    let mut output = vec![0.0; predictor.n_groups()];
+    predictor.predict_row_into(features, None, &mut output);
+    output
+}
 
 fn main() {
     // =========================================================================
@@ -106,7 +116,7 @@ fn main() {
 
     let preds_baseline: Vec<f32> = test_features
         .chunks(n_features)
-        .map(|row| forest_baseline.predict_row(row)[0])
+        .map(|row| predict_row(&forest_baseline, row)[0])
         .collect();
     let rmse_baseline = compute_rmse(&preds_baseline, &test_labels);
 
@@ -141,7 +151,7 @@ fn main() {
 
     let preds_goss: Vec<f32> = test_features
         .chunks(n_features)
-        .map(|row| forest_goss.predict_row(row)[0])
+        .map(|row| predict_row(&forest_goss, row)[0])
         .collect();
     let rmse_goss = compute_rmse(&preds_goss, &test_labels);
 
@@ -177,7 +187,7 @@ fn main() {
 
     let preds_uniform: Vec<f32> = test_features
         .chunks(n_features)
-        .map(|row| forest_uniform.predict_row(row)[0])
+        .map(|row| predict_row(&forest_uniform, row)[0])
         .collect();
     let rmse_uniform = compute_rmse(&preds_uniform, &test_labels);
 

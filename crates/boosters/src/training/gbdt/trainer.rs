@@ -291,16 +291,14 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
                 let tree = mutable_tree.freeze();
 
                 // Update predictions (row of Array2)
-                let mut pred_row = predictions.row_mut(output);
+                let pred_row = predictions.row_mut(output);
                 if sampled.is_none() {
                     // Fast path: use partitioner for O(n) prediction update
                     grower.update_predictions_from_last_tree(pred_row);
                 } else {
                     // Fallback: row sampling trains on a subset; we must still apply the
                     // trained tree to all rows to keep predictions correct.
-                    let pred_slice = pred_row.as_slice_mut()
-                        .expect("prediction row should be contiguous");
-                    tree.predict_into(dataset, pred_slice, parallelism);
+                    tree.predict_into(dataset, pred_row, parallelism);
                 }
 
                 // Incremental eval set prediction: add this tree's contribution
@@ -308,11 +306,9 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
                 // Only compute if evaluation is needed
                 if needs_evaluation {
                     for (set_idx, eval_set) in eval_sets.iter().enumerate() {
-                        let mut pred_row = eval_predictions[set_idx].row_mut(output);
-                        let pred_slice = pred_row.as_slice_mut()
-                            .expect("eval prediction row should be contiguous");
+                        let pred_row = eval_predictions[set_idx].row_mut(output);
                         // Use FeaturesView directly - it implements FeatureAccessor
-                        tree.predict_into(&eval_set.dataset.features(), pred_slice, parallelism);
+                        tree.predict_into(&eval_set.dataset.features(), pred_row, parallelism);
                     }
                 }
 

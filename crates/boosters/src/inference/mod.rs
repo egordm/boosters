@@ -32,5 +32,4 @@ pub use predictions::{PredictionKind, Predictions};
 pub use gbdt::{
     Predictor, SimplePredictor, UnrolledPredictor6,
     StandardTraversal, UnrolledTraversal, UnrolledTraversal6, TreeTraversal,
-    BinnedSample,
 };

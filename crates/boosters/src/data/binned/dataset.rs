@@ -1,5 +1,7 @@
 //! BinnedDataset - the main dataset structure.
 
+use crate::data::{DataAccessor, SampleAccessor};
+use crate::dataset::FeatureType;
 use super::bundling::{BundlePlan, FeatureLocation};
 use super::group::{FeatureGroup, FeatureMeta};
 use super::storage::{BinStorage, FeatureView, GroupLayout};
@@ -416,16 +418,16 @@ impl BinnedDataset {
     /// }
     /// ```
     #[inline]
-    pub fn row_view(&self, row: usize) -> Option<BinnedSampleSlice<'_>> {
+    pub fn row_view(&self, row: usize) -> Option<BinnedSample<'_>> {
         if row >= self.n_rows {
             return None;
         }
-        Some(BinnedSampleSlice { dataset: self, row })
+        Some(BinnedSample { dataset: self, row })
     }
 }
 
 // =============================================================================
-// RowView
+// BinnedSample
 // =============================================================================
 
 /// A validated view into a single row of a BinnedDataset.
@@ -433,20 +435,26 @@ impl BinnedDataset {
 /// Created via `BinnedDataset::row_view()` with bounds checking.
 /// Provides convenient access to bin values for a specific row.
 ///
+/// Implements [`SampleAccessor`] for tree traversal, converting bin indices
+/// to midpoint values on-demand.
+///
 /// # Example
 ///
 /// ```ignore
-/// let row_view = dataset.row_view(0)?;
-/// let bin = row_view.get_bin(feature_idx);
-/// let is_missing = row_view.is_missing(feature_idx);
+/// let sample = dataset.row_view(0)?;
+/// let bin = sample.get_bin(feature_idx);
+/// let is_missing = sample.is_missing(feature_idx);
+///
+/// // For tree traversal via SampleAccessor:
+/// let value = sample.feature(feature_idx);
 /// ```
 #[derive(Clone, Copy, Debug)]
-pub struct BinnedSampleSlice<'a> {
+pub struct BinnedSample<'a> {
     dataset: &'a BinnedDataset,
     row: usize,
 }
 
-impl<'a> BinnedSampleSlice<'a> {
+impl<'a> BinnedSample<'a> {
     /// Get the bin value for a feature.
     ///
     /// Returns `Some(bin)` for dense features, `None` for sparse features
@@ -472,6 +480,62 @@ impl<'a> BinnedSampleSlice<'a> {
     #[inline]
     pub fn dataset(&self) -> &'a BinnedDataset {
         self.dataset
+    }
+}
+
+// =============================================================================
+// Trait Implementations
+// =============================================================================
+
+impl SampleAccessor for BinnedSample<'_> {
+    #[inline]
+    fn feature(&self, index: usize) -> f32 {
+        let bin = self.dataset.get_bin(self.row, index);
+        match bin {
+            Some(b) => self.dataset.bin_mapper(index).bin_to_midpoint(b) as f32,
+            None => f32::NAN,
+        }
+    }
+
+    #[inline]
+    fn n_features(&self) -> usize {
+        self.dataset.n_features()
+    }
+}
+
+impl DataAccessor for BinnedDataset {
+    type Sample<'a> = BinnedSample<'a> where Self: 'a;
+
+    #[inline]
+    fn sample(&self, index: usize) -> Self::Sample<'_> {
+        BinnedSample {
+            dataset: self,
+            row: index,
+        }
+    }
+
+    #[inline]
+    fn n_samples(&self) -> usize {
+        self.n_rows()
+    }
+
+    #[inline]
+    fn n_features(&self) -> usize {
+        BinnedDataset::n_features(self)
+    }
+
+    #[inline]
+    fn feature_type(&self, feature: usize) -> FeatureType {
+        if self.features[feature].is_categorical() {
+            FeatureType::Categorical
+        } else {
+            FeatureType::Numeric
+        }
+    }
+
+    #[inline]
+    fn has_categorical(&self) -> bool {
+        self.features.iter().any(|f| f.is_categorical())
     }
 }
 

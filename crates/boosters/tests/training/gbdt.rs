@@ -4,11 +4,20 @@
 
 use boosters::data::{transpose_to_c_order, BinnedDatasetBuilder, BinningConfig, GroupLayout, GroupStrategy};
 use boosters::dataset::{Dataset, TargetsView};
+use boosters::inference::gbdt::SimplePredictor;
 use boosters::model::gbdt::{GBDTConfig, GBDTModel};
-use boosters::repr::gbdt::{TreeView, SplitType};
+use boosters::repr::gbdt::{Forest, TreeView, SplitType};
 use boosters::training::{GBDTParams, GBDTTrainer, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
 use ndarray::{Array2, ArrayView2};
+
+/// Predict a single row using the predictor.
+fn predict_row(forest: &Forest, features: &[f32]) -> Vec<f32> {
+    let predictor = SimplePredictor::new(forest);
+    let mut output = vec![0.0; predictor.n_groups()];
+    predictor.predict_row_into(features, None, &mut output);
+    output
+}
 
 #[test]
 fn train_rejects_invalid_targets_len() {
@@ -72,7 +81,7 @@ fn trained_model_improves_over_base_score_on_simple_problem() {
 
     for row in 0..n_samples {
         let x = features_raw[row];
-        let pred = forest.predict_row(&[x])[0];
+        let pred = predict_row(&forest, &[x])[0];
         let target = targets[row];
 
         base_error_sum += (base - target).powi(2);
@@ -141,7 +150,7 @@ fn trained_model_improves_over_base_score_on_medium_problem() {
             row_features.push(features[[f, row]]);
         }
 
-        let pred = forest.predict_row(&row_features)[0];
+        let pred = predict_row(&forest, &row_features)[0];
         let target = targets[row];
 
         base_error_sum += (base - target).powi(2);
@@ -241,10 +250,10 @@ fn train_with_categorical_features_produces_categorical_splits() {
 
     // Verify predictions are reasonable
     // Categories 0, 2 should predict low, categories 1, 3 should predict high
-    let pred_cat0 = forest.predict_row(&[0.0])[0];
-    let pred_cat1 = forest.predict_row(&[1.0])[0];
-    let pred_cat2 = forest.predict_row(&[2.0])[0];
-    let pred_cat3 = forest.predict_row(&[3.0])[0];
+    let pred_cat0 = predict_row(&forest, &[0.0])[0];
+    let pred_cat1 = predict_row(&forest, &[1.0])[0];
+    let pred_cat2 = predict_row(&forest, &[2.0])[0];
+    let pred_cat3 = predict_row(&forest, &[3.0])[0];
 
     // Low predictions (categories 0, 2) should be < 5.5 (midpoint)
     // High predictions (categories 1, 3) should be > 5.5
@@ -313,7 +322,7 @@ fn train_from_dataset_api() {
     for row in 0..n_samples {
         let x0 = row as f32 / 10.0;
         let x1 = (row as f32 * 2.0) % 10.0;
-        let pred = forest.predict_row(&[x0, x1])[0];
+        let pred = predict_row(&forest, &[x0, x1])[0];
         let target = targets_data[row];
         
         base_error += (base - target).powi(2);
@@ -385,7 +394,7 @@ fn train_from_dataset_with_eval_set() {
     for i in 0..n_eval {
         let x0 = (n_train + i) as f32 / 10.0;
         let x1 = ((n_train + i) as f32 * 2.0) % 10.0;
-        let pred = forest.predict_row(&[x0, x1])[0];
+        let pred = predict_row(&forest, &[x0, x1])[0];
         let target = eval_targets[i];
         
         pred_error += (pred - target).powi(2);

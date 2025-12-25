@@ -10,6 +10,8 @@
 // Allow many constructor arguments for creating trees with all their fields.
 #![allow(clippy::too_many_arguments)]
 
+use ndarray::ArrayViewMut1;
+
 use crate::data::{DataAccessor, SampleAccessor};
 
 use super::categories::{float_to_category, CategoriesStorage};
@@ -489,13 +491,13 @@ impl<L: LeafValue> Tree<L> {
     ///
     /// let tree: Tree<ScalarLeaf> = /* ... */;
     /// let data = SamplesView::from_slice(&[0.1, 0.2, 0.3, 0.4], 2, 2).unwrap();
-    /// let mut predictions = vec![0.0; 2];
-    /// tree.predict_into(&data, &mut predictions, Parallelism::Parallel);
+    /// let mut predictions = Array1::zeros(2);
+    /// tree.predict_into(&data, predictions.view_mut(), Parallelism::Parallel);
     /// ```
     pub fn predict_into<D: DataAccessor + Sync>(
         &self,
         data: &D,
-        predictions: &mut [f32],
+        mut predictions: ArrayViewMut1<'_, f32>,
         parallelism: crate::utils::Parallelism,
     ) where
         L: Into<f32> + Copy + Send + Sync,
@@ -503,17 +505,21 @@ impl<L: LeafValue> Tree<L> {
         let n_samples = data.n_samples();
         debug_assert_eq!(predictions.len(), n_samples);
 
+        // Get underlying slice for parallel unsafe access
+        // ArrayViewMut1 is contiguous so as_slice_mut().unwrap() is safe
+        let pred_slice = predictions.as_slice_mut().expect("predictions must be contiguous");
+
         if self.has_linear_leaves() {
             parallelism.maybe_par_for_each(0..n_samples, |row_idx| {
                 // Safety: each row_idx is unique, so we can safely write to predictions[row_idx]
-                let pred = unsafe { &mut *predictions.as_ptr().add(row_idx).cast_mut() };
+                let pred = unsafe { &mut *pred_slice.as_ptr().add(row_idx).cast_mut() };
                 let sample = data.sample(row_idx);
                 let leaf_idx = self.traverse_to_leaf(&sample);
                 *pred += self.compute_leaf_value(leaf_idx, &sample);
             });
         } else {
             parallelism.maybe_par_for_each(0..n_samples, |row_idx| {
-                let pred = unsafe { &mut *predictions.as_ptr().add(row_idx).cast_mut() };
+                let pred = unsafe { &mut *pred_slice.as_ptr().add(row_idx).cast_mut() };
                 let sample = data.sample(row_idx);
                 let leaf_idx = self.traverse_to_leaf(&sample);
                 *pred += (*self.leaf_value(leaf_idx)).into();
@@ -671,13 +677,13 @@ mod tests {
         let data = SamplesView::from_array(arr.view());
         
         // Test accumulate pattern (starts with existing values)
-        let mut predictions = vec![10.0, 20.0, 30.0];
-        tree.predict_into(&data, &mut predictions, crate::utils::Parallelism::Sequential);
+        let mut predictions = ndarray::Array1::from_vec(vec![10.0, 20.0, 30.0]);
+        tree.predict_into(&data, predictions.view_mut(), crate::utils::Parallelism::Sequential);
 
         // Row 0: 0.3 < 0.5 -> left (1.0), 10.0 + 1.0 = 11.0
         // Row 1: 0.7 >= 0.5 -> right (2.0), 20.0 + 2.0 = 22.0
         // Row 2: 0.5 >= 0.5 -> right (2.0), 30.0 + 2.0 = 32.0
-        assert_eq!(predictions, vec![11.0, 22.0, 32.0]);
+        assert_eq!(predictions.to_vec(), vec![11.0, 22.0, 32.0]);
     }
 
     #[test]
@@ -701,8 +707,8 @@ mod tests {
         // Row 2: x=0.1 -> left leaf -> 0.5 + 2.0*0.1 = 0.7
         let arr = Array2::from_shape_vec((3, 1), vec![0.3, 0.7, 0.1]).unwrap();
         let data = SamplesView::from_array(arr.view());
-        let mut predictions = vec![0.0; 3];
-        frozen.predict_into(&data, &mut predictions, crate::utils::Parallelism::Sequential);
+        let mut predictions = ndarray::Array1::zeros(3);
+        frozen.predict_into(&data, predictions.view_mut(), crate::utils::Parallelism::Sequential);
 
         assert!((predictions[0] - 1.1).abs() < 1e-5, "got {}", predictions[0]);
         assert!((predictions[1] - 10.0).abs() < 1e-5, "got {}", predictions[1]);
@@ -725,8 +731,8 @@ mod tests {
         // Row 1: x=NaN -> fall back to base=5.0
         let arr = Array2::from_shape_vec((2, 1), vec![0.5, f32::NAN]).unwrap();
         let data = SamplesView::from_array(arr.view());
-        let mut predictions = vec![0.0; 2];
-        frozen.predict_into(&data, &mut predictions, crate::utils::Parallelism::Sequential);
+        let mut predictions = ndarray::Array1::zeros(2);
+        frozen.predict_into(&data, predictions.view_mut(), crate::utils::Parallelism::Sequential);
 
         assert!((predictions[0] - 2.0).abs() < 1e-5, "got {}", predictions[0]);
         assert!((predictions[1] - 5.0).abs() < 1e-5, "got {}", predictions[1]);
@@ -748,8 +754,8 @@ mod tests {
         // Row 1: [0.5, 2.0] -> 1.0 + 2.0*0.5 + 3.0*2.0 = 8.0
         let arr = Array2::from_shape_vec((2, 2), vec![1.0, 1.0, 0.5, 2.0]).unwrap();
         let data = SamplesView::from_array(arr.view());
-        let mut predictions = vec![0.0; 2];
-        frozen.predict_into(&data, &mut predictions, crate::utils::Parallelism::Sequential);
+        let mut predictions = ndarray::Array1::zeros(2);
+        frozen.predict_into(&data, predictions.view_mut(), crate::utils::Parallelism::Sequential);
 
         assert!((predictions[0] - 6.0).abs() < 1e-5, "got {}", predictions[0]);
         assert!((predictions[1] - 8.0).abs() < 1e-5, "got {}", predictions[1]);

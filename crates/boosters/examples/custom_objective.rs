@@ -11,10 +11,20 @@
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
 use boosters::dataset::{Dataset, TargetsView};
+use boosters::inference::gbdt::SimplePredictor;
+use boosters::repr::gbdt::Forest;
 use boosters::training::{GBDTParams, GBDTTrainer, GradsTuple, GrowthStrategy, Rmse, TargetSchema};
 use boosters::{ObjectiveFn, Parallelism, TaskKind};
 use boosters::inference::PredictionKind;
 use ndarray::{Array2, ArrayView1, ArrayView2, ArrayViewMut2};
+
+/// Predict a single row using the predictor.
+fn predict_row(forest: &Forest, features: &[f32]) -> Vec<f32> {
+    let predictor = SimplePredictor::new(forest);
+    let mut output = vec![0.0; predictor.n_groups()];
+    predictor.predict_row_into(features, None, &mut output);
+    output
+}
 
 /// A custom objective: Huber loss with delta=1.0
 ///
@@ -158,7 +168,7 @@ fn main() {
     let predictions: Vec<f32> = (0..n_samples)
         .map(|i| {
             let row: Vec<f32> = (0..n_features).map(|f| features[(f, i)]).collect();
-            forest.predict_row(&row)[0]
+            predict_row(&forest, &row)[0]
         })
         .collect();
 

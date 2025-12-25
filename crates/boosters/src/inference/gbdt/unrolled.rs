@@ -334,7 +334,7 @@ impl<D: UnrollDepth> UnrolledTreeLayout<D> {
 
     /// Traverse the array layout for a single sample using SampleAccessor.
     #[inline]
-    pub fn traverse_to_exit_sample<S: SampleAccessor + ?Sized>(&self, sample: &S) -> usize {
+    pub fn traverse_to_exit<S: SampleAccessor + ?Sized>(&self, sample: &S) -> usize {
         let mut idx = 0usize;
         let split_indices = self.split_indices.as_ref();
         let split_thresholds = self.split_thresholds.as_ref();
@@ -369,7 +369,7 @@ impl<D: UnrollDepth> UnrolledTreeLayout<D> {
     ///
     /// This version works with any DataAccessor but may be slower than
     /// `process_block` for contiguous data.
-    pub fn process_block_accessor<A: DataAccessor>(&self, data: &A, exit_indices: &mut [usize]) {
+    pub fn traverse_block<A: DataAccessor>(&self, data: &A, exit_indices: &mut [usize]) {
         let split_indices = self.split_indices.as_ref();
         let split_thresholds = self.split_thresholds.as_ref();
         let default_left = self.default_left.as_ref();
@@ -592,8 +592,8 @@ mod tests {
         let layout = UnrolledTreeLayout4::from_tree(&tree);
 
         // Use SampleAccessor-based traverse_to_exit_sample (slices implement SampleAccessor)
-        let exit_left = layout.traverse_to_exit_sample(&[0.3f32]);
-        let exit_right = layout.traverse_to_exit_sample(&[0.7f32]);
+        let exit_left = layout.traverse_to_exit(&[0.3f32]);
+        let exit_right = layout.traverse_to_exit(&[0.7f32]);
 
         let left_node = layout.exit_node_idx(exit_left);
         let right_node = layout.exit_node_idx(exit_right);
@@ -632,7 +632,7 @@ mod tests {
         let view = SamplesView::from_slice(&feature_values, 4, 1).unwrap();
         let mut exit_indices = vec![0usize; 4];
 
-        layout.process_block_accessor(&view, &mut exit_indices);
+        layout.traverse_block(&view, &mut exit_indices);
 
         for (i, &exit_idx) in exit_indices.iter().enumerate() {
             let node_idx = layout.exit_node_idx(exit_idx);
@@ -659,7 +659,7 @@ mod tests {
 
         let layout = UnrolledTreeLayout4::from_tree(&tree);
 
-        let exit_nan = layout.traverse_to_exit_sample(&[f32::NAN]);
+        let exit_nan = layout.traverse_to_exit(&[f32::NAN]);
         let node_idx = layout.exit_node_idx(exit_nan);
         assert_eq!(tree.leaf_value(node_idx).0, 1.0);
     }

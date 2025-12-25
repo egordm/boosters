@@ -45,7 +45,7 @@ pub use ndarray::{
 pub use binned::{
     BinMapper, BinStorage, BinType, BinnedDataset, BinnedDatasetBuilder, BinningConfig,
     BinningStrategy, BuildError, FeatureGroup, FeatureMeta, FeatureType, FeatureView,
-    GroupLayout, MissingType, BinnedSampleSlice as BinnedRowView,
+    GroupLayout, MissingType, BinnedSample,
 };
 
 // Internal types for tests/benchmarks

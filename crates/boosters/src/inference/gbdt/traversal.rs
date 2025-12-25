@@ -164,7 +164,7 @@ impl<D: UnrollDepth> TreeTraversal<ScalarLeaf> for UnrolledTraversal<D> {
         sample: &S,
     ) -> NodeId {
         // Phase 1: Traverse unrolled levels
-        let exit_idx = state.traverse_to_exit_sample(sample);
+        let exit_idx = state.traverse_to_exit(sample);
         let node_idx = state.exit_node_idx(exit_idx);
 
         // Phase 2: Continue to leaf if not already there
@@ -190,11 +190,11 @@ impl<D: UnrollDepth> TreeTraversal<ScalarLeaf> for UnrolledTraversal<D> {
 
         let indices: &mut [usize] = if block_size <= 256 {
             let slice = &mut stack_indices[..block_size];
-            state.process_block_accessor(data, slice);
+            state.traverse_block(data, slice);
             slice
         } else {
             exit_indices = vec![0usize; block_size];
-            state.process_block_accessor(data, &mut exit_indices);
+            state.traverse_block(data, &mut exit_indices);
             &mut exit_indices
         };
 

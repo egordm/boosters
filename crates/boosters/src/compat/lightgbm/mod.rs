@@ -21,10 +21,13 @@
 //!
 //! ```ignore
 //! use boosters::compat::lightgbm::LgbModel;
+//! use boosters::inference::gbdt::SimplePredictor;
 //!
 //! let model = LgbModel::from_file("model.txt")?;
 //! let forest = model.to_forest()?;
-//! let predictions = forest.predict_row(&features);
+//! let predictor = SimplePredictor::new(&forest);
+//! let mut output = vec![0.0; predictor.n_groups()];
+//! predictor.predict_row_into(&features, None, &mut output);
 //! ```
 
 mod convert;

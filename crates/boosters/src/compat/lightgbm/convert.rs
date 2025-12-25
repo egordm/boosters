@@ -27,7 +27,7 @@ impl LgbModel {
     /// ```ignore
     /// let model = LgbModel::from_file("model.txt")?;
     /// let forest = model.to_forest()?;
-    /// let predictions = forest.predict_row(&features);
+    /// let predictions = predict_row(&forest, &features);
     /// ```
     pub fn to_forest(&self) -> Result<Forest<ScalarLeaf>, ConversionError> {
         // Check for unsupported features
@@ -219,7 +219,15 @@ fn extract_categorical_bitset(lgb_tree: &LgbTree, cat_idx: usize) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inference::gbdt::SimplePredictor;
     use approx::assert_abs_diff_eq;
+
+    fn predict_row(forest: &Forest, features: &[f32]) -> Vec<f32> {
+        let predictor = SimplePredictor::new(forest);
+        let mut output = vec![0.0; predictor.n_groups()];
+        predictor.predict_row_into(features, None, &mut output);
+        output
+    }
 
     fn load_model(name: &str) -> LgbModel {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -266,7 +274,7 @@ mod tests {
 
         for (i, (row, exp)) in data.iter().zip(expected.iter()).enumerate() {
             let features: Vec<f32> = row.iter().map(|x| *x as f32).collect();
-            let pred = forest.predict_row(&features);
+            let pred = predict_row(&forest, &features);
             assert_eq!(pred.len(), 1, "Row {}: expected 1 output", i);
             assert_abs_diff_eq!(
                 pred[0],
@@ -293,7 +301,7 @@ mod tests {
 
         for (i, (row, exp)) in data.iter().zip(expected.iter()).enumerate() {
             let features: Vec<f32> = row.iter().map(|x| *x as f32).collect();
-            let pred = forest.predict_row(&features);
+            let pred = predict_row(&forest, &features);
             assert_eq!(pred.len(), 1, "Row {}: expected 1 output", i);
             assert_abs_diff_eq!(
                 pred[0],
@@ -320,7 +328,7 @@ mod tests {
 
         for (i, (row, exp)) in data.iter().zip(expected.iter()).enumerate() {
             let features: Vec<f32> = row.iter().map(|x| *x as f32).collect();
-            let pred = forest.predict_row(&features);
+            let pred = predict_row(&forest, &features);
             assert_eq!(pred.len(), 1, "Row {}: expected 1 output", i);
             assert_abs_diff_eq!(
                 pred[0],
@@ -364,7 +372,7 @@ mod tests {
 
         for (i, (row, exp_vec)) in data.iter().zip(raw.iter()).enumerate() {
             let features: Vec<f32> = row.iter().map(|x| *x as f32).collect();
-            let pred = forest.predict_row(&features);
+            let pred = predict_row(&forest, &features);
             // Multiclass returns one output per class
             assert_eq!(pred.len(), 3, "Row {}: expected 3 outputs for 3-class", i);
 
@@ -421,7 +429,7 @@ mod tests {
         let raw: Vec<f64> = serde_json::from_value(expected["raw"].clone()).unwrap();
 
         for (i, (row, exp)) in data.iter().zip(raw.iter()).enumerate() {
-            let pred = forest.predict_row(row);
+            let pred = predict_row(&forest, row);
             assert_eq!(pred.len(), 1, "Row {}: expected 1 output", i);
             assert_abs_diff_eq!(
                 pred[0],
@@ -453,7 +461,7 @@ mod tests {
 
         for (i, (row, exp)) in data.iter().zip(expected.iter()).enumerate() {
             let features: Vec<f32> = row.iter().map(|x| *x as f32).collect();
-            let pred = forest.predict_row(&features);
+            let pred = predict_row(&forest, &features);
             assert_eq!(pred.len(), 1, "Row {}: expected 1 output", i);
             // Tighter tolerance for linear trees since they should match closely
             assert_abs_diff_eq!(

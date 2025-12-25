@@ -27,17 +27,15 @@ mod dataset;
 mod builder;
 mod feature_analysis;
 mod bundling;
-mod accessor;
 
 pub use bin_mapper::{BinMapper, FeatureType, MissingType};
 pub use storage::{FeatureView, BinStorage, BinType, GroupLayout};
 pub use group::{FeatureGroup, FeatureMeta};
-pub use dataset::{BinnedDataset, BundlingStats, BinnedSampleSlice};
+pub use dataset::{BinnedDataset, BundlingStats, BinnedSample};
 pub use builder::{BinnedDatasetBuilder, BuildError, BinningConfig, BinningStrategy};
 pub use feature_analysis::{FeatureInfo, analyze_features, analyze_features_sequential};
 pub use bundling::BundlingFeatures;
 pub use bundling::{BundlingConfig, FeatureBundle, FeatureLocation, BundlePlan, create_bundle_plan};
-pub use accessor::BinnedSample;
 
 // Internal types exposed for tests and benchmarks
 #[doc(hidden)]

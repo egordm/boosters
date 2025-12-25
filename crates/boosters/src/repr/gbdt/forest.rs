@@ -1,6 +1,6 @@
 //! Canonical forest representation (collection of trees).
 
-use super::{tree::TreeValidationError, LeafValue, ScalarLeaf, Tree, TreeView};
+use super::{tree::TreeValidationError, LeafValue, ScalarLeaf, Tree};
 
 /// Structural validation errors for [`Forest`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,29 +131,10 @@ impl<L: LeafValue> Forest<L> {
     }
 }
 
-/// Prediction methods for forests with scalar leaves.
-impl Forest<ScalarLeaf> {
-    /// Predict for a single row of features.
-    ///
-    /// Handles linear leaf coefficients if present, computing `intercept + Σ(coef × feature)`.
-    ///
-    /// For batch prediction, use [`Predictor`](crate::inference::gbdt::Predictor) instead.
-    pub fn predict_row(&self, features: &[f32]) -> Vec<f32> {
-        let mut output = self.base_score.clone();
-
-        for (tree, group) in self.trees_with_groups() {
-            let leaf_idx = tree.traverse_to_leaf(&features);
-            let leaf_val = tree.compute_leaf_value(leaf_idx, &features);
-            output[group as usize] += leaf_val;
-        }
-
-        output
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inference::gbdt::SimplePredictor;
     use crate::repr::gbdt::ScalarLeaf;
 
     fn build_simple_tree(left_val: f32, right_val: f32, threshold: f32) -> Tree<ScalarLeaf> {
@@ -169,11 +150,14 @@ mod tests {
         let mut forest = Forest::for_regression();
         forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
 
-        let pred = forest.predict_row(&[0.3]);
-        assert_eq!(pred, vec![1.0]);
+        let predictor = SimplePredictor::new(&forest);
+        let mut output = vec![0.0; 1];
 
-        let pred = forest.predict_row(&[0.7]);
-        assert_eq!(pred, vec![2.0]);
+        predictor.predict_row_into(&[0.3], None, &mut output);
+        assert_eq!(output, vec![1.0]);
+
+        predictor.predict_row_into(&[0.7], None, &mut output);
+        assert_eq!(output, vec![2.0]);
     }
 
 }

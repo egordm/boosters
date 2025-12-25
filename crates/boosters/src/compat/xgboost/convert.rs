@@ -326,6 +326,7 @@ impl ModelTrees {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inference::gbdt::SimplePredictor;
     use std::fs::File;
     use std::path::PathBuf;
 
@@ -425,7 +426,9 @@ mod tests {
 
         // Simple smoke test: predict on dummy features
         let features = vec![0.5; 5]; // 5 features
-        let predictions = forest.predict_row(&features);
+        let predictor = SimplePredictor::new(&forest);
+        let mut predictions = vec![0.0f32; predictor.n_groups()];
+        predictor.predict_row_into(&features, None, &mut predictions);
 
         assert_eq!(predictions.len(), 1);
         // The prediction should be a finite number
