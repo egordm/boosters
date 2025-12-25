@@ -12,7 +12,7 @@ use crate::training::sampling::{ColSampler, ColSamplingParams};
 
 use super::expansion::{GrowthState, GrowthStrategy, NodeCandidate};
 use super::histograms::{
-    HistFeatureMeta, FeatureView, HistogramBuilder, HistogramPool,
+    HistogramLayout, FeatureView, HistogramBuilder, HistogramPool,
 };
 use crate::utils::Parallelism;
 use super::partition::RowPartitioner;
@@ -74,7 +74,7 @@ pub struct TreeGrower {
     /// Feature has missing values (true = has missing).
     feature_has_missing: Vec<bool>,
     /// Feature metadata for histogram building.
-    feature_metas: Vec<HistFeatureMeta>,
+    feature_metas: Vec<HistogramLayout>,
     /// Split strategy.
     split_strategy: GreedySplitter,
     /// Column sampler for feature subsampling.
@@ -110,8 +110,8 @@ impl TreeGrower {
         let n_samples = dataset.n_rows();
 
         // Build feature metadata for histogram pool
-        let feature_metas: Vec<HistFeatureMeta> = (0..n_features)
-            .map(|f| HistFeatureMeta {
+        let feature_metas: Vec<HistogramLayout> = (0..n_features)
+            .map(|f| HistogramLayout {
                 offset: dataset.global_bin_offset(f),
                 n_bins: dataset.n_bins(f),
             })

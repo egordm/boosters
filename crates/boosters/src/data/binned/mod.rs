@@ -30,7 +30,7 @@ mod bundling;
 
 pub use bin_mapper::{BinMapper, FeatureType, MissingType};
 pub use storage::{FeatureView, BinStorage, BinType, GroupLayout};
-pub use group::{FeatureGroup, BinnedFeatureMeta};
+pub use group::{FeatureGroup, BinnedFeatureInfo};
 pub use dataset::{BinnedDataset, BundlingStats, BinnedSample};
 pub use builder::{BinnedDatasetBuilder, BuildError, BinningConfig, BinningStrategy};
 pub use feature_analysis::{FeatureInfo, analyze_features, analyze_features_sequential};

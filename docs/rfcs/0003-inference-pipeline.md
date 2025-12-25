@@ -8,7 +8,7 @@
 
 ## Summary
 
-The inference pipeline provides batch and single-row prediction for GBDT ensembles using pluggable traversal strategies. The `Predictor<T>` struct orchestrates tree traversal, block processing, and parallel execution via Rayon. Trees are traversed using the `TreeView` trait and `FeatureAccessor` for data access.
+The inference pipeline provides batch and single-row prediction for GBDT ensembles using pluggable traversal strategies. The `Predictor<T>` struct orchestrates tree traversal, block processing, and parallel execution via Rayon. Trees are traversed using `TreeView` and `SampleAccessor` traits for data access.
 
 ## Design Overview
 
@@ -91,7 +91,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
 }
 ```
 
-**Note on FeatureAccessor**: While the `TreeView::traverse_to_leaf` method uses `FeatureAccessor` generically, the `Predictor` takes `ArrayView2<f32>` directly for efficiency. The predictor extracts contiguous row data and passes it to traversal methods as slices.
+**Note on DataAccessor**: While the `TreeView::traverse_to_leaf` method uses `SampleAccessor` generically, the `Predictor` takes `FeaturesView` directly for efficiency. The predictor internally transposes blocks to sample-major order and passes rows to traversal methods as slices.
 
 ### Type Aliases
 
@@ -185,41 +185,21 @@ pub struct UnrolledNode {
 
 **Block processing**: All rows traverse the same tree level together, keeping level data in L1/L2 cache.
 
-## Data Access via FeatureAccessor
+## Data Access via DataAccessor
 
-Prediction is generic over any `FeatureAccessor` (RFC-0001):
+Prediction internally uses the `DataAccessor` and `SampleAccessor` traits (RFC-0001), but the `Predictor` API accepts concrete view types for efficiency:
 
 ```rust
-// Works with SamplesView
-let samples = SamplesView::from_array(arr.view());
-let output = predictor.predict(&samples, Parallelism::Parallel);
-
-// Works with FeaturesView
+// FeaturesView for batch prediction (feature-major)
 let features = FeaturesView::from_array(arr.view());
-let output = predictor.predict(&features, Parallelism::Sequential);
+let output = predictor.predict(features, Parallelism::Parallel);
 
-// Works with BinnedAccessor (during training)
-let accessor = BinnedAccessor::new(&binned_dataset);
-let output = predictor.predict(&accessor, Parallelism::Sequential);
+// Raw slice for single-row prediction  
+let features: &[f32] = &[0.1, 0.2, 0.3];
+predictor.predict_row_into(features, None, &mut output);
 ```
 
-### BinnedAccessor
-
-For training-time prediction on quantized data:
-
-```rust
-pub struct BinnedAccessor<'a> {
-    dataset: &'a BinnedDataset,
-}
-
-impl FeatureAccessor for BinnedAccessor<'_> {
-    fn get_feature(&self, row: usize, feature: usize) -> f32 {
-        // Convert bin index to midpoint value
-        let bin = self.dataset.bin(row, feature);
-        self.dataset.bin_mapper(feature).bin_to_value(bin)
-    }
-}
-```
+Note: The predictor takes `FeaturesView` (feature-major) for batches because the internal block processing transposes to sample-major per block for cache efficiency. For single rows, raw `&[f32]` slices are used to avoid view overhead.
 
 ## Output Format
 
@@ -330,20 +310,18 @@ let output = predictor.predict_weighted(&features, &tree_weights, Parallelism::P
 
 ## Design Decisions
 
-### DD-1: Direct ArrayView2 over FeatureAccessor
+### DD-1: FeaturesView Input with Block Transpose
 
 **Context**: How should predictor access feature data?
 
-**Decision**: Take `ArrayView2<f32>` directly, not `impl FeatureAccessor`.
+**Decision**: Take `FeaturesView` (feature-major) and transpose internally per block.
 
 **Rationale**:
 
-- Predictor requires C-contiguous data for block processing
-- `as_slice()` must succeed for efficient traversal
-- Type mismatch prevented via explicit ndarray types
-- `TreeView::traverse_to_leaf` still uses `FeatureAccessor` for flexibility at tree level
-
-**Implementation note**: The predictor calls `features.as_slice().expect(...)` internally, which requires C-contiguous data. Non-contiguous arrays will panic. Users should construct `SamplesView` first when data source is uncertain, as it validates contiguity at construction.
+- Feature-major storage is the standard format from training (`BinnedDataset` layout)
+- Block processing transposes to sample-major for tree traversal cache efficiency
+- Per-block transpose fits in L2 cache (~25KB for 64 rows × 100 features)
+- Single-row API uses `&[f32]` to avoid view overhead
 
 **API Layers**: Lower-level representation APIs (e.g., `repr::gblinear::LinearModel`) use `SamplesView` for type safety. Higher-level model APIs (e.g., `model::GBLinearModel`) accept `ArrayView2` for convenience, assuming users provide valid C-contiguous data.
 
@@ -387,9 +365,9 @@ let output = predictor.predict_weighted(&features, &tree_weights, Parallelism::P
 
 | Component | Integration Point |
 | --------- | ----------------- |
-| RFC-0001 (Data) | `Predictor::predict<A: FeatureAccessor>` |
+| RFC-0001 (Data) | `SamplesView`, `FeaturesView`, `SampleAccessor` |
 | RFC-0002 (Trees) | `TreeView::traverse_to_leaf` for traversal |
-| RFC-0007 (Growing) | Training uses `BinnedAccessor` for validation |
+| RFC-0007 (Growing) | Training uses prediction for validation |
 | RFC-0008 (Objectives) | Transforms margins to predictions |
 | RFC-0009 (Metrics) | Evaluates prediction output |
 
@@ -401,7 +379,8 @@ let output = predictor.predict_weighted(&features, &tree_weights, Parallelism::P
 
 ## Changelog
 
+- 2025-01-23: Updated data access section to use `DataAccessor`/`SampleAccessor` and `FeaturesView`. Removed `BinnedAccessor` section (handled internally by training).
 - 2025-01-23: Added API layering note to DD-1. Documented single-row slice convention. Clarified contiguity requirement.
-- 2025-01-23: Fixed Predictor interface to match implementation (uses `ArrayView2<f32>` not `FeatureAccessor`). Updated method signatures.
+- 2025-01-23: Fixed Predictor interface to match implementation (uses `FeaturesView` not `FeatureAccessor`). Updated method signatures.
 - 2025-01-21: Major update. Added `FeatureAccessor` integration, updated output format to `Array2`, documented `BinnedAccessor`, updated for `TreeView` trait.
 - 2024-11-15: Initial RFC with traversal strategies

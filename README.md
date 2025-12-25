@@ -18,34 +18,26 @@ boosters is a gradient boosting implementation written from scratch in Rust, des
 ### Training a Model
 
 ```rust
-use boosters::data::{Dataset, BinningConfig, BinnedDatasetBuilder, TargetsView, WeightsView};
-use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism, TreeParams};
-use ndarray::Array2;
+use boosters::{GBDTModel, GBDTConfig, Objective, Metric};
+use boosters::data::Dataset;
+use ndarray::array;
 
-// Prepare feature-major data [n_features, n_samples]
-let features = Array2::<f32>::from_shape_vec((n_features, n_samples), data).unwrap();
-let labels = Array1::<f32>::from_vec(targets);
-
-// Create binned dataset for histogram-based training
-let dataset = Dataset::new(features.view(), None, None);
-let binned = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
-    .add_features(dataset.features(), Parallelism::Parallel)
-    .build()?;
+// Create dataset with feature-major data [n_features, n_samples]
+let features = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
+let targets = array![[0.5, 1.5, 2.5]];
+let dataset = Dataset::new(features.view(), Some(targets.view()), None);
 
 // Configure and train
 let config = GBDTConfig::builder()
     .n_trees(100)
-    .learning_rate(0.1)
-    .tree(TreeParams::depth_wise(6))
     .objective(Objective::squared())
     .metric(Metric::rmse())
     .build()?;
 
-let targets = TargetsView::new(labels.view().insert_axis(ndarray::Axis(0)));
-let model = GBDTModel::train_binned(&binned, targets, WeightsView::None, &[], config, 1)?;
+let model = GBDTModel::train(&dataset, &[], config, 0)?;
 
 // Predict
-let predictions = model.predict(&dataset, 1);
+let predictions = model.predict(&dataset, 0);
 ```
 
 ### Loading XGBoost Models
@@ -54,18 +46,13 @@ let predictions = model.predict(&dataset, 1);
 use boosters::compat::xgboost::XgbModel;
 use boosters::inference::gbdt::{Predictor, StandardTraversal};
 use boosters::data::Dataset;
-use ndarray::Array2;
 
-// Load XGBoost JSON model
+// Load and convert
 let model = XgbModel::from_file("model.json")?;
 let forest = model.to_forest()?;
 
-// Create predictor for efficient batch prediction
+// Predict
 let predictor = Predictor::<StandardTraversal>::new(&forest);
-
-// Predict on feature-major data [n_features, n_samples]
-let features = Array2::<f32>::from_shape_vec((n_features, n_samples), data).unwrap();
-let dataset = Dataset::new(features.view(), None, None);
 let predictions = predictor.predict(&dataset);
 ```
 

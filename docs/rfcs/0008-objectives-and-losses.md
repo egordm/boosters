@@ -16,7 +16,8 @@ Objectives define loss functions that compute gradients and hessians for gradien
 The core trait uses ndarray views for type-safe multi-dimensional access:
 
 ```rust
-use ndarray::{ArrayView1, ArrayView2, ArrayViewMut2};
+use ndarray::{ArrayView2, ArrayViewMut2};
+use crate::training::TargetsView, WeightsView;
 
 pub trait ObjectiveFn: Send + Sync {
     /// Number of outputs per sample (1 for regression, K for multiclass).
@@ -26,24 +27,23 @@ pub trait ObjectiveFn: Send + Sync {
     ///
     /// # Arguments
     /// - `predictions`: Shape `[n_outputs, n_samples]`, model outputs
-    /// - `targets`: Shape `[n_samples]`, ground truth (single target column)
-    /// - `weights`: Optional per-sample weights
+    /// - `targets`: `TargetsView` wrapper over ground truth
+    /// - `weights`: `WeightsView::uniform(n)` for unweighted, or sample weights
     /// - `grad_hess`: Shape `[n_outputs, n_samples]`, output buffer for (grad, hess) pairs
-    fn compute_gradients(
+    fn compute_gradients_into(
         &self,
         predictions: ArrayView2<f32>,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
+        targets: TargetsView<'_>,
+        weights: WeightsView<'_>,
         grad_hess: ArrayViewMut2<GradsTuple>,
     );
 
     /// Compute initial base score (bias) from targets.
     fn compute_base_score(
         &self,
-        targets: ArrayView1<f32>,
-        weights: Option<ArrayView1<f32>>,
-        outputs: &mut [f32],
-    );
+        targets: TargetsView<'_>,
+        weights: WeightsView<'_>,
+    ) -> Vec<f32>;
 
     /// High-level task kind (Regression, BinaryClassification, etc.).
     fn task_kind(&self) -> TaskKind;
@@ -52,7 +52,7 @@ pub trait ObjectiveFn: Send + Sync {
     fn target_schema(&self) -> TargetSchema;
 
     /// Transform raw margins to semantic predictions (in-place).
-    fn transform_predictions(&self, predictions: ArrayViewMut2<f32>) -> PredictionKind;
+    fn transform_predictions_inplace(&self, predictions: ArrayViewMut2<f32>) -> PredictionKind;
 
     fn name(&self) -> &'static str;
 }
@@ -121,18 +121,12 @@ fn fill_base_scores(&self, predictions: &mut [f32], n_samples: usize, targets: &
 
 ### Sample Weight Support
 
-All objectives support per-sample weights via the `weights` parameter:
+All objectives support per-sample weights via the `WeightsView` type:
 
-- `None` = unweighted (all weights = 1.0)
-- `Some(weights)` = weights applied to both gradient and hessian
+- `WeightsView::uniform(n)` = unweighted (all weights = 1.0)
+- `WeightsView::from_slice(weights)` = custom per-sample weights
 
-```rust
-// Helper used internally
-fn weight_iter(weights: &[f32], n_samples: usize) -> impl Iterator<Item = f32> {
-    let use_weights = !weights.is_empty();
-    (0..n_samples).map(move |i| if use_weights { weights[i] } else { 1.0 })
-}
-```
+Weights are applied to both gradient and hessian during computation.
 
 ### ObjectiveFunction Enum
 
@@ -205,5 +199,6 @@ pub enum ObjectiveFunction { ... }
 
 ## Changelog
 
+- 2025-01-23: Updated trait signatures to match implementation: `compute_gradients_into`, `TargetsView`, `WeightsView`, `transform_predictions_inplace`.
 - 2025-01-23: Updated trait to use ndarray views (`ArrayView2`, `ArrayView1`, `ArrayViewMut2`) instead of slices. Renamed trait to `ObjectiveFn`. Clarified group-major layout.
 - 2025-01-21: Updated terminology (n_samples, n_classes) to match codebase conventions

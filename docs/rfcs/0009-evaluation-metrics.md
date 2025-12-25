@@ -11,21 +11,22 @@ Evaluation metrics provide scalar measures of model quality during training. Unl
 
 ## Design
 
-### Metric Trait
+### MetricFn Trait
 
-The core `Metric` trait defines how quality is measured:
+The core `MetricFn` trait defines how quality is measured:
 
 ```rust
-pub trait Metric: Send + Sync {
+use ndarray::ArrayView2;
+use crate::training::{TargetsView, WeightsView};
+
+pub trait MetricFn: Send + Sync {
     /// Compute metric value.
-    /// Predictions: row-major (n_samples, n_outputs). Empty weights = unweighted.
+    /// Predictions: column-major [n_outputs, n_samples].
     fn compute(
         &self,
-        n_samples: usize,
-        n_outputs: usize,
-        predictions: &[f32],
-        targets: &[f32],
-        weights: &[f32],
+        predictions: ArrayView2<f32>,
+        targets: TargetsView<'_>,
+        weights: WeightsView<'_>,
     ) -> f64;
 
     /// Expected prediction format (Value, Probability, or Margin).
@@ -36,6 +37,10 @@ pub trait Metric: Send + Sync {
 
     /// Display name (e.g., "rmse", "auc").
     fn name(&self) -> &'static str;
+
+    /// Whether this metric is enabled (default: true).
+    /// `NoMetric` returns false to skip computation entirely.
+    fn is_enabled(&self) -> bool { true }
 }
 ```
 
@@ -186,8 +191,8 @@ impl MetricValue {
 
 | Type | Purpose |
 |------|---------|
-| `Metric` | Trait for computing evaluation scores |
-| `MetricKind` | Enum for configuration/defaults (Rmse, Mae, LogLoss, etc.) |
+| `MetricFn` | Trait for computing evaluation scores |
+| `Metric` | Enum for configuration/defaults (Rmse, Mae, LogLoss, etc.) |
 | `MetricValue` | Computed metric with name, value, and direction metadata |
 | `EvalSet` | Named dataset reference for evaluation |
 | `Evaluator` | Component managing evaluation logic and transform buffers |
@@ -203,4 +208,5 @@ impl MetricValue {
 
 ## Changelog
 
+- 2025-01-23: Renamed `Metric` trait to `MetricFn`. Updated signatures to use `ArrayView2`, `TargetsView`, `WeightsView`. Added `is_enabled()` method.
 - 2025-01-21: Updated terminology (n_samples) to match codebase conventions

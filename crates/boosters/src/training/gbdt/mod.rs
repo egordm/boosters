@@ -26,7 +26,7 @@ pub use categorical::CatBitset;
 pub use expansion::{GrowthState, GrowthStrategy, NodeCandidate};
 pub use grower::{TreeGrower, GrowerParams};
 pub use histograms::{
-    HistFeatureMeta, FeatureView, HistogramBin, HistogramBuilder, HistogramPool, HistogramSlot,
+    HistogramLayout, FeatureView, HistogramBin, HistogramBuilder, HistogramPool, HistogramSlot,
     HistogramSlotMut,
 };
 pub use linear::{LeafFeatureBuffer, LinearLeafConfig, WeightedLeastSquaresSolver};

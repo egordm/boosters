@@ -39,7 +39,7 @@ pub use ops::{
     clear_histogram, merge_histogram, subtract_histogram, sum_histogram,
 };
 pub use pool::{
-    AcquireResult, HistFeatureMeta, HistogramPool, HistogramSlot, HistogramSlotMut, SlotId,
+    AcquireResult, HistogramLayout, HistogramPool, HistogramSlot, HistogramSlotMut, SlotId,
 };
 pub use slices::HistogramFeatureIter;
 

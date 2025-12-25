@@ -7,7 +7,7 @@
 
 ## Summary
 
-This RFC defines the data abstraction layer for feature matrices in boosters. The design uses `ndarray` for matrix storage with semantic wrapper types (`SamplesView`, `FeaturesView`) that make layout semantics explicit. A minimal `FeatureAccessor` trait provides uniform access for tree traversal.
+This RFC defines the data abstraction layer for feature matrices in boosters. The design uses `ndarray` for matrix storage with semantic wrapper types (`SamplesView`, `FeaturesView`) that make layout semantics explicit. A two-trait accessor design (`SampleAccessor`, `DataAccessor`) provides uniform access for tree traversal.
 
 ## Motivation
 
@@ -22,7 +22,7 @@ Rather than implementing custom matrix types, we leverage `ndarray` (the standar
 
 1. **Zero-copy views**: Wrapper types hold `ArrayView2`, not owned data
 2. **Explicit semantics**: Type names (`SamplesView`, `FeaturesView`) make layout clear
-3. **Minimal abstraction**: Only `FeatureAccessor` trait, not a full matrix trait
+3. **Minimal abstraction**: Two-trait accessor design (`SampleAccessor`, `DataAccessor`) focused on tree traversal
 4. **ndarray ecosystem**: Compatible with Arrow, polars, and Python via numpy
 
 ## Design
@@ -74,10 +74,17 @@ pub struct SamplesView<'a>(ArrayView2<'a, f32>);
 /// Each feature's values across samples are contiguous.
 pub struct FeaturesView<'a>(ArrayView2<'a, f32>);
 
-/// Uniform access trait for tree traversal.
-pub trait FeatureAccessor {
-    fn get_feature(&self, row: usize, feature: usize) -> f32;
-    fn n_rows(&self) -> usize;
+/// Access features for a single sample.
+pub trait SampleAccessor {
+    fn feature(&self, index: usize) -> f32;
+    fn n_features(&self) -> usize;
+}
+
+/// Access samples from a multi-sample dataset.
+pub trait DataAccessor {
+    type Sample<'a>: SampleAccessor where Self: 'a;
+    fn sample(&self, index: usize) -> Self::Sample<'_>;
+    fn n_samples(&self) -> usize;
     fn n_features(&self) -> usize;
 }
 ```
@@ -124,30 +131,32 @@ impl<'a> FeaturesView<'a> {
 }
 ```
 
-### FeatureAccessor Trait
+### SampleAccessor and DataAccessor Traits
 
-The minimal trait for tree traversal. Implemented for both wrapper types and `BinnedAccessor`:
+These traits enable generic tree traversal over different data sources:
 
 ```rust
-pub trait FeatureAccessor {
-    /// Get feature value at (row, feature_index).
-    /// Returns f32::NAN for missing values.
-    fn get_feature(&self, row: usize, feature: usize) -> f32;
-    
-    /// Number of rows (samples).
-    fn n_rows(&self) -> usize;
-    
-    /// Number of features.
+/// Access features for a single sample (used during tree traversal).
+pub trait SampleAccessor {
+    /// Get feature value at index. Returns f32::NAN for missing values.
+    fn feature(&self, index: usize) -> f32;
+    fn n_features(&self) -> usize;
+}
+
+/// Access samples from a multi-sample dataset.
+pub trait DataAccessor {
+    type Sample<'a>: SampleAccessor where Self: 'a;
+    fn sample(&self, index: usize) -> Self::Sample<'_>;
+    fn n_samples(&self) -> usize;
     fn n_features(&self) -> usize;
 }
 
 // Implemented for:
-impl FeatureAccessor for SamplesView<'_> { ... }
-impl FeatureAccessor for FeaturesView<'_> { ... }
-impl FeatureAccessor for BinnedAccessor<'_> { ... }
+impl SampleAccessor for ArrayView1<'_, f32> { ... }
+impl DataAccessor for SamplesView<'_> { ... }
 ```
 
-**Design note**: We intentionally do NOT implement `FeatureAccessor` for raw `Array2<f32>` because the axis semantics (samples vs features) depend on context. The wrapper types make the layout explicit.
+**Design note**: We intentionally do NOT implement these traits for raw `Array2<f32>` because the axis semantics (samples vs features) depend on context. The wrapper types make the layout explicit.
 
 ### Layout Conversion
 
@@ -217,7 +226,8 @@ pub fn init_predictions(base_scores: &[f32], n_samples: usize) -> Array2<f32> {
 | ---- | ----- | -------- |
 | `SamplesView<'a>` | `[n_samples, n_features]` | Inference, row iteration |
 | `FeaturesView<'a>` | `[n_features, n_samples]` | Training, column iteration |
-| `FeatureAccessor` | trait | Uniform tree traversal |
+| `SampleAccessor` | trait | Single-sample feature access |
+| `DataAccessor` | trait | Multi-sample dataset access |
 | `Array2<f32>` predictions | `[n_groups, n_samples]` | Model output |
 | `BinnedDataset` | packed bins | Histogram-based training |
 | `Dataset` | high-level | User-facing with targets, weights |
@@ -343,18 +353,18 @@ This pattern applies across all prediction and transformation APIs.
 - Wrappers are zero-cost (`#[repr(transparent)]` pattern)
 - `FeatureAccessor` trait only implemented for explicit types
 
-### DD-4: Minimal FeatureAccessor Trait
+### DD-4: Minimal Accessor Traits
 
-**Context**: Should we have a full `DataMatrix` trait or minimal accessor?
+**Context**: Should we have a full `DataMatrix` trait or minimal accessors?
 
-**Decision**: Minimal `FeatureAccessor` trait.
+**Decision**: Two-trait design with `SampleAccessor` and `DataAccessor`.
 
 **Rationale**:
 
-- Only tree traversal needs a trait (generic over data source)
-- Other operations use concrete types with type-specific methods
+- `SampleAccessor` handles single-sample feature access (used in tree traversal)
+- `DataAccessor` handles multi-sample iteration with associated `Sample` type
+- Clean separation of concerns
 - Fewer methods = simpler implementations
-- `BinnedAccessor` only needs `get_feature`, not full matrix API
 
 ### DD-5: Prediction Layout [n_groups, n_samples]
 
@@ -389,8 +399,8 @@ This pattern applies across all prediction and transformation APIs.
 
 | Component | Integration Point |
 | --------- | ----------------- |
-| RFC-0002 (Trees) | `TreeView::traverse_to_leaf<A: FeatureAccessor>` |
-| RFC-0003 (Inference) | `Predictor::predict_into(features: &impl FeatureAccessor, ...)` |
+| RFC-0002 (Trees) | `TreeView::traverse_to_leaf<A: SampleAccessor>` |
+| RFC-0003 (Inference) | `Predictor::predict_into(features: &impl DataAccessor, ...)` |
 | RFC-0004 (Binning) | `BinnedDataset` built from `Dataset` |
 | RFC-0014 (GBLinear) | `FeaturesView` for column-wise coordinate descent |
 
@@ -401,6 +411,7 @@ This pattern applies across all prediction and transformation APIs.
 
 ## Changelog
 
+- 2025-01-23: Updated accessor traits to match actual implementation (`SampleAccessor`, `DataAccessor` instead of `FeatureAccessor`).
 - 2025-01-23: Added DD-2 (non-allocating `_into` convention), renumbered DDs to DD-3 through DD-6. Clarified from_slice failure conditions. Clarified debug-only enforcement in DD-6.
 - 2025-01-23: Added DD-5 documenting C-contiguous layout enforcement. Expanded layout documentation.
 - 2025-01-21: Major rewrite for ndarray migration. Replaced `DenseMatrix`, `RowMatrix`, `ColMatrix` with `SamplesView`, `FeaturesView`. Replaced `DataMatrix` trait with minimal `FeatureAccessor`. Absorbed content from RFC-0021. Added Non-Goals section.

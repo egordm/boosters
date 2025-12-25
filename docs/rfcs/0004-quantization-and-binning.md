@@ -82,7 +82,7 @@ The `default_bin` field specifies which bin receives missing values during binni
 | `BinMapper` | Computes and stores bin boundaries; maps values ↔ bins |
 | `BinnedDataset` | Main quantized dataset with feature groups |
 | `FeatureGroup` | Storage for related features (shared layout/bin type) |
-| `FeatureMeta` | Per-feature metadata (mapper, group location) |
+| `BinnedFeatureInfo` | Per-feature metadata (mapper, group_index, index_in_group) |
 | `BinStorage` | Enum of storage formats (DenseU8/U16, SparseU8/U16) |
 | `FeatureView` | Zero-cost slice view for accessing feature bins |
 | `BinnedDatasetBuilder` | Fluent API for dataset construction |
@@ -96,4 +96,5 @@ The `default_bin` field specifies which bin receives missing values during binni
 
 ## Changelog
 
+- 2025-01-23: Renamed `FeatureMeta` to `BinnedFeatureInfo` to clarify purpose and avoid confusion with `schema::FeatureMeta`.
 - 2025-01-21: Updated terminology to match refactored implementation (`n_bins`, `n_features`, `n_samples`)

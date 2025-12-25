@@ -5,7 +5,7 @@ use bon::Builder;
 use super::bundling::{create_bundle_plan, BundlePlan, BundlingConfig};
 use super::dataset::BinnedDataset;
 use super::feature_analysis::FeatureInfo;
-use super::group::{FeatureGroup, BinnedFeatureMeta};
+use super::group::{FeatureGroup, BinnedFeatureInfo};
 use super::storage::{BinStorage, BinType, GroupLayout};
 use super::MissingType;
 use super::BinMapper;
@@ -709,11 +709,11 @@ impl BinnedDatasetBuilder {
         &self,
         n_rows: usize,
         specs: &[GroupSpec],
-    ) -> Result<(Vec<FeatureGroup>, Vec<BinnedFeatureMeta>), BuildError> {
+    ) -> Result<(Vec<FeatureGroup>, Vec<BinnedFeatureInfo>), BuildError> {
         let n_features = self.features.len();
 
         // Pre-allocate feature metadata (will be filled in order)
-        let mut feature_metas: Vec<Option<BinnedFeatureMeta>> = vec![None; n_features];
+        let mut feature_metas: Vec<Option<BinnedFeatureInfo>> = vec![None; n_features];
         let mut groups = Vec::with_capacity(specs.len());
 
         for (group_idx, spec) in specs.iter().enumerate() {
@@ -752,7 +752,7 @@ impl BinnedDatasetBuilder {
             // Create feature metadata
             for (idx_in_group, &feature_idx) in spec.features.iter().enumerate() {
                 let f = &self.features[feature_idx];
-                let mut meta = BinnedFeatureMeta::new(
+                let mut meta = BinnedFeatureInfo::new(
                     f.mapper.clone(),
                     group_idx as u32,
                     idx_in_group as u32,
@@ -765,7 +765,7 @@ impl BinnedDatasetBuilder {
         }
 
         // Unwrap all feature metadata (should all be Some now)
-        let features: Vec<BinnedFeatureMeta> = feature_metas
+        let features: Vec<BinnedFeatureInfo> = feature_metas
             .into_iter()
             .enumerate()
             .map(|(i, opt)| opt.unwrap_or_else(|| panic!("Feature {} not assigned to any group", i)))

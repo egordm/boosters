@@ -68,7 +68,7 @@ pub use ndarray::{
 // =============================================================================
 
 pub use binned::{
-    BinMapper, BinStorage, BinType, BinnedDataset, BinnedDatasetBuilder, BinnedFeatureMeta,
+    BinMapper, BinStorage, BinType, BinnedDataset, BinnedDatasetBuilder, BinnedFeatureInfo,
     BinningConfig, BinningStrategy, BuildError, FeatureGroup, FeatureView,
     GroupLayout, MissingType, BinnedSample,
 };

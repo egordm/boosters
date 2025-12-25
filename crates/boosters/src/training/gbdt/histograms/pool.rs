@@ -15,7 +15,7 @@ const UNMAPPED: i32 = -1;
 
 /// Metadata describing a single feature's histogram layout.
 #[derive(Clone, Debug)]
-pub struct HistFeatureMeta {
+pub struct HistogramLayout {
     /// Bin offset into the histogram data buffer.
     pub offset: u32,
     /// Number of bins for this feature.
@@ -86,7 +86,7 @@ pub struct HistogramPool {
     data: Box<[HistogramBin]>,
 
     /// Feature metadata (shared across all slots).
-    features: Box<[HistFeatureMeta]>,
+    features: Box<[HistogramLayout]>,
 
     /// Total number of bins per histogram (sum of all feature bins).
     total_bins: usize,
@@ -144,7 +144,7 @@ impl HistogramPool {
     /// # Panics
     ///
     /// Panics if `cache_size < 2` (need at least slots for smaller and larger leaf).
-    pub fn new(features: Vec<HistFeatureMeta>, cache_size: usize, total_nodes: usize) -> Self {
+    pub fn new(features: Vec<HistogramLayout>, cache_size: usize, total_nodes: usize) -> Self {
         assert!(cache_size >= 2, "cache_size must be at least 2");
 
         let cache_size = cache_size.min(total_nodes);
@@ -424,7 +424,7 @@ impl HistogramPool {
 
     /// Returns the feature metadata.
     #[inline]
-    pub fn features(&self) -> &[HistFeatureMeta] {
+    pub fn features(&self) -> &[HistogramLayout] {
         &self.features
     }
 
@@ -494,7 +494,7 @@ pub struct HistogramSlot<'a> {
     /// Histogram bins (grad, hess) tuples.
     pub bins: &'a [HistogramBin],
     /// Feature metadata for iterating by feature.
-    pub features: &'a [HistFeatureMeta],
+    pub features: &'a [HistogramLayout],
 }
 
 impl<'a> HistogramSlot<'a> {
@@ -545,7 +545,7 @@ pub struct HistogramSlotMut<'a> {
     /// Histogram bins (mutable).
     pub bins: &'a mut [HistogramBin],
     /// Feature metadata for iterating by feature.
-    pub features: &'a [HistFeatureMeta],
+    pub features: &'a [HistogramLayout],
 }
 
 impl<'a> HistogramSlotMut<'a> {
@@ -588,12 +588,12 @@ impl<'a> HistogramSlotMut<'a> {
 mod tests {
     use super::*;
 
-    fn make_features(bin_counts: &[u32]) -> Vec<HistFeatureMeta> {
+    fn make_features(bin_counts: &[u32]) -> Vec<HistogramLayout> {
         let mut offset = 0;
         bin_counts
             .iter()
             .map(|&n_bins| {
-                let meta = HistFeatureMeta { offset, n_bins };
+                let meta = HistogramLayout { offset, n_bins };
                 offset += n_bins;
                 meta
             })
@@ -805,7 +805,7 @@ mod tests {
 
     #[test]
     fn test_pinning_prevents_eviction() {
-        let features = vec![HistFeatureMeta { offset: 0, n_bins: 4 }];
+        let features = vec![HistogramLayout { offset: 0, n_bins: 4 }];
         let mut pool = HistogramPool::new(features, 2, 10);
 
         pool.acquire(0);

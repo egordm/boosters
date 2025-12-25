@@ -27,9 +27,9 @@ Histograms are laid out contiguously per slot with features packed sequentially:
 Slot 0: [feat0_bin0, feat0_bin1, ..., feat1_bin0, feat1_bin1, ...]
 ```
 
-`FeatureMeta` tracks each feature's offset and bin count:
+`HistogramLayout` tracks each feature's offset and bin count for indexing:
 ```rust
-pub struct FeatureMeta {
+pub struct HistogramLayout {
     pub offset: u32,
     pub n_bins: u32,
 }
@@ -121,4 +121,5 @@ The simple scalar feature-parallel approach with subtraction trick outperforms c
 
 ## Changelog
 
+- 2025-01-23: Renamed `FeatureMeta` to `HistogramLayout` to clarify purpose and avoid confusion with other meta types.
 - 2025-01-21: Updated terminology to match refactored implementation; standardized header format

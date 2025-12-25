@@ -396,7 +396,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
 mod tests {
     use super::*;
     use crate::data::{
-        BinMapper, BinStorage, BinnedDataset, FeatureGroup, BinnedFeatureMeta, GroupLayout, MissingType,
+        BinMapper, BinStorage, BinnedDataset, FeatureGroup, BinnedFeatureInfo, GroupLayout, MissingType,
     };
     use crate::data::WeightsView;
     use crate::training::metrics::Rmse;
@@ -424,8 +424,8 @@ mod tests {
         let group = FeatureGroup::new(vec![0, 1], GroupLayout::RowMajor, 8, storage, vec![4, 3]);
 
         let features = vec![
-            BinnedFeatureMeta::new(make_simple_mapper(4), 0, 0),
-            BinnedFeatureMeta::new(make_simple_mapper(3), 0, 1),
+            BinnedFeatureInfo::new(make_simple_mapper(4), 0, 0),
+            BinnedFeatureInfo::new(make_simple_mapper(3), 0, 1),
         ];
 
         BinnedDataset::with_bundle_plan(8, features, vec![group], None)
