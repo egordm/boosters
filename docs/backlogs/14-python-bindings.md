@@ -885,16 +885,17 @@ fit). This avoids complex GIL juggling. Python can inspect results after trainin
 
 **RFC Section**: RFC-0014 "GBLinearModel"  
 **Effort**: M (2-3h)
+**Status**: ✅ Complete (commit 38288a5)
 
 **Description**: Implement linear boosting model with same interface patterns as GBDTModel.
 
 **Tasks**:
 
-- [ ] 4.5.1 Implement `GBLinearModel` structure (same pattern as GBDTModel)
-- [ ] 4.5.2 Implement `fit()` using Rust linear trainer with GIL release
-- [ ] 4.5.3 Implement `predict()` with GIL release
-- [ ] 4.5.4 Add `coef_` and `intercept_` properties for sklearn compat
-- [ ] 4.5.5 Populate `eval_results`, `best_iteration`, `best_score` (same as GBDTModel)
+- [x] 4.5.1 Implement `GBLinearModel` structure (same pattern as GBDTModel)
+- [x] 4.5.2 Implement `fit()` using Rust linear trainer with GIL release
+- [x] 4.5.3 Implement `predict()` with GIL release
+- [x] 4.5.4 Add `coef_` and `intercept_` properties for sklearn compat
+- [x] 4.5.5 Populate `eval_results`, `best_iteration`, `best_score` (same as GBDTModel)
 
 **Definition of Done**:
 
@@ -916,13 +917,14 @@ fit). This avoids complex GIL juggling. Python can inspect results after trainin
 ### Story 4.6: NotImplementedError for Deferred Features
 
 **Effort**: S (15min)
+**Status**: ✅ Complete (commit pending)
 
 **Description**: Add clear error messages for features deferred to later versions.
 
 **Tasks**:
 
-- [ ] 4.6.1 Add sparse matrix detection in `Dataset` → raise `NotImplementedError("Sparse matrices deferred to v0.2.0")`
-- [ ] 4.6.2 Document deferred features in class docstrings
+- [x] 4.6.1 Add sparse matrix detection in `Dataset` → raise `NotImplementedError("Sparse matrices deferred to v0.2.0")`
+- [x] 4.6.2 Document deferred features in class docstrings
 
 **Definition of Done**:
 

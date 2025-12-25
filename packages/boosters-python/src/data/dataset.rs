@@ -255,6 +255,14 @@ impl PyDataset {
             return Ok(result);
         }
 
+        // Check for scipy sparse matrices and provide helpful error
+        if Self::is_sparse_matrix(py, features_bound)? {
+            return Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                "Sparse matrices are not yet supported. Convert to dense array with .toarray() \
+                or use a pandas DataFrame. Sparse support is planned for a future release."
+            ));
+        }
+
         // Try to convert to numpy array
         let type_name = features_bound
             .get_type()
@@ -266,6 +274,21 @@ impl PyDataset {
             type_name
         ))
         .into())
+    }
+
+    /// Check if an object is a scipy sparse matrix.
+    fn is_sparse_matrix(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
+        // Try to import scipy.sparse and check if the object is a sparse matrix
+        if let Ok(scipy_sparse) = py.import_bound("scipy.sparse") {
+            if let Ok(issparse) = scipy_sparse.getattr("issparse") {
+                if let Ok(result) = issparse.call1((obj,)) {
+                    if let Ok(is_sparse) = result.extract::<bool>() {
+                        return Ok(is_sparse);
+                    }
+                }
+            }
+        }
+        Ok(false)
     }
 
     /// Try to extract a pandas DataFrame.

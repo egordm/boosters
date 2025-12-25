@@ -180,6 +180,17 @@ class TestDataset:
         with pytest.raises((ValueError, TypeError)):
             Dataset(X)
 
+    def test_sparse_matrix_raises_not_implemented(self) -> None:
+        """Test that sparse matrices raise NotImplementedError with helpful message."""
+        scipy = pytest.importorskip("scipy")
+        from scipy.sparse import csr_matrix
+
+        X_dense = np.random.rand(100, 10).astype(np.float32)
+        X_sparse = csr_matrix(X_dense)
+
+        with pytest.raises(NotImplementedError, match="Sparse matrices are not yet supported"):
+            Dataset(X_sparse)
+
 
 class TestEvalSet:
     """Tests for EvalSet type."""
