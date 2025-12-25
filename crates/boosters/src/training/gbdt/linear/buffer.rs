@@ -69,7 +69,7 @@ impl LeafFeatureBuffer {
     ///
     /// Works with any type implementing `DataAccessor`, including:
     /// - `FeaturesView` for raw feature values
-    /// - `BinnedAccessor` for binned data (using midpoint values)
+    /// - `BinnedDataset` for binned data (using midpoint values)
     ///
     /// # Arguments
     ///

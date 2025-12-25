@@ -476,7 +476,7 @@ impl<L: LeafValue> Tree<L> {
     /// buffer (accumulate pattern). Supports both sequential and parallel execution.
     ///
     /// # Arguments
-    /// * `data` - Data source (SamplesView, FeaturesView, BinnedAccessor, etc.)
+    /// * `data` - Data source (SamplesView, FeaturesView, BinnedDataset, etc.)
     /// * `predictions` - Pre-allocated buffer to update (length = `data.n_samples()`)
     /// * `parallelism` - Whether to use parallel execution
     ///

@@ -332,78 +332,6 @@ impl<D: UnrollDepth> UnrolledTreeLayout<D> {
         false
     }
 
-    /// Traverse the array layout for a single row, returning the exit index.
-    #[inline]
-    pub fn traverse_to_exit(&self, features: &[f32]) -> usize { // TODO: traverse_to_exit and process_block have inconsistent names.
-        let mut idx = 0usize;
-        let split_indices = self.split_indices.as_ref();
-        let split_thresholds = self.split_thresholds.as_ref();
-        let default_left = self.default_left.as_ref();
-        let split_types = self.split_types.as_ref();
-
-        for _ in 0..D::DEPTH {
-            let feat_idx = split_indices[idx] as usize;
-            let fvalue = features.get(feat_idx).copied().unwrap_or(f32::NAN);
-
-            let go_left = if fvalue.is_nan() {
-                default_left[idx]
-            } else if self.has_categorical && split_types[idx] == SplitType::Categorical {
-                let category = fvalue as u32;
-                !self.category_goes_right_array(idx, category)
-            } else {
-                fvalue < split_thresholds[idx]
-            };
-
-            idx = if go_left { 2 * idx + 1 } else { 2 * idx + 2 };
-        }
-
-        // Convert final array index to exit index
-        idx - nodes_at_depth(D::DEPTH)
-    }
-
-    /// Process a block of rows through the array layout.
-    ///
-    /// This is the key optimization: all rows traverse the same levels together,
-    /// which keeps the array data in cache.
-    pub fn process_block(&self, features: &[f32], n_features: usize, exit_indices: &mut [usize]) {
-        let split_indices = self.split_indices.as_ref();
-        let split_thresholds = self.split_thresholds.as_ref();
-        let default_left = self.default_left.as_ref();
-        let split_types = self.split_types.as_ref();
-
-        // Initialize all rows at position 0 within level
-        for pos in exit_indices.iter_mut() {
-            *pos = 0;
-        }
-
-        // Traverse level by level
-        for level in 0..D::DEPTH {
-            let level_start = nodes_at_depth(level);
-
-            for (row_idx, pos) in exit_indices.iter_mut().enumerate() {
-                let array_idx = level_start + *pos;
-
-                let feat_idx = split_indices[array_idx] as usize;
-                let row_offset = row_idx * n_features;
-                let fvalue = features
-                    .get(row_offset + feat_idx)
-                    .copied()
-                    .unwrap_or(f32::NAN);
-
-                let go_left = if fvalue.is_nan() {
-                    default_left[array_idx]
-                } else if self.has_categorical && split_types[array_idx] == SplitType::Categorical {
-                    let category = fvalue as u32;
-                    !self.category_goes_right_array(array_idx, category)
-                } else {
-                    fvalue < split_thresholds[array_idx]
-                };
-
-                *pos = 2 * *pos + (!go_left as usize);
-            }
-        }
-    }
-
     /// Traverse the array layout for a single sample using SampleAccessor.
     #[inline]
     pub fn traverse_to_exit_sample<S: SampleAccessor + ?Sized>(&self, sample: &S) -> usize {
@@ -663,8 +591,9 @@ mod tests {
 
         let layout = UnrolledTreeLayout4::from_tree(&tree);
 
-        let exit_left = layout.traverse_to_exit(&[0.3]);
-        let exit_right = layout.traverse_to_exit(&[0.7]);
+        // Use SampleAccessor-based traverse_to_exit_sample (slices implement SampleAccessor)
+        let exit_left = layout.traverse_to_exit_sample(&[0.3f32]);
+        let exit_right = layout.traverse_to_exit_sample(&[0.7f32]);
 
         let left_node = layout.exit_node_idx(exit_left);
         let right_node = layout.exit_node_idx(exit_right);
@@ -687,6 +616,8 @@ mod tests {
 
     #[test]
     fn unrolled_layout_block_processing() {
+        use crate::dataset::SamplesView;
+
         let mut builder = MutableTree::with_capacity(3);
         let root = builder.init_root();
         let (l, r) = builder.apply_numeric_split(root, 0, 0.5, true);
@@ -696,20 +627,22 @@ mod tests {
 
         let layout = UnrolledTreeLayout4::from_tree(&tree);
 
-        let features = vec![0.3, 0.7, 0.2, 0.9];
+        // Create a SamplesView with 4 rows, 1 feature each
+        let feature_values = [0.3f32, 0.7, 0.2, 0.9];
+        let view = SamplesView::from_slice(&feature_values, 4, 1).unwrap();
         let mut exit_indices = vec![0usize; 4];
 
-        layout.process_block(&features, 1, &mut exit_indices);
+        layout.process_block_accessor(&view, &mut exit_indices);
 
         for (i, &exit_idx) in exit_indices.iter().enumerate() {
             let node_idx = layout.exit_node_idx(exit_idx);
-            let expected_val = if features[i] < 0.5 { 1.0 } else { 2.0 };
+            let expected_val = if feature_values[i] < 0.5 { 1.0 } else { 2.0 };
             assert_eq!(
                 tree.leaf_value(node_idx).0,
                 expected_val,
                 "Row {} with feature {} should get leaf {}",
                 i,
-                features[i],
+                feature_values[i],
                 expected_val
             );
         }
@@ -726,7 +659,7 @@ mod tests {
 
         let layout = UnrolledTreeLayout4::from_tree(&tree);
 
-        let exit_nan = layout.traverse_to_exit(&[f32::NAN]);
+        let exit_nan = layout.traverse_to_exit_sample(&[f32::NAN]);
         let node_idx = layout.exit_node_idx(exit_nan);
         assert_eq!(tree.leaf_value(node_idx).0, 1.0);
     }

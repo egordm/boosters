@@ -452,11 +452,9 @@ impl<'a> crate::data::DataAccessor for SamplesView<'a> {
 
     #[inline]
     fn sample(&self, index: usize) -> Self::Sample<'_> {
-        // For contiguous C-order arrays, get slice directly from underlying storage
-        let slice = self
-            .data
-            .as_slice()
-            .expect("SamplesView must be contiguous (C-order)");
+        // For contiguous C-order arrays, get slice directly from underlying storage.
+        // SamplesView invariant guarantees C-order layout, so unwrap is safe.
+        let slice = self.data.as_slice().unwrap();
         let start = index * self.data.ncols();
         let end = start + self.data.ncols();
         &slice[start..end]

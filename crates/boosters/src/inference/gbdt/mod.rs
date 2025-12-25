@@ -55,5 +55,5 @@ pub use traversal::{
     UnrolledTraversal8,
 };
 
-// Re-export BinnedAccessor from its home in data::binned
-pub use crate::data::binned::BinnedAccessor;
+// Re-export BinnedSample from data::binned for use with BinnedDataset as DataAccessor
+pub use crate::data::binned::BinnedSample;

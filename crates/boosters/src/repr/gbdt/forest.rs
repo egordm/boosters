@@ -1,7 +1,5 @@
 //! Canonical forest representation (collection of trees).
 
-use crate::data::DataAccessor;
-
 use super::{tree::TreeValidationError, LeafValue, ScalarLeaf, Tree, TreeView};
 
 /// Structural validation errors for [`Forest`].
@@ -138,6 +136,8 @@ impl Forest<ScalarLeaf> {
     /// Predict for a single row of features.
     ///
     /// Handles linear leaf coefficients if present, computing `intercept + Σ(coef × feature)`.
+    ///
+    /// For batch prediction, use [`Predictor`](crate::inference::gbdt::Predictor) instead.
     pub fn predict_row(&self, features: &[f32]) -> Vec<f32> {
         let mut output = self.base_score.clone();
 
@@ -148,79 +148,6 @@ impl Forest<ScalarLeaf> {
         }
 
         output
-    }
-
-    /// Predict for a batch of rows.
-    pub fn predict_batch(&self, features: &[&[f32]]) -> Vec<Vec<f32>> {
-        features.iter().map(|row| self.predict_row(row)).collect()
-    }
-
-    /// Batch predict using any data accessor, writing into a flat output buffer.
-    ///
-    /// This is the unified batch prediction method that works with any data source
-    /// implementing `DataAccessor`.
-    ///
-    /// # Note on Linear Leaves
-    ///
-    /// This method does **not** support linear leaf coefficients. For trees with
-    /// linear leaves, use [`Predictor`](crate::inference::gbdt::Predictor) instead.
-    ///
-    /// # Arguments
-    /// * `data` - Data source (SamplesView, FeaturesView, BinnedAccessor, etc.)
-    /// * `output` - Pre-allocated output buffer, must have length `n_samples * n_groups`.
-    ///   Layout: row-major `[row0_g0, row0_g1, ..., row1_g0, row1_g1, ...]`
-    ///
-    /// # Panics
-    /// Panics if `output.len() != data.n_samples() * self.n_groups()`.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use boosters::repr::gbdt::{Forest, ScalarLeaf};
-    /// use boosters::dataset::SamplesView;
-    ///
-    /// let forest: Forest<ScalarLeaf> = /* ... */;
-    /// let data = [0.1f32, 0.2, 0.3, 0.4];
-    /// let view = SamplesView::from_slice(&data, 2, 2).unwrap();
-    /// let mut output = vec![0.0; 2 * forest.n_groups()];
-    /// forest.predict_into(&view, &mut output);
-    /// ```
-    pub fn predict_into<D: DataAccessor>(
-        &self,
-        data: &D,
-        output: &mut [f32],
-    ) {
-        // Debug check: this method doesn't support linear leaves
-        debug_assert!(
-            !self.trees.iter().any(|t| t.has_linear_leaves()),
-            "predict_into does not support linear leaves; use Predictor instead"
-        );
-
-        let n_samples = data.n_samples();
-        let n_groups = self.n_groups() as usize;
-        assert_eq!(
-            output.len(),
-            n_samples * n_groups,
-            "output buffer must have length n_samples * n_groups"
-        );
-
-        // Initialize with base scores
-        for row in 0..n_samples {
-            for (group, &base) in self.base_score.iter().enumerate() {
-                output[row * n_groups + group] = base;
-            }
-        }
-
-        // Accumulate tree predictions
-        for (tree, group) in self.trees_with_groups() {
-            let group_idx = group as usize;
-            for row in 0..n_samples {
-                let sample = data.sample(row);
-                let leaf_idx = tree.traverse_to_leaf(&sample);
-                let leaf_val = tree.leaf_value(leaf_idx).0;
-                output[row * n_groups + group_idx] += leaf_val;
-            }
-        }
     }
 }
 
@@ -249,51 +176,4 @@ mod tests {
         assert_eq!(pred, vec![2.0]);
     }
 
-    #[test]
-    fn forest_multiple_trees_sum() {
-        let mut forest = Forest::for_regression();
-        forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
-        forest.push_tree(build_simple_tree(0.5, 1.5, 0.5), 0);
-
-        let pred = forest.predict_row(&[0.3]);
-        assert_eq!(pred, vec![1.5]);
-
-        let pred = forest.predict_row(&[0.7]);
-        assert_eq!(pred, vec![3.5]);
-    }
-
-    #[test]
-    fn forest_with_base_score() {
-        let mut forest = Forest::for_regression().with_base_score(vec![0.5]);
-        forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
-
-        let pred = forest.predict_row(&[0.3]);
-        assert_eq!(pred, vec![1.5]);
-    }
-
-    #[test]
-    fn test_predict_into_matches_predict_row() {
-        use crate::dataset::SamplesView;
-
-        let mut forest = Forest::for_regression().with_base_score(vec![0.1]);
-        forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
-        forest.push_tree(build_simple_tree(0.5, 1.0, 0.5), 0);
-
-        // Test data: 3 rows, 1 feature
-        let data = [0.3f32, 0.7, 0.5];
-        let view = SamplesView::from_slice(&data, 3, 1).unwrap();
-        
-        // predict_into
-        let mut batch_output = vec![0.0; 3];
-        forest.predict_into(&view, &mut batch_output);
-
-        // predict_row for comparison
-        let row0 = forest.predict_row(&[0.3])[0];
-        let row1 = forest.predict_row(&[0.7])[0];
-        let row2 = forest.predict_row(&[0.5])[0];
-
-        assert!((batch_output[0] - row0).abs() < 1e-6);
-        assert!((batch_output[1] - row1).abs() < 1e-6);
-        assert!((batch_output[2] - row2).abs() < 1e-6);
-    }
 }

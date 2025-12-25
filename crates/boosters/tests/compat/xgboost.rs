@@ -205,8 +205,10 @@ fn predict_batch_regression() {
     let rows = input.to_f32_rows();
     let expected_preds = expected.as_flat();
 
-    let feature_refs: Vec<&[f32]> = rows.iter().map(|v| v.as_slice()).collect();
-    let predictions = forest.predict_batch(&feature_refs);
+    // Use predict_row for each sample (predict_batch removed in favor of Predictor)
+    let predictions: Vec<Vec<f32>> = rows.iter()
+        .map(|row| forest.predict_row(row))
+        .collect();
 
     assert_eq!(predictions.len(), expected_preds.len());
     for (i, (pred, exp)) in predictions.iter().zip(expected_preds.iter()).enumerate() {

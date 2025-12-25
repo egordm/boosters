@@ -12,7 +12,7 @@
 //! - `SampleAccessor` is implemented by `&[f32]`, allowing slices to be used directly
 //!   for tree traversal without wrapper types
 //! - `DataAccessor` is implemented by matrix types (`SamplesView`, `FeaturesView`,
-//!   `BinnedAccessor`) and provides sample extraction
+//!   `BinnedDataset`) and provides sample extraction
 //!
 //! # Example
 //!
@@ -118,7 +118,7 @@ impl<T: AsRef<[f32]> + ?Sized> SampleAccessor for &T {
 ///
 /// - [`SamplesView`](crate::dataset::SamplesView): Sample-major `[n_samples, n_features]`
 /// - [`FeaturesView`](crate::dataset::FeaturesView): Feature-major `[n_features, n_samples]`
-/// - [`BinnedAccessor`](crate::data::binned::BinnedAccessor): Binned data with midpoint conversion
+/// - [`BinnedDataset`](crate::data::binned::BinnedDataset): Binned data with midpoint conversion
 ///
 /// # Feature Types
 ///

@@ -5,7 +5,6 @@
 
 use crate::data::{init_predictions, BinnedDataset};
 use crate::dataset::TargetsView;
-use crate::inference::gbdt::BinnedAccessor;
 use crate::training::callback::{EarlyStopping, EarlyStopAction};
 use crate::training::eval::{self, EvalSet};
 use crate::training::logger::TrainingLogger;
@@ -185,18 +184,13 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
         );
 
         // Initialize linear leaf trainer if configured
-        let (mut linear_trainer, bin_mappers) = if let Some(config) = &self.params.linear_leaves {
+        let mut linear_trainer = if let Some(config) = &self.params.linear_leaves {
             // Estimate max samples per leaf: use n_rows as upper bound
             // (worst case: single-leaf tree for some output)
             // This may overallocate but is safe; typical usage is much smaller
-            let trainer = LeafLinearTrainer::new(config.clone(), n_rows);
-            // Only clone bin mappers when linear leaves are enabled
-            let mappers: Vec<_> = (0..dataset.n_features())
-                .map(|f| dataset.bin_mapper(f).clone())
-                .collect();
-            (Some(trainer), mappers)
+            Some(LeafLinearTrainer::new(config.clone(), n_rows))
         } else {
-            (None, Vec::new())
+            None
         };
 
         let mut row_sampler = RowSampler::new(
@@ -269,10 +263,9 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
                 // Fit linear models in leaves (skip round 0: homogeneous gradients)
                 // Only fit if linear_leaves config is set and we're past round 0
                 if round > 0 && let Some(ref mut linear_trainer) = linear_trainer {
-                    let accessor = BinnedAccessor::new(dataset, &bin_mappers);
                     let fitted = linear_trainer.train(
                         &mutable_tree,
-                        &accessor,
+                        dataset,
                         grower.partitioner(),
                         grower.leaf_node_mapping(),
                         &gradients,
@@ -301,16 +294,13 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
                 let mut pred_row = predictions.row_mut(output);
                 if sampled.is_none() {
                     // Fast path: use partitioner for O(n) prediction update
-                    grower.update_predictions_from_last_tree(pred_row.view_mut());
+                    grower.update_predictions_from_last_tree(pred_row);
                 } else {
                     // Fallback: row sampling trains on a subset; we must still apply the
                     // trained tree to all rows to keep predictions correct.
-                    // Create accessor with bin mappers for binned data traversal
-                    let mappers = dataset.bin_mappers();
-                    let accessor = BinnedAccessor::new(dataset, &mappers);
                     let pred_slice = pred_row.as_slice_mut()
                         .expect("prediction row should be contiguous");
-                    tree.predict_into(&accessor, pred_slice, parallelism);
+                    tree.predict_into(dataset, pred_slice, parallelism);
                 }
 
                 // Incremental eval set prediction: add this tree's contribution

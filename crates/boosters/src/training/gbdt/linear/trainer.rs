@@ -96,10 +96,9 @@ impl LeafLinearTrainer {
     /// # Example
     ///
     /// ```ignore
-    /// // With BinnedAccessor (during GBDT training):
-    /// let accessor = BinnedAccessor::new(dataset, &bin_mappers);
+    /// // With BinnedDataset (during GBDT training):
     /// let mapping = grower.leaf_node_mapping();
-    /// let fitted = trainer.train(&tree, &accessor, partitioner, mapping, gradients, 0, 0.1);
+    /// let fitted = trainer.train(&tree, dataset, partitioner, mapping, gradients, 0, 0.1);
     ///
     /// // With FeaturesView (for testing):
     /// let fitted = trainer.train(&tree, &features, partitioner, mapping, gradients, 0, 0.1);

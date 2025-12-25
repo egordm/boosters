@@ -37,7 +37,7 @@ pub use builder::{BinnedDatasetBuilder, BuildError, BinningConfig, BinningStrate
 pub use feature_analysis::{FeatureInfo, analyze_features, analyze_features_sequential};
 pub use bundling::BundlingFeatures;
 pub use bundling::{BundlingConfig, FeatureBundle, FeatureLocation, BundlePlan, create_bundle_plan};
-pub use accessor::BinnedAccessor;
+pub use accessor::BinnedSample;
 
 // Internal types exposed for tests and benchmarks
 #[doc(hidden)]

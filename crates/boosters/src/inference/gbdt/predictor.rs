@@ -51,37 +51,6 @@ use super::TreeTraversal;
 /// Default block size for batch processing (matches XGBoost).
 pub const DEFAULT_BLOCK_SIZE: usize = 64;
 
-/// Compute the prediction value for a linear leaf.
-///
-/// Returns `intercept + Σ(coef × feature)`, or the base leaf value if any
-/// linear feature is NaN.
-#[inline]
-fn compute_linear_leaf_value(tree: &Tree<ScalarLeaf>, leaf_idx: u32, features: &[f32]) -> f32 {
-    let base = tree.leaf_value(leaf_idx).0;
-
-    if let Some((feat_indices, coefs)) = tree.leaf_terms(leaf_idx) {
-        // Check for NaN in any linear feature
-        for &feat_idx in feat_indices {
-            let val = features.get(feat_idx as usize).copied().unwrap_or(f32::NAN);
-            if val.is_nan() {
-                return base; // Fall back to constant leaf
-            }
-        }
-
-        // Compute linear prediction: intercept + Σ(coef × feature)
-        let intercept = tree.leaf_intercept(leaf_idx);
-        let linear_sum: f32 = feat_indices
-            .iter()
-            .zip(coefs.iter())
-            .map(|(&f, &c)| c * features.get(f as usize).copied().unwrap_or(0.0))
-            .sum();
-
-        intercept + linear_sum
-    } else {
-        base
-    }
-}
-
 /// Unified predictor for tree ensemble inference.
 ///
 /// Generic over [`TreeTraversal`] strategy, allowing different optimization
@@ -186,7 +155,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
             let leaf_idx = T::traverse_tree(tree, state, features);
 
             let leaf_value = if tree.has_linear_leaves() {
-                compute_linear_leaf_value(tree, leaf_idx, features)
+                tree.compute_leaf_value(leaf_idx, &features)
             } else {
                 tree.leaf_value(leaf_idx).0
             };
@@ -337,11 +306,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
             if tree.has_linear_leaves() {
                 for i in 0..n_rows {
                     let feat_row = features.sample(i);
-                    let value = compute_linear_leaf_value(
-                        tree,
-                        leaf_indices[i],
-                        feat_row,
-                    );
+                    let value = tree.compute_leaf_value(leaf_indices[i], &feat_row);
                     group_row[i] += value * tree_weight;
                 }
             } else {
