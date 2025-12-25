@@ -19,11 +19,16 @@ This backlog implements Python bindings for boosters via PyO3/Maturin, providing
 **Non-Goals (v0.1.0 scope boundaries)**:
 
 - ❌ Model serialization (save/load) — not implemented, no interface (future RFC)
-- ❌ SHAP values (pred_contrib) — deferred to explainability epic
 - ❌ Sparse matrix support — deferred to v0.2.0
 - ❌ Python callbacks during training — Rust-only callbacks
-- ❌ Categorical feature encoding — pandas categoricals converted, but not lightgbm-style native categoricals
 - ❌ Library comparison tests — benchmarks handled by `packages/boosters-eval`
+
+**In Scope (clarification)**:
+
+- ✅ SHAP values via `pred_contrib=True` — Rust core supports this
+- ✅ Native categorical features — Rust core has `SplitType::Categorical` with bitset-based
+  multi-way splits (like LightGBM). Pandas categoricals auto-detected, or specify
+  `categorical_features=[...]` for integer-encoded data
 
 **Definition of Ready** (story can start when):
 
@@ -55,15 +60,15 @@ Callback pattern (Story 4.2):
 
 **Dependencies**:
 
-- Rust crate `boosters` must be stable (training, prediction, objectives)
+- Rust crate `boosters` must be stable (training, prediction, objectives, SHAP, categoricals)
 
 **Milestones**:
 
 | Version | Scope | Epics |
-|---------|-------|-------|
-| **v0.1.0 (MVP)** | Core API only | 1, 2, 3, 4 |
+| ------- | ----- | ----- |
+| **v0.1.0 (MVP)** | Core API (incl. SHAP, categoricals) | 1, 2, 3, 4 |
 | **v0.2.0** | sklearn integration | 5, 6 |
-| **Future** | SHAP, sparse matrices | Blocked on Rust features |
+| **Future** | Sparse matrices | Blocked on Rust feature |
 
 **Parallel Work Opportunities**:
 - Epic 1 (Project Setup) must complete first
@@ -173,45 +178,46 @@ Epic 1 (Setup) ┤                      ├──► Epic 4 (Models)
 **Tasks**:
 
 - [ ] 1.3.1 Update `packages/boosters-python/pyproject.toml`:
-  - Add dev dependencies: ruff, pyright, pytest, pytest-cov, poethepoet, pyproject-fmt, nbmake
-  - Configure pyright strict mode
-  - Configure ruff with strict linting (include D for docstrings)
-  - Add local poe tasks (`poe lint`, `poe all`, etc.) for package development
-- [ ] 1.3.2 Update root `pyproject.toml` with namespaced tasks:
-  - `python:lint`: ruff check with fix option
-  - `python:format`: ruff format
+  - Package has no dev dependencies (all dev deps in root pyproject.toml per uv workspace)
+  - Configure package-specific pyright settings if needed
+  - Configure package-specific ruff overrides if needed
+  - Note: poe tasks run from root, not package directory
+- [ ] 1.3.2 Update root `pyproject.toml` with Python-specific tasks:
+  - Add dev dependencies to root: pytest-cov, pyproject-fmt, nbmake
+  - `python:test`: pytest for boosters-python with coverage
+  - `python:doctest`: pytest --doctest-modules
   - `python:format-pyproject`: pyproject-fmt
-  - `python:type`: pyright (strict)
-  - `python:tests`: pytest with coverage
-  - `python:doctests`: pytest --doctest-modules
-  - `all`: run everything in sequence (for dev and CI)
-- [ ] 1.3.3 Configure pyright strict settings:
-  - `typeCheckingMode = "strict"`
-  - Appropriate include/exclude paths
-- [ ] 1.3.4 Configure ruff strict settings:
-  - Enable D (pydocstyle) for docstring enforcement (D100-D107)
-  - Enable all standard lint rules (E, W, F, I, B, C4, UP, RUF)
+  - Update existing `test` task to include Python tests
+  - Note: `lint`, `format`, `typecheck` already exist at root level
+- [ ] 1.3.3 Configure pyright settings:
+  - Keep `typeCheckingMode = "basic"` (current root config)
+  - Document path to strict mode for future (after initial implementation)
+  - Appropriate include/exclude paths for boosters-python
+- [ ] 1.3.4 Configure ruff with docstring rules:
+  - Add D (pydocstyle) to select list for docstring enforcement (D100-D107)
+  - Keep existing strict lint rules (E, W, F, I, B, C4, UP, RUF)
   - Google-style docstrings (`convention = "google"`)
 - [ ] 1.3.5 Add pyproject-fmt to format pyproject.toml consistently
 - [ ] 1.3.6 Verify tooling is correctly configured:
-  - `poe all` runs without crashes on minimal codebase
+  - `poe check` runs without crashes on minimal codebase
   - Warnings expected until APIs are implemented in Epic 2-4
 
 **Note**: Docstring enforcement ramps up as APIs are implemented. Ruff D rules
 will flag missing docstrings; actual docstrings added with each public API.
+Pyright starts in basic mode; upgrade to strict after core implementation.
 
 **Definition of Done**:
 
-- `poe all` runs complete tooling pipeline
-- pyright strict mode configured (may have warnings on minimal codebase)
+- `poe check` runs complete tooling pipeline
+- pyright basic mode configured with boosters-python paths
 - ruff configured with D rules enabled
-- `poe doctests` validates docstring examples
+- `poe python:doctest` validates docstring examples
 
 **Testing Criteria**:
 
-- `poe lint --check` catches issues
-- `poe type` runs pyright in strict mode
-- `poe doctests` runs (passes trivially on minimal codebase)
+- `poe lint` catches issues
+- `poe typecheck` runs pyright
+- `poe python:doctest` runs (passes trivially on minimal codebase)
 
 ---
 
@@ -308,9 +314,9 @@ will flag missing docstrings; actual docstrings added with each public API.
 ### Story 2.1: Basic Config Types
 
 **RFC Section**: RFC-0014 "Rust Config Implementation"  
-**Effort**: M (2-3h)
+**Effort**: L (3-4h)
 
-**Description**: Implement `TreeConfig`, `RegularizationConfig`, `SamplingConfig`.
+**Description**: Implement `TreeConfig`, `RegularizationConfig`, `SamplingConfig`, and additional sub-configs.
 
 **Tasks**:
 
@@ -327,17 +333,32 @@ will flag missing docstrings; actual docstrings added with each public API.
 - [ ] 2.1.5 Implement `SamplingConfig`:
   - `subsample: f64` (default 1.0)
   - `colsample: f64` (default 1.0)
-- [ ] 2.1.6 Add validation in constructors (e.g., `subsample` in (0, 1])
-- [ ] 2.1.7 Export all types in `#[pymodule]`
+  - `goss_alpha: f64` (default 0.0, for GOSS sampling)
+  - `goss_beta: f64` (default 0.0)
+- [ ] 2.1.6 Implement `CategoricalConfig`:
+  - `max_categories: u32` (default 256)
+  - `min_category_count: u32` (default 10)
+- [ ] 2.1.7 Implement `EFBConfig` (Exclusive Feature Bundling):
+  - `enable: bool` (default true)
+  - `max_conflict_rate: f64` (default 0.0)
+- [ ] 2.1.8 Implement `LinearLeavesConfig`:
+  - `enable: bool` (default false)
+  - `l2_regularization: f64` (default 0.0)
+- [ ] 2.1.9 Add validation in constructors (e.g., `subsample` in (0, 1])
+- [ ] 2.1.10 Export all types in `#[pymodule]`
 
 **Definition of Done**:
-- All config types constructible from Python with defaults
+
+- All 6 config types constructible from Python with defaults
 - Invalid values raise `ValueError`
 
 **Testing Criteria**:
+
 - `TreeConfig()` has correct defaults
 - `TreeConfig(max_depth=5)` works
 - `SamplingConfig(subsample=1.5)` raises `ValueError`
+- `CategoricalConfig(max_categories=64)` works
+- `LinearLeavesConfig(enable=True)` works
 
 ---
 
@@ -427,20 +448,21 @@ will flag missing docstrings; actual docstrings added with each public API.
   - `tree: Py<TreeConfig>`
   - `regularization: Py<RegularizationConfig>`
   - `sampling: Py<SamplingConfig>`
-  - `linear_trees: bool` (default false)
-  - `enable_bundling: bool` (default true)
+  - `categorical: Py<CategoricalConfig>`
+  - `efb: Py<EFBConfig>`
+  - `linear_leaves: Py<LinearLeavesConfig>`
   - `n_threads: i32` (default 0 = auto)
   - `seed: Option<u64>`
   - `verbose: i32` (default 1)
 - [ ] 2.4.2 Implement `#[new]` with all defaults
-- [ ] 2.4.3 Implement `GBLinearConfig` (subset of fields)
+- [ ] 2.4.3 Implement `GBLinearConfig` (subset of fields, no tree/categorical/efb)
 - [ ] 2.4.4 Add `objective_kind(&self)` method for Rust-side extraction
 - [ ] 2.4.5 Add validation for cross-field consistency (deferred to fit-time)
 
 **Definition of Done**:
 
 - `GBDTConfig()` creates valid config with all defaults
-- Nested configs can be overridden
+- All 6 sub-configs nested correctly
 - Stubs show full signature
 
 **Testing Criteria**:
@@ -550,10 +572,14 @@ This keeps Python layer simple and lets Rust handle full validation.
 **RFC Section**: RFC-0014 "Dataset"  
 **Effort**: L (4-5h)
 
-**Description**: Implement `Dataset` with NumPy array handling and lifetime management.
+**Description**: Implement `Dataset` with NumPy array handling, lifetime management, and native categorical support.
 
 **Data Layout Note**: C-contiguous (row-major) arrays are optimal for performance.
 F-contiguous arrays will be copied to C-order automatically.
+
+**Native Categoricals**: boosters supports native categorical splits (like LightGBM), using
+bitset-based multi-way splits. This is different from one-hot encoding. Categorical features
+are specified via `categorical_features=[...]` parameter or auto-detected from pandas categoricals.
 
 **Tasks**:
 
@@ -565,15 +591,17 @@ F-contiguous arrays will be copied to C-order automatically.
   - `weights: Option<Py<PyAny>>`
   - `groups: Option<Py<PyAny>>` (for ranking)
   - `feature_names: Option<Vec<String>>`
-  - `categorical_features: Option<Vec<usize>>` (indices)
+  - `categorical_features: Option<Vec<usize>>` (feature indices)
 - [ ] 3.1.4 Implement `#[new]` with:
   - NumPy array detection
   - pandas DataFrame detection and column extraction
-  - pandas categorical dtype handling → encode to integers
+  - pandas categorical dtype → auto-detect and add to `categorical_features`
+  - Integer-encoded categoricals → user specifies indices
 - [ ] 3.1.5 Implement `n_samples` and `n_features` properties
 - [ ] 3.1.6 Implement internal `to_rust_view()`:
   - Return `PyReadonlyArray2<f32>` or `PyReadonlyArray2<f64>`
   - `Py<PyArray>` reference keeps Python array alive during Rust access
+  - Pass `categorical_features` indices to Rust training
 - [ ] 3.1.7 Handle memory layout:
   - C-contiguous float32: zero-copy
   - F-contiguous: copy to C-order
@@ -583,14 +611,15 @@ F-contiguous arrays will be copied to C-order automatically.
   - NaN allowed in features (treated as missing values, like XGBoost)
   - Inf in features → `ValueError` with message about data preprocessing
   - NaN/Inf in labels → `ValueError`
-- [ ] 3.1.10 Add sparse matrix detection → `NotImplementedError("Sparse matrices in v0.2.0")`
+- [ ] 3.1.10 Sparse matrix detection moved to Story 4.6
 
 **Definition of Done**:
 
 - `Dataset` constructible from NumPy arrays and pandas DataFrames
 - Properties return correct values
 - Zero-copy works for C-contiguous float32
-- pandas categoricals converted to integer codes
+- pandas categoricals auto-detected and tracked
+- `categorical_features` passed to Rust for native categorical splits
 - Clear errors for invalid data (Inf, NaN in labels)
 
 **Testing Criteria**:
@@ -598,8 +627,8 @@ F-contiguous arrays will be copied to C-order automatically.
 - `Dataset(features=np.zeros((100, 10)))` works
 - `Dataset(features=pd.DataFrame(...))` works
 - `dataset.n_samples` returns 100
-- pandas categorical column handled correctly
-- scipy.sparse input raises `NotImplementedError`
+- pandas categorical column auto-detected: `dataset.categorical_features == [1]`
+- `Dataset(X, categorical_features=[0, 5])` works for integer-encoded data
 - Features with NaN work (missing values)
 - Features with Inf raise `ValueError`
 - Labels with NaN raise `ValueError`
@@ -772,6 +801,7 @@ fit). This avoids complex GIL juggling. Python can inspect results after trainin
 - `model.fit(train, valid=[EvalSet("val", val_data)])` works
 - `model.eval_results["val"]["rmse"]` populated
 - Early stopping triggers correctly
+- Training with `categorical_features` uses native categorical splits (not just encoded)
 - Invalid label shape → clear `ValueError` with expected vs actual
 
 ---
@@ -785,7 +815,7 @@ fit). This avoids complex GIL juggling. Python can inspect results after trainin
 
 **Tasks**:
 
-- [ ] 4.4.1 Implement `predict(features, n_iterations=None, raw_score=False)`:
+- [ ] 4.4.1 Implement `predict(features, n_iterations=None, raw_score=False, pred_contrib=False)`:
   - Validate feature shape
   - Release GIL during prediction
   - Return NumPy array
@@ -795,18 +825,25 @@ fit). This avoids complex GIL juggling. Python can inspect results after trainin
   - Multiclass: `(n_samples, n_classes)`
 - [ ] 4.4.3 Implement `raw_score=True` for margin output
 - [ ] 4.4.4 Implement `n_iterations` for partial prediction
-- [ ] 4.4.5 Add SHAP placeholder `pred_contrib=True` → raise `NotImplementedError` (see Story 4.6)
+- [ ] 4.4.5 Implement `pred_contrib=True` for SHAP values:
+  - Call Rust SHAP implementation
+  - Shape: `(n_samples, n_features + 1)` for scalar objectives
+  - Shape: `(n_samples, n_features + 1, n_classes)` for multiclass
+  - Last column is bias term
 
 **Definition of Done**:
 
 - Predictions match Rust crate output
 - Output shapes correct for all objectives
+- SHAP values return correct shape
 - GIL released during prediction
 
 **Testing Criteria**:
 
 - `model.predict(X)` returns correct shape
 - `model.predict(X, raw_score=True)` returns margins
+- `model.predict(X, pred_contrib=True)` returns `(n, features+1)` for regression
+- `model.predict(X, pred_contrib=True)` returns `(n, features+1, n_classes)` for multiclass
 - Multi-quantile returns `(n, 3)` for 3-alpha PinballLoss
 
 ---
@@ -849,7 +886,7 @@ fit). This avoids complex GIL juggling. Python can inspect results after trainin
 
 **Tasks**:
 
-- [ ] 4.6.1 Add `predict(pred_contrib=True)` check that raises `NotImplementedError("SHAP values deferred to explainability epic")`
+- [ ] 4.6.1 Add sparse matrix detection in `Dataset` → raise `NotImplementedError("Sparse matrices deferred to v0.2.0")`
 - [ ] 4.6.2 Document deferred features in class docstrings
 
 **Definition of Done**:
@@ -859,7 +896,7 @@ fit). This avoids complex GIL juggling. Python can inspect results after trainin
 
 **Testing Criteria**:
 
-- `model.predict(X, pred_contrib=True)` raises appropriate error
+- `Dataset(scipy.sparse.csr_matrix(...))` raises appropriate error
 
 ---
 
@@ -1206,7 +1243,7 @@ exercise full train/predict flows; unit tests isolate individual components.
 
 | Epic | Focus | Key Tests |
 | ---- | ----- | --------- |
-| 1: Setup | Build works, imports, tooling | `import boosters`, `poe all` passes |
+| 1: Setup | Build works, imports, tooling | `import boosters`, `poe check` passes |
 | 2: Config | Construction, defaults, validation | Config roundtrip, defaults match RFC |
 | 3: Dataset | Data loading, memory safety | Zero-copy, <10% memory growth |
 | 4: Training | End-to-end, correctness | train/predict works, doctests pass |
@@ -1308,4 +1345,17 @@ exercise full train/predict flows; unit tests isolate individual components.
   - **Updated Story 6.2**: Standardized on nbmake for notebooks
   - **Updated Story 6.4**: Added README badges, TestPyPI task
   - **Updated Testing Strategy**: Clarified flat test directory structure
+  - Backlog re-finalized for implementation
+- 2025-01-21: Rounds 13-16 refinement (scope & tooling corrections):
+  - **Scope fix**: SHAP values and native categoricals now in scope (were incorrectly excluded)
+  - **Added "In Scope" section**: Clarifies SHAP output shapes and native categorical split behavior
+  - **Updated Story 1.3**: Dev deps in root pyproject.toml (uv workspace), poe task naming (singular: test, doctest)
+  - **Updated Story 2.1**: Added CategoricalConfig, EFBConfig, LinearLeavesConfig (now 6 config types, effort L)
+  - **Updated Story 2.4**: GBDTConfig now includes all 6 sub-configs
+  - **Updated Story 3.1**: Native categorical support details, NaN=missing clarification
+  - **Updated Story 4.4**: SHAP fully implemented (not placeholder), multiclass SHAP test added
+  - **Updated Story 4.6**: Changed to sparse matrix NotImplementedError only (SHAP moved to 4.4)
+  - **Updated Testing Strategy**: "poe all" → "poe check" consistency
+  - **Updated milestones**: v0.1.0 now explicitly includes SHAP and categoricals
+  - **Updated CONTRIBUTING guide**: Added Python Development section (uv workspace, poe tasks, test org)
   - Backlog re-finalized for implementation
