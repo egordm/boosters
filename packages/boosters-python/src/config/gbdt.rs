@@ -1,18 +1,253 @@
-//! GBDT configuration (placeholder - Story 2.4).
+//! GBDT configuration for Python bindings.
 
 use pyo3::prelude::*;
 
+use super::{
+    PyCategoricalConfig, PyEFBConfig, PyLinearLeavesConfig, PyRegularizationConfig,
+    PySamplingConfig, PyTreeConfig,
+};
+use crate::error::BoostersError;
+use crate::metrics::PyMetric;
+use crate::objectives::PyObjective;
+
 /// Main configuration for GBDT model.
 ///
-/// This is a placeholder - full implementation in Story 2.4.
+/// This is the primary configuration class for gradient boosted decision trees.
+/// It accepts nested configuration objects for tree structure, regularization,
+/// sampling, etc.
+///
+/// Parameters
+/// ----------
+/// n_estimators : int, default=100
+///     Number of boosting rounds (trees to train).
+/// learning_rate : float, default=0.3
+///     Step size shrinkage. Smaller values require more trees but often
+///     produce better models. Typical range: 0.01 - 0.3.
+/// objective : Objective, default=SquaredLoss()
+///     Loss function for training.
+/// metric : Metric or None, default=None
+///     Evaluation metric. If None, uses objective's default metric.
+/// tree : TreeConfig or None, default=None
+///     Tree structure parameters. If None, uses defaults.
+/// regularization : RegularizationConfig or None, default=None
+///     L1/L2 regularization parameters. If None, uses defaults.
+/// sampling : SamplingConfig or None, default=None
+///     Row and column subsampling parameters. If None, uses defaults.
+/// categorical : CategoricalConfig or None, default=None
+///     Categorical feature handling. If None, uses defaults.
+/// efb : EFBConfig or None, default=None
+///     Exclusive Feature Bundling config. If None, uses defaults.
+/// linear_leaves : LinearLeavesConfig or None, default=None
+///     Linear model in leaves config. If None, disabled.
+/// early_stopping_rounds : int or None, default=None
+///     Stop if no improvement for this many rounds. None disables.
+/// seed : int, default=42
+///     Random seed for reproducibility.
+///
+/// Examples
+/// --------
+/// >>> from boosters import GBDTConfig, SquaredLoss, TreeConfig
+/// >>> config = GBDTConfig(
+/// ...     n_estimators=500,
+/// ...     learning_rate=0.1,
+/// ...     objective=SquaredLoss(),
+/// ...     tree=TreeConfig(max_depth=6),
+/// ... )
 #[pyclass(name = "GBDTConfig", module = "boosters._boosters_rs")]
-#[derive(Clone, Debug, Default)]
-pub struct PyGBDTConfig;
+#[derive(Debug)]
+pub struct PyGBDTConfig {
+    /// Number of boosting rounds.
+    #[pyo3(get)]
+    pub n_estimators: u32,
+    /// Learning rate (step size shrinkage).
+    #[pyo3(get)]
+    pub learning_rate: f64,
+    /// Tree structure config.
+    #[pyo3(get)]
+    pub tree: PyTreeConfig,
+    /// Regularization config.
+    #[pyo3(get)]
+    pub regularization: PyRegularizationConfig,
+    /// Sampling config.
+    #[pyo3(get)]
+    pub sampling: PySamplingConfig,
+    /// Categorical feature config.
+    #[pyo3(get)]
+    pub categorical: PyCategoricalConfig,
+    /// Exclusive Feature Bundling config.
+    #[pyo3(get)]
+    pub efb: PyEFBConfig,
+    /// Linear leaves config (None = disabled).
+    #[pyo3(get)]
+    pub linear_leaves: Option<PyLinearLeavesConfig>,
+    /// Early stopping rounds (None = disabled).
+    #[pyo3(get)]
+    pub early_stopping_rounds: Option<u32>,
+    /// Random seed.
+    #[pyo3(get)]
+    pub seed: u64,
+
+    // Store objective and metric as Python objects since the enum
+    // doesn't implement IntoPy (it only implements FromPyObject for extraction)
+    objective_obj: PyObject,
+    metric_obj: Option<PyObject>,
+}
+
+impl Clone for PyGBDTConfig {
+    fn clone(&self) -> Self {
+        Python::with_gil(|py| Self {
+            n_estimators: self.n_estimators,
+            learning_rate: self.learning_rate,
+            objective_obj: self.objective_obj.clone_ref(py),
+            metric_obj: self.metric_obj.as_ref().map(|m| m.clone_ref(py)),
+            tree: self.tree.clone(),
+            regularization: self.regularization.clone(),
+            sampling: self.sampling.clone(),
+            categorical: self.categorical.clone(),
+            efb: self.efb.clone(),
+            linear_leaves: self.linear_leaves.clone(),
+            early_stopping_rounds: self.early_stopping_rounds,
+            seed: self.seed,
+        })
+    }
+}
 
 #[pymethods]
 impl PyGBDTConfig {
     #[new]
-    fn new() -> Self {
-        Self
+    #[pyo3(signature = (
+        n_estimators = 100,
+        learning_rate = 0.3,
+        objective = None,
+        metric = None,
+        tree = None,
+        regularization = None,
+        sampling = None,
+        categorical = None,
+        efb = None,
+        linear_leaves = None,
+        early_stopping_rounds = None,
+        seed = 42
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        py: Python<'_>,
+        n_estimators: u32,
+        learning_rate: f64,
+        objective: Option<&Bound<'_, PyAny>>,
+        metric: Option<&Bound<'_, PyAny>>,
+        tree: Option<PyTreeConfig>,
+        regularization: Option<PyRegularizationConfig>,
+        sampling: Option<PySamplingConfig>,
+        categorical: Option<PyCategoricalConfig>,
+        efb: Option<PyEFBConfig>,
+        linear_leaves: Option<PyLinearLeavesConfig>,
+        early_stopping_rounds: Option<u32>,
+        seed: u64,
+    ) -> PyResult<Self> {
+        // Validate n_estimators
+        if n_estimators == 0 {
+            return Err(BoostersError::InvalidParameter {
+                name: "n_estimators".to_string(),
+                message: "must be positive".to_string(),
+            }
+            .into());
+        }
+
+        // Validate learning_rate
+        if learning_rate <= 0.0 {
+            return Err(BoostersError::InvalidParameter {
+                name: "learning_rate".to_string(),
+                message: "must be positive".to_string(),
+            }
+            .into());
+        }
+
+        // Handle objective - create default SquaredLoss if not provided
+        let objective_obj = match objective {
+            Some(obj) => {
+                // Validate it's a valid objective by trying to extract
+                let _: PyObjective = obj.extract()?;
+                obj.clone().unbind()
+            }
+            None => {
+                // Create default SquaredLoss
+                let squared_loss = crate::objectives::PySquaredLoss::default();
+                Py::new(py, squared_loss)?.into_any()
+            }
+        };
+
+        // Handle metric
+        let metric_obj = match metric {
+            Some(m) => {
+                // Validate it's a valid metric by trying to extract
+                let _: PyMetric = m.extract()?;
+                Some(m.clone().unbind())
+            }
+            None => None,
+        };
+
+        Ok(Self {
+            n_estimators,
+            learning_rate,
+            objective_obj,
+            metric_obj,
+            tree: tree.unwrap_or_default(),
+            regularization: regularization.unwrap_or_default(),
+            sampling: sampling.unwrap_or_default(),
+            categorical: categorical.unwrap_or_default(),
+            efb: efb.unwrap_or_default(),
+            linear_leaves,
+            early_stopping_rounds,
+            seed,
+        })
+    }
+
+    /// Get the objective as a Python object.
+    #[getter]
+    fn objective(&self, py: Python<'_>) -> PyObject {
+        self.objective_obj.clone_ref(py)
+    }
+
+    /// Get the metric as a Python object (or None).
+    #[getter]
+    fn metric(&self, py: Python<'_>) -> Option<PyObject> {
+        self.metric_obj.as_ref().map(|m| m.clone_ref(py))
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let obj_repr = self
+            .objective_obj
+            .bind(py)
+            .repr()
+            .map(|r| r.to_string())
+            .unwrap_or_else(|_| "?".to_string());
+        format!(
+            "GBDTConfig(n_estimators={}, learning_rate={}, objective={})",
+            self.n_estimators, self.learning_rate, obj_repr
+        )
+    }
+}
+
+impl Default for PyGBDTConfig {
+    fn default() -> Self {
+        // Note: This requires Python GIL. Use new() in Python context.
+        Python::with_gil(|py| {
+            let squared_loss = crate::objectives::PySquaredLoss::default();
+            Self {
+                n_estimators: 100,
+                learning_rate: 0.3,
+                objective_obj: Py::new(py, squared_loss).unwrap().into_any(),
+                metric_obj: None,
+                tree: PyTreeConfig::default(),
+                regularization: PyRegularizationConfig::default(),
+                sampling: PySamplingConfig::default(),
+                categorical: PyCategoricalConfig::default(),
+                efb: PyEFBConfig::default(),
+                linear_leaves: None,
+                early_stopping_rounds: None,
+                seed: 42,
+            }
+        })
     }
 }
