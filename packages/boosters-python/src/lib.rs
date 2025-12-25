@@ -5,6 +5,7 @@
 
 mod config;
 mod convert;
+mod data;
 mod error;
 mod metrics;
 mod objectives;
@@ -16,6 +17,7 @@ use config::{
     PyCategoricalConfig, PyEFBConfig, PyGBDTConfig, PyGBLinearConfig, PyLinearLeavesConfig,
     PyRegularizationConfig, PySamplingConfig, PyTreeConfig,
 };
+use data::{PyDataset, PyEvalSet};
 use metrics::{PyAccuracy, PyAuc, PyLogLoss, PyMae, PyMape, PyNdcg, PyRmse};
 use objectives::{
     PyAbsoluteLoss, PyArctanLoss, PyHingeLoss, PyHuberLoss, PyLambdaRankLoss, PyLogisticLoss,
@@ -39,6 +41,10 @@ fn _boosters_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLinearLeavesConfig>()?;
     m.add_class::<PyGBDTConfig>()?;
     m.add_class::<PyGBLinearConfig>()?;
+
+    // Data types
+    m.add_class::<PyDataset>()?;
+    m.add_class::<PyEvalSet>()?;
 
     // Objective types
     m.add_class::<PySquaredLoss>()?;

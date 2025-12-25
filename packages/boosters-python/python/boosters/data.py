@@ -8,13 +8,9 @@ Types:
     - EvalSet: Named evaluation set for validation during training
 """
 
-# Re-exports will be added as Epic 3 is implemented
-# from boosters._boosters_rs import (
-#     Dataset,
-#     EvalSet,
-# )
+from boosters._boosters_rs import Dataset, EvalSet
 
 __all__: list[str] = [
-    # "Dataset",
-    # "EvalSet",
+    "Dataset",
+    "EvalSet",
 ]

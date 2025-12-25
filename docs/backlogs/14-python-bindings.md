@@ -583,7 +583,8 @@ where the actual fit() method will use these conversions.
 ### Story 3.1: Dataset Type
 
 **RFC Section**: RFC-0014 "Dataset"  
-**Effort**: L (4-5h)
+**Effort**: L (4-5h)  
+**Status**: ✅ Complete
 
 **Description**: Implement `Dataset` with NumPy array handling, lifetime management, and native categorical support.
 
@@ -596,31 +597,31 @@ are specified via `categorical_features=[...]` parameter or auto-detected from p
 
 **Tasks**:
 
-- [ ] 3.1.1 Create `src/data/mod.rs` module
-- [ ] 3.1.2 Add `numpy` dependency to PyO3 crate
-- [ ] 3.1.3 Implement `Dataset` as `#[pyclass]`:
+- [x] 3.1.1 Create `src/data/mod.rs` module
+- [x] 3.1.2 Add `numpy` dependency to PyO3 crate
+- [x] 3.1.3 Implement `Dataset` as `#[pyclass]`:
   - `features: Py<PyAny>` (ndarray or DataFrame, kept alive)
   - `labels: Option<Py<PyAny>>`
   - `weights: Option<Py<PyAny>>`
   - `groups: Option<Py<PyAny>>` (for ranking)
   - `feature_names: Option<Vec<String>>`
   - `categorical_features: Option<Vec<usize>>` (feature indices)
-- [ ] 3.1.4 Implement `#[new]` with:
+- [x] 3.1.4 Implement `#[new]` with:
   - NumPy array detection
   - pandas DataFrame detection and column extraction
   - pandas categorical dtype → auto-detect and add to `categorical_features`
   - Integer-encoded categoricals → user specifies indices
-- [ ] 3.1.5 Implement `n_samples` and `n_features` properties
-- [ ] 3.1.6 Implement internal `to_rust_view()`:
+- [x] 3.1.5 Implement `n_samples` and `n_features` properties
+- [x] 3.1.6 Implement internal `to_rust_view()`:
   - Return `PyReadonlyArray2<f32>` or `PyReadonlyArray2<f64>`
   - `Py<PyArray>` reference keeps Python array alive during Rust access
   - Pass `categorical_features` indices to Rust training
-- [ ] 3.1.7 Handle memory layout:
+- [x] 3.1.7 Handle memory layout:
   - C-contiguous float32: zero-copy
   - F-contiguous: copy to C-order
   - Non-contiguous: error with helpful message
-- [ ] 3.1.8 Add dtype validation (float32 recommended, float64 supported)
-- [ ] 3.1.9 Add NaN/Inf handling:
+- [x] 3.1.8 Add dtype validation (float32 recommended, float64 supported)
+- [x] 3.1.9 Add NaN/Inf handling:
   - NaN allowed in features (treated as missing values, like XGBoost)
   - Inf in features → `ValueError` with message about data preprocessing
   - NaN/Inf in labels → `ValueError`
@@ -634,6 +635,8 @@ are specified via `categorical_features=[...]` parameter or auto-detected from p
 - pandas categoricals auto-detected and tracked
 - `categorical_features` passed to Rust for native categorical splits
 - Clear errors for invalid data (Inf, NaN in labels)
+
+> Note: Don't forget to check stakeholder feedback.
 
 **Testing Criteria**:
 
@@ -668,6 +671,8 @@ are specified via `categorical_features=[...]` parameter or auto-detected from p
 
 - `EvalSet("valid", dataset)` works
 - Name accessible for eval_results
+
+> Note: Don't forget to check stakeholder feedback.
 
 **Testing Criteria**:
 - `EvalSet("test", Dataset(...))` constructible

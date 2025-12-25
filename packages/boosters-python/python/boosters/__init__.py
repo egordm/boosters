@@ -29,6 +29,9 @@ from boosters.config import (
     TreeConfig,
 )
 
+# Data types
+from boosters.data import Dataset, EvalSet
+
 # Metric types
 from boosters.metrics import (
     Accuracy,
@@ -62,7 +65,9 @@ __all__ = [
     "ArctanLoss",
     "Auc",
     "CategoricalConfig",
+    "Dataset",
     "EFBConfig",
+    "EvalSet",
     "GBDTConfig",
     "GBLinearConfig",
     "HingeLoss",
