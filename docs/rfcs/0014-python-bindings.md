@@ -203,13 +203,33 @@ X, y = np.random.rand(1000, 10), np.random.rand(1000)
 train = bst.Dataset(features=X[:800], labels=y[:800])
 valid = bst.Dataset(features=X[800:], labels=y[800:])
 
-# Configure and train (core API with explicit config)
-config = bst.GBDTConfig(n_estimators=100, learning_rate=0.1)
+# Configure with explicit nested configs (Rust-owned types)
+config = bst.GBDTConfig(
+    n_estimators=100,
+    learning_rate=0.1,
+    objective=bst.SquaredLoss(),
+    tree=bst.TreeConfig(max_depth=6, n_leaves=31),
+    regularization=bst.RegularizationConfig(l2=0.1),
+)
+
+# Train
 model = bst.GBDTModel(config)
 model.fit(train, valid=[bst.EvalSet("valid", valid)])
 
 # Predict
 predictions = model.predict(X[800:])
+```
+
+**Multi-output quantile regression example:**
+
+```python
+# Multi-quantile prediction (3 output columns)
+config = bst.GBDTConfig(
+    objective=bst.PinballLoss(alpha=[0.1, 0.5, 0.9]),
+)
+model = bst.GBDTModel(config)
+model.fit(train)
+quantiles = model.predict(X_test)  # Shape: (n_samples, 3)
 ```
 
 For sklearn-style usage, see the [scikit-learn Integration](#scikit-learn-integration) section.
@@ -1055,77 +1075,270 @@ ds = Dataset(df, label=y)  # 'city' automatically categorical
 
 ## PyO3 Implementation
 
-### Configuration Types: Pure Python vs PyO3
+### Configuration Types: Rust-Owned with Generated Stubs
 
 **Key design question**: Where do config types like `GBDTConfig`, `PinballLoss`, `EvalSet` live?
 
-**Decision**: **Hybrid approach** — config types are pure Python dataclasses, models are PyO3.
+**Decision**: **Rust-owned** — config types are defined in Rust with `#[pyclass]`,
+type stubs are auto-generated, Python uses Rust types directly.
 
 | Type | Implementation | Rationale |
 | ---- | -------------- | --------- |
-| `GBDTConfig`, `TreeConfig`, etc. | Pure Python `@dataclass` | IDE support, easy validation, Pythonic |
-| `PinballLoss`, `SoftmaxLoss`, etc. | Pure Python `@dataclass` | Parameter validation, IDE autocomplete |
-| `EvalSet`, `Dataset` | Pure Python `@dataclass` | Holds Python objects (numpy arrays) |
-| `GBDTModel`, `GBLinearModel` | PyO3 `#[pyclass]` | Wraps Rust model, owns trained state |
+| `GBDTConfig`, `TreeConfig`, etc. | Rust `#[pyclass]` | Single source of truth |
+| `PinballLoss`, `SoftmaxLoss`, etc. | Rust `#[pyclass]` | Compiler-enforced completeness |
+| `EvalSet` | Rust `#[pyclass]` | Type-safe validation set wrapper |
+| `Dataset` | Rust `#[pyclass]` | Holds data references, lazy conversion |
+| `GBDTModel`, `GBLinearModel` | Rust `#[pyclass]` | Training/prediction |
 
-**Why pure Python for configs?**
+**Why Rust-owned configs?**
 
-1. **IDE autocomplete**: Native Python dataclasses have perfect IDE support
-2. **Validation**: `__post_init__` runs before any Rust code
-3. **No FFI overhead**: Config objects are only converted at `fit()` boundary
-4. **Easy extension**: Adding parameters doesn't require Rust recompile
-5. **Type stubs not needed**: Pure Python types are already typed
+1. **Single source of truth**: Rust struct IS the definition
+2. **Compiler-enforced**: Adding a Rust field requires updating PyO3 bindings
+3. **No parser drift**: Direct field access, not dict parsing
+4. **CI catches sync**: Stub generation + pyright catches Python code drift
+5. **IDE support via stubs**: Generated `.pyi` files provide autocomplete
 
-**Conversion at boundary**:
+**Risk with Python-owned configs** (rejected approach):
 
-```python
-# Python side (boosters/config.py)
-@dataclass
-class GBDTConfig:
-    n_estimators: int = 100
-    learning_rate: float = 0.1
-    objective: Objective = field(default_factory=SquaredLoss)
-    tree: TreeConfig = field(default_factory=TreeConfig)
-    # ...
-
-# Python side (boosters/model.py)
-class GBDTModel:
-    def __init__(self, config: GBDTConfig | None = None):
-        self._config = config or GBDTConfig()
-        self._inner = None  # PyO3 model, set after fit
-    
-    def fit(self, train: Dataset, ...) -> Self:
-        # Convert Python config to Rust-compatible dict/struct
-        rust_config = _convert_config(self._config)
-        # Call into PyO3
-        self._inner = _boosters_rs.train_gbdt(rust_config, train._to_rust())
-        return self
+```text
+Rust adds field → Python dataclass not updated → Parser silently ignores → Bug
 ```
 
+**Safe failure mode with Rust-owned configs**:
+
+```text
+Rust adds field → Stub regenerated → Python code using old API fails pyright → Caught in CI
+```
+
+### Rust Config Implementation
+
 ```rust
-// Rust side (lib.rs)
-#[pyfunction]
-fn train_gbdt(
-    py: Python<'_>,
-    config: PyObject,  // Python dict or parsed config
-    train: &PyDataset,
-) -> PyResult<PyGBDTModelInner> {
-    let config: GBDTConfig = extract_config(py, config)?;
-    // ... training
+use pyo3::prelude::*;
+
+/// Tree structure configuration.
+#[pyclass(get_all, set_all)]
+#[derive(Clone, Default)]
+pub struct TreeConfig {
+    /// Maximum tree depth. -1 for unlimited.
+    pub max_depth: i32,
+    /// Maximum number of leaves.
+    pub n_leaves: u32,
+    /// Minimum samples per leaf.
+    pub min_samples_leaf: u32,
+    /// Minimum gain to make a split.
+    pub min_gain_to_split: f64,
+}
+
+#[pymethods]
+impl TreeConfig {
+    #[new]
+    #[pyo3(signature = (max_depth=-1, n_leaves=31, min_samples_leaf=20, min_gain_to_split=0.0))]
+    fn new(max_depth: i32, n_leaves: u32, min_samples_leaf: u32, min_gain_to_split: f64) -> Self {
+        Self { max_depth, n_leaves, min_samples_leaf, min_gain_to_split }
+    }
+}
+
+/// Regularization parameters.
+#[pyclass(get_all, set_all)]
+#[derive(Clone, Default)]
+pub struct RegularizationConfig {
+    pub l1: f64,
+    pub l2: f64,
+}
+
+#[pymethods]
+impl RegularizationConfig {
+    #[new]
+    #[pyo3(signature = (l1=0.0, l2=0.0))]
+    fn new(l1: f64, l2: f64) -> Self {
+        Self { l1, l2 }
+    }
+}
+
+/// GBDT training configuration.
+#[pyclass(get_all, set_all)]
+#[derive(Clone)]
+pub struct GBDTConfig {
+    pub n_estimators: u32,
+    pub learning_rate: f64,
+    pub objective: PyObject,  // Union type handled via PyObject
+    pub metrics: Option<Vec<PyObject>>,
+    pub tree: Py<TreeConfig>,
+    pub regularization: Py<RegularizationConfig>,
+    // ...
+}
+
+#[pymethods]
+impl GBDTConfig {
+    #[new]
+    #[pyo3(signature = (
+        n_estimators=100,
+        learning_rate=0.1,
+        objective=None,
+        metrics=None,
+        tree=None,
+        regularization=None,
+        // ...
+    ))]
+    fn new(
+        py: Python<'_>,
+        n_estimators: u32,
+        learning_rate: f64,
+        objective: Option<PyObject>,
+        metrics: Option<Vec<PyObject>>,
+        tree: Option<Py<TreeConfig>>,
+        regularization: Option<Py<RegularizationConfig>>,
+    ) -> PyResult<Self> {
+        Ok(Self {
+            n_estimators,
+            learning_rate,
+            objective: objective.unwrap_or_else(|| {
+                Py::new(py, SquaredLoss {}).unwrap().into_py(py)
+            }),
+            metrics,
+            tree: tree.unwrap_or_else(|| Py::new(py, TreeConfig::default()).unwrap()),
+            regularization: regularization.unwrap_or_else(|| {
+                Py::new(py, RegularizationConfig::default()).unwrap()
+            }),
+        })
+    }
 }
 ```
 
-### Type Stubs (.pyi Files)
+### Objective Types (Enum Variants as Separate Classes)
 
-For the PyO3 types (`GBDTModel._inner`, internal functions), we generate `.pyi` stub files.
+Each objective is a separate `#[pyclass]`:
 
-**Generation options**:
+```rust
+/// Mean squared error loss.
+#[pyclass]
+#[derive(Clone)]
+pub struct SquaredLoss;
 
-1. **pyo3-stub-gen**: Automatically generates stubs from `#[pyclass]` definitions
-2. **Manual stubs**: Write `_boosters_rs.pyi` by hand for internal API
-3. **Maturin**: Has experimental stub generation support
+#[pymethods]
+impl SquaredLoss {
+    #[new]
+    fn new() -> Self { Self }
+}
 
-**Recommended approach**:
+/// Pinball loss for quantile regression.
+#[pyclass(get_all, set_all)]
+#[derive(Clone)]
+pub struct PinballLoss {
+    /// Quantile(s) to predict. Single value or list.
+    pub alpha: PyObject,  // f64 | Vec<f64>
+}
+
+#[pymethods]
+impl PinballLoss {
+    #[new]
+    #[pyo3(signature = (alpha=0.5))]
+    fn new(py: Python<'_>, alpha: PyObject) -> PyResult<Self> {
+        // Validate alpha in (0, 1)
+        validate_alpha(py, &alpha)?;
+        Ok(Self { alpha: alpha.into_py(py) })
+    }
+}
+
+/// Multi-class cross-entropy loss.
+#[pyclass(get_all)]
+#[derive(Clone)]
+pub struct SoftmaxLoss {
+    pub n_classes: u32,
+}
+
+#[pymethods]
+impl SoftmaxLoss {
+    #[new]
+    fn new(n_classes: u32) -> PyResult<Self> {
+        if n_classes < 2 {
+            return Err(PyValueError::new_err("n_classes must be >= 2"));
+        }
+        Ok(Self { n_classes })
+    }
+}
+```
+
+Python sees these as separate classes, and we define the union in the stub:
+
+```python
+# _boosters_rs.pyi (generated)
+class SquaredLoss:
+    def __init__(self) -> None: ...
+
+class PinballLoss:
+    alpha: float | list[float]
+    def __init__(self, alpha: float | list[float] = 0.5) -> None: ...
+
+class SoftmaxLoss:
+    n_classes: int
+    def __init__(self, n_classes: int) -> None: ...
+
+# Union defined in Python wrapper or stub
+Objective = SquaredLoss | AbsoluteLoss | HuberLoss | PinballLoss | ...
+```
+
+### Objective Union Handling in Rust
+
+To maintain type safety, use a Rust enum with `FromPyObject`:
+
+```rust
+use pyo3::prelude::*;
+
+/// Rust-side objective enum for type-safe extraction.
+#[derive(Clone, FromPyObject)]
+pub enum PyObjective {
+    Squared(SquaredLoss),
+    Absolute(AbsoluteLoss),
+    Huber(HuberLoss),
+    Pinball(PinballLoss),
+    Arctan(ArctanLoss),
+    Poisson(PoissonLoss),
+    Logistic(LogisticLoss),
+    Hinge(HingeLoss),
+    Softmax(SoftmaxLoss),
+    LambdaRank(LambdaRankLoss),
+}
+
+// Used in GBDTConfig
+#[pyclass(get_all, set_all)]
+pub struct GBDTConfig {
+    pub n_estimators: u32,
+    pub learning_rate: f64,
+    pub objective: PyObject,  // Stored as PyObject for Python access
+    pub tree: Py<TreeConfig>,
+    // ...
+}
+
+#[pymethods]
+impl GBDTConfig {
+    /// Extract objective as Rust enum (for internal use).
+    fn objective_kind(&self, py: Python<'_>) -> PyResult<PyObjective> {
+        self.objective.extract(py)
+    }
+}
+```
+
+**Error messages** for invalid objectives:
+
+```python
+# Wrong type
+config = GBDTConfig(objective="squared")
+# TypeError: 'str' object cannot be converted to 'SquaredLoss | AbsoluteLoss | ...'
+
+# Valid objective, invalid params
+config = GBDTConfig(objective=PinballLoss(alpha=1.5))
+# ValueError: alpha must be in (0, 1), got 1.5
+
+# Custom class (not supported)
+class MyLoss: pass
+config = GBDTConfig(objective=MyLoss())
+# TypeError: expected one of [SquaredLoss, AbsoluteLoss, ...], got 'MyLoss'
+```
+
+### Type Stub Generation
+
+**Tool**: `pyo3-stub-gen` or Maturin's built-in stub generation.
 
 ```toml
 # pyproject.toml
@@ -1133,45 +1346,159 @@ For the PyO3 types (`GBDTModel._inner`, internal functions), we generate `.pyi` 
 python-source = "python"
 module-name = "boosters._boosters_rs"
 
-# Generate stubs for internal Rust module
-[tool.pyo3-stub-gen]
-output = "python/boosters/_boosters_rs.pyi"
+[tool.maturin.generate-stubs]
+enabled = true
 ```
 
-Since config types are pure Python, they don't need generated stubs — they're
-already fully typed. Only the internal `_boosters_rs` module needs stubs.
-
-**Stub example for internal module**:
+**Generated stub example** (`_boosters_rs.pyi`):
 
 ```python
-# python/boosters/_boosters_rs.pyi (generated or manual)
 from numpy.typing import NDArray
 import numpy as np
 
-class PyGBDTModelInner:
-    """Internal trained model state. Not public API."""
+class TreeConfig:
+    max_depth: int
+    n_leaves: int
+    min_samples_leaf: int
+    min_gain_to_split: float
+    
+    def __init__(
+        self,
+        max_depth: int = -1,
+        n_leaves: int = 31,
+        min_samples_leaf: int = 20,
+        min_gain_to_split: float = 0.0,
+    ) -> None: ...
+
+class GBDTConfig:
+    n_estimators: int
+    learning_rate: float
+    objective: Objective
+    tree: TreeConfig
+    regularization: RegularizationConfig
+    
+    def __init__(
+        self,
+        n_estimators: int = 100,
+        learning_rate: float = 0.1,
+        objective: Objective | None = None,
+        tree: TreeConfig | None = None,
+        regularization: RegularizationConfig | None = None,
+        # ...
+    ) -> None: ...
+
+class GBDTModel:
+    def __init__(self, config: GBDTConfig | None = None) -> None: ...
+    def fit(
+        self,
+        train: Dataset,
+        valid: EvalSet | list[EvalSet] | None = None,
+        callbacks: list[Callback] | None = None,
+    ) -> GBDTModel: ...
+    def predict(
+        self,
+        features: NDArray[np.floating],
+        n_iterations: int | None = None,
+        raw_score: bool = False,
+    ) -> NDArray[np.floating]: ...
+    
     @property
     def n_trees(self) -> int: ...
     @property
     def n_features(self) -> int: ...
-    def predict(
-        self,
-        features: NDArray[np.float32],
-        n_iterations: int | None = None,
-    ) -> NDArray[np.float32]: ...
-
-def train_gbdt(
-    config: dict,
-    features: NDArray[np.float32],
-    labels: NDArray[np.float32],
-    # ...
-) -> PyGBDTModelInner: ...
 ```
 
-### Architecture Overview
+### CI Stub Verification
 
-**Separate model types** (matching Rust): `PyGBDTModel` and `PyGBLinearModel` as
-distinct `#[pyclass]` types, not a unified `Booster` enum.
+```yaml
+# .github/workflows/ci.yml
+- name: Generate stubs
+  run: maturin develop --generate-stubs
+
+- name: Type check
+  run: pyright boosters/
+
+- name: Verify stubs match
+  run: |
+    # Ensure generated stubs are committed
+    git diff --exit-code python/boosters/_boosters_rs.pyi
+```
+
+If a developer adds a Rust field but forgets to regenerate stubs:
+
+1. CI regenerates stubs
+2. `git diff --exit-code` fails
+3. PR blocked until stubs committed
+
+### Python Re-exports (Thin Wrapper)
+
+The `boosters` package re-exports Rust types with Pythonic naming:
+
+```python
+# boosters/__init__.py
+from boosters._boosters_rs import (
+    # Config
+    GBDTConfig, GBLinearConfig, TreeConfig,
+    RegularizationConfig, SamplingConfig,
+    # Objectives
+    SquaredLoss, AbsoluteLoss, HuberLoss, PinballLoss, ArctanLoss,
+    PoissonLoss, LogisticLoss, HingeLoss, SoftmaxLoss, LambdaRankLoss,
+    # Metrics  
+    Rmse, Mae, Mape, LogLoss, Auc, Accuracy, Ndcg,
+    # Data
+    Dataset, EvalSet,
+    # Models
+    GBDTModel, GBLinearModel,
+    # Callbacks
+    EarlyStopping, LogEvaluation,
+)
+
+# Type aliases for documentation
+from typing import TypeAlias
+Objective: TypeAlias = (
+    SquaredLoss | AbsoluteLoss | HuberLoss | PinballLoss | ArctanLoss |
+    PoissonLoss | LogisticLoss | HingeLoss | SoftmaxLoss | LambdaRankLoss
+)
+Metric: TypeAlias = Rmse | Mae | Mape | LogLoss | Auc | Accuracy | Ndcg
+```
+
+### Validation in Rust
+
+With Rust-owned types, validation happens in Rust constructors:
+
+```rust
+#[pymethods]
+impl PinballLoss {
+    #[new]
+    #[pyo3(signature = (alpha=0.5))]
+    fn new(py: Python<'_>, alpha: PyObject) -> PyResult<Self> {
+        // Handle both f64 and Vec<f64>
+        if let Ok(single) = alpha.extract::<f64>(py) {
+            if single <= 0.0 || single >= 1.0 {
+                return Err(PyValueError::new_err(
+                    format!("alpha must be in (0, 1), got {}", single)
+                ));
+            }
+        } else if let Ok(multi) = alpha.extract::<Vec<f64>>(py) {
+            if multi.is_empty() {
+                return Err(PyValueError::new_err("alpha must be non-empty"));
+            }
+            for a in &multi {
+                if *a <= 0.0 || *a >= 1.0 {
+                    return Err(PyValueError::new_err(
+                        format!("alpha values must be in (0, 1), got {}", a)
+                    ));
+                }
+            }
+        } else {
+            return Err(PyTypeError::new_err(
+                "alpha must be float or list of floats"
+            ));
+        }
+        Ok(Self { alpha: alpha.into_py(py) })
+    }
+}
+```
 
 ```rust
 use pyo3::prelude::*;
@@ -1430,19 +1757,24 @@ def _validate_feature_count(
 
 **Rationale**: Matches Rust API, clearer type safety, avoid enum dispatch overhead.
 
-### DD-3: Pure Python Config, PyO3 Models (Hybrid Architecture)
+### DD-3: Rust-Owned Config Types with Generated Stubs
 
-**Decision**: Configuration types (`GBDTConfig`, `PinballLoss`, `EvalSet`) are pure Python
-dataclasses. Model types (`GBDTModel`, `GBLinearModel`) are thin Python wrappers around
-PyO3 `#[pyclass]` internal types.
+**Decision**: Configuration types (`GBDTConfig`, `PinballLoss`, `EvalSet`) are defined in
+Rust using `#[pyclass]`. Type stubs are auto-generated via `pyo3-stub-gen` or Maturin.
+Python uses the Rust types directly (thin re-export wrapper only).
 
 **Rationale**:
 
-- **IDE support**: Pure Python dataclasses have perfect autocomplete without stubs
-- **Validation**: `__post_init__` runs in Python before any Rust FFI
-- **No compile overhead**: Adding config params doesn't require Rust recompile
-- **Type stubs only needed for internal module**: `_boosters_rs.pyi` is small
-- **Conversion at boundary**: Config → Rust dict/struct only at `fit()` call
+- **Single source of truth**: Rust struct IS the definition, no sync risk
+- **Compiler-enforced**: Adding a Rust field requires updating PyO3 `#[new]`
+- **No parser drift**: Direct field access, not dict parsing that can miss fields
+- **CI catches sync**: `git diff --exit-code` on stubs blocks stale PRs
+- **IDE support via stubs**: Generated `.pyi` files provide autocomplete
+
+**Rejected alternative**: Pure Python dataclasses with parser conversion.
+
+- Risk: Parser silently ignores missing fields → runtime bugs
+- Problem: No compile-time guarantee between Python dataclass and Rust struct
 
 ### DD-4: Pythonic Naming
 
@@ -1590,6 +1922,73 @@ def verify_api_sync():
 4. **Reserved names**: `"train"` is reserved for training metrics (if `eval_train=True`).
 
 **Rationale**: Explicit defaults reduce user confusion while allowing full customization.
+
+### DD-13: Nested Configs (Core API) vs Flat Kwargs (sklearn)
+
+**Decision**: Core API uses **nested configs only**. Sklearn wrapper provides **flat kwargs**.
+
+**Core API pattern** (explicit):
+
+```python
+# User must construct sub-configs explicitly
+config = GBDTConfig(
+    tree=TreeConfig(max_depth=5),
+    regularization=RegularizationConfig(l2=0.1),
+)
+model = GBDTModel(config)
+```
+
+**sklearn pattern** (flat):
+
+```python
+# Flat kwargs routed to appropriate sub-config
+model = GBDTRegressor(max_depth=5, reg_lambda=0.1)
+```
+
+**Rationale**:
+
+- **Core API clarity**: Explicit nesting shows which config owns each parameter
+- **IDE navigation**: Jump to `TreeConfig` definition to see all tree params
+- **No ambiguity**: `l1` could be tree regularization or linear leaf regularization
+- **sklearn compatibility**: Users expect flat kwargs from existing XGBoost/LightGBM usage
+- **Separation of concerns**: Core API prioritizes correctness, sklearn prioritizes convenience
+
+**Not supported in core API** (no flat kwargs routing):
+
+```python
+# This does NOT work in core API
+config = GBDTConfig(max_depth=5)  # Error: unexpected kwarg 'max_depth'
+```
+
+### DD-14: Objective Union Type Safety
+
+**Decision**: Objectives use a Rust enum (`PyObjective`) with `FromPyObject` for type-safe extraction.
+Config stores `PyObject` for Python accessibility, but extracts to enum for Rust usage.
+
+**Implementation**:
+
+```rust
+#[derive(Clone, FromPyObject)]
+pub enum PyObjective {
+    Squared(SquaredLoss),
+    Pinball(PinballLoss),
+    // ... all variants
+}
+```
+
+**Error message strategy**:
+
+| Error Type | Message Pattern |
+| ---------- | --------------- |
+| Wrong Python type | `TypeError: 'str' cannot be converted to 'SquaredLoss \| AbsoluteLoss \| ...'` |
+| Invalid params | `ValueError: PinballLoss.alpha must be in (0, 1), got 1.5` |
+| Unknown class | `TypeError: expected one of [SquaredLoss, ...], got 'MyCustomLoss'` |
+
+**Rationale**:
+
+- **Type safety**: Rust compiler ensures all objective variants are handled
+- **Clear errors**: Users get actionable error messages
+- **Extensibility**: Adding new objectives requires adding enum variant (compiler-enforced)
 
 ---
 
@@ -1772,25 +2171,64 @@ pred = model.predict(test_df)  # 'd' uses missing-value path
 
 ## Parameter Validation and Edge Cases
 
-### Parameter Validation
+### Validation Timing
 
-With dataclass configuration, validation happens at construction time:
+With Rust-owned config types, validation is split across two stages:
+
+| Validation Stage | What's Checked | Examples |
+| ---------------- | -------------- | -------- |
+| **Constructor** | Type correctness, range validity | `alpha ∈ (0,1)`, `n_classes ≥ 2`, `n_estimators > 0` |
+| **Fit** | Cross-field consistency, data compatibility | `max_depth` vs `n_leaves` feasibility, feature count matches |
+
+**Constructor-time validation** (Rust `#[new]` methods):
 
 ```python
-from boosters import GBDTConfig, TreeConfig
+from boosters import GBDTConfig, TreeConfig, PinballLoss
 
-# Type errors caught by dataclass
+# Type errors caught immediately
 config = GBDTConfig(learning_rate='fast')
-# TypeError: learning_rate must be float, got str
+# TypeError: 'str' cannot be converted to 'float'
 
-# Value validation in __post_init__
-config = GBDTConfig(n_estimators=-1)
-# ValueError: n_estimators must be positive, got -1
+# Value validation in Rust constructor
+config = GBDTConfig(n_estimators=0)
+# ValueError: n_estimators must be positive, got 0
 
 # Nested config validation
 config = GBDTConfig(tree=TreeConfig(n_leaves=0))
 # ValueError: n_leaves must be positive, got 0
+
+# Parameterized objective validation
+obj = PinballLoss(alpha=1.5)
+# ValueError: alpha must be in (0, 1), got 1.5
 ```
+
+**Fit-time validation** (cross-field and data checks):
+
+```python
+# Cross-field consistency
+config = GBDTConfig(tree=TreeConfig(max_depth=2, n_leaves=100))
+model = GBDTModel(config)
+model.fit(train)  
+# ValueError: max_depth=2 cannot produce n_leaves=100 (max 4 leaves at depth 2)
+
+# Data compatibility
+model.fit(train)  # train has 100 features
+model.predict(X)  # X has 50 features
+# ValueError: expected 100 features, got 50
+```
+
+### Complete Sub-Config Reference
+
+All configuration types exposed via PyO3:
+
+| Config | Fields | Purpose |
+| ------ | ------ | ------- |
+| `TreeConfig` | `max_depth`, `n_leaves`, `min_samples_leaf`, `min_gain_to_split` | Tree structure |
+| `RegularizationConfig` | `l1`, `l2` | L1/L2 penalties |
+| `SamplingConfig` | `subsample`, `colsample`, `goss_alpha`, `goss_beta` | Row/column sampling |
+| `EFBConfig` | `enable`, `max_conflict_rate` | Exclusive Feature Bundling |
+| `CategoricalConfig` | `max_categories`, `min_category_count` | Category handling |
+| `LinearLeavesConfig` | `enable`, `l2_regularization` | Linear models in leaves |
 
 ### Edge Cases
 
@@ -1933,6 +2371,75 @@ print(f"Histograms/leaf: {hist_mb:.3f} MB")
 - [ ] Tweedie/Gamma deviance objectives
 - [ ] Learning rate schedules
 - [ ] Custom objectives in Python
+
+---
+
+## Known Limitations (v1)
+
+These features are explicitly out of scope for the initial release:
+
+| Feature | Status | Notes |
+| ------- | ------ | ----- |
+| Custom objectives (Python-defined) | Not supported | Requires Python→Rust callbacks; use built-in objectives |
+| Custom metrics (Python-defined) | Not supported | Use built-in metrics; add new ones via GitHub issue |
+| Distributed training | Not supported | Single-machine only |
+| GPU training | Not supported | CPU only |
+| Model warm-start (continue training) | Not supported | Train from scratch |
+| Learning rate schedules | Not supported | Use constant learning rate |
+
+**Workarounds:**
+
+- **Custom objective needed?** Open a GitHub issue describing your use case. Common objectives
+  will be added to the built-in set.
+- **Distributed training?** Pre-aggregate data; use Dask/Spark for data prep only.
+- **GPU acceleration?** This library focuses on CPU; consider CatBoost/XGBoost for GPU.
+
+---
+
+## Migration Guide
+
+### From XGBoost
+
+| XGBoost Parameter | boosters Equivalent |
+| ----------------- | ------------------- |
+| `n_estimators` | `n_estimators` |
+| `max_depth` | `tree.max_depth` (or flat `max_depth` in sklearn) |
+| `learning_rate` / `eta` | `learning_rate` |
+| `reg_lambda` | `regularization.l2` (or flat `reg_lambda` in sklearn) |
+| `reg_alpha` | `regularization.l1` (or flat `reg_alpha` in sklearn) |
+| `subsample` | `sampling.subsample` |
+| `colsample_bytree` | `sampling.colsample` |
+| `min_child_weight` | `tree.min_samples_leaf` (approximate) |
+| `gamma` | `tree.min_gain_to_split` |
+| `objective="reg:squarederror"` | `objective=SquaredLoss()` |
+| `objective="binary:logistic"` | `objective=LogisticLoss()` |
+| `objective="multi:softmax"` | `objective=SoftmaxLoss(n_classes=k)` |
+
+### From LightGBM
+
+| LightGBM Parameter | boosters Equivalent |
+| ------------------ | ------------------- |
+| `n_estimators` / `num_iterations` | `n_estimators` |
+| `num_leaves` | `tree.n_leaves` |
+| `max_depth` | `tree.max_depth` |
+| `learning_rate` | `learning_rate` |
+| `lambda_l1` | `regularization.l1` |
+| `lambda_l2` | `regularization.l2` |
+| `bagging_fraction` | `sampling.subsample` |
+| `feature_fraction` | `sampling.colsample` |
+| `min_data_in_leaf` | `tree.min_samples_leaf` |
+| `min_gain_to_split` | `tree.min_gain_to_split` |
+| `objective="regression"` | `objective=SquaredLoss()` |
+| `objective="binary"` | `objective=LogisticLoss()` |
+| `objective="multiclass"` | `objective=SoftmaxLoss(n_classes=k)` |
+
+### sklearn Wrapper vs Core API
+
+| sklearn Wrapper | Core API Equivalent |
+| --------------- | ------------------- |
+| `GBDTRegressor(max_depth=5)` | `GBDTModel(GBDTConfig(tree=TreeConfig(max_depth=5)))` |
+| `clf.fit(X, y, eval_set=[(X_val, y_val)])` | `model.fit(train, valid=[EvalSet("valid", valid)])` |
+| `clf.fit(..., early_stopping_rounds=10)` | `model.fit(..., callbacks=[EarlyStopping(patience=10)])` |
 
 ---
 
@@ -2100,8 +2607,6 @@ def test_sklearn_compliance():
 - 2025-12-25: Rounds 11-14 - Implementation details review:
   - Renamed QuantileLoss → PinballLoss (consistency with ArctanLoss)
   - Added ArctanLoss for robust quantile regression
-  - DD-3 updated: Hybrid architecture (pure Python configs, PyO3 models)
-  - Type stub strategy: Only `_boosters_rs.pyi` needed
   - Clarified Quick Start as core API (not sklearn)
   - Reorganized package structure with logical submodules
   - Added `__all__` exports documentation
@@ -2109,3 +2614,16 @@ def test_sklearn_compliance():
   - sklearn: Added parameter mapping table
   - sklearn: Documented objective inference for classifiers
   - sklearn: Added eval_set conversion documentation
+- 2025-12-25: Rounds 15-18 - Config ownership and final review:
+  - DD-3 rewritten: Rust-owned configs with generated stubs (was: hybrid Python dataclass)
+  - All config types (`GBDTConfig`, `TreeConfig`, `PinballLoss`, etc.) now `#[pyclass]`
+  - Added pyo3-stub-gen workflow and CI verification
+  - Documented Rust constructor validation patterns
+  - Updated PyO3 implementation section with full examples
+  - DD-13: Nested configs (core API) vs flat kwargs (sklearn)
+  - DD-14: Objective union type safety with `PyObjective` enum
+  - Validation timing: Constructor (type/range) vs Fit (cross-field)
+  - Complete sub-config reference table
+  - Quick Start updated with full Rust-owned type examples
+  - Migration guide: XGBoost and LightGBM parameter mapping
+  - Known Limitations section for v1 scope
