@@ -42,13 +42,11 @@ Python is the primary language for ML practitioners. A Python interface will:
 
 | Python | Support Status |
 | ------ | -------------- |
-| 3.9 | Supported (minimum) |
-| 3.10 | Supported |
-| 3.11 | Supported (primary) |
-| 3.12 | Supported |
+| 3.12 | Supported (minimum) |
 | 3.13+ | Added when stable |
 
-**Policy**: Support Python versions with security updates. Drop versions ~6 months
+**Policy**: Target Python 3.12+ to leverage modern type hints (`type` statements,
+`|` unions, `Self`, generics without `typing` imports). Drop versions ~6 months
 after upstream end-of-life.
 
 ### Wheel Distribution
@@ -57,8 +55,10 @@ Pre-built wheels for:
 
 | Platform | Architecture | Notes |
 | -------- | ------------ | ----- |
-| Linux (manylinux2014) | x86_64 | Primary |
+| Linux (manylinux2014) | x86_64 | Primary (glibc) |
 | Linux (manylinux2014) | aarch64 | ARM64 servers |
+| Linux (musllinux_1_2) | x86_64 | Alpine Linux |
+| Linux (musllinux_1_2) | aarch64 | Alpine ARM64 |
 | macOS | x86_64 | Intel Macs |
 | macOS | arm64 | Apple Silicon |
 | Windows | x86_64 | |
@@ -128,187 +128,327 @@ packages/boosters-python/
 
 ## Core API Design
 
+### Design Principles
+
+1. **Strict typing**: All public APIs use Python 3.12+ type hints
+2. **Dataclass configs**: Configuration via typed dataclasses, not dicts
+3. **Pythonic naming**: `n_samples`, `n_features`, `labels` (not `num_data`, `get_label`)
+4. **Model separation**: `GBDTModel` and `GBLinearModel` as distinct classes (like Rust)
+5. **Google-style docstrings**: Brief, typed, no redundant parameter descriptions
+6. **sklearn-like fit/predict**: Config in `__init__`, data in `fit`/`predict`
+
 ### Dataset
 
-Wrapper around Rust `Dataset` that accepts various input formats.
-
 ```python
+from dataclasses import dataclass
+from numpy.typing import ArrayLike, NDArray
+import numpy as np
+
+@dataclass
 class Dataset:
-    """Dataset for boosters training.
+    """Training dataset with features, labels, and optional metadata."""
     
-    Parameters
-    ----------
-    data : array-like, pandas DataFrame, or PyArrow Table
-        Feature matrix. Shape (n_samples, n_features).
-    label : array-like, optional
-        Target values. Shape (n_samples,) or (n_samples, n_outputs).
-    weight : array-like, optional
-        Sample weights.
-    categorical_feature : list of str or int, optional
-        Indices or names of categorical features.
-    feature_name : list of str, optional
-        Feature names.
-    """
-    
-    def __init__(
-        self,
-        data,
-        label=None,
-        weight=None,
-        categorical_feature=None,
-        feature_name='auto',
-    ): ...
+    features: NDArray[np.floating] | pd.DataFrame
+    labels: NDArray[np.floating] | None = None
+    weights: NDArray[np.floating] | None = None
+    groups: NDArray[np.integer] | None = None  # For ranking
+    feature_names: list[str] | None = None
+    categorical_features: list[int | str] | None = None
     
     @property
-    def num_data(self) -> int:
+    def n_samples(self) -> int:
         """Number of samples."""
     
     @property
-    def num_feature(self) -> int:
+    def n_features(self) -> int:
         """Number of features."""
     
-    def get_label(self) -> np.ndarray: ...
-    def get_weight(self) -> np.ndarray | None: ...
-    def get_feature_name(self) -> list[str]: ...
+    def __len__(self) -> int:
+        return self.n_samples
 ```
 
-### Booster
-
-Core model class wrapping `GBDTModel` or `GBLinearModel`.
+### Configuration Dataclasses
 
 ```python
-class Booster:
-    """Boosters model.
+from dataclasses import dataclass, field
+from enum import Enum
+
+class Objective(Enum):
+    """Loss function for training."""
+    SQUARED = "squared"
+    ABSOLUTE = "absolute"
+    HUBER = "huber"
+    QUANTILE = "quantile"
+    POISSON = "poisson"
+    LOGISTIC = "logistic"
+    HINGE = "hinge"
+    SOFTMAX = "softmax"
+    LAMBDARANK = "lambdarank"
+
+class Metric(Enum):
+    """Evaluation metric."""
+    RMSE = "rmse"
+    MAE = "mae"
+    MAPE = "mape"
+    LOGLOSS = "logloss"
+    AUC = "auc"
+    ACCURACY = "accuracy"
+    NDCG = "ndcg"
+
+@dataclass
+class TreeConfig:
+    """Tree structure configuration."""
+    max_depth: int = -1  # -1 = unlimited
+    n_leaves: int = 31
+    min_samples_leaf: int = 20
+    min_gain_to_split: float = 0.0
+
+@dataclass  
+class RegularizationConfig:
+    """Regularization parameters."""
+    l1: float = 0.0
+    l2: float = 0.0
     
-    Can be created via train() or loaded from file.
-    """
+@dataclass
+class SamplingConfig:
+    """Row and column sampling."""
+    subsample: float = 1.0
+    colsample: float = 1.0
     
-    @classmethod
-    def from_file(cls, filename: str) -> 'Booster':
-        """Load model from file."""
+@dataclass
+class GBDTConfig:
+    """Configuration for GBDT training."""
     
-    def save_model(self, filename: str) -> None:
-        """Save model to file."""
+    # Core
+    n_estimators: int = 100
+    learning_rate: float = 0.1
+    objective: Objective = Objective.SQUARED
+    metric: Metric | list[Metric] | None = None
+    
+    # Tree structure
+    tree: TreeConfig = field(default_factory=TreeConfig)
+    
+    # Regularization
+    regularization: RegularizationConfig = field(default_factory=RegularizationConfig)
+    
+    # Sampling
+    sampling: SamplingConfig = field(default_factory=SamplingConfig)
+    
+    # Features
+    linear_trees: bool = False
+    enable_bundling: bool = True  # EFB
+    
+    # Runtime
+    n_threads: int = 0  # 0 = auto
+    seed: int | None = None
+    verbose: int = 1
+
+@dataclass
+class GBLinearConfig:
+    """Configuration for GBLinear training."""
+    
+    n_estimators: int = 100
+    learning_rate: float = 0.1
+    objective: Objective = Objective.SQUARED
+    metric: Metric | list[Metric] | None = None
+    
+    # Regularization (critical for linear)
+    regularization: RegularizationConfig = field(default_factory=RegularizationConfig)
+    
+    # Runtime
+    n_threads: int = 0
+    seed: int | None = None
+    verbose: int = 1
+```
+
+### GBDT Model
+
+```python
+class GBDTModel:
+    """Gradient Boosted Decision Trees model."""
+    
+    def __init__(self, config: GBDTConfig | None = None) -> None:
+        """Initialize with configuration.
+        
+        Args:
+            config: Training configuration. Uses defaults if None.
+        """
+    
+    def fit(
+        self,
+        train: Dataset,
+        *,
+        valid: Dataset | list[Dataset] | None = None,
+        callbacks: list[Callback] | None = None,
+    ) -> Self:
+        """Train the model.
+        
+        Args:
+            train: Training dataset.
+            valid: Validation dataset(s) for early stopping.
+            callbacks: Training callbacks (early stopping, logging).
+        
+        Returns:
+            Self for method chaining.
+        """
     
     def predict(
         self,
-        data,
-        num_iteration: int | None = None,
+        features: NDArray[np.floating] | pd.DataFrame,
+        *,
+        n_iterations: int | None = None,
         raw_score: bool = False,
         pred_leaf: bool = False,
         pred_contrib: bool = False,
-        n_jobs: int = -1,
-    ) -> np.ndarray:
+    ) -> NDArray[np.floating]:
         """Make predictions.
         
-        Parameters
-        ----------
-        data : array-like, pandas DataFrame, or PyArrow Table
-            Features to predict on.
-        num_iteration : int, optional
-            Limit iterations used. None = use best_iteration or all.
-        raw_score : bool
-            Return raw margin scores (no transformation).
-        pred_leaf : bool
-            Return leaf indices instead of predictions.
-        pred_contrib : bool
-            Return SHAP values for each prediction.
-        n_jobs : int
-            Number of threads. -1 = auto.
-        """
-    
-    def feature_importance(
-        self,
-        importance_type: str = 'gain',
-    ) -> np.ndarray:
-        """Get feature importances.
+        Args:
+            features: Feature matrix (n_samples, n_features).
+            n_iterations: Limit trees used. None = best_iteration or all.
+            raw_score: Return raw margins (no sigmoid/softmax).
+            pred_leaf: Return leaf indices instead of predictions.
+            pred_contrib: Return SHAP values.
         
-        Parameters
-        ----------
-        importance_type : str
-            'gain', 'split', 'cover', 'average_gain', 'average_cover'
+        Returns:
+            Predictions array.
         """
     
+    # Model inspection
     @property
-    def feature_name(self) -> list[str]: ...
+    def n_features(self) -> int: ...
     
     @property
-    def num_trees(self) -> int: ...
+    def n_trees(self) -> int: ...
+    
+    @property
+    def feature_names(self) -> list[str] | None: ...
     
     @property
     def best_iteration(self) -> int | None: ...
+    
+    @property
+    def best_score(self) -> float | None: ...
+    
+    @property
+    def eval_results(self) -> dict[str, list[float]] | None: ...
+    
+    def feature_importance(
+        self,
+        importance_type: Literal["gain", "split", "cover"] = "gain",
+    ) -> NDArray[np.floating]: ...
+    
+    def trees_to_dataframe(self) -> pd.DataFrame: ...
+
+class GBLinearModel:
+    """Gradient Boosted Linear model."""
+    
+    def __init__(self, config: GBLinearConfig | None = None) -> None:
+        """Initialize with configuration."""
+    
+    def fit(
+        self,
+        train: Dataset,
+        *,
+        valid: Dataset | list[Dataset] | None = None,
+        callbacks: list[Callback] | None = None,
+    ) -> Self:
+        """Train the model."""
+    
+    def predict(
+        self,
+        features: NDArray[np.floating] | pd.DataFrame,
+        *,
+        n_iterations: int | None = None,
+        raw_score: bool = False,
+    ) -> NDArray[np.floating]:
+        """Make predictions."""
+    
+    @property
+    def weights(self) -> NDArray[np.floating]:
+        """Model weights (n_features,) or (n_features, n_outputs)."""
+    
+    @property
+    def bias(self) -> float | NDArray[np.floating]:
+        """Model bias term."""
 ```
 
-### Training Function
+### Training Function (Alternative API)
+
+For users who prefer functional style:
 
 ```python
-def train(
-    params: dict,
-    train_set: Dataset,
-    num_boost_round: int = 100,
-    valid_sets: list[Dataset] | None = None,
-    valid_names: list[str] | None = None,
-    callbacks: list[Callable] | None = None,
-    init_model: str | Booster | None = None,
-) -> Booster:
-    """Train a boosters model.
+def train_gbdt(
+    config: GBDTConfig,
+    train: Dataset,
+    *,
+    valid: Dataset | list[Dataset] | None = None,
+    callbacks: list[Callback] | None = None,
+) -> GBDTModel:
+    """Train a GBDT model.
     
-    Parameters
-    ----------
-    params : dict
-        Training parameters. See Parameters documentation.
-    train_set : Dataset
-        Training data.
-    num_boost_round : int
-        Number of boosting iterations.
-    valid_sets : list of Dataset, optional
-        Validation sets for early stopping.
-    valid_names : list of str, optional
-        Names for validation sets.
-    callbacks : list of callable, optional
-        Callbacks for logging, early stopping, etc.
-    init_model : str or Booster, optional
-        Continue training from existing model.
+    Args:
+        config: Training configuration.
+        train: Training dataset.
+        valid: Validation dataset(s).
+        callbacks: Training callbacks.
+    
+    Returns:
+        Trained model.
     """
+
+def train_gblinear(
+    config: GBLinearConfig,
+    train: Dataset,
+    *,
+    valid: Dataset | list[Dataset] | None = None,
+    callbacks: list[Callback] | None = None,
+) -> GBLinearModel:
+    """Train a GBLinear model."""
 ```
 
-### Parameters
-
-Configuration via dictionary (like LightGBM):
+### Callbacks
 
 ```python
-params = {
-    # Core
-    'objective': 'regression',        # See objective mapping below
-    'metric': 'rmse',                 # See metric mapping below
-    'num_leaves': 31,
-    'max_depth': -1,                  # -1 = unlimited
-    'learning_rate': 0.1,
-    'n_estimators': 100,
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+
+class Callback(ABC):
+    """Base class for training callbacks."""
     
-    # Regularization
-    'lambda_l1': 0.0,
-    'lambda_l2': 0.0,
-    'min_gain_to_split': 0.0,
-    'min_data_in_leaf': 20,
+    @abstractmethod
+    def __call__(self, iteration: int, eval_results: dict[str, float]) -> bool:
+        """Called after each iteration.
+        
+        Args:
+            iteration: Current iteration number.
+            eval_results: Metric values for this iteration.
+        
+        Returns:
+            True to stop training, False to continue.
+        """
+
+@dataclass
+class EarlyStopping(Callback):
+    """Stop training when validation metric stops improving."""
     
-    # Sampling
-    'subsample': 1.0,
-    'colsample_bytree': 1.0,
+    patience: int = 50
+    min_delta: float = 0.0
     
-    # Categorical
-    'categorical_feature': 'auto',
+    def __call__(self, iteration: int, eval_results: dict[str, float]) -> bool: ...
+
+@dataclass
+class LogEvaluation(Callback):
+    """Log evaluation metrics periodically."""
     
-    # Advanced
-    'booster': 'gbdt',               # 'gbdt' or 'gblinear'
-    'linear_tree': False,            # Enable linear leaves
-    'enable_bundle': True,           # EFB for sparse data
+    period: int = 10
     
-    # Threading
-    'n_jobs': -1,                    # -1 = auto
-    'verbose': 1,
-}
+    def __call__(self, iteration: int, eval_results: dict[str, float]) -> bool: ...
 ```
+
+---
+
+## Objective and Metric Mapping
 
 ### Objective Mapping
 
@@ -342,18 +482,25 @@ params = {
 ## scikit-learn Integration
 
 ```python
-from boosters.sklearn import BoostersRegressor, BoostersClassifier
+from boosters.sklearn import GBDTRegressor, GBDTClassifier, GBDTRanker
 
 # Works like any sklearn estimator
-model = BoostersRegressor(
+model = GBDTRegressor(
     n_estimators=100,
     learning_rate=0.1,
     max_depth=6,
-    n_jobs=-1,
+    n_threads=0,  # 0 = auto
 )
 
-model.fit(X_train, y_train, eval_set=[(X_val, y_val)])
+model.fit(X_train, y_train)
 predictions = model.predict(X_test)
+
+# With validation for early stopping
+model.fit(
+    X_train, y_train,
+    eval_set=[(X_val, y_val)],
+    callbacks=[EarlyStopping(patience=50)],
+)
 
 # Cross-validation works
 from sklearn.model_selection import cross_val_score
@@ -363,110 +510,173 @@ scores = cross_val_score(model, X, y, cv=5)
 from sklearn.pipeline import Pipeline
 pipe = Pipeline([
     ('scaler', StandardScaler()),
-    ('model', BoostersClassifier()),
+    ('model', GBDTClassifier()),
 ])
 ```
 
 ### scikit-learn Estimator Classes
 
 ```python
-class BoostersModel(BaseEstimator):
-    """Base class for scikit-learn estimators."""
+from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
+from typing import Self
+
+class GBDTRegressor(BaseEstimator, RegressorMixin):
+    """GBDT regressor with sklearn interface.
+    
+    All constructor parameters become sklearn-compatible attributes.
+    Configuration is flattened (no nested dataclasses) for sklearn compatibility.
+    """
     
     def __init__(
         self,
+        *,
         n_estimators: int = 100,
         learning_rate: float = 0.1,
         max_depth: int = -1,
-        num_leaves: int = 31,
-        min_data_in_leaf: int = 20,
-        lambda_l1: float = 0.0,
-        lambda_l2: float = 0.0,
+        n_leaves: int = 31,
+        min_samples_leaf: int = 20,
+        l1: float = 0.0,
+        l2: float = 0.0,
         subsample: float = 1.0,
-        colsample_bytree: float = 1.0,
-        n_jobs: int = -1,
-        random_state: int | None = None,
-        **kwargs,
-    ): ...
+        colsample: float = 1.0,
+        linear_trees: bool = False,
+        n_threads: int = 0,
+        seed: int | None = None,
+        verbose: int = 1,
+    ) -> None: ...
     
     def fit(
         self,
-        X,
-        y,
-        sample_weight=None,
-        eval_set=None,
-        callbacks=None,
-    ) -> 'BoostersModel': ...
+        X: ArrayLike,
+        y: ArrayLike,
+        *,
+        sample_weight: ArrayLike | None = None,
+        eval_set: list[tuple[ArrayLike, ArrayLike]] | None = None,
+        callbacks: list[Callback] | None = None,
+    ) -> Self: ...
     
-    def predict(self, X) -> np.ndarray: ...
+    def predict(self, X: ArrayLike) -> NDArray[np.floating]: ...
     
-    @property
-    def feature_importances_(self) -> np.ndarray: ...
-    
-    @property
-    def n_features_in_(self) -> int: ...
-    
-    @property
-    def feature_names_in_(self) -> np.ndarray: ...
+    # sklearn-standard attributes (set after fit)
+    n_features_in_: int
+    feature_names_in_: NDArray[np.str_] | None
+    feature_importances_: NDArray[np.floating]
+    best_iteration_: int | None
 
-class BoostersRegressor(BoostersModel, RegressorMixin):
-    """Boosters regressor."""
+class GBDTClassifier(BaseEstimator, ClassifierMixin):
+    """GBDT classifier with sklearn interface."""
+    
+    def __init__(self, *, **kwargs) -> None: ...  # Same as GBDTRegressor
+    
+    def fit(self, X: ArrayLike, y: ArrayLike, **kwargs) -> Self: ...
+    def predict(self, X: ArrayLike) -> NDArray[np.integer]: ...
+    def predict_proba(self, X: ArrayLike) -> NDArray[np.floating]: ...
+    
+    classes_: NDArray  # Set after fit
 
-class BoostersClassifier(BoostersModel, ClassifierMixin):
-    """Boosters classifier."""
+class GBDTRanker(BaseEstimator):
+    """GBDT ranker for learning-to-rank."""
     
-    def predict_proba(self, X) -> np.ndarray: ...
-    
-    @property
-    def classes_(self) -> np.ndarray: ...
+    def fit(
+        self,
+        X: ArrayLike,
+        y: ArrayLike,
+        *,
+        group: ArrayLike | None = None,
+        **kwargs,
+    ) -> Self: ...
 
-class BoostersRanker(BoostersModel):
-    """Boosters ranker for learning-to-rank tasks."""
+class GBLinearRegressor(BaseEstimator, RegressorMixin):
+    """GBLinear regressor with sklearn interface."""
     
-    def fit(self, X, y, group=None, ...): ...
+    def __init__(
+        self,
+        *,
+        n_estimators: int = 100,
+        learning_rate: float = 0.1,
+        l1: float = 0.0,
+        l2: float = 1.0,  # Usually need regularization for linear
+        n_threads: int = 0,
+        seed: int | None = None,
+        verbose: int = 1,
+    ) -> None: ...
+
+class GBLinearClassifier(BaseEstimator, ClassifierMixin):
+    """GBLinear classifier with sklearn interface."""
 ```
 
 ---
 
 ## Data Format Support
 
+### Recommended Input Format
+
+**Best performance**: `pandas.DataFrame` or F-contiguous NumPy array.
+
+```python
+import pandas as pd
+import numpy as np
+
+# Option 1: pandas DataFrame (recommended)
+# - Automatic categorical detection
+# - Feature names preserved
+# - Optimal memory layout extracted automatically
+df = pd.DataFrame(data, columns=feature_names)
+model.fit(df, y)
+
+# Option 2: F-contiguous NumPy array (zero-copy)
+X = np.asfortranarray(data, dtype=np.float32)
+model.fit(X, y)
+
+# Option 3: C-contiguous array (will be transposed internally)
+X = np.ascontiguousarray(data, dtype=np.float32)
+model.fit(X, y)  # One-time transpose cost
+```
+
 ### Input Formats
 
-| Format | Support | Notes |
-| ------ | ------- | ----- |
-| NumPy ndarray | ✓ | Accepts both C and F contiguous |
-| pandas DataFrame | ✓ | Auto-detect categorical columns |
-| PyArrow Table | ✓ | Zero-copy via Arrow C Data Interface |
-| scipy.sparse CSR | ✓ | Sparse matrix support |
-| scipy.sparse CSC | ✓ | Converted to CSR internally |
-| Python lists | ✓ | Converted to NumPy |
+| Format | Support | Conversion Cost |
+| ------ | ------- | --------------- |
+| pandas DataFrame | ✓ | Optimal (extracts F-contiguous) |
+| NumPy F-contiguous f32 | ✓ | Zero copy |
+| NumPy C-contiguous f32 | ✓ | Transpose O(n×m) |
+| NumPy f64 (any order) | ✓ | Cast + possible transpose |
+| PyArrow Table | ✓ | Usually copy (unless f32 chunked) |
+| scipy.sparse CSR/CSC | ✓ | Sparse path (efficient) |
 
 ### Memory Layout Strategy
 
-**Problem**: Python uses row-major `(n_samples, n_features)`, Rust core uses
-feature-major `[n_features, n_samples]`.
-
-**Solution**: Accept both layouts, detect at runtime:
+**Rust core** uses feature-major layout `[n_features][n_samples]` for cache-efficient
+histogram building. The Python bindings handle conversion:
 
 ```python
-# Detection in conversion layer
-if array.flags['F_CONTIGUOUS']:
-    # F-contiguous (column-major) - can be viewed as feature-major
-    layout = 'feature_major'
-    data = array.ravel(order='F')
-elif array.flags['C_CONTIGUOUS']:
-    # C-contiguous (row-major) - needs transpose or row-major path
-    layout = 'sample_major'
-    data = array.ravel(order='C')
-else:
-    # Non-contiguous - copy to C order
-    array = np.ascontiguousarray(array)
-    layout = 'sample_major'
-    data = array.ravel(order='C')
+def _convert_features(data: ArrayLike) -> FeatureMatrix:
+    """Convert Python data to Rust-compatible format.
+    
+    Priority:
+    1. If pandas DataFrame: extract underlying arrays optimally
+    2. If F-contiguous f32: zero-copy view
+    3. If C-contiguous: transpose to F-contiguous
+    4. Otherwise: copy to F-contiguous f32
+    """
+    if isinstance(data, pd.DataFrame):
+        # pandas stores columns contiguously - optimal for feature-major!
+        return _convert_dataframe(data)
+    
+    arr = np.asarray(data)
+    
+    if arr.flags['F_CONTIGUOUS'] and arr.dtype == np.float32:
+        # Zero-copy path
+        return FeatureMatrix.from_f_contiguous(arr)
+    
+    # Convert to optimal layout
+    return FeatureMatrix.from_array(
+        np.asfortranarray(arr, dtype=np.float32)
+    )
 ```
 
-For training, we transpose C-order data to F-order (one-time cost amortized over
-many iterations). For prediction, we support both layouts via the inference layer.
+**Key insight**: pandas DataFrames naturally store columns contiguously, which
+aligns perfectly with our feature-major layout. Recommend DataFrame input in docs.
 
 ### Type Handling
 
@@ -489,81 +699,137 @@ ds = Dataset(df, label=y)  # 'city' automatically categorical
 
 ## PyO3 Implementation
 
-### Booster Architecture
+### Architecture Overview
+
+**Separate model types** (matching Rust): `PyGBDTModel` and `PyGBLinearModel` as
+distinct `#[pyclass]` types, not a unified `Booster` enum.
 
 ```rust
 use pyo3::prelude::*;
-use std::sync::Arc;
-use boosters::{GBDTModel, GBLinearModel, ModelMeta};
+use numpy::{PyArray1, PyArray2, PyReadonlyArray2};
+use boosters::{GBDTModel, GBLinearModel, GBDTConfig, GBLinearConfig};
 
-/// Unified booster type supporting both GBDT and GBLinear.
-#[pyclass]
-pub struct Booster {
-    inner: BoosterInner,
-    // Python-side metadata
+/// GBDT model wrapper.
+#[pyclass(name = "GBDTModel")]
+pub struct PyGBDTModel {
+    inner: Option<GBDTModel>,
+    config: GBDTConfig,
     feature_names: Option<Vec<String>>,
-    pandas_categorical: Option<Vec<Vec<PyObject>>>,
     best_iteration: Option<usize>,
 }
 
-enum BoosterInner {
-    GBDT(Arc<GBDTModel>),
-    GBLinear(Arc<GBLinearModel>),
-}
-
 #[pymethods]
-impl Booster {
-    /// Predict on new data.
-    fn predict(
-        &self,
+impl PyGBDTModel {
+    #[new]
+    fn new(config: Option<PyGBDTConfig>) -> Self {
+        Self {
+            inner: None,
+            config: config.map(Into::into).unwrap_or_default(),
+            feature_names: None,
+            best_iteration: None,
+        }
+    }
+    
+    fn fit(
+        &mut self,
         py: Python<'_>,
-        data: PyObject,
-        num_iteration: Option<usize>,
-        raw_score: bool,
-        pred_leaf: bool,
-        pred_contrib: bool,
-        n_jobs: i32,
-    ) -> PyResult<PyObject> {
-        // Release GIL during prediction
+        train: &PyDataset,
+        valid: Option<&PyDataset>,
+        callbacks: Option<Vec<PyObject>>,
+    ) -> PyResult<()> {
+        // Threading is handled here at the bindings level
+        let n_threads = self.config.n_threads;
+        
         py.allow_threads(|| {
-            match &self.inner {
-                BoosterInner::GBDT(model) => {
-                    // ... predict logic
-                }
-                BoosterInner::GBLinear(model) => {
-                    // ... predict logic  
-                }
-            }
+            boosters::run_with_threads(n_threads, |_| {
+                // Train model - Rust core does NOT manage threads
+                self.inner = Some(GBDTModel::train(&self.config, train.inner())?);
+                Ok(())
+            })
         })
     }
     
-    /// Get feature importance.
-    fn feature_importance(&self, importance_type: &str) -> PyResult<Vec<f64>> {
-        match &self.inner {
-            BoosterInner::GBDT(model) => {
-                let imp_type = parse_importance_type(importance_type)?;
-                Ok(model.feature_importance(imp_type).values().to_vec())
-            }
-            BoosterInner::GBLinear(model) => {
-                // Weight magnitudes for linear model
-                Ok(model.weight_importance())
-            }
-        }
+    fn predict<'py>(
+        &self,
+        py: Python<'py>,
+        features: PyReadonlyArray2<'py, f32>,
+        n_iterations: Option<usize>,
+        raw_score: bool,
+    ) -> PyResult<Bound<'py, PyArray1<f32>>> {
+        let model = self.inner.as_ref().ok_or_else(|| {
+            PyValueError::new_err("Model not trained. Call fit() first.")
+        })?;
+        
+        let n_threads = self.config.n_threads;
+        
+        py.allow_threads(|| {
+            boosters::run_with_threads(n_threads, |_| {
+                model.predict(&features.as_array(), n_iterations)
+            })
+        })
+        .map(|arr| PyArray1::from_vec_bound(py, arr))
     }
     
     #[getter]
-    fn num_trees(&self) -> usize {
-        match &self.inner {
-            BoosterInner::GBDT(m) => m.forest().n_trees(),
-            BoosterInner::GBLinear(m) => m.n_rounds(),
-        }
+    fn n_trees(&self) -> PyResult<usize> {
+        self.inner.as_ref()
+            .map(|m| m.forest().n_trees())
+            .ok_or_else(|| PyValueError::new_err("Model not trained"))
+    }
+}
+
+/// GBLinear model wrapper.
+#[pyclass(name = "GBLinearModel")]
+pub struct PyGBLinearModel {
+    inner: Option<GBLinearModel>,
+    config: GBLinearConfig,
+    // ... similar structure
+}
+```
+
+### Threading Strategy
+
+**Key decision**: Threading is managed at the Python bindings level, not in Rust core.
+
+```rust
+// Python bindings handle thread pool setup
+impl PyGBDTModel {
+    fn fit(&mut self, py: Python<'_>, ...) -> PyResult<()> {
+        let n_threads = convert_n_threads(self.config.n_threads);
+        
+        py.allow_threads(|| {
+            boosters::run_with_threads(n_threads, |_| {
+                // Rust core assumes thread pool is already set up
+                // No internal run_with_threads calls in GBDTModel::train
+                GBDTModel::train(...)
+            })
+        })
+    }
+}
+
+/// Convert Python n_threads convention to Rust.
+/// 
+/// Python: 0 = auto, -1 = auto, 1 = sequential, n > 1 = n threads
+/// Rust:   0 = auto, 1 = sequential, n > 1 = n threads
+fn convert_n_threads(n: i32) -> usize {
+    match n {
+        0 | -1 => 0,  // Auto
+        1 => 1,       // Sequential
+        n if n > 1 => n as usize,
+        _ => 0,       // Negative → auto
     }
 }
 ```
 
-### Dataset Architecture
+**Implication for Rust core**: The `GBDTModel::train()` and `GBLinearModel::train()`
+methods should NOT call `run_with_threads` internally. They should assume the
+caller has already set up the thread pool. This allows:
 
-**Dataset Lifetime Strategy**:
+1. Python bindings to manage threads with GIL release
+2. Rust CLI/library users to manage threads at their level  
+3. No nested thread pool issues
+
+### Dataset Architecture
 
 ```rust
 #[pyclass]
@@ -606,17 +872,17 @@ then optionally free it. This allows lazy construction while preventing GC issue
 
 ```rust
 // Release GIL during expensive operations
-impl PyBooster {
-    fn predict(&self, py: Python<'_>, data: PyObject) -> PyResult<PyObject> {
-        let features = convert_to_features(py, data)?;
+impl PyGBDTModel {
+    fn predict(&self, py: Python<'_>, features: PyReadonlyArray2<f32>) -> PyResult<...> {
+        let model = self.inner.as_ref().ok_or(...)?;
+        let n_threads = self.config.n_threads;
         
-        // Release GIL during prediction
-        let result = py.allow_threads(|| {
-            self.inner.predict(&features)
-        });
-        
-        // Convert back to NumPy
-        numpy_from_array2(py, result)
+        // Release GIL, set up thread pool, run prediction
+        py.allow_threads(|| {
+            boosters::run_with_threads(n_threads, |_| {
+                model.predict(&features.as_array())
+            })
+        })
     }
 }
 ```
@@ -624,13 +890,17 @@ impl PyBooster {
 ### Error Handling
 
 ```rust
-// Map Rust errors to Python exceptions
-#[pyclass]
-struct BoostersError;
+use pyo3::exceptions::{PyValueError, PyTypeError, PyRuntimeError};
 
-impl From<boosters::DatasetError> for PyErr {
-    fn from(err: DatasetError) -> PyErr {
-        PyValueError::new_err(err.to_string())
+// Map Rust errors to Python exceptions
+impl From<boosters::Error> for PyErr {
+    fn from(err: boosters::Error) -> PyErr {
+        match err {
+            boosters::Error::InvalidParameter(msg) => PyValueError::new_err(msg),
+            boosters::Error::ShapeMismatch(msg) => PyValueError::new_err(msg),
+            boosters::Error::NotFitted => PyRuntimeError::new_err("Model not fitted"),
+            _ => PyRuntimeError::new_err(err.to_string()),
+        }
     }
 }
 ```
@@ -639,93 +909,80 @@ impl From<boosters::DatasetError> for PyErr {
 
 ## Design Decisions
 
-### DD-1: PyO3 vs cffi
+### DD-1: PyO3 + Maturin
 
-**Decision**: Use PyO3 (Rust-native Python bindings).
+**Decision**: Use PyO3 for bindings, Maturin for build.
 
-**Rationale**:
+**Rationale**: Single build step, excellent numpy integration, active ecosystem.
 
-- Single build step (Maturin)
-- Better error handling integration
-- No need for C API layer
-- Active ecosystem and community
+### DD-2: Separate Model Types
 
-### DD-2: API Style
+**Decision**: `GBDTModel` and `GBLinearModel` as separate classes (not unified `Booster`).
 
-**Decision**: Mirror LightGBM's Python API where possible.
+**Rationale**: Matches Rust API, clearer type safety, avoid enum dispatch overhead.
 
-**Rationale**:
+### DD-3: Dataclass Configuration
 
-- Familiar to existing GBDT users
-- Easy migration from LightGBM
-- Proven API design
-- dict-based params for flexibility
-
-### DD-3: scikit-learn First-Class
-
-**Decision**: Provide native sklearn estimators (not just wrappers).
+**Decision**: Use `@dataclass` for configuration, not dict-based params.
 
 **Rationale**:
 
-- Full sklearn compatibility (pipelines, CV, etc.)
-- Property-based API (n_estimators vs num_trees)
-- Type hints and IDE support
+- Full type safety and IDE autocomplete
+- Validation at construction time
+- Nested configs for organization (TreeConfig, RegularizationConfig)
+- Modern Python 3.12+ style
 
-### DD-4: Zero-Copy Where Possible
+### DD-4: Pythonic Naming
 
-**Decision**: Use Arrow C Data Interface for zero-copy with PyArrow.
-
-**Rationale**:
-
-- Avoid unnecessary memory copies
-- Critical for large datasets
-- Arrow becoming standard for data interchange
-
-### DD-5: Package Naming
-
-**Decision**: Package name `boosters` (import as `import boosters`).
+**Decision**: Use Python conventions (`n_samples`, `n_features`, `labels`).
 
 **Rationale**:
 
-- Clean, memorable name
-- Consistent with crate name
-- Available on PyPI (need to verify)
+- Consistent with sklearn and numpy
+- `n_` prefix standard for counts
+- Plural for collections (`labels`, `weights`, `feature_names`)
 
-### DD-6: Memory Layout Handling
+### DD-5: pandas DataFrame Recommended
 
-**Decision**: Accept both C and F contiguous arrays, transpose C-order for training.
+**Decision**: Recommend DataFrame input, document as optimal path.
 
 **Rationale**:
 
-- Users expect `(n_samples, n_features)` convention
-- One-time transpose cost acceptable for training
-- Prediction can use row-major path for compatibility
+- pandas stores columns contiguously (matches feature-major layout)
+- Automatic categorical detection
+- Feature names preserved
+- Most users already have DataFrames
 
-### DD-7: Verbose/Logging
+### DD-6: Threading at Bindings Level
 
-**Decision**: Match LightGBM's `verbose` parameter semantics.
+**Decision**: Python bindings manage thread pool, Rust core is thread-agnostic.
 
-```python
-verbose = -1  # Silent
-verbose = 0   # Warning only
-verbose = 1   # Info (default)
-verbose > 1   # Debug
-```
+**Rationale**:
 
-### DD-8: Callbacks for Early Stopping
+- GIL must be released in Python layer anyway
+- Avoids nested thread pool issues
+- Rust library users can manage threads their way
+- Clear separation of concerns
 
-**Decision**: Provide `early_stopping()` callback (like LightGBM).
+### DD-7: Strict Typing + Google Docstrings
 
-```python
-from boosters.callback import early_stopping
+**Decision**: Full Python 3.12+ type hints, Google-style docstrings.
 
-model = train(
-    params,
-    train_set,
-    valid_sets=[valid_set],
-    callbacks=[early_stopping(stopping_rounds=50)],
-)
-```
+**Rationale**:
+
+- Type hints enable IDE autocomplete and static analysis
+- Google style is concise (no duplicate type info in docstrings)
+- Python 3.12+ unlocks cleaner syntax (`type X = ...`, `Self`)
+
+### DD-8: sklearn Estimators Use Flat Config
+
+**Decision**: sklearn estimators take flat kwargs (not nested dataclasses).
+
+**Rationale**:
+
+- sklearn's `get_params()`/`set_params()` expect flat attributes
+- GridSearchCV and similar tools require flat parameter space
+- Core API uses dataclasses, sklearn API flattens them
 
 ---
 
@@ -744,24 +1001,8 @@ shap_values = model.predict(X, pred_contrib=True)
 from boosters import TreeExplainer
 
 explainer = TreeExplainer(model)
-shap_values = explainer.shap_values(X)  # Returns ShapValues object
+shap_values = explainer.shap_values(X)
 base_value = explainer.expected_value
-```
-
-### Feature Importance
-
-```python
-# Multiple importance types
-gain_importance = model.feature_importance(importance_type='gain')
-split_importance = model.feature_importance(importance_type='split')
-cover_importance = model.feature_importance(importance_type='cover')
-
-# As DataFrame with feature names
-import pandas as pd
-df = pd.DataFrame({
-    'feature': model.feature_name,
-    'importance': model.feature_importance('gain'),
-}).sort_values('importance', ascending=False)
 ```
 
 ---
@@ -771,49 +1012,53 @@ df = pd.DataFrame({
 ### Classification
 
 ```python
+from boosters import GBDTModel, GBDTConfig, Objective
+
 # Binary classification
-params = {'objective': 'binary', 'metric': 'auc'}
+config = GBDTConfig(objective=Objective.LOGISTIC)
+model = GBDTModel(config)
+model.fit(train)
+probs = model.predict(X)  # (n_samples,) - probabilities
 
 # Multiclass classification
-params = {
-    'objective': 'multiclass',
-    'num_class': 3,
-    'metric': 'multi_logloss',
-}
-
-# Prediction shapes
-binary_pred = model.predict(X)      # (n_samples,) - probabilities
-multi_pred = model.predict(X)       # (n_samples, n_classes) - probabilities
-multi_raw = model.predict(X, raw_score=True)  # Raw logits
+config = GBDTConfig(
+    objective=Objective.SOFTMAX,
+    n_classes=3,
+)
+model = GBDTModel(config)
+model.fit(train)
+probs = model.predict(X)              # (n_samples, n_classes)
+logits = model.predict(X, raw_score=True)  # Raw logits
 ```
 
 ### Multi-Output Regression
 
 ```python
 # Native multi-output (one tree per output per round)
-params = {
-    'objective': 'regression',
-    'num_output': 2,  # New parameter
-}
-
-# Prediction: (n_samples, n_outputs)
+config = GBDTConfig(
+    objective=Objective.SQUARED,
+    n_outputs=2,
+)
+model = GBDTModel(config)
+model.fit(train)
+preds = model.predict(X)  # (n_samples, n_outputs)
 ```
 
 ---
 
 ## Model Inspection
 
-### Feature Importance Methods
+### Feature Importance
 
 ```python
 # Multiple importance types
-importance_split = model.feature_importance(importance_type='split')  # Number of splits
-importance_gain = model.feature_importance(importance_type='gain')    # Total gain
+importance_split = model.feature_importance(importance_type='split')
+importance_gain = model.feature_importance(importance_type='gain')
 
 # As DataFrame with feature names
 import pandas as pd
 importance_df = pd.DataFrame({
-    'feature': model.feature_name_,
+    'feature': model.feature_names,
     'importance': model.feature_importance('gain'),
 }).sort_values('importance', ascending=False)
 ```
@@ -821,7 +1066,7 @@ importance_df = pd.DataFrame({
 ### Tree Structure Export
 
 ```python
-# Export trees to DataFrame (like LightGBM)
+# Export trees to DataFrame
 trees_df = model.trees_to_dataframe()
 # Columns: tree_index, node_depth, node_index, left_child, right_child,
 #          parent_index, split_feature, split_gain, threshold, 
@@ -834,16 +1079,21 @@ tree_0 = trees_df[trees_df['tree_index'] == 0]
 ### Model Attributes
 
 ```python
-# After fit():
-model.n_features_in_       # int: Number of features seen during fit
-model.feature_names_in_    # ndarray: Feature names if pandas input
-model.feature_name_        # list: Feature names (same as feature_names_in_)
-model.n_classes_           # int: Number of classes (classification only)
-model.classes_             # ndarray: Class labels (classification only)
-model.best_iteration_      # int: Best iteration if early stopping
-model.best_score_          # float: Best eval score if early stopping
-model.n_estimators_        # int: Actual number of trees trained
-model.evals_result_        # dict: Training history if record_evaluation used
+# Core model API attributes (after fit):
+model.n_features       # int: Number of features
+model.n_trees          # int: Number of trees trained
+model.feature_names    # list[str] | None: Feature names
+model.best_iteration   # int | None: Best iteration (early stopping)
+model.best_score       # float | None: Best validation score
+model.eval_results     # dict[str, list[float]] | None: Training history
+
+# sklearn estimator attributes (after fit):
+# These follow sklearn naming conventions with trailing underscore
+estimator.n_features_in_      # int
+estimator.feature_names_in_   # ndarray | None
+estimator.feature_importances_  # ndarray
+estimator.classes_            # ndarray (classifier only)
+estimator.best_iteration_     # int | None
 ```
 
 ---
@@ -858,32 +1108,34 @@ df = pd.DataFrame({
     'numeric': [1.0, 2.0, 3.0],
     'category': pd.Categorical(['a', 'b', 'c']),
 })
-ds = Dataset(df, label=y)
-# ds.categorical_feature_ == ['category']
+dataset = Dataset(features=df, labels=y)
+# dataset.categorical_features == [1]  # index of 'category' column
 
 # Or specify manually
-ds = Dataset(X, label=y, categorical_feature=['col_0', 'col_5'])
-ds = Dataset(X, label=y, categorical_feature=[0, 5])  # By index
+dataset = Dataset(features=X, labels=y, categorical_features=[0, 5])
 ```
 
 ### Category Value Preservation
 
 ```python
 # Original categories are preserved for interpretability
-model.fit(df[['category']], y)
-print(model.pandas_categorical_)
-# [['a', 'b', 'c']]  # Original category order
+dataset = Dataset(features=df, labels=y)
+model = GBDTModel()
+model.fit(dataset)
 
-# When inspecting trees:
+# Access category mappings
+print(model.category_encodings)
+# {'category': ['a', 'b', 'c']}  # Original category order
+
+# Tree export shows category names in thresholds
 trees_df = model.trees_to_dataframe()
-# threshold contains original category names for categorical splits
 ```
 
 ### Integer-Encoded Categoricals
 
 ```python
 # If data is already integer-encoded, specify feature indices
-ds = Dataset(X, label=y, categorical_feature=[2, 5])
+dataset = Dataset(features=X, labels=y, categorical_features=[2, 5])
 # Values are treated as category indices (0, 1, 2, ...)
 ```
 
@@ -891,11 +1143,13 @@ ds = Dataset(X, label=y, categorical_feature=[2, 5])
 
 ```python
 # Categories not seen during training are treated as missing
-# This matches LightGBM behavior
 train_df = pd.DataFrame({'cat': pd.Categorical(['a', 'b', 'c'])})
 test_df = pd.DataFrame({'cat': pd.Categorical(['a', 'd'])})  # 'd' is unseen
 
-model.fit(train_df, y)
+train_ds = Dataset(features=train_df, labels=y)
+model = GBDTModel()
+model.fit(train_ds)
+
 pred = model.predict(test_df)  # 'd' uses missing-value path
 ```
 
@@ -905,18 +1159,22 @@ pred = model.predict(test_df)  # 'd' uses missing-value path
 
 ### Parameter Validation
 
+With dataclass configuration, validation happens at construction time:
+
 ```python
-# Unknown parameters: warn and ignore (like LightGBM)
-params = {'max_depth': 6, 'typo_param': 5}  
-# UserWarning: Unknown parameter 'typo_param' will be ignored
+from boosters import GBDTConfig, TreeConfig
 
-# Invalid parameter values: raise immediately
-params = {'max_depth': -1}
-# ValueError: max_depth must be positive, got -1
-
-# Type errors: raise immediately
-params = {'learning_rate': 'fast'}
+# Type errors caught by dataclass
+config = GBDTConfig(learning_rate='fast')
 # TypeError: learning_rate must be float, got str
+
+# Value validation in __post_init__
+config = GBDTConfig(n_estimators=-1)
+# ValueError: n_estimators must be positive, got -1
+
+# Nested config validation
+config = GBDTConfig(tree=TreeConfig(n_leaves=0))
+# ValueError: n_leaves must be positive, got 0
 ```
 
 ### Edge Cases
@@ -930,69 +1188,31 @@ params = {'learning_rate': 'fast'}
 | NaN in labels | ValueError |
 | All-constant feature | Skipped during split finding |
 | Mismatched shapes | ValueError with clear message |
+| Wrong n_features at predict | ValueError: expected N features, got M |
 
 ---
 
 ## Serialization
 
-### File-Based (v1.0)
+**Note:** Serialization support depends on RFC for storage formats (not yet implemented
+in Rust core). This section documents planned API when available.
+
+### Planned API (Future)
 
 ```python
-# Save/load model
-model.save_model('model.bin')  # Binary format (fast, compact)
-model.save_model('model.json')  # JSON format (human-readable)
+# File-based serialization
+model.save('model.boosters')     # Native binary format
+model.save('model.json')         # JSON format (human-readable)
 
-loaded = Booster(model_file='model.bin')
+loaded = GBDTModel.load('model.boosters')
 
-# Or using class method
-loaded = Booster.load('model.bin')
-```
-
-### Pickle Support (v1.1+)
-
-```python
+# Pickle support (requires serialization to bytes)
 import pickle
-
-# Future: full pickle support
 with open('model.pkl', 'wb') as f:
     pickle.dump(model, f)
-
-# Implementation: serialize Rust model to bytes, store in Python object
-def __reduce__(self):
-    return (Booster._from_bytes, (self._to_bytes(),))
 ```
 
-**Note:** v1.0 will support file-based serialization. Pickle support is planned for v1.1.
-
----
-
-## Callbacks
-
-```python
-from boosters.callback import early_stopping, log_evaluation, record_evaluation
-
-# Early stopping
-model = train(
-    params,
-    train_set,
-    valid_sets=[valid_set],
-    callbacks=[
-        early_stopping(stopping_rounds=50),
-        log_evaluation(period=10),  # Print every 10 iterations
-    ],
-)
-
-# Record training history
-evals_result = {}
-model = train(
-    params,
-    train_set,
-    valid_sets=[train_set, valid_set],
-    valid_names=['train', 'valid'],
-    callbacks=[record_evaluation(evals_result)],
-)
-# evals_result = {'train': {'rmse': [...]}, 'valid': {'rmse': [...]}}
-```
+**Timeline:** Blocked on Rust serialization format RFC (see backlog/05-storage-format.md).
 
 ---
 
@@ -1017,48 +1237,33 @@ model = train(
 
 ### Thread Management
 
-```rust
-// Python n_jobs convention:
-// -1 = auto (all cores)
-//  0 = auto (same as -1 in Python convention)
-//  1 = sequential
-//  n > 1 = exactly n threads
+Threading is managed at the Python bindings level (see DD-6). The `n_threads`
+parameter uses sklearn-compatible semantics:
 
-fn convert_n_jobs(n_jobs: i32) -> usize {
-    match n_jobs {
-        -1 | 0 => 0,  // 0 means "auto" in run_with_threads
-        1 => 1,       // Sequential
-        n if n > 1 => n as usize,
-        _ => 0,       // Negative (other than -1) → auto
-    }
-}
-
-// In PyO3, release GIL during Rust computation
-impl Booster {
-    fn predict(&self, py: Python<'_>, ...) -> PyResult<...> {
-        let n_threads = convert_n_jobs(n_jobs);
-        
-        py.allow_threads(|| {
-            boosters::run_with_threads(n_threads, |_| {
-                self.inner.predict(...)
-            })
-        })
-    }
-}
+```python
+n_threads = 0   # Auto (all available cores)
+n_threads = -1  # Same as 0 (sklearn convention)
+n_threads = 1   # Sequential (no parallelism)
+n_threads = 4   # Exactly 4 threads
 ```
 
-**Key principles:**
+The conversion happens in Python before calling Rust:
 
-1. Always release GIL during Rust computation
-2. Use `run_with_threads` to manage Rayon thread pool
-3. Avoid nested parallelism conflicts with sklearn's `n_jobs`
+```python
+def _to_rust_threads(n_threads: int) -> int:
+    """Convert sklearn n_threads to Rust convention."""
+    if n_threads <= 0:
+        return 0  # Auto in Rust
+    return n_threads
+```
 
 ### Data Conversion Performance
 
 | Input Type | Conversion Cost | Notes |
 | ---------- | --------------- | ----- |
+| pandas DataFrame | Optimal | Columns already contiguous |
 | F-contiguous f32 array | Zero copy | Optimal path |
-| C-contiguous f32 array | Transpose O(n×m) | Training only, cache-unfriendly |
+| C-contiguous f32 array | Transpose O(n×m) | Cache-unfriendly |
 | F-contiguous f64 array | Cast O(n×m) | One pass |
 | C-contiguous f64 array | Cast + transpose | Two passes |
 | pandas DataFrame | Extract + possible transpose | Categorical detection overhead |
@@ -1152,10 +1357,8 @@ print(f"Histograms/leaf: {hist_mb:.3f} MB")
 
 | Python | OS | Test Scope |
 | ------ | -- | ---------- |
-| 3.9 | Linux | Full |
-| 3.10 | Linux | Full |
-| 3.11 | Linux, macOS, Windows | Full |
-| 3.12 | Linux | Full |
+| 3.12 | Linux, macOS, Windows | Full |
+| 3.13 | Linux | Full |
 
 ### sklearn Compliance
 
@@ -1164,7 +1367,7 @@ from sklearn.utils.estimator_checks import check_estimator
 
 def test_sklearn_compliance():
     # Run standard sklearn estimator checks
-    for estimator in [BoostersRegressor(), BoostersClassifier()]:
+    for estimator in [GBDTRegressor(), GBDTClassifier()]:
         for check in check_estimator(estimator, generate_only=True):
             check(estimator)
 ```
@@ -1174,9 +1377,14 @@ def test_sklearn_compliance():
 ## Changelog
 
 - 2025-12-25: Initial draft
-- 2025-12-25: Round 1 - Added memory layout strategy, objective/metric mapping
-- 2025-12-25: Round 2 - Added Dataset lifetime strategy, PyArrow integration details
-- 2025-12-25: Round 3 - Added testing strategy, PyO3 Booster architecture
-- 2025-12-25: Round 4 - Added threading model, error handling, edge cases
-- 2025-12-25: Round 5 - Added model inspection, categorical handling, tree export
-- 2025-12-25: Round 6 - Added Python version policy, wheel distribution, unseen categories
+- 2025-12-25: Rounds 1-6 - Design review (memory, threading, testing, etc.)
+- 2025-12-25: Major revision based on feedback:
+  - Python 3.12+ only (leverage modern type hints)
+  - Alpine/musl support added
+  - Separate GBDTModel/GBLinearModel classes (match Rust)
+  - Dataclass-based configuration instead of dicts
+  - Pythonic naming (n_samples, labels, feature_names)
+  - pandas DataFrame recommended as optimal input
+  - Threading managed at bindings level (Rust core thread-agnostic)
+  - Strict typing with Google-style docstrings
+  - Serialization deferred until Rust storage format RFC
