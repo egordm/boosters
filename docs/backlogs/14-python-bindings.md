@@ -716,20 +716,21 @@ are specified via `categorical_features=[...]` parameter or auto-detected from p
 ### Story 4.1: GBDTModel Structure
 
 **RFC Section**: RFC-0014 "GBDTModel"  
-**Effort**: M (2-3h)
+**Effort**: M (2-3h)  
+**Status**: ✅ Complete
 
 **Description**: Implement `GBDTModel` class with config and state management.
 
 **Tasks**:
 
-- [ ] 4.1.1 Create `src/model/mod.rs` module
-- [ ] 4.1.2 Implement `GBDTModel` as `#[pyclass]`:
+- [x] 4.1.1 Create `src/model/mod.rs` module
+- [x] 4.1.2 Implement `GBDTModel` as `#[pyclass]`:
   - `config: Py<GBDTConfig>`
   - `inner: Option<RustGBDTModel>` (None until fit)
-- [ ] 4.1.3 Implement `#[new]` with optional config
-- [ ] 4.1.4 Implement properties: `n_trees`, `n_features`, `is_fitted`
-- [ ] 4.1.5 Implement `get_config()` method
-- [ ] 4.1.6 Implement `feature_importance(importance_type="split")` method
+- [x] 4.1.3 Implement `#[new]` with optional config
+- [x] 4.1.4 Implement properties: `n_trees`, `n_features`, `is_fitted`
+- [x] 4.1.5 Implement `get_config()` method
+- [x] 4.1.6 Implement `feature_importance(importance_type="split")` method
 
 **Definition of Done**:
 

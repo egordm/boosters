@@ -8,6 +8,7 @@ mod convert;
 mod data;
 mod error;
 mod metrics;
+mod model;
 mod objectives;
 
 use pyo3::prelude::*;
@@ -19,6 +20,7 @@ use config::{
 };
 use data::{PyDataset, PyEvalSet};
 use metrics::{PyAccuracy, PyAuc, PyLogLoss, PyMae, PyMape, PyNdcg, PyRmse};
+use model::PyGBDTModel;
 use objectives::{
     PyAbsoluteLoss, PyArctanLoss, PyHingeLoss, PyHuberLoss, PyLambdaRankLoss, PyLogisticLoss,
     PyPinballLoss, PyPoissonLoss, PySoftmaxLoss, PySquaredLoss,
@@ -45,6 +47,9 @@ fn _boosters_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Data types
     m.add_class::<PyDataset>()?;
     m.add_class::<PyEvalSet>()?;
+
+    // Model types
+    m.add_class::<PyGBDTModel>()?;
 
     // Objective types
     m.add_class::<PySquaredLoss>()?;

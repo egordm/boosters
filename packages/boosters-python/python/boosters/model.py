@@ -5,16 +5,14 @@ All types are Rust-owned (#[pyclass]) with generated type stubs.
 
 Types:
     - GBDTModel: Gradient Boosted Decision Trees model
-    - GBLinearModel: Gradient Boosted Linear model
+    - GBLinearModel: Gradient Boosted Linear model (coming in Story 4.5)
 """
 
-# Re-exports will be added as Epic 4 is implemented
-# from boosters._boosters_rs import (
-#     GBDTModel,
-#     GBLinearModel,
-# )
+from boosters._boosters_rs import GBDTModel
+
+# GBLinearModel will be added in Story 4.5
 
 __all__: list[str] = [
-    # "GBDTModel",
-    # "GBLinearModel",
+    "GBDTModel",
+    # "GBLinearModel",  # Coming in Story 4.5
 ]

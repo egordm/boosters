@@ -396,3 +396,100 @@ class EvalSet:
     dataset: Dataset
 
     def __init__(self, name: str, dataset: Dataset) -> None: ...
+
+# =============================================================================
+# Model Types
+# =============================================================================
+
+class GBDTModel:
+    """Gradient Boosted Decision Tree model.
+
+    This is the main model class for training and prediction with gradient
+    boosted decision trees.
+
+    Example:
+        >>> from boosters import GBDTModel, GBDTConfig, Dataset
+        >>> import numpy as np
+        >>>
+        >>> # Create training data
+        >>> X = np.random.rand(1000, 10).astype(np.float32)
+        >>> y = np.random.rand(1000).astype(np.float32)
+        >>> train = Dataset(X, y)
+        >>>
+        >>> # Train with default config
+        >>> model = GBDTModel().fit(train)
+        >>>
+        >>> # Or with custom config
+        >>> config = GBDTConfig(n_estimators=50, learning_rate=0.1)
+        >>> model = GBDTModel(config=config).fit(train)
+        >>>
+        >>> # Predict
+        >>> predictions = model.predict(X_test)
+    """
+
+    @property
+    def is_fitted(self) -> bool:
+        """Whether the model has been fitted."""
+        ...
+
+    @property
+    def n_trees(self) -> int:
+        """Number of trees in the fitted model.
+
+        Raises:
+            RuntimeError: If model has not been fitted.
+        """
+        ...
+
+    @property
+    def n_features(self) -> int:
+        """Number of features the model was trained on.
+
+        Raises:
+            RuntimeError: If model has not been fitted.
+        """
+        ...
+
+    @property
+    def best_iteration(self) -> int | None:
+        """Best iteration from early stopping. None if not used."""
+        ...
+
+    @property
+    def best_score(self) -> float | None:
+        """Best score from early stopping. None if not used."""
+        ...
+
+    @property
+    def eval_results(self) -> dict[str, dict[str, list[float]]] | None:
+        """Evaluation results from training."""
+        ...
+
+    @property
+    def config(self) -> GBDTConfig:
+        """Get the model configuration."""
+        ...
+
+    def __init__(self, config: GBDTConfig | None = None) -> None:
+        """Create a new GBDT model.
+
+        Args:
+            config: Optional GBDTConfig. If not provided, uses default config.
+        """
+        ...
+
+    def feature_importance(self, importance_type: str = "split") -> NDArray[np.float64]:
+        """Get feature importance scores.
+
+        Args:
+            importance_type: Type of importance to compute.
+                - "split" (default): Number of times a feature is used to split.
+                - "gain": Total gain achieved by splits on this feature.
+
+        Returns:
+            NumPy array of importance scores, one per feature.
+
+        Raises:
+            RuntimeError: If model has not been fitted.
+        """
+        ...

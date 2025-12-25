@@ -44,6 +44,9 @@ from boosters.metrics import (
     Rmse,
 )
 
+# Model types
+from boosters.model import GBDTModel
+
 # Objective types
 from boosters.objectives import (
     AbsoluteLoss,
@@ -69,6 +72,7 @@ __all__ = [
     "EFBConfig",
     "EvalSet",
     "GBDTConfig",
+    "GBDTModel",
     "GBLinearConfig",
     "HingeLoss",
     "HuberLoss",

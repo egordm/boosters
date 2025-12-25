@@ -26,8 +26,8 @@ pub enum BoostersError {
     ShapeMismatch(String),
 
     /// Model not fitted yet.
-    #[error("Model not fitted. Call fit() first.")]
-    NotFitted,
+    #[error("Model not fitted. Call {method}() after fit().")]
+    NotFitted { method: String },
 
     /// Data conversion error.
     #[error("Data conversion error: {0}")]
@@ -40,6 +40,10 @@ pub enum BoostersError {
     /// Prediction error.
     #[error("Prediction error: {0}")]
     Prediction(String),
+
+    /// Explainability error.
+    #[error("Explainability error: {0}")]
+    ExplainError(String),
 }
 
 // =============================================================================
@@ -52,10 +56,11 @@ impl From<BoostersError> for PyErr {
             BoostersError::InvalidParameter { .. } => PyValueError::new_err(err.to_string()),
             BoostersError::TypeError(_) => PyTypeError::new_err(err.to_string()),
             BoostersError::ShapeMismatch(_) => PyValueError::new_err(err.to_string()),
-            BoostersError::NotFitted => PyRuntimeError::new_err(err.to_string()),
+            BoostersError::NotFitted { .. } => PyRuntimeError::new_err(err.to_string()),
             BoostersError::DataConversion(_) => PyValueError::new_err(err.to_string()),
             BoostersError::Training(_) => PyRuntimeError::new_err(err.to_string()),
             BoostersError::Prediction(_) => PyRuntimeError::new_err(err.to_string()),
+            BoostersError::ExplainError(_) => PyRuntimeError::new_err(err.to_string()),
         }
     }
 }
