@@ -21,7 +21,10 @@ dev = [
     "ruff>=0.8.0",
     "pyright>=1.1.0",
     "pytest>=8.0",
+    "pytest-cov>=4.0",
     "poethepoet>=0.31.0",
+    "pyproject-fmt>=2.0",
+    "nbmake>=1.5",
     "microsoft-python-type-stubs",
 ]
 
@@ -37,6 +40,10 @@ typecheck = "pyright"
 check = ["format-check", "lint", "typecheck"]
 fix = ["format", "lint-fix"]
 test = "pytest"
+
+# Package-specific tasks (boosters-python)
+"python:test" = "pytest packages/boosters-python/tests -v"
+"python:doctest" = "pytest packages/boosters-python/python --doctest-modules"
 
 # =============================================================================
 # Ruff Configuration (shared across all packages)
@@ -56,10 +63,18 @@ select = [
     "C4",     # flake8-comprehensions
     "UP",     # pyupgrade
     "RUF",    # Ruff-specific
+    "D",      # pydocstyle (docstrings)
 ]
 ignore = [
     "E501",   # Line too long (handled by formatter)
+    "D100",   # Missing docstring in public module (too noisy for now)
+    "D102",   # Missing docstring in public method (too noisy for now)
+    "D104",   # Missing docstring in public package (too noisy for now)
+    "D107",   # Missing docstring in __init__ (too noisy for now)
 ]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["D", "B017", "F401"]

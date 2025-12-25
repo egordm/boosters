@@ -178,7 +178,7 @@ class LightGBMRunner(Runner):
         train_time = time.perf_counter() - start
 
         y_pred = model.predict(x_valid)
-        metrics = compute_metrics(task, y_valid, y_pred, config.dataset.n_classes) # pyright: ignore[reportArgumentType]
+        metrics = compute_metrics(task, y_valid, y_pred, config.dataset.n_classes)  # pyright: ignore[reportArgumentType]
 
         return BenchmarkResult(
             config_name=config.name,

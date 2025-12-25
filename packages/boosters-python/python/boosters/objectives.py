@@ -22,8 +22,6 @@ Type Aliases:
     - Objective: Union of all objective types
 """
 
-from typing import TypeAlias
-
 # Re-exports will be added as Epic 2 is implemented
 # from boosters._boosters_rs import (
 #     SquaredLoss,

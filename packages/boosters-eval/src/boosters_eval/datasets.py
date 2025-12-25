@@ -110,7 +110,7 @@ def synthetic_regression(
     """Factory for synthetic regression datasets."""
 
     def loader() -> tuple[NDArray[np.floating[Any]], NDArray[np.floating[Any]]]:
-        x, y = make_regression( # pyright: ignore[reportAssignmentType]
+        x, y = make_regression(  # pyright: ignore[reportAssignmentType]
             n_samples=n_samples,
             n_features=n_features,
             noise=noise,
