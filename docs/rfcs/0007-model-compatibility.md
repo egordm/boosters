@@ -1,4 +1,4 @@
-# RFC-0012: Model Compatibility
+# RFC-0007: Model Compatibility
 
 - **Status**: Implemented
 - **Created**: 2024-12-15

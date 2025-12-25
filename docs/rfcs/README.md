@@ -1,58 +1,60 @@
-# RFC Index
+# booste-rs RFCs
 
-Design documents for boosters, ordered by learning path.
+This directory contains design documents (RFCs) for the booste-rs library.
 
-**Last updated**: 2025-01-23
+**Last updated**: 2025-01-25
 
-## Implemented
+## RFC Index
 
-| RFC | Topic | Description |
-|-----|-------|-------------|
-| [0001](./0001-data-matrix.md) | Data Matrix | ndarray-based feature views (SamplesView, FeaturesView) |
-| [0002](./0002-forest-and-tree-structures.md) | Forest & Trees | SoA tree storage, TreeView trait, MutableTree |
-| [0003](./0003-inference-pipeline.md) | Inference | Predictor with traversal strategies |
-| [0004](./0004-quantization-and-binning.md) | Binning | Feature quantization for histograms |
-| [0005](./0005-histogram-building.md) | Histograms | Gradient histogram construction |
-| [0006](./0006-split-finding.md) | Split Finding | Best split selection with regularization |
-| [0007](./0007-tree-growing.md) | Tree Growing | Depth-wise and leaf-wise strategies |
-| [0008](./0008-objectives-and-losses.md) | Objectives | Loss functions and gradients |
-| [0009](./0009-evaluation-metrics.md) | Metrics | Evaluation and early stopping |
-| [0010](./0010-sampling-strategies.md) | Sampling | GOSS and column sampling |
-| [0011](./0011-multi-output-training.md) | Multi-Output | Multiclass and multi-target |
-| [0012](./0012-model-compatibility.md) | Compatibility | XGBoost and LightGBM loading |
-| [0013](./0013-arrow-parquet-io.md) | Arrow/Parquet | Data loading from Arrow/Parquet |
-| [0014](./0014-gblinear.md) | GBLinear | Linear booster training and inference |
-| [0015](./0015-linear-trees.md) | Linear Leaves | Linear models at tree leaf nodes |
-| [0017](./0017-feature-bundling.md) | Feature Bundling | Exclusive Feature Bundling (EFB) |
-| [0018](./0018-native-categorical-features.md) | Categoricals | Native categorical feature support |
+### Core (Data & Trees)
 
-## Draft
+| RFC | Title | Status | Description |
+|-----|-------|--------|-------------|
+| [0001](0001-data-types.md) | Data Types | Implemented | Layout convention, view types, accessor traits, Dataset, BinnedData |
+| [0002](0002-forest-and-tree-structures.md) | Forest and Trees | Implemented | SoA tree representation, TreeView trait, MutableTree |
+| [0003](0003-inference-pipeline.md) | Inference Pipeline | Implemented | Batch/single-row prediction, traversal strategies |
 
-| RFC | Topic | Description |
-|-----|-------|-------------|
-| [0019](./0019-dataset-format.md) | Dataset Format | High-level Dataset type |
-| [0020](./0020-data-access-layer.md) | Data Access | View types and access patterns |
-| [0022](./0022-explainability.md) | Explainability | Feature importance and SHAP values |
+### Training (GBDT)
+
+| RFC | Title | Status | Description |
+|-----|-------|--------|-------------|
+| [0004](0004-binning-and-histograms.md) | Binning and Histograms | Implemented | Quantization, BinnedDataset, histogram accumulation |
+| [0005](0005-tree-growing.md) | Tree Growing | Implemented | Split finding, tree construction, depth/leaf-wise growth |
+| [0006](0006-training-configuration.md) | Training Configuration | Implemented | Objectives, metrics, sampling, multi-output |
+
+### Extensions
+
+| RFC | Title | Status | Description |
+|-----|-------|--------|-------------|
+| [0007](0007-model-compatibility.md) | Model Compatibility | Implemented | XGBoost/LightGBM model loading |
+| [0008](0008-arrow-parquet-io.md) | Arrow/Parquet I/O | Implemented | Data loading from Arrow IPC and Parquet |
+| [0009](0009-gblinear.md) | GBLinear | Implemented | Linear booster with coordinate descent |
+| [0010](0010-linear-trees.md) | Linear Leaves | Implemented | Linear model fitting at tree leaves |
+| [0011](0011-feature-bundling.md) | Feature Bundling | Implemented | EFB for sparse/one-hot features |
+| [0012](0012-native-categorical-features.md) | Native Categorical | Implemented | Native categorical feature handling |
+| [0013](0013-explainability.md) | Explainability | Draft | Feature importance and SHAP values |
 
 ## Reading Order
 
 For understanding the system architecture:
 
-1. **Data Layer**: RFC-0001 (Data Matrix)
-2. **Model Layer**: RFC-0002 (Trees), RFC-0014 (GBLinear)
+1. **Data Layer**: RFC-0001 (Data Types)
+2. **Model Layer**: RFC-0002 (Trees), RFC-0009 (GBLinear)
 3. **Inference**: RFC-0003 (Pipeline)
-4. **Training**: RFC-0004→0007 (Binning→Histograms→Splits→Growing)
-5. **Training Config**: RFC-0008 (Objectives), RFC-0009 (Metrics), RFC-0010 (Sampling)
-6. **Advanced**: RFC-0015 (Linear Leaves), RFC-0017 (Bundling), RFC-0018 (Categoricals)
+4. **Training**: RFC-0004 (Binning) → RFC-0005 (Growing) → RFC-0006 (Config)
+5. **Advanced**: RFC-0010 (Linear Leaves), RFC-0011 (Bundling), RFC-0012 (Categoricals)
 
-## Archived
+## RFC Status
 
-Previous RFCs that have been superseded or absorbed into other documents:
+- **Draft**: Design in progress, open for feedback
+- **Accepted**: Design approved, implementation pending
+- **Implemented**: Code complete and tested
+- **Deprecated**: Superseded by newer RFC
 
-| RFC | Reason |
-|-----|--------|
-| [0016](./archive/0016-prediction-architecture.md) | Content absorbed into RFC-0002 |
+## Archive
+
+Previous RFC versions before the 2025-01-24 restructure are in [archive/pre-restructure/](archive/pre-restructure/).
 
 ## Creating New RFCs
 
-Use [TEMPLATE.md](./TEMPLATE.md) as a starting point.
+Use [TEMPLATE.md](TEMPLATE.md) as a starting point.

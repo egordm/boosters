@@ -1,4 +1,4 @@
-# RFC-0014: GBLinear
+# RFC-0009: GBLinear
 
 - **Status**: Implemented
 - **Created**: 2025-12-17

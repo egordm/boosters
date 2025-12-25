@@ -1,4 +1,4 @@
-# RFC-0013: Arrow and Parquet I/O
+# RFC-0008: Arrow and Parquet I/O
 
 - **Status**: Implemented
 - **Created**: 2024-12-15

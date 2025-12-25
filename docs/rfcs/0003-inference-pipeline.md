@@ -3,7 +3,7 @@
 - **Status**: Implemented
 - **Created**: 2024-11-15
 - **Updated**: 2025-01-21
-- **Depends on**: RFC-0001 (Data Matrix), RFC-0002 (Forest/Trees)
+- **Depends on**: RFC-0001 (Data Types), RFC-0002 (Trees)
 - **Scope**: Batch and single-row prediction for GBDT ensembles
 
 ## Summary
