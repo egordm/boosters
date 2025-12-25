@@ -4,13 +4,43 @@
 //! for tree traversal comparisons.
 
 use super::{BinMapper, BinnedDataset};
-use crate::data::FeatureAccessor;
+use crate::data::{DataAccessor, SampleAccessor};
+
+// ============================================================================
+// BinnedSample
+// ============================================================================
+
+/// A single sample from binned data, implementing `SampleAccessor`.
+///
+/// Converts bin indices to midpoint values on-demand for tree traversal.
+/// This is a lightweight view that holds references to the underlying data.
+pub struct BinnedSample<'a> {
+    dataset: &'a BinnedDataset,
+    bin_mappers: &'a [BinMapper],
+    row: usize,
+}
+
+impl SampleAccessor for BinnedSample<'_> {
+    #[inline]
+    fn feature(&self, index: usize) -> f32 {
+        let bin = self.dataset.get_bin(self.row, index);
+        match bin {
+            Some(b) => self.bin_mappers[index].bin_to_midpoint(b) as f32,
+            None => f32::NAN,
+        }
+    }
+
+    #[inline]
+    fn n_features(&self) -> usize {
+        self.dataset.n_features()
+    }
+}
 
 // ============================================================================
 // BinnedAccessor
 // ============================================================================
 
-/// Feature accessor that converts binned data to midpoint values.
+/// Data accessor that converts binned data to midpoint values.
 ///
 /// For each bin, returns the midpoint between lower and upper bounds:
 /// - Bin 0: `(min_val + upper_bound[0]) / 2`
@@ -48,18 +78,20 @@ impl<'a> BinnedAccessor<'a> {
     }
 }
 
-impl FeatureAccessor for BinnedAccessor<'_> {
+impl<'a> DataAccessor for BinnedAccessor<'a> {
+    type Sample<'b> = BinnedSample<'b> where Self: 'b;
+
     #[inline]
-    fn get_feature(&self, row: usize, feature: usize) -> f32 {
-        let bin = self.dataset.get_bin(row, feature);
-        match bin {
-            Some(b) => self.bin_mappers[feature].bin_to_midpoint(b) as f32,
-            None => f32::NAN,
+    fn sample(&self, index: usize) -> Self::Sample<'_> {
+        BinnedSample {
+            dataset: self.dataset,
+            bin_mappers: self.bin_mappers,
+            row: index,
         }
     }
 
     #[inline]
-    fn n_rows(&self) -> usize {
+    fn n_samples(&self) -> usize {
         self.dataset.n_rows()
     }
 

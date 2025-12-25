@@ -110,8 +110,9 @@ impl<'a> FeaturesView<'a> {
     ///
     /// **Warning**: This returns a strided view, not contiguous.
     /// For performance-critical code, consider block buffering instead.
+    /// For tree traversal, use the `DataAccessor::sample` method instead.
     #[inline]
-    pub fn sample(&self, sample: usize) -> ArrayView1<'_, f32> {
+    pub fn sample_view(&self, sample: usize) -> ArrayView1<'_, f32> {
         self.data.column(sample)
     }
 
@@ -154,22 +155,59 @@ impl<'a> std::fmt::Debug for FeaturesView<'a> {
     }
 }
 
-// Enable tree traversal with FeaturesView (feature-major layout)
-impl<'a> crate::data::FeatureAccessor for FeaturesView<'a> {
+/// A strided sample view for feature-major data.
+///
+/// This wrapper exists because `FeaturesView` stores data in feature-major order,
+/// so accessing a sample requires strided access. This implements `SampleAccessor`
+/// for use with tree traversal.
+#[derive(Clone, Copy)]
+pub struct StridedSample<'a> {
+    data: ArrayView1<'a, f32>,
+}
+
+impl<'a> crate::data::SampleAccessor for StridedSample<'a> {
     #[inline]
-    fn get_feature(&self, row: usize, feature: usize) -> f32 {
-        // Transposed access: data is [feature, sample]
-        self.data[[feature, row]]
+    fn feature(&self, index: usize) -> f32 {
+        self.data[index]
     }
 
     #[inline]
-    fn n_rows(&self) -> usize {
-        self.n_samples()
+    fn n_features(&self) -> usize {
+        self.data.len()
+    }
+}
+
+// Enable tree traversal with FeaturesView (feature-major layout)
+impl<'a> crate::data::DataAccessor for FeaturesView<'a> {
+    type Sample<'b> = StridedSample<'b> where Self: 'b;
+
+    #[inline]
+    fn sample(&self, index: usize) -> Self::Sample<'_> {
+        StridedSample {
+            data: self.data.column(index),
+        }
+    }
+
+    #[inline]
+    fn n_samples(&self) -> usize {
+        self.data.ncols()
     }
 
     #[inline]
     fn n_features(&self) -> usize {
         self.data.nrows()
+    }
+
+    #[inline]
+    fn feature_type(&self, feature: usize) -> FeatureType {
+        self.schema
+            .map(|s| s.feature_type(feature))
+            .unwrap_or(FeatureType::Numeric)
+    }
+
+    #[inline]
+    fn has_categorical(&self) -> bool {
+        self.schema.map(|s| s.has_categorical()).unwrap_or(false)
     }
 }
 
@@ -352,8 +390,9 @@ impl<'a> SamplesView<'a> {
     /// Get all features for a sample as a contiguous slice.
     ///
     /// This is the fast path - returns a contiguous slice.
+    /// For tree traversal, use the `DataAccessor::sample` method instead.
     #[inline]
-    pub fn sample(&self, sample: usize) -> ArrayView1<'_, f32> {
+    pub fn sample_view(&self, sample: usize) -> ArrayView1<'_, f32> {
         self.data.row(sample)
     }
 
@@ -407,26 +446,49 @@ impl<'a> std::fmt::Debug for SamplesView<'a> {
 }
 
 // Enable tree traversal with SamplesView (sample-major layout)
-impl<'a> crate::data::FeatureAccessor for SamplesView<'a> {
+impl<'a> crate::data::DataAccessor for SamplesView<'a> {
+    // Samples are contiguous, so we can return a slice directly
+    type Sample<'b> = &'b [f32] where Self: 'b;
+
     #[inline]
-    fn get_feature(&self, row: usize, feature: usize) -> f32 {
-        self.data[[row, feature]]
+    fn sample(&self, index: usize) -> Self::Sample<'_> {
+        // For contiguous C-order arrays, get slice directly from underlying storage
+        let slice = self
+            .data
+            .as_slice()
+            .expect("SamplesView must be contiguous (C-order)");
+        let start = index * self.data.ncols();
+        let end = start + self.data.ncols();
+        &slice[start..end]
     }
 
     #[inline]
-    fn n_rows(&self) -> usize {
-        self.n_samples()
+    fn n_samples(&self) -> usize {
+        self.data.nrows()
     }
 
     #[inline]
     fn n_features(&self) -> usize {
         self.data.ncols()
     }
+
+    #[inline]
+    fn feature_type(&self, feature: usize) -> FeatureType {
+        self.schema
+            .map(|s| s.feature_type(feature))
+            .unwrap_or(FeatureType::Numeric)
+    }
+
+    #[inline]
+    fn has_categorical(&self) -> bool {
+        self.schema.map(|s| s.has_categorical()).unwrap_or(false)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::{DataAccessor, SampleAccessor};
     use ndarray::array;
 
     #[test]
@@ -464,10 +526,12 @@ mod tests {
         let schema = DatasetSchema::all_numeric(2);
         let view = FeaturesView::new(data.view(), &schema);
 
-        // sample() returns strided view
+        // sample() returns StridedSample which implements SampleAccessor
         let s0 = view.sample(0);
-        // May or may not be contiguous depending on layout
-        assert_eq!(s0.to_vec(), vec![1.0, 4.0]);
+        // Verify via SampleAccessor::feature
+        assert_eq!(s0.feature(0), 1.0); // feature 0
+        assert_eq!(s0.feature(1), 4.0); // feature 1
+        assert_eq!(s0.n_features(), 2);
     }
 
     #[test]

@@ -41,7 +41,7 @@
 //! See [`TreeTraversal`] for implementing custom strategies.
 
 use crate::Parallelism;
-use crate::data::axis;
+use crate::data::{axis, DataAccessor};
 use crate::dataset::{FeaturesView, SamplesView};
 use crate::repr::gbdt::{Forest, ScalarLeaf, Tree, TreeView};
 use ndarray::{Array2, ArrayViewMut2};
@@ -340,7 +340,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
                     let value = compute_linear_leaf_value(
                         tree,
                         leaf_indices[i],
-                        feat_row.as_slice().unwrap(),
+                        feat_row,
                     );
                     group_row[i] += value * tree_weight;
                 }

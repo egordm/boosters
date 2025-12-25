@@ -66,10 +66,12 @@ pub trait TreeTraversal<L: LeafValue>: Clone {
     ) where
         L: Into<f32>,
     {
+        use crate::data::DataAccessor;
+        
         // Default: per-row traversal
         for (row_idx, out) in output.iter_mut().enumerate() {
             let row_features = features.sample(row_idx);
-            *out = Self::traverse_tree(tree, state, row_features.as_slice().unwrap());
+            *out = Self::traverse_tree(tree, state, row_features);
         }
     }
 }
@@ -104,10 +106,8 @@ impl TreeTraversal<ScalarLeaf> for StandardTraversal {
         _state: &Self::TreeState,
         features: &[f32],
     ) -> NodeId {
-        // Use SamplesView for single-row access
-        let view = SamplesView::from_slice(features, 1, features.len())
-            .expect("features slice must be valid");
-        tree.traverse_to_leaf(&view, 0)
+        // Pass slice directly - &[f32] implements SampleAccessor
+        tree.traverse_to_leaf(&features)
     }
 }
 
@@ -170,9 +170,8 @@ impl<D: UnrollDepth> TreeTraversal<ScalarLeaf> for UnrolledTraversal<D> {
         let node_idx = state.exit_node_idx(exit_idx);
 
         // Phase 2: Continue to leaf if not already there
-        let view = SamplesView::from_slice(features, 1, features.len())
-            .expect("features slice must be valid");
-        tree.traverse_to_leaf_from(node_idx, &view, 0)
+        // Pass slice directly - &[f32] implements SampleAccessor
+        tree.traverse_to_leaf_from(node_idx, &features)
     }
 
     /// Optimized block traversal using level-by-level processing.
@@ -205,9 +204,11 @@ impl<D: UnrollDepth> TreeTraversal<ScalarLeaf> for UnrolledTraversal<D> {
         };
 
         // Phase 2: Continue from exit nodes to leaves
+        use crate::data::DataAccessor;
         for (row_idx, &exit_idx) in indices.iter().enumerate() {
             let node_idx = state.exit_node_idx(exit_idx);
-            let leaf_idx = tree.traverse_to_leaf_from(node_idx, &features, row_idx);
+            let sample = features.sample(row_idx);
+            let leaf_idx = tree.traverse_to_leaf_from(node_idx, &sample);
             output[row_idx] = leaf_idx;
         }
     }
@@ -441,21 +442,17 @@ mod tests {
 
     #[test]
     fn traverse_to_leaf_from_basic() {
-        use crate::dataset::SamplesView;
-        use ndarray::array;
-        
         let tree_storage = build_simple_tree(1.0, 2.0, 0.5);
         let mut forest = Forest::for_regression();
         forest.push_tree(tree_storage, 0);
         let tree = forest.tree(0);
 
         // Starting from root (node 0)
-        let features_left = array![[0.3f32]];
-        let features_right = array![[0.7f32]];
-        let view_left = SamplesView::from_array(features_left.view());
-        let view_right = SamplesView::from_array(features_right.view());
-        let leaf_left = tree.traverse_to_leaf_from(0, &view_left, 0);
-        let leaf_right = tree.traverse_to_leaf_from(0, &view_right, 0);
+        // Pass slices directly - &[f32] implements SampleAccessor
+        let features_left: &[f32] = &[0.3f32];
+        let features_right: &[f32] = &[0.7f32];
+        let leaf_left = tree.traverse_to_leaf_from(0, &features_left);
+        let leaf_right = tree.traverse_to_leaf_from(0, &features_right);
 
         assert_eq!(tree.leaf_value(leaf_left).0, 1.0);
         assert_eq!(tree.leaf_value(leaf_right).0, 2.0);

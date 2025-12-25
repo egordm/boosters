@@ -144,6 +144,7 @@ pub fn init_predictions_into(base_scores: &[f32], predictions: &mut Array2<f32>)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::DataAccessor;
     use crate::dataset::{FeaturesView, SamplesView};
     use ndarray::{arr2, array};
 
@@ -189,10 +190,10 @@ mod tests {
         let data = array![[1.0f32, 2.0, 3.0], [4.0, 5.0, 6.0]];
         let view = SamplesView::from_array(data.view());
 
-        // Sample 0 features
-        assert_eq!(view.sample(0).as_slice().unwrap(), &[1.0, 2.0, 3.0]);
+        // Sample 0 features - sample() now returns &[f32] directly via DataAccessor
+        assert_eq!(view.sample(0), &[1.0, 2.0, 3.0]);
         // Sample 1 features
-        assert_eq!(view.sample(1).as_slice().unwrap(), &[4.0, 5.0, 6.0]);
+        assert_eq!(view.sample(1), &[4.0, 5.0, 6.0]);
     }
 
     #[test]

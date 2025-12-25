@@ -490,6 +490,7 @@ mod tests {
 
     #[test]
     fn test_traverse_on_mutable_tree() {
+        use crate::data::DataAccessor;
         use crate::dataset::SamplesView;
         use ndarray::Array2;
 
@@ -512,8 +513,10 @@ mod tests {
         // 2 samples, 1 feature each: [[0.3], [0.7]]
         let arr = Array2::from_shape_vec((2, 1), vec![0.3, 0.7]).unwrap();
         let row_data = SamplesView::from_array(arr.view());
-        let leaf_0 = tree.traverse_to_leaf(&row_data, 0);
-        let leaf_1 = tree.traverse_to_leaf(&row_data, 1);
+        let sample_0 = row_data.sample(0);
+        let sample_1 = row_data.sample(1);
+        let leaf_0 = tree.traverse_to_leaf(&sample_0);
+        let leaf_1 = tree.traverse_to_leaf(&sample_1);
 
         assert_eq!(leaf_0, left);
         assert_eq!(leaf_1, right);

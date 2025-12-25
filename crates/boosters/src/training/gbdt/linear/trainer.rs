@@ -8,7 +8,7 @@
 //!
 //! See RFC-0015 for design rationale.
 
-use crate::data::FeatureAccessor;
+use crate::data::DataAccessor;
 use crate::repr::gbdt::{MutableTree, ScalarLeaf, SplitType, TreeView};
 use crate::training::gbdt::partition::RowPartitioner;
 use crate::training::{Gradients, GradsTuple};
@@ -86,7 +86,7 @@ impl LeafLinearTrainer {
     ///
     /// # Arguments
     /// * `tree` - The tree being trained (implements TreeView for path traversal)
-    /// * `accessor` - Feature accessor (any type implementing FeatureAccessor)
+    /// * `data` - Data accessor (any type implementing DataAccessor)
     /// * `partitioner` - Row partitioner with leaf assignments
     /// * `leaf_node_mapping` - Mapping from tree node IDs to partitioner node IDs
     /// * `gradients` - Gradient/hessian values
@@ -101,14 +101,14 @@ impl LeafLinearTrainer {
     /// let mapping = grower.leaf_node_mapping();
     /// let fitted = trainer.train(&tree, &accessor, partitioner, mapping, gradients, 0, 0.1);
     ///
-    /// // With ColMatrix (for testing):
-    /// let fitted = trainer.train(&tree, &col_matrix, partitioner, mapping, gradients, 0, 0.1);
+    /// // With FeaturesView (for testing):
+    /// let fitted = trainer.train(&tree, &features, partitioner, mapping, gradients, 0, 0.1);
     /// ```
     #[allow(clippy::too_many_arguments)]
-    pub fn train<A: FeatureAccessor>(
+    pub fn train<D: DataAccessor>(
         &mut self,
         tree: &MutableTree<ScalarLeaf>,
-        accessor: &A,
+        data: &D,
         partitioner: &RowPartitioner,
         leaf_node_mapping: &[(u32, u32)],
         gradients: &Gradients,
@@ -136,7 +136,7 @@ impl LeafLinearTrainer {
                 tree_node,
                 &features,
                 rows,
-                accessor,
+                data,
                 gradients,
                 output,
                 learning_rate,
@@ -212,12 +212,12 @@ impl LeafLinearTrainer {
 
     /// Fit a linear model for a single leaf.
     #[allow(clippy::too_many_arguments)]
-    fn fit_leaf<A: FeatureAccessor>(
+    fn fit_leaf<D: DataAccessor>(
         &mut self,
         node_id: u32,
         features: &[u32],
         rows: &[u32],
-        accessor: &A,
+        data: &D,
         gradients: &Gradients,
         output: usize,
         learning_rate: f32,
@@ -225,8 +225,8 @@ impl LeafLinearTrainer {
         let n_features = features.len();
         let n_rows = rows.len();
 
-        // Gather features using accessor
-        self.feature_buffer.gather(rows, accessor, features);
+        // Gather features using data accessor
+        self.feature_buffer.gather(rows, data, features);
 
         // Reset solver and accumulate
         self.solver.reset(n_features);

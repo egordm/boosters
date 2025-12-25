@@ -13,14 +13,16 @@
 use ndarray::ArrayViewMut1;
 
 use crate::Parallelism;
-use crate::data::{BinnedDataset, BinnedRowView, FeatureAccessor};
-use crate::dataset::SamplesView;
+use crate::data::{BinnedDataset, DataAccessor, SampleAccessor};
 
 use super::categories::{float_to_category, CategoriesStorage};
 use super::coefficients::LeafCoefficients;
 use super::leaf::LeafValue;
 use super::node::SplitType;
 use super::NodeId;
+
+/// Re-export for backward compatibility during migration.
+pub use crate::data::binned::BinnedSampleSlice as BinnedRowView;
 
 // ============================================================================
 // TreeView Trait
@@ -86,16 +88,15 @@ pub trait TreeView {
         !self.categories().is_empty()
     }
 
-    /// Traverse the tree to find the leaf node for a given row.
+    /// Traverse the tree to find the leaf node for a sample.
     ///
-    /// This is the primary traversal method that works with any `FeatureAccessor`.
+    /// This is the primary traversal method that works with any `SampleAccessor`.
     /// The traversal handles NaN values using the tree's default direction,
     /// and supports both numeric and categorical splits.
     ///
     /// # Arguments
     ///
-    /// * `accessor` - Feature value source (implements [`FeatureAccessor`])
-    /// * `row` - Row index in the accessor
+    /// * `sample` - Feature values for the sample (implements [`SampleAccessor`])
     ///
     /// # Returns
     ///
@@ -105,15 +106,14 @@ pub trait TreeView {
     ///
     /// ```ignore
     /// use boosters::repr::gbdt::TreeView;
-    /// use boosters::data::SamplesView;
-    /// use ndarray::array;
+    /// use boosters::data::SampleAccessor;
     ///
-    /// let features = SamplesView::from_array(array![[0.5, 1.0]].view());
-    /// let leaf_id = tree.traverse_to_leaf(&features, 0);
+    /// let features: &[f32] = &[0.5, 1.0, 2.3];
+    /// let leaf_id = tree.traverse_to_leaf(features);
     /// ```
     #[inline]
-    fn traverse_to_leaf<A: FeatureAccessor>(&self, accessor: &A, row: usize) -> NodeId {
-        self.traverse_to_leaf_from(0, accessor, row)
+    fn traverse_to_leaf<S: SampleAccessor>(&self, sample: &S) -> NodeId {
+        self.traverse_to_leaf_from(0, sample)
     }
 
     /// Traverse the tree starting from a specific node.
@@ -124,24 +124,18 @@ pub trait TreeView {
     /// # Arguments
     ///
     /// * `start_node` - Node ID to start traversal from
-    /// * `accessor` - Feature value source (implements [`FeatureAccessor`])
-    /// * `row` - Row index in the accessor
+    /// * `sample` - Feature values for the sample (implements [`SampleAccessor`])
     ///
     /// # Returns
     ///
     /// The `NodeId` of the reached leaf node.
     #[inline]
-    fn traverse_to_leaf_from<A: FeatureAccessor>(
-        &self,
-        start_node: NodeId,
-        accessor: &A,
-        row: usize,
-    ) -> NodeId {
+    fn traverse_to_leaf_from<S: SampleAccessor>(&self, start_node: NodeId, sample: &S) -> NodeId {
         let mut node = start_node;
 
         while !self.is_leaf(node) {
             let feat_idx = self.split_index(node) as usize;
-            let fvalue = accessor.get_feature(row, feat_idx);
+            let fvalue = sample.feature(feat_idx);
 
             node = if fvalue.is_nan() {
                 // Missing value: use default direction
@@ -478,10 +472,7 @@ impl<L: LeafValue> Tree<L> {
     ///
     /// Reference to the leaf value for this sample.
     pub fn predict_row(&self, features: &[f32]) -> &L {
-        // Wrap the slice as a 1-row SamplesView and use traverse_to_leaf
-        let accessor =
-            SamplesView::from_slice(features, 1, features.len()).unwrap();
-        let leaf_id = self.traverse_to_leaf(&accessor, 0);
+        let leaf_id = self.traverse_to_leaf(&features);
         self.leaf_value(leaf_id)
     }
 
@@ -567,59 +558,64 @@ impl<L: LeafValue> Tree<L> {
         );
     }
 
-    /// Unified batch prediction using any feature accessor.
+    /// Unified batch prediction using any data accessor.
     ///
     /// Traverses the tree for each row and **adds** leaf values to the predictions
     /// buffer (accumulate pattern). Supports both sequential and parallel execution.
     ///
     /// # Arguments
-    /// * `accessor` - Feature value source (SamplesView, FeaturesView, BinnedAccessor, etc.)
-    /// * `predictions` - Pre-allocated buffer to update (length = `accessor.num_rows()`)
+    /// * `data` - Data source (SamplesView, FeaturesView, BinnedAccessor, etc.)
+    /// * `predictions` - Pre-allocated buffer to update (length = `data.n_samples()`)
     /// * `parallelism` - Whether to use parallel execution
     ///
     /// # Example
     ///
     /// ```ignore
     /// use boosters::repr::gbdt::{Tree, ScalarLeaf};
-    /// use boosters::data::RowMatrix;
-    /// use boosters::utils::Parallelism;
+    /// use boosters::dataset::SamplesView;
+    /// use boosters::Parallelism;
     ///
     /// let tree: Tree<ScalarLeaf> = /* ... */;
-    /// let data = RowMatrix::from_vec(vec![0.1, 0.2, 0.3, 0.4], 2, 2);
+    /// let data = SamplesView::from_slice(&[0.1, 0.2, 0.3, 0.4], 2, 2).unwrap();
     /// let mut predictions = vec![0.0; 2];
     /// tree.predict_into(&data, &mut predictions, Parallelism::Parallel);
     /// ```
-    pub fn predict_into<A: crate::data::FeatureAccessor + Sync>(
+    pub fn predict_into<D: DataAccessor + Sync>(
         &self,
-        accessor: &A,
+        data: &D,
         predictions: &mut [f32],
         parallelism: crate::utils::Parallelism,
     ) where
         L: Into<f32> + Copy + Send + Sync,
     {
-        let n_rows = accessor.n_rows();
-        debug_assert_eq!(predictions.len(), n_rows);
+        let n_samples = data.n_samples();
+        debug_assert_eq!(predictions.len(), n_samples);
+
+        // Create prediction closures that extract samples within the closure
+        // to avoid HRTB lifetime issues with `for<'a> D::Sample<'a>: Send`
+        let predict_linear = |row_idx: usize| {
+            let sample = data.sample(row_idx);
+            let leaf_idx = self.traverse_to_leaf(&sample);
+            self.compute_leaf_value(leaf_idx, &sample)
+        };
+
+        let predict_constant = |row_idx: usize| {
+            let sample = data.sample(row_idx);
+            let leaf_idx = self.traverse_to_leaf(&sample);
+            (*self.leaf_value(leaf_idx)).into()
+        };
 
         if self.has_linear_leaves() {
-            // Linear leaf path: need to compute linear contribution
-            parallelism.maybe_par_for_each(
-                predictions.iter_mut().enumerate().collect::<Vec<_>>(),
-                |(row_idx, pred)| {
-                    let leaf_idx = self.traverse_to_leaf(accessor, row_idx);
-                    let value = self.compute_leaf_value(leaf_idx, accessor, row_idx);
-                    *pred += value;
-                },
-            );
+            parallelism.maybe_par_for_each(0..n_samples, |row_idx| {
+                // Safety: each row_idx is unique, so we can safely write to predictions[row_idx]
+                let pred = unsafe { &mut *predictions.as_ptr().add(row_idx).cast_mut() };
+                *pred += predict_linear(row_idx);
+            });
         } else {
-            // Standard path: just use leaf values
-            parallelism.maybe_par_for_each(
-                predictions.iter_mut().enumerate().collect::<Vec<_>>(),
-                |(row_idx, pred)| {
-                    let leaf_idx = self.traverse_to_leaf(accessor, row_idx);
-                    let leaf = self.leaf_value(leaf_idx);
-                    *pred += (*leaf).into();
-                },
-            );
+            parallelism.maybe_par_for_each(0..n_samples, |row_idx| {
+                let pred = unsafe { &mut *predictions.as_ptr().add(row_idx).cast_mut() };
+                *pred += predict_constant(row_idx);
+            });
         }
     }
 
@@ -629,11 +625,10 @@ impl<L: LeafValue> Tree<L> {
     /// For linear leaves, returns `intercept + Σ(coef × feature)`.
     /// If any linear feature is NaN, falls back to the base leaf value.
     #[inline]
-    pub(crate) fn compute_leaf_value<A: crate::data::FeatureAccessor>(
+    pub(crate) fn compute_leaf_value<S: SampleAccessor>(
         &self,
         leaf_idx: NodeId,
-        accessor: &A,
-        row_idx: usize,
+        sample: &S,
     ) -> f32
     where
         L: Into<f32> + Copy,
@@ -643,7 +638,7 @@ impl<L: LeafValue> Tree<L> {
         if let Some((feat_indices, coefs)) = self.leaf_terms(leaf_idx) {
             // Check for NaN in any linear feature
             for &feat_idx in feat_indices {
-                let val = accessor.get_feature(row_idx, feat_idx as usize);
+                let val = sample.feature(feat_idx as usize);
                 if val.is_nan() {
                     return base; // Fall back to constant leaf
                 }
@@ -654,7 +649,7 @@ impl<L: LeafValue> Tree<L> {
             let linear_sum: f32 = feat_indices
                 .iter()
                 .zip(coefs.iter())
-                .map(|(&f, &c)| c * accessor.get_feature(row_idx, f as usize))
+                .map(|(&f, &c)| c * sample.feature(f as usize))
                 .sum();
 
             intercept + linear_sum
@@ -886,6 +881,8 @@ mod tests {
 
     #[test]
     fn test_traverse_with_different_accessors() {
+        use crate::data::DataAccessor;
+
         let tree = crate::scalar_tree! {
             0 => num(0, 0.5, L) -> 1, 2,
             1 => leaf(-1.0),
@@ -908,18 +905,18 @@ mod tests {
         let features_view = FeaturesView::from_array(col_data.view());
 
         // Test SamplesView accessor
-        let leaf_row_0 = tree.traverse_to_leaf(&samples_view, 0);
-        let leaf_row_1 = tree.traverse_to_leaf(&samples_view, 1);
-        let leaf_row_2 = tree.traverse_to_leaf(&samples_view, 2);
+        let leaf_row_0 = tree.traverse_to_leaf(&samples_view.sample(0));
+        let leaf_row_1 = tree.traverse_to_leaf(&samples_view.sample(1));
+        let leaf_row_2 = tree.traverse_to_leaf(&samples_view.sample(2));
 
         assert_eq!(leaf_row_0, 1, "0.3 < 0.5 should go left");
         assert_eq!(leaf_row_1, 2, "0.7 >= 0.5 should go right");
         assert_eq!(leaf_row_2, 1, "NaN with default_left=true should go left");
 
         // Test FeaturesView accessor - should reach same leaves
-        let leaf_col_0 = tree.traverse_to_leaf(&features_view, 0);
-        let leaf_col_1 = tree.traverse_to_leaf(&features_view, 1);
-        let leaf_col_2 = tree.traverse_to_leaf(&features_view, 2);
+        let leaf_col_0 = tree.traverse_to_leaf(&features_view.sample(0));
+        let leaf_col_1 = tree.traverse_to_leaf(&features_view.sample(1));
+        let leaf_col_2 = tree.traverse_to_leaf(&features_view.sample(2));
 
         assert_eq!(leaf_col_0, leaf_row_0, "FeaturesView should match SamplesView");
         assert_eq!(leaf_col_1, leaf_row_1, "FeaturesView should match SamplesView");
@@ -928,6 +925,8 @@ mod tests {
 
     #[test]
     fn test_traverse_on_mutable_tree() {
+        use crate::data::DataAccessor;
+
         let mut tree = MutableTree::<ScalarLeaf>::new();
         let _root = tree.init_root();
 
@@ -947,8 +946,8 @@ mod tests {
         // 2 samples, 1 feature each: [[0.3], [0.7]]
         let arr = Array2::from_shape_vec((2, 1), vec![0.3, 0.7]).unwrap();
         let row_data = SamplesView::from_array(arr.view());
-        let leaf_0 = tree.traverse_to_leaf(&row_data, 0);
-        let leaf_1 = tree.traverse_to_leaf(&row_data, 1);
+        let leaf_0 = tree.traverse_to_leaf(&row_data.sample(0));
+        let leaf_1 = tree.traverse_to_leaf(&row_data.sample(1));
 
         assert_eq!(leaf_0, left);
         assert_eq!(leaf_1, right);

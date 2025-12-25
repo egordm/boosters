@@ -5,8 +5,10 @@
 //!
 //! # Overview
 //!
-//! The core abstraction is [`FeatureAccessor`], which provides a uniform interface
-//! for accessing feature values regardless of the underlying storage format.
+//! The core abstractions are:
+//!
+//! - [`SampleAccessor`]: Access features for a single sample (row). Implemented by `&[f32]`.
+//! - [`DataAccessor`]: Access samples from a dataset (matrix). Implemented by view types.
 //!
 //! # Storage Types
 //!
@@ -26,13 +28,13 @@
 //! See RFC-0004 for design rationale, RFC-0021 for ndarray migration.
 
 pub mod binned;
-mod traits;
+mod accessor;
 mod ndarray;
 
 #[cfg(feature = "io-parquet")]
 pub mod io;
 
-pub use traits::FeatureAccessor;
+pub use accessor::{DataAccessor, SampleAccessor};
 
 pub use ndarray::{
     axis, init_predictions, init_predictions_into, transpose_to_c_order,

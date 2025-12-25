@@ -3,7 +3,7 @@
 //! This buffer is allocated once at training start and reused for each leaf.
 //! It gathers features into contiguous columns for efficient coordinate descent.
 
-use crate::data::FeatureAccessor;
+use crate::data::DataAccessor;
 
 /// Column-major buffer for leaf feature data.
 ///
@@ -14,12 +14,12 @@ use crate::data::FeatureAccessor;
 /// # Example
 ///
 /// ```ignore
-/// use crate::data::ColMatrix;
+/// use boosters::dataset::FeaturesView;
 ///
 /// let mut buffer = LeafFeatureBuffer::new(1000, 10);
 ///
-/// // Gather features for rows in this leaf (ColMatrix implements FeatureAccessor)
-/// buffer.gather(&leaf_rows, &col_matrix, &path_features);
+/// // Gather features for rows in this leaf (FeaturesView implements DataAccessor)
+/// buffer.gather(&leaf_rows, &features_view, &path_features);
 ///
 /// // Access feature columns for coordinate descent
 /// for feat_idx in 0..buffer.n_features() {
@@ -65,27 +65,29 @@ impl LeafFeatureBuffer {
         }
     }
 
-    /// Gather features from any FeatureAccessor into this buffer.
+    /// Gather features from any DataAccessor into this buffer.
     ///
-    /// Works with any type implementing `FeatureAccessor`, including:
-    /// - `ColMatrix` for raw feature values
+    /// Works with any type implementing `DataAccessor`, including:
+    /// - `FeaturesView` for raw feature values
     /// - `BinnedAccessor` for binned data (using midpoint values)
     ///
     /// # Arguments
     ///
     /// * `rows` - Row indices of samples in this leaf
-    /// * `accessor` - Feature accessor
+    /// * `data` - Data accessor
     /// * `features` - Feature indices to gather (typically path features)
     ///
     /// # Panics
     ///
     /// Panics if `rows.len() > max_rows` or `features.len() > max_features`.
-    pub fn gather<A: FeatureAccessor>(
+    pub fn gather<D: DataAccessor>(
         &mut self,
         rows: &[u32],
-        accessor: &A,
+        data: &D,
         features: &[u32],
     ) {
+        use crate::data::SampleAccessor;
+        
         debug_assert!(
             rows.len() <= self.max_rows,
             "Too many rows: {} > max {}",
@@ -106,7 +108,8 @@ impl LeafFeatureBuffer {
         for (feat_idx, &feat) in features.iter().enumerate() {
             let col_offset = feat_idx * self.max_rows;
             for (row_idx, &row) in rows.iter().enumerate() {
-                self.data[col_offset + row_idx] = accessor.get_feature(row as usize, feat as usize);
+                let sample = data.sample(row as usize);
+                self.data[col_offset + row_idx] = sample.feature(feat as usize);
             }
         }
     }

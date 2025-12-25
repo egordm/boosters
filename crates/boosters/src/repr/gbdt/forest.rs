@@ -1,6 +1,6 @@
 //! Canonical forest representation (collection of trees).
 
-use crate::dataset::SamplesView;
+use crate::data::DataAccessor;
 
 use super::{tree::TreeValidationError, LeafValue, ScalarLeaf, Tree, TreeView};
 
@@ -141,12 +141,9 @@ impl Forest<ScalarLeaf> {
     pub fn predict_row(&self, features: &[f32]) -> Vec<f32> {
         let mut output = self.base_score.clone();
 
-        let view = SamplesView::from_slice(features, 1, features.len())
-            .expect("features slice must be valid");
-
         for (tree, group) in self.trees_with_groups() {
-            let leaf_idx = tree.traverse_to_leaf(&view, 0);
-            let leaf_val = tree.compute_leaf_value(leaf_idx, &view, 0);
+            let leaf_idx = tree.traverse_to_leaf(&features);
+            let leaf_val = tree.compute_leaf_value(leaf_idx, &features);
             output[group as usize] += leaf_val;
         }
 
@@ -158,10 +155,10 @@ impl Forest<ScalarLeaf> {
         features.iter().map(|row| self.predict_row(row)).collect()
     }
 
-    /// Batch predict using any feature accessor, writing into a flat output buffer.
+    /// Batch predict using any data accessor, writing into a flat output buffer.
     ///
     /// This is the unified batch prediction method that works with any data source
-    /// implementing `FeatureAccessor`.
+    /// implementing `DataAccessor`.
     ///
     /// # Note on Linear Leaves
     ///
@@ -169,18 +166,18 @@ impl Forest<ScalarLeaf> {
     /// linear leaves, use [`Predictor`](crate::inference::gbdt::Predictor) instead.
     ///
     /// # Arguments
-    /// * `accessor` - Feature value source (SamplesView, FeaturesView, BinnedAccessor, etc.)
-    /// * `output` - Pre-allocated output buffer, must have length `n_rows * n_groups`.
+    /// * `data` - Data source (SamplesView, FeaturesView, BinnedAccessor, etc.)
+    /// * `output` - Pre-allocated output buffer, must have length `n_samples * n_groups`.
     ///   Layout: row-major `[row0_g0, row0_g1, ..., row1_g0, row1_g1, ...]`
     ///
     /// # Panics
-    /// Panics if `output.len() != accessor.num_rows() * self.n_groups()`.
+    /// Panics if `output.len() != data.n_samples() * self.n_groups()`.
     ///
     /// # Example
     ///
     /// ```ignore
     /// use boosters::repr::gbdt::{Forest, ScalarLeaf};
-    /// use boosters::data::SamplesView;
+    /// use boosters::dataset::SamplesView;
     ///
     /// let forest: Forest<ScalarLeaf> = /* ... */;
     /// let data = [0.1f32, 0.2, 0.3, 0.4];
@@ -188,9 +185,9 @@ impl Forest<ScalarLeaf> {
     /// let mut output = vec![0.0; 2 * forest.n_groups()];
     /// forest.predict_into(&view, &mut output);
     /// ```
-    pub fn predict_into<A: crate::data::FeatureAccessor>(
+    pub fn predict_into<D: DataAccessor>(
         &self,
-        accessor: &A,
+        data: &D,
         output: &mut [f32],
     ) {
         // Debug check: this method doesn't support linear leaves
@@ -199,16 +196,16 @@ impl Forest<ScalarLeaf> {
             "predict_into does not support linear leaves; use Predictor instead"
         );
 
-        let n_rows = accessor.n_rows();
+        let n_samples = data.n_samples();
         let n_groups = self.n_groups() as usize;
         assert_eq!(
             output.len(),
-            n_rows * n_groups,
-            "output buffer must have length n_rows * n_groups"
+            n_samples * n_groups,
+            "output buffer must have length n_samples * n_groups"
         );
 
         // Initialize with base scores
-        for row in 0..n_rows {
+        for row in 0..n_samples {
             for (group, &base) in self.base_score.iter().enumerate() {
                 output[row * n_groups + group] = base;
             }
@@ -217,8 +214,9 @@ impl Forest<ScalarLeaf> {
         // Accumulate tree predictions
         for (tree, group) in self.trees_with_groups() {
             let group_idx = group as usize;
-            for row in 0..n_rows {
-                let leaf_idx = tree.traverse_to_leaf(accessor, row);
+            for row in 0..n_samples {
+                let sample = data.sample(row);
+                let leaf_idx = tree.traverse_to_leaf(&sample);
                 let leaf_val = tree.leaf_value(leaf_idx).0;
                 output[row * n_groups + group_idx] += leaf_val;
             }
