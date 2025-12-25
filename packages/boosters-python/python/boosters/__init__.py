@@ -45,7 +45,7 @@ from boosters.metrics import (
 )
 
 # Model types
-from boosters.model import GBDTModel
+from boosters.model import GBDTModel, GBLinearModel
 
 # Objective types
 from boosters.objectives import (
@@ -74,6 +74,7 @@ __all__ = [
     "GBDTConfig",
     "GBDTModel",
     "GBLinearConfig",
+    "GBLinearModel",
     "HingeLoss",
     "HuberLoss",
     "LambdaRankLoss",

@@ -204,6 +204,37 @@ impl PyGBLinearConfig {
     }
 }
 
+impl PyGBLinearConfig {
+    /// Convert to core GBLinearConfig for training.
+    pub fn to_core(&self, py: Python<'_>) -> PyResult<boosters::GBLinearConfig> {
+        // Extract objective
+        let py_objective: PyObjective = self.objective_obj.extract(py)?;
+        let objective = py_objective.to_core();
+
+        // Extract metric if present
+        let metric: Option<boosters::training::Metric> = match &self.metric_obj {
+            Some(m) => {
+                let py_metric: PyMetric = m.extract(py)?;
+                Some(py_metric.to_core())
+            }
+            None => None,
+        };
+
+        // Build core config
+        boosters::GBLinearConfig::builder()
+            .objective(objective)
+            .maybe_metric(metric)
+            .n_rounds(self.n_estimators)
+            .learning_rate(self.learning_rate as f32)
+            .alpha(self.l1 as f32)
+            .lambda(self.l2 as f32)
+            .maybe_early_stopping_rounds(self.early_stopping_rounds)
+            .seed(self.seed)
+            .build()
+            .map_err(|e| BoostersError::ValidationError(e.to_string()).into())
+    }
+}
+
 impl Default for PyGBLinearConfig {
     fn default() -> Self {
         Python::with_gil(|py| {

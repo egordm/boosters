@@ -902,6 +902,8 @@ fit). This avoids complex GIL juggling. Python can inspect results after trainin
 - Matches sklearn-like coefficient access
 - `eval_results` populated same as GBDTModel
 
+> Note: Don't forget to check stakeholder feedback.
+
 **Testing Criteria**:
 
 - Training and prediction work
@@ -926,6 +928,8 @@ fit). This avoids complex GIL juggling. Python can inspect results after trainin
 
 - Users get clear error messages for deferred features
 - Docstrings indicate what's not yet implemented
+
+> Note: Don't forget to check stakeholder feedback.
 
 **Testing Criteria**:
 

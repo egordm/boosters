@@ -21,7 +21,7 @@ use config::{
 };
 use data::{PyDataset, PyEvalSet};
 use metrics::{PyAccuracy, PyAuc, PyLogLoss, PyMae, PyMape, PyNdcg, PyRmse};
-use model::PyGBDTModel;
+use model::{PyGBDTModel, PyGBLinearModel};
 use objectives::{
     PyAbsoluteLoss, PyArctanLoss, PyHingeLoss, PyHuberLoss, PyLambdaRankLoss, PyLogisticLoss,
     PyPinballLoss, PyPoissonLoss, PySoftmaxLoss, PySquaredLoss,
@@ -51,6 +51,7 @@ fn _boosters_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Model types
     m.add_class::<PyGBDTModel>()?;
+    m.add_class::<PyGBLinearModel>()?;
 
     // Objective types
     m.add_class::<PySquaredLoss>()?;
