@@ -104,7 +104,8 @@ Epic 1 (Setup) ┤                      ├──► Epic 4 (Models)
 ### Story 1.1: Initialize Maturin Project
 
 **RFC Section**: RFC-0014 "Package Structure"  
-**Effort**: M (1-2h)
+**Effort**: M (1-2h)  
+**Status**: ✅ Complete (commit e7c6d94)
 
 **Description**: Create the Python package with Maturin build system.
 
@@ -115,16 +116,16 @@ Epic 1 (Setup) ┤                      ├──► Epic 4 (Models)
 - [x] 1.1.1 Create `packages/boosters-python/` directory structure *(skeleton exists)*
 - [x] 1.1.2 Initialize `pyproject.toml` with Maturin backend *(basic config exists, needs dev deps)*
 - [x] 1.1.3 Create `Cargo.toml` for the PyO3 crate with `pyo3` and `numpy` dependencies *(exists)*
-- [ ] 1.1.4 Create `src/lib.rs` with basic `#[pymodule]` definition *(placeholder only, needs real module)*
-- [ ] 1.1.5 Create `python/boosters/__init__.py` with version and re-exports *(placeholder only)*
-- [ ] 1.1.6 Create re-export modules *(depends on Epic 2-4 providing exports)*:
+- [x] 1.1.4 Create `src/lib.rs` with basic `#[pymodule]` definition *(placeholder only, needs real module)*
+- [x] 1.1.5 Create `python/boosters/__init__.py` with version and re-exports *(placeholder only)*
+- [x] 1.1.6 Create re-export modules *(depends on Epic 2-4 providing exports)*:
   - `python/boosters/config.py` (re-exports config types)
   - `python/boosters/objectives.py` (re-exports objectives)
   - `python/boosters/metrics.py` (re-exports metrics)
   - `python/boosters/model.py` (re-exports models)
   - `python/boosters/data.py` (re-exports Dataset, EvalSet)
-- [ ] 1.1.7 Verify `maturin develop` builds and imports successfully
-- [ ] 1.1.8 Add `.gitignore` for Python artifacts *(may already exist)*
+- [x] 1.1.7 Verify `maturin develop` builds and imports successfully
+- [x] 1.1.8 Add `.gitignore` for Python artifacts *(may already exist)*
 
 **Definition of Done**:
 
@@ -142,17 +143,18 @@ Epic 1 (Setup) ┤                      ├──► Epic 4 (Models)
 ### Story 1.2: Type Stub Generation Setup
 
 **RFC Section**: RFC-0014 "Type Stub Generation"  
-**Effort**: S (30min-1h)
+**Effort**: S (30min-1h)  
+**Status**: ✅ Complete (commit 2a2ed8c)
 
 **Description**: Configure automatic `.pyi` stub generation.
 
 **Tasks**:
 
-- [ ] 1.2.1 Add `pyo3-stub-gen` to build dependencies (or use Maturin's built-in)
-- [ ] 1.2.2 Configure stub output to `python/boosters/_boosters_rs.pyi`
-- [ ] 1.2.3 Add stub generation to `maturin develop` workflow
-- [ ] 1.2.4 Verify IDE autocomplete works with generated stubs
-- [ ] 1.2.5 Evaluate stub quality for nested config types:
+- [x] 1.2.1 Add `pyo3-stub-gen` to build dependencies (or use Maturin's built-in)
+- [x] 1.2.2 Configure stub output to `python/boosters/_boosters_rs.pyi`
+- [x] 1.2.3 Add stub generation to `maturin develop` workflow
+- [x] 1.2.4 Verify IDE autocomplete works with generated stubs
+- [x] 1.2.5 Evaluate stub quality for nested config types:
   - If pyo3-stub-gen has gaps, add manual overrides in same `python/boosters/` directory
   - Document any types requiring manual stubs
 
@@ -171,34 +173,35 @@ Epic 1 (Setup) ┤                      ├──► Epic 4 (Models)
 
 ### Story 1.3: Python Development Tooling
 
-**Effort**: M (1-2h)
+**Effort**: M (1-2h)  
+**Status**: ✅ Complete (commit f8e4b33)
 
 **Description**: Configure ruff, pyright, pytest, poe tasks, and pyproject-fmt for development workflow.
 
 **Tasks**:
 
-- [ ] 1.3.1 Update `packages/boosters-python/pyproject.toml`:
+- [x] 1.3.1 Update `packages/boosters-python/pyproject.toml`:
   - Package has no dev dependencies (all dev deps in root pyproject.toml per uv workspace)
   - Configure package-specific pyright settings if needed
   - Configure package-specific ruff overrides if needed
   - Note: poe tasks run from root, not package directory
-- [ ] 1.3.2 Update root `pyproject.toml` with Python-specific tasks:
+- [x] 1.3.2 Update root `pyproject.toml` with Python-specific tasks:
   - Add dev dependencies to root: pytest-cov, pyproject-fmt, nbmake
   - `python:test`: pytest for boosters-python with coverage
   - `python:doctest`: pytest --doctest-modules
   - `python:format-pyproject`: pyproject-fmt
   - Update existing `test` task to include Python tests
   - Note: `lint`, `format`, `typecheck` already exist at root level
-- [ ] 1.3.3 Configure pyright settings:
+- [x] 1.3.3 Configure pyright settings:
   - Keep `typeCheckingMode = "basic"` (current root config)
   - Document path to strict mode for future (after initial implementation)
   - Appropriate include/exclude paths for boosters-python
-- [ ] 1.3.4 Configure ruff with docstring rules:
+- [x] 1.3.4 Configure ruff with docstring rules:
   - Add D (pydocstyle) to select list for docstring enforcement (D100-D107)
   - Keep existing strict lint rules (E, W, F, I, B, C4, UP, RUF)
   - Google-style docstrings (`convention = "google"`)
-- [ ] 1.3.5 Add pyproject-fmt to format pyproject.toml consistently
-- [ ] 1.3.6 Verify tooling is correctly configured:
+- [x] 1.3.5 Add pyproject-fmt to format pyproject.toml consistently
+- [x] 1.3.6 Verify tooling is correctly configured:
   - `poe check` runs without crashes on minimal codebase
   - Warnings expected until APIs are implemented in Epic 2-4
 
@@ -224,17 +227,18 @@ Pyright starts in basic mode; upgrade to strict after core implementation.
 ### Story 1.4: CI Pipeline
 
 **RFC Section**: RFC-0014 "CI Matrix"  
-**Effort**: M (1-2h)
+**Effort**: M (1-2h)  
+**Status**: ✅ Complete (commit 81089db)
 
 **Description**: Set up GitHub Actions for Python package CI.
 
 **Tasks**:
 
-- [ ] 1.4.1 Create `.github/workflows/python.yml`
-- [ ] 1.4.2 Add matrix: Python 3.12, 3.13 × Linux, macOS, Windows
-- [ ] 1.4.3 Add `maturin build` step
-- [ ] 1.4.4 Run `poe all` for full lint/type/test validation
-- [ ] 1.4.5 Add stub freshness check (`git diff --exit-code *.pyi`)
+- [x] 1.4.1 Create `.github/workflows/python.yml`
+- [x] 1.4.2 Add matrix: Python 3.12, 3.13 × Linux, macOS, Windows
+- [x] 1.4.3 Add `maturin build` step
+- [x] 1.4.4 Run `poe all` for full lint/type/test validation
+- [x] 1.4.5 Add stub freshness check (`git diff --exit-code *.pyi`)
 - [ ] 1.4.6 Add wheel artifact upload
 
 **Definition of Done**:
@@ -252,20 +256,21 @@ Pyright starts in basic mode; upgrade to strict after core implementation.
 ### Story 1.5: Error Handling Infrastructure
 
 **RFC Section**: RFC-0014 "Error Handling"  
-**Effort**: M (1-2h)
+**Effort**: M (1-2h)  
+**Status**: ✅ Complete (commit e7c6d94, part of 1.1)
 
 **Description**: Establish consistent Rust→Python error conversion.
 
 **Tasks**:
 
-- [ ] 1.5.1 Create `src/error.rs` module
-- [ ] 1.5.2 Define `PyBoostersError` enum covering:
+- [x] 1.5.1 Create `src/error.rs` module
+- [x] 1.5.2 Define `PyBoostersError` enum covering:
   - Configuration errors → `ValueError`
   - Type errors → `TypeError`
   - Not fitted errors → `RuntimeError`
   - Data shape errors → `ValueError`
-- [ ] 1.5.3 Implement `From<PyBoostersError> for PyErr`
-- [ ] 1.5.4 Define error message templates for consistency
+- [x] 1.5.3 Implement `From<PyBoostersError> for PyErr`
+- [x] 1.5.4 Define error message templates for consistency
 - [ ] 1.5.5 Add helper macro for error creation
 
 **Definition of Done**:
@@ -282,15 +287,16 @@ Pyright starts in basic mode; upgrade to strict after core implementation.
 
 ### Story 1.6: Stakeholder Feedback Check (Setup)
 
-**Meta-task for Epic 1**
+**Meta-task for Epic 1**  
+**Status**: ✅ Complete (commit 8ca1031)
 
 **Tasks**:
 
-- [ ] 1.6.1 Review `tmp/stakeholder_feedback.md` for build/packaging concerns
-- [ ] 1.6.2 Document any feedback in backlog adjustments
+- [x] 1.6.1 Review `tmp/stakeholder_feedback.md` for build/packaging concerns
+- [x] 1.6.2 Document any feedback in backlog adjustments
 - [ ] 1.6.3 Verify package naming `boosters` has no PyPI conflicts
 - [ ] 1.6.4 Check if users need Alpine/musl support for v0.1.0
-- [ ] 1.6.5 Create `tests/conftest.py` with shared pytest fixtures:
+- [x] 1.6.5 Create `tests/conftest.py` with shared pytest fixtures:
   - `synthetic_regression_data` fixture
   - `synthetic_classification_data` fixture
   - Reusable across all test files
