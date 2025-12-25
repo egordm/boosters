@@ -655,17 +655,18 @@ are specified via `categorical_features=[...]` parameter or auto-detected from p
 ### Story 3.2: EvalSet Type
 
 **RFC Section**: RFC-0014 "EvalSet"  
-**Effort**: S (30min)
+**Effort**: S (30min)  
+**Status**: ✅ Complete (commit a233904 - done with Story 3.1)
 
 **Description**: Implement named evaluation set wrapper.
 
 **Tasks**:
 
-- [ ] 3.2.1 Implement `EvalSet` as `#[pyclass]`:
+- [x] 3.2.1 Implement `EvalSet` as `#[pyclass]`:
   - `name: String`
   - `dataset: Py<Dataset>`
-- [ ] 3.2.2 Implement `#[new]` constructor
-- [ ] 3.2.3 Export in module
+- [x] 3.2.2 Implement `#[new]` constructor
+- [x] 3.2.3 Export in module
 
 **Definition of Done**:
 
@@ -682,13 +683,19 @@ are specified via `categorical_features=[...]` parameter or auto-detected from p
 
 ### Story 3.3: Stakeholder Feedback Check (Data)
 
-**Meta-task for Epic 3**
+**Meta-task for Epic 3**  
+**Status**: ✅ Complete
 
 **Tasks**:
 
-- [ ] 3.3.1 Review feedback on data format preferences
-- [ ] 3.3.2 Check if scipy.sparse support is needed for v1
-- [ ] 3.3.3 Document any deferred features
+- [x] 3.3.1 Review feedback on data format preferences
+  - No specific data format feedback received
+  - NumPy arrays and pandas DataFrames well supported
+- [x] 3.3.2 Check if scipy.sparse support is needed for v1
+  - Deferred to post-v1 (Story 4.6 handles sparse detection)
+- [x] 3.3.3 Document any deferred features
+  - Sparse matrix support deferred
+  - Memory benchmarking (pytest-memray) deferred to v1 polish
 
 **Definition of Done**:
 - Data format requirements confirmed
