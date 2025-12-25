@@ -1,4 +1,46 @@
-//! Leaf value types for tree nodes.
+//! Core types for tree nodes and leaves.
+//!
+//! This module defines the fundamental types used in tree structures:
+//! - [`SplitType`]: Type of split in a decision node
+//! - [`LeafValue`]: Trait for leaf node values
+//! - [`ScalarLeaf`] / [`VectorLeaf`]: Concrete leaf value types
+
+// ============================================================================
+// Split Types
+// ============================================================================
+
+/// Type of split in a decision tree node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub enum SplitType {
+    /// Numeric split: go left if value < threshold
+    #[default]
+    Numeric = 0,
+    /// Categorical split: go left if value NOT in category set
+    Categorical = 1,
+}
+
+impl From<u8> for SplitType {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => SplitType::Numeric,
+            _ => SplitType::Categorical,
+        }
+    }
+}
+
+impl From<i32> for SplitType {
+    fn from(value: i32) -> Self {
+        match value {
+            0 => SplitType::Numeric,
+            _ => SplitType::Categorical,
+        }
+    }
+}
+
+// ============================================================================
+// Leaf Value Types
+// ============================================================================
 
 /// Trait for values stored in leaf nodes.
 pub trait LeafValue: Clone + Default + Send + Sync {

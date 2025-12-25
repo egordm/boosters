@@ -8,7 +8,7 @@
 //! - [`GBDTModel`] / [`GBLinearModel`] - High-level models with train/predict
 //! - [`GBDTConfig`] / [`GBLinearConfig`] - Configuration builders
 //! - [`Objective`] / [`Metric`] - Training objectives and evaluation metrics
-//! - [`Dataset`] / [`RowMatrix`] - Data handling
+//! - [`Dataset`] - Data handling
 //!
 //! # Training
 //!
@@ -25,7 +25,6 @@ pub use approx;
 
 pub mod compat;
 pub mod data;
-pub mod dataset;
 pub mod explainability;
 pub mod inference;
 pub mod model;
@@ -49,10 +48,9 @@ pub use model::gblinear::GBLinearConfig;
 pub use training::{Metric, MetricFn, Objective, ObjectiveFn};
 
 // Data types (for preparing training data)
-// Re-export the new unified Dataset type at crate root
-pub use dataset::{
+pub use data::{
     Column, Dataset, DatasetBuilder, DatasetError, DatasetSchema, FeatureMeta, FeatureType,
-    FeaturesView, SparseColumn, TargetsView,
+    FeaturesView, SparseColumn, TargetsView, WeightsView,
 };
 
 // Shared utilities

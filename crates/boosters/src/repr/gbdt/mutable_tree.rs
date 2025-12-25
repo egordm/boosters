@@ -2,8 +2,8 @@
 
 use super::categories::CategoriesStorage;
 use super::coefficients::LeafCoefficientsBuilder;
-use super::leaf::LeafValue;
-use super::node::SplitType;
+use super::types::LeafValue;
+use super::types::SplitType;
 use super::tree::Tree;
 use super::tree_view::TreeView;
 use super::NodeId;
@@ -440,7 +440,7 @@ mod tests {
     use super::*;
     use crate::repr::gbdt::ScalarLeaf;
     use crate::data::DataAccessor;
-    use crate::dataset::SamplesView;
+    use crate::data::SamplesView;
     use ndarray::Array2;
 
     #[test]

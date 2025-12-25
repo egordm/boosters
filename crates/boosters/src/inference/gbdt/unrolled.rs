@@ -616,7 +616,7 @@ mod tests {
 
     #[test]
     fn unrolled_layout_block_processing() {
-        use crate::dataset::SamplesView;
+        use crate::data::SamplesView;
 
         let mut builder = MutableTree::with_capacity(3);
         let root = builder.init_root();

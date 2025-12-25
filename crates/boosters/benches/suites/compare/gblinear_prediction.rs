@@ -10,8 +10,8 @@ use common::models::load_linear_model;
 #[cfg(feature = "bench-xgboost")]
 use common::models::bench_models_dir;
 
-use boosters::dataset::FeaturesView;
-use boosters::testing::data::random_features_array;
+use boosters::data::FeaturesView;
+use boosters::testing::synthetic_datasets::random_features_array;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 

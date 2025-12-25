@@ -22,7 +22,7 @@
 use ndarray::ArrayViewMut2;
 use rayon::prelude::*;
 
-use crate::dataset::FeaturesView;
+use crate::data::FeaturesView;
 use crate::repr::gblinear::LinearModel;
 use crate::training::Gradients;
 
@@ -362,7 +362,7 @@ fn soft_threshold(x: f32, threshold: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dataset::FeaturesView;
+    use crate::data::FeaturesView;
     use ndarray::{array, Array2};
     use super::super::selector::CyclicSelector;
 

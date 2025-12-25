@@ -12,8 +12,8 @@ use common::criterion_config::default_criterion;
 use common::matrix::THREAD_COUNTS;
 use common::threading::with_rayon_threads;
 
-use boosters::dataset::{TargetsView, WeightsView};
-use boosters::testing::data::synthetic_regression;
+use boosters::data::{TargetsView, WeightsView};
+use boosters::testing::synthetic_datasets::synthetic_regression;
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
 

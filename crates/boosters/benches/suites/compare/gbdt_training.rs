@@ -10,8 +10,8 @@ use common::criterion_config::default_criterion;
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{transpose_to_c_order, BinningConfig};
-use boosters::dataset::{Dataset, TargetsView, WeightsView};
-use boosters::testing::data::synthetic_regression;
+use boosters::data::{Dataset, TargetsView, WeightsView};
+use boosters::testing::synthetic_datasets::synthetic_regression;
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
 

@@ -3,7 +3,7 @@
 //! Focused on behavior and invariants (not default params or superficial shapes).
 
 use boosters::data::{transpose_to_c_order, BinnedDatasetBuilder, BinningConfig, GroupLayout, GroupStrategy};
-use boosters::dataset::{Dataset, TargetsView, WeightsView};
+use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::inference::gbdt::SimplePredictor;
 use boosters::model::gbdt::{GBDTConfig, GBDTModel};
 use boosters::repr::gbdt::{Forest, TreeView, SplitType};
@@ -172,7 +172,7 @@ fn trained_model_improves_over_base_score_on_medium_problem() {
 /// 4. Inference correctly handles categorical splits
 #[test]
 fn train_with_categorical_features_produces_categorical_splits() {
-    use boosters::dataset::{DatasetSchema, FeatureMeta};
+    use boosters::data::{DatasetSchema, FeatureMeta};
     
     // Create a dataset where a categorical feature is the only useful predictor.
     // 4 categories: 0, 1, 2, 3

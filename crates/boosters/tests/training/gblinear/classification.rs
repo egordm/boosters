@@ -5,7 +5,7 @@
 //! - Multiclass classification with softmax loss
 
 use super::{load_config, load_train_data, make_dataset};
-use boosters::dataset::{FeaturesView, TargetsView, WeightsView};
+use boosters::data::{FeaturesView, TargetsView, WeightsView};
 use boosters::training::{
     GBLinearParams, GBLinearTrainer, LogLoss, LogisticLoss, MulticlassLogLoss, SoftmaxLoss,
     Verbosity,

@@ -20,7 +20,7 @@
 //! - Gain computation involves differences of large sums that can lose precision in f32
 //! - Memory overhead is acceptable (histograms are small: typically 256 bins × features)
 
-use super::pool::FeatureMeta;
+use super::pool::HistFeatureMeta;
 use super::slices::HistogramFeatureIter;
 use crate::data::binned::FeatureView;
 use crate::utils::Parallelism;
@@ -75,7 +75,7 @@ impl HistogramBuilder {
         ordered_grad_hess: &[GradsTuple],
         indices: &[u32],
         bin_views: &[FeatureView<'_>],
-        feature_metas: &[FeatureMeta],
+        feature_metas: &[HistFeatureMeta],
     ) {
         debug_assert_eq!(ordered_grad_hess.len(), indices.len());
 
@@ -102,7 +102,7 @@ impl HistogramBuilder {
         ordered_grad_hess: &[GradsTuple],
         start_row: usize,
         bin_views: &[FeatureView<'_>],
-        feature_metas: &[FeatureMeta],
+        feature_metas: &[HistFeatureMeta],
     ) {
         let n_rows = ordered_grad_hess.len();
         let parallelism = self.suggest_parallelism(n_rows, feature_metas.len());
@@ -441,12 +441,12 @@ pub fn sum_histogram(histogram: &[HistogramBin]) -> (f64, f64) {
 mod tests {
     use super::*;
 
-    fn make_features(bin_counts: &[u32]) -> Vec<FeatureMeta> {
+    fn make_features(bin_counts: &[u32]) -> Vec<HistFeatureMeta> {
         let mut offset = 0;
         bin_counts
             .iter()
             .map(|&n_bins| {
-                let meta = FeatureMeta { offset, n_bins };
+                let meta = HistFeatureMeta { offset, n_bins };
                 offset += n_bins;
                 meta
             })

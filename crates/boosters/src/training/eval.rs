@@ -5,7 +5,7 @@
 
 use ndarray::{Array2, ArrayView2};
 
-use crate::dataset::{Dataset, TargetsView, WeightsView};
+use crate::data::{Dataset, TargetsView, WeightsView};
 use crate::inference::PredictionKind;
 
 use super::metrics::MetricFn;

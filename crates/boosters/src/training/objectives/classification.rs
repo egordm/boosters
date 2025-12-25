@@ -3,10 +3,10 @@
 use ndarray::{ArrayView2, ArrayViewMut2};
 
 use super::{ObjectiveFn, TargetSchema, TaskKind};
-use crate::dataset::TargetsView;
+use crate::data::TargetsView;
 use crate::inference::PredictionKind;
 use crate::training::GradsTuple;
-use crate::dataset::WeightsView;
+use crate::data::WeightsView;
 
 // =============================================================================
 // Logistic Loss
@@ -540,7 +540,7 @@ mod tests {
     use super::*;
     use approx::assert_abs_diff_eq;
     use crate::testing::DEFAULT_TOLERANCE;
-    use crate::dataset::WeightsView;
+    use crate::data::WeightsView;
     use ndarray::Array2;
 
     fn make_preds(n_outputs: usize, n_samples: usize, data: &[f32]) -> Array2<f32> {

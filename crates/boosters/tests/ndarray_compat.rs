@@ -5,7 +5,7 @@
 //! 2. Output shape conventions are correct: Array2 (n_groups, n_samples)
 //! 3. XGBoost compatibility is maintained
 
-use boosters::dataset::Dataset;
+use boosters::data::Dataset;
 use boosters::model::{GBDTModel, ModelMeta};
 use boosters::repr::gbdt::{Forest, ScalarLeaf};
 use boosters::scalar_tree;

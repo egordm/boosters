@@ -19,7 +19,7 @@ use common::criterion_config::default_criterion;
 
 use boosters::data::binned::{BinnedDatasetBuilder, BundlingConfig};
 use boosters::data::{transpose_to_c_order, BinningConfig};
-use boosters::dataset::{Dataset, TargetsView, WeightsView};
+use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
 

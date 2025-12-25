@@ -6,9 +6,9 @@ mod common;
 use common::criterion_config::default_criterion;
 
 use boosters::data::{binned::BinnedDatasetBuilder, BinningConfig};
-use boosters::dataset::{Dataset, FeaturesView, TargetsView, WeightsView};
+use boosters::data::{Dataset, FeaturesView, TargetsView, WeightsView};
 use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
-use boosters::testing::data::{select_rows, select_targets, split_indices, synthetic_regression};
+use boosters::testing::synthetic_datasets::{select_rows, select_targets, split_indices, synthetic_regression};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
 

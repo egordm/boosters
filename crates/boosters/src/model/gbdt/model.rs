@@ -5,7 +5,7 @@
 //! and [`config()`](GBDTModel::config).
 
 use crate::data::binned::BinnedDataset;
-use crate::dataset::{Dataset, TargetsView, WeightsView};
+use crate::data::{Dataset, TargetsView, WeightsView};
 use crate::explainability::{
     compute_forest_importance, ExplainError, FeatureImportance, ImportanceType, ShapValues,
     TreeExplainer,

@@ -7,9 +7,9 @@ use common::criterion_config::default_criterion;
 use common::models::load_boosters_model;
 use common::threading::with_rayon_threads;
 
-use boosters::dataset::FeaturesView;
+use boosters::data::FeaturesView;
 use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
-use boosters::testing::data::random_features_array;
+use boosters::testing::synthetic_datasets::random_features_array;
 use boosters::Parallelism;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};

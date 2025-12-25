@@ -15,7 +15,7 @@ use common::models::bench_models_dir;
 
 use boosters::compat::lightgbm::LgbModel;
 use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
-use boosters::testing::data::random_features_array;
+use boosters::testing::synthetic_datasets::random_features_array;
 use boosters::Parallelism;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};

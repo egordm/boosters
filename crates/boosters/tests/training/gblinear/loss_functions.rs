@@ -6,7 +6,7 @@
 
 use super::{load_test_data, load_train_data, make_dataset};
 use boosters::data::transpose_to_c_order;
-use boosters::dataset::{FeaturesView, TargetsView, WeightsView};
+use boosters::data::{FeaturesView, TargetsView, WeightsView};
 use boosters::training::{
     Accuracy, GBLinearParams, GBLinearTrainer, HingeLoss, LogLoss, LogisticLoss, MarginAccuracy,
     ObjectiveFn, PseudoHuberLoss, Rmse, SquaredLoss, Verbosity,

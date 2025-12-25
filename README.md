@@ -18,47 +18,55 @@ boosters is a gradient boosting implementation written from scratch in Rust, des
 ### Training a Model
 
 ```rust
-use boosters::model::{GBDTModel, gbdt::GBDTConfig};
-use boosters::data::{Dataset, RowMatrix};
-use boosters::training::{Objective, Metric};
+use boosters::data::{Dataset, BinningConfig, BinnedDatasetBuilder, TargetsView, WeightsView};
+use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism, TreeParams};
+use ndarray::Array2;
 
-// Prepare data
-let features = RowMatrix::from_vec(data, n_samples, n_features);
-let labels: Vec<f32> = /* your targets */;
+// Prepare feature-major data [n_features, n_samples]
+let features = Array2::<f32>::from_shape_vec((n_features, n_samples), data).unwrap();
+let labels = Array1::<f32>::from_vec(targets);
 
-// Create dataset with binned features for histogram-based training
-let dataset = Dataset::from_parts(features, labels.clone(), None);
+// Create binned dataset for histogram-based training
+let dataset = Dataset::new(features.view(), None, None);
+let binned = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+    .add_features(dataset.features(), Parallelism::Parallel)
+    .build()?;
 
 // Configure and train
 let config = GBDTConfig::builder()
-    .objective(Objective::squared_error())
-    .metric(Metric::rmse())
     .n_trees(100)
     .learning_rate(0.1)
+    .tree(TreeParams::depth_wise(6))
+    .objective(Objective::squared())
+    .metric(Metric::rmse())
     .build()?;
 
-let model = GBDTModel::train(&dataset, config)?;
+let targets = TargetsView::new(labels.view().insert_axis(ndarray::Axis(0)));
+let model = GBDTModel::train_binned(&binned, targets, WeightsView::None, &[], config, 1)?;
 
 // Predict
-let test_features = RowMatrix::from_vec(test_data, n_test, n_features);
-let predictions = model.predict(&test_features);  // ColMatrix<f32>
+let predictions = model.predict(&dataset, 1);
 ```
 
 ### Loading XGBoost Models
 
 ```rust
 use boosters::compat::xgboost::XgbModel;
-use boosters::inference::gbdt::Predictor;
-use boosters::data::RowMatrix;
+use boosters::inference::gbdt::{Predictor, StandardTraversal};
+use boosters::data::Dataset;
+use ndarray::Array2;
 
 // Load XGBoost JSON model
 let model = XgbModel::from_file("model.json")?;
 let forest = model.to_forest()?;
 
-// Use Predictor for efficient batch prediction
-let features = RowMatrix::from_vec(data, n_rows, n_features);
-let predictor = Predictor::new(&forest);
-let predictions = predictor.predict(&features);  // Batch prediction
+// Create predictor for efficient batch prediction
+let predictor = Predictor::<StandardTraversal>::new(&forest);
+
+// Predict on feature-major data [n_features, n_samples]
+let features = Array2::<f32>::from_shape_vec((n_features, n_samples), data).unwrap();
+let dataset = Dataset::new(features.view(), None, None);
+let predictions = predictor.predict(&dataset);
 ```
 
 ## Performance

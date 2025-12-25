@@ -15,7 +15,7 @@ use std::time::Instant;
 
 use boosters::data::binned::{BinnedDatasetBuilder, BundlingConfig};
 use boosters::data::BinningConfig;
-use boosters::dataset::{Dataset, TargetsView, WeightsView};
+use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism, TreeParams};
 use ndarray::{Array1, Array2};
 

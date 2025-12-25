@@ -7,8 +7,8 @@ use common::criterion_config::default_criterion;
 use common::threading::with_rayon_threads;
 
 use boosters::data::{binned::BinnedDatasetBuilder, transpose_to_c_order, BinningConfig};
-use boosters::dataset::{Dataset, TargetsView, WeightsView};
-use boosters::testing::data::{
+use boosters::data::{Dataset, TargetsView, WeightsView};
+use boosters::testing::synthetic_datasets::{
 	random_features_array, synthetic_binary, synthetic_multiclass, synthetic_regression,
 };
 use boosters::training::{

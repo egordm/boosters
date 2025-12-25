@@ -60,7 +60,7 @@ for round in 0..n_trees {
     if linear_leaves_enabled && round > 0 {
         // partitioner has row→leaf mapping from growth
         let rows_per_leaf = grower.partitioner();
-        linear_trainer.train(&mut tree, &col_matrix, rows_per_leaf, &gradients);
+        linear_trainer.train(&mut tree, &features_view, rows_per_leaf, &gradients);
     }
     
     let tree = tree.freeze();  // LeafCoefficients built here
@@ -102,17 +102,17 @@ impl LeafFeatureBuffer {
 }
 ```
 
-**Gather order**: Source is column-major (`ColMatrix`), so iterate features-first
+**Gather order**: Source is column-major (`FeaturesView`), so iterate features-first
 for cache-friendly reads. Output is also column-major for contiguous slices:
 
 ```rust
 impl LeafFeatureBuffer {
     /// Gather from column-major source into column-major buffer
-    /// Features-first iteration: cache-friendly read from ColMatrix
+    /// Features-first iteration: cache-friendly read from FeaturesView
     pub fn gather<S: AsRef<[f32]>>(
         &mut self,
         rows: &[u32],
-        col_matrix: &ColMatrix<f32, S>,
+        features_view: &FeaturesView<'_>,
         features: &[u32],
     ) {
         self.n_rows = rows.len();
@@ -122,7 +122,7 @@ impl LeafFeatureBuffer {
         for (feat_idx, &feat) in features.iter().enumerate() {
             let col_offset = feat_idx * self.max_rows;
             for (row_idx, &row) in rows.iter().enumerate() {
-                self.data[col_offset + row_idx] = col_matrix.get(row as usize, feat as usize);
+                self.data[col_offset + row_idx] = features_view.get(row as usize, feat as usize);
             }
         }
     }
@@ -332,7 +332,7 @@ impl LeafLinearTrainer {
     pub fn train<S: AsRef<[f32]>>(
         &mut self,
         tree: &mut MutableTree<ScalarLeaf>,
-        col_matrix: &ColMatrix<f32, S>,
+        features_view: &FeaturesView<'_>,
         partitioner: &RowPartitioner,
         gradients: &Gradients,
         output: usize,
@@ -343,7 +343,7 @@ impl LeafLinearTrainer {
             if rows.len() < self.config.min_samples { continue; }
             
             let features = self.select_features(tree, leaf_node);
-            self.feature_buffer.gather(rows, col_matrix, &features);
+            self.feature_buffer.gather(rows, features_view, &features);
             
             if let Some(coefs) = fit_leaf(
                 &mut self.solver,
@@ -384,7 +384,7 @@ impl LeafLinearTrainer {
     pub fn train_parallel<S: AsRef<[f32]> + Sync>(
         &self,
         tree: &MutableTree<ScalarLeaf>,
-        col_matrix: &ColMatrix<f32, S>,
+        features_view: &FeaturesView<'_>,
         partitioner: &RowPartitioner,
         gradients: &Gradients,
         output: usize,
@@ -401,7 +401,7 @@ impl LeafLinearTrainer {
                 if rows.len() < self.config.min_samples { return None; }
                 
                 let features = self.select_features(tree, leaf);
-                ctx.feature_buffer.gather(rows, col_matrix, &features);
+                ctx.feature_buffer.gather(rows, features_view, &features);
                 
                 let coefs = fit_leaf(&mut ctx.solver, ...);
                 Some((leaf, features.to_vec(), coefs.to_vec()))
@@ -544,9 +544,9 @@ code, refactor to LinearTree wrapper later.
 
 ## Design Decisions
 
-### DD-1: Use Existing ColMatrix
+### DD-1: Use Existing FeaturesView
 
-No new RawFeatureView. Caller has ColMatrix for GBLinear anyway. Pass it to
+No new RawFeatureView. Caller has FeaturesView for GBLinear anyway. Pass it to
 LeafLinearTrainer.
 
 ### DD-2: Reuse Grower's Partitioner
@@ -561,7 +561,7 @@ in `freeze()`, like CategoriesStorage.
 ### DD-4: Column-Major Buffer
 
 LeafFeatureBuffer uses column-major layout for contiguous feature slices. Gather
-features-first for cache-friendly ColMatrix reads.
+features-first for cache-friendly FeaturesView reads.
 
 ### DD-5: Fixed GBDT Gradients
 
@@ -628,3 +628,4 @@ apply to MutableTree after parallel phase (avoids mutable sharing).
 - **2025-12-18**: LightGBM loader completed — Parses `is_linear`, `leaf_const`,
   `leaf_features`, `leaf_coeff` fields. Predictions match exactly.
 - **2025-01-21**: Terminology update — standardized naming conventions
+- **2025-01-23**: Fixed `ColMatrix` → `FeaturesView` to match current data API

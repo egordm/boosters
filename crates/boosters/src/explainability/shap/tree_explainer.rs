@@ -3,7 +3,7 @@
 //! Implements the TreeSHAP algorithm from Lundberg et al. (2020):
 //! "From local explanations to global understanding with explainable AI for trees"
 
-use crate::dataset::FeaturesView;
+use crate::data::FeaturesView;
 use crate::explainability::shap::{PathState, ShapValues};
 use crate::explainability::ExplainError;
 use crate::repr::gbdt::TreeView;
@@ -212,7 +212,7 @@ impl<'a> TreeExplainer<'a> {
 /// Compute the depth of a tree.
 fn tree_depth<L>(tree: &Tree<L>, node: u32) -> usize
 where
-    L: crate::repr::gbdt::leaf::LeafValue,
+    L: crate::repr::gbdt::types::LeafValue,
 {
     if tree.is_leaf(node) {
         1

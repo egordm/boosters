@@ -1,53 +1,79 @@
-//! Data input abstractions for feature matrices.
+//! Data structures for feature matrices and datasets.
 //!
-//! This module provides data types for accessing feature data during
-//! tree traversal and training.
+//! This module provides the data layer for boosters, including:
 //!
-//! # Overview
+//! # User-Facing Types
 //!
-//! The core abstractions are:
+//! - [`Dataset`]: Main container for features, targets, and weights
+//! - [`DatasetBuilder`]: Fluent builder for complex dataset construction
+//! - [`FeaturesView`] / [`TargetsView`] / [`WeightsView`]: Read-only views
 //!
-//! - [`SampleAccessor`]: Access features for a single sample (row). Implemented by `&[f32]`.
-//! - [`DataAccessor`]: Access samples from a dataset (matrix). Implemented by view types.
+//! # Training-Specific Types
 //!
-//! # Storage Types
+//! - [`binned::BinnedDataset`]: Quantized feature data for histogram-based GBDT
+//! - [`BinningConfig`]: Configuration for feature quantization
 //!
-//! - [`FeaturesView`]: Feature-major view `[n_features, n_samples]` - features on rows
-//! - [`binned::BinnedDataset`]: Quantized feature data for GBDT training
+//! # Internal Types
 //!
-//! # ndarray Integration
+//! - [`SampleAccessor`]: Access features for a single sample (row)
+//! - [`DataAccessor`]: Access samples from a dataset (matrix)
 //!
-//! This module works with ndarray arrays directly. The wrapper type [`FeaturesView`]
-//! provides semantic clarity about which axis represents what.
+//! # Storage Layout
+//!
+//! Features are stored in **feature-major** layout: `[n_features, n_samples]`.
+//! This is optimal for training (histogram building, coordinate descent).
 //!
 //! # Missing Values
 //!
-//! Missing values are represented as `f32::NAN`. This is the modern standard
-//! used by XGBoost and other libraries.
-//!
-//! See RFC-0004 for design rationale, RFC-0021 for ndarray migration.
+//! Missing values are represented as `f32::NAN`.
 
 pub mod binned;
 mod accessor;
+mod column;
+mod dataset;
+mod error;
 mod ndarray;
+mod schema;
+mod views;
 
 #[cfg(feature = "io-parquet")]
 pub mod io;
 
+// =============================================================================
+// Core Dataset Types (user-facing)
+// =============================================================================
+
+pub use column::{Column, SparseColumn};
+pub use dataset::{Dataset, DatasetBuilder};
+pub use error::DatasetError;
+pub use schema::{DatasetSchema, FeatureMeta, FeatureType};
+pub use views::{FeaturesView, SamplesView, TargetsView, WeightsIter, WeightsView};
+
+// =============================================================================
+// Accessor Traits (internal)
+// =============================================================================
+
 pub use accessor::{DataAccessor, SampleAccessor};
+
+// =============================================================================
+// ndarray Utilities
+// =============================================================================
 
 pub use ndarray::{
     axis, init_predictions, init_predictions_into, transpose_to_c_order,
 };
 
+// =============================================================================
+// Binned Data Types (re-exports for convenience)
+// =============================================================================
 
-// Re-export binned types for convenience
 pub use binned::{
-    BinMapper, BinStorage, BinType, BinnedDataset, BinnedDatasetBuilder, BinningConfig,
-    BinningStrategy, BuildError, FeatureGroup, FeatureMeta, FeatureType, FeatureView,
+    BinMapper, BinStorage, BinType, BinnedDataset, BinnedDatasetBuilder, BinnedFeatureMeta,
+    BinningConfig, BinningStrategy, BuildError, FeatureGroup, FeatureView,
     GroupLayout, MissingType, BinnedSample,
 };
 
 // Internal types for tests/benchmarks
 #[doc(hidden)]
 pub use binned::{GroupSpec, GroupStrategy};
+

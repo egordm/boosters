@@ -530,14 +530,14 @@ impl GreedySplitter {
 mod tests {
     use super::*;
     use super::super::types::SplitType;
-    use crate::training::gbdt::histograms::{FeatureMeta, HistogramPool};
+    use crate::training::gbdt::histograms::{HistFeatureMeta, HistogramPool};
 
     fn make_pool(bin_counts: &[u32]) -> HistogramPool {
         let mut offset = 0;
-        let features: Vec<FeatureMeta> = bin_counts
+        let features: Vec<HistFeatureMeta> = bin_counts
             .iter()
             .map(|&n_bins| {
-                let meta = FeatureMeta { offset, n_bins };
+                let meta = HistFeatureMeta { offset, n_bins };
                 offset += n_bins;
                 meta
             })

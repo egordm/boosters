@@ -6,7 +6,7 @@
 use ndarray::Array2;
 
 use crate::data::init_predictions;
-use crate::dataset::{Dataset, FeaturesView};
+use crate::data::{Dataset, FeaturesView};
 use crate::repr::gblinear::LinearModel;
 use crate::training::eval;
 use crate::training::{

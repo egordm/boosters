@@ -40,7 +40,7 @@ mod regression;
 pub use classification::{HingeLoss, LambdaRankLoss, LogisticLoss, SoftmaxLoss};
 pub use regression::{AbsoluteLoss, PinballLoss, PoissonLoss, PseudoHuberLoss, SquaredLoss};
 
-use crate::dataset::{TargetsView, WeightsView};
+use crate::data::{TargetsView, WeightsView};
 use crate::inference::PredictionKind;
 use crate::training::GradsTuple;
 use ndarray::{ArrayView2, ArrayViewMut2};
@@ -394,7 +394,7 @@ impl ObjectiveFn for Objective {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dataset::{TargetsView, WeightsView};
+    use crate::data::{TargetsView, WeightsView};
     use ndarray::Array2;
 
     fn make_grad_hess_array(n_outputs: usize, n_samples: usize) -> Array2<GradsTuple> {

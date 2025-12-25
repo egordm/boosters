@@ -15,8 +15,8 @@ use crate::data::{DataAccessor, SampleAccessor};
 
 use super::categories::CategoriesStorage;
 use super::coefficients::LeafCoefficients;
-use super::leaf::LeafValue;
-use super::node::SplitType;
+use super::types::LeafValue;
+use super::types::SplitType;
 use super::tree_view::{validate_tree, TreeValidationError, TreeView};
 use super::NodeId;
 
@@ -242,7 +242,7 @@ impl<L: LeafValue> Tree<L> {
     ///
     /// ```ignore
     /// use boosters::repr::gbdt::{Tree, ScalarLeaf};
-    /// use boosters::dataset::SamplesView;
+    /// use boosters::data::SamplesView;
     /// use boosters::Parallelism;
     ///
     /// let tree: Tree<ScalarLeaf> = /* ... */;
@@ -380,7 +380,7 @@ impl<L: LeafValue> TreeView for Tree<L> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dataset::{FeaturesView, SamplesView};
+    use crate::data::{FeaturesView, SamplesView};
     use crate::repr::gbdt::mutable_tree::MutableTree;
     use crate::repr::gbdt::ScalarLeaf;
     use ndarray::{array, Array2};

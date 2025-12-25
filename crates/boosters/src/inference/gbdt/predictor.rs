@@ -42,7 +42,7 @@
 
 use crate::Parallelism;
 use crate::data::{axis, DataAccessor};
-use crate::dataset::{FeaturesView, SamplesView};
+use crate::data::{FeaturesView, SamplesView};
 use crate::repr::gbdt::{Forest, ScalarLeaf, TreeView};
 use ndarray::{Array2, ArrayViewMut2};
 

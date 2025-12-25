@@ -8,7 +8,7 @@
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
-use boosters::dataset::{Dataset, TargetsView, WeightsView};
+use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism, RegularizationParams, TreeParams};
 use ndarray::Array2;
 

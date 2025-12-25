@@ -1,9 +1,9 @@
 //! BinnedDataset - the main dataset structure.
 
 use crate::data::{DataAccessor, SampleAccessor};
-use crate::dataset::FeatureType;
+use crate::data::FeatureType;
 use super::bundling::{BundlePlan, FeatureLocation};
-use super::group::{FeatureGroup, FeatureMeta};
+use super::group::{FeatureGroup, BinnedFeatureMeta};
 use super::storage::{BinStorage, FeatureView, GroupLayout};
 
 /// The main binned dataset for GBDT training.
@@ -32,7 +32,7 @@ pub struct BinnedDataset {
     /// Number of rows (samples).
     n_rows: usize,
     /// Feature metadata indexed by global feature ID.
-    features: Box<[FeatureMeta]>,
+    features: Box<[BinnedFeatureMeta]>,
     /// Feature groups.
     groups: Vec<FeatureGroup>,
     /// Cumulative bin offsets across ALL features (for histogram indexing).
@@ -49,7 +49,7 @@ impl BinnedDataset {
     /// Typically constructed via `BinnedDatasetBuilder`.
     pub(crate) fn with_bundle_plan(
         n_rows: usize,
-        features: Vec<FeatureMeta>,
+        features: Vec<BinnedFeatureMeta>,
         groups: Vec<FeatureGroup>,
         bundle_plan: Option<BundlePlan>,
     ) -> Self {
@@ -108,13 +108,13 @@ impl BinnedDataset {
 
     /// Get feature metadata by global feature index.
     #[inline]
-    pub fn feature(&self, idx: usize) -> &FeatureMeta {
+    pub fn feature(&self, idx: usize) -> &BinnedFeatureMeta {
         &self.features[idx]
     }
 
     /// Iterate over feature metadata.
     #[inline]
-    pub fn iter_features(&self) -> impl Iterator<Item = &FeatureMeta> {
+    pub fn iter_features(&self) -> impl Iterator<Item = &BinnedFeatureMeta> {
         self.features.iter()
     }
 
@@ -569,8 +569,8 @@ mod tests {
         );
 
         let features = vec![
-            FeatureMeta::new(make_simple_mapper(4), 0, 0),
-            FeatureMeta::new(make_simple_mapper(4), 0, 1),
+            BinnedFeatureMeta::new(make_simple_mapper(4), 0, 0),
+            BinnedFeatureMeta::new(make_simple_mapper(4), 0, 1),
         ];
 
         let dataset = BinnedDataset::with_bundle_plan(4, features, vec![group], None);
@@ -620,9 +620,9 @@ mod tests {
         );
 
         let features = vec![
-            FeatureMeta::new(make_simple_mapper(4), 0, 0),   // feature 0 -> group 0, idx 0
-            FeatureMeta::new(make_simple_mapper(4), 0, 1),   // feature 1 -> group 0, idx 1
-            FeatureMeta::new(make_simple_mapper(16), 1, 0),  // feature 2 -> group 1, idx 0
+            BinnedFeatureMeta::new(make_simple_mapper(4), 0, 0),   // feature 0 -> group 0, idx 0
+            BinnedFeatureMeta::new(make_simple_mapper(4), 0, 1),   // feature 1 -> group 0, idx 1
+            BinnedFeatureMeta::new(make_simple_mapper(16), 1, 0),  // feature 2 -> group 1, idx 0
         ];
 
         let dataset = BinnedDataset::with_bundle_plan(3, features, vec![group0, group1], None);
@@ -675,8 +675,8 @@ mod tests {
         );
 
         let features = vec![
-            FeatureMeta::new(make_simple_mapper(4), 0, 0),
-            FeatureMeta::new(make_simple_mapper(16), 0, 1),
+            BinnedFeatureMeta::new(make_simple_mapper(4), 0, 0),
+            BinnedFeatureMeta::new(make_simple_mapper(16), 0, 1),
         ];
 
         let dataset = BinnedDataset::with_bundle_plan(4, features, vec![group], None);

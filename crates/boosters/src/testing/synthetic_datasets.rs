@@ -8,7 +8,7 @@
 //! Use [`SyntheticDataset`] and the `synthetic_*` functions for the cleanest API:
 //!
 //! ```
-//! use boosters::testing::data::{synthetic_regression, synthetic_binary};
+//! use boosters::testing::synthetic_datasets::{synthetic_regression, synthetic_binary};
 //!
 //! let dataset = synthetic_regression(1000, 10, 42, 0.05);
 //! let binned = dataset.to_binned(256);
@@ -25,7 +25,7 @@ use rand::prelude::*;
 use ndarray::{Array1, Array2, ArrayView2};
 
 use crate::data::{binned::BinnedDataset, BinnedDatasetBuilder, BinningConfig, transpose_to_c_order};
-use crate::dataset::{Dataset, FeaturesView};
+use crate::data::{Dataset, FeaturesView};
 use crate::utils::Parallelism;
 
 // =============================================================================
@@ -107,7 +107,7 @@ impl SyntheticDataset {
 /// # Example
 ///
 /// ```
-/// use boosters::testing::data::synthetic_regression;
+/// use boosters::testing::synthetic_datasets::synthetic_regression;
 ///
 /// let dataset = synthetic_regression(1000, 10, 42, 0.05);
 /// let binned = dataset.to_binned(256);

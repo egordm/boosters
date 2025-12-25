@@ -5,7 +5,7 @@
 
 use boosters::data::binned::{BinnedDatasetBuilder, GroupLayout, GroupStrategy};
 use boosters::data::BinningConfig;
-use boosters::dataset::{Dataset, TargetsView, WeightsView};
+use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
 use ndarray::Array2;

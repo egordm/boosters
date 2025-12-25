@@ -17,10 +17,10 @@ use std::time::Instant;
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
-use boosters::dataset::{Dataset, TargetsView, WeightsView};
+use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::inference::gbdt::SimplePredictor;
 use boosters::repr::gbdt::Forest;
-use boosters::testing::data::synthetic_regression;
+use boosters::testing::synthetic_datasets::synthetic_regression;
 use boosters::training::{
     GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, RowSamplingParams,
     SquaredLoss,

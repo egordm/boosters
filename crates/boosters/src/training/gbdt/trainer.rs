@@ -4,7 +4,7 @@
 //! Use [`GBDTTrainer::train`] to train a forest from a binned dataset.
 
 use crate::data::{init_predictions, BinnedDataset};
-use crate::dataset::{TargetsView, WeightsView};
+use crate::data::{TargetsView, WeightsView};
 use crate::training::callback::{EarlyStopping, EarlyStopAction};
 use crate::training::eval::{self, EvalSet};
 use crate::training::logger::TrainingLogger;
@@ -396,9 +396,9 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
 mod tests {
     use super::*;
     use crate::data::{
-        BinMapper, BinStorage, BinnedDataset, FeatureGroup, FeatureMeta, GroupLayout, MissingType,
+        BinMapper, BinStorage, BinnedDataset, FeatureGroup, BinnedFeatureMeta, GroupLayout, MissingType,
     };
-    use crate::dataset::WeightsView;
+    use crate::data::WeightsView;
     use crate::training::metrics::Rmse;
     use crate::training::objectives::SquaredLoss;
     use ndarray::arr2;
@@ -424,8 +424,8 @@ mod tests {
         let group = FeatureGroup::new(vec![0, 1], GroupLayout::RowMajor, 8, storage, vec![4, 3]);
 
         let features = vec![
-            FeatureMeta::new(make_simple_mapper(4), 0, 0),
-            FeatureMeta::new(make_simple_mapper(3), 0, 1),
+            BinnedFeatureMeta::new(make_simple_mapper(4), 0, 0),
+            BinnedFeatureMeta::new(make_simple_mapper(3), 0, 1),
         ];
 
         BinnedDataset::with_bundle_plan(8, features, vec![group], None)

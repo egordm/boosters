@@ -8,7 +8,7 @@
 use super::{load_config, load_test_data, load_train_data, make_dataset, pearson_correlation, TEST_CASES_DIR};
 use approx::assert_relative_eq;
 use boosters::data::transpose_to_c_order;
-use boosters::dataset::FeaturesView;
+use boosters::data::FeaturesView;
 use boosters::training::{GBLinearParams, GBLinearTrainer, PinballLoss, Rmse, Verbosity};
 use rstest::rstest;
 use serde::Deserialize;

@@ -5,8 +5,8 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
-use boosters::dataset::Dataset;
-use boosters::testing::data::synthetic_regression;
+use boosters::data::Dataset;
+use boosters::testing::synthetic_datasets::synthetic_regression;
 use boosters::training::{GBLinearParams, GBLinearTrainer, MulticlassLogLoss, Rmse, SoftmaxLoss, SquaredLoss, Verbosity};
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};

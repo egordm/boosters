@@ -10,7 +10,7 @@
 use super::{load_config, load_train_data, load_xgb_weights, make_dataset};
 use approx::assert_relative_eq;
 use boosters::data::transpose_to_c_order;
-use boosters::dataset::{FeaturesView, TargetsView, WeightsView};
+use boosters::data::{FeaturesView, TargetsView, WeightsView};
 use boosters::training::{GBLinearParams, GBLinearTrainer, Rmse, SquaredLoss, Verbosity};
 use ndarray::Array2;
 use rstest::rstest;

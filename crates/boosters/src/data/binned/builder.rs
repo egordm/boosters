@@ -5,13 +5,13 @@ use bon::Builder;
 use super::bundling::{create_bundle_plan, BundlePlan, BundlingConfig};
 use super::dataset::BinnedDataset;
 use super::feature_analysis::FeatureInfo;
-use super::group::{FeatureGroup, FeatureMeta};
+use super::group::{FeatureGroup, BinnedFeatureMeta};
 use super::storage::{BinStorage, BinType, GroupLayout};
 use super::MissingType;
 use super::BinMapper;
 
 use crate::data::binned::BundlingFeatures;
-use crate::dataset::FeaturesView;
+use crate::data::FeaturesView;
 use crate::utils::Parallelism;
 
 // =============================================================================
@@ -208,7 +208,7 @@ impl BundlingFeatures for FeatureBinAccessor<'_> {
 ///
 /// Building from raw array (no schema):
 /// ```ignore
-/// use boosters::dataset::FeaturesView;
+/// use boosters::data::FeaturesView;
 /// use ndarray::array;
 ///
 /// let features = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
@@ -266,7 +266,7 @@ impl BinnedDatasetBuilder {
     ///
     /// ```ignore
     /// use boosters::data::{BinnedDatasetBuilder, BinningConfig};
-    /// use boosters::dataset::{Dataset, FeaturesView};
+    /// use boosters::data::{Dataset, FeaturesView};
     /// use boosters::Parallelism;
     /// use ndarray::array;
     ///
@@ -709,11 +709,11 @@ impl BinnedDatasetBuilder {
         &self,
         n_rows: usize,
         specs: &[GroupSpec],
-    ) -> Result<(Vec<FeatureGroup>, Vec<FeatureMeta>), BuildError> {
+    ) -> Result<(Vec<FeatureGroup>, Vec<BinnedFeatureMeta>), BuildError> {
         let n_features = self.features.len();
 
         // Pre-allocate feature metadata (will be filled in order)
-        let mut feature_metas: Vec<Option<FeatureMeta>> = vec![None; n_features];
+        let mut feature_metas: Vec<Option<BinnedFeatureMeta>> = vec![None; n_features];
         let mut groups = Vec::with_capacity(specs.len());
 
         for (group_idx, spec) in specs.iter().enumerate() {
@@ -752,7 +752,7 @@ impl BinnedDatasetBuilder {
             // Create feature metadata
             for (idx_in_group, &feature_idx) in spec.features.iter().enumerate() {
                 let f = &self.features[feature_idx];
-                let mut meta = FeatureMeta::new(
+                let mut meta = BinnedFeatureMeta::new(
                     f.mapper.clone(),
                     group_idx as u32,
                     idx_in_group as u32,
@@ -765,7 +765,7 @@ impl BinnedDatasetBuilder {
         }
 
         // Unwrap all feature metadata (should all be Some now)
-        let features: Vec<FeatureMeta> = feature_metas
+        let features: Vec<BinnedFeatureMeta> = feature_metas
             .into_iter()
             .enumerate()
             .map(|(i, opt)| opt.unwrap_or_else(|| panic!("Feature {} not assigned to any group", i)))
@@ -1144,7 +1144,7 @@ mod tests {
     #[test]
     fn test_add_features_with_schema() {
         use ndarray::array;
-        use crate::dataset::DatasetSchema;
+        use crate::data::DatasetSchema;
 
         // Create feature-major data: 2 features, 3 samples
         let feature_data = array![[1.0f32, 2.0, 3.0], [4.0, 5.0, 6.0]];

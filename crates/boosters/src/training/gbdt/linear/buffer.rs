@@ -14,7 +14,7 @@ use crate::data::{DataAccessor, SampleAccessor};
 /// # Example
 ///
 /// ```ignore
-/// use boosters::dataset::FeaturesView;
+/// use boosters::data::FeaturesView;
 ///
 /// let mut buffer = LeafFeatureBuffer::new(1000, 10);
 ///
@@ -159,7 +159,7 @@ impl LeafFeatureBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dataset::FeaturesView;
+    use crate::data::FeaturesView;
 
     #[test]
     fn test_leaf_buffer_gather() {

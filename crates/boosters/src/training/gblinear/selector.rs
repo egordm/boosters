@@ -24,7 +24,7 @@
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 
-use crate::dataset::FeaturesView;
+use crate::data::FeaturesView;
 use crate::repr::gblinear::LinearModel;
 use crate::training::Gradients;
 
@@ -814,7 +814,7 @@ mod tests {
 
     #[test]
     fn greedy_selector_with_setup() {
-        use crate::dataset::FeaturesView;
+        use crate::data::FeaturesView;
         use crate::repr::gblinear::LinearModel;
         use crate::training::Gradients;
 
@@ -873,7 +873,7 @@ mod tests {
 
     #[test]
     fn thrifty_selector_with_setup() {
-        use crate::dataset::FeaturesView;
+        use crate::data::FeaturesView;
         use crate::repr::gblinear::LinearModel;
         use crate::training::Gradients;
 

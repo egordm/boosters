@@ -2,7 +2,7 @@
 
 use ndarray::{s, Array2, ArrayView1, ArrayViewMut2};
 
-use crate::dataset::FeaturesView;
+use crate::data::FeaturesView;
 
 /// Linear booster model (weights + bias).
 ///

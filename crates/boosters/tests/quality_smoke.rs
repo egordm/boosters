@@ -1,7 +1,7 @@
 use boosters::data::{binned::BinnedDatasetBuilder, transpose_to_c_order, BinningConfig};
-use boosters::dataset::{Dataset, TargetsView, WeightsView};
+use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::model::gbdt::{GBDTConfig, GBDTModel, RegularizationParams, TreeParams};
-use boosters::testing::data::{
+use boosters::testing::synthetic_datasets::{
 	random_features_array, split_indices, synthetic_binary, synthetic_multiclass,
 	synthetic_regression,
 };

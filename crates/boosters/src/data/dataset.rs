@@ -26,7 +26,7 @@ use super::views::{FeaturesView, TargetsView, WeightsView};
 /// # Example
 ///
 /// ```
-/// use boosters::dataset::Dataset;
+/// use boosters::data::Dataset;
 /// use ndarray::array;
 ///
 /// // Feature-major format: 2 features, 3 samples
@@ -73,7 +73,7 @@ impl Dataset {
     /// # Example
     ///
     /// ```
-    /// use boosters::dataset::Dataset;
+    /// use boosters::data::Dataset;
     /// use ndarray::array;
     ///
     /// // Training: features with targets
@@ -239,7 +239,7 @@ impl Dataset {
 /// # Example
 ///
 /// ```
-/// use boosters::dataset::{DatasetBuilder, FeatureType};
+/// use boosters::data::{DatasetBuilder, FeatureType};
 /// use ndarray::array;
 ///
 /// let ds = DatasetBuilder::new()
@@ -445,7 +445,7 @@ impl DatasetBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dataset::FeatureType;
+    use crate::data::FeatureType;
     use ndarray::array;
 
     #[test]

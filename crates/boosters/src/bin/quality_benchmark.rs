@@ -47,9 +47,9 @@ use std::path::{Path, PathBuf};
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
-use boosters::dataset::{Dataset, TargetsView, WeightsView};
+use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::model::gbdt::{GBDTConfig, GBDTModel, TreeParams};
-use boosters::testing::data::{
+use boosters::testing::synthetic_datasets::{
 	random_features_array, split_indices, synthetic_binary, synthetic_multiclass,
 	synthetic_regression,
 };

@@ -8,8 +8,8 @@ mod common;
 use common::criterion_config::default_criterion;
 
 use boosters::data::{binned::BinnedDatasetBuilder, BinningConfig};
-use boosters::dataset::{Dataset, TargetsView, WeightsView};
-use boosters::testing::data::{select_rows, select_targets, split_indices, synthetic_regression};
+use boosters::data::{Dataset, TargetsView, WeightsView};
+use boosters::testing::synthetic_datasets::{select_rows, select_targets, split_indices, synthetic_regression};
 use boosters::training::{
     GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, LinearLeafConfig, Rmse, SquaredLoss,
 };

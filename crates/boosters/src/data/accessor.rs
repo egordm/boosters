@@ -31,7 +31,7 @@
 //! }
 //! ```
 
-use crate::dataset::FeatureType;
+use crate::data::FeatureType;
 
 // ============================================================================
 // SampleAccessor Trait
@@ -129,8 +129,8 @@ impl SampleAccessor for ndarray::ArrayView1<'_, f32> {
 ///
 /// # Implementations
 ///
-/// - [`SamplesView`](crate::dataset::SamplesView): Sample-major `[n_samples, n_features]`
-/// - [`FeaturesView`](crate::dataset::FeaturesView): Feature-major `[n_features, n_samples]`
+/// - [`SamplesView`](crate::data::SamplesView): Sample-major `[n_samples, n_features]`
+/// - [`FeaturesView`](crate::data::FeaturesView): Feature-major `[n_features, n_samples]`
 /// - [`BinnedDataset`](crate::data::binned::BinnedDataset): Binned data with midpoint conversion
 ///
 /// # Feature Types

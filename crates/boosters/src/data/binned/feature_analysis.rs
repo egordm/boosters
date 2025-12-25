@@ -9,7 +9,7 @@
 
 use rayon::prelude::*;
 
-use crate::dataset::FeaturesView;
+use crate::data::FeaturesView;
 
 /// Metadata about a feature determined during analysis.
 #[derive(Clone, Debug, PartialEq)]
@@ -237,7 +237,7 @@ pub fn analyze_features_sequential(features: FeaturesView<'_>) -> Vec<FeatureInf
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dataset::FeaturesView;
+    use crate::data::FeaturesView;
 
     /// Helper to create FeaturesView from feature-major data
     fn make_features(data: &[f32], n_samples: usize, n_features: usize) -> FeaturesView<'_> {

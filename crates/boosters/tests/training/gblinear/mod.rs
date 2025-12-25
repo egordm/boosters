@@ -22,7 +22,7 @@ mod regression;
 mod selectors;
 
 use boosters::data::transpose_to_c_order;
-use boosters::dataset::{TargetsView, WeightsView};
+use boosters::data::{TargetsView, WeightsView};
 use boosters::Dataset;
 use boosters::training::Rmse;
 use ndarray::{Array2, ArrayView2};

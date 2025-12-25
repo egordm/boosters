@@ -145,7 +145,7 @@ pub fn init_predictions_into(base_scores: &[f32], predictions: &mut Array2<f32>)
 mod tests {
     use super::*;
     use crate::data::DataAccessor;
-    use crate::dataset::{FeaturesView, SamplesView};
+    use crate::data::{FeaturesView, SamplesView};
     use ndarray::{arr2, array};
 
     #[test]

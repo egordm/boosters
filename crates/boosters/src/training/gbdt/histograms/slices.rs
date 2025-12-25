@@ -5,7 +5,7 @@
 //! histogram region. The invariants (non-overlapping regions, bounds checking)
 //! are enforced here so callers can iterate safely.
 
-use super::pool::FeatureMeta;
+use super::pool::HistFeatureMeta;
 use super::HistogramBin;
 
 use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
@@ -25,7 +25,7 @@ impl HistogramFeatureIter {
     ///
     /// In debug builds, validates that all feature regions are disjoint and in-bounds.
     #[inline]
-    pub fn new(histogram: &mut [HistogramBin], _feature_metas: &[FeatureMeta]) -> Self {
+    pub fn new(histogram: &mut [HistogramBin], _feature_metas: &[HistFeatureMeta]) -> Self {
         let this = Self {
             hist_addr: histogram.as_mut_ptr() as usize,
             hist_len: histogram.len(),
@@ -39,7 +39,7 @@ impl HistogramFeatureIter {
 
     /// Iterate over features sequentially, calling `f` for each feature's histogram slice.
     #[inline]
-    pub fn for_each_mut<F>(&self, feature_metas: &[FeatureMeta], mut f: F)
+    pub fn for_each_mut<F>(&self, feature_metas: &[HistFeatureMeta], mut f: F)
     where
         F: FnMut(usize, &mut [HistogramBin]),
     {
@@ -52,10 +52,10 @@ impl HistogramFeatureIter {
     ///
     /// # Safety invariant
     ///
-    /// Each feature's slice is disjoint (enforced by `FeatureMeta` offsets), so
+    /// Each feature's slice is disjoint (enforced by `HistFeatureMeta` offsets), so
     /// parallel mutable access is safe.
     #[inline]
-    pub fn par_for_each_mut<F>(&self, feature_metas: &[FeatureMeta], f: F)
+    pub fn par_for_each_mut<F>(&self, feature_metas: &[HistFeatureMeta], f: F)
     where
         F: Fn(usize, &mut [HistogramBin]) + Sync + Send,
     {
@@ -69,7 +69,7 @@ impl HistogramFeatureIter {
 
     /// Get a mutable slice for a single feature's histogram region.
     #[inline]
-    fn with_feature_slice_mut<F, R>(&self, meta: &FeatureMeta, f: F) -> R
+    fn with_feature_slice_mut<F, R>(&self, meta: &HistFeatureMeta, f: F) -> R
     where
         F: FnOnce(&mut [HistogramBin]) -> R,
     {
@@ -89,7 +89,7 @@ impl HistogramFeatureIter {
     }
 
     #[cfg(debug_assertions)]
-    fn debug_validate_feature_metas(&self, feature_metas: &[FeatureMeta]) {
+    fn debug_validate_feature_metas(&self, feature_metas: &[HistFeatureMeta]) {
         let mut regions: Vec<(usize, usize)> = Vec::with_capacity(feature_metas.len());
         for meta in feature_metas {
             let start = meta.offset as usize;
@@ -114,12 +114,12 @@ impl HistogramFeatureIter {
 mod tests {
     use super::*;
 
-    fn make_features(bin_counts: &[u32]) -> Vec<FeatureMeta> {
+    fn make_features(bin_counts: &[u32]) -> Vec<HistFeatureMeta> {
         let mut offset = 0;
         bin_counts
             .iter()
             .map(|&n_bins| {
-                let meta = FeatureMeta { offset, n_bins };
+                let meta = HistFeatureMeta { offset, n_bins };
                 offset += n_bins;
                 meta
             })

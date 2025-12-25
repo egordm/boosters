@@ -276,9 +276,13 @@ impl FeatureGroup {
     }
 }
 
-/// Metadata for a single feature.
+/// Metadata for a single binned feature.
+///
+/// This contains binning information (BinMapper) and group assignment
+/// for use with BinnedDataset. For simple feature metadata (name + type)
+/// used with Dataset, see [`crate::data::BinnedFeatureMeta`].
 #[derive(Clone, Debug)]
-pub struct FeatureMeta {
+pub struct BinnedFeatureMeta {
     /// Feature name (optional).
     pub name: Option<String>,
     /// Bin mapper for this feature.
@@ -289,7 +293,7 @@ pub struct FeatureMeta {
     pub index_in_group: u32,
 }
 
-impl FeatureMeta {
+impl BinnedFeatureMeta {
     /// Create new feature metadata.
     pub fn new(
         bin_mapper: BinMapper,
@@ -430,7 +434,7 @@ mod tests {
     #[test]
     fn test_feature_meta() {
         let mapper = make_simple_mapper(4);
-        let meta = FeatureMeta::new(mapper, 0, 2)
+        let meta = BinnedFeatureMeta::new(mapper, 0, 2)
             .with_name("feature_x");
 
         assert_eq!(meta.name, Some("feature_x".to_string()));

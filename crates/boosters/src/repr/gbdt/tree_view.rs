@@ -8,8 +8,8 @@
 use crate::data::SampleAccessor;
 
 use super::categories::{float_to_category, CategoriesStorage};
-use super::leaf::LeafValue;
-use super::node::SplitType;
+use super::types::LeafValue;
+use super::types::SplitType;
 use super::NodeId;
 
 // ============================================================================
@@ -303,7 +303,7 @@ pub fn validate_tree<T: TreeView>(tree: &T) -> Result<(), TreeValidationError> {
 mod tests {
     use super::*;
     use crate::repr::gbdt::coefficients::LeafCoefficients;
-    use crate::repr::gbdt::node::SplitType;
+    use crate::repr::gbdt::types::SplitType;
     use crate::repr::gbdt::{ScalarLeaf, Tree};
 
     #[test]

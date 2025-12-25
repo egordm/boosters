@@ -7,7 +7,7 @@
 use ndarray::{ArrayView1, ArrayView2, ArrayViewMut2};
 
 use super::{ObjectiveFn, TargetSchema, TaskKind};
-use crate::dataset::{TargetsView, WeightsView};
+use crate::data::{TargetsView, WeightsView};
 use crate::inference::PredictionKind;
 use crate::training::GradsTuple;
 
@@ -502,7 +502,7 @@ fn compute_weighted_quantile(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dataset::{TargetsView, WeightsView};
+    use crate::data::{TargetsView, WeightsView};
     use ndarray::Array2;
 
     fn make_preds(n_outputs: usize, n_samples: usize, data: &[f32]) -> Array2<f32> {

@@ -13,7 +13,7 @@
 //! See RFC-0017 for detailed design rationale.
 
 use super::FeatureInfo;
-use crate::dataset::FeaturesView;
+use crate::data::FeaturesView;
 use fixedbitset::FixedBitSet;
 use rand::prelude::*;
 use rand::SeedableRng;
@@ -816,7 +816,7 @@ pub fn create_bundle_plan<F: BundlingFeatures>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dataset::FeaturesView;
+    use crate::data::FeaturesView;
     use ndarray::array;
 
     #[test]

@@ -3,7 +3,7 @@
 //! SHAP values for linear models have a closed-form solution:
 //! shap[i] = weight[i] * (x[i] - mean[i])
 
-use crate::dataset::FeaturesView;
+use crate::data::FeaturesView;
 use crate::explainability::shap::ShapValues;
 use crate::explainability::ExplainError;
 use crate::repr::gblinear::LinearModel;

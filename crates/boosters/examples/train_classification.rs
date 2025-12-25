@@ -19,7 +19,7 @@
 
 use boosters::data::BinningConfig;
 use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::dataset::{Dataset, TargetsView, WeightsView};
+use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism, TreeParams};
 use ndarray::{Array1, Array2, ArrayView1};
 

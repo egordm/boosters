@@ -48,7 +48,7 @@ pub use classification::{Accuracy, Auc, LogLoss, MarginAccuracy, MulticlassAccur
 use ndarray::ArrayView2;
 pub use regression::{HuberMetric, Mae, Mape, PoissonDeviance, QuantileMetric, Rmse};
 
-use crate::dataset::{TargetsView, WeightsView};
+use crate::data::{TargetsView, WeightsView};
 use crate::inference::PredictionKind;
 
 // =============================================================================

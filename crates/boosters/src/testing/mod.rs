@@ -45,7 +45,7 @@ mod slices;
 mod stats;
 mod tree;
 
-pub mod data;
+pub mod synthetic_datasets;
 
 #[cfg(feature = "xgboost-compat")]
 mod cases;

@@ -11,9 +11,9 @@ use common::models::load_boosters_model;
 #[cfg(any(feature = "bench-xgboost", feature = "bench-lightgbm"))]
 use common::models::bench_models_dir;
 
-use boosters::dataset::FeaturesView;
+use boosters::data::FeaturesView;
 use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
-use boosters::testing::data::random_features_array;
+use boosters::testing::synthetic_datasets::random_features_array;
 use boosters::Parallelism;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};

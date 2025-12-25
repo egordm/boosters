@@ -8,8 +8,8 @@ mod common;
 use common::criterion_config::default_criterion;
 
 use boosters::data::transpose_to_c_order;
-use boosters::dataset::Dataset;
-use boosters::testing::data::synthetic_regression;
+use boosters::data::Dataset;
+use boosters::testing::synthetic_datasets::synthetic_regression;
 use boosters::training::{GBLinearParams, GBLinearTrainer, Rmse, SquaredLoss, Verbosity};
 
 use ndarray::ArrayView2;

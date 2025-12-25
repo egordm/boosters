@@ -308,7 +308,7 @@ impl<'a> std::fmt::Debug for TargetsView<'a> {
 /// # Example
 ///
 /// ```ignore
-/// use boosters::dataset::WeightsView;
+/// use boosters::data::WeightsView;
 /// use ndarray::array;
 ///
 /// // No weights (all 1.0)
