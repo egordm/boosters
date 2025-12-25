@@ -10,6 +10,7 @@ mod error;
 mod metrics;
 mod model;
 mod objectives;
+mod threading;
 
 use pyo3::prelude::*;
 use pyo3_stub_gen::define_stub_info_gatherer;
