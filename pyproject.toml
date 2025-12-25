@@ -25,6 +25,7 @@ dev = [
     "poethepoet>=0.31.0",
     "pyproject-fmt>=2.0",
     "nbmake>=1.5",
+    "maturin>=1.0",
     "microsoft-python-type-stubs",
 ]
 
