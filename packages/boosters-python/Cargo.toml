@@ -6,9 +6,13 @@ license = "MIT"
 publish = false
 
 [lib]
-name = "boosters_python"
+name = "_boosters_rs"
 crate-type = ["cdylib"]
 
 [dependencies]
+boosters = { path = "../../crates/boosters" }
 pyo3 = { version = "0.22", features = ["extension-module"] }
+numpy = "0.22"
+ndarray = "0.16"
+thiserror = "2"
 
