@@ -983,22 +983,23 @@ to avoid duplication across `GBDTRegressor`, `GBDTClassifier`, `GBLinearRegresso
 
 **RFC Section**: RFC-0014 "sklearn Integration"  
 **Effort**: M (2-3h)
+**Status**: ✅ Complete (commit 424bea4)
 
 **Description**: Implement sklearn-compatible regressor.
 
 **Tasks**:
 
-- [ ] 5.1.1 Create `python/boosters/sklearn.py` module
-- [ ] 5.1.2 Create `python/boosters/_sklearn_base.py` with shared kwargs→config conversion
-- [ ] 5.1.3 Implement `GBDTRegressor(BaseEstimator, RegressorMixin)`:
+- [x] 5.1.1 Create `python/boosters/sklearn.py` module
+- [x] 5.1.2 Create `python/boosters/_sklearn_base.py` with shared kwargs→config conversion
+- [x] 5.1.3 Implement `GBDTRegressor(BaseEstimator, RegressorMixin)`:
   - Flat kwargs: `max_depth`, `n_leaves`, `learning_rate`, etc.
   - Internal: Create `GBDTConfig` from kwargs
-- [ ] 5.1.4 Implement `fit(X, y, eval_set=None, early_stopping_rounds=None)`
-- [ ] 5.1.5 Implement `predict(X)`
-- [ ] 5.1.6 Implement `get_params()` / `set_params()` for sklearn compat
-- [ ] 5.1.7 Add `feature_importances_` property
-- [ ] 5.1.8 Add sklearn parameter mapping table from RFC
-- [ ] 5.1.9 Add tests for kwargs→GBDTConfig conversion edge cases:
+- [x] 5.1.4 Implement `fit(X, y, eval_set=None, early_stopping_rounds=None)`
+- [x] 5.1.5 Implement `predict(X)`
+- [x] 5.1.6 Implement `get_params()` / `set_params()` for sklearn compat
+- [x] 5.1.7 Add `feature_importances_` property
+- [x] 5.1.8 Add sklearn parameter mapping table from RFC
+- [x] 5.1.9 Add tests for kwargs→GBDTConfig conversion edge cases:
   - Default values match RFC defaults
   - Invalid kwargs raise ValueError
   - Nested config options (e.g., tree config) are correctly mapped
@@ -1025,25 +1026,28 @@ to avoid duplication across `GBDTRegressor`, `GBDTClassifier`, `GBLinearRegresso
 
 **RFC Section**: RFC-0014 "sklearn Integration"  
 **Effort**: M (2-3h)
+**Status**: ✅ Complete (commit 424bea4)
 
 **Description**: Implement sklearn-compatible classifier.
 
 **Tasks**:
 
-- [ ] 5.2.1 Implement `GBDTClassifier(BaseEstimator, ClassifierMixin)`:
+- [x] 5.2.1 Implement `GBDTClassifier(BaseEstimator, ClassifierMixin)`:
   - Auto-infer `objective` from label cardinality
   - Binary: `LogisticLoss()`
   - Multiclass: `SoftmaxLoss(n_classes=k)`
-- [ ] 5.2.2 Implement `fit(X, y)` with label encoding
-- [ ] 5.2.3 Implement `predict(X)` returning class labels
-- [ ] 5.2.4 Implement `predict_proba(X)` returning probabilities
-- [ ] 5.2.5 Add `classes_` property
+- [x] 5.2.2 Implement `fit(X, y)` with label encoding
+- [x] 5.2.3 Implement `predict(X)` returning class labels
+- [x] 5.2.4 Implement `predict_proba(X)` returning probabilities
+- [x] 5.2.5 Add `classes_` property
 
 **Definition of Done**:
+
 - Binary and multiclass classification work
 - Probability outputs correct
 
 **Testing Criteria**:
+
 - `check_estimator(GBDTClassifier())` passes
 - Binary classification works on Iris subset
 - Multiclass works on full Iris
@@ -1054,20 +1058,23 @@ to avoid duplication across `GBDTRegressor`, `GBDTClassifier`, `GBLinearRegresso
 
 **RFC Section**: RFC-0014 "sklearn Integration"  
 **Effort**: S (1-2h)
+**Status**: ✅ Complete (commit 424bea4)
 
 **Description**: Implement linear model sklearn wrappers.
 
 **Tasks**:
 
-- [ ] 5.3.1 Implement `GBLinearRegressor` (same pattern as GBDT)
-- [ ] 5.3.2 Implement `GBLinearClassifier`
-- [ ] 5.3.3 Add `coef_` and `intercept_` properties
+- [x] 5.3.1 Implement `GBLinearRegressor` (same pattern as GBDT)
+- [x] 5.3.2 Implement `GBLinearClassifier`
+- [x] 5.3.3 Add `coef_` and `intercept_` properties
 
 **Definition of Done**:
+
 - Both estimators pass sklearn checks
 - Linear coefficient access works
 
 **Testing Criteria**:
+
 - `check_estimator()` passes for both
 
 ---
@@ -1075,14 +1082,15 @@ to avoid duplication across `GBDTRegressor`, `GBDTClassifier`, `GBLinearRegresso
 ### Story 5.4: Stakeholder Feedback Check (sklearn)
 
 **Meta-task for Epic 5**
+**Status**: ✅ Complete
 
 **Tasks**:
 
-- [ ] 5.4.1 Review `tmp/stakeholder_feedback.md` for sklearn-specific feedback
-- [ ] 5.4.2 Review feedback on sklearn API preferences
-- [ ] 5.4.3 Check migration pain points from other libraries
-- [ ] 5.4.4 Adjust parameter mapping if needed
-- [ ] 5.4.5 Document outcomes in `tmp/development_review_<timestamp>.md`
+- [x] 5.4.1 Review `tmp/stakeholder_feedback.md` for sklearn-specific feedback
+- [x] 5.4.2 Review feedback on sklearn API preferences
+- [x] 5.4.3 Check migration pain points from other libraries
+- [x] 5.4.4 Adjust parameter mapping if needed
+- [x] 5.4.5 Document outcomes in `tmp/development_review_<timestamp>.md`
 
 **Definition of Done**:
 

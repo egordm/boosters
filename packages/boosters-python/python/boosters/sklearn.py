@@ -4,18 +4,10 @@ This module provides sklearn-compatible wrappers around the core boosters models
 The estimators follow sklearn conventions and pass `check_estimator()` tests.
 
 Example:
-    >>> from boosters.sklearn import GBDTRegressor, GBDTClassifier
-    >>> from sklearn.model_selection import cross_val_score
-    >>>
-    >>> # Regression
+    >>> from boosters.sklearn import GBDTRegressor
     >>> reg = GBDTRegressor(max_depth=5, learning_rate=0.1)
-    >>> scores = cross_val_score(reg, X, y, cv=5)
-    >>>
-    >>> # Classification
-    >>> clf = GBDTClassifier(n_estimators=100)
-    >>> clf.fit(X_train, y_train)
-    >>> predictions = clf.predict(X_test)
-    >>> probabilities = clf.predict_proba(X_test)
+
+    For full training examples, see individual class docstrings.
 """
 
 from typing import Any
@@ -146,9 +138,15 @@ class GBDTRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
     Examples
     --------
     >>> from boosters.sklearn import GBDTRegressor
-    >>> reg = GBDTRegressor(max_depth=5, n_estimators=100)
-    >>> reg.fit(X_train, y_train)
-    >>> predictions = reg.predict(X_test)
+    >>> reg = GBDTRegressor(max_depth=5, n_estimators=10, verbose=0)
+    >>> import numpy as np
+    >>> X = np.random.randn(100, 5).astype(np.float32)
+    >>> y = X[:, 0] + np.random.randn(100).astype(np.float32) * 0.1
+    >>> reg.fit(X, y)  # doctest: +ELLIPSIS
+    GBDTRegressor(...)
+    >>> predictions = reg.predict(X)
+    >>> predictions.shape
+    (100,)
     """
 
     def __init__(
@@ -347,10 +345,16 @@ class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
     Examples
     --------
     >>> from boosters.sklearn import GBDTClassifier
-    >>> clf = GBDTClassifier(max_depth=5)
-    >>> clf.fit(X_train, y_train)
-    >>> predictions = clf.predict(X_test)
-    >>> probabilities = clf.predict_proba(X_test)
+    >>> import numpy as np
+    >>> X = np.random.randn(100, 5).astype(np.float32)
+    >>> y = (X[:, 0] > 0).astype(int)
+    >>> clf = GBDTClassifier(max_depth=5, n_estimators=10, verbose=0)
+    >>> clf.fit(X, y)  # doctest: +ELLIPSIS
+    GBDTClassifier(...)
+    >>> predictions = clf.predict(X)
+    >>> probabilities = clf.predict_proba(X)
+    >>> probabilities.shape
+    (100, 2)
     """
 
     def __init__(
