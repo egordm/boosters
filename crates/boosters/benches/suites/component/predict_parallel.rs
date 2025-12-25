@@ -7,6 +7,7 @@ use common::criterion_config::default_criterion;
 use common::models::load_boosters_model;
 use common::threading::with_rayon_threads;
 
+use boosters::dataset::FeaturesView;
 use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
 use boosters::testing::data::random_features_array;
 use boosters::Parallelism;
@@ -26,14 +27,16 @@ fn bench_gbtree_thread_scaling(c: &mut Criterion) {
 	for &n_threads in common::matrix::THREAD_COUNTS {
 		group.bench_with_input(BenchmarkId::new("par_predict", n_threads), &matrix, |b, m| {
 			b.iter(|| {
-				with_rayon_threads(n_threads, || black_box(predictor.predict(black_box(m.view()), Parallelism::Parallel)))
+				let features = FeaturesView::from_array(m.view());
+				with_rayon_threads(n_threads, || black_box(predictor.predict(black_box(features), Parallelism::Parallel)))
 			})
 		});
 	}
 
 	// Sequential baseline
 	group.bench_with_input(BenchmarkId::new("predict", 1), &matrix, |b, m| {
-		b.iter(|| black_box(predictor.predict(black_box(m.view()), Parallelism::Sequential)))
+		let features = FeaturesView::from_array(m.view());
+		b.iter(|| black_box(predictor.predict(black_box(features), Parallelism::Sequential)))
 	});
 
 	group.finish();

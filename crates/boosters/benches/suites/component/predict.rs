@@ -7,6 +7,7 @@ use common::criterion_config::default_criterion;
 use common::models::load_boosters_model;
 
 use boosters::inference::gbdt::{Predictor, StandardTraversal, UnrolledTraversal6};
+use boosters::dataset::FeaturesView;
 use boosters::testing::data::random_features_array;
 use boosters::Parallelism;
 
@@ -25,7 +26,8 @@ fn bench_gbtree_batch_sizes(c: &mut Criterion) {
 		group.throughput(Throughput::Elements(batch_size as u64));
 		group.bench_with_input(BenchmarkId::new("medium", batch_size), &matrix, |b, matrix| {
 			b.iter(|| {
-				let output = predictor.predict(black_box(matrix.view()), Parallelism::Sequential);
+				let features = FeaturesView::from_array(matrix.view());
+				let output = predictor.predict(black_box(features), Parallelism::Sequential);
 				black_box(output)
 			});
 		});
@@ -55,7 +57,8 @@ fn bench_gbtree_model_sizes(c: &mut Criterion) {
 		group.throughput(Throughput::Elements(batch_size as u64));
 		group.bench_with_input(BenchmarkId::new(label, batch_size), &matrix, |b, matrix| {
 			b.iter(|| {
-				let output = predictor.predict(black_box(matrix.view()), Parallelism::Sequential);
+				let features = FeaturesView::from_array(matrix.view());
+				let output = predictor.predict(black_box(features), Parallelism::Sequential);
 				black_box(output)
 			});
 		});
@@ -72,7 +75,8 @@ fn bench_gbtree_single_row(c: &mut Criterion) {
 
 	c.bench_function("component/predict/single_row/medium", |b| {
 		b.iter(|| {
-			let output = predictor.predict(black_box(matrix.view()), Parallelism::Sequential);
+			let features = FeaturesView::from_array(matrix.view());
+			let output = predictor.predict(black_box(features), Parallelism::Sequential);
 			black_box(output)
 		})
 	});
@@ -92,13 +96,15 @@ fn bench_traversal_strategies(c: &mut Criterion) {
 	// Standard traversal (baseline)
 	let standard = Predictor::<StandardTraversal>::new(&model.forest).with_block_size(64);
 	group.bench_with_input(BenchmarkId::new("standard", batch_size), &matrix, |b, m| {
-		b.iter(|| black_box(standard.predict(black_box(m.view()), Parallelism::Sequential)))
+		let features = FeaturesView::from_array(m.view());
+		b.iter(|| black_box(standard.predict(black_box(features), Parallelism::Sequential)))
 	});
 
 	// Unrolled traversal (6 levels)
 	let unrolled = Predictor::<UnrolledTraversal6>::new(&model.forest).with_block_size(64);
 	group.bench_with_input(BenchmarkId::new("unrolled6", batch_size), &matrix, |b, m| {
-		b.iter(|| black_box(unrolled.predict(black_box(m.view()), Parallelism::Sequential)))
+		let features = FeaturesView::from_array(m.view());
+		b.iter(|| black_box(unrolled.predict(black_box(features), Parallelism::Sequential)))
 	});
 
 	group.finish();

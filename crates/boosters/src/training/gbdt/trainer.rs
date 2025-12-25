@@ -209,15 +209,14 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
         let mut gradients = Gradients::new(n_rows, n_outputs);
 
         // Compute base scores using objective
-        let mut base_scores_vec = vec![0.0f32; n_outputs];
-        self.objective.compute_base_score(targets, weights, &mut base_scores_vec);
+        let base_scores = self.objective.compute_base_score(targets, weights);
 
         // Initialize predictions with base scores
-        let mut predictions = init_predictions(&base_scores_vec, n_rows);
+        let mut predictions = init_predictions(&base_scores, n_rows);
 
         // Create inference forest directly (Phase 2: no conversion needed)
         let mut forest = Forest::<ScalarLeaf>::new(n_outputs as u32)
-            .with_base_score(base_scores_vec.clone());
+            .with_base_score(base_scores.clone());
 
         // Check if we need evaluation (metric is enabled)
         let needs_evaluation = self.metric.is_enabled();
@@ -228,7 +227,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
         let mut eval_predictions: Vec<Array2<f32>> = if needs_evaluation {
             eval_sets
                 .iter()
-                .map(|es| init_predictions(&base_scores_vec, es.dataset.n_samples()))
+                .map(|es| init_predictions(&base_scores, es.dataset.n_samples()))
                 .collect()
         } else {
             Vec::new()
@@ -249,7 +248,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
 
         for round in 0..self.params.n_trees {
             // Compute gradients for all outputs
-            self.objective.compute_gradients(
+            self.objective.compute_gradients_into(
                 predictions.view(),
                 targets,
                 weights,
@@ -299,18 +298,14 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
                 let tree = mutable_tree.freeze();
 
                 // Update predictions (row of Array2)
-                {
-                    let mut pred_row = predictions.row_mut(output);
-                    let pred_slice = pred_row.as_slice_mut()
-                        .expect("predictions row must be contiguous");
-                    if sampled.is_none() {
-                        // Fast path: use partitioner for O(n) prediction update
-                        grower.update_predictions_from_last_tree(pred_slice);
-                    } else {
-                        // Fallback: row sampling trains on a subset; we must still apply the
-                        // trained tree to all rows to keep predictions correct.
-                        tree.predict_binned_into(dataset, pred_slice, parallelism);
-                    }
+                let pred_row = predictions.row_mut(output);
+                if sampled.is_none() {
+                    // Fast path: use partitioner for O(n) prediction update
+                    grower.update_predictions_from_last_tree(pred_row);
+                } else {
+                    // Fallback: row sampling trains on a subset; we must still apply the
+                    // trained tree to all rows to keep predictions correct.
+                    tree.predict_binned_into(dataset, pred_row, parallelism);
                 }
 
                 // Incremental eval set prediction: add this tree's contribution

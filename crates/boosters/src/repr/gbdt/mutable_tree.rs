@@ -490,7 +490,7 @@ mod tests {
 
     #[test]
     fn test_traverse_on_mutable_tree() {
-        use crate::data::SamplesView;
+        use crate::dataset::SamplesView;
         use ndarray::Array2;
 
         let mut tree = MutableTree::<ScalarLeaf>::new();

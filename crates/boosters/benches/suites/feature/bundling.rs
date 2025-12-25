@@ -19,11 +19,11 @@ use common::criterion_config::default_criterion;
 
 use boosters::data::binned::{BinnedDatasetBuilder, BundlingConfig};
 use boosters::data::{transpose_to_c_order, BinningConfig};
-use boosters::dataset::Dataset;
+use boosters::dataset::{Dataset, TargetsView};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
 
-use ndarray::{ArrayView1, ArrayView2};
+use ndarray::{Array2, ArrayView2};
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
@@ -149,11 +149,8 @@ fn bench_boosters_binning(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("no_bundling", config.name), |b| {
             b.iter(|| {
                 black_box(
-                    BinnedDatasetBuilder::from_dataset(
-                        &features_dataset,
-                        BinningConfig::builder().max_bins(256).build(),
-                        Parallelism::Parallel,
-                    )
+                    BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+                        .add_features(features_dataset.features(), Parallelism::Parallel)
                         .with_bundling(BundlingConfig::disabled())
                         .build()
                         .unwrap(),
@@ -165,11 +162,8 @@ fn bench_boosters_binning(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("with_bundling", config.name), |b| {
             b.iter(|| {
                 black_box(
-                    BinnedDatasetBuilder::from_dataset(
-                        &features_dataset,
-                        BinningConfig::builder().max_bins(256).build(),
-                        Parallelism::Parallel,
-                    )
+                    BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+                        .add_features(features_dataset.features(), Parallelism::Parallel)
                         .with_bundling(BundlingConfig::auto())
                         .build()
                         .unwrap(),
@@ -178,11 +172,8 @@ fn bench_boosters_binning(c: &mut Criterion) {
         });
 
         // Report bundling statistics
-        let binned = BinnedDatasetBuilder::from_dataset(
-            &features_dataset,
-            BinningConfig::builder().max_bins(256).build(),
-            Parallelism::Parallel,
-        )
+        let binned = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+            .add_features(features_dataset.features(), Parallelism::Parallel)
             .with_bundling(BundlingConfig::auto())
             .build()
             .unwrap();
@@ -230,34 +221,33 @@ fn bench_boosters_training(c: &mut Criterion) {
         let features_dataset = Dataset::new(features_fm.view(), None, None);
 
         // Pre-build binned datasets
-        let binned_no_bundle = BinnedDatasetBuilder::from_dataset(
-            &features_dataset,
-            BinningConfig::builder().max_bins(256).build(),
-            Parallelism::Parallel,
-        )
+        let binned_no_bundle = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+            .add_features(features_dataset.features(), Parallelism::Parallel)
             .with_bundling(BundlingConfig::disabled())
             .build()
             .unwrap();
-        let binned_with_bundle = BinnedDatasetBuilder::from_dataset(
-            &features_dataset,
-            BinningConfig::builder().max_bins(256).build(),
-            Parallelism::Parallel,
-        )
+        let binned_with_bundle = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+            .add_features(features_dataset.features(), Parallelism::Parallel)
             .with_bundling(BundlingConfig::auto())
             .build()
             .unwrap();
 
+        // Convert targets to 2D
+        let targets_2d = Array2::from_shape_vec((1, targets.len()), targets.clone()).unwrap();
+
         // WITHOUT bundling (training only)
         group.bench_function(BenchmarkId::new("no_bundling", config.name), |b| {
+            let targets_view = TargetsView::new(targets_2d.view());
             b.iter(|| {
-                black_box(trainer.train(black_box(&binned_no_bundle), ArrayView1::from(black_box(&targets[..])), None, &[], Parallelism::Sequential).unwrap())
+                black_box(trainer.train(black_box(&binned_no_bundle), targets_view, None, &[], Parallelism::Sequential).unwrap())
             })
         });
 
         // WITH bundling (training only)
         group.bench_function(BenchmarkId::new("with_bundling", config.name), |b| {
+            let targets_view = TargetsView::new(targets_2d.view());
             b.iter(|| {
-                black_box(trainer.train(black_box(&binned_with_bundle), ArrayView1::from(black_box(&targets[..])), None, &[], Parallelism::Sequential).unwrap())
+                black_box(trainer.train(black_box(&binned_with_bundle), targets_view, None, &[], Parallelism::Sequential).unwrap())
             })
         });
     }

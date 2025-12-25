@@ -32,10 +32,7 @@
 //! let samples = transpose_to_c_order(features.view());
 //! ```
 
-use ndarray::{Array2, ArrayBase, ArrayView1, ArrayView2, Data, Ix2};
-use std::ops::Deref;
-
-use super::FeatureAccessor;
+use ndarray::{Array2, ArrayBase, Data, Ix2};
 
 // =============================================================================
 // Layout Utilities
@@ -75,233 +72,6 @@ pub mod axis {
 
     pub const ROWS: Axis = Axis(0);
     pub const COLS: Axis = Axis(1);
-}
-
-// =============================================================================
-// SamplesView (Sample-Major Layout)
-// =============================================================================
-
-/// View into a feature matrix with sample-major layout.
-///
-/// Shape: `[n_samples, n_features]` - each sample's features are contiguous in memory.
-///
-/// This is an internal type used by explainers where we iterate over samples.
-/// Users should use [`FeaturesView`] or [`crate::dataset::Dataset`] instead.
-#[derive(Debug, Clone, Copy)]
-pub struct SamplesView<'a>(ArrayView2<'a, f32>);
-
-impl<'a> SamplesView<'a> {
-    /// Create from a slice in sample-major (row-major) order.
-    ///
-    /// This is zero-copy.
-    ///
-    /// # Arguments
-    ///
-    /// * `data` - Slice of length `n_samples * n_features`
-    /// * `n_samples` - Number of samples (rows)
-    /// * `n_features` - Number of features (columns)
-    pub fn from_slice(
-        data: &'a [f32],
-        n_samples: usize,
-        n_features: usize,
-    ) -> Option<Self> {
-        ArrayView2::from_shape((n_samples, n_features), data)
-            .ok()
-            .map(Self)
-    }
-
-    /// Create from an ArrayView2 that is sample-major.
-    ///
-    /// The array should have shape `[n_samples, n_features]` and be in C-order.
-    ///
-    /// # Panics (debug only)
-    ///
-    /// Debug-asserts that the array is in standard (C) layout.
-    pub fn from_array(view: ArrayView2<'a, f32>) -> Self {
-        debug_assert!(view.is_standard_layout(), "Array must be in C-order");
-        Self(view)
-    }
-
-    /// Number of samples (rows).
-    #[inline]
-    pub fn n_samples(&self) -> usize {
-        self.0.nrows()
-    }
-
-    /// Number of features (columns).
-    #[inline]
-    pub fn n_features(&self) -> usize {
-        self.0.ncols()
-    }
-
-    /// Get feature value at (sample, feature).
-    #[inline]
-    #[allow(dead_code)] // Public API for completeness
-    pub fn get(&self, sample: usize, feature: usize) -> f32 {
-        self.0[[sample, feature]]
-    }
-
-    /// Get sample row as a contiguous slice.
-    ///
-    /// This is the fast path for sample-major data.
-    #[inline]
-    pub fn sample(&self, sample: usize) -> ArrayView1<'_, f32> {
-        self.0.row(sample)
-    }
-
-    /// Get the underlying array view.
-    pub fn view(&self) -> ArrayView2<'a, f32> {
-        self.0
-    }
-}
-
-impl<'a> Deref for SamplesView<'a> {
-    type Target = ArrayView2<'a, f32>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<'a> FeatureAccessor for SamplesView<'a> {
-    #[inline]
-    fn get_feature(&self, row: usize, feature: usize) -> f32 {
-        self.0[[row, feature]]
-    }
-
-    #[inline]
-    fn n_rows(&self) -> usize {
-        self.0.nrows()
-    }
-
-    #[inline]
-    fn n_features(&self) -> usize {
-        self.0.ncols()
-    }
-}
-
-// =============================================================================
-// FeaturesView (Feature-Major Layout)
-// =============================================================================
-
-/// View into a feature matrix with feature-major layout.
-///
-/// Shape: `[n_features, n_samples]` - each feature's values across all samples are contiguous.
-///
-/// This layout is optimal for training where we iterate over features
-/// (e.g., histogram building, coordinate descent in GBLinear).
-///
-/// # Example
-///
-/// ```
-/// use boosters::data::FeaturesView;
-///
-/// // 2 features, 3 samples
-/// // Data is [f0_s0, f0_s1, f0_s2, f1_s0, f1_s1, f1_s2]
-/// let data = [1.0f32, 2.0, 3.0, 10.0, 20.0, 30.0];
-/// let view = FeaturesView::from_slice(&data, 3, 2).unwrap();
-///
-/// assert_eq!(view.n_samples(), 3);
-/// assert_eq!(view.n_features(), 2);
-/// assert_eq!(view.get(0, 0), 1.0);  // sample 0, feature 0
-/// assert_eq!(view.get(0, 1), 10.0); // sample 0, feature 1
-/// ```
-#[derive(Debug, Clone, Copy)]
-pub struct FeaturesView<'a>(ArrayView2<'a, f32>);
-
-impl<'a> FeaturesView<'a> {
-    /// Create from an ArrayView2 that is feature-major.
-    ///
-    /// The array should have shape `[n_features, n_samples]` and be in C-order.
-    ///
-    /// # Panics (debug only)
-    ///
-    /// Debug-asserts that the array is in standard (C) layout.
-    pub fn new(view: ArrayView2<'a, f32>) -> Self {
-        debug_assert!(view.is_standard_layout(), "Array must be in C-order");
-        Self(view)
-    }
-
-    /// Create from a slice in feature-major order.
-    ///
-    /// This is zero-copy.
-    ///
-    /// Data layout: `[f0_s0, f0_s1, ..., f1_s0, f1_s1, ...]`
-    ///
-    /// # Arguments
-    ///
-    /// * `data` - Slice of length `n_samples * n_features`
-    /// * `n_samples` - Number of samples
-    /// * `n_features` - Number of features
-    pub fn from_slice(
-        data: &'a [f32],
-        n_samples: usize,
-        n_features: usize,
-    ) -> Option<Self> {
-        // Shape is [n_features, n_samples] for feature-major
-        ArrayView2::from_shape((n_features, n_samples), data)
-            .ok()
-            .map(Self)
-    }
-
-    /// Number of samples.
-    #[inline]
-    pub fn n_samples(&self) -> usize {
-        self.0.ncols()
-    }
-
-    /// Number of features.
-    #[inline]
-    pub fn n_features(&self) -> usize {
-        self.0.nrows()
-    }
-
-    /// Get feature value at (sample, feature).
-    ///
-    /// Note: Internally this accesses `[feature, sample]` due to the layout.
-    #[inline]
-    pub fn get(&self, sample: usize, feature: usize) -> f32 {
-        self.0[[feature, sample]]
-    }
-
-    /// Get a contiguous view of all sample values for a feature.
-    ///
-    /// This is the fast path for feature-major data.
-    #[inline]
-    pub fn feature(&self, feature: usize) -> ArrayView1<'_, f32> {
-        self.0.row(feature)
-    }
-
-    /// Get the underlying array view.
-    pub fn as_array(&self) -> ArrayView2<'a, f32> {
-        self.0
-    }
-}
-
-impl<'a> Deref for FeaturesView<'a> {
-    type Target = ArrayView2<'a, f32>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<'a> FeatureAccessor for FeaturesView<'a> {
-    #[inline]
-    fn get_feature(&self, row: usize, feature: usize) -> f32 {
-        // Note: transposed access for feature-major layout
-        self.0[[feature, row]]
-    }
-
-    #[inline]
-    fn n_rows(&self) -> usize {
-        self.0.ncols() // n_samples
-    }
-
-    #[inline]
-    fn n_features(&self) -> usize {
-        self.0.nrows() // n_features
-    }
 }
 
 // =============================================================================
@@ -374,28 +144,25 @@ pub fn init_predictions_into(base_scores: &[f32], predictions: &mut Array2<f32>)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::arr2;
+    use crate::dataset::{FeaturesView, SamplesView};
+    use ndarray::{arr2, array};
 
     #[test]
     fn test_samples_view_creation() {
-        // 2 samples, 3 features: [[1,2,3], [4,5,6]]
-        let data = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
-        let view = SamplesView::from_slice(&data, 2, 3).unwrap();
+        // 2 samples, 3 features (sample-major layout)
+        let data = array![[1.0f32, 2.0, 3.0], [4.0, 5.0, 6.0]];
+        let view = SamplesView::from_array(data.view());
 
         assert_eq!(view.n_samples(), 2);
         assert_eq!(view.n_features(), 3);
-        assert_eq!(
-            view.view(),
-            arr2(&[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        );
+        assert_eq!(view.view(), arr2(&[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]));
     }
 
     #[test]
     fn test_features_view_creation() {
-        // 2 features, 3 samples
-        // Feature-major: [f0_s0, f0_s1, f0_s2, f1_s0, f1_s1, f1_s2]
-        let data = [1.0f32, 2.0, 3.0, 10.0, 20.0, 30.0];
-        let view = FeaturesView::from_slice(&data, 3, 2).unwrap();
+        // 2 features, 3 samples (feature-major layout)
+        let data = array![[1.0f32, 2.0, 3.0], [10.0, 20.0, 30.0]];
+        let view = FeaturesView::from_array(data.view());
 
         assert_eq!(view.n_samples(), 3);
         assert_eq!(view.n_features(), 2);
@@ -408,8 +175,8 @@ mod tests {
 
     #[test]
     fn test_features_view_feature_values() {
-        let data = [1.0f32, 2.0, 3.0, 10.0, 20.0, 30.0];
-        let view = FeaturesView::from_slice(&data, 3, 2).unwrap();
+        let data = array![[1.0f32, 2.0, 3.0], [10.0, 20.0, 30.0]];
+        let view = FeaturesView::from_array(data.view());
 
         // Feature 0 values (all samples)
         assert_eq!(view.feature(0).as_slice().unwrap(), &[1.0, 2.0, 3.0]);
@@ -419,8 +186,8 @@ mod tests {
 
     #[test]
     fn test_samples_view_sample_values() {
-        let data = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
-        let view = SamplesView::from_slice(&data, 2, 3).unwrap();
+        let data = array![[1.0f32, 2.0, 3.0], [4.0, 5.0, 6.0]];
+        let view = SamplesView::from_array(data.view());
 
         // Sample 0 features
         assert_eq!(view.sample(0).as_slice().unwrap(), &[1.0, 2.0, 3.0]);

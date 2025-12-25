@@ -41,7 +41,7 @@ impl ObjectiveFn for HuberLoss {
         1
     }
 
-    fn compute_gradients(
+    fn compute_gradients_into(
         &self,
         predictions: ArrayView2<f32>,
         targets: TargetsView<'_>,
@@ -83,19 +83,17 @@ impl ObjectiveFn for HuberLoss {
         &self,
         targets: TargetsView<'_>,
         _weights: Option<ArrayView1<f32>>,
-        outputs: &mut [f32],
-    ) {
+    ) -> Vec<f32> {
         // Use median for Huber (more robust than mean)
         // For simplicity, using mean here
         let n_rows = targets.n_samples();
         if n_rows == 0 {
-            outputs.fill(0.0);
-            return;
+            return vec![0.0];
         }
 
         let targets_row = targets.output(0);
         let sum: f32 = targets_row.iter().sum();
-        outputs.fill(sum / n_rows as f32);
+        vec![sum / n_rows as f32]
     }
 
     fn name(&self) -> &'static str {
@@ -110,7 +108,7 @@ impl ObjectiveFn for HuberLoss {
         TargetSchema::Continuous
     }
 
-    fn transform_predictions(&self, _predictions: ArrayViewMut2<f32>) -> PredictionKind {
+    fn transform_predictions_inplace(&self, _predictions: ArrayViewMut2<f32>) -> PredictionKind {
         PredictionKind::Value
     }
 }

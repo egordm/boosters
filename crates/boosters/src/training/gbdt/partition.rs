@@ -426,8 +426,8 @@ mod tests {
             BinMapper::numerical(vec![0.5, 1.5], MissingType::None, 0, 0, 0.0, 0.0, 1.0);
 
         BinnedDatasetBuilder::new(BinningConfig::default())
-            .add_binned(f0_bins, f0_mapper)
-            .add_binned(f1_bins, f1_mapper)
+            .add_binned(f0_bins, f0_mapper, None)
+            .add_binned(f1_bins, f1_mapper, None)
             .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
             .build()
             .unwrap()

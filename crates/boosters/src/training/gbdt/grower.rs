@@ -3,8 +3,10 @@
 //! Orchestrates tree training using histogram-based split finding, row partitioning,
 //! and the subtraction trick to reduce computation.
 
+use ndarray::ArrayViewMut1;
+
 use crate::data::BinnedDataset;
-use crate::repr::gbdt::{categories_to_bitset, MutableTree, NodeId, ScalarLeaf, Tree};
+use crate::repr::gbdt::{categories_to_bitset, MutableTree, NodeId, ScalarLeaf};
 use crate::training::{GradsTuple, Gradients};
 use crate::training::sampling::{ColSampler, ColSamplingParams};
 
@@ -181,45 +183,6 @@ impl TreeGrower {
         &self.leaf_node_map
     }
 
-    /// Grow a tree and (optionally) update predictions using training-time leaf assignments.
-    ///
-    /// When `sampled_rows` is `None`, the partitioner contains **all** rows, so we can update
-    /// predictions by iterating leaf ranges instead of traversing the tree per row.
-    /// Grow a decision tree and update predictions in-place.
-    ///
-    /// This is the preferred method when you need both the tree and want to update
-    /// predictions efficiently. Uses the partitioner's leaf assignments to update
-    /// predictions in O(n_rows) time instead of O(n_rows × tree_depth) traversals.
-    ///
-    /// # Arguments
-    /// * `dataset` - Binned training data
-    /// * `gradients` - Current gradient and hessian vectors
-    /// * `output` - Output index (for multi-class)
-    /// * `sampled_rows` - Optional sampled row indices
-    /// * `predictions` - Prediction buffer to update
-    ///
-    /// # Returns
-    /// The trained tree (frozen).
-    pub fn grow_and_update_predictions(
-        &mut self,
-        dataset: &BinnedDataset,
-        gradients: &Gradients,
-        output: usize,
-        sampled_rows: Option<&[u32]>,
-        predictions: &mut [f32],
-    ) -> Tree<ScalarLeaf> {
-        debug_assert_eq!(predictions.len(), dataset.n_rows());
-
-        let tree = self.grow(dataset, gradients, output, sampled_rows);
-
-        // Fast path only valid when the partitioner includes all rows.
-        // After tree growth, partitioner leaves contain the final leaf assignment.
-        if sampled_rows.is_none() {
-            self.update_predictions_from_last_tree(predictions);
-        }
-
-        tree.freeze()
-    }
 
     /// Update predictions using the partitioner's leaf assignments and cached leaf values.
     ///
@@ -235,7 +198,7 @@ impl TreeGrower {
     /// This method uses only the base leaf values (not linear coefficients), which is
     /// correct for training: we accumulate predictions incrementally using constant
     /// leaf values, and linear adjustments are inference-time only.
-    pub fn update_predictions_from_last_tree(&self, predictions: &mut [f32]) {
+    pub fn update_predictions_from_last_tree(&self, mut predictions: ArrayViewMut1<f32>) {
         for (leaf_node, leaf_value) in self.last_leaf_values.iter().enumerate() {
             if leaf_value.is_nan() {
                 continue;
@@ -714,7 +677,7 @@ impl TreeGrower {
 mod tests {
     use super::*;
     use crate::data::{BinMapper, BinningConfig, BinnedDataset, BinnedDatasetBuilder, GroupLayout, GroupStrategy, MissingType};
-    use crate::repr::gbdt::TreeView;
+    use crate::repr::gbdt::{Tree, TreeView};
 
     /// Helper to count leaves in a Tree.
     fn count_leaves<L: crate::repr::gbdt::LeafValue>(tree: &Tree<L>) -> usize {
@@ -734,7 +697,7 @@ mod tests {
             3.0,
         );
         BinnedDatasetBuilder::new(BinningConfig::default())
-            .add_binned(bins, mapper)
+            .add_binned(bins, mapper, None)
             .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
             .build()
             .unwrap()
@@ -750,8 +713,8 @@ mod tests {
             BinMapper::numerical(vec![0.5, 1.5], MissingType::None, 0, 0, 0.0, 0.0, 1.0);
 
         BinnedDatasetBuilder::new(BinningConfig::default())
-            .add_binned(f0_bins, f0_mapper)
-            .add_binned(f1_bins, f1_mapper)
+            .add_binned(f0_bins, f0_mapper, None)
+            .add_binned(f1_bins, f1_mapper, None)
             .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
             .build()
             .unwrap()
@@ -771,7 +734,7 @@ mod tests {
             1.0,
         );
         BinnedDatasetBuilder::new(BinningConfig::default())
-            .add_binned(bins, mapper)
+            .add_binned(bins, mapper, None)
             .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
             .build()
             .unwrap()
@@ -790,7 +753,7 @@ mod tests {
             0.0,
         );
         BinnedDatasetBuilder::new(BinningConfig::default())
-            .add_binned(bins, mapper)
+            .add_binned(bins, mapper, None)
             .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
             .build()
             .unwrap()

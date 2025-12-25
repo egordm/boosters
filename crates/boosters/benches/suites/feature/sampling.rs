@@ -10,6 +10,7 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
+use boosters::dataset::TargetsView;
 use boosters::testing::data::synthetic_regression;
 use boosters::training::{
     GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, RowSamplingParams, SquaredLoss,
@@ -37,7 +38,7 @@ fn bench_sampling_strategies(c: &mut Criterion) {
     let (rows, cols) = DATASET;
     let dataset = synthetic_regression(rows, cols, 42, 0.05);
     let binned = dataset.to_binned(256);
-    let targets = dataset.targets.view();
+    let targets = TargetsView::new(dataset.targets.view().insert_axis(ndarray::Axis(0)));
 
     group.throughput(Throughput::Elements((rows * cols) as u64));
 

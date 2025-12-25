@@ -13,7 +13,7 @@
 //! See RFC-0017 for detailed design rationale.
 
 use super::FeatureInfo;
-use crate::data::FeaturesView;
+use crate::dataset::FeaturesView;
 use fixedbitset::FixedBitSet;
 use rand::prelude::*;
 use rand::SeedableRng;
@@ -816,7 +816,8 @@ pub fn create_bundle_plan<F: BundlingFeatures>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::FeaturesView;
+    use crate::dataset::FeaturesView;
+    use ndarray::array;
 
     #[test]
     fn test_bundling_config_defaults() {
@@ -922,12 +923,12 @@ mod tests {
     #[test]
     fn test_conflict_graph_no_conflicts() {
         // Two mutually exclusive features (one-hot style)
-        // Feature 0: [1, 0, 0, 0]
-        // Feature 1: [0, 1, 0, 0]
-        // FeaturesView is feature-major: [n_features, n_samples]
-        // Data layout: [f0_s0, f0_s1, f0_s2, f0_s3, f1_s0, f1_s1, f1_s2, f1_s3]
-        let data = vec![1.0f32, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0];
-        let view = FeaturesView::from_slice(&data, 4, 2).unwrap();
+        // FeaturesView is feature-major: each row is a feature, columns are samples
+        let data = array![
+            [1.0f32, 0.0, 0.0, 0.0],  // feature 0: non-zero at sample 0
+            [0.0, 1.0, 0.0, 0.0],      // feature 1: non-zero at sample 1
+        ];
+        let view = FeaturesView::from_array(data.view());
 
         let sparse_features = vec![0, 1];
         let sampled_rows: Vec<usize> = (0..4).collect();
@@ -941,11 +942,12 @@ mod tests {
     #[test]
     fn test_conflict_graph_with_conflicts() {
         // Two features that conflict on row 0
-        // Feature 0: [1, 0, 0, 0]
-        // Feature 1: [1, 1, 0, 0]
-        // FeaturesView is feature-major
-        let data = vec![1.0f32, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0];
-        let view = FeaturesView::from_slice(&data, 4, 2).unwrap();
+        // FeaturesView is feature-major: each row is a feature, columns are samples
+        let data = array![
+            [1.0f32, 0.0, 0.0, 0.0],  // feature 0: non-zero at sample 0
+            [1.0, 1.0, 0.0, 0.0],      // feature 1: non-zero at samples 0 and 1 (conflicts at 0)
+        ];
+        let view = FeaturesView::from_array(data.view());
 
         let sparse_features = vec![0, 1];
         let sampled_rows: Vec<usize> = (0..4).collect();
@@ -958,9 +960,12 @@ mod tests {
 
     #[test]
     fn test_bundle_plan_disabled() {
-        // 2 samples, 2 features. Feature 0: [1, 0], Feature 1: [0, 1]
-        let data = vec![1.0f32, 0.0, 0.0, 1.0];
-        let view = FeaturesView::from_slice(&data, 2, 2).unwrap();
+        // 2 features, 2 samples. Feature 0: [1, 0], Feature 1: [0, 1]
+        let data = array![
+            [1.0f32, 0.0],  // feature 0
+            [0.0, 1.0],     // feature 1
+        ];
+        let view = FeaturesView::from_array(data.view());
         let feature_infos = vec![
             FeatureInfo {
                 original_idx: 0,
@@ -986,9 +991,12 @@ mod tests {
     #[test]
     fn test_bundle_plan_too_few_sparse() {
         // Only 1 sparse feature - not enough to bundle
-        // 2 samples, 2 features. Feature 0: [1, 0], Feature 1: [0, 0]
-        let data = vec![1.0f32, 0.0, 0.0, 0.0];
-        let view = FeaturesView::from_slice(&data, 2, 2).unwrap();
+        // 2 features, 2 samples. Feature 0: [1, 0], Feature 1: [0, 0]
+        let data = array![
+            [1.0f32, 0.0],  // feature 0: not sparse
+            [0.0, 0.0],     // feature 1: all zeros (sparse/trivial)
+        ];
+        let view = FeaturesView::from_array(data.view());
         let feature_infos = vec![
             FeatureInfo {
                 original_idx: 0,
@@ -1018,18 +1026,14 @@ mod tests {
     #[test]
     fn test_bundle_plan_exclusive_features() {
         // 4 mutually exclusive features (one-hot encoding)
-        // 10 samples, 4 features
-        // Each feature has 1 non-zero value in different samples
-        // Feature 0: [1,0,0,0,0,0,0,0,0,0]
-        // Feature 1: [0,1,0,0,0,0,0,0,0,0]
-        // Feature 2: [0,0,1,0,0,0,0,0,0,0]
-        // Feature 3: [0,0,0,1,0,0,0,0,0,0]
-        let mut data = vec![0.0f32; 40]; // 4 features * 10 samples
-        data[0] = 1.0;  // feature 0, sample 0
-        data[11] = 1.0; // feature 1, sample 1
-        data[22] = 1.0; // feature 2, sample 2
-        data[33] = 1.0; // feature 3, sample 3
-        let view = FeaturesView::from_slice(&data, 10, 4).unwrap();
+        // 4 features, 10 samples - each feature has 1 non-zero value in different samples
+        let data = array![
+            [1.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  // feature 0: sample 0
+            [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],     // feature 1: sample 1
+            [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],     // feature 2: sample 2
+            [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],     // feature 3: sample 3
+        ];
+        let view = FeaturesView::from_array(data.view());
 
         // density = 0.1 for each feature (1 non-zero out of 10)
         let feature_infos: Vec<FeatureInfo> = (0..4)
@@ -1060,17 +1064,13 @@ mod tests {
     fn test_bundle_plan_conflicting_features() {
         // 3 features where 2 conflict but 1 doesn't
         // This tests that conflicting features end up in separate bundles
-        // 10 samples, 3 features
-        // Feature 0: [1,1,0,0,0,0,0,0,0,0] - conflicts with feature 1
-        // Feature 1: [1,1,0,0,0,0,0,0,0,0] - conflicts with feature 0
-        // Feature 2: [0,0,1,0,0,0,0,0,0,0] - doesn't conflict with anyone
-        let mut data = vec![0.0f32; 30];
-        data[0] = 1.0;  // feature 0, sample 0
-        data[1] = 1.0;  // feature 0, sample 1
-        data[10] = 1.0; // feature 1, sample 0
-        data[11] = 1.0; // feature 1, sample 1
-        data[22] = 1.0; // feature 2, sample 2
-        let view = FeaturesView::from_slice(&data, 10, 3).unwrap();
+        // 3 features, 10 samples
+        let data = array![
+            [1.0f32, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  // feature 0: conflicts with 1
+            [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],     // feature 1: conflicts with 0
+            [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],     // feature 2: no conflict
+        ];
+        let view = FeaturesView::from_array(data.view());
 
         // strict() uses min_sparsity = 0.95, so sparse_threshold = 0.05
         let feature_infos = vec![
@@ -1107,12 +1107,12 @@ mod tests {
     fn test_bundle_plan_high_conflict_skipped() {
         // 2 features that conflict on every non-zero row
         // This should trigger early termination due to high conflict rate (>50%)
-        let mut data = vec![0.0f32; 20];
-        data[0] = 1.0;  // feature 0, sample 0
-        data[1] = 1.0;  // feature 0, sample 1
-        data[10] = 1.0; // feature 1, sample 0
-        data[11] = 1.0; // feature 1, sample 1
-        let view = FeaturesView::from_slice(&data, 10, 2).unwrap();
+        // 2 features, 10 samples
+        let data = array![
+            [1.0f32, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  // feature 0
+            [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],     // feature 1: conflicts
+        ];
+        let view = FeaturesView::from_array(data.view());
 
         let feature_infos = vec![
             FeatureInfo {
@@ -1267,17 +1267,13 @@ mod tests {
 
     #[test]
     fn test_bundle_plan_feature_mapping() {
-        // 10 samples, 3 features - 2 sparse (mutually exclusive) + 1 dense
-        // Feature 0: [1,0,0,0,0,0,0,0,0,0] - sparse
-        // Feature 1: [0,1,0,0,0,0,0,0,0,0] - sparse
-        // Feature 2: [1,1,1,1,1,1,1,1,1,1] - dense
-        let mut data = vec![0.0f32; 30];
-        data[0] = 1.0;  // feature 0, sample 0
-        data[11] = 1.0; // feature 1, sample 1
-        for i in 0..10 {
-            data[20 + i] = 1.0; // feature 2, all samples
-        }
-        let view = FeaturesView::from_slice(&data, 10, 3).unwrap();
+        // 3 features, 10 samples - 2 sparse (mutually exclusive) + 1 dense
+        let data = array![
+            [1.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  // feature 0: sparse
+            [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],     // feature 1: sparse
+            [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],     // feature 2: dense
+        ];
+        let view = FeaturesView::from_array(data.view());
 
         let feature_infos = vec![
             FeatureInfo {

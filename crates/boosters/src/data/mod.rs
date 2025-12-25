@@ -36,11 +36,8 @@ pub use traits::FeatureAccessor;
 
 pub use ndarray::{
     axis, init_predictions, init_predictions_into, transpose_to_c_order,
-    FeaturesView,
 };
 
-// Internal: sample-major view used by explainers
-pub(crate) use ndarray::SamplesView;
 
 // Re-export binned types for convenience
 pub use binned::{

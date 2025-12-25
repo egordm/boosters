@@ -158,7 +158,7 @@ impl LeafFeatureBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::FeaturesView;
+    use crate::dataset::FeaturesView;
 
     #[test]
     fn test_leaf_buffer_gather() {

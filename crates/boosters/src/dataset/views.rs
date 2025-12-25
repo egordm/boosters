@@ -52,6 +52,32 @@ impl<'a> FeaturesView<'a> {
         Self { data, schema: None }
     }
 
+    /// Create from a contiguous slice in feature-major order.
+    ///
+    /// This is zero-copy.
+    ///
+    /// Data layout: `[f0_s0, f0_s1, ..., f1_s0, f1_s1, ...]`
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Slice of length `n_samples * n_features`
+    /// * `n_samples` - Number of samples
+    /// * `n_features` - Number of features
+    ///
+    /// # Returns
+    ///
+    /// `None` if the slice length doesn't match `n_samples * n_features`.
+    pub fn from_slice(
+        data: &'a [f32],
+        n_samples: usize,
+        n_features: usize,
+    ) -> Option<Self> {
+        // Shape is [n_features, n_samples] for feature-major
+        ArrayView2::from_shape((n_features, n_samples), data)
+            .ok()
+            .map(|view| Self { data: view, schema: None })
+    }
+
     /// Number of samples (second dimension).
     #[inline]
     pub fn n_samples(&self) -> usize {
@@ -220,6 +246,181 @@ impl<'a> std::fmt::Debug for TargetsView<'a> {
             .field("n_outputs", &self.n_outputs())
             .field("n_samples", &self.n_samples())
             .finish()
+    }
+}
+
+// =============================================================================
+// SamplesView (Sample-Major Layout)
+// =============================================================================
+
+/// Read-only view into feature data with sample-major layout.
+///
+/// Shape: `[n_samples, n_features]` - each sample's features are contiguous in memory.
+/// This is the transpose of [`FeaturesView`] and is useful for:
+/// - Tree traversal (where we access all features for one sample)
+/// - Block-buffered prediction (where we transpose chunks for cache efficiency)
+///
+/// The API uses conceptual terms (sample, feature) not array terms (row, col).
+/// Schema is optional - when not provided, all features are assumed numeric.
+#[derive(Clone, Copy)]
+pub struct SamplesView<'a> {
+    /// Shape: [n_samples, n_features] - sample-major
+    data: ArrayView2<'a, f32>,
+    /// Optional schema. If None, all features are assumed numeric.
+    schema: Option<&'a DatasetSchema>,
+}
+
+impl<'a> SamplesView<'a> {
+    /// Create a new samples view with schema.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Array with shape `[n_samples, n_features]`, must be C-order (row-major)
+    /// * `schema` - Feature metadata
+    ///
+    /// # Panics (debug only)
+    ///
+    /// Debug-asserts that the array is in standard (C) layout.
+    pub fn new(data: ArrayView2<'a, f32>, schema: &'a DatasetSchema) -> Self {
+        debug_assert!(data.is_standard_layout(), "Array must be in C-order");
+        debug_assert_eq!(
+            data.ncols(),
+            schema.n_features(),
+            "data.ncols() must match schema.n_features()"
+        );
+        Self {
+            data,
+            schema: Some(schema),
+        }
+    }
+
+    /// Create a samples view without schema (all features assumed numeric).
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Array with shape `[n_samples, n_features]`, must be C-order
+    ///
+    /// # Panics (debug only)
+    ///
+    /// Debug-asserts that the array is in standard (C) layout.
+    pub fn from_array(data: ArrayView2<'a, f32>) -> Self {
+        debug_assert!(data.is_standard_layout(), "Array must be in C-order");
+        Self { data, schema: None }
+    }
+
+    /// Create from a contiguous slice in sample-major (row-major) order.
+    ///
+    /// This is zero-copy.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Slice of length `n_samples * n_features`
+    /// * `n_samples` - Number of samples (rows)
+    /// * `n_features` - Number of features (columns)
+    ///
+    /// # Returns
+    ///
+    /// `None` if the slice length doesn't match `n_samples * n_features`.
+    pub fn from_slice(
+        data: &'a [f32],
+        n_samples: usize,
+        n_features: usize,
+    ) -> Option<Self> {
+        ArrayView2::from_shape((n_samples, n_features), data)
+            .ok()
+            .map(|view| Self { data: view, schema: None })
+    }
+
+    /// Number of samples (first dimension).
+    #[inline]
+    pub fn n_samples(&self) -> usize {
+        self.data.nrows()
+    }
+
+    /// Number of features (second dimension).
+    #[inline]
+    pub fn n_features(&self) -> usize {
+        self.data.ncols()
+    }
+
+    /// Get feature value at (sample, feature).
+    #[inline]
+    pub fn get(&self, sample: usize, feature: usize) -> f32 {
+        self.data[[sample, feature]]
+    }
+
+    /// Get all features for a sample as a contiguous slice.
+    ///
+    /// This is the fast path - returns a contiguous slice.
+    #[inline]
+    pub fn sample(&self, sample: usize) -> ArrayView1<'_, f32> {
+        self.data.row(sample)
+    }
+
+    /// Get all sample values for a feature.
+    ///
+    /// **Warning**: This returns a strided view, not contiguous.
+    /// For performance-critical code needing feature-contiguous access,
+    /// use [`FeaturesView`] instead.
+    #[inline]
+    pub fn feature(&self, feature: usize) -> ArrayView1<'_, f32> {
+        self.data.column(feature)
+    }
+
+    /// Get the type of a feature.
+    ///
+    /// Returns `Numeric` if no schema was provided.
+    #[inline]
+    pub fn feature_type(&self, feature: usize) -> FeatureType {
+        self.schema
+            .map(|s| s.feature_type(feature))
+            .unwrap_or(FeatureType::Numeric)
+    }
+
+    /// Get the underlying array view.
+    ///
+    /// Shape is `[n_samples, n_features]`.
+    pub fn view(&self) -> ArrayView2<'a, f32> {
+        self.data
+    }
+
+    /// Get the schema, if available.
+    pub fn schema(&self) -> Option<&DatasetSchema> {
+        self.schema
+    }
+
+    /// Check if any feature is categorical.
+    ///
+    /// Returns `false` if no schema was provided.
+    pub fn has_categorical(&self) -> bool {
+        self.schema.map(|s| s.has_categorical()).unwrap_or(false)
+    }
+}
+
+impl<'a> std::fmt::Debug for SamplesView<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SamplesView")
+            .field("n_samples", &self.n_samples())
+            .field("n_features", &self.n_features())
+            .finish()
+    }
+}
+
+// Enable tree traversal with SamplesView (sample-major layout)
+impl<'a> crate::data::FeatureAccessor for SamplesView<'a> {
+    #[inline]
+    fn get_feature(&self, row: usize, feature: usize) -> f32 {
+        self.data[[row, feature]]
+    }
+
+    #[inline]
+    fn n_rows(&self) -> usize {
+        self.n_samples()
+    }
+
+    #[inline]
+    fn n_features(&self) -> usize {
+        self.data.ncols()
     }
 }
 

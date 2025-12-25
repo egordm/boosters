@@ -42,9 +42,9 @@
 
 use crate::Parallelism;
 use crate::data::axis;
-use crate::dataset::FeaturesView;
+use crate::dataset::{FeaturesView, SamplesView};
 use crate::repr::gbdt::{Forest, ScalarLeaf, Tree, TreeView};
-use ndarray::{Array2, ArrayView2, ArrayViewMut2};
+use ndarray::{Array2, ArrayViewMut2};
 
 use super::TreeTraversal;
 
@@ -285,8 +285,9 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
                     // Transpose feature chunk into buffer: [n_features, block_size].T -> [block_size, n_features]
                     buffer.assign(&feature_chunk.t());
 
-                    // Predict block into output chunk
-                    self.predict_block_into(buffer.view(), tree_weights, output_chunk);
+                    // Predict block into output chunk (buffer is sample-major)
+                    let samples = SamplesView::from_array(buffer.view());
+                    self.predict_block_into(samples, tree_weights, output_chunk);
                 });
             },
         );
@@ -316,13 +317,11 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
 
     fn predict_block_into(
         &self,
-        features: ArrayView2<f32>,
+        features: SamplesView<'_>,
         tree_weights: Option<&[f32]>,
         mut output: ArrayViewMut2<f32>,
     ) {
-        let feature_data = features.as_slice().expect("features must be contiguous");
-        let n_features = features.ncols();
-        let n_rows = features.nrows();
+        let n_rows = features.n_samples();
         let mut leaf_indices = vec![0u32; n_rows];
 
         for (tree_idx, (tree, group)) in self.forest.trees_with_groups().enumerate() {
@@ -331,12 +330,13 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
             let tree_weight = tree_weights.map(|w| w[tree_idx]).unwrap_or(1.0);
 
             // Step 1: Get leaf indices
-            T::traverse_block(tree, state, feature_data, n_features, &mut leaf_indices);
+            T::traverse_block(tree, state, features, &mut leaf_indices);
 
             // Step 2: Extract values and accumulate into group row
             let mut group_row = output.row_mut(group_idx);
             if tree.has_linear_leaves() {
-                for (i, feat_row) in features.axis_iter(axis::ROWS).enumerate() {
+                for i in 0..n_rows {
+                    let feat_row = features.sample(i);
                     let value = compute_linear_leaf_value(
                         tree,
                         leaf_indices[i],
@@ -379,7 +379,7 @@ pub type UnrolledPredictor8<'f> = Predictor<'f, UnrolledTraversal<Depth8>>;
 mod tests {
     use super::*;
     use approx::assert_abs_diff_eq;
-    use ndarray::Array2;
+    use ndarray::{Array2, ArrayView2};
     use crate::repr::gbdt::{Forest, ScalarLeaf, Tree};
 
     fn build_simple_tree(

@@ -24,8 +24,8 @@ use rand::prelude::*;
 
 use ndarray::{Array1, Array2, ArrayView2};
 
-use crate::data::{binned::BinnedDataset, BinnedDatasetBuilder, BinningConfig, FeaturesView, transpose_to_c_order};
-use crate::dataset::Dataset;
+use crate::data::{binned::BinnedDataset, BinnedDatasetBuilder, BinningConfig, transpose_to_c_order};
+use crate::dataset::{Dataset, FeaturesView};
 use crate::utils::Parallelism;
 
 // =============================================================================
@@ -57,7 +57,7 @@ impl SyntheticDataset {
 
     /// Get features as a `FeaturesView` for binning/training.
     pub fn features_view(&self) -> FeaturesView<'_> {
-        FeaturesView::new(self.features.view())
+        FeaturesView::from_array(self.features.view())
     }
 
     /// Get targets as a slice.

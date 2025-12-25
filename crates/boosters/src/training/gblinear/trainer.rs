@@ -5,8 +5,8 @@
 
 use ndarray::Array2;
 
-use crate::data::{init_predictions, FeaturesView};
-use crate::dataset::Dataset;
+use crate::data::init_predictions;
+use crate::dataset::{Dataset, FeaturesView};
 use crate::repr::gblinear::LinearModel;
 use crate::training::eval;
 use crate::training::{
@@ -136,8 +136,8 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
         // Get weights as ArrayView1 (matching Dataset::weights() return type)
         let weights = train.weights();
 
-        let n_features = train_data.nrows();
-        let n_samples = train_data.ncols();
+        let n_features = train.n_features();
+        let n_samples = train.n_samples();
         let n_outputs = self.objective.n_outputs();
 
         assert!(
@@ -149,8 +149,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
         debug_assert!(weights.is_none_or(|w| w.len() == n_samples));
 
         // Compute base scores using objective
-        let mut base_scores = vec![0.0f32; n_outputs];
-        self.objective.compute_base_score(targets, weights, &mut base_scores);
+        let base_scores = self.objective.compute_base_score(targets, weights);
 
         // Initialize model with base scores as biases
         let mut model = LinearModel::zeros(n_features, n_outputs);
@@ -214,7 +213,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
             // On first round (round == 0), predictions are already initialized with base scores.
 
             // Compute gradients from current predictions
-            self.objective.compute_gradients(
+            self.objective.compute_gradients_into(
                 predictions.view(),
                 targets,
                 weights,
@@ -230,26 +229,22 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                     updater.apply_bias_delta_to_predictions(
                         bias_delta,
                         output,
-                        n_samples,
-                        predictions.as_slice_mut().unwrap(),
+                        predictions.view_mut(),
                     );
                     
                     // Also update eval predictions (only if evaluation is needed)
                     if needs_evaluation {
                         for eval_preds in eval_predictions.iter_mut() {
-                            let eval_rows = eval_preds.ncols();
-                            let eval_preds_slice = eval_preds.as_slice_mut().unwrap();
                             updater.apply_bias_delta_to_predictions(
                                 bias_delta,
                                 output,
-                                eval_rows,
-                                eval_preds_slice,
+                                eval_preds.view_mut(),
                             );
                         }
                     }
                     
                     // Recompute gradients after bias update
-                    self.objective.compute_gradients(
+                    self.objective.compute_gradients_into(
                         predictions.view(),
                         targets,
                         weights,
@@ -257,7 +252,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                     );
                 }
 
-                let train_features = FeaturesView::new(train_data.view());
+                let train_features = FeaturesView::from_array(train_data.view());
                 selector.setup_round(
                     &model,
                     &train_features,
@@ -281,23 +276,19 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                         &train_features,
                         &weight_deltas,
                         output,
-                        n_samples,
-                        predictions.as_slice_mut().unwrap(),
+                        predictions.view_mut(),
                     );
                     
                     // Also update eval predictions (only if evaluation is needed)
                     if needs_evaluation {
                         for (set_idx, eval_set) in eval_sets.iter().enumerate() {
-                            let eval_rows = eval_predictions[set_idx].ncols();
                             // Use view() to get ArrayView2, then wrap in data::FeaturesView
-                            let eval_features = FeaturesView::new(eval_set.dataset.features().view());
-                            let eval_preds_slice = eval_predictions[set_idx].as_slice_mut().unwrap();
+                            let eval_features = eval_set.dataset.features();
                             updater.apply_weight_deltas_to_predictions(
                                 &eval_features,
                                 &weight_deltas,
                                 output,
-                                eval_rows,
-                                eval_preds_slice,
+                                eval_predictions[set_idx].view_mut(),
                             );
                         }
                     }

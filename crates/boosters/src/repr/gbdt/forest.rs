@@ -1,6 +1,6 @@
 //! Canonical forest representation (collection of trees).
 
-use crate::data::SamplesView;
+use crate::dataset::SamplesView;
 
 use super::{tree::TreeValidationError, LeafValue, ScalarLeaf, Tree, TreeView};
 
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn test_predict_into_matches_predict_row() {
-        use crate::data::SamplesView;
+        use crate::dataset::SamplesView;
 
         let mut forest = Forest::for_regression().with_base_score(vec![0.1]);
         forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);

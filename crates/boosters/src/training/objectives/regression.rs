@@ -29,7 +29,7 @@ impl ObjectiveFn for SquaredLoss {
         1
     }
 
-    fn compute_gradients(
+    fn compute_gradients_into(
         &self,
         predictions: ArrayView2<f32>,
         targets: TargetsView<'_>,
@@ -59,13 +59,11 @@ impl ObjectiveFn for SquaredLoss {
         &self,
         targets: TargetsView<'_>,
         weights: Option<ArrayView1<'_, f32>>,
-        outputs: &mut [f32],
-    ) {
+    ) -> Vec<f32> {
         let targets = targets.output(0);
         let n_rows = targets.len();
         if n_rows == 0 {
-            outputs.fill(0.0);
-            return;
+            return vec![0.0];
         }
 
         // Compute weighted mean
@@ -77,9 +75,7 @@ impl ObjectiveFn for SquaredLoss {
             });
 
         let base = if sum_w > 0.0 { (sum_wy / sum_w) as f32 } else { 0.0 };
-        
-        // Fill all outputs with the same base score (single-output objective)
-        outputs.fill(base);
+        vec![base]
     }
 
     fn name(&self) -> &'static str {
@@ -94,7 +90,7 @@ impl ObjectiveFn for SquaredLoss {
         TargetSchema::Continuous
     }
 
-    fn transform_predictions(&self, _predictions: ArrayViewMut2<f32>) -> PredictionKind {
+    fn transform_predictions_inplace(&self, _predictions: ArrayViewMut2<f32>) -> PredictionKind {
         PredictionKind::Value
     }
 }
@@ -116,7 +112,7 @@ impl ObjectiveFn for AbsoluteLoss {
         1
     }
 
-    fn compute_gradients(
+    fn compute_gradients_into(
         &self,
         predictions: ArrayView2<f32>,
         targets: TargetsView<'_>,
@@ -147,17 +143,15 @@ impl ObjectiveFn for AbsoluteLoss {
         &self,
         targets: TargetsView<'_>,
         weights: Option<ArrayView1<'_, f32>>,
-        outputs: &mut [f32],
-    ) {
+    ) -> Vec<f32> {
         let targets = targets.output(0);
         // Use weighted median as base score (optimal for L1 loss)
         if targets.is_empty() {
-            outputs.fill(0.0);
-            return;
+            return vec![0.0];
         }
 
         let median = compute_weighted_quantile(targets, weights, 0.5);
-        outputs.fill(median);
+        vec![median]
     }
 
     fn name(&self) -> &'static str {
@@ -172,7 +166,7 @@ impl ObjectiveFn for AbsoluteLoss {
         TargetSchema::Continuous
     }
 
-    fn transform_predictions(&self, _predictions: ArrayViewMut2<f32>) -> PredictionKind {
+    fn transform_predictions_inplace(&self, _predictions: ArrayViewMut2<f32>) -> PredictionKind {
         PredictionKind::Value
     }
 }
@@ -220,7 +214,7 @@ impl ObjectiveFn for PinballLoss {
         self.alphas.len()
     }
 
-    fn compute_gradients(
+    fn compute_gradients_into(
         &self,
         predictions: ArrayView2<f32>,
         targets: TargetsView<'_>,
@@ -252,18 +246,16 @@ impl ObjectiveFn for PinballLoss {
         &self,
         targets: TargetsView<'_>,
         weights: Option<ArrayView1<'_, f32>>,
-        outputs: &mut [f32],
-    ) {
+    ) -> Vec<f32> {
         let targets = targets.output(0);
         if targets.is_empty() {
-            outputs.fill(0.0);
-            return;
+            return vec![0.0; self.alphas.len()];
         }
 
-        for (out_idx, &alpha) in self.alphas.iter().enumerate() {
-            let quantile = compute_weighted_quantile(targets, weights, alpha);
-            outputs[out_idx] = quantile;
-        }
+        self.alphas
+            .iter()
+            .map(|&alpha| compute_weighted_quantile(targets, weights, alpha))
+            .collect()
     }
 
     fn task_kind(&self) -> TaskKind {
@@ -274,7 +266,7 @@ impl ObjectiveFn for PinballLoss {
         TargetSchema::Continuous
     }
 
-    fn transform_predictions(&self, _predictions: ArrayViewMut2<f32>) -> PredictionKind {
+    fn transform_predictions_inplace(&self, _predictions: ArrayViewMut2<f32>) -> PredictionKind {
         PredictionKind::Value
     }
 
@@ -310,7 +302,7 @@ impl ObjectiveFn for PseudoHuberLoss {
         1
     }
 
-    fn compute_gradients(
+    fn compute_gradients_into(
         &self,
         predictions: ArrayView2<f32>,
         targets: TargetsView<'_>,
@@ -346,17 +338,15 @@ impl ObjectiveFn for PseudoHuberLoss {
         &self,
         targets: TargetsView<'_>,
         weights: Option<ArrayView1<'_, f32>>,
-        outputs: &mut [f32],
-    ) {
+    ) -> Vec<f32> {
         let targets = targets.output(0);
         // Use median as robust base score
         if targets.is_empty() {
-            outputs.fill(0.0);
-            return;
+            return vec![0.0];
         }
 
         let median = compute_weighted_quantile(targets, weights, 0.5);
-        outputs.fill(median);
+        vec![median]
     }
 
     fn name(&self) -> &'static str {
@@ -371,7 +361,7 @@ impl ObjectiveFn for PseudoHuberLoss {
         TargetSchema::Continuous
     }
 
-    fn transform_predictions(&self, _predictions: ArrayViewMut2<f32>) -> PredictionKind {
+    fn transform_predictions_inplace(&self, _predictions: ArrayViewMut2<f32>) -> PredictionKind {
         PredictionKind::Value
     }
 }
@@ -395,7 +385,7 @@ impl ObjectiveFn for PoissonLoss {
         1
     }
 
-    fn compute_gradients(
+    fn compute_gradients_into(
         &self,
         predictions: ArrayView2<f32>,
         targets: TargetsView<'_>,
@@ -430,13 +420,11 @@ impl ObjectiveFn for PoissonLoss {
         &self,
         targets: TargetsView<'_>,
         weights: Option<ArrayView1<'_, f32>>,
-        outputs: &mut [f32],
-    ) {
+    ) -> Vec<f32> {
         let targets = targets.output(0);
         let n_rows = targets.len();
         if n_rows == 0 {
-            outputs.fill(0.0);
-            return;
+            return vec![0.0];
         }
 
         // Base score is log of weighted mean target
@@ -448,7 +436,7 @@ impl ObjectiveFn for PoissonLoss {
             });
 
         let mean = if sum_w > 0.0 { (sum_wy / sum_w).max(1e-7) } else { 1.0 };
-        outputs.fill(mean.ln() as f32);
+        vec![mean.ln() as f32]
     }
 
     fn name(&self) -> &'static str {
@@ -463,7 +451,7 @@ impl ObjectiveFn for PoissonLoss {
         TargetSchema::CountNonNegative
     }
 
-    fn transform_predictions(&self, _predictions: ArrayViewMut2<f32>) -> PredictionKind {
+    fn transform_predictions_inplace(&self, _predictions: ArrayViewMut2<f32>) -> PredictionKind {
         PredictionKind::Value
     }
 }
@@ -536,7 +524,7 @@ mod tests {
         let targets = TargetsView::new(targets_arr.view());
         let mut gh = make_grad_hess(1, 3);
 
-        obj.compute_gradients(preds.view(), targets, None, gh.view_mut());
+        obj.compute_gradients_into(preds.view(), targets, None, gh.view_mut());
 
         assert!((gh[[0, 0]].grad - 0.5).abs() < 1e-6);  // 1.0 - 0.5
         assert!((gh[[0, 1]].grad - -0.5).abs() < 1e-6); // 2.0 - 2.5
@@ -553,7 +541,7 @@ mod tests {
         let weights = ndarray::array![2.0f32, 0.5];
         let mut gh = make_grad_hess(1, 2);
 
-        obj.compute_gradients(preds.view(), targets, Some(weights.view()), gh.view_mut());
+        obj.compute_gradients_into(preds.view(), targets, Some(weights.view()), gh.view_mut());
 
         assert!((gh[[0, 0]].grad - 1.0).abs() < 1e-6);   // 2.0 * 0.5
         assert!((gh[[0, 1]].grad - -0.25).abs() < 1e-6); // 0.5 * -0.5
@@ -566,9 +554,9 @@ mod tests {
         let obj = SquaredLoss;
         let targets_arr = make_targets_array(&[1.0, 2.0, 3.0, 4.0]);
         let targets = TargetsView::new(targets_arr.view());
-        let mut output = [0.0f32];
 
-        obj.compute_base_score(targets, None, &mut output);
+        let output = obj.compute_base_score(targets, None);
+        assert_eq!(output.len(), 1);
         assert!((output[0] - 2.5).abs() < 1e-6);
     }
 
@@ -580,7 +568,7 @@ mod tests {
         let targets = TargetsView::new(targets_arr.view());
         let mut gh = make_grad_hess(1, 3);
 
-        obj.compute_gradients(preds.view(), targets, None, gh.view_mut());
+        obj.compute_gradients_into(preds.view(), targets, None, gh.view_mut());
 
         assert!((gh[[0, 0]].grad - 0.5).abs() < 1e-6);  // pred > target
         assert!((gh[[0, 1]].grad - -0.5).abs() < 1e-6); // pred < target
@@ -595,7 +583,7 @@ mod tests {
         let targets = TargetsView::new(targets_arr.view());
         let mut gh = make_grad_hess(1, 3);
 
-        obj.compute_gradients(preds.view(), targets, None, gh.view_mut());
+        obj.compute_gradients_into(preds.view(), targets, None, gh.view_mut());
 
         assert!((gh[[0, 0]].grad - 1.0).abs() < 1e-6);  // sign(0.5) = 1
         assert!((gh[[0, 1]].grad - -1.0).abs() < 1e-6); // sign(-0.5) = -1
@@ -610,7 +598,7 @@ mod tests {
         let targets = TargetsView::new(targets_arr.view());
         let mut gh = make_grad_hess(1, 1);
 
-        obj.compute_gradients(preds.view(), targets, None, gh.view_mut());
+        obj.compute_gradients_into(preds.view(), targets, None, gh.view_mut());
 
         // Near zero, should be approximately linear (grad ≈ residual)
         assert!((gh[[0, 0]].grad - 0.01).abs() < 0.001);
@@ -625,7 +613,7 @@ mod tests {
         let targets = TargetsView::new(targets_arr.view());
         let mut gh = make_grad_hess(1, 1);
 
-        obj.compute_gradients(preds.view(), targets, None, gh.view_mut());
+        obj.compute_gradients_into(preds.view(), targets, None, gh.view_mut());
 
         // grad = exp(0) - 2 = 1 - 2 = -1
         assert!((gh[[0, 0]].grad - -1.0).abs() < 1e-6);
@@ -638,12 +626,12 @@ mod tests {
         let obj = PoissonLoss;
         let targets_arr = make_targets_array(&[1.0, 2.0, 3.0, 4.0]);
         let targets = TargetsView::new(targets_arr.view());
-        let mut output = [0.0f32];
 
-        obj.compute_base_score(targets, None, &mut output);
+        let output = obj.compute_base_score(targets, None);
 
         // Base score = log(mean) = log(2.5)
         let expected = (2.5f32).ln();
+        assert_eq!(output.len(), 1);
         assert!((output[0] - expected).abs() < 1e-6);
     }
 }

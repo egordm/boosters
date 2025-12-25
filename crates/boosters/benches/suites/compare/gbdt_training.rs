@@ -10,12 +10,12 @@ use common::criterion_config::default_criterion;
 
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{transpose_to_c_order, BinningConfig};
-use boosters::dataset::Dataset;
+use boosters::dataset::{Dataset, TargetsView};
 use boosters::testing::data::synthetic_regression;
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
 
-use ndarray::{ArrayView1, ArrayView2};
+use ndarray::{Array2, ArrayView2};
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
@@ -82,14 +82,13 @@ fn bench_train_regression(c: &mut Criterion) {
 			b.iter(|| {
 				// Use single-threaded binning to match training parallelism
 				// This mirrors how LightGBM's num_threads=1 affects its entire pipeline
-				let binned = BinnedDatasetBuilder::from_dataset(
-					&features_dataset,
-					BinningConfig::builder().max_bins(256).build(),
-					Parallelism::Sequential,
-				)
-				.build()
-				.unwrap();
-				black_box(trainer.train(black_box(&binned), ArrayView1::from(black_box(&targets[..])), None, &[], Parallelism::Sequential).unwrap())
+				let binned = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+					.add_features(features_dataset.features(), Parallelism::Sequential)
+					.build()
+					.unwrap();
+				let targets_2d = Array2::from_shape_vec((1, targets.len()), targets.clone()).unwrap();
+				let targets_view = TargetsView::new(targets_2d.view());
+				black_box(trainer.train(black_box(&binned), targets_view, None, &[], Parallelism::Sequential).unwrap())
 			})
 		});
 

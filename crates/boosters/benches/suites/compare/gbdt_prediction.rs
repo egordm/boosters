@@ -11,6 +11,7 @@ use common::models::load_boosters_model;
 #[cfg(any(feature = "bench-xgboost", feature = "bench-lightgbm"))]
 use common::models::bench_models_dir;
 
+use boosters::dataset::FeaturesView;
 use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
 use boosters::testing::data::random_features_array;
 use boosters::Parallelism;
@@ -95,8 +96,9 @@ fn bench_predict_batch_sizes(c: &mut Criterion) {
 		group.throughput(Throughput::Elements(batch_size as u64));
 
 		// booste-rs
-		group.bench_with_input(BenchmarkId::new("boosters", batch_size), &input_array, |b, m| {
-			b.iter(|| black_box(predictor.predict(black_box(m.view()), Parallelism::Sequential)))
+		let features = FeaturesView::from_array(input_array.view());
+		group.bench_with_input(BenchmarkId::new("boosters", batch_size), &features, |b, f| {
+			b.iter(|| black_box(predictor.predict(black_box(*f), Parallelism::Sequential)))
 		});
 
 		// Get raw slice for XGBoost/LightGBM
@@ -169,8 +171,9 @@ fn bench_predict_single_row(c: &mut Criterion) {
 	let mut group = c.benchmark_group("compare/predict/single_row/medium");
 
 	// booste-rs
+	let features = FeaturesView::from_array(input_array.view());
 	group.bench_function("boosters", |b| {
-		b.iter(|| black_box(predictor.predict(black_box(input_array.view()), Parallelism::Sequential)))
+		b.iter(|| black_box(predictor.predict(black_box(features), Parallelism::Sequential)))
 	});
 
 	// XGBoost
@@ -238,10 +241,11 @@ fn bench_predict_thread_scaling(c: &mut Criterion) {
 	let mut group = c.benchmark_group("compare/predict/thread_scaling/medium");
 	group.throughput(Throughput::Elements(batch_size as u64));
 
+	let features = FeaturesView::from_array(input_array.view());
 	for &n_threads in common::matrix::THREAD_COUNTS {
 		// booste-rs
-		group.bench_with_input(BenchmarkId::new("boosters", n_threads), &input_array, |b, m| {
-			b.iter(|| black_box(predictor.predict(black_box(m.view()), Parallelism::Parallel)))
+		group.bench_with_input(BenchmarkId::new("boosters", n_threads), &features, |b, f| {
+			b.iter(|| black_box(predictor.predict(black_box(*f), Parallelism::Parallel)))
 		});
 
 		// XGBoost

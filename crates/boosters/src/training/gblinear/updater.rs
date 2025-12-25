@@ -19,9 +19,10 @@
 //! - Shape `[n_samples, n_outputs]` for unified single/multi-output handling
 //! - Separate `grads[]` and `hess[]` arrays for cache efficiency
 
+use ndarray::ArrayViewMut2;
 use rayon::prelude::*;
 
-use crate::data::FeaturesView;
+use crate::dataset::FeaturesView;
 use crate::repr::gblinear::LinearModel;
 use crate::training::Gradients;
 
@@ -169,22 +170,19 @@ impl Updater {
     /// * `data` - Training data as FeaturesView `[n_features, n_samples]`
     /// * `deltas` - Weight deltas from coordinate descent: (feature_idx, delta) pairs
     /// * `output` - Which output group these deltas apply to
-    /// * `n_rows` - Number of samples
-    /// * `predictions` - Prediction buffer in column-major layout: `[group * n_rows + row]`
+    /// * `predictions` - Prediction buffer `[n_outputs, n_samples]`
     pub fn apply_weight_deltas_to_predictions(
         &self,
         data: &FeaturesView<'_>,
         deltas: &[(usize, f32)],
         output: usize,
-        n_rows: usize,
-        predictions: &mut [f32],
+        mut predictions: ArrayViewMut2<'_, f32>,
     ) {
-        let offset = output * n_rows;
-
+        let mut output_row = predictions.row_mut(output);
         for &(feature, delta) in deltas {
             let feature_values = data.feature(feature);
             for (row, &value) in feature_values.iter().enumerate() {
-                predictions[offset + row] += value * delta;
+                output_row[row] += value * delta;
             }
         }
     }
@@ -197,19 +195,17 @@ impl Updater {
     ///
     /// * `bias_delta` - Change in bias value
     /// * `output` - Which output group to update
-    /// * `n_rows` - Number of samples
-    /// * `predictions` - Prediction buffer in column-major layout
+    /// * `predictions` - Prediction buffer `[n_outputs, n_samples]`
     pub fn apply_bias_delta_to_predictions(
         &self,
         bias_delta: f32,
         output: usize,
-        n_rows: usize,
-        predictions: &mut [f32],
+        mut predictions: ArrayViewMut2<'_, f32>,
     ) {
         if bias_delta.abs() > 1e-10 {
-            let offset = output * n_rows;
-            for i in 0..n_rows {
-                predictions[offset + i] += bias_delta;
+            let mut output_row = predictions.row_mut(output);
+            for i in 0..output_row.len() {
+                output_row[i] += bias_delta;
             }
         }
     }
@@ -366,16 +362,15 @@ fn soft_threshold(x: f32, threshold: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::FeaturesView;
+    use crate::dataset::FeaturesView;
+    use ndarray::{array, Array2};
     use super::super::selector::CyclicSelector;
 
-    fn make_test_data() -> (Vec<f32>, Gradients) {
-        // Simple 4x2 dataset in feature-major layout
-        // Feature 0: [1.0, 0.0, 1.0, 2.0] (samples 0-3)
-        // Feature 1: [0.0, 1.0, 1.0, 0.5] (samples 0-3)
-        let feature_data = vec![
-            1.0, 0.0, 1.0, 2.0, // feature 0
-            0.0, 1.0, 1.0, 0.5, // feature 1
+    fn make_test_data() -> (Array2<f32>, Gradients) {
+        // Simple 2 features x 4 samples dataset (feature-major layout)
+        let feature_data = array![
+            [1.0f32, 0.0, 1.0, 2.0], // feature 0
+            [0.0, 1.0, 1.0, 0.5],    // feature 1
         ];
 
         // Gradients (simulating squared error loss)
@@ -407,7 +402,7 @@ mod tests {
     #[test]
     fn sequential_updater_changes_weights() {
         let (feature_data, buffer) = make_test_data();
-        let data = FeaturesView::from_slice(&feature_data, 4, 2).unwrap();
+        let data = FeaturesView::from_array(feature_data.view());
         let mut model = LinearModel::zeros(2, 1);
         let mut selector = CyclicSelector::new();
 
@@ -435,7 +430,7 @@ mod tests {
     #[test]
     fn parallel_updater_changes_weights() {
         let (feature_data, buffer) = make_test_data();
-        let data = FeaturesView::from_slice(&feature_data, 4, 2).unwrap();
+        let data = FeaturesView::from_array(feature_data.view());
         let mut model = LinearModel::zeros(2, 1);
         let mut selector = CyclicSelector::new();
 
@@ -463,7 +458,7 @@ mod tests {
     #[test]
     fn l2_regularization_shrinks_weights() {
         let (feature_data, buffer) = make_test_data();
-        let data = FeaturesView::from_slice(&feature_data, 4, 2).unwrap();
+        let data = FeaturesView::from_array(feature_data.view());
 
         // No regularization
         let mut model1 = LinearModel::zeros(2, 1);

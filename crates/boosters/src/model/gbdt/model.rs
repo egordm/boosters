@@ -267,7 +267,7 @@ impl GBDTModel {
         let mut output = self.predict_raw(data, n_threads);
 
         // Apply transformation (sigmoid/softmax for classification)
-        self.config.objective.transform_predictions(output.view_mut());
+        self.config.objective.transform_predictions_inplace(output.view_mut());
 
         output
     }

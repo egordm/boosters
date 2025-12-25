@@ -10,8 +10,11 @@
 // Allow many constructor arguments for creating trees with all their fields.
 #![allow(clippy::too_many_arguments)]
 
+use ndarray::ArrayViewMut1;
+
 use crate::Parallelism;
 use crate::data::{BinnedDataset, BinnedRowView, FeatureAccessor};
+use crate::dataset::SamplesView;
 
 use super::categories::{float_to_category, CategoriesStorage};
 use super::coefficients::LeafCoefficients;
@@ -103,8 +106,9 @@ pub trait TreeView {
     /// ```ignore
     /// use boosters::repr::gbdt::TreeView;
     /// use boosters::data::SamplesView;
+    /// use ndarray::array;
     ///
-    /// let features = SamplesView::from_slice(&[0.5, 1.0], 1, 2).unwrap();
+    /// let features = SamplesView::from_array(array![[0.5, 1.0]].view());
     /// let leaf_id = tree.traverse_to_leaf(&features, 0);
     /// ```
     #[inline]
@@ -476,7 +480,7 @@ impl<L: LeafValue> Tree<L> {
     pub fn predict_row(&self, features: &[f32]) -> &L {
         // Wrap the slice as a 1-row SamplesView and use traverse_to_leaf
         let accessor =
-            crate::data::SamplesView::from_slice(features, 1, features.len()).unwrap();
+            SamplesView::from_slice(features, 1, features.len()).unwrap();
         let leaf_id = self.traverse_to_leaf(&accessor, 0);
         self.leaf_value(leaf_id)
     }
@@ -544,7 +548,7 @@ impl<L: LeafValue> Tree<L> {
     pub fn predict_binned_into(
         &self,
         dataset: &BinnedDataset,
-        predictions: &mut [f32],
+        mut predictions: ArrayViewMut1<f32>,
         parallelism: Parallelism,
     ) where
         L: Into<f32> + Copy + Send + Sync,
@@ -721,10 +725,10 @@ impl<L: LeafValue> TreeView for Tree<L> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{FeaturesView, SamplesView};
+    use crate::dataset::{FeaturesView, SamplesView};
     use crate::repr::gbdt::mutable_tree::MutableTree;
     use crate::repr::gbdt::ScalarLeaf;
-    use ndarray::Array2;
+    use ndarray::{array, Array2};
 
     #[test]
     fn predict_simple_tree() {
@@ -888,14 +892,20 @@ mod tests {
             2 => leaf(1.0),
         };
 
-        // Sample-major data: 3 rows, 2 features (row-major order)
-        let row_data = [0.3f32, 0.0, 0.7, 0.0, f32::NAN, 0.0];
-        let samples_view = SamplesView::from_slice(&row_data, 3, 2).unwrap();
+        // Sample-major data: 3 samples, 2 features
+        let row_data = array![
+            [0.3f32, 0.0],  // sample 0
+            [0.7, 0.0],     // sample 1
+            [f32::NAN, 0.0] // sample 2
+        ];
+        let samples_view = SamplesView::from_array(row_data.view());
 
-        // Feature-major data: same logical values but in feature-major order
-        // [f0_s0, f0_s1, f0_s2, f1_s0, f1_s1, f1_s2] = [0.3, 0.7, NaN, 0.0, 0.0, 0.0]
-        let col_data = [0.3f32, 0.7, f32::NAN, 0.0, 0.0, 0.0];
-        let features_view = FeaturesView::from_slice(&col_data, 3, 2).unwrap();
+        // Feature-major data: same logical values but in feature-major layout
+        let col_data = array![
+            [0.3f32, 0.7, f32::NAN],  // feature 0
+            [0.0, 0.0, 0.0],          // feature 1
+        ];
+        let features_view = FeaturesView::from_array(col_data.view());
 
         // Test SamplesView accessor
         let leaf_row_0 = tree.traverse_to_leaf(&samples_view, 0);

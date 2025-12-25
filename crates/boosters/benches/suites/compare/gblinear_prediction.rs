@@ -10,7 +10,7 @@ use common::models::load_linear_model;
 #[cfg(feature = "bench-xgboost")]
 use common::models::bench_models_dir;
 
-use boosters::data::SamplesView;
+use boosters::dataset::FeaturesView;
 use boosters::testing::data::random_features_array;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
@@ -67,13 +67,13 @@ fn bench_predict_batch_sizes(c: &mut Criterion) {
 
 	for batch_size in [SMALL_BATCH, MEDIUM_BATCH, LARGE_BATCH] {
 		let input_array = random_features_array(batch_size, n_features, 42, -5.0, 5.0);
-		let samples_view = SamplesView::from_array(input_array.view());
+		let features_view = FeaturesView::from_array(input_array.view());
 
 		group.throughput(Throughput::Elements(batch_size as u64));
 
 		// booste-rs
 		group.bench_function(BenchmarkId::new("boosters", batch_size), |b| {
-			b.iter(|| black_box(boosters_model.model.predict(black_box(samples_view), &[])))
+			b.iter(|| black_box(boosters_model.model.predict(black_box(features_view))))
 		});
 
 		// XGBoost
@@ -111,7 +111,7 @@ fn bench_predict_single_row(c: &mut Criterion) {
 	let xgb_model = new_xgb_booster(&xgb_model_bytes);
 
 	let input_array = random_features_array(1, n_features, 42, -5.0, 5.0);
-	let samples_view = SamplesView::from_array(input_array.view());
+	let features_view = FeaturesView::from_array(input_array.view());
 
 	#[cfg(feature = "bench-xgboost")]
 	let input_data: &[f32] = input_array.as_slice().unwrap();
@@ -120,7 +120,7 @@ fn bench_predict_single_row(c: &mut Criterion) {
 
 	// booste-rs
 	group.bench_function("boosters", |b| {
-		b.iter(|| black_box(boosters_model.model.predict(black_box(samples_view), &[])))
+		b.iter(|| black_box(boosters_model.model.predict(black_box(features_view))))
 	});
 
 	// XGBoost
@@ -167,7 +167,7 @@ fn bench_model_sizes(c: &mut Criterion) {
 	for (name, model) in &models {
 		let n_features = model.n_features;
 		let input_array = random_features_array(batch_size, n_features, 42, -5.0, 5.0);
-		let samples_view = SamplesView::from_array(input_array.view());
+		let features_view = FeaturesView::from_array(input_array.view());
 
 		#[cfg(feature = "bench-xgboost")]
 		let input_data: &[f32] = input_array.as_slice().unwrap();
@@ -176,7 +176,7 @@ fn bench_model_sizes(c: &mut Criterion) {
 
 		// booste-rs
 		group.bench_function(BenchmarkId::new("boosters", name), |b| {
-			b.iter(|| black_box(model.model.predict(black_box(samples_view), &[])))
+			b.iter(|| black_box(model.model.predict(black_box(features_view))))
 		});
 
 		// XGBoost

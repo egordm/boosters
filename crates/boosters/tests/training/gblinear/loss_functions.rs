@@ -193,7 +193,7 @@ fn train_hinge_binary_classification() {
     let logistic_output = logistic_model.predict(test_view);
     // Apply transform to convert logits to probabilities
     let mut logistic_arr = logistic_output.clone();
-    LogisticLoss.transform_predictions(logistic_arr.view_mut());
+    LogisticLoss.transform_predictions_inplace(logistic_arr.view_mut());
     let logistic_acc = Accuracy::with_threshold(0.5)
         .compute(logistic_arr.view(), targets, None) as f32;
 

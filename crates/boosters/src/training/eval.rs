@@ -193,7 +193,7 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
                 &mut self.transform_buffer[..required],
             )
             .expect("transform buffer shape mismatch");
-            self.objective.transform_predictions(view.view_mut());
+            self.objective.transform_predictions_inplace(view.view_mut());
 
             let preds_view = ArrayView2::from_shape(
                 (self.n_outputs, n_samples),

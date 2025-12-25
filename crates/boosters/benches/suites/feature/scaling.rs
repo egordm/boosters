@@ -10,9 +10,12 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
+use boosters::dataset::TargetsView;
 use boosters::testing::data::synthetic_regression;
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 use boosters::Parallelism;
+
+use ndarray::Array2;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
@@ -53,13 +56,18 @@ fn bench_row_scaling(c: &mut Criterion) {
 
         let dataset = synthetic_regression(rows, cols, 42, 0.05);
         // Get row-major features for XGBoost/LightGBM compatibility
+        #[allow(unused_variables)]
         let features = dataset.features_row_major_slice();
+        #[allow(unused_variables)]
         let targets = dataset.targets.to_vec();
 
         group.throughput(Throughput::Elements((rows * cols) as u64));
 
         // Pre-build binned dataset
         let binned = dataset.to_binned(256);
+        
+        // Convert targets to 2D
+        let targets_2d = Array2::from_shape_vec((1, dataset.targets.len()), dataset.targets.to_vec()).unwrap();
 
         // =====================================================================
         // booste-rs (depth-wise, single-threaded for fair comparison)
@@ -80,10 +88,11 @@ fn bench_row_scaling(c: &mut Criterion) {
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
 
         group.bench_function(BenchmarkId::new("boosters", &row_label), |b| {
+            let targets_view = TargetsView::new(targets_2d.view());
             b.iter(|| {
                 black_box(
                     trainer
-                        .train(black_box(&binned), black_box(dataset.targets.view()), None, &[], Parallelism::Sequential)
+                        .train(black_box(&binned), targets_view, None, &[], Parallelism::Sequential)
                         .unwrap(),
                 )
             })
@@ -194,13 +203,18 @@ fn bench_feature_scaling(c: &mut Criterion) {
 
         let dataset = synthetic_regression(rows, cols, 42, 0.05);
         // Get row-major features for XGBoost/LightGBM compatibility
+        #[allow(unused_variables)]
         let features = dataset.features_row_major_slice();
+        #[allow(unused_variables)]
         let targets = dataset.targets.to_vec();
 
         group.throughput(Throughput::Elements((rows * cols) as u64));
 
         // Pre-build binned dataset
         let binned = dataset.to_binned(256);
+        
+        // Convert targets to 2D
+        let targets_2d = Array2::from_shape_vec((1, dataset.targets.len()), dataset.targets.to_vec()).unwrap();
 
         // =====================================================================
         // booste-rs
@@ -221,10 +235,11 @@ fn bench_feature_scaling(c: &mut Criterion) {
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
 
         group.bench_function(BenchmarkId::new("boosters", &feat_label), |b| {
+            let targets_view = TargetsView::new(targets_2d.view());
             b.iter(|| {
                 black_box(
                     trainer
-                        .train(black_box(&binned), black_box(dataset.targets.view()), None, &[], Parallelism::Sequential)
+                        .train(black_box(&binned), targets_view, None, &[], Parallelism::Sequential)
                         .unwrap(),
                 )
             })

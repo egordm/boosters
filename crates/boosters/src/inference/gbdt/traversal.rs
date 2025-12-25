@@ -8,7 +8,7 @@
 //! - [`StandardTraversal`]: Direct node-by-node traversal (simple, good for single rows)
 //! - [`UnrolledTraversal`]: Uses [`UnrolledTreeLayout`] for cache-friendly batch traversal
 
-use crate::data::SamplesView;
+use crate::dataset::SamplesView;
 use crate::repr::gbdt::{LeafValue, NodeId, ScalarLeaf, Tree, TreeView};
 use super::{Depth6, UnrollDepth, UnrolledTreeLayout};
 
@@ -55,23 +55,21 @@ pub trait TreeTraversal<L: LeafValue>: Clone {
     ///
     /// - `tree`: The tree to traverse
     /// - `state`: Pre-computed state for this tree
-    /// - `feature_buffer`: Contiguous buffer of features, `block_size * n_features`
-    /// - `n_features`: Number of features per row
+    /// - `features`: Sample-major feature view `[n_samples, n_features]`
+    /// - `output`: Buffer for leaf node indices
     #[inline]
     fn traverse_block(
         tree: &Tree<L>,
         state: &Self::TreeState,
-        feature_buffer: &[f32],
-        n_features: usize,
+        features: SamplesView<'_>,
         output: &mut [NodeId],
     ) where
         L: Into<f32>,
     {
         // Default: per-row traversal
         for (row_idx, out) in output.iter_mut().enumerate() {
-            let row_offset = row_idx * n_features;
-            let row_features = &feature_buffer[row_offset..][..n_features];
-            *out = Self::traverse_tree(tree, state, row_features);
+            let row_features = features.sample(row_idx);
+            *out = Self::traverse_tree(tree, state, row_features.as_slice().unwrap());
         }
     }
 }
@@ -184,35 +182,33 @@ impl<D: UnrollDepth> TreeTraversal<ScalarLeaf> for UnrolledTraversal<D> {
     fn traverse_block(
         tree: &Tree<ScalarLeaf>,
         state: &Self::TreeState,
-        feature_buffer: &[f32],
-        n_features: usize,
+        features: SamplesView<'_>,
         output: &mut [NodeId],
     ) {
         let block_size = output.len();
+        let data_view = features.view();
+        let feature_buffer = data_view.as_slice().expect("features must be contiguous");
+        let n_features = features.n_features();
 
-        // Phase 2 logic: continue from exit nodes to leaves
-        let mut traverse_from_exits = |indices: &[usize]| {
-            for (row_idx, &exit_idx) in indices.iter().enumerate() {
-                let node_idx = state.exit_node_idx(exit_idx);
-                let row_offset = row_idx * n_features;
-                let row_features = &feature_buffer[row_offset..][..n_features];
-                let view = SamplesView::from_slice(row_features, 1, n_features)
-                    .expect("row features slice must be valid");
-                let leaf_idx = tree.traverse_to_leaf_from(node_idx, &view, 0);
-                output[row_idx] = leaf_idx;
-            }
+        // Phase 1: Traverse unrolled levels for all rows
+        let mut exit_indices: Vec<usize>;
+        let mut stack_indices = [0usize; 256];
+
+        let indices: &mut [usize] = if block_size <= 256 {
+            let slice = &mut stack_indices[..block_size];
+            state.process_block(feature_buffer, n_features, slice);
+            slice
+        } else {
+            exit_indices = vec![0usize; block_size];
+            state.process_block(feature_buffer, n_features, &mut exit_indices);
+            &mut exit_indices
         };
 
-        // Use stack for small blocks, heap for large
-        if block_size <= 256 {
-            let mut indices = [0usize; 256];
-            let indices = &mut indices[..block_size];
-            state.process_block(feature_buffer, n_features, indices);
-            traverse_from_exits(indices);
-        } else {
-            let mut indices = vec![0usize; block_size];
-            state.process_block(feature_buffer, n_features, &mut indices);
-            traverse_from_exits(&indices);
+        // Phase 2: Continue from exit nodes to leaves
+        for (row_idx, &exit_idx) in indices.iter().enumerate() {
+            let node_idx = state.exit_node_idx(exit_idx);
+            let leaf_idx = tree.traverse_to_leaf_from(node_idx, &features, row_idx);
+            output[row_idx] = leaf_idx;
         }
     }
 }
@@ -445,7 +441,8 @@ mod tests {
 
     #[test]
     fn traverse_to_leaf_from_basic() {
-        use crate::data::SamplesView;
+        use crate::dataset::SamplesView;
+        use ndarray::array;
         
         let tree_storage = build_simple_tree(1.0, 2.0, 0.5);
         let mut forest = Forest::for_regression();
@@ -453,8 +450,10 @@ mod tests {
         let tree = forest.tree(0);
 
         // Starting from root (node 0)
-        let view_left = SamplesView::from_slice(&[0.3], 1, 1).unwrap();
-        let view_right = SamplesView::from_slice(&[0.7], 1, 1).unwrap();
+        let features_left = array![[0.3f32]];
+        let features_right = array![[0.7f32]];
+        let view_left = SamplesView::from_array(features_left.view());
+        let view_right = SamplesView::from_array(features_right.view());
         let leaf_left = tree.traverse_to_leaf_from(0, &view_left, 0);
         let leaf_right = tree.traverse_to_leaf_from(0, &view_right, 0);
 

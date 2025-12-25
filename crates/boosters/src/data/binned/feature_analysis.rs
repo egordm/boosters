@@ -9,7 +9,7 @@
 
 use rayon::prelude::*;
 
-use crate::data::FeaturesView;
+use crate::dataset::FeaturesView;
 
 /// Metadata about a feature determined during analysis.
 #[derive(Clone, Debug, PartialEq)]
@@ -155,15 +155,16 @@ impl FeatureStats {
 /// # Example
 ///
 /// ```
-/// use boosters::data::FeaturesView;
+/// use boosters::FeaturesView;
 /// use boosters::data::binned::analyze_features;
+/// use ndarray::array;
 ///
-/// // 3 samples, 2 features (feature-major layout)
-/// let data = [
-///     0.0f32, 0.0, 1.0,  // Feature 0: sparse binary (1 non-zero out of 3)
-///     1.0, 2.0, 3.0,     // Feature 1: dense continuous
+/// // 2 features, 3 samples (feature-major layout)
+/// let data = array![
+///     [0.0f32, 0.0, 1.0],  // Feature 0: sparse binary (1 non-zero out of 3)
+///     [1.0, 2.0, 3.0],     // Feature 1: dense continuous
 /// ];
-/// let features = FeaturesView::from_slice(&data, 3, 2).unwrap();
+/// let features = FeaturesView::from_array(data.view());
 ///
 /// let infos = analyze_features(features);
 ///
@@ -236,7 +237,7 @@ pub fn analyze_features_sequential(features: FeaturesView<'_>) -> Vec<FeatureInf
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::FeaturesView;
+    use crate::dataset::FeaturesView;
 
     /// Helper to create FeaturesView from feature-major data
     fn make_features(data: &[f32], n_samples: usize, n_features: usize) -> FeaturesView<'_> {

@@ -174,7 +174,7 @@ impl GBLinearModel {
         let mut output = self.predict_raw(dataset);
 
         // Apply transformation if we have config with objective
-        self.config.objective.transform_predictions(output.view_mut());
+        self.config.objective.transform_predictions_inplace(output.view_mut());
 
         output
     }

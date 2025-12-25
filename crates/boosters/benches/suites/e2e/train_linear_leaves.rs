@@ -8,12 +8,14 @@ mod common;
 use common::criterion_config::default_criterion;
 
 use boosters::data::{binned::BinnedDatasetBuilder, BinningConfig};
-use boosters::dataset::Dataset;
+use boosters::dataset::{Dataset, TargetsView};
 use boosters::testing::data::{select_rows, select_targets, split_indices, synthetic_regression};
 use boosters::training::{
     GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, LinearLeafConfig, Rmse, SquaredLoss,
 };
 use boosters::Parallelism;
+
+use ndarray::Array2;
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
@@ -32,11 +34,10 @@ fn bench_linear_training_overhead(c: &mut Criterion) {
 
     // Build binned dataset for training (x_train is already feature-major)
     let x_train_dataset = Dataset::new(x_train.view(), None, None);
-    let binned_train = BinnedDatasetBuilder::from_dataset(
-        &x_train_dataset,
-        BinningConfig::builder().max_bins(256).build(),
-        Parallelism::Parallel,
-    ).build().unwrap();
+    let binned_train = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+        .add_features(x_train_dataset.features(), Parallelism::Parallel)
+        .build()
+        .unwrap();
 
     let base_params = GBDTParams {
         n_trees: 20,
@@ -50,10 +51,12 @@ fn bench_linear_training_overhead(c: &mut Criterion) {
 
     // Benchmark baseline (no linear leaves)
     let trainer_baseline = GBDTTrainer::new(SquaredLoss, Rmse, base_params.clone());
+    let y_train_2d = Array2::from_shape_vec((1, y_train.len()), y_train.iter().cloned().collect()).unwrap();
     group.bench_function("baseline", |b| {
         b.iter(|| {
+            let targets = TargetsView::new(y_train_2d.view());
             let forest = trainer_baseline
-                .train(black_box(&binned_train), black_box(y_train.view()), None, &[], Parallelism::Sequential)
+                .train(black_box(&binned_train), targets, None, &[], Parallelism::Sequential)
                 .unwrap();
             black_box(forest)
         })
@@ -67,8 +70,9 @@ fn bench_linear_training_overhead(c: &mut Criterion) {
     let trainer_linear = GBDTTrainer::new(SquaredLoss, Rmse, linear_params);
     group.bench_function("linear_leaves", |b| {
         b.iter(|| {
+            let targets = TargetsView::new(y_train_2d.view());
             let forest = trainer_linear
-                .train(black_box(&binned_train), black_box(y_train.view()), None, &[], Parallelism::Sequential)
+                .train(black_box(&binned_train), targets, None, &[], Parallelism::Sequential)
                 .unwrap();
             black_box(forest)
         })
