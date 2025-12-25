@@ -441,12 +441,13 @@ Pyright starts in basic mode; upgrade to strict after core implementation.
 
 **RFC Section**: RFC-0014 "GBDTConfig", "GBLinearConfig"  
 **Effort**: M (2-3h)
+**Status**: ✅ Complete (commit 881ae5c)
 
 **Description**: Implement top-level config types with nested sub-configs.
 
 **Tasks**:
 
-- [ ] 2.4.1 Implement `GBDTConfig`:
+- [x] 2.4.1 Implement `GBDTConfig`:
   - `n_estimators: u32` (default 100)
   - `learning_rate: f64` (default 0.1)
   - `objective: PyObject` (default `SquaredLoss()`)
@@ -460,10 +461,10 @@ Pyright starts in basic mode; upgrade to strict after core implementation.
   - `n_threads: i32` (default 0 = auto)
   - `seed: Option<u64>`
   - `verbose: i32` (default 1)
-- [ ] 2.4.2 Implement `#[new]` with all defaults
-- [ ] 2.4.3 Implement `GBLinearConfig` (subset of fields, no tree/categorical/efb)
-- [ ] 2.4.4 Add `objective_kind(&self)` method for Rust-side extraction
-- [ ] 2.4.5 Add validation for cross-field consistency (deferred to fit-time)
+- [x] 2.4.2 Implement `#[new]` with all defaults
+- [x] 2.4.3 Implement `GBLinearConfig` (subset of fields, no tree/categorical/efb)
+- [x] 2.4.4 Add `objective_kind(&self)` method for Rust-side extraction
+- [x] 2.4.5 Add validation for cross-field consistency (deferred to fit-time)
 
 **Definition of Done**:
 
@@ -477,6 +478,8 @@ Pyright starts in basic mode; upgrade to strict after core implementation.
 - `GBDTConfig(tree=TreeConfig(max_depth=5))` works
 - `GBDTConfig(objective=PinballLoss(alpha=0.5))` works
 - Roundtrip: `config = GBDTConfig(); assert config.n_estimators == 100`
+
+> Note: Don't forget to check stakeholder feedback.
 
 ---
 
@@ -507,6 +510,8 @@ This keeps Python layer simple and lets Rust handle full validation.
 - All PyO3 config types convertible to core types
 - Conversion preserves all values correctly
 - Conversion happens in `fit()`, not in config `__init__`
+
+> Note: Don't forget to check stakeholder feedback.
 
 **Testing Criteria**:
 

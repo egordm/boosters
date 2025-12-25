@@ -4,6 +4,7 @@
 //! via PyO3. It exposes configuration types, dataset handling, and model training/prediction.
 
 mod config;
+mod convert;
 mod error;
 mod metrics;
 mod objectives;
