@@ -316,14 +316,16 @@ class TestSklearnIntegration:
         X = np.random.randn(100, 5).astype(np.float32) * 100  # Large scale
         y = (X[:, 0] > 0).astype(int)
 
-        pipe = Pipeline([
-            ("scaler", StandardScaler()),
-            ("clf", GBDTClassifier(n_estimators=10, verbose=0)),
-        ])
+        pipe = Pipeline(
+            [
+                ("scaler", StandardScaler()),
+                ("clf", GBDTClassifier(n_estimators=10, verbose=0)),
+            ]
+        )
 
         pipe.fit(X, y)
         preds = pipe.predict(X)
-        assert preds.shape == (100,)
+        assert len(preds) == 100
 
     def test_grid_search(self) -> None:
         """Test GridSearchCV compatibility."""

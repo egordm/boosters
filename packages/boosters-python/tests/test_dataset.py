@@ -182,7 +182,7 @@ class TestDataset:
 
     def test_sparse_matrix_raises_not_implemented(self) -> None:
         """Test that sparse matrices raise NotImplementedError with helpful message."""
-        scipy = pytest.importorskip("scipy")
+        pytest.importorskip("scipy")
         from scipy.sparse import csr_matrix
 
         X_dense = np.random.rand(100, 10).astype(np.float32)

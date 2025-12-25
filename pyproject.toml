@@ -31,20 +31,26 @@ dev = [
 
 # =============================================================================
 # Poe Tasks - Run with: uv run poe <task>
+# Check mode: poe check (verify only), Fix mode: poe fix (auto-fix)
 # =============================================================================
 [tool.poe.tasks]
-lint = "ruff check ."
-lint-fix = "ruff check --fix ."
-format = "ruff format ."
-format-check = "ruff format --check ."
-typecheck = "pyright"
-check = ["format-check", "lint", "typecheck"]
-fix = ["format", "lint-fix"]
-test = "pytest"
+
+# Individual tools
+lint = { cmd = "ruff check .", help = "Run ruff linter" }
+lint-fix = { cmd = "ruff check --fix .", help = "Run ruff linter with auto-fix" }
+format = { cmd = "ruff format .", help = "Format code with ruff" }
+format-check = { cmd = "ruff format --check .", help = "Check code formatting" }
+typecheck = { cmd = "pyright", help = "Run pyright type checker" }
+
+# Combined tasks
+check = { sequence = ["format-check", "lint", "typecheck"], help = "Run all checks (no auto-fix)" }
+fix = { sequence = ["format", "lint-fix"], help = "Auto-fix formatting and linting" }
+test = { cmd = "pytest", help = "Run all tests" }
 
 # Package-specific tasks (boosters-python)
-"python:test" = "pytest packages/boosters-python/tests -v"
-"python:doctest" = "pytest packages/boosters-python/python --doctest-modules"
+"python:test" = { cmd = "pytest packages/boosters-python/tests -v", help = "Run boosters-python tests" }
+"python:doctest" = { cmd = "pytest packages/boosters-python/python --doctest-modules", help = "Run boosters-python doctests" }
+"python:examples" = { shell = "for f in packages/boosters-python/examples/*.py; do echo \"Running $f...\"; python \"$f\" || exit 1; done", help = "Run all example scripts" }
 
 # =============================================================================
 # Ruff Configuration (shared across all packages)
@@ -91,7 +97,7 @@ known-first-party = ["boosters", "boosters_eval", "boosters_datagen"]
 [tool.pyright]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
-include = ["packages/*/src", "packages/*/python", "packages/*/tests"]
+include = ["packages/*/src", "packages/*/python", "packages/*/tests", "packages/*/examples"]
 exclude = ["**/__pycache__", "**/.venv", "**/node_modules"]
 # External libraries have incomplete stubs
 reportMissingTypeStubs = false

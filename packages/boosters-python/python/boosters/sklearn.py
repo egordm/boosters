@@ -10,7 +10,9 @@ Example:
     For full training examples, see individual class docstrings.
 """
 
-from typing import Any
+from __future__ import annotations
+
+from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import NDArray
@@ -27,21 +29,47 @@ from boosters import (
 )
 from boosters._sklearn_base import build_gbdt_config, build_gblinear_config
 
+GrowthStrategy = Literal["leafwise", "depthwise"]
+
 # Check if sklearn is available
 try:
-    from sklearn.base import (
-        BaseEstimator,
-        ClassifierMixin,
-        RegressorMixin,
+    from sklearn.base import BaseEstimator as _SklearnBaseEstimator
+    from sklearn.base import ClassifierMixin as _SklearnClassifierMixin
+    from sklearn.base import RegressorMixin as _SklearnRegressorMixin
+    from sklearn.utils.validation import (
+        check_array as _sklearn_check_array,
     )
-    from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
+    from sklearn.utils.validation import (
+        check_is_fitted as _sklearn_check_is_fitted,
+    )
+    from sklearn.utils.validation import (
+        check_X_y as _sklearn_check_X_y,
+    )
 
     SKLEARN_AVAILABLE = True
+
+    # Use sklearn implementations
+    BaseEstimator: type = _SklearnBaseEstimator
+    ClassifierMixin: type = _SklearnClassifierMixin
+    RegressorMixin: type = _SklearnRegressorMixin
+
+    def check_array(X: Any, **kwargs: Any) -> NDArray[np.floating[Any]]:
+        """Validate array input."""
+        return _sklearn_check_array(X, **kwargs)  # type: ignore[return-value]
+
+    def check_X_y(X: Any, y: Any, **kwargs: Any) -> tuple[NDArray[np.floating[Any]], NDArray[Any]]:
+        """Validate X and y inputs."""
+        return _sklearn_check_X_y(X, y, **kwargs)  # type: ignore[return-value]
+
+    def check_is_fitted(estimator: Any, attributes: list[str] | None = None) -> None:
+        """Check if estimator is fitted."""
+        _sklearn_check_is_fitted(estimator, attributes)
+
 except ImportError:
     # Create dummy classes if sklearn is not available
     SKLEARN_AVAILABLE = False
 
-    class BaseEstimator:  # type: ignore[no-redef]
+    class _DummyBaseEstimator:
         """Dummy base class when sklearn is not installed.
 
         Provides minimal get_params/set_params for sklearn compatibility.
@@ -55,26 +83,30 @@ except ImportError:
                     params[key] = getattr(self, key)
             return params
 
-        def set_params(self, **params: Any) -> "BaseEstimator":
+        def set_params(self, **params: Any) -> _DummyBaseEstimator:
             """Set parameters for this estimator."""
             for key, value in params.items():
                 setattr(self, key, value)
             return self
 
-    class RegressorMixin:  # type: ignore[no-redef]
+    class _DummyRegressorMixin:
         """Dummy mixin when sklearn is not installed."""
 
         pass
 
-    class ClassifierMixin:  # type: ignore[no-redef]
+    class _DummyClassifierMixin:
         """Dummy mixin when sklearn is not installed."""
 
         pass
 
-    def check_array(X: Any, **kwargs: Any) -> NDArray[np.float32]:
+    BaseEstimator: type = _DummyBaseEstimator  # type: ignore[no-redef]
+    ClassifierMixin: type = _DummyClassifierMixin  # type: ignore[no-redef]
+    RegressorMixin: type = _DummyRegressorMixin  # type: ignore[no-redef]
+
+    def check_array(X: Any, **kwargs: Any) -> NDArray[np.floating[Any]]:
         return np.asarray(X, dtype=np.float32)
 
-    def check_X_y(X: Any, y: Any, **kwargs: Any) -> tuple[NDArray, NDArray]:
+    def check_X_y(X: Any, y: Any, **kwargs: Any) -> tuple[NDArray[np.floating[Any]], NDArray[Any]]:
         # Don't convert y to float32 since it might be categorical
         return np.asarray(X, dtype=np.float32), np.asarray(y)
 
@@ -126,7 +158,7 @@ class GBDTRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
     verbose : int, default=1
         Verbosity level. 0=silent, 1=progress, 2=debug.
 
-    Attributes
+    Attributes:
     ----------
     model_ : GBDTModel
         The fitted core model.
@@ -135,7 +167,7 @@ class GBDTRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
     feature_importances_ : ndarray of shape (n_features,)
         Feature importances based on split count.
 
-    Examples
+    Examples:
     --------
     >>> from boosters.sklearn import GBDTRegressor
     >>> reg = GBDTRegressor(max_depth=5, n_estimators=10, verbose=0)
@@ -157,7 +189,7 @@ class GBDTRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
         n_leaves: int = 31,
         min_samples_leaf: int = 1,
         min_gain_to_split: float = 0.0,
-        growth_strategy: str = "depthwise",
+        growth_strategy: GrowthStrategy = "depthwise",
         l1: float = 0.0,
         l2: float = 1.0,
         min_hessian: float = 1.0,
@@ -207,7 +239,7 @@ class GBDTRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
         y: NDArray[np.float32],
         eval_set: list[tuple[NDArray, NDArray]] | None = None,
         sample_weight: NDArray[np.float32] | None = None,
-    ) -> "GBDTRegressor":
+    ) -> GBDTRegressor:
         """Fit the regressor.
 
         Parameters
@@ -221,7 +253,7 @@ class GBDTRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
         sample_weight : array-like of shape (n_samples,), optional
             Sample weights.
 
-        Returns
+        Returns:
         -------
         self : GBDTRegressor
             Fitted estimator.
@@ -284,17 +316,17 @@ class GBDTRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
         X : array-like of shape (n_samples, n_features)
             Features to predict.
 
-        Returns
+        Returns:
         -------
         y_pred : ndarray of shape (n_samples,)
             Predicted values.
         """
         check_is_fitted(self, ["model_"])
         X = check_array(X, dtype=np.float32)
-        return self.model_.predict(X)
+        return self.model_.predict(X)  # type: ignore[return-value]
 
     @property
-    def feature_importances_(self) -> NDArray[np.float32]:
+    def feature_importances_(self) -> NDArray[np.float64]:
         """Feature importances based on split count."""
         check_is_fitted(self, ["model_"])
         return self.model_.feature_importance()
@@ -331,7 +363,7 @@ class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
     seed : int, default=42
         Random seed.
 
-    Attributes
+    Attributes:
     ----------
     model_ : GBDTModel
         The fitted core model.
@@ -342,7 +374,7 @@ class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
     n_features_in_ : int
         Number of features seen during fit.
 
-    Examples
+    Examples:
     --------
     >>> from boosters.sklearn import GBDTClassifier
     >>> import numpy as np
@@ -365,7 +397,7 @@ class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         n_leaves: int = 31,
         min_samples_leaf: int = 1,
         min_gain_to_split: float = 0.0,
-        growth_strategy: str = "depthwise",
+        growth_strategy: GrowthStrategy = "depthwise",
         l1: float = 0.0,
         l2: float = 1.0,
         min_hessian: float = 1.0,
@@ -415,7 +447,7 @@ class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         y: NDArray,
         eval_set: list[tuple[NDArray, NDArray]] | None = None,
         sample_weight: NDArray[np.float32] | None = None,
-    ) -> "GBDTClassifier":
+    ) -> GBDTClassifier:
         """Fit the classifier.
 
         Parameters
@@ -429,7 +461,7 @@ class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         sample_weight : array-like of shape (n_samples,), optional
             Sample weights.
 
-        Returns
+        Returns:
         -------
         self : GBDTClassifier
             Fitted estimator.
@@ -489,9 +521,7 @@ class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
             valid = []
             for i, (X_val, y_val) in enumerate(eval_set):
                 X_val = check_array(X_val, dtype=np.float32)
-                y_val_encoded = np.array(
-                    [self._label_to_idx[c] for c in y_val], dtype=np.float32
-                )
+                y_val_encoded = np.array([self._label_to_idx[c] for c in y_val], dtype=np.float32)
                 valid.append(EvalSet(f"valid_{i}", Dataset(X_val, y_val_encoded)))
 
         # Fit model
@@ -508,7 +538,7 @@ class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         X : array-like of shape (n_samples, n_features)
             Features to predict.
 
-        Returns
+        Returns:
         -------
         y_pred : ndarray of shape (n_samples,)
             Predicted class labels.
@@ -532,7 +562,7 @@ class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         X : array-like of shape (n_samples, n_features)
             Features to predict.
 
-        Returns
+        Returns:
         -------
         proba : ndarray of shape (n_samples, n_classes)
             Class probabilities.
@@ -548,10 +578,10 @@ class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
             # Multiclass: preds is already (n_samples, n_classes)
             proba = preds
 
-        return proba
+        return proba  # type: ignore[return-value]
 
     @property
-    def feature_importances_(self) -> NDArray[np.float32]:
+    def feature_importances_(self) -> NDArray[np.float64]:
         """Feature importances based on split count."""
         check_is_fitted(self, ["model_"])
         return self.model_.feature_importance()
@@ -582,7 +612,7 @@ class GBLinearRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
     seed : int, default=42
         Random seed.
 
-    Attributes
+    Attributes:
     ----------
     model_ : GBLinearModel
         The fitted core model.
@@ -616,7 +646,7 @@ class GBLinearRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
         y: NDArray[np.float32],
         eval_set: list[tuple[NDArray, NDArray]] | None = None,
         sample_weight: NDArray[np.float32] | None = None,
-    ) -> "GBLinearRegressor":
+    ) -> GBLinearRegressor:
         """Fit the regressor."""
         X, y = check_X_y(X, y, dtype=np.float32, y_numeric=True)
         self.n_features_in_ = X.shape[1]
@@ -686,7 +716,7 @@ class GBLinearClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
     seed : int, default=42
         Random seed.
 
-    Attributes
+    Attributes:
     ----------
     model_ : GBLinearModel
         The fitted core model.
@@ -720,7 +750,7 @@ class GBLinearClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         y: NDArray,
         eval_set: list[tuple[NDArray, NDArray]] | None = None,
         sample_weight: NDArray[np.float32] | None = None,
-    ) -> "GBLinearClassifier":
+    ) -> GBLinearClassifier:
         """Fit the classifier."""
         X, y = check_X_y(X, y, dtype=np.float32)
         self.n_features_in_ = X.shape[1]
@@ -753,9 +783,7 @@ class GBLinearClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
             valid = []
             for i, (X_val, y_val) in enumerate(eval_set):
                 X_val = check_array(X_val, dtype=np.float32)
-                y_val_encoded = np.array(
-                    [self._label_to_idx[c] for c in y_val], dtype=np.float32
-                )
+                y_val_encoded = np.array([self._label_to_idx[c] for c in y_val], dtype=np.float32)
                 valid.append(EvalSet(f"valid_{i}", Dataset(X_val, y_val_encoded)))
 
         self.model_ = GBLinearModel(config=config)
@@ -803,8 +831,8 @@ class GBLinearClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
 
 
 __all__ = [
-    "GBDTRegressor",
     "GBDTClassifier",
-    "GBLinearRegressor",
+    "GBDTRegressor",
     "GBLinearClassifier",
+    "GBLinearRegressor",
 ]

@@ -25,7 +25,6 @@ from boosters import (
     TreeConfig,
 )
 
-
 # =============================================================================
 # Helper functions for generating test data
 # =============================================================================
@@ -42,10 +41,7 @@ def make_regression_data(
     X = rng.standard_normal((n_samples, n_features)).astype(np.float32)
     # Non-linear relationship with some features
     y = (
-        np.sin(X[:, 0] * 2)
-        + X[:, 1] ** 2
-        + X[:, 2] * 0.5
-        + rng.standard_normal(n_samples) * noise
+        np.sin(X[:, 0] * 2) + X[:, 1] ** 2 + X[:, 2] * 0.5 + rng.standard_normal(n_samples) * noise
     ).astype(np.float32)
     return X, y
 
@@ -261,7 +257,7 @@ class TestGBLinearModelIntegration:
         X_train = rng.standard_normal((500, 10)).astype(np.float32)
         # Simple linear relationship with known weights
         true_weights = np.array([1, 0.5, -0.3, 0.2, 0, 0, 0, 0, 0, 0], dtype=np.float32)
-        y_train = (X_train @ true_weights + rng.standard_normal(500).astype(np.float32) * 0.1)
+        y_train = X_train @ true_weights + rng.standard_normal(500).astype(np.float32) * 0.1
 
         X_test = rng.standard_normal((100, 10)).astype(np.float32)
         y_test = X_test @ true_weights
@@ -304,14 +300,14 @@ class TestGBLinearModelIntegration:
         X, y = make_linear_data(500, 10, seed=42)
 
         # Low regularization
-        model_low = GBLinearModel(
-            config=GBLinearConfig(n_estimators=50, l2=0.01)
-        ).fit(Dataset(X, y))
+        model_low = GBLinearModel(config=GBLinearConfig(n_estimators=50, l2=0.01)).fit(
+            Dataset(X, y)
+        )
 
         # High regularization
-        model_high = GBLinearModel(
-            config=GBLinearConfig(n_estimators=50, l2=10.0)
-        ).fit(Dataset(X, y))
+        model_high = GBLinearModel(config=GBLinearConfig(n_estimators=50, l2=10.0)).fit(
+            Dataset(X, y)
+        )
 
         # High reg should have smaller weights
         norm_low = np.linalg.norm(model_low.coef_)
@@ -392,10 +388,6 @@ class TestMethodChaining:
         y = np.random.rand(100).astype(np.float32)
 
         # Train and predict in one line
-        preds = (
-            GBDTModel(config=GBDTConfig(n_estimators=10))
-            .fit(Dataset(X, y))
-            .predict(X[:10])
-        )
+        preds = GBDTModel(config=GBDTConfig(n_estimators=10)).fit(Dataset(X, y)).predict(X[:10])
 
         assert preds.shape == (10,)

@@ -4,6 +4,8 @@ This module provides shared logic for sklearn-compatible estimators,
 including kwargs→config conversion and common estimator patterns.
 """
 
+from typing import Literal
+
 from boosters import (
     CategoricalConfig,
     EFBConfig,
@@ -14,6 +16,8 @@ from boosters import (
     SamplingConfig,
     TreeConfig,
 )
+
+GrowthStrategy = Literal["leafwise", "depthwise"]
 
 
 def build_gbdt_config(
@@ -30,7 +34,7 @@ def build_gbdt_config(
     n_leaves: int = 31,
     min_samples_leaf: int = 1,
     min_gain_to_split: float = 0.0,
-    growth_strategy: str = "depthwise",
+    growth_strategy: GrowthStrategy = "depthwise",
     # Regularization
     l1: float = 0.0,
     l2: float = 1.0,
