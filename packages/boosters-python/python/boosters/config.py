@@ -14,25 +14,24 @@ Types:
     - GBLinearConfig: Top-level GBLinear configuration
 """
 
-# Re-exports will be added as Epic 2 is implemented
-# from boosters._boosters_rs import (
-#     TreeConfig,
-#     RegularizationConfig,
-#     SamplingConfig,
-#     CategoricalConfig,
-#     EFBConfig,
-#     LinearLeavesConfig,
-#     GBDTConfig,
-#     GBLinearConfig,
-# )
+from boosters._boosters_rs import (
+    CategoricalConfig,
+    EFBConfig,
+    GBDTConfig,
+    GBLinearConfig,
+    LinearLeavesConfig,
+    RegularizationConfig,
+    SamplingConfig,
+    TreeConfig,
+)
 
 __all__: list[str] = [
-    # "TreeConfig",
-    # "RegularizationConfig",
-    # "SamplingConfig",
-    # "CategoricalConfig",
-    # "EFBConfig",
-    # "LinearLeavesConfig",
-    # "GBDTConfig",
-    # "GBLinearConfig",
+    "CategoricalConfig",
+    "EFBConfig",
+    "GBDTConfig",
+    "GBLinearConfig",
+    "LinearLeavesConfig",
+    "RegularizationConfig",
+    "SamplingConfig",
+    "TreeConfig",
 ]

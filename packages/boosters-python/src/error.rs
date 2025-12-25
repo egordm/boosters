@@ -14,29 +14,29 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum BoostersError {
     /// Invalid parameter value.
-    #[error("Invalid parameter: {0}")]
-    InvalidParameter(String),
-    
+    #[error("Invalid parameter '{name}': {message}")]
+    InvalidParameter { name: String, message: String },
+
     /// Type mismatch error.
     #[error("Type error: {0}")]
     TypeError(String),
-    
+
     /// Shape mismatch in arrays.
     #[error("Shape mismatch: {0}")]
     ShapeMismatch(String),
-    
+
     /// Model not fitted yet.
     #[error("Model not fitted. Call fit() first.")]
     NotFitted,
-    
+
     /// Data conversion error.
     #[error("Data conversion error: {0}")]
     DataConversion(String),
-    
+
     /// Training error.
     #[error("Training error: {0}")]
     Training(String),
-    
+
     /// Prediction error.
     #[error("Prediction error: {0}")]
     Prediction(String),
@@ -48,14 +48,14 @@ pub enum BoostersError {
 
 impl From<BoostersError> for PyErr {
     fn from(err: BoostersError) -> PyErr {
-        match err {
-            BoostersError::InvalidParameter(msg) => PyValueError::new_err(msg),
-            BoostersError::TypeError(msg) => PyTypeError::new_err(msg),
-            BoostersError::ShapeMismatch(msg) => PyValueError::new_err(msg),
+        match &err {
+            BoostersError::InvalidParameter { .. } => PyValueError::new_err(err.to_string()),
+            BoostersError::TypeError(_) => PyTypeError::new_err(err.to_string()),
+            BoostersError::ShapeMismatch(_) => PyValueError::new_err(err.to_string()),
             BoostersError::NotFitted => PyRuntimeError::new_err(err.to_string()),
-            BoostersError::DataConversion(msg) => PyValueError::new_err(msg),
-            BoostersError::Training(msg) => PyRuntimeError::new_err(msg),
-            BoostersError::Prediction(msg) => PyRuntimeError::new_err(msg),
+            BoostersError::DataConversion(_) => PyValueError::new_err(err.to_string()),
+            BoostersError::Training(_) => PyRuntimeError::new_err(err.to_string()),
+            BoostersError::Prediction(_) => PyRuntimeError::new_err(err.to_string()),
         }
     }
 }
@@ -72,4 +72,5 @@ impl From<boosters::DatasetError> for BoostersError {
 // =============================================================================
 
 /// Result type for boosters operations.
+#[allow(dead_code)]
 pub type Result<T> = std::result::Result<T, BoostersError>;

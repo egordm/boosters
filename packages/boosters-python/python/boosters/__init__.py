@@ -17,18 +17,32 @@ See Also:
 
 from boosters._boosters_rs import __version__
 
-# Type aliases (populated as types are implemented)
-# from boosters.config import ...
-# from boosters.objectives import ...
-# from boosters.metrics import ...
-# from boosters.data import ...
-# from boosters.model import ...
+# Config types
+from boosters.config import (
+    CategoricalConfig,
+    EFBConfig,
+    GBDTConfig,
+    GBLinearConfig,
+    LinearLeavesConfig,
+    RegularizationConfig,
+    SamplingConfig,
+    TreeConfig,
+)
 
 __all__ = [
+    # Config types (Epic 2 - Story 2.1)
+    "CategoricalConfig",
+    "EFBConfig",
+    "GBDTConfig",
+    "GBLinearConfig",
+    "LinearLeavesConfig",
+    "RegularizationConfig",
+    "SamplingConfig",
+    "TreeConfig",
+    # Version
     "__version__",
-    # Config types (Epic 2)
-    # Objective types (Epic 2)
-    # Metric types (Epic 2)
+    # Objective types (Epic 2 - Story 2.2)
+    # Metric types (Epic 2 - Story 2.3)
     # Data types (Epic 3)
     # Model types (Epic 4)
 ]

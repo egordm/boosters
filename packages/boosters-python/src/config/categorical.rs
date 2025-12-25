@@ -1,0 +1,78 @@
+//! Categorical feature configuration.
+
+use pyo3::prelude::*;
+
+use crate::error::BoostersError;
+
+/// Configuration for categorical feature handling.
+///
+/// Boosters supports native categorical splits (like LightGBM) using
+/// bitset-based multi-way splits rather than one-hot encoding.
+///
+/// Examples
+/// --------
+/// >>> from boosters import CategoricalConfig
+/// >>> config = CategoricalConfig(max_categories=256)
+/// >>> config.max_categories
+/// 256
+#[pyclass(name = "CategoricalConfig", module = "boosters._boosters_rs", get_all, set_all)]
+#[derive(Clone, Debug)]
+pub struct PyCategoricalConfig {
+    /// Maximum number of categories for native categorical splits.
+    /// Categories beyond this are treated as continuous.
+    pub max_categories: u32,
+    /// Minimum count for a category to be considered.
+    /// Categories with fewer samples are grouped into "other".
+    pub min_category_count: u32,
+    /// Maximum categories for one-hot encoding fallback.
+    /// If a feature has more categories, use bitset splits.
+    pub max_onehot: u32,
+}
+
+#[pymethods]
+impl PyCategoricalConfig {
+    /// Create a new CategoricalConfig.
+    ///
+    /// Parameters
+    /// ----------
+    /// max_categories : int, default=256
+    ///     Maximum categories for native categorical splits.
+    /// min_category_count : int, default=10
+    ///     Minimum samples per category.
+    /// max_onehot : int, default=4
+    ///     Maximum categories for one-hot encoding.
+    #[new]
+    #[pyo3(signature = (max_categories = 256, min_category_count = 10, max_onehot = 4))]
+    fn new(max_categories: u32, min_category_count: u32, max_onehot: u32) -> PyResult<Self> {
+        if max_categories == 0 {
+            return Err(BoostersError::InvalidParameter {
+                name: "max_categories".to_string(),
+                message: "must be positive".to_string(),
+            }
+            .into());
+        }
+
+        Ok(Self {
+            max_categories,
+            min_category_count,
+            max_onehot,
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "CategoricalConfig(max_categories={}, min_category_count={}, max_onehot={})",
+            self.max_categories, self.min_category_count, self.max_onehot
+        )
+    }
+}
+
+impl Default for PyCategoricalConfig {
+    fn default() -> Self {
+        Self {
+            max_categories: 256,
+            min_category_count: 10,
+            max_onehot: 4,
+        }
+    }
+}
