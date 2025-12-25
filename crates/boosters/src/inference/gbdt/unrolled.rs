@@ -40,6 +40,7 @@
 //! - `UnrolledTreeLayout6` — 63 nodes, 64 exits (default, matches XGBoost)
 //! - `UnrolledTreeLayout8` — 255 nodes, 256 exits (deep trees)
 
+use crate::data::{DataAccessor, SampleAccessor};
 use crate::repr::gbdt::{LeafValue, SplitType, Tree, TreeView};
 
 /// Maximum number of levels to unroll (matches XGBoost).
@@ -388,6 +389,83 @@ impl<D: UnrollDepth> UnrolledTreeLayout<D> {
                     .get(row_offset + feat_idx)
                     .copied()
                     .unwrap_or(f32::NAN);
+
+                let go_left = if fvalue.is_nan() {
+                    default_left[array_idx]
+                } else if self.has_categorical && split_types[array_idx] == SplitType::Categorical {
+                    let category = fvalue as u32;
+                    !self.category_goes_right_array(array_idx, category)
+                } else {
+                    fvalue < split_thresholds[array_idx]
+                };
+
+                *pos = 2 * *pos + (!go_left as usize);
+            }
+        }
+    }
+
+    /// Traverse the array layout for a single sample using SampleAccessor.
+    #[inline]
+    pub fn traverse_to_exit_sample<S: SampleAccessor + ?Sized>(&self, sample: &S) -> usize {
+        let mut idx = 0usize;
+        let split_indices = self.split_indices.as_ref();
+        let split_thresholds = self.split_thresholds.as_ref();
+        let default_left = self.default_left.as_ref();
+        let split_types = self.split_types.as_ref();
+
+        for _ in 0..D::DEPTH {
+            let feat_idx = split_indices[idx] as usize;
+            let fvalue = if feat_idx < sample.n_features() {
+                sample.feature(feat_idx)
+            } else {
+                f32::NAN
+            };
+
+            let go_left = if fvalue.is_nan() {
+                default_left[idx]
+            } else if self.has_categorical && split_types[idx] == SplitType::Categorical {
+                let category = fvalue as u32;
+                !self.category_goes_right_array(idx, category)
+            } else {
+                fvalue < split_thresholds[idx]
+            };
+
+            idx = if go_left { 2 * idx + 1 } else { 2 * idx + 2 };
+        }
+
+        // Convert final array index to exit index
+        idx - nodes_at_depth(D::DEPTH)
+    }
+
+    /// Process a block of rows through the array layout using DataAccessor.
+    ///
+    /// This version works with any DataAccessor but may be slower than
+    /// `process_block` for contiguous data.
+    pub fn process_block_accessor<A: DataAccessor>(&self, data: &A, exit_indices: &mut [usize]) {
+        let split_indices = self.split_indices.as_ref();
+        let split_thresholds = self.split_thresholds.as_ref();
+        let default_left = self.default_left.as_ref();
+        let split_types = self.split_types.as_ref();
+
+        // Initialize all rows at position 0 within level
+        for pos in exit_indices.iter_mut() {
+            *pos = 0;
+        }
+
+        // Traverse level by level
+        for level in 0..D::DEPTH {
+            let level_start = nodes_at_depth(level);
+
+            for (row_idx, pos) in exit_indices.iter_mut().enumerate() {
+                let array_idx = level_start + *pos;
+
+                let feat_idx = split_indices[array_idx] as usize;
+                let sample = data.sample(row_idx);
+                let fvalue = if feat_idx < sample.n_features() {
+                    sample.feature(feat_idx)
+                } else {
+                    f32::NAN
+                };
 
                 let go_left = if fvalue.is_nan() {
                     default_left[array_idx]

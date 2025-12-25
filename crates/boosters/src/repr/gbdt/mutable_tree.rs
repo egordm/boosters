@@ -438,6 +438,9 @@ impl<L: LeafValue> TreeView for MutableTree<L> {
 mod tests {
     use super::*;
     use crate::repr::gbdt::ScalarLeaf;
+    use crate::data::DataAccessor;
+    use crate::dataset::SamplesView;
+    use ndarray::Array2;
 
     #[test]
     fn test_mutable_tree_linear_leaf_freeze() {
@@ -490,9 +493,7 @@ mod tests {
 
     #[test]
     fn test_traverse_on_mutable_tree() {
-        use crate::data::DataAccessor;
-        use crate::dataset::SamplesView;
-        use ndarray::Array2;
+
 
         let mut tree = MutableTree::<ScalarLeaf>::new();
         let _root = tree.init_root();

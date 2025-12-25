@@ -298,14 +298,19 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
                 let tree = mutable_tree.freeze();
 
                 // Update predictions (row of Array2)
-                let pred_row = predictions.row_mut(output);
+                let mut pred_row = predictions.row_mut(output);
                 if sampled.is_none() {
                     // Fast path: use partitioner for O(n) prediction update
-                    grower.update_predictions_from_last_tree(pred_row);
+                    grower.update_predictions_from_last_tree(pred_row.view_mut());
                 } else {
                     // Fallback: row sampling trains on a subset; we must still apply the
                     // trained tree to all rows to keep predictions correct.
-                    tree.predict_binned_into(dataset, pred_row, parallelism);
+                    // Create accessor with bin mappers for binned data traversal
+                    let mappers = dataset.bin_mappers();
+                    let accessor = BinnedAccessor::new(dataset, &mappers);
+                    let pred_slice = pred_row.as_slice_mut()
+                        .expect("prediction row should be contiguous");
+                    tree.predict_into(&accessor, pred_slice, parallelism);
                 }
 
                 // Incremental eval set prediction: add this tree's contribution

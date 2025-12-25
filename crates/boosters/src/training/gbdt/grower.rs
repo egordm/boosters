@@ -676,7 +676,8 @@ impl TreeGrower {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{BinMapper, BinningConfig, BinnedDataset, BinnedDatasetBuilder, GroupLayout, GroupStrategy, MissingType};
+    use crate::data::{BinMapper, BinningConfig, BinnedDataset, BinnedDatasetBuilder, DataAccessor, GroupLayout, GroupStrategy, MissingType, SampleAccessor};
+    use crate::inference::gbdt::BinnedAccessor;
     use crate::repr::gbdt::{Tree, TreeView};
 
     /// Helper to count leaves in a Tree.
@@ -783,10 +784,13 @@ mod tests {
         assert_eq!(tree.predict_row(&[threshold]).0, 20.0);
 
         // And the binned path must match training semantics.
-        let row0 = dataset.row_view(0).unwrap();
-        let row1 = dataset.row_view(1).unwrap();
-        assert_eq!(tree.predict_binned_row(&row0, &dataset).0, 10.0);
-        assert_eq!(tree.predict_binned_row(&row1, &dataset).0, 20.0);
+        // Use BinnedAccessor to convert bins to midpoint values for traversal.
+        let mappers = dataset.bin_mappers();
+        let accessor = BinnedAccessor::new(&dataset, &mappers);
+        let sample0 = accessor.sample(0);
+        let sample1 = accessor.sample(1);
+        assert_eq!(tree.predict_row(&[sample0.feature(0)]).0, 10.0);
+        assert_eq!(tree.predict_row(&[sample1.feature(0)]).0, 20.0);
     }
 
     #[test]
@@ -815,10 +819,13 @@ mod tests {
         assert_eq!(tree.predict_row(&[2.0]).0, 20.0);
 
         // Binned path should match too (bins are the category indices).
-        let row1 = dataset.row_view(1).unwrap(); // bin 1
-        let row2 = dataset.row_view(2).unwrap(); // bin 2
-        assert_eq!(tree.predict_binned_row(&row1, &dataset).0, 10.0);
-        assert_eq!(tree.predict_binned_row(&row2, &dataset).0, 20.0);
+        // Use BinnedAccessor to convert bins to category values for traversal.
+        let mappers = dataset.bin_mappers();
+        let accessor = BinnedAccessor::new(&dataset, &mappers);
+        let sample1 = accessor.sample(1); // bin 1
+        let sample2 = accessor.sample(2); // bin 2
+        assert_eq!(tree.predict_row(&[sample1.feature(0)]).0, 10.0);
+        assert_eq!(tree.predict_row(&[sample2.feature(0)]).0, 20.0);
     }
 
     #[test]

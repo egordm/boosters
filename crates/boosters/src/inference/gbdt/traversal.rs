@@ -8,9 +8,10 @@
 //! - [`StandardTraversal`]: Direct node-by-node traversal (simple, good for single rows)
 //! - [`UnrolledTraversal`]: Uses [`UnrolledTreeLayout`] for cache-friendly batch traversal
 
-use crate::dataset::SamplesView;
+use crate::data::{DataAccessor, SampleAccessor};
 use crate::repr::gbdt::{LeafValue, NodeId, ScalarLeaf, Tree, TreeView};
 use super::{Depth6, UnrollDepth, UnrolledTreeLayout};
+
 
 // =============================================================================
 // TreeTraversal Trait
@@ -42,8 +43,8 @@ pub trait TreeTraversal<L: LeafValue>: Clone {
     /// Called once per tree when creating a predictor.
     fn build_tree_state(tree: &Tree<L>) -> Self::TreeState;
 
-    /// Traverse a tree with given features, returning the leaf value.
-    fn traverse_tree(tree: &Tree<L>, state: &Self::TreeState, features: &[f32]) -> NodeId;
+    /// Traverse a tree with given sample, returning the leaf node index.
+    fn traverse_tree<S: SampleAccessor + ?Sized>(tree: &Tree<L>, state: &Self::TreeState, sample: &S) -> NodeId;
 
     /// Traverse a tree for a block of rows, accumulating results.
     ///
@@ -55,23 +56,21 @@ pub trait TreeTraversal<L: LeafValue>: Clone {
     ///
     /// - `tree`: The tree to traverse
     /// - `state`: Pre-computed state for this tree
-    /// - `features`: Sample-major feature view `[n_samples, n_features]`
+    /// - `data`: Data accessor for sample-major data
     /// - `output`: Buffer for leaf node indices
     #[inline]
-    fn traverse_block(
+    fn traverse_block<D: DataAccessor>(
         tree: &Tree<L>,
         state: &Self::TreeState,
-        features: SamplesView<'_>,
+        data: &D,
         output: &mut [NodeId],
     ) where
         L: Into<f32>,
     {
-        use crate::data::DataAccessor;
-        
         // Default: per-row traversal
         for (row_idx, out) in output.iter_mut().enumerate() {
-            let row_features = features.sample(row_idx);
-            *out = Self::traverse_tree(tree, state, row_features);
+            let sample = data.sample(row_idx);
+            *out = Self::traverse_tree(tree, state, &sample);
         }
     }
 }
@@ -101,13 +100,12 @@ impl TreeTraversal<ScalarLeaf> for StandardTraversal {
     }
 
     #[inline]
-    fn traverse_tree(
+    fn traverse_tree<S: SampleAccessor + ?Sized>(
         tree: &Tree<ScalarLeaf>,
         _state: &Self::TreeState,
-        features: &[f32],
+        sample: &S,
     ) -> NodeId {
-        // Pass slice directly - &[f32] implements SampleAccessor
-        tree.traverse_to_leaf(&features)
+        tree.traverse_to_leaf(sample)
     }
 }
 
@@ -160,34 +158,31 @@ impl<D: UnrollDepth> TreeTraversal<ScalarLeaf> for UnrolledTraversal<D> {
     }
 
     #[inline]
-    fn traverse_tree(
+    fn traverse_tree<S: SampleAccessor + ?Sized>(
         tree: &Tree<ScalarLeaf>,
         state: &Self::TreeState,
-        features: &[f32],
+        sample: &S,
     ) -> NodeId {
         // Phase 1: Traverse unrolled levels
-        let exit_idx = state.traverse_to_exit(features);
+        let exit_idx = state.traverse_to_exit_sample(sample);
         let node_idx = state.exit_node_idx(exit_idx);
 
         // Phase 2: Continue to leaf if not already there
-        // Pass slice directly - &[f32] implements SampleAccessor
-        tree.traverse_to_leaf_from(node_idx, &features)
+        tree.traverse_to_leaf_from(node_idx, sample)
     }
 
     /// Optimized block traversal using level-by-level processing.
     ///
     /// All rows traverse the same tree level together, keeping level data in cache.
+    /// This implementation requires contiguous sample-major data for maximum performance.
     #[inline]
-    fn traverse_block(
+    fn traverse_block<A: DataAccessor>(
         tree: &Tree<ScalarLeaf>,
         state: &Self::TreeState,
-        features: SamplesView<'_>,
+        data: &A,
         output: &mut [NodeId],
     ) {
         let block_size = output.len();
-        let data_view = features.view();
-        let feature_buffer = data_view.as_slice().expect("features must be contiguous");
-        let n_features = features.n_features();
 
         // Phase 1: Traverse unrolled levels for all rows
         let mut exit_indices: Vec<usize>;
@@ -195,19 +190,18 @@ impl<D: UnrollDepth> TreeTraversal<ScalarLeaf> for UnrolledTraversal<D> {
 
         let indices: &mut [usize] = if block_size <= 256 {
             let slice = &mut stack_indices[..block_size];
-            state.process_block(feature_buffer, n_features, slice);
+            state.process_block_accessor(data, slice);
             slice
         } else {
             exit_indices = vec![0usize; block_size];
-            state.process_block(feature_buffer, n_features, &mut exit_indices);
+            state.process_block_accessor(data, &mut exit_indices);
             &mut exit_indices
         };
 
         // Phase 2: Continue from exit nodes to leaves
-        use crate::data::DataAccessor;
         for (row_idx, &exit_idx) in indices.iter().enumerate() {
             let node_idx = state.exit_node_idx(exit_idx);
-            let sample = features.sample(row_idx);
+            let sample = data.sample(row_idx);
             let leaf_idx = tree.traverse_to_leaf_from(node_idx, &sample);
             output[row_idx] = leaf_idx;
         }
@@ -417,8 +411,8 @@ mod tests {
 
         // Reach node 15 by taking left at all numeric splits (feature 0 < 0.5),
         // then resolve categorical split by feature 1.
-        let left_cat_left = [0.1, 2.0];
-        let left_cat_right = [0.1, 1.0];
+        let left_cat_left: [f32; 2] = [0.1, 2.0];
+        let left_cat_right: [f32; 2] = [0.1, 1.0];
 
         let std_left = StandardTraversal::traverse_tree(&tree_storage, &std_state, &left_cat_left);
         let unrolled_left = <UnrolledTraversal4 as TreeTraversal<ScalarLeaf>>::traverse_tree(

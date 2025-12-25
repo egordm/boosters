@@ -165,6 +165,13 @@ impl BinnedDataset {
         &self.features[feature].bin_mapper
     }
 
+    /// Get all bin mappers as a vector.
+    ///
+    /// This is useful for creating a `BinnedAccessor`.
+    pub fn bin_mappers(&self) -> Vec<super::BinMapper> {
+        self.features.iter().map(|f| f.bin_mapper.clone()).collect()
+    }
+
     /// Total memory size in bytes (data only, not metadata).
     pub fn data_size_bytes(&self) -> usize {
         self.groups.iter().map(|g| g.size_bytes()).sum()

@@ -3,7 +3,7 @@
 //! This buffer is allocated once at training start and reused for each leaf.
 //! It gathers features into contiguous columns for efficient coordinate descent.
 
-use crate::data::DataAccessor;
+use crate::data::{DataAccessor, SampleAccessor};
 
 /// Column-major buffer for leaf feature data.
 ///
@@ -86,8 +86,6 @@ impl LeafFeatureBuffer {
         data: &D,
         features: &[u32],
     ) {
-        use crate::data::SampleAccessor;
-        
         debug_assert!(
             rows.len() <= self.max_rows,
             "Too many rows: {} > max {}",

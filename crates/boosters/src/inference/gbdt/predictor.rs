@@ -330,7 +330,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
             let tree_weight = tree_weights.map(|w| w[tree_idx]).unwrap_or(1.0);
 
             // Step 1: Get leaf indices
-            T::traverse_block(tree, state, features, &mut leaf_indices);
+            T::traverse_block(tree, state, &features, &mut leaf_indices);
 
             // Step 2: Extract values and accumulate into group row
             let mut group_row = output.row_mut(group_idx);

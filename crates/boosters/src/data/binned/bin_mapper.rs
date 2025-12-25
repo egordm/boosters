@@ -264,17 +264,14 @@ impl BinMapper {
     /// - Bin n: `(upper_bound[n-1] + upper_bound[n]) / 2`
     /// - Last bin: Uses `max_val` instead of the sentinel `f64::MAX` upper bound
     ///
-    /// For categorical features, returns the category value.
+    /// For categorical features, returns the bin index (which is the category index
+    /// used during tree traversal). This differs from the original category value.
     /// For missing/NaN bins, returns `f64::NAN`.
     #[inline]
     pub fn bin_to_midpoint(&self, bin: u32) -> f64 {
         if self.is_categorical() {
-            // Categorical: return category value
-            return self
-                .bin_to_cat
-                .as_ref()
-                .map(|cats| cats[bin as usize] as f64)
-                .unwrap_or(0.0);
+            // Categorical: return bin index directly (used as category index in trees)
+            return bin as f64;
         }
 
         // Handle NaN bin (typically last bin when missing_type == NaN)

@@ -78,7 +78,20 @@ impl SampleAccessor for [f32] {
     }
 }
 
-// Implementation for references to slices
+// Implementation for fixed-size arrays (enables &[0.5f32, 1.0] syntax)
+impl<const N: usize> SampleAccessor for [f32; N] {
+    #[inline]
+    fn feature(&self, index: usize) -> f32 {
+        self[index]
+    }
+
+    #[inline]
+    fn n_features(&self) -> usize {
+        N
+    }
+}
+
+// Implementation for references to types that can be viewed as slices
 impl<T: AsRef<[f32]> + ?Sized> SampleAccessor for &T {
     #[inline]
     fn feature(&self, index: usize) -> f32 {

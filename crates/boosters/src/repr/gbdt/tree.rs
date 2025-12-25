@@ -10,19 +10,13 @@
 // Allow many constructor arguments for creating trees with all their fields.
 #![allow(clippy::too_many_arguments)]
 
-use ndarray::ArrayViewMut1;
-
-use crate::Parallelism;
-use crate::data::{BinnedDataset, DataAccessor, SampleAccessor};
+use crate::data::{DataAccessor, SampleAccessor};
 
 use super::categories::{float_to_category, CategoriesStorage};
 use super::coefficients::LeafCoefficients;
 use super::leaf::LeafValue;
 use super::node::SplitType;
 use super::NodeId;
-
-/// Re-export for backward compatibility during migration.
-pub use crate::data::binned::BinnedSampleSlice as BinnedRowView;
 
 // ============================================================================
 // TreeView Trait
@@ -112,7 +106,7 @@ pub trait TreeView {
     /// let leaf_id = tree.traverse_to_leaf(features);
     /// ```
     #[inline]
-    fn traverse_to_leaf<S: SampleAccessor>(&self, sample: &S) -> NodeId {
+    fn traverse_to_leaf<S: SampleAccessor + ?Sized>(&self, sample: &S) -> NodeId {
         self.traverse_to_leaf_from(0, sample)
     }
 
@@ -130,7 +124,7 @@ pub trait TreeView {
     ///
     /// The `NodeId` of the reached leaf node.
     #[inline]
-    fn traverse_to_leaf_from<S: SampleAccessor>(&self, start_node: NodeId, sample: &S) -> NodeId {
+    fn traverse_to_leaf_from<S: SampleAccessor + ?Sized>(&self, start_node: NodeId, sample: &S) -> NodeId {
         let mut node = start_node;
 
         while !self.is_leaf(node) {
@@ -476,88 +470,6 @@ impl<L: LeafValue> Tree<L> {
         self.leaf_value(leaf_id)
     }
 
-    /// Traverse the tree to find the leaf for a binned row.
-    ///
-    /// Used during training when we have binned data. Numeric bins are converted
-    /// to float values using the bin mappers before comparison. Categorical bins
-    /// are treated as canonical category indices (0..K-1).
-    pub fn predict_binned_row(
-        &self,
-        row: &BinnedRowView<'_>,
-        dataset: &BinnedDataset,
-    ) -> &L {
-        let mut idx: NodeId = 0;
-
-        while !self.is_leaf(idx) {
-            let feat_idx = self.split_index(idx) as usize;
-            let bin_opt = row.get_bin(feat_idx);
-
-            idx = match bin_opt {
-                None => {
-                    if self.default_left(idx) {
-                        self.left_child(idx)
-                    } else {
-                        self.right_child(idx)
-                    }
-                }
-                Some(bin) => match self.split_type(idx) {
-                    SplitType::Numeric => {
-                        let mapper = dataset.bin_mapper(feat_idx);
-                        let fvalue = mapper.bin_to_value(bin) as f32;
-                        if fvalue < self.split_threshold(idx) {
-                            self.left_child(idx)
-                        } else {
-                            self.right_child(idx)
-                        }
-                    }
-                    SplitType::Categorical => {
-                        let category = bin;
-                        if self.categories.category_goes_right(idx, category) {
-                            self.right_child(idx)
-                        } else {
-                            self.left_child(idx)
-                        }
-                    }
-                },
-            };
-        }
-
-        self.leaf_value(idx)
-    }
-
-
-
-    /// Unified batch prediction for binned datasets.
-    ///
-    /// Traverses the tree for each row and **adds** leaf values to the predictions
-    /// buffer (accumulate pattern). Supports both sequential and parallel execution.
-    ///
-    /// # Arguments
-    /// * `dataset` - The binned dataset containing the rows
-    /// * `predictions` - Pre-allocated buffer to update (length = `dataset.n_rows()`)
-    /// * `parallelism` - Whether to use parallel execution
-    pub fn predict_binned_into(
-        &self,
-        dataset: &BinnedDataset,
-        mut predictions: ArrayViewMut1<f32>,
-        parallelism: Parallelism,
-    ) where
-        L: Into<f32> + Copy + Send + Sync,
-    {
-        let n_rows = dataset.n_rows();
-        debug_assert_eq!(predictions.len(), n_rows);
-
-        parallelism.maybe_par_for_each(
-            predictions.iter_mut().enumerate().collect::<Vec<_>>(),
-            |(row_idx, pred)| {
-                if let Some(row) = dataset.row_view(row_idx) {
-                    let leaf = self.predict_binned_row(&row, dataset);
-                    *pred += (*leaf).into();
-                }
-            },
-        );
-    }
-
     /// Unified batch prediction using any data accessor.
     ///
     /// Traverses the tree for each row and **adds** leaf values to the predictions
@@ -591,30 +503,20 @@ impl<L: LeafValue> Tree<L> {
         let n_samples = data.n_samples();
         debug_assert_eq!(predictions.len(), n_samples);
 
-        // Create prediction closures that extract samples within the closure
-        // to avoid HRTB lifetime issues with `for<'a> D::Sample<'a>: Send`
-        let predict_linear = |row_idx: usize| {
-            let sample = data.sample(row_idx);
-            let leaf_idx = self.traverse_to_leaf(&sample);
-            self.compute_leaf_value(leaf_idx, &sample)
-        };
-
-        let predict_constant = |row_idx: usize| {
-            let sample = data.sample(row_idx);
-            let leaf_idx = self.traverse_to_leaf(&sample);
-            (*self.leaf_value(leaf_idx)).into()
-        };
-
         if self.has_linear_leaves() {
             parallelism.maybe_par_for_each(0..n_samples, |row_idx| {
                 // Safety: each row_idx is unique, so we can safely write to predictions[row_idx]
                 let pred = unsafe { &mut *predictions.as_ptr().add(row_idx).cast_mut() };
-                *pred += predict_linear(row_idx);
+                let sample = data.sample(row_idx);
+                let leaf_idx = self.traverse_to_leaf(&sample);
+                *pred += self.compute_leaf_value(leaf_idx, &sample);
             });
         } else {
             parallelism.maybe_par_for_each(0..n_samples, |row_idx| {
                 let pred = unsafe { &mut *predictions.as_ptr().add(row_idx).cast_mut() };
-                *pred += predict_constant(row_idx);
+                let sample = data.sample(row_idx);
+                let leaf_idx = self.traverse_to_leaf(&sample);
+                *pred += (*self.leaf_value(leaf_idx)).into();
             });
         }
     }
@@ -881,8 +783,6 @@ mod tests {
 
     #[test]
     fn test_traverse_with_different_accessors() {
-        use crate::data::DataAccessor;
-
         let tree = crate::scalar_tree! {
             0 => num(0, 0.5, L) -> 1, 2,
             1 => leaf(-1.0),
@@ -925,8 +825,6 @@ mod tests {
 
     #[test]
     fn test_traverse_on_mutable_tree() {
-        use crate::data::DataAccessor;
-
         let mut tree = MutableTree::<ScalarLeaf>::new();
         let _root = tree.init_root();
 
