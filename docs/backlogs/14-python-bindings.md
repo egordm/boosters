@@ -942,15 +942,16 @@ fit). This avoids complex GIL juggling. Python can inspect results after trainin
 ### Story 4.7: Review - Training Demo
 
 **Meta-task for Epic 4**
+**Status**: ✅ Complete (commit pending)
 
 **Tasks**:
 
-- [ ] 4.7.1 Review `tmp/stakeholder_feedback.md` for Epic 4-relevant feedback
-- [ ] 4.7.2 Create integration test `tests/test_training_demo.py`:
+- [x] 4.7.1 Review `tmp/stakeholder_feedback.md` for Epic 4-relevant feedback
+- [x] 4.7.2 Create integration test `tests/test_training_demo.py`:
   - Load data, configure model, train, predict
   - Verify callbacks and early stopping work correctly
   - Cover both `GBDTModel` and `GBLinearModel`
-- [ ] 4.7.3 Document demo results in `tmp/development_review_<timestamp>.md`
+- [x] 4.7.3 Document demo results in `tmp/development_review_<timestamp>.md`
 
 **Note**: Performance and quality comparisons with other libraries are handled by
 `packages/boosters-eval`, not in the Python bindings tests.
