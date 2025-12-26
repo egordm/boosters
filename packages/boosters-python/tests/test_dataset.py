@@ -201,8 +201,8 @@ class TestEvalSet:
         y = np.random.rand(50).astype(np.float32)
         ds = Dataset(X, y)
 
-        # EvalSet expects the inner Rust Dataset
-        es = EvalSet("validation", ds._inner)
+        # EvalSet takes (dataset, name) - Dataset IS a PyDataset subclass
+        es = EvalSet(ds, "validation")
         assert es.name == "validation"
 
     def test_dataset_access(self) -> None:
@@ -211,7 +211,7 @@ class TestEvalSet:
         y = np.random.rand(50).astype(np.float32)
         ds = Dataset(X, y)
 
-        es = EvalSet("test", ds._inner)
+        es = EvalSet(ds, "test")
         retrieved = es.dataset
 
         # Should get a usable dataset (Rust Dataset)
@@ -223,7 +223,7 @@ class TestEvalSet:
         X = np.random.rand(50, 10).astype(np.float32)
         y = np.random.rand(50).astype(np.float32)
         ds = Dataset(X, y)
-        es = EvalSet("validation", ds._inner)
+        es = EvalSet(ds, "validation")
 
         r = repr(es)
         assert "validation" in r

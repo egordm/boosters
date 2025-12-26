@@ -1,65 +1,38 @@
 """Objective (loss) functions for gradient boosting.
 
-This module provides objective classes for training GBDT and GBLinear models.
-All types are Rust-owned (#[pyclass]) with generated type stubs.
+This module provides the Objective enum for training GBDT and GBLinear models.
+The Objective class is a Rust-backed PyO3 complex enum with variants for each loss type.
+
+Usage:
+    >>> from boosters import Objective
+    >>> obj = Objective.squared()  # L2 regression
+    >>> obj = Objective.logistic()  # Binary classification
+    >>> obj = Objective.pinball([0.1, 0.5, 0.9])  # Quantile regression
+    >>> obj = Objective.softmax(10)  # Multiclass classification
 
 Regression:
-    - SquaredLoss: Mean squared error (L2)
-    - AbsoluteLoss: Mean absolute error (L1)
-    - HuberLoss: Pseudo-Huber loss (robust)
-    - ArctanLoss: Arctan loss (smooth robust)
-    - PinballLoss: Quantile regression (single or multi)
-    - PoissonLoss: Poisson deviance for count data
+    - Objective.Squared(): Mean squared error (L2)
+    - Objective.Absolute(): Mean absolute error (L1)
+    - Objective.Huber(delta): Pseudo-Huber loss (robust)
+    - Objective.Pinball(alpha): Quantile regression
+    - Objective.Poisson(): Poisson deviance for count data
 
 Classification:
-    - LogisticLoss: Binary cross-entropy
-    - HingeLoss: SVM-style hinge loss
-    - SoftmaxLoss: Multiclass cross-entropy
+    - Objective.Logistic(): Binary cross-entropy
+    - Objective.Hinge(): SVM-style hinge loss
+    - Objective.Softmax(n_classes): Multiclass cross-entropy
 
 Ranking:
-    - LambdaRankLoss: LambdaMART for NDCG optimization
+    - Objective.LambdaRank(ndcg_at): LambdaMART for NDCG optimization
 
-Type Aliases:
-    - Objective: Union of all objective types
+Pattern Matching:
+    >>> match obj:
+    ...     case Objective.Squared():
+    ...         print("L2 loss")
+    ...     case Objective.Pinball(alpha=a):
+    ...         print(f"Quantile: {a}")
 """
 
-from boosters._boosters_rs import (
-    AbsoluteLoss,
-    ArctanLoss,
-    HingeLoss,
-    HuberLoss,
-    LambdaRankLoss,
-    LogisticLoss,
-    PinballLoss,
-    PoissonLoss,
-    SoftmaxLoss,
-    SquaredLoss,
-)
+from boosters._boosters_rs import Objective
 
-# Type alias for all objectives
-type Objective = (
-    SquaredLoss
-    | AbsoluteLoss
-    | HuberLoss
-    | ArctanLoss
-    | PinballLoss
-    | PoissonLoss
-    | LogisticLoss
-    | HingeLoss
-    | SoftmaxLoss
-    | LambdaRankLoss
-)
-
-__all__: list[str] = [
-    "AbsoluteLoss",
-    "ArctanLoss",
-    "HingeLoss",
-    "HuberLoss",
-    "LambdaRankLoss",
-    "LogisticLoss",
-    "Objective",
-    "PinballLoss",
-    "PoissonLoss",
-    "SoftmaxLoss",
-    "SquaredLoss",
-]
+__all__: list[str] = ["Objective"]

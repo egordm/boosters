@@ -7,7 +7,7 @@ use boosters::data::transpose_to_c_order;
 use boosters::training::EvalSet as CoreEvalSet;
 
 use crate::config::PyGBLinearConfig;
-use crate::data::{extract_dataset, PyDataset, PyEvalSet};
+use crate::data::{PyDataset, PyEvalSet};
 use crate::error::BoostersError;
 
 /// Gradient Boosted Linear model.
@@ -180,6 +180,7 @@ impl PyGBLinearModel {
     /// Returns a dict mapping eval set names to dicts of metric names to lists
     /// of scores per iteration.
     #[getter]
+    #[gen_stub(override_return_type(type_repr = "dict[str, dict[str, list[float]]] | None", imports = ()))]
     pub fn eval_results(&self, py: Python<'_>) -> Option<Py<PyAny>> {
         self.eval_results.as_ref().map(|r| r.clone_ref(py))
     }
@@ -221,12 +222,8 @@ impl PyGBLinearModel {
     ///     >>> predictions = model.predict(test_data)
     #[pyo3(signature = (data))]
     #[gen_stub(override_return_type(type_repr = "numpy.ndarray", imports = ("numpy",)))]
-    pub fn predict(
-        &self,
-        py: Python<'_>,
-        #[gen_stub(override_type(type_repr = "Dataset"))] data: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        self.predict_internal(py, data, false)
+    pub fn predict(&self, py: Python<'_>, data: PyRef<'_, PyDataset>) -> PyResult<Py<PyAny>> {
+        self.predict_internal(py, &data, false)
     }
 
     /// Make raw (untransformed) predictions on features.
@@ -249,12 +246,8 @@ impl PyGBLinearModel {
     ///     >>> raw_margins = model.predict_raw(test_data)
     #[pyo3(signature = (data))]
     #[gen_stub(override_return_type(type_repr = "numpy.ndarray", imports = ("numpy",)))]
-    pub fn predict_raw(
-        &self,
-        py: Python<'_>,
-        #[gen_stub(override_type(type_repr = "Dataset"))] data: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
-        self.predict_internal(py, data, true)
+    pub fn predict_raw(&self, py: Python<'_>, data: PyRef<'_, PyDataset>) -> PyResult<Py<PyAny>> {
+        self.predict_internal(py, &data, true)
     }
 
     /// Train the model on a dataset.
@@ -272,16 +265,11 @@ impl PyGBLinearModel {
     pub fn fit<'py>(
         mut slf: PyRefMut<'py, Self>,
         py: Python<'py>,
-        #[gen_stub(override_type(type_repr = "Dataset"))] train: &Bound<'py, PyAny>,
-        #[gen_stub(override_type(type_repr = "EvalSet | list[EvalSet] | None"))]
-        eval_set: Option<&Bound<'py, PyAny>>,
+        train: PyRef<'py, PyDataset>,
+        eval_set: Option<Vec<PyRef<'py, PyEvalSet>>>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        // Extract PyDataset from train argument
-        let train_dataset_py = extract_dataset(py, train)?;
-        let train_dataset = train_dataset_py.bind(py).borrow();
-
         // Validate that training data has labels
-        if !train_dataset.has_labels() {
+        if !train.has_labels() {
             return Err(BoostersError::ValidationError(
                 "Training dataset must have labels".to_string(),
             )
@@ -290,19 +278,22 @@ impl PyGBLinearModel {
 
         // Convert Python config to core config
         let config = slf.config.bind(py).borrow();
-        let core_config = config.to_core(py)?;
+        let core_config = config.to_core()?;
         drop(config);
 
-        // Get reference to the core dataset directly - no conversion needed!
-        let core_train = train_dataset.as_core();
+        // Get reference to the core dataset directly
+        let core_train = train.as_core();
 
-        // Extract eval sets as Vec<(name, PyRef<PyDataset>)> to keep borrows alive
-        let eval_set_data: Vec<(String, PyRef<'py, PyDataset>)> = if let Some(valid_obj) = eval_set
-        {
-            Self::extract_eval_set_refs(py, valid_obj)?
-        } else {
-            Vec::new()
-        };
+        // Extract eval sets
+        let eval_set_data: Vec<(String, PyRef<'py, PyDataset>)> = eval_set
+            .unwrap_or_default()
+            .into_iter()
+            .map(|es| {
+                let name = es.name().to_string();
+                let dataset = es.get_dataset(py);
+                (name, dataset)
+            })
+            .collect();
 
         // Create EvalSet references for training
         let eval_set_refs: Vec<CoreEvalSet<'_>> = eval_set_data
@@ -338,7 +329,7 @@ impl PyGBLinearModel {
     fn predict_internal(
         &self,
         py: Python<'_>,
-        data: &Bound<'_, PyAny>,
+        data: &PyRef<'_, PyDataset>,
         raw_score: bool,
     ) -> PyResult<Py<PyAny>> {
         use numpy::PyArray2;
@@ -347,10 +338,7 @@ impl PyGBLinearModel {
             method: "predict".to_string(),
         })?;
 
-        // Extract dataset
-        let dataset_py = extract_dataset(py, data)?;
-        let dataset = dataset_py.bind(py).borrow();
-        let core_dataset = dataset.as_core();
+        let core_dataset = data.as_core();
 
         // Validate feature count
         let expected_features = model.meta().n_features;
@@ -381,33 +369,5 @@ impl PyGBLinearModel {
         let output_t = transpose_to_c_order(output.view());
         let arr = PyArray2::from_owned_array(py, output_t);
         Ok(arr.into_any().unbind())
-    }
-
-    /// Extract evaluation sets from Python input, keeping PyRef borrows alive.
-    ///
-    /// Returns Vec of (name, PyRef<PyDataset>) so the borrows remain valid.
-    fn extract_eval_set_refs<'py>(
-        py: Python<'py>,
-        valid: &Bound<'py, PyAny>,
-    ) -> PyResult<Vec<(String, PyRef<'py, PyDataset>)>> {
-        let mut result = Vec::new();
-
-        // Check if it's a list
-        if let Ok(list) = valid.downcast::<pyo3::types::PyList>() {
-            for item in list.iter() {
-                let eval_set: PyRef<'py, PyEvalSet> = item.extract()?;
-                let name = eval_set.name().to_string();
-                let dataset = eval_set.get_dataset(py);
-                result.push((name, dataset));
-            }
-        } else {
-            // Try as single EvalSet
-            let eval_set: PyRef<'py, PyEvalSet> = valid.extract()?;
-            let name = eval_set.name().to_string();
-            let dataset = eval_set.get_dataset(py);
-            result.push((name, dataset));
-        }
-
-        Ok(result)
     }
 }

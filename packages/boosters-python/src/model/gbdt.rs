@@ -10,7 +10,7 @@ use boosters::explainability::ShapValues;
 use boosters::training::EvalSet as CoreEvalSet;
 
 use crate::config::PyGBDTConfig;
-use crate::data::{extract_dataset, PyDataset, PyEvalSet};
+use crate::data::{PyDataset, PyEvalSet};
 use crate::error::BoostersError;
 
 /// Gradient Boosted Decision Tree model.
@@ -146,6 +146,7 @@ impl PyGBDTModel {
     ///     >>> results = model.eval_results
     ///     >>> # {"train": {"rmse": [0.5, 0.4, ...]}}
     #[getter]
+    #[gen_stub(override_return_type(type_repr = "dict[str, dict[str, list[float]]] | None", imports = ()))]
     pub fn eval_results(&self, py: Python<'_>) -> Option<Py<PyAny>> {
         self.eval_results.as_ref().map(|r| r.clone_ref(py))
     }
@@ -223,21 +224,14 @@ impl PyGBDTModel {
     ///     >>> shap_values = model.shap_values(test_data)
     #[pyo3(signature = (data))]
     #[gen_stub(override_return_type(type_repr = "numpy.ndarray", imports = ("numpy",)))]
-    pub fn shap_values(
-        &self,
-        py: Python<'_>,
-        data: &Bound<'_, PyAny>,
-    ) -> PyResult<Py<PyAny>> {
+    pub fn shap_values(&self, py: Python<'_>, data: PyRef<'_, PyDataset>) -> PyResult<Py<PyAny>> {
         use numpy::{PyArray2, PyArray3};
 
         let model = self.inner.as_ref().ok_or_else(|| BoostersError::NotFitted {
             method: "shap_values".to_string(),
         })?;
 
-        // Extract dataset
-        let dataset_py = extract_dataset(py, data)?;
-        let dataset = dataset_py.bind(py).borrow();
-        let core_dataset = dataset.as_core();
+        let core_dataset = data.as_core();
 
         // Validate feature count
         let expected_features = model.meta().n_features;
@@ -251,8 +245,7 @@ impl PyGBDTModel {
         }
 
         // Compute SHAP values with GIL released
-        let shap_result: Result<ShapValues, _> =
-            py.detach(|| model.shap_values(core_dataset));
+        let shap_result: Result<ShapValues, _> = py.detach(|| model.shap_values(core_dataset));
 
         match shap_result {
             Ok(shap_values) => {
@@ -311,10 +304,10 @@ impl PyGBDTModel {
     pub fn predict(
         &self,
         py: Python<'_>,
-        data: &Bound<'_, PyAny>,
+        data: PyRef<'_, PyDataset>,
         n_iterations: Option<usize>,
     ) -> PyResult<Py<PyAny>> {
-        self.predict_internal(py, data, false, n_iterations)
+        self.predict_internal(py, &data, false, n_iterations)
     }
 
     /// Make raw (untransformed) predictions on data.
@@ -340,10 +333,10 @@ impl PyGBDTModel {
     pub fn predict_raw(
         &self,
         py: Python<'_>,
-        data: &Bound<'_, PyAny>,
+        data: PyRef<'_, PyDataset>,
         n_iterations: Option<usize>,
     ) -> PyResult<Py<PyAny>> {
-        self.predict_internal(py, data, true, n_iterations)
+        self.predict_internal(py, &data, true, n_iterations)
     }
 
     /// Train the model on a dataset.
@@ -364,16 +357,11 @@ impl PyGBDTModel {
     pub fn fit<'py>(
         mut slf: PyRefMut<'py, Self>,
         py: Python<'py>,
-        train: &Bound<'py, PyAny>,
-        #[gen_stub(override_type(type_repr = "EvalSet | list[EvalSet] | None"))]
-        valid: Option<&Bound<'py, PyAny>>,
+        train: PyRef<'py, PyDataset>,
+        valid: Option<Vec<PyRef<'py, PyEvalSet>>>,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        // Extract PyDataset from train argument
-        let train_dataset_py = extract_dataset(py, train)?;
-        let train_dataset = train_dataset_py.bind(py).borrow();
-
         // Validate that training data has labels
-        if !train_dataset.has_labels() {
+        if !train.has_labels() {
             return Err(BoostersError::ValidationError(
                 "Training dataset must have labels".to_string(),
             )
@@ -386,14 +374,18 @@ impl PyGBDTModel {
         drop(config);
 
         // Get reference to the core dataset directly
-        let core_train = train_dataset.as_core();
+        let core_train = train.as_core();
 
         // Extract eval sets
-        let eval_set_data: Vec<(String, PyRef<'py, PyDataset>)> = if let Some(valid_obj) = valid {
-            Self::extract_eval_set_refs(py, valid_obj)?
-        } else {
-            Vec::new()
-        };
+        let eval_set_data: Vec<(String, PyRef<'py, PyDataset>)> = valid
+            .unwrap_or_default()
+            .into_iter()
+            .map(|es| {
+                let name = es.name().to_string();
+                let dataset = es.get_dataset(py);
+                (name, dataset)
+            })
+            .collect();
 
         // Create EvalSet references for training
         let eval_set_refs: Vec<CoreEvalSet<'_>> = eval_set_data
@@ -437,7 +429,7 @@ impl PyGBDTModel {
     fn predict_internal(
         &self,
         py: Python<'_>,
-        data: &Bound<'_, PyAny>,
+        data: &PyRef<'_, PyDataset>,
         raw_score: bool,
         n_iterations: Option<usize>,
     ) -> PyResult<Py<PyAny>> {
@@ -445,10 +437,7 @@ impl PyGBDTModel {
             method: "predict".to_string(),
         })?;
 
-        // Extract dataset
-        let dataset_py = extract_dataset(py, data)?;
-        let dataset = dataset_py.bind(py).borrow();
-        let core_dataset = dataset.as_core();
+        let core_dataset = data.as_core();
 
         // Validate feature count
         let expected_features = model.meta().n_features;
@@ -478,29 +467,5 @@ impl PyGBDTModel {
         let output_t = transpose_to_c_order(output.view());
         let arr = PyArray2::from_owned_array(py, output_t);
         Ok(arr.into_any().unbind())
-    }
-
-    /// Extract evaluation sets from Python input.
-    fn extract_eval_set_refs<'py>(
-        py: Python<'py>,
-        valid: &Bound<'py, PyAny>,
-    ) -> PyResult<Vec<(String, PyRef<'py, PyDataset>)>> {
-        let mut result = Vec::new();
-
-        if let Ok(list) = valid.downcast::<pyo3::types::PyList>() {
-            for item in list.iter() {
-                let eval_set: PyRef<'py, PyEvalSet> = item.extract()?;
-                let name = eval_set.name().to_string();
-                let dataset = eval_set.get_dataset(py);
-                result.push((name, dataset));
-            }
-        } else {
-            let eval_set: PyRef<'py, PyEvalSet> = valid.extract()?;
-            let name = eval_set.name().to_string();
-            let dataset = eval_set.get_dataset(py);
-            result.push((name, dataset));
-        }
-
-        Ok(result)
     }
 }

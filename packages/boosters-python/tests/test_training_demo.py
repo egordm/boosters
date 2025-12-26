@@ -19,9 +19,8 @@ from boosters import (
     GBDTModel,
     GBLinearConfig,
     GBLinearModel,
-    LogisticLoss,
-    Rmse,
-    SquaredLoss,
+    Metric,
+    Objective,
     TreeConfig,
 )
 
@@ -94,7 +93,7 @@ class TestGBDTModelIntegration:
             n_estimators=50,
             learning_rate=0.1,
             tree=TreeConfig(max_depth=5),
-            objective=SquaredLoss(),
+            objective=Objective.squared(),
         )
 
         # Train
@@ -107,7 +106,7 @@ class TestGBDTModelIntegration:
         assert model.n_features == 10
 
         # Predict - always returns 2D (n_samples, n_outputs)
-        preds = model.predict(X_test)
+        preds = model.predict(Dataset(X_test))
         assert preds.shape == (100, 1)
         assert preds.dtype == np.float32
 
@@ -125,15 +124,15 @@ class TestGBDTModelIntegration:
             n_estimators=100,
             learning_rate=0.1,
             tree=TreeConfig(max_depth=5),
-            objective=SquaredLoss(),
-            metric=Rmse(),
+            objective=Objective.squared(),
+            metric=Metric.rmse(),
         )
 
         model = GBDTModel(config=config)
         val_ds = Dataset(X_val, y_val)
         model.fit(
             Dataset(X_train, y_train),
-            valid=[EvalSet("validation", val_ds._inner)],
+            valid=[EvalSet(val_ds, "validation")],
         )
 
         assert model.is_fitted
@@ -149,22 +148,22 @@ class TestGBDTModelIntegration:
             early_stopping_rounds=10,
             learning_rate=0.1,
             tree=TreeConfig(max_depth=5),
-            objective=SquaredLoss(),
-            metric=Rmse(),
+            objective=Objective.squared(),
+            metric=Metric.rmse(),
         )
 
         model = GBDTModel(config=config)
         val_ds = Dataset(X_val, y_val)
         model.fit(
             Dataset(X_train, y_train),
-            valid=[EvalSet("validation", val_ds._inner)],
+            valid=[EvalSet(val_ds, "validation")],
         )
 
         assert model.is_fitted
         # Early stopping should trigger before 1000
         assert model.n_trees < 1000
         # Model should make reasonable predictions
-        preds = model.predict(X_val)
+        preds = model.predict(Dataset(X_val))
         assert preds.shape == (100, 1)
 
     def test_binary_classification_workflow(self):
@@ -176,14 +175,14 @@ class TestGBDTModelIntegration:
             n_estimators=50,
             learning_rate=0.1,
             tree=TreeConfig(max_depth=4),
-            objective=LogisticLoss(),
+            objective=Objective.logistic(),
         )
 
         model = GBDTModel(config=config)
         model.fit(Dataset(X_train, y_train))
 
         # Predict probabilities - always 2D (n_samples, n_outputs)
-        preds = model.predict(X_test)
+        preds = model.predict(Dataset(X_test))
         assert preds.shape == (100, 1)
 
         # Probabilities should be in [0, 1] range
@@ -201,15 +200,15 @@ class TestGBDTModelIntegration:
 
         config = GBDTConfig(
             n_estimators=30,
-            objective=LogisticLoss(),
+            objective=Objective.logistic(),
         )
 
         model = GBDTModel(config=config).fit(Dataset(X, y))
 
         # Normal predictions (probabilities)
-        preds = model.predict(X[:10])
+        preds = model.predict(Dataset(X[:10]))
         # Raw predictions (logits) - now a separate method
-        raw_preds = model.predict_raw(X[:10])
+        raw_preds = model.predict_raw(Dataset(X[:10]))
 
         # Both should return 2D (n_samples, n_outputs)
         assert preds.shape == raw_preds.shape == (10, 1)
@@ -232,18 +231,15 @@ class TestGBDTModelIntegration:
         assert np.sum(importance) > 0
 
     def test_predict_with_dataset_object(self):
-        """Test that predict works with Dataset as well as arrays."""
+        """Test that predict works with Dataset."""
         X, y = make_regression_data(500, 10, seed=42)
 
         config = GBDTConfig(n_estimators=30)
         model = GBDTModel(config=config).fit(Dataset(X, y))
 
-        # Predict with array
-        preds_array = model.predict(X[:10])
         # Predict with Dataset
-        preds_dataset = model.predict(Dataset(X[:10], y[:10]))
-
-        np.testing.assert_array_equal(preds_array, preds_dataset)
+        preds = model.predict(Dataset(X[:10]))
+        assert preds.shape == (10, 1)
 
 
 # =============================================================================
@@ -278,7 +274,7 @@ class TestGBLinearModelIntegration:
         assert model.is_fitted
         assert model.n_features_in_ == 10
 
-        preds = model.predict(X_test)
+        preds = model.predict(Dataset(X_test))
         assert preds.shape == (100, 1)
 
         # Linear model should do reasonably well on clean linear data
@@ -327,14 +323,14 @@ class TestGBLinearModelIntegration:
 
         config = GBLinearConfig(
             n_estimators=100,
-            metric=Rmse(),
+            metric=Metric.rmse(),
         )
 
         model = GBLinearModel(config=config)
         val_ds = Dataset(X_val, y_val)
         model.fit(
             Dataset(X_train, y_train),
-            eval_set=[EvalSet("validation", val_ds._inner)],
+            eval_set=[EvalSet(val_ds, "validation")],
         )
 
         assert model.is_fitted
@@ -354,7 +350,7 @@ class TestErrorHandling:
         X = np.random.rand(10, 5).astype(np.float32)
 
         with pytest.raises(RuntimeError, match="not fitted"):
-            model.predict(X)
+            model.predict(Dataset(X))
 
     def test_wrong_feature_count_raises(self):
         """Predicting with wrong feature count should raise error."""
@@ -368,7 +364,7 @@ class TestErrorHandling:
         X_wrong = np.random.rand(10, 5).astype(np.float32)
 
         with pytest.raises(ValueError, match="features"):
-            model.predict(X_wrong)
+            model.predict(Dataset(X_wrong))
 
     def test_missing_labels_for_training_raises(self):
         """Training without labels should raise error."""
@@ -394,7 +390,11 @@ class TestMethodChaining:
         y = np.random.rand(100).astype(np.float32)
 
         # Train and predict in one line
-        preds = GBDTModel(config=GBDTConfig(n_estimators=10)).fit(Dataset(X, y)).predict(X[:10])
+        preds = (
+            GBDTModel(config=GBDTConfig(n_estimators=10))
+            .fit(Dataset(X, y))
+            .predict(Dataset(X[:10]))
+        )
 
         # Always returns 2D (n_samples, n_outputs)
         assert preds.shape == (10, 1)

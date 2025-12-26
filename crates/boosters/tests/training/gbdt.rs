@@ -300,11 +300,10 @@ fn train_from_dataset_api() {
     assert_eq!(dataset.n_features(), 2);
     
     // Train using high-level API
-    use boosters::model::gbdt::TreeParams;
     let config = GBDTConfig::builder()
         .n_trees(20)
         .learning_rate(0.2)
-        .tree(TreeParams::depth_wise(3))
+        .growth_strategy(GrowthStrategy::DepthWise { max_depth: 3 })
         .build()
         .unwrap();
     
@@ -339,8 +338,6 @@ fn train_from_dataset_api() {
 /// Test GBDTModel::train_with_eval() using EvalSet.
 #[test]
 fn train_from_dataset_with_eval_set() {
-    use boosters::model::gbdt::TreeParams;
-    
     // Create training data
     let n_train = 80;
     let n_eval = 20;
@@ -377,7 +374,7 @@ fn train_from_dataset_with_eval_set() {
     let config = GBDTConfig::builder()
         .n_trees(10)
         .learning_rate(0.2)
-        .tree(TreeParams::depth_wise(3))
+        .growth_strategy(GrowthStrategy::DepthWise { max_depth: 3 })
         .build()
         .unwrap();
     
@@ -411,8 +408,6 @@ fn train_from_dataset_with_eval_set() {
 /// Test GBDTModel::predict() with feature-major storage.
 #[test]
 fn predict_from_dataset_with_block_buffering() {
-    use boosters::model::gbdt::TreeParams;
-    
     // Train a model first
     let n_samples = 100;
     let mut features_data = Vec::with_capacity(n_samples * 2);
@@ -434,7 +429,7 @@ fn predict_from_dataset_with_block_buffering() {
     let config = GBDTConfig::builder()
         .n_trees(10)
         .learning_rate(0.3)
-        .tree(TreeParams::depth_wise(3))
+        .growth_strategy(GrowthStrategy::DepthWise { max_depth: 3 })
         .build()
         .unwrap();
     
@@ -468,8 +463,6 @@ fn predict_from_dataset_with_block_buffering() {
 /// Test that parallel predict_dataset matches sequential.
 #[test]
 fn predict_from_dataset_parallel_matches_sequential() {
-    use boosters::model::gbdt::TreeParams;
-    
     // Train a model
     let n_samples = 200;
     let mut features_data = Vec::with_capacity(n_samples * 3);
@@ -493,7 +486,7 @@ fn predict_from_dataset_parallel_matches_sequential() {
     let config = GBDTConfig::builder()
         .n_trees(10)
         .learning_rate(0.3)
-        .tree(TreeParams::depth_wise(4))
+        .growth_strategy(GrowthStrategy::DepthWise { max_depth: 4 })
         .build()
         .unwrap();
     

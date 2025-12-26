@@ -26,6 +26,9 @@ __all__: list[str] = [
     "EvalSet",
 ]
 
+# Re-export EvalSet from Rust (no Python wrapper needed)
+# EvalSet signature: EvalSet(dataset, name)
+
 
 def _extract_dataframe(
     df: pd.DataFrame,
@@ -110,10 +113,10 @@ def _is_dataframe(obj: object) -> bool:
         return False
 
 
-class Dataset:
+class Dataset(_RustDataset):
     """Dataset holding features, labels, and optional metadata.
 
-    This class wraps NumPy arrays or pandas DataFrames for use with boosters models.
+    This class extends the Rust Dataset with Python-friendly constructors.
     Data is converted to C-contiguous float32 arrays for efficient processing.
 
     Args:
@@ -139,19 +142,23 @@ class Dataset:
         >>>
         >>> dataset = Dataset(X, y)
         >>> print(f"Samples: {dataset.n_samples}, Features: {dataset.n_features}")
+        Samples: 100, Features: 10
     """
 
-    _inner: _RustDataset
+    # Groups stored on Python side only (not yet implemented in Rust)
+    _groups: NDArray[np.int32] | None
+    _python_converted: bool
 
-    def __init__(
-        self,
+    def __new__(
+        cls,
         features: ArrayLike,
         labels: ArrayLike | None = None,
         weights: ArrayLike | None = None,
         groups: ArrayLike | None = None,
         feature_names: Sequence[str] | None = None,
         categorical_features: Sequence[int] | None = None,
-    ) -> None:
+    ) -> Dataset:
+        """Create a new Dataset instance via Rust's __new__."""
         # Handle sparse matrices
         if _is_sparse_matrix(features):
             raise NotImplementedError(
@@ -182,9 +189,6 @@ class Dataset:
                 type_name = type(features).__name__
                 raise TypeError(f"expected numpy array or pandas DataFrame, got {type_name}") from e
 
-        # Store conversion flag for the property
-        self._python_converted = python_converted
-
         # Use detected names if not provided
         if feature_names is None:
             feature_names = detected_names
@@ -201,22 +205,26 @@ class Dataset:
         for cat_idx in all_cats:
             if cat_idx < 0 or cat_idx >= n_features:
                 raise ValueError(
-                    f"categorical feature index {cat_idx} is out of range "
-                    f"(0 to {n_features - 1})"
+                    f"categorical feature index {cat_idx} is out of range (0 to {n_features - 1})"
                 )
 
-        # Convert labels if provided
-        labels_arr = None
+        # Convert labels if provided - must be 2D for Rust
+        labels_2d: NDArray[np.float32] | None = None
         if labels is not None:
             labels_arr = np.asarray(labels, dtype=np.float32)
-            if labels_arr.ndim != 1:
-                raise ValueError(f"labels must be 1D array, got {labels_arr.ndim}D")
-            if labels_arr.shape[0] != features_arr.shape[0]:
+            if labels_arr.ndim == 1:
+                # Convert 1D labels [n_samples] to 2D [1, n_samples]
+                labels_2d = labels_arr.reshape(1, -1)
+            elif labels_arr.ndim == 2:
+                labels_2d = labels_arr
+            else:
+                raise ValueError(f"labels must be 1D or 2D array, got {labels_arr.ndim}D")
+            if labels_2d.shape[1] != features_arr.shape[0]:
                 raise ValueError(
                     f"labels shape mismatch: expected {features_arr.shape[0]} samples, "
-                    f"got {labels_arr.shape[0]}"
+                    f"got {labels_2d.shape[1]}"
                 )
-            if not np.all(np.isfinite(labels_arr)):
+            if not np.all(np.isfinite(labels_2d)):
                 raise ValueError("labels contain NaN or Inf values")
 
         # Convert weights if provided
@@ -231,66 +239,49 @@ class Dataset:
                     f"got {weights_arr.shape[0]}"
                 )
 
-        # Convert groups if provided
-        groups_arr = None
-        if groups is not None:
-            groups_arr = np.asarray(groups, dtype=np.int32)
-            if groups_arr.ndim != 1:
-                raise ValueError(f"groups must be 1D array, got {groups_arr.ndim}D")
-            if groups_arr.shape[0] != features_arr.shape[0]:
-                raise ValueError(
-                    f"groups shape mismatch: expected {features_arr.shape[0]} samples, "
-                    f"got {groups_arr.shape[0]}"
-                )
-            # Store groups on Python side - not yet passed to Rust
-            self._groups = groups_arr
-        else:
-            self._groups = None
-
-        # Create Rust Dataset with pre-validated arrays
-        # Note: groups stored on Python side only (not yet implemented in Rust)
-        self._inner = _RustDataset(
+        # Create the Rust instance via parent's __new__
+        instance: Dataset = _RustDataset.__new__(
+            cls,
             features=features_arr,
-            labels=labels_arr,
+            labels=labels_2d,
             weights=weights_arr,
             feature_names=list(feature_names) if feature_names else None,
             categorical_features=all_cats if all_cats else None,
         )
 
-    @property
-    def n_samples(self) -> int:
-        """Number of samples in the dataset."""
-        return self._inner.n_samples
+        # Store Python-only attributes
+        instance._python_converted = python_converted
 
-    @property
-    def n_features(self) -> int:
-        """Number of features in the dataset."""
-        return self._inner.n_features
+        return instance
 
-    @property
-    def has_labels(self) -> bool:
-        """Whether labels are present."""
-        return self._inner.has_labels
-
-    @property
-    def has_weights(self) -> bool:
-        """Whether weights are present."""
-        return self._inner.has_weights
+    def __init__(
+        self,
+        features: ArrayLike,
+        labels: ArrayLike | None = None,
+        weights: ArrayLike | None = None,
+        groups: ArrayLike | None = None,
+        feature_names: Sequence[str] | None = None,
+        categorical_features: Sequence[int] | None = None,
+    ) -> None:
+        """Initialize Python-only attributes (groups)."""
+        # Only handle groups here - everything else done in __new__
+        if groups is not None:
+            groups_arr = np.asarray(groups, dtype=np.int32)
+            if groups_arr.ndim != 1:
+                raise ValueError(f"groups must be 1D array, got {groups_arr.ndim}D")
+            if groups_arr.shape[0] != self.n_samples:
+                raise ValueError(
+                    f"groups shape mismatch: expected {self.n_samples} samples, "
+                    f"got {groups_arr.shape[0]}"
+                )
+            self._groups = groups_arr
+        else:
+            self._groups = None
 
     @property
     def has_groups(self) -> bool:
         """Whether groups are present."""
         return self._groups is not None
-
-    @property
-    def feature_names(self) -> list[str] | None:
-        """Feature names if provided."""
-        return self._inner.feature_names
-
-    @property
-    def categorical_features(self) -> list[int]:
-        """Indices of categorical features."""
-        return self._inner.categorical_features
 
     @property
     def was_converted(self) -> bool:
@@ -301,11 +292,6 @@ class Dataset:
         tracks Python-side conversions.
         """
         return self._python_converted
-
-    @property
-    def shape(self) -> tuple[int, int]:
-        """Shape of the features array as (n_samples, n_features)."""
-        return self._inner.shape
 
     def __repr__(self) -> str:  # noqa: D105
         return (

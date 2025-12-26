@@ -15,7 +15,7 @@ See Also:
     - https://github.com/your-org/boosters for documentation
 """
 
-from boosters._boosters_rs import __version__
+from boosters._boosters_rs import __version__  # pyright: ignore[reportAttributeAccessIssue]
 
 # Config types
 from boosters.config import (
@@ -32,44 +32,19 @@ from boosters.config import (
 # Data types
 from boosters.data import Dataset, EvalSet
 
-# Metric types
-from boosters.metrics import (
-    Accuracy,
-    Auc,
-    LogLoss,
-    Mae,
-    Mape,
-    Metric,
-    Ndcg,
-    Rmse,
-)
+# Metric enum
+from boosters.metrics import Metric
 
 # Model types
 from boosters.model import GBDTModel, GBLinearModel
 
-# Objective types
-from boosters.objectives import (
-    AbsoluteLoss,
-    ArctanLoss,
-    HingeLoss,
-    HuberLoss,
-    LambdaRankLoss,
-    LogisticLoss,
-    Objective,
-    PinballLoss,
-    PoissonLoss,
-    SoftmaxLoss,
-    SquaredLoss,
-)
+# Objective enum
+from boosters.objectives import Objective
 
 # Type aliases
 from boosters.types import GrowthStrategy
 
 __all__ = [
-    "AbsoluteLoss",
-    "Accuracy",
-    "ArctanLoss",
-    "Auc",
     "CategoricalConfig",
     "Dataset",
     "EFBConfig",
@@ -79,24 +54,11 @@ __all__ = [
     "GBLinearConfig",
     "GBLinearModel",
     "GrowthStrategy",
-    "HingeLoss",
-    "HuberLoss",
-    "LambdaRankLoss",
     "LinearLeavesConfig",
-    "LogLoss",
-    "LogisticLoss",
-    "Mae",
-    "Mape",
     "Metric",
-    "Ndcg",
     "Objective",
-    "PinballLoss",
-    "PoissonLoss",
     "RegularizationConfig",
-    "Rmse",
     "SamplingConfig",
-    "SoftmaxLoss",
-    "SquaredLoss",
     "TreeConfig",
     "__version__",
 ]

@@ -15,7 +15,7 @@ use crate::objectives::PyObjective;
 /// Args:
 ///     n_estimators: Number of boosting rounds. Default: 100.
 ///     learning_rate: Step size for weight updates. Default: 0.5.
-///     objective: Loss function for training. Default: SquaredLoss().
+///     objective: Loss function for training. Default: Objective.Squared().
 ///     metric: Evaluation metric. None uses objective's default.
 ///     l1: L1 regularization (alpha). Encourages sparse weights. Default: 0.0.
 ///     l2: L2 regularization (lambda). Prevents large weights. Default: 1.0.
@@ -26,11 +26,12 @@ use crate::objectives::PyObjective;
 ///     >>> config = GBLinearConfig(
 ///     ...     n_estimators=200,
 ///     ...     learning_rate=0.3,
+///     ...     objective=Objective.logistic(),
 ///     ...     l2=0.1,
 ///     ... )
 #[gen_stub_pyclass]
 #[pyclass(name = "GBLinearConfig", module = "boosters._boosters_rs")]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PyGBLinearConfig {
     /// Number of boosting rounds.
     #[pyo3(get)]
@@ -38,6 +39,10 @@ pub struct PyGBLinearConfig {
     /// Learning rate (step size).
     #[pyo3(get)]
     pub learning_rate: f64,
+    /// Objective function.
+    pub objective: PyObjective,
+    /// Evaluation metric (optional).
+    pub metric: Option<PyMetric>,
     /// L1 regularization (alpha).
     #[pyo3(get)]
     pub l1: f64,
@@ -50,25 +55,6 @@ pub struct PyGBLinearConfig {
     /// Random seed.
     #[pyo3(get)]
     pub seed: u64,
-
-    // Store objective and metric as Python objects
-    objective_obj: Py<PyAny>,
-    metric_obj: Option<Py<PyAny>>,
-}
-
-impl Clone for PyGBLinearConfig {
-    fn clone(&self) -> Self {
-        Python::attach(|py| Self {
-            n_estimators: self.n_estimators,
-            learning_rate: self.learning_rate,
-            objective_obj: self.objective_obj.clone_ref(py),
-            metric_obj: self.metric_obj.as_ref().map(|m| m.clone_ref(py)),
-            l1: self.l1,
-            l2: self.l2,
-            early_stopping_rounds: self.early_stopping_rounds,
-            seed: self.seed,
-        })
-    }
 }
 
 #[gen_stub_pymethods]
@@ -87,13 +73,12 @@ impl PyGBLinearConfig {
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
-        py: Python<'_>,
         n_estimators: u32,
         learning_rate: f64,
-        #[gen_stub(override_type(type_repr = "SquaredLoss | AbsoluteLoss | PoissonLoss | LogisticLoss | HingeLoss | HuberLoss | PinballLoss | ArctanLoss | SoftmaxLoss | LambdaRankLoss | None"))]
-        objective: Option<&Bound<'_, PyAny>>,
-        #[gen_stub(override_type(type_repr = "Rmse | Mae | Mape | LogLoss | Auc | Accuracy | Ndcg | None"))]
-        metric: Option<&Bound<'_, PyAny>>,
+        #[gen_stub(override_type(type_repr = "Objective | None"))]
+        objective: Option<PyObjective>,
+        #[gen_stub(override_type(type_repr = "Metric | None"))]
+        metric: Option<PyMetric>,
         l1: f64,
         l2: f64,
         early_stopping_rounds: Option<u32>,
@@ -134,35 +119,11 @@ impl PyGBLinearConfig {
             .into());
         }
 
-        // Handle objective - create default SquaredLoss if not provided
-        let objective_obj = match objective {
-            Some(obj) => {
-                // Validate it's a valid objective by trying to extract
-                let _: PyObjective = obj.extract()?;
-                obj.clone().unbind()
-            }
-            None => {
-                // Create default SquaredLoss
-                let squared_loss = crate::objectives::PySquaredLoss::default();
-                Py::new(py, squared_loss)?.into_any()
-            }
-        };
-
-        // Handle metric
-        let metric_obj = match metric {
-            Some(m) => {
-                // Validate it's a valid metric by trying to extract
-                let _: PyMetric = m.extract()?;
-                Some(m.clone().unbind())
-            }
-            None => None,
-        };
-
         Ok(Self {
             n_estimators,
             learning_rate,
-            objective_obj,
-            metric_obj,
+            objective: objective.unwrap_or_default(),
+            metric,
             l1,
             l2,
             early_stopping_rounds,
@@ -170,49 +131,36 @@ impl PyGBLinearConfig {
         })
     }
 
-    /// Get the objective as a Python object.
-    #[getter]
-    #[gen_stub(override_return_type(type_repr = "SquaredLoss | AbsoluteLoss | PoissonLoss | LogisticLoss | HingeLoss | HuberLoss | PinballLoss | ArctanLoss | SoftmaxLoss | LambdaRankLoss"))]
-    fn objective(&self, py: Python<'_>) -> Py<PyAny> {
-        self.objective_obj.clone_ref(py)
-    }
-
-    /// Get the metric as a Python object (or None).
-    #[getter]
-    #[gen_stub(override_return_type(type_repr = "Rmse | Mae | Mape | LogLoss | Auc | Accuracy | Ndcg | None"))]
-    fn metric(&self, py: Python<'_>) -> Option<Py<PyAny>> {
-        self.metric_obj.as_ref().map(|m| m.clone_ref(py))
-    }
-
-    fn __repr__(&self, py: Python<'_>) -> String {
-        let obj_repr = self
-            .objective_obj
-            .bind(py)
-            .repr()
-            .map(|r| r.to_string())
-            .unwrap_or_else(|_| "?".to_string());
+    fn __repr__(&self) -> String {
         format!(
-            "GBLinearConfig(n_estimators={}, learning_rate={}, l1={}, l2={}, objective={})",
-            self.n_estimators, self.learning_rate, self.l1, self.l2, obj_repr
+            "GBLinearConfig(n_estimators={}, learning_rate={}, l1={}, l2={}, objective={:?})",
+            self.n_estimators, self.learning_rate, self.l1, self.l2, self.objective
         )
+    }
+
+    /// Get the objective function.
+    #[getter]
+    #[gen_stub(override_return_type(type_repr = "Objective"))]
+    fn objective(&self) -> PyObjective {
+        self.objective.clone()
+    }
+
+    /// Get the evaluation metric (or None).
+    #[getter]
+    #[gen_stub(override_return_type(type_repr = "Metric | None"))]
+    fn metric(&self) -> Option<PyMetric> {
+        self.metric.clone()
     }
 }
 
 impl PyGBLinearConfig {
     /// Convert to core GBLinearConfig for training.
-    pub fn to_core(&self, py: Python<'_>) -> PyResult<boosters::GBLinearConfig> {
-        // Extract objective
-        let py_objective: PyObjective = self.objective_obj.extract(py)?;
-        let objective = py_objective.to_core();
+    pub fn to_core(&self) -> PyResult<boosters::GBLinearConfig> {
+        // Convert objective
+        let objective: boosters::training::Objective = (&self.objective).into();
 
-        // Extract metric if present
-        let metric: Option<boosters::training::Metric> = match &self.metric_obj {
-            Some(m) => {
-                let py_metric: PyMetric = m.extract(py)?;
-                Some(py_metric.to_core())
-            }
-            None => None,
-        };
+        // Convert metric if present
+        let metric = self.metric.as_ref().map(|m| m.into());
 
         // Build core config
         boosters::GBLinearConfig::builder()
@@ -231,18 +179,15 @@ impl PyGBLinearConfig {
 
 impl Default for PyGBLinearConfig {
     fn default() -> Self {
-        Python::attach(|py| {
-            let squared_loss = crate::objectives::PySquaredLoss::default();
-            Self {
-                n_estimators: 100,
-                learning_rate: 0.5,
-                objective_obj: Py::new(py, squared_loss).unwrap().into_any(),
-                metric_obj: None,
-                l1: 0.0,
-                l2: 1.0,
-                early_stopping_rounds: None,
-                seed: 42,
-            }
-        })
+        Self {
+            n_estimators: 100,
+            learning_rate: 0.5,
+            objective: PyObjective::default(),
+            metric: None,
+            l1: 0.0,
+            l2: 1.0,
+            early_stopping_rounds: None,
+            seed: 42,
+        }
     }
 }

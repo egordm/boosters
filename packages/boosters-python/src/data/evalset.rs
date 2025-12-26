@@ -4,7 +4,6 @@ use pyo3::prelude::*;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use super::PyDataset;
-use crate::error::BoostersError;
 
 /// Named evaluation set for model training.
 ///
@@ -52,15 +51,13 @@ impl PyEvalSet {
     ///
     /// Args:
     ///     name: Name for this evaluation set (e.g., "validation", "test")
-    ///     dataset: Dataset containing features and labels. Accepts either
-    ///         the Rust Dataset from `_boosters_rs` or the Python wrapper.
+    ///     dataset: Dataset containing features and labels.
     ///
     /// Returns:
     ///     EvalSet ready for use in training
     #[new]
-    pub fn new(py: Python<'_>, name: String, dataset: &Bound<'_, PyAny>) -> PyResult<Self> {
-        let inner = extract_dataset(py, dataset)?;
-        Ok(Self { name, dataset: inner })
+    pub fn new(dataset: Py<PyDataset>, name: String) -> Self {
+        Self { name, dataset }
     }
 
     /// Name of this evaluation set.
@@ -87,53 +84,4 @@ impl PyEvalSet {
     pub fn get_dataset<'py>(&self, py: Python<'py>) -> PyRef<'py, PyDataset> {
         self.dataset.bind(py).borrow()
     }
-}
-
-/// Extract PyDataset from various Python input types.
-///
-/// Accepts:
-/// - Direct `PyDataset` (Rust type from `_boosters_rs.Dataset`)
-/// - Python wrapper with `_inner` attribute (from `boosters.data.Dataset`)
-/// - Numpy ndarray (converted via Python Dataset wrapper for validation)
-pub fn extract_dataset(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Py<PyDataset>> {
-    // Try direct extraction first (Rust PyDataset)
-    if let Ok(dataset) = obj.extract::<Py<PyDataset>>() {
-        return Ok(dataset);
-    }
-
-    // Try extracting from _inner attribute (Python wrapper)
-    if let Ok(inner) = obj.getattr("_inner") {
-        if let Ok(dataset) = inner.extract::<Py<PyDataset>>() {
-            return Ok(dataset);
-        }
-    }
-
-    // Try to convert numpy array via Python Dataset wrapper
-    // This ensures all validation/conversion logic stays in Python
-    let numpy_mod = py.import("numpy").ok();
-    if let Some(numpy) = numpy_mod {
-        if let Ok(ndarray_type) = numpy.getattr("ndarray") {
-            if obj.is_instance(&ndarray_type).unwrap_or(false) {
-                // Import Python Dataset wrapper and use it for conversion
-                let dataset_mod = py.import("boosters.data")?;
-                let dataset_class = dataset_mod.getattr("Dataset")?;
-                let wrapped = dataset_class.call1((obj,))?;
-                // Extract the _inner PyDataset
-                let inner = wrapped.getattr("_inner")?;
-                return inner.extract::<Py<PyDataset>>();
-            }
-        }
-    }
-
-    // Not a valid dataset type
-    let type_name = obj
-        .get_type()
-        .name()
-        .map(|n| n.to_string())
-        .unwrap_or_else(|_| "unknown".to_string());
-    Err(BoostersError::TypeError(format!(
-        "expected Dataset, got {}",
-        type_name
-    ))
-    .into())
 }

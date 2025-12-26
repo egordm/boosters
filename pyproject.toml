@@ -89,6 +89,7 @@ convention = "google"
 "tests/*" = ["D", "B017", "F401"]
 "**/tests/*" = ["D", "B017", "F401"]
 "**/cli.py" = ["B008"]  # Typer uses function calls in defaults
+"**/_boosters_rs.pyi" = ["D", "F821"]  # Generated stub file
 
 [tool.ruff.lint.isort]
 known-first-party = ["boosters", "boosters_eval", "boosters_datagen"]

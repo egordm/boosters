@@ -48,13 +48,13 @@ use std::path::{Path, PathBuf};
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
 use boosters::data::{Dataset, TargetsView, WeightsView};
-use boosters::model::gbdt::{GBDTConfig, GBDTModel, TreeParams};
+use boosters::model::gbdt::{GBDTConfig, GBDTModel};
 use boosters::testing::synthetic_datasets::{
 	random_features_array, split_indices, synthetic_binary, synthetic_multiclass,
 	synthetic_regression,
 };
 use boosters::training::{
-	Accuracy, LinearLeafConfig, LogLoss, Mae,
+	Accuracy, GrowthStrategy, LinearLeafConfig, LogLoss, Mae,
 	MetricFn, Metric, MulticlassAccuracy, MulticlassLogLoss, Objective, Rmse,
 };
 use boosters::Parallelism;
@@ -685,7 +685,7 @@ fn train_boosters(
 			.metric(metric)
 			.n_trees(config.trees)
 			.learning_rate(0.1)
-			.tree(TreeParams::depth_wise(config.depth))
+			.growth_strategy(GrowthStrategy::DepthWise { max_depth: config.depth })
 			.seed(seed)
 			.linear_leaves(ll)
 			.build()
@@ -696,7 +696,7 @@ fn train_boosters(
 			.metric(metric)
 			.n_trees(config.trees)
 			.learning_rate(0.1)
-			.tree(TreeParams::depth_wise(config.depth))
+			.growth_strategy(GrowthStrategy::DepthWise { max_depth: config.depth })
 			.seed(seed)
 			.build()
 			.expect("valid config")

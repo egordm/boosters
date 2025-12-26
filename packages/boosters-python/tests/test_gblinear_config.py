@@ -4,12 +4,8 @@ import pytest
 
 from boosters import (
     GBLinearConfig,
-    HuberLoss,
-    LogisticLoss,
-    LogLoss,
-    Mae,
-    Rmse,
-    SquaredLoss,
+    Metric,
+    Objective,
 )
 
 
@@ -33,10 +29,10 @@ class TestGBLinearConfigDefaults:
         assert isinstance(config.seed, int)
 
     def test_default_objective(self):
-        """Default objective should be present."""
+        """Default objective should be Squared."""
         config = GBLinearConfig()
-        # Default should be some objective
         assert config.objective is not None
+        assert config.objective == Objective.Squared()
 
     def test_default_metric_is_none(self):
         """Default metric should be None (auto-selected based on objective)."""
@@ -61,16 +57,16 @@ class TestGBLinearConfigCustomization:
 
     def test_custom_objective(self):
         """Custom objective should be stored."""
-        config = GBLinearConfig(objective=HuberLoss(delta=2.0))
+        config = GBLinearConfig(objective=Objective.huber(delta=2.0))
 
-        assert isinstance(config.objective, HuberLoss)
-        assert config.objective.delta == 2.0
+        assert config.objective == Objective.Huber(delta=2.0)
+        assert config.objective.delta == 2.0  # type: ignore[attr-defined]
 
     def test_custom_metric(self):
         """Custom metric should be stored."""
-        config = GBLinearConfig(metric=Mae())
+        config = GBLinearConfig(metric=Metric.mae())
 
-        assert isinstance(config.metric, Mae)
+        assert config.metric == Metric.Mae()
 
     def test_custom_l1_regularization(self):
         """Custom L1 regularization should be stored."""
@@ -137,7 +133,7 @@ class TestGBLinearConfigValidation:
             GBLinearConfig(metric="invalid")  # type: ignore[arg-type]
 
         with pytest.raises(TypeError):
-            GBLinearConfig(metric=SquaredLoss())  # type: ignore[arg-type]
+            GBLinearConfig(metric=Objective.squared())  # type: ignore[arg-type]
 
 
 class TestGBLinearConfigRepr:
@@ -163,21 +159,21 @@ class TestGBLinearConfigCombinations:
         config = GBLinearConfig(
             n_estimators=100,
             learning_rate=0.3,
-            objective=LogisticLoss(),
-            metric=LogLoss(),
+            objective=Objective.logistic(),
+            metric=Metric.logloss(),
             l2=0.1,
         )
 
-        assert isinstance(config.objective, LogisticLoss)
-        assert isinstance(config.metric, LogLoss)
+        assert config.objective == Objective.Logistic()
+        assert config.metric == Metric.LogLoss()
 
     def test_sparse_regression_config(self):
         """Test regression with L1 for sparsity."""
         config = GBLinearConfig(
             n_estimators=200,
             learning_rate=0.1,
-            objective=SquaredLoss(),
-            metric=Rmse(),
+            objective=Objective.squared(),
+            metric=Metric.rmse(),
             l1=1.0,  # High L1 for sparse weights
             l2=0.0,
             early_stopping_rounds=10,

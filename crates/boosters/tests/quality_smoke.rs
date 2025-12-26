@@ -1,12 +1,12 @@
 use boosters::data::{binned::BinnedDatasetBuilder, transpose_to_c_order, BinningConfig};
 use boosters::data::{Dataset, TargetsView, WeightsView};
-use boosters::model::gbdt::{GBDTConfig, GBDTModel, RegularizationParams, TreeParams};
+use boosters::model::gbdt::{GBDTConfig, GBDTModel};
 use boosters::testing::synthetic_datasets::{
 	random_features_array, split_indices, synthetic_binary, synthetic_multiclass,
 	synthetic_regression,
 };
 use boosters::training::{
-	Accuracy, LinearLeafConfig, LogLoss, Mae, MetricFn, MulticlassAccuracy, MulticlassLogLoss,
+	Accuracy, GrowthStrategy, LinearLeafConfig, LogLoss, Mae, MetricFn, MulticlassAccuracy, MulticlassLogLoss,
 	Objective, Rmse,
 };
 use boosters::Parallelism;
@@ -61,11 +61,8 @@ fn run_synthetic_regression(
 		.objective(Objective::squared())
 		.n_trees(trees)
 		.learning_rate(0.1)
-		.tree(TreeParams::depth_wise(depth))
-		.regularization(RegularizationParams {
-			lambda: 1.0,
-			..Default::default()
-		})
+		.growth_strategy(GrowthStrategy::DepthWise { max_depth: depth })
+		.lambda(1.0)
 		.cache_size(64)
 		.seed(seed)
 		.build()
@@ -123,11 +120,8 @@ fn run_synthetic_binary(
 		.objective(Objective::logistic())
 		.n_trees(trees)
 		.learning_rate(0.1)
-		.tree(TreeParams::depth_wise(depth))
-		.regularization(RegularizationParams {
-			lambda: 1.0,
-			..Default::default()
-		})
+		.growth_strategy(GrowthStrategy::DepthWise { max_depth: depth })
+		.lambda(1.0)
 		.cache_size(64)
 		.seed(seed)
 		.build()
@@ -186,11 +180,8 @@ fn run_synthetic_multiclass(
 		.objective(Objective::softmax(classes))
 		.n_trees(trees)
 		.learning_rate(0.1)
-		.tree(TreeParams::depth_wise(depth))
-		.regularization(RegularizationParams {
-			lambda: 1.0,
-			..Default::default()
-		})
+		.growth_strategy(GrowthStrategy::DepthWise { max_depth: depth })
+		.lambda(1.0)
 		.cache_size(64)
 		.seed(seed)
 		.build()
@@ -323,11 +314,8 @@ fn test_quality_improvement_linear_leaves() {
 		.objective(Objective::squared())
 		.n_trees(N_TREES)
 		.learning_rate(0.1)
-		.tree(TreeParams::depth_wise(MAX_DEPTH))
-		.regularization(RegularizationParams {
-			lambda: 1.0,
-			..Default::default()
-		})
+		.growth_strategy(GrowthStrategy::DepthWise { max_depth: MAX_DEPTH })
+		.lambda(1.0)
 		.seed(SEED)
 		.build()
 		.unwrap();
@@ -355,11 +343,8 @@ fn test_quality_improvement_linear_leaves() {
 		.objective(Objective::squared())
 		.n_trees(N_TREES)
 		.learning_rate(0.1)
-		.tree(TreeParams::depth_wise(MAX_DEPTH))
-		.regularization(RegularizationParams {
-			lambda: 1.0,
-			..Default::default()
-		})
+		.growth_strategy(GrowthStrategy::DepthWise { max_depth: MAX_DEPTH })
+		.lambda(1.0)
 		.linear_leaves(LinearLeafConfig::default().with_min_samples(10))
 		.seed(SEED)
 		.build()

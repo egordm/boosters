@@ -4,13 +4,11 @@
 //! via PyO3. It exposes configuration types, dataset handling, and model training/prediction.
 
 mod config;
-mod convert;
 mod data;
 mod error;
 mod metrics;
 mod model;
 mod objectives;
-mod threading;
 
 use pyo3::prelude::*;
 use pyo3_stub_gen::define_stub_info_gatherer;
@@ -20,12 +18,9 @@ use config::{
     PyLinearLeavesConfig, PyRegularizationConfig, PySamplingConfig, PyTreeConfig,
 };
 use data::{PyDataset, PyEvalSet};
-use metrics::{PyAccuracy, PyAuc, PyLogLoss, PyMae, PyMape, PyNdcg, PyRmse};
+use metrics::PyMetric;
 use model::{PyGBDTModel, PyGBLinearModel};
-use objectives::{
-    PyAbsoluteLoss, PyArctanLoss, PyHingeLoss, PyHuberLoss, PyLambdaRankLoss, PyLogisticLoss,
-    PyPinballLoss, PyPoissonLoss, PySoftmaxLoss, PySquaredLoss,
-};
+use objectives::PyObjective;
 
 /// Python module for boosters.
 ///
@@ -54,26 +49,9 @@ fn _boosters_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyGBDTModel>()?;
     m.add_class::<PyGBLinearModel>()?;
 
-    // Objective types
-    m.add_class::<PySquaredLoss>()?;
-    m.add_class::<PyAbsoluteLoss>()?;
-    m.add_class::<PyPoissonLoss>()?;
-    m.add_class::<PyLogisticLoss>()?;
-    m.add_class::<PyHingeLoss>()?;
-    m.add_class::<PyHuberLoss>()?;
-    m.add_class::<PyPinballLoss>()?;
-    m.add_class::<PyArctanLoss>()?;
-    m.add_class::<PySoftmaxLoss>()?;
-    m.add_class::<PyLambdaRankLoss>()?;
-
-    // Metric types
-    m.add_class::<PyRmse>()?;
-    m.add_class::<PyMae>()?;
-    m.add_class::<PyMape>()?;
-    m.add_class::<PyLogLoss>()?;
-    m.add_class::<PyAuc>()?;
-    m.add_class::<PyAccuracy>()?;
-    m.add_class::<PyNdcg>()?;
+    // Objective and Metric enums (complex enums with variants)
+    m.add_class::<PyObjective>()?;
+    m.add_class::<PyMetric>()?;
 
     Ok(())
 }

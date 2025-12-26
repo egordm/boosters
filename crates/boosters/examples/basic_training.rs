@@ -11,7 +11,8 @@
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
 use boosters::data::{Dataset, TargetsView, WeightsView};
-use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism, TreeParams};
+use boosters::training::GrowthStrategy;
+use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism};
 use ndarray::{Array1, Array2};
 
 fn main() {
@@ -38,7 +39,7 @@ fn main() {
     let config = GBDTConfig::builder()
         .n_trees(50)
         .learning_rate(0.1)
-        .tree(TreeParams::depth_wise(4))
+        .growth_strategy(GrowthStrategy::DepthWise { max_depth: 4 })
         .objective(Objective::squared())
         .metric(Metric::rmse())
         .build()

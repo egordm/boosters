@@ -20,7 +20,8 @@
 use boosters::data::BinningConfig;
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{Dataset, TargetsView, WeightsView};
-use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism, TreeParams};
+use boosters::training::GrowthStrategy;
+use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism};
 use ndarray::{Array1, Array2, ArrayView1};
 
 fn main() {
@@ -71,7 +72,7 @@ fn main() {
         .metric(Metric::logloss())
         .n_trees(30)
         .learning_rate(0.1)
-        .tree(TreeParams::depth_wise(3))
+        .growth_strategy(GrowthStrategy::DepthWise { max_depth: 3 })
         .cache_size(32)
         .build()
         .expect("Invalid configuration");
@@ -100,7 +101,7 @@ fn main() {
         .metric(Metric::logloss())
         .n_trees(30)
         .learning_rate(0.1)
-        .tree(TreeParams::leaf_wise(8))
+        .growth_strategy(GrowthStrategy::LeafWise { max_leaves: 8 })
         .cache_size(32)
         .build()
         .expect("Invalid configuration");
@@ -134,7 +135,7 @@ fn main() {
         .metric(Metric::logloss())
         .n_trees(30)
         .learning_rate(0.1)
-        .tree(TreeParams::depth_wise(3))
+        .growth_strategy(GrowthStrategy::DepthWise { max_depth: 3 })
         .cache_size(32)
         .build()
         .expect("Invalid configuration");

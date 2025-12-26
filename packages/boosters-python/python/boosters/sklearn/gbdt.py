@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -12,13 +12,10 @@ from boosters import (
     GBDTConfig,
     GBDTModel,
     LinearLeavesConfig,
-    LogisticLoss,
-    LogLoss,
+    Metric,
+    Objective,
     RegularizationConfig,
-    Rmse,
     SamplingConfig,
-    SoftmaxLoss,
-    SquaredLoss,
     TreeConfig,
 )
 from boosters.data import Dataset, EvalSet
@@ -71,22 +68,22 @@ def _build_config(
 ) -> GBDTConfig:
     """Build a GBDTConfig from flat kwargs."""
     # Map objective string to objective object
-    objective_map: dict[str, Any] = {
-        "regression:squarederror": SquaredLoss(),
-        "binary:logistic": LogisticLoss(),
-        "multi:softmax": SoftmaxLoss(n_classes=n_classes or 2),
+    objective_map: dict[str, Objective] = {
+        "regression:squarederror": Objective.squared(),
+        "binary:logistic": Objective.logistic(),
+        "multi:softmax": Objective.softmax(n_classes=n_classes or 2),
     }
     obj = objective_map.get(objective)
     if obj is None:
         raise ValueError(f"Unknown objective: {objective}")
 
     # Map metric string to metric object
-    metric_obj = None
+    metric_obj: Metric | None = None
     if metric:
-        metric_map: dict[str, Any] = {
-            "rmse": Rmse(),
-            "logloss": LogLoss(),
-            "mlogloss": LogLoss(),
+        metric_map: dict[str, Metric] = {
+            "rmse": Metric.rmse(),
+            "logloss": Metric.logloss(),
+            "mlogloss": Metric.logloss(),
         }
         metric_obj = metric_map.get(metric)
         if metric_obj is None:
@@ -270,7 +267,7 @@ class GBDTRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
                 X_val = check_array(X_val, dtype=np.float32)
                 y_val = np.asarray(y_val, dtype=np.float32)
                 val_ds = Dataset(X_val, y_val)
-                valid_list.append(EvalSet(f"valid_{i}", val_ds))
+                valid_list.append(EvalSet(val_ds, f"valid_{i}"))
 
         self.model_ = GBDTModel(config=config)
         self.model_.fit(train_data, valid=valid_list)
@@ -292,7 +289,7 @@ class GBDTRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
         """
         check_is_fitted(self, ["model_"])
         X = check_array(X, dtype=np.float32)
-        preds = self.model_.predict(X)
+        preds = self.model_.predict(Dataset(X))
         # Squeeze from (n_samples, 1) to (n_samples,) for sklearn compatibility
         return np.squeeze(preds, axis=-1)
 
@@ -454,7 +451,7 @@ class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
                 X_val = check_array(X_val, dtype=np.float32)
                 y_val_encoded = np.array([self._label_to_idx[c] for c in y_val], dtype=np.float32)
                 val_ds = Dataset(X_val, y_val_encoded)
-                valid_list.append(EvalSet(f"valid_{i}", val_ds))
+                valid_list.append(EvalSet(val_ds, f"valid_{i}"))
 
         self.model_ = GBDTModel(config=config)
         self.model_.fit(train_data, valid=valid_list)
@@ -499,7 +496,7 @@ class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         """
         check_is_fitted(self, ["model_"])
         X = check_array(X, dtype=np.float32)
-        preds = self.model_.predict(X)
+        preds = self.model_.predict(Dataset(X))
 
         if self.n_classes_ == 2:
             # Binary: preds is (n_samples, 1), squeeze and make 2-column

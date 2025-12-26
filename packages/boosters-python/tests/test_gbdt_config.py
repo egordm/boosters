@@ -3,20 +3,14 @@
 import pytest
 
 from boosters import (
-    Accuracy,
     CategoricalConfig,
     EFBConfig,
     GBDTConfig,
-    HuberLoss,
     LinearLeavesConfig,
-    LogisticLoss,
-    LogLoss,
-    Mae,
+    Metric,
+    Objective,
     RegularizationConfig,
-    Rmse,
     SamplingConfig,
-    SoftmaxLoss,
-    SquaredLoss,
     TreeConfig,
 )
 
@@ -39,8 +33,9 @@ class TestGBDTConfigDefaults:
     def test_default_objective(self):
         """Default objective should be present."""
         config = GBDTConfig()
-        # Default should be some objective (likely SquaredLoss)
+        # Default should be Squared
         assert config.objective is not None
+        assert config.objective == Objective.Squared()
 
     def test_default_metric_is_none(self):
         """Default metric should be None (auto-selected based on objective)."""
@@ -95,16 +90,16 @@ class TestGBDTConfigCustomization:
 
     def test_custom_objective(self):
         """Custom objective should be stored."""
-        config = GBDTConfig(objective=HuberLoss(delta=2.0))
+        config = GBDTConfig(objective=Objective.huber(delta=2.0))
 
-        assert isinstance(config.objective, HuberLoss)
-        assert config.objective.delta == 2.0
+        assert config.objective == Objective.Huber(delta=2.0)
+        assert config.objective.delta == 2.0  # type: ignore[attr-defined]
 
     def test_custom_metric(self):
         """Custom metric should be stored."""
-        config = GBDTConfig(metric=Mae())
+        config = GBDTConfig(metric=Metric.mae())
 
-        assert isinstance(config.metric, Mae)
+        assert config.metric == Metric.Mae()
 
     def test_custom_tree_config(self):
         """Custom tree config should replace default."""
@@ -190,7 +185,7 @@ class TestGBDTConfigValidation:
             GBDTConfig(metric="invalid")  # type: ignore[arg-type]
 
         with pytest.raises(TypeError):
-            GBDTConfig(metric=SquaredLoss())  # type: ignore[arg-type]
+            GBDTConfig(metric=Objective.squared())  # type: ignore[arg-type]
 
 
 class TestGBDTConfigRepr:
@@ -214,34 +209,34 @@ class TestGBDTConfigCombinations:
         config = GBDTConfig(
             n_estimators=100,
             learning_rate=0.1,
-            objective=LogisticLoss(),
-            metric=LogLoss(),
+            objective=Objective.logistic(),
+            metric=Metric.logloss(),
             tree=TreeConfig(max_depth=6),
             regularization=RegularizationConfig(l2=1.0),
         )
 
-        assert isinstance(config.objective, LogisticLoss)
-        assert isinstance(config.metric, LogLoss)
+        assert config.objective == Objective.Logistic()
+        assert config.metric == Metric.LogLoss()
 
     def test_multiclass_config(self):
         """Test a multiclass classification configuration."""
         config = GBDTConfig(
             n_estimators=100,
             learning_rate=0.1,
-            objective=SoftmaxLoss(n_classes=5),
-            metric=Accuracy(),
+            objective=Objective.softmax(n_classes=5),
+            metric=Metric.accuracy(),
         )
 
-        assert isinstance(config.objective, SoftmaxLoss)
-        assert config.objective.n_classes == 5
+        assert config.objective == Objective.Softmax(n_classes=5)
+        assert config.objective.n_classes == 5  # type: ignore[attr-defined]
 
     def test_regression_with_subsampling(self):
         """Test regression config with subsampling."""
         config = GBDTConfig(
             n_estimators=500,
             learning_rate=0.05,
-            objective=SquaredLoss(),
-            metric=Rmse(),
+            objective=Objective.squared(),
+            metric=Metric.rmse(),
             sampling=SamplingConfig(subsample=0.8, colsample=0.8),
             early_stopping_rounds=20,
         )

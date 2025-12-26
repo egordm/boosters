@@ -8,8 +8,8 @@ from boosters import (
     EvalSet,
     GBLinearConfig,
     GBLinearModel,
-    Rmse,
-    SquaredLoss,
+    Metric,
+    Objective,
 )
 
 
@@ -68,12 +68,12 @@ class TestGBLinearModelFit:
         """Model trains with validation data."""
         X, y = _make_linear_data(200)
         X_val, y_val = _make_linear_data(50, seed=123)
-        config = GBLinearConfig(n_estimators=10, metric=Rmse())
+        config = GBLinearConfig(n_estimators=10, metric=Metric.rmse())
         model = GBLinearModel(config=config)
         val_ds = Dataset(X_val, y_val)
         model.fit(
             Dataset(X, y),
-            eval_set=[EvalSet("valid", val_ds._inner)],
+            eval_set=[EvalSet(val_ds, "valid")],
         )
         assert model.is_fitted
 
@@ -84,18 +84,18 @@ class TestGBLinearModelFit:
         config = GBLinearConfig(
             n_estimators=100,
             early_stopping_rounds=5,
-            metric=Rmse(),
+            metric=Metric.rmse(),
         )
         model = GBLinearModel(config=config)
         val_ds = Dataset(X_val, y_val)
         model.fit(
             Dataset(X, y),
-            eval_set=[EvalSet("valid", val_ds._inner)],
+            eval_set=[EvalSet(val_ds, "valid")],
         )
         # Model should be fitted
         assert model.is_fitted
         # Predictions should work - always 2D (n_samples, n_outputs)
-        preds = model.predict(X)
+        preds = model.predict(Dataset(X))
         assert preds.shape == (200, 1)
 
     def test_refit_replaces_model(self):
@@ -116,12 +116,12 @@ class TestGBLinearModelPredict:
     """Tests for GBLinearModel.predict()."""
 
     def test_predict_with_array(self):
-        """predict() works with numpy array."""
+        """predict() works with Dataset wrapping array."""
         X, y = _make_linear_data()
         config = GBLinearConfig(n_estimators=20)
         model = GBLinearModel(config=config)
         model.fit(Dataset(X, y))
-        preds = model.predict(X)
+        preds = model.predict(Dataset(X))
         # Always 2D (n_samples, n_outputs)
         assert preds.shape == (len(X), 1)
         assert preds.dtype == np.float32
@@ -142,7 +142,7 @@ class TestGBLinearModelPredict:
         config = GBLinearConfig(n_estimators=20)
         model = GBLinearModel(config=config)
         model.fit(Dataset(X_train, y_train))
-        preds = model.predict(X_test)
+        preds = model.predict(Dataset(X_test))
         assert preds.shape == (50, 1)
 
     def test_predict_not_fitted_raises(self):
@@ -150,7 +150,7 @@ class TestGBLinearModelPredict:
         X, _ = _make_linear_data(10)
         model = GBLinearModel()
         with pytest.raises(RuntimeError, match="not fitted"):
-            model.predict(X)
+            model.predict(Dataset(X))
 
 
 class TestGBLinearModelProperties:
@@ -202,7 +202,7 @@ class TestGBLinearModelQuality:
         config = GBLinearConfig(n_estimators=100, learning_rate=0.5)
         model = GBLinearModel(config=config)
         model.fit(Dataset(X, y))
-        preds = model.predict(X)
+        preds = model.predict(Dataset(X))
         # Squeeze to 1D for correlation calculation
         preds_1d = np.squeeze(preds, axis=-1)
         # Check reasonable correlation

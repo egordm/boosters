@@ -1,38 +1,26 @@
 //! GBDT model and configuration.
 //!
-//! This module provides the high-level [`GBDTModel`] wrapper and nested
-//! parameter structs for configuration.
-//!
-//! # Parameter Groups
-//!
-//! Configuration is organized into semantic groups:
-//! - [`TreeParams`]: Tree structure (growth strategy, max depth/leaves)
-//! - [`RegularizationParams`]: L1/L2 regularization and split constraints
-//! - [`SamplingParams`]: Row and column subsampling
-//!
-//! These are composed into [`GBDTConfig`] for high-level model training.
+//! This module provides the high-level [`GBDTModel`] wrapper and configuration
+//! for GBDT training.
 //!
 //! # Example
 //!
 //! ```
-//! use boosters::model::gbdt::{GBDTConfig, TreeParams, SamplingParams};
+//! use boosters::model::gbdt::GBDTConfig;
 //!
 //! // Build config with custom settings (validation at build time)
+//! use boosters::training::GrowthStrategy;
 //! let config = GBDTConfig::builder()
 //!     .n_trees(200)
 //!     .learning_rate(0.1)
-//!     .tree(TreeParams::depth_wise(8))
-//!     .sampling(SamplingParams { subsample: 0.8, ..Default::default() })
+//!     .growth_strategy(GrowthStrategy::DepthWise { max_depth: 8 })
+//!     .subsample(0.8)
 //!     .build()
 //!     .unwrap();
 //! ```
 
 mod config;
 mod model;
-mod params;
 
 pub use config::{ConfigError, GBDTConfig};
 pub use model::GBDTModel;
-pub use params::{
-    ParamValidationError, RegularizationParams, SamplingParams, TreeParams,
-};

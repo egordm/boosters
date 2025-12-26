@@ -9,7 +9,8 @@
 use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
 use boosters::data::{Dataset, TargetsView, WeightsView};
-use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism, RegularizationParams, TreeParams};
+use boosters::training::GrowthStrategy;
+use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism};
 use ndarray::Array2;
 
 fn main() {
@@ -55,13 +56,10 @@ fn main() {
         .metric(Metric::rmse())
         .n_trees(n_trees as u32)
         .learning_rate(0.1)
-        .tree(TreeParams::depth_wise(max_depth))
-        .regularization(RegularizationParams {
-            lambda: 1.0,
-            min_child_weight: 1.0,
-            min_gain: 0.0,
-            ..Default::default()
-        })
+        .growth_strategy(GrowthStrategy::DepthWise { max_depth })
+        .lambda(1.0)
+        .min_child_weight(1.0)
+        .min_gain(0.0)
         .cache_size(64)
         .build()
         .expect("Invalid configuration");

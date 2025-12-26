@@ -8,65 +8,6 @@ import numpy.typing
 import typing
 
 @typing.final
-class AbsoluteLoss:
-    r"""
-    Absolute error loss (L1) for robust regression.
-    
-    Examples
-    --------
-    >>> from boosters import AbsoluteLoss
-    >>> obj = AbsoluteLoss()
-    """
-    def __new__(cls) -> AbsoluteLoss: ...
-    def __repr__(self) -> builtins.str: ...
-
-@typing.final
-class Accuracy:
-    r"""
-    Classification accuracy (binary or multiclass).
-    
-    Examples
-    --------
-    >>> from boosters import Accuracy
-    >>> metric = Accuracy()
-    """
-    def __new__(cls) -> Accuracy: ...
-    def __repr__(self) -> builtins.str: ...
-
-@typing.final
-class ArctanLoss:
-    r"""
-    Arctan loss for bounded regression.
-    
-    Parameters
-    ----------
-    alpha : float, default=0.5
-        Scale parameter. Must be in (0, 1).
-    
-    Examples
-    --------
-    >>> from boosters import ArctanLoss
-    >>> obj = ArctanLoss(alpha=0.3)
-    """
-    @property
-    def alpha(self) -> builtins.float: ...
-    def __new__(cls, alpha: builtins.float = 0.5) -> ArctanLoss: ...
-    def __repr__(self) -> builtins.str: ...
-
-@typing.final
-class Auc:
-    r"""
-    Area Under ROC Curve for binary classification.
-    
-    Examples
-    --------
-    >>> from boosters import Auc
-    >>> metric = Auc()
-    """
-    def __new__(cls) -> Auc: ...
-    def __repr__(self) -> builtins.str: ...
-
-@typing.final
 class CategoricalConfig:
     r"""
     Configuration for categorical feature handling.
@@ -131,16 +72,16 @@ class CategoricalConfig:
         """
     def __repr__(self) -> builtins.str: ...
 
-@typing.final
 class Dataset:
     r"""
     Internal dataset holding features, labels, and optional metadata.
     
     This is a low-level binding that accepts pre-validated numpy arrays.
-    Use the Python `Dataset` wrapper class for user-facing functionality.
+    The Python `Dataset` class extends this to provide user-friendly
+    constructors with DataFrame support, type conversion, and validation.
     
     Note:
-        This class expects C-contiguous float32 arrays. The Python wrapper
+        This class expects C-contiguous float32 arrays. The Python subclass
         handles all type conversion, validation, and DataFrame support.
     
     Attributes:
@@ -187,13 +128,13 @@ class Dataset:
         r"""
         Shape of the features array as (n_samples, n_features).
         """
-    def __new__(cls, features: numpy.typing.NDArray[numpy.float32], labels: numpy.ndarray | None = None, weights: numpy.ndarray | None = None, feature_names: typing.Optional[typing.Sequence[builtins.str]] = None, categorical_features: typing.Optional[typing.Sequence[builtins.int]] = None) -> Dataset:
+    def __new__(cls, features: numpy.typing.NDArray[numpy.float32], labels: typing.Optional[numpy.typing.NDArray[numpy.float32]] = None, weights: typing.Optional[numpy.typing.NDArray[numpy.float32]] = None, feature_names: typing.Optional[typing.Sequence[builtins.str]] = None, categorical_features: typing.Optional[typing.Sequence[builtins.int]] = None) -> Dataset:
         r"""
         Create a new Dataset from pre-validated numpy arrays.
         
         Args:
             features: C-contiguous float32 array of shape (n_samples, n_features).
-            labels: C-contiguous float32 array of shape (n_samples,), or None.
+            labels: C-contiguous float32 array of shape (n_outputs, n_samples), or None.
             weights: C-contiguous float32 array of shape (n_samples,), or None.
             feature_names: List of feature names, or None.
             categorical_features: List of categorical feature indices, or None.
@@ -286,14 +227,13 @@ class EvalSet:
         r"""
         The underlying dataset.
         """
-    def __new__(cls, name: builtins.str, dataset: typing.Any) -> EvalSet:
+    def __new__(cls, dataset: Dataset, name: builtins.str) -> EvalSet:
         r"""
         Create a new named evaluation set.
         
         Args:
             name: Name for this evaluation set (e.g., "validation", "test")
-            dataset: Dataset containing features and labels. Accepts either
-                the Rust Dataset from `_boosters_rs` or the Python wrapper.
+            dataset: Dataset containing features and labels.
         
         Returns:
             EvalSet ready for use in training
@@ -312,7 +252,7 @@ class GBDTConfig:
     Args:
         n_estimators: Number of boosting rounds (trees to train). Default: 100.
         learning_rate: Step size shrinkage (0.01 - 0.3 typical). Default: 0.3.
-        objective: Loss function for training. Default: SquaredLoss().
+        objective: Loss function for training. Default: Objective.Squared().
         metric: Evaluation metric. None uses objective's default.
         tree: Tree structure parameters.
         regularization: L1/L2 regularization parameters.
@@ -327,6 +267,7 @@ class GBDTConfig:
         >>> config = GBDTConfig(
         ...     n_estimators=500,
         ...     learning_rate=0.1,
+        ...     objective=Objective.logistic(),
         ...     tree=TreeConfig(max_depth=6),
         ... )
     """
@@ -381,16 +322,16 @@ class GBDTConfig:
         Random seed.
         """
     @property
-    def objective(self) -> SquaredLoss | AbsoluteLoss | PoissonLoss | LogisticLoss | HingeLoss | HuberLoss | PinballLoss | ArctanLoss | SoftmaxLoss | LambdaRankLoss:
+    def objective(self) -> Objective:
         r"""
-        Get the objective as a Python object.
+        Get the objective function.
         """
     @property
-    def metric(self) -> Rmse | Mae | Mape | LogLoss | Auc | Accuracy | Ndcg | None:
+    def metric(self) -> Metric | None:
         r"""
-        Get the metric as a Python object (or None).
+        Get the evaluation metric (or None).
         """
-    def __new__(cls, n_estimators: builtins.int = 100, learning_rate: builtins.float = 0.3, objective: SquaredLoss | AbsoluteLoss | PoissonLoss | LogisticLoss | HingeLoss | HuberLoss | PinballLoss | ArctanLoss | SoftmaxLoss | LambdaRankLoss | None = None, metric: Rmse | Mae | Mape | LogLoss | Auc | Accuracy | Ndcg | None = None, tree: typing.Optional[TreeConfig] = None, regularization: typing.Optional[RegularizationConfig] = None, sampling: typing.Optional[SamplingConfig] = None, categorical: typing.Optional[CategoricalConfig] = None, efb: typing.Optional[EFBConfig] = None, linear_leaves: typing.Optional[LinearLeavesConfig] = None, early_stopping_rounds: typing.Optional[builtins.int] = None, seed: builtins.int = 42) -> GBDTConfig: ...
+    def __new__(cls, n_estimators: builtins.int = 100, learning_rate: builtins.float = 0.3, objective: Objective | None = None, metric: Metric | None = None, tree: typing.Optional[TreeConfig] = None, regularization: typing.Optional[RegularizationConfig] = None, sampling: typing.Optional[SamplingConfig] = None, categorical: typing.Optional[CategoricalConfig] = None, efb: typing.Optional[EFBConfig] = None, linear_leaves: typing.Optional[LinearLeavesConfig] = None, early_stopping_rounds: typing.Optional[builtins.int] = None, seed: builtins.int = 42) -> GBDTConfig: ...
     def __repr__(self) -> builtins.str: ...
 
 @typing.final
@@ -452,7 +393,7 @@ class GBDTModel:
         Returns None if early stopping was not used or not triggered.
         """
     @property
-    def eval_results(self) -> typing.Optional[typing.Any]:
+    def eval_results(self) -> dict[str, dict[str, list[float]]] | None:
         r"""
         Evaluation results from training.
         
@@ -491,7 +432,7 @@ class GBDTModel:
         Raises:
             ValueError: If model has not been fitted.
         """
-    def shap_values(self, data: typing.Any) -> numpy.ndarray:
+    def shap_values(self, data: Dataset) -> numpy.ndarray:
         r"""
         Compute SHAP values for feature contribution analysis.
         
@@ -516,7 +457,7 @@ class GBDTModel:
         r"""
         String representation.
         """
-    def predict(self, data: typing.Any, n_iterations: typing.Optional[builtins.int] = None) -> numpy.ndarray:
+    def predict(self, data: Dataset, n_iterations: typing.Optional[builtins.int] = None) -> numpy.ndarray:
         r"""
         Make predictions on data.
         
@@ -536,7 +477,7 @@ class GBDTModel:
         Examples:
             >>> predictions = model.predict(test_data)
         """
-    def predict_raw(self, data: typing.Any, n_iterations: typing.Optional[builtins.int] = None) -> numpy.ndarray:
+    def predict_raw(self, data: Dataset, n_iterations: typing.Optional[builtins.int] = None) -> numpy.ndarray:
         r"""
         Make raw (untransformed) predictions on data.
         
@@ -557,7 +498,7 @@ class GBDTModel:
         Examples:
             >>> raw_margins = model.predict_raw(test_data)
         """
-    def fit(self, train: typing.Any, valid: EvalSet | list[EvalSet] | None = None) -> GBDTModel:
+    def fit(self, train: Dataset, valid: typing.Optional[typing.Sequence[EvalSet]] = None) -> GBDTModel:
         r"""
         Train the model on a dataset.
         
@@ -586,7 +527,7 @@ class GBLinearConfig:
     Args:
         n_estimators: Number of boosting rounds. Default: 100.
         learning_rate: Step size for weight updates. Default: 0.5.
-        objective: Loss function for training. Default: SquaredLoss().
+        objective: Loss function for training. Default: Objective.Squared().
         metric: Evaluation metric. None uses objective's default.
         l1: L1 regularization (alpha). Encourages sparse weights. Default: 0.0.
         l2: L2 regularization (lambda). Prevents large weights. Default: 1.0.
@@ -597,6 +538,7 @@ class GBLinearConfig:
         >>> config = GBLinearConfig(
         ...     n_estimators=200,
         ...     learning_rate=0.3,
+        ...     objective=Objective.logistic(),
         ...     l2=0.1,
         ... )
     """
@@ -631,16 +573,16 @@ class GBLinearConfig:
         Random seed.
         """
     @property
-    def objective(self) -> SquaredLoss | AbsoluteLoss | PoissonLoss | LogisticLoss | HingeLoss | HuberLoss | PinballLoss | ArctanLoss | SoftmaxLoss | LambdaRankLoss:
+    def objective(self) -> Objective:
         r"""
-        Get the objective as a Python object.
+        Get the objective function.
         """
     @property
-    def metric(self) -> Rmse | Mae | Mape | LogLoss | Auc | Accuracy | Ndcg | None:
+    def metric(self) -> Metric | None:
         r"""
-        Get the metric as a Python object (or None).
+        Get the evaluation metric (or None).
         """
-    def __new__(cls, n_estimators: builtins.int = 100, learning_rate: builtins.float = 0.5, objective: SquaredLoss | AbsoluteLoss | PoissonLoss | LogisticLoss | HingeLoss | HuberLoss | PinballLoss | ArctanLoss | SoftmaxLoss | LambdaRankLoss | None = None, metric: Rmse | Mae | Mape | LogLoss | Auc | Accuracy | Ndcg | None = None, l1: builtins.float = 0.0, l2: builtins.float = 1.0, early_stopping_rounds: typing.Optional[builtins.int] = None, seed: builtins.int = 42) -> GBLinearConfig: ...
+    def __new__(cls, n_estimators: builtins.int = 100, learning_rate: builtins.float = 0.5, objective: Objective | None = None, metric: Metric | None = None, l1: builtins.float = 0.0, l2: builtins.float = 1.0, early_stopping_rounds: typing.Optional[builtins.int] = None, seed: builtins.int = 42) -> GBLinearConfig: ...
     def __repr__(self) -> builtins.str: ...
 
 @typing.final
@@ -714,7 +656,7 @@ class GBLinearModel:
         Returns None if early stopping was not used or not triggered.
         """
     @property
-    def eval_results(self) -> typing.Optional[typing.Any]:
+    def eval_results(self) -> dict[str, dict[str, list[float]]] | None:
         r"""
         Evaluation results from training.
         
@@ -781,7 +723,7 @@ class GBLinearModel:
         Examples:
             >>> raw_margins = model.predict_raw(test_data)
         """
-    def fit(self, train: Dataset, eval_set: EvalSet | list[EvalSet] | None = None) -> GBLinearModel:
+    def fit(self, train: Dataset, eval_set: typing.Optional[typing.Sequence[EvalSet]] = None) -> GBLinearModel:
         r"""
         Train the model on a dataset.
         
@@ -795,59 +737,6 @@ class GBLinearModel:
         Raises:
             ValueError: If training data is invalid or labels are missing.
         """
-
-@typing.final
-class HingeLoss:
-    r"""
-    Hinge loss for binary classification (SVM-style).
-    
-    Examples
-    --------
-    >>> from boosters import HingeLoss
-    >>> obj = HingeLoss()
-    """
-    def __new__(cls) -> HingeLoss: ...
-    def __repr__(self) -> builtins.str: ...
-
-@typing.final
-class HuberLoss:
-    r"""
-    Pseudo-Huber loss for robust regression.
-    
-    Parameters
-    ----------
-    delta : float, default=1.0
-        Transition point between quadratic and linear loss.
-    
-    Examples
-    --------
-    >>> from boosters import HuberLoss
-    >>> obj = HuberLoss(delta=1.5)
-    """
-    @property
-    def delta(self) -> builtins.float: ...
-    def __new__(cls, delta: builtins.float = 1.0) -> HuberLoss: ...
-    def __repr__(self) -> builtins.str: ...
-
-@typing.final
-class LambdaRankLoss:
-    r"""
-    LambdaRank loss for learning to rank.
-    
-    Parameters
-    ----------
-    ndcg_at : int, default=10
-        Truncation point for NDCG calculation.
-    
-    Examples
-    --------
-    >>> from boosters import LambdaRankLoss
-    >>> obj = LambdaRankLoss(ndcg_at=5)
-    """
-    @property
-    def ndcg_at(self) -> builtins.int: ...
-    def __new__(cls, ndcg_at: builtins.int = 10) -> LambdaRankLoss: ...
-    def __repr__(self) -> builtins.str: ...
 
 @typing.final
 class LinearLeavesConfig:
@@ -945,115 +834,6 @@ class LinearLeavesConfig:
     def __repr__(self) -> builtins.str: ...
 
 @typing.final
-class LogLoss:
-    r"""
-    Binary Log Loss (cross-entropy) for classification.
-    
-    Examples
-    --------
-    >>> from boosters import LogLoss
-    >>> metric = LogLoss()
-    """
-    def __new__(cls) -> LogLoss: ...
-    def __repr__(self) -> builtins.str: ...
-
-@typing.final
-class LogisticLoss:
-    r"""
-    Logistic loss for binary classification.
-    
-    Examples
-    --------
-    >>> from boosters import LogisticLoss
-    >>> obj = LogisticLoss()
-    """
-    def __new__(cls) -> LogisticLoss: ...
-    def __repr__(self) -> builtins.str: ...
-
-@typing.final
-class Mae:
-    r"""
-    Mean Absolute Error for regression.
-    
-    Examples
-    --------
-    >>> from boosters import Mae
-    >>> metric = Mae()
-    """
-    def __new__(cls) -> Mae: ...
-    def __repr__(self) -> builtins.str: ...
-
-@typing.final
-class Mape:
-    r"""
-    Mean Absolute Percentage Error for regression.
-    
-    Examples
-    --------
-    >>> from boosters import Mape
-    >>> metric = Mape()
-    """
-    def __new__(cls) -> Mape: ...
-    def __repr__(self) -> builtins.str: ...
-
-@typing.final
-class Ndcg:
-    r"""
-    Normalized Discounted Cumulative Gain for ranking.
-    
-    Parameters
-    ----------
-    at : int, default=10
-        Truncation point for NDCG calculation (NDCG@k).
-    
-    Examples
-    --------
-    >>> from boosters import Ndcg
-    >>> metric = Ndcg(at=5)  # NDCG@5
-    """
-    @property
-    def at(self) -> builtins.int: ...
-    def __new__(cls, at: builtins.int = 10) -> Ndcg: ...
-    def __repr__(self) -> builtins.str: ...
-
-@typing.final
-class PinballLoss:
-    r"""
-    Pinball loss for quantile regression.
-    
-    Parameters
-    ----------
-    alpha : float or list of float, default=0.5
-        Quantile(s) to predict. Each value must be in (0, 1).
-    
-    Examples
-    --------
-    >>> from boosters import PinballLoss
-    >>> obj = PinballLoss(alpha=0.5)  # median
-    >>> obj = PinballLoss(alpha=[0.1, 0.5, 0.9])  # multiple quantiles
-    """
-    @property
-    def alpha(self) -> builtins.list[builtins.float]:
-        r"""
-        Quantile values (always stored as Vec for consistency).
-        """
-    def __new__(cls, alpha: typing.Optional[typing.Any] = None) -> PinballLoss: ...
-    def __repr__(self) -> builtins.str: ...
-
-@typing.final
-class PoissonLoss:
-    r"""
-    Poisson loss for count regression.
-    
-    Examples
-    --------
-    >>> from boosters import PoissonLoss
-    >>> obj = PoissonLoss()
-    """
-    def __new__(cls) -> PoissonLoss: ...
-    def __repr__(self) -> builtins.str: ...
-
-@typing.final
 class RegularizationConfig:
     r"""
     Configuration for L1/L2 regularization.
@@ -1107,19 +887,6 @@ class RegularizationConfig:
             l2: L2 regularization term. Default: 1.0.
             min_hessian: Minimum sum of hessians in a leaf. Default: 1.0.
         """
-    def __repr__(self) -> builtins.str: ...
-
-@typing.final
-class Rmse:
-    r"""
-    Root Mean Squared Error for regression.
-    
-    Examples
-    --------
-    >>> from boosters import Rmse
-    >>> metric = Rmse()
-    """
-    def __new__(cls) -> Rmse: ...
     def __repr__(self) -> builtins.str: ...
 
 @typing.final
@@ -1204,39 +971,6 @@ class SamplingConfig:
             goss_alpha: GOSS top percentage. 0 disables GOSS. Default: 0.0.
             goss_beta: GOSS random percentage for small gradients. Default: 0.0.
         """
-    def __repr__(self) -> builtins.str: ...
-
-@typing.final
-class SoftmaxLoss:
-    r"""
-    Softmax loss for multiclass classification.
-    
-    Parameters
-    ----------
-    n_classes : int
-        Number of classes. Must be >= 2.
-    
-    Examples
-    --------
-    >>> from boosters import SoftmaxLoss
-    >>> obj = SoftmaxLoss(n_classes=10)
-    """
-    @property
-    def n_classes(self) -> builtins.int: ...
-    def __new__(cls, n_classes: builtins.int) -> SoftmaxLoss: ...
-    def __repr__(self) -> builtins.str: ...
-
-@typing.final
-class SquaredLoss:
-    r"""
-    Squared error loss (L2) for regression.
-    
-    Examples
-    --------
-    >>> from boosters import SquaredLoss
-    >>> obj = SquaredLoss()
-    """
-    def __new__(cls) -> SquaredLoss: ...
     def __repr__(self) -> builtins.str: ...
 
 @typing.final
@@ -1389,4 +1123,242 @@ class GrowthStrategy(enum.Enum):
         r"""
         Copy support - return self since enum variants are singletons.
         """
+
+@typing.final
+class Metric(enum.Enum):
+    r"""
+    Evaluation metrics for gradient boosting.
+    
+    Each variant represents a different metric for evaluating model performance.
+    Use the static constructor methods for validation.
+    
+    Regression:
+        - Metric.Rmse(): Root Mean Squared Error
+        - Metric.Mae(): Mean Absolute Error
+        - Metric.Mape(): Mean Absolute Percentage Error
+    
+    Classification:
+        - Metric.LogLoss(): Binary cross-entropy
+        - Metric.Auc(): Area Under ROC Curve
+        - Metric.Accuracy(): Classification accuracy
+    
+    Ranking:
+        - Metric.Ndcg(at): Normalized Discounted Cumulative Gain@k
+    
+    Examples
+    --------
+    >>> from boosters import Metric
+    >>> metric = Metric.rmse()  # Regression
+    >>> metric = Metric.auc()  # Binary classification
+    >>> metric = Metric.ndcg(at=5)  # Ranking
+    
+    Pattern matching:
+    >>> match metric:
+    ...     case Metric.Rmse():
+    ...         print("RMSE")
+    ...     case Metric.Ndcg(at=k):
+    ...         print(f"NDCG@{k}")
+    """
+    Rmse = ...
+    r"""
+    Root Mean Squared Error for regression.
+    """
+    Mae = ...
+    r"""
+    Mean Absolute Error for regression.
+    """
+    Mape = ...
+    r"""
+    Mean Absolute Percentage Error for regression.
+    """
+    LogLoss = ...
+    r"""
+    Binary Log Loss (cross-entropy) for classification.
+    """
+    Auc = ...
+    r"""
+    Area Under ROC Curve for binary classification.
+    """
+    Accuracy = ...
+    r"""
+    Classification accuracy (binary or multiclass).
+    """
+    Ndcg = ...
+    r"""
+    Normalized Discounted Cumulative Gain for ranking.
+    
+    Parameters:
+        at: Truncation point for NDCG calculation (NDCG@k). Default: 10.
+    """
+
+    @staticmethod
+    def rmse() -> Metric:
+        r"""
+        Create RMSE metric.
+        """
+    @staticmethod
+    def mae() -> Metric:
+        r"""
+        Create MAE metric.
+        """
+    @staticmethod
+    def mape() -> Metric:
+        r"""
+        Create MAPE metric.
+        """
+    @staticmethod
+    def logloss() -> Metric:
+        r"""
+        Create log loss metric.
+        """
+    @staticmethod
+    def auc() -> Metric:
+        r"""
+        Create AUC metric.
+        """
+    @staticmethod
+    def accuracy() -> Metric:
+        r"""
+        Create accuracy metric.
+        """
+    @staticmethod
+    def ndcg(at: builtins.int = 10) -> Metric:
+        r"""
+        Create NDCG@k metric with validation.
+        """
+    def __repr__(self) -> builtins.str: ...
+
+@typing.final
+class Objective(enum.Enum):
+    r"""
+    Objective (loss) functions for gradient boosting.
+    
+    Each variant represents a different loss function for training GBDT and
+    GBLinear models. Use the static constructor methods for validation.
+    
+    Regression:
+        - Objective.Squared(): Mean squared error (L2)
+        - Objective.Absolute(): Mean absolute error (L1)
+        - Objective.Huber(delta): Pseudo-Huber loss (robust)
+        - Objective.Pinball(alpha): Quantile regression
+        - Objective.Poisson(): Poisson deviance for count data
+    
+    Classification:
+        - Objective.Logistic(): Binary cross-entropy
+        - Objective.Hinge(): SVM-style hinge loss
+        - Objective.Softmax(n_classes): Multiclass cross-entropy
+    
+    Ranking:
+        - Objective.LambdaRank(ndcg_at): LambdaMART for NDCG optimization
+    
+    Examples
+    --------
+    >>> from boosters import Objective
+    >>> obj = Objective.squared()  # L2 regression
+    >>> obj = Objective.logistic()  # Binary classification
+    >>> obj = Objective.pinball([0.1, 0.5, 0.9])  # Quantile regression
+    >>> obj = Objective.softmax(10)  # Multiclass classification
+    
+    Pattern matching:
+    >>> match obj:
+    ...     case Objective.Squared():
+    ...         print("L2 loss")
+    ...     case Objective.Pinball(alpha=a):
+    ...         print(f"Quantile: {a}")
+    """
+    Squared = ...
+    r"""
+    Squared error loss (L2) for regression.
+    """
+    Absolute = ...
+    r"""
+    Absolute error loss (L1) for robust regression.
+    """
+    Poisson = ...
+    r"""
+    Poisson loss for count regression.
+    """
+    Logistic = ...
+    r"""
+    Logistic loss for binary classification.
+    """
+    Hinge = ...
+    r"""
+    Hinge loss for binary classification (SVM-style).
+    """
+    Huber = ...
+    r"""
+    Pseudo-Huber loss for robust regression.
+    
+    Parameters:
+        delta: Transition point between quadratic and linear loss. Default: 1.0.
+    """
+    Pinball = ...
+    r"""
+    Pinball loss for quantile regression.
+    
+    Parameters:
+        alpha: List of quantiles to predict. Each value must be in (0, 1).
+    """
+    Softmax = ...
+    r"""
+    Softmax loss for multiclass classification.
+    
+    Parameters:
+        n_classes: Number of classes. Must be >= 2.
+    """
+    LambdaRank = ...
+    r"""
+    LambdaRank loss for learning to rank.
+    
+    Parameters:
+        ndcg_at: Truncation point for NDCG calculation. Default: 10.
+    """
+
+    @staticmethod
+    def squared() -> Objective:
+        r"""
+        Create squared error loss (L2).
+        """
+    @staticmethod
+    def absolute() -> Objective:
+        r"""
+        Create absolute error loss (L1).
+        """
+    @staticmethod
+    def poisson() -> Objective:
+        r"""
+        Create Poisson loss.
+        """
+    @staticmethod
+    def logistic() -> Objective:
+        r"""
+        Create logistic loss for binary classification.
+        """
+    @staticmethod
+    def hinge() -> Objective:
+        r"""
+        Create hinge loss for binary classification.
+        """
+    @staticmethod
+    def huber(delta: builtins.float = 1.0) -> Objective:
+        r"""
+        Create Huber loss with validation.
+        """
+    @staticmethod
+    def pinball(alpha: typing.Sequence[builtins.float]) -> Objective:
+        r"""
+        Create pinball loss with validation.
+        """
+    @staticmethod
+    def softmax(n_classes: builtins.int) -> Objective:
+        r"""
+        Create softmax loss with validation.
+        """
+    @staticmethod
+    def lambdarank(ndcg_at: builtins.int = 10) -> Objective:
+        r"""
+        Create LambdaRank loss with validation.
+        """
+    def __repr__(self) -> builtins.str: ...
 

@@ -13,10 +13,11 @@ use boosters::data::{transpose_to_c_order, Dataset as CoreDataset};
 /// Internal dataset holding features, labels, and optional metadata.
 ///
 /// This is a low-level binding that accepts pre-validated numpy arrays.
-/// Use the Python `Dataset` wrapper class for user-facing functionality.
+/// The Python `Dataset` class extends this to provide user-friendly
+/// constructors with DataFrame support, type conversion, and validation.
 ///
 /// Note:
-///     This class expects C-contiguous float32 arrays. The Python wrapper
+///     This class expects C-contiguous float32 arrays. The Python subclass
 ///     handles all type conversion, validation, and DataFrame support.
 ///
 /// Attributes:
@@ -28,7 +29,8 @@ use boosters::data::{transpose_to_c_order, Dataset as CoreDataset};
 ///     categorical_features: Indices of categorical features.
 ///     shape: Shape as (n_samples, n_features).
 #[gen_stub_pyclass]
-#[pyclass(name = "Dataset", module = "boosters._boosters_rs")]
+#[pyclass(name = "Dataset", module = "boosters._boosters_rs", subclass)]
+#[derive(Clone)]
 pub struct PyDataset {
     /// The core dataset containing features, labels, and weights.
     inner: CoreDataset,
@@ -40,16 +42,6 @@ pub struct PyDataset {
     categorical_features: Vec<usize>,
 }
 
-impl Clone for PyDataset {
-    fn clone(&self) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            feature_names: self.feature_names.clone(),
-            categorical_features: self.categorical_features.clone(),
-        }
-    }
-}
-
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyDataset {
@@ -57,7 +49,7 @@ impl PyDataset {
     ///
     /// Args:
     ///     features: C-contiguous float32 array of shape (n_samples, n_features).
-    ///     labels: C-contiguous float32 array of shape (n_samples,), or None.
+    ///     labels: C-contiguous float32 array of shape (n_outputs, n_samples), or None.
     ///     weights: C-contiguous float32 array of shape (n_samples,), or None.
     ///     feature_names: List of feature names, or None.
     ///     categorical_features: List of categorical feature indices, or None.
@@ -68,9 +60,7 @@ impl PyDataset {
     #[pyo3(signature = (features, labels=None, weights=None, feature_names=None, categorical_features=None))]
     pub fn new(
         features: PyReadonlyArray2<'_, f32>,
-        #[gen_stub(override_type(type_repr = "numpy.ndarray | None", imports = ("numpy",)))]
-        labels: Option<PyReadonlyArray1<'_, f32>>,
-        #[gen_stub(override_type(type_repr = "numpy.ndarray | None", imports = ("numpy",)))]
+        labels: Option<PyReadonlyArray2<'_, f32>>,
         weights: Option<PyReadonlyArray1<'_, f32>>,
         feature_names: Option<Vec<String>>,
         categorical_features: Option<Vec<usize>>,
@@ -81,16 +71,8 @@ impl PyDataset {
         // Transpose features to [n_features, n_samples] for CoreDataset
         let features_transposed = transpose_to_c_order(features_view);
 
-        // Convert 1D labels to 2D [1, n_samples] for CoreDataset
-        // CoreDataset expects targets with shape [n_outputs, n_samples]
-        let labels_2d: Option<Array2<f32>> = labels.map(|l| {
-            let arr = l.as_array();
-            let n = arr.len();
-            // Reshape from [n_samples] to [1, n_samples] (1 output)
-            arr.to_owned()
-                .into_shape_with_order((1, n))
-                .expect("labels reshape should succeed")
-        });
+        // Labels are already 2D [n_outputs, n_samples] - just copy
+        let labels_2d: Option<Array2<f32>> = labels.map(|l| l.as_array().to_owned());
 
         // Extract weights if present
         let weights_1d: Option<Array1<f32>> = weights.map(|w| w.as_array().to_owned());

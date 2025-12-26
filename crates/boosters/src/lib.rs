@@ -41,7 +41,7 @@ pub mod utils;
 pub use model::{GBDTModel, GBLinearModel, ModelMeta, TaskKind};
 
 // Configuration types (most users want these)
-pub use model::gbdt::{GBDTConfig, RegularizationParams, SamplingParams, TreeParams};
+pub use model::gbdt::GBDTConfig;
 pub use model::gblinear::GBLinearConfig;
 
 // Training types (objectives, metrics)

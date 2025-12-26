@@ -106,7 +106,7 @@ class TestGBDTModelFit:
         """Test basic binary classification fit."""
         X, y = binary_data
         train = Dataset(X, y)
-        model = GBDTModel(config=GBDTConfig(n_estimators=10, objective=bst.LogisticLoss()))
+        model = GBDTModel(config=GBDTConfig(n_estimators=10, objective=bst.Objective.logistic()))
         model.fit(train)
 
         assert model.is_fitted
@@ -129,10 +129,10 @@ class TestGBDTModelFit:
 
         train = Dataset(X_train, y_train)
         val_ds = Dataset(X_val, y_val)
-        valid = EvalSet("valid", val_ds._inner)
+        valid = EvalSet(val_ds, "valid")
 
         model = GBDTModel(config=GBDTConfig(n_estimators=10))
-        model.fit(train._inner, valid=[valid])
+        model.fit(train, valid=[valid])
 
         assert model.is_fitted
         # eval_results will be populated in story 4.6
@@ -146,10 +146,10 @@ class TestGBDTModelFit:
 
         train = Dataset(X_train, y_train)
         val_ds = Dataset(X_val, y_val)
-        valid = EvalSet("valid", val_ds._inner)
+        valid = EvalSet(val_ds, "valid")
 
         model = GBDTModel(config=GBDTConfig(n_estimators=100, early_stopping_rounds=5))
-        model.fit(train._inner, valid=[valid])
+        model.fit(train, valid=[valid])
 
         assert model.is_fitted
         # May have stopped early
@@ -185,7 +185,7 @@ class TestGBDTModelPredict:
         X = rng.standard_normal((100, 5)).astype(np.float32)
         y = (X[:, 0] + X[:, 1] > 0).astype(np.float32)
         train = Dataset(X, y)
-        model = GBDTModel(config=GBDTConfig(n_estimators=10, objective=bst.LogisticLoss()))
+        model = GBDTModel(config=GBDTConfig(n_estimators=10, objective=bst.Objective.logistic()))
         model.fit(train)
         return model, X, y
 
@@ -194,7 +194,7 @@ class TestGBDTModelPredict:
     ) -> None:
         """Test that predict returns correct shape for regression."""
         model, X, _ = fitted_regression_model
-        predictions = model.predict(X)
+        predictions = model.predict(Dataset(X))
 
         # Always returns 2D array (n_samples, n_outputs)
         assert predictions.shape == (100, 1)
@@ -215,8 +215,8 @@ class TestGBDTModelPredict:
     ) -> None:
         """Test that predict_raw returns margins."""
         model, X, _ = fitted_classification_model
-        normal_preds = model.predict(X)
-        raw_preds = model.predict_raw(X)
+        normal_preds = model.predict(Dataset(X))
+        raw_preds = model.predict_raw(Dataset(X))
 
         # Raw should be logits (can be any value), normal should be probabilities [0, 1]
         assert raw_preds.shape == (100, 1)
@@ -231,7 +231,7 @@ class TestGBDTModelPredict:
         X = np.random.randn(10, 5).astype(np.float32)
 
         with pytest.raises(RuntimeError, match="not fitted"):
-            model.predict(X)
+            model.predict(Dataset(X))
 
     def test_predict_validates_feature_count(
         self, fitted_regression_model: tuple[GBDTModel, np.ndarray, np.ndarray]
@@ -241,7 +241,7 @@ class TestGBDTModelPredict:
         X_wrong = np.random.randn(10, 3).astype(np.float32)  # 3 features, trained on 5
 
         with pytest.raises((ValueError, RuntimeError)):
-            model.predict(X_wrong)
+            model.predict(Dataset(X_wrong))
 
 
 class TestGBDTModelImports:

@@ -1,45 +1,35 @@
 """Evaluation metrics for gradient boosting.
 
-This module provides metric classes for model evaluation during training.
-All types are Rust-owned (#[pyclass]) with generated type stubs.
+This module provides the Metric enum for model evaluation during training.
+The Metric class is a Rust-backed PyO3 complex enum with variants for each metric type.
+
+Usage:
+    >>> from boosters import Metric
+    >>> metric = Metric.rmse()  # Root mean squared error
+    >>> metric = Metric.logloss()  # Binary log loss
+    >>> metric = Metric.ndcg(at=10)  # NDCG@10 for ranking
 
 Regression:
-    - Rmse: Root mean squared error
-    - Mae: Mean absolute error
-    - Mape: Mean absolute percentage error
+    - Metric.Rmse(): Root mean squared error
+    - Metric.Mae(): Mean absolute error
+    - Metric.Mape(): Mean absolute percentage error
 
 Classification:
-    - LogLoss: Binary log loss
-    - Auc: Area under ROC curve
-    - Accuracy: Classification accuracy
+    - Metric.LogLoss(): Binary log loss
+    - Metric.Auc(): Area under ROC curve
+    - Metric.Accuracy(): Classification accuracy
 
 Ranking:
-    - Ndcg: Normalized discounted cumulative gain
+    - Metric.Ndcg(at): Normalized discounted cumulative gain
 
-Type Aliases:
-    - Metric: Union of all metric types
+Pattern Matching:
+    >>> match metric:
+    ...     case Metric.Rmse():
+    ...         print("RMSE")
+    ...     case Metric.Ndcg(at=k):
+    ...         print(f"NDCG@{k}")
 """
 
-from boosters._boosters_rs import (
-    Accuracy,
-    Auc,
-    LogLoss,
-    Mae,
-    Mape,
-    Ndcg,
-    Rmse,
-)
+from boosters._boosters_rs import Metric
 
-# Type alias for all metrics
-type Metric = Rmse | Mae | Mape | LogLoss | Auc | Accuracy | Ndcg
-
-__all__: list[str] = [
-    "Accuracy",
-    "Auc",
-    "LogLoss",
-    "Mae",
-    "Mape",
-    "Metric",
-    "Ndcg",
-    "Rmse",
-]
+__all__: list[str] = ["Metric"]
