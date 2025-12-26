@@ -1,6 +1,7 @@
 //! Categorical feature configuration.
 
 use pyo3::prelude::*;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use crate::error::BoostersError;
 
@@ -15,6 +16,7 @@ use crate::error::BoostersError;
 /// >>> config = CategoricalConfig(max_categories=256)
 /// >>> config.max_categories
 /// 256
+#[gen_stub_pyclass]
 #[pyclass(name = "CategoricalConfig", module = "boosters._boosters_rs", get_all, set_all)]
 #[derive(Clone, Debug)]
 pub struct PyCategoricalConfig {
@@ -29,6 +31,7 @@ pub struct PyCategoricalConfig {
     pub max_onehot: u32,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyCategoricalConfig {
     /// Create a new CategoricalConfig.

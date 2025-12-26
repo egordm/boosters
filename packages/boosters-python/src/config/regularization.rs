@@ -1,6 +1,7 @@
 //! Regularization configuration for gradient boosting.
 
 use pyo3::prelude::*;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use crate::error::BoostersError;
 
@@ -12,6 +13,7 @@ use crate::error::BoostersError;
 /// >>> config = RegularizationConfig(l1=0.1, l2=1.0)
 /// >>> config.l2
 /// 1.0
+#[gen_stub_pyclass]
 #[pyclass(name = "RegularizationConfig", module = "boosters._boosters_rs", get_all, set_all)]
 #[derive(Clone, Debug)]
 pub struct PyRegularizationConfig {
@@ -23,6 +25,7 @@ pub struct PyRegularizationConfig {
     pub min_hessian: f64,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyRegularizationConfig {
     /// Create a new RegularizationConfig.

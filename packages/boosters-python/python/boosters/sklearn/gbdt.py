@@ -2,20 +2,32 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from boosters import GBDTModel
-from boosters._boosters_rs import EvalSet
-from boosters.data import Dataset
+from boosters import (
+    CategoricalConfig,
+    EFBConfig,
+    GBDTConfig,
+    GBDTModel,
+    LinearLeavesConfig,
+    LogisticLoss,
+    LogLoss,
+    RegularizationConfig,
+    Rmse,
+    SamplingConfig,
+    SoftmaxLoss,
+    SquaredLoss,
+    TreeConfig,
+)
+from boosters.data import Dataset, EvalSet
+from boosters.types import GrowthStrategy
 
 from .base import (
     BaseEstimator,
     ClassifierMixin,
-    GrowthStrategy,
     RegressorMixin,
-    build_gbdt_config,
     check_array,
     check_is_fitted,
     check_X_y,
@@ -23,6 +35,106 @@ from .base import (
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+
+
+# =============================================================================
+# Config Builder
+# =============================================================================
+
+
+def _build_config(
+    *,
+    objective: str,
+    metric: str | None = None,
+    n_classes: int | None = None,
+    n_estimators: int = 100,
+    learning_rate: float = 0.3,
+    early_stopping_rounds: int | None = None,
+    seed: int = 42,
+    max_depth: int = -1,
+    max_leaves: int = 31,
+    min_child_weight: float = 1.0,
+    gamma: float = 0.0,
+    grow_strategy: GrowthStrategy = "depthwise",
+    reg_alpha: float = 0.0,
+    reg_lambda: float = 1.0,
+    subsample: float = 1.0,
+    colsample_bytree: float = 1.0,
+    goss_top_rate: float = 0.0,
+    goss_other_rate: float = 0.0,
+    min_samples_cat: int = 10,
+    max_cat_threshold: int = 256,
+    enable_efb: bool = True,
+    max_conflict_rate: float = 0.0,
+    enable_linear_leaves: bool = False,
+    linear_leaves_l2: float = 0.01,
+) -> GBDTConfig:
+    """Build a GBDTConfig from flat kwargs."""
+    # Map objective string to objective object
+    objective_map: dict[str, Any] = {
+        "regression:squarederror": SquaredLoss(),
+        "binary:logistic": LogisticLoss(),
+        "multi:softmax": SoftmaxLoss(n_classes=n_classes or 2),
+    }
+    obj = objective_map.get(objective)
+    if obj is None:
+        raise ValueError(f"Unknown objective: {objective}")
+
+    # Map metric string to metric object
+    metric_obj = None
+    if metric:
+        metric_map: dict[str, Any] = {
+            "rmse": Rmse(),
+            "logloss": LogLoss(),
+            "mlogloss": LogLoss(),
+        }
+        metric_obj = metric_map.get(metric)
+        if metric_obj is None:
+            raise ValueError(f"Unknown metric: {metric}")
+
+    return GBDTConfig(
+        n_estimators=n_estimators,
+        learning_rate=learning_rate,
+        early_stopping_rounds=early_stopping_rounds,
+        seed=seed,
+        objective=obj,
+        metric=metric_obj,
+        tree=TreeConfig(
+            max_depth=max_depth,
+            n_leaves=max_leaves,
+            min_samples_leaf=1,
+            min_gain_to_split=gamma,
+            growth_strategy=grow_strategy,
+        ),
+        regularization=RegularizationConfig(
+            l1=reg_alpha,
+            l2=reg_lambda,
+            min_hessian=min_child_weight,
+        ),
+        sampling=SamplingConfig(
+            subsample=subsample,
+            colsample=colsample_bytree,
+            goss_alpha=goss_top_rate,
+            goss_beta=goss_other_rate,
+        ),
+        categorical=CategoricalConfig(
+            max_categories=max_cat_threshold,
+            min_category_count=min_samples_cat,
+        ),
+        efb=EFBConfig(
+            enable=enable_efb,
+            max_conflict_rate=max_conflict_rate,
+        ),
+        linear_leaves=LinearLeavesConfig(
+            enable=enable_linear_leaves,
+            l2=linear_leaves_l2,
+        ),
+    )
+
+
+# =============================================================================
+# Estimators
+# =============================================================================
 
 
 class GBDTRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
@@ -131,7 +243,7 @@ class GBDTRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
         X, y = check_X_y(X, y, dtype=np.float32, y_numeric=True)
         self.n_features_in_ = X.shape[1]
 
-        config = build_gbdt_config(
+        config = _build_config(
             objective="regression:squarederror",
             metric="rmse",
             n_estimators=self.n_estimators,
@@ -158,10 +270,10 @@ class GBDTRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
                 X_val = check_array(X_val, dtype=np.float32)
                 y_val = np.asarray(y_val, dtype=np.float32)
                 val_ds = Dataset(X_val, y_val)
-                valid_list.append(EvalSet(f"valid_{i}", val_ds._inner))
+                valid_list.append(EvalSet(f"valid_{i}", val_ds))
 
         self.model_ = GBDTModel(config=config)
-        self.model_.fit(train_data._inner, valid=valid_list)
+        self.model_.fit(train_data, valid=valid_list)
 
         return self
 
@@ -180,7 +292,9 @@ class GBDTRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
         """
         check_is_fitted(self, ["model_"])
         X = check_array(X, dtype=np.float32)
-        return self.model_.predict(X)
+        preds = self.model_.predict(X)
+        # Squeeze from (n_samples, 1) to (n_samples,) for sklearn compatibility
+        return np.squeeze(preds, axis=-1)
 
     @property
     def feature_importances_(self) -> NDArray[np.float64]:
@@ -312,7 +426,7 @@ class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
             objective = "multi:softmax"
             metric = "mlogloss"
 
-        config = build_gbdt_config(
+        config = _build_config(
             objective=objective,
             metric=metric,
             n_classes=self.n_classes_,
@@ -340,10 +454,10 @@ class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
                 X_val = check_array(X_val, dtype=np.float32)
                 y_val_encoded = np.array([self._label_to_idx[c] for c in y_val], dtype=np.float32)
                 val_ds = Dataset(X_val, y_val_encoded)
-                valid_list.append(EvalSet(f"valid_{i}", val_ds._inner))
+                valid_list.append(EvalSet(f"valid_{i}", val_ds))
 
         self.model_ = GBDTModel(config=config)
-        self.model_.fit(train_data._inner, valid=valid_list)
+        self.model_.fit(train_data, valid=valid_list)
 
         return self
 
@@ -388,8 +502,11 @@ class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         preds = self.model_.predict(X)
 
         if self.n_classes_ == 2:
-            proba = np.column_stack([1 - preds, preds])
+            # Binary: preds is (n_samples, 1), squeeze and make 2-column
+            preds_1d = np.squeeze(preds, axis=-1)
+            proba = np.column_stack([1 - preds_1d, preds_1d])
         else:
+            # Multiclass: preds is already (n_samples, n_classes)
             proba = preds
 
         return proba

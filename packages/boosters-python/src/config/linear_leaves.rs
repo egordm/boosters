@@ -1,6 +1,7 @@
 //! Linear leaves configuration.
 
 use pyo3::prelude::*;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use crate::error::BoostersError;
 
@@ -15,6 +16,7 @@ use crate::error::BoostersError;
 /// >>> config = LinearLeavesConfig(enable=True, l2=0.01)
 /// >>> config.enable
 /// True
+#[gen_stub_pyclass]
 #[pyclass(name = "LinearLeavesConfig", module = "boosters._boosters_rs", get_all, set_all)]
 #[derive(Clone, Debug)]
 pub struct PyLinearLeavesConfig {
@@ -32,6 +34,7 @@ pub struct PyLinearLeavesConfig {
     pub min_samples: u32,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyLinearLeavesConfig {
     /// Create a new LinearLeavesConfig.

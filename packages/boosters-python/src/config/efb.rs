@@ -1,6 +1,7 @@
 //! Exclusive Feature Bundling (EFB) configuration.
 
 use pyo3::prelude::*;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use crate::error::BoostersError;
 
@@ -15,6 +16,7 @@ use crate::error::BoostersError;
 /// >>> config = EFBConfig(enable=True, max_conflict_rate=0.0)
 /// >>> config.enable
 /// True
+#[gen_stub_pyclass]
 #[pyclass(name = "EFBConfig", module = "boosters._boosters_rs", get_all, set_all)]
 #[derive(Clone, Debug)]
 pub struct PyEFBConfig {
@@ -25,6 +27,7 @@ pub struct PyEFBConfig {
     pub max_conflict_rate: f64,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyEFBConfig {
     /// Create a new EFBConfig.

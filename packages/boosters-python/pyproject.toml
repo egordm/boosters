@@ -30,6 +30,6 @@ dependencies = [
 pandas = ["pandas>=2.0"]
 
 [tool.maturin]
-features = ["pyo3/extension-module"]
+features = ["extension-module"]
 python-source = "python"
 module-name = "boosters._boosters_rs"

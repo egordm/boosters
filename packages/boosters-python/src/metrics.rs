@@ -4,6 +4,7 @@
 //! wraps them all for type-safe handling in GBDTConfig/GBLinearConfig.
 
 use pyo3::prelude::*;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use crate::error::BoostersError;
 
@@ -17,10 +18,12 @@ use crate::error::BoostersError;
 /// --------
 /// >>> from boosters import Rmse
 /// >>> metric = Rmse()
+#[gen_stub_pyclass]
 #[pyclass(name = "Rmse", module = "boosters._boosters_rs")]
 #[derive(Clone, Debug, Default)]
 pub struct PyRmse;
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyRmse {
     #[new]
@@ -39,10 +42,12 @@ impl PyRmse {
 /// --------
 /// >>> from boosters import Mae
 /// >>> metric = Mae()
+#[gen_stub_pyclass]
 #[pyclass(name = "Mae", module = "boosters._boosters_rs")]
 #[derive(Clone, Debug, Default)]
 pub struct PyMae;
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyMae {
     #[new]
@@ -61,10 +66,12 @@ impl PyMae {
 /// --------
 /// >>> from boosters import Mape
 /// >>> metric = Mape()
+#[gen_stub_pyclass]
 #[pyclass(name = "Mape", module = "boosters._boosters_rs")]
 #[derive(Clone, Debug, Default)]
 pub struct PyMape;
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyMape {
     #[new]
@@ -83,10 +90,12 @@ impl PyMape {
 /// --------
 /// >>> from boosters import LogLoss
 /// >>> metric = LogLoss()
+#[gen_stub_pyclass]
 #[pyclass(name = "LogLoss", module = "boosters._boosters_rs")]
 #[derive(Clone, Debug, Default)]
 pub struct PyLogLoss;
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyLogLoss {
     #[new]
@@ -105,10 +114,12 @@ impl PyLogLoss {
 /// --------
 /// >>> from boosters import Auc
 /// >>> metric = Auc()
+#[gen_stub_pyclass]
 #[pyclass(name = "Auc", module = "boosters._boosters_rs")]
 #[derive(Clone, Debug, Default)]
 pub struct PyAuc;
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyAuc {
     #[new]
@@ -127,10 +138,12 @@ impl PyAuc {
 /// --------
 /// >>> from boosters import Accuracy
 /// >>> metric = Accuracy()
+#[gen_stub_pyclass]
 #[pyclass(name = "Accuracy", module = "boosters._boosters_rs")]
 #[derive(Clone, Debug, Default)]
 pub struct PyAccuracy;
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyAccuracy {
     #[new]
@@ -158,12 +171,14 @@ impl PyAccuracy {
 /// --------
 /// >>> from boosters import Ndcg
 /// >>> metric = Ndcg(at=5)  # NDCG@5
+#[gen_stub_pyclass]
 #[pyclass(name = "Ndcg", module = "boosters._boosters_rs", get_all)]
 #[derive(Clone, Debug)]
 pub struct PyNdcg {
     pub at: u32,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyNdcg {
     #[new]

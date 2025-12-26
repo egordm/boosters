@@ -106,13 +106,14 @@ class TestGBDTModelIntegration:
         assert model.n_trees > 0
         assert model.n_features == 10
 
-        # Predict
+        # Predict - always returns 2D (n_samples, n_outputs)
         preds = model.predict(X_test)
-        assert preds.shape == (100,)
+        assert preds.shape == (100, 1)
         assert preds.dtype == np.float32
 
         # Basic quality check - predictions should correlate with targets
-        correlation = np.corrcoef(y_test, preds)[0, 1]
+        preds_1d = np.squeeze(preds, axis=-1)
+        correlation = np.corrcoef(y_test, preds_1d)[0, 1]
         assert correlation > 0.5, f"Correlation too low: {correlation:.3f}"
 
     def test_regression_with_validation(self):
@@ -164,7 +165,7 @@ class TestGBDTModelIntegration:
         assert model.n_trees < 1000
         # Model should make reasonable predictions
         preds = model.predict(X_val)
-        assert preds.shape == (100,)
+        assert preds.shape == (100, 1)
 
     def test_binary_classification_workflow(self):
         """Test complete binary classification workflow."""
@@ -181,20 +182,21 @@ class TestGBDTModelIntegration:
         model = GBDTModel(config=config)
         model.fit(Dataset(X_train, y_train))
 
-        # Predict probabilities
+        # Predict probabilities - always 2D (n_samples, n_outputs)
         preds = model.predict(X_test)
-        assert preds.shape == (100,)
+        assert preds.shape == (100, 1)
 
         # Probabilities should be in [0, 1] range
         assert np.all(preds >= 0) and np.all(preds <= 1)
 
         # Basic quality check - should do better than random
-        pred_classes = (preds > 0.5).astype(np.float32)
+        preds_1d = np.squeeze(preds, axis=-1)
+        pred_classes = (preds_1d > 0.5).astype(np.float32)
         accuracy = np.mean(pred_classes == y_test)
         assert accuracy > 0.6, f"Accuracy too low: {accuracy:.3f}"
 
     def test_raw_score_prediction(self):
-        """Test raw score (margin) predictions."""
+        """Test raw score (margin) predictions using predict_raw."""
         X, y = make_binary_classification_data(500, 10, seed=42)
 
         config = GBDTConfig(
@@ -206,11 +208,11 @@ class TestGBDTModelIntegration:
 
         # Normal predictions (probabilities)
         preds = model.predict(X[:10])
-        # Raw predictions (logits)
-        raw_preds = model.predict(X[:10], raw_score=True)
+        # Raw predictions (logits) - now a separate method
+        raw_preds = model.predict_raw(X[:10])
 
-        # Raw scores should be unbounded
-        assert preds.shape == raw_preds.shape
+        # Both should return 2D (n_samples, n_outputs)
+        assert preds.shape == raw_preds.shape == (10, 1)
         # For logistic loss, prob = sigmoid(raw)
         # Just check they're different and raw can be negative/positive
         assert not np.allclose(preds, raw_preds)
@@ -277,10 +279,11 @@ class TestGBLinearModelIntegration:
         assert model.n_features_in_ == 10
 
         preds = model.predict(X_test)
-        assert preds.shape == (100,)
+        assert preds.shape == (100, 1)
 
         # Linear model should do reasonably well on clean linear data
-        correlation = np.corrcoef(y_test, preds)[0, 1]
+        preds_1d = np.squeeze(preds, axis=-1)
+        correlation = np.corrcoef(y_test, preds_1d)[0, 1]
         assert correlation > 0.5, f"Correlation too low: {correlation:.3f}"
 
     def test_sklearn_compatible_properties(self):
@@ -393,4 +396,5 @@ class TestMethodChaining:
         # Train and predict in one line
         preds = GBDTModel(config=GBDTConfig(n_estimators=10)).fit(Dataset(X, y)).predict(X[:10])
 
-        assert preds.shape == (10,)
+        # Always returns 2D (n_samples, n_outputs)
+        assert preds.shape == (10, 1)

@@ -7,12 +7,23 @@ publish = false
 
 [lib]
 name = "_boosters_rs"
-crate-type = ["cdylib"]
+# cdylib for Python extension, rlib for stubgen binary
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "stubgen"
+doc = false
+
+[features]
+default = []
+# extension-module: Use when building the Python extension (maturin sets this)
+# Do NOT enable for stubgen binary as it requires Python symbols at link time
+extension-module = ["pyo3/extension-module"]
 
 [dependencies]
 boosters = { path = "../../crates/boosters" }
-pyo3 = { version = "0.22", features = ["extension-module"] }
-pyo3-stub-gen = { version = "0.6.2", default-features = false }
+pyo3 = { version = "0.22" }
+pyo3-stub-gen = { version = "0.6.2" }
 numpy = "0.22"
 ndarray = "0.16"
 thiserror = "2"

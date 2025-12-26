@@ -2031,6 +2031,7 @@ dependencies = [
  "log",
  "maplit",
  "num-complex",
+ "numpy",
  "pyo3",
  "pyo3-stub-gen-derive",
  "serde",

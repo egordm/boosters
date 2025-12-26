@@ -233,13 +233,18 @@ class Dataset:
                     f"groups shape mismatch: expected {features_arr.shape[0]} samples, "
                     f"got {groups_arr.shape[0]}"
                 )
+            # Store groups on Python side - not yet passed to Rust
+            self._groups = groups_arr
+        else:
+            self._groups = None
 
         # Create Rust Dataset with pre-validated arrays
+        # Note: groups not passed to Rust yet (not implemented)
         self._inner = _RustDataset(
             features=features_arr,
             labels=labels_arr,
             weights=weights_arr,
-            groups=groups_arr,
+            groups=None,  # Groups not yet implemented in Rust
             feature_names=list(feature_names) if feature_names else None,
             categorical_features=all_cats if all_cats else None,
         )
@@ -267,7 +272,7 @@ class Dataset:
     @property
     def has_groups(self) -> bool:
         """Whether groups are present."""
-        return self._inner.has_groups
+        return self._groups is not None
 
     @property
     def feature_names(self) -> list[str] | None:
@@ -283,9 +288,11 @@ class Dataset:
     def was_converted(self) -> bool:
         """Whether data was converted (not zero-copy).
 
-        True if either Python or Rust performed a copy/conversion.
+        True if Python performed a copy/conversion during construction.
+        Note: Rust always converts to internal format, so this only
+        tracks Python-side conversions.
         """
-        return self._python_converted or self._inner.was_converted
+        return self._python_converted
 
     @property
     def shape(self) -> tuple[int, int]:

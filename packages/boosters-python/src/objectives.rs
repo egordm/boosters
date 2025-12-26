@@ -4,6 +4,7 @@
 //! wraps them all for type-safe handling in GBDTConfig/GBLinearConfig.
 
 use pyo3::prelude::*;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use crate::error::BoostersError;
 
@@ -17,10 +18,12 @@ use crate::error::BoostersError;
 /// --------
 /// >>> from boosters import SquaredLoss
 /// >>> obj = SquaredLoss()
+#[gen_stub_pyclass]
 #[pyclass(name = "SquaredLoss", module = "boosters._boosters_rs")]
 #[derive(Clone, Debug, Default)]
 pub struct PySquaredLoss;
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PySquaredLoss {
     #[new]
@@ -39,10 +42,12 @@ impl PySquaredLoss {
 /// --------
 /// >>> from boosters import AbsoluteLoss
 /// >>> obj = AbsoluteLoss()
+#[gen_stub_pyclass]
 #[pyclass(name = "AbsoluteLoss", module = "boosters._boosters_rs")]
 #[derive(Clone, Debug, Default)]
 pub struct PyAbsoluteLoss;
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyAbsoluteLoss {
     #[new]
@@ -61,10 +66,12 @@ impl PyAbsoluteLoss {
 /// --------
 /// >>> from boosters import PoissonLoss
 /// >>> obj = PoissonLoss()
+#[gen_stub_pyclass]
 #[pyclass(name = "PoissonLoss", module = "boosters._boosters_rs")]
 #[derive(Clone, Debug, Default)]
 pub struct PyPoissonLoss;
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyPoissonLoss {
     #[new]
@@ -83,10 +90,12 @@ impl PyPoissonLoss {
 /// --------
 /// >>> from boosters import LogisticLoss
 /// >>> obj = LogisticLoss()
+#[gen_stub_pyclass]
 #[pyclass(name = "LogisticLoss", module = "boosters._boosters_rs")]
 #[derive(Clone, Debug, Default)]
 pub struct PyLogisticLoss;
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyLogisticLoss {
     #[new]
@@ -105,10 +114,12 @@ impl PyLogisticLoss {
 /// --------
 /// >>> from boosters import HingeLoss
 /// >>> obj = HingeLoss()
+#[gen_stub_pyclass]
 #[pyclass(name = "HingeLoss", module = "boosters._boosters_rs")]
 #[derive(Clone, Debug, Default)]
 pub struct PyHingeLoss;
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyHingeLoss {
     #[new]
@@ -136,12 +147,14 @@ impl PyHingeLoss {
 /// --------
 /// >>> from boosters import HuberLoss
 /// >>> obj = HuberLoss(delta=1.5)
+#[gen_stub_pyclass]
 #[pyclass(name = "HuberLoss", module = "boosters._boosters_rs", get_all)]
 #[derive(Clone, Debug)]
 pub struct PyHuberLoss {
     pub delta: f64,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyHuberLoss {
     #[new]
@@ -180,6 +193,7 @@ impl Default for PyHuberLoss {
 /// >>> from boosters import PinballLoss
 /// >>> obj = PinballLoss(alpha=0.5)  # median
 /// >>> obj = PinballLoss(alpha=[0.1, 0.5, 0.9])  # multiple quantiles
+#[gen_stub_pyclass]
 #[pyclass(name = "PinballLoss", module = "boosters._boosters_rs", get_all)]
 #[derive(Clone, Debug)]
 pub struct PyPinballLoss {
@@ -187,6 +201,7 @@ pub struct PyPinballLoss {
     pub alpha: Vec<f64>,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyPinballLoss {
     #[new]
@@ -249,12 +264,14 @@ impl Default for PyPinballLoss {
 /// --------
 /// >>> from boosters import ArctanLoss
 /// >>> obj = ArctanLoss(alpha=0.3)
+#[gen_stub_pyclass]
 #[pyclass(name = "ArctanLoss", module = "boosters._boosters_rs", get_all)]
 #[derive(Clone, Debug)]
 pub struct PyArctanLoss {
     pub alpha: f64,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyArctanLoss {
     #[new]
@@ -292,12 +309,14 @@ impl Default for PyArctanLoss {
 /// --------
 /// >>> from boosters import SoftmaxLoss
 /// >>> obj = SoftmaxLoss(n_classes=10)
+#[gen_stub_pyclass]
 #[pyclass(name = "SoftmaxLoss", module = "boosters._boosters_rs", get_all)]
 #[derive(Clone, Debug)]
 pub struct PySoftmaxLoss {
     pub n_classes: u32,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PySoftmaxLoss {
     #[new]
@@ -328,12 +347,14 @@ impl PySoftmaxLoss {
 /// --------
 /// >>> from boosters import LambdaRankLoss
 /// >>> obj = LambdaRankLoss(ndcg_at=5)
+#[gen_stub_pyclass]
 #[pyclass(name = "LambdaRankLoss", module = "boosters._boosters_rs", get_all)]
 #[derive(Clone, Debug)]
 pub struct PyLambdaRankLoss {
     pub ndcg_at: u32,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyLambdaRankLoss {
     #[new]

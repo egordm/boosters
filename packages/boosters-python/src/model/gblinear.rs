@@ -1,15 +1,15 @@
 //! GBLinear Model Python bindings.
 
-use ndarray::{Array1, Array2};
+use ndarray::Array2;
 use pyo3::prelude::*;
-use pyo3_stub_gen::derive::gen_stub_pyclass;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
+
+use boosters::data::{transpose_to_c_order, Dataset as CoreDataset};
+use boosters::training::EvalSet as CoreEvalSet;
 
 use crate::config::PyGBLinearConfig;
-use crate::data::{PyDataset, PyEvalSet};
+use crate::data::{extract_dataset, PyDataset, PyEvalSet};
 use crate::error::BoostersError;
-
-use boosters::data::Dataset as CoreDataset;
-use boosters::training::EvalSet as CoreEvalSet;
 
 /// Gradient Boosted Linear model.
 ///
@@ -60,6 +60,7 @@ pub struct PyGBLinearModel {
     best_score: Option<f64>,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyGBLinearModel {
     /// Create a new GBLinear model.
@@ -219,43 +220,152 @@ impl PyGBLinearModel {
 
     /// Make predictions on features.
     ///
+    /// Returns transformed predictions (e.g., probabilities for classification).
+    ///
     /// Args:
     ///     features: Feature array of shape `(n_samples, n_features)` or Dataset.
-    ///     raw_score: If True, return raw margin scores without transformation.
     ///
     /// Returns:
-    ///     NumPy array with predictions. Shape depends on the objective:
-    ///     - Regression: `(n_samples,)`
-    ///     - Binary classification: `(n_samples,)` (probability of positive class)
-    ///     - Multiclass: `(n_samples, n_classes)`
+    ///     NumPy array with predictions of shape `(n_samples, n_outputs)`.
+    ///     For single-output models, n_outputs is 1.
     ///
     /// Raises:
     ///     RuntimeError: If model has not been fitted.
     ///     ValueError: If features have wrong shape.
-    #[pyo3(signature = (features, raw_score=false))]
+    ///
+    /// Example:
+    ///     ```python
+    ///     predictions = model.predict(X_test)  # shape: (n_samples, n_outputs)
+    ///     ```
+    #[pyo3(signature = (features))]
     pub fn predict(
+        &self,
+        py: Python<'_>,
+        features: &Bound<'_, PyAny>,
+    ) -> PyResult<PyObject> {
+        self.predict_internal(py, features, false)
+    }
+
+    /// Make raw (untransformed) predictions on features.
+    ///
+    /// Returns raw margin scores without transformation.
+    /// For classification this means logits instead of probabilities.
+    ///
+    /// Args:
+    ///     features: Feature array of shape `(n_samples, n_features)` or Dataset.
+    ///
+    /// Returns:
+    ///     NumPy array with raw scores of shape `(n_samples, n_outputs)`.
+    ///     For single-output models, n_outputs is 1.
+    ///
+    /// Raises:
+    ///     RuntimeError: If model has not been fitted.
+    ///     ValueError: If features have wrong shape.
+    ///
+    /// Example:
+    ///     ```python
+    ///     raw_margins = model.predict_raw(X_test)  # shape: (n_samples, n_outputs)
+    ///     ```
+    #[pyo3(signature = (features))]
+    pub fn predict_raw(
+        &self,
+        py: Python<'_>,
+        features: &Bound<'_, PyAny>,
+    ) -> PyResult<PyObject> {
+        self.predict_internal(py, features, true)
+    }
+
+    /// Train the model on a dataset.
+    ///
+    /// Args:
+    ///     train: Training dataset containing features and labels.
+    ///     eval_set: Optional validation set(s) for early stopping and evaluation.
+    ///
+    /// Returns:
+    ///     Self (for method chaining).
+    ///
+    /// Raises:
+    ///     ValueError: If training data is invalid or labels are missing.
+    #[pyo3(signature = (train, eval_set=None))]
+    pub fn fit<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        py: Python<'py>,
+        train: &Bound<'py, PyAny>,
+        eval_set: Option<&Bound<'py, PyAny>>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        // Extract PyDataset from train argument
+        let train_dataset_py = extract_dataset(py, train)?;
+        let train_dataset = train_dataset_py.bind(py).borrow();
+
+        // Validate that training data has labels
+        if !train_dataset.has_labels() {
+            return Err(BoostersError::ValidationError(
+                "Training dataset must have labels".to_string(),
+            )
+            .into());
+        }
+
+        // Convert Python config to core config
+        let config = slf.config.bind(py).borrow();
+        let core_config = config.to_core(py)?;
+        drop(config);
+
+        // Get reference to the core dataset directly - no conversion needed!
+        let core_train = train_dataset.as_core();
+
+        // Extract eval sets as Vec<(name, PyRef<PyDataset>)> to keep borrows alive
+        let eval_set_data: Vec<(String, PyRef<'py, PyDataset>)> = if let Some(valid_obj) = eval_set
+        {
+            Self::extract_eval_set_refs(py, valid_obj)?
+        } else {
+            Vec::new()
+        };
+
+        // Create EvalSet references for training
+        let eval_set_refs: Vec<CoreEvalSet<'_>> = eval_set_data
+            .iter()
+            .map(|(name, ds)| CoreEvalSet::new(name.as_str(), ds.as_core()))
+            .collect();
+
+        // Train with GIL released
+        let n_threads = 0;
+        let trained_model = py.allow_threads(|| {
+            boosters::GBLinearModel::train(core_train, &eval_set_refs, core_config, n_threads)
+        });
+
+        match trained_model {
+            Some(model) => {
+                slf.best_iteration = model.meta().best_iteration;
+                slf.inner = Some(model);
+                Ok(slf)
+            }
+            None => Err(BoostersError::TrainingError(
+                "Training failed to produce a model".to_string(),
+            )
+            .into()),
+        }
+    }
+}
+
+// Internal helper methods
+impl PyGBLinearModel {
+    /// Internal prediction method shared by predict and predict_raw.
+    ///
+    /// Always returns 2D array of shape [n_samples, n_outputs] for consistency.
+    fn predict_internal(
         &self,
         py: Python<'_>,
         features: &Bound<'_, PyAny>,
         raw_score: bool,
     ) -> PyResult<PyObject> {
-        use numpy::{PyArray1, PyArray2};
+        use numpy::PyArray2;
 
         let model = self.inner.as_ref().ok_or_else(|| BoostersError::NotFitted {
             method: "predict".to_string(),
         })?;
 
-        // Extract features array - either from Dataset or raw numpy array
-        // Also handle Python wrapper with _inner attribute
-        let features_array: Array2<f32> = if let Ok(dataset) = Self::extract_dataset(features) {
-            let features_view = dataset.features_array(py)?;
-            let features_np = features_view.as_array();
-            features_np.t().as_standard_layout().into_owned()
-        } else {
-            let features_view: numpy::PyReadonlyArray2<'_, f32> = features.extract()?;
-            let features_np = features_view.as_array();
-            features_np.t().as_standard_layout().into_owned()
-        };
+        // Extract features array
+        let features_array = Self::extract_features(py, features)?;
 
         // Validate feature count
         let expected_features = model.meta().n_features;
@@ -282,207 +392,51 @@ impl PyGBLinearModel {
 
         // output shape is [n_groups, n_samples]
         // Transpose to [n_samples, n_groups] for Python convention
-        let output_t = output.t().as_standard_layout().into_owned();
-
-        // Return appropriate shape based on n_groups
-        let n_groups = output.nrows();
-        if n_groups == 1 {
-            let flat: Vec<f32> = output_t.iter().copied().collect();
-            let arr = PyArray1::from_vec_bound(py, flat);
-            Ok(arr.into_any().unbind())
-        } else {
-            let arr = PyArray2::from_owned_array_bound(py, output_t);
-            Ok(arr.into_any().unbind())
-        }
+        // Always return 2D array for consistent shape
+        let output_t = transpose_to_c_order(output.view());
+        let arr = PyArray2::from_owned_array_bound(py, output_t);
+        Ok(arr.into_any().unbind())
     }
 
-    /// Train the model on a dataset.
+    /// Extract features array from various Python input types.
+    fn extract_features(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Array2<f32>> {
+        // Try as Dataset first (Rust or Python wrapper)
+        if let Ok(dataset_py) = extract_dataset(py, obj) {
+            let dataset = dataset_py.bind(py).borrow();
+            // CoreDataset already stores features in [n_features, n_samples] format
+            return Ok(dataset.as_core().features().view().to_owned());
+        }
+
+        // Fall back to numpy array - need to transpose from [n_samples, n_features]
+        let features_view: numpy::PyReadonlyArray2<'_, f32> = obj.extract()?;
+        Ok(transpose_to_c_order(features_view.as_array()))
+    }
+
+    /// Extract evaluation sets from Python input, keeping PyRef borrows alive.
     ///
-    /// Args:
-    ///     train: Training dataset containing features and labels.
-    ///     eval_set: Optional validation set(s) for early stopping and evaluation.
-    ///
-    /// Returns:
-    ///     Self (for method chaining).
-    ///
-    /// Raises:
-    ///     ValueError: If training data is invalid or labels are missing.
-    #[pyo3(signature = (train, eval_set=None))]
-    pub fn fit<'py>(
-        mut slf: PyRefMut<'py, Self>,
+    /// Returns Vec of (name, PyRef<PyDataset>) so the borrows remain valid.
+    fn extract_eval_set_refs<'py>(
         py: Python<'py>,
-        train: &Bound<'py, PyAny>,
-        eval_set: Option<&Bound<'py, PyAny>>,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        // Extract PyDataset from either:
-        // 1. Direct PyDataset (Rust type)
-        // 2. Python wrapper with _inner attribute
-        let train_dataset: PyRef<'py, PyDataset> = Self::extract_dataset(train)?;
-
-        // Validate that training data has labels
-        if !train_dataset.has_labels() {
-            return Err(BoostersError::ValidationError(
-                "Training dataset must have labels".to_string(),
-            )
-            .into());
-        }
-
-        // Convert Python config to core config
-        let config = slf.config.bind(py).borrow();
-        let core_config = config.to_core(py)?;
-        drop(config);
-
-        // Extract features [n_samples, n_features] and transpose to [n_features, n_samples]
-        let features_view = train_dataset.features_array(py)?;
-        let features_np = features_view.as_array();
-        let features_transposed: Array2<f32> = features_np.t().as_standard_layout().into_owned();
-
-        // Extract labels [n_samples] and reshape to [1, n_samples]
-        let labels_view = train_dataset.labels_array(py)?.expect("labels validated above");
-        let labels_np = labels_view.as_array();
-        let labels_1d: Array1<f32> = labels_np.to_owned();
-        let labels_2d: Array2<f32> =
-            labels_1d.into_shape((1, features_transposed.ncols())).map_err(|_| {
-                BoostersError::ValidationError("Failed to reshape labels".to_string())
-            })?;
-
-        // Extract weights (optional)
-        let weights_view = train_dataset.weights_array(py)?;
-        let weights_opt: Option<ndarray::Array1<f32>> =
-            weights_view.map(|w| w.as_array().to_owned());
-
-        // Create core dataset
-        let core_train = CoreDataset::new(
-            features_transposed.view(),
-            Some(labels_2d.view()),
-            weights_opt.as_ref().map(|w| w.view()),
-        );
-
-        // Convert validation sets
-        let eval_sets: Vec<(String, CoreDataset)> = if let Some(valid_obj) = eval_set {
-            Self::extract_eval_sets(py, valid_obj)?
-        } else {
-            Vec::new()
-        };
-
-        // Create EvalSet references for training
-        let eval_set_refs: Vec<CoreEvalSet<'_>> = eval_sets
-            .iter()
-            .map(|(name, ds)| CoreEvalSet::new(name.as_str(), ds))
-            .collect();
-
-        // Train with GIL released
-        let n_threads = 0;
-        let trained_model = py.allow_threads(|| {
-            boosters::GBLinearModel::train(&core_train, &eval_set_refs, core_config, n_threads)
-        });
-
-        match trained_model {
-            Some(model) => {
-                slf.best_iteration = model.meta().best_iteration;
-                slf.inner = Some(model);
-                Ok(slf)
-            }
-            None => Err(BoostersError::TrainingError(
-                "Training failed to produce a model".to_string(),
-            )
-            .into()),
-        }
-    }
-}
-
-// Internal methods
-impl PyGBLinearModel {
-    /// Extract evaluation sets from Python input.
-    fn extract_eval_sets(
-        py: Python<'_>,
-        valid: &Bound<'_, PyAny>,
-    ) -> PyResult<Vec<(String, CoreDataset)>> {
+        valid: &Bound<'py, PyAny>,
+    ) -> PyResult<Vec<(String, PyRef<'py, PyDataset>)>> {
         let mut result = Vec::new();
 
+        // Check if it's a list
         if let Ok(list) = valid.downcast::<pyo3::types::PyList>() {
             for item in list.iter() {
-                let eval_set: PyRef<'_, PyEvalSet> = item.extract()?;
-                let ds = Self::convert_eval_set(py, &eval_set)?;
-                result.push(ds);
+                let eval_set: PyRef<'py, PyEvalSet> = item.extract()?;
+                let name = eval_set.name().to_string();
+                let dataset = eval_set.get_dataset(py);
+                result.push((name, dataset));
             }
         } else {
-            let eval_set: PyRef<'_, PyEvalSet> = valid.extract()?;
-            let ds = Self::convert_eval_set(py, &eval_set)?;
-            result.push(ds);
+            // Try as single EvalSet
+            let eval_set: PyRef<'py, PyEvalSet> = valid.extract()?;
+            let name = eval_set.name().to_string();
+            let dataset = eval_set.get_dataset(py);
+            result.push((name, dataset));
         }
 
         Ok(result)
     }
-
-    /// Convert a single PyEvalSet to core types.
-    fn convert_eval_set(
-        py: Python<'_>,
-        eval_set: &PyRef<'_, PyEvalSet>,
-    ) -> PyResult<(String, CoreDataset)> {
-        let name = eval_set.name().to_string();
-        let dataset_ref = eval_set.get_dataset(py);
-        let dataset = &*dataset_ref;
-
-        let features_view = dataset.features_array(py)?;
-        let features_np = features_view.as_array();
-        let features_transposed: Array2<f32> = features_np.t().as_standard_layout().into_owned();
-
-        let labels_view = dataset.labels_array(py)?;
-        let labels_2d = if let Some(lv) = labels_view {
-            let labels_np = lv.as_array();
-            let labels_1d: Array1<f32> = labels_np.to_owned();
-            Some(
-                labels_1d
-                    .into_shape((1, features_transposed.ncols()))
-                    .map_err(|_| {
-                        BoostersError::ValidationError("Failed to reshape labels".to_string())
-                    })?,
-            )
-        } else {
-            None
-        };
-
-        let weights_view = dataset.weights_array(py)?;
-        let weights_opt: Option<ndarray::Array1<f32>> =
-            weights_view.map(|w| w.as_array().to_owned());
-
-        let core_ds = CoreDataset::new(
-            features_transposed.view(),
-            labels_2d.as_ref().map(|l| l.view()),
-            weights_opt.as_ref().map(|w| w.view()),
-        );
-
-        Ok((name, core_ds))
-    }
-
-    /// Extract a Dataset from a Python object.
-    ///
-    /// Accepts:
-    /// - Direct PyDataset (Rust type from `_boosters_rs.Dataset`)
-    /// - Python wrapper with `_inner` attribute (from `boosters.data.Dataset`)
-    fn extract_dataset<'py>(obj: &Bound<'py, PyAny>) -> PyResult<PyRef<'py, PyDataset>> {
-        // Try direct extraction first (Rust PyDataset)
-        if let Ok(dataset) = obj.extract::<PyRef<'py, PyDataset>>() {
-            return Ok(dataset);
-        }
-
-        // Try extracting from _inner attribute (Python wrapper)
-        if let Ok(inner) = obj.getattr("_inner") {
-            if let Ok(dataset) = inner.extract::<PyRef<'py, PyDataset>>() {
-                return Ok(dataset);
-            }
-        }
-
-        // Not a valid dataset type
-        let type_name = obj
-            .get_type()
-            .name()
-            .map(|n| n.to_string())
-            .unwrap_or_else(|_| "unknown".to_string());
-        Err(BoostersError::TypeError(format!(
-            "expected Dataset, got {}",
-            type_name
-        ))
-        .into())
-    }}
+}

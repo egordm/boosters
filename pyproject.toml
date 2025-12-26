@@ -51,6 +51,7 @@ test = { cmd = "pytest", help = "Run all tests" }
 "python:test" = { cmd = "pytest packages/boosters-python/tests -v", help = "Run boosters-python tests" }
 "python:doctest" = { cmd = "pytest packages/boosters-python/python --doctest-modules", help = "Run boosters-python doctests" }
 "python:examples" = { shell = "for f in packages/boosters-python/examples/*.py; do echo \"Running $f...\"; python \"$f\" || exit 1; done", help = "Run all example scripts" }
+"python:stubs" = { cmd = "cargo run -p boosters-python --bin stubgen", help = "Generate Python type stubs" }
 
 # =============================================================================
 # Ruff Configuration (shared across all packages)

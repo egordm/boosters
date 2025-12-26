@@ -14,4 +14,4 @@ mod dataset;
 mod evalset;
 
 pub use dataset::PyDataset;
-pub use evalset::PyEvalSet;
+pub use evalset::{extract_dataset, PyEvalSet};

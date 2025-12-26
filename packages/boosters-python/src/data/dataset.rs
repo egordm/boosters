@@ -1,22 +1,25 @@
 //! Dataset type for holding training/prediction data.
 
-use numpy::{PyArrayLike1, PyArrayLike2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2};
+use ndarray::{Array1, Array2};
+use numpy::{PyArrayLike1, PyArrayLike2, PyArrayMethods};
 use pyo3::prelude::*;
-use pyo3_stub_gen::derive::gen_stub_pyclass;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
+
+use boosters::data::{transpose_to_c_order, Dataset as CoreDataset};
 
 use crate::error::BoostersError;
 
 /// Dataset holding features, labels, and optional metadata.
 ///
 /// This class wraps NumPy arrays or pandas DataFrames for use with boosters models.
-/// It keeps references to the original Python objects to ensure zero-copy access
-/// where possible.
+/// Data is converted to an internal representation on construction for efficient
+/// training and prediction.
 ///
 /// # Data Layout
 ///
-/// - C-contiguous (row-major) float32 arrays provide zero-copy access
+/// - C-contiguous (row-major) float32 arrays provide optimal performance
 /// - F-contiguous arrays are automatically converted to C-order
-/// - float64 arrays are supported but may require conversion
+/// - float64 arrays are supported but will be converted to float32
 ///
 /// # Categorical Features
 ///
@@ -44,48 +47,27 @@ use crate::error::BoostersError;
 #[gen_stub_pyclass]
 #[pyclass(name = "Dataset", module = "boosters._boosters_rs")]
 pub struct PyDataset {
-    /// Original features array (kept alive for zero-copy)
-    features: Py<PyAny>,
+    /// The core dataset containing features, labels, and weights.
+    inner: CoreDataset,
 
-    /// Original labels array (optional)
-    labels: Option<Py<PyAny>>,
-
-    /// Sample weights (optional)
-    weights: Option<Py<PyAny>>,
-
-    /// Group labels for ranking (optional)
-    groups: Option<Py<PyAny>>,
-
-    /// Feature names (optional)
+    /// Feature names (optional, for display and export only)
     feature_names: Option<Vec<String>>,
 
-    /// Indices of categorical features
+    /// Indices of categorical features (for metadata, used in binning)
     categorical_features: Vec<usize>,
-
-    /// Cached shape
-    n_samples: usize,
-    n_features: usize,
-
-    /// Whether features were converted (not zero-copy)
-    converted: bool,
 }
 
 impl Clone for PyDataset {
     fn clone(&self) -> Self {
-        Python::with_gil(|py| Self {
-            features: self.features.clone_ref(py),
-            labels: self.labels.as_ref().map(|l| l.clone_ref(py)),
-            weights: self.weights.as_ref().map(|w| w.clone_ref(py)),
-            groups: self.groups.as_ref().map(|g| g.clone_ref(py)),
+        Self {
+            inner: self.inner.clone(),
             feature_names: self.feature_names.clone(),
             categorical_features: self.categorical_features.clone(),
-            n_samples: self.n_samples,
-            n_features: self.n_features,
-            converted: self.converted,
-        })
+        }
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyDataset {
     /// Create a new Dataset from features and optional labels.
@@ -94,7 +76,7 @@ impl PyDataset {
     ///     features: 2D NumPy array or pandas DataFrame of shape (n_samples, n_features)
     ///     labels: Optional 1D array of shape (n_samples,)
     ///     weights: Optional 1D array of sample weights (n_samples,)
-    ///     groups: Optional 1D array of group labels for ranking
+    ///     groups: Optional 1D array of group labels for ranking (not yet implemented)
     ///     feature_names: Optional list of feature names
     ///     categorical_features: Optional list of categorical feature indices
     ///
@@ -115,9 +97,21 @@ impl PyDataset {
         feature_names: Option<Vec<String>>,
         categorical_features: Option<Vec<usize>>,
     ) -> PyResult<Self> {
-        // Process features and extract shape
-        let (processed_features, n_samples, n_features, converted, detected_cats) =
-            Self::process_features(py, &features)?;
+        // Groups not yet implemented
+        if groups.is_some() {
+            return Err(pyo3::exceptions::PyNotImplementedError::new_err(
+                "groups parameter is not yet implemented",
+            ));
+        }
+
+        // Extract and validate features - convert to [n_features, n_samples]
+        let (features_array, detected_cats, extracted_names) =
+            Self::extract_features(py, &features)?;
+        let n_samples = features_array.ncols();
+        let n_features = features_array.nrows();
+
+        // Merge feature names: explicit > extracted from DataFrame
+        let final_feature_names = feature_names.or(extracted_names);
 
         // Merge categorical features: user-specified + auto-detected
         let mut all_cats = categorical_features.unwrap_or_default();
@@ -133,71 +127,62 @@ impl PyDataset {
             if idx >= n_features {
                 return Err(BoostersError::InvalidParameter {
                     name: "categorical_features".to_string(),
-                    reason: format!(
-                        "index {} out of range for {} features",
-                        idx, n_features
-                    ),
+                    reason: format!("index {} out of range for {} features", idx, n_features),
                 }
                 .into());
             }
         }
 
-        // Validate labels if present
-        if let Some(ref labels_obj) = labels {
-            Self::validate_labels(py, labels_obj, n_samples)?;
-        }
+        // Extract labels if present - convert to [1, n_samples]
+        let labels_array = if let Some(ref labels_obj) = labels {
+            Some(Self::extract_labels(py, labels_obj, n_samples)?)
+        } else {
+            None
+        };
 
-        // Validate weights if present
-        if let Some(ref weights_obj) = weights {
-            Self::validate_1d_array(py, weights_obj, n_samples, "weights")?;
-        }
+        // Extract weights if present
+        let weights_array = if let Some(ref weights_obj) = weights {
+            Some(Self::extract_weights(py, weights_obj, n_samples)?)
+        } else {
+            None
+        };
 
-        // Validate groups if present
-        if let Some(ref groups_obj) = groups {
-            Self::validate_1d_array(py, groups_obj, n_samples, "groups")?;
-        }
+        // Create the core dataset
+        let inner = CoreDataset::new(
+            features_array.view(),
+            labels_array.as_ref().map(|l| l.view()),
+            weights_array.as_ref().map(|w| w.view()),
+        );
 
         Ok(Self {
-            features: processed_features,
-            labels,
-            weights,
-            groups,
-            feature_names,
+            inner,
+            feature_names: final_feature_names,
             categorical_features: all_cats,
-            n_samples,
-            n_features,
-            converted,
         })
     }
 
     /// Number of samples in the dataset.
     #[getter]
     pub fn n_samples(&self) -> usize {
-        self.n_samples
+        self.inner.n_samples()
     }
 
     /// Number of features in the dataset.
     #[getter]
     pub fn n_features(&self) -> usize {
-        self.n_features
+        self.inner.n_features()
     }
 
     /// Whether labels are present.
     #[getter]
     pub fn has_labels(&self) -> bool {
-        self.labels.is_some()
+        self.inner.n_outputs() > 0
     }
 
     /// Whether weights are present.
     #[getter]
     pub fn has_weights(&self) -> bool {
-        self.weights.is_some()
-    }
-
-    /// Whether groups are present.
-    #[getter]
-    pub fn has_groups(&self) -> bool {
-        self.groups.is_some()
+        self.inner.weights().is_some()
     }
 
     /// Feature names if provided.
@@ -212,23 +197,17 @@ impl PyDataset {
         self.categorical_features.clone()
     }
 
-    /// Whether data was converted (not zero-copy).
-    #[getter]
-    pub fn was_converted(&self) -> bool {
-        self.converted
-    }
-
     /// Shape of the features array as (n_samples, n_features).
     #[getter]
     pub fn shape(&self) -> (usize, usize) {
-        (self.n_samples, self.n_features)
+        (self.inner.n_samples(), self.inner.n_features())
     }
 
     fn __repr__(&self) -> String {
         format!(
             "Dataset(n_samples={}, n_features={}, has_labels={}, categorical_features={})",
-            self.n_samples,
-            self.n_features,
+            self.n_samples(),
+            self.n_features(),
             self.has_labels(),
             self.categorical_features.len()
         )
@@ -236,13 +215,28 @@ impl PyDataset {
 }
 
 impl PyDataset {
-    /// Process features from various input types.
+    /// Get direct access to the inner CoreDataset.
+    pub fn as_core(&self) -> &CoreDataset {
+        &self.inner
+    }
+
+    /// Get mutable access to the inner CoreDataset.
+    pub fn as_core_mut(&mut self) -> &mut CoreDataset {
+        &mut self.inner
+    }
+
+    /// Consume and return the inner CoreDataset.
+    pub fn into_core(self) -> CoreDataset {
+        self.inner
+    }
+
+    /// Extract features from various Python input types.
     ///
-    /// Returns: (processed_features, n_samples, n_features, was_converted, detected_categoricals)
-    fn process_features(
+    /// Returns: (features [n_features, n_samples], detected_categoricals, feature_names)
+    fn extract_features(
         py: Python<'_>,
         features: &PyObject,
-    ) -> PyResult<(Py<PyAny>, usize, usize, bool, Vec<usize>)> {
+    ) -> PyResult<(Array2<f32>, Vec<usize>, Option<Vec<String>>)> {
         let features_bound = features.bind(py);
 
         // Check if it's a pandas DataFrame
@@ -259,11 +253,11 @@ impl PyDataset {
         if Self::is_sparse_matrix(py, features_bound)? {
             return Err(pyo3::exceptions::PyNotImplementedError::new_err(
                 "Sparse matrices are not yet supported. Convert to dense array with .toarray() \
-                or use a pandas DataFrame. Sparse support is planned for a future release."
+                or use a pandas DataFrame. Sparse support is planned for a future release.",
             ));
         }
 
-        // Try to convert to numpy array
+        // Unknown type
         let type_name = features_bound
             .get_type()
             .name()
@@ -278,7 +272,6 @@ impl PyDataset {
 
     /// Check if an object is a scipy sparse matrix.
     fn is_sparse_matrix(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
-        // Try to import scipy.sparse and check if the object is a sparse matrix
         if let Ok(scipy_sparse) = py.import_bound("scipy.sparse") {
             if let Ok(issparse) = scipy_sparse.getattr("issparse") {
                 if let Ok(result) = issparse.call1((obj,)) {
@@ -295,7 +288,7 @@ impl PyDataset {
     fn try_extract_dataframe(
         py: Python<'_>,
         obj: &Bound<'_, PyAny>,
-    ) -> PyResult<(Py<PyAny>, usize, usize, bool, Vec<usize>)> {
+    ) -> PyResult<(Array2<f32>, Vec<usize>, Option<Vec<String>>)> {
         // Check for DataFrame by checking for 'values' and 'dtypes' attributes
         if !obj.hasattr("values")? || !obj.hasattr("dtypes")? {
             return Err(pyo3::exceptions::PyTypeError::new_err(
@@ -311,10 +304,17 @@ impl PyDataset {
         let shape_tuple: (usize, usize) = shape.extract()?;
         let (n_samples, n_features) = shape_tuple;
 
+        if n_samples == 0 {
+            return Err(BoostersError::InvalidParameter {
+                name: "features".to_string(),
+                reason: "DataFrame must have at least one row".to_string(),
+            }
+            .into());
+        }
+
         // Detect categorical columns
         let mut detected_cats = Vec::new();
         if let Ok(dtypes) = obj.getattr("dtypes") {
-            // Iterate over dtype indices
             for i in 0..n_features {
                 if let Ok(dtype) = dtypes.get_item(i) {
                     let dtype_name: String = dtype.getattr("name")?.extract()?;
@@ -325,53 +325,36 @@ impl PyDataset {
             }
         }
 
-        // Get column names if available
-        // Note: We don't store them here, just detect categoricals
-
-        // Convert to C-contiguous float32 if needed
-        let numpy = py.import_bound("numpy")?;
-        let ascontiguousarray = numpy.getattr("ascontiguousarray")?;
-
-        // Check dtype
-        let dtype = values.getattr("dtype")?;
-        let dtype_name: String = dtype.getattr("name")?.extract()?;
-
-        let (processed, converted) = if dtype_name == "float32" {
-            let flags = values.getattr("flags")?;
-            let c_contiguous: bool = flags.getattr("c_contiguous")?.extract()?;
-            if c_contiguous {
-                (values.unbind(), false)
+        // Extract column names
+        let feature_names = if let Ok(columns) = obj.getattr("columns") {
+            if let Ok(col_list) = columns.call_method0("tolist") {
+                col_list.extract::<Vec<String>>().ok()
             } else {
-                // Convert to C-contiguous
-                let converted =
-                    ascontiguousarray.call1((values, numpy.getattr("float32")?))?;
-                (converted.unbind(), true)
-            }
-        } else if dtype_name == "float64" {
-            // Keep as float64 but ensure C-contiguous
-            let flags = values.getattr("flags")?;
-            let c_contiguous: bool = flags.getattr("c_contiguous")?.extract()?;
-            if c_contiguous {
-                (values.unbind(), false)
-            } else {
-                let converted = ascontiguousarray.call1((values,))?;
-                (converted.unbind(), true)
+                None
             }
         } else {
-            // Convert to float32
-            let converted =
-                ascontiguousarray.call1((values, numpy.getattr("float32")?))?;
-            (converted.unbind(), true)
+            None
         };
 
-        Ok((processed, n_samples, n_features, converted, detected_cats))
+        // Convert to numpy float32 and extract
+        let numpy = py.import_bound("numpy")?;
+        let arr_f32 = numpy
+            .getattr("ascontiguousarray")?
+            .call1((values, numpy.getattr("float32")?))?;
+
+        // Extract as numpy array and transpose to feature-major [n_features, n_samples]
+        let arr_view = arr_f32.extract::<PyArrayLike2<f32>>()?;
+        let arr_ro = arr_view.try_readonly()?;
+        let features_transposed = transpose_to_c_order(arr_ro.as_array());
+
+        Ok((features_transposed, detected_cats, feature_names))
     }
 
     /// Try to extract a NumPy array.
     fn try_extract_numpy_array(
         py: Python<'_>,
         obj: &Bound<'_, PyAny>,
-    ) -> PyResult<(Py<PyAny>, usize, usize, bool, Vec<usize>)> {
+    ) -> PyResult<(Array2<f32>, Vec<usize>, Option<Vec<String>>)> {
         // Check for ndim and shape attributes (numpy array)
         if !obj.hasattr("ndim")? || !obj.hasattr("shape")? || !obj.hasattr("dtype")? {
             return Err(pyo3::exceptions::PyTypeError::new_err("Not a numpy array"));
@@ -390,7 +373,7 @@ impl PyDataset {
         // Get shape
         let shape = obj.getattr("shape")?;
         let shape_tuple: (usize, usize) = shape.extract()?;
-        let (n_samples, n_features) = shape_tuple;
+        let (n_samples, _n_features) = shape_tuple;
 
         if n_samples == 0 {
             return Err(BoostersError::InvalidParameter {
@@ -400,45 +383,29 @@ impl PyDataset {
             .into());
         }
 
-        // Check dtype and contiguity
-        let dtype = obj.getattr("dtype")?;
-        let dtype_name: String = dtype.getattr("name")?.extract()?;
-
+        // Convert to float32 and ensure C-contiguous
         let numpy = py.import_bound("numpy")?;
-        let ascontiguousarray = numpy.getattr("ascontiguousarray")?;
+        let arr_f32 = numpy
+            .getattr("ascontiguousarray")?
+            .call1((obj, numpy.getattr("float32")?))?;
 
-        let (processed, converted) = if dtype_name == "float32" {
-            let flags = obj.getattr("flags")?;
-            let c_contiguous: bool = flags.getattr("c_contiguous")?.extract()?;
-            if c_contiguous {
-                (obj.clone().unbind(), false)
-            } else {
-                let converted =
-                    ascontiguousarray.call1((obj, numpy.getattr("float32")?))?;
-                (converted.unbind(), true)
-            }
-        } else if dtype_name == "float64" {
-            let flags = obj.getattr("flags")?;
-            let c_contiguous: bool = flags.getattr("c_contiguous")?.extract()?;
-            if c_contiguous {
-                (obj.clone().unbind(), false)
-            } else {
-                let converted = ascontiguousarray.call1((obj,))?;
-                (converted.unbind(), true)
-            }
-        } else {
-            // Convert to float32
-            let converted =
-                ascontiguousarray.call1((obj, numpy.getattr("float32")?))?;
-            (converted.unbind(), true)
-        };
+        // Extract as numpy array and transpose to feature-major [n_features, n_samples]
+        let arr_view = arr_f32.extract::<PyArrayLike2<f32>>()?;
+        let arr_ro = arr_view.try_readonly()?;
+        let features_transposed = transpose_to_c_order(arr_ro.as_array());
 
-        // No categorical detection for raw numpy arrays
-        Ok((processed, n_samples, n_features, converted, Vec::new()))
+        // No categorical detection or feature names for raw numpy arrays
+        Ok((features_transposed, Vec::new(), None))
     }
 
-    /// Validate labels array.
-    fn validate_labels(py: Python<'_>, labels: &PyObject, expected_samples: usize) -> PyResult<()> {
+    /// Extract and validate labels array.
+    ///
+    /// Returns labels as [1, n_samples] for CoreDataset format.
+    fn extract_labels(
+        py: Python<'_>,
+        labels: &PyObject,
+        expected_samples: usize,
+    ) -> PyResult<Array2<f32>> {
         let labels_bound = labels.bind(py);
 
         // Check for ndim
@@ -449,13 +416,13 @@ impl PyDataset {
                 .map(|n| n.to_string())
                 .unwrap_or_else(|_| "unknown".to_string());
             return Err(BoostersError::TypeError(format!(
-                "expected numpy array, got {}",
+                "labels: expected numpy array, got {}",
                 type_name
             ))
             .into());
         }
-        let ndim: usize = labels_bound.getattr("ndim")?.extract()?;
 
+        let ndim: usize = labels_bound.getattr("ndim")?.extract()?;
         if ndim != 1 {
             return Err(BoostersError::InvalidParameter {
                 name: "labels".to_string(),
@@ -494,49 +461,63 @@ impl PyDataset {
             .into());
         }
 
-        Ok(())
+        // Convert to float32 if needed
+        let arr_f32 = numpy
+            .getattr("ascontiguousarray")?
+            .call1((labels_bound, numpy.getattr("float32")?))?;
+
+        // Extract as 1D array
+        let arr_view = arr_f32.extract::<PyArrayLike1<f32>>()?;
+        let arr_ro = arr_view.try_readonly()?;
+        let labels_1d: Array1<f32> = arr_ro.as_array().to_owned();
+
+        // Reshape to [1, n_samples] for CoreDataset format
+        let labels_2d = labels_1d.into_shape((1, expected_samples)).map_err(|_| {
+            BoostersError::ValidationError("Failed to reshape labels".to_string())
+        })?;
+
+        Ok(labels_2d)
     }
 
-    /// Validate a 1D array (weights, groups).
-    fn validate_1d_array(
+    /// Extract and validate weights array.
+    fn extract_weights(
         py: Python<'_>,
-        arr: &PyObject,
+        weights: &PyObject,
         expected_samples: usize,
-        name: &str,
-    ) -> PyResult<()> {
-        let arr_bound = arr.bind(py);
+    ) -> PyResult<Array1<f32>> {
+        let weights_bound = weights.bind(py);
 
         // Check for ndim
-        if !arr_bound.hasattr("ndim")? {
-            let type_name = arr_bound
+        if !weights_bound.hasattr("ndim")? {
+            let type_name = weights_bound
                 .get_type()
                 .name()
                 .map(|n| n.to_string())
                 .unwrap_or_else(|_| "unknown".to_string());
             return Err(BoostersError::TypeError(format!(
-                "expected numpy array, got {}",
+                "weights: expected numpy array, got {}",
                 type_name
             ))
             .into());
         }
-        let ndim: usize = arr_bound.getattr("ndim")?.extract()?;
 
+        let ndim: usize = weights_bound.getattr("ndim")?.extract()?;
         if ndim != 1 {
             return Err(BoostersError::InvalidParameter {
-                name: name.to_string(),
+                name: "weights".to_string(),
                 reason: format!("expected 1D array, got {}D", ndim),
             }
             .into());
         }
 
         // Check shape
-        let shape = arr_bound.getattr("shape")?;
+        let shape = weights_bound.getattr("shape")?;
         let shape_tuple: (usize,) = shape.extract()?;
         let n_samples = shape_tuple.0;
 
         if n_samples != expected_samples {
             return Err(BoostersError::InvalidParameter {
-                name: name.to_string(),
+                name: "weights".to_string(),
                 reason: format!(
                     "shape mismatch: expected {} samples, got {}",
                     expected_samples, n_samples
@@ -545,77 +526,18 @@ impl PyDataset {
             .into());
         }
 
-        Ok(())
-    }
+        // Convert to float32 if needed
+        let numpy = py.import_bound("numpy")?;
+        let arr_f32 = numpy
+            .getattr("ascontiguousarray")?
+            .call1((weights_bound, numpy.getattr("float32")?))?;
 
-    /// Get features as a readonly array view.
-    ///
-    /// This is used internally by the training code.
-    pub fn features_array<'py>(
-        &self,
-        py: Python<'py>,
-    ) -> PyResult<PyReadonlyArray2<'py, f32>> {
-        // Try to extract as f32
-        if let Ok(arr) = self.features.bind(py).extract::<PyArrayLike2<f32>>() {
-            return Ok(arr.try_readonly()?);
-        }
-
-        // Try as f64 and we'll need to handle conversion upstream
-        Err(BoostersError::TypeError(
-            "expected float32 array, got float64 (conversion needed)".to_string(),
-        )
-        .into())
-    }
-
-    /// Get features as a readonly array view (f64 version).
-    pub fn features_array_f64<'py>(
-        &self,
-        py: Python<'py>,
-    ) -> PyResult<PyReadonlyArray2<'py, f64>> {
-        self.features
-            .bind(py)
-            .extract::<PyArrayLike2<f64>>()
-            .and_then(|a| Ok(a.try_readonly()?))
-            .map_err(|_| {
-                BoostersError::TypeError("expected float64 array".to_string()).into()
-            })
-    }
-
-    /// Get labels as a readonly array view.
-    pub fn labels_array<'py>(&self, py: Python<'py>) -> PyResult<Option<PyReadonlyArray1<'py, f32>>> {
-        match &self.labels {
-            Some(labels) => {
-                let arr = labels
-                    .bind(py)
-                    .extract::<PyArrayLike1<f32>>()
-                    .and_then(|a| Ok(a.try_readonly()?))?;
-                Ok(Some(arr))
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// Get weights as a readonly array view.
-    pub fn weights_array<'py>(
-        &self,
-        py: Python<'py>,
-    ) -> PyResult<Option<PyReadonlyArray1<'py, f32>>> {
-        match &self.weights {
-            Some(weights) => {
-                let arr = weights
-                    .bind(py)
-                    .extract::<PyArrayLike1<f32>>()
-                    .and_then(|a| Ok(a.try_readonly()?))?;
-                Ok(Some(arr))
-            }
-            None => Ok(None),
-        }
+        // Extract as 1D array
+        let arr_view = arr_f32.extract::<PyArrayLike1<f32>>()?;
+        let arr_ro = arr_view.try_readonly()?;
+        Ok(arr_ro.as_array().to_owned())
     }
 }
-
-// =============================================================================
-// Tests
-// =============================================================================
 
 #[cfg(test)]
 mod tests {

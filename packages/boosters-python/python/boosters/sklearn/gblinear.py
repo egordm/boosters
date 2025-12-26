@@ -2,21 +2,19 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from boosters import GBLinearModel
-from boosters._boosters_rs import EvalSet
-from boosters.data import Dataset
-from boosters.metrics import Rmse
-from boosters.objectives import LogisticLoss, SoftmaxLoss, SquaredLoss
+from boosters import GBLinearConfig, GBLinearModel
+from boosters.data import Dataset, EvalSet
+from boosters.metrics import Metric, Rmse
+from boosters.objectives import LogisticLoss, Objective, SoftmaxLoss, SquaredLoss
 
 from .base import (
     BaseEstimator,
     ClassifierMixin,
     RegressorMixin,
-    build_gblinear_config,
     check_array,
     check_is_fitted,
     check_X_y,
@@ -24,6 +22,40 @@ from .base import (
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+
+
+# =============================================================================
+# Config Builder
+# =============================================================================
+
+
+def _build_config(
+    *,
+    objective: Objective,
+    metric: Metric | None = None,
+    n_estimators: int = 100,
+    learning_rate: float = 0.5,
+    l1: float = 0.0,
+    l2: float = 1.0,
+    early_stopping_rounds: int | None = None,
+    seed: int = 42,
+) -> GBLinearConfig:
+    """Build a GBLinearConfig from flat kwargs."""
+    return GBLinearConfig(
+        n_estimators=n_estimators,
+        learning_rate=learning_rate,
+        early_stopping_rounds=early_stopping_rounds,
+        seed=seed,
+        objective=objective,
+        metric=metric,
+        l1=l1,
+        l2=l2,
+    )
+
+
+# =============================================================================
+# Estimators
+# =============================================================================
 
 
 class GBLinearRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
@@ -102,7 +134,7 @@ class GBLinearRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
         X, y = check_X_y(X, y, dtype=np.float32, y_numeric=True)
         self.n_features_in_ = X.shape[1]
 
-        config = build_gblinear_config(
+        config = _build_config(
             objective=SquaredLoss(),
             metric=Rmse(),
             n_estimators=self.n_estimators,
@@ -122,10 +154,10 @@ class GBLinearRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
                 X_val = check_array(X_val, dtype=np.float32)
                 y_val = np.asarray(y_val, dtype=np.float32)
                 val_ds = Dataset(X_val, y_val)
-                valid_list.append(EvalSet(f"valid_{i}", val_ds._inner))
+                valid_list.append(EvalSet(f"valid_{i}", val_ds))
 
         self.model_ = GBLinearModel(config=config)
-        self.model_.fit(train_data._inner, eval_set=valid_list)
+        self.model_.fit(train_data, eval_set=valid_list)
 
         return self
 
@@ -144,7 +176,9 @@ class GBLinearRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
         """
         check_is_fitted(self, ["model_"])
         X = check_array(X, dtype=np.float32)
-        return self.model_.predict(X)
+        preds = self.model_.predict(X)
+        # Squeeze from (n_samples, 1) to (n_samples,) for sklearn compatibility
+        return np.squeeze(preds, axis=-1)
 
     @property
     def coef_(self) -> NDArray[np.float32]:
@@ -246,7 +280,7 @@ class GBLinearClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         else:
             objective = SoftmaxLoss(n_classes=self.n_classes_)
 
-        config = build_gblinear_config(
+        config = _build_config(
             objective=objective,
             n_estimators=self.n_estimators,
             learning_rate=self.learning_rate,
@@ -265,10 +299,10 @@ class GBLinearClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
                 X_val = check_array(X_val, dtype=np.float32)
                 y_val_encoded = np.array([self._label_to_idx[c] for c in y_val], dtype=np.float32)
                 val_ds = Dataset(X_val, y_val_encoded)
-                valid_list.append(EvalSet(f"valid_{i}", val_ds._inner))
+                valid_list.append(EvalSet(f"valid_{i}", val_ds))
 
         self.model_ = GBLinearModel(config=config)
-        self.model_.fit(train_data._inner, eval_set=valid_list)
+        self.model_.fit(train_data, eval_set=valid_list)
 
         return self
 
@@ -313,8 +347,11 @@ class GBLinearClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         preds = self.model_.predict(X)
 
         if self.n_classes_ == 2:
-            proba = np.column_stack([1 - preds, preds])
+            # Binary: preds is (n_samples, 1), squeeze and make 2-column
+            preds_1d = np.squeeze(preds, axis=-1)
+            proba = np.column_stack([1 - preds_1d, preds_1d])
         else:
+            # Multiclass: preds is already (n_samples, n_classes)
             proba = preds
 
         return proba

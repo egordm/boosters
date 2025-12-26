@@ -196,7 +196,8 @@ class TestGBDTModelPredict:
         model, X, _ = fitted_regression_model
         predictions = model.predict(X)
 
-        assert predictions.shape == (100,)
+        # Always returns 2D array (n_samples, n_outputs)
+        assert predictions.shape == (100, 1)
         assert predictions.dtype == np.float32
 
     def test_predict_with_dataset(
@@ -207,18 +208,18 @@ class TestGBDTModelPredict:
         test_ds = Dataset(X)  # No labels needed for prediction
         predictions = model.predict(test_ds)
 
-        assert predictions.shape == (100,)
+        assert predictions.shape == (100, 1)
 
     def test_predict_raw_score(
         self, fitted_classification_model: tuple[GBDTModel, np.ndarray, np.ndarray]
     ) -> None:
-        """Test that raw_score=True returns margins."""
+        """Test that predict_raw returns margins."""
         model, X, _ = fitted_classification_model
         normal_preds = model.predict(X)
-        raw_preds = model.predict(X, raw_score=True)
+        raw_preds = model.predict_raw(X)
 
         # Raw should be logits (can be any value), normal should be probabilities [0, 1]
-        assert raw_preds.shape == (100,)
+        assert raw_preds.shape == (100, 1)
         # Transformed predictions should be in [0, 1] range
         assert np.all(normal_preds >= 0) and np.all(normal_preds <= 1)
         # Raw can be outside [0, 1]

@@ -94,9 +94,9 @@ class TestGBLinearModelFit:
         )
         # Model should be fitted
         assert model.is_fitted
-        # Predictions should work
+        # Predictions should work - always 2D (n_samples, n_outputs)
         preds = model.predict(X)
-        assert preds.shape == (200,)
+        assert preds.shape == (200, 1)
 
     def test_refit_replaces_model(self):
         """Fitting again replaces the model."""
@@ -122,7 +122,8 @@ class TestGBLinearModelPredict:
         model = GBLinearModel(config=config)
         model.fit(Dataset(X, y))
         preds = model.predict(X)
-        assert preds.shape == (len(X),)
+        # Always 2D (n_samples, n_outputs)
+        assert preds.shape == (len(X), 1)
         assert preds.dtype == np.float32
 
     def test_predict_with_dataset(self):
@@ -132,7 +133,7 @@ class TestGBLinearModelPredict:
         model = GBLinearModel(config=config)
         model.fit(Dataset(X, y))
         preds = model.predict(Dataset(X, y))
-        assert preds.shape == (len(X),)
+        assert preds.shape == (len(X), 1)
 
     def test_predict_on_new_data(self):
         """predict() works on unseen data."""
@@ -142,7 +143,7 @@ class TestGBLinearModelPredict:
         model = GBLinearModel(config=config)
         model.fit(Dataset(X_train, y_train))
         preds = model.predict(X_test)
-        assert preds.shape == (50,)
+        assert preds.shape == (50, 1)
 
     def test_predict_not_fitted_raises(self):
         """predict() raises if model not fitted."""
@@ -202,8 +203,10 @@ class TestGBLinearModelQuality:
         model = GBLinearModel(config=config)
         model.fit(Dataset(X, y))
         preds = model.predict(X)
+        # Squeeze to 1D for correlation calculation
+        preds_1d = np.squeeze(preds, axis=-1)
         # Check reasonable correlation
-        corr = np.corrcoef(y, preds)[0, 1]
+        corr = np.corrcoef(y, preds_1d)[0, 1]
         assert corr > 0.9, f"Correlation too low: {corr}"
 
     def test_regularization_shrinks_weights(self):

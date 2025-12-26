@@ -1,6 +1,7 @@
 //! Sampling configuration for gradient boosting.
 
 use pyo3::prelude::*;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use crate::error::BoostersError;
 
@@ -12,6 +13,7 @@ use crate::error::BoostersError;
 /// >>> config = SamplingConfig(subsample=0.8, colsample=0.8)
 /// >>> config.subsample
 /// 0.8
+#[gen_stub_pyclass]
 #[pyclass(name = "SamplingConfig", module = "boosters._boosters_rs", get_all, set_all)]
 #[derive(Clone, Debug)]
 pub struct PySamplingConfig {
@@ -29,6 +31,7 @@ pub struct PySamplingConfig {
     pub goss_beta: f64,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PySamplingConfig {
     /// Create a new SamplingConfig.

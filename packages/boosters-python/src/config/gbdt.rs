@@ -1,6 +1,7 @@
 //! GBDT configuration for Python bindings.
 
 use pyo3::prelude::*;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use super::{
     PyCategoricalConfig, PyEFBConfig, PyLinearLeavesConfig, PyRegularizationConfig,
@@ -53,6 +54,7 @@ use crate::objectives::PyObjective;
 /// ...     objective=SquaredLoss(),
 /// ...     tree=TreeConfig(max_depth=6),
 /// ... )
+#[gen_stub_pyclass]
 #[pyclass(name = "GBDTConfig", module = "boosters._boosters_rs")]
 #[derive(Debug)]
 pub struct PyGBDTConfig {
@@ -112,6 +114,7 @@ impl Clone for PyGBDTConfig {
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyGBDTConfig {
     #[new]

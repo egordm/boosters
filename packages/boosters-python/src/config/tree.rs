@@ -1,6 +1,7 @@
 //! Tree configuration for gradient boosting.
 
 use pyo3::prelude::*;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use crate::error::BoostersError;
 
@@ -14,6 +15,7 @@ use crate::error::BoostersError;
 /// >>> config = TreeConfig(max_depth=6, n_leaves=31)
 /// >>> config.max_depth
 /// 6
+#[gen_stub_pyclass]
 #[pyclass(name = "TreeConfig", module = "boosters._boosters_rs", get_all, set_all)]
 #[derive(Clone, Debug)]
 pub struct PyTreeConfig {
@@ -29,6 +31,7 @@ pub struct PyTreeConfig {
     pub growth_strategy: String,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyTreeConfig {
     /// Create a new TreeConfig.

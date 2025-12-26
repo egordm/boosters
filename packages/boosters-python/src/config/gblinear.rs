@@ -1,6 +1,7 @@
 //! GBLinear configuration for Python bindings.
 
 use pyo3::prelude::*;
+use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use crate::error::BoostersError;
 use crate::metrics::PyMetric;
@@ -40,6 +41,7 @@ use crate::objectives::PyObjective;
 /// ...     objective=SquaredLoss(),
 /// ...     l2=0.1,
 /// ... )
+#[gen_stub_pyclass]
 #[pyclass(name = "GBLinearConfig", module = "boosters._boosters_rs")]
 #[derive(Debug)]
 pub struct PyGBLinearConfig {
@@ -82,6 +84,7 @@ impl Clone for PyGBLinearConfig {
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyGBLinearConfig {
     #[new]
