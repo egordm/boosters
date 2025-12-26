@@ -15,7 +15,11 @@ See Also:
     - https://github.com/your-org/boosters for documentation
 """
 
-from boosters._boosters_rs import __version__  # pyright: ignore[reportAttributeAccessIssue]
+# Explainability types
+from boosters._boosters_rs import (
+    ImportanceType,
+    __version__,  # pyright: ignore[reportAttributeAccessIssue]
+)
 
 # Config types
 from boosters.config import GBDTConfig, GBLinearConfig
@@ -43,6 +47,7 @@ __all__ = [
     "GBLinearConfig",
     "GBLinearModel",
     "GrowthStrategy",
+    "ImportanceType",
     "Metric",
     "Objective",
     "__version__",

@@ -1,19 +1,17 @@
 //! GBDT Model Python bindings.
 
-use numpy::PyArray2;
+use numpy::{PyArray1, PyArray2, PyArray3};
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
-use numpy::PyArray3;
 
-use boosters::data::transpose_to_c_order;
 use boosters::explainability::ShapValues;
 use boosters::training::EvalSet as CoreEvalSet;
-use boosters::explainability::ImportanceType;
-use numpy::PyArray1;
 
 use crate::config::PyGBDTConfig;
 use crate::data::{PyDataset, PyEvalSet};
 use crate::error::BoostersError;
+use crate::importance::PyImportanceType;
+use crate::validation::{require_fitted, validate_feature_count};
 
 /// Gradient Boosted Decision Tree model.
 ///
@@ -69,7 +67,6 @@ impl PyGBDTModel {
         let config = match config {
             Some(c) => c,
             None => {
-                // Create default config using Python interface
                 let boosters_mod = py.import("boosters._boosters_rs")?;
                 let config_class = boosters_mod.getattr("GBDTConfig")?;
                 let config_obj = config_class.call0()?;
@@ -93,38 +90,20 @@ impl PyGBDTModel {
     }
 
     /// Number of trees in the fitted model.
-    ///
-    /// Raises:
-    ///     ValueError: If model has not been fitted.
     #[getter]
     pub fn n_trees(&self) -> PyResult<usize> {
-        match &self.inner {
-            Some(model) => Ok(model.forest().n_trees()),
-            None => Err(BoostersError::NotFitted {
-                method: "n_trees".to_string(),
-            }
-            .into()),
-        }
+        let model = require_fitted(self.inner.as_ref(), "n_trees")?;
+        Ok(model.forest().n_trees())
     }
 
     /// Number of features the model was trained on.
-    ///
-    /// Raises:
-    ///     ValueError: If model has not been fitted.
     #[getter]
     pub fn n_features(&self) -> PyResult<usize> {
-        match &self.inner {
-            Some(model) => Ok(model.meta().n_features),
-            None => Err(BoostersError::NotFitted {
-                method: "n_features".to_string(),
-            }
-            .into()),
-        }
+        let model = require_fitted(self.inner.as_ref(), "n_features")?;
+        Ok(model.meta().n_features)
     }
 
     /// Best iteration from early stopping.
-    ///
-    /// Returns None if early stopping was not used or not triggered.
     #[getter]
     pub fn best_iteration(&self) -> Option<usize> {
         self.best_iteration
@@ -132,21 +111,12 @@ impl PyGBDTModel {
     }
 
     /// Best score from early stopping.
-    ///
-    /// Returns None if early stopping was not used or not triggered.
     #[getter]
     pub fn best_score(&self) -> Option<f64> {
         self.best_score
     }
 
     /// Evaluation results from training.
-    ///
-    /// Returns a dict mapping eval set names to dicts of metric names to lists
-    /// of scores per iteration.
-    ///
-    /// Examples:
-    ///     >>> results = model.eval_results
-    ///     >>> # {"train": {"rmse": [0.5, 0.4, ...]}}
     #[getter]
     #[gen_stub(override_return_type(type_repr = "dict[str, dict[str, list[float]]] | None", imports = ()))]
     pub fn eval_results(&self, py: Python<'_>) -> Option<Py<PyAny>> {
@@ -162,98 +132,53 @@ impl PyGBDTModel {
     /// Get feature importance scores.
     ///
     /// Args:
-    ///     importance_type: Type of importance: "split" or "gain".
+    ///     importance_type: Type of importance (ImportanceType.Split or ImportanceType.Gain).
     ///
     /// Returns:
     ///     Array of importance scores, one per feature.
-    ///
-    /// Raises:
-    ///     ValueError: If model has not been fitted.
-    #[pyo3(signature = (importance_type="split"))]
-    #[gen_stub(override_return_type(type_repr = "numpy.ndarray", imports = ("numpy",)))]
-    pub fn feature_importance(
+    #[pyo3(signature = (importance_type=PyImportanceType::Split))]
+    pub fn feature_importance<'py>(
         &self,
-        py: Python<'_>,
-        #[gen_stub(override_type(type_repr = "typing.Literal['split', 'gain']", imports = ("typing",)))]
-        importance_type: &str,
-    ) -> PyResult<Py<PyAny>> {
+        py: Python<'py>,
+        importance_type: PyImportanceType,
+    ) -> PyResult<Bound<'py, PyArray1<f32>>> {
+        let model = require_fitted(self.inner.as_ref(), "feature_importance")?;
 
+        let importance = model
+            .feature_importance(importance_type.into())
+            .map_err(|e| BoostersError::ExplainError(e.to_string()))?;
 
-        let model = self.inner.as_ref().ok_or_else(|| BoostersError::NotFitted {
-            method: "feature_importance".to_string(),
-        })?;
-
-        let importance = match importance_type {
-            "split" => model.feature_importance(ImportanceType::Split),
-            "gain" => model.feature_importance(ImportanceType::Gain),
-            other => {
-                return Err(BoostersError::InvalidParameter {
-                    name: "importance_type".to_string(),
-                    reason: format!("expected 'split' or 'gain', got '{}'", other),
-                }
-                .into())
-            }
-        };
-
-        match importance {
-            Ok(fi) => {
-                let scores = fi.values();
-                let arr = PyArray1::from_slice(py, scores);
-                Ok(arr.into_any().unbind())
-            }
-            Err(e) => Err(BoostersError::ExplainError(e.to_string()).into()),
-        }
+        // Cast f64 to f32 for consistency with other outputs
+        let values: Vec<f32> = importance.values().iter().map(|&v| v as f32).collect();
+        Ok(PyArray1::from_vec(py, values))
     }
 
     /// Compute SHAP values for feature contribution analysis.
-    ///
-    /// SHAP (SHapley Additive exPlanations) values show how each feature
-    /// contributes to individual predictions.
     ///
     /// Args:
     ///     data: Dataset containing features for SHAP computation.
     ///
     /// Returns:
     ///     Array with shape (n_samples, n_features + 1, n_outputs).
-    ///     The last feature index contains the base value.
-    ///
-    /// Raises:
-    ///     RuntimeError: If model has not been fitted.
-    ///     ValueError: If features have wrong shape.
-    ///
-    /// Examples:
-    ///     >>> shap_values = model.shap_values(test_data)
     #[pyo3(signature = (data))]
-    #[gen_stub(override_return_type(type_repr = "numpy.ndarray", imports = ("numpy",)))]
-    pub fn shap_values(&self, py: Python<'_>, data: PyRef<'_, PyDataset>) -> PyResult<Py<PyAny>> {
+    pub fn shap_values<'py>(
+        &self,
+        py: Python<'py>,
+        data: PyRef<'_, PyDataset>,
+    ) -> PyResult<Bound<'py, PyArray3<f32>>> {
+        let model = require_fitted(self.inner.as_ref(), "shap_values")?;
+        let dataset = data.inner();
 
-        let model = self.inner.as_ref().ok_or_else(|| BoostersError::NotFitted {
-            method: "shap_values".to_string(),
-        })?;
-
-        let core_dataset = data.as_core();
-
-        // Validate feature count
-        let expected_features = model.meta().n_features;
-        let actual_features = core_dataset.n_features();
-        if actual_features != expected_features {
-            return Err(BoostersError::ValidationError(format!(
-                "Expected {} features, got {}",
-                expected_features, actual_features
-            ))
-            .into());
-        }
+        validate_feature_count(model.meta().n_features, dataset.n_features())?;
 
         // Compute SHAP values with GIL released
-        let shap_result: Result<ShapValues, _> = py.detach(|| model.shap_values(core_dataset));
+        let shap_result: Result<ShapValues, _> = py.detach(|| model.shap_values(dataset));
 
         match shap_result {
             Ok(shap_values) => {
-                // Return as-is: shape [n_samples, n_features + 1, n_outputs]
                 let arr = shap_values.as_array();
                 let arr_f32: ndarray::Array3<f32> = arr.mapv(|v| v as f32);
-                let py_arr = PyArray3::from_owned_array(py, arr_f32);
-                Ok(py_arr.into_any().unbind())
+                Ok(PyArray3::from_owned_array(py, arr_f32))
             }
             Err(e) => Err(BoostersError::ExplainError(e.to_string()).into()),
         }
@@ -275,58 +200,61 @@ impl PyGBDTModel {
     /// Make predictions on data.
     ///
     /// Returns transformed predictions (e.g., probabilities for classification).
+    /// Output shape is (n_samples, n_outputs) - sklearn convention.
     ///
     /// Args:
     ///     data: Dataset containing features for prediction.
-    ///     n_iterations: Number of trees to use. Defaults to all trees.
+    ///     n_threads: Number of threads for parallel prediction (0 = auto).
     ///
     /// Returns:
-    ///     Predictions of shape (n_samples, n_outputs).
-    ///
-    /// Raises:
-    ///     RuntimeError: If model has not been fitted.
-    ///     ValueError: If features have wrong shape.
-    ///
-    /// Examples:
-    ///     >>> predictions = model.predict(test_data)
-    #[pyo3(signature = (data, n_iterations=None))]
-    #[gen_stub(override_return_type(type_repr = "numpy.ndarray", imports = ("numpy",)))]
-    pub fn predict(
+    ///     Predictions array with shape (n_samples, n_outputs).
+    #[pyo3(signature = (data, n_threads=0))]
+    pub fn predict<'py>(
         &self,
-        py: Python<'_>,
+        py: Python<'py>,
         data: PyRef<'_, PyDataset>,
-        n_iterations: Option<usize>,
-    ) -> PyResult<Py<PyAny>> {
-        self.predict_internal(py, &data, false, n_iterations)
+        n_threads: usize,
+    ) -> PyResult<Bound<'py, PyArray2<f32>>> {
+        let model = require_fitted(self.inner.as_ref(), "predict")?;
+        let dataset = data.inner();
+
+        validate_feature_count(model.meta().n_features, dataset.n_features())?;
+
+        // Predict with GIL released
+        let output = py.detach(|| model.predict(dataset, n_threads));
+
+        // Transpose from (n_outputs, n_samples) to (n_samples, n_outputs) for sklearn
+        Ok(PyArray2::from_owned_array(py, output.t().to_owned()))
     }
 
     /// Make raw (untransformed) predictions on data.
     ///
     /// Returns raw margin scores without transformation.
-    /// For classification this means logits instead of probabilities.
+    /// Output shape is (n_samples, n_outputs) - sklearn convention.
     ///
     /// Args:
     ///     data: Dataset containing features for prediction.
-    ///     n_iterations: Number of trees to use. Defaults to all trees.
+    ///     n_threads: Number of threads for parallel prediction (0 = auto).
     ///
     /// Returns:
-    ///     Raw scores of shape (n_samples, n_outputs).
-    ///
-    /// Raises:
-    ///     RuntimeError: If model has not been fitted.
-    ///     ValueError: If features have wrong shape.
-    ///
-    /// Examples:
-    ///     >>> raw_margins = model.predict_raw(test_data)
-    #[pyo3(signature = (data, n_iterations=None))]
-    #[gen_stub(override_return_type(type_repr = "numpy.ndarray", imports = ("numpy",)))]
-    pub fn predict_raw(
+    ///     Raw scores array with shape (n_samples, n_outputs).
+    #[pyo3(signature = (data, n_threads=0))]
+    pub fn predict_raw<'py>(
         &self,
-        py: Python<'_>,
+        py: Python<'py>,
         data: PyRef<'_, PyDataset>,
-        n_iterations: Option<usize>,
-    ) -> PyResult<Py<PyAny>> {
-        self.predict_internal(py, &data, true, n_iterations)
+        n_threads: usize,
+    ) -> PyResult<Bound<'py, PyArray2<f32>>> {
+        let model = require_fitted(self.inner.as_ref(), "predict_raw")?;
+        let dataset = data.inner();
+
+        validate_feature_count(model.meta().n_features, dataset.n_features())?;
+
+        // Predict with GIL released
+        let output = py.detach(|| model.predict_raw(dataset, n_threads));
+
+        // Transpose from (n_outputs, n_samples) to (n_samples, n_outputs) for sklearn
+        Ok(PyArray2::from_owned_array(py, output.t().to_owned()))
     }
 
     /// Train the model on a dataset.
@@ -334,23 +262,18 @@ impl PyGBDTModel {
     /// Args:
     ///     train: Training dataset containing features and labels.
     ///     valid: Validation set(s) for early stopping and evaluation.
+    ///     n_threads: Number of threads for parallel training (0 = auto).
     ///
     /// Returns:
     ///     Self (for method chaining).
-    ///
-    /// Raises:
-    ///     ValueError: If training data is invalid or labels are missing.
-    ///
-    /// Examples:
-    ///     >>> model = GBDTModel().fit(train_dataset)
-    #[pyo3(signature = (train, valid=None))]
+    #[pyo3(signature = (train, valid=None, n_threads=0))]
     pub fn fit<'py>(
         mut slf: PyRefMut<'py, Self>,
         py: Python<'py>,
         train: PyRef<'py, PyDataset>,
         valid: Option<Vec<PyRef<'py, PyEvalSet>>>,
+        n_threads: usize,
     ) -> PyResult<PyRefMut<'py, Self>> {
-        // Validate that training data has labels
         if !train.has_labels() {
             return Err(BoostersError::ValidationError(
                 "Training dataset must have labels".to_string(),
@@ -360,33 +283,25 @@ impl PyGBDTModel {
 
         // Convert Python config to core config
         let config = slf.config.bind(py).borrow();
-        let core_config = config.to_core(py)?;
+        let core_config: boosters::GBDTConfig = (&*config).into();
         drop(config);
 
-        // Get reference to the core dataset directly
-        let core_train = train.as_core();
+        let core_train = train.inner();
 
-        // Extract eval sets
-        let eval_set_data: Vec<(String, PyRef<'py, PyDataset>)> = valid
-            .unwrap_or_default()
-            .into_iter()
-            .map(|es| {
-                let name = es.name().to_string();
-                let dataset = es.get_dataset(py);
-                (name, dataset)
-            })
-            .collect();
-
-        // Create EvalSet references for training
-        let eval_set_refs: Vec<CoreEvalSet<'_>> = eval_set_data
+        // Build eval sets from PyEvalSet references
+        let py_eval_sets: Vec<_> = valid.unwrap_or_default();
+        let borrowed: Vec<_> = py_eval_sets
             .iter()
-            .map(|(name, ds)| CoreEvalSet::new(name.as_str(), ds.as_core()))
+            .map(|es| (es.name_str(), es.dataset_ref().bind(py).borrow()))
+            .collect();
+        let eval_sets: Vec<CoreEvalSet<'_>> = borrowed
+            .iter()
+            .map(|(name, ds)| CoreEvalSet::new(name, ds.inner()))
             .collect();
 
         // Train with GIL released
-        let n_threads = 0; // Auto-detect
         let trained_model = py.detach(|| {
-            boosters::GBDTModel::train(core_train, &eval_set_refs, core_config, n_threads)
+            boosters::GBDTModel::train(core_train, &eval_sets, core_config, n_threads)
         });
 
         match trained_model {
@@ -400,62 +315,5 @@ impl PyGBDTModel {
             )
             .into()),
         }
-    }
-}
-
-// Internal helper methods
-impl PyGBDTModel {
-    /// Set the inner model after training.
-    pub fn set_inner(&mut self, model: boosters::GBDTModel) {
-        self.inner = Some(model);
-    }
-
-    /// Get reference to inner model.
-    pub fn get_inner(&self) -> Option<&boosters::GBDTModel> {
-        self.inner.as_ref()
-    }
-
-    /// Internal prediction method shared by predict and predict_raw.
-    fn predict_internal(
-        &self,
-        py: Python<'_>,
-        data: &PyRef<'_, PyDataset>,
-        raw_score: bool,
-        n_iterations: Option<usize>,
-    ) -> PyResult<Py<PyAny>> {
-        let model = self.inner.as_ref().ok_or_else(|| BoostersError::NotFitted {
-            method: "predict".to_string(),
-        })?;
-
-        let core_dataset = data.as_core();
-
-        // Validate feature count
-        let expected_features = model.meta().n_features;
-        let actual_features = core_dataset.n_features();
-        if actual_features != expected_features {
-            return Err(BoostersError::ValidationError(format!(
-                "Expected {} features, got {}",
-                expected_features, actual_features
-            ))
-            .into());
-        }
-
-        // n_iterations accepted for API compatibility but not used
-        let _ = n_iterations;
-
-        // Predict with GIL released
-        let n_threads = 0;
-        let output = py.detach(|| {
-            if raw_score {
-                model.predict_raw(core_dataset, n_threads)
-            } else {
-                model.predict(core_dataset, n_threads)
-            }
-        });
-
-        // Transpose to [n_samples, n_groups] for Python convention
-        let output_t = transpose_to_c_order(output.view());
-        let arr = PyArray2::from_owned_array(py, output_t);
-        Ok(arr.into_any().unbind())
     }
 }

@@ -5,9 +5,9 @@
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
-use crate::error::BoostersError;
 use crate::metrics::PyMetric;
 use crate::objectives::PyObjective;
+use crate::validation::{validate_non_negative, validate_positive, validate_ratio};
 
 // =============================================================================
 // Growth Strategy
@@ -106,47 +106,41 @@ impl PyGrowthStrategy {
 /// This is the primary configuration class for gradient boosted decision trees.
 /// All parameters are flat (no nested config objects) matching the core Rust API.
 ///
-/// Args:
-///     n_estimators: Number of boosting rounds (trees to train). Default: 100.
-///     learning_rate: Step size shrinkage (0.01 - 0.3 typical). Default: 0.3.
-///     objective: Loss function for training. Default: Objective.Squared().
-///     metric: Evaluation metric. None uses objective's default.
+/// # Arguments
 ///
-///     # Tree Structure
-///     growth_strategy: Tree growth strategy. Default: GrowthStrategy.Depthwise.
-///     max_depth: Maximum tree depth (only for depthwise). Default: 6.
-///     n_leaves: Maximum leaves (only for leafwise). Default: 31.
-///     max_onehot_cats: Max categories for one-hot encoding. Default: 4.
+/// * `n_estimators` - Number of boosting rounds (trees to train). Default: 100.
+/// * `learning_rate` - Step size shrinkage (0.01 - 0.3 typical). Default: 0.3.
+/// * `objective` - Loss function for training. Default: Objective.Squared().
+/// * `metric` - Evaluation metric. None uses objective's default.
+/// * `growth_strategy` - Tree growth strategy. Default: GrowthStrategy.Depthwise.
+/// * `max_depth` - Maximum tree depth (only for depthwise). Default: 6.
+/// * `n_leaves` - Maximum leaves (only for leafwise). Default: 31.
+/// * `max_onehot_cats` - Max categories for one-hot encoding. Default: 4.
+/// * `l1` - L1 regularization on leaf weights. Default: 0.0.
+/// * `l2` - L2 regularization on leaf weights. Default: 1.0.
+/// * `min_gain_to_split` - Minimum gain required to make a split. Default: 0.0.
+/// * `min_child_weight` - Minimum sum of hessians in a leaf. Default: 1.0.
+/// * `min_samples_leaf` - Minimum samples in a leaf. Default: 1.
+/// * `subsample` - Row subsampling ratio per tree. Default: 1.0.
+/// * `colsample_bytree` - Column subsampling per tree. Default: 1.0.
+/// * `colsample_bylevel` - Column subsampling per level. Default: 1.0.
+/// * `linear_leaves` - Enable linear models in leaves (experimental). Default: False.
+/// * `linear_l2` - L2 regularization for linear coefficients. Default: 0.01.
+/// * `linear_l1` - L1 regularization for linear coefficients. Default: 0.0.
+/// * `early_stopping_rounds` - Stop if no improvement for this many rounds.
+/// * `seed` - Random seed for reproducibility. Default: 42.
 ///
-///     # Regularization
-///     l1: L1 regularization on leaf weights. Default: 0.0.
-///     l2: L2 regularization on leaf weights. Default: 1.0.
-///     min_gain_to_split: Minimum gain required to make a split. Default: 0.0.
-///     min_child_weight: Minimum sum of hessians in a leaf. Default: 1.0.
-///     min_samples_leaf: Minimum samples in a leaf. Default: 1.
+/// # Example (Python)
 ///
-///     # Sampling
-///     subsample: Row subsampling ratio per tree. Default: 1.0.
-///     colsample_bytree: Column subsampling per tree. Default: 1.0.
-///     colsample_bylevel: Column subsampling per level. Default: 1.0.
-///
-///     # Linear Leaves (experimental)
-///     linear_leaves: Enable linear models in leaves. Default: False.
-///     linear_l2: L2 regularization for linear coefficients. Default: 0.01.
-///     linear_l1: L1 regularization for linear coefficients. Default: 0.0.
-///
-///     # Training Control
-///     early_stopping_rounds: Stop if no improvement for this many rounds.
-///     seed: Random seed for reproducibility. Default: 42.
-///
-/// Examples:
-///     >>> config = GBDTConfig(
-///     ...     n_estimators=500,
-///     ...     learning_rate=0.1,
-///     ...     objective=Objective.logistic(),
-///     ...     max_depth=6,
-///     ...     l2=1.0,
-///     ... )
+/// ```text
+/// config = GBDTConfig(
+///     n_estimators=500,
+///     learning_rate=0.1,
+///     objective=Objective.logistic(),
+///     max_depth=6,
+///     l2=1.0,
+/// )
+/// ```
 #[gen_stub_pyclass]
 #[pyclass(name = "GBDTConfig", module = "boosters._boosters_rs")]
 #[derive(Debug, Clone)]
@@ -278,76 +272,16 @@ impl PyGBDTConfig {
         early_stopping_rounds: Option<u32>,
         seed: u64,
     ) -> PyResult<Self> {
-        // Validate n_estimators
-        if n_estimators == 0 {
-            return Err(BoostersError::InvalidParameter {
-                name: "n_estimators".to_string(),
-                reason: "must be positive".to_string(),
-            }
-            .into());
-        }
-
-        // Validate learning_rate
-        if learning_rate <= 0.0 {
-            return Err(BoostersError::InvalidParameter {
-                name: "learning_rate".to_string(),
-                reason: "must be positive".to_string(),
-            }
-            .into());
-        }
-
-        // Validate sampling ratios
-        if subsample <= 0.0 || subsample > 1.0 {
-            return Err(BoostersError::InvalidParameter {
-                name: "subsample".to_string(),
-                reason: "must be in (0, 1]".to_string(),
-            }
-            .into());
-        }
-        if colsample_bytree <= 0.0 || colsample_bytree > 1.0 {
-            return Err(BoostersError::InvalidParameter {
-                name: "colsample_bytree".to_string(),
-                reason: "must be in (0, 1]".to_string(),
-            }
-            .into());
-        }
-        if colsample_bylevel <= 0.0 || colsample_bylevel > 1.0 {
-            return Err(BoostersError::InvalidParameter {
-                name: "colsample_bylevel".to_string(),
-                reason: "must be in (0, 1]".to_string(),
-            }
-            .into());
-        }
-
-        // Validate regularization
-        if l1 < 0.0 {
-            return Err(BoostersError::InvalidParameter {
-                name: "l1".to_string(),
-                reason: "must be non-negative".to_string(),
-            }
-            .into());
-        }
-        if l2 < 0.0 {
-            return Err(BoostersError::InvalidParameter {
-                name: "l2".to_string(),
-                reason: "must be non-negative".to_string(),
-            }
-            .into());
-        }
-        if min_child_weight < 0.0 {
-            return Err(BoostersError::InvalidParameter {
-                name: "min_child_weight".to_string(),
-                reason: "must be non-negative".to_string(),
-            }
-            .into());
-        }
-        if min_gain_to_split < 0.0 {
-            return Err(BoostersError::InvalidParameter {
-                name: "min_gain_to_split".to_string(),
-                reason: "must be non-negative".to_string(),
-            }
-            .into());
-        }
+        // Validate parameters
+        validate_positive("n_estimators", n_estimators)?;
+        validate_positive("learning_rate", learning_rate)?;
+        validate_ratio("subsample", subsample)?;
+        validate_ratio("colsample_bytree", colsample_bytree)?;
+        validate_ratio("colsample_bylevel", colsample_bylevel)?;
+        validate_non_negative("l1", l1)?;
+        validate_non_negative("l2", l2)?;
+        validate_non_negative("min_child_weight", min_child_weight)?;
+        validate_non_negative("min_gain_to_split", min_gain_to_split)?;
 
         Ok(Self {
             n_estimators,
@@ -424,78 +358,63 @@ impl Default for PyGBDTConfig {
     }
 }
 
-impl PyGBDTConfig {
-    /// Convert Python config to core Rust config.
-    ///
-    /// Called at fit-time to create the Rust training configuration.
-    pub fn to_core(&self, _py: Python<'_>) -> PyResult<boosters::GBDTConfig> {
+impl From<&PyGBDTConfig> for boosters::GBDTConfig {
+    fn from(py_config: &PyGBDTConfig) -> Self {
         use boosters::training::gbdt::GrowthStrategy;
 
         // Convert objective
-        let objective: boosters::training::Objective = (&self.objective).into();
+        let objective: boosters::training::Objective = (&py_config.objective).into();
 
         // Convert metric (optional)
-        let metric = self.metric.as_ref().map(|m| m.into());
+        let metric = py_config.metric.as_ref().map(|m| m.into());
 
         // Convert growth strategy
-        let growth_strategy = match self.growth_strategy {
+        let growth_strategy = match py_config.growth_strategy {
             PyGrowthStrategy::Depthwise => GrowthStrategy::DepthWise {
-                max_depth: self.max_depth,
+                max_depth: py_config.max_depth,
             },
             PyGrowthStrategy::Leafwise => GrowthStrategy::LeafWise {
-                max_leaves: self.n_leaves,
+                max_leaves: py_config.n_leaves,
             },
         };
 
         // Convert linear leaves config (optional)
-        let linear_leaves = if self.linear_leaves {
+        let linear_leaves = if py_config.linear_leaves {
             Some(boosters::training::gbdt::LinearLeafConfig {
-                lambda: self.linear_l2 as f32,
-                alpha: self.linear_l1 as f32,
-                max_iterations: 10,          // Default
-                tolerance: 1e-6,             // Default
-                min_samples: 50,             // Default
-                coefficient_threshold: 1e-6, // Default
-                max_features: 10,            // Default
+                lambda: py_config.linear_l2 as f32,
+                alpha: py_config.linear_l1 as f32,
+                max_iterations: 10,
+                tolerance: 1e-6,
+                min_samples: 50,
+                coefficient_threshold: 1e-6,
+                max_features: 10,
             })
         } else {
             None
         };
 
-        // Build core config using struct constructor.
-        // This ensures compile-time errors if new fields are added to GBDTConfig.
-        let config = boosters::GBDTConfig {
+        boosters::GBDTConfig {
             objective,
             metric,
-            n_trees: self.n_estimators,
-            learning_rate: self.learning_rate as f32,
+            n_trees: py_config.n_estimators,
+            learning_rate: py_config.learning_rate as f32,
             growth_strategy,
-            max_onehot_cats: self.max_onehot_cats,
-            lambda: self.l2 as f32,
-            alpha: self.l1 as f32,
-            min_gain: self.min_gain_to_split as f32,
-            min_child_weight: self.min_child_weight as f32,
-            min_samples_leaf: self.min_samples_leaf,
-            subsample: self.subsample as f32,
-            colsample_bytree: self.colsample_bytree as f32,
-            colsample_bylevel: self.colsample_bylevel as f32,
+            max_onehot_cats: py_config.max_onehot_cats,
+            lambda: py_config.l2 as f32,
+            alpha: py_config.l1 as f32,
+            min_gain: py_config.min_gain_to_split as f32,
+            min_child_weight: py_config.min_child_weight as f32,
+            min_samples_leaf: py_config.min_samples_leaf,
+            subsample: py_config.subsample as f32,
+            colsample_bytree: py_config.colsample_bytree as f32,
+            colsample_bylevel: py_config.colsample_bylevel as f32,
             binning: Default::default(),
             linear_leaves,
-            early_stopping_rounds: self.early_stopping_rounds,
+            early_stopping_rounds: py_config.early_stopping_rounds,
             cache_size: 8,
-            seed: self.seed,
+            seed: py_config.seed,
             verbosity: Default::default(),
-        };
-
-        // Validate the constructed config
-        config.validate().map_err(|e| {
-            BoostersError::InvalidParameter {
-                name: "config".to_string(),
-                reason: e.to_string(),
-            }
-        })?;
-
-        Ok(config)
+        }
     }
 }
 
@@ -580,40 +499,11 @@ impl PyGBLinearConfig {
         early_stopping_rounds: Option<u32>,
         seed: u64,
     ) -> PyResult<Self> {
-        // Validate n_estimators
-        if n_estimators == 0 {
-            return Err(BoostersError::InvalidParameter {
-                name: "n_estimators".to_string(),
-                reason: "must be positive".to_string(),
-            }
-            .into());
-        }
-
-        // Validate learning_rate
-        if learning_rate <= 0.0 {
-            return Err(BoostersError::InvalidParameter {
-                name: "learning_rate".to_string(),
-                reason: "must be positive".to_string(),
-            }
-            .into());
-        }
-
-        // Validate regularization
-        if l1 < 0.0 {
-            return Err(BoostersError::InvalidParameter {
-                name: "l1".to_string(),
-                reason: "must be non-negative".to_string(),
-            }
-            .into());
-        }
-
-        if l2 < 0.0 {
-            return Err(BoostersError::InvalidParameter {
-                name: "l2".to_string(),
-                reason: "must be non-negative".to_string(),
-            }
-            .into());
-        }
+        // Validate parameters
+        validate_positive("n_estimators", n_estimators)?;
+        validate_positive("learning_rate", learning_rate)?;
+        validate_non_negative("l1", l1)?;
+        validate_non_negative("l2", l2)?;
 
         Ok(Self {
             n_estimators,
@@ -649,37 +539,27 @@ impl PyGBLinearConfig {
     }
 }
 
-impl PyGBLinearConfig {
-    /// Convert to core GBLinearConfig for training.
-    pub fn to_core(&self) -> PyResult<boosters::GBLinearConfig> {
+impl From<&PyGBLinearConfig> for boosters::GBLinearConfig {
+    fn from(py_config: &PyGBLinearConfig) -> Self {
         // Convert objective
-        let objective: boosters::training::Objective = (&self.objective).into();
+        let objective: boosters::training::Objective = (&py_config.objective).into();
 
         // Convert metric if present
-        let metric = self.metric.as_ref().map(|m| m.into());
+        let metric = py_config.metric.as_ref().map(|m| m.into());
 
-        // Build core config using struct constructor instead of builder.
-        // This ensures compile-time errors if new fields are added to GBLinearConfig.
-        let config = boosters::GBLinearConfig {
+        boosters::GBLinearConfig {
             objective,
             metric,
-            n_rounds: self.n_estimators,
-            learning_rate: self.learning_rate as f32,
-            alpha: self.l1 as f32,
-            lambda: self.l2 as f32,
-            parallel: true, // Default
+            n_rounds: py_config.n_estimators,
+            learning_rate: py_config.learning_rate as f32,
+            alpha: py_config.l1 as f32,
+            lambda: py_config.l2 as f32,
+            parallel: true,
             feature_selector: Default::default(),
-            early_stopping_rounds: self.early_stopping_rounds,
-            seed: self.seed,
+            early_stopping_rounds: py_config.early_stopping_rounds,
+            seed: py_config.seed,
             verbosity: Default::default(),
-        };
-
-        // Validate the constructed config
-        config
-            .validate()
-            .map_err(|e| BoostersError::ValidationError(e.to_string()))?;
-
-        Ok(config)
+        }
     }
 }
 

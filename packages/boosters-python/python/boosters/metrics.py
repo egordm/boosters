@@ -22,12 +22,13 @@ Classification:
 Ranking:
     - Metric.Ndcg(at): Normalized discounted cumulative gain
 
-Pattern Matching:
-    >>> match metric:
-    ...     case Metric.Rmse():
-    ...         print("RMSE")
-    ...     case Metric.Ndcg(at=k):
-    ...         print(f"NDCG@{k}")
+Pattern Matching::
+
+    match metric:
+        case Metric.Rmse():
+            print("RMSE")
+        case Metric.Ndcg(at=k):
+            print(f"NDCG@{k}")
 """
 
 from boosters._boosters_rs import Metric

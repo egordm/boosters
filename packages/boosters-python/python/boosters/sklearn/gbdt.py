@@ -10,6 +10,7 @@ from boosters import (
     GBDTConfig,
     GBDTModel,
     GrowthStrategy,
+    ImportanceType,
     Metric,
     Objective,
 )
@@ -258,11 +259,31 @@ class GBDTRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
         # Squeeze from (n_samples, 1) to (n_samples,) for sklearn compatibility
         return np.squeeze(preds, axis=-1)
 
+    def get_feature_importance(
+        self, importance_type: ImportanceType = ImportanceType.Gain
+    ) -> NDArray[np.float32]:
+        """Get feature importance scores.
+
+        Parameters
+        ----------
+        importance_type : ImportanceType, default=ImportanceType.Gain
+            Type of feature importance to compute.
+            - ImportanceType.Split: Number of times feature is used in splits
+            - ImportanceType.Gain: Total gain from splits using feature
+
+        Returns:
+        -------
+        importance : ndarray of shape (n_features,)
+            Feature importance scores.
+        """
+        check_is_fitted(self, ["model_"])
+        return self.model_.feature_importance(importance_type)
+
     @property
-    def feature_importances_(self) -> NDArray[np.float64]:
+    def feature_importances_(self) -> NDArray[np.float32]:
         """Return feature importances (gain-based)."""
         check_is_fitted(self, ["model_"])
-        return self.model_.feature_importance(importance_type="gain")
+        return self.model_.feature_importance(ImportanceType.Gain)
 
 
 class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
@@ -477,7 +498,7 @@ class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
     def feature_importances_(self) -> NDArray[np.float64]:
         """Return feature importances (gain-based)."""
         check_is_fitted(self, ["model_"])
-        return self.model_.feature_importance(importance_type="gain")
+        return self.model_.feature_importance(ImportanceType.Gain)
 
 
 __all__ = ["GBDTClassifier", "GBDTRegressor"]

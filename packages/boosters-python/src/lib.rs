@@ -6,15 +6,18 @@
 mod config;
 mod data;
 mod error;
+mod importance;
 mod metrics;
 mod model;
 mod objectives;
+mod validation;
 
 use pyo3::prelude::*;
 use pyo3_stub_gen::define_stub_info_gatherer;
 
 pub use config::{PyGBDTConfig, PyGBLinearConfig, PyGrowthStrategy};
 use data::{PyDataset, PyEvalSet};
+use importance::PyImportanceType;
 use metrics::PyMetric;
 use model::{PyGBDTModel, PyGBLinearModel};
 use objectives::PyObjective;
@@ -43,6 +46,9 @@ fn _boosters_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Objective and Metric enums (complex enums with variants)
     m.add_class::<PyObjective>()?;
     m.add_class::<PyMetric>()?;
+
+    // Explainability types
+    m.add_class::<PyImportanceType>()?;
 
     Ok(())
 }

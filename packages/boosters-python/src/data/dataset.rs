@@ -148,18 +148,15 @@ impl PyDataset {
 }
 
 impl PyDataset {
-    /// Get direct access to the inner CoreDataset.
-    pub fn as_core(&self) -> &CoreDataset {
+    /// Get the inner CoreDataset.
+    #[inline]
+    pub fn inner(&self) -> &CoreDataset {
         &self.inner
     }
+}
 
-    /// Get mutable access to the inner CoreDataset.
-    pub fn as_core_mut(&mut self) -> &mut CoreDataset {
-        &mut self.inner
-    }
-
-    /// Consume and return the inner CoreDataset.
-    pub fn into_core(self) -> CoreDataset {
-        self.inner
+impl AsRef<CoreDataset> for PyDataset {
+    fn as_ref(&self) -> &CoreDataset {
+        &self.inner
     }
 }

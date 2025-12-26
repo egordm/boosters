@@ -80,8 +80,15 @@ impl PyEvalSet {
 }
 
 impl PyEvalSet {
-    /// Get the dataset reference.
-    pub fn get_dataset<'py>(&self, py: Python<'py>) -> PyRef<'py, PyDataset> {
-        self.dataset.bind(py).borrow()
+    /// Get the name as a string slice.
+    #[inline]
+    pub fn name_str(&self) -> &str {
+        &self.name
+    }
+
+    /// Get the dataset Py reference.
+    #[inline]
+    pub fn dataset_ref(&self) -> &Py<PyDataset> {
+        &self.dataset
     }
 }
