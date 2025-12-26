@@ -46,12 +46,13 @@ pub enum RowSamplingParams {
     },
 }
 
-
-
 impl RowSamplingParams {
     /// Create uniform sampling config.
     pub fn uniform(subsample: f32) -> Self {
-        assert!(subsample > 0.0 && subsample <= 1.0, "subsample must be in (0, 1]");
+        assert!(
+            subsample > 0.0 && subsample <= 1.0,
+            "subsample must be in (0, 1]"
+        );
         if (subsample - 1.0).abs() < 1e-6 {
             Self::None
         } else {
@@ -63,8 +64,14 @@ impl RowSamplingParams {
     pub fn goss(top_rate: f32, other_rate: f32) -> Self {
         assert!(top_rate > 0.0, "top_rate must be positive");
         assert!(other_rate > 0.0, "other_rate must be positive");
-        assert!(top_rate + other_rate <= 1.0, "top_rate + other_rate must be <= 1.0");
-        Self::Goss { top_rate, other_rate }
+        assert!(
+            top_rate + other_rate <= 1.0,
+            "top_rate + other_rate must be <= 1.0"
+        );
+        Self::Goss {
+            top_rate,
+            other_rate,
+        }
     }
 }
 
@@ -97,7 +104,7 @@ impl RowSampler {
     /// * `learning_rate` - Learning rate (used to compute GOSS warmup)
     pub fn new(config: RowSamplingParams, n_rows: usize, seed: u64, learning_rate: f32) -> Self {
         let rng = SmallRng::seed_from_u64(seed);
-        
+
         // GOSS warmup: don't sample for first 1/learning_rate iterations
         let warmup_rounds = match &config {
             RowSamplingParams::Goss { .. } => (1.0 / learning_rate) as usize,
@@ -131,27 +138,26 @@ impl RowSampler {
     /// # Note
     /// For GOSS, the gradients and hessians are modified in-place to apply
     /// the amplification factor for sampled small-gradient samples.
-    pub fn sample(
-        &mut self,
-        iteration: usize,
-        grad_hess: &mut [GradsTuple],
-    ) -> Option<&[u32]> {
+    pub fn sample(&mut self, iteration: usize, grad_hess: &mut [GradsTuple]) -> Option<&[u32]> {
         let n_rows = grad_hess.len();
-        
+
         match &self.config {
             RowSamplingParams::None => None,
-            
+
             RowSamplingParams::Uniform { subsample } => {
                 self.sample_uniform(grad_hess, n_rows, *subsample);
                 Some(&self.indices)
             }
-            
-            RowSamplingParams::Goss { top_rate, other_rate } => {
+
+            RowSamplingParams::Goss {
+                top_rate,
+                other_rate,
+            } => {
                 // Skip GOSS during warmup
                 if iteration < self.warmup_rounds {
                     return None;
                 }
-                
+
                 self.sample_goss(grad_hess, *top_rate, *other_rate);
                 Some(&self.indices)
             }
@@ -161,17 +167,12 @@ impl RowSampler {
     /// Uniform random sampling.
     ///
     /// Zeros out gradients for unsampled rows to exclude them from tree building.
-    fn sample_uniform(
-        &mut self,
-        grad_hess: &mut [GradsTuple],
-        n_rows: usize,
-        subsample: f32,
-    ) {
+    fn sample_uniform(&mut self, grad_hess: &mut [GradsTuple], n_rows: usize, subsample: f32) {
         self.indices.clear();
-        
+
         let target_count = ((n_rows as f32) * subsample) as usize;
         let target_count = target_count.max(1);
-        
+
         let target_count = target_count.min(n_rows);
         if target_count == 0 {
             grad_hess.fill(GradsTuple::default());
@@ -207,14 +208,9 @@ impl RowSampler {
     }
 
     /// GOSS sampling.
-    fn sample_goss(
-        &mut self,
-        grad_hess: &mut [GradsTuple],
-        top_rate: f32,
-        other_rate: f32,
-    ) {
+    fn sample_goss(&mut self, grad_hess: &mut [GradsTuple], top_rate: f32, other_rate: f32) {
         let n_rows = grad_hess.len();
-        
+
         // Step 1: Compute gradient magnitudes |grad * hess|
         self.grad_magnitudes.clear();
         self.grad_magnitudes
@@ -229,24 +225,23 @@ impl RowSampler {
         // Clone for partitioning (we need original order)
         let mut sorted_mags = self.grad_magnitudes.clone();
         let threshold_idx = n_rows - top_k;
-        let (_, threshold_val, _) = sorted_mags.select_nth_unstable_by(
-            threshold_idx,
-            |a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-        );
+        let (_, threshold_val, _) = sorted_mags.select_nth_unstable_by(threshold_idx, |a, b| {
+            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+        });
         let threshold = *threshold_val;
 
         // Step 3: Select samples
         self.indices.clear();
-        
+
         // Amplification factor for small gradients
         let multiply = (n_rows - top_k) as f32 / other_k as f32;
-        
+
         let mut big_count = 0usize;
         let mut small_sampled = 0usize;
-        
+
         for (i, gh) in grad_hess.iter_mut().enumerate() {
             let mag = self.grad_magnitudes[i];
-            
+
             if mag >= threshold {
                 // Top gradient - always keep
                 self.indices.push(i as u32);
@@ -255,13 +250,13 @@ impl RowSampler {
                 // Small gradient - sample with adaptive probability
                 let rest_need = other_k.saturating_sub(small_sampled);
                 let rest_all = (n_rows - i).saturating_sub(top_k.saturating_sub(big_count));
-                
+
                 if rest_all > 0 {
                     let prob = rest_need as f32 / rest_all as f32;
                     if self.rng.r#gen::<f32>() < prob {
                         self.indices.push(i as u32);
                         small_sampled += 1;
-                        
+
                         // Amplify gradients to correct bias
                         gh.grad *= multiply;
                         gh.hess *= multiply;
@@ -269,7 +264,7 @@ impl RowSampler {
                 }
             }
         }
-        
+
         // Sort for cache-friendly access
         self.indices.sort_unstable();
     }
@@ -278,10 +273,11 @@ impl RowSampler {
     pub fn sample_count(&self, n_rows: usize, iteration: usize) -> usize {
         match &self.config {
             RowSamplingParams::None => n_rows,
-            RowSamplingParams::Uniform { subsample } => {
-                ((n_rows as f32) * subsample) as usize
-            }
-            RowSamplingParams::Goss { top_rate, other_rate } => {
+            RowSamplingParams::Uniform { subsample } => ((n_rows as f32) * subsample) as usize,
+            RowSamplingParams::Goss {
+                top_rate,
+                other_rate,
+            } => {
                 if iteration < self.warmup_rounds {
                     n_rows
                 } else {
@@ -307,20 +303,21 @@ mod tests {
 
     #[test]
     fn test_uniform_sampling() {
-        let mut sampler = RowSampler::new(
-            RowSamplingParams::uniform(0.5),
-            100,
-            42,
-            0.1,
-        );
-        
-        let mut grad_hess = vec![GradsTuple { grad: 1.0, hess: 1.0 }; 100];
-        
+        let mut sampler = RowSampler::new(RowSamplingParams::uniform(0.5), 100, 42, 0.1);
+
+        let mut grad_hess = vec![
+            GradsTuple {
+                grad: 1.0,
+                hess: 1.0
+            };
+            100
+        ];
+
         let indices = sampler.sample(0, &mut grad_hess).unwrap();
-        
+
         // Should sample approximately 50 rows
         assert!(indices.len() >= 40 && indices.len() <= 60);
-        
+
         // Indices should be sorted
         for i in 1..indices.len() {
             assert!(indices[i] > indices[i - 1]);
@@ -335,14 +332,20 @@ mod tests {
             42,
             0.1, // warmup = 10 rounds
         );
-        
-        let mut grad_hess = vec![GradsTuple { grad: 1.0, hess: 1.0 }; 100];
-        
+
+        let mut grad_hess = vec![
+            GradsTuple {
+                grad: 1.0,
+                hess: 1.0
+            };
+            100
+        ];
+
         // During warmup, should return None
         assert!(sampler.sample(0, &mut grad_hess).is_none());
         assert!(sampler.sample(5, &mut grad_hess).is_none());
         assert!(sampler.sample(9, &mut grad_hess).is_none());
-        
+
         // After warmup, should return indices
         assert!(sampler.sample(10, &mut grad_hess).is_some());
     }
@@ -356,7 +359,7 @@ mod tests {
             42,
             100.0, // high lr = no warmup (warmup < 1)
         );
-        
+
         // Create gradients with varying magnitudes
         let mut grad_hess: Vec<GradsTuple> = (0..n_rows)
             .map(|i| GradsTuple {
@@ -364,21 +367,28 @@ mod tests {
                 hess: 1.0,
             })
             .collect();
-        
+
         let indices = sampler.sample(0, &mut grad_hess).unwrap();
-        
+
         // Should sample approximately 30% (20% top + 10% other)
         let expected = (n_rows as f32 * 0.3) as usize;
         assert!(indices.len() >= expected - 50 && indices.len() <= expected + 50);
-        
+
         // High gradient samples should be included
         // Last 200 samples (top 20%) should mostly be in indices
         let top_count = indices.iter().filter(|&&i| i >= 800).count();
-        assert!(top_count >= 180, "Expected most top gradients to be kept, got {}", top_count);
-        
+        assert!(
+            top_count >= 180,
+            "Expected most top gradients to be kept, got {}",
+            top_count
+        );
+
         // Check that some small gradients were amplified
         let amplified_count = grad_hess.iter().filter(|gh| gh.grad > 1.0).count();
-        assert!(amplified_count > 0, "Expected some gradients to be amplified");
+        assert!(
+            amplified_count > 0,
+            "Expected some gradients to be amplified"
+        );
     }
 
     #[test]
@@ -390,19 +400,25 @@ mod tests {
             42,
             100.0, // high lr = no warmup
         );
-        
+
         // All small gradients
-        let mut grad_hess = vec![GradsTuple { grad: 0.01, hess: 1.0 }; n_rows];
-        
+        let mut grad_hess = vec![
+            GradsTuple {
+                grad: 0.01,
+                hess: 1.0
+            };
+            n_rows
+        ];
+
         // Set a few to be "top" gradients
         for i in 80..100 {
             grad_hess[i].grad = 1.0;
         }
-        
+
         let original_small_grad = grad_hess[0].grad;
-        
+
         sampler.sample(0, &mut grad_hess).unwrap();
-        
+
         // Amplification factor should be (100 - 20) / 10 = 8.0
         // Some small gradients should be amplified
         let amplified: Vec<_> = grad_hess
@@ -411,7 +427,7 @@ mod tests {
             .map(|gh| gh.grad)
             .filter(|&g| (g - original_small_grad).abs() > 0.001)
             .collect();
-        
+
         if !amplified.is_empty() {
             let expected_amplified = original_small_grad * 8.0;
             assert!(
@@ -425,15 +441,16 @@ mod tests {
 
     #[test]
     fn test_no_sampling() {
-        let mut sampler = RowSampler::new(
-            RowSamplingParams::None,
-            100,
-            42,
-            0.1,
-        );
-        
-        let mut grad_hess = vec![GradsTuple { grad: 1.0, hess: 1.0 }; 100];
-        
+        let mut sampler = RowSampler::new(RowSamplingParams::None, 100, 42, 0.1);
+
+        let mut grad_hess = vec![
+            GradsTuple {
+                grad: 1.0,
+                hess: 1.0
+            };
+            100
+        ];
+
         assert!(sampler.sample(0, &mut grad_hess).is_none());
         assert!(!sampler.is_sampling_active(0));
     }
@@ -446,10 +463,10 @@ mod tests {
             42,
             0.1, // warmup = 10
         );
-        
+
         // During warmup
         assert_eq!(sampler.sample_count(1000, 0), 1000);
-        
+
         // After warmup
         assert_eq!(sampler.sample_count(1000, 10), 300);
     }

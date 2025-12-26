@@ -81,8 +81,15 @@ fn main() {
     let targets_2d = labels.clone().insert_axis(ndarray::Axis(0));
     let targets = TargetsView::new(targets_2d.view());
 
-    let model_depth = GBDTModel::train_binned(&dataset, targets.clone(), WeightsView::None, &[], config_depth, 1)
-        .expect("Training failed");
+    let model_depth = GBDTModel::train_binned(
+        &dataset,
+        targets.clone(),
+        WeightsView::None,
+        &[],
+        config_depth,
+        1,
+    )
+    .expect("Training failed");
 
     // Predict: features_dataset is already feature-major
     let predictions = model_depth.predict(&features_dataset, 1);
@@ -106,8 +113,15 @@ fn main() {
         .build()
         .expect("Invalid configuration");
 
-    let model_leaf = GBDTModel::train_binned(&dataset, targets.clone(), WeightsView::None, &[], config_leaf, 1)
-        .expect("Training failed");
+    let model_leaf = GBDTModel::train_binned(
+        &dataset,
+        targets.clone(),
+        WeightsView::None,
+        &[],
+        config_leaf,
+        1,
+    )
+    .expect("Training failed");
 
     let predictions = model_leaf.predict(&features_dataset, 1);
 
@@ -153,7 +167,10 @@ fn main() {
     let predictions = model_weighted.predict(&features_dataset, 1);
 
     let acc = compute_accuracy(predictions.as_slice().unwrap(), labels.as_slice().unwrap());
-    println!("Weighted training: {} trees", model_weighted.forest().n_trees());
+    println!(
+        "Weighted training: {} trees",
+        model_weighted.forest().n_trees()
+    );
     println!("Accuracy: {:.2}%", acc * 100.0);
     println!("\nNote: See train_imbalanced.rs for class imbalance handling.");
 }

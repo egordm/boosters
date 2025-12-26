@@ -112,9 +112,7 @@ def save_training_case(
 
         dtest = xgb.DMatrix(x_test)
         test_preds = booster.predict(dtest, output_margin=True)
-        save_json(
-            output_dir / f"{name}.test_predictions.json", {"predictions": test_preds.tolist()}
-        )
+        save_json(output_dir / f"{name}.test_predictions.json", {"predictions": test_preds.tolist()})
 
         # Metrics
         metrics = {"num_trees": int(booster.num_boosted_rounds())}
@@ -231,9 +229,7 @@ def gen_gblinear_binary() -> None:
     dtrain = xgb.DMatrix(x, label=y)
     params = {"objective": "binary:logistic", "booster": "gblinear", "eta": 0.5}
     booster = xgb.train(params, dtrain, num_boost_round=20)
-    save_xgb_test_case(
-        "gblinear_binary", booster, x_test, "binary:logistic", output_dir=GBLINEAR_INFERENCE_DIR
-    )
+    save_xgb_test_case("gblinear_binary", booster, x_test, "binary:logistic", output_dir=GBLINEAR_INFERENCE_DIR)
 
 
 # =============================================================================

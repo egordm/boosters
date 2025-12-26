@@ -126,7 +126,7 @@ pub struct LgbTree {
     pub cat_boundaries: Vec<i32>,
     /// Categorical split threshold bitset
     pub cat_threshold: Vec<u32>,
-    
+
     // Linear tree fields (only populated when is_linear=true)
     /// Intercept for each leaf's linear model (size: n_leaves)
     pub leaf_const: Vec<f64>,
@@ -353,9 +353,7 @@ impl LgbModel {
 // =============================================================================
 
 /// Parse header section until first Tree= line.
-fn parse_header(
-    lines: &mut std::iter::Peekable<std::str::Lines>,
-) -> Result<LgbHeader, ParseError> {
+fn parse_header(lines: &mut std::iter::Peekable<std::str::Lines>) -> Result<LgbHeader, ParseError> {
     let mut header = LgbHeader::default();
     let mut kv = HashMap::new();
 
@@ -452,10 +450,7 @@ fn parse_tree(lines: &mut std::iter::Peekable<std::str::Lines>) -> Result<LgbTre
         .and_then(|v| v.parse().ok())
         .ok_or(ParseError::MissingField("num_leaves"))?;
 
-    tree.n_cat = kv
-        .get("num_cat")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
+    tree.n_cat = kv.get("num_cat").and_then(|v| v.parse().ok()).unwrap_or(0);
 
     tree.shrinkage = kv
         .get("shrinkage")
@@ -574,16 +569,14 @@ fn parse_tree(lines: &mut std::iter::Peekable<std::str::Lines>) -> Result<LgbTre
         // Parse leaf_features: grouped by leaf, separated by spaces
         // Format: "0 1  2  0 1 2" where groups are based on num_features_per_leaf
         if let Some(features_str) = kv.get("leaf_features") {
-            tree.leaf_features =
-                parse_grouped_int_array(features_str, &tree.n_features_per_leaf)?;
+            tree.leaf_features = parse_grouped_int_array(features_str, &tree.n_features_per_leaf)?;
         } else {
             tree.leaf_features = vec![Vec::new(); tree.n_leaves];
         }
 
         // Parse leaf_coeff: same grouping as leaf_features
         if let Some(coeff_str) = kv.get("leaf_coeff") {
-            tree.leaf_coeff =
-                parse_grouped_double_array(coeff_str, &tree.n_features_per_leaf)?;
+            tree.leaf_coeff = parse_grouped_double_array(coeff_str, &tree.n_features_per_leaf)?;
         } else {
             tree.leaf_coeff = vec![Vec::new(); tree.n_leaves];
         }
@@ -705,7 +698,11 @@ fn parse_grouped_double_array(s: &str, counts: &[i32]) -> Result<Vec<Vec<f64>>, 
     Ok(result)
 }
 
-fn validate_array_size<T>(field: &'static str, arr: &[T], expected: usize) -> Result<(), ParseError> {
+fn validate_array_size<T>(
+    field: &'static str,
+    arr: &[T],
+    expected: usize,
+) -> Result<(), ParseError> {
     if arr.len() != expected {
         return Err(ParseError::ArraySizeMismatch {
             field,
@@ -758,22 +755,28 @@ mod tests {
 
     #[test]
     fn parse_objective() {
-        assert!(matches!(LgbObjective::parse("regression"), LgbObjective::Regression));
-        
+        assert!(matches!(
+            LgbObjective::parse("regression"),
+            LgbObjective::Regression
+        ));
+
         let binary = LgbObjective::parse("binary sigmoid:1");
         assert!(matches!(binary, LgbObjective::Binary { sigmoid } if (sigmoid - 1.0).abs() < 1e-6));
 
         let multiclass = LgbObjective::parse("multiclass num_class:3");
-        assert!(matches!(multiclass, LgbObjective::Multiclass { num_class: 3 }));
+        assert!(matches!(
+            multiclass,
+            LgbObjective::Multiclass { num_class: 3 }
+        ));
     }
 
     #[test]
     fn parse_small_tree_model() {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/test-cases/lightgbm/inference/small_tree/model.txt");
-        
+
         let model = LgbModel::from_file(&path).expect("Failed to parse model");
-        
+
         assert_eq!(model.header.version, "v4");
         assert_eq!(model.header.n_class, 1);
         assert_eq!(model.n_trees(), 3);
@@ -792,11 +795,14 @@ mod tests {
     fn parse_binary_classification_model() {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/test-cases/lightgbm/inference/binary_classification/model.txt");
-        
+
         let model = LgbModel::from_file(&path).expect("Failed to parse model");
-        
+
         assert_eq!(model.header.n_class, 1); // Binary uses num_class=1
-        assert!(matches!(model.header.objective, Some(LgbObjective::Binary { .. })));
+        assert!(matches!(
+            model.header.objective,
+            Some(LgbObjective::Binary { .. })
+        ));
         assert!(model.n_trees() > 0);
     }
 
@@ -804,12 +810,15 @@ mod tests {
     fn parse_multiclass_model() {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/test-cases/lightgbm/inference/multiclass/model.txt");
-        
+
         let model = LgbModel::from_file(&path).expect("Failed to parse model");
-        
+
         assert_eq!(model.header.n_class, 3);
         assert_eq!(model.header.n_tree_per_iteration, 3);
-        assert!(matches!(model.header.objective, Some(LgbObjective::Multiclass { num_class: 3 })));
+        assert!(matches!(
+            model.header.objective,
+            Some(LgbObjective::Multiclass { num_class: 3 })
+        ));
         assert!(model.n_trees() > 0);
         // Should have trees % 3 == 0 for multiclass
         assert_eq!(model.n_trees() % 3, 0);
@@ -818,12 +827,22 @@ mod tests {
     #[test]
     fn parse_float_array_rejects_invalid_values() {
         let err = parse_float_array("1.0 2.0 nope 3.0").unwrap_err();
-        assert!(matches!(err, ParseError::InvalidValue { field: "array", .. }));
+        assert!(matches!(
+            err,
+            ParseError::InvalidValue { field: "array", .. }
+        ));
     }
 
     #[test]
     fn validate_array_size_reports_mismatch() {
         let err = validate_array_size("test", &[1u32, 2u32], 3).unwrap_err();
-        assert!(matches!(err, ParseError::ArraySizeMismatch { field: "test", expected: 3, actual: 2 }));
+        assert!(matches!(
+            err,
+            ParseError::ArraySizeMismatch {
+                field: "test",
+                expected: 3,
+                actual: 2
+            }
+        ));
     }
 }

@@ -5,7 +5,7 @@
 
 use crate::repr::gbdt::NodeId;
 
-use super::ops::{clear_histogram, subtract_histogram, HistogramBin};
+use super::ops::{HistogramBin, clear_histogram, subtract_histogram};
 
 /// Physical slot index in the histogram cache.
 pub type SlotId = u32;
@@ -128,8 +128,8 @@ pub struct HistogramPool {
     /// A slot is considered valid iff `identity_slot_epoch[slot] == identity_epoch`.
     identity_slot_epoch: Box<[u64]>,
 
-	/// Eviction pins (by slot). Only used when `!identity_mode`.
-	pinned: Box<[bool]>,
+    /// Eviction pins (by slot). Only used when `!identity_mode`.
+    pinned: Box<[bool]>,
 }
 
 impl HistogramPool {
@@ -159,13 +159,18 @@ impl HistogramPool {
 
         // Allocate mapping arrays only if needed
         let (node_to_slot, slot_to_node, last_used_time, pinned) = if identity_mode {
-            (Box::default(), Box::default(), Box::default(), Box::default())
+            (
+                Box::default(),
+                Box::default(),
+                Box::default(),
+                Box::default(),
+            )
         } else {
             (
                 vec![UNMAPPED; total_nodes].into_boxed_slice(),
                 vec![UNMAPPED; cache_size].into_boxed_slice(),
                 vec![0u64; cache_size].into_boxed_slice(),
-				vec![false; cache_size].into_boxed_slice(),
+                vec![false; cache_size].into_boxed_slice(),
             )
         };
 
@@ -189,7 +194,7 @@ impl HistogramPool {
 
             identity_epoch: 1,
             identity_slot_epoch,
-			pinned,
+            pinned,
         }
     }
 
@@ -305,7 +310,7 @@ impl HistogramPool {
             self.node_to_slot[node_idx] = UNMAPPED;
             self.slot_to_node[slot as usize] = UNMAPPED;
             self.last_used_time[slot as usize] = 0; // Make it most eligible for eviction
-			self.pinned[slot as usize] = false;
+            self.pinned[slot as usize] = false;
         }
     }
 
@@ -417,8 +422,12 @@ impl HistogramPool {
         let target_start = target_slot as usize * self.total_bins;
         let source_start = source_slot as usize * self.total_bins;
 
-        let (target_slice, source_slice) =
-            crate::utils::disjoint_slices_mut(&mut self.data, target_start, source_start, self.total_bins);
+        let (target_slice, source_slice) = crate::utils::disjoint_slices_mut(
+            &mut self.data,
+            target_start,
+            source_start,
+            self.total_bins,
+        );
         subtract_histogram(target_slice, source_slice);
     }
 
@@ -471,20 +480,20 @@ impl HistogramPool {
     fn find_lru_slot(&self) -> SlotId {
         let mut min_time = u64::MAX;
         let mut lru_slot = 0;
-		let mut found = false;
+        let mut found = false;
 
         for (slot, &time) in self.last_used_time.iter().enumerate() {
-			if self.pinned[slot] {
-				continue;
-			}
+            if self.pinned[slot] {
+                continue;
+            }
             if time < min_time {
                 min_time = time;
                 lru_slot = slot;
-				found = true;
+                found = true;
             }
         }
 
-		assert!(found, "All histogram slots are pinned; cannot evict");
+        assert!(found, "All histogram slots are pinned; cannot evict");
         lru_slot as SlotId
     }
 }
@@ -642,7 +651,9 @@ mod tests {
         pool.move_mapping(0, 1);
 
         // Destination should be visible and contain copied data.
-        let view1 = pool.get(1).expect("node 1 should be valid after move_mapping");
+        let view1 = pool
+            .get(1)
+            .expect("node 1 should be valid after move_mapping");
         assert_eq!(view1.bins[0].0, 42.0);
         assert_eq!(view1.bins[0].1, 10.0);
 
@@ -805,7 +816,10 @@ mod tests {
 
     #[test]
     fn test_pinning_prevents_eviction() {
-        let features = vec![HistogramLayout { offset: 0, n_bins: 4 }];
+        let features = vec![HistogramLayout {
+            offset: 0,
+            n_bins: 4,
+        }];
         let mut pool = HistogramPool::new(features, 2, 10);
 
         pool.acquire(0);

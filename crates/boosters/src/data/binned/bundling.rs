@@ -15,8 +15,8 @@
 use super::FeatureInfo;
 use crate::data::FeaturesView;
 use fixedbitset::FixedBitSet;
-use rand::prelude::*;
 use rand::SeedableRng;
+use rand::prelude::*;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -33,7 +33,7 @@ use std::collections::HashMap;
 pub trait BundlingFeatures: Sync {
     /// Number of samples (rows).
     fn n_samples(&self) -> usize;
-    
+
     /// Get the value at (sample, feature) as f32.
     /// Used for conflict detection (non-zero check).
     fn get(&self, sample: usize, feature: usize) -> f32;
@@ -43,7 +43,7 @@ impl BundlingFeatures for FeaturesView<'_> {
     fn n_samples(&self) -> usize {
         self.n_samples()
     }
-    
+
     fn get(&self, sample: usize, feature: usize) -> f32 {
         FeaturesView::get(self, sample, feature)
     }
@@ -401,7 +401,9 @@ impl BundlePlan {
     /// * `Some((original_feature_idx, original_bin))` if valid
     /// * `None` if bundle_idx is invalid or bin is out of range
     pub fn decode_bundle_split(&self, bundle_idx: usize, encoded_bin: u32) -> Option<(usize, u32)> {
-        self.bundles.get(bundle_idx).and_then(|b| b.decode(encoded_bin))
+        self.bundles
+            .get(bundle_idx)
+            .and_then(|b| b.decode(encoded_bin))
     }
 
     /// Get all original feature indices that belong to a bundle.
@@ -412,7 +414,9 @@ impl BundlePlan {
     /// # Returns
     /// Slice of original feature indices, or None if bundle_idx is invalid
     pub fn bundle_features(&self, bundle_idx: usize) -> Option<&[usize]> {
-        self.bundles.get(bundle_idx).map(|b| b.feature_indices.as_slice())
+        self.bundles
+            .get(bundle_idx)
+            .map(|b| b.feature_indices.as_slice())
     }
 }
 
@@ -627,7 +631,8 @@ fn assign_bundles(
                     .iter()
                     .position(|f| f.original_idx == *existing_orig)
                 {
-                    conflict_sum += conflict_graph.get_conflict(feat_sparse_idx, existing_sparse_idx);
+                    conflict_sum +=
+                        conflict_graph.get_conflict(feat_sparse_idx, existing_sparse_idx);
                 }
             }
             let new_conflicts = conflict_sum;
@@ -748,7 +753,8 @@ pub fn create_bundle_plan<F: BundlingFeatures>(
     let n_sampled = sampled_rows.len();
 
     // Get sparse feature indices in original space
-    let sparse_original_indices: Vec<usize> = sparse_features.iter().map(|f| f.original_idx).collect();
+    let sparse_original_indices: Vec<usize> =
+        sparse_features.iter().map(|f| f.original_idx).collect();
 
     // Build conflict graph
     let conflict_graph = ConflictGraph::build(features, &sparse_original_indices, &sampled_rows);
@@ -765,7 +771,8 @@ pub fn create_bundle_plan<F: BundlingFeatures>(
     }
 
     // Create a local copy of sparse feature infos for assignment
-    let sparse_feature_infos: Vec<FeatureInfo> = sparse_features.iter().map(|f| (*f).clone()).collect();
+    let sparse_feature_infos: Vec<FeatureInfo> =
+        sparse_features.iter().map(|f| (*f).clone()).collect();
 
     // Assign features to bundles
     let (bundles, total_conflicts) =
@@ -796,7 +803,10 @@ pub fn create_bundle_plan<F: BundlingFeatures>(
     // Bundled features
     for (bundle_idx, bundle) in bundles.iter().enumerate() {
         for (position, &feat_idx) in bundle.feature_indices.iter().enumerate() {
-            feature_mapping[feat_idx] = FeatureLocation::Bundled { bundle_idx, position };
+            feature_mapping[feat_idx] = FeatureLocation::Bundled {
+                bundle_idx,
+                position,
+            };
         }
     }
 
@@ -925,8 +935,8 @@ mod tests {
         // Two mutually exclusive features (one-hot style)
         // FeaturesView is feature-major: each row is a feature, columns are samples
         let data = array![
-            [1.0f32, 0.0, 0.0, 0.0],  // feature 0: non-zero at sample 0
-            [0.0, 1.0, 0.0, 0.0],      // feature 1: non-zero at sample 1
+            [1.0f32, 0.0, 0.0, 0.0], // feature 0: non-zero at sample 0
+            [0.0, 1.0, 0.0, 0.0],    // feature 1: non-zero at sample 1
         ];
         let view = FeaturesView::from_array(data.view());
 
@@ -944,8 +954,8 @@ mod tests {
         // Two features that conflict on row 0
         // FeaturesView is feature-major: each row is a feature, columns are samples
         let data = array![
-            [1.0f32, 0.0, 0.0, 0.0],  // feature 0: non-zero at sample 0
-            [1.0, 1.0, 0.0, 0.0],      // feature 1: non-zero at samples 0 and 1 (conflicts at 0)
+            [1.0f32, 0.0, 0.0, 0.0], // feature 0: non-zero at sample 0
+            [1.0, 1.0, 0.0, 0.0],    // feature 1: non-zero at samples 0 and 1 (conflicts at 0)
         ];
         let view = FeaturesView::from_array(data.view());
 
@@ -962,8 +972,8 @@ mod tests {
     fn test_bundle_plan_disabled() {
         // 2 features, 2 samples. Feature 0: [1, 0], Feature 1: [0, 1]
         let data = array![
-            [1.0f32, 0.0],  // feature 0
-            [0.0, 1.0],     // feature 1
+            [1.0f32, 0.0], // feature 0
+            [0.0, 1.0],    // feature 1
         ];
         let view = FeaturesView::from_array(data.view());
         let feature_infos = vec![
@@ -993,8 +1003,8 @@ mod tests {
         // Only 1 sparse feature - not enough to bundle
         // 2 features, 2 samples. Feature 0: [1, 0], Feature 1: [0, 0]
         let data = array![
-            [1.0f32, 0.0],  // feature 0: not sparse
-            [0.0, 0.0],     // feature 1: all zeros (sparse/trivial)
+            [1.0f32, 0.0], // feature 0: not sparse
+            [0.0, 0.0],    // feature 1: all zeros (sparse/trivial)
         ];
         let view = FeaturesView::from_array(data.view());
         let feature_infos = vec![
@@ -1016,11 +1026,12 @@ mod tests {
         let plan = create_bundle_plan(&view, &feature_infos, &config);
 
         assert!(plan.skipped);
-        assert!(plan
-            .skip_reason
-            .as_ref()
-            .unwrap()
-            .contains("Too few sparse features"));
+        assert!(
+            plan.skip_reason
+                .as_ref()
+                .unwrap()
+                .contains("Too few sparse features")
+        );
     }
 
     #[test]
@@ -1028,10 +1039,10 @@ mod tests {
         // 4 mutually exclusive features (one-hot encoding)
         // 4 features, 10 samples - each feature has 1 non-zero value in different samples
         let data = array![
-            [1.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  // feature 0: sample 0
-            [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],     // feature 1: sample 1
-            [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],     // feature 2: sample 2
-            [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],     // feature 3: sample 3
+            [1.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], // feature 0: sample 0
+            [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],    // feature 1: sample 1
+            [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],    // feature 2: sample 2
+            [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],    // feature 3: sample 3
         ];
         let view = FeaturesView::from_array(data.view());
 
@@ -1066,9 +1077,9 @@ mod tests {
         // This tests that conflicting features end up in separate bundles
         // 3 features, 10 samples
         let data = array![
-            [1.0f32, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  // feature 0: conflicts with 1
-            [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],     // feature 1: conflicts with 0
-            [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],     // feature 2: no conflict
+            [1.0f32, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], // feature 0: conflicts with 1
+            [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],    // feature 1: conflicts with 0
+            [0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],    // feature 2: no conflict
         ];
         let view = FeaturesView::from_array(data.view());
 
@@ -1100,7 +1111,11 @@ mod tests {
         assert!(!plan.skipped, "skip_reason: {:?}", plan.skip_reason);
         // Feature 2 can bundle with either 0 or 1, but 0 and 1 must be separate
         // So we expect at least 2 bundles
-        assert!(plan.bundles.len() >= 2, "Should have at least 2 bundles, got {}", plan.bundles.len());
+        assert!(
+            plan.bundles.len() >= 2,
+            "Should have at least 2 bundles, got {}",
+            plan.bundles.len()
+        );
     }
 
     #[test]
@@ -1109,8 +1124,8 @@ mod tests {
         // This should trigger early termination due to high conflict rate (>50%)
         // 2 features, 10 samples
         let data = array![
-            [1.0f32, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  // feature 0
-            [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],     // feature 1: conflicts
+            [1.0f32, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], // feature 0
+            [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],    // feature 1: conflicts
         ];
         let view = FeaturesView::from_array(data.view());
 
@@ -1135,7 +1150,12 @@ mod tests {
         // With only 2 features, the only pair conflicts = 100% conflict rate
         // Should be skipped due to high conflict rate
         assert!(plan.skipped);
-        assert!(plan.skip_reason.as_ref().unwrap().contains("High conflict rate"));
+        assert!(
+            plan.skip_reason
+                .as_ref()
+                .unwrap()
+                .contains("High conflict rate")
+        );
     }
 
     #[test]
@@ -1251,13 +1271,7 @@ mod tests {
         assert_eq!(result, 5); // offset 0 + bin 5
 
         // Simulate: feature 1 is non-zero with bin 15
-        let result = bundle.encode(|idx| {
-            if idx == 0 {
-                (false, 0)
-            } else {
-                (true, 15)
-            }
-        });
+        let result = bundle.encode(|idx| if idx == 0 { (false, 0) } else { (true, 15) });
         assert_eq!(result, 10 + 15); // offset 10 + bin 15
 
         // Simulate: both features are zero
@@ -1269,9 +1283,9 @@ mod tests {
     fn test_bundle_plan_feature_mapping() {
         // 3 features, 10 samples - 2 sparse (mutually exclusive) + 1 dense
         let data = array![
-            [1.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],  // feature 0: sparse
-            [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],     // feature 1: sparse
-            [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],     // feature 2: dense
+            [1.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], // feature 0: sparse
+            [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],    // feature 1: sparse
+            [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],    // feature 2: dense
         ];
         let view = FeaturesView::from_array(data.view());
 
@@ -1328,8 +1342,14 @@ mod tests {
             standalone_features: vec![2, 3, 4],
             skipped_features: vec![5],
             feature_mapping: vec![
-                FeatureLocation::Bundled { bundle_idx: 0, position: 0 },
-                FeatureLocation::Bundled { bundle_idx: 1, position: 0 },
+                FeatureLocation::Bundled {
+                    bundle_idx: 0,
+                    position: 0,
+                },
+                FeatureLocation::Bundled {
+                    bundle_idx: 1,
+                    position: 0,
+                },
                 FeatureLocation::Standalone(0),
                 FeatureLocation::Standalone(1),
                 FeatureLocation::Standalone(2),
@@ -1412,8 +1432,14 @@ mod tests {
             standalone_features: vec![2],
             skipped_features: vec![],
             feature_mapping: vec![
-                FeatureLocation::Bundled { bundle_idx: 0, position: 0 },
-                FeatureLocation::Bundled { bundle_idx: 0, position: 1 },
+                FeatureLocation::Bundled {
+                    bundle_idx: 0,
+                    position: 0,
+                },
+                FeatureLocation::Bundled {
+                    bundle_idx: 0,
+                    position: 1,
+                },
                 FeatureLocation::Standalone(0),
             ],
             total_conflicts: 0,
@@ -1440,8 +1466,14 @@ mod tests {
             standalone_features: vec![2],
             skipped_features: vec![3],
             feature_mapping: vec![
-                FeatureLocation::Bundled { bundle_idx: 0, position: 0 },
-                FeatureLocation::Bundled { bundle_idx: 0, position: 1 },
+                FeatureLocation::Bundled {
+                    bundle_idx: 0,
+                    position: 0,
+                },
+                FeatureLocation::Bundled {
+                    bundle_idx: 0,
+                    position: 1,
+                },
                 FeatureLocation::Standalone(0),
                 FeatureLocation::Skipped,
             ],
@@ -1454,7 +1486,10 @@ mod tests {
 
         assert_eq!(
             plan.original_to_location(0),
-            Some(&FeatureLocation::Bundled { bundle_idx: 0, position: 0 })
+            Some(&FeatureLocation::Bundled {
+                bundle_idx: 0,
+                position: 0
+            })
         );
         assert_eq!(
             plan.original_to_location(2),

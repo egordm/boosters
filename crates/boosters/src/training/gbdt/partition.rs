@@ -121,11 +121,11 @@ impl RowPartitioner {
                         *idx = i as u32;
                     }
                 }
-                
+
                 // Reset leaf tracking
                 self.leaf_begin.fill(0);
                 self.leaf_count.fill(0);
-                
+
                 // Root leaf owns all rows
                 self.leaf_begin[0] = 0;
                 self.leaf_count[0] = n_samples as u32;
@@ -142,11 +142,11 @@ impl RowPartitioner {
                 } else {
                     self.indices[..n_sampled].copy_from_slice(sampled_indices);
                 }
-                
+
                 // Reset leaf tracking
                 self.leaf_begin.fill(0);
                 self.leaf_count.fill(0);
-                
+
                 // Root leaf owns all sampled rows
                 self.leaf_begin[0] = 0;
                 self.leaf_count[0] = n_sampled as u32;
@@ -297,7 +297,12 @@ impl RowPartitioner {
                     } else {
                         right_write -= 1;
                         scratch[right_write] = idx;
-                        update_seq(&mut right_seq_start, &mut right_prev, &mut right_is_seq, idx);
+                        update_seq(
+                            &mut right_seq_start,
+                            &mut right_prev,
+                            &mut right_is_seq,
+                            idx,
+                        );
                     }
                 }
             }
@@ -319,7 +324,12 @@ impl RowPartitioner {
                     } else {
                         right_write -= 1;
                         scratch[right_write] = idx;
-                        update_seq(&mut right_seq_start, &mut right_prev, &mut right_is_seq, idx);
+                        update_seq(
+                            &mut right_seq_start,
+                            &mut right_prev,
+                            &mut right_is_seq,
+                            idx,
+                        );
                     }
                 }
             }
@@ -340,7 +350,12 @@ impl RowPartitioner {
                     } else {
                         right_write -= 1;
                         scratch[right_write] = idx;
-                        update_seq(&mut right_seq_start, &mut right_prev, &mut right_is_seq, idx);
+                        update_seq(
+                            &mut right_seq_start,
+                            &mut right_prev,
+                            &mut right_is_seq,
+                            idx,
+                        );
                     }
                 }
             }
@@ -361,7 +376,12 @@ impl RowPartitioner {
                     } else {
                         right_write -= 1;
                         scratch[right_write] = idx;
-                        update_seq(&mut right_seq_start, &mut right_prev, &mut right_is_seq, idx);
+                        update_seq(
+                            &mut right_seq_start,
+                            &mut right_prev,
+                            &mut right_is_seq,
+                            idx,
+                        );
                     }
                 }
             }
@@ -375,7 +395,12 @@ impl RowPartitioner {
                     } else {
                         right_write -= 1;
                         scratch[right_write] = idx;
-                        update_seq(&mut right_seq_start, &mut right_prev, &mut right_is_seq, idx);
+                        update_seq(
+                            &mut right_seq_start,
+                            &mut right_prev,
+                            &mut right_is_seq,
+                            idx,
+                        );
                     }
                 }
             }
@@ -401,17 +426,20 @@ impl RowPartitioner {
         self.n_leaves += 1;
         self.leaf_begin[right_leaf as usize] = (begin as u32) + left_count;
         self.leaf_count[right_leaf as usize] = right_count;
-        self.leaf_sequential_start[right_leaf as usize] = if right_is_seq { right_seq_start } else { None };
+        self.leaf_sequential_start[right_leaf as usize] =
+            if right_is_seq { right_seq_start } else { None };
 
         (right_leaf, left_count, right_count)
     }
-
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{BinMapper, BinningConfig, BinnedDataset, BinnedDatasetBuilder, GroupLayout, GroupStrategy, MissingType};
+    use crate::data::{
+        BinMapper, BinnedDataset, BinnedDatasetBuilder, BinningConfig, GroupLayout, GroupStrategy,
+        MissingType,
+    };
 
     fn make_test_dataset() -> BinnedDataset {
         // 8 samples, 2 features
@@ -428,7 +456,9 @@ mod tests {
         BinnedDatasetBuilder::new(BinningConfig::default())
             .add_binned(f0_bins, f0_mapper, None)
             .add_binned(f1_bins, f1_mapper, None)
-            .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
+            .group_strategy(GroupStrategy::SingleGroup {
+                layout: GroupLayout::ColumnMajor,
+            })
             .build()
             .unwrap()
     }

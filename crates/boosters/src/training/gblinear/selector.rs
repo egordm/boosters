@@ -428,24 +428,18 @@ impl GreedySelector {
             }
 
             // Compute coordinate descent update with elastic net
-            let magnitude = coordinate_delta_magnitude(
-                sum_grad,
-                sum_hess,
-                current_weight,
-                alpha,
-                lambda,
-            );
+            let magnitude =
+                coordinate_delta_magnitude(sum_grad, sum_hess, current_weight, alpha, lambda);
             self.update_magnitudes.push(magnitude);
         }
 
         // Sort features by descending magnitude
         self.sorted_features = (0..n_features).collect();
-        self.sorted_features
-            .sort_by(|&a, &b| {
-                self.update_magnitudes[b]
-                    .partial_cmp(&self.update_magnitudes[a])
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
+        self.sorted_features.sort_by(|&a, &b| {
+            self.update_magnitudes[b]
+                .partial_cmp(&self.update_magnitudes[a])
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         self.current = 0;
     }
@@ -576,21 +570,14 @@ impl ThriftySelector {
                     sum_hess += grad_hess[row].hess * value * value;
                 }
 
-                let magnitude = coordinate_delta_magnitude(
-                    sum_grad,
-                    sum_hess,
-                    current_weight,
-                    alpha,
-                    lambda,
-                );
+                let magnitude =
+                    coordinate_delta_magnitude(sum_grad, sum_hess, current_weight, alpha, lambda);
                 (feature_idx, magnitude)
             })
             .collect();
 
         // Sort by descending magnitude
-        magnitudes.sort_by(|a, b| {
-            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        magnitudes.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
         self.sorted_features = magnitudes.into_iter().map(|(f, _)| f).collect();
         self.current = 0;

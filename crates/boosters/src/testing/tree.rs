@@ -129,9 +129,8 @@ pub fn scalar_tree_with_capacity(
     capacity: usize,
     build: impl FnOnce(&mut crate::repr::gbdt::MutableTree<crate::repr::gbdt::ScalarLeaf>),
 ) -> crate::repr::gbdt::Tree<crate::repr::gbdt::ScalarLeaf> {
-    let mut t = crate::repr::gbdt::MutableTree::<crate::repr::gbdt::ScalarLeaf>::with_capacity(
-        capacity,
-    );
+    let mut t =
+        crate::repr::gbdt::MutableTree::<crate::repr::gbdt::ScalarLeaf>::with_capacity(capacity);
     build(&mut t);
     t.freeze()
 }

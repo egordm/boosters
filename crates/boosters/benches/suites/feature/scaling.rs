@@ -10,21 +10,21 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
+use boosters::Parallelism;
 use boosters::data::{TargetsView, WeightsView};
 use boosters::testing::synthetic_datasets::synthetic_regression;
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
-use boosters::Parallelism;
 
 use ndarray::Array2;
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 #[cfg(feature = "bench-xgboost")]
 use xgb::parameters::tree::{TreeBoosterParametersBuilder, TreeMethod};
 #[cfg(feature = "bench-xgboost")]
 use xgb::parameters::{
-    learning::LearningTaskParametersBuilder, learning::Objective, BoosterParametersBuilder,
-    BoosterType, TrainingParametersBuilder,
+    BoosterParametersBuilder, BoosterType, TrainingParametersBuilder,
+    learning::LearningTaskParametersBuilder, learning::Objective,
 };
 #[cfg(feature = "bench-xgboost")]
 use xgb::{Booster, DMatrix};
@@ -65,9 +65,10 @@ fn bench_row_scaling(c: &mut Criterion) {
 
         // Pre-build binned dataset
         let binned = dataset.to_binned(256);
-        
+
         // Convert targets to 2D
-        let targets_2d = Array2::from_shape_vec((1, dataset.targets.len()), dataset.targets.to_vec()).unwrap();
+        let targets_2d =
+            Array2::from_shape_vec((1, dataset.targets.len()), dataset.targets.to_vec()).unwrap();
 
         // =====================================================================
         // booste-rs (depth-wise, single-threaded for fair comparison)
@@ -92,7 +93,13 @@ fn bench_row_scaling(c: &mut Criterion) {
             b.iter(|| {
                 black_box(
                     trainer
-                        .train(black_box(&binned), targets_view, WeightsView::None, &[], Parallelism::Sequential)
+                        .train(
+                            black_box(&binned),
+                            targets_view,
+                            WeightsView::None,
+                            &[],
+                            Parallelism::Sequential,
+                        )
                         .unwrap(),
                 )
             })
@@ -158,9 +165,13 @@ fn bench_row_scaling(c: &mut Criterion) {
 
             group.bench_function(BenchmarkId::new("lightgbm", &row_label), |b| {
                 b.iter(|| {
-                    let dataset =
-                        lightgbm3::Dataset::from_slice(&features_f64, &labels_f32, num_features, true)
-                            .unwrap();
+                    let dataset = lightgbm3::Dataset::from_slice(
+                        &features_f64,
+                        &labels_f32,
+                        num_features,
+                        true,
+                    )
+                    .unwrap();
                     let params = json!({
                         "objective": "regression",
                         "metric": "l2",
@@ -212,9 +223,10 @@ fn bench_feature_scaling(c: &mut Criterion) {
 
         // Pre-build binned dataset
         let binned = dataset.to_binned(256);
-        
+
         // Convert targets to 2D
-        let targets_2d = Array2::from_shape_vec((1, dataset.targets.len()), dataset.targets.to_vec()).unwrap();
+        let targets_2d =
+            Array2::from_shape_vec((1, dataset.targets.len()), dataset.targets.to_vec()).unwrap();
 
         // =====================================================================
         // booste-rs
@@ -239,7 +251,13 @@ fn bench_feature_scaling(c: &mut Criterion) {
             b.iter(|| {
                 black_box(
                     trainer
-                        .train(black_box(&binned), targets_view, WeightsView::None, &[], Parallelism::Sequential)
+                        .train(
+                            black_box(&binned),
+                            targets_view,
+                            WeightsView::None,
+                            &[],
+                            Parallelism::Sequential,
+                        )
                         .unwrap(),
                 )
             })
@@ -304,9 +322,13 @@ fn bench_feature_scaling(c: &mut Criterion) {
 
             group.bench_function(BenchmarkId::new("lightgbm", &feat_label), |b| {
                 b.iter(|| {
-                    let dataset =
-                        lightgbm3::Dataset::from_slice(&features_f64, &labels_f32, num_features, true)
-                            .unwrap();
+                    let dataset = lightgbm3::Dataset::from_slice(
+                        &features_f64,
+                        &labels_f32,
+                        num_features,
+                        true,
+                    )
+                    .unwrap();
                     let params = json!({
                         "objective": "regression",
                         "metric": "l2",

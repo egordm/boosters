@@ -118,9 +118,7 @@ class TestGBDTClassifierSklearn:
         y[X[:, 0] < -0.5] = 2
 
         # Must specify softmax with correct n_classes
-        clf = GBDTClassifier(
-            n_estimators=30, verbose=0, objective=Objective.softmax(n_classes=3)
-        )
+        clf = GBDTClassifier(n_estimators=30, verbose=0, objective=Objective.softmax(n_classes=3))
         clf.fit(X, y)
 
         assert clf.n_classes_ == 3

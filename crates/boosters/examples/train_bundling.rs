@@ -13,8 +13,8 @@
 
 use std::time::Instant;
 
-use boosters::data::binned::{BinnedDatasetBuilder, BundlingConfig};
 use boosters::data::BinningConfig;
+use boosters::data::binned::{BinnedDatasetBuilder, BundlingConfig};
 use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::training::GrowthStrategy;
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism};
@@ -83,11 +83,12 @@ fn main() {
     println!("=== Training WITHOUT bundling ===\n");
 
     let start = Instant::now();
-    let dataset_no_bundle = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
-        .add_features(features_dataset.features(), Parallelism::Parallel)
-        .with_bundling(BundlingConfig::disabled())
-        .build()
-        .expect("Failed to build dataset");
+    let dataset_no_bundle =
+        BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+            .add_features(features_dataset.features(), Parallelism::Parallel)
+            .with_bundling(BundlingConfig::disabled())
+            .build()
+            .expect("Failed to build dataset");
     let binning_time_no_bundle = start.elapsed();
 
     // Without bundling, binned columns = original features
@@ -96,7 +97,11 @@ fn main() {
 
     println!("Features: {}", dataset_no_bundle.n_features());
     println!("Binned columns: {}", binned_cols_no_bundle);
-    println!("Binned data size: {} bytes ({:.2} KB)", mem_no_bundle, mem_no_bundle as f64 / 1024.0);
+    println!(
+        "Binned data size: {} bytes ({:.2} KB)",
+        mem_no_bundle,
+        mem_no_bundle as f64 / 1024.0
+    );
     println!("Binning time: {:?}", binning_time_no_bundle);
 
     // =========================================================================
@@ -112,14 +117,19 @@ fn main() {
         .expect("Failed to build dataset");
     let binning_time_bundled = start.elapsed();
 
-    let binned_cols_bundled = dataset_bundled.bundling_stats()
+    let binned_cols_bundled = dataset_bundled
+        .bundling_stats()
         .map(|s| s.binned_columns)
         .unwrap_or(dataset_bundled.n_features());
     let mem_bundled = n_samples * binned_cols_bundled;
 
     println!("Features: {}", dataset_bundled.n_features());
     println!("Binned columns: {}", binned_cols_bundled);
-    println!("Binned data size: {} bytes ({:.2} KB)", mem_bundled, mem_bundled as f64 / 1024.0);
+    println!(
+        "Binned data size: {} bytes ({:.2} KB)",
+        mem_bundled,
+        mem_bundled as f64 / 1024.0
+    );
     println!("Binning time: {:?}", binning_time_bundled);
     println!(
         "Bundling effective: {}",
@@ -131,7 +141,10 @@ fn main() {
         println!("  Bundles created: {}", stats.bundles_created);
         println!("  Standalone features: {}", stats.standalone_features);
         println!("  Skipped features: {}", stats.skipped_features);
-        println!("  Sparse features analyzed: {}", stats.original_sparse_features);
+        println!(
+            "  Sparse features analyzed: {}",
+            stats.original_sparse_features
+        );
         println!("  Total conflicts: {}", stats.total_conflicts);
         println!("  Is effective: {}", stats.is_effective);
         println!(
@@ -171,22 +184,22 @@ fn main() {
     .expect("Training failed");
 
     // Train with bundling
-    let model_bundled = GBDTModel::train_binned(
-        &dataset_bundled,
-        targets,
-        WeightsView::None,
-        &[],
-        config,
-        1,
-    )
-    .expect("Training failed");
+    let model_bundled =
+        GBDTModel::train_binned(&dataset_bundled, targets, WeightsView::None, &[], config, 1)
+            .expect("Training failed");
 
     // Evaluate both - features_dataset is already feature-major
     let predictions_no_bundle = model_no_bundle.predict(&features_dataset, 1);
     let predictions_bundled = model_bundled.predict(&features_dataset, 1);
 
-    let rmse_no_bundle = compute_rmse(predictions_no_bundle.as_slice().unwrap(), labels.as_slice().unwrap());
-    let rmse_bundled = compute_rmse(predictions_bundled.as_slice().unwrap(), labels.as_slice().unwrap());
+    let rmse_no_bundle = compute_rmse(
+        predictions_no_bundle.as_slice().unwrap(),
+        labels.as_slice().unwrap(),
+    );
+    let rmse_bundled = compute_rmse(
+        predictions_bundled.as_slice().unwrap(),
+        labels.as_slice().unwrap(),
+    );
 
     println!("=== Results ===");
     println!("Without bundling - RMSE: {:.4}", rmse_no_bundle);
@@ -201,9 +214,14 @@ fn main() {
     } else {
         0.0
     };
-    println!("Memory reduction: {:.1}% ({} → {} columns)", 
-        memory_reduction, binned_cols_no_bundle, binned_cols_bundled);
-    println!("Binning overhead: {:?} → {:?}", binning_time_no_bundle, binning_time_bundled);
+    println!(
+        "Memory reduction: {:.1}% ({} → {} columns)",
+        memory_reduction, binned_cols_no_bundle, binned_cols_bundled
+    );
+    println!(
+        "Binning overhead: {:?} → {:?}",
+        binning_time_no_bundle, binning_time_bundled
+    );
     println!("\nNote: EFB's primary benefit is MEMORY reduction, not training speed.");
     println!("      Training time is dominated by tree building, not histogram storage.");
 
@@ -213,7 +231,9 @@ fn main() {
     println!("\n=== Available Bundling Presets ===");
     println!("  BundlingConfig::auto()       - Default, works well for most cases");
     println!("  BundlingConfig::disabled()   - Disable bundling");
-    println!("  BundlingConfig::aggressive() - Bundle more aggressively (higher conflict tolerance)");
+    println!(
+        "  BundlingConfig::aggressive() - Bundle more aggressively (higher conflict tolerance)"
+    );
     println!("  BundlingConfig::strict()     - Only bundle truly exclusive features");
 }
 

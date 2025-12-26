@@ -9,8 +9,16 @@ Focuses on:
 import numpy as np
 import pytest
 
-from boosters import Dataset, EvalSet, GBDTConfig, GBDTModel, GBLinearConfig, GBLinearModel
-from boosters import Metric, Objective
+from boosters import (
+    Dataset,
+    EvalSet,
+    GBDTConfig,
+    GBDTModel,
+    GBLinearConfig,
+    GBLinearModel,
+    Metric,
+    Objective,
+)
 
 
 def make_regression_data(n_samples: int = 200, n_features: int = 5, seed: int = 42):
@@ -75,11 +83,13 @@ class TestGBDTModelFitPredict:
         X_train, X_val = X[:300], X[300:]
         y_train, y_val = y[:300], y[300:]
 
-        model = GBDTModel(config=GBDTConfig(
-            n_estimators=1000,
-            early_stopping_rounds=10,
-            metric=Metric.rmse(),
-        ))
+        model = GBDTModel(
+            config=GBDTConfig(
+                n_estimators=1000,
+                early_stopping_rounds=10,
+                metric=Metric.rmse(),
+            )
+        )
         model.fit(
             Dataset(X_train, y_train),
             valid=[EvalSet(Dataset(X_val, y_val), "valid")],

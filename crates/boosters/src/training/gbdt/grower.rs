@@ -6,17 +6,15 @@
 use ndarray::ArrayViewMut1;
 
 use crate::data::BinnedDataset;
-use crate::repr::gbdt::{categories_to_bitset, MutableTree, NodeId, ScalarLeaf};
-use crate::training::{GradsTuple, Gradients};
+use crate::repr::gbdt::{MutableTree, NodeId, ScalarLeaf, categories_to_bitset};
 use crate::training::sampling::{ColSampler, ColSamplingParams};
+use crate::training::{Gradients, GradsTuple};
 
 use super::expansion::{GrowthState, GrowthStrategy, NodeCandidate};
-use super::histograms::{
-    HistogramLayout, FeatureView, HistogramBuilder, HistogramPool,
-};
-use crate::utils::Parallelism;
+use super::histograms::{FeatureView, HistogramBuilder, HistogramLayout, HistogramPool};
 use super::partition::RowPartitioner;
 use super::split::{GainParams, GreedySplitter, SplitInfo, SplitType};
+use crate::utils::Parallelism;
 
 /// Parameters for tree growth.
 #[derive(Clone, Debug)]
@@ -126,18 +124,14 @@ impl TreeGrower {
         let partitioner = RowPartitioner::new(n_samples, max_nodes);
 
         // Collect feature types and missing info
-        let feature_types: Vec<bool> =
-            (0..n_features).map(|f| dataset.is_categorical(f)).collect();
+        let feature_types: Vec<bool> = (0..n_features).map(|f| dataset.is_categorical(f)).collect();
         let feature_has_missing: Vec<bool> =
             (0..n_features).map(|f| dataset.has_missing(f)).collect();
 
         // Build split strategy with gain params encapsulated
         // Parallelism self-corrects based on workload
-        let split_strategy = GreedySplitter::with_config(
-            params.gain.clone(),
-            params.max_onehot_cats,
-            parallelism,
-        );
+        let split_strategy =
+            GreedySplitter::with_config(params.gain.clone(), params.max_onehot_cats, parallelism);
 
         // Create column sampler (handles all/none case gracefully)
         let col_sampler = ColSampler::new(params.col_sampling.clone(), n_features as u32, 0);
@@ -158,7 +152,6 @@ impl TreeGrower {
             histogram_builder: HistogramBuilder::new(parallelism),
         }
     }
-
 
     /// Get read-only access to the row partitioner.
     ///
@@ -182,7 +175,6 @@ impl TreeGrower {
     pub fn leaf_node_mapping(&self) -> &[(NodeId, NodeId)] {
         &self.leaf_node_map
     }
-
 
     /// Update predictions using the partitioner's leaf assignments and cached leaf values.
     ///
@@ -295,7 +287,9 @@ impl TreeGrower {
             let candidates = state.pop_next();
 
             for candidate in candidates {
-                self.process_candidate(candidate, dataset, gradients, output, &bin_views, &mut state);
+                self.process_candidate(
+                    candidate, dataset, gradients, output, &bin_views, &mut state,
+                );
             }
 
             // Advance to next iteration (depth-wise: move to next level)
@@ -308,7 +302,7 @@ impl TreeGrower {
         // Apply learning rate
         self.tree_builder
             .apply_learning_rate(self.params.learning_rate);
-        
+
         // Return mutable tree (caller should call freeze() after any post-processing)
         std::mem::take(&mut self.tree_builder)
     }
@@ -332,7 +326,8 @@ impl TreeGrower {
             self.tree_builder
                 .make_leaf(candidate.tree_node, ScalarLeaf(weight));
             // Record cover for explainability (leaves have gain=0)
-            self.tree_builder.set_cover(candidate.tree_node, candidate.hess_sum as f32);
+            self.tree_builder
+                .set_cover(candidate.tree_node, candidate.hess_sum as f32);
             self.record_leaf_value(candidate.tree_node, candidate.node, weight);
             self.histogram_pool.release(candidate.node);
             return;
@@ -346,13 +341,17 @@ impl TreeGrower {
         );
 
         // Apply split (translating bin thresholds to float values)
-        let (left_tree, right_tree) =
-            Self::apply_split_to_builder(&mut self.tree_builder, candidate.tree_node, &candidate.split, dataset);
+        let (left_tree, right_tree) = Self::apply_split_to_builder(
+            &mut self.tree_builder,
+            candidate.tree_node,
+            &candidate.split,
+            dataset,
+        );
 
         // Partition rows
-        let (right_node, left_count, right_count) = self
-            .partitioner
-            .split(candidate.node, &candidate.split, dataset);
+        let (right_node, left_count, right_count) =
+            self.partitioner
+                .split(candidate.node, &candidate.split, dataset);
 
         // Use original node as left (now owns only left rows)
         let left_node = candidate.node;
@@ -390,7 +389,8 @@ impl TreeGrower {
         }
 
         // Compute gradient sums for smaller child from histogram (O(n_bins) instead of O(n_rows))
-        let (small_grad, small_hess) = self.histogram_pool
+        let (small_grad, small_hess) = self
+            .histogram_pool
             .get(small_node)
             .expect("small_node histogram should exist after build")
             .sum_gradients();
@@ -466,7 +466,8 @@ impl TreeGrower {
                 self.tree_builder
                     .make_leaf(candidate.tree_node, ScalarLeaf(weight));
                 // Record cover for explainability (leaves have gain=0)
-                self.tree_builder.set_cover(candidate.tree_node, candidate.hess_sum as f32);
+                self.tree_builder
+                    .set_cover(candidate.tree_node, candidate.hess_sum as f32);
                 self.record_leaf_value(candidate.tree_node, candidate.node, weight);
                 self.histogram_pool.release(candidate.node);
             }
@@ -646,13 +647,7 @@ impl TreeGrower {
     }
 
     /// Find best split for a node using column sampler.
-    fn find_split(
-        &mut self,
-        node: u32,
-        grad_sum: f64,
-        hess_sum: f64,
-        count: u32,
-    ) -> SplitInfo {
+    fn find_split(&mut self, node: u32, grad_sum: f64, hess_sum: f64, count: u32) -> SplitInfo {
         let histogram = match self.histogram_pool.get(node) {
             Some(h) => h,
             None => return SplitInfo::invalid(),
@@ -676,12 +671,17 @@ impl TreeGrower {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{BinMapper, BinningConfig, BinnedDataset, BinnedDatasetBuilder, DataAccessor, GroupLayout, GroupStrategy, MissingType, SampleAccessor};
+    use crate::data::{
+        BinMapper, BinnedDataset, BinnedDatasetBuilder, BinningConfig, DataAccessor, GroupLayout,
+        GroupStrategy, MissingType, SampleAccessor,
+    };
     use crate::repr::gbdt::{Tree, TreeView};
 
     /// Helper to count leaves in a Tree.
     fn count_leaves<L: crate::repr::gbdt::LeafValue>(tree: &Tree<L>) -> usize {
-        (0..tree.n_nodes() as u32).filter(|&i| tree.is_leaf(i)).count()
+        (0..tree.n_nodes() as u32)
+            .filter(|&i| tree.is_leaf(i))
+            .count()
     }
 
     fn make_simple_dataset() -> BinnedDataset {
@@ -698,7 +698,9 @@ mod tests {
         );
         BinnedDatasetBuilder::new(BinningConfig::default())
             .add_binned(bins, mapper, None)
-            .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
+            .group_strategy(GroupStrategy::SingleGroup {
+                layout: GroupLayout::ColumnMajor,
+            })
             .build()
             .unwrap()
     }
@@ -715,7 +717,9 @@ mod tests {
         BinnedDatasetBuilder::new(BinningConfig::default())
             .add_binned(f0_bins, f0_mapper, None)
             .add_binned(f1_bins, f1_mapper, None)
-            .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
+            .group_strategy(GroupStrategy::SingleGroup {
+                layout: GroupLayout::ColumnMajor,
+            })
             .build()
             .unwrap()
     }
@@ -724,18 +728,12 @@ mod tests {
         // 2 samples, 1 feature, 2 bins.
         // Bin 0 upper bound is 0.5, bin 1 upper bound is 1.5.
         let bins = vec![0, 1];
-        let mapper = BinMapper::numerical(
-            vec![0.5, 1.5],
-            MissingType::None,
-            0,
-            0,
-            0.0,
-            0.0,
-            1.0,
-        );
+        let mapper = BinMapper::numerical(vec![0.5, 1.5], MissingType::None, 0, 0, 0.0, 0.0, 1.0);
         BinnedDatasetBuilder::new(BinningConfig::default())
             .add_binned(bins, mapper, None)
-            .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
+            .group_strategy(GroupStrategy::SingleGroup {
+                layout: GroupLayout::ColumnMajor,
+            })
             .build()
             .unwrap()
     }
@@ -745,16 +743,13 @@ mod tests {
         // The raw category values are intentionally large to catch accidental use of
         // raw values as bitset indices.
         let bins = vec![0, 1, 2, 3];
-        let mapper = BinMapper::categorical(
-            vec![1000, 2000, 3000, 4000],
-            MissingType::None,
-            0,
-            0,
-            0.0,
-        );
+        let mapper =
+            BinMapper::categorical(vec![1000, 2000, 3000, 4000], MissingType::None, 0, 0, 0.0);
         BinnedDatasetBuilder::new(BinningConfig::default())
             .add_binned(bins, mapper, None)
-            .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
+            .group_strategy(GroupStrategy::SingleGroup {
+                layout: GroupLayout::ColumnMajor,
+            })
             .build()
             .unwrap()
     }
@@ -768,7 +763,8 @@ mod tests {
 
         // Training semantics: bin <= 0 goes left.
         let split = SplitInfo::numerical(0, 0, 1.0, true);
-        let (left, right) = TreeGrower::apply_split_to_builder(&mut builder, root, &split, &dataset);
+        let (left, right) =
+            TreeGrower::apply_split_to_builder(&mut builder, root, &split, &dataset);
         builder.make_leaf(left, ScalarLeaf(10.0));
         builder.make_leaf(right, ScalarLeaf(20.0));
         let tree = builder.freeze();
@@ -802,7 +798,8 @@ mod tests {
         left_cats.insert(1);
         left_cats.insert(3);
         let split = SplitInfo::categorical(0, left_cats, 1.0, false);
-        let (left, right) = TreeGrower::apply_split_to_builder(&mut builder, root, &split, &dataset);
+        let (left, right) =
+            TreeGrower::apply_split_to_builder(&mut builder, root, &split, &dataset);
         builder.make_leaf(left, ScalarLeaf(10.0));
         builder.make_leaf(right, ScalarLeaf(20.0));
         let tree = builder.freeze();
@@ -857,7 +854,10 @@ mod tests {
         let dataset = make_simple_dataset();
         let params = GrowerParams {
             growth_strategy: GrowthStrategy::DepthWise { max_depth: 1 },
-            gain: GainParams { min_gain: 0.0, ..Default::default() },
+            gain: GainParams {
+                min_gain: 0.0,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -888,7 +888,11 @@ mod tests {
         let dataset = make_two_feature_dataset();
         let params = GrowerParams {
             growth_strategy: GrowthStrategy::DepthWise { max_depth: 2 },
-            gain: GainParams { min_gain: 0.0, min_child_weight: 0.1, ..Default::default() },
+            gain: GainParams {
+                min_gain: 0.0,
+                min_child_weight: 0.1,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -919,9 +923,13 @@ mod tests {
 
         // Push root
         state.push_root(NodeCandidate::new(
-            0, 0, 0,
+            0,
+            0,
+            0,
             SplitInfo::numerical(0, 1, 0.5, false),
-            0.0, 1.0, 10,
+            0.0,
+            1.0,
+            10,
         ));
 
         assert!(state.should_continue());
@@ -938,14 +946,22 @@ mod tests {
 
         // Push candidates with different gains
         state.push_root(NodeCandidate::new(
-            0, 0, 0,
+            0,
+            0,
+            0,
             SplitInfo::numerical(0, 1, 0.5, false),
-            0.0, 1.0, 10,
+            0.0,
+            1.0,
+            10,
         ));
         state.push(NodeCandidate::new(
-            1, 1, 0,
+            1,
+            1,
+            0,
             SplitInfo::numerical(0, 1, 0.8, false),
-            0.0, 1.0, 10,
+            0.0,
+            1.0,
+            10,
         ));
 
         // Should pop highest gain first
@@ -961,7 +977,10 @@ mod tests {
         let params = GrowerParams {
             growth_strategy: GrowthStrategy::DepthWise { max_depth: 1 },
             learning_rate: 0.1,
-            gain: GainParams { min_gain: 0.0, ..Default::default() },
+            gain: GainParams {
+                min_gain: 0.0,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -995,7 +1014,11 @@ mod tests {
         let dataset = make_two_feature_dataset();
         let params = GrowerParams {
             growth_strategy: GrowthStrategy::LeafWise { max_leaves: 4 },
-            gain: GainParams { min_gain: 0.0, min_child_weight: 0.1, ..Default::default() },
+            gain: GainParams {
+                min_gain: 0.0,
+                min_child_weight: 0.1,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -1024,17 +1047,25 @@ mod tests {
         use crate::training::sampling::ColSamplingParams;
 
         let dataset = make_two_feature_dataset();
-        
+
         let params_no_sampling = GrowerParams {
             growth_strategy: GrowthStrategy::DepthWise { max_depth: 2 },
-            gain: GainParams { min_gain: 0.0, min_child_weight: 0.1, ..Default::default() },
+            gain: GainParams {
+                min_gain: 0.0,
+                min_child_weight: 0.1,
+                ..Default::default()
+            },
             col_sampling: ColSamplingParams::None,
             ..Default::default()
         };
 
         let params_with_sampling = GrowerParams {
             growth_strategy: GrowthStrategy::DepthWise { max_depth: 2 },
-            gain: GainParams { min_gain: 0.0, min_child_weight: 0.1, ..Default::default() },
+            gain: GainParams {
+                min_gain: 0.0,
+                min_child_weight: 0.1,
+                ..Default::default()
+            },
             col_sampling: ColSamplingParams::bytree(0.5),
             ..Default::default()
         };
@@ -1052,21 +1083,13 @@ mod tests {
         }
 
         // Without column sampling
-        let mut grower_all = TreeGrower::new(
-            &dataset,
-            params_no_sampling,
-            8,
-            Parallelism::Sequential,
-        );
+        let mut grower_all =
+            TreeGrower::new(&dataset, params_no_sampling, 8, Parallelism::Sequential);
         let tree_all = grower_all.grow(&dataset, &gradients, 0, None).freeze();
 
         // With column sampling
-        let mut grower_sampled = TreeGrower::new(
-            &dataset,
-            params_with_sampling,
-            8,
-            Parallelism::Sequential,
-        );
+        let mut grower_sampled =
+            TreeGrower::new(&dataset, params_with_sampling, 8, Parallelism::Sequential);
         let tree_sampled = grower_sampled.grow(&dataset, &gradients, 0, None).freeze();
 
         // Both should produce trees
@@ -1079,7 +1102,10 @@ mod tests {
         let dataset = make_simple_dataset();
         let params = GrowerParams {
             growth_strategy: GrowthStrategy::DepthWise { max_depth: 1 },
-            gain: GainParams { min_gain: 0.0, ..Default::default() },
+            gain: GainParams {
+                min_gain: 0.0,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -1108,7 +1134,10 @@ mod tests {
         let dataset = make_simple_dataset();
         let params = GrowerParams {
             growth_strategy: GrowthStrategy::DepthWise { max_depth: 1 },
-            gain: GainParams { min_gain: 0.0, ..Default::default() },
+            gain: GainParams {
+                min_gain: 0.0,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
@@ -1137,7 +1166,10 @@ mod tests {
         let total_samples: usize = (0..partitioner.n_leaves())
             .map(|i| partitioner.get_leaf_indices(i as u32).len())
             .sum();
-        assert_eq!(total_samples, 10, "All 10 rows should be assigned to leaves");
+        assert_eq!(
+            total_samples, 10,
+            "All 10 rows should be assigned to leaves"
+        );
 
         // Each leaf should have non-overlapping row indices
         let mut all_indices: Vec<u32> = Vec::new();

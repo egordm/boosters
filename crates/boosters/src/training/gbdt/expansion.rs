@@ -156,9 +156,7 @@ impl GrowthState {
     /// For leaf-wise: returns the single best node by gain.
     pub fn pop_next(&mut self) -> Vec<NodeCandidate> {
         match self {
-            GrowthState::DepthWise { current_level, .. } => {
-                std::mem::take(current_level)
-            }
+            GrowthState::DepthWise { current_level, .. } => std::mem::take(current_level),
             GrowthState::LeafWise {
                 candidates,
                 n_leaves,
@@ -344,7 +342,10 @@ mod tests {
     #[test]
     fn test_growth_strategy_default() {
         let strategy = GrowthStrategy::default();
-        assert!(matches!(strategy, GrowthStrategy::DepthWise { max_depth: 6 }));
+        assert!(matches!(
+            strategy,
+            GrowthStrategy::DepthWise { max_depth: 6 }
+        ));
     }
 
     #[test]
@@ -453,7 +454,7 @@ mod tests {
         state.pop_next();
         state.push(make_candidate(2, 0.3));
         state.advance();
-		// At depth == max_depth, we stop expanding (leaves can be at depth=max_depth).
+        // At depth == max_depth, we stop expanding (leaves can be at depth=max_depth).
         assert!(!state.should_continue());
     }
 

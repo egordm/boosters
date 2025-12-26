@@ -45,10 +45,7 @@ impl TestInput {
     pub fn to_flat_f32(&self) -> Vec<f32> {
         self.features
             .iter()
-            .flat_map(|row| {
-                row.iter()
-                    .map(|&x| x.map(|v| v as f32).unwrap_or(f32::NAN))
-            })
+            .flat_map(|row| row.iter().map(|&x| x.map(|v| v as f32).unwrap_or(f32::NAN)))
             .collect()
     }
 }

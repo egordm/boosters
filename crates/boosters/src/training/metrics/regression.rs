@@ -10,8 +10,8 @@ use ndarray::ArrayView2;
 
 use super::MetricFn;
 use crate::data::TargetsView;
-use crate::inference::PredictionKind;
 use crate::data::WeightsView;
+use crate::inference::PredictionKind;
 
 // =============================================================================
 // RMSE (Root Mean Squared Error)
@@ -49,7 +49,11 @@ impl MetricFn for Rmse {
                     (ss + (w as f64) * diff * diff, sw + w as f64)
                 });
 
-            sum_rmse += if sum_w > 0.0 { (sum_sq / sum_w).sqrt() } else { 0.0 };
+            sum_rmse += if sum_w > 0.0 {
+                (sum_sq / sum_w).sqrt()
+            } else {
+                0.0
+            };
         }
 
         sum_rmse / n_outputs as f64
@@ -316,11 +320,7 @@ impl MetricFn for PoissonDeviance {
                 (swd + w * dev, sw + w)
             });
 
-        if sum_w > 0.0 {
-            sum_wdev / sum_w
-        } else {
-            0.0
-        }
+        if sum_w > 0.0 { sum_wdev / sum_w } else { 0.0 }
     }
 
     fn higher_is_better(&self) -> bool {
@@ -392,11 +392,7 @@ impl MetricFn for HuberMetric {
                 (swl + w * loss, sw + w)
             });
 
-        if sum_w > 0.0 {
-            sum_wloss / sum_w
-        } else {
-            0.0
-        }
+        if sum_w > 0.0 { sum_wloss / sum_w } else { 0.0 }
     }
 
     fn higher_is_better(&self) -> bool {
@@ -419,9 +415,9 @@ impl MetricFn for HuberMetric {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use approx::assert_abs_diff_eq;
-    use crate::testing::DEFAULT_TOLERANCE;
     use crate::data::WeightsView;
+    use crate::testing::DEFAULT_TOLERANCE;
+    use approx::assert_abs_diff_eq;
     use ndarray::Array2;
 
     fn make_preds(n_outputs: usize, n_samples: usize, data: &[f32]) -> Array2<f32> {
@@ -440,7 +436,11 @@ mod tests {
     fn rmse_perfect() {
         let preds = make_preds(1, 3, &[1.0, 2.0, 3.0]);
         let labels = make_targets(&[1.0, 2.0, 3.0]);
-        let rmse = Rmse.compute(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let rmse = Rmse.compute(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert!(rmse.abs() < 1e-10);
     }
 
@@ -449,7 +449,11 @@ mod tests {
         // RMSE of [1, 2] vs [0, 0] = sqrt((1 + 4) / 2) = sqrt(2.5)
         let preds = make_preds(1, 2, &[1.0, 2.0]);
         let labels = make_targets(&[0.0, 0.0]);
-        let rmse = Rmse.compute(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let rmse = Rmse.compute(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert!((rmse - 2.5f64.sqrt()).abs() < 1e-10);
     }
 
@@ -460,7 +464,11 @@ mod tests {
         // Sample 0: error=1, sample 1: error=0
         // High weight on sample 0: (10*1 + 1*0) / 11 = 10/11
         let weights = ndarray::array![10.0f32, 1.0];
-        let rmse = Rmse.compute(preds.view(), TargetsView::new(labels.view()), WeightsView::from_array(weights.view()));
+        let rmse = Rmse.compute(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::from_array(weights.view()),
+        );
         let expected = (10.0 / 11.0f64).sqrt();
         assert_abs_diff_eq!(rmse as f32, expected as f32, epsilon = DEFAULT_TOLERANCE);
     }
@@ -473,7 +481,11 @@ mod tests {
     fn mae_perfect() {
         let preds = make_preds(1, 3, &[1.0, 2.0, 3.0]);
         let labels = make_targets(&[1.0, 2.0, 3.0]);
-        let mae = Mae.compute(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let mae = Mae.compute(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert!(mae.abs() < 1e-10);
     }
 
@@ -482,7 +494,11 @@ mod tests {
         // MAE of [1, 2] vs [0, 0] = (1 + 2) / 2 = 1.5
         let preds = make_preds(1, 2, &[1.0, 2.0]);
         let labels = make_targets(&[0.0, 0.0]);
-        let mae = Mae.compute(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let mae = Mae.compute(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert_abs_diff_eq!(mae as f32, 1.5, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -493,7 +509,11 @@ mod tests {
         // Errors: 2, 1
         // (10*2 + 1*1) / 11 = 21/11
         let weights = ndarray::array![10.0f32, 1.0];
-        let mae = Mae.compute(preds.view(), TargetsView::new(labels.view()), WeightsView::from_array(weights.view()));
+        let mae = Mae.compute(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::from_array(weights.view()),
+        );
         let expected = 21.0 / 11.0;
         assert_abs_diff_eq!(mae as f32, expected as f32, epsilon = DEFAULT_TOLERANCE);
     }
@@ -506,7 +526,11 @@ mod tests {
     fn mape_perfect() {
         let preds = make_preds(1, 3, &[1.0, 2.0, 3.0]);
         let labels = make_targets(&[1.0, 2.0, 3.0]);
-        let mape = Mape.compute(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let mape = Mape.compute(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert!(mape.abs() < 1e-10);
     }
 
@@ -515,7 +539,11 @@ mod tests {
         // |1-2|/2 = 0.5, |3-4|/4 = 0.25 → mean = 0.375 → 37.5%
         let preds = make_preds(1, 2, &[1.0, 3.0]);
         let labels = make_targets(&[2.0, 4.0]);
-        let mape = Mape.compute(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let mape = Mape.compute(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert_abs_diff_eq!(mape as f32, 37.5, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -527,7 +555,11 @@ mod tests {
     fn quantile_median_perfect() {
         let preds = make_preds(1, 3, &[1.0, 2.0, 3.0]);
         let labels = make_targets(&[1.0, 2.0, 3.0]);
-        let loss = QuantileMetric::median().compute(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let loss = QuantileMetric::median().compute(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert!(loss.abs() < 1e-10);
     }
 
@@ -536,7 +568,11 @@ mod tests {
         // |1-2| = 1, |3-2| = 1 → pinball each = 0.5 → mean = 0.5
         let preds = make_preds(1, 2, &[2.0, 2.0]);
         let labels = make_targets(&[1.0, 3.0]);
-        let loss = QuantileMetric::median().compute(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let loss = QuantileMetric::median().compute(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert_abs_diff_eq!(loss as f32, 0.5, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -548,7 +584,11 @@ mod tests {
     fn poisson_deviance_perfect() {
         let preds = make_preds(1, 3, &[1.0, 2.0, 3.0]);
         let labels = make_targets(&[1.0, 2.0, 3.0]);
-        let dev = PoissonDeviance.compute(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let dev = PoissonDeviance.compute(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert!(dev.abs() < 1e-8);
     }
 
@@ -557,7 +597,11 @@ mod tests {
         // When y=0: deviance = 2 * mu
         let preds = make_preds(1, 2, &[1.0, 2.0]);
         let labels = make_targets(&[0.0, 0.0]);
-        let dev = PoissonDeviance.compute(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let dev = PoissonDeviance.compute(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert_abs_diff_eq!(dev as f32, 3.0, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -569,7 +613,11 @@ mod tests {
     fn huber_perfect() {
         let preds = make_preds(1, 3, &[1.0, 2.0, 3.0]);
         let labels = make_targets(&[1.0, 2.0, 3.0]);
-        let loss = HuberMetric::default().compute(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let loss = HuberMetric::default().compute(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert!(loss.abs() < 1e-10);
     }
 
@@ -578,7 +626,11 @@ mod tests {
         // delta=1.0, residual=0.5 → loss = 0.5 * 0.25 = 0.125
         let preds = make_preds(1, 1, &[1.5]);
         let labels = make_targets(&[1.0]);
-        let loss = HuberMetric::new(1.0).compute(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let loss = HuberMetric::new(1.0).compute(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert_abs_diff_eq!(loss as f32, 0.125, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -587,7 +639,11 @@ mod tests {
         // delta=1.0, residual=2.0 → loss = 1.0 * (2.0 - 0.5) = 1.5
         let preds = make_preds(1, 1, &[3.0]);
         let labels = make_targets(&[1.0]);
-        let loss = HuberMetric::new(1.0).compute(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let loss = HuberMetric::new(1.0).compute(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert_abs_diff_eq!(loss as f32, 1.5, epsilon = DEFAULT_TOLERANCE);
     }
 

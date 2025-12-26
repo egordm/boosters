@@ -1,38 +1,41 @@
+[build-system]
+build-backend = "hatchling.build"
+requires = [ "hatchling" ]
+
 [project]
 name = "boosters-eval"
 version = "0.1.0"
 description = "Evaluation benchmarks for gradient boosting libraries"
 readme = "README.md"
-requires-python = ">=3.12"
-license = { text = "MIT" }
-keywords = ["machine-learning", "gradient-boosting", "benchmarking", "evaluation"]
+keywords = [ "benchmarking", "evaluation", "gradient-boosting", "machine-learning" ]
 
+license = { text = "MIT" }
+requires-python = ">=3.12"
+classifiers = [
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+]
 dependencies = [
-    "numpy>=2.0",
-    "pandas>=2.2",
-    "scikit-learn>=1.5",
-    "typer>=0.12",
-    "rich>=13.0",
-    "pydantic>=2.0",
-    "tabulate>=0.9",
-    "boosters",
+  "boosters",
+  "numpy>=2",
+  "pandas>=2.2",
+  "pydantic>=2",
+  "rich>=13",
+  "scikit-learn>=1.5",
+  "tabulate>=0.9",
+  "typer>=0.12",
 ]
 
-[project.optional-dependencies]
-xgboost = ["xgboost>=2.0"]
-lightgbm = ["lightgbm>=4.0"]
-catboost = ["catboost>=1.2"]
-all = ["xgboost>=2.0", "lightgbm>=4.0", "catboost>=1.2"]
-
-[project.scripts]
-boosters-eval = "boosters_eval.cli:app"
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/boosters_eval"]
+optional-dependencies.all = [ "catboost>=1.2", "lightgbm>=4", "xgboost>=2" ]
+optional-dependencies.catboost = [ "catboost>=1.2" ]
+optional-dependencies.lightgbm = [ "lightgbm>=4" ]
+optional-dependencies.xgboost = [ "xgboost>=2" ]
+scripts.boosters-eval = "boosters_eval.cli:app"
 
 [dependency-groups]
-dev = ["pytest>=8.0"]
+dev = [ "pytest>=8" ]
+
+[tool.hatch.build.targets.wheel]
+packages = [ "src/boosters_eval" ]

@@ -230,7 +230,7 @@ mod tests {
     #[test]
     fn test_maybe_par_for_each() {
         use std::sync::atomic::{AtomicUsize, Ordering};
-        
+
         let sum = AtomicUsize::new(0);
         Parallelism::Sequential.maybe_par_for_each(0..10usize, |i| {
             sum.fetch_add(i, Ordering::Relaxed);

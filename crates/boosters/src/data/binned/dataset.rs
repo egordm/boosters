@@ -1,10 +1,10 @@
 //! BinnedDataset - the main dataset structure.
 
-use crate::data::{DataAccessor, SampleAccessor};
-use crate::data::FeatureType;
 use super::bundling::{BundlePlan, FeatureLocation};
-use super::group::{FeatureGroup, BinnedFeatureInfo};
+use super::group::{BinnedFeatureInfo, FeatureGroup};
 use super::storage::{BinStorage, FeatureView, GroupLayout};
+use crate::data::FeatureType;
+use crate::data::{DataAccessor, SampleAccessor};
 
 /// The main binned dataset for GBDT training.
 ///
@@ -219,7 +219,9 @@ impl BinnedDataset {
     /// }
     /// ```
     pub fn decode_bundle_split(&self, bundle_idx: usize, encoded_bin: u32) -> Option<(usize, u32)> {
-        self.bundle_plan.as_ref()?.decode_bundle_split(bundle_idx, encoded_bin)
+        self.bundle_plan
+            .as_ref()?
+            .decode_bundle_split(bundle_idx, encoded_bin)
     }
 
     /// Get the location of an original feature after bundling.
@@ -280,7 +282,10 @@ impl BinnedDataset {
     }
 
     /// Get groups by layout type (dense groups only).
-    pub fn groups_by_layout(&self, layout: GroupLayout) -> impl Iterator<Item = (usize, &FeatureGroup)> {
+    pub fn groups_by_layout(
+        &self,
+        layout: GroupLayout,
+    ) -> impl Iterator<Item = (usize, &FeatureGroup)> {
         self.groups
             .iter()
             .enumerate()
@@ -352,28 +357,54 @@ impl BinnedDataset {
             (BinStorage::DenseU8(data), GroupLayout::ColumnMajor) => {
                 let start = idx_in_group * self.n_rows;
                 let end = start + self.n_rows;
-                FeatureView::U8 { bins: &data[start..end], stride: 1 }
+                FeatureView::U8 {
+                    bins: &data[start..end],
+                    stride: 1,
+                }
             }
             (BinStorage::DenseU16(data), GroupLayout::ColumnMajor) => {
                 let start = idx_in_group * self.n_rows;
                 let end = start + self.n_rows;
-                FeatureView::U16 { bins: &data[start..end], stride: 1 }
+                FeatureView::U16 {
+                    bins: &data[start..end],
+                    stride: 1,
+                }
             }
             // Row-major dense: provide full data with stride
             (BinStorage::DenseU8(data), GroupLayout::RowMajor) => {
                 // Slice from feature offset, stride = n_features
-                FeatureView::U8 { bins: &data[idx_in_group..], stride: n_features }
+                FeatureView::U8 {
+                    bins: &data[idx_in_group..],
+                    stride: n_features,
+                }
             }
-            (BinStorage::DenseU16(data), GroupLayout::RowMajor) => {
-                FeatureView::U16 { bins: &data[idx_in_group..], stride: n_features }
-            }
+            (BinStorage::DenseU16(data), GroupLayout::RowMajor) => FeatureView::U16 {
+                bins: &data[idx_in_group..],
+                stride: n_features,
+            },
             // Sparse: always contiguous (one feature per group)
-            (BinStorage::SparseU8 { row_indices, bin_values, .. }, _) => {
-                FeatureView::SparseU8 { row_indices, bin_values }
-            }
-            (BinStorage::SparseU16 { row_indices, bin_values, .. }, _) => {
-                FeatureView::SparseU16 { row_indices, bin_values }
-            }
+            (
+                BinStorage::SparseU8 {
+                    row_indices,
+                    bin_values,
+                    ..
+                },
+                _,
+            ) => FeatureView::SparseU8 {
+                row_indices,
+                bin_values,
+            },
+            (
+                BinStorage::SparseU16 {
+                    row_indices,
+                    bin_values,
+                    ..
+                },
+                _,
+            ) => FeatureView::SparseU16 {
+                row_indices,
+                bin_values,
+            },
         }
     }
 
@@ -504,7 +535,10 @@ impl SampleAccessor for BinnedSample<'_> {
 }
 
 impl DataAccessor for BinnedDataset {
-    type Sample<'a> = BinnedSample<'a> where Self: 'a;
+    type Sample<'a>
+        = BinnedSample<'a>
+    where
+        Self: 'a;
 
     #[inline]
     fn sample(&self, index: usize) -> Self::Sample<'_> {
@@ -541,32 +575,34 @@ impl DataAccessor for BinnedDataset {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::storage::BinStorage;
+    use super::*;
     use crate::data::binned::{BinMapper, MissingType};
 
     fn make_simple_mapper(n_bins: u32) -> BinMapper {
         let bounds: Vec<f64> = (0..n_bins).map(|i| i as f64 + 0.5).collect();
-        BinMapper::numerical(bounds, MissingType::None, 0, 0, 0.0, 0.0, (n_bins - 1) as f64)
+        BinMapper::numerical(
+            bounds,
+            MissingType::None,
+            0,
+            0,
+            0.0,
+            0.0,
+            (n_bins - 1) as f64,
+        )
     }
 
     #[test]
     fn test_binned_dataset_single_group() {
         // 4 rows, 2 features in one group
         let storage = BinStorage::from_u8(vec![
-            0, 1,  // row 0
-            2, 3,  // row 1
-            0, 2,  // row 2
-            1, 3,  // row 3
+            0, 1, // row 0
+            2, 3, // row 1
+            0, 2, // row 2
+            1, 3, // row 3
         ]);
 
-        let group = FeatureGroup::new(
-            vec![0, 1],
-            GroupLayout::RowMajor,
-            4,
-            storage,
-            vec![4, 4],
-        );
+        let group = FeatureGroup::new(vec![0, 1], GroupLayout::RowMajor, 4, storage, vec![4, 4]);
 
         let features = vec![
             BinnedFeatureInfo::new(make_simple_mapper(4), 0, 0),
@@ -607,7 +643,7 @@ mod tests {
             vec![0, 1],
             GroupLayout::RowMajor,
             3,
-            BinStorage::from_u8(vec![0, 1, 2, 3, 4, 5]),  // 3 rows * 2 features
+            BinStorage::from_u8(vec![0, 1, 2, 3, 4, 5]), // 3 rows * 2 features
             vec![4, 4],
         );
 
@@ -615,14 +651,14 @@ mod tests {
             vec![2],
             GroupLayout::ColumnMajor,
             3,
-            BinStorage::from_u8(vec![10, 11, 12]),  // 3 rows * 1 feature
+            BinStorage::from_u8(vec![10, 11, 12]), // 3 rows * 1 feature
             vec![16],
         );
 
         let features = vec![
-            BinnedFeatureInfo::new(make_simple_mapper(4), 0, 0),   // feature 0 -> group 0, idx 0
-            BinnedFeatureInfo::new(make_simple_mapper(4), 0, 1),   // feature 1 -> group 0, idx 1
-            BinnedFeatureInfo::new(make_simple_mapper(16), 1, 0),  // feature 2 -> group 1, idx 0
+            BinnedFeatureInfo::new(make_simple_mapper(4), 0, 0), // feature 0 -> group 0, idx 0
+            BinnedFeatureInfo::new(make_simple_mapper(4), 0, 1), // feature 1 -> group 0, idx 1
+            BinnedFeatureInfo::new(make_simple_mapper(16), 1, 0), // feature 2 -> group 1, idx 0
         ];
 
         let dataset = BinnedDataset::with_bundle_plan(3, features, vec![group0, group1], None);
@@ -630,7 +666,7 @@ mod tests {
         assert_eq!(dataset.n_rows(), 3);
         assert_eq!(dataset.n_features(), 3);
         assert_eq!(dataset.n_groups(), 2);
-        assert_eq!(dataset.total_bins(), 24);  // 4 + 4 + 16
+        assert_eq!(dataset.total_bins(), 24); // 4 + 4 + 16
         assert_eq!(dataset.global_bin_offsets(), &[0, 4, 8, 24]);
 
         // Verify access patterns
@@ -654,16 +690,16 @@ mod tests {
         let col_major: Vec<_> = dataset.column_major_groups().collect();
         assert_eq!(row_major.len(), 1);
         assert_eq!(col_major.len(), 1);
-        assert_eq!(row_major[0].0, 0);  // group 0
-        assert_eq!(col_major[0].0, 1);  // group 1
+        assert_eq!(row_major[0].0, 0); // group 0
+        assert_eq!(col_major[0].0, 1); // group 1
     }
 
     #[test]
     fn test_feature_views() {
         // Column-major: 4 rows, 2 features
         let storage = BinStorage::from_u8(vec![
-            0, 1, 2, 3,  // feature 0
-            10, 11, 12, 13,  // feature 1
+            0, 1, 2, 3, // feature 0
+            10, 11, 12, 13, // feature 1
         ]);
 
         let group = FeatureGroup::new(

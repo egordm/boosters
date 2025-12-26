@@ -171,8 +171,7 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
         targets: TargetsView<'_>,
         weights: WeightsView<'_>,
     ) -> f64 {
-        let needs_transform =
-            self.metric.expected_prediction_kind() != PredictionKind::Margin;
+        let needs_transform = self.metric.expected_prediction_kind() != PredictionKind::Margin;
 
         let n_samples = targets.n_samples();
 
@@ -184,16 +183,18 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
             }
 
             // Copy predictions to buffer for in-place transformation
-            let pred_slice = predictions.as_slice()
+            let pred_slice = predictions
+                .as_slice()
                 .expect("predictions must be contiguous");
             self.transform_buffer[..required].copy_from_slice(&pred_slice[..required]);
-            
+
             let mut view = ndarray::ArrayViewMut2::from_shape(
                 (self.n_outputs, n_samples),
                 &mut self.transform_buffer[..required],
             )
             .expect("transform buffer shape mismatch");
-            self.objective.transform_predictions_inplace(view.view_mut());
+            self.objective
+                .transform_predictions_inplace(view.view_mut());
 
             let preds_view = ArrayView2::from_shape(
                 (self.n_outputs, n_samples),
@@ -250,7 +251,7 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
         if !self.metric.is_enabled() {
             return Vec::new();
         }
-        
+
         let mut metrics = Vec::with_capacity(1 + eval_sets.len());
 
         // Compute training metric
@@ -265,7 +266,10 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
         // Compute eval set metrics
         for (set_idx, eval_set) in eval_sets.iter().enumerate() {
             let preds = &eval_predictions[set_idx];
-            let targets = eval_set.dataset.targets().expect("eval set must have targets");
+            let targets = eval_set
+                .dataset
+                .targets()
+                .expect("eval set must have targets");
             let weights = eval_set.dataset.weights();
 
             let metric = self.compute_metric(

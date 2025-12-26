@@ -13,10 +13,10 @@ pub mod tree;
 pub mod tree_view;
 pub mod types;
 
-pub use categories::{categories_to_bitset, float_to_category, CategoriesStorage};
+pub use categories::{CategoriesStorage, categories_to_bitset, float_to_category};
 pub use coefficients::{LeafCoefficients, LeafCoefficientsBuilder};
 pub use forest::{Forest, ForestValidationError};
 pub use mutable_tree::MutableTree;
 pub use tree::Tree;
-pub use tree_view::{validate_tree, TreeValidationError, TreeView};
+pub use tree_view::{TreeValidationError, TreeView, validate_tree};
 pub use types::{LeafValue, ScalarLeaf, SplitType, VectorLeaf};

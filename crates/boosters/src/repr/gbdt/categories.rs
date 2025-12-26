@@ -38,8 +38,7 @@ pub struct CategoriesStorage {
 use std::sync::LazyLock;
 
 /// Static empty CategoriesStorage for returning references.
-static EMPTY_CATEGORIES: LazyLock<CategoriesStorage> =
-    LazyLock::new(CategoriesStorage::empty);
+static EMPTY_CATEGORIES: LazyLock<CategoriesStorage> = LazyLock::new(CategoriesStorage::empty);
 
 impl CategoriesStorage {
     /// Get a static reference to an empty storage.

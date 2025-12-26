@@ -596,9 +596,8 @@ impl XgbModel {
     pub fn from_file(path: impl AsRef<std::path::Path>) -> std::io::Result<Self> {
         let file = std::fs::File::open(path)?;
         let reader = std::io::BufReader::new(file);
-        serde_json::from_reader(reader).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e)
-        })
+        serde_json::from_reader(reader)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
 
     /// Parse a model from a serde_json Value.

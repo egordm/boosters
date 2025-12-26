@@ -8,8 +8,8 @@
 //! cargo run --example basic_training
 //! ```
 
-use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
+use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::training::GrowthStrategy;
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism};
@@ -56,7 +56,9 @@ fn main() {
     let targets = TargetsView::new(targets_2d.view());
 
     // Train using GBDTModel (high-level API)
-    let model = GBDTModel::train_binned(&binned_dataset, targets, WeightsView::None, &[], config, 1).expect("Training failed");
+    let model =
+        GBDTModel::train_binned(&binned_dataset, targets, WeightsView::None, &[], config, 1)
+            .expect("Training failed");
 
     // =========================================================================
     // 3. Make Predictions

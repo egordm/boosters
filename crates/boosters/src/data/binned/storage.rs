@@ -122,7 +122,10 @@ impl BinStorage {
     /// * `n_rows` - Total number of rows in the dataset
     pub fn from_sparse_u8(row_indices: Vec<u32>, bin_values: Vec<u8>, n_rows: usize) -> Self {
         debug_assert_eq!(row_indices.len(), bin_values.len());
-        debug_assert!(row_indices.windows(2).all(|w| w[0] <= w[1]), "row_indices must be sorted");
+        debug_assert!(
+            row_indices.windows(2).all(|w| w[0] <= w[1]),
+            "row_indices must be sorted"
+        );
         Self::SparseU8 {
             row_indices: row_indices.into_boxed_slice(),
             bin_values: bin_values.into_boxed_slice(),
@@ -199,12 +202,16 @@ impl BinStorage {
         match self {
             Self::DenseU8(data) => data.len(),
             Self::DenseU16(data) => data.len() * 2,
-            Self::SparseU8 { row_indices, bin_values, .. } => {
-                row_indices.len() * 4 + bin_values.len()
-            }
-            Self::SparseU16 { row_indices, bin_values, .. } => {
-                row_indices.len() * 4 + bin_values.len() * 2
-            }
+            Self::SparseU8 {
+                row_indices,
+                bin_values,
+                ..
+            } => row_indices.len() * 4 + bin_values.len(),
+            Self::SparseU16 {
+                row_indices,
+                bin_values,
+                ..
+            } => row_indices.len() * 4 + bin_values.len() * 2,
         }
     }
 }
@@ -253,15 +260,9 @@ pub enum FeatureView<'a> {
     /// Dense u8 bins with stride.
     /// - Column-major: bins is contiguous feature data, stride=1
     /// - Row-major: bins is full group data, stride=n_features
-    U8 {
-        bins: &'a [u8],
-        stride: usize,
-    },
+    U8 { bins: &'a [u8], stride: usize },
     /// Dense u16 bins with stride.
-    U16 {
-        bins: &'a [u16],
-        stride: usize,
-    },
+    U16 { bins: &'a [u16], stride: usize },
     /// Sparse u8 bins (always contiguous, stride=1 implicit).
     SparseU8 {
         row_indices: &'a [u32],
@@ -278,7 +279,10 @@ impl<'a> FeatureView<'a> {
     /// Check if sparse.
     #[inline]
     pub fn is_sparse(&self) -> bool {
-        matches!(self, FeatureView::SparseU8 { .. } | FeatureView::SparseU16 { .. })
+        matches!(
+            self,
+            FeatureView::SparseU8 { .. } | FeatureView::SparseU16 { .. }
+        )
     }
 
     /// Check if dense.
@@ -351,14 +355,30 @@ impl<'a> From<&'a BinStorage> for FeatureView<'a> {
     /// `BinnedDataset::feature_view()` instead to get proper stride info.
     fn from(storage: &'a BinStorage) -> Self {
         match storage {
-            BinStorage::DenseU8(data) => FeatureView::U8 { bins: data, stride: 1 },
-            BinStorage::DenseU16(data) => FeatureView::U16 { bins: data, stride: 1 },
-            BinStorage::SparseU8 { row_indices, bin_values, .. } => {
-                FeatureView::SparseU8 { row_indices, bin_values }
-            }
-            BinStorage::SparseU16 { row_indices, bin_values, .. } => {
-                FeatureView::SparseU16 { row_indices, bin_values }
-            }
+            BinStorage::DenseU8(data) => FeatureView::U8 {
+                bins: data,
+                stride: 1,
+            },
+            BinStorage::DenseU16(data) => FeatureView::U16 {
+                bins: data,
+                stride: 1,
+            },
+            BinStorage::SparseU8 {
+                row_indices,
+                bin_values,
+                ..
+            } => FeatureView::SparseU8 {
+                row_indices,
+                bin_values,
+            },
+            BinStorage::SparseU16 {
+                row_indices,
+                bin_values,
+                ..
+            } => FeatureView::SparseU16 {
+                row_indices,
+                bin_values,
+            },
         }
     }
 }
@@ -437,7 +457,11 @@ mod tests {
         assert_eq!(storage.size_bytes(), 15);
 
         match &storage {
-            BinStorage::SparseU8 { row_indices, bin_values, n_rows } => {
+            BinStorage::SparseU8 {
+                row_indices,
+                bin_values,
+                n_rows,
+            } => {
                 assert_eq!(row_indices.as_ref(), &[0, 2, 5]);
                 assert_eq!(bin_values.as_ref(), &[1, 3, 2]);
                 assert_eq!(*n_rows, 10);
@@ -455,7 +479,11 @@ mod tests {
         assert_eq!(storage.nnz(), Some(2));
 
         match &storage {
-            BinStorage::SparseU16 { row_indices, bin_values, .. } => {
+            BinStorage::SparseU16 {
+                row_indices,
+                bin_values,
+                ..
+            } => {
                 assert_eq!(row_indices.as_ref(), &[1, 3]);
                 assert_eq!(bin_values.as_ref(), &[256, 1000]);
             }

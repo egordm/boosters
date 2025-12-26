@@ -5,8 +5,8 @@
 //! histogram region. The invariants (non-overlapping regions, bounds checking)
 //! are enforced here so callers can iterate safely.
 
-use super::pool::HistogramLayout;
 use super::HistogramBin;
+use super::pool::HistogramLayout;
 
 use rayon::prelude::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 

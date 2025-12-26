@@ -23,12 +23,7 @@ def main() -> None:
     np.random.seed(42)
     X = np.random.randn(200, 5).astype(np.float32)
     # Linear combination with noise
-    y_reg = (
-        2.0 * X[:, 0]
-        - 1.5 * X[:, 1]
-        + 0.5 * X[:, 2]
-        + np.random.randn(200).astype(np.float32) * 0.1
-    )
+    y_reg = 2.0 * X[:, 0] - 1.5 * X[:, 1] + 0.5 * X[:, 2] + np.random.randn(200).astype(np.float32) * 0.1
     y_cls = (y_reg > 0).astype(np.int32)
 
     # Linear Regression

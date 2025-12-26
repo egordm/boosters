@@ -21,8 +21,6 @@ pub enum TaskKind {
     Ranking,
 }
 
-
-
 impl TaskKind {
     /// Returns the number of output groups for this task.
     pub fn n_groups(&self) -> usize {
@@ -60,8 +58,6 @@ pub enum FeatureType {
         n_categories: Option<u32>,
     },
 }
-
-
 
 /// Shared metadata for all model types.
 ///

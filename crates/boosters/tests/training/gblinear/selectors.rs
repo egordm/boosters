@@ -129,8 +129,11 @@ fn train_all_selectors_multiclass() {
         verbosity: Verbosity::Silent,
         ..Default::default()
     };
-    let shuffle_trainer =
-        GBLinearTrainer::new(SoftmaxLoss::new(num_classes), MulticlassLogLoss, shuffle_params);
+    let shuffle_trainer = GBLinearTrainer::new(
+        SoftmaxLoss::new(num_classes),
+        MulticlassLogLoss,
+        shuffle_params,
+    );
     let shuffle_model = shuffle_trainer.train(&train, &[]).unwrap();
     use boosters::training::{MetricFn, MulticlassAccuracy};
     let shuffle_output = shuffle_model.predict(test_view);
@@ -153,9 +156,8 @@ fn train_all_selectors_multiclass() {
     let shuffle_pred_arr = Array2::from_shape_vec((1, n_samples), shuffle_pred_classes).unwrap();
     let targets_2d = Array2::from_shape_vec((1, test_labels.len()), test_labels.clone()).unwrap();
     let targets = TargetsView::new(targets_2d.view());
-    let shuffle_acc = MulticlassAccuracy
-        .compute(shuffle_pred_arr.view(), targets, WeightsView::None)
-        as f32;
+    let shuffle_acc =
+        MulticlassAccuracy.compute(shuffle_pred_arr.view(), targets, WeightsView::None) as f32;
 
     for (name, selector) in selectors {
         let params = GBLinearParams {
@@ -191,9 +193,7 @@ fn train_all_selectors_multiclass() {
             })
             .collect();
         let pred_arr = Array2::from_shape_vec((1, n_samples), pred_classes).unwrap();
-        let acc = MulticlassAccuracy
-            .compute(pred_arr.view(), targets, WeightsView::None)
-            as f32;
+        let acc = MulticlassAccuracy.compute(pred_arr.view(), targets, WeightsView::None) as f32;
 
         // All selectors should achieve reasonable accuracy
         // (at least 50% of shuffle baseline accuracy)
@@ -246,10 +246,8 @@ fn train_greedy_selector_feature_priority() {
     let cyclic_model = cyclic_trainer.train(&train, &[]).unwrap();
 
     // Both should produce valid models (non-zero weights somewhere)
-    let greedy_has_weights: bool = (0..n_features)
-        .any(|i| greedy_model.weight(i, 0).abs() > 1e-6);
-    let cyclic_has_weights: bool = (0..n_features)
-        .any(|i| cyclic_model.weight(i, 0).abs() > 1e-6);
+    let greedy_has_weights: bool = (0..n_features).any(|i| greedy_model.weight(i, 0).abs() > 1e-6);
+    let cyclic_has_weights: bool = (0..n_features).any(|i| cyclic_model.weight(i, 0).abs() > 1e-6);
 
     assert!(
         greedy_has_weights,
@@ -259,7 +257,6 @@ fn train_greedy_selector_feature_priority() {
         cyclic_has_weights,
         "Cyclic model should have non-zero weights"
     );
-
 }
 
 /// Test Thrifty selector convergence with caching.

@@ -19,8 +19,8 @@
 //! cargo run --example train_imbalanced
 //! ```
 
-use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
+use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::training::GrowthStrategy;
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism};
@@ -73,13 +73,26 @@ fn main() {
 
     let class_weights: Vec<f32> = labels
         .iter()
-        .map(|&l| if l < 0.5 { weight_class_0 } else { weight_class_1 })
+        .map(|&l| {
+            if l < 0.5 {
+                weight_class_0
+            } else {
+                weight_class_1
+            }
+        })
         .collect();
 
     println!("=== Imbalanced Classification Example ===\n");
-    println!("Dataset: {} majority, {} minority ({:.0}:1 ratio)\n",
-        n_majority, n_minority, n_majority as f32 / n_minority as f32);
-    println!("Class weights: majority={:.2}, minority={:.2}\n", weight_class_0, weight_class_1);
+    println!(
+        "Dataset: {} majority, {} minority ({:.0}:1 ratio)\n",
+        n_majority,
+        n_minority,
+        n_majority as f32 / n_minority as f32
+    );
+    println!(
+        "Class weights: majority={:.2}, minority={:.2}\n",
+        weight_class_0, weight_class_1
+    );
 
     let config = GBDTConfig::builder()
         .objective(Objective::logistic())
@@ -113,7 +126,11 @@ fn main() {
     let probs_uw = model_unweighted.predict(&features_dataset, 1);
 
     let acc_uw = compute_accuracy(probs_uw.as_slice().unwrap(), labels.as_slice().unwrap());
-    let recall_1_uw = compute_recall(probs_uw.as_slice().unwrap(), labels.as_slice().unwrap(), 1.0);
+    let recall_1_uw = compute_recall(
+        probs_uw.as_slice().unwrap(),
+        labels.as_slice().unwrap(),
+        1.0,
+    );
     println!("  Accuracy: {:.1}%", acc_uw * 100.0);
     println!("  Minority recall: {:.1}%\n", recall_1_uw * 100.0);
 
@@ -142,7 +159,10 @@ fn main() {
     // Summary
     // =========================================================================
     println!("=== Summary ===");
-    println!("Minority recall improvement: {:.1}%", (recall_1_w - recall_1_uw) * 100.0);
+    println!(
+        "Minority recall improvement: {:.1}%",
+        (recall_1_w - recall_1_uw) * 100.0
+    );
 
     if recall_1_w > recall_1_uw {
         println!("✓ Weighted training improved minority class recall!");
@@ -175,5 +195,9 @@ fn compute_recall(probs: &[f32], labels: &[f32], target_class: f32) -> f32 {
             }
         }
     }
-    if total > 0 { tp as f32 / total as f32 } else { 0.0 }
+    if total > 0 {
+        tp as f32 / total as f32
+    } else {
+        0.0
+    }
 }

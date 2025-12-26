@@ -186,7 +186,7 @@ mod tests {
         assert_eq!(early_stop.update(0.5), EarlyStopAction::Improved); // current=1, best=0, gap=1
         assert_eq!(early_stop.update(0.6), EarlyStopAction::Continue); // current=2, best=0, gap=2
         assert_eq!(early_stop.update(0.7), EarlyStopAction::Continue); // current=3, best=0, gap=3
-        assert_eq!(early_stop.update(0.8), EarlyStopAction::Stop);     // current=4, best=0, gap=4 > 3
+        assert_eq!(early_stop.update(0.8), EarlyStopAction::Stop); // current=4, best=0, gap=4 > 3
 
         assert_eq!(early_stop.best_round(), 0);
         assert!((early_stop.best_value().unwrap() - 0.5).abs() < 1e-10);
@@ -205,7 +205,7 @@ mod tests {
         assert_eq!(early_stop.update(0.9), EarlyStopAction::Improved); // current=4, best=3
         assert_eq!(early_stop.update(1.0), EarlyStopAction::Continue); // current=5, gap=2
         assert_eq!(early_stop.update(1.1), EarlyStopAction::Continue); // current=6, gap=3
-        assert_eq!(early_stop.update(1.2), EarlyStopAction::Stop);     // current=7, gap=4 > 3
+        assert_eq!(early_stop.update(1.2), EarlyStopAction::Stop); // current=7, gap=4 > 3
 
         assert_eq!(early_stop.best_round(), 3);
     }
@@ -217,7 +217,7 @@ mod tests {
         assert_eq!(early_stop.update(0.8), EarlyStopAction::Improved); // current=1, best=0
         assert_eq!(early_stop.update(0.9), EarlyStopAction::Improved); // current=2, best=1
         assert_eq!(early_stop.update(0.85), EarlyStopAction::Continue); // current=3, gap=2
-        assert_eq!(early_stop.update(0.85), EarlyStopAction::Stop);     // current=4, gap=3 > 2
+        assert_eq!(early_stop.update(0.85), EarlyStopAction::Stop); // current=4, gap=3 > 2
 
         assert_eq!(early_stop.best_round(), 1);
         assert!((early_stop.best_value().unwrap() - 0.9).abs() < 1e-10);

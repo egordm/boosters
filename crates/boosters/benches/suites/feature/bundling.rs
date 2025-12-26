@@ -17,15 +17,15 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
+use boosters::Parallelism;
 use boosters::data::binned::{BinnedDatasetBuilder, BundlingConfig};
-use boosters::data::{transpose_to_c_order, BinningConfig};
+use boosters::data::{BinningConfig, transpose_to_c_order};
 use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
-use boosters::Parallelism;
 
 use ndarray::{Array2, ArrayView2};
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 #[cfg(feature = "bench-lightgbm")]
 use serde_json::json;
@@ -135,13 +135,19 @@ fn bench_boosters_binning(c: &mut Criterion) {
     group.sample_size(20);
 
     for config in DATASETS {
-        let (features, _targets, n_features) =
-            generate_onehot_dataset(config.rows, config.n_numerical, config.n_categoricals, config.cats_per_cat, 42);
+        let (features, _targets, n_features) = generate_onehot_dataset(
+            config.rows,
+            config.n_numerical,
+            config.n_categoricals,
+            config.cats_per_cat,
+            42,
+        );
 
         group.throughput(Throughput::Elements((config.rows * n_features) as u64));
 
         // Pre-convert to feature-major layout
-        let sample_major_view = ArrayView2::from_shape((config.rows, n_features), &features).unwrap();
+        let sample_major_view =
+            ArrayView2::from_shape((config.rows, n_features), &features).unwrap();
         let features_fm = transpose_to_c_order(sample_major_view);
         let features_dataset = Dataset::new(features_fm.view(), None, None);
 
@@ -184,7 +190,8 @@ fn bench_boosters_binning(c: &mut Criterion) {
                 config.name,
                 n_features,
                 s.bundles_created + s.standalone_features,
-                (1.0 - (s.bundles_created + s.standalone_features) as f64 / n_features as f64) * 100.0
+                (1.0 - (s.bundles_created + s.standalone_features) as f64 / n_features as f64)
+                    * 100.0
             );
         }
     }
@@ -200,8 +207,13 @@ fn bench_boosters_training(c: &mut Criterion) {
     let (n_trees, max_depth) = (10u32, 6u32);
 
     for config in DATASETS {
-        let (features, targets, n_features) =
-            generate_onehot_dataset(config.rows, config.n_numerical, config.n_categoricals, config.cats_per_cat, 42);
+        let (features, targets, n_features) = generate_onehot_dataset(
+            config.rows,
+            config.n_numerical,
+            config.n_categoricals,
+            config.cats_per_cat,
+            42,
+        );
 
         group.throughput(Throughput::Elements((config.rows * n_features) as u64));
 
@@ -209,28 +221,34 @@ fn bench_boosters_training(c: &mut Criterion) {
             n_trees,
             learning_rate: 0.1,
             growth_strategy: GrowthStrategy::DepthWise { max_depth },
-            gain: GainParams { reg_lambda: 1.0, ..Default::default() },
+            gain: GainParams {
+                reg_lambda: 1.0,
+                ..Default::default()
+            },
             cache_size: 32,
             ..Default::default()
         };
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
 
         // Pre-convert to feature-major layout
-        let sample_major_view = ArrayView2::from_shape((config.rows, n_features), &features).unwrap();
+        let sample_major_view =
+            ArrayView2::from_shape((config.rows, n_features), &features).unwrap();
         let features_fm = transpose_to_c_order(sample_major_view);
         let features_dataset = Dataset::new(features_fm.view(), None, None);
 
         // Pre-build binned datasets
-        let binned_no_bundle = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
-            .add_features(features_dataset.features(), Parallelism::Parallel)
-            .with_bundling(BundlingConfig::disabled())
-            .build()
-            .unwrap();
-        let binned_with_bundle = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
-            .add_features(features_dataset.features(), Parallelism::Parallel)
-            .with_bundling(BundlingConfig::auto())
-            .build()
-            .unwrap();
+        let binned_no_bundle =
+            BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+                .add_features(features_dataset.features(), Parallelism::Parallel)
+                .with_bundling(BundlingConfig::disabled())
+                .build()
+                .unwrap();
+        let binned_with_bundle =
+            BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+                .add_features(features_dataset.features(), Parallelism::Parallel)
+                .with_bundling(BundlingConfig::auto())
+                .build()
+                .unwrap();
 
         // Convert targets to 2D
         let targets_2d = Array2::from_shape_vec((1, targets.len()), targets.clone()).unwrap();
@@ -239,7 +257,17 @@ fn bench_boosters_training(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("no_bundling", config.name), |b| {
             let targets_view = TargetsView::new(targets_2d.view());
             b.iter(|| {
-                black_box(trainer.train(black_box(&binned_no_bundle), targets_view, WeightsView::None, &[], Parallelism::Sequential).unwrap())
+                black_box(
+                    trainer
+                        .train(
+                            black_box(&binned_no_bundle),
+                            targets_view,
+                            WeightsView::None,
+                            &[],
+                            Parallelism::Sequential,
+                        )
+                        .unwrap(),
+                )
             })
         });
 
@@ -247,7 +275,17 @@ fn bench_boosters_training(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("with_bundling", config.name), |b| {
             let targets_view = TargetsView::new(targets_2d.view());
             b.iter(|| {
-                black_box(trainer.train(black_box(&binned_with_bundle), targets_view, WeightsView::None, &[], Parallelism::Sequential).unwrap())
+                black_box(
+                    trainer
+                        .train(
+                            black_box(&binned_with_bundle),
+                            targets_view,
+                            WeightsView::None,
+                            &[],
+                            Parallelism::Sequential,
+                        )
+                        .unwrap(),
+                )
             })
         });
     }
@@ -267,8 +305,13 @@ fn bench_lightgbm_bundling(c: &mut Criterion) {
     let (n_trees, max_depth) = (50u32, 6u32);
 
     for config in DATASETS {
-        let (features, targets, n_features) =
-            generate_onehot_dataset(config.rows, config.n_numerical, config.n_categoricals, config.cats_per_cat, 42);
+        let (features, targets, n_features) = generate_onehot_dataset(
+            config.rows,
+            config.n_numerical,
+            config.n_categoricals,
+            config.cats_per_cat,
+            42,
+        );
         let features_f64: Vec<f64> = features.iter().map(|&x| x as f64).collect();
 
         group.throughput(Throughput::Elements((config.rows * n_features) as u64));

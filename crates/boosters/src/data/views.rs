@@ -67,15 +67,14 @@ impl<'a> FeaturesView<'a> {
     /// # Returns
     ///
     /// `None` if the slice length doesn't match `n_samples * n_features`.
-    pub fn from_slice(
-        data: &'a [f32],
-        n_samples: usize,
-        n_features: usize,
-    ) -> Option<Self> {
+    pub fn from_slice(data: &'a [f32], n_samples: usize, n_features: usize) -> Option<Self> {
         // Shape is [n_features, n_samples] for feature-major
         ArrayView2::from_shape((n_features, n_samples), data)
             .ok()
-            .map(|view| Self { data: view, schema: None })
+            .map(|view| Self {
+                data: view,
+                schema: None,
+            })
     }
 
     /// Number of samples (second dimension).
@@ -179,7 +178,10 @@ impl<'a> crate::data::SampleAccessor for StridedSample<'a> {
 
 // Enable tree traversal with FeaturesView (feature-major layout)
 impl<'a> crate::data::DataAccessor for FeaturesView<'a> {
-    type Sample<'b> = StridedSample<'b> where Self: 'b;
+    type Sample<'b>
+        = StridedSample<'b>
+    where
+        Self: 'b;
 
     #[inline]
     fn sample(&self, index: usize) -> Self::Sample<'_> {
@@ -403,7 +405,9 @@ impl<'a> WeightsView<'a> {
     #[inline]
     pub fn iter(self, n_samples: usize) -> WeightsIter<'a> {
         match self {
-            WeightsView::None => WeightsIter::Uniform { remaining: n_samples },
+            WeightsView::None => WeightsIter::Uniform {
+                remaining: n_samples,
+            },
             WeightsView::Some(w) => {
                 debug_assert_eq!(w.len(), n_samples, "weights length mismatch");
                 WeightsIter::Weighted { view: w, idx: 0 }
@@ -542,14 +546,13 @@ impl<'a> SamplesView<'a> {
     /// # Returns
     ///
     /// `None` if the slice length doesn't match `n_samples * n_features`.
-    pub fn from_slice(
-        data: &'a [f32],
-        n_samples: usize,
-        n_features: usize,
-    ) -> Option<Self> {
+    pub fn from_slice(data: &'a [f32], n_samples: usize, n_features: usize) -> Option<Self> {
         ArrayView2::from_shape((n_samples, n_features), data)
             .ok()
-            .map(|view| Self { data: view, schema: None })
+            .map(|view| Self {
+                data: view,
+                schema: None,
+            })
     }
 
     /// Number of samples (first dimension).
@@ -631,7 +634,10 @@ impl<'a> std::fmt::Debug for SamplesView<'a> {
 // Enable tree traversal with SamplesView (sample-major layout)
 impl<'a> crate::data::DataAccessor for SamplesView<'a> {
     // Samples are contiguous, so we can return a slice directly
-    type Sample<'b> = &'b [f32] where Self: 'b;
+    type Sample<'b>
+        = &'b [f32]
+    where
+        Self: 'b;
 
     #[inline]
     fn sample(&self, index: usize) -> Self::Sample<'_> {
@@ -720,10 +726,8 @@ mod tests {
         use super::super::schema::FeatureMeta;
 
         let data = array![[1.0, 2.0], [3.0, 4.0]];
-        let schema = DatasetSchema::from_features(vec![
-            FeatureMeta::numeric(),
-            FeatureMeta::categorical(),
-        ]);
+        let schema =
+            DatasetSchema::from_features(vec![FeatureMeta::numeric(), FeatureMeta::categorical()]);
         let view = FeaturesView::new(data.view(), &schema);
 
         assert_eq!(view.feature_type(0), FeatureType::Numeric);

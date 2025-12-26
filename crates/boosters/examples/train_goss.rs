@@ -15,17 +15,16 @@
 
 use std::time::Instant;
 
-use boosters::data::binned::BinnedDatasetBuilder;
+use boosters::Parallelism;
 use boosters::data::BinningConfig;
+use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::inference::gbdt::SimplePredictor;
 use boosters::repr::gbdt::Forest;
 use boosters::testing::synthetic_datasets::synthetic_regression;
 use boosters::training::{
-    GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, RowSamplingParams,
-    SquaredLoss,
+    GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, RowSamplingParams, SquaredLoss,
 };
-use boosters::Parallelism;
 use ndarray::Array2;
 
 /// Predict a single row using the predictor.
@@ -45,7 +44,10 @@ fn main() {
     let n_trees = 100;
     let max_depth = 6;
 
-    println!("Generating dataset: {} rows × {} features", n_samples, n_features);
+    println!(
+        "Generating dataset: {} rows × {} features",
+        n_samples, n_features
+    );
     let dataset = synthetic_regression(n_samples, n_features, 42, 0.1);
 
     // Split train/test (80/20)
@@ -59,7 +61,7 @@ fn main() {
     // The dataset has feature-major: [n_features, n_samples]
     let features_fm = dataset.features.view();
     let labels = dataset.targets_slice();
-    
+
     // Extract train/test splits
     let mut train_features = Array2::<f32>::zeros((n_features, n_train));
     for f in 0..n_features {
@@ -68,7 +70,7 @@ fn main() {
         }
     }
     let train_labels: Vec<f32> = labels[..n_train].to_vec();
-    
+
     // For test data: create sample-major array for predict_row
     let mut test_features: Vec<f32> = Vec::with_capacity(n_test * n_features);
     for i in split_idx..n_samples {
@@ -105,12 +107,19 @@ fn main() {
     let trainer_baseline = GBDTTrainer::new(SquaredLoss, Rmse, params_baseline);
 
     // Wrap labels in TargetsView (shape [n_outputs=1, n_samples])
-    let targets_2d = ndarray::Array2::from_shape_vec((1, train_labels.len()), train_labels.clone()).unwrap();
+    let targets_2d =
+        ndarray::Array2::from_shape_vec((1, train_labels.len()), train_labels.clone()).unwrap();
     let targets = TargetsView::new(targets_2d.view());
 
     let start = Instant::now();
     let forest_baseline = trainer_baseline
-        .train(&dataset, targets.clone(), WeightsView::None, &[], Parallelism::Sequential)
+        .train(
+            &dataset,
+            targets.clone(),
+            WeightsView::None,
+            &[],
+            Parallelism::Sequential,
+        )
         .unwrap();
     let time_baseline = start.elapsed();
 
@@ -145,7 +154,13 @@ fn main() {
 
     let start = Instant::now();
     let forest_goss = trainer_goss
-        .train(&dataset, targets.clone(), WeightsView::None, &[], Parallelism::Sequential)
+        .train(
+            &dataset,
+            targets.clone(),
+            WeightsView::None,
+            &[],
+            Parallelism::Sequential,
+        )
         .unwrap();
     let time_goss = start.elapsed();
 
@@ -181,7 +196,13 @@ fn main() {
 
     let start = Instant::now();
     let forest_uniform = trainer_uniform
-        .train(&dataset, targets, WeightsView::None, &[], Parallelism::Sequential)
+        .train(
+            &dataset,
+            targets,
+            WeightsView::None,
+            &[],
+            Parallelism::Sequential,
+        )
         .unwrap();
     let time_uniform = start.elapsed();
 

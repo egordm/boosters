@@ -1,7 +1,7 @@
 //! Feature group - a collection of features with shared storage layout.
 
-use super::storage::{BinStorage, BinType, GroupLayout};
 use super::BinMapper;
+use super::storage::{BinStorage, BinType, GroupLayout};
 
 /// A group of features with shared storage layout.
 ///
@@ -104,7 +104,7 @@ impl FeatureGroup {
         bin_counts: Vec<u32>,
     ) -> Self {
         let n_features = feature_indices.len();
-        
+
         // Compute cumulative bin offsets
         let mut bin_offsets = Vec::with_capacity(n_features + 1);
         let mut total = 0u32;
@@ -295,11 +295,7 @@ pub struct BinnedFeatureInfo {
 
 impl BinnedFeatureInfo {
     /// Create new feature metadata.
-    pub fn new(
-        bin_mapper: BinMapper,
-        group_index: u32,
-        index_in_group: u32,
-    ) -> Self {
+    pub fn new(bin_mapper: BinMapper, group_index: u32, index_in_group: u32) -> Self {
         Self {
             name: None,
             bin_mapper,
@@ -340,7 +336,15 @@ mod tests {
 
     fn make_simple_mapper(n_bins: u32) -> BinMapper {
         let bounds: Vec<f64> = (0..n_bins).map(|i| i as f64 + 0.5).collect();
-        BinMapper::numerical(bounds, MissingType::None, 0, 0, 0.0, 0.0, (n_bins - 1) as f64)
+        BinMapper::numerical(
+            bounds,
+            MissingType::None,
+            0,
+            0,
+            0.0,
+            0.0,
+            (n_bins - 1) as f64,
+        )
     }
 
     #[test]
@@ -349,11 +353,11 @@ mod tests {
         // Row-major: [r0f0, r0f1, r1f0, r1f1, r2f0, r2f1]
         let storage = BinStorage::from_u8(vec![0, 1, 2, 3, 4, 5]);
         let group = FeatureGroup::new(
-            vec![0, 1],      // feature indices
+            vec![0, 1], // feature indices
             GroupLayout::RowMajor,
-            3,               // n_rows
+            3, // n_rows
             storage,
-            vec![4, 4],      // bin counts
+            vec![4, 4], // bin counts
         );
 
         assert_eq!(group.n_features(), 2);
@@ -381,11 +385,11 @@ mod tests {
         // Column-major: [f0r0, f0r1, f0r2, f1r0, f1r1, f1r2]
         let storage = BinStorage::from_u8(vec![0, 1, 2, 3, 4, 5]);
         let group = FeatureGroup::new(
-            vec![10, 11],    // feature indices (non-zero to test they're stored)
+            vec![10, 11], // feature indices (non-zero to test they're stored)
             GroupLayout::ColumnMajor,
-            3,               // n_rows
+            3, // n_rows
             storage,
-            vec![4, 4],      // bin counts
+            vec![4, 4], // bin counts
         );
 
         assert_eq!(group.n_features(), 2);
@@ -399,10 +403,10 @@ mod tests {
         match group.storage() {
             BinStorage::DenseU8(data) => {
                 // Column-major: feature 0 rows first, then feature 1 rows
-                assert_eq!(data[0], 0);  // f0r0
-                assert_eq!(data[1], 1);  // f0r1
-                assert_eq!(data[2], 2);  // f0r2
-                assert_eq!(data[3], 3);  // f1r0
+                assert_eq!(data[0], 0); // f0r0
+                assert_eq!(data[1], 1); // f0r1
+                assert_eq!(data[2], 2); // f0r2
+                assert_eq!(data[3], 3); // f1r0
             }
             _ => panic!("expected DenseU8"),
         }
@@ -434,8 +438,7 @@ mod tests {
     #[test]
     fn test_feature_meta() {
         let mapper = make_simple_mapper(4);
-        let meta = BinnedFeatureInfo::new(mapper, 0, 2)
-            .with_name("feature_x");
+        let meta = BinnedFeatureInfo::new(mapper, 0, 2).with_name("feature_x");
 
         assert_eq!(meta.name, Some("feature_x".to_string()));
         assert_eq!(meta.group_index, 0);

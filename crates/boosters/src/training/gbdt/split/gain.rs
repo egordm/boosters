@@ -38,7 +38,13 @@ impl NodeGainContext {
     /// This is the hot path called for every split candidate.
     /// Uses only 2 divisions instead of the 3 in the original formula.
     #[inline]
-    pub fn compute_gain(&self, grad_left: f64, hess_left: f64, grad_right: f64, hess_right: f64) -> f32 {
+    pub fn compute_gain(
+        &self,
+        grad_left: f64,
+        hess_left: f64,
+        grad_right: f64,
+        hess_right: f64,
+    ) -> f32 {
         let score_left = grad_left * grad_left / (hess_left + self.lambda);
         let score_right = grad_right * grad_right / (hess_right + self.lambda);
         (0.5 * (score_left + score_right) - self.gain_offset) as f32
@@ -172,9 +178,9 @@ mod tests {
 
         // Simple case: symmetric split
         let gain = params.compute_gain(
-            10.0, 5.0,  // left: G=10, H=5
+            10.0, 5.0, // left: G=10, H=5
             -10.0, 5.0, // right: G=-10, H=5
-            0.0, 10.0,  // parent: G=0, H=10
+            0.0, 10.0, // parent: G=0, H=10
         );
 
         // score_left = 100/6 ≈ 16.67, score_right = 100/6 ≈ 16.67, score_parent = 0/11 = 0

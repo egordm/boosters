@@ -184,34 +184,34 @@ mod tests {
     #[test]
     fn test_get_set() {
         let mut shap = ShapValues::zeros(2, 3, 1);
-        
+
         shap.set(0, 0, 0, 1.0);
         shap.set(0, 1, 0, 2.0);
         shap.set(1, 2, 0, 3.0);
-        
+
         assert_eq!(shap.get(0, 0, 0), 1.0f32);
         assert_eq!(shap.get(0, 1, 0), 2.0f32);
         assert_eq!(shap.get(1, 2, 0), 3.0f32);
-        assert_eq!(shap.get(0, 2, 0), 0.0f32);  // Default is 0
+        assert_eq!(shap.get(0, 2, 0), 0.0f32); // Default is 0
     }
 
     #[test]
     fn test_add() {
         let mut shap = ShapValues::zeros(1, 2, 1);
-        
+
         shap.add(0, 0, 0, 1.5);
         shap.add(0, 0, 0, 2.5);
-        
+
         assert_eq!(shap.get(0, 0, 0), 4.0f32);
     }
 
     #[test]
     fn test_base_value() {
         let mut shap = ShapValues::zeros(2, 3, 1);
-        
+
         shap.set_base_value(0, 0, 0.5);
         shap.set_base_value(1, 0, 0.3);
-        
+
         assert_eq!(shap.base_value(0, 0), 0.5f32);
         assert_eq!(shap.base_value(1, 0), 0.3f32);
     }
@@ -219,12 +219,12 @@ mod tests {
     #[test]
     fn test_sample_view() {
         let mut shap = ShapValues::zeros(2, 2, 1);
-        
+
         // Sample 0: features [1.0, 2.0], base 3.0
         shap.set(0, 0, 0, 1.0);
         shap.set(0, 1, 0, 2.0);
         shap.set_base_value(0, 0, 3.0);
-        
+
         let sample = shap.sample(0);
         let expected = array![[1.0f32], [2.0], [3.0]];
         assert_eq!(sample, expected);
@@ -233,12 +233,12 @@ mod tests {
     #[test]
     fn test_feature_shap() {
         let mut shap = ShapValues::zeros(1, 3, 1);
-        
+
         shap.set(0, 0, 0, 1.0);
         shap.set(0, 1, 0, 2.0);
         shap.set(0, 2, 0, 3.0);
         shap.set_base_value(0, 0, 0.5);
-        
+
         let features = shap.feature_shap(0, 0);
         assert_eq!(features, vec![1.0f32, 2.0, 3.0]);
     }
@@ -246,17 +246,17 @@ mod tests {
     #[test]
     fn test_verify_correct() {
         let mut shap = ShapValues::zeros(2, 2, 1);
-        
+
         // Sample 0: shap = [1.0, 2.0], base = 0.5 → sum = 3.5
         shap.set(0, 0, 0, 1.0);
         shap.set(0, 1, 0, 2.0);
         shap.set_base_value(0, 0, 0.5);
-        
+
         // Sample 1: shap = [0.5, 0.5], base = 1.0 → sum = 2.0
         shap.set(1, 0, 0, 0.5);
         shap.set(1, 1, 0, 0.5);
         shap.set_base_value(1, 0, 1.0);
-        
+
         let predictions = vec![3.5f32, 2.0];
         assert!(shap.verify(&predictions, 1e-5));
     }
@@ -264,11 +264,11 @@ mod tests {
     #[test]
     fn test_verify_incorrect() {
         let mut shap = ShapValues::zeros(1, 2, 1);
-        
+
         shap.set(0, 0, 0, 1.0);
         shap.set(0, 1, 0, 2.0);
         shap.set_base_value(0, 0, 0.5);
-        
+
         // Prediction doesn't match sum (3.5)
         let predictions = vec![5.0f32];
         assert!(!shap.verify(&predictions, 1e-5));
@@ -277,17 +277,17 @@ mod tests {
     #[test]
     fn test_multi_output() {
         let mut shap = ShapValues::zeros(1, 2, 2);
-        
+
         // Output 0
         shap.set(0, 0, 0, 1.0);
         shap.set(0, 1, 0, 2.0);
         shap.set_base_value(0, 0, 0.5);
-        
+
         // Output 1
         shap.set(0, 0, 1, 0.5);
         shap.set(0, 1, 1, 1.5);
         shap.set_base_value(0, 1, 0.0);
-        
+
         let predictions = vec![3.5f32, 2.0];
         assert!(shap.verify(&predictions, 1e-5));
     }

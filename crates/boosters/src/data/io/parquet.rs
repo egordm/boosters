@@ -19,48 +19,54 @@ use super::error::DatasetLoadError;
 // =============================================================================
 
 /// Load a Parquet file into a row-major Array2<f32> with shape (n_samples, n_features).
-pub fn load_parquet_to_row_matrix_f32(path: impl AsRef<Path>) -> Result<Array2<f32>, DatasetLoadError> {
-	let (batches, schema) = read_parquet_file(path)?;
-	let loaded = super::record_batches::LoadedBatches::new(schema, batches)?;
-	loaded.to_row_matrix_f32()
+pub fn load_parquet_to_row_matrix_f32(
+    path: impl AsRef<Path>,
+) -> Result<Array2<f32>, DatasetLoadError> {
+    let (batches, schema) = read_parquet_file(path)?;
+    let loaded = super::record_batches::LoadedBatches::new(schema, batches)?;
+    loaded.to_row_matrix_f32()
 }
 
 /// Load a Parquet file into a column-major Array2<f32> with shape (n_features, n_samples).
-pub fn load_parquet_to_col_matrix_f32(path: impl AsRef<Path>) -> Result<Array2<f32>, DatasetLoadError> {
-	let (batches, schema) = read_parquet_file(path)?;
-	let loaded = super::record_batches::LoadedBatches::new(schema, batches)?;
-	loaded.to_col_matrix_f32()
+pub fn load_parquet_to_col_matrix_f32(
+    path: impl AsRef<Path>,
+) -> Result<Array2<f32>, DatasetLoadError> {
+    let (batches, schema) = read_parquet_file(path)?;
+    let loaded = super::record_batches::LoadedBatches::new(schema, batches)?;
+    loaded.to_col_matrix_f32()
 }
 
 /// Load a Parquet file and return both features and targets as vecs.
 ///
 /// Returns `(features_row_major, targets, rows, cols)`.
 pub fn load_parquet_xy_row_major_f32(
-	path: impl AsRef<Path>,
+    path: impl AsRef<Path>,
 ) -> Result<(Vec<f32>, Vec<f32>, usize, usize), DatasetLoadError> {
-	let (batches, schema) = read_parquet_file(path)?;
-	let loaded = super::record_batches::LoadedBatches::new(schema, batches)?;
-	loaded.to_raw_f32()
+    let (batches, schema) = read_parquet_file(path)?;
+    let loaded = super::record_batches::LoadedBatches::new(schema, batches)?;
+    loaded.to_raw_f32()
 }
 
 /// Backward-compatible alias for [`load_parquet_xy_row_major_f32`].
 ///
 /// Note: despite the generic name, this returns **row-major** features.
 pub fn load_parquet_raw_f32(
-	path: impl AsRef<Path>,
+    path: impl AsRef<Path>,
 ) -> Result<(Vec<f32>, Vec<f32>, usize, usize), DatasetLoadError> {
-	load_parquet_xy_row_major_f32(path)
+    load_parquet_xy_row_major_f32(path)
 }
 
 // =============================================================================
 // Internal helpers
 // =============================================================================
 
-fn read_parquet_file(path: impl AsRef<Path>) -> Result<(Vec<RecordBatch>, Arc<Schema>), DatasetLoadError> {
-	let file = File::open(path.as_ref())?;
-	let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-	let schema = builder.schema().clone();
-	let reader = builder.build()?;
-	let batches: Result<Vec<_>, _> = reader.collect();
-	Ok((batches?, schema))
+fn read_parquet_file(
+    path: impl AsRef<Path>,
+) -> Result<(Vec<RecordBatch>, Arc<Schema>), DatasetLoadError> {
+    let file = File::open(path.as_ref())?;
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+    let schema = builder.schema().clone();
+    let reader = builder.build()?;
+    let batches: Result<Vec<_>, _> = reader.collect();
+    Ok((batches?, schema))
 }

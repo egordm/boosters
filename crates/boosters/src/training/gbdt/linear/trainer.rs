@@ -119,7 +119,7 @@ impl LeafLinearTrainer {
         for &(tree_node, partitioner_node) in leaf_node_mapping {
             // Get samples in this leaf using partitioner node ID
             let rows = partitioner.get_leaf_indices(partitioner_node);
-            
+
             if rows.len() < self.config.min_samples {
                 continue;
             }
@@ -243,7 +243,8 @@ impl LeafLinearTrainer {
         // Accumulate each feature column
         for feat_idx in 0..n_features {
             let feat_values = self.feature_buffer.feature_slice(feat_idx);
-            self.solver.accumulate_column(feat_idx, feat_values, grad_hess);
+            self.solver
+                .accumulate_column(feat_idx, feat_values, grad_hess);
         }
 
         // Accumulate cross-terms
@@ -251,7 +252,8 @@ impl LeafLinearTrainer {
             let col_i = self.feature_buffer.feature_slice(i);
             for j in (i + 1)..n_features {
                 let col_j = self.feature_buffer.feature_slice(j);
-                self.solver.accumulate_cross_term(i, j, col_i, col_j, grad_hess);
+                self.solver
+                    .accumulate_cross_term(i, j, col_i, col_j, grad_hess);
             }
         }
 
@@ -313,8 +315,8 @@ mod tests {
         tree.init_root();
         // Root splits on feature 0
         let (left, right) = tree.apply_numeric_split(0, 0, 0.5, true);
-        tree.make_leaf(right, ScalarLeaf(2.0));  // Right is a leaf
-        
+        tree.make_leaf(right, ScalarLeaf(2.0)); // Right is a leaf
+
         // Left child splits on feature 1
         let (ll, lr) = tree.apply_numeric_split(left, 1, 0.3, true);
         tree.make_leaf(ll, ScalarLeaf(3.0));
@@ -332,11 +334,19 @@ mod tests {
 
         // Leaf 1 (left child of root) - path uses feature 0
         let features = trainer.select_path_features(&frozen, 1);
-        assert_eq!(features, vec![0], "Left leaf should see feature 0 from root");
+        assert_eq!(
+            features,
+            vec![0],
+            "Left leaf should see feature 0 from root"
+        );
 
         // Leaf 2 (right child of root) - path uses feature 0
         let features = trainer.select_path_features(&frozen, 2);
-        assert_eq!(features, vec![0], "Right leaf should see feature 0 from root");
+        assert_eq!(
+            features,
+            vec![0],
+            "Right leaf should see feature 0 from root"
+        );
     }
 
     #[test]
@@ -354,7 +364,7 @@ mod tests {
         //     (f1)
         //    /   \
         //   3     4
-        
+
         // Leaf 3 path: 0 -> 1 -> 3, sees f0 and f1
         let features = trainer.select_path_features(&frozen, 3);
         assert!(features.contains(&0), "Deep leaf should see f0 from root");
@@ -377,28 +387,28 @@ mod tests {
         // Create a deeper tree with 5 levels
         let mut tree: MutableTree<ScalarLeaf> = MutableTree::new();
         tree.init_root();
-        
+
         // Split root on f0
         let (l1, r1) = tree.apply_numeric_split(0, 0, 0.5, true);
         tree.make_leaf(r1, ScalarLeaf(0.0));
-        
+
         // Split left child on f1
         let (l2, r2) = tree.apply_numeric_split(l1, 1, 0.5, true);
         tree.make_leaf(r2, ScalarLeaf(0.0));
-        
+
         // Split that child on f2
         let (l3, r3) = tree.apply_numeric_split(l2, 2, 0.5, true);
         tree.make_leaf(r3, ScalarLeaf(0.0));
-        
+
         // Split that child on f3
         let (l4, r4) = tree.apply_numeric_split(l3, 3, 0.5, true);
         tree.make_leaf(r4, ScalarLeaf(0.0));
-        
+
         // Split that child on f4 (different from f2)
         let (l5, r5) = tree.apply_numeric_split(l4, 4, 0.3, true);
         tree.make_leaf(l5, ScalarLeaf(0.0));
         tree.make_leaf(r5, ScalarLeaf(0.0));
-        
+
         let frozen = tree.clone().freeze();
 
         // With max_features=3, should only get 3 features
@@ -407,8 +417,12 @@ mod tests {
 
         // Path to l5 has f0, f1, f2, f3, f4 = 5 unique features, but limited to 3
         let features = trainer.select_path_features(&frozen, l5);
-        assert!(features.len() <= 3, "Should respect max_features limit, got {}", features.len());
-        
+        assert!(
+            features.len() <= 3,
+            "Should respect max_features limit, got {}",
+            features.len()
+        );
+
         // Path to r4 has f0, f1, f2, f3 = 4 features, limited to 3
         let features_r4 = trainer.select_path_features(&frozen, r4);
         assert!(features_r4.len() <= 3, "Should respect max_features limit");
@@ -417,7 +431,7 @@ mod tests {
     #[test]
     fn test_fitted_leaf_creation() {
         let fitted = FittedLeaf::new(5, vec![0, 2], 1.5, vec![0.5, -0.3]);
-        
+
         assert_eq!(fitted.node_id, 5);
         assert_eq!(fitted.features, vec![0, 2]);
         assert_eq!(fitted.intercept, 1.5);
@@ -428,7 +442,7 @@ mod tests {
     #[test]
     fn test_fitted_leaf_intercept_only() {
         let fitted = FittedLeaf::new(3, vec![], 2.0, vec![]);
-        
+
         assert_eq!(fitted.intercept, 2.0);
         assert!(fitted.features.is_empty());
         assert!(!fitted.has_coefficients(), "Should not have coefficients");
@@ -440,9 +454,9 @@ mod tests {
             .min_samples(20)
             .max_features(5)
             .build();
-        
+
         let trainer = LeafLinearTrainer::new(config, 100);
-        
+
         assert_eq!(trainer.config().min_samples, 20);
         assert_eq!(trainer.config().max_features, 5);
     }

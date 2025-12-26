@@ -52,18 +52,17 @@ mod objectives;
 pub mod sampling;
 
 // Re-export shared types at the training module level
-pub use callback::{EarlyStopping, EarlyStopAction};
+pub use callback::{EarlyStopAction, EarlyStopping};
 pub use eval::{EvalSet, Evaluator, MetricValue};
-pub use gradients::{GradsTuple, Gradients};
+pub use gradients::{Gradients, GradsTuple};
 pub use logger::{TrainingLogger, Verbosity};
 pub use metrics::{
     Accuracy, Auc, HuberMetric, LogLoss, Mae, Mape, MarginAccuracy, Metric, MetricFn,
     MulticlassAccuracy, MulticlassLogLoss, PoissonDeviance, QuantileMetric, Rmse,
 };
 pub use objectives::{
-    AbsoluteLoss, HingeLoss, LambdaRankLoss, LogisticLoss, Objective, ObjectiveFn,
-    PinballLoss, PoissonLoss, PseudoHuberLoss, SoftmaxLoss, SquaredLoss,
-    TargetSchema,
+    AbsoluteLoss, HingeLoss, LambdaRankLoss, LogisticLoss, Objective, ObjectiveFn, PinballLoss,
+    PoissonLoss, PseudoHuberLoss, SoftmaxLoss, SquaredLoss, TargetSchema,
 };
 
 // Re-export gbdt trainer and params
@@ -74,4 +73,3 @@ pub use sampling::{ColSamplingParams, RowSamplingParams};
 
 // Re-export gblinear trainer and params
 pub use gblinear::{GBLinearParams, GBLinearTrainer};
-

@@ -29,9 +29,9 @@ use rstest::rstest;
 /// - Large delta: Behaves more like squared loss, converges faster
 /// - Moderate delta: More robust to outliers but may need more rounds
 #[rstest]
-#[case(2.0, 50.0)]   // Moderate delta: more robust, higher RMSE threshold
-#[case(5.0, 20.0)]   // Medium delta: balanced
-#[case(10.0, 20.0)]  // Large delta: similar to squared loss
+#[case(2.0, 50.0)] // Moderate delta: more robust, higher RMSE threshold
+#[case(5.0, 20.0)] // Medium delta: balanced
+#[case(10.0, 20.0)] // Large delta: similar to squared loss
 fn train_pseudo_huber_with_delta(#[case] delta: f32, #[case] max_rmse: f64) {
     let (data, labels) = load_train_data("regression_l2");
     let train = make_dataset(&data, &labels);
@@ -186,16 +186,16 @@ fn train_hinge_binary_classification() {
     let hinge_output = hinge_model.predict(test_view);
     let targets_2d = Array2::from_shape_vec((1, test_labels.len()), test_labels.clone()).unwrap();
     let targets = TargetsView::new(targets_2d.view());
-    let hinge_acc = MarginAccuracy::default()
-        .compute(hinge_output.view(), targets, WeightsView::None)
-        as f32;
+    let hinge_acc =
+        MarginAccuracy::default().compute(hinge_output.view(), targets, WeightsView::None) as f32;
 
     let logistic_output = logistic_model.predict(test_view);
     // Apply transform to convert logits to probabilities
     let mut logistic_arr = logistic_output.clone();
     LogisticLoss.transform_predictions_inplace(logistic_arr.view_mut());
-    let logistic_acc = Accuracy::with_threshold(0.5)
-        .compute(logistic_arr.view(), targets, WeightsView::None) as f32;
+    let logistic_acc =
+        Accuracy::with_threshold(0.5).compute(logistic_arr.view(), targets, WeightsView::None)
+            as f32;
 
     // Both should achieve reasonable accuracy (better than random = 50%)
     assert!(

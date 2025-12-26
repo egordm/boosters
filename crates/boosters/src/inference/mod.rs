@@ -24,12 +24,12 @@
 //! let output = predictor.predict(&features);
 //! ```
 
-mod predictions;
 pub mod gbdt;
+mod predictions;
 
 // Re-export commonly used inference types
-pub use predictions::{PredictionKind, Predictions};
 pub use gbdt::{
-    Predictor, SimplePredictor, UnrolledPredictor6,
-    StandardTraversal, UnrolledTraversal, UnrolledTraversal6, TreeTraversal,
+    Predictor, SimplePredictor, StandardTraversal, TreeTraversal, UnrolledPredictor6,
+    UnrolledTraversal, UnrolledTraversal6,
 };
+pub use predictions::{PredictionKind, Predictions};

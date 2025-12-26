@@ -50,16 +50,10 @@ def save_lgb_test_case(
     )
 
     # Expected
-    expected = {
-        "raw": expected_raw.tolist()
-        if expected_raw.ndim == 1
-        else [row.tolist() for row in expected_raw]
-    }
+    expected = {"raw": expected_raw.tolist() if expected_raw.ndim == 1 else [row.tolist() for row in expected_raw]}
     if expected_proba is not None:
         expected["proba"] = (
-            expected_proba.tolist()
-            if expected_proba.ndim == 1
-            else [row.tolist() for row in expected_proba]
+            expected_proba.tolist() if expected_proba.ndim == 1 else [row.tolist() for row in expected_proba]
         )
     save_json(output_dir / "expected.json", expected)
 

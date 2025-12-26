@@ -87,10 +87,9 @@ fn load_test_case(subdir: &str) -> (LgbModel, TestInput, TestExpected) {
     let model = LgbModel::from_file(dir.join("model.txt"))
         .unwrap_or_else(|e| panic!("Failed to load model from {subdir}: {e}"));
 
-    let input: TestInput = serde_json::from_reader(
-        File::open(dir.join("input.json")).expect("input.json missing"),
-    )
-    .expect("Failed to parse input.json");
+    let input: TestInput =
+        serde_json::from_reader(File::open(dir.join("input.json")).expect("input.json missing"))
+            .expect("Failed to parse input.json");
 
     let expected: TestExpected = serde_json::from_reader(
         File::open(dir.join("expected.json")).expect("expected.json missing"),
@@ -234,7 +233,12 @@ mod multiclass {
             let exp_sum: f32 = raw.iter().map(|&x| (x - max_val).exp()).sum();
             let proba: Vec<f32> = raw.iter().map(|&x| (x - max_val).exp() / exp_sum).collect();
 
-            assert_slices_approx_eq_f64!(&proba, &expected_proba[i], TOLERANCE, "multiclass proba row {i}");
+            assert_slices_approx_eq_f64!(
+                &proba,
+                &expected_proba[i],
+                TOLERANCE,
+                "multiclass proba row {i}"
+            );
         }
     }
 }
@@ -280,6 +284,9 @@ mod missing_values {
 
         let pred = predict_row(&forest, &features);
         assert_eq!(pred.len(), 1);
-        assert!(pred[0].is_finite(), "Prediction should be finite with NaN inputs");
+        assert!(
+            pred[0].is_finite(),
+            "Prediction should be finite with NaN inputs"
+        );
     }
 }

@@ -7,12 +7,14 @@
 
 use std::path::PathBuf;
 
-use boosters::compat::xgboost::{Booster, FeatureType, GradientBooster};
 use boosters::compat::XgbModel;
+use boosters::compat::xgboost::{Booster, FeatureType, GradientBooster};
 use boosters::inference::gbdt::SimplePredictor;
 use boosters::repr::gbdt::Forest;
 
-use super::test_data::{load_json, xgboost_test_cases_dir, TestExpected, TestInput, DEFAULT_TOLERANCE_F64};
+use super::test_data::{
+    DEFAULT_TOLERANCE_F64, TestExpected, TestInput, load_json, xgboost_test_cases_dir,
+};
 
 // =============================================================================
 // Test Case Loading
@@ -84,7 +86,10 @@ fn assert_preds_match(actual: &[f32], expected: &[f64], tolerance: f64, context:
             msg.push_str(&format!("  [{i}]: got {a}, expected {e}, diff {diff}\n"));
         }
         if mismatches.len() > 10 {
-            msg.push_str(&format!("  ... and {} more mismatches\n", mismatches.len() - 10));
+            msg.push_str(&format!(
+                "  ... and {} more mismatches\n",
+                mismatches.len() - 10
+            ));
         }
         panic!("{msg}");
     }
@@ -111,7 +116,12 @@ fn predict_regression() {
     let expected_preds = expected.as_flat();
     for (i, features) in input.to_f32_rows().iter().enumerate() {
         let pred = predict_row(&forest, features);
-        assert_preds_match(&pred, &[expected_preds[i]], DEFAULT_TOLERANCE_F64, &format!("row {i}"));
+        assert_preds_match(
+            &pred,
+            &[expected_preds[i]],
+            DEFAULT_TOLERANCE_F64,
+            &format!("row {i}"),
+        );
     }
 }
 
@@ -124,7 +134,12 @@ fn predict_binary_logistic() {
     let expected_preds = expected.as_flat();
     for (i, features) in input.to_f32_rows().iter().enumerate() {
         let pred = predict_row(&forest, features);
-        assert_preds_match(&pred, &[expected_preds[i]], DEFAULT_TOLERANCE_F64, &format!("row {i}"));
+        assert_preds_match(
+            &pred,
+            &[expected_preds[i]],
+            DEFAULT_TOLERANCE_F64,
+            &format!("row {i}"),
+        );
     }
 }
 
@@ -138,7 +153,12 @@ fn predict_multiclass() {
     for (i, features) in input.to_f32_rows().iter().enumerate() {
         let pred = predict_row(&forest, features);
         assert_eq!(pred.len(), 3, "expected 3 classes");
-        assert_preds_match(&pred, &expected_preds[i], DEFAULT_TOLERANCE_F64, &format!("row {i}"));
+        assert_preds_match(
+            &pred,
+            &expected_preds[i],
+            DEFAULT_TOLERANCE_F64,
+            &format!("row {i}"),
+        );
     }
 }
 
@@ -151,7 +171,12 @@ fn predict_with_missing_values() {
     let expected_preds = expected.as_flat();
     for (i, features) in input.to_f32_rows().iter().enumerate() {
         let pred = predict_row(&forest, features);
-        assert_preds_match(&pred, &[expected_preds[i]], DEFAULT_TOLERANCE_F64, &format!("row {i}"));
+        assert_preds_match(
+            &pred,
+            &[expected_preds[i]],
+            DEFAULT_TOLERANCE_F64,
+            &format!("row {i}"),
+        );
     }
 }
 
@@ -164,7 +189,12 @@ fn predict_deep_trees() {
     let expected_preds = expected.as_flat();
     for (i, features) in input.to_f32_rows().iter().enumerate() {
         let pred = predict_row(&forest, features);
-        assert_preds_match(&pred, &[expected_preds[i]], DEFAULT_TOLERANCE_F64, &format!("row {i}"));
+        assert_preds_match(
+            &pred,
+            &[expected_preds[i]],
+            DEFAULT_TOLERANCE_F64,
+            &format!("row {i}"),
+        );
     }
 }
 
@@ -177,7 +207,12 @@ fn predict_single_tree() {
     let expected_preds = expected.as_flat();
     for (i, features) in input.to_f32_rows().iter().enumerate() {
         let pred = predict_row(&forest, features);
-        assert_preds_match(&pred, &[expected_preds[i]], DEFAULT_TOLERANCE_F64, &format!("row {i}"));
+        assert_preds_match(
+            &pred,
+            &[expected_preds[i]],
+            DEFAULT_TOLERANCE_F64,
+            &format!("row {i}"),
+        );
     }
 }
 
@@ -190,7 +225,12 @@ fn predict_many_trees() {
     let expected_preds = expected.as_flat();
     for (i, features) in input.to_f32_rows().iter().enumerate() {
         let pred = predict_row(&forest, features);
-        assert_preds_match(&pred, &[expected_preds[i]], DEFAULT_TOLERANCE_F64, &format!("row {i}"));
+        assert_preds_match(
+            &pred,
+            &[expected_preds[i]],
+            DEFAULT_TOLERANCE_F64,
+            &format!("row {i}"),
+        );
     }
 }
 
@@ -203,7 +243,12 @@ fn predict_wide_features() {
     let expected_preds = expected.as_flat();
     for (i, features) in input.to_f32_rows().iter().enumerate() {
         let pred = predict_row(&forest, features);
-        assert_preds_match(&pred, &[expected_preds[i]], DEFAULT_TOLERANCE_F64, &format!("row {i}"));
+        assert_preds_match(
+            &pred,
+            &[expected_preds[i]],
+            DEFAULT_TOLERANCE_F64,
+            &format!("row {i}"),
+        );
     }
 }
 
@@ -216,13 +261,16 @@ fn predict_batch_regression() {
     let expected_preds = expected.as_flat();
 
     // Use predict_row for each sample (batch prediction uses Predictor directly)
-    let predictions: Vec<Vec<f32>> = rows.iter()
-        .map(|row| predict_row(&forest, row))
-        .collect();
+    let predictions: Vec<Vec<f32>> = rows.iter().map(|row| predict_row(&forest, row)).collect();
 
     assert_eq!(predictions.len(), expected_preds.len());
     for (i, (pred, exp)) in predictions.iter().zip(expected_preds.iter()).enumerate() {
-        assert_preds_match(pred, &[*exp], DEFAULT_TOLERANCE_F64, &format!("batch row {i}"));
+        assert_preds_match(
+            pred,
+            &[*exp],
+            DEFAULT_TOLERANCE_F64,
+            &format!("batch row {i}"),
+        );
     }
 }
 
@@ -252,7 +300,12 @@ fn predict_categorical() {
     let expected_preds = expected.as_flat();
     for (i, features) in input.to_f32_rows().iter().enumerate() {
         let pred = predict_row(&forest, features);
-        assert_preds_match(&pred, &[expected_preds[i]], DEFAULT_TOLERANCE_F64, &format!("row {i}"));
+        assert_preds_match(
+            &pred,
+            &[expected_preds[i]],
+            DEFAULT_TOLERANCE_F64,
+            &format!("row {i}"),
+        );
     }
 }
 
@@ -265,7 +318,12 @@ fn predict_categorical_binary() {
     let expected_preds = expected.as_flat();
     for (i, features) in input.to_f32_rows().iter().enumerate() {
         let pred = predict_row(&forest, features);
-        assert_preds_match(&pred, &[expected_preds[i]], DEFAULT_TOLERANCE_F64, &format!("row {i}"));
+        assert_preds_match(
+            &pred,
+            &[expected_preds[i]],
+            DEFAULT_TOLERANCE_F64,
+            &format!("row {i}"),
+        );
     }
 }
 
@@ -288,7 +346,12 @@ fn predict_dart() {
     let expected_preds = expected.as_flat();
     for (i, features) in input.to_f32_rows().iter().enumerate() {
         let pred = predict_row(&forest, features);
-        assert_preds_match(&pred, &[expected_preds[i]], DEFAULT_TOLERANCE_F64, &format!("row {i}"));
+        assert_preds_match(
+            &pred,
+            &[expected_preds[i]],
+            DEFAULT_TOLERANCE_F64,
+            &format!("row {i}"),
+        );
     }
 }
 
@@ -311,7 +374,12 @@ fn predict_gblinear_regression() {
         let mut pred = [0.0f32; 1];
         // base_score is now baked into the model bias during conversion
         linear.predict_row_into(features, &mut pred);
-        assert_preds_match(&pred, &[expected_preds[i]], DEFAULT_TOLERANCE_F64, &format!("row {i}"));
+        assert_preds_match(
+            &pred,
+            &[expected_preds[i]],
+            DEFAULT_TOLERANCE_F64,
+            &format!("row {i}"),
+        );
     }
 }
 
@@ -330,7 +398,12 @@ fn predict_gblinear_binary() {
         let mut pred = [0.0f32; 1];
         // base_score is now baked into the model bias during conversion
         linear.predict_row_into(features, &mut pred);
-        assert_preds_match(&pred, &[expected_preds[i]], DEFAULT_TOLERANCE_F64, &format!("row {i}"));
+        assert_preds_match(
+            &pred,
+            &[expected_preds[i]],
+            DEFAULT_TOLERANCE_F64,
+            &format!("row {i}"),
+        );
     }
 }
 
@@ -352,6 +425,11 @@ fn predict_gblinear_multiclass() {
         // base_score is now baked into the model bias during conversion
         linear.predict_row_into(features, &mut pred);
         assert_eq!(pred.len(), n_class);
-        assert_preds_match(&pred, &expected_preds[i], DEFAULT_TOLERANCE_F64, &format!("row {i}"));
+        assert_preds_match(
+            &pred,
+            &expected_preds[i],
+            DEFAULT_TOLERANCE_F64,
+            &format!("row {i}"),
+        );
     }
 }

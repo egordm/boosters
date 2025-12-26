@@ -1,6 +1,6 @@
 //! Linear model data structure.
 
-use ndarray::{s, Array2, ArrayView1, ArrayViewMut2};
+use ndarray::{Array2, ArrayView1, ArrayViewMut2, s};
 
 use crate::data::FeaturesView;
 
@@ -115,13 +115,17 @@ impl LinearModel {
     /// Last row contains biases.
     #[inline]
     pub fn as_slice(&self) -> &[f32] {
-        self.weights.as_slice().expect("weights should be contiguous")
+        self.weights
+            .as_slice()
+            .expect("weights should be contiguous")
     }
 
     /// Mutable access to weights as a flat slice.
     #[inline]
     pub fn as_slice_mut(&mut self) -> &mut [f32] {
-        self.weights.as_slice_mut().expect("weights should be contiguous")
+        self.weights
+            .as_slice_mut()
+            .expect("weights should be contiguous")
     }
 
     /// Get the weight matrix (excluding bias row) as an ArrayView2.
@@ -244,7 +248,7 @@ impl LinearModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::{array, Array2};
+    use ndarray::{Array2, array};
 
     #[test]
     fn linear_model_new() {

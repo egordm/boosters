@@ -1,40 +1,40 @@
 [build-system]
-requires = ["maturin>=1.5,<2.0"]
 build-backend = "maturin"
+requires = [ "maturin>=1.5,<2" ]
 
 [project]
 name = "boosters"
 version = "0.1.0"
 description = "Fast gradient boosting library with native Rust core"
 readme = "README.md"
-requires-python = ">=3.12"
+keywords = [ "gbdt", "gradient-boosting", "lightgbm", "machine-learning", "xgboost" ]
+
 license = { text = "MIT" }
+requires-python = ">=3.12"
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
-    "Intended Audience :: Developers",
-    "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Programming Language :: Rust",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Rust",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-keywords = ["machine-learning", "gradient-boosting", "gbdt", "xgboost", "lightgbm"]
-
 dependencies = [
-    "numpy>=1.26",
+  "numpy>=1.26",
 ]
 
-[project.optional-dependencies]
-pandas = ["pandas>=2.0"]
-
-[tool.maturin]
-features = ["extension-module"]
-python-source = "python"
-module-name = "boosters._boosters_rs"
+optional-dependencies.pandas = [ "pandas>=2" ]
 
 [dependency-groups]
 dev = [
-    "polars>=1.36.1",
+  "polars>=1.36.1",
 ]
+
+[tool.maturin]
+features = [ "extension-module" ]
+python-source = "python"
+module-name = "boosters._boosters_rs"

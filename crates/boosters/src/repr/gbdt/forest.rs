@@ -5,10 +5,23 @@ use super::{LeafValue, ScalarLeaf, Tree, TreeValidationError};
 /// Structural validation errors for [`Forest`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ForestValidationError {
-    BaseScoreLenMismatch { n_groups: u32, len: usize },
-    TreeGroupsLenMismatch { n_trees: usize, len: usize },
-    TreeGroupOutOfRange { tree_idx: usize, group: u32, n_groups: u32 },
-    InvalidTree { tree_idx: usize, error: TreeValidationError },
+    BaseScoreLenMismatch {
+        n_groups: u32,
+        len: usize,
+    },
+    TreeGroupsLenMismatch {
+        n_trees: usize,
+        len: usize,
+    },
+    TreeGroupOutOfRange {
+        tree_idx: usize,
+        group: u32,
+        n_groups: u32,
+    },
+    InvalidTree {
+        tree_idx: usize,
+        error: TreeValidationError,
+    },
 }
 
 /// Forest of decision trees.
@@ -124,7 +137,10 @@ impl<L: LeafValue> Forest<L> {
 
         for (i, tree) in self.trees.iter().enumerate() {
             tree.validate()
-                .map_err(|e| ForestValidationError::InvalidTree { tree_idx: i, error: e })?;
+                .map_err(|e| ForestValidationError::InvalidTree {
+                    tree_idx: i,
+                    error: e,
+                })?;
         }
 
         Ok(())
@@ -159,5 +175,4 @@ mod tests {
         predictor.predict_row_into(&[0.7], None, &mut output);
         assert_eq!(output, vec![2.0]);
     }
-
 }

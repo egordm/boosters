@@ -29,7 +29,5 @@
 mod importance;
 pub mod shap;
 
-pub use importance::{
-    compute_forest_importance, ExplainError, FeatureImportance, ImportanceType,
-};
+pub use importance::{ExplainError, FeatureImportance, ImportanceType, compute_forest_importance};
 pub use shap::{LinearExplainer, PathState, ShapValues, TreeExplainer};

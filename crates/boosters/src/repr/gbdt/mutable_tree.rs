@@ -1,12 +1,12 @@
 //! Mutable tree construction API for training.
 
+use super::NodeId;
 use super::categories::CategoriesStorage;
 use super::coefficients::LeafCoefficientsBuilder;
-use super::types::LeafValue;
-use super::types::SplitType;
 use super::tree::Tree;
 use super::tree_view::TreeView;
-use super::NodeId;
+use super::types::LeafValue;
+use super::types::SplitType;
 
 /// Mutable tree for use during training.
 ///
@@ -232,7 +232,11 @@ impl<L: LeafValue> MutableTree<L> {
         );
 
         // Remove any existing entry for this node
-        if let Some(pos) = self.linear_leaves.iter().position(|(n, _, _, _)| *n == node) {
+        if let Some(pos) = self
+            .linear_leaves
+            .iter()
+            .position(|(n, _, _, _)| *n == node)
+        {
             self.linear_leaves.remove(pos);
         }
         self.linear_leaves
@@ -309,8 +313,8 @@ impl<L: LeafValue> MutableTree<L> {
         // Check if gains/covers were populated (any non-zero values).
         // During training, the grower always populates stats. But loaders
         // (XGBoost/LightGBM) may not have this data, so we check.
-        let has_stats = self.gains.iter().any(|&g| g != 0.0)
-            || self.covers.iter().any(|&c| c != 0.0);
+        let has_stats =
+            self.gains.iter().any(|&g| g != 0.0) || self.covers.iter().any(|&c| c != 0.0);
 
         let mut tree = Tree::new(
             self.split_indices,
@@ -438,9 +442,9 @@ impl<L: LeafValue> TreeView for MutableTree<L> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repr::gbdt::ScalarLeaf;
     use crate::data::DataAccessor;
     use crate::data::SamplesView;
+    use crate::repr::gbdt::ScalarLeaf;
     use ndarray::Array2;
 
     #[test]
@@ -494,8 +498,6 @@ mod tests {
 
     #[test]
     fn test_traverse_on_mutable_tree() {
-
-
         let mut tree = MutableTree::<ScalarLeaf>::new();
         let _root = tree.init_root();
 

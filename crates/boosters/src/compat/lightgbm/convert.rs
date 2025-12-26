@@ -61,10 +61,7 @@ impl LgbModel {
 }
 
 /// Convert a single LightGBM tree to canonical [`Tree`].
-fn convert_tree(
-    lgb_tree: &LgbTree,
-    _tree_idx: usize,
-) -> Result<Tree<ScalarLeaf>, ConversionError> {
+fn convert_tree(lgb_tree: &LgbTree, _tree_idx: usize) -> Result<Tree<ScalarLeaf>, ConversionError> {
     // Special case: single-leaf tree
     if lgb_tree.n_leaves == 1 {
         let leaf_value = lgb_tree.leaf_value.first().copied().unwrap_or(0.0) as f32;
@@ -135,23 +132,30 @@ fn convert_tree(
     // The shrinkage field in the model is just for informational purposes
     for leaf_idx in 0..lgb_tree.n_leaves {
         let node_idx = n_internal + leaf_idx;
-        tree.make_leaf(node_idx as u32, ScalarLeaf(lgb_tree.leaf_value[leaf_idx] as f32));
+        tree.make_leaf(
+            node_idx as u32,
+            ScalarLeaf(lgb_tree.leaf_value[leaf_idx] as f32),
+        );
     }
 
     // Add linear coefficients if this is a linear tree
     if lgb_tree.is_linear {
         for leaf_idx in 0..lgb_tree.n_leaves {
             let node_idx = (n_internal + leaf_idx) as u32;
-            
+
             // Get linear model data for this leaf
             let intercept = lgb_tree.leaf_const.get(leaf_idx).copied().unwrap_or(0.0) as f32;
-            let features = lgb_tree.leaf_features.get(leaf_idx)
+            let features = lgb_tree
+                .leaf_features
+                .get(leaf_idx)
                 .map(|f| f.iter().map(|&x| x as u32).collect::<Vec<_>>())
                 .unwrap_or_default();
-            let coefficients = lgb_tree.leaf_coeff.get(leaf_idx)
+            let coefficients = lgb_tree
+                .leaf_coeff
+                .get(leaf_idx)
                 .map(|c| c.iter().map(|&x| x as f32).collect::<Vec<_>>())
                 .unwrap_or_default();
-            
+
             // Only add if there are actual coefficients
             if !coefficients.is_empty() || intercept.abs() > 1e-10 {
                 tree.set_linear_leaf(node_idx, features, intercept, coefficients);
@@ -303,11 +307,7 @@ mod tests {
             let features: Vec<f32> = row.iter().map(|x| *x as f32).collect();
             let pred = predict_row(&forest, &features);
             assert_eq!(pred.len(), 1, "Row {}: expected 1 output", i);
-            assert_abs_diff_eq!(
-                pred[0],
-                *exp as f32,
-                epsilon = 0.01
-            );
+            assert_abs_diff_eq!(pred[0], *exp as f32, epsilon = 0.01);
         }
     }
 
@@ -330,11 +330,7 @@ mod tests {
             let features: Vec<f32> = row.iter().map(|x| *x as f32).collect();
             let pred = predict_row(&forest, &features);
             assert_eq!(pred.len(), 1, "Row {}: expected 1 output", i);
-            assert_abs_diff_eq!(
-                pred[0],
-                *exp as f32,
-                epsilon = 0.01
-            );
+            assert_abs_diff_eq!(pred[0], *exp as f32, epsilon = 0.01);
         }
     }
 
@@ -378,11 +374,7 @@ mod tests {
 
             for (class_idx, pred_val) in pred.iter().enumerate() {
                 let exp_val = exp_vec[class_idx];
-                assert_abs_diff_eq!(
-                    *pred_val,
-                    exp_val as f32,
-                    epsilon = 0.01
-                );
+                assert_abs_diff_eq!(*pred_val, exp_val as f32, epsilon = 0.01);
             }
         }
     }
@@ -446,10 +438,9 @@ mod tests {
 
         assert_eq!(forest.n_groups(), 1);
         assert_eq!(forest.n_trees(), 5);
-        
+
         // Verify that at least some trees have linear leaves
-        let has_linear = (0..forest.n_trees())
-            .any(|i| forest.tree(i).has_linear_leaves());
+        let has_linear = (0..forest.n_trees()).any(|i| forest.tree(i).has_linear_leaves());
         assert!(has_linear, "Expected at least one tree with linear leaves");
     }
 
@@ -464,11 +455,7 @@ mod tests {
             let pred = predict_row(&forest, &features);
             assert_eq!(pred.len(), 1, "Row {}: expected 1 output", i);
             // Tighter tolerance for linear trees since they should match closely
-            assert_abs_diff_eq!(
-                pred[0],
-                *exp as f32,
-                epsilon = 0.001
-            );
+            assert_abs_diff_eq!(pred[0], *exp as f32, epsilon = 0.001);
         }
     }
 }

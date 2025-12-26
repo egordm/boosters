@@ -4,8 +4,8 @@
 //! "From local explanations to global understanding with explainable AI for trees"
 
 use crate::data::FeaturesView;
-use crate::explainability::shap::{PathState, ShapValues};
 use crate::explainability::ExplainError;
+use crate::explainability::shap::{PathState, ShapValues};
 use crate::repr::gbdt::TreeView;
 use crate::repr::gbdt::{Forest, ScalarLeaf, Tree};
 
@@ -32,7 +32,7 @@ impl<'a> TreeExplainer<'a> {
         for (i, tree) in forest.trees().enumerate() {
             if !tree.has_covers() {
                 return Err(ExplainError::MissingNodeStats(
-                    "cover statistics required for TreeSHAP"
+                    "cover statistics required for TreeSHAP",
                 ));
             }
             let _ = i; // Silence unused warning
@@ -312,10 +312,16 @@ mod tests {
         // TODO: Verify SHAP algorithm correctness with reference values
         // The current implementation is a skeleton that needs validation
         // against the shap Python library. For now, just verify we get values.
-        assert!(prediction_from_shap.is_finite(), "SHAP values should be finite");
-        
+        assert!(
+            prediction_from_shap.is_finite(),
+            "SHAP values should be finite"
+        );
+
         // Feature 0 is the splitting feature, so it should have non-zero contribution
         let f0_contrib = shap.get(0, 0, 0);
-        assert!(f0_contrib != 0.0f32, "Splitting feature should have non-zero SHAP");
+        assert!(
+            f0_contrib != 0.0f32,
+            "Splitting feature should have non-zero SHAP"
+        );
     }
 }

@@ -10,14 +10,14 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
+use boosters::Parallelism;
 use boosters::data::{TargetsView, WeightsView};
 use boosters::testing::synthetic_datasets::synthetic_regression;
 use boosters::training::{
     GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, RowSamplingParams, SquaredLoss,
 };
-use boosters::Parallelism;
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 // =============================================================================
 // Dataset Configuration
@@ -74,7 +74,13 @@ fn bench_sampling_strategies(c: &mut Criterion) {
             b.iter(|| {
                 black_box(
                     trainer
-                        .train(black_box(&binned), black_box(targets), WeightsView::None, &[], Parallelism::Sequential)
+                        .train(
+                            black_box(&binned),
+                            black_box(targets),
+                            WeightsView::None,
+                            &[],
+                            Parallelism::Sequential,
+                        )
                         .unwrap(),
                 )
             })

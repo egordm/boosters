@@ -7,8 +7,8 @@
 use crate::data::binned::BinnedDataset;
 use crate::data::{Dataset, TargetsView, WeightsView};
 use crate::explainability::{
-    compute_forest_importance, ExplainError, FeatureImportance, ImportanceType, ShapValues,
-    TreeExplainer,
+    ExplainError, FeatureImportance, ImportanceType, ShapValues, TreeExplainer,
+    compute_forest_importance,
 };
 use crate::inference::gbdt::UnrolledPredictor6;
 use crate::model::meta::ModelMeta;
@@ -31,7 +31,7 @@ pub struct GBDTModel {
     /// Model metadata.
     meta: ModelMeta,
     /// Training configuration (if available).
-    /// 
+    ///
     /// This is `Some` when trained with the new API or loaded from a format
     /// that includes config. May be `None` for models loaded from legacy
     /// formats or created with `from_forest()`.
@@ -43,23 +43,24 @@ impl GBDTModel {
     ///
     /// Use this when loading models from formats that don't include config,
     /// or for quick testing. For training new models, prefer [`GBDTModel::train`].
-    pub fn from_forest(
-        forest: Forest<ScalarLeaf>,
-        meta: ModelMeta,
-    ) -> Self {
-        Self { forest, meta, config: GBDTConfig::default() }
+    pub fn from_forest(forest: Forest<ScalarLeaf>, meta: ModelMeta) -> Self {
+        Self {
+            forest,
+            meta,
+            config: GBDTConfig::default(),
+        }
     }
 
     /// Create a model from all its parts.
     ///
     /// Used when loading from a format that includes config, or after training
     /// with the new config-based API.
-    pub fn from_parts(
-        forest: Forest<ScalarLeaf>,
-        meta: ModelMeta,
-        config: GBDTConfig,
-    ) -> Self {
-        Self { forest, meta, config }
+    pub fn from_parts(forest: Forest<ScalarLeaf>, meta: ModelMeta, config: GBDTConfig) -> Self {
+        Self {
+            forest,
+            meta,
+            config,
+        }
     }
 
     // =========================================================================
@@ -150,7 +151,9 @@ impl GBDTModel {
                 .expect("binning should not fail on valid dataset");
 
             // Get targets - panics if dataset has no targets
-            let targets = dataset.targets().expect("dataset must have targets for training");
+            let targets = dataset
+                .targets()
+                .expect("dataset must have targets for training");
             // Get weights as WeightsView
             let weights = dataset.weights();
 
@@ -197,24 +200,20 @@ impl GBDTModel {
     ) -> Option<Self> {
         let n_features = dataset.n_features();
         let n_outputs = config.objective.n_outputs();
-        
+
         // Get task kind from objective (not inferred from n_outputs)
         // This correctly handles multi-output regression (e.g., multi-quantile)
         let task = config.objective.task_kind();
-        
+
         // Convert config to trainer params
         let params = config.to_trainer_params();
-        
+
         // Convert Option<Metric> to Metric (None -> Metric::None)
         let metric = config.metric.clone().unwrap_or(Metric::none());
-        
+
         // Create trainer with objective and metric from config
-        let trainer = GBDTTrainer::new(
-            config.objective.clone(),
-            metric,
-            params,
-        );
-        
+        let trainer = GBDTTrainer::new(config.objective.clone(), metric, params);
+
         // Components receive parallelism flag; thread pool is already set up
         let forest = trainer.train(dataset, targets, weights, eval_sets, parallelism)?;
 
@@ -226,9 +225,12 @@ impl GBDTModel {
             ..Default::default()
         };
 
-        Some(Self { forest, meta, config })
+        Some(Self {
+            forest,
+            meta,
+            config,
+        })
     }
-
 
     // =========================================================================
     // Prediction
@@ -237,7 +239,7 @@ impl GBDTModel {
     /// Predict from a Dataset.
     ///
     /// This is the **preferred** prediction method. It extracts features from
-    /// the dataset (feature-major layout `[n_features, n_samples]`) and uses 
+    /// the dataset (feature-major layout `[n_features, n_samples]`) and uses
     /// block buffering for optimal cache efficiency. Targets in the dataset
     /// are ignored.
     ///
@@ -258,16 +260,14 @@ impl GBDTModel {
     /// ```ignore
     /// let preds = model.predict(&dataset, 0);
     /// ```
-    pub fn predict(
-        &self,
-        data: &Dataset,
-        n_threads: usize,
-    ) -> Array2<f32> {
+    pub fn predict(&self, data: &Dataset, n_threads: usize) -> Array2<f32> {
         // Get raw predictions
         let mut output = self.predict_raw(data, n_threads);
 
         // Apply transformation (sigmoid/softmax for classification)
-        self.config.objective.transform_predictions_inplace(output.view_mut());
+        self.config
+            .objective
+            .transform_predictions_inplace(output.view_mut());
 
         output
     }
@@ -282,11 +282,7 @@ impl GBDTModel {
     /// # Returns
     ///
     /// Array2 with shape `[n_groups, n_samples]`.
-    pub fn predict_raw(
-        &self,
-        data: &Dataset,
-        n_threads: usize,
-    ) -> Array2<f32> {
+    pub fn predict_raw(&self, data: &Dataset, n_threads: usize) -> Array2<f32> {
         let features = data.features();
         let n_samples = features.n_samples();
         let n_groups = self.meta.n_groups;
@@ -301,14 +297,9 @@ impl GBDTModel {
         // Run prediction with thread pool management
         run_with_threads(n_threads, |parallelism| {
             let predictor = UnrolledPredictor6::new(&self.forest);
-            
+
             // predict_into takes FeaturesView directly
-            predictor.predict_into(
-                features,
-                None,
-                parallelism,
-                output_array.view_mut(),
-            );
+            predictor.predict_into(features, None, parallelism, output_array.view_mut());
         });
 
         output_array
@@ -345,7 +336,7 @@ impl GBDTModel {
     /// ShapValues container with shape `[n_samples, n_features + 1, n_outputs]`.
     pub fn shap_values(&self, data: &Dataset) -> Result<ShapValues, ExplainError> {
         let explainer = TreeExplainer::new(&self.forest)?;
-        
+
         // TreeExplainer now takes FeaturesView directly
         Ok(explainer.shap_values(data.features()))
     }

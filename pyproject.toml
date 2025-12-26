@@ -4,11 +4,31 @@ version = "0.1.0"
 description = "Boosters monorepo workspace"
 requires-python = ">=3.12"
 
+classifiers = [
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+]
+
+[dependency-groups]
+dev = [
+  "maturin>=1",
+  "microsoft-python-type-stubs",
+  "nbmake>=1.5",
+  "poethepoet>=0.31",
+  "pyproject-fmt>=2",
+  "pyright>=1.1",
+  "pytest>=8",
+  "pytest-cov>=4",
+  "ruff>=0.8",
+]
+
 [tool.uv]
 package = false
 
 [tool.uv.workspace]
-members = ["packages/*"]
+members = [ "packages/*" ]
 
 [tool.uv.sources]
 boosters = { workspace = true }
@@ -16,99 +36,213 @@ boosters-datagen = { workspace = true }
 boosters-eval = { workspace = true }
 microsoft-python-type-stubs = { git = "https://github.com/microsoft/python-type-stubs.git" }
 
-[dependency-groups]
-dev = [
-    "ruff>=0.8.0",
-    "pyright>=1.1.0",
-    "pytest>=8.0",
-    "pytest-cov>=4.0",
-    "poethepoet>=0.31.0",
-    "pyproject-fmt>=2.0",
-    "nbmake>=1.5",
-    "maturin>=1.0",
-    "microsoft-python-type-stubs",
-]
-
-# =============================================================================
-# Poe Tasks - Run with: uv run poe <task>
-# Check mode: poe check (verify only), Fix mode: poe fix (auto-fix)
-# =============================================================================
-[tool.poe.tasks]
-
-# Individual tools
-lint = { cmd = "ruff check .", help = "Run ruff linter" }
-lint-fix = { cmd = "ruff check --fix .", help = "Run ruff linter with auto-fix" }
-format = { cmd = "ruff format .", help = "Format code with ruff" }
-format-check = { cmd = "ruff format --check .", help = "Check code formatting" }
-typecheck = { cmd = "pyright", help = "Run pyright type checker" }
-
-# Combined tasks
-check = { sequence = ["format-check", "lint", "typecheck"], help = "Run all checks (no auto-fix)" }
-fix = { sequence = ["format", "lint-fix"], help = "Auto-fix formatting and linting" }
-test = { cmd = "pytest", help = "Run all tests" }
-
-# Package-specific tasks (boosters-python)
-"python:test" = { cmd = "pytest packages/boosters-python/tests -v", help = "Run boosters-python tests" }
-"python:doctest" = { cmd = "pytest packages/boosters-python/python --doctest-modules", help = "Run boosters-python doctests" }
-"python:examples" = { shell = "for f in packages/boosters-python/examples/*.py; do echo \"Running $f...\"; python \"$f\" || exit 1; done", help = "Run all example scripts" }
-# Note: stubgen requires PYTHONHOME for uv-managed Python, use: python:stubs:gen
-"python:stubs" = { shell = "cd packages/boosters-python && PYTHONHOME=$(python -c 'import sys; print(sys.base_prefix)') cargo run --bin stubgen", help = "Generate Python type stubs" }
-
-# =============================================================================
-# Ruff Configuration (shared across all packages)
-# =============================================================================
 [tool.ruff]
 target-version = "py312"
-line-length = 100
-src = ["packages/*/src", "packages/*/python", "packages/*/tests", "packages/*/examples"]
+line-length = 120
+src = [ "packages/*/python", "packages/*/src" ]
+include = [ "packages/**/*.py" ]
 
-[tool.ruff.lint]
-select = [
-    "E",      # pycodestyle errors
-    "W",      # pycodestyle warnings
-    "F",      # Pyflakes
-    "I",      # isort
-    "B",      # flake8-bugbear
-    "C4",     # flake8-comprehensions
-    "UP",     # pyupgrade
-    "RUF",    # Ruff-specific
-    "D",      # pydocstyle (docstrings)
+output-format = "concise"
+format.preview = true
+lint.select = [ "ALL" ]
+lint.ignore = [
+  "COM812", # Conflicting rules (a), ruff itself suggest disabling them
+  "CPY001", # Reuse covers copyright checks
+  "D203",   # Conflicting rules (a), ruff itself suggest disabling them
+  "D213",   # Conflicting rules (a), ruff itself suggest disabling them
+  "EM101",  # do not enforce message in variable when raising an exception
+  "FIX002", # TODO's are allowed when they are linked ot an issue (TD003 handles that part)
+  "PGH003", # Allow generic type ignores, since sometimes there are multiple unresolvable issues
+  "TC006",  # Let's not force quoting the first param of typing.cast
+  "TRY003", # simplify exception messages
 ]
-ignore = [
-    "E501",   # Line too long (handled by formatter)
-    "D100",   # Missing docstring in public module (too noisy for now)
-    "D102",   # Missing docstring in public method (too noisy for now)
-    "D104",   # Missing docstring in public package (too noisy for now)
-    "D107",   # Missing docstring in __init__ (too noisy for now)
+lint.per-file-ignores."**/cli.py" = [ "B008" ] # Typer uses function calls in defaults
+
+lint.per-file-ignores."./packages/*/tests/*" = [
+  "ARG",     # Unused function args -> fixtures nevertheless are functionally relevant...
+  "D",       # All docstring rules
+  "DOC",     # All docstring rules
+  "E501",    # Line too long (test names can be descriptive)
+  "FBT",     # Allow booleans as positional arguments in tests, e.g. via @pytest.mark.parametrize()
+  "PLR0913", # Pytests can have a lot of fixtures, ignore too many arguments
+  "PLR0917", # Pytests can have a lot of fixtures, ignore too many arguments
+  "PLR2004", # Magic value used in comparison
+  "S101",    # asserts allowed in tests...
+  "S311",    # Standard pseudo-random generators
+  "SLF001",  # Allow private access in tests
 ]
+lint.per-file-ignores."./{docs,examples}/*" = [
+  "INP001", # example folders are not packages, so __init__.py is not needed
+  "T201",   # examples are allowed to use print
+]
+lint.fixable = [ "ALL" ]
+lint.flake8-annotations.allow-star-arg-any = true # *args and **kwargs are allowed to be Any
+lint.flake8-annotations.suppress-dummy-args = true # do not type _ arguments/variables
+lint.flake8-annotations.suppress-none-returning = true # do not require annotation if None is returned/there is no return
+lint.pydocstyle.convention = "google"
 
-[tool.ruff.lint.pydocstyle]
-convention = "google"
+[tool.pytest.ini_options]
+testpaths = [ "packages/*/tests" ]
+python_files = [ "test_*.py" ]
+python_functions = [ "test_*" ]
 
-[tool.ruff.lint.per-file-ignores]
-"tests/*" = ["D", "B017", "F401"]
-"**/tests/*" = ["D", "B017", "F401"]
-"**/cli.py" = ["B008"]  # Typer uses function calls in defaults
-"**/_boosters_rs.pyi" = ["D", "F821"]  # Generated stub file
-
-[tool.ruff.lint.isort]
-known-first-party = ["boosters", "boosters_eval", "boosters_datagen"]
-
-# =============================================================================
-# Pyright Configuration (shared across all packages)
-# =============================================================================
 [tool.pyright]
 pythonVersion = "3.12"
-typeCheckingMode = "basic"
-include = ["packages/*/src", "packages/*/python", "packages/*/tests", "packages/*/examples"]
-exclude = ["**/__pycache__", "**/.venv", "**/node_modules"]
+typeCheckingMode = "standard"
+include = [ "packages/*/src", "packages/*/python", "packages/*/tests", "packages/*/examples" ]
+exclude = [ "**/__pycache__", "**/.venv", "**/node_modules" ]
 # External libraries have incomplete stubs
 reportMissingTypeStubs = false
 
-# =============================================================================
-# Pytest Configuration
-# =============================================================================
-[tool.pytest.ini_options]
-testpaths = ["packages/*/tests"]
-python_files = ["test_*.py"]
-python_functions = ["test_*"]
+[tool.poe.tasks]
+[tool.poe.tasks."python:lint"]
+help = "Lint code (with ruff)"
+cmd = 'ruff check --fix --show-fixes ${check:+ --no-fix} ${unsafe:+ --unsafe-fixes}'
+args = [
+  { name = "check", type = "boolean", help = "Does not correct files, only warns" },
+  { name = "unsafe", type = "boolean", help = "Enables unsafe fixes, which may change the code in a way that is not reversible. Use with care." },
+]
+
+[tool.poe.tasks."python:format"]
+help = "Format code (with ruff)"
+cmd = 'ruff format ${check:+ --diff}'
+args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns" } ]
+
+[tool.poe.tasks."python:format-pyproject"]
+help = "Format pyproject.toml (with pyproject-fmt)"
+cmd = 'pyproject-fmt ${check:+ --check} -n pyproject.toml packages/*/pyproject.toml'
+args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns" } ]
+
+[tool.poe.tasks."python:lock"]
+help = "Asserts that dependencies are locked"
+cmd = "uv lock --check"
+
+[tool.poe.tasks."python:type"]
+help = "Check typing (with pyright)"
+cmd = "pyright packages/*/src packages/*/examples"
+
+[tool.poe.tasks."python:type-tests"]
+help = "Check typing (with pyright)"
+cmd = "pyright packages/*/tests"
+
+[tool.poe.tasks."python:test"]
+help = "Run pytests"
+cmd = "pytest ${markers:+ -m $markers} --cov --cov-report=term-missing --cov-report=xml:coverage.xml"
+args = [
+  { name = "markers", type = "string", default = "", help = "Only run tests matching the given pytest markers expression" },
+]
+
+[tool.poe.tasks."python:doctest"]
+help = "Run all docstring examples via pytest's doctest plugin"
+cmd = "pytest --doctest-modules packages/*/src --maxfail=1"
+
+[tool.poe.tasks."python:stubs-gen"]
+help = "Generate Python type stubs for boosters-python"
+shell = "PYTHONHOME=$(python -c 'import sys; print(sys.base_prefix)') cargo run --bin stubgen --package boosters-python"
+
+[tool.poe.tasks."rust:clean"]
+help = "Clean all Rust build artifacts"
+cmd = "cargo clean --workspace"
+
+[tool.poe.tasks."rust:format"]
+help = "Format all Rust code (with cargo fmt)"
+cmd = "cargo fmt --all -- ${check:+-- --check}"
+args = [ { name = "check", type = "boolean", help = "Automatically check formatting without applying changes" } ]
+
+[tool.poe.tasks."rust:lint"]
+help = "Lint all Rust code (with cargo clippy)"
+cmd = "cargo clippy --workspace --all-features -- ${check:+--fix=false} -- -D warnings"
+args = [ { name = "check", type = "boolean", help = "Automatically check linting without applying changes" } ]
+
+[tool.poe.tasks."rust:build:core"]
+help = "Build the core Rust library"
+cmd = "cargo build --package boosters ${release:+ --release}"
+args = [ { name = "release", type = "boolean", help = "Build in release mode" } ]
+
+[tool.poe.tasks."rust:build:python"]
+help = "Build the Python Rust library"
+sequence = [
+  "python:stubs-gen",
+  { cmd = "cargo build --package boosters-python ${release:+ --release}" },
+]
+args = [ { name = "release", type = "boolean", help = "Build in release mode" } ]
+
+[tool.poe.tasks."rust:build"]
+help = "Build all Rust libraries"
+sequence = [
+  "rust:build:core ${release}",
+  "rust:build:python ${release}",
+]
+args = [ { name = "release", type = "boolean", help = "Build in release mode" } ]
+
+[tool.poe.tasks."rust:test:core"]
+help = "Run Rust tests"
+cmd = "cargo test --package boosters ${release:+ --release} ${all:+ --all-features}"
+args = [
+  { name = "release", type = "boolean", help = "Run tests in release mode", default = false },
+  { name = "all", type = "boolean", help = "Run all tests, including all features and targets", default = false },
+]
+
+[tool.poe.tasks."rust:test:python"]
+help = "Run Python tests for the Python Rust library"
+shell = "cargo test --package boosters-python ${release:+ --release}"
+args = [
+  { name = "release", type = "boolean", help = "Run tests in release mode", default = false },
+]
+
+[tool.poe.tasks."python:all"]
+help = "Run all CI calls"
+control.expr = "check"
+args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns" } ]
+switch = [
+  { case = "check", sequence = [
+    "python:stubs-gen",
+    "python:lint --check",
+    "python:format --check",
+    "python:format-pyproject --check",
+    "python:lock",
+    "python:type",
+    "python:test",
+    "python:doctest",
+  ], ignore_fail = "return_non_zero" },
+  { sequence = [
+    "python:stubs-gen",
+    "python:lint",
+    "python:format",
+    "python:format-pyproject",
+    "python:lock",
+    "python:type",
+    "python:test",
+    "python:doctest",
+  ], ignore_fail = "return_non_zero" },
+]
+
+[tool.poe.tasks."rust:all"]
+help = "Run all Rust CI calls"
+control.expr = "check"
+args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns" } ]
+switch = [
+  { case = "check", sequence = [
+    "rust:format --check",
+    "rust:lint --check",
+    "rust:build --release",
+    "rust:test:core --release --all",
+    "rust:test:python --release",
+  ], ignore_fail = "return_non_zero" },
+  { sequence = [
+    "rust:format",
+    "rust:lint",
+    "rust:build --release",
+    "rust:test:core --release --all",
+    "rust:test:python --release",
+  ], ignore_fail = "return_non_zero" },
+]
+
+[tool.poe.tasks."all"]
+help = "Run all CI calls (Python and Rust)"
+sequence = [
+  "python:all ${check}",
+  "rust:all ${check}",
+]
+args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns" } ]
+ignore_fail = "return_non_zero"

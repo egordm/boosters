@@ -21,9 +21,9 @@ mod quantile;
 mod regression;
 mod selectors;
 
+use boosters::Dataset;
 use boosters::data::transpose_to_c_order;
 use boosters::data::{TargetsView, WeightsView};
-use boosters::Dataset;
 use boosters::training::Rmse;
 use ndarray::{Array2, ArrayView2};
 use serde::Deserialize;
@@ -170,8 +170,8 @@ pub fn load_xgb_predictions(name: &str) -> Option<Vec<f32>> {
 /// and creates a Dataset for training.
 pub fn make_dataset(features: &Array2<f32>, labels: &[f32]) -> Dataset {
     let n_samples = features.ncols();
-    let targets = Array2::from_shape_vec((1, n_samples), labels.to_vec())
-        .expect("targets shape mismatch");
+    let targets =
+        Array2::from_shape_vec((1, n_samples), labels.to_vec()).expect("targets shape mismatch");
     Dataset::new(features.view(), Some(targets.view()), None)
 }
 

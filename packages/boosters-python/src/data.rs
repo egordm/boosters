@@ -271,9 +271,14 @@ impl PyEvalSet {
     pub fn to_core_eval_set<'a>(
         &'a self,
         py: Python<'a>,
-    ) -> (PyRef<'a, PyDataset>, impl FnOnce(&'a PyDataset) -> CoreEvalSet<'a>) {
+    ) -> (
+        PyRef<'a, PyDataset>,
+        impl FnOnce(&'a PyDataset) -> CoreEvalSet<'a>,
+    ) {
         let dataset_ref = self.dataset.bind(py).borrow();
         let name = &self.name;
-        (dataset_ref, move |ds: &'a PyDataset| CoreEvalSet::new(name, ds.inner()))
+        (dataset_ref, move |ds: &'a PyDataset| {
+            CoreEvalSet::new(name, ds.inner())
+        })
     }
 }

@@ -298,9 +298,8 @@ impl PyGBDTModel {
             .collect();
 
         // Train with GIL released
-        let trained_model = py.detach(|| {
-            boosters::GBDTModel::train(core_train, &eval_sets, core_config, n_threads)
-        });
+        let trained_model = py
+            .detach(|| boosters::GBDTModel::train(core_train, &eval_sets, core_config, n_threads));
 
         match trained_model {
             Some(model) => {

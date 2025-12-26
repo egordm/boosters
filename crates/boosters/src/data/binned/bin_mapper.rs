@@ -281,14 +281,14 @@ impl BinMapper {
 
         let bin_idx = bin as usize;
         let upper = self.bin_upper_bounds[bin_idx];
-        
+
         // Use max_val for the last bin to avoid f64::MAX sentinel values
         let effective_upper = if upper.is_infinite() || upper > self.max_val {
             self.max_val
         } else {
             upper
         };
-        
+
         let lower = if bin_idx == 0 {
             self.min_val
         } else {
@@ -300,7 +300,9 @@ impl BinMapper {
 
     /// Get max category value (categorical only).
     pub fn max_cat_value(&self) -> Option<i32> {
-        self.bin_to_cat.as_ref().and_then(|cats| cats.iter().max().copied())
+        self.bin_to_cat
+            .as_ref()
+            .and_then(|cats| cats.iter().max().copied())
     }
 
     /// Min value seen during binning (numerical only).

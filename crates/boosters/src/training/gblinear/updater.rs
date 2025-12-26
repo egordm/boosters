@@ -142,12 +142,7 @@ impl Updater {
     /// # Returns
     ///
     /// The bias delta that was applied (0.0 if hessian too small)
-    pub fn update_bias(
-        &self,
-        model: &mut LinearModel,
-        buffer: &Gradients,
-        output: usize,
-    ) -> f32 {
+    pub fn update_bias(&self, model: &mut LinearModel, buffer: &Gradients, output: usize) -> f32 {
         let (sum_grad, sum_hess) = buffer.sum(output, None);
 
         if sum_hess.abs() > 1e-10 {
@@ -361,10 +356,10 @@ fn soft_threshold(x: f32, threshold: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    use super::super::selector::CyclicSelector;
     use super::*;
     use crate::data::FeaturesView;
-    use ndarray::{array, Array2};
-    use super::super::selector::CyclicSelector;
+    use ndarray::{Array2, array};
 
     fn make_test_data() -> (Array2<f32>, Gradients) {
         // Simple 2 features x 4 samples dataset (feature-major layout)
@@ -511,7 +506,7 @@ mod tests {
         buffer.set(2, 0, 0.2, 1.0);
 
         let mut model = LinearModel::zeros(2, 1);
-        
+
         let config = UpdateConfig {
             alpha: 0.0,
             lambda: 0.0,

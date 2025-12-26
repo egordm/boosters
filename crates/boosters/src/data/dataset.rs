@@ -335,7 +335,7 @@ impl DatasetBuilder {
         self.targets = Some(
             targets
                 .to_owned()
-                .into_shape((1, n))
+                .into_shape_with_order((1, n))
                 .expect("reshape should succeed"),
         );
         self
@@ -540,7 +540,10 @@ mod tests {
         let targets = array![[0.0, 1.0, 0.0]]; // [n_outputs=1, n_samples=3]
         let ds = Dataset::new(features.view(), Some(targets.view()), None);
 
-        assert_eq!(ds.targets().unwrap().as_single_output().to_vec(), vec![0.0, 1.0, 0.0]);
+        assert_eq!(
+            ds.targets().unwrap().as_single_output().to_vec(),
+            vec![0.0, 1.0, 0.0]
+        );
     }
 
     #[test]
@@ -668,11 +671,9 @@ mod tests {
         }
 
         let features = Array2::from_shape_vec((n_features, n_samples), data).unwrap();
-        let targets = Array2::from_shape_vec(
-            (1, n_samples),
-            (0..n_samples).map(|i| i as f32).collect(),
-        )
-        .unwrap();
+        let targets =
+            Array2::from_shape_vec((1, n_samples), (0..n_samples).map(|i| i as f32).collect())
+                .unwrap();
 
         let ds = Dataset::new(features.view(), Some(targets.view()), None);
         let view = ds.features();

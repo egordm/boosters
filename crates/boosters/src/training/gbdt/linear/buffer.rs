@@ -55,7 +55,7 @@ impl LeafFeatureBuffer {
     pub fn new(max_rows: usize, max_features: usize) -> Self {
         debug_assert!(max_rows > 0, "max_rows must be positive");
         debug_assert!(max_features > 0, "max_features must be positive");
-        
+
         Self {
             data: vec![0.0; max_rows * max_features],
             max_rows,
@@ -80,12 +80,7 @@ impl LeafFeatureBuffer {
     /// # Panics
     ///
     /// Panics if `rows.len() > max_rows` or `features.len() > max_features`.
-    pub fn gather<D: DataAccessor>(
-        &mut self,
-        rows: &[u32],
-        data: &D,
-        features: &[u32],
-    ) {
+    pub fn gather<D: DataAccessor>(&mut self, rows: &[u32], data: &D, features: &[u32]) {
         debug_assert!(
             rows.len() <= self.max_rows,
             "Too many rows: {} > max {}",

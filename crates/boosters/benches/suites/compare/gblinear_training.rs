@@ -7,21 +7,21 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
-use boosters::data::transpose_to_c_order;
 use boosters::data::Dataset;
+use boosters::data::transpose_to_c_order;
 use boosters::testing::synthetic_datasets::synthetic_regression;
 use boosters::training::{GBLinearParams, GBLinearTrainer, Rmse, SquaredLoss, Verbosity};
 
 use ndarray::ArrayView2;
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 #[cfg(feature = "bench-xgboost")]
 use xgb::parameters::linear::LinearBoosterParametersBuilder;
 #[cfg(feature = "bench-xgboost")]
 use xgb::parameters::{
-    learning::LearningTaskParametersBuilder, learning::Objective, BoosterParametersBuilder,
-    BoosterType, TrainingParametersBuilder,
+    BoosterParametersBuilder, BoosterType, TrainingParametersBuilder,
+    learning::LearningTaskParametersBuilder, learning::Objective,
 };
 #[cfg(feature = "bench-xgboost")]
 use xgb::{Booster, DMatrix};
@@ -41,19 +41,25 @@ const LARGE: (usize, usize) = (100_000, 200);
 // Helpers
 // =============================================================================
 
-fn build_features_array(features_row_major: &[f32], rows: usize, cols: usize) -> ndarray::Array2<f32> {
+fn build_features_array(
+    features_row_major: &[f32],
+    rows: usize,
+    cols: usize,
+) -> ndarray::Array2<f32> {
     let sample_major_view = ArrayView2::from_shape((rows, cols), features_row_major).unwrap();
     transpose_to_c_order(sample_major_view)
 }
 
-fn build_dataset(features_row_major: &[f32], rows: usize, cols: usize, targets: Vec<f32>) -> Dataset {
+fn build_dataset(
+    features_row_major: &[f32],
+    rows: usize,
+    cols: usize,
+    targets: Vec<f32>,
+) -> Dataset {
     // Build feature-major Array2: [n_features, n_samples]
     let feature_major = build_features_array(features_row_major, rows, cols);
     // Build targets Array2: [1, n_samples]
-    let targets_2d = ndarray::Array2::from_shape_vec(
-        (1, targets.len()),
-        targets
-    ).unwrap();
+    let targets_2d = ndarray::Array2::from_shape_vec((1, targets.len()), targets).unwrap();
     Dataset::new(feature_major.view(), Some(targets_2d.view()), None)
 }
 

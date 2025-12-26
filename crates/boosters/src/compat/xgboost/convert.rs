@@ -2,7 +2,7 @@
 
 use ndarray::Array2;
 
-use crate::repr::gbdt::{categories_to_bitset, Forest, MutableTree, ScalarLeaf, Tree};
+use crate::repr::gbdt::{Forest, MutableTree, ScalarLeaf, Tree, categories_to_bitset};
 use crate::repr::gblinear::LinearModel;
 
 use super::json::{GradientBooster, ModelTrees, Tree as XgbTree, XgbModel};
@@ -29,14 +29,18 @@ pub enum Booster {
 pub enum ConversionError {
     #[error("tree {0} has no nodes")]
     EmptyTree(usize),
-    #[error("invalid node index in tree {tree}: node {node} references child {child} but tree has {num_nodes} nodes")]
+    #[error(
+        "invalid node index in tree {tree}: node {node} references child {child} but tree has {num_nodes} nodes"
+    )]
     InvalidNodeIndex {
         tree: usize,
         node: usize,
         child: i32,
         num_nodes: usize,
     },
-    #[error("gblinear weights length {actual} doesn't match (num_features + 1) * num_groups = {expected}")]
+    #[error(
+        "gblinear weights length {actual} doesn't match (num_features + 1) * num_groups = {expected}"
+    )]
     InvalidLinearWeights { actual: usize, expected: usize },
 }
 
@@ -108,10 +112,7 @@ impl XgbModel {
 
     /// Returns true if this model uses DART booster.
     pub fn is_dart(&self) -> bool {
-        matches!(
-            &self.learner.gradient_booster,
-            GradientBooster::Dart { .. }
-        )
+        matches!(&self.learner.gradient_booster, GradientBooster::Dart { .. })
     }
 
     /// Returns true if this model uses gblinear booster.
@@ -130,7 +131,11 @@ impl XgbModel {
     fn convert_linear_model(&self, weights: &[f32]) -> Result<LinearModel, ConversionError> {
         let num_features = self.learner.learner_model_param.n_features as usize;
         let num_class = self.learner.learner_model_param.n_class;
-        let num_groups = if num_class <= 1 { 1 } else { num_class as usize };
+        let num_groups = if num_class <= 1 {
+            1
+        } else {
+            num_class as usize
+        };
 
         let expected_len = (num_features + 1) * num_groups;
         if weights.len() != expected_len {
@@ -163,9 +168,10 @@ impl XgbModel {
     ) -> Result<(Forest<ScalarLeaf>, Option<Vec<f32>>), ConversionError> {
         let (model_trees, tree_weights) = match &self.learner.gradient_booster {
             GradientBooster::Gbtree { model } => (model, None),
-            GradientBooster::Dart { gbtree, weight_drop } => {
-                (&gbtree.model, Some(weight_drop.clone()))
-            }
+            GradientBooster::Dart {
+                gbtree,
+                weight_drop,
+            } => (&gbtree.model, Some(weight_drop.clone())),
             GradientBooster::Gblinear { .. } => {
                 // This shouldn't happen - callers should use convert_linear_model directly
                 unreachable!("to_forest_with_weights called on gblinear model")

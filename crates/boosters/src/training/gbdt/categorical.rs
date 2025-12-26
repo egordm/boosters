@@ -53,7 +53,9 @@ impl CatBitset {
             let idx = ((cat - 64) / 64) as usize;
             let bit = (cat - 64) % 64;
 
-            let overflow = self.overflow.get_or_insert_with(|| vec![0u64; idx + 1].into_boxed_slice());
+            let overflow = self
+                .overflow
+                .get_or_insert_with(|| vec![0u64; idx + 1].into_boxed_slice());
 
             // Grow if needed
             if idx >= overflow.len() {
@@ -80,7 +82,11 @@ impl CatBitset {
     /// Check if the bitset is empty.
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.bits == 0 && self.overflow.as_ref().is_none_or(|o| o.iter().all(|&w| w == 0))
+        self.bits == 0
+            && self
+                .overflow
+                .as_ref()
+                .is_none_or(|o| o.iter().all(|&w| w == 0))
     }
 
     /// Iterate over all categories contained in the set.

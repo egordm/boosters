@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use serde::de::DeserializeOwned;
 
 // Re-export test data structures from library
-pub use boosters::testing::{TestExpected, TestInput, DEFAULT_TOLERANCE_F64};
+pub use boosters::testing::{DEFAULT_TOLERANCE_F64, TestExpected, TestInput};
 
 /// Base directory for test cases.
 pub fn test_cases_dir() -> PathBuf {

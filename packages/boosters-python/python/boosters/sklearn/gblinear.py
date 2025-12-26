@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Self, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -114,12 +114,12 @@ class _GBLinearEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
         ...
 
     def fit(
-        self: T,
+        self,
         X: NDArray[Any],
         y: NDArray[Any],
         eval_set: list[tuple[NDArray[Any], NDArray[Any]]] | list[EvalSet] | None = None,
         sample_weight: NDArray[np.float32] | None = None,
-    ) -> T:
+    ) -> Self:
         """Fit the estimator.
 
         Parameters
@@ -135,7 +135,7 @@ class _GBLinearEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
         sample_weight : array-like of shape (n_samples,), optional
             Sample weights.
 
-        Returns
+        Returns:
         -------
         self
             Fitted estimator.
@@ -182,7 +182,7 @@ class _GBLinearEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
         X : array-like of shape (n_samples, n_features)
             Input samples.
 
-        Returns
+        Returns:
         -------
         y_pred : ndarray of shape (n_samples,)
             Predicted values.
@@ -235,7 +235,7 @@ class GBLinearRegressor(_GBLinearEstimatorBase, RegressorMixin):  # type: ignore
     metric : Metric or None, default=None
         Evaluation metric. If None, uses Metric.rmse().
 
-    Attributes
+    Attributes:
     ----------
     model_ : GBLinearModel
         The fitted core model.
@@ -307,7 +307,7 @@ class GBLinearClassifier(_GBLinearEstimatorBase, ClassifierMixin):  # type: igno
     metric : Metric or None, default=None
         Evaluation metric. If None, uses Metric.logloss().
 
-    Attributes
+    Attributes:
     ----------
     model_ : GBLinearModel
         The fitted core model.
@@ -324,7 +324,15 @@ class GBLinearClassifier(_GBLinearEstimatorBase, ClassifierMixin):  # type: igno
     n_classes_: int
     _label_to_idx: Mapping[Any, int]
 
-    _REGRESSION_KEYWORDS = ("squared", "absolute", "huber", "quantile", "tweedie", "poisson", "gamma")
+    _REGRESSION_KEYWORDS = (
+        "squared",
+        "absolute",
+        "huber",
+        "quantile",
+        "tweedie",
+        "poisson",
+        "gamma",
+    )
 
     @classmethod
     def _get_default_objective(cls) -> Objective:
@@ -363,7 +371,7 @@ class GBLinearClassifier(_GBLinearEstimatorBase, ClassifierMixin):  # type: igno
         X : array-like of shape (n_samples, n_features)
             Input samples.
 
-        Returns
+        Returns:
         -------
         y_pred : ndarray of shape (n_samples,)
             Predicted class labels.
@@ -386,7 +394,7 @@ class GBLinearClassifier(_GBLinearEstimatorBase, ClassifierMixin):  # type: igno
         X : array-like of shape (n_samples, n_features)
             Input samples.
 
-        Returns
+        Returns:
         -------
         proba : ndarray of shape (n_samples, n_classes)
             Class probability estimates.

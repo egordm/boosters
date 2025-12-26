@@ -44,7 +44,9 @@
 mod classification;
 mod regression;
 
-pub use classification::{Accuracy, Auc, LogLoss, MarginAccuracy, MulticlassAccuracy, MulticlassLogLoss};
+pub use classification::{
+    Accuracy, Auc, LogLoss, MarginAccuracy, MulticlassAccuracy, MulticlassLogLoss,
+};
 use ndarray::ArrayView2;
 pub use regression::{HuberMetric, Mae, Mape, PoissonDeviance, QuantileMetric, Rmse};
 
@@ -122,8 +124,12 @@ impl std::fmt::Debug for Metric {
             Self::Accuracy(inner) => f.debug_tuple("Accuracy").field(inner).finish(),
             Self::MarginAccuracy(inner) => f.debug_tuple("MarginAccuracy").field(inner).finish(),
             Self::Auc(inner) => f.debug_tuple("Auc").field(inner).finish(),
-            Self::MulticlassLogLoss(inner) => f.debug_tuple("MulticlassLogLoss").field(inner).finish(),
-            Self::MulticlassAccuracy(inner) => f.debug_tuple("MulticlassAccuracy").field(inner).finish(),
+            Self::MulticlassLogLoss(inner) => {
+                f.debug_tuple("MulticlassLogLoss").field(inner).finish()
+            }
+            Self::MulticlassAccuracy(inner) => {
+                f.debug_tuple("MulticlassAccuracy").field(inner).finish()
+            }
             Self::Quantile(inner) => f.debug_tuple("Quantile").field(inner).finish(),
             Self::Huber(inner) => f.debug_tuple("Huber").field(inner).finish(),
             Self::PoissonDeviance(inner) => f.debug_tuple("PoissonDeviance").field(inner).finish(),

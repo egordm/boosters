@@ -40,7 +40,10 @@ use super::NodeId;
 /// }
 /// ```
 #[derive(Debug, Clone, Default)]
-#[cfg_attr(feature = "xgboost-compat", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "xgboost-compat",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct LeafCoefficients {
     /// Flat array of feature indices for all linear leaves.
     feature_indices: Box<[u32]>,
@@ -57,8 +60,7 @@ pub struct LeafCoefficients {
 use std::sync::LazyLock;
 
 /// Static empty LeafCoefficients for returning references.
-static EMPTY_COEFFICIENTS: LazyLock<LeafCoefficients> =
-    LazyLock::new(LeafCoefficients::empty);
+static EMPTY_COEFFICIENTS: LazyLock<LeafCoefficients> = LazyLock::new(LeafCoefficients::empty);
 
 impl LeafCoefficients {
     /// Get a static reference to empty coefficients.
@@ -115,7 +117,14 @@ impl LeafCoefficients {
         // If len == 0 but there's a non-zero intercept, return empty slices
         if len == 0 {
             // Check for non-zero intercept
-            if self.intercepts.get(node as usize).copied().unwrap_or(0.0).abs() < 1e-10 {
+            if self
+                .intercepts
+                .get(node as usize)
+                .copied()
+                .unwrap_or(0.0)
+                .abs()
+                < 1e-10
+            {
                 return None;
             }
             // Return empty slices - caller should use leaf_intercept
@@ -206,13 +215,7 @@ impl LeafCoefficientsBuilder {
     /// * `features` - Feature indices used
     /// * `intercept` - Intercept adjustment
     /// * `coefs` - Coefficients (parallel to features)
-    pub fn add(
-        &mut self,
-        node: NodeId,
-        features: &[u32],
-        intercept: f32,
-        coefs: &[f32],
-    ) {
+    pub fn add(&mut self, node: NodeId, features: &[u32], intercept: f32, coefs: &[f32]) {
         debug_assert_eq!(features.len(), coefs.len());
         if features.is_empty() && intercept.abs() < 1e-10 {
             return; // Nothing to store
@@ -298,7 +301,7 @@ mod tests {
     fn multiple_linear_leaves() {
         // Tree: 3 nodes, nodes 1 and 2 are linear leaves
         let coefs = LeafCoefficients::new(
-            vec![0, 1, 2],           // 3 terms total
+            vec![0, 1, 2], // 3 terms total
             vec![1.0, 2.0, 3.0],
             vec![(0, 0), (0, 2), (2, 1)], // node 0: none, node 1: 2 terms, node 2: 1 term
             vec![0.0, 0.5, 0.1],

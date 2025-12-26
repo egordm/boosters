@@ -24,7 +24,9 @@ use rand::prelude::*;
 
 use ndarray::{Array1, Array2, ArrayView2};
 
-use crate::data::{binned::BinnedDataset, BinnedDatasetBuilder, BinningConfig, transpose_to_c_order};
+use crate::data::{
+    BinnedDatasetBuilder, BinningConfig, binned::BinnedDataset, transpose_to_c_order,
+};
 use crate::data::{Dataset, FeaturesView};
 use crate::utils::Parallelism;
 
@@ -112,42 +114,62 @@ impl SyntheticDataset {
 /// let dataset = synthetic_regression(1000, 10, 42, 0.05);
 /// let binned = dataset.to_binned(256);
 /// ```
-pub fn synthetic_regression(n_samples: usize, n_features: usize, seed: u64, noise: f32) -> SyntheticDataset {
+pub fn synthetic_regression(
+    n_samples: usize,
+    n_features: usize,
+    seed: u64,
+    noise: f32,
+) -> SyntheticDataset {
     let features_sm = random_features_array(n_samples, n_features, seed, -1.0, 1.0);
     let targets = generate_linear_targets(features_sm.view(), seed.wrapping_add(1), noise);
     let features_fm = transpose_to_c_order(features_sm.view());
-    
-    SyntheticDataset { features: features_fm, targets }
+
+    SyntheticDataset {
+        features: features_fm,
+        targets,
+    }
 }
 
 /// Generate a synthetic binary classification dataset.
 ///
 /// Targets are 0.0 or 1.0 based on linear score thresholding.
-pub fn synthetic_binary(n_samples: usize, n_features: usize, seed: u64, noise: f32) -> SyntheticDataset {
+pub fn synthetic_binary(
+    n_samples: usize,
+    n_features: usize,
+    seed: u64,
+    noise: f32,
+) -> SyntheticDataset {
     let features_sm = random_features_array(n_samples, n_features, seed, -1.0, 1.0);
     let scores = generate_linear_targets(features_sm.view(), seed.wrapping_add(1), noise);
     let targets = scores.mapv(|s| if s > 0.0 { 1.0 } else { 0.0 });
     let features_fm = transpose_to_c_order(features_sm.view());
-    
-    SyntheticDataset { features: features_fm, targets }
+
+    SyntheticDataset {
+        features: features_fm,
+        targets,
+    }
 }
 
 /// Generate a synthetic multiclass classification dataset.
 ///
 /// Targets are class indices (0, 1, 2, ..., n_classes-1) as f32.
 pub fn synthetic_multiclass(
-    n_samples: usize, 
-    n_features: usize, 
-    n_classes: usize, 
-    seed: u64, 
-    noise: f32
+    n_samples: usize,
+    n_features: usize,
+    n_classes: usize,
+    seed: u64,
+    noise: f32,
 ) -> SyntheticDataset {
     assert!(n_classes >= 2);
     let features_sm = random_features_array(n_samples, n_features, seed, -1.0, 1.0);
-    let targets = generate_multiclass_targets(features_sm.view(), n_classes, seed.wrapping_add(1), noise);
+    let targets =
+        generate_multiclass_targets(features_sm.view(), n_classes, seed.wrapping_add(1), noise);
     let features_fm = transpose_to_c_order(features_sm.view());
-    
-    SyntheticDataset { features: features_fm, targets }
+
+    SyntheticDataset {
+        features: features_fm,
+        targets,
+    }
 }
 
 // =============================================================================
@@ -158,11 +180,13 @@ pub fn synthetic_multiclass(
 fn generate_linear_targets(features: ArrayView2<'_, f32>, seed: u64, noise: f32) -> Array1<f32> {
     let (n_samples, n_features) = features.dim();
     let mut rng = StdRng::seed_from_u64(seed);
-    
+
     // Random weights and bias
-    let weights: Vec<f32> = (0..n_features).map(|_| rng.r#gen::<f32>() * 2.0 - 1.0).collect();
+    let weights: Vec<f32> = (0..n_features)
+        .map(|_| rng.r#gen::<f32>() * 2.0 - 1.0)
+        .collect();
     let bias: f32 = rng.r#gen::<f32>() * 0.5 - 0.25;
-    
+
     let mut targets = Array1::zeros(n_samples);
     for r in 0..n_samples {
         let mut y = bias;
@@ -174,20 +198,20 @@ fn generate_linear_targets(features: ArrayView2<'_, f32>, seed: u64, noise: f32)
         }
         targets[r] = y;
     }
-    
+
     targets
 }
 
 /// Generate multiclass targets from sample-major features.
 fn generate_multiclass_targets(
-    features: ArrayView2<'_, f32>, 
+    features: ArrayView2<'_, f32>,
     n_classes: usize,
-    seed: u64, 
-    noise: f32
+    seed: u64,
+    noise: f32,
 ) -> Array1<f32> {
     let (n_samples, n_features) = features.dim();
     let mut rng = StdRng::seed_from_u64(seed);
-    
+
     // Random weights per class
     let weights: Vec<f32> = (0..n_classes * n_features)
         .map(|_| rng.r#gen::<f32>() * 2.0 - 1.0)
@@ -195,7 +219,7 @@ fn generate_multiclass_targets(
     let bias: Vec<f32> = (0..n_classes)
         .map(|_| rng.r#gen::<f32>() * 0.5 - 0.25)
         .collect();
-    
+
     let mut targets = Array1::zeros(n_samples);
     for r in 0..n_samples {
         let mut best_class = 0usize;
@@ -216,7 +240,7 @@ fn generate_multiclass_targets(
         }
         targets[r] = best_class as f32;
     }
-    
+
     targets
 }
 
@@ -227,29 +251,35 @@ fn generate_multiclass_targets(
 /// Create a sample-major [`Array2<f32>`] from random dense features.
 ///
 /// Returns an array with shape `[rows, cols]` (sample-major).
-pub fn random_features_array(rows: usize, cols: usize, seed: u64, min: f32, max: f32) -> Array2<f32> {
-	assert!(max >= min);
-	let mut rng = StdRng::seed_from_u64(seed);
-	let width = max - min;
-	let data: Vec<f32> = (0..rows * cols)
-		.map(|_| min + rng.r#gen::<f32>() * width)
-		.collect();
-	Array2::from_shape_vec((rows, cols), data).expect("shape mismatch")
+pub fn random_features_array(
+    rows: usize,
+    cols: usize,
+    seed: u64,
+    min: f32,
+    max: f32,
+) -> Array2<f32> {
+    assert!(max >= min);
+    let mut rng = StdRng::seed_from_u64(seed);
+    let width = max - min;
+    let data: Vec<f32> = (0..rows * cols)
+        .map(|_| min + rng.r#gen::<f32>() * width)
+        .collect();
+    Array2::from_shape_vec((rows, cols), data).expect("shape mismatch")
 }
 
 /// Deterministic train/valid split indices.
 ///
 /// Returns `(train_idx, valid_idx)`.
 pub fn split_indices(rows: usize, valid_fraction: f32, seed: u64) -> (Vec<usize>, Vec<usize>) {
-	assert!((0.0..1.0).contains(&valid_fraction));
-	let mut idx: Vec<usize> = (0..rows).collect();
-	let mut rng = StdRng::seed_from_u64(seed);
-	idx.shuffle(&mut rng);
+    assert!((0.0..1.0).contains(&valid_fraction));
+    let mut idx: Vec<usize> = (0..rows).collect();
+    let mut rng = StdRng::seed_from_u64(seed);
+    idx.shuffle(&mut rng);
 
-	let valid_len = ((rows as f32) * valid_fraction).round() as usize;
-	let valid_len = valid_len.min(rows);
-	let (valid, train) = idx.split_at(valid_len);
-	(train.to_vec(), valid.to_vec())
+    let valid_len = ((rows as f32) * valid_fraction).round() as usize;
+    let valid_len = valid_len.min(rows);
+    let (valid, train) = idx.split_at(valid_len);
+    (train.to_vec(), valid.to_vec())
 }
 
 /// Select rows from a sample-major Array2 by indices.

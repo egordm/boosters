@@ -9,8 +9,8 @@
 //! cargo run --example early_stopping
 //! ```
 
-use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
+use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::training::GrowthStrategy;
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism};
@@ -51,7 +51,10 @@ fn main() {
     println!("Configuration:");
     println!("  Max trees: {}", config.n_trees);
     println!("  Learning rate: {}", config.learning_rate);
-    println!("  Early stopping rounds: {:?}", config.early_stopping_rounds);
+    println!(
+        "  Early stopping rounds: {:?}",
+        config.early_stopping_rounds
+    );
     println!();
 
     // =========================================================================
@@ -63,8 +66,8 @@ fn main() {
     let targets_2d = labels.clone().insert_axis(ndarray::Axis(0));
     let targets = TargetsView::new(targets_2d.view());
 
-    let model =
-        GBDTModel::train_binned(&dataset, targets, WeightsView::None, &[], config, 1).expect("Training failed");
+    let model = GBDTModel::train_binned(&dataset, targets, WeightsView::None, &[], config, 1)
+        .expect("Training failed");
 
     // =========================================================================
     // 4. Results
@@ -90,7 +93,11 @@ fn main() {
 }
 
 // Helper functions
-fn generate_regression_data(n_samples: usize, n_features: usize, seed: u64) -> (Array2<f32>, Array1<f32>) {
+fn generate_regression_data(
+    n_samples: usize,
+    n_features: usize,
+    seed: u64,
+) -> (Array2<f32>, Array1<f32>) {
     // Feature-major data [n_features, n_samples]
     let mut features = Array2::<f32>::zeros((n_features, n_samples));
     let mut labels = Array1::<f32>::zeros(n_samples);

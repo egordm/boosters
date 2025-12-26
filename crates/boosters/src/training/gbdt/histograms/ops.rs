@@ -23,8 +23,8 @@
 use super::pool::HistogramLayout;
 use super::slices::HistogramFeatureIter;
 use crate::data::binned::FeatureView;
-use crate::utils::Parallelism;
 use crate::training::GradsTuple;
+use crate::utils::Parallelism;
 
 /// A histogram bin storing accumulated (gradient_sum, hessian_sum).
 ///
@@ -262,11 +262,29 @@ fn build_feature_contiguous(
         FeatureView::U16 { bins, stride } => {
             build_u16_strided_contiguous(bins, *stride, ordered_grad_hess, histogram, start_row);
         }
-        FeatureView::SparseU8 { row_indices, bin_values } => {
-            build_sparse_u8_contiguous(row_indices, bin_values, ordered_grad_hess, histogram, start_row);
+        FeatureView::SparseU8 {
+            row_indices,
+            bin_values,
+        } => {
+            build_sparse_u8_contiguous(
+                row_indices,
+                bin_values,
+                ordered_grad_hess,
+                histogram,
+                start_row,
+            );
         }
-        FeatureView::SparseU16 { row_indices, bin_values } => {
-            build_sparse_u16_contiguous(row_indices, bin_values, ordered_grad_hess, histogram, start_row);
+        FeatureView::SparseU16 {
+            row_indices,
+            bin_values,
+        } => {
+            build_sparse_u16_contiguous(
+                row_indices,
+                bin_values,
+                ordered_grad_hess,
+                histogram,
+                start_row,
+            );
         }
     }
 }
@@ -461,7 +479,10 @@ mod tests {
         let mut histogram = vec![(0.0, 0.0); 3];
 
         let features = make_features(&[3]);
-        let bin_views = vec![FeatureView::U8 { bins: &bins, stride: 1 }];
+        let bin_views = vec![FeatureView::U8 {
+            bins: &bins,
+            stride: 1,
+        }];
         let ordered_grad_hess: Vec<GradsTuple> = grad
             .iter()
             .zip(&hess)
@@ -486,17 +507,29 @@ mod tests {
         let indices: Vec<u32> = vec![0, 2, 4];
 
         let features = make_features(&[3]);
-        let bin_views = vec![FeatureView::U8 { bins: &bins, stride: 1 }];
+        let bin_views = vec![FeatureView::U8 {
+            bins: &bins,
+            stride: 1,
+        }];
         let ordered_grad_hess: Vec<GradsTuple> = indices
             .iter()
             .map(|&r| {
                 let r = r as usize;
-                GradsTuple { grad: grad[r], hess: hess[r] }
+                GradsTuple {
+                    grad: grad[r],
+                    hess: hess[r],
+                }
             })
             .collect();
 
         let builder = HistogramBuilder::new(Parallelism::Sequential);
-        builder.build_gathered(&mut histogram, &ordered_grad_hess, &indices, &bin_views, &features);
+        builder.build_gathered(
+            &mut histogram,
+            &ordered_grad_hess,
+            &indices,
+            &bin_views,
+            &features,
+        );
 
         assert!((histogram[0].0 - 1.0).abs() < 1e-10);
         assert!((histogram[1].0 - 5.0).abs() < 1e-10);
@@ -548,9 +581,18 @@ mod tests {
         let bins_f2: Vec<u8> = (0..n_samples).map(|i| ((i + 2) % 4) as u8).collect();
 
         let bin_views = vec![
-            FeatureView::U8 { bins: &bins_f0, stride: 1 },
-            FeatureView::U8 { bins: &bins_f1, stride: 1 },
-            FeatureView::U8 { bins: &bins_f2, stride: 1 },
+            FeatureView::U8 {
+                bins: &bins_f0,
+                stride: 1,
+            },
+            FeatureView::U8 {
+                bins: &bins_f1,
+                stride: 1,
+            },
+            FeatureView::U8 {
+                bins: &bins_f2,
+                stride: 1,
+            },
         ];
 
         let grad: Vec<f32> = (0..n_samples).map(|i| i as f32).collect();
@@ -581,8 +623,14 @@ mod tests {
         let bins_f1: Vec<u8> = (0..n_samples).map(|i| ((i + 1) % 4) as u8).collect();
 
         let bin_views = vec![
-            FeatureView::U8 { bins: &bins_f0, stride: 1 },
-            FeatureView::U8 { bins: &bins_f1, stride: 1 },
+            FeatureView::U8 {
+                bins: &bins_f0,
+                stride: 1,
+            },
+            FeatureView::U8 {
+                bins: &bins_f1,
+                stride: 1,
+            },
         ];
 
         let indices: Vec<u32> = (0..n_samples as u32).step_by(3).collect();
@@ -607,13 +655,22 @@ mod tests {
             .iter()
             .map(|&r| {
                 let r = r as f32;
-                GradsTuple { grad: r * 0.25, hess: 1.0 + r * 0.01 }
+                GradsTuple {
+                    grad: r * 0.25,
+                    hess: 1.0 + r * 0.01,
+                }
             })
             .collect();
 
         let mut hist = vec![(0.0, 0.0); 8];
         let builder = HistogramBuilder::new(Parallelism::Sequential);
-        builder.build_gathered(&mut hist, &ordered_interleaved, &indices, &bin_views, &features);
+        builder.build_gathered(
+            &mut hist,
+            &ordered_interleaved,
+            &indices,
+            &bin_views,
+            &features,
+        );
 
         for i in 0..hist.len() {
             assert!((hist_ref[i].0 - hist[i].0).abs() < 1e-10);
@@ -628,11 +685,17 @@ mod tests {
         let bins: Vec<u8> = (0..n_samples).map(|i| (i % 4) as u8).collect();
 
         let bin_views: Vec<_> = (0..4)
-            .map(|_| FeatureView::U8 { bins: &bins, stride: 1 })
+            .map(|_| FeatureView::U8 {
+                bins: &bins,
+                stride: 1,
+            })
             .collect();
 
         let ordered_grad_hess: Vec<GradsTuple> = (0..n_samples)
-            .map(|i| GradsTuple { grad: i as f32, hess: 1.0 })
+            .map(|i| GradsTuple {
+                grad: i as f32,
+                hess: 1.0,
+            })
             .collect();
 
         // Sequential

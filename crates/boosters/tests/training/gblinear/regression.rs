@@ -96,9 +96,7 @@ fn train_l2_regularization_shrinks_weights() {
     let no_reg_l2_norm: f32 = (0..n_features)
         .map(|i| no_reg_model.weight(i, 0).powi(2))
         .sum();
-    let l2_norm: f32 = (0..n_features)
-        .map(|i| l2_model.weight(i, 0).powi(2))
-        .sum();
+    let l2_norm: f32 = (0..n_features).map(|i| l2_model.weight(i, 0).powi(2)).sum();
 
     assert!(
         l2_norm < no_reg_l2_norm,
@@ -152,10 +150,14 @@ fn trained_model_predictions_reasonable() {
 fn parallel_vs_sequential_similar() {
     // Feature-major: [n_features=2, n_samples=4]
     // Converting from row-major: [[1,1], [2,1], [1,2], [2,2]] -> feature 0: [1,2,1,2], feature 1: [1,1,2,2]
-    let data = Array2::from_shape_vec((2, 4), vec![
-        1.0, 2.0, 1.0, 2.0,  // feature 0
-        1.0, 1.0, 2.0, 2.0,  // feature 1
-    ]).unwrap();
+    let data = Array2::from_shape_vec(
+        (2, 4),
+        vec![
+            1.0, 2.0, 1.0, 2.0, // feature 0
+            1.0, 1.0, 2.0, 2.0, // feature 1
+        ],
+    )
+    .unwrap();
     let labels = vec![3.0, 4.0, 5.0, 6.0]; // y = x0 + 2*x1
     let train = make_dataset(&data, &labels);
 
@@ -295,11 +297,8 @@ fn test_set_prediction_quality(#[case] name: &str) {
     // RMSE should be reasonable (less than std of labels)
     let label_std = {
         let mean = test_labels.iter().sum::<f32>() / test_labels.len() as f32;
-        let var: f32 = test_labels
-            .iter()
-            .map(|&l| (l - mean).powi(2))
-            .sum::<f32>()
-            / test_labels.len() as f32;
+        let var: f32 =
+            test_labels.iter().map(|&l| (l - mean).powi(2)).sum::<f32>() / test_labels.len() as f32;
         var.sqrt() as f64
     };
 

@@ -137,12 +137,12 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
         ...
 
     def fit(
-        self: T,
+        self,
         X: NDArray[Any],
         y: NDArray[Any],
         eval_set: list[tuple[NDArray[Any], NDArray[Any]]] | list[EvalSet] | None = None,
         sample_weight: NDArray[np.float32] | None = None,
-    ) -> T:
+    ) -> Self:
         """Fit the estimator.
 
         Parameters
@@ -158,7 +158,7 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
         sample_weight : array-like of shape (n_samples,), optional
             Sample weights.
 
-        Returns
+        Returns:
         -------
         self
             Fitted estimator.
@@ -205,7 +205,7 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
         X : array-like of shape (n_samples, n_features)
             Input samples.
 
-        Returns
+        Returns:
         -------
         y_pred : ndarray of shape (n_samples,)
             Predicted values.
@@ -221,9 +221,7 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
         check_is_fitted(self, ["model_"])
         return self.model_.feature_importance(ImportanceType.Gain)
 
-    def get_feature_importance(
-        self, importance_type: ImportanceType = ImportanceType.Gain
-    ) -> NDArray[np.float32]:
+    def get_feature_importance(self, importance_type: ImportanceType = ImportanceType.Gain) -> NDArray[np.float32]:
         """Get feature importance scores.
 
         Parameters
@@ -231,7 +229,7 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
         importance_type : ImportanceType, default=ImportanceType.Gain
             Type of feature importance to compute.
 
-        Returns
+        Returns:
         -------
         importance : ndarray of shape (n_features,)
             Feature importance scores.
@@ -286,7 +284,7 @@ class GBDTRegressor(_GBDTEstimatorBase, RegressorMixin):  # type: ignore[misc]
     metric : Metric or None, default=None
         Evaluation metric. If None, uses Metric.rmse().
 
-    Attributes
+    Attributes:
     ----------
     model_ : GBDTModel
         The fitted core model.
@@ -296,7 +294,15 @@ class GBDTRegressor(_GBDTEstimatorBase, RegressorMixin):  # type: ignore[misc]
         Feature importance scores (gain-based).
     """
 
-    _REGRESSION_KEYWORDS = ("squared", "absolute", "huber", "quantile", "tweedie", "poisson", "gamma")
+    _REGRESSION_KEYWORDS = (
+        "squared",
+        "absolute",
+        "huber",
+        "quantile",
+        "tweedie",
+        "poisson",
+        "gamma",
+    )
     _CLASSIFICATION_KEYWORDS = ("logistic", "softmax", "cross")
 
     @classmethod
@@ -373,7 +379,7 @@ class GBDTClassifier(_GBDTEstimatorBase, ClassifierMixin):  # type: ignore[misc]
     metric : Metric or None, default=None
         Evaluation metric. If None, uses Metric.logloss().
 
-    Attributes
+    Attributes:
     ----------
     model_ : GBDTModel
         The fitted core model.
@@ -392,7 +398,15 @@ class GBDTClassifier(_GBDTEstimatorBase, ClassifierMixin):  # type: ignore[misc]
     n_classes_: int
     _label_to_idx: Mapping[Any, int]
 
-    _REGRESSION_KEYWORDS = ("squared", "absolute", "huber", "quantile", "tweedie", "poisson", "gamma")
+    _REGRESSION_KEYWORDS = (
+        "squared",
+        "absolute",
+        "huber",
+        "quantile",
+        "tweedie",
+        "poisson",
+        "gamma",
+    )
 
     @classmethod
     def _get_default_objective(cls) -> Objective:
@@ -431,7 +445,7 @@ class GBDTClassifier(_GBDTEstimatorBase, ClassifierMixin):  # type: ignore[misc]
         X : array-like of shape (n_samples, n_features)
             Input samples.
 
-        Returns
+        Returns:
         -------
         y_pred : ndarray of shape (n_samples,)
             Predicted class labels.
@@ -454,7 +468,7 @@ class GBDTClassifier(_GBDTEstimatorBase, ClassifierMixin):  # type: ignore[misc]
         X : array-like of shape (n_samples, n_features)
             Input samples.
 
-        Returns
+        Returns:
         -------
         proba : ndarray of shape (n_samples, n_classes)
             Class probability estimates.

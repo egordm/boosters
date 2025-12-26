@@ -10,11 +10,12 @@ use crate::data::{Dataset, FeaturesView};
 use crate::repr::gblinear::LinearModel;
 use crate::training::eval;
 use crate::training::{
-    EarlyStopping, EarlyStopAction, EvalSet, Gradients, MetricFn, ObjectiveFn, TrainingLogger, Verbosity,
+    EarlyStopAction, EarlyStopping, EvalSet, Gradients, MetricFn, ObjectiveFn, TrainingLogger,
+    Verbosity,
 };
 
 use super::selector::FeatureSelectorKind;
-use super::updater::{Updater, UpdateConfig, UpdaterKind};
+use super::updater::{UpdateConfig, Updater, UpdaterKind};
 
 // ============================================================================
 // GBLinearParams
@@ -115,10 +116,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
     /// - Dataset contains categorical features (not supported by GBLinear)
     /// - Dataset has no targets
     /// - Evaluation set datasets have categorical features
-    pub fn train(
-        &self, 
-        train: &Dataset, eval_sets: &[EvalSet<'_>]
-    ) -> Option<LinearModel> {
+    pub fn train(&self, train: &Dataset, eval_sets: &[EvalSet<'_>]) -> Option<LinearModel> {
         // Validate: GBLinear doesn't support categorical features
         if train.has_categorical() {
             return None;
@@ -131,7 +129,9 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
 
         // Get feature data as array [n_features, n_samples]
         let train_data = train.features().view();
-        let targets = train.targets().expect("dataset must have targets for training");
+        let targets = train
+            .targets()
+            .expect("dataset must have targets for training");
         let weights = train.weights();
 
         let n_features = train.n_features();
@@ -144,7 +144,9 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
             n_outputs
         );
         debug_assert_eq!(targets.n_samples(), n_samples);
-        debug_assert!(weights.is_none() || weights.as_array().is_some_and(|w| w.len() == n_samples));
+        debug_assert!(
+            weights.is_none() || weights.as_array().is_some_and(|w| w.len() == n_samples)
+        );
 
         // Compute base scores using objective
         let base_scores = self.objective.compute_base_score(targets, weights);
@@ -175,7 +177,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
         // Initialize predictions with base scores using helper
         // Shape: [n_outputs, n_samples] - column-major for efficient group access
         let mut predictions = init_predictions(&base_scores, n_samples);
-        
+
         // Check if we need evaluation (metric is enabled)
         let needs_evaluation = self.metric.is_enabled();
 
@@ -221,7 +223,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
             // Update each output
             for output in 0..n_outputs {
                 let bias_delta = updater.update_bias(&mut model, &gradients, output);
-                
+
                 // Apply bias delta to predictions incrementally
                 if bias_delta.abs() > 1e-10 {
                     updater.apply_bias_delta_to_predictions(
@@ -229,7 +231,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                         output,
                         predictions.view_mut(),
                     );
-                    
+
                     // Also update eval predictions (only if evaluation is needed)
                     if needs_evaluation {
                         for eval_preds in eval_predictions.iter_mut() {
@@ -240,7 +242,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                             );
                         }
                     }
-                    
+
                     // Recompute gradients after bias update
                     self.objective.compute_gradients_into(
                         predictions.view(),
@@ -267,7 +269,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                     &mut selector,
                     output,
                 );
-                
+
                 // Apply weight deltas to predictions incrementally
                 if !weight_deltas.is_empty() {
                     updater.apply_weight_deltas_to_predictions(
@@ -276,7 +278,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                         output,
                         predictions.view_mut(),
                     );
-                    
+
                     // Also update eval predictions (only if evaluation is needed)
                     if needs_evaluation {
                         for (set_idx, eval_set) in eval_sets.iter().enumerate() {
@@ -354,9 +356,11 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::{array, Array2};
-    use crate::training::{LogLoss, MulticlassLogLoss, Rmse, SquaredLoss, LogisticLoss, SoftmaxLoss};
     use crate::data::transpose_to_c_order;
+    use crate::training::{
+        LogLoss, LogisticLoss, MulticlassLogLoss, Rmse, SoftmaxLoss, SquaredLoss,
+    };
+    use ndarray::{Array2, array};
 
     /// Helper to create a Dataset from row-major feature data.
     /// Accepts features in [n_samples, n_features] layout (standard user format)
@@ -398,7 +402,7 @@ mod tests {
         // y = 2*x + 1
         // 4 samples, 1 feature - [n_samples, n_features]
         let features = array![[1.0], [2.0], [3.0], [4.0]]; // [4, 1]
-        let targets = array![[3.0], [5.0], [7.0], [9.0]];  // [4, 1]
+        let targets = array![[3.0], [5.0], [7.0], [9.0]]; // [4, 1]
         let train = make_dataset(features, targets);
 
         let params = GBLinearParams {
@@ -429,7 +433,7 @@ mod tests {
     fn train_with_regularization() {
         // 4 samples, 1 feature
         let features = array![[1.0], [2.0], [3.0], [4.0]]; // [4, 1]
-        let targets = array![[3.0], [5.0], [7.0], [9.0]];  // [4, 1]
+        let targets = array![[3.0], [5.0], [7.0], [9.0]]; // [4, 1]
         let train = make_dataset(features, targets);
 
         // Train without regularization

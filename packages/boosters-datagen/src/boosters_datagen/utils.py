@@ -13,11 +13,11 @@ def nan_to_null(obj: Any) -> Any:
     """Convert NaN values to None for JSON serialization."""
     if isinstance(obj, float) and np.isnan(obj):
         return None
-    elif isinstance(obj, list):
+    if isinstance(obj, list):
         return [nan_to_null(item) for item in obj]
-    elif isinstance(obj, dict):
+    if isinstance(obj, dict):
         return {k: nan_to_null(v) for k, v in obj.items()}
-    elif isinstance(obj, np.ndarray):
+    if isinstance(obj, np.ndarray):
         return nan_to_null(obj.tolist())
     return obj
 

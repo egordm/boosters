@@ -27,8 +27,8 @@
 //!
 //! Missing values are represented as `f32::NAN`.
 
-pub mod binned;
 mod accessor;
+pub mod binned;
 mod column;
 mod dataset;
 mod error;
@@ -59,9 +59,7 @@ pub use accessor::{DataAccessor, SampleAccessor};
 // ndarray Utilities
 // =============================================================================
 
-pub use ndarray::{
-    axis, init_predictions, init_predictions_into, transpose_to_c_order,
-};
+pub use ndarray::{axis, init_predictions, init_predictions_into, transpose_to_c_order};
 
 // =============================================================================
 // Binned Data Types (re-exports for convenience)
@@ -69,11 +67,10 @@ pub use ndarray::{
 
 pub use binned::{
     BinMapper, BinStorage, BinType, BinnedDataset, BinnedDatasetBuilder, BinnedFeatureInfo,
-    BinningConfig, BinningStrategy, BuildError, FeatureGroup, FeatureView,
-    GroupLayout, MissingType, BinnedSample,
+    BinnedSample, BinningConfig, BinningStrategy, BuildError, FeatureGroup, FeatureView,
+    GroupLayout, MissingType,
 };
 
 // Internal types for tests/benchmarks
 #[doc(hidden)]
 pub use binned::{GroupSpec, GroupStrategy};
-

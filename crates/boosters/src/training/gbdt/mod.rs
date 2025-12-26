@@ -24,13 +24,12 @@ pub mod trainer;
 // Re-export main types
 pub use categorical::CatBitset;
 pub use expansion::{GrowthState, GrowthStrategy, NodeCandidate};
-pub use grower::{TreeGrower, GrowerParams};
+pub use grower::{GrowerParams, TreeGrower};
 pub use histograms::{
-    HistogramLayout, FeatureView, HistogramBin, HistogramBuilder, HistogramPool, HistogramSlot,
+    FeatureView, HistogramBin, HistogramBuilder, HistogramLayout, HistogramPool, HistogramSlot,
     HistogramSlotMut,
 };
 pub use linear::{LeafFeatureBuffer, LinearLeafConfig, WeightedLeastSquaresSolver};
 pub use partition::{LeafId, RowPartitioner};
-pub use split::{GainParams, GreedySplitter, SplitInfo, SplitType, DEFAULT_MAX_ONEHOT_CATS};
+pub use split::{DEFAULT_MAX_ONEHOT_CATS, GainParams, GreedySplitter, SplitInfo, SplitType};
 pub use trainer::{GBDTParams, GBDTTrainer};
-

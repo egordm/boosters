@@ -4,8 +4,8 @@
 //! shap[i] = weight[i] * (x[i] - mean[i])
 
 use crate::data::FeaturesView;
-use crate::explainability::shap::ShapValues;
 use crate::explainability::ExplainError;
+use crate::explainability::shap::ShapValues;
 use crate::repr::gblinear::LinearModel;
 
 /// Linear SHAP explainer for linear models.
@@ -30,10 +30,13 @@ impl<'a> LinearExplainer<'a> {
     pub fn new(model: &'a LinearModel, feature_means: Vec<f64>) -> Result<Self, ExplainError> {
         if feature_means.len() != model.n_features() {
             return Err(ExplainError::MissingNodeStats(
-                "feature_means length must match number of features"
+                "feature_means length must match number of features",
             ));
         }
-        Ok(Self { model, feature_means })
+        Ok(Self {
+            model,
+            feature_means,
+        })
     }
 
     /// Create a LinearExplainer using zeros as feature means.
@@ -41,7 +44,10 @@ impl<'a> LinearExplainer<'a> {
     /// This is useful when the data is already centered.
     pub fn with_zero_means(model: &'a LinearModel) -> Self {
         let feature_means = vec![0.0; model.n_features()];
-        Self { model, feature_means }
+        Self {
+            model,
+            feature_means,
+        }
     }
 
     /// Get the expected value (base value).
@@ -53,7 +59,7 @@ impl<'a> LinearExplainer<'a> {
         let n_groups = self.model.n_groups();
 
         let mut base = self.model.bias(output) as f64;
-        
+
         for feature in 0..n_features {
             let weight_idx = feature * n_groups + output;
             base += weights[weight_idx] as f64 * self.feature_means[feature];

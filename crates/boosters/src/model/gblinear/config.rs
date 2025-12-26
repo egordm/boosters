@@ -25,8 +25,8 @@
 
 use bon::Builder;
 
-use crate::training::gblinear::FeatureSelectorKind;
 use crate::training::Verbosity;
+use crate::training::gblinear::FeatureSelectorKind;
 use crate::training::{Metric, Objective};
 
 // =============================================================================
@@ -351,7 +351,10 @@ mod tests {
         let result = GBLinearConfig::builder().lambda(-0.1).build();
         assert!(matches!(
             result,
-            Err(ConfigError::InvalidRegularization { field: "lambda", .. })
+            Err(ConfigError::InvalidRegularization {
+                field: "lambda",
+                ..
+            })
         ));
     }
 

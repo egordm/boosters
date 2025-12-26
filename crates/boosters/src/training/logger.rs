@@ -86,7 +86,6 @@ impl TrainingLogger<io::Stdout> {
 }
 
 impl<W: Write + Send> TrainingLogger<W> {
-
     /// Get the current verbosity level.
     pub fn verbosity(&self) -> Verbosity {
         self.verbosity

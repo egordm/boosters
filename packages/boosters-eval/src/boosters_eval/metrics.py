@@ -38,19 +38,19 @@ def compute_metrics(
             "rmse": float(np.sqrt(mean_squared_error(y_true, y_pred))),
             "mae": float(mean_absolute_error(y_true, y_pred)),
         }
-    elif task == Task.BINARY:
+    if task == Task.BINARY:
         y_pred_class = (np.asarray(y_pred) >= 0.5).astype(int)
         return {
             "logloss": float(log_loss(y_true, y_pred, labels=[0, 1])),
             "accuracy": float(accuracy_score(y_true, y_pred_class)),
         }
-    else:  # MULTICLASS
-        y_pred_class = np.argmax(y_pred, axis=1)
-        labels = list(range(n_classes)) if n_classes else None
-        return {
-            "mlogloss": float(log_loss(y_true, y_pred, labels=labels)),
-            "accuracy": float(accuracy_score(y_true, y_pred_class)),
-        }
+    # MULTICLASS
+    y_pred_class = np.argmax(y_pred, axis=1)
+    labels = list(range(n_classes)) if n_classes else None
+    return {
+        "mlogloss": float(log_loss(y_true, y_pred, labels=labels)),
+        "accuracy": float(accuracy_score(y_true, y_pred_class)),
+    }
 
 
 def primary_metric(task: Task) -> str:

@@ -12,21 +12,21 @@ use common::criterion_config::default_criterion;
 use common::matrix::THREAD_COUNTS;
 use common::threading::with_rayon_threads;
 
+use boosters::Parallelism;
 use boosters::data::{TargetsView, WeightsView};
 use boosters::testing::synthetic_datasets::synthetic_regression;
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
-use boosters::Parallelism;
 
 use ndarray::Array2;
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 #[cfg(feature = "bench-xgboost")]
 use xgb::parameters::tree::{TreeBoosterParametersBuilder, TreeMethod};
 #[cfg(feature = "bench-xgboost")]
 use xgb::parameters::{
-    learning::LearningTaskParametersBuilder, learning::Objective, BoosterParametersBuilder,
-    BoosterType, TrainingParametersBuilder,
+    BoosterParametersBuilder, BoosterType, TrainingParametersBuilder,
+    learning::LearningTaskParametersBuilder, learning::Objective,
 };
 #[cfg(feature = "bench-xgboost")]
 use xgb::{Booster, DMatrix};
@@ -53,7 +53,7 @@ fn bench_multithreading(c: &mut Criterion) {
 
     let (rows, cols) = DATASET;
     let dataset = synthetic_regression(rows, cols, 42, 0.05);
-    
+
     // Get row-major features for XGBoost/LightGBM compatibility
     #[allow(unused_variables)]
     let features = dataset.features_row_major_slice();
@@ -64,9 +64,10 @@ fn bench_multithreading(c: &mut Criterion) {
 
     // Pre-build binned dataset (we're benchmarking training, not binning)
     let binned = dataset.to_binned(256);
-    
+
     // Convert targets to 2D
-    let targets_2d = Array2::from_shape_vec((1, dataset.targets.len()), dataset.targets.to_vec()).unwrap();
+    let targets_2d =
+        Array2::from_shape_vec((1, dataset.targets.len()), dataset.targets.to_vec()).unwrap();
 
     for &n_threads in THREAD_COUNTS {
         let thread_label = format!("{}_threads", n_threads);
@@ -95,7 +96,13 @@ fn bench_multithreading(c: &mut Criterion) {
                 with_rayon_threads(n_threads, || {
                     black_box(
                         trainer
-                            .train(black_box(&binned), targets_view, WeightsView::None, &[], Parallelism::Parallel)
+                            .train(
+                                black_box(&binned),
+                                targets_view,
+                                WeightsView::None,
+                                &[],
+                                Parallelism::Parallel,
+                            )
                             .unwrap(),
                     )
                 })

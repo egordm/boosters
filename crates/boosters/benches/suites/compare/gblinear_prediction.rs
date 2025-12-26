@@ -6,14 +6,14 @@
 mod common;
 
 use common::criterion_config::default_criterion;
-use common::models::load_linear_model;
 #[cfg(feature = "bench-xgboost")]
 use common::models::bench_models_dir;
+use common::models::load_linear_model;
 
 use boosters::data::FeaturesView;
 use boosters::testing::synthetic_datasets::random_features_array;
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 #[cfg(feature = "bench-xgboost")]
 use criterion::BatchSize;
@@ -38,18 +38,18 @@ const LARGE_BATCH: usize = 10_000;
 
 #[cfg(feature = "bench-xgboost")]
 fn load_xgb_model_bytes(name: &str) -> Vec<u8> {
-	let path = bench_models_dir().join(format!("{name}.model.json"));
-	std::fs::read(&path).unwrap_or_else(|_| panic!("Failed to read XGB model: {path:?}"))
+    let path = bench_models_dir().join(format!("{name}.model.json"));
+    std::fs::read(&path).unwrap_or_else(|_| panic!("Failed to read XGB model: {path:?}"))
 }
 
 #[cfg(feature = "bench-xgboost")]
 fn new_xgb_booster(model_bytes: &[u8]) -> Booster {
-	Booster::load_buffer(model_bytes).expect("Failed to load XGB model from buffer")
+    Booster::load_buffer(model_bytes).expect("Failed to load XGB model from buffer")
 }
 
 #[cfg(feature = "bench-xgboost")]
 fn create_dmatrix(data: &[f32], n_rows: usize) -> DMatrix {
-	DMatrix::from_dense(data, n_rows).expect("Failed to create DMatrix")
+    DMatrix::from_dense(data, n_rows).expect("Failed to create DMatrix")
 }
 
 // =============================================================================
@@ -57,44 +57,44 @@ fn create_dmatrix(data: &[f32], n_rows: usize) -> DMatrix {
 // =============================================================================
 
 fn bench_predict_batch_sizes(c: &mut Criterion) {
-	let boosters_model = load_linear_model("bench_gblinear_medium");
-	let n_features = boosters_model.n_features;
+    let boosters_model = load_linear_model("bench_gblinear_medium");
+    let n_features = boosters_model.n_features;
 
-	#[cfg(feature = "bench-xgboost")]
-	let xgb_model_bytes = load_xgb_model_bytes("bench_gblinear_medium");
+    #[cfg(feature = "bench-xgboost")]
+    let xgb_model_bytes = load_xgb_model_bytes("bench_gblinear_medium");
 
-	let mut group = c.benchmark_group("compare/predict/gblinear/batch_size/medium");
+    let mut group = c.benchmark_group("compare/predict/gblinear/batch_size/medium");
 
-	for batch_size in [SMALL_BATCH, MEDIUM_BATCH, LARGE_BATCH] {
-		let input_array = random_features_array(batch_size, n_features, 42, -5.0, 5.0);
-		let features_view = FeaturesView::from_array(input_array.view());
+    for batch_size in [SMALL_BATCH, MEDIUM_BATCH, LARGE_BATCH] {
+        let input_array = random_features_array(batch_size, n_features, 42, -5.0, 5.0);
+        let features_view = FeaturesView::from_array(input_array.view());
 
-		group.throughput(Throughput::Elements(batch_size as u64));
+        group.throughput(Throughput::Elements(batch_size as u64));
 
-		// booste-rs
-		group.bench_function(BenchmarkId::new("boosters", batch_size), |b| {
-			b.iter(|| black_box(boosters_model.model.predict(black_box(features_view))))
-		});
+        // booste-rs
+        group.bench_function(BenchmarkId::new("boosters", batch_size), |b| {
+            b.iter(|| black_box(boosters_model.model.predict(black_box(features_view))))
+        });
 
-		// XGBoost
-		#[cfg(feature = "bench-xgboost")]
-		{
-			let input_data: &[f32] = input_array.as_slice().unwrap();
-			group.bench_function(BenchmarkId::new("xgboost/cold_dmatrix", batch_size), |b| {
-				let booster = new_xgb_booster(&xgb_model_bytes);
-				b.iter_batched(
-					|| create_dmatrix(input_data, batch_size),
-					|dmatrix| {
-						let out = booster.predict(black_box(&dmatrix)).unwrap();
-						black_box(out)
-					},
-					BatchSize::SmallInput,
-				)
-			});
-		}
-	}
+        // XGBoost
+        #[cfg(feature = "bench-xgboost")]
+        {
+            let input_data: &[f32] = input_array.as_slice().unwrap();
+            group.bench_function(BenchmarkId::new("xgboost/cold_dmatrix", batch_size), |b| {
+                let booster = new_xgb_booster(&xgb_model_bytes);
+                b.iter_batched(
+                    || create_dmatrix(input_data, batch_size),
+                    |dmatrix| {
+                        let out = booster.predict(black_box(&dmatrix)).unwrap();
+                        black_box(out)
+                    },
+                    BatchSize::SmallInput,
+                )
+            });
+        }
+    }
 
-	group.finish();
+    group.finish();
 }
 
 // =============================================================================
@@ -102,43 +102,43 @@ fn bench_predict_batch_sizes(c: &mut Criterion) {
 // =============================================================================
 
 fn bench_predict_single_row(c: &mut Criterion) {
-	let boosters_model = load_linear_model("bench_gblinear_medium");
-	let n_features = boosters_model.n_features;
+    let boosters_model = load_linear_model("bench_gblinear_medium");
+    let n_features = boosters_model.n_features;
 
-	#[cfg(feature = "bench-xgboost")]
-	let xgb_model_bytes = load_xgb_model_bytes("bench_gblinear_medium");
-	#[cfg(feature = "bench-xgboost")]
-	let xgb_model = new_xgb_booster(&xgb_model_bytes);
+    #[cfg(feature = "bench-xgboost")]
+    let xgb_model_bytes = load_xgb_model_bytes("bench_gblinear_medium");
+    #[cfg(feature = "bench-xgboost")]
+    let xgb_model = new_xgb_booster(&xgb_model_bytes);
 
-	let input_array = random_features_array(1, n_features, 42, -5.0, 5.0);
-	let features_view = FeaturesView::from_array(input_array.view());
+    let input_array = random_features_array(1, n_features, 42, -5.0, 5.0);
+    let features_view = FeaturesView::from_array(input_array.view());
 
-	#[cfg(feature = "bench-xgboost")]
-	let input_data: &[f32] = input_array.as_slice().unwrap();
+    #[cfg(feature = "bench-xgboost")]
+    let input_data: &[f32] = input_array.as_slice().unwrap();
 
-	let mut group = c.benchmark_group("compare/predict/gblinear/single_row/medium");
+    let mut group = c.benchmark_group("compare/predict/gblinear/single_row/medium");
 
-	// booste-rs
-	group.bench_function("boosters", |b| {
-		b.iter(|| black_box(boosters_model.model.predict(black_box(features_view))))
-	});
+    // booste-rs
+    group.bench_function("boosters", |b| {
+        b.iter(|| black_box(boosters_model.model.predict(black_box(features_view))))
+    });
 
-	// XGBoost
-	#[cfg(feature = "bench-xgboost")]
-	{
-		group.bench_function("xgboost/cold_dmatrix", |b| {
-			b.iter_batched(
-				|| create_dmatrix(input_data, 1),
-				|dmatrix| {
-					let out = xgb_model.predict(black_box(&dmatrix)).unwrap();
-					black_box(out)
-				},
-				BatchSize::SmallInput,
-			)
-		});
-	}
+    // XGBoost
+    #[cfg(feature = "bench-xgboost")]
+    {
+        group.bench_function("xgboost/cold_dmatrix", |b| {
+            b.iter_batched(
+                || create_dmatrix(input_data, 1),
+                |dmatrix| {
+                    let out = xgb_model.predict(black_box(&dmatrix)).unwrap();
+                    black_box(out)
+                },
+                BatchSize::SmallInput,
+            )
+        });
+    }
 
-	group.finish();
+    group.finish();
 }
 
 // =============================================================================
@@ -146,63 +146,63 @@ fn bench_predict_single_row(c: &mut Criterion) {
 // =============================================================================
 
 fn bench_model_sizes(c: &mut Criterion) {
-	let models = [
-		("small", load_linear_model("bench_gblinear_small")),
-		("medium", load_linear_model("bench_gblinear_medium")),
-		("large", load_linear_model("bench_gblinear_large")),
-	];
+    let models = [
+        ("small", load_linear_model("bench_gblinear_small")),
+        ("medium", load_linear_model("bench_gblinear_medium")),
+        ("large", load_linear_model("bench_gblinear_large")),
+    ];
 
-	#[cfg(feature = "bench-xgboost")]
-	let xgb_models: Vec<(&str, Booster)> = models
-		.iter()
-		.map(|(name, _)| {
-			let bytes = load_xgb_model_bytes(&format!("bench_gblinear_{}", name));
-			(*name, new_xgb_booster(&bytes))
-		})
-		.collect();
+    #[cfg(feature = "bench-xgboost")]
+    let xgb_models: Vec<(&str, Booster)> = models
+        .iter()
+        .map(|(name, _)| {
+            let bytes = load_xgb_model_bytes(&format!("bench_gblinear_{}", name));
+            (*name, new_xgb_booster(&bytes))
+        })
+        .collect();
 
-	let mut group = c.benchmark_group("compare/predict/gblinear/model_scaling");
-	let batch_size = MEDIUM_BATCH;
+    let mut group = c.benchmark_group("compare/predict/gblinear/model_scaling");
+    let batch_size = MEDIUM_BATCH;
 
-	for (name, model) in &models {
-		let n_features = model.n_features;
-		let input_array = random_features_array(batch_size, n_features, 42, -5.0, 5.0);
-		let features_view = FeaturesView::from_array(input_array.view());
+    for (name, model) in &models {
+        let n_features = model.n_features;
+        let input_array = random_features_array(batch_size, n_features, 42, -5.0, 5.0);
+        let features_view = FeaturesView::from_array(input_array.view());
 
-		#[cfg(feature = "bench-xgboost")]
-		let input_data: &[f32] = input_array.as_slice().unwrap();
+        #[cfg(feature = "bench-xgboost")]
+        let input_data: &[f32] = input_array.as_slice().unwrap();
 
-		group.throughput(Throughput::Elements(batch_size as u64));
+        group.throughput(Throughput::Elements(batch_size as u64));
 
-		// booste-rs
-		group.bench_function(BenchmarkId::new("boosters", name), |b| {
-			b.iter(|| black_box(model.model.predict(black_box(features_view))))
-		});
+        // booste-rs
+        group.bench_function(BenchmarkId::new("boosters", name), |b| {
+            b.iter(|| black_box(model.model.predict(black_box(features_view))))
+        });
 
-		// XGBoost
-		#[cfg(feature = "bench-xgboost")]
-		{
-			if let Some((_, xgb_model)) = xgb_models.iter().find(|(n, _)| n == name) {
-				group.bench_function(BenchmarkId::new("xgboost/cold_dmatrix", name), |b| {
-					b.iter_batched(
-						|| create_dmatrix(input_data, batch_size),
-						|dmatrix| {
-							let out = xgb_model.predict(black_box(&dmatrix)).unwrap();
-							black_box(out)
-						},
-						BatchSize::SmallInput,
-					)
-				});
-			}
-		}
-	}
+        // XGBoost
+        #[cfg(feature = "bench-xgboost")]
+        {
+            if let Some((_, xgb_model)) = xgb_models.iter().find(|(n, _)| n == name) {
+                group.bench_function(BenchmarkId::new("xgboost/cold_dmatrix", name), |b| {
+                    b.iter_batched(
+                        || create_dmatrix(input_data, batch_size),
+                        |dmatrix| {
+                            let out = xgb_model.predict(black_box(&dmatrix)).unwrap();
+                            black_box(out)
+                        },
+                        BatchSize::SmallInput,
+                    )
+                });
+            }
+        }
+    }
 
-	group.finish();
+    group.finish();
 }
 
 criterion_group! {
-	name = benches;
-	config = default_criterion();
-	targets = bench_predict_batch_sizes, bench_predict_single_row, bench_model_sizes
+    name = benches;
+    config = default_criterion();
+    targets = bench_predict_batch_sizes, bench_predict_single_row, bench_model_sizes
 }
 criterion_main!(benches);

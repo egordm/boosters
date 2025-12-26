@@ -21,22 +21,24 @@
 //! - Sparse features: column-major with optional bundling
 
 mod bin_mapper;
-mod storage;
-mod group;
-mod dataset;
 mod builder;
-mod feature_analysis;
 mod bundling;
+mod dataset;
+mod feature_analysis;
+mod group;
+mod storage;
 
 pub use bin_mapper::{BinMapper, FeatureType, MissingType};
-pub use storage::{FeatureView, BinStorage, BinType, GroupLayout};
-pub use group::{FeatureGroup, BinnedFeatureInfo};
-pub use dataset::{BinnedDataset, BundlingStats, BinnedSample};
-pub use builder::{BinnedDatasetBuilder, BuildError, BinningConfig, BinningStrategy};
-pub use feature_analysis::{FeatureInfo, analyze_features, analyze_features_sequential};
+pub use builder::{BinnedDatasetBuilder, BinningConfig, BinningStrategy, BuildError};
 pub use bundling::BundlingFeatures;
-pub use bundling::{BundlingConfig, FeatureBundle, FeatureLocation, BundlePlan, create_bundle_plan};
+pub use bundling::{
+    BundlePlan, BundlingConfig, FeatureBundle, FeatureLocation, create_bundle_plan,
+};
+pub use dataset::{BinnedDataset, BinnedSample, BundlingStats};
+pub use feature_analysis::{FeatureInfo, analyze_features, analyze_features_sequential};
+pub use group::{BinnedFeatureInfo, FeatureGroup};
+pub use storage::{BinStorage, BinType, FeatureView, GroupLayout};
 
 // Internal types exposed for tests and benchmarks
 #[doc(hidden)]
-pub use builder::{GroupStrategy, GroupSpec};
+pub use builder::{GroupSpec, GroupStrategy};

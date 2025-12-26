@@ -38,15 +38,15 @@ mod unrolled;
 
 // Unrolled tree layout types (inference-specific optimization)
 pub use unrolled::{
+    DEFAULT_UNROLL_DEPTH, Depth4, Depth6, Depth8, MAX_UNROLL_DEPTH, UnrollDepth,
     UnrolledTreeLayout, UnrolledTreeLayout4, UnrolledTreeLayout6, UnrolledTreeLayout8,
-    UnrollDepth, Depth4, Depth6, Depth8,
-    nodes_at_depth, DEFAULT_UNROLL_DEPTH, MAX_UNROLL_DEPTH,
+    nodes_at_depth,
 };
 
 // Re-export predictor types
 pub use predictor::{
-    Predictor, SimplePredictor, UnrolledPredictor4, UnrolledPredictor6, UnrolledPredictor8,
-    DEFAULT_BLOCK_SIZE,
+    DEFAULT_BLOCK_SIZE, Predictor, SimplePredictor, UnrolledPredictor4, UnrolledPredictor6,
+    UnrolledPredictor8,
 };
 
 // Re-export traversal types

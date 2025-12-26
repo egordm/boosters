@@ -126,11 +126,7 @@ pub trait ObjectiveFn: Send + Sync {
     ///
     /// * `targets` - Ground truth labels
     /// * `weights` - Sample weights (use `WeightsView::uniform(n)` for unweighted)
-    fn compute_base_score(
-        &self,
-        targets: TargetsView<'_>,
-        weights: WeightsView<'_>,
-    ) -> Vec<f32>;
+    fn compute_base_score(&self, targets: TargetsView<'_>, weights: WeightsView<'_>) -> Vec<f32>;
 
     // =========================================================================
     // RFC 0028: Semantics + Prediction Transforms
@@ -224,42 +220,42 @@ impl Objective {
     pub fn squared() -> Self {
         Self::SquaredLoss(SquaredLoss)
     }
-    
+
     /// Absolute error (L1) loss for robust regression.
     pub fn absolute() -> Self {
         Self::AbsoluteLoss(AbsoluteLoss)
     }
-    
+
     /// Binary logistic loss for classification.
     pub fn logistic() -> Self {
         Self::LogisticLoss(LogisticLoss)
     }
-    
+
     /// Hinge loss for SVM-style classification.
     pub fn hinge() -> Self {
         Self::HingeLoss(HingeLoss)
     }
-    
+
     /// Softmax loss for multiclass classification.
     pub fn softmax(n_classes: usize) -> Self {
         Self::SoftmaxLoss(SoftmaxLoss::new(n_classes))
     }
-    
+
     /// Pinball loss for single quantile regression.
     pub fn quantile(alpha: f32) -> Self {
         Self::PinballLoss(PinballLoss::new(alpha))
     }
-    
+
     /// Pinball loss for multiple quantile regression.
     pub fn multi_quantile(alphas: Vec<f32>) -> Self {
         Self::PinballLoss(PinballLoss::with_quantiles(alphas))
     }
-    
+
     /// Pseudo-Huber loss for robust regression.
     pub fn pseudo_huber(delta: f32) -> Self {
         Self::PseudoHuberLoss(PseudoHuberLoss::new(delta))
     }
-    
+
     /// Poisson loss for count data regression.
     pub fn poisson() -> Self {
         Self::PoissonLoss(PoissonLoss)
@@ -300,23 +296,37 @@ impl ObjectiveFn for Objective {
         grad_hess: ArrayViewMut2<GradsTuple>,
     ) {
         match self {
-            Self::SquaredLoss(inner) => inner.compute_gradients_into(predictions, targets, weights, grad_hess),
-            Self::AbsoluteLoss(inner) => inner.compute_gradients_into(predictions, targets, weights, grad_hess),
-            Self::LogisticLoss(inner) => inner.compute_gradients_into(predictions, targets, weights, grad_hess),
-            Self::HingeLoss(inner) => inner.compute_gradients_into(predictions, targets, weights, grad_hess),
-            Self::SoftmaxLoss(inner) => inner.compute_gradients_into(predictions, targets, weights, grad_hess),
-            Self::PinballLoss(inner) => inner.compute_gradients_into(predictions, targets, weights, grad_hess),
-            Self::PseudoHuberLoss(inner) => inner.compute_gradients_into(predictions, targets, weights, grad_hess),
-            Self::PoissonLoss(inner) => inner.compute_gradients_into(predictions, targets, weights, grad_hess),
-            Self::Custom(inner) => inner.compute_gradients_into(predictions, targets, weights, grad_hess),
+            Self::SquaredLoss(inner) => {
+                inner.compute_gradients_into(predictions, targets, weights, grad_hess)
+            }
+            Self::AbsoluteLoss(inner) => {
+                inner.compute_gradients_into(predictions, targets, weights, grad_hess)
+            }
+            Self::LogisticLoss(inner) => {
+                inner.compute_gradients_into(predictions, targets, weights, grad_hess)
+            }
+            Self::HingeLoss(inner) => {
+                inner.compute_gradients_into(predictions, targets, weights, grad_hess)
+            }
+            Self::SoftmaxLoss(inner) => {
+                inner.compute_gradients_into(predictions, targets, weights, grad_hess)
+            }
+            Self::PinballLoss(inner) => {
+                inner.compute_gradients_into(predictions, targets, weights, grad_hess)
+            }
+            Self::PseudoHuberLoss(inner) => {
+                inner.compute_gradients_into(predictions, targets, weights, grad_hess)
+            }
+            Self::PoissonLoss(inner) => {
+                inner.compute_gradients_into(predictions, targets, weights, grad_hess)
+            }
+            Self::Custom(inner) => {
+                inner.compute_gradients_into(predictions, targets, weights, grad_hess)
+            }
         }
     }
 
-    fn compute_base_score(
-        &self,
-        targets: TargetsView<'_>,
-        weights: WeightsView<'_>,
-    ) -> Vec<f32> {
+    fn compute_base_score(&self, targets: TargetsView<'_>, weights: WeightsView<'_>) -> Vec<f32> {
         match self {
             Self::SquaredLoss(inner) => inner.compute_base_score(targets, weights),
             Self::AbsoluteLoss(inner) => inner.compute_base_score(targets, weights),
@@ -398,7 +408,13 @@ mod tests {
     use ndarray::Array2;
 
     fn make_grad_hess_array(n_outputs: usize, n_samples: usize) -> Array2<GradsTuple> {
-        Array2::from_elem((n_outputs, n_samples), GradsTuple { grad: 0.0, hess: 0.0 })
+        Array2::from_elem(
+            (n_outputs, n_samples),
+            GradsTuple {
+                grad: 0.0,
+                hess: 0.0,
+            },
+        )
     }
 
     fn make_targets(data: &[f32]) -> Array2<f32> {
@@ -412,7 +428,12 @@ mod tests {
         let targets = make_targets(&[0.5, 2.5, 2.5]);
         let mut grad_hess = make_grad_hess_array(1, 3);
 
-        obj.compute_gradients_into(preds.view(), TargetsView::new(targets.view()), WeightsView::None, grad_hess.view_mut());
+        obj.compute_gradients_into(
+            preds.view(),
+            TargetsView::new(targets.view()),
+            WeightsView::None,
+            grad_hess.view_mut(),
+        );
 
         // grad = pred - target
         assert!((grad_hess[[0, 0]].grad - 0.5).abs() < 1e-6);
@@ -433,7 +454,12 @@ mod tests {
         let weights = ndarray::array![2.0f32, 0.5];
         let mut grad_hess = make_grad_hess_array(1, 2);
 
-        obj.compute_gradients_into(preds.view(), TargetsView::new(targets.view()), WeightsView::from_array(weights.view()), grad_hess.view_mut());
+        obj.compute_gradients_into(
+            preds.view(),
+            TargetsView::new(targets.view()),
+            WeightsView::from_array(weights.view()),
+            grad_hess.view_mut(),
+        );
 
         // grad = weight * (pred - target)
         assert!((grad_hess[[0, 0]].grad - 1.0).abs() < 1e-6); // 2.0 * 0.5
@@ -451,7 +477,12 @@ mod tests {
         let targets = make_targets(&[0.5, 2.5, 2.5]);
         let mut grad_hess = make_grad_hess_array(1, 3);
 
-        obj.compute_gradients_into(preds.view(), TargetsView::new(targets.view()), WeightsView::None, grad_hess.view_mut());
+        obj.compute_gradients_into(
+            preds.view(),
+            TargetsView::new(targets.view()),
+            WeightsView::None,
+            grad_hess.view_mut(),
+        );
 
         // For alpha=0.5: grad = 0.5 if pred > target, -0.5 if pred < target
         assert!((grad_hess[[0, 0]].grad - 0.5).abs() < 1e-6); // pred > target

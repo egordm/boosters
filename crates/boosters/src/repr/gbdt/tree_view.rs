@@ -7,10 +7,10 @@
 
 use crate::data::SampleAccessor;
 
-use super::categories::{float_to_category, CategoriesStorage};
+use super::NodeId;
+use super::categories::{CategoriesStorage, float_to_category};
 use super::types::LeafValue;
 use super::types::SplitType;
-use super::NodeId;
 
 // ============================================================================
 // TreeView Trait
@@ -186,10 +186,7 @@ pub enum TreeValidationError {
     /// A node exists in storage but is unreachable from the root.
     UnreachableNode { node: NodeId },
     /// Tree contains categorical splits but the category segments array is not sized to nodes.
-    CategoricalSegmentsLenMismatch {
-        segments_len: usize,
-        n_nodes: usize,
-    },
+    CategoricalSegmentsLenMismatch { segments_len: usize, n_nodes: usize },
 }
 
 // ============================================================================
@@ -310,14 +307,14 @@ mod tests {
     fn validate_tree_empty_tree_fails() {
         // A tree with 0 nodes should fail
         let tree: Tree<ScalarLeaf> = Tree::new(
-            vec![],               // split_indices
-            vec![],               // split_thresholds
-            vec![],               // left_children
-            vec![],               // right_children
-            vec![],               // default_left
-            vec![],               // is_leaf
-            vec![],               // leaf_values
-            vec![],               // split_types
+            vec![], // split_indices
+            vec![], // split_thresholds
+            vec![], // left_children
+            vec![], // right_children
+            vec![], // default_left
+            vec![], // is_leaf
+            vec![], // leaf_values
+            vec![], // split_types
             CategoriesStorage::empty(),
             LeafCoefficients::empty(),
         );
@@ -328,13 +325,13 @@ mod tests {
     fn validate_tree_single_leaf_succeeds() {
         // Single leaf node is valid
         let tree: Tree<ScalarLeaf> = Tree::new(
-            vec![0],              // split_indices (unused for leaf)
-            vec![0.0],            // split_thresholds (unused for leaf)
-            vec![0],              // left_children (self-referencing, but it's a leaf)
-            vec![0],              // right_children
-            vec![true],           // default_left
-            vec![true],           // is_leaf - this node IS a leaf
-            vec![ScalarLeaf(1.0)],// leaf_values
+            vec![0],               // split_indices (unused for leaf)
+            vec![0.0],             // split_thresholds (unused for leaf)
+            vec![0],               // left_children (self-referencing, but it's a leaf)
+            vec![0],               // right_children
+            vec![true],            // default_left
+            vec![true],            // is_leaf - this node IS a leaf
+            vec![ScalarLeaf(1.0)], // leaf_values
             vec![SplitType::Numeric],
             CategoriesStorage::empty(),
             LeafCoefficients::empty(),
@@ -347,11 +344,11 @@ mod tests {
         // Root with two leaf children
         // Node 0: root (split), Node 1: left leaf, Node 2: right leaf
         let tree: Tree<ScalarLeaf> = Tree::new(
-            vec![0, 0, 0],        // split_indices (feature 0 at root)
-            vec![0.5, 0.0, 0.0],  // split_thresholds (0.5 at root)
-            vec![1, 1, 2],        // left_children (root->1, leaves point to self)
-            vec![2, 1, 2],        // right_children (root->2, leaves point to self)
-            vec![true, true, true], // default_left
+            vec![0, 0, 0],           // split_indices (feature 0 at root)
+            vec![0.5, 0.0, 0.0],     // split_thresholds (0.5 at root)
+            vec![1, 1, 2],           // left_children (root->1, leaves point to self)
+            vec![2, 1, 2],           // right_children (root->2, leaves point to self)
+            vec![true, true, true],  // default_left
             vec![false, true, true], // is_leaf: root is NOT a leaf, children ARE leaves
             vec![ScalarLeaf(0.0), ScalarLeaf(1.0), ScalarLeaf(2.0)],
             vec![SplitType::Numeric, SplitType::Numeric, SplitType::Numeric],

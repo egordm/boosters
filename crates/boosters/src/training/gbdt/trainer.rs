@@ -3,22 +3,22 @@
 //! Orchestrates objective computation, tree growing, and prediction updates.
 //! Use [`GBDTTrainer::train`] to train a forest from a binned dataset.
 
-use crate::data::{init_predictions, BinnedDataset};
+use crate::data::{BinnedDataset, init_predictions};
 use crate::data::{TargetsView, WeightsView};
-use crate::training::callback::{EarlyStopping, EarlyStopAction};
+use crate::training::Gradients;
+use crate::training::Verbosity;
+use crate::training::callback::{EarlyStopAction, EarlyStopping};
 use crate::training::eval::{self, EvalSet};
 use crate::training::logger::TrainingLogger;
 use crate::training::metrics::MetricFn;
 use crate::training::objectives::ObjectiveFn;
 use crate::training::sampling::{ColSamplingParams, RowSampler, RowSamplingParams};
-use crate::training::Gradients;
-use crate::training::Verbosity;
 
 use super::expansion::GrowthStrategy;
 use super::grower::{GrowerParams, TreeGrower};
 use super::linear::{LeafLinearTrainer, LinearLeafConfig};
-use crate::utils::Parallelism;
 use super::split::GainParams;
+use crate::utils::Parallelism;
 
 use crate::repr::gbdt::{Forest, ScalarLeaf};
 use ndarray::Array2;
@@ -126,7 +126,11 @@ pub struct GBDTTrainer<O: ObjectiveFn, M: MetricFn> {
 impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
     /// Create a new GBDT trainer.
     pub fn new(objective: O, metric: M, params: GBDTParams) -> Self {
-        Self { objective, metric, params }
+        Self {
+            objective,
+            metric,
+            params,
+        }
     }
 
     /// Get reference to parameters.
@@ -176,12 +180,8 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
 
         // Initialize components (train-local)
         let grower_params = self.params.to_grower_params();
-        let mut grower = TreeGrower::new(
-            dataset,
-            grower_params,
-            self.params.cache_size,
-            parallelism,
-        );
+        let mut grower =
+            TreeGrower::new(dataset, grower_params, self.params.cache_size, parallelism);
 
         // Initialize linear leaf trainer if configured
         let mut linear_trainer = if let Some(config) = &self.params.linear_leaves {
@@ -209,8 +209,8 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
         let mut predictions = init_predictions(&base_scores, n_rows);
 
         // Create inference forest directly (Phase 2: no conversion needed)
-        let mut forest = Forest::<ScalarLeaf>::new(n_outputs as u32)
-            .with_base_score(base_scores.clone());
+        let mut forest =
+            Forest::<ScalarLeaf>::new(n_outputs as u32).with_base_score(base_scores.clone());
 
         // Check if we need evaluation (metric is enabled)
         let needs_evaluation = self.metric.is_enabled();
@@ -262,7 +262,9 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
 
                 // Fit linear models in leaves (skip round 0: homogeneous gradients)
                 // Only fit if linear_leaves config is set and we're past round 0
-                if round > 0 && let Some(ref mut linear_trainer) = linear_trainer {
+                if round > 0
+                    && let Some(ref mut linear_trainer) = linear_trainer
+                {
                     let fitted = linear_trainer.train(
                         &mutable_tree,
                         dataset,
@@ -370,12 +372,9 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
     }
 
     /// Create a truncated copy of the forest with only the first `n_trees` trees.
-    fn truncate_forest(
-        forest: &Forest<ScalarLeaf>,
-        n_trees: usize,
-    ) -> Forest<ScalarLeaf> {
-        let mut truncated = Forest::new(forest.n_groups())
-            .with_base_score(forest.base_score().to_vec());
+    fn truncate_forest(forest: &Forest<ScalarLeaf>, n_trees: usize) -> Forest<ScalarLeaf> {
+        let mut truncated =
+            Forest::new(forest.n_groups()).with_base_score(forest.base_score().to_vec());
 
         for (idx, (tree, group)) in forest.trees_with_groups().enumerate() {
             if idx >= n_trees {
@@ -395,17 +394,26 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{
-        BinMapper, BinStorage, BinnedDataset, FeatureGroup, BinnedFeatureInfo, GroupLayout, MissingType,
-    };
     use crate::data::WeightsView;
+    use crate::data::{
+        BinMapper, BinStorage, BinnedDataset, BinnedFeatureInfo, FeatureGroup, GroupLayout,
+        MissingType,
+    };
     use crate::training::metrics::Rmse;
     use crate::training::objectives::SquaredLoss;
     use ndarray::arr2;
 
     fn make_simple_mapper(n_bins: u32) -> BinMapper {
         let bounds: Vec<f64> = (0..n_bins).map(|i| i as f64 + 0.5).collect();
-        BinMapper::numerical(bounds, MissingType::None, 0, 0, 0.0, 0.0, (n_bins - 1) as f64)
+        BinMapper::numerical(
+            bounds,
+            MissingType::None,
+            0,
+            0,
+            0.0,
+            0.0,
+            (n_bins - 1) as f64,
+        )
     }
 
     fn make_test_dataset() -> BinnedDataset {
@@ -437,7 +445,10 @@ mod tests {
 
         assert_eq!(params.n_trees, 100);
         assert!((params.learning_rate - 0.3).abs() < 1e-6);
-        assert_eq!(params.growth_strategy, GrowthStrategy::DepthWise { max_depth: 6 });
+        assert_eq!(
+            params.growth_strategy,
+            GrowthStrategy::DepthWise { max_depth: 6 }
+        );
         assert!((params.gain.reg_lambda - 1.0).abs() < 1e-6);
     }
 
@@ -457,7 +468,10 @@ mod tests {
 
         assert_eq!(params.n_trees, 50);
         assert!((params.learning_rate - 0.1).abs() < 1e-6);
-        assert_eq!(params.growth_strategy, GrowthStrategy::DepthWise { max_depth: 4 });
+        assert_eq!(
+            params.growth_strategy,
+            GrowthStrategy::DepthWise { max_depth: 4 }
+        );
         assert!((params.gain.reg_lambda - 2.0).abs() < 1e-6);
         assert!((params.gain.min_child_weight - 5.0).abs() < 1e-6);
     }
@@ -468,10 +482,21 @@ mod tests {
         let targets_arr = arr2(&[[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]]);
         let targets = TargetsView::new(targets_arr.view());
 
-        let params = GBDTParams { n_trees: 1, ..Default::default() };
+        let params = GBDTParams {
+            n_trees: 1,
+            ..Default::default()
+        };
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let forest = trainer.train(&dataset, targets, WeightsView::None, &[], Parallelism::Sequential).unwrap();
+        let forest = trainer
+            .train(
+                &dataset,
+                targets,
+                WeightsView::None,
+                &[],
+                Parallelism::Sequential,
+            )
+            .unwrap();
 
         assert_eq!(forest.n_trees(), 1);
         assert_eq!(forest.n_groups(), 1);
@@ -490,7 +515,15 @@ mod tests {
         };
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let forest = trainer.train(&dataset, targets, WeightsView::None, &[], Parallelism::Sequential).unwrap();
+        let forest = trainer
+            .train(
+                &dataset,
+                targets,
+                WeightsView::None,
+                &[],
+                Parallelism::Sequential,
+            )
+            .unwrap();
 
         assert_eq!(forest.n_trees(), 10);
     }
@@ -512,7 +545,15 @@ mod tests {
         };
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let forest = trainer.train(&dataset, targets, WeightsView::None, &[], Parallelism::Sequential).unwrap();
+        let forest = trainer
+            .train(
+                &dataset,
+                targets,
+                WeightsView::None,
+                &[],
+                Parallelism::Sequential,
+            )
+            .unwrap();
 
         assert_eq!(forest.n_trees(), 5);
     }
@@ -524,10 +565,21 @@ mod tests {
         let targets = TargetsView::new(targets_arr.view());
         let weights = ndarray::array![1.0f32, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0, 2.0];
 
-        let params = GBDTParams { n_trees: 5, ..Default::default() };
+        let params = GBDTParams {
+            n_trees: 5,
+            ..Default::default()
+        };
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let forest = trainer.train(&dataset, targets, WeightsView::from_array(weights.view()), &[], Parallelism::Sequential).unwrap();
+        let forest = trainer
+            .train(
+                &dataset,
+                targets,
+                WeightsView::from_array(weights.view()),
+                &[],
+                Parallelism::Sequential,
+            )
+            .unwrap();
 
         assert_eq!(forest.n_trees(), 5);
     }
@@ -546,7 +598,13 @@ mod tests {
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
         let forest = trainer
-            .train(&dataset, targets, WeightsView::None, &[], Parallelism::Sequential)
+            .train(
+                &dataset,
+                targets,
+                WeightsView::None,
+                &[],
+                Parallelism::Sequential,
+            )
             .unwrap();
 
         assert_eq!(forest.n_trees(), 3);
@@ -561,7 +619,13 @@ mod tests {
         let params = GBDTParams::default();
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
-        let result = trainer.train(&dataset, targets, WeightsView::None, &[], Parallelism::Sequential);
+        let result = trainer.train(
+            &dataset,
+            targets,
+            WeightsView::None,
+            &[],
+            Parallelism::Sequential,
+        );
 
         assert!(result.is_none());
     }
@@ -582,7 +646,13 @@ mod tests {
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
         let forest = trainer
-            .train(&dataset, targets, WeightsView::None, &[], Parallelism::Sequential)
+            .train(
+                &dataset,
+                targets,
+                WeightsView::None,
+                &[],
+                Parallelism::Sequential,
+            )
             .unwrap();
 
         assert_eq!(forest.n_trees(), 5);
@@ -608,12 +678,21 @@ mod tests {
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
         let forest = trainer
-            .train(&dataset, targets, WeightsView::None, &[], Parallelism::Sequential)
+            .train(
+                &dataset,
+                targets,
+                WeightsView::None,
+                &[],
+                Parallelism::Sequential,
+            )
             .unwrap();
 
         // First tree should NOT have linear leaves (round 0 is skipped)
         let first_tree = forest.tree(0);
-        assert!(!first_tree.has_linear_leaves(), "First tree should not have linear leaves");
+        assert!(
+            !first_tree.has_linear_leaves(),
+            "First tree should not have linear leaves"
+        );
     }
 
     #[test]
@@ -632,7 +711,13 @@ mod tests {
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
         let forest = trainer
-            .train(&dataset, targets, WeightsView::None, &[], Parallelism::Sequential)
+            .train(
+                &dataset,
+                targets,
+                WeightsView::None,
+                &[],
+                Parallelism::Sequential,
+            )
             .unwrap();
 
         // All trained trees should have gains and covers
@@ -649,7 +734,11 @@ mod tests {
 
             // Covers should be positive (sum of hessians)
             for (node_idx, &cover) in covers.iter().enumerate() {
-                assert!(cover >= 0.0, "Cover at node {} should be non-negative", node_idx);
+                assert!(
+                    cover >= 0.0,
+                    "Cover at node {} should be non-negative",
+                    node_idx
+                );
             }
 
             // Split nodes should have positive gain, leaves have gain=0
@@ -663,7 +752,11 @@ mod tests {
                     );
                 }
                 // Split gains should be non-negative (enforced by min_gain)
-                assert!(gain >= 0.0, "Gain at node {} should be non-negative", node_idx);
+                assert!(
+                    gain >= 0.0,
+                    "Gain at node {} should be non-negative",
+                    node_idx
+                );
             }
         }
     }

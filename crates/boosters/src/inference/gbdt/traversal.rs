@@ -8,10 +8,9 @@
 //! - [`StandardTraversal`]: Direct node-by-node traversal (simple, good for single rows)
 //! - [`UnrolledTraversal`]: Uses [`UnrolledTreeLayout`] for cache-friendly batch traversal
 
+use super::{Depth6, UnrollDepth, UnrolledTreeLayout};
 use crate::data::{DataAccessor, SampleAccessor};
 use crate::repr::gbdt::{LeafValue, NodeId, ScalarLeaf, Tree, TreeView};
-use super::{Depth6, UnrollDepth, UnrolledTreeLayout};
-
 
 // =============================================================================
 // TreeTraversal Trait
@@ -44,7 +43,11 @@ pub trait TreeTraversal<L: LeafValue>: Clone {
     fn build_tree_state(tree: &Tree<L>) -> Self::TreeState;
 
     /// Traverse a tree with given sample, returning the leaf node index.
-    fn traverse_tree<S: SampleAccessor + ?Sized>(tree: &Tree<L>, state: &Self::TreeState, sample: &S) -> NodeId;
+    fn traverse_tree<S: SampleAccessor + ?Sized>(
+        tree: &Tree<L>,
+        state: &Self::TreeState,
+        sample: &S,
+    ) -> NodeId;
 
     /// Traverse a tree for a block of rows, accumulating results.
     ///
@@ -228,11 +231,7 @@ mod tests {
     use super::*;
     use crate::repr::gbdt::{Forest, TreeView};
 
-    fn build_simple_tree(
-        left_val: f32,
-        right_val: f32,
-        threshold: f32,
-    ) -> Tree<ScalarLeaf> {
+    fn build_simple_tree(left_val: f32, right_val: f32, threshold: f32) -> Tree<ScalarLeaf> {
         crate::scalar_tree! {
             0 => num(0, threshold, L) -> 1, 2,
             1 => leaf(left_val),
@@ -367,12 +366,11 @@ mod tests {
 
         for fval in [0.1, 0.3, 0.5, 0.7, 0.9, f32::NAN] {
             let std_result = StandardTraversal::traverse_tree(&tree, &std_state, &[fval]);
-            let unrolled_result =
-                <UnrolledTraversal6 as TreeTraversal<ScalarLeaf>>::traverse_tree(
-                    &tree,
-                    &unrolled_state,
-                    &[fval],
-                );
+            let unrolled_result = <UnrolledTraversal6 as TreeTraversal<ScalarLeaf>>::traverse_tree(
+                &tree,
+                &unrolled_state,
+                &[fval],
+            );
 
             // Both traversals should return the same leaf index
             assert_eq!(
@@ -424,7 +422,8 @@ mod tests {
         assert_eq!(tree_storage.leaf_value(std_left).0, 10.0);
         assert_eq!(std_left, unrolled_left);
 
-        let std_right = StandardTraversal::traverse_tree(&tree_storage, &std_state, &left_cat_right);
+        let std_right =
+            StandardTraversal::traverse_tree(&tree_storage, &std_state, &left_cat_right);
         let unrolled_right = <UnrolledTraversal4 as TreeTraversal<ScalarLeaf>>::traverse_tree(
             &tree_storage,
             &unrolled_state,

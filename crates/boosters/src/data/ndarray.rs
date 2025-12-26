@@ -168,8 +168,8 @@ mod tests {
         assert_eq!(view.n_samples(), 3);
         assert_eq!(view.n_features(), 2);
         // Access via (sample, feature) coordinates
-        assert_eq!(view.get(0, 0), 1.0);  // sample 0, feature 0
-        assert_eq!(view.get(1, 0), 2.0);  // sample 1, feature 0
+        assert_eq!(view.get(0, 0), 1.0); // sample 0, feature 0
+        assert_eq!(view.get(1, 0), 2.0); // sample 1, feature 0
         assert_eq!(view.get(0, 1), 10.0); // sample 0, feature 1
         assert_eq!(view.get(2, 1), 30.0); // sample 2, feature 1
     }
@@ -223,7 +223,7 @@ mod tests {
     fn test_transpose_to_c_order() {
         // Feature-major [2 features, 3 samples]
         let features = arr2(&[
-            [1.0, 2.0, 3.0],   // feature 0
+            [1.0, 2.0, 3.0],    // feature 0
             [10.0, 20.0, 30.0], // feature 1
         ]);
 
@@ -232,9 +232,9 @@ mod tests {
 
         assert!(samples.is_standard_layout());
         let expected = arr2(&[
-            [1.0, 10.0],  // sample 0
-            [2.0, 20.0],  // sample 1
-            [3.0, 30.0],  // sample 2
+            [1.0, 10.0], // sample 0
+            [2.0, 20.0], // sample 1
+            [3.0, 30.0], // sample 2
         ]);
         assert_eq!(samples, expected);
     }

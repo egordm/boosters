@@ -13,12 +13,12 @@ use ndarray::ArrayViewMut1;
 
 use crate::data::{DataAccessor, SampleAccessor};
 
+use super::NodeId;
 use super::categories::CategoriesStorage;
 use super::coefficients::LeafCoefficients;
+use super::tree_view::{TreeValidationError, TreeView, validate_tree};
 use super::types::LeafValue;
 use super::types::SplitType;
-use super::tree_view::{validate_tree, TreeValidationError, TreeView};
-use super::NodeId;
 
 // ============================================================================
 // Tree Structure
@@ -262,20 +262,28 @@ impl<L: LeafValue> Tree<L> {
 
         // Get underlying slice and iterate with index - this is safe because
         // each (row_idx, pred) pair is unique and owned by a single thread
-        let pred_slice = predictions.as_slice_mut().expect("predictions must be contiguous");
+        let pred_slice = predictions
+            .as_slice_mut()
+            .expect("predictions must be contiguous");
 
         if self.has_linear_leaves() {
-            parallelism.maybe_par_bridge_for_each(pred_slice.iter_mut().enumerate(), |(row_idx, pred)| {
-                let sample = data.sample(row_idx);
-                let leaf_idx = self.traverse_to_leaf(&sample);
-                *pred += self.compute_leaf_value(leaf_idx, &sample);
-            });
+            parallelism.maybe_par_bridge_for_each(
+                pred_slice.iter_mut().enumerate(),
+                |(row_idx, pred)| {
+                    let sample = data.sample(row_idx);
+                    let leaf_idx = self.traverse_to_leaf(&sample);
+                    *pred += self.compute_leaf_value(leaf_idx, &sample);
+                },
+            );
         } else {
-            parallelism.maybe_par_bridge_for_each(pred_slice.iter_mut().enumerate(), |(row_idx, pred)| {
-                let sample = data.sample(row_idx);
-                let leaf_idx = self.traverse_to_leaf(&sample);
-                *pred += (*self.leaf_value(leaf_idx)).into();
-            });
+            parallelism.maybe_par_bridge_for_each(
+                pred_slice.iter_mut().enumerate(),
+                |(row_idx, pred)| {
+                    let sample = data.sample(row_idx);
+                    let leaf_idx = self.traverse_to_leaf(&sample);
+                    *pred += (*self.leaf_value(leaf_idx)).into();
+                },
+            );
         }
     }
 
@@ -285,11 +293,7 @@ impl<L: LeafValue> Tree<L> {
     /// For linear leaves, returns `intercept + Σ(coef × feature)`.
     /// If any linear feature is NaN, falls back to the base leaf value.
     #[inline]
-    pub(crate) fn compute_leaf_value<S: SampleAccessor>(
-        &self,
-        leaf_idx: NodeId,
-        sample: &S,
-    ) -> f32
+    pub(crate) fn compute_leaf_value<S: SampleAccessor>(&self, leaf_idx: NodeId, sample: &S) -> f32
     where
         L: Into<f32> + Copy,
     {
@@ -381,9 +385,9 @@ impl<L: LeafValue> TreeView for Tree<L> {
 mod tests {
     use super::*;
     use crate::data::{FeaturesView, SamplesView};
-    use crate::repr::gbdt::mutable_tree::MutableTree;
     use crate::repr::gbdt::ScalarLeaf;
-    use ndarray::{array, Array2};
+    use crate::repr::gbdt::mutable_tree::MutableTree;
+    use ndarray::{Array2, array};
 
     #[test]
     fn predict_simple_tree() {
@@ -427,10 +431,14 @@ mod tests {
         // 3 rows, 1 feature: [[0.3], [0.7], [0.5]]
         let arr = Array2::from_shape_vec((3, 1), vec![0.3, 0.7, 0.5]).unwrap();
         let data = SamplesView::from_array(arr.view());
-        
+
         // Test accumulate pattern (starts with existing values)
         let mut predictions = ndarray::Array1::from_vec(vec![10.0, 20.0, 30.0]);
-        tree.predict_into(&data, predictions.view_mut(), crate::utils::Parallelism::Sequential);
+        tree.predict_into(
+            &data,
+            predictions.view_mut(),
+            crate::utils::Parallelism::Sequential,
+        );
 
         // Row 0: 0.3 < 0.5 -> left (1.0), 10.0 + 1.0 = 11.0
         // Row 1: 0.7 >= 0.5 -> right (2.0), 20.0 + 2.0 = 22.0
@@ -460,11 +468,27 @@ mod tests {
         let arr = Array2::from_shape_vec((3, 1), vec![0.3, 0.7, 0.1]).unwrap();
         let data = SamplesView::from_array(arr.view());
         let mut predictions = ndarray::Array1::zeros(3);
-        frozen.predict_into(&data, predictions.view_mut(), crate::utils::Parallelism::Sequential);
+        frozen.predict_into(
+            &data,
+            predictions.view_mut(),
+            crate::utils::Parallelism::Sequential,
+        );
 
-        assert!((predictions[0] - 1.1).abs() < 1e-5, "got {}", predictions[0]);
-        assert!((predictions[1] - 10.0).abs() < 1e-5, "got {}", predictions[1]);
-        assert!((predictions[2] - 0.7).abs() < 1e-5, "got {}", predictions[2]);
+        assert!(
+            (predictions[0] - 1.1).abs() < 1e-5,
+            "got {}",
+            predictions[0]
+        );
+        assert!(
+            (predictions[1] - 10.0).abs() < 1e-5,
+            "got {}",
+            predictions[1]
+        );
+        assert!(
+            (predictions[2] - 0.7).abs() < 1e-5,
+            "got {}",
+            predictions[2]
+        );
     }
 
     #[test]
@@ -484,10 +508,22 @@ mod tests {
         let arr = Array2::from_shape_vec((2, 1), vec![0.5, f32::NAN]).unwrap();
         let data = SamplesView::from_array(arr.view());
         let mut predictions = ndarray::Array1::zeros(2);
-        frozen.predict_into(&data, predictions.view_mut(), crate::utils::Parallelism::Sequential);
+        frozen.predict_into(
+            &data,
+            predictions.view_mut(),
+            crate::utils::Parallelism::Sequential,
+        );
 
-        assert!((predictions[0] - 2.0).abs() < 1e-5, "got {}", predictions[0]);
-        assert!((predictions[1] - 5.0).abs() < 1e-5, "got {}", predictions[1]);
+        assert!(
+            (predictions[0] - 2.0).abs() < 1e-5,
+            "got {}",
+            predictions[0]
+        );
+        assert!(
+            (predictions[1] - 5.0).abs() < 1e-5,
+            "got {}",
+            predictions[1]
+        );
     }
 
     #[test]
@@ -507,10 +543,22 @@ mod tests {
         let arr = Array2::from_shape_vec((2, 2), vec![1.0, 1.0, 0.5, 2.0]).unwrap();
         let data = SamplesView::from_array(arr.view());
         let mut predictions = ndarray::Array1::zeros(2);
-        frozen.predict_into(&data, predictions.view_mut(), crate::utils::Parallelism::Sequential);
+        frozen.predict_into(
+            &data,
+            predictions.view_mut(),
+            crate::utils::Parallelism::Sequential,
+        );
 
-        assert!((predictions[0] - 6.0).abs() < 1e-5, "got {}", predictions[0]);
-        assert!((predictions[1] - 8.0).abs() < 1e-5, "got {}", predictions[1]);
+        assert!(
+            (predictions[0] - 6.0).abs() < 1e-5,
+            "got {}",
+            predictions[0]
+        );
+        assert!(
+            (predictions[1] - 8.0).abs() < 1e-5,
+            "got {}",
+            predictions[1]
+        );
     }
 
     #[test]
@@ -549,16 +597,16 @@ mod tests {
 
         // Sample-major data: 3 samples, 2 features
         let row_data = array![
-            [0.3f32, 0.0],  // sample 0
-            [0.7, 0.0],     // sample 1
-            [f32::NAN, 0.0] // sample 2
+            [0.3f32, 0.0],   // sample 0
+            [0.7, 0.0],      // sample 1
+            [f32::NAN, 0.0]  // sample 2
         ];
         let samples_view = SamplesView::from_array(row_data.view());
 
         // Feature-major data: same logical values but in feature-major layout
         let col_data = array![
-            [0.3f32, 0.7, f32::NAN],  // feature 0
-            [0.0, 0.0, 0.0],          // feature 1
+            [0.3f32, 0.7, f32::NAN], // feature 0
+            [0.0, 0.0, 0.0],         // feature 1
         ];
         let features_view = FeaturesView::from_array(col_data.view());
 
@@ -576,9 +624,18 @@ mod tests {
         let leaf_col_1 = tree.traverse_to_leaf(&features_view.sample(1));
         let leaf_col_2 = tree.traverse_to_leaf(&features_view.sample(2));
 
-        assert_eq!(leaf_col_0, leaf_row_0, "FeaturesView should match SamplesView");
-        assert_eq!(leaf_col_1, leaf_row_1, "FeaturesView should match SamplesView");
-        assert_eq!(leaf_col_2, leaf_row_2, "FeaturesView should match SamplesView");
+        assert_eq!(
+            leaf_col_0, leaf_row_0,
+            "FeaturesView should match SamplesView"
+        );
+        assert_eq!(
+            leaf_col_1, leaf_row_1,
+            "FeaturesView should match SamplesView"
+        );
+        assert_eq!(
+            leaf_col_2, leaf_row_2,
+            "FeaturesView should match SamplesView"
+        );
     }
 
     #[test]
@@ -609,4 +666,3 @@ mod tests {
         assert_eq!(leaf_1, right);
     }
 }
-

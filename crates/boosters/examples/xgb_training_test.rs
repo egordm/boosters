@@ -5,8 +5,8 @@
 #[cfg(feature = "bench-xgboost")]
 fn main() {
     use std::time::Instant;
-    use xgb::parameters::tree::{TreeBoosterParametersBuilder, TreeMethod};
     use xgb::parameters::BoosterType;
+    use xgb::parameters::tree::{TreeBoosterParametersBuilder, TreeMethod};
     use xgb::parameters::{BoosterParametersBuilder, TrainingParametersBuilder};
     use xgb::{Booster, DMatrix};
 
@@ -89,7 +89,7 @@ fn main() {
 
         let mut model = Booster::train(&training_params).unwrap();
         let _preds = model.predict(&dtrain).unwrap();
-        
+
         // Reset the booster to clear caches
         model.reset().unwrap();
 
@@ -107,7 +107,7 @@ fn main() {
 
         // Create booster WITH cached dmat so it knows num_features
         let mut bst = Booster::new_with_cached_dmats(&booster_params, &[&dtrain]).unwrap();
-        
+
         for round in 0..n_trees as i32 {
             bst.update(&dtrain, round).unwrap();
         }

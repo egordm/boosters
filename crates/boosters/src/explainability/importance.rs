@@ -22,7 +22,11 @@ impl std::fmt::Display for ExplainError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::MissingNodeStats(stat) => {
-                write!(f, "Node {} statistics not available. Train a new model or load one with stats.", stat)
+                write!(
+                    f,
+                    "Node {} statistics not available. Train a new model or load one with stats.",
+                    stat
+                )
             }
             Self::MissingFeatureStats => {
                 write!(f, "Feature means not available. Required for linear SHAP.")
@@ -265,7 +269,11 @@ pub fn compute_forest_importance(
         }
     }
 
-    Ok(FeatureImportance::new(values, importance_type, feature_names))
+    Ok(FeatureImportance::new(
+        values,
+        importance_type,
+        feature_names,
+    ))
 }
 
 #[cfg(test)]
@@ -302,8 +310,7 @@ mod tests {
     #[test]
     fn split_importance() {
         let forest = make_forest_with_stats();
-        let imp =
-            compute_forest_importance(&forest, 2, ImportanceType::Split, None).unwrap();
+        let imp = compute_forest_importance(&forest, 2, ImportanceType::Split, None).unwrap();
 
         // feature 0 used 2 times (tree1 root, tree2 root)
         // feature 1 used 1 time (tree1 node 2)
@@ -313,8 +320,7 @@ mod tests {
     #[test]
     fn gain_importance() {
         let forest = make_forest_with_stats();
-        let imp =
-            compute_forest_importance(&forest, 2, ImportanceType::Gain, None).unwrap();
+        let imp = compute_forest_importance(&forest, 2, ImportanceType::Gain, None).unwrap();
 
         // feature 0: 10.0 + 8.0 = 18.0
         // feature 1: 5.0
@@ -324,8 +330,7 @@ mod tests {
     #[test]
     fn average_gain_importance() {
         let forest = make_forest_with_stats();
-        let imp = compute_forest_importance(&forest, 2, ImportanceType::AverageGain, None)
-            .unwrap();
+        let imp = compute_forest_importance(&forest, 2, ImportanceType::AverageGain, None).unwrap();
 
         // feature 0: (10.0 + 8.0) / 2 = 9.0
         // feature 1: 5.0 / 1 = 5.0
@@ -335,8 +340,7 @@ mod tests {
     #[test]
     fn cover_importance() {
         let forest = make_forest_with_stats();
-        let imp =
-            compute_forest_importance(&forest, 2, ImportanceType::Cover, None).unwrap();
+        let imp = compute_forest_importance(&forest, 2, ImportanceType::Cover, None).unwrap();
 
         // feature 0: 100.0 + 100.0 = 200.0
         // feature 1: 60.0
@@ -386,7 +390,8 @@ mod tests {
     #[test]
     fn top_k() {
         let names = vec!["a".to_string(), "b".to_string(), "c".to_string()];
-        let imp = FeatureImportance::new(vec![10.0, 30.0, 20.0], ImportanceType::Split, Some(names));
+        let imp =
+            FeatureImportance::new(vec![10.0, 30.0, 20.0], ImportanceType::Split, Some(names));
 
         let top2 = imp.top_k(2);
         assert_eq!(top2.len(), 2);

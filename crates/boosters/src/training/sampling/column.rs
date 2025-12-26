@@ -32,8 +32,6 @@ pub enum ColSamplingParams {
     },
 }
 
-
-
 impl ColSamplingParams {
     /// Create a config with only `colsample_bytree`.
     pub fn bytree(rate: f32) -> Self {
@@ -276,7 +274,7 @@ impl ColSampler {
             let j = rng.r#gen::<usize>() % (n - i) + i;
             data.swap(i, j);
         }
-        
+
         // Truncate to k elements
         data.truncate(k);
 

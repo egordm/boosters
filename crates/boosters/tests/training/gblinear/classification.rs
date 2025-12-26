@@ -39,12 +39,7 @@ fn train_binary_classification() {
     let output = model.predict(features_view);
 
     // output is Array2<f32> with shape [n_groups, n_samples]
-    let predictions: Vec<f32> = output
-        .row(0)
-        .iter()
-        .copied()
-        .take(10)
-        .collect();
+    let predictions: Vec<f32> = output.row(0).iter().copied().take(10).collect();
 
     // Logits should be finite and not too extreme
     for pred in &predictions {
@@ -130,5 +125,9 @@ fn train_multioutput_classification() {
 
     // Training accuracy should be reasonable for linear model
     // (better than random = 33.3% for 3 classes)
-    assert!(accuracy > 0.4, "Training accuracy {} should be > 40%", accuracy);
+    assert!(
+        accuracy > 0.4,
+        "Training accuracy {} should be > 40%",
+        accuracy
+    );
 }

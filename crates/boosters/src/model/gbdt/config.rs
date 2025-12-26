@@ -27,8 +27,8 @@
 use bon::Builder;
 
 use crate::data::BinningConfig;
-use crate::training::gbdt::{GrowthStrategy, LinearLeafConfig};
 use crate::training::Verbosity;
+use crate::training::gbdt::{GrowthStrategy, LinearLeafConfig};
 use crate::training::{Metric, Objective};
 
 // =============================================================================

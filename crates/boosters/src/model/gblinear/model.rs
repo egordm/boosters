@@ -63,23 +63,19 @@ impl GBLinearModel {
     ) -> Option<Self> {
         let n_features = dataset.n_features();
         let n_outputs = config.objective.n_outputs();
-        
+
         // Get task kind from objective (not inferred from n_outputs)
         // This correctly handles multi-output regression (e.g., multi-quantile)
         let task = config.objective.task_kind();
-        
+
         // Convert config to trainer params
         let params = config.to_trainer_params();
-        
+
         // Convert Option<Metric> to Metric (None -> Metric::None)
         let metric = config.metric.clone().unwrap_or(Metric::none());
-        
+
         // Create trainer with objective and metric from config
-        let trainer = GBLinearTrainer::new(
-            config.objective.clone(),
-            metric,
-            params,
-        );
+        let trainer = GBLinearTrainer::new(config.objective.clone(), metric, params);
         let linear_model = trainer.train(dataset, eval_sets)?;
 
         let meta = ModelMeta {
@@ -89,30 +85,35 @@ impl GBLinearModel {
             ..Default::default()
         };
 
-        Some(Self { model: linear_model, meta, config })
+        Some(Self {
+            model: linear_model,
+            meta,
+            config,
+        })
     }
 
     /// Create a model from a linear model and metadata.
     ///
     /// Use this when loading models from formats that don't include config,
     /// or for quick testing. For training new models, prefer [`GBLinearModel::train`].
-    pub fn from_linear_model(
-        model: LinearModel,
-        meta: ModelMeta,
-    ) -> Self {
-        Self { model, meta, config: GBLinearConfig::default() }
+    pub fn from_linear_model(model: LinearModel, meta: ModelMeta) -> Self {
+        Self {
+            model,
+            meta,
+            config: GBLinearConfig::default(),
+        }
     }
 
     /// Create a model from all its parts.
     ///
     /// Used when loading from a format that includes config, or after training
     /// with the new config-based API.
-    pub fn from_parts(
-        model: LinearModel,
-        meta: ModelMeta,
-        config: GBLinearConfig,
-    ) -> Self {
-        Self { model, meta, config }
+    pub fn from_parts(model: LinearModel, meta: ModelMeta, config: GBLinearConfig) -> Self {
+        Self {
+            model,
+            meta,
+            config,
+        }
     }
 
     // =========================================================================
@@ -174,7 +175,9 @@ impl GBLinearModel {
         let mut output = self.predict_raw(dataset);
 
         // Apply transformation if we have config with objective
-        self.config.objective.transform_predictions_inplace(output.view_mut());
+        self.config
+            .objective
+            .transform_predictions_inplace(output.view_mut());
 
         output
     }
@@ -221,7 +224,7 @@ impl GBLinearModel {
     ) -> Result<ShapValues, ExplainError> {
         let means = feature_means.unwrap_or_else(|| vec![0.0; self.meta.n_features]);
         let explainer = LinearExplainer::new(&self.model, means)?;
-        
+
         // LinearExplainer now takes FeaturesView directly
         Ok(explainer.shap_values(data.features()))
     }

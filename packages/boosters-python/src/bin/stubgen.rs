@@ -10,9 +10,9 @@ use pyo3_stub_gen::Result;
 fn main() -> Result<()> {
     // Gather stub info from the library
     let stub = _boosters_rs::stub_info()?;
-    
+
     // Write stubs to the python module directory
     stub.generate()?;
-    
+
     Ok(())
 }

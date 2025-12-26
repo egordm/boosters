@@ -2,13 +2,15 @@
 //!
 //! Focused on behavior and invariants (not default params or superficial shapes).
 
-use boosters::data::{transpose_to_c_order, BinnedDatasetBuilder, BinningConfig, GroupLayout, GroupStrategy};
+use boosters::Parallelism;
+use boosters::data::{
+    BinnedDatasetBuilder, BinningConfig, GroupLayout, GroupStrategy, transpose_to_c_order,
+};
 use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::inference::gbdt::SimplePredictor;
 use boosters::model::gbdt::{GBDTConfig, GBDTModel};
-use boosters::repr::gbdt::{Forest, TreeView, SplitType};
+use boosters::repr::gbdt::{Forest, SplitType, TreeView};
 use boosters::training::{GBDTParams, GBDTTrainer, GrowthStrategy, Rmse, SquaredLoss};
-use boosters::Parallelism;
 use ndarray::{Array2, ArrayView2};
 
 /// Predict a single row using the predictor.
@@ -23,10 +25,14 @@ fn predict_row(forest: &Forest, features: &[f32]) -> Vec<f32> {
 fn train_rejects_invalid_targets_len() {
     // Data is feature-major: [n_features, n_samples]
     // 2 features, 4 samples
-    let features = Array2::from_shape_vec((2, 4), vec![
-        0.0, 1.0, 2.0, 3.0,  // feature 0
-        1.0, 2.0, 3.0, 4.0,  // feature 1
-    ]).unwrap();
+    let features = Array2::from_shape_vec(
+        (2, 4),
+        vec![
+            0.0, 1.0, 2.0, 3.0, // feature 0
+            1.0, 2.0, 3.0, 4.0, // feature 1
+        ],
+    )
+    .unwrap();
     let features_dataset = Dataset::new(features.view(), None, None);
     let targets: Vec<f32> = vec![1.0, 2.0]; // Too few targets
 
@@ -38,7 +44,13 @@ fn train_rejects_invalid_targets_len() {
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, GBDTParams::default());
     let targets_2d = Array2::from_shape_vec((1, targets.len()), targets).unwrap();
     let targets_view = TargetsView::new(targets_2d.view());
-    let result = trainer.train(&dataset, targets_view, WeightsView::None, &[], Parallelism::Sequential);
+    let result = trainer.train(
+        &dataset,
+        targets_view,
+        WeightsView::None,
+        &[],
+        Parallelism::Sequential,
+    );
 
     assert!(result.is_none());
 }
@@ -68,7 +80,15 @@ fn trained_model_improves_over_base_score_on_simple_problem() {
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
     let targets_2d = Array2::from_shape_vec((1, targets.len()), targets.clone()).unwrap();
     let targets_view = TargetsView::new(targets_2d.view());
-    let forest = trainer.train(&dataset, targets_view, WeightsView::None, &[], Parallelism::Sequential).unwrap();
+    let forest = trainer
+        .train(
+            &dataset,
+            targets_view,
+            WeightsView::None,
+            &[],
+            Parallelism::Sequential,
+        )
+        .unwrap();
 
     forest
         .validate()
@@ -133,7 +153,15 @@ fn trained_model_improves_over_base_score_on_medium_problem() {
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
     let targets_2d = Array2::from_shape_vec((1, targets.len()), targets.clone()).unwrap();
     let targets_view = TargetsView::new(targets_2d.view());
-    let forest = trainer.train(&dataset, targets_view, WeightsView::None, &[], Parallelism::Sequential).unwrap();
+    let forest = trainer
+        .train(
+            &dataset,
+            targets_view,
+            WeightsView::None,
+            &[],
+            Parallelism::Sequential,
+        )
+        .unwrap();
 
     forest
         .validate()
@@ -173,14 +201,14 @@ fn trained_model_improves_over_base_score_on_medium_problem() {
 #[test]
 fn train_with_categorical_features_produces_categorical_splits() {
     use boosters::data::{DatasetSchema, FeatureMeta};
-    
+
     // Create a dataset where a categorical feature is the only useful predictor.
     // 4 categories: 0, 1, 2, 3
     // Target: category 0 or 2 → low value (1.0), category 1 or 3 → high value (10.0)
     //
     // This forces the model to use categorical splits since there's no
     // numeric threshold that separates the groups.
-    
+
     let n_samples = 40;
     let categories: Vec<f32> = (0..n_samples).map(|i| (i % 4) as f32).collect();
     let targets: Vec<f32> = categories
@@ -190,15 +218,17 @@ fn train_with_categorical_features_produces_categorical_splits() {
 
     // Create feature-major array: [1 feature, n_samples]
     let features = ndarray::Array2::from_shape_vec((1, n_samples), categories).unwrap();
-    
+
     // Create schema marking the feature as categorical
     let schema = DatasetSchema::from_features(vec![FeatureMeta::categorical()]);
     let features_dataset = Dataset::new(features.view(), None, None).with_schema(schema);
-    
+
     // Build binned dataset - should detect categorical from schema
     let dataset = BinnedDatasetBuilder::new(BinningConfig::default())
         .add_features(features_dataset.features(), Parallelism::Sequential)
-        .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
+        .group_strategy(GroupStrategy::SingleGroup {
+            layout: GroupLayout::ColumnMajor,
+        })
         .build()
         .expect("Failed to build binned dataset");
 
@@ -209,23 +239,29 @@ fn train_with_categorical_features_produces_categorical_splits() {
         n_trees: 5,
         learning_rate: 0.3,
         growth_strategy: GrowthStrategy::DepthWise { max_depth: 2 },
-        max_onehot_cats: 4,  // Allow one-hot splits for this test
+        max_onehot_cats: 4, // Allow one-hot splits for this test
         ..Default::default()
     };
 
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
     let targets_2d = Array2::from_shape_vec((1, targets.len()), targets.clone()).unwrap();
     let targets_view = TargetsView::new(targets_2d.view());
-    let forest = trainer.train(&dataset, targets_view, WeightsView::None, &[], Parallelism::Sequential).unwrap();
+    let forest = trainer
+        .train(
+            &dataset,
+            targets_view,
+            WeightsView::None,
+            &[],
+            Parallelism::Sequential,
+        )
+        .unwrap();
 
     forest
         .validate()
         .expect("trained forest should be structurally valid");
 
     // Check that at least one tree has a categorical split
-    let has_categorical_split = forest.trees().any(|tree| {
-        tree.has_categorical()
-    });
+    let has_categorical_split = forest.trees().any(|tree| tree.has_categorical());
 
     assert!(
         has_categorical_split,
@@ -233,7 +269,10 @@ fn train_with_categorical_features_produces_categorical_splits() {
     );
 
     // Verify the first tree has categorical split nodes
-    let first_tree = forest.trees().next().expect("should have at least one tree");
+    let first_tree = forest
+        .trees()
+        .next()
+        .expect("should have at least one tree");
     let mut found_categorical = false;
     for node_idx in 0..first_tree.n_nodes() as u32 {
         if !first_tree.is_leaf(node_idx) {
@@ -260,12 +299,14 @@ fn train_with_categorical_features_produces_categorical_splits() {
     assert!(
         pred_cat0 < 5.5 && pred_cat2 < 5.5,
         "Categories 0 and 2 should predict low values, got {} and {}",
-        pred_cat0, pred_cat2
+        pred_cat0,
+        pred_cat2
     );
     assert!(
         pred_cat1 > 5.5 && pred_cat3 > 5.5,
         "Categories 1 and 3 should predict high values, got {} and {}",
-        pred_cat1, pred_cat3
+        pred_cat1,
+        pred_cat3
     );
 }
 
@@ -277,11 +318,11 @@ fn train_with_categorical_features_produces_categorical_splits() {
 fn train_from_dataset_api() {
     // Simple linear relationship: y = x0 + 0.5*x1
     let n_samples = 100;
-    
+
     // Build row-major features: [n_samples, n_features]
     let mut features_data = Vec::with_capacity(n_samples * 2);
     let mut targets_data = Vec::with_capacity(n_samples);
-    
+
     for i in 0..n_samples {
         let x0 = i as f32 / 10.0;
         let x1 = (i as f32 * 2.0) % 10.0;
@@ -289,16 +330,16 @@ fn train_from_dataset_api() {
         features_data.push(x1);
         targets_data.push(x0 + 0.5 * x1);
     }
-    
+
     // Create Dataset using the new API (feature-major: [n_features, n_samples])
     let features = Array2::from_shape_vec((n_samples, 2), features_data).unwrap();
     let features_fm = transpose_to_c_order(features.view());
     let targets_fm = Array2::from_shape_vec((1, n_samples), targets_data.clone()).unwrap();
     let dataset = Dataset::new(features_fm.view(), Some(targets_fm.view()), None);
-    
+
     assert_eq!(dataset.n_samples(), n_samples);
     assert_eq!(dataset.n_features(), 2);
-    
+
     // Train using high-level API
     let config = GBDTConfig::builder()
         .n_trees(20)
@@ -306,32 +347,33 @@ fn train_from_dataset_api() {
         .growth_strategy(GrowthStrategy::DepthWise { max_depth: 3 })
         .build()
         .unwrap();
-    
+
     let model = GBDTModel::train(&dataset, &[], config, 1).expect("training should succeed");
-    
+
     // Verify model produces reasonable predictions
     let forest = model.forest();
     forest.validate().expect("trained forest should be valid");
-    
+
     // Compute error
     let base = forest.base_score()[0];
     let mut base_error = 0.0f32;
     let mut pred_error = 0.0f32;
-    
+
     for row in 0..n_samples {
         let x0 = row as f32 / 10.0;
         let x1 = (row as f32 * 2.0) % 10.0;
         let pred = predict_row(&forest, &[x0, x1])[0];
         let target = targets_data[row];
-        
+
         base_error += (base - target).powi(2);
         pred_error += (pred - target).powi(2);
     }
-    
+
     assert!(
         pred_error < base_error,
         "Model should improve over base score: pred_error={}, base_error={}",
-        pred_error, base_error
+        pred_error,
+        base_error
     );
 }
 
@@ -341,12 +383,12 @@ fn train_from_dataset_with_eval_set() {
     // Create training data
     let n_train = 80;
     let n_eval = 20;
-    
+
     let mut train_features = Vec::with_capacity(n_train * 2);
     let mut train_targets = Vec::with_capacity(n_train);
     let mut eval_features = Vec::with_capacity(n_eval * 2);
     let mut eval_targets = Vec::with_capacity(n_eval);
-    
+
     for i in 0..n_train {
         let x0 = i as f32 / 10.0;
         let x1 = (i as f32 * 2.0) % 10.0;
@@ -354,7 +396,7 @@ fn train_from_dataset_with_eval_set() {
         train_features.push(x1);
         train_targets.push(x0 + 0.5 * x1);
     }
-    
+
     for i in 0..n_eval {
         let x0 = (n_train + i) as f32 / 10.0;
         let x1 = ((n_train + i) as f32 * 2.0) % 10.0;
@@ -362,13 +404,13 @@ fn train_from_dataset_with_eval_set() {
         eval_features.push(x1);
         eval_targets.push(x0 + 0.5 * x1);
     }
-    
+
     // Create training dataset (convert to feature-major)
     let train_feat = Array2::from_shape_vec((n_train, 2), train_features).unwrap();
     let train_feat_fm = transpose_to_c_order(train_feat.view());
     let train_targ_fm = Array2::from_shape_vec((1, n_train), train_targets).unwrap();
     let train_ds = Dataset::new(train_feat_fm.view(), Some(train_targ_fm.view()), None);
-    
+
     // Create eval set using binned data (existing API)
     // For now, just test train() works. EvalSet integration will be story 3.3+
     let config = GBDTConfig::builder()
@@ -377,31 +419,31 @@ fn train_from_dataset_with_eval_set() {
         .growth_strategy(GrowthStrategy::DepthWise { max_depth: 3 })
         .build()
         .unwrap();
-    
+
     // Train without eval set first (eval set integration is future work)
-    let model = GBDTModel::train(&train_ds, &[], config, 1)
-        .expect("training should succeed");
-    
+    let model = GBDTModel::train(&train_ds, &[], config, 1).expect("training should succeed");
+
     // Verify predictions are reasonable
     let forest = model.forest();
     let base = forest.base_score()[0];
     let mut pred_error = 0.0f32;
     let mut base_error = 0.0f32;
-    
+
     for i in 0..n_eval {
         let x0 = (n_train + i) as f32 / 10.0;
         let x1 = ((n_train + i) as f32 * 2.0) % 10.0;
         let pred = predict_row(&forest, &[x0, x1])[0];
         let target = eval_targets[i];
-        
+
         pred_error += (pred - target).powi(2);
         base_error += (base - target).powi(2);
     }
-    
+
     assert!(
         pred_error < base_error,
         "Model should generalize to unseen data: pred_error={}, base_error={}",
-        pred_error, base_error
+        pred_error,
+        base_error
     );
 }
 
@@ -412,7 +454,7 @@ fn predict_from_dataset_with_block_buffering() {
     let n_samples = 100;
     let mut features_data = Vec::with_capacity(n_samples * 2);
     let mut targets_data = Vec::with_capacity(n_samples);
-    
+
     for i in 0..n_samples {
         let x0 = i as f32 / 10.0;
         let x1 = (i as f32 * 2.0) % 10.0;
@@ -420,43 +462,44 @@ fn predict_from_dataset_with_block_buffering() {
         features_data.push(x1);
         targets_data.push(x0 + 0.5 * x1);
     }
-    
+
     let features = Array2::from_shape_vec((n_samples, 2), features_data.clone()).unwrap();
     let features_fm = transpose_to_c_order(features.view());
     let targets_fm = Array2::from_shape_vec((1, n_samples), targets_data.clone()).unwrap();
     let train_dataset = Dataset::new(features_fm.view(), Some(targets_fm.view()), None);
-    
+
     let config = GBDTConfig::builder()
         .n_trees(10)
         .learning_rate(0.3)
         .growth_strategy(GrowthStrategy::DepthWise { max_depth: 3 })
         .build()
         .unwrap();
-    
+
     let model = GBDTModel::train(&train_dataset, &[], config, 1).expect("training should succeed");
-    
+
     // Create a prediction dataset (same data)
     let pred_dataset = Dataset::new(features_fm.view(), Some(targets_fm.view()), None);
-    
+
     // Predict using Dataset API (feature-major with block buffering)
     let output = model.predict(&pred_dataset, 1);
-    
+
     // Verify predictions are reasonable
     let mut pred_error = 0.0f32;
     let mut base_error = 0.0f32;
     let base = model.forest().base_score()[0];
-    
+
     for i in 0..n_samples {
         let pred = output[[0, i]];
         let target = targets_data[i];
         pred_error += (pred - target).powi(2);
         base_error += (base - target).powi(2);
     }
-    
+
     assert!(
         pred_error < base_error,
         "Predictions should be better than base: pred_error={}, base_error={}",
-        pred_error, base_error
+        pred_error,
+        base_error
     );
 }
 
@@ -467,7 +510,7 @@ fn predict_from_dataset_parallel_matches_sequential() {
     let n_samples = 200;
     let mut features_data = Vec::with_capacity(n_samples * 3);
     let mut targets_data = Vec::with_capacity(n_samples);
-    
+
     for i in 0..n_samples {
         let x0 = i as f32 / 20.0;
         let x1 = (i as f32 * 2.0) % 10.0;
@@ -477,37 +520,39 @@ fn predict_from_dataset_parallel_matches_sequential() {
         features_data.push(x2);
         targets_data.push(x0 + 0.5 * x1 + 0.2 * x2);
     }
-    
+
     let features = Array2::from_shape_vec((n_samples, 3), features_data).unwrap();
     let features_fm = transpose_to_c_order(features.view());
     let targets_fm = Array2::from_shape_vec((1, n_samples), targets_data).unwrap();
     let dataset = Dataset::new(features_fm.view(), Some(targets_fm.view()), None);
-    
+
     let config = GBDTConfig::builder()
         .n_trees(10)
         .learning_rate(0.3)
         .growth_strategy(GrowthStrategy::DepthWise { max_depth: 4 })
         .build()
         .unwrap();
-    
+
     let model = GBDTModel::train(&dataset, &[], config, 1).expect("training should succeed");
-    
+
     // Sequential prediction (n_threads=1)
     let seq_output = model.predict(&dataset, 1);
-    
+
     // Parallel prediction (n_threads=0 = auto)
     let par_output = model.predict(&dataset, 0);
-    
+
     // Results should match
     assert_eq!(seq_output.shape(), par_output.shape());
-    
+
     for i in 0..n_samples {
         let seq = seq_output[[0, i]];
         let par = par_output[[0, i]];
         assert!(
             (seq - par).abs() < 1e-5,
             "Sequential and parallel should match at sample {}: seq={}, par={}",
-            i, seq, par
+            i,
+            seq,
+            par
         );
     }
 }

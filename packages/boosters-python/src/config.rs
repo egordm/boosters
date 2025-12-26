@@ -281,10 +281,8 @@ impl PyGBDTConfig {
     fn new(
         n_estimators: u32,
         learning_rate: f64,
-        #[gen_stub(override_type(type_repr = "Objective | None"))]
-        objective: Option<PyObjective>,
-        #[gen_stub(override_type(type_repr = "Metric | None"))]
-        metric: Option<PyMetric>,
+        #[gen_stub(override_type(type_repr = "Objective | None"))] objective: Option<PyObjective>,
+        #[gen_stub(override_type(type_repr = "Metric | None"))] metric: Option<PyMetric>,
         growth_strategy: PyGrowthStrategy,
         max_depth: u32,
         n_leaves: u32,
@@ -546,10 +544,8 @@ impl PyGBLinearConfig {
     fn new(
         n_estimators: u32,
         learning_rate: f64,
-        #[gen_stub(override_type(type_repr = "Objective | None"))]
-        objective: Option<PyObjective>,
-        #[gen_stub(override_type(type_repr = "Metric | None"))]
-        metric: Option<PyMetric>,
+        #[gen_stub(override_type(type_repr = "Objective | None"))] objective: Option<PyObjective>,
+        #[gen_stub(override_type(type_repr = "Metric | None"))] metric: Option<PyMetric>,
         l1: f64,
         l2: f64,
         early_stopping_rounds: Option<u32>,

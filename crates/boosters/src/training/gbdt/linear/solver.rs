@@ -151,12 +151,7 @@ impl WeightedLeastSquaresSolver {
     ///
     /// Note: Must call `accumulate_intercept` first/separately, then
     /// accumulate each feature column.
-    pub fn accumulate_column(
-        &mut self,
-        feat_idx: usize,
-        values: &[f32],
-        grad_hess: &[GradsTuple],
-    ) {
+    pub fn accumulate_column(&mut self, feat_idx: usize, values: &[f32], grad_hess: &[GradsTuple]) {
         let n_features = self.current_features;
         let size = n_features + 1;
         let col = feat_idx + 1; // offset for intercept

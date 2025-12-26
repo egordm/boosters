@@ -2,16 +2,16 @@
 
 use bon::Builder;
 
-use super::bundling::{create_bundle_plan, BundlePlan, BundlingConfig};
+use super::BinMapper;
+use super::MissingType;
+use super::bundling::{BundlePlan, BundlingConfig, create_bundle_plan};
 use super::dataset::BinnedDataset;
 use super::feature_analysis::FeatureInfo;
-use super::group::{FeatureGroup, BinnedFeatureInfo};
+use super::group::{BinnedFeatureInfo, FeatureGroup};
 use super::storage::{BinStorage, BinType, GroupLayout};
-use super::MissingType;
-use super::BinMapper;
 
-use crate::data::binned::BundlingFeatures;
 use crate::data::FeaturesView;
+use crate::data::binned::BundlingFeatures;
 use crate::utils::Parallelism;
 
 // =============================================================================
@@ -83,9 +83,7 @@ impl From<u32> for BinningConfig {
 #[derive(Clone, Debug, Default)]
 pub enum GroupStrategy {
     /// All features in one group with specified layout.
-    SingleGroup {
-        layout: GroupLayout,
-    },
+    SingleGroup { layout: GroupLayout },
 
     /// Automatic grouping based on feature characteristics.
     /// - Dense numeric (<=256 bins): row-major u8 group
@@ -177,7 +175,7 @@ impl BundlingFeatures for FeatureBinAccessor<'_> {
     fn n_samples(&self) -> usize {
         self.n_rows
     }
-    
+
     fn get(&self, sample: usize, feature: usize) -> f32 {
         self.features[feature].bins[sample] as f32
     }
@@ -291,7 +289,7 @@ impl BinnedDatasetBuilder {
         let process_feature = |feat_idx: usize| -> (Vec<u32>, BinMapper, Option<String>) {
             let feature_data = features.feature(feat_idx);
             let is_categorical = features.feature_type(feat_idx).is_categorical();
-            
+
             // Get feature name from schema if available
             let name = schema
                 .and_then(|s| s.get(feat_idx))
@@ -302,7 +300,7 @@ impl BinnedDatasetBuilder {
             } else {
                 Self::bin_numeric(feature_data.as_slice().unwrap(), config)
             };
-            
+
             (bins, mapper, name)
         };
 
@@ -343,13 +341,7 @@ impl BinnedDatasetBuilder {
             })
             .collect();
 
-        let mapper = BinMapper::categorical(
-            categories,
-            MissingType::None,
-            0,
-            0,
-            0.0,
-        );
+        let mapper = BinMapper::categorical(categories, MissingType::None, 0, 0, 0.0);
 
         (bins, mapper)
     }
@@ -375,15 +367,8 @@ impl BinnedDatasetBuilder {
         // Handle degenerate cases
         if values.is_empty() || min_val >= max_val {
             let bins: Vec<u32> = vec![0; n_samples];
-            let mapper = BinMapper::numerical(
-                vec![f64::MAX],
-                MissingType::None,
-                0,
-                0,
-                0.0,
-                0.0,
-                0.0,
-            );
+            let mapper =
+                BinMapper::numerical(vec![f64::MAX], MissingType::None, 0, 0, 0.0, 0.0, 0.0);
             return (bins, mapper);
         }
 
@@ -501,11 +486,7 @@ impl BinnedDatasetBuilder {
         name: Option<String>,
     ) -> Self {
         self.validate_n_rows(bins.len());
-        self.features.push(FeatureData {
-            bins,
-            mapper,
-            name,
-        });
+        self.features.push(FeatureData { bins, mapper, name });
         self
     }
 
@@ -582,7 +563,10 @@ impl BinnedDatasetBuilder {
         };
 
         Ok(BinnedDataset::with_bundle_plan(
-            n_rows, features, groups, bundle_plan,
+            n_rows,
+            features,
+            groups,
+            bundle_plan,
         ))
     }
 
@@ -620,7 +604,11 @@ impl BinnedDatasetBuilder {
     fn validate_n_rows(&mut self, rows: usize) {
         match self.n_rows {
             None => self.n_rows = Some(rows),
-            Some(n) => assert_eq!(n, rows, "Feature row count mismatch: expected {}, got {}", n, rows),
+            Some(n) => assert_eq!(
+                n, rows,
+                "Feature row count mismatch: expected {}, got {}",
+                n, rows
+            ),
         }
     }
 
@@ -720,9 +708,12 @@ impl BinnedDatasetBuilder {
             let group_features: Vec<_> = spec.features.iter().map(|&i| &self.features[i]).collect();
 
             // Determine bin type for this group
-            let max_bins = group_features.iter().map(|f| f.n_bins()).max().unwrap_or(256);
-            let bin_type = BinType::for_max_bins(max_bins)
-                .expect("max_bins should be > 0");
+            let max_bins = group_features
+                .iter()
+                .map(|f| f.n_bins())
+                .max()
+                .unwrap_or(256);
+            let bin_type = BinType::for_max_bins(max_bins).expect("max_bins should be > 0");
 
             // Build storage based on layout
             let storage = match spec.layout {
@@ -735,7 +726,9 @@ impl BinnedDatasetBuilder {
             };
 
             // Collect bin counts
-            let bin_counts: Vec<u32> = spec.features.iter()
+            let bin_counts: Vec<u32> = spec
+                .features
+                .iter()
                 .map(|&i| self.features[i].n_bins())
                 .collect();
 
@@ -752,11 +745,8 @@ impl BinnedDatasetBuilder {
             // Create feature metadata
             for (idx_in_group, &feature_idx) in spec.features.iter().enumerate() {
                 let f = &self.features[feature_idx];
-                let mut meta = BinnedFeatureInfo::new(
-                    f.mapper.clone(),
-                    group_idx as u32,
-                    idx_in_group as u32,
-                );
+                let mut meta =
+                    BinnedFeatureInfo::new(f.mapper.clone(), group_idx as u32, idx_in_group as u32);
                 if let Some(name) = &f.name {
                     meta = meta.with_name(name.clone());
                 }
@@ -768,7 +758,9 @@ impl BinnedDatasetBuilder {
         let features: Vec<BinnedFeatureInfo> = feature_metas
             .into_iter()
             .enumerate()
-            .map(|(i, opt)| opt.unwrap_or_else(|| panic!("Feature {} not assigned to any group", i)))
+            .map(|(i, opt)| {
+                opt.unwrap_or_else(|| panic!("Feature {} not assigned to any group", i))
+            })
             .collect();
 
         Ok((groups, features))
@@ -881,7 +873,15 @@ mod tests {
     /// Create a simple numeric BinMapper for testing.
     fn make_mapper(n_bins: u32) -> BinMapper {
         let bounds: Vec<f64> = (0..n_bins).map(|i| i as f64 + 0.5).collect();
-        BinMapper::numerical(bounds, MissingType::None, 0, 0, 0.0, 0.0, (n_bins - 1) as f64)
+        BinMapper::numerical(
+            bounds,
+            MissingType::None,
+            0,
+            0,
+            0.0,
+            0.0,
+            (n_bins - 1) as f64,
+        )
     }
 
     #[test]
@@ -889,7 +889,9 @@ mod tests {
         let dataset = BinnedDatasetBuilder::new(BinningConfig::default())
             .add_binned(vec![0, 1, 2, 3], make_mapper(4), None)
             .add_binned(vec![1, 2, 3, 0], make_mapper(4), None)
-            .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::RowMajor })
+            .group_strategy(GroupStrategy::SingleGroup {
+                layout: GroupLayout::RowMajor,
+            })
             .build()
             .unwrap();
 
@@ -900,7 +902,7 @@ mod tests {
         // Verify row-major layout
         let group = dataset.group(0);
         assert!(group.is_row_major());
-        
+
         // Access bins via storage match
         match group.storage() {
             BinStorage::DenseU8(bins) => {
@@ -919,7 +921,9 @@ mod tests {
         let dataset = BinnedDatasetBuilder::new(BinningConfig::default())
             .add_binned(vec![0, 1, 2, 3], make_mapper(4), None)
             .add_binned(vec![10, 11, 12, 13], make_mapper(16), None)
-            .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
+            .group_strategy(GroupStrategy::SingleGroup {
+                layout: GroupLayout::ColumnMajor,
+            })
             .build()
             .unwrap();
 
@@ -928,13 +932,13 @@ mod tests {
 
         let group = dataset.group(0);
         assert!(group.is_column_major());
-        
+
         // Access bins via storage match
         match group.storage() {
             BinStorage::DenseU8(bins) => {
                 // Column-major: all feat0 values, then all feat1 values
-                assert_eq!(bins[0], 0);  // feat 0, row 0
-                assert_eq!(bins[3], 3);  // feat 0, row 3
+                assert_eq!(bins[0], 0); // feat 0, row 0
+                assert_eq!(bins[3], 3); // feat 0, row 3
                 assert_eq!(bins[4], 10); // feat 1, row 0
                 assert_eq!(bins[7], 13); // feat 1, row 3
             }
@@ -947,8 +951,8 @@ mod tests {
         // Feature 0: dense numeric (<=256 bins) -> column-major (optimized for histogram building)
         // Feature 1: wide numeric (>256 bins) -> column-major
         let dataset = BinnedDatasetBuilder::new(BinningConfig::default())
-            .add_binned(vec![0, 1, 2, 3], make_mapper(100), None)  // dense
-            .add_binned(vec![0, 100, 200, 300], make_mapper(500), None)  // wide
+            .add_binned(vec![0, 1, 2, 3], make_mapper(100), None) // dense
+            .add_binned(vec![0, 100, 200, 300], make_mapper(500), None) // wide
             .group_strategy(GroupStrategy::Auto)
             .build()
             .unwrap();
@@ -991,7 +995,9 @@ mod tests {
 
     #[test]
     fn test_builder_empty() {
-        let dataset = BinnedDatasetBuilder::new(BinningConfig::default()).build().unwrap();
+        let dataset = BinnedDatasetBuilder::new(BinningConfig::default())
+            .build()
+            .unwrap();
         assert_eq!(dataset.n_rows(), 0);
         assert_eq!(dataset.n_features(), 0);
         assert_eq!(dataset.n_groups(), 0);
@@ -1004,7 +1010,7 @@ mod tests {
             .add_binned(vec![1, 2, 3], make_mapper(4), None)
             .group_strategy(GroupStrategy::Custom(vec![
                 GroupSpec::new(vec![0, 1], GroupLayout::RowMajor),
-                GroupSpec::new(vec![1], GroupLayout::ColumnMajor),  // duplicate!
+                GroupSpec::new(vec![1], GroupLayout::ColumnMajor), // duplicate!
             ]))
             .build();
 
@@ -1122,12 +1128,12 @@ mod tests {
     #[test]
     fn test_add_features() {
         use ndarray::array;
-        
+
         // Create feature-major data: 3 features, 4 samples
         let features = array![
-            [1.0f32, 4.0, 7.0, 0.0],  // feature 0
-            [2.0, 5.0, 8.0, 1.0],  // feature 1
-            [3.0, 6.0, 9.0, 2.0],  // feature 2
+            [1.0f32, 4.0, 7.0, 0.0], // feature 0
+            [2.0, 5.0, 8.0, 1.0],    // feature 1
+            [3.0, 6.0, 9.0, 2.0],    // feature 2
         ];
         let features_view = FeaturesView::from_array(features.view());
 
@@ -1143,8 +1149,8 @@ mod tests {
 
     #[test]
     fn test_add_features_with_schema() {
-        use ndarray::array;
         use crate::data::DatasetSchema;
+        use ndarray::array;
 
         // Create feature-major data: 2 features, 3 samples
         let feature_data = array![[1.0f32, 2.0, 3.0], [4.0, 5.0, 6.0]];

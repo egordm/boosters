@@ -41,7 +41,7 @@
 //! See [`TreeTraversal`] for implementing custom strategies.
 
 use crate::Parallelism;
-use crate::data::{axis, DataAccessor};
+use crate::data::{DataAccessor, axis};
 use crate::data::{FeaturesView, SamplesView};
 use crate::repr::gbdt::{Forest, ScalarLeaf, TreeView};
 use ndarray::{Array2, ArrayViewMut2};
@@ -63,7 +63,7 @@ pub const DEFAULT_BLOCK_SIZE: usize = 64;
 /// # Example
 ///
 /// ```ignore
-    /// use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
+/// use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
 ///
 /// let predictor = Predictor::<UnrolledTraversal6>::new(&forest);
 /// let output = predictor.predict(&features);
@@ -140,9 +140,17 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
         tree_weights: Option<&[f32]>,
         output: &mut [f32],
     ) {
-        assert_eq!(output.len(), self.n_groups(), "output length must equal n_groups");
+        assert_eq!(
+            output.len(),
+            self.n_groups(),
+            "output length must equal n_groups"
+        );
         if let Some(w) = tree_weights {
-            assert_eq!(w.len(), self.forest.n_trees(), "tree_weights length must match number of trees");
+            assert_eq!(
+                w.len(),
+                self.forest.n_trees(),
+                "tree_weights length must match number of trees"
+            );
         }
 
         // Initialize with base scores
@@ -163,7 +171,7 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
             let weighted_value = tree_weights
                 .map(|w| leaf_value * w[tree_idx])
                 .unwrap_or(leaf_value);
-            
+
             output[group as usize] += weighted_value;
         }
     }
@@ -242,9 +250,8 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
                     let mut buffer_ref = buf.borrow_mut();
 
                     // Get or create buffer with correct size: [block_size, n_features]
-                    let buffer = buffer_ref.get_or_insert_with(|| {
-                        Array2::zeros((block_size, n_features))
-                    });
+                    let buffer =
+                        buffer_ref.get_or_insert_with(|| Array2::zeros((block_size, n_features)));
 
                     // Resize buffer if shape changed
                     if buffer.shape() != [block_size, n_features] {
@@ -283,7 +290,6 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
         output
     }
 
-
     fn predict_block_into(
         &self,
         features: SamplesView<'_>,
@@ -314,7 +320,6 @@ impl<'f, T: TreeTraversal<ScalarLeaf>> Predictor<'f, T> {
                     group_row[i] += tree.leaf_value(leaf_indices[i]).0 * tree_weight;
                 }
             }
-
         }
     }
 }
@@ -343,15 +348,11 @@ pub type UnrolledPredictor8<'f> = Predictor<'f, UnrolledTraversal<Depth8>>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::repr::gbdt::{Forest, ScalarLeaf, Tree};
     use approx::assert_abs_diff_eq;
     use ndarray::{Array2, ArrayView2};
-    use crate::repr::gbdt::{Forest, ScalarLeaf, Tree};
 
-    fn build_simple_tree(
-        left_val: f32,
-        right_val: f32,
-        threshold: f32,
-    ) -> Tree<ScalarLeaf> {
+    fn build_simple_tree(left_val: f32, right_val: f32, threshold: f32) -> Tree<ScalarLeaf> {
         crate::scalar_tree! {
             0 => num(0, threshold, L) -> 1, 2,
             1 => leaf(left_val),
@@ -451,9 +452,9 @@ mod tests {
 
         // Output shape: [n_groups, n_samples] = [1, 3]
         assert_eq!(output.shape(), &[1, 3]);
-        assert_eq!(output[[0, 0]], 1.0);  // 0.3 < 0.5 -> left
-        assert_eq!(output[[0, 1]], 2.0);  // 0.7 >= 0.5 -> right
-        assert_eq!(output[[0, 2]], 2.0);  // 0.5 >= 0.5 -> right
+        assert_eq!(output[[0, 0]], 1.0); // 0.3 < 0.5 -> left
+        assert_eq!(output[[0, 1]], 2.0); // 0.7 >= 0.5 -> right
+        assert_eq!(output[[0, 2]], 2.0); // 0.5 >= 0.5 -> right
     }
 
     #[test]
@@ -536,8 +537,8 @@ mod tests {
         // Feature 0: [0.2, 0.2, 0.6, 0.6]  (split threshold 0.5)
         // Feature 1: [0.1, 0.5, 0.5, 0.9]  (split threshold 0.3 for left, 0.7 for right)
         let data = vec![
-            0.2, 0.2, 0.6, 0.6,  // feature 0 values
-            0.1, 0.5, 0.5, 0.9,  // feature 1 values
+            0.2, 0.2, 0.6, 0.6, // feature 0 values
+            0.1, 0.5, 0.5, 0.9, // feature 1 values
         ];
         let features = features_view(&data, 2, 4);
 
@@ -571,8 +572,18 @@ mod tests {
         let mut simple_output = Array2::<f32>::zeros((1, 2));
         let mut unrolled_output = Array2::<f32>::zeros((1, 2));
 
-        simple.predict_into(features, Some(weights), Parallelism::Sequential, simple_output.view_mut());
-        unrolled.predict_into(features, Some(weights), Parallelism::Sequential, unrolled_output.view_mut());
+        simple.predict_into(
+            features,
+            Some(weights),
+            Parallelism::Sequential,
+            simple_output.view_mut(),
+        );
+        unrolled.predict_into(
+            features,
+            Some(weights),
+            Parallelism::Sequential,
+            unrolled_output.view_mut(),
+        );
 
         assert_abs_diff_eq!(simple_output, unrolled_output, epsilon = 1e-6);
     }
@@ -688,8 +699,18 @@ mod tests {
         let mut seq_output = Array2::<f32>::zeros((1, 100));
         let mut par_output = Array2::<f32>::zeros((1, 100));
 
-        predictor.predict_into(features, Some(weights), Parallelism::Sequential, seq_output.view_mut());
-        predictor.predict_into(features, Some(weights), Parallelism::Parallel, par_output.view_mut());
+        predictor.predict_into(
+            features,
+            Some(weights),
+            Parallelism::Sequential,
+            seq_output.view_mut(),
+        );
+        predictor.predict_into(
+            features,
+            Some(weights),
+            Parallelism::Parallel,
+            par_output.view_mut(),
+        );
 
         assert_abs_diff_eq!(seq_output, par_output, epsilon = 1e-6);
     }

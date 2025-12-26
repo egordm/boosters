@@ -143,7 +143,9 @@ impl DatasetSchema {
 
     /// Check if any feature is categorical.
     pub fn has_categorical(&self) -> bool {
-        self.features.iter().any(|m| m.feature_type.is_categorical())
+        self.features
+            .iter()
+            .any(|m| m.feature_type.is_categorical())
     }
 
     /// Get feature index by name.
@@ -154,7 +156,9 @@ impl DatasetSchema {
         if self.name_index.is_none() {
             self.build_name_index();
         }
-        self.name_index.as_ref().and_then(|idx| idx.get(name).copied())
+        self.name_index
+            .as_ref()
+            .and_then(|idx| idx.get(name).copied())
     }
 
     /// Build the name index from feature metadata.
@@ -230,10 +234,8 @@ mod tests {
 
     #[test]
     fn schema_with_categorical() {
-        let schema = DatasetSchema::from_features(vec![
-            FeatureMeta::numeric(),
-            FeatureMeta::categorical(),
-        ]);
+        let schema =
+            DatasetSchema::from_features(vec![FeatureMeta::numeric(), FeatureMeta::categorical()]);
         assert!(schema.has_categorical());
         assert_eq!(schema.feature_type(0), FeatureType::Numeric);
         assert_eq!(schema.feature_type(1), FeatureType::Categorical);

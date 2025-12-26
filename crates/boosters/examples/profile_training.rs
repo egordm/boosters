@@ -6,8 +6,8 @@
 //! samply record target/release/examples/profile_training
 //! ```
 
-use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
+use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::training::GrowthStrategy;
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism};
@@ -23,7 +23,7 @@ fn main() {
     println!("Generating synthetic data...");
     println!("  Samples: {}", n_samples);
     println!("  Features: {}", n_features);
-    
+
     // Generate feature-major data [n_features, n_samples]
     let mut features = Array2::<f32>::zeros((n_features, n_samples));
     let mut labels = Vec::with_capacity(n_samples);
@@ -42,7 +42,7 @@ fn main() {
 
     println!("Building binned dataset...");
     let features_dataset = Dataset::new(features.view(), None, None);
-    
+
     let start = std::time::Instant::now();
     let dataset = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
         .add_features(features_dataset.features(), Parallelism::Parallel)
@@ -67,7 +67,7 @@ fn main() {
     println!("\nTraining...");
     println!("  Trees: {}", config.n_trees);
     println!("  Depth: {}", max_depth);
-    
+
     let start = std::time::Instant::now();
     // Use n_threads=1 for cleaner profiling (single thread)
     // Wrap labels in TargetsView (shape [n_outputs=1, n_samples])
@@ -81,6 +81,8 @@ fn main() {
     println!("\n=== Results ===");
     println!("Training time: {:?}", train_time);
     println!("Trees: {}", model.forest().n_trees());
-    println!("Throughput: {:.2} Melem/s", 
-        (n_samples * n_features * n_trees) as f64 / train_time.as_secs_f64() / 1_000_000.0);
+    println!(
+        "Throughput: {:.2} Melem/s",
+        (n_samples * n_features * n_trees) as f64 / train_time.as_secs_f64() / 1_000_000.0
+    );
 }

@@ -75,9 +75,7 @@ class BenchmarkSuite:
 
                     if verbose:
                         metrics_str = ", ".join(f"{k}={v:.4f}" for k, v in result.metrics.items())
-                        time_str = (
-                            f", time={result.train_time_s:.3f}s" if result.train_time_s else ""
-                        )
+                        time_str = f", time={result.train_time_s:.3f}s" if result.train_time_s else ""
                         print(f"  {library} (seed={seed}): {metrics_str}{time_str}")
 
         return self.to_dataframe()

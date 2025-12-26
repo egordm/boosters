@@ -8,14 +8,14 @@
 //! cargo run --example custom_objective
 //! ```
 
-use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::BinningConfig;
+use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{Dataset, TargetsView, WeightsView};
+use boosters::inference::PredictionKind;
 use boosters::inference::gbdt::SimplePredictor;
 use boosters::repr::gbdt::Forest;
 use boosters::training::{GBDTParams, GBDTTrainer, GradsTuple, GrowthStrategy, Rmse, TargetSchema};
 use boosters::{ObjectiveFn, Parallelism, TaskKind};
-use boosters::inference::PredictionKind;
 use ndarray::{Array2, ArrayView2, ArrayViewMut2};
 
 /// Predict a single row using the predictor.
@@ -69,7 +69,11 @@ impl ObjectiveFn for HuberLoss {
             let mut gh_row = grad_hess.row_mut(out_idx);
             let gh_slice = gh_row.as_slice_mut().unwrap();
 
-            for (i, (gh, (&pred, w))) in gh_slice.iter_mut().zip(preds_slice.iter().zip(weights.iter(n_rows))).enumerate() {
+            for (i, (gh, (&pred, w))) in gh_slice
+                .iter_mut()
+                .zip(preds_slice.iter().zip(weights.iter(n_rows)))
+                .enumerate()
+            {
                 let target = targets_slice[i];
                 let error = pred - target;
 
@@ -87,11 +91,7 @@ impl ObjectiveFn for HuberLoss {
         }
     }
 
-    fn compute_base_score(
-        &self,
-        targets: TargetsView<'_>,
-        _weights: WeightsView<'_>,
-    ) -> Vec<f32> {
+    fn compute_base_score(&self, targets: TargetsView<'_>, _weights: WeightsView<'_>) -> Vec<f32> {
         // Use median for Huber (more robust than mean)
         // For simplicity, using mean here
         let n_rows = targets.n_samples();
@@ -156,7 +156,13 @@ fn main() {
     let huber = HuberLoss::new(1.0);
     let trainer = GBDTTrainer::new(huber, Rmse, params);
     let forest = trainer
-        .train(&dataset, targets, WeightsView::None, &[], Parallelism::Sequential)
+        .train(
+            &dataset,
+            targets,
+            WeightsView::None,
+            &[],
+            Parallelism::Sequential,
+        )
         .unwrap();
 
     // =========================================================================

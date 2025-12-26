@@ -35,12 +35,10 @@ def main() -> None:
 
     # Pipeline with preprocessing
     print("\n--- Pipeline ---")
-    pipe = Pipeline(
-        [
-            ("scaler", StandardScaler()),
-            ("model", GBDTRegressor(n_estimators=50, verbose=0)),
-        ]
-    )
+    pipe = Pipeline([
+        ("scaler", StandardScaler()),
+        ("model", GBDTRegressor(n_estimators=50, verbose=0)),
+    ])
     pipe.fit(X, y)
     preds = pipe.predict(X)
     rmse = np.sqrt(np.mean((preds - y) ** 2))

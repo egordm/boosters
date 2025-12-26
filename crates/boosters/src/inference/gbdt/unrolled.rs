@@ -134,7 +134,13 @@ macro_rules! impl_unroll_depth {
 
 // Depth implementations: 2^DEPTH - 1 nodes, 2^DEPTH exits
 impl_unroll_depth!(Depth4, 4, 15, 16, "Depth 4: 15 nodes, 16 exits.");
-impl_unroll_depth!(Depth6, 6, 63, 64, "Depth 6: 63 nodes, 64 exits (default, matches XGBoost).");
+impl_unroll_depth!(
+    Depth6,
+    6,
+    63,
+    64,
+    "Depth 6: 63 nodes, 64 exits (default, matches XGBoost)."
+);
 impl_unroll_depth!(Depth8, 8, 255, 256, "Depth 8: 255 nodes, 256 exits.");
 
 // =============================================================================

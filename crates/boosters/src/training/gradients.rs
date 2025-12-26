@@ -521,7 +521,12 @@ mod tests {
         buffer.reset();
 
         // Verify all values are zero
-        assert!(buffer.pairs().iter().all(|p| p.grad == 0.0 && p.hess == 0.0));
+        assert!(
+            buffer
+                .pairs()
+                .iter()
+                .all(|p| p.grad == 0.0 && p.hess == 0.0)
+        );
     }
 
     #[test]

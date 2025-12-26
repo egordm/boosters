@@ -54,11 +54,7 @@ impl ObjectiveFn for SquaredLoss {
         }
     }
 
-    fn compute_base_score(
-        &self,
-        targets: TargetsView<'_>,
-        weights: WeightsView<'_>,
-    ) -> Vec<f32> {
+    fn compute_base_score(&self, targets: TargetsView<'_>, weights: WeightsView<'_>) -> Vec<f32> {
         let targets = targets.output(0);
         let n_rows = targets.len();
         if n_rows == 0 {
@@ -73,7 +69,11 @@ impl ObjectiveFn for SquaredLoss {
                 (sw + w as f64, swy + w as f64 * y as f64)
             });
 
-        let base = if sum_w > 0.0 { (sum_wy / sum_w) as f32 } else { 0.0 };
+        let base = if sum_w > 0.0 {
+            (sum_wy / sum_w) as f32
+        } else {
+            0.0
+        };
         vec![base]
     }
 
@@ -138,11 +138,7 @@ impl ObjectiveFn for AbsoluteLoss {
         }
     }
 
-    fn compute_base_score(
-        &self,
-        targets: TargetsView<'_>,
-        weights: WeightsView<'_>,
-    ) -> Vec<f32> {
+    fn compute_base_score(&self, targets: TargetsView<'_>, weights: WeightsView<'_>) -> Vec<f32> {
         let targets = targets.output(0);
         // Use weighted median as base score (optimal for L1 loss)
         if targets.is_empty() {
@@ -189,7 +185,9 @@ impl PinballLoss {
     /// Create a pinball loss for a single quantile.
     pub fn new(alpha: f32) -> Self {
         debug_assert!(alpha > 0.0 && alpha < 1.0, "alpha must be in (0, 1)");
-        Self { alphas: vec![alpha] }
+        Self {
+            alphas: vec![alpha],
+        }
     }
 
     /// Create a pinball loss for multiple quantiles.
@@ -241,11 +239,7 @@ impl ObjectiveFn for PinballLoss {
         }
     }
 
-    fn compute_base_score(
-        &self,
-        targets: TargetsView<'_>,
-        weights: WeightsView<'_>,
-    ) -> Vec<f32> {
+    fn compute_base_score(&self, targets: TargetsView<'_>, weights: WeightsView<'_>) -> Vec<f32> {
         let targets = targets.output(0);
         if targets.is_empty() {
             return vec![0.0; self.alphas.len()];
@@ -333,11 +327,7 @@ impl ObjectiveFn for PseudoHuberLoss {
         }
     }
 
-    fn compute_base_score(
-        &self,
-        targets: TargetsView<'_>,
-        weights: WeightsView<'_>,
-    ) -> Vec<f32> {
+    fn compute_base_score(&self, targets: TargetsView<'_>, weights: WeightsView<'_>) -> Vec<f32> {
         let targets = targets.output(0);
         // Use median as robust base score
         if targets.is_empty() {
@@ -415,11 +405,7 @@ impl ObjectiveFn for PoissonLoss {
         }
     }
 
-    fn compute_base_score(
-        &self,
-        targets: TargetsView<'_>,
-        weights: WeightsView<'_>,
-    ) -> Vec<f32> {
+    fn compute_base_score(&self, targets: TargetsView<'_>, weights: WeightsView<'_>) -> Vec<f32> {
         let targets = targets.output(0);
         let n_rows = targets.len();
         if n_rows == 0 {
@@ -434,7 +420,11 @@ impl ObjectiveFn for PoissonLoss {
                 (sw + w as f64, swy + w as f64 * y as f64)
             });
 
-        let mean = if sum_w > 0.0 { (sum_wy / sum_w).max(1e-7) } else { 1.0 };
+        let mean = if sum_w > 0.0 {
+            (sum_wy / sum_w).max(1e-7)
+        } else {
+            1.0
+        };
         vec![mean.ln() as f32]
     }
 
@@ -460,14 +450,10 @@ impl ObjectiveFn for PoissonLoss {
 // =============================================================================
 
 /// Compute weighted quantile (used for base scores in quantile/L1 objectives).
-/// 
+///
 /// Note: This requires sorting which is O(n log n). For `compute_base_score` this
 /// is acceptable as it's called once per training run, not in the hot path.
-fn compute_weighted_quantile(
-    values: ArrayView1<f32>,
-    weights: WeightsView<'_>,
-    alpha: f32,
-) -> f32 {
+fn compute_weighted_quantile(values: ArrayView1<f32>, weights: WeightsView<'_>, alpha: f32) -> f32 {
     let n_rows = values.len();
     if n_rows == 0 {
         return 0.0;
@@ -527,9 +513,9 @@ mod tests {
 
         obj.compute_gradients_into(preds.view(), targets, WeightsView::None, gh.view_mut());
 
-        assert!((gh[[0, 0]].grad - 0.5).abs() < 1e-6);  // 1.0 - 0.5
+        assert!((gh[[0, 0]].grad - 0.5).abs() < 1e-6); // 1.0 - 0.5
         assert!((gh[[0, 1]].grad - -0.5).abs() < 1e-6); // 2.0 - 2.5
-        assert!((gh[[0, 2]].grad - 0.5).abs() < 1e-6);  // 3.0 - 2.5
+        assert!((gh[[0, 2]].grad - 0.5).abs() < 1e-6); // 3.0 - 2.5
         assert!((gh[[0, 0]].hess - 1.0).abs() < 1e-6);
     }
 
@@ -542,9 +528,14 @@ mod tests {
         let weights = ndarray::array![2.0f32, 0.5];
         let mut gh = make_grad_hess(1, 2);
 
-        obj.compute_gradients_into(preds.view(), targets, WeightsView::from_array(weights.view()), gh.view_mut());
+        obj.compute_gradients_into(
+            preds.view(),
+            targets,
+            WeightsView::from_array(weights.view()),
+            gh.view_mut(),
+        );
 
-        assert!((gh[[0, 0]].grad - 1.0).abs() < 1e-6);   // 2.0 * 0.5
+        assert!((gh[[0, 0]].grad - 1.0).abs() < 1e-6); // 2.0 * 0.5
         assert!((gh[[0, 1]].grad - -0.25).abs() < 1e-6); // 0.5 * -0.5
         assert!((gh[[0, 0]].hess - 2.0).abs() < 1e-6);
         assert!((gh[[0, 1]].hess - 0.5).abs() < 1e-6);
@@ -571,9 +562,9 @@ mod tests {
 
         obj.compute_gradients_into(preds.view(), targets, WeightsView::None, gh.view_mut());
 
-        assert!((gh[[0, 0]].grad - 0.5).abs() < 1e-6);  // pred > target
+        assert!((gh[[0, 0]].grad - 0.5).abs() < 1e-6); // pred > target
         assert!((gh[[0, 1]].grad - -0.5).abs() < 1e-6); // pred < target
-        assert!((gh[[0, 2]].grad - 0.5).abs() < 1e-6);  // pred > target
+        assert!((gh[[0, 2]].grad - 0.5).abs() < 1e-6); // pred > target
     }
 
     #[test]
@@ -586,9 +577,9 @@ mod tests {
 
         obj.compute_gradients_into(preds.view(), targets, WeightsView::None, gh.view_mut());
 
-        assert!((gh[[0, 0]].grad - 1.0).abs() < 1e-6);  // sign(0.5) = 1
+        assert!((gh[[0, 0]].grad - 1.0).abs() < 1e-6); // sign(0.5) = 1
         assert!((gh[[0, 1]].grad - -1.0).abs() < 1e-6); // sign(-0.5) = -1
-        assert!((gh[[0, 2]].grad - 1.0).abs() < 1e-6);  // sign(0.5) = 1
+        assert!((gh[[0, 2]].grad - 1.0).abs() < 1e-6); // sign(0.5) = 1
     }
 
     #[test]

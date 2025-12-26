@@ -5,10 +5,12 @@
 //! - Multi-quantile regression (joint training)
 //! - Quantile ordering validation
 
-use super::{load_config, load_test_data, load_train_data, make_dataset, pearson_correlation, TEST_CASES_DIR};
+use super::{
+    TEST_CASES_DIR, load_config, load_test_data, load_train_data, make_dataset, pearson_correlation,
+};
 use approx::assert_relative_eq;
-use boosters::data::transpose_to_c_order;
 use boosters::data::FeaturesView;
+use boosters::data::transpose_to_c_order;
 use boosters::training::{GBLinearParams, GBLinearTrainer, PinballLoss, Rmse, Verbosity};
 use rstest::rstest;
 use serde::Deserialize;
@@ -33,7 +35,9 @@ fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
     let train = make_dataset(&data, &labels);
 
     // Verify config has correct quantile alpha
-    let alpha = config.quantile_alpha.expect("Config should have quantile_alpha");
+    let alpha = config
+        .quantile_alpha
+        .expect("Config should have quantile_alpha");
     assert_relative_eq!(alpha, expected_alpha, epsilon = 0.01);
 
     let params = GBLinearParams {
@@ -210,8 +214,11 @@ fn train_multi_quantile_regression() {
         ..Default::default()
     };
 
-    let trainer =
-        GBLinearTrainer::new(PinballLoss::with_quantiles(quantile_alphas.clone()), Rmse, params);
+    let trainer = GBLinearTrainer::new(
+        PinballLoss::with_quantiles(quantile_alphas.clone()),
+        Rmse,
+        params,
+    );
     let model = trainer.train(&train, &[]).unwrap();
 
     // Verify model has correct number of output groups
@@ -223,7 +230,7 @@ fn train_multi_quantile_regression() {
     let test_view = FeaturesView::from_array(test_features.view());
     let n_test_samples = test_data.nrows();
     let output = model.predict(test_view);
-    
+
     // output is [n_groups, n_samples], extract per-quantile predictions
     let mut our_predictions: Vec<Vec<f32>> = vec![vec![0.0; n_test_samples]; num_quantiles];
     for i in 0..n_test_samples {

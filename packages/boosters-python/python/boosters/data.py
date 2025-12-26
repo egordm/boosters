@@ -311,9 +311,7 @@ class Dataset(_RustDataset):
         n_features = features_arr.shape[1]
         for cat_idx in all_cats:
             if cat_idx < 0 or cat_idx >= n_features:
-                raise ValueError(
-                    f"categorical feature index {cat_idx} is out of range [0, {n_features - 1}]"
-                )
+                raise ValueError(f"categorical feature index {cat_idx} is out of range [0, {n_features - 1}]")
 
         # Convert labels if provided
         labels_2d: NDArray[np.float32] | None = None
@@ -328,8 +326,7 @@ class Dataset(_RustDataset):
 
             if labels_2d.shape[1] != features_arr.shape[0]:
                 raise ValueError(
-                    f"labels shape mismatch: expected {features_arr.shape[0]} samples, "
-                    f"got {labels_2d.shape[1]}"
+                    f"labels shape mismatch: expected {features_arr.shape[0]} samples, got {labels_2d.shape[1]}"
                 )
             if not np.all(np.isfinite(labels_2d)):
                 raise ValueError("labels contain NaN or Inf values")
@@ -342,8 +339,7 @@ class Dataset(_RustDataset):
                 raise ValueError(f"weights must be 1D array, got {weights_arr.ndim}D")
             if weights_arr.shape[0] != features_arr.shape[0]:
                 raise ValueError(
-                    f"weights shape mismatch: expected {features_arr.shape[0]} samples, "
-                    f"got {weights_arr.shape[0]}"
+                    f"weights shape mismatch: expected {features_arr.shape[0]} samples, got {weights_arr.shape[0]}"
                 )
 
         # Create the Rust instance
@@ -370,8 +366,7 @@ class Dataset(_RustDataset):
                 raise ValueError(f"groups must be 1D array, got {groups_arr.ndim}D")
             if groups_arr.shape[0] != features_arr.shape[0]:
                 raise ValueError(
-                    f"groups shape mismatch: expected {features_arr.shape[0]} samples, "
-                    f"got {groups_arr.shape[0]}"
+                    f"groups shape mismatch: expected {features_arr.shape[0]} samples, got {groups_arr.shape[0]}"
                 )
             instance._groups = groups_arr
 
@@ -388,7 +383,6 @@ class Dataset(_RustDataset):
         categorical_features: Sequence[int] | None = None,
     ) -> None:
         """No-op init - all initialization done in __new__."""
-        pass
 
     @property
     def groups(self) -> NDArray[np.int32] | None:

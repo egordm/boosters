@@ -44,10 +44,10 @@
 //! let probs = predictions.col_slice(0); // Access first output column
 //! ```
 
-mod meta;
 pub mod gbdt;
 pub mod gblinear;
+mod meta;
 
-pub use meta::{ModelMeta, TaskKind, FeatureType};
 pub use gbdt::GBDTModel;
 pub use gblinear::GBLinearModel;
+pub use meta::{FeatureType, ModelMeta, TaskKind};

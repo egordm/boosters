@@ -70,11 +70,7 @@ impl PathState {
         self.one_fractions[d] = one_fraction;
 
         // Initialize weight for new depth
-        self.weights[d] = if d == 0 {
-            1.0
-        } else {
-            0.0
-        };
+        self.weights[d] = if d == 0 { 1.0 } else { 0.0 };
 
         // Update weights using the SHAP path formula
         // This is the core recursion from Algorithm 2
@@ -102,11 +98,7 @@ impl PathState {
             if one_fraction != 0.0 {
                 let denom = one_fraction * (i + 1) as f64;
                 let scale = numer / denom;
-                let term = if i > 0 {
-                    self.weights[i - 1]
-                } else {
-                    0.0
-                };
+                let term = if i > 0 { self.weights[i - 1] } else { 0.0 };
                 self.weights[i] = (self.weights[i] - term) * scale;
             } else {
                 // When one_fraction is 0, use the zero_fraction inverse
@@ -147,7 +139,8 @@ impl PathState {
                 let w = next_one_portion * (d as f64) / ((i + 1) as f64 * one_fraction);
                 total += w;
                 let prev_weight = if i > 0 { self.weights[i - 1] } else { 0.0 };
-                next_one_portion = prev_weight - self.weights[i] * zero_fraction * ((d - i) as f64) / (d as f64);
+                next_one_portion =
+                    prev_weight - self.weights[i] * zero_fraction * ((d - i) as f64) / (d as f64);
                 if i == 0 {
                     next_one_portion = 0.0;
                 }
@@ -188,10 +181,10 @@ mod tests {
     fn test_extend_single() {
         let mut path = PathState::new(10);
         path.reset();
-        
+
         // Extend with a feature (50% go each way regardless of coalition)
         path.extend(0, 0.5, 0.5);
-        
+
         assert_eq!(path.depth(), 1);
         assert_eq!(path.feature(0), 0);
     }
@@ -200,10 +193,10 @@ mod tests {
     fn test_extend_unwind_depth() {
         let mut path = PathState::new(10);
         path.reset();
-        
+
         path.extend(0, 0.5, 0.5);
         assert_eq!(path.depth(), 1);
-        
+
         path.unwind();
         assert_eq!(path.depth(), 0);
     }
@@ -212,21 +205,21 @@ mod tests {
     fn test_multiple_extend_unwind() {
         let mut path = PathState::new(10);
         path.reset();
-        
+
         // Build a path
-        path.extend(0, 0.6, 1.0);  // Feature 0 goes left always when in coalition
-        path.extend(1, 0.4, 0.0);  // Feature 1 goes right always when in coalition
-        path.extend(2, 0.5, 0.5);  // Feature 2 is 50/50
-        
+        path.extend(0, 0.6, 1.0); // Feature 0 goes left always when in coalition
+        path.extend(1, 0.4, 0.0); // Feature 1 goes right always when in coalition
+        path.extend(2, 0.5, 0.5); // Feature 2 is 50/50
+
         assert_eq!(path.depth(), 3);
-        
+
         // Unwind back
         path.unwind();
         assert_eq!(path.depth(), 2);
-        
+
         path.unwind();
         assert_eq!(path.depth(), 1);
-        
+
         path.unwind();
         assert_eq!(path.depth(), 0);
     }
@@ -235,13 +228,13 @@ mod tests {
     fn test_path_weights_sum() {
         let mut path = PathState::new(10);
         path.reset();
-        
+
         // After reset, weight should be 1
         assert_eq!(path.weights[0], 1.0);
-        
+
         // Extend and check weights are being computed
         path.extend(0, 0.5, 0.5);
-        
+
         // Weights should be non-negative
         assert!(path.weights[0] >= 0.0);
         assert!(path.weights[1] >= 0.0);

@@ -3,11 +3,11 @@
 //! Run with:
 //! cargo run --release --example layout_benchmark
 
-use boosters::data::binned::{BinnedDatasetBuilder, GroupLayout, GroupStrategy};
+use boosters::Parallelism;
 use boosters::data::BinningConfig;
+use boosters::data::binned::{BinnedDatasetBuilder, GroupLayout, GroupStrategy};
 use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
-use boosters::Parallelism;
 use ndarray::Array2;
 use std::time::Instant;
 
@@ -20,8 +20,10 @@ fn main() {
     let n_runs = 3;
 
     println!("=== Layout Benchmark ===");
-    println!("Samples: {}, Features: {}, Trees: {}, Depth: {}", 
-        n_samples, n_features, n_trees, max_depth);
+    println!(
+        "Samples: {}, Features: {}, Trees: {}, Depth: {}",
+        n_samples, n_features, n_trees, max_depth
+    );
     println!();
 
     // Generate synthetic feature-major data [n_features, n_samples]
@@ -42,18 +44,24 @@ fn main() {
 
     // Build datasets with different layouts
     println!("Building RowMajor dataset...");
-    let row_major_dataset = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
-        .add_features(features_dataset.features(), Parallelism::Parallel)
-        .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::RowMajor })
-        .build()
-        .unwrap();
+    let row_major_dataset =
+        BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+            .add_features(features_dataset.features(), Parallelism::Parallel)
+            .group_strategy(GroupStrategy::SingleGroup {
+                layout: GroupLayout::RowMajor,
+            })
+            .build()
+            .unwrap();
 
     println!("Building ColumnMajor dataset...");
-    let col_major_dataset = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
-        .add_features(features_dataset.features(), Parallelism::Parallel)
-        .group_strategy(GroupStrategy::SingleGroup { layout: GroupLayout::ColumnMajor })
-        .build()
-        .unwrap();
+    let col_major_dataset =
+        BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+            .add_features(features_dataset.features(), Parallelism::Parallel)
+            .group_strategy(GroupStrategy::SingleGroup {
+                layout: GroupLayout::ColumnMajor,
+            })
+            .build()
+            .unwrap();
 
     // Verify layouts
     let row_view = row_major_dataset.feature_view(0);
@@ -88,7 +96,13 @@ fn main() {
         let start = Instant::now();
         // Single thread for accurate comparison
         let _ = GBDTTrainer::new(SquaredLoss, Rmse, params.clone())
-            .train(&row_major_dataset, targets.clone(), WeightsView::None, &[], Parallelism::Sequential)
+            .train(
+                &row_major_dataset,
+                targets.clone(),
+                WeightsView::None,
+                &[],
+                Parallelism::Sequential,
+            )
             .unwrap();
         row_times.push(start.elapsed());
     }
@@ -100,7 +114,13 @@ fn main() {
     for _ in 0..n_runs {
         let start = Instant::now();
         let _ = GBDTTrainer::new(SquaredLoss, Rmse, params.clone())
-            .train(&col_major_dataset, targets.clone(), WeightsView::None, &[], Parallelism::Sequential)
+            .train(
+                &col_major_dataset,
+                targets.clone(),
+                WeightsView::None,
+                &[],
+                Parallelism::Sequential,
+            )
             .unwrap();
         col_times.push(start.elapsed());
     }
@@ -112,9 +132,12 @@ fn main() {
     println!("RowMajor avg:    {:.3} ms", row_avg * 1000.0);
     println!("ColumnMajor avg: {:.3} ms", col_avg * 1000.0);
     println!("Speedup: {:.2}x", row_avg / col_avg);
-    
+
     if col_avg < row_avg {
-        println!("\n✅ ColumnMajor is {:.1}% faster!", (1.0 - col_avg / row_avg) * 100.0);
+        println!(
+            "\n✅ ColumnMajor is {:.1}% faster!",
+            (1.0 - col_avg / row_avg) * 100.0
+        );
         println!("   Consider changing default layout in BinnedDatasetBuilder::auto_group()");
     } else {
         println!("\n❌ RowMajor is faster (or no significant difference)");
