@@ -10,12 +10,14 @@ use crate::error::BoostersError;
 /// EFB bundles mutually exclusive features to reduce memory and computation,
 /// similar to LightGBM's implementation.
 ///
-/// Examples
-/// --------
-/// >>> from boosters import EFBConfig
-/// >>> config = EFBConfig(enable=True, max_conflict_rate=0.0)
-/// >>> config.enable
-/// True
+/// Attributes:
+///     enable: Whether to enable EFB.
+///     max_conflict_rate: Maximum conflict rate for bundling features.
+///
+/// Examples:
+///     >>> config = EFBConfig(enable=True, max_conflict_rate=0.0)
+///     >>> config.enable
+///     True
 #[gen_stub_pyclass]
 #[pyclass(name = "EFBConfig", module = "boosters._boosters_rs", get_all, set_all)]
 #[derive(Clone, Debug)]
@@ -32,12 +34,9 @@ pub struct PyEFBConfig {
 impl PyEFBConfig {
     /// Create a new EFBConfig.
     ///
-    /// Parameters
-    /// ----------
-    /// enable : bool, default=True
-    ///     Whether to enable EFB.
-    /// max_conflict_rate : float, default=0.0
-    ///     Maximum conflict rate for bundling. Must be in [0, 1).
+    /// Args:
+    ///     enable: Whether to enable EFB. Default: True.
+    ///     max_conflict_rate: Maximum conflict rate. Must be in [0, 1). Default: 0.0.
     #[new]
     #[pyo3(signature = (enable = true, max_conflict_rate = 0.0))]
     fn new(enable: bool, max_conflict_rate: f64) -> PyResult<Self> {

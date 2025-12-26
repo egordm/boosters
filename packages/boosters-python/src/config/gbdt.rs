@@ -4,8 +4,8 @@ use pyo3::prelude::*;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use super::{
-    PyCategoricalConfig, PyEFBConfig, PyLinearLeavesConfig, PyRegularizationConfig,
-    PySamplingConfig, PyTreeConfig,
+    PyCategoricalConfig, PyEFBConfig, PyGrowthStrategy, PyLinearLeavesConfig,
+    PyRegularizationConfig, PySamplingConfig, PyTreeConfig,
 };
 use crate::error::BoostersError;
 use crate::metrics::PyMetric;
@@ -17,43 +17,26 @@ use crate::objectives::PyObjective;
 /// It accepts nested configuration objects for tree structure, regularization,
 /// sampling, etc.
 ///
-/// Parameters
-/// ----------
-/// n_estimators : int, default=100
-///     Number of boosting rounds (trees to train).
-/// learning_rate : float, default=0.3
-///     Step size shrinkage. Smaller values require more trees but often
-///     produce better models. Typical range: 0.01 - 0.3.
-/// objective : Objective, default=SquaredLoss()
-///     Loss function for training.
-/// metric : Metric or None, default=None
-///     Evaluation metric. If None, uses objective's default metric.
-/// tree : TreeConfig or None, default=None
-///     Tree structure parameters. If None, uses defaults.
-/// regularization : RegularizationConfig or None, default=None
-///     L1/L2 regularization parameters. If None, uses defaults.
-/// sampling : SamplingConfig or None, default=None
-///     Row and column subsampling parameters. If None, uses defaults.
-/// categorical : CategoricalConfig or None, default=None
-///     Categorical feature handling. If None, uses defaults.
-/// efb : EFBConfig or None, default=None
-///     Exclusive Feature Bundling config. If None, uses defaults.
-/// linear_leaves : LinearLeavesConfig or None, default=None
-///     Linear model in leaves config. If None, disabled.
-/// early_stopping_rounds : int or None, default=None
-///     Stop if no improvement for this many rounds. None disables.
-/// seed : int, default=42
-///     Random seed for reproducibility.
+/// Args:
+///     n_estimators: Number of boosting rounds (trees to train). Default: 100.
+///     learning_rate: Step size shrinkage (0.01 - 0.3 typical). Default: 0.3.
+///     objective: Loss function for training. Default: SquaredLoss().
+///     metric: Evaluation metric. None uses objective's default.
+///     tree: Tree structure parameters.
+///     regularization: L1/L2 regularization parameters.
+///     sampling: Row and column subsampling parameters.
+///     categorical: Categorical feature handling.
+///     efb: Exclusive Feature Bundling config.
+///     linear_leaves: Linear model in leaves config. None = disabled.
+///     early_stopping_rounds: Stop if no improvement for this many rounds.
+///     seed: Random seed for reproducibility. Default: 42.
 ///
-/// Examples
-/// --------
-/// >>> from boosters import GBDTConfig, SquaredLoss, TreeConfig
-/// >>> config = GBDTConfig(
-/// ...     n_estimators=500,
-/// ...     learning_rate=0.1,
-/// ...     objective=SquaredLoss(),
-/// ...     tree=TreeConfig(max_depth=6),
-/// ... )
+/// Examples:
+///     >>> config = GBDTConfig(
+///     ...     n_estimators=500,
+///     ...     learning_rate=0.1,
+///     ...     tree=TreeConfig(max_depth=6),
+///     ... )
 #[gen_stub_pyclass]
 #[pyclass(name = "GBDTConfig", module = "boosters._boosters_rs")]
 #[derive(Debug)]
@@ -91,13 +74,13 @@ pub struct PyGBDTConfig {
 
     // Store objective and metric as Python objects since the enum
     // doesn't implement IntoPy (it only implements FromPyObject for extraction)
-    objective_obj: PyObject,
-    metric_obj: Option<PyObject>,
+    objective_obj: Py<PyAny>,
+    metric_obj: Option<Py<PyAny>>,
 }
 
 impl Clone for PyGBDTConfig {
     fn clone(&self) -> Self {
-        Python::with_gil(|py| Self {
+        Python::attach(|py| Self {
             n_estimators: self.n_estimators,
             learning_rate: self.learning_rate,
             objective_obj: self.objective_obj.clone_ref(py),
@@ -137,7 +120,9 @@ impl PyGBDTConfig {
         py: Python<'_>,
         n_estimators: u32,
         learning_rate: f64,
+        #[gen_stub(override_type(type_repr = "SquaredLoss | AbsoluteLoss | PoissonLoss | LogisticLoss | HingeLoss | HuberLoss | PinballLoss | ArctanLoss | SoftmaxLoss | LambdaRankLoss | None"))]
         objective: Option<&Bound<'_, PyAny>>,
+        #[gen_stub(override_type(type_repr = "Rmse | Mae | Mape | LogLoss | Auc | Accuracy | Ndcg | None"))]
         metric: Option<&Bound<'_, PyAny>>,
         tree: Option<PyTreeConfig>,
         regularization: Option<PyRegularizationConfig>,
@@ -208,13 +193,15 @@ impl PyGBDTConfig {
 
     /// Get the objective as a Python object.
     #[getter]
-    fn objective(&self, py: Python<'_>) -> PyObject {
+    #[gen_stub(override_return_type(type_repr = "SquaredLoss | AbsoluteLoss | PoissonLoss | LogisticLoss | HingeLoss | HuberLoss | PinballLoss | ArctanLoss | SoftmaxLoss | LambdaRankLoss"))]
+    fn objective(&self, py: Python<'_>) -> Py<PyAny> {
         self.objective_obj.clone_ref(py)
     }
 
     /// Get the metric as a Python object (or None).
     #[getter]
-    fn metric(&self, py: Python<'_>) -> Option<PyObject> {
+    #[gen_stub(override_return_type(type_repr = "Rmse | Mae | Mape | LogLoss | Auc | Accuracy | Ndcg | None"))]
+    fn metric(&self, py: Python<'_>) -> Option<Py<PyAny>> {
         self.metric_obj.as_ref().map(|m| m.clone_ref(py))
     }
 
@@ -235,7 +222,7 @@ impl PyGBDTConfig {
 impl Default for PyGBDTConfig {
     fn default() -> Self {
         // Note: This requires Python GIL. Use new() in Python context.
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let squared_loss = crate::objectives::PySquaredLoss::default();
             Self {
                 n_estimators: 100,
@@ -279,8 +266,8 @@ impl PyGBDTConfig {
 
         // Convert tree config
         // Note: PyTreeConfig.max_depth is i32 (-1 means unlimited), core uses u32
-        let growth_strategy = match self.tree.growth_strategy.as_str() {
-            "depthwise" => {
+        let growth_strategy = match self.tree.growth_strategy {
+            PyGrowthStrategy::Depthwise => {
                 let max_depth = if self.tree.max_depth < 0 {
                     6 // Default depth when unlimited
                 } else {
@@ -288,17 +275,9 @@ impl PyGBDTConfig {
                 };
                 GrowthStrategy::DepthWise { max_depth }
             }
-            "leafwise" => GrowthStrategy::LeafWise {
+            PyGrowthStrategy::Leafwise => GrowthStrategy::LeafWise {
                 max_leaves: self.tree.n_leaves,
             },
-            _ => {
-                let max_depth = if self.tree.max_depth < 0 {
-                    6
-                } else {
-                    self.tree.max_depth as u32
-                };
-                GrowthStrategy::DepthWise { max_depth }
-            }
         };
 
         let tree = TreeParams {

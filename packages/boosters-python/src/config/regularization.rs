@@ -7,12 +7,15 @@ use crate::error::BoostersError;
 
 /// Configuration for L1/L2 regularization.
 ///
-/// Examples
-/// --------
-/// >>> from boosters import RegularizationConfig
-/// >>> config = RegularizationConfig(l1=0.1, l2=1.0)
-/// >>> config.l2
-/// 1.0
+/// Attributes:
+///     l1: L1 (Lasso) regularization term on leaf weights.
+///     l2: L2 (Ridge) regularization term on leaf weights.
+///     min_hessian: Minimum sum of hessians required in a leaf.
+///
+/// Examples:
+///     >>> config = RegularizationConfig(l1=0.1, l2=1.0)
+///     >>> config.l2
+///     1.0
 #[gen_stub_pyclass]
 #[pyclass(name = "RegularizationConfig", module = "boosters._boosters_rs", get_all, set_all)]
 #[derive(Clone, Debug)]
@@ -30,14 +33,10 @@ pub struct PyRegularizationConfig {
 impl PyRegularizationConfig {
     /// Create a new RegularizationConfig.
     ///
-    /// Parameters
-    /// ----------
-    /// l1 : float, default=0.0
-    ///     L1 regularization term.
-    /// l2 : float, default=1.0
-    ///     L2 regularization term.
-    /// min_hessian : float, default=1.0
-    ///     Minimum sum of hessians in a leaf.
+    /// Args:
+    ///     l1: L1 regularization term. Default: 0.0.
+    ///     l2: L2 regularization term. Default: 1.0.
+    ///     min_hessian: Minimum sum of hessians in a leaf. Default: 1.0.
     #[new]
     #[pyo3(signature = (l1 = 0.0, l2 = 1.0, min_hessian = 1.0))]
     fn new(l1: f64, l2: f64, min_hessian: f64) -> PyResult<Self> {

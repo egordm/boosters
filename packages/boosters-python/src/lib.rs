@@ -16,8 +16,8 @@ use pyo3::prelude::*;
 use pyo3_stub_gen::define_stub_info_gatherer;
 
 use config::{
-    PyCategoricalConfig, PyEFBConfig, PyGBDTConfig, PyGBLinearConfig, PyLinearLeavesConfig,
-    PyRegularizationConfig, PySamplingConfig, PyTreeConfig,
+    PyCategoricalConfig, PyEFBConfig, PyGBDTConfig, PyGBLinearConfig, PyGrowthStrategy,
+    PyLinearLeavesConfig, PyRegularizationConfig, PySamplingConfig, PyTreeConfig,
 };
 use data::{PyDataset, PyEvalSet};
 use metrics::{PyAccuracy, PyAuc, PyLogLoss, PyMae, PyMape, PyNdcg, PyRmse};
@@ -37,6 +37,7 @@ fn _boosters_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Config types
     m.add_class::<PyTreeConfig>()?;
+    m.add_class::<PyGrowthStrategy>()?;
     m.add_class::<PyRegularizationConfig>()?;
     m.add_class::<PySamplingConfig>()?;
     m.add_class::<PyCategoricalConfig>()?;

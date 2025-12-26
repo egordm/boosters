@@ -1,10 +1,9 @@
 //! GBLinear Model Python bindings.
 
-use ndarray::Array2;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
-use boosters::data::{transpose_to_c_order, Dataset as CoreDataset};
+use boosters::data::transpose_to_c_order;
 use boosters::training::EvalSet as CoreEvalSet;
 
 use crate::config::PyGBLinearConfig;
@@ -16,31 +15,16 @@ use crate::error::BoostersError;
 /// GBLinear uses gradient boosting to train a linear model via coordinate
 /// descent. Simpler than GBDT but can be effective for linear relationships.
 ///
-/// # Example
+/// Attributes:
+///     coef_: Model coefficients after fitting.
+///     intercept_: Model intercept after fitting.
+///     is_fitted: Whether the model has been trained.
+///     n_features_in_: Number of features seen during fit.
 ///
-/// ```python
-/// from boosters import GBLinearModel, GBLinearConfig, Dataset
-/// import numpy as np
-///
-/// # Create training data
-/// X = np.random.rand(1000, 10).astype(np.float32)
-/// y = np.random.rand(1000).astype(np.float32)
-/// train = Dataset(X, y)
-///
-/// # Train with default config
-/// model = GBLinearModel().fit(train)
-///
-/// # Or with custom config
-/// config = GBLinearConfig(n_estimators=50, learning_rate=0.3, l2=0.1)
-/// model = GBLinearModel(config=config).fit(train)
-///
-/// # Predict
-/// predictions = model.predict(X_test)
-///
-/// # Access weights
-/// print(model.coef_)      # shape: (n_features,) or (n_features, n_outputs)
-/// print(model.intercept_)  # shape: () or (n_outputs,)
-/// ```
+/// Examples:
+///     >>> config = GBLinearConfig(n_estimators=50, learning_rate=0.3)
+///     >>> model = GBLinearModel(config=config).fit(train)
+///     >>> predictions = model.predict(X_test)
 #[gen_stub_pyclass]
 #[pyclass(name = "GBLinearModel", module = "boosters._boosters_rs")]
 pub struct PyGBLinearModel {
@@ -117,14 +101,14 @@ impl PyGBLinearModel {
     /// Model coefficients (weights).
     ///
     /// Returns:
-    ///     NumPy array with shape:
-    ///     - `(n_features,)` for single-output models
-    ///     - `(n_features, n_outputs)` for multi-output models
+    ///     Array with shape (n_features,) for single-output models
+    ///     or (n_features, n_outputs) for multi-output models.
     ///
     /// Raises:
     ///     RuntimeError: If model has not been fitted.
     #[getter]
-    pub fn coef_(&self, py: Python<'_>) -> PyResult<PyObject> {
+    #[gen_stub(override_return_type(type_repr = "numpy.ndarray", imports = ("numpy",)))]
+    pub fn coef_(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         use numpy::{PyArray1, PyArray2};
 
         let model = self.inner.as_ref().ok_or_else(|| BoostersError::NotFitted {
@@ -152,14 +136,14 @@ impl PyGBLinearModel {
     /// Model intercept (bias).
     ///
     /// Returns:
-    ///     NumPy array with shape:
-    ///     - `()` (scalar) for single-output models
-    ///     - `(n_outputs,)` for multi-output models
+    ///     Scalar for single-output models or array of shape (n_outputs,)
+    ///     for multi-output models.
     ///
     /// Raises:
     ///     RuntimeError: If model has not been fitted.
     #[getter]
-    pub fn intercept_(&self, py: Python<'_>) -> PyResult<PyObject> {
+    #[gen_stub(override_return_type(type_repr = "numpy.ndarray", imports = ("numpy",)))]
+    pub fn intercept_(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         use numpy::PyArray1;
 
         let model = self.inner.as_ref().ok_or_else(|| BoostersError::NotFitted {
@@ -196,7 +180,7 @@ impl PyGBLinearModel {
     /// Returns a dict mapping eval set names to dicts of metric names to lists
     /// of scores per iteration.
     #[getter]
-    pub fn eval_results(&self, py: Python<'_>) -> Option<PyObject> {
+    pub fn eval_results(&self, py: Python<'_>) -> Option<Py<PyAny>> {
         self.eval_results.as_ref().map(|r| r.clone_ref(py))
     }
 
@@ -223,27 +207,26 @@ impl PyGBLinearModel {
     /// Returns transformed predictions (e.g., probabilities for classification).
     ///
     /// Args:
-    ///     features: Feature array of shape `(n_samples, n_features)` or Dataset.
+    ///     data: Dataset containing features.
     ///
     /// Returns:
-    ///     NumPy array with predictions of shape `(n_samples, n_outputs)`.
+    ///     Predictions of shape (n_samples, n_outputs).
     ///     For single-output models, n_outputs is 1.
     ///
     /// Raises:
     ///     RuntimeError: If model has not been fitted.
     ///     ValueError: If features have wrong shape.
     ///
-    /// Example:
-    ///     ```python
-    ///     predictions = model.predict(X_test)  # shape: (n_samples, n_outputs)
-    ///     ```
-    #[pyo3(signature = (features))]
+    /// Examples:
+    ///     >>> predictions = model.predict(test_data)
+    #[pyo3(signature = (data))]
+    #[gen_stub(override_return_type(type_repr = "numpy.ndarray", imports = ("numpy",)))]
     pub fn predict(
         &self,
         py: Python<'_>,
-        features: &Bound<'_, PyAny>,
-    ) -> PyResult<PyObject> {
-        self.predict_internal(py, features, false)
+        #[gen_stub(override_type(type_repr = "Dataset"))] data: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        self.predict_internal(py, data, false)
     }
 
     /// Make raw (untransformed) predictions on features.
@@ -252,34 +235,33 @@ impl PyGBLinearModel {
     /// For classification this means logits instead of probabilities.
     ///
     /// Args:
-    ///     features: Feature array of shape `(n_samples, n_features)` or Dataset.
+    ///     data: Dataset containing features.
     ///
     /// Returns:
-    ///     NumPy array with raw scores of shape `(n_samples, n_outputs)`.
+    ///     Raw scores of shape (n_samples, n_outputs).
     ///     For single-output models, n_outputs is 1.
     ///
     /// Raises:
     ///     RuntimeError: If model has not been fitted.
     ///     ValueError: If features have wrong shape.
     ///
-    /// Example:
-    ///     ```python
-    ///     raw_margins = model.predict_raw(X_test)  # shape: (n_samples, n_outputs)
-    ///     ```
-    #[pyo3(signature = (features))]
+    /// Examples:
+    ///     >>> raw_margins = model.predict_raw(test_data)
+    #[pyo3(signature = (data))]
+    #[gen_stub(override_return_type(type_repr = "numpy.ndarray", imports = ("numpy",)))]
     pub fn predict_raw(
         &self,
         py: Python<'_>,
-        features: &Bound<'_, PyAny>,
-    ) -> PyResult<PyObject> {
-        self.predict_internal(py, features, true)
+        #[gen_stub(override_type(type_repr = "Dataset"))] data: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        self.predict_internal(py, data, true)
     }
 
     /// Train the model on a dataset.
     ///
     /// Args:
     ///     train: Training dataset containing features and labels.
-    ///     eval_set: Optional validation set(s) for early stopping and evaluation.
+    ///     eval_set: Validation set(s) for early stopping and evaluation.
     ///
     /// Returns:
     ///     Self (for method chaining).
@@ -290,7 +272,8 @@ impl PyGBLinearModel {
     pub fn fit<'py>(
         mut slf: PyRefMut<'py, Self>,
         py: Python<'py>,
-        train: &Bound<'py, PyAny>,
+        #[gen_stub(override_type(type_repr = "Dataset"))] train: &Bound<'py, PyAny>,
+        #[gen_stub(override_type(type_repr = "EvalSet | list[EvalSet] | None"))]
         eval_set: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<PyRefMut<'py, Self>> {
         // Extract PyDataset from train argument
@@ -329,7 +312,7 @@ impl PyGBLinearModel {
 
         // Train with GIL released
         let n_threads = 0;
-        let trained_model = py.allow_threads(|| {
+        let trained_model = py.detach(|| {
             boosters::GBLinearModel::train(core_train, &eval_set_refs, core_config, n_threads)
         });
 
@@ -355,21 +338,23 @@ impl PyGBLinearModel {
     fn predict_internal(
         &self,
         py: Python<'_>,
-        features: &Bound<'_, PyAny>,
+        data: &Bound<'_, PyAny>,
         raw_score: bool,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         use numpy::PyArray2;
 
         let model = self.inner.as_ref().ok_or_else(|| BoostersError::NotFitted {
             method: "predict".to_string(),
         })?;
 
-        // Extract features array
-        let features_array = Self::extract_features(py, features)?;
+        // Extract dataset
+        let dataset_py = extract_dataset(py, data)?;
+        let dataset = dataset_py.bind(py).borrow();
+        let core_dataset = dataset.as_core();
 
         // Validate feature count
         let expected_features = model.meta().n_features;
-        let actual_features = features_array.nrows();
+        let actual_features = core_dataset.n_features();
         if actual_features != expected_features {
             return Err(BoostersError::ValidationError(format!(
                 "Expected {} features, got {}",
@@ -378,11 +363,11 @@ impl PyGBLinearModel {
             .into());
         }
 
-        // Create temporary dataset for prediction
-        let pred_dataset = CoreDataset::new(features_array.view(), None, None);
-
         // Predict with GIL released
-        let output = py.allow_threads(|| {
+        // Note: GBLinearModel::predict takes Dataset by value, so we clone
+        let features_owned = core_dataset.features().view().to_owned();
+        let output = py.detach(|| {
+            let pred_dataset = boosters::data::Dataset::new(features_owned.view(), None, None);
             if raw_score {
                 model.predict_raw(pred_dataset)
             } else {
@@ -396,20 +381,6 @@ impl PyGBLinearModel {
         let output_t = transpose_to_c_order(output.view());
         let arr = PyArray2::from_owned_array(py, output_t);
         Ok(arr.into_any().unbind())
-    }
-
-    /// Extract features array from various Python input types.
-    fn extract_features(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Array2<f32>> {
-        // Try as Dataset first (Rust or Python wrapper)
-        if let Ok(dataset_py) = extract_dataset(py, obj) {
-            let dataset = dataset_py.bind(py).borrow();
-            // CoreDataset already stores features in [n_features, n_samples] format
-            return Ok(dataset.as_core().features().view().to_owned());
-        }
-
-        // Fall back to numpy array - need to transpose from [n_samples, n_features]
-        let features_view: numpy::PyReadonlyArray2<'_, f32> = obj.extract()?;
-        Ok(transpose_to_c_order(features_view.as_array()))
     }
 
     /// Extract evaluation sets from Python input, keeping PyRef borrows alive.

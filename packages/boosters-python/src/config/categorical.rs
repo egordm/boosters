@@ -10,12 +10,15 @@ use crate::error::BoostersError;
 /// Boosters supports native categorical splits (like LightGBM) using
 /// bitset-based multi-way splits rather than one-hot encoding.
 ///
-/// Examples
-/// --------
-/// >>> from boosters import CategoricalConfig
-/// >>> config = CategoricalConfig(max_categories=256)
-/// >>> config.max_categories
-/// 256
+/// Attributes:
+///     max_categories: Maximum categories for native categorical splits.
+///     min_category_count: Minimum samples per category.
+///     max_onehot: Maximum categories for one-hot encoding.
+///
+/// Examples:
+///     >>> config = CategoricalConfig(max_categories=256)
+///     >>> config.max_categories
+///     256
 #[gen_stub_pyclass]
 #[pyclass(name = "CategoricalConfig", module = "boosters._boosters_rs", get_all, set_all)]
 #[derive(Clone, Debug)]
@@ -36,14 +39,10 @@ pub struct PyCategoricalConfig {
 impl PyCategoricalConfig {
     /// Create a new CategoricalConfig.
     ///
-    /// Parameters
-    /// ----------
-    /// max_categories : int, default=256
-    ///     Maximum categories for native categorical splits.
-    /// min_category_count : int, default=10
-    ///     Minimum samples per category.
-    /// max_onehot : int, default=4
-    ///     Maximum categories for one-hot encoding.
+    /// Args:
+    ///     max_categories: Maximum categories for native splits. Default: 256.
+    ///     min_category_count: Minimum samples per category. Default: 10.
+    ///     max_onehot: Maximum categories for one-hot encoding. Default: 4.
     #[new]
     #[pyo3(signature = (max_categories = 256, min_category_count = 10, max_onehot = 4))]
     fn new(max_categories: u32, min_category_count: u32, max_onehot: u32) -> PyResult<Self> {

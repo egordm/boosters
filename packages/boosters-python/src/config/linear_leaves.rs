@@ -10,12 +10,18 @@ use crate::error::BoostersError;
 /// When enabled, each leaf fits a linear regression model on its samples
 /// instead of using a constant value.
 ///
-/// Examples
-/// --------
-/// >>> from boosters import LinearLeavesConfig
-/// >>> config = LinearLeavesConfig(enable=True, l2=0.01)
-/// >>> config.enable
-/// True
+/// Attributes:
+///     enable: Whether to enable linear models in leaves.
+///     l2: L2 regularization for linear coefficients.
+///     l1: L1 regularization for linear coefficients.
+///     max_iter: Maximum coordinate descent iterations per leaf.
+///     tolerance: Convergence tolerance.
+///     min_samples: Minimum samples required to fit a linear model.
+///
+/// Examples:
+///     >>> config = LinearLeavesConfig(enable=True, l2=0.01)
+///     >>> config.enable
+///     True
 #[gen_stub_pyclass]
 #[pyclass(name = "LinearLeavesConfig", module = "boosters._boosters_rs", get_all, set_all)]
 #[derive(Clone, Debug)]
@@ -39,20 +45,13 @@ pub struct PyLinearLeavesConfig {
 impl PyLinearLeavesConfig {
     /// Create a new LinearLeavesConfig.
     ///
-    /// Parameters
-    /// ----------
-    /// enable : bool, default=False
-    ///     Whether to enable linear leaves.
-    /// l2 : float, default=0.01
-    ///     L2 regularization.
-    /// l1 : float, default=0.0
-    ///     L1 regularization.
-    /// max_iter : int, default=10
-    ///     Maximum coordinate descent iterations.
-    /// tolerance : float, default=1e-6
-    ///     Convergence tolerance.
-    /// min_samples : int, default=50
-    ///     Minimum samples to fit linear model.
+    /// Args:
+    ///     enable: Whether to enable linear leaves. Default: False.
+    ///     l2: L2 regularization. Default: 0.01.
+    ///     l1: L1 regularization. Default: 0.0.
+    ///     max_iter: Maximum coordinate descent iterations. Default: 10.
+    ///     tolerance: Convergence tolerance. Default: 1e-6.
+    ///     min_samples: Minimum samples to fit linear model. Default: 50.
     #[new]
     #[pyo3(signature = (
         enable = false,

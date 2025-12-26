@@ -1,10 +1,11 @@
 //! GBDT Model Python bindings.
 
 use ndarray::Array2;
+use numpy::PyArray2;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
-use boosters::data::{transpose_to_c_order, Dataset as CoreDataset};
+use boosters::data::transpose_to_c_order;
 use boosters::explainability::ShapValues;
 use boosters::training::EvalSet as CoreEvalSet;
 
@@ -17,27 +18,20 @@ use crate::error::BoostersError;
 /// This is the main model class for training and prediction with gradient
 /// boosted decision trees.
 ///
-/// # Example
+/// Attributes:
+///     is_fitted: Whether the model has been fitted.
+///     n_trees: Number of trees in the fitted model.
+///     n_features: Number of features the model was trained on.
+///     best_iteration: Best iteration from early stopping.
+///     best_score: Best score from early stopping.
+///     eval_results: Evaluation results from training.
+///     config: Model configuration.
 ///
-/// ```python
-/// from boosters import GBDTModel, GBDTConfig, Dataset
-/// import numpy as np
-///
-/// # Create training data
-/// X = np.random.rand(1000, 10).astype(np.float32)
-/// y = np.random.rand(1000).astype(np.float32)
-/// train = Dataset(X, y)
-///
-/// # Train with default config
-/// model = GBDTModel().fit(train)
-///
-/// # Or with custom config
-/// config = GBDTConfig(n_estimators=50, learning_rate=0.1)
-/// model = GBDTModel(config=config).fit(train)
-///
-/// # Predict
-/// predictions = model.predict(X_test)
-/// ```
+/// Examples:
+///     >>> from boosters import GBDTModel, Dataset
+///     >>> train = Dataset(X, y)
+///     >>> model = GBDTModel().fit(train)
+///     >>> predictions = model.predict(train)
 #[gen_stub_pyclass]
 #[pyclass(name = "GBDTModel", module = "boosters._boosters_rs")]
 pub struct PyGBDTModel {
@@ -148,13 +142,11 @@ impl PyGBDTModel {
     /// Returns a dict mapping eval set names to dicts of metric names to lists
     /// of scores per iteration.
     ///
-    /// Example:
-    ///     ```python
-    ///     results = model.eval_results
-    ///     # {"train": {"rmse": [0.5, 0.4, ...]}, "valid": {"rmse": [0.6, 0.5, ...]}}
-    ///     ```
+    /// Examples:
+    ///     >>> results = model.eval_results
+    ///     >>> # {"train": {"rmse": [0.5, 0.4, ...]}}
     #[getter]
-    pub fn eval_results(&self, py: Python<'_>) -> Option<PyObject> {
+    pub fn eval_results(&self, py: Python<'_>) -> Option<Py<PyAny>> {
         self.eval_results.as_ref().map(|r| r.clone_ref(py))
     }
 
@@ -167,17 +159,21 @@ impl PyGBDTModel {
     /// Get feature importance scores.
     ///
     /// Args:
-    ///     importance_type: Type of importance to compute.
-    ///         - "split" (default): Number of times a feature is used to split.
-    ///         - "gain": Total gain achieved by splits on this feature.
+    ///     importance_type: Type of importance: "split" or "gain".
     ///
     /// Returns:
-    ///     NumPy array of importance scores, one per feature.
+    ///     Array of importance scores, one per feature.
     ///
     /// Raises:
     ///     ValueError: If model has not been fitted.
     #[pyo3(signature = (importance_type="split"))]
-    pub fn feature_importance(&self, py: Python<'_>, importance_type: &str) -> PyResult<PyObject> {
+    #[gen_stub(override_return_type(type_repr = "numpy.ndarray", imports = ("numpy",)))]
+    pub fn feature_importance(
+        &self,
+        py: Python<'_>,
+        #[gen_stub(override_type(type_repr = "typing.Literal['split', 'gain']", imports = ("typing",)))]
+        importance_type: &str,
+    ) -> PyResult<Py<PyAny>> {
         use boosters::explainability::ImportanceType;
         use numpy::PyArray1;
 
@@ -191,10 +187,7 @@ impl PyGBDTModel {
             other => {
                 return Err(BoostersError::InvalidParameter {
                     name: "importance_type".to_string(),
-                    reason: format!(
-                        "expected 'split' or 'gain', got '{}'",
-                        other
-                    ),
+                    reason: format!("expected 'split' or 'gain', got '{}'", other),
                 }
                 .into())
             }
@@ -213,51 +206,42 @@ impl PyGBDTModel {
     /// Compute SHAP values for feature contribution analysis.
     ///
     /// SHAP (SHapley Additive exPlanations) values show how each feature
-    /// contributes to individual predictions. The values sum to the difference
-    /// between the model's prediction and the base value.
+    /// contributes to individual predictions.
     ///
     /// Args:
-    ///     features: Feature array of shape `(n_samples, n_features)` or Dataset.
+    ///     data: Dataset containing features for SHAP computation.
     ///
     /// Returns:
-    ///     NumPy array with shape `(n_samples, n_features + 1, n_outputs)`.
-    ///     The last feature index contains the base value (expected value).
-    ///     For single-output models, the last dimension is squeezed.
+    ///     Array with shape (n_samples, n_features + 1, n_outputs).
+    ///     The last feature index contains the base value.
     ///
     /// Raises:
     ///     RuntimeError: If model has not been fitted.
     ///     ValueError: If features have wrong shape.
     ///
-    /// Example:
-    ///     ```python
-    ///     # Get SHAP values for test data
-    ///     shap_values = model.shap_values(X_test)
-    ///
-    ///     # For a single sample, contributions sum to prediction - base_value
-    ///     sample_idx = 0
-    ///     feature_contribs = shap_values[sample_idx, :-1, 0]  # All features
-    ///     base_value = shap_values[sample_idx, -1, 0]  # Base value
-    ///     prediction = model.predict(X_test[sample_idx:sample_idx+1])[0]
-    ///     # assert np.isclose(base_value + feature_contribs.sum(), prediction)
-    ///     ```
-    #[pyo3(signature = (features))]
+    /// Examples:
+    ///     >>> shap_values = model.shap_values(test_data)
+    #[pyo3(signature = (data))]
+    #[gen_stub(override_return_type(type_repr = "numpy.ndarray", imports = ("numpy",)))]
     pub fn shap_values(
         &self,
         py: Python<'_>,
-        features: &Bound<'_, PyAny>,
-    ) -> PyResult<PyObject> {
+        data: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyAny>> {
         use numpy::{PyArray2, PyArray3};
 
         let model = self.inner.as_ref().ok_or_else(|| BoostersError::NotFitted {
             method: "shap_values".to_string(),
         })?;
 
-        // Extract features array
-        let features_array = Self::extract_features(py, features)?;
+        // Extract dataset
+        let dataset_py = extract_dataset(py, data)?;
+        let dataset = dataset_py.bind(py).borrow();
+        let core_dataset = dataset.as_core();
 
         // Validate feature count
         let expected_features = model.meta().n_features;
-        let actual_features = features_array.nrows();
+        let actual_features = core_dataset.n_features();
         if actual_features != expected_features {
             return Err(BoostersError::ValidationError(format!(
                 "Expected {} features, got {}",
@@ -266,30 +250,23 @@ impl PyGBDTModel {
             .into());
         }
 
-        // Create temporary dataset for SHAP computation (no labels needed)
-        let shap_dataset = CoreDataset::new(features_array.view(), None, None);
-
         // Compute SHAP values with GIL released
-        let shap_result: Result<ShapValues, _> = py.allow_threads(|| {
-            model.shap_values(&shap_dataset)
-        });
+        let shap_result: Result<ShapValues, _> =
+            py.detach(|| model.shap_values(core_dataset));
 
         match shap_result {
             Ok(shap_values) => {
-                // ShapValues is [n_samples, n_features + 1, n_outputs]
                 let arr = shap_values.as_array();
                 let n_outputs = shap_values.n_outputs();
 
                 if n_outputs == 1 {
                     // Single output: squeeze to [n_samples, n_features + 1]
-                    // Convert f64 to f32 for consistency with predict()
                     let squeezed = arr.slice(ndarray::s![.., .., 0]);
                     let squeezed_owned: Array2<f32> = squeezed.mapv(|v| v as f32);
                     let py_arr = PyArray2::from_owned_array(py, squeezed_owned);
                     Ok(py_arr.into_any().unbind())
                 } else {
-                    // Multi-output: keep 3D [n_samples, n_features + 1, n_outputs]
-                    // Convert f64 to f32
+                    // Multi-output: keep 3D
                     let arr_f32: ndarray::Array3<f32> = arr.mapv(|v| v as f32);
                     let py_arr = PyArray3::from_owned_array(py, arr_f32);
                     Ok(py_arr.into_any().unbind())
@@ -312,73 +289,68 @@ impl PyGBDTModel {
         }
     }
 
-    /// Make predictions on features.
+    /// Make predictions on data.
     ///
     /// Returns transformed predictions (e.g., probabilities for classification).
     ///
     /// Args:
-    ///     features: Feature array of shape `(n_samples, n_features)` or Dataset.
-    ///     n_iterations: Number of trees to use for prediction. If None, uses all trees.
+    ///     data: Dataset containing features for prediction.
+    ///     n_iterations: Number of trees to use. Defaults to all trees.
     ///
     /// Returns:
-    ///     NumPy array with predictions of shape `(n_samples, n_outputs)`.
-    ///     For single-output models, n_outputs is 1.
+    ///     Predictions of shape (n_samples, n_outputs).
     ///
     /// Raises:
     ///     RuntimeError: If model has not been fitted.
     ///     ValueError: If features have wrong shape.
     ///
-    /// Example:
-    ///     ```python
-    ///     predictions = model.predict(X_test)  # shape: (n_samples, n_outputs)
-    ///     ```
-    #[pyo3(signature = (features, n_iterations=None))]
+    /// Examples:
+    ///     >>> predictions = model.predict(test_data)
+    #[pyo3(signature = (data, n_iterations=None))]
+    #[gen_stub(override_return_type(type_repr = "numpy.ndarray", imports = ("numpy",)))]
     pub fn predict(
         &self,
         py: Python<'_>,
-        features: &Bound<'_, PyAny>,
+        data: &Bound<'_, PyAny>,
         n_iterations: Option<usize>,
-    ) -> PyResult<PyObject> {
-        self.predict_internal(py, features, false, n_iterations)
+    ) -> PyResult<Py<PyAny>> {
+        self.predict_internal(py, data, false, n_iterations)
     }
 
-    /// Make raw (untransformed) predictions on features.
+    /// Make raw (untransformed) predictions on data.
     ///
     /// Returns raw margin scores without transformation.
     /// For classification this means logits instead of probabilities.
     ///
     /// Args:
-    ///     features: Feature array of shape `(n_samples, n_features)` or Dataset.
-    ///     n_iterations: Number of trees to use for prediction. If None, uses all trees.
+    ///     data: Dataset containing features for prediction.
+    ///     n_iterations: Number of trees to use. Defaults to all trees.
     ///
     /// Returns:
-    ///     NumPy array with raw scores of shape `(n_samples, n_outputs)`.
-    ///     For single-output models, n_outputs is 1.
+    ///     Raw scores of shape (n_samples, n_outputs).
     ///
     /// Raises:
     ///     RuntimeError: If model has not been fitted.
     ///     ValueError: If features have wrong shape.
     ///
-    /// Example:
-    ///     ```python
-    ///     raw_margins = model.predict_raw(X_test)  # shape: (n_samples, n_outputs)
-    ///     ```
-    #[pyo3(signature = (features, n_iterations=None))]
+    /// Examples:
+    ///     >>> raw_margins = model.predict_raw(test_data)
+    #[pyo3(signature = (data, n_iterations=None))]
+    #[gen_stub(override_return_type(type_repr = "numpy.ndarray", imports = ("numpy",)))]
     pub fn predict_raw(
         &self,
         py: Python<'_>,
-        features: &Bound<'_, PyAny>,
+        data: &Bound<'_, PyAny>,
         n_iterations: Option<usize>,
-    ) -> PyResult<PyObject> {
-        self.predict_internal(py, features, true, n_iterations)
+    ) -> PyResult<Py<PyAny>> {
+        self.predict_internal(py, data, true, n_iterations)
     }
 
     /// Train the model on a dataset.
     ///
     /// Args:
     ///     train: Training dataset containing features and labels.
-    ///     valid: Optional validation set(s) for early stopping and evaluation.
-    ///         Can be a single EvalSet or a list of EvalSets.
+    ///     valid: Validation set(s) for early stopping and evaluation.
     ///
     /// Returns:
     ///     Self (for method chaining).
@@ -386,16 +358,14 @@ impl PyGBDTModel {
     /// Raises:
     ///     ValueError: If training data is invalid or labels are missing.
     ///
-    /// Example:
-    ///     ```python
-    ///     model = GBDTModel().fit(train_dataset)
-    ///     model = GBDTModel().fit(train, valid=[EvalSet("val", val_data)])
-    ///     ```
+    /// Examples:
+    ///     >>> model = GBDTModel().fit(train_dataset)
     #[pyo3(signature = (train, valid=None))]
     pub fn fit<'py>(
         mut slf: PyRefMut<'py, Self>,
         py: Python<'py>,
         train: &Bound<'py, PyAny>,
+        #[gen_stub(override_type(type_repr = "EvalSet | list[EvalSet] | None"))]
         valid: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<PyRefMut<'py, Self>> {
         // Extract PyDataset from train argument
@@ -415,10 +385,10 @@ impl PyGBDTModel {
         let core_config = config.to_core(py)?;
         drop(config);
 
-        // Get reference to the core dataset directly - no conversion needed!
+        // Get reference to the core dataset directly
         let core_train = train_dataset.as_core();
 
-        // Extract eval sets as Vec<(name, PyRef<PyDataset>)> to keep borrows alive
+        // Extract eval sets
         let eval_set_data: Vec<(String, PyRef<'py, PyDataset>)> = if let Some(valid_obj) = valid {
             Self::extract_eval_set_refs(py, valid_obj)?
         } else {
@@ -433,18 +403,14 @@ impl PyGBDTModel {
 
         // Train with GIL released
         let n_threads = 0; // Auto-detect
-        let trained_model = py.allow_threads(|| {
+        let trained_model = py.detach(|| {
             boosters::GBDTModel::train(core_train, &eval_set_refs, core_config, n_threads)
         });
 
         match trained_model {
             Some(model) => {
-                // Store best iteration/score from model metadata
                 slf.best_iteration = model.meta().best_iteration;
-
-                // Store the trained model
                 slf.inner = Some(model);
-
                 Ok(slf)
             }
             None => Err(BoostersError::TrainingError(
@@ -468,27 +434,25 @@ impl PyGBDTModel {
     }
 
     /// Internal prediction method shared by predict and predict_raw.
-    ///
-    /// Always returns 2D array of shape [n_samples, n_outputs] for consistency.
     fn predict_internal(
         &self,
         py: Python<'_>,
-        features: &Bound<'_, PyAny>,
+        data: &Bound<'_, PyAny>,
         raw_score: bool,
         n_iterations: Option<usize>,
-    ) -> PyResult<PyObject> {
-        use numpy::PyArray2;
-
+    ) -> PyResult<Py<PyAny>> {
         let model = self.inner.as_ref().ok_or_else(|| BoostersError::NotFitted {
             method: "predict".to_string(),
         })?;
 
-        // Extract features array
-        let features_array = Self::extract_features(py, features)?;
+        // Extract dataset
+        let dataset_py = extract_dataset(py, data)?;
+        let dataset = dataset_py.bind(py).borrow();
+        let core_dataset = dataset.as_core();
 
         // Validate feature count
         let expected_features = model.meta().n_features;
-        let actual_features = features_array.nrows();
+        let actual_features = core_dataset.n_features();
         if actual_features != expected_features {
             return Err(BoostersError::ValidationError(format!(
                 "Expected {} features, got {}",
@@ -497,62 +461,32 @@ impl PyGBDTModel {
             .into());
         }
 
-        // Create temporary dataset for prediction (no labels needed)
-        let pred_dataset = CoreDataset::new(features_array.view(), None, None);
-
-        // Note: n_iterations is accepted for API compatibility but not used.
-        // Users should train with the desired number of trees.
+        // n_iterations accepted for API compatibility but not used
         let _ = n_iterations;
 
         // Predict with GIL released
         let n_threads = 0;
-        let output = py.allow_threads(|| {
+        let output = py.detach(|| {
             if raw_score {
-                model.predict_raw(&pred_dataset, n_threads)
+                model.predict_raw(core_dataset, n_threads)
             } else {
-                model.predict(&pred_dataset, n_threads)
+                model.predict(core_dataset, n_threads)
             }
         });
 
-        // output shape is [n_groups, n_samples]
         // Transpose to [n_samples, n_groups] for Python convention
-        // Always return 2D array for consistent shape
         let output_t = transpose_to_c_order(output.view());
         let arr = PyArray2::from_owned_array(py, output_t);
         Ok(arr.into_any().unbind())
     }
 
-    /// Extract features array from various Python input types.
-    ///
-    /// Accepts:
-    /// - Direct PyDataset (Rust type)
-    /// - Python wrapper with _inner attribute
-    /// - Raw numpy array [n_samples, n_features]
-    ///
-    /// Returns features transposed to [n_features, n_samples] for core API.
-    fn extract_features(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Array2<f32>> {
-        // Try as Dataset first (Rust or Python wrapper)
-        if let Ok(dataset_py) = extract_dataset(py, obj) {
-            let dataset = dataset_py.bind(py).borrow();
-            // CoreDataset already stores features in [n_features, n_samples] format
-            return Ok(dataset.as_core().features().view().to_owned());
-        }
-
-        // Fall back to numpy array - need to transpose from [n_samples, n_features]
-        let features_view: numpy::PyReadonlyArray2<'_, f32> = obj.extract()?;
-        Ok(transpose_to_c_order(features_view.as_array()))
-    }
-
-    /// Extract evaluation sets from Python input, keeping PyRef borrows alive.
-    ///
-    /// Returns Vec of (name, PyRef<PyDataset>) so the borrows remain valid.
+    /// Extract evaluation sets from Python input.
     fn extract_eval_set_refs<'py>(
         py: Python<'py>,
         valid: &Bound<'py, PyAny>,
     ) -> PyResult<Vec<(String, PyRef<'py, PyDataset>)>> {
         let mut result = Vec::new();
 
-        // Check if it's a list
         if let Ok(list) = valid.downcast::<pyo3::types::PyList>() {
             for item in list.iter() {
                 let eval_set: PyRef<'py, PyEvalSet> = item.extract()?;
@@ -561,7 +495,6 @@ impl PyGBDTModel {
                 result.push((name, dataset));
             }
         } else {
-            // Try as single EvalSet
             let eval_set: PyRef<'py, PyEvalSet> = valid.extract()?;
             let name = eval_set.name().to_string();
             let dataset = eval_set.get_dataset(py);

@@ -6,6 +6,7 @@ import boosters
 from boosters import (
     CategoricalConfig,
     EFBConfig,
+    GrowthStrategy,
     LinearLeavesConfig,
     RegularizationConfig,
     SamplingConfig,
@@ -25,7 +26,7 @@ class TestTreeConfig:
         assert config.n_leaves > 0
         assert isinstance(config.min_samples_leaf, int)
         assert isinstance(config.min_gain_to_split, float)
-        assert config.growth_strategy in ("depthwise", "leafwise")
+        assert config.growth_strategy in (GrowthStrategy.Depthwise, GrowthStrategy.Leafwise)
 
     def test_custom_values(self):
         """Test TreeConfig accepts custom values."""
@@ -35,12 +36,12 @@ class TestTreeConfig:
 
     def test_growth_strategy_leafwise(self):
         """Test leafwise growth strategy is valid."""
-        config = TreeConfig(growth_strategy="leafwise")
-        assert config.growth_strategy == "leafwise"
+        config = TreeConfig(growth_strategy=GrowthStrategy.Leafwise)
+        assert config.growth_strategy == GrowthStrategy.Leafwise
 
     def test_invalid_growth_strategy(self):
-        """Test invalid growth strategy raises ValueError."""
-        with pytest.raises(ValueError, match="growth_strategy"):
+        """Test invalid growth strategy raises TypeError (enum doesn't accept strings)."""
+        with pytest.raises(TypeError):
             # Intentionally passing invalid value to test runtime validation
             TreeConfig(growth_strategy="invalid")  # type: ignore[arg-type]
 

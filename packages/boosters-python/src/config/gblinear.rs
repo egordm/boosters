@@ -12,35 +12,22 @@ use crate::objectives::PyObjective;
 /// GBLinear uses gradient boosting to train a linear model via coordinate
 /// descent. Simpler than GBDT but can be effective for linear relationships.
 ///
-/// Parameters
-/// ----------
-/// n_estimators : int, default=100
-///     Number of boosting rounds.
-/// learning_rate : float, default=0.5
-///     Step size for weight updates. Higher values mean faster convergence
-///     but risk overshooting.
-/// objective : Objective, default=SquaredLoss()
-///     Loss function for training.
-/// metric : Metric or None, default=None
-///     Evaluation metric. If None, uses objective's default metric.
-/// l1 : float, default=0.0
-///     L1 regularization (alpha). Encourages sparse weights.
-/// l2 : float, default=1.0
-///     L2 regularization (lambda). Prevents large weights.
-/// early_stopping_rounds : int or None, default=None
-///     Stop if no improvement for this many rounds. None disables.
-/// seed : int, default=42
-///     Random seed for reproducibility.
+/// Args:
+///     n_estimators: Number of boosting rounds. Default: 100.
+///     learning_rate: Step size for weight updates. Default: 0.5.
+///     objective: Loss function for training. Default: SquaredLoss().
+///     metric: Evaluation metric. None uses objective's default.
+///     l1: L1 regularization (alpha). Encourages sparse weights. Default: 0.0.
+///     l2: L2 regularization (lambda). Prevents large weights. Default: 1.0.
+///     early_stopping_rounds: Stop if no improvement for this many rounds.
+///     seed: Random seed for reproducibility. Default: 42.
 ///
-/// Examples
-/// --------
-/// >>> from boosters import GBLinearConfig, SquaredLoss
-/// >>> config = GBLinearConfig(
-/// ...     n_estimators=200,
-/// ...     learning_rate=0.3,
-/// ...     objective=SquaredLoss(),
-/// ...     l2=0.1,
-/// ... )
+/// Examples:
+///     >>> config = GBLinearConfig(
+///     ...     n_estimators=200,
+///     ...     learning_rate=0.3,
+///     ...     l2=0.1,
+///     ... )
 #[gen_stub_pyclass]
 #[pyclass(name = "GBLinearConfig", module = "boosters._boosters_rs")]
 #[derive(Debug)]
@@ -65,13 +52,13 @@ pub struct PyGBLinearConfig {
     pub seed: u64,
 
     // Store objective and metric as Python objects
-    objective_obj: PyObject,
-    metric_obj: Option<PyObject>,
+    objective_obj: Py<PyAny>,
+    metric_obj: Option<Py<PyAny>>,
 }
 
 impl Clone for PyGBLinearConfig {
     fn clone(&self) -> Self {
-        Python::with_gil(|py| Self {
+        Python::attach(|py| Self {
             n_estimators: self.n_estimators,
             learning_rate: self.learning_rate,
             objective_obj: self.objective_obj.clone_ref(py),
@@ -103,7 +90,9 @@ impl PyGBLinearConfig {
         py: Python<'_>,
         n_estimators: u32,
         learning_rate: f64,
+        #[gen_stub(override_type(type_repr = "SquaredLoss | AbsoluteLoss | PoissonLoss | LogisticLoss | HingeLoss | HuberLoss | PinballLoss | ArctanLoss | SoftmaxLoss | LambdaRankLoss | None"))]
         objective: Option<&Bound<'_, PyAny>>,
+        #[gen_stub(override_type(type_repr = "Rmse | Mae | Mape | LogLoss | Auc | Accuracy | Ndcg | None"))]
         metric: Option<&Bound<'_, PyAny>>,
         l1: f64,
         l2: f64,
@@ -183,13 +172,15 @@ impl PyGBLinearConfig {
 
     /// Get the objective as a Python object.
     #[getter]
-    fn objective(&self, py: Python<'_>) -> PyObject {
+    #[gen_stub(override_return_type(type_repr = "SquaredLoss | AbsoluteLoss | PoissonLoss | LogisticLoss | HingeLoss | HuberLoss | PinballLoss | ArctanLoss | SoftmaxLoss | LambdaRankLoss"))]
+    fn objective(&self, py: Python<'_>) -> Py<PyAny> {
         self.objective_obj.clone_ref(py)
     }
 
     /// Get the metric as a Python object (or None).
     #[getter]
-    fn metric(&self, py: Python<'_>) -> Option<PyObject> {
+    #[gen_stub(override_return_type(type_repr = "Rmse | Mae | Mape | LogLoss | Auc | Accuracy | Ndcg | None"))]
+    fn metric(&self, py: Python<'_>) -> Option<Py<PyAny>> {
         self.metric_obj.as_ref().map(|m| m.clone_ref(py))
     }
 
@@ -240,7 +231,7 @@ impl PyGBLinearConfig {
 
 impl Default for PyGBLinearConfig {
     fn default() -> Self {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let squared_loss = crate::objectives::PySquaredLoss::default();
             Self {
                 n_estimators: 100,

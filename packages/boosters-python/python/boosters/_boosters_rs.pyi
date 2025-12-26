@@ -2,6 +2,9 @@
 # ruff: noqa: E501, F401
 
 import builtins
+import enum
+import numpy
+import numpy.typing
 import typing
 
 @typing.final
@@ -71,12 +74,15 @@ class CategoricalConfig:
     Boosters supports native categorical splits (like LightGBM) using
     bitset-based multi-way splits rather than one-hot encoding.
     
-    Examples
-    --------
-    >>> from boosters import CategoricalConfig
-    >>> config = CategoricalConfig(max_categories=256)
-    >>> config.max_categories
-    256
+    Attributes:
+        max_categories: Maximum categories for native categorical splits.
+        min_category_count: Minimum samples per category.
+        max_onehot: Maximum categories for one-hot encoding.
+    
+    Examples:
+        >>> config = CategoricalConfig(max_categories=256)
+        >>> config.max_categories
+        256
     """
     @property
     def max_categories(self) -> builtins.int:
@@ -118,55 +124,33 @@ class CategoricalConfig:
         r"""
         Create a new CategoricalConfig.
         
-        Parameters
-        ----------
-        max_categories : int, default=256
-            Maximum categories for native categorical splits.
-        min_category_count : int, default=10
-            Minimum samples per category.
-        max_onehot : int, default=4
-            Maximum categories for one-hot encoding.
+        Args:
+            max_categories: Maximum categories for native splits. Default: 256.
+            min_category_count: Minimum samples per category. Default: 10.
+            max_onehot: Maximum categories for one-hot encoding. Default: 4.
         """
     def __repr__(self) -> builtins.str: ...
 
 @typing.final
 class Dataset:
     r"""
-    Dataset holding features, labels, and optional metadata.
+    Internal dataset holding features, labels, and optional metadata.
     
-    This class wraps NumPy arrays or pandas DataFrames for use with boosters models.
-    Data is converted to an internal representation on construction for efficient
-    training and prediction.
+    This is a low-level binding that accepts pre-validated numpy arrays.
+    Use the Python `Dataset` wrapper class for user-facing functionality.
     
-    # Data Layout
+    Note:
+        This class expects C-contiguous float32 arrays. The Python wrapper
+        handles all type conversion, validation, and DataFrame support.
     
-    - C-contiguous (row-major) float32 arrays provide optimal performance
-    - F-contiguous arrays are automatically converted to C-order
-    - float64 arrays are supported but will be converted to float32
-    
-    # Categorical Features
-    
-    Categorical features can be:
-    1. Auto-detected from pandas categorical dtype
-    2. Specified explicitly via `categorical_features` parameter
-    
-    # Missing Values
-    
-    NaN values in features are treated as missing (like XGBoost).
-    Inf values in features or NaN/Inf in labels raise errors.
-    
-    # Example
-    
-    ```python
-    import numpy as np
-    from boosters import Dataset
-    
-    X = np.random.rand(100, 10).astype(np.float32)
-    y = np.random.rand(100).astype(np.float32)
-    
-    dataset = Dataset(X, y)
-    print(f"Samples: {dataset.n_samples}, Features: {dataset.n_features}")
-    ```
+    Attributes:
+        n_samples: Number of samples in the dataset.
+        n_features: Number of features in the dataset.
+        has_labels: Whether labels are present.
+        has_weights: Whether weights are present.
+        feature_names: Feature names if provided.
+        categorical_features: Indices of categorical features.
+        shape: Shape as (n_samples, n_features).
     """
     @property
     def n_samples(self) -> builtins.int:
@@ -203,24 +187,19 @@ class Dataset:
         r"""
         Shape of the features array as (n_samples, n_features).
         """
-    def __new__(cls, features: typing.Any, labels: typing.Optional[typing.Any] = None, weights: typing.Optional[typing.Any] = None, groups: typing.Optional[typing.Any] = None, feature_names: typing.Optional[typing.Sequence[builtins.str]] = None, categorical_features: typing.Optional[typing.Sequence[builtins.int]] = None) -> Dataset:
+    def __new__(cls, features: numpy.typing.NDArray[numpy.float32], labels: numpy.ndarray | None = None, weights: numpy.ndarray | None = None, feature_names: typing.Optional[typing.Sequence[builtins.str]] = None, categorical_features: typing.Optional[typing.Sequence[builtins.int]] = None) -> Dataset:
         r"""
-        Create a new Dataset from features and optional labels.
+        Create a new Dataset from pre-validated numpy arrays.
         
         Args:
-            features: 2D NumPy array or pandas DataFrame of shape (n_samples, n_features)
-            labels: Optional 1D array of shape (n_samples,)
-            weights: Optional 1D array of sample weights (n_samples,)
-            groups: Optional 1D array of group labels for ranking (not yet implemented)
-            feature_names: Optional list of feature names
-            categorical_features: Optional list of categorical feature indices
+            features: C-contiguous float32 array of shape (n_samples, n_features).
+            labels: C-contiguous float32 array of shape (n_samples,), or None.
+            weights: C-contiguous float32 array of shape (n_samples,), or None.
+            feature_names: List of feature names, or None.
+            categorical_features: List of categorical feature indices, or None.
         
         Returns:
-            Dataset ready for training or prediction
-        
-        Raises:
-            ValueError: If data is invalid (shape mismatch, Inf values, etc.)
-            TypeError: If data types are unsupported
+            Dataset ready for training or prediction.
         """
     def __repr__(self) -> builtins.str: ...
 
@@ -232,12 +211,14 @@ class EFBConfig:
     EFB bundles mutually exclusive features to reduce memory and computation,
     similar to LightGBM's implementation.
     
-    Examples
-    --------
-    >>> from boosters import EFBConfig
-    >>> config = EFBConfig(enable=True, max_conflict_rate=0.0)
-    >>> config.enable
-    True
+    Attributes:
+        enable: Whether to enable EFB.
+        max_conflict_rate: Maximum conflict rate for bundling features.
+    
+    Examples:
+        >>> config = EFBConfig(enable=True, max_conflict_rate=0.0)
+        >>> config.enable
+        True
     """
     @property
     def enable(self) -> builtins.bool:
@@ -265,12 +246,9 @@ class EFBConfig:
         r"""
         Create a new EFBConfig.
         
-        Parameters
-        ----------
-        enable : bool, default=True
-            Whether to enable EFB.
-        max_conflict_rate : float, default=0.0
-            Maximum conflict rate for bundling. Must be in [0, 1).
+        Args:
+            enable: Whether to enable EFB. Default: True.
+            max_conflict_rate: Maximum conflict rate. Must be in [0, 1). Default: 0.0.
         """
     def __repr__(self) -> builtins.str: ...
 
@@ -331,43 +309,26 @@ class GBDTConfig:
     It accepts nested configuration objects for tree structure, regularization,
     sampling, etc.
     
-    Parameters
-    ----------
-    n_estimators : int, default=100
-        Number of boosting rounds (trees to train).
-    learning_rate : float, default=0.3
-        Step size shrinkage. Smaller values require more trees but often
-        produce better models. Typical range: 0.01 - 0.3.
-    objective : Objective, default=SquaredLoss()
-        Loss function for training.
-    metric : Metric or None, default=None
-        Evaluation metric. If None, uses objective's default metric.
-    tree : TreeConfig or None, default=None
-        Tree structure parameters. If None, uses defaults.
-    regularization : RegularizationConfig or None, default=None
-        L1/L2 regularization parameters. If None, uses defaults.
-    sampling : SamplingConfig or None, default=None
-        Row and column subsampling parameters. If None, uses defaults.
-    categorical : CategoricalConfig or None, default=None
-        Categorical feature handling. If None, uses defaults.
-    efb : EFBConfig or None, default=None
-        Exclusive Feature Bundling config. If None, uses defaults.
-    linear_leaves : LinearLeavesConfig or None, default=None
-        Linear model in leaves config. If None, disabled.
-    early_stopping_rounds : int or None, default=None
-        Stop if no improvement for this many rounds. None disables.
-    seed : int, default=42
-        Random seed for reproducibility.
+    Args:
+        n_estimators: Number of boosting rounds (trees to train). Default: 100.
+        learning_rate: Step size shrinkage (0.01 - 0.3 typical). Default: 0.3.
+        objective: Loss function for training. Default: SquaredLoss().
+        metric: Evaluation metric. None uses objective's default.
+        tree: Tree structure parameters.
+        regularization: L1/L2 regularization parameters.
+        sampling: Row and column subsampling parameters.
+        categorical: Categorical feature handling.
+        efb: Exclusive Feature Bundling config.
+        linear_leaves: Linear model in leaves config. None = disabled.
+        early_stopping_rounds: Stop if no improvement for this many rounds.
+        seed: Random seed for reproducibility. Default: 42.
     
-    Examples
-    --------
-    >>> from boosters import GBDTConfig, SquaredLoss, TreeConfig
-    >>> config = GBDTConfig(
-    ...     n_estimators=500,
-    ...     learning_rate=0.1,
-    ...     objective=SquaredLoss(),
-    ...     tree=TreeConfig(max_depth=6),
-    ... )
+    Examples:
+        >>> config = GBDTConfig(
+        ...     n_estimators=500,
+        ...     learning_rate=0.1,
+        ...     tree=TreeConfig(max_depth=6),
+        ... )
     """
     @property
     def n_estimators(self) -> builtins.int:
@@ -420,16 +381,16 @@ class GBDTConfig:
         Random seed.
         """
     @property
-    def objective(self) -> typing.Any:
+    def objective(self) -> SquaredLoss | AbsoluteLoss | PoissonLoss | LogisticLoss | HingeLoss | HuberLoss | PinballLoss | ArctanLoss | SoftmaxLoss | LambdaRankLoss:
         r"""
         Get the objective as a Python object.
         """
     @property
-    def metric(self) -> typing.Optional[typing.Any]:
+    def metric(self) -> Rmse | Mae | Mape | LogLoss | Auc | Accuracy | Ndcg | None:
         r"""
         Get the metric as a Python object (or None).
         """
-    def __new__(cls, n_estimators: builtins.int = 100, learning_rate: builtins.float = 0.3, objective: typing.Optional[typing.Any] = None, metric: typing.Optional[typing.Any] = None, tree: typing.Optional[TreeConfig] = None, regularization: typing.Optional[RegularizationConfig] = None, sampling: typing.Optional[SamplingConfig] = None, categorical: typing.Optional[CategoricalConfig] = None, efb: typing.Optional[EFBConfig] = None, linear_leaves: typing.Optional[LinearLeavesConfig] = None, early_stopping_rounds: typing.Optional[builtins.int] = None, seed: builtins.int = 42) -> GBDTConfig: ...
+    def __new__(cls, n_estimators: builtins.int = 100, learning_rate: builtins.float = 0.3, objective: SquaredLoss | AbsoluteLoss | PoissonLoss | LogisticLoss | HingeLoss | HuberLoss | PinballLoss | ArctanLoss | SoftmaxLoss | LambdaRankLoss | None = None, metric: Rmse | Mae | Mape | LogLoss | Auc | Accuracy | Ndcg | None = None, tree: typing.Optional[TreeConfig] = None, regularization: typing.Optional[RegularizationConfig] = None, sampling: typing.Optional[SamplingConfig] = None, categorical: typing.Optional[CategoricalConfig] = None, efb: typing.Optional[EFBConfig] = None, linear_leaves: typing.Optional[LinearLeavesConfig] = None, early_stopping_rounds: typing.Optional[builtins.int] = None, seed: builtins.int = 42) -> GBDTConfig: ...
     def __repr__(self) -> builtins.str: ...
 
 @typing.final
@@ -440,27 +401,20 @@ class GBDTModel:
     This is the main model class for training and prediction with gradient
     boosted decision trees.
     
-    # Example
+    Attributes:
+        is_fitted: Whether the model has been fitted.
+        n_trees: Number of trees in the fitted model.
+        n_features: Number of features the model was trained on.
+        best_iteration: Best iteration from early stopping.
+        best_score: Best score from early stopping.
+        eval_results: Evaluation results from training.
+        config: Model configuration.
     
-    ```python
-    from boosters import GBDTModel, GBDTConfig, Dataset
-    import numpy as np
-    
-    # Create training data
-    X = np.random.rand(1000, 10).astype(np.float32)
-    y = np.random.rand(1000).astype(np.float32)
-    train = Dataset(X, y)
-    
-    # Train with default config
-    model = GBDTModel().fit(train)
-    
-    # Or with custom config
-    config = GBDTConfig(n_estimators=50, learning_rate=0.1)
-    model = GBDTModel(config=config).fit(train)
-    
-    # Predict
-    predictions = model.predict(X_test)
-    ```
+    Examples:
+        >>> from boosters import GBDTModel, Dataset
+        >>> train = Dataset(X, y)
+        >>> model = GBDTModel().fit(train)
+        >>> predictions = model.predict(train)
     """
     @property
     def is_fitted(self) -> builtins.bool:
@@ -505,11 +459,9 @@ class GBDTModel:
         Returns a dict mapping eval set names to dicts of metric names to lists
         of scores per iteration.
         
-        Example:
-            ```python
-            results = model.eval_results
-            # {"train": {"rmse": [0.5, 0.4, ...]}, "valid": {"rmse": [0.6, 0.5, ...]}}
-            ```
+        Examples:
+            >>> results = model.eval_results
+            >>> # {"train": {"rmse": [0.5, 0.4, ...]}}
         """
     @property
     def config(self) -> GBDTConfig:
@@ -526,113 +478,92 @@ class GBDTModel:
         Returns:
             New GBDTModel instance (not yet fitted).
         """
-    def feature_importance(self, importance_type: builtins.str = 'split') -> typing.Any:
+    def feature_importance(self, importance_type: typing.Literal['split', 'gain'] = "split") -> numpy.ndarray:
         r"""
         Get feature importance scores.
         
         Args:
-            importance_type: Type of importance to compute.
-                - "split" (default): Number of times a feature is used to split.
-                - "gain": Total gain achieved by splits on this feature.
+            importance_type: Type of importance: "split" or "gain".
         
         Returns:
-            NumPy array of importance scores, one per feature.
+            Array of importance scores, one per feature.
         
         Raises:
             ValueError: If model has not been fitted.
         """
-    def shap_values(self, features: typing.Any) -> typing.Any:
+    def shap_values(self, data: typing.Any) -> numpy.ndarray:
         r"""
         Compute SHAP values for feature contribution analysis.
         
         SHAP (SHapley Additive exPlanations) values show how each feature
-        contributes to individual predictions. The values sum to the difference
-        between the model's prediction and the base value.
+        contributes to individual predictions.
         
         Args:
-            features: Feature array of shape `(n_samples, n_features)` or Dataset.
+            data: Dataset containing features for SHAP computation.
         
         Returns:
-            NumPy array with shape `(n_samples, n_features + 1, n_outputs)`.
-            The last feature index contains the base value (expected value).
-            For single-output models, the last dimension is squeezed.
+            Array with shape (n_samples, n_features + 1, n_outputs).
+            The last feature index contains the base value.
         
         Raises:
             RuntimeError: If model has not been fitted.
             ValueError: If features have wrong shape.
         
-        Example:
-            ```python
-            # Get SHAP values for test data
-            shap_values = model.shap_values(X_test)
-        
-            # For a single sample, contributions sum to prediction - base_value
-            sample_idx = 0
-            feature_contribs = shap_values[sample_idx, :-1, 0]  # All features
-            base_value = shap_values[sample_idx, -1, 0]  # Base value
-            prediction = model.predict(X_test[sample_idx:sample_idx+1])[0]
-            # assert np.isclose(base_value + feature_contribs.sum(), prediction)
-            ```
+        Examples:
+            >>> shap_values = model.shap_values(test_data)
         """
     def __repr__(self) -> builtins.str:
         r"""
         String representation.
         """
-    def predict(self, features: typing.Any, n_iterations: typing.Optional[builtins.int] = None) -> typing.Any:
+    def predict(self, data: typing.Any, n_iterations: typing.Optional[builtins.int] = None) -> numpy.ndarray:
         r"""
-        Make predictions on features.
+        Make predictions on data.
         
         Returns transformed predictions (e.g., probabilities for classification).
         
         Args:
-            features: Feature array of shape `(n_samples, n_features)` or Dataset.
-            n_iterations: Number of trees to use for prediction. If None, uses all trees.
+            data: Dataset containing features for prediction.
+            n_iterations: Number of trees to use. Defaults to all trees.
         
         Returns:
-            NumPy array with predictions of shape `(n_samples, n_outputs)`.
-            For single-output models, n_outputs is 1.
+            Predictions of shape (n_samples, n_outputs).
         
         Raises:
             RuntimeError: If model has not been fitted.
             ValueError: If features have wrong shape.
         
-        Example:
-            ```python
-            predictions = model.predict(X_test)  # shape: (n_samples, n_outputs)
-            ```
+        Examples:
+            >>> predictions = model.predict(test_data)
         """
-    def predict_raw(self, features: typing.Any, n_iterations: typing.Optional[builtins.int] = None) -> typing.Any:
+    def predict_raw(self, data: typing.Any, n_iterations: typing.Optional[builtins.int] = None) -> numpy.ndarray:
         r"""
-        Make raw (untransformed) predictions on features.
+        Make raw (untransformed) predictions on data.
         
         Returns raw margin scores without transformation.
         For classification this means logits instead of probabilities.
         
         Args:
-            features: Feature array of shape `(n_samples, n_features)` or Dataset.
-            n_iterations: Number of trees to use for prediction. If None, uses all trees.
+            data: Dataset containing features for prediction.
+            n_iterations: Number of trees to use. Defaults to all trees.
         
         Returns:
-            NumPy array with raw scores of shape `(n_samples, n_outputs)`.
-            For single-output models, n_outputs is 1.
+            Raw scores of shape (n_samples, n_outputs).
         
         Raises:
             RuntimeError: If model has not been fitted.
             ValueError: If features have wrong shape.
         
-        Example:
-            ```python
-            raw_margins = model.predict_raw(X_test)  # shape: (n_samples, n_outputs)
-            ```
+        Examples:
+            >>> raw_margins = model.predict_raw(test_data)
         """
-    def fit(self, train: typing.Any, valid: typing.Optional[typing.Any] = None) -> GBDTModel:
+    def fit(self, train: typing.Any, valid: EvalSet | list[EvalSet] | None = None) -> GBDTModel:
         r"""
         Train the model on a dataset.
         
         Args:
             train: Training dataset containing features and labels.
-            valid: Optional validation set(s) for early stopping and evaluation.
-                Can be a single EvalSet or a list of EvalSets.
+            valid: Validation set(s) for early stopping and evaluation.
         
         Returns:
             Self (for method chaining).
@@ -640,11 +571,8 @@ class GBDTModel:
         Raises:
             ValueError: If training data is invalid or labels are missing.
         
-        Example:
-            ```python
-            model = GBDTModel().fit(train_dataset)
-            model = GBDTModel().fit(train, valid=[EvalSet("val", val_data)])
-            ```
+        Examples:
+            >>> model = GBDTModel().fit(train_dataset)
         """
 
 @typing.final
@@ -655,35 +583,22 @@ class GBLinearConfig:
     GBLinear uses gradient boosting to train a linear model via coordinate
     descent. Simpler than GBDT but can be effective for linear relationships.
     
-    Parameters
-    ----------
-    n_estimators : int, default=100
-        Number of boosting rounds.
-    learning_rate : float, default=0.5
-        Step size for weight updates. Higher values mean faster convergence
-        but risk overshooting.
-    objective : Objective, default=SquaredLoss()
-        Loss function for training.
-    metric : Metric or None, default=None
-        Evaluation metric. If None, uses objective's default metric.
-    l1 : float, default=0.0
-        L1 regularization (alpha). Encourages sparse weights.
-    l2 : float, default=1.0
-        L2 regularization (lambda). Prevents large weights.
-    early_stopping_rounds : int or None, default=None
-        Stop if no improvement for this many rounds. None disables.
-    seed : int, default=42
-        Random seed for reproducibility.
+    Args:
+        n_estimators: Number of boosting rounds. Default: 100.
+        learning_rate: Step size for weight updates. Default: 0.5.
+        objective: Loss function for training. Default: SquaredLoss().
+        metric: Evaluation metric. None uses objective's default.
+        l1: L1 regularization (alpha). Encourages sparse weights. Default: 0.0.
+        l2: L2 regularization (lambda). Prevents large weights. Default: 1.0.
+        early_stopping_rounds: Stop if no improvement for this many rounds.
+        seed: Random seed for reproducibility. Default: 42.
     
-    Examples
-    --------
-    >>> from boosters import GBLinearConfig, SquaredLoss
-    >>> config = GBLinearConfig(
-    ...     n_estimators=200,
-    ...     learning_rate=0.3,
-    ...     objective=SquaredLoss(),
-    ...     l2=0.1,
-    ... )
+    Examples:
+        >>> config = GBLinearConfig(
+        ...     n_estimators=200,
+        ...     learning_rate=0.3,
+        ...     l2=0.1,
+        ... )
     """
     @property
     def n_estimators(self) -> builtins.int:
@@ -716,16 +631,16 @@ class GBLinearConfig:
         Random seed.
         """
     @property
-    def objective(self) -> typing.Any:
+    def objective(self) -> SquaredLoss | AbsoluteLoss | PoissonLoss | LogisticLoss | HingeLoss | HuberLoss | PinballLoss | ArctanLoss | SoftmaxLoss | LambdaRankLoss:
         r"""
         Get the objective as a Python object.
         """
     @property
-    def metric(self) -> typing.Optional[typing.Any]:
+    def metric(self) -> Rmse | Mae | Mape | LogLoss | Auc | Accuracy | Ndcg | None:
         r"""
         Get the metric as a Python object (or None).
         """
-    def __new__(cls, n_estimators: builtins.int = 100, learning_rate: builtins.float = 0.5, objective: typing.Optional[typing.Any] = None, metric: typing.Optional[typing.Any] = None, l1: builtins.float = 0.0, l2: builtins.float = 1.0, early_stopping_rounds: typing.Optional[builtins.int] = None, seed: builtins.int = 42) -> GBLinearConfig: ...
+    def __new__(cls, n_estimators: builtins.int = 100, learning_rate: builtins.float = 0.5, objective: SquaredLoss | AbsoluteLoss | PoissonLoss | LogisticLoss | HingeLoss | HuberLoss | PinballLoss | ArctanLoss | SoftmaxLoss | LambdaRankLoss | None = None, metric: Rmse | Mae | Mape | LogLoss | Auc | Accuracy | Ndcg | None = None, l1: builtins.float = 0.0, l2: builtins.float = 1.0, early_stopping_rounds: typing.Optional[builtins.int] = None, seed: builtins.int = 42) -> GBLinearConfig: ...
     def __repr__(self) -> builtins.str: ...
 
 @typing.final
@@ -736,31 +651,16 @@ class GBLinearModel:
     GBLinear uses gradient boosting to train a linear model via coordinate
     descent. Simpler than GBDT but can be effective for linear relationships.
     
-    # Example
+    Attributes:
+        coef_: Model coefficients after fitting.
+        intercept_: Model intercept after fitting.
+        is_fitted: Whether the model has been trained.
+        n_features_in_: Number of features seen during fit.
     
-    ```python
-    from boosters import GBLinearModel, GBLinearConfig, Dataset
-    import numpy as np
-    
-    # Create training data
-    X = np.random.rand(1000, 10).astype(np.float32)
-    y = np.random.rand(1000).astype(np.float32)
-    train = Dataset(X, y)
-    
-    # Train with default config
-    model = GBLinearModel().fit(train)
-    
-    # Or with custom config
-    config = GBLinearConfig(n_estimators=50, learning_rate=0.3, l2=0.1)
-    model = GBLinearModel(config=config).fit(train)
-    
-    # Predict
-    predictions = model.predict(X_test)
-    
-    # Access weights
-    print(model.coef_)      # shape: (n_features,) or (n_features, n_outputs)
-    print(model.intercept_)  # shape: () or (n_outputs,)
-    ```
+    Examples:
+        >>> config = GBLinearConfig(n_estimators=50, learning_rate=0.3)
+        >>> model = GBLinearModel(config=config).fit(train)
+        >>> predictions = model.predict(X_test)
     """
     @property
     def is_fitted(self) -> builtins.bool:
@@ -776,27 +676,25 @@ class GBLinearModel:
             RuntimeError: If model has not been fitted.
         """
     @property
-    def coef_(self) -> typing.Any:
+    def coef_(self) -> numpy.ndarray:
         r"""
         Model coefficients (weights).
         
         Returns:
-            NumPy array with shape:
-            - `(n_features,)` for single-output models
-            - `(n_features, n_outputs)` for multi-output models
+            Array with shape (n_features,) for single-output models
+            or (n_features, n_outputs) for multi-output models.
         
         Raises:
             RuntimeError: If model has not been fitted.
         """
     @property
-    def intercept_(self) -> typing.Any:
+    def intercept_(self) -> numpy.ndarray:
         r"""
         Model intercept (bias).
         
         Returns:
-            NumPy array with shape:
-            - `()` (scalar) for single-output models
-            - `(n_outputs,)` for multi-output models
+            Scalar for single-output models or array of shape (n_outputs,)
+            for multi-output models.
         
         Raises:
             RuntimeError: If model has not been fitted.
@@ -842,29 +740,27 @@ class GBLinearModel:
         r"""
         String representation.
         """
-    def predict(self, features: typing.Any) -> typing.Any:
+    def predict(self, data: Dataset) -> numpy.ndarray:
         r"""
         Make predictions on features.
         
         Returns transformed predictions (e.g., probabilities for classification).
         
         Args:
-            features: Feature array of shape `(n_samples, n_features)` or Dataset.
+            data: Dataset containing features.
         
         Returns:
-            NumPy array with predictions of shape `(n_samples, n_outputs)`.
+            Predictions of shape (n_samples, n_outputs).
             For single-output models, n_outputs is 1.
         
         Raises:
             RuntimeError: If model has not been fitted.
             ValueError: If features have wrong shape.
         
-        Example:
-            ```python
-            predictions = model.predict(X_test)  # shape: (n_samples, n_outputs)
-            ```
+        Examples:
+            >>> predictions = model.predict(test_data)
         """
-    def predict_raw(self, features: typing.Any) -> typing.Any:
+    def predict_raw(self, data: Dataset) -> numpy.ndarray:
         r"""
         Make raw (untransformed) predictions on features.
         
@@ -872,28 +768,26 @@ class GBLinearModel:
         For classification this means logits instead of probabilities.
         
         Args:
-            features: Feature array of shape `(n_samples, n_features)` or Dataset.
+            data: Dataset containing features.
         
         Returns:
-            NumPy array with raw scores of shape `(n_samples, n_outputs)`.
+            Raw scores of shape (n_samples, n_outputs).
             For single-output models, n_outputs is 1.
         
         Raises:
             RuntimeError: If model has not been fitted.
             ValueError: If features have wrong shape.
         
-        Example:
-            ```python
-            raw_margins = model.predict_raw(X_test)  # shape: (n_samples, n_outputs)
-            ```
+        Examples:
+            >>> raw_margins = model.predict_raw(test_data)
         """
-    def fit(self, train: typing.Any, eval_set: typing.Optional[typing.Any] = None) -> GBLinearModel:
+    def fit(self, train: Dataset, eval_set: EvalSet | list[EvalSet] | None = None) -> GBLinearModel:
         r"""
         Train the model on a dataset.
         
         Args:
             train: Training dataset containing features and labels.
-            eval_set: Optional validation set(s) for early stopping and evaluation.
+            eval_set: Validation set(s) for early stopping and evaluation.
         
         Returns:
             Self (for method chaining).
@@ -963,12 +857,18 @@ class LinearLeavesConfig:
     When enabled, each leaf fits a linear regression model on its samples
     instead of using a constant value.
     
-    Examples
-    --------
-    >>> from boosters import LinearLeavesConfig
-    >>> config = LinearLeavesConfig(enable=True, l2=0.01)
-    >>> config.enable
-    True
+    Attributes:
+        enable: Whether to enable linear models in leaves.
+        l2: L2 regularization for linear coefficients.
+        l1: L1 regularization for linear coefficients.
+        max_iter: Maximum coordinate descent iterations per leaf.
+        tolerance: Convergence tolerance.
+        min_samples: Minimum samples required to fit a linear model.
+    
+    Examples:
+        >>> config = LinearLeavesConfig(enable=True, l2=0.01)
+        >>> config.enable
+        True
     """
     @property
     def enable(self) -> builtins.bool:
@@ -1034,20 +934,13 @@ class LinearLeavesConfig:
         r"""
         Create a new LinearLeavesConfig.
         
-        Parameters
-        ----------
-        enable : bool, default=False
-            Whether to enable linear leaves.
-        l2 : float, default=0.01
-            L2 regularization.
-        l1 : float, default=0.0
-            L1 regularization.
-        max_iter : int, default=10
-            Maximum coordinate descent iterations.
-        tolerance : float, default=1e-6
-            Convergence tolerance.
-        min_samples : int, default=50
-            Minimum samples to fit linear model.
+        Args:
+            enable: Whether to enable linear leaves. Default: False.
+            l2: L2 regularization. Default: 0.01.
+            l1: L1 regularization. Default: 0.0.
+            max_iter: Maximum coordinate descent iterations. Default: 10.
+            tolerance: Convergence tolerance. Default: 1e-6.
+            min_samples: Minimum samples to fit linear model. Default: 50.
         """
     def __repr__(self) -> builtins.str: ...
 
@@ -1165,12 +1058,15 @@ class RegularizationConfig:
     r"""
     Configuration for L1/L2 regularization.
     
-    Examples
-    --------
-    >>> from boosters import RegularizationConfig
-    >>> config = RegularizationConfig(l1=0.1, l2=1.0)
-    >>> config.l2
-    1.0
+    Attributes:
+        l1: L1 (Lasso) regularization term on leaf weights.
+        l2: L2 (Ridge) regularization term on leaf weights.
+        min_hessian: Minimum sum of hessians required in a leaf.
+    
+    Examples:
+        >>> config = RegularizationConfig(l1=0.1, l2=1.0)
+        >>> config.l2
+        1.0
     """
     @property
     def l1(self) -> builtins.float:
@@ -1206,14 +1102,10 @@ class RegularizationConfig:
         r"""
         Create a new RegularizationConfig.
         
-        Parameters
-        ----------
-        l1 : float, default=0.0
-            L1 regularization term.
-        l2 : float, default=1.0
-            L2 regularization term.
-        min_hessian : float, default=1.0
-            Minimum sum of hessians in a leaf.
+        Args:
+            l1: L1 regularization term. Default: 0.0.
+            l2: L2 regularization term. Default: 1.0.
+            min_hessian: Minimum sum of hessians in a leaf. Default: 1.0.
         """
     def __repr__(self) -> builtins.str: ...
 
@@ -1235,12 +1127,17 @@ class SamplingConfig:
     r"""
     Configuration for row and column subsampling.
     
-    Examples
-    --------
-    >>> from boosters import SamplingConfig
-    >>> config = SamplingConfig(subsample=0.8, colsample=0.8)
-    >>> config.subsample
-    0.8
+    Attributes:
+        subsample: Row subsampling ratio (per tree). Value in (0, 1].
+        colsample: Column subsampling ratio (per tree). Value in (0, 1].
+        colsample_bylevel: Column subsampling ratio (per level). Value in (0, 1].
+        goss_alpha: GOSS top percentage. 0 disables GOSS.
+        goss_beta: GOSS random percentage for small gradients.
+    
+    Examples:
+        >>> config = SamplingConfig(subsample=0.8, colsample=0.8)
+        >>> config.subsample
+        0.8
     """
     @property
     def subsample(self) -> builtins.float:
@@ -1300,18 +1197,12 @@ class SamplingConfig:
         r"""
         Create a new SamplingConfig.
         
-        Parameters
-        ----------
-        subsample : float, default=1.0
-            Row subsampling ratio. Must be in (0, 1].
-        colsample : float, default=1.0
-            Column subsampling ratio per tree. Must be in (0, 1].
-        colsample_bylevel : float, default=1.0
-            Column subsampling ratio per level. Must be in (0, 1].
-        goss_alpha : float, default=0.0
-            GOSS top percentage. 0 disables GOSS.
-        goss_beta : float, default=0.0
-            GOSS random percentage for small gradients.
+        Args:
+            subsample: Row subsampling ratio. Must be in (0, 1]. Default: 1.0.
+            colsample: Column subsampling ratio per tree. Must be in (0, 1]. Default: 1.0.
+            colsample_bylevel: Column subsampling ratio per level. Default: 1.0.
+            goss_alpha: GOSS top percentage. 0 disables GOSS. Default: 0.0.
+            goss_beta: GOSS random percentage for small gradients. Default: 0.0.
         """
     def __repr__(self) -> builtins.str: ...
 
@@ -1355,12 +1246,20 @@ class TreeConfig:
     
     Controls tree depth, number of leaves, and split constraints.
     
-    Examples
-    --------
-    >>> from boosters import TreeConfig
-    >>> config = TreeConfig(max_depth=6, n_leaves=31)
-    >>> config.max_depth
-    6
+    Attributes:
+        max_depth (int): Maximum depth of tree. -1 means unlimited
+            (controlled by n_leaves).
+        n_leaves (int): Maximum number of leaves. Only used when max_depth=-1.
+        min_samples_leaf (int): Minimum number of samples required in a leaf.
+        min_gain_to_split (float): Minimum gain required to make a split.
+        growth_strategy (GrowthStrategy): Growth strategy for tree building.
+    
+    Examples:
+        >>> from boosters import TreeConfig, GrowthStrategy
+        >>> config = TreeConfig(max_depth=6)
+        >>> config.max_depth
+        6
+        >>> config = TreeConfig(max_depth=-1, n_leaves=31, growth_strategy=GrowthStrategy.Leafwise)
     """
     @property
     def max_depth(self) -> builtins.int:
@@ -1403,31 +1302,91 @@ class TreeConfig:
         Minimum gain required to make a split.
         """
     @property
-    def growth_strategy(self) -> builtins.str:
+    def growth_strategy(self) -> GrowthStrategy:
         r"""
-        Growth strategy: "depthwise" or "leafwise".
+        Growth strategy for tree building.
         """
     @growth_strategy.setter
-    def growth_strategy(self, value: builtins.str) -> None:
+    def growth_strategy(self, value: GrowthStrategy) -> None:
         r"""
-        Growth strategy: "depthwise" or "leafwise".
+        Growth strategy for tree building.
         """
-    def __new__(cls, max_depth: builtins.int = -1, n_leaves: builtins.int = 31, min_samples_leaf: builtins.int = 1, min_gain_to_split: builtins.float = 0.0, growth_strategy: builtins.str = 'depthwise') -> TreeConfig:
+    def __new__(cls, max_depth: builtins.int = -1, n_leaves: builtins.int = 31, min_samples_leaf: builtins.int = 1, min_gain_to_split: builtins.float = 0.0, growth_strategy: GrowthStrategy = GrowthStrategy.Depthwise) -> TreeConfig:
         r"""
         Create a new TreeConfig.
         
-        Parameters
-        ----------
-        max_depth : int, default=-1
-            Maximum depth of tree. -1 means unlimited.
-        n_leaves : int, default=31
-            Maximum number of leaves (only used when max_depth=-1).
-        min_samples_leaf : int, default=1
-            Minimum samples required in a leaf.
-        min_gain_to_split : float, default=0.0
-            Minimum gain required to make a split.
-        growth_strategy : str, default="depthwise"
-            Tree growth strategy: "depthwise" or "leafwise".
+        Args:
+            max_depth: Maximum depth of tree. -1 means unlimited
+                (controlled by n_leaves). Defaults to -1.
+            n_leaves: Maximum number of leaves. Only used when max_depth=-1.
+                Defaults to 31.
+            min_samples_leaf: Minimum samples required in a leaf. Defaults to 1.
+            min_gain_to_split: Minimum gain required to make a split.
+                Defaults to 0.0.
+            growth_strategy: Tree growth strategy. Defaults to Depthwise.
+        
+        Returns:
+            A new TreeConfig instance.
+        
+        Examples:
+            >>> from boosters import TreeConfig, GrowthStrategy
+            >>> config = TreeConfig(max_depth=6)
+            >>> config = TreeConfig(growth_strategy=GrowthStrategy.Leafwise)
         """
     def __repr__(self) -> builtins.str: ...
+
+@typing.final
+class GrowthStrategy(enum.Enum):
+    r"""
+    Tree growth strategy for building decision trees.
+    
+    Determines the order in which nodes are expanded during tree construction.
+    Acts like a Python StrEnum - can be compared to strings.
+    
+    Attributes:
+        Depthwise: Grow tree level-by-level (like XGBoost).
+            All nodes at depth d are expanded before any node at depth d+1.
+            More balanced trees, better for shallow trees.
+        Leafwise: Grow tree by best-first split (like LightGBM).
+            Always expands the leaf with highest gain.
+            Can produce deeper, more accurate trees but risks overfitting.
+    
+    Examples:
+        >>> from boosters import GrowthStrategy
+        >>> strategy = GrowthStrategy.Depthwise
+        >>> strategy == "depthwise"
+        True
+        >>> str(strategy)
+        'depthwise'
+    """
+    Depthwise = ...
+    r"""
+    Grow tree level-by-level (like XGBoost).
+    """
+    Leafwise = ...
+    r"""
+    Grow tree by best-first split (like LightGBM).
+    """
+
+    def __str__(self) -> builtins.str:
+        r"""
+        String representation like StrEnum.
+        """
+    def __repr__(self) -> builtins.str: ...
+    def __hash__(self) -> builtins.int:
+        r"""
+        Hash using the string value for StrEnum-like behavior.
+        """
+    def __reduce__(self) -> tuple[typing.Any, tuple[builtins.str]]:
+        r"""
+        Pickle support: reduce to module path and variant name.
+        """
+    def __deepcopy__(self, _memo: typing.Any) -> GrowthStrategy:
+        r"""
+        Deepcopy support - return self since enum variants are singletons.
+        """
+    def __copy__(self) -> GrowthStrategy:
+        r"""
+        Copy support - return self since enum variants are singletons.
+        """
 

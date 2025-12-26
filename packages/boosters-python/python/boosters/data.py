@@ -196,6 +196,15 @@ class Dataset:
                 all_cats.append(cat)
         all_cats.sort()
 
+        # Validate categorical feature indices are in range
+        n_features = features_arr.shape[1]
+        for cat_idx in all_cats:
+            if cat_idx < 0 or cat_idx >= n_features:
+                raise ValueError(
+                    f"categorical feature index {cat_idx} is out of range "
+                    f"(0 to {n_features - 1})"
+                )
+
         # Convert labels if provided
         labels_arr = None
         if labels is not None:
@@ -239,12 +248,11 @@ class Dataset:
             self._groups = None
 
         # Create Rust Dataset with pre-validated arrays
-        # Note: groups not passed to Rust yet (not implemented)
+        # Note: groups stored on Python side only (not yet implemented in Rust)
         self._inner = _RustDataset(
             features=features_arr,
             labels=labels_arr,
             weights=weights_arr,
-            groups=None,  # Groups not yet implemented in Rust
             feature_names=list(feature_names) if feature_names else None,
             categorical_features=all_cats if all_cats else None,
         )

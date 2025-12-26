@@ -11,7 +11,7 @@ mod linear_leaves;
 mod gbdt;
 mod gblinear;
 
-pub use tree::PyTreeConfig;
+pub use tree::{PyTreeConfig, PyGrowthStrategy};
 pub use regularization::PyRegularizationConfig;
 pub use sampling::PySamplingConfig;
 pub use categorical::PyCategoricalConfig;

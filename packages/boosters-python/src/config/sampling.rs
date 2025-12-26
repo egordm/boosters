@@ -7,12 +7,17 @@ use crate::error::BoostersError;
 
 /// Configuration for row and column subsampling.
 ///
-/// Examples
-/// --------
-/// >>> from boosters import SamplingConfig
-/// >>> config = SamplingConfig(subsample=0.8, colsample=0.8)
-/// >>> config.subsample
-/// 0.8
+/// Attributes:
+///     subsample: Row subsampling ratio (per tree). Value in (0, 1].
+///     colsample: Column subsampling ratio (per tree). Value in (0, 1].
+///     colsample_bylevel: Column subsampling ratio (per level). Value in (0, 1].
+///     goss_alpha: GOSS top percentage. 0 disables GOSS.
+///     goss_beta: GOSS random percentage for small gradients.
+///
+/// Examples:
+///     >>> config = SamplingConfig(subsample=0.8, colsample=0.8)
+///     >>> config.subsample
+///     0.8
 #[gen_stub_pyclass]
 #[pyclass(name = "SamplingConfig", module = "boosters._boosters_rs", get_all, set_all)]
 #[derive(Clone, Debug)]
@@ -36,18 +41,12 @@ pub struct PySamplingConfig {
 impl PySamplingConfig {
     /// Create a new SamplingConfig.
     ///
-    /// Parameters
-    /// ----------
-    /// subsample : float, default=1.0
-    ///     Row subsampling ratio. Must be in (0, 1].
-    /// colsample : float, default=1.0
-    ///     Column subsampling ratio per tree. Must be in (0, 1].
-    /// colsample_bylevel : float, default=1.0
-    ///     Column subsampling ratio per level. Must be in (0, 1].
-    /// goss_alpha : float, default=0.0
-    ///     GOSS top percentage. 0 disables GOSS.
-    /// goss_beta : float, default=0.0
-    ///     GOSS random percentage for small gradients.
+    /// Args:
+    ///     subsample: Row subsampling ratio. Must be in (0, 1]. Default: 1.0.
+    ///     colsample: Column subsampling ratio per tree. Must be in (0, 1]. Default: 1.0.
+    ///     colsample_bylevel: Column subsampling ratio per level. Default: 1.0.
+    ///     goss_alpha: GOSS top percentage. 0 disables GOSS. Default: 0.0.
+    ///     goss_beta: GOSS random percentage for small gradients. Default: 0.0.
     #[new]
     #[pyo3(signature = (
         subsample = 1.0,

@@ -38,7 +38,7 @@ pub struct PyEvalSet {
 
 impl Clone for PyEvalSet {
     fn clone(&self) -> Self {
-        Python::with_gil(|py| Self {
+        Python::attach(|py| Self {
             name: self.name.clone(),
             dataset: self.dataset.clone_ref(py),
         })
@@ -94,7 +94,8 @@ impl PyEvalSet {
 /// Accepts:
 /// - Direct `PyDataset` (Rust type from `_boosters_rs.Dataset`)
 /// - Python wrapper with `_inner` attribute (from `boosters.data.Dataset`)
-pub fn extract_dataset(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Py<PyDataset>> {
+/// - Numpy ndarray (converted via Python Dataset wrapper for validation)
+pub fn extract_dataset(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Py<PyDataset>> {
     // Try direct extraction first (Rust PyDataset)
     if let Ok(dataset) = obj.extract::<Py<PyDataset>>() {
         return Ok(dataset);
@@ -104,6 +105,23 @@ pub fn extract_dataset(_py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<Py<P
     if let Ok(inner) = obj.getattr("_inner") {
         if let Ok(dataset) = inner.extract::<Py<PyDataset>>() {
             return Ok(dataset);
+        }
+    }
+
+    // Try to convert numpy array via Python Dataset wrapper
+    // This ensures all validation/conversion logic stays in Python
+    let numpy_mod = py.import("numpy").ok();
+    if let Some(numpy) = numpy_mod {
+        if let Ok(ndarray_type) = numpy.getattr("ndarray") {
+            if obj.is_instance(&ndarray_type).unwrap_or(false) {
+                // Import Python Dataset wrapper and use it for conversion
+                let dataset_mod = py.import("boosters.data")?;
+                let dataset_class = dataset_mod.getattr("Dataset")?;
+                let wrapped = dataset_class.call1((obj,))?;
+                // Extract the _inner PyDataset
+                let inner = wrapped.getattr("_inner")?;
+                return inner.extract::<Py<PyDataset>>();
+            }
         }
     }
 
