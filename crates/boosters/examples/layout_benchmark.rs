@@ -98,7 +98,7 @@ fn main() {
         let _ = GBDTTrainer::new(SquaredLoss, Rmse, params.clone())
             .train(
                 &row_major_dataset,
-                targets.clone(),
+                targets,
                 WeightsView::None,
                 &[],
                 Parallelism::Sequential,
@@ -116,7 +116,7 @@ fn main() {
         let _ = GBDTTrainer::new(SquaredLoss, Rmse, params.clone())
             .train(
                 &col_major_dataset,
-                targets.clone(),
+                targets,
                 WeightsView::None,
                 &[],
                 Parallelism::Sequential,

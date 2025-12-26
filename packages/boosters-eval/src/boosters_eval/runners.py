@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import time
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
-from numpy.typing import NDArray
+if TYPE_CHECKING:
+    import numpy as np
+    from numpy.typing import NDArray
 
 from boosters_eval.datasets import BenchmarkConfig, BoosterType, Task
 from boosters_eval.metrics import compute_metrics
@@ -47,6 +48,7 @@ class XGBoostRunner(Runner):
 
     @classmethod
     def supports(cls, config: BenchmarkConfig) -> bool:
+        """Check if XGBoost supports the given configuration."""
         return config.booster_type in (BoosterType.GBDT, BoosterType.GBLINEAR)
 
     @classmethod
@@ -59,7 +61,8 @@ class XGBoostRunner(Runner):
         y_valid: NDArray[np.floating[Any]],
         seed: int,
     ) -> BenchmarkResult:
-        import xgboost as xgb
+        """Run XGBoost training and return results."""
+        import xgboost as xgb  # noqa: PLC0415 (optional dependency)
 
         task = config.dataset.task
         tc = config.training
@@ -118,6 +121,7 @@ class LightGBMRunner(Runner):
 
     @classmethod
     def supports(cls, config: BenchmarkConfig) -> bool:
+        """Check if LightGBM supports the given configuration."""
         return config.booster_type in (BoosterType.GBDT, BoosterType.LINEAR_TREES)
 
     @classmethod
@@ -130,7 +134,8 @@ class LightGBMRunner(Runner):
         y_valid: NDArray[np.floating[Any]],
         seed: int,
     ) -> BenchmarkResult:
-        import lightgbm as lgb
+        """Run LightGBM training and return results."""
+        import lightgbm as lgb  # noqa: PLC0415 (optional dependency)
 
         task = config.dataset.task
         tc = config.training
@@ -199,6 +204,7 @@ class CatBoostRunner(Runner):
 
     @classmethod
     def supports(cls, config: BenchmarkConfig) -> bool:
+        """Check if CatBoost supports the given configuration."""
         return config.booster_type == BoosterType.GBDT
 
     @classmethod
@@ -211,7 +217,8 @@ class CatBoostRunner(Runner):
         y_valid: NDArray[np.floating[Any]],
         seed: int,
     ) -> BenchmarkResult:
-        from catboost import Pool, train
+        """Run CatBoost training and return results."""
+        from catboost import Pool, train  # noqa: PLC0415 (optional dependency)
 
         task = config.dataset.task
         tc = config.training
@@ -280,11 +287,11 @@ def get_runner(name: str) -> type[Runner]:
     runner_cls = _RUNNERS[name]
 
     if name == "xgboost":
-        import xgboost  # noqa: F401
+        import xgboost  # noqa: F401, PLC0415 (optional dependency)
     elif name == "lightgbm":
-        import lightgbm  # noqa: F401
+        import lightgbm  # noqa: F401, PLC0415 (optional dependency)
     elif name == "catboost":
-        import catboost  # noqa: F401
+        import catboost  # noqa: F401, PLC0415 (optional dependency)
 
     return runner_cls
 

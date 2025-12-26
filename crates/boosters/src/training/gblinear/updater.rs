@@ -350,10 +350,6 @@ fn soft_threshold(x: f32, threshold: f32) -> f32 {
 /// Returns the bias delta that was applied, for incremental prediction updates.
 ///
 /// This works for both single-output and multi-output models.
-///
-/// # Arguments
-///
-
 #[cfg(test)]
 mod tests {
     use super::super::selector::CyclicSelector;

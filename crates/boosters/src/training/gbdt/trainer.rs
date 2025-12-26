@@ -184,14 +184,11 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
             TreeGrower::new(dataset, grower_params, self.params.cache_size, parallelism);
 
         // Initialize linear leaf trainer if configured
-        let mut linear_trainer = if let Some(config) = &self.params.linear_leaves {
-            // Estimate max samples per leaf: use n_rows as upper bound
-            // (worst case: single-leaf tree for some output)
-            // This may overallocate but is safe; typical usage is much smaller
-            Some(LeafLinearTrainer::new(config.clone(), n_rows))
-        } else {
-            None
-        };
+        let mut linear_trainer = self
+            .params
+            .linear_leaves
+            .as_ref()
+            .map(|config| LeafLinearTrainer::new(config.clone(), n_rows));
 
         let mut row_sampler = RowSampler::new(
             self.params.row_sampling.clone(),

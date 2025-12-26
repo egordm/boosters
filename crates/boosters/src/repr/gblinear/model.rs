@@ -49,7 +49,7 @@ impl LinearModel {
     /// # Arguments
     ///
     /// * `weights` - Weight matrix with shape `[n_features + 1, n_groups]`
-    ///               where the last row contains biases.
+    ///   where the last row contains biases.
     ///
     /// # Panics
     ///
@@ -235,12 +235,12 @@ impl LinearModel {
         debug_assert!(features.len() >= n_features);
         debug_assert!(output.len() >= n_groups);
 
-        for group in 0..n_groups {
+        for (group, out) in output.iter_mut().enumerate().take(n_groups) {
             let mut sum = self.bias(group);
             for (feat_idx, &value) in features.iter().take(n_features).enumerate() {
                 sum += value * self.weight(feat_idx, group);
             }
-            output[group] = sum;
+            *out = sum;
         }
     }
 }

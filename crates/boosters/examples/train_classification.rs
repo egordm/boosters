@@ -81,15 +81,9 @@ fn main() {
     let targets_2d = labels.clone().insert_axis(ndarray::Axis(0));
     let targets = TargetsView::new(targets_2d.view());
 
-    let model_depth = GBDTModel::train_binned(
-        &dataset,
-        targets.clone(),
-        WeightsView::None,
-        &[],
-        config_depth,
-        1,
-    )
-    .expect("Training failed");
+    let model_depth =
+        GBDTModel::train_binned(&dataset, targets, WeightsView::None, &[], config_depth, 1)
+            .expect("Training failed");
 
     // Predict: features_dataset is already feature-major
     let predictions = model_depth.predict(&features_dataset, 1);
@@ -113,15 +107,9 @@ fn main() {
         .build()
         .expect("Invalid configuration");
 
-    let model_leaf = GBDTModel::train_binned(
-        &dataset,
-        targets.clone(),
-        WeightsView::None,
-        &[],
-        config_leaf,
-        1,
-    )
-    .expect("Training failed");
+    let model_leaf =
+        GBDTModel::train_binned(&dataset, targets, WeightsView::None, &[], config_leaf, 1)
+            .expect("Training failed");
 
     let predictions = model_leaf.predict(&features_dataset, 1);
 
@@ -140,7 +128,11 @@ fn main() {
             let dx = features[(0, i)] - 5.0;
             let dy = features[(1, i)] - 5.0;
             let dist = (dx * dx + dy * dy).sqrt();
-            if dist >= 2.0 && dist <= 4.0 { 3.0 } else { 1.0 }
+            if (2.0..=4.0).contains(&dist) {
+                3.0
+            } else {
+                1.0
+            }
         })
         .collect();
 

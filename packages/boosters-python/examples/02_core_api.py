@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Core API example with full control.
 
 This example demonstrates the core API with flat config parameters
@@ -20,9 +19,9 @@ def main() -> None:
     print("=" * 60)
 
     # Generate sample data
-    np.random.seed(42)
-    X = np.random.randn(100, 5).astype(np.float32)
-    y = X[:, 0] + np.random.randn(100).astype(np.float32) * 0.1
+    rng = np.random.default_rng(42)
+    features = rng.standard_normal((100, 5)).astype(np.float32)
+    y = features[:, 0] + rng.standard_normal(100).astype(np.float32) * 0.1
 
     # Create config with flat structure
     print("\n--- Creating Config ---")
@@ -41,13 +40,13 @@ def main() -> None:
     # Create model and train
     print("\n--- Training Model ---")
     model = bst.GBDTModel(config=config)
-    train_data = bst.Dataset(X, y)
+    train_data = bst.Dataset(features, y)
     model.fit(train_data)
     print("Model trained successfully!")
 
     # Predict
     print("\n--- Predictions ---")
-    predictions = model.predict(bst.Dataset(X))
+    predictions = model.predict(bst.Dataset(features))
     rmse = np.sqrt(np.mean((predictions - y) ** 2))
     print(f"Training RMSE: {rmse:.4f}")
     print(f"Predictions shape: {predictions.shape}")

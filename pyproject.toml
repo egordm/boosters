@@ -46,40 +46,53 @@ output-format = "concise"
 format.preview = true
 lint.select = [ "ALL" ]
 lint.ignore = [
-  "COM812", # Conflicting rules (a), ruff itself suggest disabling them
-  "CPY001", # Reuse covers copyright checks
-  "D203",   # Conflicting rules (a), ruff itself suggest disabling them
-  "D213",   # Conflicting rules (a), ruff itself suggest disabling them
-  "EM101",  # do not enforce message in variable when raising an exception
-  "FIX002", # TODO's are allowed when they are linked ot an issue (TD003 handles that part)
-  "PGH003", # Allow generic type ignores, since sometimes there are multiple unresolvable issues
-  "TC006",  # Let's not force quoting the first param of typing.cast
-  "TRY003", # simplify exception messages
+  "ANN401",  # Any types sometimes unavoidable with flexible APIs
+  "COM812",  # Conflicting rules (a), ruff itself suggest disabling them
+  "CPY001",  # Reuse covers copyright checks
+  "D203",    # Conflicting rules (a), ruff itself suggest disabling them
+  "D213",    # Conflicting rules (a), ruff itself suggest disabling them
+  "EM101",   # do not enforce message in variable when raising an exception
+  "EM102",   # do not enforce message in variable when raising an exception (f-string)
+  "FIX002",  # TODO's are allowed when they are linked to an issue (TD003 handles that part)
+  "PGH003",  # Allow generic type ignores, since sometimes there are multiple unresolvable issues
+  "PLR2004", # Magic value comparison - too many false positives (2 for dims, 0.5 for thresholds, etc.)
+  "TC006",   # Let's not force quoting the first param of typing.cast
+  "TRY003",  # simplify exception messages
 ]
-lint.per-file-ignores."**/cli.py" = [ "B008" ] # Typer uses function calls in defaults
-
+lint.per-file-ignores."**/cli.py" = [
+  "B008",    # Typer uses function calls in defaults
+  "PLC0415", # Lazy imports for fast CLI startup
+]
+lint.per-file-ignores."./packages/*/examples/*" = [
+  "INP001", # example folders are not packages
+  "T201",   # print is expected in examples
+]
 lint.per-file-ignores."./packages/*/tests/*" = [
-  "ARG",     # Unused function args -> fixtures nevertheless are functionally relevant...
-  "D",       # All docstring rules
-  "DOC",     # All docstring rules
-  "E501",    # Line too long (test names can be descriptive)
-  "FBT",     # Allow booleans as positional arguments in tests, e.g. via @pytest.mark.parametrize()
-  "PLR0913", # Pytests can have a lot of fixtures, ignore too many arguments
-  "PLR0917", # Pytests can have a lot of fixtures, ignore too many arguments
-  "PLR2004", # Magic value used in comparison
-  "S101",    # asserts allowed in tests...
-  "S311",    # Standard pseudo-random generators
-  "SLF001",  # Allow private access in tests
+  "ARG",     # Unused function args -> fixtures nevertheless are functionally relevant
+  "D",       # Docstring rules relaxed in tests
+  "DOC",     # Docstring rules relaxed in tests
+  "FBT",     # Booleans as positional arguments common in @pytest.mark.parametrize()
+  "INP001",  # Test directories don't need __init__.py
+  "PLC0415", # Lazy imports in conditional test logic
+  "PT018",   # Compound assertions acceptable in tests
+  "S101",    # Asserts expected in tests
+  "S311",    # Standard pseudo-random generators fine in tests
+  "SLF001",  # Private access often needed in tests
 ]
 lint.per-file-ignores."./{docs,examples}/*" = [
-  "INP001", # example folders are not packages, so __init__.py is not needed
-  "T201",   # examples are allowed to use print
+  "INP001", # example folders are not packages
 ]
 lint.fixable = [ "ALL" ]
-lint.flake8-annotations.allow-star-arg-any = true # *args and **kwargs are allowed to be Any
-lint.flake8-annotations.suppress-dummy-args = true # do not type _ arguments/variables
+
+# Rule parameter adjustments
+lint.flake8-annotations.allow-star-arg-any = true      # *args and **kwargs are allowed to be Any
+lint.flake8-annotations.suppress-dummy-args = true     # do not type _ arguments/variables
 lint.flake8-annotations.suppress-none-returning = true # do not require annotation if None is returned/there is no return
+lint.mccabe.max-complexity = 17                        # Allow moderately complex functions (default: 10)
 lint.pydocstyle.convention = "google"
+lint.pylint.max-args = 8                               # ML libs often have many hyperparameters (default: 5)
+lint.pylint.max-branches = 17                          # Complex logic in report generation (default: 12)
+lint.pylint.max-statements = 60                        # Complex constructors (default: 50)
 
 [tool.pytest.ini_options]
 testpaths = [ "packages/*/tests" ]
@@ -151,8 +164,8 @@ args = [ { name = "check", type = "boolean", help = "Automatically check formatt
 
 [tool.poe.tasks."rust:lint"]
 help = "Lint all Rust code (with cargo clippy)"
-cmd = "cargo clippy --workspace --all-features -- ${check:+--fix=false} -- -D warnings"
-args = [ { name = "check", type = "boolean", help = "Automatically check linting without applying changes" } ]
+cmd = "cargo clippy --workspace --all-features --all-targets ${check:+--fix} -- -D warnings"
+args = [ { name = "check", type = "boolean", help = "Automatically fix lint issues where possible" } ]
 
 [tool.poe.tasks."rust:build:core"]
 help = "Build the core Rust library"
@@ -169,11 +182,18 @@ args = [ { name = "release", type = "boolean", help = "Build in release mode" } 
 
 [tool.poe.tasks."rust:build"]
 help = "Build all Rust libraries"
-sequence = [
-  "rust:build:core ${release}",
-  "rust:build:python ${release}",
-]
+control.expr = "release"
 args = [ { name = "release", type = "boolean", help = "Build in release mode" } ]
+switch = [
+  { case = "release", sequence = [
+    "rust:build:core --release",
+    "rust:build:python --release",
+  ] },
+  { sequence = [
+    "rust:build:core",
+    "rust:build:python",
+  ] },
+]
 
 [tool.poe.tasks."rust:test:core"]
 help = "Run Rust tests"

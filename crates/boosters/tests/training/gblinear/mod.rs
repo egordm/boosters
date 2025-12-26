@@ -182,15 +182,6 @@ pub fn make_dataset(features: &Array2<f32>, labels: &[f32]) -> Dataset {
 // Re-export from library
 pub use boosters::testing::pearson_correlation;
 
-/// Transpose a feature-major Array2 to sample-major Array2, ensuring C-order.
-///
-/// Input: [n_features, n_samples] (feature-major)
-/// Output: [n_samples, n_features] (sample-major, C-order)
-#[inline]
-pub fn transpose_to_samples(features: &Array2<f32>) -> Array2<f32> {
-    transpose_to_c_order(features.view())
-}
-
 /// Root mean squared error - uses library Rmse metric.
 pub fn rmse(predictions: &[f32], labels: &[f32]) -> f64 {
     use boosters::training::MetricFn;

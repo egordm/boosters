@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable  # noqa: TC003 (used at runtime by pydantic)
 from enum import Enum
 from typing import Any
 
 import numpy as np
-from numpy.typing import NDArray
+from numpy.typing import NDArray  # noqa: TC002 (used at runtime by pydantic)
 from pydantic import BaseModel, ConfigDict
 from sklearn.datasets import (
     fetch_california_housing,

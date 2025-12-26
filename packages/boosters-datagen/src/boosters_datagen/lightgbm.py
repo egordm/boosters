@@ -35,7 +35,7 @@ def save_lgb_test_case(
 
     # Model
     model.save_model(str(output_dir / "model.txt"))
-    with open(output_dir / "model.json", "w") as f:
+    with (output_dir / "model.json").open("w") as f:
         json.dump(model.dump_model(), f, indent=2)
 
     # Input
@@ -62,9 +62,11 @@ def save_lgb_test_case(
 
 def gen_regression() -> None:
     """Regression test case."""
-    np.random.seed(42)
-    x, y = make_regression(n_samples=100, n_features=10, noise=0.1, random_state=42)
-    x, y = x.astype(np.float64), y.astype(np.float64)
+    x_full, y_full, _ = make_regression(  # pyright: ignore[reportAssignmentType]
+        n_samples=100, n_features=10, noise=0.1, random_state=42, coef=True
+    )
+    x: np.ndarray = x_full.astype(np.float64)
+    y: np.ndarray = y_full.astype(np.float64)
 
     params = {
         "objective": "regression",
@@ -78,15 +80,15 @@ def gen_regression() -> None:
 
     x_test = x[:10]
     y_test = y[:10]
-    expected_raw = model.predict(x_test, raw_score=True)
+    expected_raw = np.asarray(model.predict(x_test, raw_score=True))
     save_lgb_test_case("regression", model, x_test, y_test, expected_raw)
 
 
 def gen_binary() -> None:
     """Binary classification test case."""
-    np.random.seed(42)
-    x, y = make_classification(n_samples=100, n_features=10, n_informative=5, random_state=42)
-    x, y = x.astype(np.float64), y.astype(np.float64)
+    x_full, y_full = make_classification(n_samples=100, n_features=10, n_informative=5, random_state=42)
+    x: np.ndarray = x_full.astype(np.float64)
+    y: np.ndarray = y_full.astype(np.float64)
 
     params = {
         "objective": "binary",
@@ -100,15 +102,14 @@ def gen_binary() -> None:
 
     x_test = x[:10]
     y_test = y[:10]
-    expected_raw = model.predict(x_test, raw_score=True)
-    expected_proba = model.predict(x_test)
+    expected_raw = np.asarray(model.predict(x_test, raw_score=True))
+    expected_proba = np.asarray(model.predict(x_test))
     save_lgb_test_case("binary", model, x_test, y_test, expected_raw, expected_proba)
 
 
 def gen_multiclass() -> None:
     """Multiclass classification test case."""
-    np.random.seed(42)
-    x, y = make_classification(
+    x_full, y_full = make_classification(
         n_samples=150,
         n_features=10,
         n_informative=5,
@@ -116,7 +117,8 @@ def gen_multiclass() -> None:
         n_clusters_per_class=1,
         random_state=42,
     )
-    x, y = x.astype(np.float64), y.astype(np.float64)
+    x: np.ndarray = x_full.astype(np.float64)
+    y: np.ndarray = y_full.astype(np.float64)
 
     params = {
         "objective": "multiclass",
@@ -131,16 +133,18 @@ def gen_multiclass() -> None:
 
     x_test = x[:10]
     y_test = y[:10]
-    expected_raw = model.predict(x_test, raw_score=True)
-    expected_proba = model.predict(x_test)
+    expected_raw = np.asarray(model.predict(x_test, raw_score=True))
+    expected_proba = np.asarray(model.predict(x_test))
     save_lgb_test_case("multiclass", model, x_test, y_test, expected_raw, expected_proba)
 
 
 def generate_all() -> None:
     """Generate all LightGBM test cases."""
+    from boosters_datagen.utils import console  # noqa: PLC0415 - lazy import for generate_all entry point
+
     ensure_dirs()
-    print("\n=== LightGBM Inference ===")
+    console.print("\n[bold]=== LightGBM Inference ===[/bold]")
     gen_regression()
     gen_binary()
     gen_multiclass()
-    print("\n✓ All LightGBM test cases generated")
+    console.print("\n[green]✓ All LightGBM test cases generated[/green]")

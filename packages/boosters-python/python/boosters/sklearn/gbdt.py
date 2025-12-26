@@ -6,8 +6,10 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Self, TypeVar
 
 import numpy as np
-from numpy.typing import NDArray
 from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
 
 from boosters import GBDTConfig, GBDTModel, GrowthStrategy, ImportanceType, Metric, Objective
@@ -60,7 +62,7 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
         """
         ...
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 (sklearn estimators have many hyperparameters)
         self,
         n_estimators: int = 100,
         learning_rate: float = 0.1,
@@ -138,7 +140,7 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
 
     def fit(
         self,
-        X: NDArray[Any],
+        X: NDArray[Any],  # noqa: N803 (sklearn convention for feature matrix)
         y: NDArray[Any],
         eval_set: list[tuple[NDArray[Any], NDArray[Any]]] | list[EvalSet] | None = None,
         sample_weight: NDArray[np.float32] | None = None,
@@ -163,7 +165,7 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
         self
             Fitted estimator.
         """
-        X, y = check_X_y(X, y, dtype=np.float32)
+        X, y = check_X_y(X, y, dtype=np.float32)  # noqa: N806 (sklearn convention)
         self.n_features_in_ = X.shape[1]
 
         # Prepare targets (handles label encoding for classifiers)
@@ -189,15 +191,15 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
             if isinstance(item, EvalSet):
                 valid_list.append(item)
             else:
-                X_val, y_val = item
-                X_val = check_array(X_val, dtype=np.float32)
+                X_val, y_val = item  # noqa: N806 (sklearn convention)
+                X_val = check_array(X_val, dtype=np.float32)  # noqa: N806 (sklearn convention)
                 y_val_prepared = self._prepare_eval_targets(y_val)
                 val_ds = Dataset(X_val, y_val_prepared)
                 valid_list.append(EvalSet(val_ds, f"valid_{i}"))
 
         return valid_list
 
-    def predict(self, X: NDArray[Any]) -> NDArray[np.float32]:
+    def predict(self, X: NDArray[Any]) -> NDArray[np.float32]:  # noqa: N803 (sklearn convention)
         """Predict using the fitted model.
 
         Parameters
@@ -211,7 +213,7 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
             Predicted values.
         """
         check_is_fitted(self, ["model_"])
-        X = check_array(X, dtype=np.float32)
+        X = check_array(X, dtype=np.float32)  # noqa: N806 (sklearn convention)
         preds: NDArray[np.float32] = self.model_.predict(Dataset(X))
         return np.squeeze(preds, axis=-1)
 
@@ -437,7 +439,7 @@ class GBDTClassifier(_GBDTEstimatorBase, ClassifierMixin):  # type: ignore[misc]
         """Prepare evaluation set targets with label encoding."""
         return np.array([self._label_to_idx[c] for c in y], dtype=np.float32)
 
-    def predict(self, X: NDArray[Any]) -> NDArray[Any]:
+    def predict(self, X: NDArray[Any]) -> NDArray[Any]:  # noqa: N803 (sklearn convention)
         """Predict class labels.
 
         Parameters
@@ -453,14 +455,15 @@ class GBDTClassifier(_GBDTEstimatorBase, ClassifierMixin):  # type: ignore[misc]
         check_is_fitted(self, ["model_", "classes_"])
         proba = self.predict_proba(X)
 
-        if self.n_classes_ == 2:
+        # Binary vs multiclass classification threshold
+        if self.n_classes_ == 2:  # noqa: SIM108 (ternary less readable here)
             indices = (proba[:, 1] >= 0.5).astype(int)
         else:
             indices = np.argmax(proba, axis=1)
 
         return self.classes_[indices]
 
-    def predict_proba(self, X: NDArray[Any]) -> NDArray[np.float32]:
+    def predict_proba(self, X: NDArray[Any]) -> NDArray[np.float32]:  # noqa: N803 (sklearn convention)
         """Predict class probabilities.
 
         Parameters
@@ -474,7 +477,7 @@ class GBDTClassifier(_GBDTEstimatorBase, ClassifierMixin):  # type: ignore[misc]
             Class probability estimates.
         """
         check_is_fitted(self, ["model_"])
-        X = check_array(X, dtype=np.float32)
+        X = check_array(X, dtype=np.float32)  # noqa: N806 (sklearn convention)
         preds: NDArray[np.float32] = self.model_.predict(Dataset(X))
 
         if self.n_classes_ == 2:

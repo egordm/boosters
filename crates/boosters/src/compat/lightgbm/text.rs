@@ -195,7 +195,7 @@ impl LgbObjective {
     /// - "multiclass num_class:3"
     pub fn parse(s: &str) -> Self {
         let parts: Vec<&str> = s.split_whitespace().collect();
-        let name = parts.first().map(|s| *s).unwrap_or("");
+        let name = parts.first().copied().unwrap_or("");
 
         match name {
             "regression" => LgbObjective::Regression,

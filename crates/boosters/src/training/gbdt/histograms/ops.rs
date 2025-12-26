@@ -474,8 +474,8 @@ mod tests {
     #[test]
     fn test_build_histogram_basic() {
         let bins: Vec<u8> = vec![0, 1, 0, 2, 1, 0];
-        let grad = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
-        let hess = vec![0.5f32, 1.0, 1.5, 2.0, 2.5, 3.0];
+        let grad = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let hess = [0.5f32, 1.0, 1.5, 2.0, 2.5, 3.0];
         let mut histogram = vec![(0.0, 0.0); 3];
 
         let features = make_features(&[3]);
@@ -501,8 +501,8 @@ mod tests {
     #[test]
     fn test_build_histogram_with_indices() {
         let bins: Vec<u8> = vec![0, 1, 2, 0, 1, 2];
-        let grad = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
-        let hess = vec![1.0; 6];
+        let grad = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let hess = [1.0; 6];
         let mut histogram = vec![(0.0, 0.0); 3];
         let indices: Vec<u32> = vec![0, 2, 4];
 
@@ -549,8 +549,8 @@ mod tests {
     fn test_sparse_histogram() {
         let row_indices: Vec<u32> = vec![0, 2, 4];
         let bin_values: Vec<u8> = vec![1, 0, 2];
-        let grad = vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
-        let hess = vec![0.5f32, 1.0, 1.5, 2.0, 2.5, 3.0];
+        let grad = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let hess = [0.5f32, 1.0, 1.5, 2.0, 2.5, 3.0];
         let mut histogram = vec![(0.0, 0.0); 3];
 
         let features = make_features(&[3]);
@@ -636,7 +636,7 @@ mod tests {
         let indices: Vec<u32> = (0..n_samples as u32).step_by(3).collect();
 
         // Naive reference
-        let mut hist_ref = vec![(0.0, 0.0); 8];
+        let mut hist_ref = [(0.0, 0.0); 8];
         for &row_u32 in &indices {
             let row = row_u32 as usize;
             let g = (row as f32 * 0.25) as f64;

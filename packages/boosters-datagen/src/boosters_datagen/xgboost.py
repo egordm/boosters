@@ -115,7 +115,7 @@ def save_training_case(
         save_json(output_dir / f"{name}.test_predictions.json", {"predictions": test_preds.tolist()})
 
         # Metrics
-        metrics = {"num_trees": int(booster.num_boosted_rounds())}
+        metrics: dict[str, int | float] = {"num_trees": int(booster.num_boosted_rounds())}
         if test_preds.ndim == 1:
             rmse = float(np.sqrt(np.mean((test_preds - y_test) ** 2)))
             metrics["test_rmse"] = rmse
@@ -135,8 +135,9 @@ def save_training_case(
 
 def gen_regression() -> None:
     """Simple regression."""
-    np.random.seed(42)
-    x, y = make_regression(n_samples=100, n_features=5, noise=10.0, random_state=42)
+    x, y = make_regression(  # pyright: ignore[reportAssignmentType]
+        n_samples=100, n_features=5, noise=10.0, random_state=42
+    )
     x_test = x[:10]
 
     dtrain = xgb.DMatrix(x, label=y)
@@ -147,7 +148,6 @@ def gen_regression() -> None:
 
 def gen_binary() -> None:
     """Binary classification."""
-    np.random.seed(42)
     x, y = make_classification(n_samples=100, n_features=4, n_informative=3, random_state=42)
     x_test = x[:10]
 
@@ -159,7 +159,6 @@ def gen_binary() -> None:
 
 def gen_binary_missing() -> None:
     """Binary classification with missing values."""
-    np.random.seed(42)
     x, y = make_classification(n_samples=100, n_features=4, n_informative=3, random_state=42)
     x_test = x[:10].copy()
     x_test[0, 0] = np.nan
@@ -174,7 +173,6 @@ def gen_binary_missing() -> None:
 
 def gen_multiclass() -> None:
     """Multiclass classification."""
-    np.random.seed(42)
     x, y = make_classification(
         n_samples=120,
         n_features=4,
@@ -204,8 +202,9 @@ def gen_multiclass() -> None:
 
 def gen_gblinear_regression() -> None:
     """GBLinear regression."""
-    np.random.seed(42)
-    x, y = make_regression(n_samples=100, n_features=5, noise=10.0, random_state=42)
+    x, y = make_regression(  # pyright: ignore[reportAssignmentType]
+        n_samples=100, n_features=5, noise=10.0, random_state=42
+    )
     x_test = x[:10]
 
     dtrain = xgb.DMatrix(x, label=y)
@@ -222,7 +221,6 @@ def gen_gblinear_regression() -> None:
 
 def gen_gblinear_binary() -> None:
     """GBLinear binary classification."""
-    np.random.seed(42)
     x, y = make_classification(n_samples=100, n_features=4, n_informative=3, random_state=42)
     x_test = x[:10]
 
@@ -239,8 +237,9 @@ def gen_gblinear_binary() -> None:
 
 def gen_training_regression() -> None:
     """Regression training case."""
-    np.random.seed(42)
-    x, y = make_regression(n_samples=200, n_features=10, noise=10.0, random_state=42)
+    x, y = make_regression(  # pyright: ignore[reportAssignmentType]
+        n_samples=200, n_features=10, noise=10.0, random_state=42
+    )
     x, y = x.astype(np.float32), y.astype(np.float32)
     x_train, x_test = x[:160], x[160:]
     y_train, y_test = y[:160], y[160:]
@@ -262,7 +261,6 @@ def gen_training_regression() -> None:
 
 def gen_training_binary() -> None:
     """Binary classification training case."""
-    np.random.seed(42)
     x, y = make_classification(n_samples=200, n_features=10, n_informative=6, random_state=42)
     x, y = x.astype(np.float32), y.astype(np.float32)
     x_train, x_test = x[:160], x[160:]
@@ -290,19 +288,21 @@ def gen_training_binary() -> None:
 
 def generate_all() -> None:
     """Generate all XGBoost test cases."""
+    from boosters_datagen.utils import console  # noqa: PLC0415 - lazy import for generate_all entry point
+
     ensure_dirs()
-    print("\n=== GBTree Inference ===")
+    console.print("\n[bold]=== GBTree Inference ===[/bold]")
     gen_regression()
     gen_binary()
     gen_binary_missing()
     gen_multiclass()
 
-    print("\n=== GBLinear Inference ===")
+    console.print("\n[bold]=== GBLinear Inference ===[/bold]")
     gen_gblinear_regression()
     gen_gblinear_binary()
 
-    print("\n=== Training ===")
+    console.print("\n[bold]=== Training ===[/bold]")
     gen_training_regression()
     gen_training_binary()
 
-    print("\n✓ All XGBoost test cases generated")
+    console.print("\n[green]✓ All XGBoost test cases generated[/green]")

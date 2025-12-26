@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Linear boosting models example.
 
 This example demonstrates GBLinear models for both regression
@@ -20,17 +19,18 @@ def main() -> None:
     print("=" * 60)
 
     # Generate sample data (linear relationship)
-    np.random.seed(42)
-    X = np.random.randn(200, 5).astype(np.float32)
+    rng = np.random.default_rng(42)
+    features = rng.standard_normal((200, 5)).astype(np.float32)
     # Linear combination with noise
-    y_reg = 2.0 * X[:, 0] - 1.5 * X[:, 1] + 0.5 * X[:, 2] + np.random.randn(200).astype(np.float32) * 0.1
+    noise = rng.standard_normal(200).astype(np.float32) * 0.1
+    y_reg = 2.0 * features[:, 0] - 1.5 * features[:, 1] + 0.5 * features[:, 2] + noise
     y_cls = (y_reg > 0).astype(np.int32)
 
     # Linear Regression
     print("\n--- GBLinear Regression ---")
     reg = GBLinearRegressor(n_estimators=100, learning_rate=0.3)
-    reg.fit(X, y_reg)
-    preds = reg.predict(X)
+    reg.fit(features, y_reg)
+    preds = reg.predict(features)
     rmse = np.sqrt(np.mean((preds - y_reg) ** 2))
     print(f"Training RMSE: {rmse:.4f}")
 
@@ -46,8 +46,8 @@ def main() -> None:
     # Linear Classification
     print("\n--- GBLinear Classification ---")
     clf = GBLinearClassifier(n_estimators=100, learning_rate=0.3)
-    clf.fit(X, y_cls)
-    accuracy = np.mean(clf.predict(X) == y_cls)
+    clf.fit(features, y_cls)
+    accuracy = np.mean(clf.predict(features) == y_cls)
     print(f"Training Accuracy: {accuracy:.2%}")
 
     print("\n✓ Linear model examples completed successfully!")

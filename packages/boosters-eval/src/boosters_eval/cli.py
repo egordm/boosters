@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
+
+if TYPE_CHECKING:
+    from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
@@ -110,8 +113,8 @@ def compare(
         console.print(f"\n[green]Results saved to {output}[/green]")
 
 
-@app.command()
-def all(
+@app.command("all")
+def run_all(
     tasks: list[str] = typer.Option(
         None,
         "--task",

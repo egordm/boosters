@@ -10,8 +10,7 @@ Example:
     ...     libraries=["xgboost", "lightgbm"],
     ... )
     >>> suite = BenchmarkSuite([config], seeds=[42])
-    >>> df = suite.run()
-    >>> print(suite.report())
+    >>> _ = suite.run(verbose=False)  # doctest: +SKIP
 """
 
 from boosters_eval.datasets import (

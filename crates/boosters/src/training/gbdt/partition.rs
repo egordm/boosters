@@ -474,8 +474,8 @@ mod tests {
 
         // Check indices are sequential
         let indices = partitioner.get_leaf_indices(0);
-        for i in 0..100 {
-            assert_eq!(indices[i], i as u32);
+        for (i, &idx) in indices.iter().enumerate().take(100) {
+            assert_eq!(idx, i as u32);
         }
     }
 

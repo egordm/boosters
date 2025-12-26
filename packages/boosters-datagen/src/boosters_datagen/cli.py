@@ -31,8 +31,8 @@ def lightgbm() -> None:
     generate_all()
 
 
-@app.command()
-def all() -> None:
+@app.command(name="all")
+def all_cmd() -> None:
     """Generate all test cases."""
     from boosters_datagen.lightgbm import generate_all as lgb_all
     from boosters_datagen.xgboost import generate_all as xgb_all

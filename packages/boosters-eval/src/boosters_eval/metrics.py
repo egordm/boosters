@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from numpy.typing import NDArray
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 from sklearn.metrics import (
     accuracy_score,
     log_loss,
@@ -14,6 +16,9 @@ from sklearn.metrics import (
 )
 
 from boosters_eval.datasets import Task
+
+# Classification threshold for binary classification
+BINARY_THRESHOLD = 0.5
 
 
 def compute_metrics(
@@ -39,7 +44,7 @@ def compute_metrics(
             "mae": float(mean_absolute_error(y_true, y_pred)),
         }
     if task == Task.BINARY:
-        y_pred_class = (np.asarray(y_pred) >= 0.5).astype(int)
+        y_pred_class = (np.asarray(y_pred) >= BINARY_THRESHOLD).astype(int)
         return {
             "logloss": float(log_loss(y_true, y_pred, labels=[0, 1])),
             "accuracy": float(accuracy_score(y_true, y_pred_class)),

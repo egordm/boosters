@@ -3,8 +3,6 @@
 //! These tests compare booste-rs predictions against expected outputs generated
 //! by Python XGBoost fixtures under `tests/test-cases/xgboost`.
 
-#![cfg(feature = "xgboost-compat")]
-
 use std::path::PathBuf;
 
 use boosters::compat::XgbModel;

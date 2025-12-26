@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict
 
-from boosters_eval.datasets import Task
+if TYPE_CHECKING:
+    from boosters_eval.datasets import Task
 
 
 class BenchmarkResult(BaseModel):

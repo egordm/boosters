@@ -411,8 +411,8 @@ mod tests {
         ];
 
         // Set a few to be "top" gradients
-        for i in 80..100 {
-            grad_hess[i].grad = 1.0;
+        for gh in &mut grad_hess[80..100] {
+            gh.grad = 1.0;
         }
 
         let original_small_grad = grad_hess[0].grad;

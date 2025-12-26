@@ -64,19 +64,21 @@ fn infer_shape(
 /// Count number of feature columns (either wide `x_0..x_{d-1}` or FixedSizeList `x`).
 fn count_feature_columns(schema: &Schema) -> Result<usize, DatasetLoadError> {
     // Check for FixedSizeList `x` column first
-    if let Ok(field) = schema.field_with_name("x") {
-        if let DataType::FixedSizeList(_, size) = field.data_type() {
-            return Ok(*size as usize);
-        }
+    if let Ok(field) = schema.field_with_name("x")
+        && let DataType::FixedSizeList(_, size) = field.data_type()
+    {
+        return Ok(*size as usize);
     }
 
     // Otherwise count x_0, x_1, ... columns
     let mut max_idx: Option<usize> = None;
     for field in schema.fields() {
-        if let Some(rest) = field.name().strip_prefix("x_") {
-            if let Ok(idx) = rest.parse::<usize>() {
-                max_idx = Some(max_idx.map_or(idx, |m| m.max(idx)));
-            }
+        if let Some(idx) = field
+            .name()
+            .strip_prefix("x_")
+            .and_then(|rest| rest.parse::<usize>().ok())
+        {
+            max_idx = Some(max_idx.map_or(idx, |m| m.max(idx)));
         }
     }
 

@@ -112,15 +112,9 @@ fn main() {
     // Train WITHOUT weights (baseline)
     // =========================================================================
     println!("--- Training WITHOUT weights ---");
-    let model_unweighted = GBDTModel::train_binned(
-        &dataset,
-        targets.clone(),
-        WeightsView::None,
-        &[],
-        config.clone(),
-        1,
-    )
-    .expect("Training failed");
+    let model_unweighted =
+        GBDTModel::train_binned(&dataset, targets, WeightsView::None, &[], config.clone(), 1)
+            .expect("Training failed");
 
     // Predict: features_dataset is already feature-major
     let probs_uw = model_unweighted.predict(&features_dataset, 1);

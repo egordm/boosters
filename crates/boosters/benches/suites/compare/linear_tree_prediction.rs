@@ -8,6 +8,7 @@
 #[path = "../../common/mod.rs"]
 mod common;
 
+use boosters::data::FeaturesView;
 use boosters::repr::gbdt::{Forest, ScalarLeaf};
 use common::criterion_config::default_criterion;
 #[cfg(feature = "bench-lightgbm")]
@@ -83,9 +84,10 @@ fn bench_linear_gbdt_prediction(c: &mut Criterion) {
             &input_array,
             |b, m| {
                 b.iter(|| {
-                    black_box(
-                        linear_predictor.predict(black_box(m.view()), Parallelism::Sequential),
-                    )
+                    black_box(linear_predictor.predict(
+                        black_box(FeaturesView::from_array(m.view())),
+                        Parallelism::Sequential,
+                    ))
                 })
             },
         );
@@ -96,9 +98,10 @@ fn bench_linear_gbdt_prediction(c: &mut Criterion) {
             &input_array,
             |b, m| {
                 b.iter(|| {
-                    black_box(
-                        standard_predictor.predict(black_box(m.view()), Parallelism::Sequential),
-                    )
+                    black_box(standard_predictor.predict(
+                        black_box(FeaturesView::from_array(m.view())),
+                        Parallelism::Sequential,
+                    ))
                 })
             },
         );
@@ -161,17 +164,19 @@ fn bench_linear_gbdt_overhead(c: &mut Criterion) {
 
     group.bench_function("standard", |b| {
         b.iter(|| {
-            black_box(
-                standard_predictor.predict(black_box(input_array.view()), Parallelism::Sequential),
-            )
+            black_box(standard_predictor.predict(
+                black_box(FeaturesView::from_array(input_array.view())),
+                Parallelism::Sequential,
+            ))
         })
     });
 
     group.bench_function("linear", |b| {
         b.iter(|| {
-            black_box(
-                linear_predictor.predict(black_box(input_array.view()), Parallelism::Sequential),
-            )
+            black_box(linear_predictor.predict(
+                black_box(FeaturesView::from_array(input_array.view())),
+                Parallelism::Sequential,
+            ))
         })
     });
 

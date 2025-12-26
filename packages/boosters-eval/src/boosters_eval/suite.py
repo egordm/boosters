@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+from typing import TYPE_CHECKING
+
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -9,7 +12,11 @@ from tabulate import tabulate
 
 from boosters_eval.datasets import BenchmarkConfig, BoosterType, Task
 from boosters_eval.metrics import is_lower_better, primary_metric
-from boosters_eval.results import BenchmarkResult
+
+logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from boosters_eval.results import BenchmarkResult
 
 
 class BenchmarkSuite:
@@ -20,21 +27,26 @@ class BenchmarkSuite:
         configs: list[BenchmarkConfig],
         seeds: list[int] | None = None,
         validation_fraction: float = 0.2,
-    ):
+    ) -> None:
+        """Initialize benchmark suite with configurations."""
         self.configs = configs
         self.seeds = seeds or [42, 1379, 2716, 4053, 5390]
         self.validation_fraction = validation_fraction
         self._results: list[BenchmarkResult] = []
 
-    def run(self, verbose: bool = True) -> pd.DataFrame:
+    def run(
+        self,
+        *,
+        verbose: bool = True,
+    ) -> pd.DataFrame:
         """Run all benchmarks and return results as DataFrame."""
-        from boosters_eval.runners import get_runner
+        from boosters_eval.runners import get_runner  # noqa: PLC0415 (optional dependency)
 
         self._results = []
 
         for config in self.configs:
             if verbose:
-                print(f"\n=== {config.name} ===")
+                logger.info("=== %s ===", config.name)
 
             for seed in self.seeds:
                 # Load and split data
@@ -55,12 +67,12 @@ class BenchmarkSuite:
                         runner = get_runner(library)
                     except ImportError:
                         if verbose:
-                            print(f"  {library}: not available")
+                            logger.info("  %s: not available", library)
                         continue
 
                     if not runner.supports(config):
                         if verbose:
-                            print(f"  {library}: config not supported")
+                            logger.info("  %s: config not supported", library)
                         continue
 
                     result = runner.run(
@@ -76,7 +88,7 @@ class BenchmarkSuite:
                     if verbose:
                         metrics_str = ", ".join(f"{k}={v:.4f}" for k, v in result.metrics.items())
                         time_str = f", time={result.train_time_s:.3f}s" if result.train_time_s else ""
-                        print(f"  {library} (seed={seed}): {metrics_str}{time_str}")
+                        logger.info("  %s (seed=%d): %s%s", library, seed, metrics_str, time_str)
 
         return self.to_dataframe()
 
@@ -107,9 +119,11 @@ class BenchmarkSuite:
         summary = df.groupby(group_by, as_index=False).agg(agg_funcs)
 
         # Flatten column names
-        summary.columns = [f"{col}_{agg}" if agg else col for col, agg in summary.columns]
+        summary.columns = [  # pyright: ignore[reportAttributeAccessIssue]
+            f"{col}_{agg}" if agg else col for col, agg in summary.columns
+        ]
 
-        return summary
+        return pd.DataFrame(summary)
 
     def report(self, precision: int = 4) -> str:
         """Generate a formatted report with metrics as columns and libraries as rows.
@@ -127,7 +141,7 @@ class BenchmarkSuite:
         lines: list[str] = []
 
         # Group by dataset + booster
-        for (dataset, booster), group_df in df.groupby(["dataset", "booster"]):
+        for (dataset, booster), group_df in df.groupby(["dataset", "booster"]):  # pyright: ignore[reportGeneralTypeIssues]
             task = Task(group_df["task"].iloc[0])
             _ = primary_metric(task)  # Available for future use
 
@@ -158,14 +172,14 @@ class BenchmarkSuite:
 
                     # Track best
                     if col not in best_values:
-                        best_values[col] = (lib, mean)
+                        best_values[col] = (str(lib), float(mean))
                     else:
                         current_best = best_values[col][1]
                         if is_lower_better(col):
                             if mean < current_best:
-                                best_values[col] = (lib, mean)
+                                best_values[col] = (str(lib), float(mean))
                         elif mean > current_best:
-                            best_values[col] = (lib, mean)
+                            best_values[col] = (str(lib), float(mean))
 
                 table_data.append(row)
 
@@ -200,11 +214,16 @@ class BenchmarkSuite:
 
         return "\n".join(lines)
 
-    def to_markdown(self, metric: str | None = None, precision: int = 4) -> str:
+    def to_markdown(
+        self,
+        _metric: str | None = None,
+        precision: int = 4,
+    ) -> str:
         """Generate markdown report.
 
         Args:
-            metric: Specific metric to highlight. If None, uses task primary metric.
+            _metric: Specific metric to highlight. If None, uses task primary metric.
+                Currently unused - reserved for future enhancements.
             precision: Decimal precision for values.
 
         Returns:
@@ -219,6 +238,7 @@ def run_all_combinations(
     libraries: list[str] | None = None,
     seeds: list[int] | None = None,
     training: dict | None = None,
+    *,
     verbose: bool = True,
 ) -> BenchmarkSuite:
     """Run benchmarks for all valid combinations of datasets, boosters, and libraries.
@@ -234,8 +254,8 @@ def run_all_combinations(
     Returns:
         BenchmarkSuite with results.
     """
-    from boosters_eval.datasets import DATASETS, TrainingConfig
-    from boosters_eval.runners import get_available_runners
+    from boosters_eval.datasets import DATASETS, TrainingConfig  # noqa: PLC0415 (optional dependency)
+    from boosters_eval.runners import get_available_runners  # noqa: PLC0415 (optional dependency)
 
     datasets = datasets or list(DATASETS.keys())
     booster_types = booster_types or [BoosterType.GBDT]
@@ -250,16 +270,16 @@ def run_all_combinations(
             continue
         ds = DATASETS[ds_name]
 
-        for bt in booster_types:
-            configs.append(
-                BenchmarkConfig(
-                    name=f"{ds_name}/{bt.value}",
-                    dataset=ds,
-                    training=training_config,
-                    booster_type=bt,
-                    libraries=libraries,
-                )
+        configs.extend(
+            BenchmarkConfig(
+                name=f"{ds_name}/{bt.value}",
+                dataset=ds,
+                training=training_config,
+                booster_type=bt,
+                libraries=libraries,
             )
+            for bt in booster_types
+        )
 
     suite = BenchmarkSuite(configs, seeds=seeds)
     suite.run(verbose=verbose)

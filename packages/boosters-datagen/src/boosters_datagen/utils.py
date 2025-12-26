@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 import numpy as np
+from rich.console import Console
+
+if TYPE_CHECKING:
+    from typing import Any
+
+console = Console()
 
 
 def nan_to_null(obj: Any) -> Any:
@@ -24,8 +30,9 @@ def nan_to_null(obj: Any) -> Any:
 
 def save_json(path: Path, data: dict) -> None:
     """Save data to JSON file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
+    path_obj = Path(path) if not isinstance(path, Path) else path
+    path_obj.parent.mkdir(parents=True, exist_ok=True)
+    with path_obj.open("w") as f:
         json.dump(data, f, indent=2)
 
 
@@ -67,4 +74,4 @@ def save_test_expected(
 def print_success(name: str, num_cases: int, extra: str = "") -> None:
     """Print success message for generated test case."""
     suffix = f" ({extra})" if extra else ""
-    print(f"✓ {name}: model + {num_cases} test cases{suffix}")
+    console.print(f"[green]✓[/green] {name}: model + {num_cases} test cases{suffix}")

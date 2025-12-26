@@ -128,7 +128,7 @@ fn trained_model_improves_over_base_score_on_medium_problem() {
         for j in 0..n_features {
             features_row_major.push(((i * (j + 1)) % 100) as f32 / 10.0);
         }
-        let x0 = ((i * 1) % 100) as f32 / 10.0;
+        let x0 = (i % 100) as f32 / 10.0;
         let x1 = ((i * 2) % 100) as f32 / 10.0;
         targets.push(x0 + 0.5 * x1);
     }
@@ -275,11 +275,11 @@ fn train_with_categorical_features_produces_categorical_splits() {
         .expect("should have at least one tree");
     let mut found_categorical = false;
     for node_idx in 0..first_tree.n_nodes() as u32 {
-        if !first_tree.is_leaf(node_idx) {
-            if matches!(first_tree.split_type(node_idx), SplitType::Categorical) {
-                found_categorical = true;
-                break;
-            }
+        if !first_tree.is_leaf(node_idx)
+            && matches!(first_tree.split_type(node_idx), SplitType::Categorical)
+        {
+            found_categorical = true;
+            break;
         }
     }
     assert!(
@@ -359,11 +359,10 @@ fn train_from_dataset_api() {
     let mut base_error = 0.0f32;
     let mut pred_error = 0.0f32;
 
-    for row in 0..n_samples {
+    for (row, &target) in targets_data.iter().enumerate().take(n_samples) {
         let x0 = row as f32 / 10.0;
         let x1 = (row as f32 * 2.0) % 10.0;
-        let pred = predict_row(&forest, &[x0, x1])[0];
-        let target = targets_data[row];
+        let pred = predict_row(forest, &[x0, x1])[0];
 
         base_error += (base - target).powi(2);
         pred_error += (pred - target).powi(2);
@@ -429,11 +428,10 @@ fn train_from_dataset_with_eval_set() {
     let mut pred_error = 0.0f32;
     let mut base_error = 0.0f32;
 
-    for i in 0..n_eval {
+    for (i, &target) in eval_targets.iter().enumerate().take(n_eval) {
         let x0 = (n_train + i) as f32 / 10.0;
         let x1 = ((n_train + i) as f32 * 2.0) % 10.0;
-        let pred = predict_row(&forest, &[x0, x1])[0];
-        let target = eval_targets[i];
+        let pred = predict_row(forest, &[x0, x1])[0];
 
         pred_error += (pred - target).powi(2);
         base_error += (base - target).powi(2);

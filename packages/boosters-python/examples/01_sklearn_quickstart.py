@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Sklearn API quickstart example.
 
 This example demonstrates the sklearn-compatible estimators for regression
@@ -20,25 +19,25 @@ def main() -> None:
     print("=" * 60)
 
     # Generate sample data
-    np.random.seed(42)
-    X = np.random.randn(100, 5).astype(np.float32)
-    y_reg = X[:, 0] + np.random.randn(100).astype(np.float32) * 0.1
-    y_cls = (X[:, 0] > 0).astype(np.int32)
+    rng = np.random.default_rng(42)
+    features = rng.standard_normal((100, 5)).astype(np.float32)
+    y_reg = features[:, 0] + rng.standard_normal(100).astype(np.float32) * 0.1
+    y_cls = (features[:, 0] > 0).astype(np.int32)
 
     # Regression
     print("\n--- Regression ---")
     reg = GBDTRegressor(max_depth=5, n_estimators=100, verbose=0)
-    reg.fit(X, y_reg)
-    preds = reg.predict(X)
+    reg.fit(features, y_reg)
+    preds = reg.predict(features)
     rmse = np.sqrt(np.mean((preds - y_reg) ** 2))
     print(f"Training RMSE: {rmse:.4f}")
 
     # Classification
     print("\n--- Binary Classification ---")
     clf = GBDTClassifier(n_estimators=50, verbose=0)
-    clf.fit(X, y_cls)
-    proba = clf.predict_proba(X)
-    accuracy = np.mean(clf.predict(X) == y_cls)
+    clf.fit(features, y_cls)
+    proba = clf.predict_proba(features)
+    accuracy = np.mean(clf.predict(features) == y_cls)
     print(f"Training Accuracy: {accuracy:.2%}")
     print(f"Probability shape: {proba.shape}")
 

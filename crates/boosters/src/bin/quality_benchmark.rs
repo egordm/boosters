@@ -960,7 +960,7 @@ fn train_xgboost(
 
     match config.task {
         Task::Regression => {
-            let pred_f32: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
+            let pred_f32: Vec<f32> = pred.into_iter().collect();
             let pred_arr = make_preds_array(&pred_f32, 1, rows_valid);
             let targets_arr =
                 Array2::from_shape_vec((1, y_valid.len()), y_valid.to_vec()).expect("valid shape");
@@ -976,7 +976,7 @@ fn train_xgboost(
             }
         }
         Task::Binary => {
-            let pred_f32: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
+            let pred_f32: Vec<f32> = pred.into_iter().collect();
             let pred_arr = make_preds_array(&pred_f32, 1, rows_valid);
             let targets_arr =
                 Array2::from_shape_vec((1, y_valid.len()), y_valid.to_vec()).expect("valid shape");
@@ -994,7 +994,7 @@ fn train_xgboost(
         Task::Multiclass => {
             // XGBoost outputs row-major: [row0_class0, row0_class1, ..., row1_class0, ...]
             // Our metrics expect column-major: [class0_row0, class0_row1, ..., class1_row0, ...]
-            let prob_row_major: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
+            let prob_row_major: Vec<f32> = pred.into_iter().collect();
             let prob_col_major = transpose_row_to_col_major(&prob_row_major, rows_valid, n_classes);
             let pred_arr = make_preds_array(&prob_col_major, n_classes, rows_valid);
             let targets_arr =
@@ -1059,6 +1059,7 @@ fn train_lightgbm(
 
     match config.task {
         Task::Regression => {
+            #[allow(clippy::unnecessary_cast)] // pred is f64 from LightGBM
             let pred_f32: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
             let pred_arr = make_preds_array(&pred_f32, 1, rows_valid);
             let targets_arr =
@@ -1075,6 +1076,7 @@ fn train_lightgbm(
             }
         }
         Task::Binary => {
+            #[allow(clippy::unnecessary_cast)] // pred is f64 from LightGBM
             let pred_f32: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
             let pred_arr = make_preds_array(&pred_f32, 1, rows_valid);
             let targets_arr =
@@ -1093,6 +1095,7 @@ fn train_lightgbm(
         Task::Multiclass => {
             // LightGBM outputs row-major: [row0_class0, row0_class1, ..., row1_class0, ...]
             // Our metrics expect column-major: [class0_row0, class0_row1, ..., class1_row0, ...]
+            #[allow(clippy::unnecessary_cast)] // pred is f64 from LightGBM
             let prob_row_major: Vec<f32> = pred.into_iter().map(|x| x as f32).collect();
             let prob_col_major = transpose_row_to_col_major(&prob_row_major, rows_valid, n_classes);
             let pred_arr = make_preds_array(&prob_col_major, n_classes, rows_valid);

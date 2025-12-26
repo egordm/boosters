@@ -175,7 +175,7 @@ fn main() {
     // Train without bundling
     let model_no_bundle = GBDTModel::train_binned(
         &dataset_no_bundle,
-        targets.clone(),
+        targets,
         WeightsView::None,
         &[],
         config.clone(),

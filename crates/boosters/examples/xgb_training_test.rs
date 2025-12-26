@@ -17,10 +17,10 @@ fn main() {
 
     // Generate data
     let features: Vec<f32> = (0..n_samples * n_features)
-        .map(|i| ((i as f32 * 0.1).sin() * 2.0))
+        .map(|i| (i as f32 * 0.1).sin() * 2.0)
         .collect();
     let labels: Vec<f32> = (0..n_samples)
-        .map(|i| (i as f32 / n_samples as f32))
+        .map(|i| i as f32 / n_samples as f32)
         .collect();
 
     println!("Data: {} samples, {} features", n_samples, n_features);

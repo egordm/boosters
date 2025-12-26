@@ -403,25 +403,25 @@ impl DatasetBuilder {
         }
 
         // Validate targets
-        if let Some(ref targets) = self.targets {
-            if targets.ncols() != n_samples {
-                return Err(DatasetError::ShapeMismatch {
-                    expected: n_samples,
-                    got: targets.ncols(),
-                    field: "targets",
-                });
-            }
+        if let Some(ref targets) = self.targets
+            && targets.ncols() != n_samples
+        {
+            return Err(DatasetError::ShapeMismatch {
+                expected: n_samples,
+                got: targets.ncols(),
+                field: "targets",
+            });
         }
 
         // Validate weights
-        if let Some(ref weights) = self.weights {
-            if weights.len() != n_samples {
-                return Err(DatasetError::ShapeMismatch {
-                    expected: n_samples,
-                    got: weights.len(),
-                    field: "weights",
-                });
-            }
+        if let Some(ref weights) = self.weights
+            && weights.len() != n_samples
+        {
+            return Err(DatasetError::ShapeMismatch {
+                expected: n_samples,
+                got: weights.len(),
+                field: "weights",
+            });
         }
 
         // Build feature matrix [n_features, n_samples]

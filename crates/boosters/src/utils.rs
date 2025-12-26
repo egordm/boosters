@@ -26,14 +26,12 @@ pub enum Parallelism {
 impl Parallelism {
     /// Create from thread count semantics.
     ///
-    /// - 0 = auto (parallel)
+    /// - 0 = auto (parallel if rayon pool has multiple threads, sequential otherwise)
     /// - 1 = sequential
     /// - >1 = parallel
     #[inline]
     pub fn from_threads(n_threads: usize) -> Self {
-        if n_threads == 1 {
-            Parallelism::Sequential
-        } else if n_threads == 0 && rayon::current_num_threads() == 1 {
+        if n_threads == 1 || (n_threads == 0 && rayon::current_num_threads() == 1) {
             Parallelism::Sequential
         } else {
             Parallelism::Parallel

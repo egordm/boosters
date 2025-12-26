@@ -115,7 +115,7 @@ fn main() {
     let forest_baseline = trainer_baseline
         .train(
             &dataset,
-            targets.clone(),
+            targets,
             WeightsView::None,
             &[],
             Parallelism::Sequential,
@@ -156,7 +156,7 @@ fn main() {
     let forest_goss = trainer_goss
         .train(
             &dataset,
-            targets.clone(),
+            targets,
             WeightsView::None,
             &[],
             Parallelism::Sequential,

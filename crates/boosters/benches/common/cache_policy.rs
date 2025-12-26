@@ -33,11 +33,7 @@ pub fn bench_with_cache_policy<T>(
             b.iter(|| op(&mut value));
         }
         CachePolicy::Cold => {
-            b.iter_batched(
-                || setup(),
-                |mut value| op(&mut value),
-                BatchSize::SmallInput,
-            );
+            b.iter_batched(setup, |mut value| op(&mut value), BatchSize::SmallInput);
         }
     }
 }

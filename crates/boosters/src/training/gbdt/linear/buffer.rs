@@ -207,6 +207,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "Too many rows")]
+    #[cfg(debug_assertions)]
     fn test_leaf_buffer_overflow_rows() {
         let data: Vec<f32> = (0..30).map(|i| i as f32).collect();
         let view = FeaturesView::from_slice(&data, 10, 3).unwrap();
@@ -220,6 +221,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "Too many features")]
+    #[cfg(debug_assertions)]
     fn test_leaf_buffer_overflow_features() {
         let data: Vec<f32> = (0..30).map(|i| i as f32).collect();
         let view = FeaturesView::from_slice(&data, 10, 3).unwrap();

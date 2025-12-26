@@ -275,7 +275,7 @@ mod tests {
         let tree = forest.tree(0);
 
         let state = StandardTraversal::build_tree_state(&tree_storage);
-        let result = StandardTraversal::traverse_tree(&tree, &state, &[0.3]);
+        let result = StandardTraversal::traverse_tree(tree, &state, &[0.3]);
 
         assert_eq!(tree.leaf_value(result).0, 1.0);
     }
@@ -288,7 +288,7 @@ mod tests {
         let tree = forest.tree(0);
 
         let state = StandardTraversal::build_tree_state(&tree_storage);
-        let result = StandardTraversal::traverse_tree(&tree, &state, &[0.7]);
+        let result = StandardTraversal::traverse_tree(tree, &state, &[0.7]);
 
         assert_eq!(tree.leaf_value(result).0, 2.0);
     }
@@ -301,7 +301,7 @@ mod tests {
         let tree = forest.tree(0);
 
         let state = StandardTraversal::build_tree_state(&tree_storage);
-        let result = StandardTraversal::traverse_tree(&tree, &state, &[f32::NAN]);
+        let result = StandardTraversal::traverse_tree(tree, &state, &[f32::NAN]);
 
         // default_left=true, so goes left
         assert_eq!(tree.leaf_value(result).0, 1.0);
@@ -365,9 +365,9 @@ mod tests {
         let unrolled_state = UnrolledTraversal6::build_tree_state(&tree_storage);
 
         for fval in [0.1, 0.3, 0.5, 0.7, 0.9, f32::NAN] {
-            let std_result = StandardTraversal::traverse_tree(&tree, &std_state, &[fval]);
+            let std_result = StandardTraversal::traverse_tree(tree, &std_state, &[fval]);
             let unrolled_result = <UnrolledTraversal6 as TreeTraversal<ScalarLeaf>>::traverse_tree(
-                &tree,
+                tree,
                 &unrolled_state,
                 &[fval],
             );
