@@ -11,6 +11,7 @@ mod metrics;
 mod model;
 mod objectives;
 mod validation;
+mod verbosity;
 
 use pyo3::prelude::*;
 use pyo3_stub_gen::define_stub_info_gatherer;
@@ -21,6 +22,7 @@ use importance::PyImportanceType;
 use metrics::PyMetric;
 use model::{PyGBDTModel, PyGBLinearModel};
 use objectives::PyObjective;
+use verbosity::PyVerbosity;
 
 /// Python module for boosters.
 ///
@@ -49,6 +51,9 @@ fn _boosters_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Explainability types
     m.add_class::<PyImportanceType>()?;
+
+    // Verbosity
+    m.add_class::<PyVerbosity>()?;
 
     Ok(())
 }

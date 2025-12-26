@@ -64,7 +64,7 @@ impl ImportanceType {
 #[derive(Debug, Clone)]
 pub struct FeatureImportance {
     /// Raw importance values (one per feature).
-    values: Vec<f64>,
+    values: Vec<f32>,
     /// Type of importance computed.
     importance_type: ImportanceType,
     /// Optional feature names.
@@ -74,7 +74,7 @@ pub struct FeatureImportance {
 impl FeatureImportance {
     /// Create a new feature importance container.
     pub fn new(
-        values: Vec<f64>,
+        values: Vec<f32>,
         importance_type: ImportanceType,
         feature_names: Option<Vec<String>>,
     ) -> Self {
@@ -96,12 +96,12 @@ impl FeatureImportance {
     }
 
     /// Get importance for a feature by index.
-    pub fn get(&self, idx: usize) -> Option<f64> {
+    pub fn get(&self, idx: usize) -> Option<f32> {
         self.values.get(idx).copied()
     }
 
     /// Get importance for a feature by name.
-    pub fn get_by_name(&self, name: &str) -> Option<f64> {
+    pub fn get_by_name(&self, name: &str) -> Option<f32> {
         let names = self.feature_names.as_ref()?;
         let idx = names.iter().position(|n| n == name)?;
         self.get(idx)
@@ -118,13 +118,13 @@ impl FeatureImportance {
     }
 
     /// Get raw values slice.
-    pub fn values(&self) -> &[f64] {
+    pub fn values(&self) -> &[f32] {
         &self.values
     }
 
     /// Create a normalized version (sums to 1.0).
     pub fn normalized(&self) -> Self {
-        let total: f64 = self.values.iter().sum();
+        let total: f32 = self.values.iter().sum();
         let values = if total == 0.0 {
             vec![0.0; self.values.len()]
         } else {
@@ -151,7 +151,7 @@ impl FeatureImportance {
     /// Get top k features by importance.
     ///
     /// Returns `(index, name, importance)` tuples sorted by importance descending.
-    pub fn top_k(&self, k: usize) -> Vec<(usize, Option<String>, f64)> {
+    pub fn top_k(&self, k: usize) -> Vec<(usize, Option<String>, f32)> {
         let indices = self.sorted_indices();
         indices
             .into_iter()
@@ -167,14 +167,14 @@ impl FeatureImportance {
     }
 
     /// Convert to a HashMap (feature index → importance).
-    pub fn to_map(&self) -> HashMap<usize, f64> {
+    pub fn to_map(&self) -> HashMap<usize, f32> {
         self.values.iter().copied().enumerate().collect()
     }
 
     /// Convert to a HashMap (feature name → importance).
     ///
     /// Returns None if feature names are not available.
-    pub fn to_named_map(&self) -> Option<HashMap<String, f64>> {
+    pub fn to_named_map(&self) -> Option<HashMap<String, f32>> {
         let names = self.feature_names.as_ref()?;
         Some(
             names
@@ -186,7 +186,7 @@ impl FeatureImportance {
     }
 
     /// Iterate over (index, importance) pairs.
-    pub fn iter(&self) -> impl Iterator<Item = (usize, f64)> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = (usize, f32)> + '_ {
         self.values.iter().copied().enumerate()
     }
 }
@@ -221,7 +221,7 @@ pub fn compute_forest_importance(
     }
 
     let mut split_counts = vec![0u64; n_features];
-    let mut values = vec![0.0f64; n_features];
+    let mut values = vec![0.0f32; n_features];
 
     for tree in forest.trees() {
         // Pre-fetch gains and covers slices for this tree
@@ -240,12 +240,12 @@ pub fn compute_forest_importance(
                         }
                         ImportanceType::Gain | ImportanceType::AverageGain => {
                             if let Some(gains) = gains_slice {
-                                values[feature] += gains[node_idx as usize] as f64;
+                                values[feature] += gains[node_idx as usize];
                             }
                         }
                         ImportanceType::Cover | ImportanceType::AverageCover => {
                             if let Some(covers) = covers_slice {
-                                values[feature] += covers[node_idx as usize] as f64;
+                                values[feature] += covers[node_idx as usize];
                             }
                         }
                     }
@@ -260,7 +260,7 @@ pub fn compute_forest_importance(
     {
         for (i, count) in split_counts.iter().enumerate() {
             if *count > 0 {
-                values[i] /= *count as f64;
+                values[i] /= *count as f32;
             }
         }
     }
@@ -375,12 +375,12 @@ mod tests {
         let imp = FeatureImportance::new(vec![10.0, 20.0, 30.0], ImportanceType::Split, None);
         let norm = imp.normalized();
 
-        let sum: f64 = norm.values().iter().sum();
-        assert!((sum - 1.0).abs() < 1e-10);
+        let sum: f32 = norm.values().iter().sum();
+        assert!((sum - 1.0).abs() < 1e-5);
 
-        assert!((norm.get(0).unwrap() - (10.0 / 60.0)).abs() < 1e-10);
-        assert!((norm.get(1).unwrap() - (20.0 / 60.0)).abs() < 1e-10);
-        assert!((norm.get(2).unwrap() - (30.0 / 60.0)).abs() < 1e-10);
+        assert!((norm.get(0).unwrap() - (10.0 / 60.0)).abs() < 1e-5);
+        assert!((norm.get(1).unwrap() - (20.0 / 60.0)).abs() < 1e-5);
+        assert!((norm.get(2).unwrap() - (30.0 / 60.0)).abs() < 1e-5);
     }
 
     #[test]

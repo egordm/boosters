@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
+from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin
+from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
 
 from boosters import (
     GBDTConfig,
@@ -15,15 +17,6 @@ from boosters import (
     Objective,
 )
 from boosters.data import Dataset, EvalSet
-
-from .base import (
-    BaseEstimator,
-    ClassifierMixin,
-    RegressorMixin,
-    check_array,
-    check_is_fitted,
-    check_X_y,
-)
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -495,7 +488,7 @@ class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         return proba
 
     @property
-    def feature_importances_(self) -> NDArray[np.float64]:
+    def feature_importances_(self) -> NDArray[np.float32]:
         """Return feature importances (gain-based)."""
         check_is_fitted(self, ["model_"])
         return self.model_.feature_importance(ImportanceType.Gain)

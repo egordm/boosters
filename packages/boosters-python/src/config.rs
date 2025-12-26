@@ -8,6 +8,7 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 use crate::metrics::PyMetric;
 use crate::objectives::PyObjective;
 use crate::validation::{validate_non_negative, validate_positive, validate_ratio};
+use crate::verbosity::PyVerbosity;
 
 // =============================================================================
 // Growth Strategy
@@ -209,6 +210,26 @@ pub struct PyGBDTConfig {
     /// L1 regularization for linear coefficients.
     #[pyo3(get)]
     pub linear_l1: f64,
+    /// Maximum coordinate descent iterations for linear leaves.
+    #[pyo3(get)]
+    pub linear_max_iterations: u32,
+    /// Convergence tolerance for linear leaves.
+    #[pyo3(get)]
+    pub linear_tolerance: f64,
+    /// Minimum samples required to fit linear model in leaf.
+    #[pyo3(get)]
+    pub linear_min_samples: u32,
+    /// Threshold for pruning small coefficients.
+    #[pyo3(get)]
+    pub linear_coefficient_threshold: f64,
+    /// Maximum features in linear model per leaf.
+    #[pyo3(get)]
+    pub linear_max_features: u32,
+
+    // === Binning ===
+    /// Maximum bins per feature for binning (1-256).
+    #[pyo3(get)]
+    pub max_bins: u32,
 
     // === Training control ===
     /// Early stopping rounds (None = disabled).
@@ -217,6 +238,9 @@ pub struct PyGBDTConfig {
     /// Random seed.
     #[pyo3(get)]
     pub seed: u64,
+    /// Verbosity level for training output.
+    #[pyo3(get)]
+    pub verbosity: PyVerbosity,
 }
 
 #[gen_stub_pymethods]
@@ -243,8 +267,15 @@ impl PyGBDTConfig {
         linear_leaves = false,
         linear_l2 = 0.01,
         linear_l1 = 0.0,
+        linear_max_iterations = 10,
+        linear_tolerance = 1e-6,
+        linear_min_samples = 50,
+        linear_coefficient_threshold = 1e-6,
+        linear_max_features = 10,
+        max_bins = 256,
         early_stopping_rounds = None,
-        seed = 42
+        seed = 42,
+        verbosity = PyVerbosity::Silent
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -269,8 +300,15 @@ impl PyGBDTConfig {
         linear_leaves: bool,
         linear_l2: f64,
         linear_l1: f64,
+        linear_max_iterations: u32,
+        linear_tolerance: f64,
+        linear_min_samples: u32,
+        linear_coefficient_threshold: f64,
+        linear_max_features: u32,
+        max_bins: u32,
         early_stopping_rounds: Option<u32>,
         seed: u64,
+        verbosity: PyVerbosity,
     ) -> PyResult<Self> {
         // Validate parameters
         validate_positive("n_estimators", n_estimators)?;
@@ -303,8 +341,15 @@ impl PyGBDTConfig {
             linear_leaves,
             linear_l2,
             linear_l1,
+            linear_max_iterations,
+            linear_tolerance,
+            linear_min_samples,
+            linear_coefficient_threshold,
+            linear_max_features,
+            max_bins,
             early_stopping_rounds,
             seed,
+            verbosity,
         })
     }
 
@@ -352,8 +397,15 @@ impl Default for PyGBDTConfig {
             linear_leaves: false,
             linear_l2: 0.01,
             linear_l1: 0.0,
+            linear_max_iterations: 10,
+            linear_tolerance: 1e-6,
+            linear_min_samples: 50,
+            linear_coefficient_threshold: 1e-6,
+            linear_max_features: 10,
+            max_bins: 256,
             early_stopping_rounds: None,
             seed: 42,
+            verbosity: PyVerbosity::Silent,
         }
     }
 }
@@ -383,11 +435,11 @@ impl From<&PyGBDTConfig> for boosters::GBDTConfig {
             Some(boosters::training::gbdt::LinearLeafConfig {
                 lambda: py_config.linear_l2 as f32,
                 alpha: py_config.linear_l1 as f32,
-                max_iterations: 10,
-                tolerance: 1e-6,
-                min_samples: 50,
-                coefficient_threshold: 1e-6,
-                max_features: 10,
+                max_iterations: py_config.linear_max_iterations,
+                tolerance: py_config.linear_tolerance,
+                min_samples: py_config.linear_min_samples as usize,
+                coefficient_threshold: py_config.linear_coefficient_threshold as f32,
+                max_features: py_config.linear_max_features as usize,
             })
         } else {
             None
@@ -408,12 +460,12 @@ impl From<&PyGBDTConfig> for boosters::GBDTConfig {
             subsample: py_config.subsample as f32,
             colsample_bytree: py_config.colsample_bytree as f32,
             colsample_bylevel: py_config.colsample_bylevel as f32,
-            binning: Default::default(),
+            binning: py_config.max_bins.into(),
             linear_leaves,
             early_stopping_rounds: py_config.early_stopping_rounds,
             cache_size: 8,
             seed: py_config.seed,
-            verbosity: Default::default(),
+            verbosity: py_config.verbosity.into(),
         }
     }
 }
@@ -470,6 +522,9 @@ pub struct PyGBLinearConfig {
     /// Random seed.
     #[pyo3(get)]
     pub seed: u64,
+    /// Verbosity level for training output.
+    #[pyo3(get)]
+    pub verbosity: PyVerbosity,
 }
 
 #[gen_stub_pymethods]
@@ -484,7 +539,8 @@ impl PyGBLinearConfig {
         l1 = 0.0,
         l2 = 1.0,
         early_stopping_rounds = None,
-        seed = 42
+        seed = 42,
+        verbosity = PyVerbosity::Silent
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -498,6 +554,7 @@ impl PyGBLinearConfig {
         l2: f64,
         early_stopping_rounds: Option<u32>,
         seed: u64,
+        verbosity: PyVerbosity,
     ) -> PyResult<Self> {
         // Validate parameters
         validate_positive("n_estimators", n_estimators)?;
@@ -514,6 +571,7 @@ impl PyGBLinearConfig {
             l2,
             early_stopping_rounds,
             seed,
+            verbosity,
         })
     }
 
@@ -558,7 +616,7 @@ impl From<&PyGBLinearConfig> for boosters::GBLinearConfig {
             feature_selector: Default::default(),
             early_stopping_rounds: py_config.early_stopping_rounds,
             seed: py_config.seed,
-            verbosity: Default::default(),
+            verbosity: py_config.verbosity.into(),
         }
     }
 }
@@ -574,6 +632,7 @@ impl Default for PyGBLinearConfig {
             l2: 1.0,
             early_stopping_rounds: None,
             seed: 42,
+            verbosity: PyVerbosity::Silent,
         }
     }
 }

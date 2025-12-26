@@ -18,6 +18,7 @@ See Also:
 # Explainability types
 from boosters._boosters_rs import (
     ImportanceType,
+    Verbosity,
     __version__,  # pyright: ignore[reportAttributeAccessIssue]
 )
 
@@ -50,5 +51,6 @@ __all__ = [
     "ImportanceType",
     "Metric",
     "Objective",
+    "Verbosity",
     "__version__",
 ]

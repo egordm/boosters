@@ -1,7 +1,14 @@
-//! Dataset type for holding training/prediction data.
+//! Dataset and EvalSet types for Python bindings.
 //!
-//! This module provides a minimal Rust binding that accepts pre-validated
-//! numpy arrays. All type conversion and validation logic is in Python.
+//! This module provides the `Dataset` wrapper for NumPy arrays and pandas DataFrames,
+//! along with `EvalSet` for named evaluation datasets.
+//!
+//! # Design Notes
+//!
+//! - Dataset is marked as `subclass` so Python can extend it with convenience methods
+//! - Categorical features can be auto-detected from pandas or specified explicitly
+//! - NaN in features is allowed (treated as missing values)
+//! - Inf in features or NaN/Inf in labels raise errors
 
 use ndarray::{Array1, Array2};
 use numpy::{PyReadonlyArray1, PyReadonlyArray2};
@@ -9,6 +16,11 @@ use pyo3::prelude::*;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use boosters::data::{transpose_to_c_order, Dataset as CoreDataset};
+use boosters::training::EvalSet as CoreEvalSet;
+
+// =============================================================================
+// Dataset
+// =============================================================================
 
 /// Internal dataset holding features, labels, and optional metadata.
 ///
@@ -158,5 +170,110 @@ impl PyDataset {
 impl AsRef<CoreDataset> for PyDataset {
     fn as_ref(&self) -> &CoreDataset {
         &self.inner
+    }
+}
+
+// =============================================================================
+// EvalSet
+// =============================================================================
+
+/// Named evaluation set for model training.
+///
+/// An EvalSet wraps a Dataset with a name, which is used to identify
+/// the evaluation set in training logs and `eval_results`.
+///
+/// # Example
+///
+/// ```python
+/// from boosters import Dataset, EvalSet
+/// import numpy as np
+///
+/// X_val = np.random.rand(50, 10).astype(np.float32)
+/// y_val = np.random.rand(50).astype(np.float32)
+///
+/// val_data = Dataset(X_val, y_val)
+/// eval_set = EvalSet("validation", val_data)
+///
+/// # Use in training:
+/// # model.fit(train_data, valid=[eval_set])
+/// ```
+#[gen_stub_pyclass]
+#[pyclass(name = "EvalSet", module = "boosters._boosters_rs")]
+pub struct PyEvalSet {
+    /// Name of the evaluation set (used in logs and eval_results)
+    name: String,
+
+    /// The underlying dataset
+    dataset: Py<PyDataset>,
+}
+
+impl Clone for PyEvalSet {
+    fn clone(&self) -> Self {
+        Python::attach(|py| Self {
+            name: self.name.clone(),
+            dataset: self.dataset.clone_ref(py),
+        })
+    }
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl PyEvalSet {
+    /// Create a new named evaluation set.
+    ///
+    /// Args:
+    ///     name: Name for this evaluation set (e.g., "validation", "test")
+    ///     dataset: Dataset containing features and labels.
+    ///
+    /// Returns:
+    ///     EvalSet ready for use in training
+    #[new]
+    pub fn new(dataset: Py<PyDataset>, name: String) -> Self {
+        Self { name, dataset }
+    }
+
+    /// Name of this evaluation set.
+    #[getter]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The underlying dataset.
+    #[getter]
+    pub fn dataset(&self, py: Python<'_>) -> Py<PyDataset> {
+        self.dataset.clone_ref(py)
+    }
+
+    fn __repr__(&self, py: Python<'_>) -> String {
+        let dataset = self.dataset.bind(py);
+        let n_samples = dataset.borrow().n_samples();
+        format!("EvalSet(name='{}', n_samples={})", self.name, n_samples)
+    }
+}
+
+impl PyEvalSet {
+    /// Get the name as a string slice.
+    #[inline]
+    pub fn name_str(&self) -> &str {
+        &self.name
+    }
+
+    /// Get the dataset Py reference.
+    #[inline]
+    pub fn dataset_ref(&self) -> &Py<PyDataset> {
+        &self.dataset
+    }
+
+    /// Convert to a CoreEvalSet by borrowing the inner dataset.
+    ///
+    /// The returned CoreEvalSet has the same lifetime as the borrowed PyDataset.
+    #[inline]
+    pub fn to_core_eval_set<'a>(
+        &'a self,
+        py: Python<'a>,
+    ) -> (PyRef<'a, PyDataset>, impl FnOnce(&'a PyDataset) -> CoreEvalSet<'a>) {
+        let dataset_ref = self.dataset.bind(py).borrow();
+        let name = &self.name;
+        (dataset_ref, move |ds: &'a PyDataset| CoreEvalSet::new(name, ds.inner()))
     }
 }

@@ -12,6 +12,9 @@ use crate::error::BoostersError;
 /// Attributes:
 ///     Split: Number of times each feature is used in splits.
 ///     Gain: Total gain from splits using each feature.
+///     AverageGain: Average gain per split (Gain / Split count).
+///     Cover: Total cover (hessian sum) at nodes splitting on each feature.
+///     AverageCover: Average cover per split (Cover / Split count).
 ///
 /// Examples:
 ///     >>> from boosters import ImportanceType
@@ -25,6 +28,12 @@ pub enum PyImportanceType {
     Split = 0,
     /// Total gain from splits using each feature.
     Gain = 1,
+    /// Average gain per split (Gain / Split count).
+    AverageGain = 2,
+    /// Total cover (hessian sum) at nodes splitting on each feature.
+    Cover = 3,
+    /// Average cover per split (Cover / Split count).
+    AverageCover = 4,
 }
 
 #[gen_stub_pymethods]
@@ -35,6 +44,9 @@ impl PyImportanceType {
         match self {
             PyImportanceType::Split => "split",
             PyImportanceType::Gain => "gain",
+            PyImportanceType::AverageGain => "average_gain",
+            PyImportanceType::Cover => "cover",
+            PyImportanceType::AverageCover => "average_cover",
         }
     }
 
@@ -42,6 +54,9 @@ impl PyImportanceType {
         match self {
             PyImportanceType::Split => "ImportanceType.Split",
             PyImportanceType::Gain => "ImportanceType.Gain",
+            PyImportanceType::AverageGain => "ImportanceType.AverageGain",
+            PyImportanceType::Cover => "ImportanceType.Cover",
+            PyImportanceType::AverageCover => "ImportanceType.AverageCover",
         }
     }
 }
@@ -51,6 +66,9 @@ impl From<PyImportanceType> for CoreImportanceType {
         match py_type {
             PyImportanceType::Split => CoreImportanceType::Split,
             PyImportanceType::Gain => CoreImportanceType::Gain,
+            PyImportanceType::AverageGain => CoreImportanceType::AverageGain,
+            PyImportanceType::Cover => CoreImportanceType::Cover,
+            PyImportanceType::AverageCover => CoreImportanceType::AverageCover,
         }
     }
 }
@@ -61,9 +79,15 @@ impl PyImportanceType {
         match s {
             "split" => Ok(PyImportanceType::Split),
             "gain" => Ok(PyImportanceType::Gain),
+            "average_gain" => Ok(PyImportanceType::AverageGain),
+            "cover" => Ok(PyImportanceType::Cover),
+            "average_cover" => Ok(PyImportanceType::AverageCover),
             other => Err(BoostersError::InvalidParameter {
                 name: "importance_type".to_string(),
-                reason: format!("expected 'split' or 'gain', got '{}'", other),
+                reason: format!(
+                    "expected 'split', 'gain', 'average_gain', 'cover', or 'average_cover', got '{}'",
+                    other
+                ),
             }
             .into()),
         }

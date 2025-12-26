@@ -148,9 +148,8 @@ impl PyGBDTModel {
             .feature_importance(importance_type.into())
             .map_err(|e| BoostersError::ExplainError(e.to_string()))?;
 
-        // Cast f64 to f32 for consistency with other outputs
-        let values: Vec<f32> = importance.values().iter().map(|&v| v as f32).collect();
-        Ok(PyArray1::from_vec(py, values))
+        // Values are already f32
+        Ok(PyArray1::from_vec(py, importance.values().to_vec()))
     }
 
     /// Compute SHAP values for feature contribution analysis.
