@@ -402,7 +402,7 @@ mod tests {
         let frozen = tree.clone().freeze();
 
         // With max_features=3, should only get 3 features
-        let config = LinearLeafConfig::default().with_max_features(3);
+        let config = LinearLeafConfig::builder().max_features(3).build();
         let trainer = LeafLinearTrainer::new(config, 100);
 
         // Path to l5 has f0, f1, f2, f3, f4 = 5 unique features, but limited to 3
@@ -436,9 +436,10 @@ mod tests {
 
     #[test]
     fn test_trainer_new() {
-        let config = LinearLeafConfig::default()
-            .with_min_samples(20)
-            .with_max_features(5);
+        let config = LinearLeafConfig::builder()
+            .min_samples(20)
+            .max_features(5)
+            .build();
         
         let trainer = LeafLinearTrainer::new(config, 100);
         

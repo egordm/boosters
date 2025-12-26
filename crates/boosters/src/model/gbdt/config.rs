@@ -241,7 +241,11 @@ impl<S: g_b_d_t_config_builder::IsComplete> GBDTConfigBuilder<S> {
 
 impl GBDTConfig {
     /// Validate the configuration.
-    fn validate(&self) -> Result<(), ConfigError> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError`] if any parameter is invalid.
+    pub fn validate(&self) -> Result<(), ConfigError> {
         // Learning rate must be positive
         if self.learning_rate <= 0.0 {
             return Err(ConfigError::InvalidLearningRate(self.learning_rate));

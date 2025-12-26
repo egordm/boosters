@@ -64,7 +64,7 @@ fn bench_linear_training_overhead(c: &mut Criterion) {
 
     // Benchmark with linear leaves
     let linear_params = GBDTParams {
-        linear_leaves: Some(LinearLeafConfig::default().with_min_samples(10)),
+        linear_leaves: Some(LinearLeafConfig::builder().min_samples(10).build()),
         ..base_params
     };
     let trainer_linear = GBDTTrainer::new(SquaredLoss, Rmse, linear_params);

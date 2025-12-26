@@ -162,18 +162,28 @@ impl PyGBLinearConfig {
         // Convert metric if present
         let metric = self.metric.as_ref().map(|m| m.into());
 
-        // Build core config
-        boosters::GBLinearConfig::builder()
-            .objective(objective)
-            .maybe_metric(metric)
-            .n_rounds(self.n_estimators)
-            .learning_rate(self.learning_rate as f32)
-            .alpha(self.l1 as f32)
-            .lambda(self.l2 as f32)
-            .maybe_early_stopping_rounds(self.early_stopping_rounds)
-            .seed(self.seed)
-            .build()
-            .map_err(|e| BoostersError::ValidationError(e.to_string()).into())
+        // Build core config using struct constructor instead of builder.
+        // This ensures compile-time errors if new fields are added to GBLinearConfig.
+        let config = boosters::GBLinearConfig {
+            objective,
+            metric,
+            n_rounds: self.n_estimators,
+            learning_rate: self.learning_rate as f32,
+            alpha: self.l1 as f32,
+            lambda: self.l2 as f32,
+            parallel: true,                // Default
+            feature_selector: Default::default(),
+            early_stopping_rounds: self.early_stopping_rounds,
+            seed: self.seed,
+            verbosity: Default::default(),
+        };
+
+        // Validate the constructed config
+        config.validate().map_err(|e| {
+            BoostersError::ValidationError(e.to_string())
+        })?;
+
+        Ok(config)
     }
 }
 

@@ -345,7 +345,7 @@ fn test_quality_improvement_linear_leaves() {
 		.learning_rate(0.1)
 		.growth_strategy(GrowthStrategy::DepthWise { max_depth: MAX_DEPTH })
 		.lambda(1.0)
-		.linear_leaves(LinearLeafConfig::default().with_min_samples(10))
+		.linear_leaves(LinearLeafConfig::builder().min_samples(10).build())
 		.seed(SEED)
 		.build()
 		.unwrap();

@@ -235,36 +235,48 @@ impl PyGBDTConfig {
             }
         });
 
-        // Build the core config using flattened builder pattern
-        boosters::GBDTConfig::builder()
-            .objective(objective)
-            .maybe_metric(metric)
-            .n_trees(self.n_estimators)
-            .learning_rate(self.learning_rate as f32)
-            // Tree params (flattened)
-            .growth_strategy(growth_strategy)
-            .max_onehot_cats(self.categorical.max_onehot as u32)
-            // Regularization params (flattened)
-            .lambda(self.regularization.l2 as f32)
-            .alpha(self.regularization.l1 as f32)
-            .min_gain(self.tree.min_gain_to_split as f32)
-            .min_child_weight(self.regularization.min_hessian as f32)
-            .min_samples_leaf(self.tree.min_samples_leaf)
-            // Sampling params (flattened)
-            .subsample(self.sampling.subsample as f32)
-            .colsample_bytree(self.sampling.colsample as f32)
-            .colsample_bylevel(self.sampling.colsample_bylevel as f32)
-            // Other
-            .maybe_linear_leaves(linear_leaves)
-            .maybe_early_stopping_rounds(self.early_stopping_rounds)
-            .seed(self.seed)
-            .build()
-            .map_err(|e| {
-                BoostersError::InvalidParameter {
-                    name: "config".to_string(),
-                    reason: e.to_string(),
-                }
-                .into()
-            })
+        // Build core config using struct constructor instead of builder.
+        // This ensures compile-time errors if new fields are added to GBDTConfig.
+        let config = boosters::GBDTConfig {
+            objective,
+            metric,
+            n_trees: self.n_estimators,
+            learning_rate: self.learning_rate as f32,
+            // Tree params
+            growth_strategy,
+            max_onehot_cats: self.categorical.max_onehot,
+            // Regularization params
+            lambda: self.regularization.l2 as f32,
+            alpha: self.regularization.l1 as f32,
+            min_gain: self.tree.min_gain_to_split as f32,
+            min_child_weight: self.regularization.min_hessian as f32,
+            min_samples_leaf: self.tree.min_samples_leaf,
+            // Sampling params
+            subsample: self.sampling.subsample as f32,
+            colsample_bytree: self.sampling.colsample as f32,
+            colsample_bylevel: self.sampling.colsample_bylevel as f32,
+            // Binning - use default
+            binning: Default::default(),
+            // Linear leaves
+            linear_leaves,
+            // Early stopping
+            early_stopping_rounds: self.early_stopping_rounds,
+            // Resources
+            cache_size: 8, // Default
+            // Reproducibility
+            seed: self.seed,
+            // Logging
+            verbosity: Default::default(),
+        };
+
+        // Validate the constructed config
+        config.validate().map_err(|e| {
+            BoostersError::InvalidParameter {
+                name: "config".to_string(),
+                reason: e.to_string(),
+            }
+        })?;
+
+        Ok(config)
     }
 }
