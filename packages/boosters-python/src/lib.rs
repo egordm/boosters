@@ -6,23 +6,21 @@
 mod config;
 mod data;
 mod error;
-mod importance;
 mod metrics;
 mod model;
 mod objectives;
+mod types;
 mod validation;
-mod verbosity;
 
 use pyo3::prelude::*;
 use pyo3_stub_gen::define_stub_info_gatherer;
 
 pub use config::{PyGBDTConfig, PyGBLinearConfig, PyGrowthStrategy};
 use data::{PyDataset, PyEvalSet};
-use importance::PyImportanceType;
 use metrics::PyMetric;
 use model::{PyGBDTModel, PyGBLinearModel};
 use objectives::PyObjective;
-use verbosity::PyVerbosity;
+use types::{PyImportanceType, PyVerbosity};
 
 /// Python module for boosters.
 ///

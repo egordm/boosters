@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -23,77 +24,242 @@ if TYPE_CHECKING:
 
 
 # =============================================================================
-# Config Builder
+# Base Estimator
 # =============================================================================
 
 
-def _build_config(
-    *,
-    objective: str,
-    metric: str | None = None,
-    n_classes: int | None = None,
-    n_estimators: int = 100,
-    learning_rate: float = 0.3,
-    early_stopping_rounds: int | None = None,
-    seed: int = 42,
-    max_depth: int = -1,
-    max_leaves: int = 31,
-    min_child_weight: float = 1.0,
-    gamma: float = 0.0,
-    grow_strategy: GrowthStrategy = GrowthStrategy.Depthwise,
-    reg_alpha: float = 0.0,
-    reg_lambda: float = 1.0,
-    subsample: float = 1.0,
-    colsample_bytree: float = 1.0,
-) -> GBDTConfig:
-    """Build a GBDTConfig from flat kwargs."""
-    # Map objective string to objective object
-    objective_map: dict[str, Objective] = {
-        "regression:squarederror": Objective.squared(),
-        "binary:logistic": Objective.logistic(),
-        "multi:softmax": Objective.softmax(n_classes=n_classes or 2),
-    }
-    obj = objective_map.get(objective)
-    if obj is None:
-        raise ValueError(f"Unknown objective: {objective}")
+class _GBDTEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
+    """Base class for GBDT estimators.
 
-    # Map metric string to metric object
-    metric_obj: Metric | None = None
-    if metric:
-        metric_map: dict[str, Metric] = {
-            "rmse": Metric.rmse(),
-            "logloss": Metric.logloss(),
-            "mlogloss": Metric.logloss(),
-        }
-        metric_obj = metric_map.get(metric)
-        if metric_obj is None:
-            raise ValueError(f"Unknown metric: {metric}")
+    Handles common initialization, config creation, and fitting logic.
+    Subclasses define task-specific behavior (regression vs classification).
+    """
 
-    return GBDTConfig(
-        n_estimators=n_estimators,
-        learning_rate=learning_rate,
-        early_stopping_rounds=early_stopping_rounds,
-        seed=seed,
-        objective=obj,
-        metric=metric_obj,
-        growth_strategy=grow_strategy,
-        max_depth=max_depth,
-        n_leaves=max_leaves,
-        min_child_weight=min_child_weight,
-        min_gain_to_split=gamma,
-        l1=reg_alpha,
-        l2=reg_lambda,
-        subsample=subsample,
-        colsample_bytree=colsample_bytree,
-    )
+    # Subclasses must define these
+    _default_objective: Objective
+    _default_metric: Metric | None
+
+    def __init__(
+        self,
+        n_estimators: int = 100,
+        learning_rate: float = 0.1,
+        max_depth: int = 6,
+        min_child_weight: float = 1.0,
+        max_leaves: int = 31,
+        grow_strategy: GrowthStrategy = GrowthStrategy.Depthwise,
+        colsample_bytree: float = 1.0,
+        subsample: float = 1.0,
+        gamma: float = 0.0,
+        reg_alpha: float = 0.0,
+        reg_lambda: float = 1.0,
+        early_stopping_rounds: int | None = None,
+        seed: int = 42,
+        n_threads: int = 0,
+        verbose: int = 1,
+        objective: Objective | None = None,
+        metric: Metric | None = None,
+    ) -> None:
+        # Store all parameters (sklearn convention)
+        self.n_estimators = n_estimators
+        self.learning_rate = learning_rate
+        self.max_depth = max_depth
+        self.min_child_weight = min_child_weight
+        self.max_leaves = max_leaves
+        self.grow_strategy = grow_strategy
+        self.colsample_bytree = colsample_bytree
+        self.subsample = subsample
+        self.gamma = gamma
+        self.reg_alpha = reg_alpha
+        self.reg_lambda = reg_lambda
+        self.early_stopping_rounds = early_stopping_rounds
+        self.seed = seed
+        self.n_threads = n_threads
+        self.verbose = verbose
+        self.objective = objective
+        self.metric = metric
+
+        # Validate and create config immediately
+        self._validate_and_create_config()
+
+    def _validate_and_create_config(self) -> None:
+        """Validate parameters and create the config object."""
+        # Use provided objective or default
+        obj = self.objective if self.objective is not None else self._default_objective
+        met = self.metric if self.metric is not None else self._default_metric
+
+        # Validate objective is appropriate for this estimator type
+        self._validate_objective(obj)
+
+        # Create config - this will validate all numeric parameters
+        self._config = GBDTConfig(
+            n_estimators=self.n_estimators,
+            learning_rate=self.learning_rate,
+            early_stopping_rounds=self.early_stopping_rounds,
+            seed=self.seed,
+            objective=obj,
+            metric=met,
+            growth_strategy=self.grow_strategy,
+            max_depth=self.max_depth,
+            n_leaves=self.max_leaves,
+            min_child_weight=self.min_child_weight,
+            min_gain_to_split=self.gamma,
+            l1=self.reg_alpha,
+            l2=self.reg_lambda,
+            subsample=self.subsample,
+            colsample_bytree=self.colsample_bytree,
+        )
+
+    @abstractmethod
+    def _validate_objective(self, objective: Objective) -> None:
+        """Validate that the objective is appropriate for this estimator."""
+        ...
+
+    @abstractmethod
+    def _prepare_targets(
+        self, y: NDArray
+    ) -> tuple[NDArray[np.float32], Objective, Metric | None]:
+        """Prepare targets for training. Returns (y_prepared, objective, metric)."""
+        ...
+
+    @abstractmethod
+    def _prepare_eval_targets(self, y: NDArray) -> NDArray[np.float32]:
+        """Prepare evaluation set targets."""
+        ...
+
+    def fit(
+        self,
+        X: NDArray[np.float32],
+        y: NDArray,
+        eval_set: list[tuple[NDArray, NDArray]] | list[EvalSet] | None = None,
+        sample_weight: NDArray[np.float32] | None = None,
+    ) -> _GBDTEstimatorBase:
+        """Fit the estimator.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples, n_features)
+            Training input samples.
+        y : array-like of shape (n_samples,)
+            Target values.
+        eval_set : list of tuples or list of EvalSet, optional
+            Validation sets. Can be:
+            - list of (X, y) tuples (auto-named as "valid_0", "valid_1", ...)
+            - list of EvalSet objects (with custom names)
+        sample_weight : array-like of shape (n_samples,), optional
+            Sample weights.
+
+        Returns
+        -------
+        self
+            Fitted estimator.
+        """
+        X, y = check_X_y(X, y, dtype=np.float32)
+        self.n_features_in_ = X.shape[1]
+
+        # Prepare targets (handles label encoding for classifiers)
+        y_prepared, objective, metric = self._prepare_targets(y)
+
+        # Update config if objective/metric changed (e.g., multiclass detection)
+        if objective != self._config.objective or metric != self._config.metric:
+            self._config = GBDTConfig(
+                n_estimators=self.n_estimators,
+                learning_rate=self.learning_rate,
+                early_stopping_rounds=self.early_stopping_rounds,
+                seed=self.seed,
+                objective=objective,
+                metric=metric,
+                growth_strategy=self.grow_strategy,
+                max_depth=self.max_depth,
+                n_leaves=self.max_leaves,
+                min_child_weight=self.min_child_weight,
+                min_gain_to_split=self.gamma,
+                l1=self.reg_alpha,
+                l2=self.reg_lambda,
+                subsample=self.subsample,
+                colsample_bytree=self.colsample_bytree,
+            )
+
+        train_data = Dataset(X, y_prepared, weights=sample_weight)
+
+        # Build eval sets
+        valid_list = self._build_eval_sets(eval_set)
+
+        self.model_ = GBDTModel(config=self._config)
+        self.model_.fit(train_data, valid=valid_list)
+
+        return self
+
+    def _build_eval_sets(
+        self, eval_set: list[tuple[NDArray, NDArray]] | list[EvalSet] | None
+    ) -> list[EvalSet] | None:
+        """Build evaluation sets from user input."""
+        if eval_set is None:
+            return None
+
+        valid_list = []
+        for i, item in enumerate(eval_set):
+            if isinstance(item, EvalSet):
+                # User provided EvalSet with custom name
+                valid_list.append(item)
+            else:
+                # Tuple of (X, y) - auto-name
+                X_val, y_val = item
+                X_val = check_array(X_val, dtype=np.float32)
+                y_val_prepared = self._prepare_eval_targets(y_val)
+                val_ds = Dataset(X_val, y_val_prepared)
+                valid_list.append(EvalSet(val_ds, f"valid_{i}"))
+
+        return valid_list
+
+    def predict(self, X: NDArray[np.float32]) -> NDArray[np.float32]:
+        """Predict using the fitted model.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples, n_features)
+            Input samples.
+
+        Returns
+        -------
+        y_pred : ndarray of shape (n_samples,)
+            Predicted values.
+        """
+        check_is_fitted(self, ["model_"])
+        X = check_array(X, dtype=np.float32)
+        preds = self.model_.predict(Dataset(X))
+        return np.squeeze(preds, axis=-1)
+
+    @property
+    def feature_importances_(self) -> NDArray[np.float32]:
+        """Return feature importances (gain-based)."""
+        check_is_fitted(self, ["model_"])
+        return self.model_.feature_importance(ImportanceType.Gain)
+
+    def get_feature_importance(
+        self, importance_type: ImportanceType = ImportanceType.Gain
+    ) -> NDArray[np.float32]:
+        """Get feature importance scores.
+
+        Parameters
+        ----------
+        importance_type : ImportanceType, default=ImportanceType.Gain
+            Type of feature importance to compute.
+
+        Returns
+        -------
+        importance : ndarray of shape (n_features,)
+            Feature importance scores.
+        """
+        check_is_fitted(self, ["model_"])
+        return self.model_.feature_importance(importance_type)
 
 
 # =============================================================================
-# Estimators
+# Regressor
 # =============================================================================
 
 
-class GBDTRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
+class GBDTRegressor(_GBDTEstimatorBase, RegressorMixin):  # type: ignore[misc]
     """Gradient Boosted Decision Tree Regressor.
 
     A sklearn-compatible wrapper around GBDTModel for regression.
@@ -110,7 +276,7 @@ class GBDTRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
         Minimum sum of instance weight (hessian) in a child node.
     max_leaves : int, default=31
         Maximum number of leaves per tree.
-    grow_strategy : {"depthwise", "lossguide"}, default="depthwise"
+    grow_strategy : GrowthStrategy, default=GrowthStrategy.Depthwise
         Tree growing strategy.
     colsample_bytree : float, default=1.0
         Subsample ratio of columns for each tree.
@@ -126,8 +292,15 @@ class GBDTRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
         Stop if no improvement for this many rounds.
     seed : int, default=42
         Random seed.
+    n_threads : int, default=0
+        Number of threads (0 = auto).
+    objective : Objective or None, default=None
+        Loss function. Must be a regression objective (e.g., Objective.squared()).
+        If None, uses Objective.squared().
+    metric : Metric or None, default=None
+        Evaluation metric. If None, uses Metric.rmse().
 
-    Attributes:
+    Attributes
     ----------
     model_ : GBDTModel
         The fitted core model.
@@ -137,149 +310,40 @@ class GBDTRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
         Feature importance scores (gain-based).
     """
 
-    def __init__(
-        self,
-        n_estimators: int = 100,
-        learning_rate: float = 0.1,
-        max_depth: int = 6,
-        min_child_weight: float = 1.0,
-        max_leaves: int = 31,
-        grow_strategy: GrowthStrategy = GrowthStrategy.Depthwise,
-        colsample_bytree: float = 1.0,
-        subsample: float = 1.0,
-        gamma: float = 0.0,
-        reg_alpha: float = 0.0,
-        reg_lambda: float = 1.0,
-        early_stopping_rounds: int | None = None,
-        seed: int = 42,
-        n_threads: int = 0,
-        verbose: int = 1,
-    ) -> None:
-        self.n_estimators = n_estimators
-        self.learning_rate = learning_rate
-        self.max_depth = max_depth
-        self.min_child_weight = min_child_weight
-        self.max_leaves = max_leaves
-        self.grow_strategy = grow_strategy
-        self.colsample_bytree = colsample_bytree
-        self.subsample = subsample
-        self.gamma = gamma
-        self.reg_alpha = reg_alpha
-        self.reg_lambda = reg_lambda
-        self.early_stopping_rounds = early_stopping_rounds
-        self.seed = seed
-        self.n_threads = n_threads  # Not yet used, for API compatibility
-        self.verbose = verbose  # Not yet used, for API compatibility
+    _default_objective = Objective.squared()
+    _default_metric = Metric.rmse()
 
-    def fit(
-        self,
-        X: NDArray[np.float32],
-        y: NDArray[np.float32],
-        eval_set: list[tuple[NDArray, NDArray]] | None = None,
-        sample_weight: NDArray[np.float32] | None = None,
-    ) -> GBDTRegressor:
-        """Fit the regressor.
+    def _validate_objective(self, objective: Objective) -> None:
+        """Validate that the objective is a regression objective."""
+        obj_name = str(objective).lower()
+        # Check if it looks like a classification objective
+        if any(x in obj_name for x in ["logistic", "softmax", "cross"]):
+            raise ValueError(
+                f"GBDTRegressor requires a regression objective, got {objective}. "
+                f"Use Objective.squared(), Objective.absolute(), etc. "
+                f"For classification, use GBDTClassifier instead."
+            )
 
-        Parameters
-        ----------
-        X : array-like of shape (n_samples, n_features)
-            Training input samples.
-        y : array-like of shape (n_samples,)
-            Target values.
-        eval_set : list of tuples, optional
-            Validation sets as (X, y) pairs for early stopping.
-        sample_weight : array-like of shape (n_samples,), optional
-            Sample weights.
+    def _prepare_targets(
+        self, y: NDArray
+    ) -> tuple[NDArray[np.float32], Objective, Metric | None]:
+        """Prepare regression targets."""
+        y = np.asarray(y, dtype=np.float32)
+        obj = self.objective if self.objective is not None else self._default_objective
+        met = self.metric if self.metric is not None else self._default_metric
+        return y, obj, met
 
-        Returns:
-        -------
-        self : GBDTRegressor
-            Fitted estimator.
-        """
-        X, y = check_X_y(X, y, dtype=np.float32, y_numeric=True)
-        self.n_features_in_ = X.shape[1]
-
-        config = _build_config(
-            objective="regression:squarederror",
-            metric="rmse",
-            n_estimators=self.n_estimators,
-            learning_rate=self.learning_rate,
-            max_depth=self.max_depth,
-            min_child_weight=self.min_child_weight,
-            max_leaves=self.max_leaves,
-            grow_strategy=self.grow_strategy,
-            colsample_bytree=self.colsample_bytree,
-            subsample=self.subsample,
-            gamma=self.gamma,
-            reg_alpha=self.reg_alpha,
-            reg_lambda=self.reg_lambda,
-            early_stopping_rounds=self.early_stopping_rounds,
-            seed=self.seed,
-        )
-
-        train_data = Dataset(X, y, weights=sample_weight)
-
-        valid_list = None
-        if eval_set is not None:
-            valid_list = []
-            for i, (X_val, y_val) in enumerate(eval_set):
-                X_val = check_array(X_val, dtype=np.float32)
-                y_val = np.asarray(y_val, dtype=np.float32)
-                val_ds = Dataset(X_val, y_val)
-                valid_list.append(EvalSet(val_ds, f"valid_{i}"))
-
-        self.model_ = GBDTModel(config=config)
-        self.model_.fit(train_data, valid=valid_list)
-
-        return self
-
-    def predict(self, X: NDArray[np.float32]) -> NDArray[np.float32]:
-        """Predict target values.
-
-        Parameters
-        ----------
-        X : array-like of shape (n_samples, n_features)
-            Input samples.
-
-        Returns:
-        -------
-        y_pred : ndarray of shape (n_samples,)
-            Predicted values.
-        """
-        check_is_fitted(self, ["model_"])
-        X = check_array(X, dtype=np.float32)
-        preds = self.model_.predict(Dataset(X))
-        # Squeeze from (n_samples, 1) to (n_samples,) for sklearn compatibility
-        return np.squeeze(preds, axis=-1)
-
-    def get_feature_importance(
-        self, importance_type: ImportanceType = ImportanceType.Gain
-    ) -> NDArray[np.float32]:
-        """Get feature importance scores.
-
-        Parameters
-        ----------
-        importance_type : ImportanceType, default=ImportanceType.Gain
-            Type of feature importance to compute.
-            - ImportanceType.Split: Number of times feature is used in splits
-            - ImportanceType.Gain: Total gain from splits using feature
-
-        Returns:
-        -------
-        importance : ndarray of shape (n_features,)
-            Feature importance scores.
-        """
-        check_is_fitted(self, ["model_"])
-        return self.model_.feature_importance(importance_type)
-
-    @property
-    def feature_importances_(self) -> NDArray[np.float32]:
-        """Return feature importances (gain-based)."""
-        check_is_fitted(self, ["model_"])
-        return self.model_.feature_importance(ImportanceType.Gain)
+    def _prepare_eval_targets(self, y: NDArray) -> NDArray[np.float32]:
+        """Prepare evaluation set targets for regression."""
+        return np.asarray(y, dtype=np.float32)
 
 
-class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
+# =============================================================================
+# Classifier
+# =============================================================================
+
+
+class GBDTClassifier(_GBDTEstimatorBase, ClassifierMixin):  # type: ignore[misc]
     """Gradient Boosted Decision Tree Classifier.
 
     A sklearn-compatible wrapper around GBDTModel for classification.
@@ -296,7 +360,7 @@ class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         Minimum sum of instance weight in a child node.
     max_leaves : int, default=31
         Maximum number of leaves per tree.
-    grow_strategy : {"depthwise", "lossguide"}, default="depthwise"
+    grow_strategy : GrowthStrategy, default=GrowthStrategy.Depthwise
         Tree growing strategy.
     colsample_bytree : float, default=1.0
         Subsample ratio of columns for each tree.
@@ -312,8 +376,16 @@ class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         Stop if no improvement for this many rounds.
     seed : int, default=42
         Random seed.
+    n_threads : int, default=0
+        Number of threads (0 = auto).
+    objective : Objective or None, default=None
+        Loss function. Must be a classification objective.
+        If None, auto-detects: Objective.logistic() for binary,
+        Objective.softmax() for multiclass.
+    metric : Metric or None, default=None
+        Evaluation metric. If None, uses Metric.logloss().
 
-    Attributes:
+    Attributes
     ----------
     model_ : GBDTModel
         The fitted core model.
@@ -327,115 +399,44 @@ class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         Feature importance scores.
     """
 
-    def __init__(
-        self,
-        n_estimators: int = 100,
-        learning_rate: float = 0.1,
-        max_depth: int = 6,
-        min_child_weight: float = 1.0,
-        max_leaves: int = 31,
-        grow_strategy: GrowthStrategy = GrowthStrategy.Depthwise,
-        colsample_bytree: float = 1.0,
-        subsample: float = 1.0,
-        gamma: float = 0.0,
-        reg_alpha: float = 0.0,
-        reg_lambda: float = 1.0,
-        early_stopping_rounds: int | None = None,
-        seed: int = 42,
-        n_threads: int = 0,
-        verbose: int = 1,
-    ) -> None:
-        self.n_estimators = n_estimators
-        self.learning_rate = learning_rate
-        self.max_depth = max_depth
-        self.min_child_weight = min_child_weight
-        self.max_leaves = max_leaves
-        self.grow_strategy = grow_strategy
-        self.colsample_bytree = colsample_bytree
-        self.subsample = subsample
-        self.gamma = gamma
-        self.reg_alpha = reg_alpha
-        self.reg_lambda = reg_lambda
-        self.early_stopping_rounds = early_stopping_rounds
-        self.seed = seed
-        self.n_threads = n_threads  # Not yet used, for API compatibility
-        self.verbose = verbose  # Not yet used, for API compatibility
+    _default_objective = Objective.logistic()  # Will be overridden for multiclass
+    _default_metric = Metric.logloss()
 
-    def fit(
-        self,
-        X: NDArray[np.float32],
-        y: NDArray,
-        eval_set: list[tuple[NDArray, NDArray]] | None = None,
-        sample_weight: NDArray[np.float32] | None = None,
-    ) -> GBDTClassifier:
-        """Fit the classifier.
+    def _validate_objective(self, objective: Objective) -> None:
+        """Validate that the objective is a classification objective."""
+        obj_name = str(objective).lower()
+        # Check if it looks like a regression objective
+        if any(x in obj_name for x in ["squared", "absolute", "huber", "quantile", "tweedie"]):
+            raise ValueError(
+                f"GBDTClassifier requires a classification objective, got {objective}. "
+                f"Use Objective.logistic() for binary or Objective.softmax() for multiclass. "
+                f"For regression, use GBDTRegressor instead."
+            )
 
-        Parameters
-        ----------
-        X : array-like of shape (n_samples, n_features)
-            Training input samples.
-        y : array-like of shape (n_samples,)
-            Target class labels.
-        eval_set : list of tuples, optional
-            Validation sets as (X, y) pairs.
-        sample_weight : array-like of shape (n_samples,), optional
-            Sample weights.
-
-        Returns:
-        -------
-        self : GBDTClassifier
-            Fitted estimator.
-        """
-        X, y = check_X_y(X, y, dtype=np.float32)
-        self.n_features_in_ = X.shape[1]
-
+    def _prepare_targets(
+        self, y: NDArray
+    ) -> tuple[NDArray[np.float32], Objective, Metric | None]:
+        """Prepare classification targets with label encoding."""
         # Label encoding
         self.classes_ = np.unique(y)
         self.n_classes_ = len(self.classes_)
         self._label_to_idx = {c: i for i, c in enumerate(self.classes_)}
         y_encoded = np.array([self._label_to_idx[c] for c in y], dtype=np.float32)
 
-        if self.n_classes_ == 2:
-            objective = "binary:logistic"
-            metric = "logloss"
+        # Determine objective based on number of classes (if not specified)
+        if self.objective is not None:
+            obj = self.objective
+        elif self.n_classes_ == 2:
+            obj = Objective.logistic()
         else:
-            objective = "multi:softmax"
-            metric = "mlogloss"
+            obj = Objective.softmax(n_classes=self.n_classes_)
 
-        config = _build_config(
-            objective=objective,
-            metric=metric,
-            n_classes=self.n_classes_,
-            n_estimators=self.n_estimators,
-            learning_rate=self.learning_rate,
-            max_depth=self.max_depth,
-            min_child_weight=self.min_child_weight,
-            max_leaves=self.max_leaves,
-            grow_strategy=self.grow_strategy,
-            colsample_bytree=self.colsample_bytree,
-            subsample=self.subsample,
-            gamma=self.gamma,
-            reg_alpha=self.reg_alpha,
-            reg_lambda=self.reg_lambda,
-            early_stopping_rounds=self.early_stopping_rounds,
-            seed=self.seed,
-        )
+        met = self.metric if self.metric is not None else Metric.logloss()
+        return y_encoded, obj, met
 
-        train_data = Dataset(X, y_encoded, weights=sample_weight)
-
-        valid_list = None
-        if eval_set is not None:
-            valid_list = []
-            for i, (X_val, y_val) in enumerate(eval_set):
-                X_val = check_array(X_val, dtype=np.float32)
-                y_val_encoded = np.array([self._label_to_idx[c] for c in y_val], dtype=np.float32)
-                val_ds = Dataset(X_val, y_val_encoded)
-                valid_list.append(EvalSet(val_ds, f"valid_{i}"))
-
-        self.model_ = GBDTModel(config=config)
-        self.model_.fit(train_data, valid=valid_list)
-
-        return self
+    def _prepare_eval_targets(self, y: NDArray) -> NDArray[np.float32]:
+        """Prepare evaluation set targets with label encoding."""
+        return np.array([self._label_to_idx[c] for c in y], dtype=np.float32)
 
     def predict(self, X: NDArray[np.float32]) -> NDArray:
         """Predict class labels.
@@ -445,7 +446,7 @@ class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         X : array-like of shape (n_samples, n_features)
             Input samples.
 
-        Returns:
+        Returns
         -------
         y_pred : ndarray of shape (n_samples,)
             Predicted class labels.
@@ -468,7 +469,7 @@ class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         X : array-like of shape (n_samples, n_features)
             Input samples.
 
-        Returns:
+        Returns
         -------
         proba : ndarray of shape (n_samples, n_classes)
             Class probability estimates.
@@ -486,12 +487,6 @@ class GBDTClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
             proba = preds
 
         return proba
-
-    @property
-    def feature_importances_(self) -> NDArray[np.float32]:
-        """Return feature importances (gain-based)."""
-        check_is_fitted(self, ["model_"])
-        return self.model_.feature_importance(ImportanceType.Gain)
 
 
 __all__ = ["GBDTClassifier", "GBDTRegressor"]

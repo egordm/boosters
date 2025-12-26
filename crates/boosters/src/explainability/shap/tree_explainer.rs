@@ -305,9 +305,9 @@ mod tests {
         let shap = explainer.shap_values(view);
 
         // Sum SHAP values + base should equal prediction (-1.0)
-        let sum: f64 = (0..3).map(|f| shap.get(0, f, 0)).sum();
+        let sum: f32 = (0..3).map(|f| shap.get(0, f, 0)).sum();
         let prediction_from_shap = sum + shap.base_value(0, 0);
-        let _actual_prediction = -1.0; // leaf value
+        let _actual_prediction = -1.0f32; // leaf value
 
         // TODO: Verify SHAP algorithm correctness with reference values
         // The current implementation is a skeleton that needs validation
@@ -316,6 +316,6 @@ mod tests {
         
         // Feature 0 is the splitting feature, so it should have non-zero contribution
         let f0_contrib = shap.get(0, 0, 0);
-        assert!(f0_contrib != 0.0, "Splitting feature should have non-zero SHAP");
+        assert!(f0_contrib != 0.0f32, "Splitting feature should have non-zero SHAP");
     }
 }

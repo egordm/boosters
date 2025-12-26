@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -16,40 +17,200 @@ if TYPE_CHECKING:
 
 
 # =============================================================================
-# Config Builder
+# Base Estimator
 # =============================================================================
 
 
-def _build_config(
-    *,
-    objective: Objective,
-    metric: Metric | None = None,
-    n_estimators: int = 100,
-    learning_rate: float = 0.5,
-    l1: float = 0.0,
-    l2: float = 1.0,
-    early_stopping_rounds: int | None = None,
-    seed: int = 42,
-) -> GBLinearConfig:
-    """Build a GBLinearConfig from flat kwargs."""
-    return GBLinearConfig(
-        n_estimators=n_estimators,
-        learning_rate=learning_rate,
-        early_stopping_rounds=early_stopping_rounds,
-        seed=seed,
-        objective=objective,
-        metric=metric,
-        l1=l1,
-        l2=l2,
-    )
+class _GBLinearEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
+    """Base class for GBLinear estimators.
+
+    Handles common initialization, config creation, and fitting logic.
+    Subclasses define task-specific behavior (regression vs classification).
+    """
+
+    # Subclasses must define these
+    _default_objective: Objective
+    _default_metric: Metric | None
+
+    def __init__(
+        self,
+        n_estimators: int = 100,
+        learning_rate: float = 0.5,
+        l1: float = 0.0,
+        l2: float = 1.0,
+        early_stopping_rounds: int | None = None,
+        seed: int = 42,
+        verbose: int = 1,
+        objective: Objective | None = None,
+        metric: Metric | None = None,
+    ) -> None:
+        # Store all parameters (sklearn convention)
+        self.n_estimators = n_estimators
+        self.learning_rate = learning_rate
+        self.l1 = l1
+        self.l2 = l2
+        self.early_stopping_rounds = early_stopping_rounds
+        self.seed = seed
+        self.verbose = verbose
+        self.objective = objective
+        self.metric = metric
+
+        # Validate and create config immediately
+        self._validate_and_create_config()
+
+    def _validate_and_create_config(self) -> None:
+        """Validate parameters and create the config object."""
+        # Use provided objective or default
+        obj = self.objective if self.objective is not None else self._default_objective
+        met = self.metric if self.metric is not None else self._default_metric
+
+        # Validate objective is appropriate for this estimator type
+        self._validate_objective(obj)
+
+        # Create config - this will validate all numeric parameters
+        self._config = GBLinearConfig(
+            n_estimators=self.n_estimators,
+            learning_rate=self.learning_rate,
+            early_stopping_rounds=self.early_stopping_rounds,
+            seed=self.seed,
+            objective=obj,
+            metric=met,
+            l1=self.l1,
+            l2=self.l2,
+        )
+
+    @abstractmethod
+    def _validate_objective(self, objective: Objective) -> None:
+        """Validate that the objective is appropriate for this estimator."""
+        ...
+
+    @abstractmethod
+    def _prepare_targets(
+        self, y: NDArray
+    ) -> tuple[NDArray[np.float32], Objective, Metric | None]:
+        """Prepare targets for training. Returns (y_prepared, objective, metric)."""
+        ...
+
+    @abstractmethod
+    def _prepare_eval_targets(self, y: NDArray) -> NDArray[np.float32]:
+        """Prepare evaluation set targets."""
+        ...
+
+    def fit(
+        self,
+        X: NDArray[np.float32],
+        y: NDArray,
+        eval_set: list[tuple[NDArray, NDArray]] | list[EvalSet] | None = None,
+        sample_weight: NDArray[np.float32] | None = None,
+    ) -> _GBLinearEstimatorBase:
+        """Fit the estimator.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples, n_features)
+            Training input samples.
+        y : array-like of shape (n_samples,)
+            Target values.
+        eval_set : list of tuples or list of EvalSet, optional
+            Validation sets. Can be:
+            - list of (X, y) tuples (auto-named as "valid_0", "valid_1", ...)
+            - list of EvalSet objects (with custom names)
+        sample_weight : array-like of shape (n_samples,), optional
+            Sample weights.
+
+        Returns
+        -------
+        self
+            Fitted estimator.
+        """
+        X, y = check_X_y(X, y, dtype=np.float32)
+        self.n_features_in_ = X.shape[1]
+
+        # Prepare targets (handles label encoding for classifiers)
+        y_prepared, objective, metric = self._prepare_targets(y)
+
+        # Update config if objective/metric changed (e.g., multiclass detection)
+        if objective != self._config.objective or metric != self._config.metric:
+            self._config = GBLinearConfig(
+                n_estimators=self.n_estimators,
+                learning_rate=self.learning_rate,
+                early_stopping_rounds=self.early_stopping_rounds,
+                seed=self.seed,
+                objective=objective,
+                metric=metric,
+                l1=self.l1,
+                l2=self.l2,
+            )
+
+        train_data = Dataset(X, y_prepared, weights=sample_weight)
+
+        # Build eval sets
+        valid_list = self._build_eval_sets(eval_set)
+
+        self.model_ = GBLinearModel(config=self._config)
+        self.model_.fit(train_data, eval_set=valid_list)
+
+        return self
+
+    def _build_eval_sets(
+        self, eval_set: list[tuple[NDArray, NDArray]] | list[EvalSet] | None
+    ) -> list[EvalSet] | None:
+        """Build evaluation sets from user input."""
+        if eval_set is None:
+            return None
+
+        valid_list = []
+        for i, item in enumerate(eval_set):
+            if isinstance(item, EvalSet):
+                # User provided EvalSet with custom name
+                valid_list.append(item)
+            else:
+                # Tuple of (X, y) - auto-name
+                X_val, y_val = item
+                X_val = check_array(X_val, dtype=np.float32)
+                y_val_prepared = self._prepare_eval_targets(y_val)
+                val_ds = Dataset(X_val, y_val_prepared)
+                valid_list.append(EvalSet(val_ds, f"valid_{i}"))
+
+        return valid_list
+
+    def predict(self, X: NDArray[np.float32]) -> NDArray[np.float32]:
+        """Predict using the fitted model.
+
+        Parameters
+        ----------
+        X : array-like of shape (n_samples, n_features)
+            Input samples.
+
+        Returns
+        -------
+        y_pred : ndarray of shape (n_samples,)
+            Predicted values.
+        """
+        check_is_fitted(self, ["model_"])
+        X = check_array(X, dtype=np.float32)
+        preds = self.model_.predict(Dataset(X))
+        return np.squeeze(preds, axis=-1)
+
+    @property
+    def coef_(self) -> NDArray[np.float32]:
+        """Coefficient weights."""
+        check_is_fitted(self, ["model_"])
+        return self.model_.coef_
+
+    @property
+    def intercept_(self) -> NDArray[np.float32]:
+        """Intercept (bias) term."""
+        check_is_fitted(self, ["model_"])
+        return self.model_.intercept_
 
 
 # =============================================================================
-# Estimators
+# Regressor
 # =============================================================================
 
 
-class GBLinearRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
+class GBLinearRegressor(_GBLinearEstimatorBase, RegressorMixin):  # type: ignore[misc]
     """Gradient Boosted Linear Regressor.
 
     A sklearn-compatible wrapper around GBLinearModel for linear regression.
@@ -68,8 +229,13 @@ class GBLinearRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
         Stop if no improvement for this many rounds.
     seed : int, default=42
         Random seed.
+    objective : Objective or None, default=None
+        Loss function. Must be a regression objective.
+        If None, uses Objective.squared().
+    metric : Metric or None, default=None
+        Evaluation metric. If None, uses Metric.rmse().
 
-    Attributes:
+    Attributes
     ----------
     model_ : GBLinearModel
         The fitted core model.
@@ -81,110 +247,39 @@ class GBLinearRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
         Number of features seen during fit.
     """
 
-    def __init__(
-        self,
-        n_estimators: int = 100,
-        learning_rate: float = 0.5,
-        l1: float = 0.0,
-        l2: float = 1.0,
-        early_stopping_rounds: int | None = None,
-        seed: int = 42,
-    ) -> None:
-        self.n_estimators = n_estimators
-        self.learning_rate = learning_rate
-        self.l1 = l1
-        self.l2 = l2
-        self.early_stopping_rounds = early_stopping_rounds
-        self.seed = seed
+    _default_objective = Objective.squared()
+    _default_metric = Metric.rmse()
 
-    def fit(
-        self,
-        X: NDArray[np.float32],
-        y: NDArray[np.float32],
-        eval_set: list[tuple[NDArray, NDArray]] | None = None,
-        sample_weight: NDArray[np.float32] | None = None,
-    ) -> GBLinearRegressor:
-        """Fit the regressor.
+    def _validate_objective(self, objective: Objective) -> None:
+        """Validate that the objective is a regression objective."""
+        obj_name = str(objective).lower()
+        if any(x in obj_name for x in ["logistic", "softmax", "cross"]):
+            raise ValueError(
+                f"GBLinearRegressor requires a regression objective, got {objective}. "
+                f"Use Objective.squared(), etc. "
+                f"For classification, use GBLinearClassifier instead."
+            )
 
-        Parameters
-        ----------
-        X : array-like of shape (n_samples, n_features)
-            Training input samples.
-        y : array-like of shape (n_samples,)
-            Target values.
-        eval_set : list of tuples, optional
-            Validation sets as (X, y) pairs for early stopping.
-        sample_weight : array-like of shape (n_samples,), optional
-            Sample weights.
+    def _prepare_targets(
+        self, y: NDArray
+    ) -> tuple[NDArray[np.float32], Objective, Metric | None]:
+        """Prepare regression targets."""
+        y = np.asarray(y, dtype=np.float32)
+        obj = self.objective if self.objective is not None else self._default_objective
+        met = self.metric if self.metric is not None else self._default_metric
+        return y, obj, met
 
-        Returns:
-        -------
-        self : GBLinearRegressor
-            Fitted estimator.
-        """
-        X, y = check_X_y(X, y, dtype=np.float32, y_numeric=True)
-        self.n_features_in_ = X.shape[1]
-
-        config = _build_config(
-            objective=Objective.squared(),
-            metric=Metric.rmse(),
-            n_estimators=self.n_estimators,
-            learning_rate=self.learning_rate,
-            l1=self.l1,
-            l2=self.l2,
-            early_stopping_rounds=self.early_stopping_rounds,
-            seed=self.seed,
-        )
-
-        train_data = Dataset(X, y, weights=sample_weight)
-
-        valid_list = None
-        if eval_set is not None:
-            valid_list = []
-            for i, (X_val, y_val) in enumerate(eval_set):
-                X_val = check_array(X_val, dtype=np.float32)
-                y_val = np.asarray(y_val, dtype=np.float32)
-                val_ds = Dataset(X_val, y_val)
-                valid_list.append(EvalSet(val_ds, f"valid_{i}"))
-
-        self.model_ = GBLinearModel(config=config)
-        self.model_.fit(train_data, eval_set=valid_list)
-
-        return self
-
-    def predict(self, X: NDArray[np.float32]) -> NDArray[np.float32]:
-        """Predict target values.
-
-        Parameters
-        ----------
-        X : array-like of shape (n_samples, n_features)
-            Input samples.
-
-        Returns:
-        -------
-        y_pred : ndarray of shape (n_samples,)
-            Predicted values.
-        """
-        check_is_fitted(self, ["model_"])
-        X = check_array(X, dtype=np.float32)
-        preds = self.model_.predict(Dataset(X))
-        # Squeeze from (n_samples, 1) to (n_samples,) for sklearn compatibility
-        return np.squeeze(preds, axis=-1)
-
-    @property
-    def coef_(self) -> NDArray[np.float32]:
-        """Coefficient weights."""
-        check_is_fitted(self, ["model_"])
-        return self.model_.coef_
-
-    @property
-    def intercept_(self) -> NDArray[np.float32]:
-        """Intercept (bias) term."""
-        check_is_fitted(self, ["model_"])
-        return self.model_.intercept_
+    def _prepare_eval_targets(self, y: NDArray) -> NDArray[np.float32]:
+        """Prepare evaluation set targets for regression."""
+        return np.asarray(y, dtype=np.float32)
 
 
-class GBLinearClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
+# =============================================================================
+# Classifier
+# =============================================================================
+
+
+class GBLinearClassifier(_GBLinearEstimatorBase, ClassifierMixin):  # type: ignore[misc]
     """Gradient Boosted Linear Classifier.
 
     A sklearn-compatible wrapper around GBLinearModel for classification.
@@ -203,8 +298,14 @@ class GBLinearClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         Stop if no improvement for this many rounds.
     seed : int, default=42
         Random seed.
+    objective : Objective or None, default=None
+        Loss function. Must be a classification objective.
+        If None, auto-detects: Objective.logistic() for binary,
+        Objective.softmax() for multiclass.
+    metric : Metric or None, default=None
+        Evaluation metric. If None, uses Metric.logloss().
 
-    Attributes:
+    Attributes
     ----------
     model_ : GBLinearModel
         The fitted core model.
@@ -216,86 +317,42 @@ class GBLinearClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         Intercept terms.
     """
 
-    def __init__(
-        self,
-        n_estimators: int = 100,
-        learning_rate: float = 0.5,
-        l1: float = 0.0,
-        l2: float = 1.0,
-        early_stopping_rounds: int | None = None,
-        seed: int = 42,
-    ) -> None:
-        self.n_estimators = n_estimators
-        self.learning_rate = learning_rate
-        self.l1 = l1
-        self.l2 = l2
-        self.early_stopping_rounds = early_stopping_rounds
-        self.seed = seed
+    _default_objective = Objective.logistic()
+    _default_metric = Metric.logloss()
 
-    def fit(
-        self,
-        X: NDArray[np.float32],
-        y: NDArray,
-        eval_set: list[tuple[NDArray, NDArray]] | None = None,
-        sample_weight: NDArray[np.float32] | None = None,
-    ) -> GBLinearClassifier:
-        """Fit the classifier.
+    def _validate_objective(self, objective: Objective) -> None:
+        """Validate that the objective is a classification objective."""
+        obj_name = str(objective).lower()
+        if any(x in obj_name for x in ["squared", "absolute", "huber", "quantile", "tweedie"]):
+            raise ValueError(
+                f"GBLinearClassifier requires a classification objective, got {objective}. "
+                f"Use Objective.logistic() for binary or Objective.softmax() for multiclass. "
+                f"For regression, use GBLinearRegressor instead."
+            )
 
-        Parameters
-        ----------
-        X : array-like of shape (n_samples, n_features)
-            Training input samples.
-        y : array-like of shape (n_samples,)
-            Target class labels.
-        eval_set : list of tuples, optional
-            Validation sets as (X, y) pairs.
-        sample_weight : array-like of shape (n_samples,), optional
-            Sample weights.
-
-        Returns:
-        -------
-        self : GBLinearClassifier
-            Fitted estimator.
-        """
-        X, y = check_X_y(X, y, dtype=np.float32)
-        self.n_features_in_ = X.shape[1]
-
+    def _prepare_targets(
+        self, y: NDArray
+    ) -> tuple[NDArray[np.float32], Objective, Metric | None]:
+        """Prepare classification targets with label encoding."""
         self.classes_ = np.unique(y)
         self.n_classes_ = len(self.classes_)
-
         self._label_to_idx = {c: i for i, c in enumerate(self.classes_)}
         y_encoded = np.array([self._label_to_idx[c] for c in y], dtype=np.float32)
 
-        if self.n_classes_ == 2:
-            objective = Objective.logistic()
+        # Determine objective based on number of classes (if not specified)
+        if self.objective is not None:
+            obj = self.objective
+        elif self.n_classes_ == 2:
+            obj = Objective.logistic()
         else:
-            objective = Objective.softmax(n_classes=self.n_classes_)
+            obj = Objective.softmax(n_classes=self.n_classes_)
 
-        config = _build_config(
-            objective=objective,
-            n_estimators=self.n_estimators,
-            learning_rate=self.learning_rate,
-            l1=self.l1,
-            l2=self.l2,
-            early_stopping_rounds=self.early_stopping_rounds,
-            seed=self.seed,
-        )
+        met = self.metric if self.metric is not None else Metric.logloss()
+        return y_encoded, obj, met
 
-        train_data = Dataset(X, y_encoded, weights=sample_weight)
-
-        valid_list = None
-        if eval_set is not None:
-            valid_list = []
-            for i, (X_val, y_val) in enumerate(eval_set):
-                X_val = check_array(X_val, dtype=np.float32)
-                y_val_encoded = np.array([self._label_to_idx[c] for c in y_val], dtype=np.float32)
-                val_ds = Dataset(X_val, y_val_encoded)
-                valid_list.append(EvalSet(val_ds, f"valid_{i}"))
-
-        self.model_ = GBLinearModel(config=config)
-        self.model_.fit(train_data, eval_set=valid_list)
-
-        return self
+    def _prepare_eval_targets(self, y: NDArray) -> NDArray[np.float32]:
+        """Prepare evaluation set targets with label encoding."""
+        return np.array([self._label_to_idx[c] for c in y], dtype=np.float32)
 
     def predict(self, X: NDArray[np.float32]) -> NDArray:
         """Predict class labels.
@@ -305,7 +362,7 @@ class GBLinearClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         X : array-like of shape (n_samples, n_features)
             Input samples.
 
-        Returns:
+        Returns
         -------
         y_pred : ndarray of shape (n_samples,)
             Predicted class labels.
@@ -328,7 +385,7 @@ class GBLinearClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         X : array-like of shape (n_samples, n_features)
             Input samples.
 
-        Returns:
+        Returns
         -------
         proba : ndarray of shape (n_samples, n_classes)
             Class probability estimates.
@@ -338,26 +395,12 @@ class GBLinearClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         preds = self.model_.predict(Dataset(X))
 
         if self.n_classes_ == 2:
-            # Binary: preds is (n_samples, 1), squeeze and make 2-column
             preds_1d = np.squeeze(preds, axis=-1)
             proba = np.column_stack([1 - preds_1d, preds_1d])
         else:
-            # Multiclass: preds is already (n_samples, n_classes)
             proba = preds
 
         return proba
-
-    @property
-    def coef_(self) -> NDArray[np.float32]:
-        """Coefficient weights."""
-        check_is_fitted(self, ["model_"])
-        return self.model_.coef_
-
-    @property
-    def intercept_(self) -> NDArray[np.float32]:
-        """Intercept terms."""
-        check_is_fitted(self, ["model_"])
-        return self.model_.intercept_
 
 
 __all__ = ["GBLinearClassifier", "GBLinearRegressor"]

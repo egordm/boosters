@@ -7,8 +7,8 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use crate::metrics::PyMetric;
 use crate::objectives::PyObjective;
+use crate::types::PyVerbosity;
 use crate::validation::{validate_non_negative, validate_positive, validate_ratio};
-use crate::verbosity::PyVerbosity;
 
 // =============================================================================
 // Growth Strategy

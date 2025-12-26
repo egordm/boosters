@@ -164,8 +164,8 @@ mod tests {
 
         // shap[0] = 2 * (3 - 1) = 4
         // shap[1] = 3 * (4 - 2) = 6
-        assert!((shap.get(0, 0, 0) - 4.0).abs() < 1e-10);
-        assert!((shap.get(0, 1, 0) - 6.0).abs() < 1e-10);
+        assert!((shap.get(0, 0, 0) - 4.0f32).abs() < 1e-5);
+        assert!((shap.get(0, 1, 0) - 6.0f32).abs() < 1e-5);
     }
 
     #[test]
@@ -180,14 +180,14 @@ mod tests {
         let view = FeaturesView::from_array(data.view());
         let shap = explainer.shap_values(view);
 
-        let sum: f64 = (0..2).map(|f| shap.get(0, f, 0)).sum();
+        let sum: f32 = (0..2).map(|f| shap.get(0, f, 0)).sum();
         let base = shap.base_value(0, 0);
         let from_shap = sum + base;
 
         // Verify: shap[0] + shap[1] + base = 4 + 6 + 8.5 = 18.5
-        let prediction = 18.5;
+        let prediction = 18.5f32;
         assert!(
-            (from_shap - prediction).abs() < 1e-10,
+            (from_shap - prediction).abs() < 1e-5,
             "SHAP sum {} + base {} = {} should equal prediction {}",
             sum,
             base,
@@ -210,10 +210,10 @@ mod tests {
         // The prediction from model (bias is baked in)
         let mut output = [0.0f32; 1];
         model.predict_row_into(&data_row, &mut output);
-        let prediction = output[0] as f64;
+        let prediction = output[0];
 
         // Verify the sum property
         let predictions = vec![prediction];
-        assert!(shap.verify(&predictions, 1e-10));
+        assert!(shap.verify(&predictions, 1e-5));
     }
 }

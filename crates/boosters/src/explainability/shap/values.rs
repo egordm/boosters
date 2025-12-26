@@ -15,14 +15,20 @@ use ndarray::{Array3, ArrayView3, ArrayViewMut3, s};
 /// - Axis 0: Samples (batch dimension)
 /// - Axis 1: Features + base value (n_features slots, then 1 base value slot)
 /// - Axis 2: Outputs (1 for regression, n_classes for multiclass)
+///
+/// # Precision
+///
+/// SHAP values are stored as f32 for consistency with predictions and memory
+/// efficiency. The TreeSHAP algorithm internally uses f64 for numerical stability
+/// during computation, but final values are cast to f32 for storage.
 #[derive(Clone, Debug)]
-pub struct ShapValues(Array3<f64>);
+pub struct ShapValues(Array3<f32>);
 
 impl ShapValues {
     /// Create ShapValues from an existing array.
     ///
     /// Shape must be `[n_samples, n_features + 1, n_outputs]`.
-    pub fn new(arr: Array3<f64>) -> Self {
+    pub fn new(arr: Array3<f32>) -> Self {
         Self(arr)
     }
 
@@ -56,31 +62,37 @@ impl ShapValues {
 
     /// Get SHAP value for a specific sample, feature, and output.
     #[inline]
-    pub fn get(&self, sample: usize, feature: usize, output: usize) -> f64 {
+    pub fn get(&self, sample: usize, feature: usize, output: usize) -> f32 {
         self.0[[sample, feature, output]]
     }
 
     /// Set SHAP value for a specific sample, feature, and output.
+    ///
+    /// Accepts f64 for compatibility with TreeSHAP's internal f64 computations.
     #[inline]
     pub fn set(&mut self, sample: usize, feature: usize, output: usize, value: f64) {
-        self.0[[sample, feature, output]] = value;
+        self.0[[sample, feature, output]] = value as f32;
     }
 
     /// Add to SHAP value for a specific sample, feature, and output.
+    ///
+    /// Accepts f64 for compatibility with TreeSHAP's internal f64 computations.
     #[inline]
     pub fn add(&mut self, sample: usize, feature: usize, output: usize, delta: f64) {
-        self.0[[sample, feature, output]] += delta;
+        self.0[[sample, feature, output]] += delta as f32;
     }
 
     /// Get the base value (expected value) for a sample and output.
     ///
     /// Base value is stored at feature index = n_features.
     #[inline]
-    pub fn base_value(&self, sample: usize, output: usize) -> f64 {
+    pub fn base_value(&self, sample: usize, output: usize) -> f32 {
         self.get(sample, self.n_features(), output)
     }
 
     /// Set the base value for a sample and output.
+    ///
+    /// Accepts f64 for compatibility with TreeSHAP's internal f64 computations.
     #[inline]
     pub fn set_base_value(&mut self, sample: usize, output: usize, value: f64) {
         let n_features = self.n_features();
@@ -90,14 +102,14 @@ impl ShapValues {
     /// Get all SHAP values for a single sample (including base).
     ///
     /// Returns a view of shape `[n_features + 1, n_outputs]`.
-    pub fn sample(&self, sample_idx: usize) -> ndarray::ArrayView2<'_, f64> {
+    pub fn sample(&self, sample_idx: usize) -> ndarray::ArrayView2<'_, f32> {
         self.0.slice(s![sample_idx, .., ..])
     }
 
     /// Get feature SHAP values only (excluding base) for a sample and output.
     ///
     /// Returns a Vec since values are not contiguous.
-    pub fn feature_shap(&self, sample_idx: usize, output: usize) -> Vec<f64> {
+    pub fn feature_shap(&self, sample_idx: usize, output: usize) -> Vec<f32> {
         let n_features = self.n_features();
         (0..n_features)
             .map(|f| self.get(sample_idx, f, output))
@@ -109,7 +121,7 @@ impl ShapValues {
     /// For each sample: sum(shap_values) + base_value ≈ prediction
     ///
     /// Returns `true` if all samples are within tolerance.
-    pub fn verify(&self, predictions: &[f64], tolerance: f64) -> bool {
+    pub fn verify(&self, predictions: &[f32], tolerance: f32) -> bool {
         let n_samples = self.n_samples();
         let n_features = self.n_features();
         let n_outputs = self.n_outputs();
@@ -135,17 +147,17 @@ impl ShapValues {
     }
 
     /// Get the underlying array view.
-    pub fn as_array(&self) -> ArrayView3<'_, f64> {
+    pub fn as_array(&self) -> ArrayView3<'_, f32> {
         self.0.view()
     }
 
     /// Get mutable access to the underlying array.
-    pub fn as_array_mut(&mut self) -> ArrayViewMut3<'_, f64> {
+    pub fn as_array_mut(&mut self) -> ArrayViewMut3<'_, f32> {
         self.0.view_mut()
     }
 
     /// Get the raw values slice (if contiguous).
-    pub fn as_slice(&self) -> Option<&[f64]> {
+    pub fn as_slice(&self) -> Option<&[f32]> {
         self.0.as_slice()
     }
 
@@ -177,10 +189,10 @@ mod tests {
         shap.set(0, 1, 0, 2.0);
         shap.set(1, 2, 0, 3.0);
         
-        assert_eq!(shap.get(0, 0, 0), 1.0);
-        assert_eq!(shap.get(0, 1, 0), 2.0);
-        assert_eq!(shap.get(1, 2, 0), 3.0);
-        assert_eq!(shap.get(0, 2, 0), 0.0);  // Default is 0
+        assert_eq!(shap.get(0, 0, 0), 1.0f32);
+        assert_eq!(shap.get(0, 1, 0), 2.0f32);
+        assert_eq!(shap.get(1, 2, 0), 3.0f32);
+        assert_eq!(shap.get(0, 2, 0), 0.0f32);  // Default is 0
     }
 
     #[test]
@@ -190,7 +202,7 @@ mod tests {
         shap.add(0, 0, 0, 1.5);
         shap.add(0, 0, 0, 2.5);
         
-        assert_eq!(shap.get(0, 0, 0), 4.0);
+        assert_eq!(shap.get(0, 0, 0), 4.0f32);
     }
 
     #[test]
@@ -200,8 +212,8 @@ mod tests {
         shap.set_base_value(0, 0, 0.5);
         shap.set_base_value(1, 0, 0.3);
         
-        assert_eq!(shap.base_value(0, 0), 0.5);
-        assert_eq!(shap.base_value(1, 0), 0.3);
+        assert_eq!(shap.base_value(0, 0), 0.5f32);
+        assert_eq!(shap.base_value(1, 0), 0.3f32);
     }
 
     #[test]
@@ -214,7 +226,7 @@ mod tests {
         shap.set_base_value(0, 0, 3.0);
         
         let sample = shap.sample(0);
-        let expected = array![[1.0], [2.0], [3.0]];
+        let expected = array![[1.0f32], [2.0], [3.0]];
         assert_eq!(sample, expected);
     }
 
@@ -228,7 +240,7 @@ mod tests {
         shap.set_base_value(0, 0, 0.5);
         
         let features = shap.feature_shap(0, 0);
-        assert_eq!(features, vec![1.0, 2.0, 3.0]);
+        assert_eq!(features, vec![1.0f32, 2.0, 3.0]);
     }
 
     #[test]
@@ -245,8 +257,8 @@ mod tests {
         shap.set(1, 1, 0, 0.5);
         shap.set_base_value(1, 0, 1.0);
         
-        let predictions = vec![3.5, 2.0];
-        assert!(shap.verify(&predictions, 1e-10));
+        let predictions = vec![3.5f32, 2.0];
+        assert!(shap.verify(&predictions, 1e-5));
     }
 
     #[test]
@@ -258,8 +270,8 @@ mod tests {
         shap.set_base_value(0, 0, 0.5);
         
         // Prediction doesn't match sum (3.5)
-        let predictions = vec![5.0];
-        assert!(!shap.verify(&predictions, 1e-10));
+        let predictions = vec![5.0f32];
+        assert!(!shap.verify(&predictions, 1e-5));
     }
 
     #[test]
@@ -276,8 +288,8 @@ mod tests {
         shap.set(0, 1, 1, 1.5);
         shap.set_base_value(0, 1, 0.0);
         
-        let predictions = vec![3.5, 2.0];
-        assert!(shap.verify(&predictions, 1e-10));
+        let predictions = vec![3.5f32, 2.0];
+        assert!(shap.verify(&predictions, 1e-5));
     }
 
     #[test]

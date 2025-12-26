@@ -10,7 +10,7 @@ use boosters::training::EvalSet as CoreEvalSet;
 use crate::config::PyGBDTConfig;
 use crate::data::{PyDataset, PyEvalSet};
 use crate::error::BoostersError;
-use crate::importance::PyImportanceType;
+use crate::types::PyImportanceType;
 use crate::validation::{require_fitted, validate_feature_count};
 
 /// Gradient Boosted Decision Tree model.
@@ -175,9 +175,8 @@ impl PyGBDTModel {
 
         match shap_result {
             Ok(shap_values) => {
-                let arr = shap_values.as_array();
-                let arr_f32: ndarray::Array3<f32> = arr.mapv(|v| v as f32);
-                Ok(PyArray3::from_owned_array(py, arr_f32))
+                let arr = shap_values.as_array().to_owned();
+                Ok(PyArray3::from_owned_array(py, arr))
             }
             Err(e) => Err(BoostersError::ExplainError(e.to_string()).into()),
         }
