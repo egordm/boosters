@@ -9,7 +9,8 @@ Types:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Sequence
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -179,10 +180,8 @@ class Dataset:
                 python_converted = True  # Always converted from non-ndarray
             except (ValueError, TypeError) as e:
                 type_name = type(features).__name__
-                raise TypeError(
-                    f"expected numpy array or pandas DataFrame, got {type_name}"
-                ) from e
-        
+                raise TypeError(f"expected numpy array or pandas DataFrame, got {type_name}") from e
+
         # Store conversion flag for the property
         self._python_converted = python_converted
 
@@ -283,7 +282,7 @@ class Dataset:
     @property
     def was_converted(self) -> bool:
         """Whether data was converted (not zero-copy).
-        
+
         True if either Python or Rust performed a copy/conversion.
         """
         return self._python_converted or self._inner.was_converted
@@ -293,7 +292,7 @@ class Dataset:
         """Shape of the features array as (n_samples, n_features)."""
         return self._inner.shape
 
-    def __repr__(self) -> str:
+    def __repr__(self) -> str:  # noqa: D105
         return (
             f"Dataset(n_samples={self.n_samples}, n_features={self.n_features}, "
             f"has_labels={self.has_labels}, categorical_features={len(self.categorical_features)})"

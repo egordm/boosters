@@ -53,9 +53,7 @@ try:
         """Validate array input."""
         return _sklearn_check_array(X, **kwargs)  # type: ignore[return-value]
 
-    def check_X_y(
-        X: Any, y: Any, **kwargs: Any
-    ) -> tuple[NDArray[np.floating[Any]], NDArray[Any]]:
+    def check_X_y(X: Any, y: Any, **kwargs: Any) -> tuple[NDArray[np.floating[Any]], NDArray[Any]]:
         """Validate X and y inputs."""
         return _sklearn_check_X_y(X, y, **kwargs)  # type: ignore[return-value]
 
@@ -101,16 +99,18 @@ except ImportError:
     ClassifierMixin: type = _DummyClassifierMixin  # type: ignore[no-redef]
     RegressorMixin: type = _DummyRegressorMixin  # type: ignore[no-redef]
 
-    def check_array(X: Any, **kwargs: Any) -> NDArray[np.floating[Any]]:
+    def check_array(X: Any, **kwargs: Any) -> NDArray[np.floating[Any]]:  # noqa: D103
         return np.asarray(X, dtype=np.float32)
 
-    def check_X_y(
+    def check_X_y(  # noqa: D103
         X: Any, y: Any, **kwargs: Any
     ) -> tuple[NDArray[np.floating[Any]], NDArray[Any]]:
         # Don't convert y to float32 since it might be categorical
         return np.asarray(X, dtype=np.float32), np.asarray(y)
 
-    def check_is_fitted(estimator: Any, attributes: list[str] | None = None) -> None:
+    def check_is_fitted(  # noqa: D103
+        estimator: Any, attributes: list[str] | None = None
+    ) -> None:
         pass
 
 
@@ -161,8 +161,8 @@ def build_gbdt_config(
     Returns:
         GBDTConfig with all nested configs populated.
     """
-    from boosters import SquaredLoss, LogisticLoss, SoftmaxLoss, Rmse, LogLoss
-    
+    from boosters import LogisticLoss, LogLoss, Rmse, SoftmaxLoss, SquaredLoss
+
     # Map objective string to objective object
     objective_map: dict[str, Any] = {
         "regression:squarederror": SquaredLoss(),
@@ -172,7 +172,7 @@ def build_gbdt_config(
     obj = objective_map.get(objective)
     if obj is None:
         raise ValueError(f"Unknown objective: {objective}")
-    
+
     # Map metric string to metric object
     metric_obj = None
     if metric:
@@ -184,7 +184,7 @@ def build_gbdt_config(
         metric_obj = metric_map.get(metric)
         if metric_obj is None:
             raise ValueError(f"Unknown metric: {metric}")
-    
+
     # Map XGBoost-style names to core names
     tree = TreeConfig(
         max_depth=max_depth,
@@ -268,14 +268,14 @@ def build_gblinear_config(
 
 
 __all__ = [
-    "GrowthStrategy",
     "SKLEARN_AVAILABLE",
     "BaseEstimator",
     "ClassifierMixin",
+    "GrowthStrategy",
     "RegressorMixin",
-    "check_array",
-    "check_X_y",
-    "check_is_fitted",
     "build_gbdt_config",
     "build_gblinear_config",
+    "check_X_y",
+    "check_array",
+    "check_is_fitted",
 ]

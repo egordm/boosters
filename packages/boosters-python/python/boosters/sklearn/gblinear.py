@@ -9,17 +9,17 @@ import numpy as np
 from boosters import GBLinearModel
 from boosters._boosters_rs import EvalSet
 from boosters.data import Dataset
-from boosters.objectives import LogisticLoss, SoftmaxLoss, SquaredLoss
 from boosters.metrics import Rmse
+from boosters.objectives import LogisticLoss, SoftmaxLoss, SquaredLoss
 
 from .base import (
     BaseEstimator,
     ClassifierMixin,
     RegressorMixin,
     build_gblinear_config,
-    check_X_y,
     check_array,
     check_is_fitted,
+    check_X_y,
 )
 
 if TYPE_CHECKING:
@@ -46,7 +46,7 @@ class GBLinearRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
     seed : int, default=42
         Random seed.
 
-    Attributes
+    Attributes:
     ----------
     model_ : GBLinearModel
         The fitted core model.
@@ -94,7 +94,7 @@ class GBLinearRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
         sample_weight : array-like of shape (n_samples,), optional
             Sample weights.
 
-        Returns
+        Returns:
         -------
         self : GBLinearRegressor
             Fitted estimator.
@@ -137,7 +137,7 @@ class GBLinearRegressor(BaseEstimator, RegressorMixin):  # type: ignore[misc]
         X : array-like of shape (n_samples, n_features)
             Input samples.
 
-        Returns
+        Returns:
         -------
         y_pred : ndarray of shape (n_samples,)
             Predicted values.
@@ -179,7 +179,7 @@ class GBLinearClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
     seed : int, default=42
         Random seed.
 
-    Attributes
+    Attributes:
     ----------
     model_ : GBLinearModel
         The fitted core model.
@@ -227,7 +227,7 @@ class GBLinearClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         sample_weight : array-like of shape (n_samples,), optional
             Sample weights.
 
-        Returns
+        Returns:
         -------
         self : GBLinearClassifier
             Fitted estimator.
@@ -263,9 +263,7 @@ class GBLinearClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
             valid_list = []
             for i, (X_val, y_val) in enumerate(eval_set):
                 X_val = check_array(X_val, dtype=np.float32)
-                y_val_encoded = np.array(
-                    [self._label_to_idx[c] for c in y_val], dtype=np.float32
-                )
+                y_val_encoded = np.array([self._label_to_idx[c] for c in y_val], dtype=np.float32)
                 val_ds = Dataset(X_val, y_val_encoded)
                 valid_list.append(EvalSet(f"valid_{i}", val_ds._inner))
 
@@ -282,7 +280,7 @@ class GBLinearClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         X : array-like of shape (n_samples, n_features)
             Input samples.
 
-        Returns
+        Returns:
         -------
         y_pred : ndarray of shape (n_samples,)
             Predicted class labels.
@@ -305,7 +303,7 @@ class GBLinearClassifier(BaseEstimator, ClassifierMixin):  # type: ignore[misc]
         X : array-like of shape (n_samples, n_features)
             Input samples.
 
-        Returns
+        Returns:
         -------
         proba : ndarray of shape (n_samples, n_classes)
             Class probability estimates.

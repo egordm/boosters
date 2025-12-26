@@ -58,7 +58,7 @@ test = { cmd = "pytest", help = "Run all tests" }
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-src = ["packages/*/src", "packages/*/python"]
+src = ["packages/*/src", "packages/*/python", "packages/*/tests", "packages/*/examples"]
 
 [tool.ruff.lint]
 select = [

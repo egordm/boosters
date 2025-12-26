@@ -15,7 +15,7 @@ GrowthStrategy = Literal["leafwise", "depthwise"]
 - ``"leafwise"``: Grow leaf-wise (best-first). Expands the leaf with the highest
   gain, which typically produces deeper trees and better accuracy but may overfit.
   This is the LightGBM default behavior.
-  
+
 - ``"depthwise"``: Grow depth-wise (level-by-level). Expands all nodes at the
   current depth before moving deeper. More regularized than leaf-wise.
   This is the XGBoost default behavior.
