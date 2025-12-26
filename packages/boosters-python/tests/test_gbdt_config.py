@@ -1,17 +1,12 @@
-"""Tests for GBDTConfig."""
+"""Tests for GBDTConfig with flat structure."""
 
 import pytest
 
 from boosters import (
-    CategoricalConfig,
-    EFBConfig,
     GBDTConfig,
-    LinearLeavesConfig,
+    GrowthStrategy,
     Metric,
     Objective,
-    RegularizationConfig,
-    SamplingConfig,
-    TreeConfig,
 )
 
 
@@ -42,35 +37,32 @@ class TestGBDTConfigDefaults:
         config = GBDTConfig()
         assert config.metric is None
 
-    def test_default_tree_config(self):
-        """Default tree config should be present."""
+    def test_default_tree_params(self):
+        """Default tree params should be set."""
         config = GBDTConfig()
-        assert isinstance(config.tree, TreeConfig)
+        assert isinstance(config.max_depth, int)
+        assert isinstance(config.n_leaves, int)
+        assert isinstance(config.growth_strategy, GrowthStrategy)
 
-    def test_default_regularization_config(self):
-        """Default regularization config should be present."""
+    def test_default_regularization_params(self):
+        """Default regularization params should be set."""
         config = GBDTConfig()
-        assert isinstance(config.regularization, RegularizationConfig)
+        assert isinstance(config.l1, float)
+        assert isinstance(config.l2, float)
+        assert isinstance(config.min_child_weight, float)
+        assert isinstance(config.min_gain_to_split, float)
 
-    def test_default_sampling_config(self):
-        """Default sampling config should be present."""
+    def test_default_sampling_params(self):
+        """Default sampling params should be set."""
         config = GBDTConfig()
-        assert isinstance(config.sampling, SamplingConfig)
+        assert isinstance(config.subsample, float)
+        assert isinstance(config.colsample_bytree, float)
+        assert isinstance(config.colsample_bylevel, float)
 
-    def test_default_categorical_config(self):
-        """Default categorical config should be present."""
+    def test_default_linear_leaves_disabled(self):
+        """Default linear_leaves should be False (disabled)."""
         config = GBDTConfig()
-        assert isinstance(config.categorical, CategoricalConfig)
-
-    def test_default_efb_config(self):
-        """Default EFB config should be present."""
-        config = GBDTConfig()
-        assert isinstance(config.efb, EFBConfig)
-
-    def test_default_linear_leaves_none(self):
-        """Default linear_leaves should be None (disabled)."""
-        config = GBDTConfig()
-        assert config.linear_leaves is None
+        assert config.linear_leaves is False
 
 
 class TestGBDTConfigCustomization:
@@ -79,79 +71,61 @@ class TestGBDTConfigCustomization:
     def test_custom_n_estimators(self):
         """Custom n_estimators should be stored."""
         config = GBDTConfig(n_estimators=500)
-
         assert config.n_estimators == 500
 
     def test_custom_learning_rate(self):
         """Custom learning_rate should be stored."""
         config = GBDTConfig(learning_rate=0.1)
-
         assert config.learning_rate == 0.1
 
     def test_custom_objective(self):
         """Custom objective should be stored."""
         config = GBDTConfig(objective=Objective.huber(delta=2.0))
-
         assert config.objective == Objective.Huber(delta=2.0)
         assert config.objective.delta == 2.0  # type: ignore[attr-defined]
 
     def test_custom_metric(self):
         """Custom metric should be stored."""
         config = GBDTConfig(metric=Metric.mae())
-
         assert config.metric == Metric.Mae()
 
-    def test_custom_tree_config(self):
-        """Custom tree config should replace default."""
-        config = GBDTConfig(tree=TreeConfig(max_depth=8, n_leaves=64))
-
-        assert config.tree.max_depth == 8
-        assert config.tree.n_leaves == 64
+    def test_custom_tree_params(self):
+        """Custom tree params should be stored."""
+        config = GBDTConfig(max_depth=8, n_leaves=64, growth_strategy=GrowthStrategy.Leafwise)
+        assert config.max_depth == 8
+        assert config.n_leaves == 64
+        assert config.growth_strategy == GrowthStrategy.Leafwise
 
     def test_custom_regularization(self):
-        """Custom regularization should replace default."""
-        config = GBDTConfig(regularization=RegularizationConfig(l1=0.5, l2=2.0))
-
-        assert config.regularization.l1 == 0.5
-        assert config.regularization.l2 == 2.0
+        """Custom regularization params should be stored."""
+        config = GBDTConfig(l1=0.5, l2=2.0, min_child_weight=5.0, min_gain_to_split=0.1)
+        assert config.l1 == 0.5
+        assert config.l2 == 2.0
+        assert config.min_child_weight == 5.0
+        assert config.min_gain_to_split == 0.1
 
     def test_custom_sampling(self):
-        """Custom sampling should replace default."""
-        config = GBDTConfig(sampling=SamplingConfig(subsample=0.8, colsample=0.9))
-
-        assert config.sampling.subsample == 0.8
-        assert config.sampling.colsample == 0.9
-
-    def test_custom_categorical(self):
-        """Custom categorical config should replace default."""
-        config = GBDTConfig(categorical=CategoricalConfig(max_categories=128))
-
-        assert config.categorical.max_categories == 128
-
-    def test_custom_efb(self):
-        """Custom EFB config should replace default."""
-        config = GBDTConfig(efb=EFBConfig(enable=False))
-
-        assert config.efb.enable is False
+        """Custom sampling params should be stored."""
+        config = GBDTConfig(subsample=0.8, colsample_bytree=0.9, colsample_bylevel=0.7)
+        assert config.subsample == 0.8
+        assert config.colsample_bytree == 0.9
+        assert config.colsample_bylevel == 0.7
 
     def test_linear_leaves_enabled(self):
-        """Linear leaves can be enabled with config."""
-        config = GBDTConfig(linear_leaves=LinearLeavesConfig(enable=True, l2=0.1))
-
-        assert config.linear_leaves is not None
-        assert config.linear_leaves.enable is True
-        assert config.linear_leaves.l2 == 0.1
+        """Linear leaves can be enabled with params."""
+        config = GBDTConfig(linear_leaves=True, linear_l2=0.1, linear_l1=0.05)
+        assert config.linear_leaves is True
+        assert config.linear_l2 == 0.1
+        assert config.linear_l1 == 0.05
 
     def test_early_stopping(self):
         """Early stopping rounds can be set."""
         config = GBDTConfig(early_stopping_rounds=50)
-
         assert config.early_stopping_rounds == 50
 
     def test_custom_seed(self):
         """Custom seed should be stored."""
         config = GBDTConfig(seed=12345)
-
         assert config.seed == 12345
 
 
@@ -211,8 +185,8 @@ class TestGBDTConfigCombinations:
             learning_rate=0.1,
             objective=Objective.logistic(),
             metric=Metric.logloss(),
-            tree=TreeConfig(max_depth=6),
-            regularization=RegularizationConfig(l2=1.0),
+            max_depth=6,
+            l2=1.0,
         )
 
         assert config.objective == Objective.Logistic()
@@ -237,9 +211,10 @@ class TestGBDTConfigCombinations:
             learning_rate=0.05,
             objective=Objective.squared(),
             metric=Metric.rmse(),
-            sampling=SamplingConfig(subsample=0.8, colsample=0.8),
+            subsample=0.8,
+            colsample_bytree=0.8,
             early_stopping_rounds=20,
         )
 
-        assert config.sampling.subsample == 0.8
+        assert config.subsample == 0.8
         assert config.early_stopping_rounds == 20

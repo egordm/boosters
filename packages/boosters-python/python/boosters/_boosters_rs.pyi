@@ -7,71 +7,6 @@ import numpy
 import numpy.typing
 import typing
 
-@typing.final
-class CategoricalConfig:
-    r"""
-    Configuration for categorical feature handling.
-    
-    Boosters supports native categorical splits (like LightGBM) using
-    bitset-based multi-way splits rather than one-hot encoding.
-    
-    Attributes:
-        max_categories: Maximum categories for native categorical splits.
-        min_category_count: Minimum samples per category.
-        max_onehot: Maximum categories for one-hot encoding.
-    
-    Examples:
-        >>> config = CategoricalConfig(max_categories=256)
-        >>> config.max_categories
-        256
-    """
-    @property
-    def max_categories(self) -> builtins.int:
-        r"""
-        Maximum number of categories for native categorical splits.
-        Categories beyond this are treated as continuous.
-        """
-    @max_categories.setter
-    def max_categories(self, value: builtins.int) -> None:
-        r"""
-        Maximum number of categories for native categorical splits.
-        Categories beyond this are treated as continuous.
-        """
-    @property
-    def min_category_count(self) -> builtins.int:
-        r"""
-        Minimum count for a category to be considered.
-        Categories with fewer samples are grouped into "other".
-        """
-    @min_category_count.setter
-    def min_category_count(self, value: builtins.int) -> None:
-        r"""
-        Minimum count for a category to be considered.
-        Categories with fewer samples are grouped into "other".
-        """
-    @property
-    def max_onehot(self) -> builtins.int:
-        r"""
-        Maximum categories for one-hot encoding fallback.
-        If a feature has more categories, use bitset splits.
-        """
-    @max_onehot.setter
-    def max_onehot(self, value: builtins.int) -> None:
-        r"""
-        Maximum categories for one-hot encoding fallback.
-        If a feature has more categories, use bitset splits.
-        """
-    def __new__(cls, max_categories: builtins.int = 256, min_category_count: builtins.int = 10, max_onehot: builtins.int = 4) -> CategoricalConfig:
-        r"""
-        Create a new CategoricalConfig.
-        
-        Args:
-            max_categories: Maximum categories for native splits. Default: 256.
-            min_category_count: Minimum samples per category. Default: 10.
-            max_onehot: Maximum categories for one-hot encoding. Default: 4.
-        """
-    def __repr__(self) -> builtins.str: ...
-
 class Dataset:
     r"""
     Internal dataset holding features, labels, and optional metadata.
@@ -145,55 +80,6 @@ class Dataset:
     def __repr__(self) -> builtins.str: ...
 
 @typing.final
-class EFBConfig:
-    r"""
-    Configuration for Exclusive Feature Bundling.
-    
-    EFB bundles mutually exclusive features to reduce memory and computation,
-    similar to LightGBM's implementation.
-    
-    Attributes:
-        enable: Whether to enable EFB.
-        max_conflict_rate: Maximum conflict rate for bundling features.
-    
-    Examples:
-        >>> config = EFBConfig(enable=True, max_conflict_rate=0.0)
-        >>> config.enable
-        True
-    """
-    @property
-    def enable(self) -> builtins.bool:
-        r"""
-        Whether to enable Exclusive Feature Bundling.
-        """
-    @enable.setter
-    def enable(self, value: builtins.bool) -> None:
-        r"""
-        Whether to enable Exclusive Feature Bundling.
-        """
-    @property
-    def max_conflict_rate(self) -> builtins.float:
-        r"""
-        Maximum conflict rate allowed when bundling features.
-        0.0 means only truly exclusive features are bundled.
-        """
-    @max_conflict_rate.setter
-    def max_conflict_rate(self, value: builtins.float) -> None:
-        r"""
-        Maximum conflict rate allowed when bundling features.
-        0.0 means only truly exclusive features are bundled.
-        """
-    def __new__(cls, enable: builtins.bool = True, max_conflict_rate: builtins.float = 0.0) -> EFBConfig:
-        r"""
-        Create a new EFBConfig.
-        
-        Args:
-            enable: Whether to enable EFB. Default: True.
-            max_conflict_rate: Maximum conflict rate. Must be in [0, 1). Default: 0.0.
-        """
-    def __repr__(self) -> builtins.str: ...
-
-@typing.final
 class EvalSet:
     r"""
     Named evaluation set for model training.
@@ -246,20 +132,38 @@ class GBDTConfig:
     Main configuration for GBDT model.
     
     This is the primary configuration class for gradient boosted decision trees.
-    It accepts nested configuration objects for tree structure, regularization,
-    sampling, etc.
+    All parameters are flat (no nested config objects) matching the core Rust API.
     
     Args:
         n_estimators: Number of boosting rounds (trees to train). Default: 100.
         learning_rate: Step size shrinkage (0.01 - 0.3 typical). Default: 0.3.
         objective: Loss function for training. Default: Objective.Squared().
         metric: Evaluation metric. None uses objective's default.
-        tree: Tree structure parameters.
-        regularization: L1/L2 regularization parameters.
-        sampling: Row and column subsampling parameters.
-        categorical: Categorical feature handling.
-        efb: Exclusive Feature Bundling config.
-        linear_leaves: Linear model in leaves config. None = disabled.
+    
+        # Tree Structure
+        growth_strategy: Tree growth strategy. Default: GrowthStrategy.Depthwise.
+        max_depth: Maximum tree depth (only for depthwise). Default: 6.
+        n_leaves: Maximum leaves (only for leafwise). Default: 31.
+        max_onehot_cats: Max categories for one-hot encoding. Default: 4.
+    
+        # Regularization
+        l1: L1 regularization on leaf weights. Default: 0.0.
+        l2: L2 regularization on leaf weights. Default: 1.0.
+        min_gain_to_split: Minimum gain required to make a split. Default: 0.0.
+        min_child_weight: Minimum sum of hessians in a leaf. Default: 1.0.
+        min_samples_leaf: Minimum samples in a leaf. Default: 1.
+    
+        # Sampling
+        subsample: Row subsampling ratio per tree. Default: 1.0.
+        colsample_bytree: Column subsampling per tree. Default: 1.0.
+        colsample_bylevel: Column subsampling per level. Default: 1.0.
+    
+        # Linear Leaves (experimental)
+        linear_leaves: Enable linear models in leaves. Default: False.
+        linear_l2: L2 regularization for linear coefficients. Default: 0.01.
+        linear_l1: L1 regularization for linear coefficients. Default: 0.0.
+    
+        # Training Control
         early_stopping_rounds: Stop if no improvement for this many rounds.
         seed: Random seed for reproducibility. Default: 42.
     
@@ -268,7 +172,8 @@ class GBDTConfig:
         ...     n_estimators=500,
         ...     learning_rate=0.1,
         ...     objective=Objective.logistic(),
-        ...     tree=TreeConfig(max_depth=6),
+        ...     max_depth=6,
+        ...     l2=1.0,
         ... )
     """
     @property
@@ -282,34 +187,79 @@ class GBDTConfig:
         Learning rate (step size shrinkage).
         """
     @property
-    def tree(self) -> TreeConfig:
+    def growth_strategy(self) -> GrowthStrategy:
         r"""
-        Tree structure config.
+        Growth strategy for tree building.
         """
     @property
-    def regularization(self) -> RegularizationConfig:
+    def max_depth(self) -> builtins.int:
         r"""
-        Regularization config.
+        Maximum depth of tree (for depthwise growth).
         """
     @property
-    def sampling(self) -> SamplingConfig:
+    def n_leaves(self) -> builtins.int:
         r"""
-        Sampling config.
+        Maximum number of leaves (for leafwise growth).
         """
     @property
-    def categorical(self) -> CategoricalConfig:
+    def max_onehot_cats(self) -> builtins.int:
         r"""
-        Categorical feature config.
+        Maximum categories for one-hot encoding categorical splits.
         """
     @property
-    def efb(self) -> EFBConfig:
+    def l1(self) -> builtins.float:
         r"""
-        Exclusive Feature Bundling config.
+        L1 regularization on leaf weights.
         """
     @property
-    def linear_leaves(self) -> typing.Optional[LinearLeavesConfig]:
+    def l2(self) -> builtins.float:
         r"""
-        Linear leaves config (None = disabled).
+        L2 regularization on leaf weights.
+        """
+    @property
+    def min_gain_to_split(self) -> builtins.float:
+        r"""
+        Minimum gain required to make a split.
+        """
+    @property
+    def min_child_weight(self) -> builtins.float:
+        r"""
+        Minimum sum of hessians required in a leaf.
+        """
+    @property
+    def min_samples_leaf(self) -> builtins.int:
+        r"""
+        Minimum number of samples required in a leaf.
+        """
+    @property
+    def subsample(self) -> builtins.float:
+        r"""
+        Row subsampling ratio per tree.
+        """
+    @property
+    def colsample_bytree(self) -> builtins.float:
+        r"""
+        Column subsampling ratio per tree.
+        """
+    @property
+    def colsample_bylevel(self) -> builtins.float:
+        r"""
+        Column subsampling ratio per level.
+        """
+    @property
+    def linear_leaves(self) -> builtins.bool:
+        r"""
+        Enable linear models in leaves.
+        """
+    @property
+    def linear_l2(self) -> builtins.float:
+        r"""
+        L2 regularization for linear coefficients.
+        """
+    @property
+    def linear_l1(self) -> builtins.float:
+        r"""
+        L1 regularization for linear coefficients.
         """
     @property
     def early_stopping_rounds(self) -> typing.Optional[builtins.int]:
@@ -331,7 +281,7 @@ class GBDTConfig:
         r"""
         Get the evaluation metric (or None).
         """
-    def __new__(cls, n_estimators: builtins.int = 100, learning_rate: builtins.float = 0.3, objective: Objective | None = None, metric: Metric | None = None, tree: typing.Optional[TreeConfig] = None, regularization: typing.Optional[RegularizationConfig] = None, sampling: typing.Optional[SamplingConfig] = None, categorical: typing.Optional[CategoricalConfig] = None, efb: typing.Optional[EFBConfig] = None, linear_leaves: typing.Optional[LinearLeavesConfig] = None, early_stopping_rounds: typing.Optional[builtins.int] = None, seed: builtins.int = 42) -> GBDTConfig: ...
+    def __new__(cls, n_estimators: builtins.int = 100, learning_rate: builtins.float = 0.3, objective: Objective | None = None, metric: Metric | None = None, growth_strategy: GrowthStrategy = GrowthStrategy.Depthwise, max_depth: builtins.int = 6, n_leaves: builtins.int = 31, max_onehot_cats: builtins.int = 4, l1: builtins.float = 0.0, l2: builtins.float = 1.0, min_gain_to_split: builtins.float = 0.0, min_child_weight: builtins.float = 1.0, min_samples_leaf: builtins.int = 1, subsample: builtins.float = 1.0, colsample_bytree: builtins.float = 1.0, colsample_bylevel: builtins.float = 1.0, linear_leaves: builtins.bool = False, linear_l2: builtins.float = 0.01, linear_l1: builtins.float = 0.0, early_stopping_rounds: typing.Optional[builtins.int] = None, seed: builtins.int = 42) -> GBDTConfig: ...
     def __repr__(self) -> builtins.str: ...
 
 @typing.final
@@ -737,337 +687,6 @@ class GBLinearModel:
         Raises:
             ValueError: If training data is invalid or labels are missing.
         """
-
-@typing.final
-class LinearLeavesConfig:
-    r"""
-    Configuration for linear models in leaf nodes.
-    
-    When enabled, each leaf fits a linear regression model on its samples
-    instead of using a constant value.
-    
-    Attributes:
-        enable: Whether to enable linear models in leaves.
-        l2: L2 regularization for linear coefficients.
-        l1: L1 regularization for linear coefficients.
-        max_iter: Maximum coordinate descent iterations per leaf.
-        tolerance: Convergence tolerance.
-        min_samples: Minimum samples required to fit a linear model.
-    
-    Examples:
-        >>> config = LinearLeavesConfig(enable=True, l2=0.01)
-        >>> config.enable
-        True
-    """
-    @property
-    def enable(self) -> builtins.bool:
-        r"""
-        Whether to enable linear models in leaves.
-        """
-    @enable.setter
-    def enable(self, value: builtins.bool) -> None:
-        r"""
-        Whether to enable linear models in leaves.
-        """
-    @property
-    def l2(self) -> builtins.float:
-        r"""
-        L2 regularization for linear coefficients.
-        """
-    @l2.setter
-    def l2(self, value: builtins.float) -> None:
-        r"""
-        L2 regularization for linear coefficients.
-        """
-    @property
-    def l1(self) -> builtins.float:
-        r"""
-        L1 regularization for linear coefficients.
-        """
-    @l1.setter
-    def l1(self, value: builtins.float) -> None:
-        r"""
-        L1 regularization for linear coefficients.
-        """
-    @property
-    def max_iter(self) -> builtins.int:
-        r"""
-        Maximum coordinate descent iterations per leaf.
-        """
-    @max_iter.setter
-    def max_iter(self, value: builtins.int) -> None:
-        r"""
-        Maximum coordinate descent iterations per leaf.
-        """
-    @property
-    def tolerance(self) -> builtins.float:
-        r"""
-        Convergence tolerance.
-        """
-    @tolerance.setter
-    def tolerance(self, value: builtins.float) -> None:
-        r"""
-        Convergence tolerance.
-        """
-    @property
-    def min_samples(self) -> builtins.int:
-        r"""
-        Minimum samples required to fit a linear model.
-        """
-    @min_samples.setter
-    def min_samples(self, value: builtins.int) -> None:
-        r"""
-        Minimum samples required to fit a linear model.
-        """
-    def __new__(cls, enable: builtins.bool = False, l2: builtins.float = 0.01, l1: builtins.float = 0.0, max_iter: builtins.int = 10, tolerance: builtins.float = 1e-06, min_samples: builtins.int = 50) -> LinearLeavesConfig:
-        r"""
-        Create a new LinearLeavesConfig.
-        
-        Args:
-            enable: Whether to enable linear leaves. Default: False.
-            l2: L2 regularization. Default: 0.01.
-            l1: L1 regularization. Default: 0.0.
-            max_iter: Maximum coordinate descent iterations. Default: 10.
-            tolerance: Convergence tolerance. Default: 1e-6.
-            min_samples: Minimum samples to fit linear model. Default: 50.
-        """
-    def __repr__(self) -> builtins.str: ...
-
-@typing.final
-class RegularizationConfig:
-    r"""
-    Configuration for L1/L2 regularization.
-    
-    Attributes:
-        l1: L1 (Lasso) regularization term on leaf weights.
-        l2: L2 (Ridge) regularization term on leaf weights.
-        min_hessian: Minimum sum of hessians required in a leaf.
-    
-    Examples:
-        >>> config = RegularizationConfig(l1=0.1, l2=1.0)
-        >>> config.l2
-        1.0
-    """
-    @property
-    def l1(self) -> builtins.float:
-        r"""
-        L1 (Lasso) regularization term on leaf weights.
-        """
-    @l1.setter
-    def l1(self, value: builtins.float) -> None:
-        r"""
-        L1 (Lasso) regularization term on leaf weights.
-        """
-    @property
-    def l2(self) -> builtins.float:
-        r"""
-        L2 (Ridge) regularization term on leaf weights.
-        """
-    @l2.setter
-    def l2(self, value: builtins.float) -> None:
-        r"""
-        L2 (Ridge) regularization term on leaf weights.
-        """
-    @property
-    def min_hessian(self) -> builtins.float:
-        r"""
-        Minimum sum of hessians required in a leaf.
-        """
-    @min_hessian.setter
-    def min_hessian(self, value: builtins.float) -> None:
-        r"""
-        Minimum sum of hessians required in a leaf.
-        """
-    def __new__(cls, l1: builtins.float = 0.0, l2: builtins.float = 1.0, min_hessian: builtins.float = 1.0) -> RegularizationConfig:
-        r"""
-        Create a new RegularizationConfig.
-        
-        Args:
-            l1: L1 regularization term. Default: 0.0.
-            l2: L2 regularization term. Default: 1.0.
-            min_hessian: Minimum sum of hessians in a leaf. Default: 1.0.
-        """
-    def __repr__(self) -> builtins.str: ...
-
-@typing.final
-class SamplingConfig:
-    r"""
-    Configuration for row and column subsampling.
-    
-    Attributes:
-        subsample: Row subsampling ratio (per tree). Value in (0, 1].
-        colsample: Column subsampling ratio (per tree). Value in (0, 1].
-        colsample_bylevel: Column subsampling ratio (per level). Value in (0, 1].
-        goss_alpha: GOSS top percentage. 0 disables GOSS.
-        goss_beta: GOSS random percentage for small gradients.
-    
-    Examples:
-        >>> config = SamplingConfig(subsample=0.8, colsample=0.8)
-        >>> config.subsample
-        0.8
-    """
-    @property
-    def subsample(self) -> builtins.float:
-        r"""
-        Row subsampling ratio (per tree). Value in (0, 1].
-        """
-    @subsample.setter
-    def subsample(self, value: builtins.float) -> None:
-        r"""
-        Row subsampling ratio (per tree). Value in (0, 1].
-        """
-    @property
-    def colsample(self) -> builtins.float:
-        r"""
-        Column subsampling ratio (per tree). Value in (0, 1].
-        """
-    @colsample.setter
-    def colsample(self, value: builtins.float) -> None:
-        r"""
-        Column subsampling ratio (per tree). Value in (0, 1].
-        """
-    @property
-    def colsample_bylevel(self) -> builtins.float:
-        r"""
-        Column subsampling ratio (per level). Value in (0, 1].
-        """
-    @colsample_bylevel.setter
-    def colsample_bylevel(self, value: builtins.float) -> None:
-        r"""
-        Column subsampling ratio (per level). Value in (0, 1].
-        """
-    @property
-    def goss_alpha(self) -> builtins.float:
-        r"""
-        GOSS top percentage (for gradient-based one-side sampling).
-        If > 0, enables GOSS. Value in [0, 1).
-        """
-    @goss_alpha.setter
-    def goss_alpha(self, value: builtins.float) -> None:
-        r"""
-        GOSS top percentage (for gradient-based one-side sampling).
-        If > 0, enables GOSS. Value in [0, 1).
-        """
-    @property
-    def goss_beta(self) -> builtins.float:
-        r"""
-        GOSS random percentage for small gradients.
-        Value in [0, 1].
-        """
-    @goss_beta.setter
-    def goss_beta(self, value: builtins.float) -> None:
-        r"""
-        GOSS random percentage for small gradients.
-        Value in [0, 1].
-        """
-    def __new__(cls, subsample: builtins.float = 1.0, colsample: builtins.float = 1.0, colsample_bylevel: builtins.float = 1.0, goss_alpha: builtins.float = 0.0, goss_beta: builtins.float = 0.0) -> SamplingConfig:
-        r"""
-        Create a new SamplingConfig.
-        
-        Args:
-            subsample: Row subsampling ratio. Must be in (0, 1]. Default: 1.0.
-            colsample: Column subsampling ratio per tree. Must be in (0, 1]. Default: 1.0.
-            colsample_bylevel: Column subsampling ratio per level. Default: 1.0.
-            goss_alpha: GOSS top percentage. 0 disables GOSS. Default: 0.0.
-            goss_beta: GOSS random percentage for small gradients. Default: 0.0.
-        """
-    def __repr__(self) -> builtins.str: ...
-
-@typing.final
-class TreeConfig:
-    r"""
-    Configuration for tree structure.
-    
-    Controls tree depth, number of leaves, and split constraints.
-    
-    Attributes:
-        max_depth (int): Maximum depth of tree. -1 means unlimited
-            (controlled by n_leaves).
-        n_leaves (int): Maximum number of leaves. Only used when max_depth=-1.
-        min_samples_leaf (int): Minimum number of samples required in a leaf.
-        min_gain_to_split (float): Minimum gain required to make a split.
-        growth_strategy (GrowthStrategy): Growth strategy for tree building.
-    
-    Examples:
-        >>> from boosters import TreeConfig, GrowthStrategy
-        >>> config = TreeConfig(max_depth=6)
-        >>> config.max_depth
-        6
-        >>> config = TreeConfig(max_depth=-1, n_leaves=31, growth_strategy=GrowthStrategy.Leafwise)
-    """
-    @property
-    def max_depth(self) -> builtins.int:
-        r"""
-        Maximum depth of tree. -1 means unlimited (controlled by n_leaves).
-        """
-    @max_depth.setter
-    def max_depth(self, value: builtins.int) -> None:
-        r"""
-        Maximum depth of tree. -1 means unlimited (controlled by n_leaves).
-        """
-    @property
-    def n_leaves(self) -> builtins.int:
-        r"""
-        Maximum number of leaves. Only used when max_depth is -1.
-        """
-    @n_leaves.setter
-    def n_leaves(self, value: builtins.int) -> None:
-        r"""
-        Maximum number of leaves. Only used when max_depth is -1.
-        """
-    @property
-    def min_samples_leaf(self) -> builtins.int:
-        r"""
-        Minimum number of samples required in a leaf node.
-        """
-    @min_samples_leaf.setter
-    def min_samples_leaf(self, value: builtins.int) -> None:
-        r"""
-        Minimum number of samples required in a leaf node.
-        """
-    @property
-    def min_gain_to_split(self) -> builtins.float:
-        r"""
-        Minimum gain required to make a split.
-        """
-    @min_gain_to_split.setter
-    def min_gain_to_split(self, value: builtins.float) -> None:
-        r"""
-        Minimum gain required to make a split.
-        """
-    @property
-    def growth_strategy(self) -> GrowthStrategy:
-        r"""
-        Growth strategy for tree building.
-        """
-    @growth_strategy.setter
-    def growth_strategy(self, value: GrowthStrategy) -> None:
-        r"""
-        Growth strategy for tree building.
-        """
-    def __new__(cls, max_depth: builtins.int = -1, n_leaves: builtins.int = 31, min_samples_leaf: builtins.int = 1, min_gain_to_split: builtins.float = 0.0, growth_strategy: GrowthStrategy = GrowthStrategy.Depthwise) -> TreeConfig:
-        r"""
-        Create a new TreeConfig.
-        
-        Args:
-            max_depth: Maximum depth of tree. -1 means unlimited
-                (controlled by n_leaves). Defaults to -1.
-            n_leaves: Maximum number of leaves. Only used when max_depth=-1.
-                Defaults to 31.
-            min_samples_leaf: Minimum samples required in a leaf. Defaults to 1.
-            min_gain_to_split: Minimum gain required to make a split.
-                Defaults to 0.0.
-            growth_strategy: Tree growth strategy. Defaults to Depthwise.
-        
-        Returns:
-            A new TreeConfig instance.
-        
-        Examples:
-            >>> from boosters import TreeConfig, GrowthStrategy
-            >>> config = TreeConfig(max_depth=6)
-            >>> config = TreeConfig(growth_strategy=GrowthStrategy.Leafwise)
-        """
-    def __repr__(self) -> builtins.str: ...
 
 @typing.final
 class GrowthStrategy(enum.Enum):

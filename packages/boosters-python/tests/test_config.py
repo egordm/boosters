@@ -3,211 +3,152 @@
 import pytest
 
 import boosters
-from boosters import (
-    CategoricalConfig,
-    EFBConfig,
-    GrowthStrategy,
-    LinearLeavesConfig,
-    RegularizationConfig,
-    SamplingConfig,
-    TreeConfig,
-)
+from boosters import GBDTConfig, GBLinearConfig, GrowthStrategy
 
 
-class TestTreeConfig:
-    """Tests for TreeConfig."""
+class TestGrowthStrategy:
+    """Tests for GrowthStrategy enum."""
 
-    def test_default_construction(self):
-        """Test TreeConfig has defaults set (not checking specific values)."""
-        config = TreeConfig()
-        # Just verify fields are accessible and have valid types
-        assert isinstance(config.max_depth, int)
-        assert isinstance(config.n_leaves, int)
-        assert config.n_leaves > 0
-        assert isinstance(config.min_samples_leaf, int)
-        assert isinstance(config.min_gain_to_split, float)
-        assert config.growth_strategy in (GrowthStrategy.Depthwise, GrowthStrategy.Leafwise)
+    def test_default_is_depthwise(self):
+        """Default growth strategy should be depthwise."""
+        config = GBDTConfig()
+        assert config.growth_strategy == GrowthStrategy.Depthwise
 
-    def test_custom_values(self):
-        """Test TreeConfig accepts custom values."""
-        config = TreeConfig(max_depth=6, n_leaves=64)
-        assert config.max_depth == 6
-        assert config.n_leaves == 64
-
-    def test_growth_strategy_leafwise(self):
-        """Test leafwise growth strategy is valid."""
-        config = TreeConfig(growth_strategy=GrowthStrategy.Leafwise)
+    def test_leafwise_valid(self):
+        """Leafwise growth strategy is valid."""
+        config = GBDTConfig(growth_strategy=GrowthStrategy.Leafwise)
         assert config.growth_strategy == GrowthStrategy.Leafwise
 
-    def test_invalid_growth_strategy(self):
-        """Test invalid growth strategy raises TypeError (enum doesn't accept strings)."""
-        with pytest.raises(TypeError):
-            # Intentionally passing invalid value to test runtime validation
-            TreeConfig(growth_strategy="invalid")  # type: ignore[arg-type]
-
-    def test_invalid_min_gain_to_split(self):
-        """Test negative min_gain_to_split raises ValueError."""
-        with pytest.raises(ValueError, match="min_gain_to_split"):
-            TreeConfig(min_gain_to_split=-1.0)
-
     def test_repr(self):
-        """Test TreeConfig repr is informative."""
-        config = TreeConfig()
-        assert "TreeConfig" in repr(config)
-        assert "max_depth" in repr(config)
+        """Test GrowthStrategy repr."""
+        assert "Depthwise" in repr(GrowthStrategy.Depthwise)
+        assert "Leafwise" in repr(GrowthStrategy.Leafwise)
 
 
-class TestRegularizationConfig:
-    """Tests for RegularizationConfig."""
+class TestGBDTConfig:
+    """Tests for GBDTConfig with flat structure."""
 
     def test_default_construction(self):
-        """Test RegularizationConfig has defaults set (not checking specific values)."""
-        config = RegularizationConfig()
-        # Just verify fields are accessible and have valid types
+        """Test GBDTConfig has sensible defaults."""
+        config = GBDTConfig()
+        # Core boosting params
+        assert isinstance(config.n_estimators, int)
+        assert config.n_estimators > 0
+        assert isinstance(config.learning_rate, float)
+        assert config.learning_rate > 0
+
+        # Tree structure
+        assert isinstance(config.max_depth, int)
+        assert isinstance(config.n_leaves, int)
+        assert config.growth_strategy in (GrowthStrategy.Depthwise, GrowthStrategy.Leafwise)
+
+        # Regularization
         assert isinstance(config.l1, float)
         assert config.l1 >= 0
         assert isinstance(config.l2, float)
         assert config.l2 >= 0
-        assert isinstance(config.min_hessian, float)
+        assert isinstance(config.min_child_weight, float)
+        assert isinstance(config.min_gain_to_split, float)
+
+        # Sampling
+        assert isinstance(config.subsample, float)
+        assert 0 < config.subsample <= 1
+        assert isinstance(config.colsample_bytree, float)
+        assert isinstance(config.colsample_bylevel, float)
 
     def test_custom_values(self):
-        """Test RegularizationConfig accepts custom values."""
-        config = RegularizationConfig(l1=0.5, l2=2.0, min_hessian=0.1)
-        assert config.l1 == 0.5
+        """Test GBDTConfig accepts custom values."""
+        config = GBDTConfig(
+            n_estimators=500,
+            learning_rate=0.1,
+            max_depth=8,
+            l2=2.0,
+            subsample=0.8,
+        )
+        assert config.n_estimators == 500
+        assert config.learning_rate == 0.1
+        assert config.max_depth == 8
         assert config.l2 == 2.0
-        assert config.min_hessian == 0.1
+        assert config.subsample == 0.8
+
+    def test_invalid_n_estimators(self):
+        """Test n_estimators=0 raises ValueError."""
+        with pytest.raises(ValueError, match="n_estimators"):
+            GBDTConfig(n_estimators=0)
+
+    def test_invalid_learning_rate(self):
+        """Test learning_rate<=0 raises ValueError."""
+        with pytest.raises(ValueError, match="learning_rate"):
+            GBDTConfig(learning_rate=0.0)
+        with pytest.raises(ValueError, match="learning_rate"):
+            GBDTConfig(learning_rate=-0.1)
+
+    def test_invalid_subsample(self):
+        """Test invalid subsample raises ValueError."""
+        with pytest.raises(ValueError, match="subsample"):
+            GBDTConfig(subsample=0.0)
+        with pytest.raises(ValueError, match="subsample"):
+            GBDTConfig(subsample=1.5)
+
+    def test_invalid_colsample_bytree(self):
+        """Test invalid colsample_bytree raises ValueError."""
+        with pytest.raises(ValueError, match="colsample_bytree"):
+            GBDTConfig(colsample_bytree=0.0)
+        with pytest.raises(ValueError, match="colsample_bytree"):
+            GBDTConfig(colsample_bytree=1.5)
 
     def test_invalid_l1(self):
         """Test negative l1 raises ValueError."""
         with pytest.raises(ValueError, match="l1"):
-            RegularizationConfig(l1=-0.1)
+            GBDTConfig(l1=-0.1)
 
     def test_invalid_l2(self):
         """Test negative l2 raises ValueError."""
         with pytest.raises(ValueError, match="l2"):
-            RegularizationConfig(l2=-0.1)
+            GBDTConfig(l2=-0.1)
+
+    def test_linear_leaves_params(self):
+        """Test linear leaves parameters."""
+        config = GBDTConfig(linear_leaves=True, linear_l2=0.1, linear_l1=0.05)
+        assert config.linear_leaves is True
+        assert config.linear_l2 == 0.1
+        assert config.linear_l1 == 0.05
+
+    def test_repr(self):
+        """Test GBDTConfig repr is informative."""
+        config = GBDTConfig()
+        assert "GBDTConfig" in repr(config)
 
 
-class TestSamplingConfig:
-    """Tests for SamplingConfig."""
-
-    def test_default_construction(self):
-        """Test SamplingConfig has defaults set (not checking specific values)."""
-        config = SamplingConfig()
-        # Just verify fields are accessible and have valid types
-        assert isinstance(config.subsample, float)
-        assert 0 < config.subsample <= 1
-        assert isinstance(config.colsample, float)
-        assert 0 < config.colsample <= 1
-        assert isinstance(config.colsample_bylevel, float)
-        assert isinstance(config.goss_alpha, float)
-        assert isinstance(config.goss_beta, float)
-
-    def test_custom_values(self):
-        """Test SamplingConfig accepts custom values."""
-        config = SamplingConfig(subsample=0.8, colsample=0.8)
-        assert config.subsample == 0.8
-        assert config.colsample == 0.8
-
-    def test_invalid_subsample_too_high(self):
-        """Test subsample > 1 raises ValueError."""
-        with pytest.raises(ValueError, match="subsample"):
-            SamplingConfig(subsample=1.5)
-
-    def test_invalid_subsample_zero(self):
-        """Test subsample = 0 raises ValueError."""
-        with pytest.raises(ValueError, match="subsample"):
-            SamplingConfig(subsample=0.0)
-
-    def test_invalid_colsample(self):
-        """Test invalid colsample raises ValueError."""
-        with pytest.raises(ValueError, match="colsample"):
-            SamplingConfig(colsample=1.5)
-
-
-class TestCategoricalConfig:
-    """Tests for CategoricalConfig."""
+class TestGBLinearConfig:
+    """Tests for GBLinearConfig."""
 
     def test_default_construction(self):
-        """Test CategoricalConfig has defaults set (not checking specific values)."""
-        config = CategoricalConfig()
-        # Just verify fields are accessible and have valid types
-        assert isinstance(config.max_categories, int)
-        assert config.max_categories > 0
-        assert isinstance(config.min_category_count, int)
-        assert isinstance(config.max_onehot, int)
-
-    def test_custom_values(self):
-        """Test CategoricalConfig accepts custom values."""
-        config = CategoricalConfig(max_categories=64)
-        assert config.max_categories == 64
-
-    def test_invalid_max_categories(self):
-        """Test zero max_categories raises ValueError."""
-        with pytest.raises(ValueError, match="max_categories"):
-            CategoricalConfig(max_categories=0)
-
-
-class TestEFBConfig:
-    """Tests for EFBConfig."""
-
-    def test_default_construction(self):
-        """Test EFBConfig has defaults set (not checking specific values)."""
-        config = EFBConfig()
-        # Just verify fields are accessible and have valid types
-        assert isinstance(config.enable, bool)
-        assert isinstance(config.max_conflict_rate, float)
-        assert 0 <= config.max_conflict_rate < 1
-
-    def test_custom_values(self):
-        """Test EFBConfig accepts custom values."""
-        config = EFBConfig(enable=False, max_conflict_rate=0.1)
-        assert config.enable is False
-        assert config.max_conflict_rate == 0.1
-
-    def test_invalid_max_conflict_rate(self):
-        """Test max_conflict_rate >= 1 raises ValueError."""
-        with pytest.raises(ValueError, match="max_conflict_rate"):
-            EFBConfig(max_conflict_rate=1.0)
-
-
-class TestLinearLeavesConfig:
-    """Tests for LinearLeavesConfig."""
-
-    def test_default_construction(self):
-        """Test LinearLeavesConfig has defaults set (not checking specific values)."""
-        config = LinearLeavesConfig()
-        # Just verify fields are accessible and have valid types
-        assert isinstance(config.enable, bool)
+        """Test GBLinearConfig has sensible defaults."""
+        config = GBLinearConfig()
+        assert isinstance(config.n_estimators, int)
+        assert config.n_estimators > 0
+        assert isinstance(config.learning_rate, float)
+        assert config.learning_rate > 0
+        assert isinstance(config.l1, float)
+        assert config.l1 >= 0
         assert isinstance(config.l2, float)
         assert config.l2 >= 0
-        assert isinstance(config.l1, float)
-        assert isinstance(config.max_iter, int)
-        assert config.max_iter > 0
-        assert isinstance(config.tolerance, float)
-        assert config.tolerance > 0
-        assert isinstance(config.min_samples, int)
 
     def test_custom_values(self):
-        """Test LinearLeavesConfig accepts custom values."""
-        config = LinearLeavesConfig(enable=True, l2=0.1)
-        assert config.enable is True
-        assert config.l2 == 0.1
-
-    def test_invalid_tolerance(self):
-        """Test non-positive tolerance raises ValueError."""
-        with pytest.raises(ValueError, match="tolerance"):
-            LinearLeavesConfig(tolerance=0.0)
+        """Test GBLinearConfig accepts custom values."""
+        config = GBLinearConfig(n_estimators=200, learning_rate=0.3, l1=0.1, l2=2.0)
+        assert config.n_estimators == 200
+        assert config.learning_rate == 0.3
+        assert config.l1 == 0.1
+        assert config.l2 == 2.0
 
 
 class TestExportsFromPackage:
     """Test config types are exported from boosters package."""
 
-    def test_all_configs_exported(self):
-        """Test all config types are exported from boosters."""
-        assert hasattr(boosters, "TreeConfig")
-        assert hasattr(boosters, "RegularizationConfig")
-        assert hasattr(boosters, "SamplingConfig")
-        assert hasattr(boosters, "CategoricalConfig")
-        assert hasattr(boosters, "EFBConfig")
-        assert hasattr(boosters, "LinearLeavesConfig")
+    def test_main_configs_exported(self):
+        """Test main config types are exported from boosters."""
+        assert hasattr(boosters, "GBDTConfig")
+        assert hasattr(boosters, "GBLinearConfig")
+        assert hasattr(boosters, "GrowthStrategy")

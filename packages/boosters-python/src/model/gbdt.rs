@@ -1,13 +1,15 @@
 //! GBDT Model Python bindings.
 
-use ndarray::Array2;
 use numpy::PyArray2;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
+use numpy::PyArray3;
 
 use boosters::data::transpose_to_c_order;
 use boosters::explainability::ShapValues;
 use boosters::training::EvalSet as CoreEvalSet;
+use boosters::explainability::ImportanceType;
+use numpy::PyArray1;
 
 use crate::config::PyGBDTConfig;
 use crate::data::{PyDataset, PyEvalSet};
@@ -175,8 +177,7 @@ impl PyGBDTModel {
         #[gen_stub(override_type(type_repr = "typing.Literal['split', 'gain']", imports = ("typing",)))]
         importance_type: &str,
     ) -> PyResult<Py<PyAny>> {
-        use boosters::explainability::ImportanceType;
-        use numpy::PyArray1;
+
 
         let model = self.inner.as_ref().ok_or_else(|| BoostersError::NotFitted {
             method: "feature_importance".to_string(),
@@ -225,7 +226,6 @@ impl PyGBDTModel {
     #[pyo3(signature = (data))]
     #[gen_stub(override_return_type(type_repr = "numpy.ndarray", imports = ("numpy",)))]
     pub fn shap_values(&self, py: Python<'_>, data: PyRef<'_, PyDataset>) -> PyResult<Py<PyAny>> {
-        use numpy::{PyArray2, PyArray3};
 
         let model = self.inner.as_ref().ok_or_else(|| BoostersError::NotFitted {
             method: "shap_values".to_string(),
@@ -249,21 +249,11 @@ impl PyGBDTModel {
 
         match shap_result {
             Ok(shap_values) => {
+                // Return as-is: shape [n_samples, n_features + 1, n_outputs]
                 let arr = shap_values.as_array();
-                let n_outputs = shap_values.n_outputs();
-
-                if n_outputs == 1 {
-                    // Single output: squeeze to [n_samples, n_features + 1]
-                    let squeezed = arr.slice(ndarray::s![.., .., 0]);
-                    let squeezed_owned: Array2<f32> = squeezed.mapv(|v| v as f32);
-                    let py_arr = PyArray2::from_owned_array(py, squeezed_owned);
-                    Ok(py_arr.into_any().unbind())
-                } else {
-                    // Multi-output: keep 3D
-                    let arr_f32: ndarray::Array3<f32> = arr.mapv(|v| v as f32);
-                    let py_arr = PyArray3::from_owned_array(py, arr_f32);
-                    Ok(py_arr.into_any().unbind())
-                }
+                let arr_f32: ndarray::Array3<f32> = arr.mapv(|v| v as f32);
+                let py_arr = PyArray3::from_owned_array(py, arr_f32);
+                Ok(py_arr.into_any().unbind())
             }
             Err(e) => Err(BoostersError::ExplainError(e.to_string()).into()),
         }

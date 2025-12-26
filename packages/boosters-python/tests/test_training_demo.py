@@ -21,7 +21,6 @@ from boosters import (
     GBLinearModel,
     Metric,
     Objective,
-    TreeConfig,
 )
 
 # =============================================================================
@@ -88,11 +87,11 @@ class TestGBDTModelIntegration:
         X_train, y_train = make_regression_data(500, 10, seed=42)
         X_test, y_test = make_regression_data(100, 10, seed=123)
 
-        # Configure model
+        # Configure model - flat config now
         config = GBDTConfig(
             n_estimators=50,
             learning_rate=0.1,
-            tree=TreeConfig(max_depth=5),
+            max_depth=5,
             objective=Objective.squared(),
         )
 
@@ -123,7 +122,7 @@ class TestGBDTModelIntegration:
         config = GBDTConfig(
             n_estimators=100,
             learning_rate=0.1,
-            tree=TreeConfig(max_depth=5),
+            max_depth=5,
             objective=Objective.squared(),
             metric=Metric.rmse(),
         )
@@ -147,7 +146,7 @@ class TestGBDTModelIntegration:
             n_estimators=1000,  # High limit
             early_stopping_rounds=10,
             learning_rate=0.1,
-            tree=TreeConfig(max_depth=5),
+            max_depth=5,
             objective=Objective.squared(),
             metric=Metric.rmse(),
         )
@@ -174,7 +173,7 @@ class TestGBDTModelIntegration:
         config = GBDTConfig(
             n_estimators=50,
             learning_rate=0.1,
-            tree=TreeConfig(max_depth=4),
+            max_depth=4,
             objective=Objective.logistic(),
         )
 
@@ -220,7 +219,7 @@ class TestGBDTModelIntegration:
         """Test feature importance extraction."""
         X, y = make_regression_data(500, 10, seed=42)
 
-        config = GBDTConfig(n_estimators=50, tree=TreeConfig(max_depth=5))
+        config = GBDTConfig(n_estimators=50, max_depth=5)
         model = GBDTModel(config=config).fit(Dataset(X, y))
 
         # Get feature importance

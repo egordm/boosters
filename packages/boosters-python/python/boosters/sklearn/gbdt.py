@@ -7,19 +7,13 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from boosters import (
-    CategoricalConfig,
-    EFBConfig,
     GBDTConfig,
     GBDTModel,
-    LinearLeavesConfig,
+    GrowthStrategy,
     Metric,
     Objective,
-    RegularizationConfig,
-    SamplingConfig,
-    TreeConfig,
 )
 from boosters.data import Dataset, EvalSet
-from boosters.types import GrowthStrategy
 
 from .base import (
     BaseEstimator,
@@ -57,14 +51,6 @@ def _build_config(
     reg_lambda: float = 1.0,
     subsample: float = 1.0,
     colsample_bytree: float = 1.0,
-    goss_top_rate: float = 0.0,
-    goss_other_rate: float = 0.0,
-    min_samples_cat: int = 10,
-    max_cat_threshold: int = 256,
-    enable_efb: bool = True,
-    max_conflict_rate: float = 0.0,
-    enable_linear_leaves: bool = False,
-    linear_leaves_l2: float = 0.01,
 ) -> GBDTConfig:
     """Build a GBDTConfig from flat kwargs."""
     # Map objective string to objective object
@@ -96,36 +82,15 @@ def _build_config(
         seed=seed,
         objective=obj,
         metric=metric_obj,
-        tree=TreeConfig(
-            max_depth=max_depth,
-            n_leaves=max_leaves,
-            min_samples_leaf=1,
-            min_gain_to_split=gamma,
-            growth_strategy=grow_strategy,
-        ),
-        regularization=RegularizationConfig(
-            l1=reg_alpha,
-            l2=reg_lambda,
-            min_hessian=min_child_weight,
-        ),
-        sampling=SamplingConfig(
-            subsample=subsample,
-            colsample=colsample_bytree,
-            goss_alpha=goss_top_rate,
-            goss_beta=goss_other_rate,
-        ),
-        categorical=CategoricalConfig(
-            max_categories=max_cat_threshold,
-            min_category_count=min_samples_cat,
-        ),
-        efb=EFBConfig(
-            enable=enable_efb,
-            max_conflict_rate=max_conflict_rate,
-        ),
-        linear_leaves=LinearLeavesConfig(
-            enable=enable_linear_leaves,
-            l2=linear_leaves_l2,
-        ),
+        growth_strategy=grow_strategy,
+        max_depth=max_depth,
+        n_leaves=max_leaves,
+        min_child_weight=min_child_weight,
+        min_gain_to_split=gamma,
+        l1=reg_alpha,
+        l2=reg_lambda,
+        subsample=subsample,
+        colsample_bytree=colsample_bytree,
     )
 
 

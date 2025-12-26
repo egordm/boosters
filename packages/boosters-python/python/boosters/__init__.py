@@ -18,16 +18,7 @@ See Also:
 from boosters._boosters_rs import __version__  # pyright: ignore[reportAttributeAccessIssue]
 
 # Config types
-from boosters.config import (
-    CategoricalConfig,
-    EFBConfig,
-    GBDTConfig,
-    GBLinearConfig,
-    LinearLeavesConfig,
-    RegularizationConfig,
-    SamplingConfig,
-    TreeConfig,
-)
+from boosters.config import GBDTConfig, GBLinearConfig
 
 # Data types
 from boosters.data import Dataset, EvalSet
@@ -45,20 +36,14 @@ from boosters.objectives import Objective
 from boosters.types import GrowthStrategy
 
 __all__ = [
-    "CategoricalConfig",
     "Dataset",
-    "EFBConfig",
     "EvalSet",
     "GBDTConfig",
     "GBDTModel",
     "GBLinearConfig",
     "GBLinearModel",
     "GrowthStrategy",
-    "LinearLeavesConfig",
     "Metric",
     "Objective",
-    "RegularizationConfig",
-    "SamplingConfig",
-    "TreeConfig",
     "__version__",
 ]
