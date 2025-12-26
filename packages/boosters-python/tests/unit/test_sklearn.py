@@ -9,6 +9,7 @@ Focuses on:
 import numpy as np
 import pytest
 
+from boosters import Objective
 from boosters.sklearn import (
     GBDTClassifier,
     GBDTRegressor,
@@ -109,14 +110,17 @@ class TestGBDTClassifierSklearn:
         assert np.allclose(proba.sum(axis=1), 1.0)
 
     def test_multiclass(self) -> None:
-        """Multiclass classification works."""
+        """Multiclass classification requires explicit softmax objective."""
         rng = np.random.default_rng(42)
         X = rng.standard_normal((150, 5)).astype(np.float32)
         y = np.zeros(150, dtype=int)
         y[X[:, 0] > 0.5] = 1
         y[X[:, 0] < -0.5] = 2
 
-        clf = GBDTClassifier(n_estimators=30, verbose=0)
+        # Must specify softmax with correct n_classes
+        clf = GBDTClassifier(
+            n_estimators=30, verbose=0, objective=Objective.softmax(n_classes=3)
+        )
         clf.fit(X, y)
 
         assert clf.n_classes_ == 3

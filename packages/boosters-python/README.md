@@ -3,13 +3,12 @@
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Fast gradient boosting library with native Rust core. Provides both a core API with
-nested configs and sklearn-compatible estimators with flat kwargs.
+Fast gradient boosting library with native Rust core. Provides both a core API
+and sklearn-compatible estimators.
 
 ## Features
 
 - **High Performance**: Native Rust core with Python bindings via PyO3
-- **Dual API**: Core API (nested configs) and sklearn API (flat kwargs)
 - **sklearn Compatible**: Works with `Pipeline`, `cross_val_score`, `GridSearchCV`
 - **Multiple Objectives**: Regression, classification, ranking, quantile regression
 - **GBDT & Linear**: Both tree-based and linear boosting models
@@ -40,38 +39,50 @@ reg = GBDTRegressor(max_depth=5, n_estimators=100)
 reg.fit(X, y)
 predictions = reg.predict(X)
 
-# Classification
+# Binary classification
 y_cls = (X[:, 0] > 0).astype(int)
 clf = GBDTClassifier(n_estimators=50)
 clf.fit(X, y_cls)
 proba = clf.predict_proba(X)
+
+# Multiclass classification (explicit objective required)
+from boosters import Objective
+y_multi = np.random.randint(0, 3, size=100)
+clf_multi = GBDTClassifier(
+    n_estimators=50,
+    objective=Objective.softmax(n_classes=3)
+)
+clf_multi.fit(X, y_multi)
 ```
 
 ### Core API
 
-The core API provides full control with nested config objects:
+The core API provides full control with flat config parameters:
 
 ```python
 import boosters as bst
 import numpy as np
 
-# Create config with nested structure
+# Create config
 config = bst.GBDTConfig(
     n_estimators=100,
     learning_rate=0.1,
-    objective=bst.SquaredLoss(),
-    metric=bst.Rmse(),
-    tree=bst.TreeConfig(max_depth=5, n_leaves=31),
-    regularization=bst.RegularizationConfig(l2=1.0),
+    objective=bst.Objective.squared(),
+    metric=bst.Metric.rmse(),
+    max_depth=5,
+    l2=1.0,
 )
 
 # Create model and train
+X = np.random.randn(100, 10).astype(np.float32)
+y = np.random.randn(100).astype(np.float32)
+
 model = bst.GBDTModel(config=config)
 train_data = bst.Dataset(X, y)
 model.fit(train_data)
 
 # Predict
-predictions = model.predict(X)
+predictions = model.predict(bst.Dataset(X))
 ```
 
 ### sklearn Integration
@@ -124,49 +135,36 @@ grid.fit(X, y)
 
 ### Objectives
 
-| Class | Description |
-|-------|-------------|
-| `SquaredLoss` | L2 regression |
-| `AbsoluteLoss` | L1 regression |
-| `HuberLoss` | Huber loss (delta parameter) |
-| `LogisticLoss` | Binary classification |
-| `SoftmaxLoss` | Multiclass classification |
-| `PoissonLoss` | Poisson regression |
-| `PinballLoss` | Quantile regression |
-| `LambdaRankLoss` | Learning to rank |
+| Method | Description |
+|--------|-------------|
+| `Objective.squared()` | L2 regression |
+| `Objective.absolute()` | L1 regression |
+| `Objective.huber(delta)` | Huber loss |
+| `Objective.logistic()` | Binary classification |
+| `Objective.softmax(n_classes)` | Multiclass classification |
+| `Objective.poisson()` | Poisson regression |
+| `Objective.pinball(alpha)` | Quantile regression |
+| `Objective.lambdarank(ndcg_at)` | Learning to rank |
 
 ### Metrics
 
-| Class | Description |
-|-------|-------------|
-| `Rmse` | Root mean squared error |
-| `Mae` | Mean absolute error |
-| `LogLoss` | Log loss / cross-entropy |
-| `Auc` | Area under ROC curve |
-| `Accuracy` | Classification accuracy |
-| `Ndcg` | Normalized discounted cumulative gain |
+| Method | Description |
+|--------|-------------|
+| `Metric.rmse()` | Root mean squared error |
+| `Metric.mae()` | Mean absolute error |
+| `Metric.logloss()` | Log loss / cross-entropy |
+| `Metric.auc()` | Area under ROC curve |
+| `Metric.accuracy()` | Classification accuracy |
+| `Metric.ndcg(at)` | Normalized discounted cumulative gain |
 
-## Status
+## Examples
 
-This package is feature-complete for v0.1.0 MVP. See [RFC-0014](../../docs/rfcs/0014-python-bindings.md) for design details.
+See the [examples/](examples/) directory:
 
-### Completed
-
-- ✅ Package structure and build (Epic 1)
-- ✅ Type stub generation
-- ✅ Python tooling (ruff, pyright, pytest)
-- ✅ CI pipeline
-- ✅ Configuration types (Epic 2)
-- ✅ Dataset handling (Epic 3)
-- ✅ Model training/prediction (Epic 4)
-- ✅ scikit-learn integration (Epic 5)
-
-### Planned
-
-- 📋 API documentation site
-- 📋 Example notebooks
-- 📋 Migration guide from XGBoost/LightGBM
-- 📋 PyPI release
+- [01_sklearn_quickstart.py](examples/01_sklearn_quickstart.py) - Basic sklearn API usage
+- [02_core_api.py](examples/02_core_api.py) - Core API with full control
+- [03_sklearn_integration.py](examples/03_sklearn_integration.py) - Pipeline, cross-validation, grid search
+- [04_linear_models.py](examples/04_linear_models.py) - GBLinear models
 
 ## License
 

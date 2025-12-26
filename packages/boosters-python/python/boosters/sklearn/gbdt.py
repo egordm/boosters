@@ -123,14 +123,11 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
         )
 
     @abstractmethod
-    def _prepare_targets(
-        self, y: NDArray[Any]
-    ) -> tuple[NDArray[np.float32], Objective, Metric | None]:
+    def _prepare_targets(self, y: NDArray[Any]) -> NDArray[np.float32]:
         """Prepare targets for training.
 
-        Returns:
-            Tuple of (y_prepared, objective, metric).
-            For classifiers, this may change objective based on n_classes.
+        For regressors, this simply casts to float32.
+        For classifiers, this performs label encoding.
         """
         ...
 
@@ -170,27 +167,7 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
         self.n_features_in_ = X.shape[1]
 
         # Prepare targets (handles label encoding for classifiers)
-        y_prepared, objective, metric = self._prepare_targets(y)
-
-        # Recreate config only if objective changed (e.g., multiclass detection)
-        if objective != self._config.objective or metric != self._config.metric:
-            self._config = GBDTConfig(
-                n_estimators=self.n_estimators,
-                learning_rate=self.learning_rate,
-                early_stopping_rounds=self.early_stopping_rounds,
-                seed=self.seed,
-                objective=objective,
-                metric=metric,
-                growth_strategy=self.grow_strategy,
-                max_depth=self.max_depth,
-                n_leaves=self.max_leaves,
-                min_child_weight=self.min_child_weight,
-                min_gain_to_split=self.gamma,
-                l1=self.reg_alpha,
-                l2=self.reg_lambda,
-                subsample=self.subsample,
-                colsample_bytree=self.colsample_bytree,
-            )
+        y_prepared = self._prepare_targets(y)
 
         train_data = Dataset(X, y_prepared, weights=sample_weight)
         valid_list = self._build_eval_sets(eval_set)
@@ -340,14 +317,9 @@ class GBDTRegressor(_GBDTEstimatorBase, RegressorMixin):  # type: ignore[misc]
                 f"For classification, use GBDTClassifier instead."
             )
 
-    def _prepare_targets(
-        self, y: NDArray[Any]
-    ) -> tuple[NDArray[np.float32], Objective, Metric | None]:
+    def _prepare_targets(self, y: NDArray[Any]) -> NDArray[np.float32]:
         """Prepare regression targets."""
-        y_arr = np.asarray(y, dtype=np.float32)
-        obj = self.objective if self.objective is not None else self._get_default_objective()
-        met = self.metric if self.metric is not None else self._get_default_metric()
-        return y_arr, obj, met
+        return np.asarray(y, dtype=np.float32)
 
     def _prepare_eval_targets(self, y: NDArray[Any]) -> NDArray[np.float32]:
         """Prepare evaluation set targets for regression."""
@@ -440,25 +412,12 @@ class GBDTClassifier(_GBDTEstimatorBase, ClassifierMixin):  # type: ignore[misc]
                 f"For regression, use GBDTRegressor instead."
             )
 
-    def _prepare_targets(
-        self, y: NDArray[Any]
-    ) -> tuple[NDArray[np.float32], Objective, Metric | None]:
+    def _prepare_targets(self, y: NDArray[Any]) -> NDArray[np.float32]:
         """Prepare classification targets with label encoding."""
         self.classes_ = np.unique(y)
         self.n_classes_ = len(self.classes_)
         self._label_to_idx = {c: i for i, c in enumerate(self.classes_)}
-        y_encoded = np.array([self._label_to_idx[c] for c in y], dtype=np.float32)
-
-        # Determine objective based on number of classes (if not specified)
-        if self.objective is not None:
-            obj = self.objective
-        elif self.n_classes_ == 2:
-            obj = Objective.logistic()
-        else:
-            obj = Objective.softmax(n_classes=self.n_classes_)
-
-        met = self.metric if self.metric is not None else Metric.logloss()
-        return y_encoded, obj, met
+        return np.array([self._label_to_idx[c] for c in y], dtype=np.float32)
 
     def _prepare_eval_targets(self, y: NDArray[Any]) -> NDArray[np.float32]:
         """Prepare evaluation set targets with label encoding."""

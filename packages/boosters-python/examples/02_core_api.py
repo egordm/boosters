@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Core API example with full control.
 
-This example demonstrates the core API with nested config objects
+This example demonstrates the core API with flat config parameters
 for maximum control over model parameters.
 
 Usage:
@@ -24,18 +24,19 @@ def main() -> None:
     X = np.random.randn(100, 5).astype(np.float32)
     y = X[:, 0] + np.random.randn(100).astype(np.float32) * 0.1
 
-    # Create config with nested structure
+    # Create config with flat structure
     print("\n--- Creating Config ---")
     config = bst.GBDTConfig(
         n_estimators=100,
         learning_rate=0.1,
-        objective=bst.SquaredLoss(),
-        metric=bst.Rmse(),
-        tree=bst.TreeConfig(max_depth=5, n_leaves=31),
-        regularization=bst.RegularizationConfig(l2=1.0),
+        objective=bst.Objective.squared(),
+        metric=bst.Metric.rmse(),
+        max_depth=5,
+        n_leaves=31,
+        l2=1.0,
     )
     print(f"Config: n_estimators={config.n_estimators}, learning_rate={config.learning_rate}")
-    print(f"Tree: max_depth={config.tree.max_depth}, n_leaves={config.tree.n_leaves}")
+    print(f"Tree: max_depth={config.max_depth}, n_leaves={config.n_leaves}")
 
     # Create model and train
     print("\n--- Training Model ---")
@@ -46,7 +47,7 @@ def main() -> None:
 
     # Predict
     print("\n--- Predictions ---")
-    predictions = model.predict(X)
+    predictions = model.predict(bst.Dataset(X))
     rmse = np.sqrt(np.mean((predictions - y) ** 2))
     print(f"Training RMSE: {rmse:.4f}")
     print(f"Predictions shape: {predictions.shape}")
