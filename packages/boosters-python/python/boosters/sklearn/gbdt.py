@@ -52,14 +52,13 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
 
     @classmethod
     @abstractmethod
-    def _is_valid_objective(cls, objective: Objective) -> bool:
-        """Check if the objective is valid for this estimator type."""
-        ...
+    def _validate_objective(cls, objective: Objective) -> None:
+        """Validate objective is appropriate for this estimator type.
 
-    @classmethod
-    def _get_invalid_objective_message(cls, objective: Objective) -> str:
-        """Return error message for invalid objective."""
-        return f"Invalid objective {objective} for {cls.__name__}"
+        Raises:
+            ValueError: If objective is not valid for this estimator type.
+        """
+        ...
 
     def __init__(
         self,
@@ -103,31 +102,24 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
         # Validate and create config immediately
         obj = objective if objective is not None else self._get_default_objective()
         met = metric if metric is not None else self._get_default_metric()
+        self._validate_objective(obj)
 
-        # Validate objective type
-        if not self._is_valid_objective(obj):
-            raise ValueError(self._get_invalid_objective_message(obj))
-
-        self._config = self._create_config(obj, met)
-
-    def _create_config(self, objective: Objective, metric: Metric | None) -> GBDTConfig:
-        """Create config with given objective and metric."""
-        return GBDTConfig(
-            n_estimators=self.n_estimators,
-            learning_rate=self.learning_rate,
-            early_stopping_rounds=self.early_stopping_rounds,
-            seed=self.seed,
-            objective=objective,
-            metric=metric,
-            growth_strategy=self.grow_strategy,
-            max_depth=self.max_depth,
-            n_leaves=self.max_leaves,
-            min_child_weight=self.min_child_weight,
-            min_gain_to_split=self.gamma,
-            l1=self.reg_alpha,
-            l2=self.reg_lambda,
-            subsample=self.subsample,
-            colsample_bytree=self.colsample_bytree,
+        self._config = GBDTConfig(
+            n_estimators=n_estimators,
+            learning_rate=learning_rate,
+            early_stopping_rounds=early_stopping_rounds,
+            seed=seed,
+            objective=obj,
+            metric=met,
+            growth_strategy=grow_strategy,
+            max_depth=max_depth,
+            n_leaves=max_leaves,
+            min_child_weight=min_child_weight,
+            min_gain_to_split=gamma,
+            l1=reg_alpha,
+            l2=reg_lambda,
+            subsample=subsample,
+            colsample_bytree=colsample_bytree,
         )
 
     @abstractmethod
@@ -182,7 +174,23 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
 
         # Recreate config only if objective changed (e.g., multiclass detection)
         if objective != self._config.objective or metric != self._config.metric:
-            self._config = self._create_config(objective, metric)
+            self._config = GBDTConfig(
+                n_estimators=self.n_estimators,
+                learning_rate=self.learning_rate,
+                early_stopping_rounds=self.early_stopping_rounds,
+                seed=self.seed,
+                objective=objective,
+                metric=metric,
+                growth_strategy=self.grow_strategy,
+                max_depth=self.max_depth,
+                n_leaves=self.max_leaves,
+                min_child_weight=self.min_child_weight,
+                min_gain_to_split=self.gamma,
+                l1=self.reg_alpha,
+                l2=self.reg_lambda,
+                subsample=self.subsample,
+                colsample_bytree=self.colsample_bytree,
+            )
 
         train_data = Dataset(X, y_prepared, weights=sample_weight)
         valid_list = self._build_eval_sets(eval_set)
@@ -323,17 +331,14 @@ class GBDTRegressor(_GBDTEstimatorBase, RegressorMixin):  # type: ignore[misc]
         return Metric.rmse()
 
     @classmethod
-    def _is_valid_objective(cls, objective: Objective) -> bool:
+    def _validate_objective(cls, objective: Objective) -> None:
         obj_name = str(objective).lower()
-        return not any(x in obj_name for x in cls._CLASSIFICATION_KEYWORDS)
-
-    @classmethod
-    def _get_invalid_objective_message(cls, objective: Objective) -> str:
-        return (
-            f"GBDTRegressor requires a regression objective, got {objective}. "
-            f"Use Objective.squared(), Objective.absolute(), etc. "
-            f"For classification, use GBDTClassifier instead."
-        )
+        if any(x in obj_name for x in cls._CLASSIFICATION_KEYWORDS):
+            raise ValueError(
+                f"GBDTRegressor requires a regression objective, got {objective}. "
+                f"Use Objective.squared(), Objective.absolute(), etc. "
+                f"For classification, use GBDTClassifier instead."
+            )
 
     def _prepare_targets(
         self, y: NDArray[Any]
@@ -426,17 +431,14 @@ class GBDTClassifier(_GBDTEstimatorBase, ClassifierMixin):  # type: ignore[misc]
         return Metric.logloss()
 
     @classmethod
-    def _is_valid_objective(cls, objective: Objective) -> bool:
+    def _validate_objective(cls, objective: Objective) -> None:
         obj_name = str(objective).lower()
-        return not any(x in obj_name for x in cls._REGRESSION_KEYWORDS)
-
-    @classmethod
-    def _get_invalid_objective_message(cls, objective: Objective) -> str:
-        return (
-            f"GBDTClassifier requires a classification objective, got {objective}. "
-            f"Use Objective.logistic() for binary or Objective.softmax() for multiclass. "
-            f"For regression, use GBDTRegressor instead."
-        )
+        if any(x in obj_name for x in cls._REGRESSION_KEYWORDS):
+            raise ValueError(
+                f"GBDTClassifier requires a classification objective, got {objective}. "
+                f"Use Objective.logistic() for binary or Objective.softmax() for multiclass. "
+                f"For regression, use GBDTRegressor instead."
+            )
 
     def _prepare_targets(
         self, y: NDArray[Any]

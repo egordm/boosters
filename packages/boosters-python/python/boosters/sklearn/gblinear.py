@@ -52,14 +52,13 @@ class _GBLinearEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
 
     @classmethod
     @abstractmethod
-    def _is_valid_objective(cls, objective: Objective) -> bool:
-        """Check if the objective is valid for this estimator type."""
-        ...
+    def _validate_objective(cls, objective: Objective) -> None:
+        """Validate objective is appropriate for this estimator type.
 
-    @classmethod
-    def _get_invalid_objective_message(cls, objective: Objective) -> str:
-        """Return error message for invalid objective."""
-        return f"Invalid objective {objective} for {cls.__name__}"
+        Raises:
+            ValueError: If objective is not valid for this estimator type.
+        """
+        ...
 
     def __init__(
         self,
@@ -87,24 +86,17 @@ class _GBLinearEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
         # Validate and create config immediately
         obj = objective if objective is not None else self._get_default_objective()
         met = metric if metric is not None else self._get_default_metric()
+        self._validate_objective(obj)
 
-        # Validate objective type
-        if not self._is_valid_objective(obj):
-            raise ValueError(self._get_invalid_objective_message(obj))
-
-        self._config = self._create_config(obj, met)
-
-    def _create_config(self, objective: Objective, metric: Metric | None) -> GBLinearConfig:
-        """Create config with given objective and metric."""
-        return GBLinearConfig(
-            n_estimators=self.n_estimators,
-            learning_rate=self.learning_rate,
-            early_stopping_rounds=self.early_stopping_rounds,
-            seed=self.seed,
-            objective=objective,
-            metric=metric,
-            l1=self.l1,
-            l2=self.l2,
+        self._config = GBLinearConfig(
+            n_estimators=n_estimators,
+            learning_rate=learning_rate,
+            early_stopping_rounds=early_stopping_rounds,
+            seed=seed,
+            objective=obj,
+            metric=met,
+            l1=l1,
+            l2=l2,
         )
 
     @abstractmethod
@@ -159,7 +151,16 @@ class _GBLinearEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
 
         # Recreate config only if objective changed (e.g., multiclass detection)
         if objective != self._config.objective or metric != self._config.metric:
-            self._config = self._create_config(objective, metric)
+            self._config = GBLinearConfig(
+                n_estimators=self.n_estimators,
+                learning_rate=self.learning_rate,
+                early_stopping_rounds=self.early_stopping_rounds,
+                seed=self.seed,
+                objective=objective,
+                metric=metric,
+                l1=self.l1,
+                l2=self.l2,
+            )
 
         train_data = Dataset(X, y_prepared, weights=sample_weight)
         valid_list = self._build_eval_sets(eval_set)
@@ -273,17 +274,14 @@ class GBLinearRegressor(_GBLinearEstimatorBase, RegressorMixin):  # type: ignore
         return Metric.rmse()
 
     @classmethod
-    def _is_valid_objective(cls, objective: Objective) -> bool:
+    def _validate_objective(cls, objective: Objective) -> None:
         obj_name = str(objective).lower()
-        return not any(x in obj_name for x in cls._CLASSIFICATION_KEYWORDS)
-
-    @classmethod
-    def _get_invalid_objective_message(cls, objective: Objective) -> str:
-        return (
-            f"GBLinearRegressor requires a regression objective, got {objective}. "
-            f"Use Objective.squared(), etc. "
-            f"For classification, use GBLinearClassifier instead."
-        )
+        if any(x in obj_name for x in cls._CLASSIFICATION_KEYWORDS):
+            raise ValueError(
+                f"GBLinearRegressor requires a regression objective, got {objective}. "
+                f"Use Objective.squared(), etc. "
+                f"For classification, use GBLinearClassifier instead."
+            )
 
     def _prepare_targets(
         self, y: NDArray[Any]
@@ -358,17 +356,14 @@ class GBLinearClassifier(_GBLinearEstimatorBase, ClassifierMixin):  # type: igno
         return Metric.logloss()
 
     @classmethod
-    def _is_valid_objective(cls, objective: Objective) -> bool:
+    def _validate_objective(cls, objective: Objective) -> None:
         obj_name = str(objective).lower()
-        return not any(x in obj_name for x in cls._REGRESSION_KEYWORDS)
-
-    @classmethod
-    def _get_invalid_objective_message(cls, objective: Objective) -> str:
-        return (
-            f"GBLinearClassifier requires a classification objective, got {objective}. "
-            f"Use Objective.logistic() for binary or Objective.softmax() for multiclass. "
-            f"For regression, use GBLinearRegressor instead."
-        )
+        if any(x in obj_name for x in cls._REGRESSION_KEYWORDS):
+            raise ValueError(
+                f"GBLinearClassifier requires a classification objective, got {objective}. "
+                f"Use Objective.logistic() for binary or Objective.softmax() for multiclass. "
+                f"For regression, use GBLinearRegressor instead."
+            )
 
     def _prepare_targets(
         self, y: NDArray[Any]

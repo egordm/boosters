@@ -33,3 +33,8 @@ pandas = ["pandas>=2.0"]
 features = ["extension-module"]
 python-source = "python"
 module-name = "boosters._boosters_rs"
+
+[dependency-groups]
+dev = [
+    "polars>=1.36.1",
+]

@@ -10,7 +10,7 @@ Types:
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 import numpy as np
 from numpy.typing import NDArray
@@ -347,13 +347,16 @@ class Dataset(_RustDataset):
                 )
 
         # Create the Rust instance
-        instance: Dataset = _RustDataset.__new__(
-            cls,
-            features=features_arr,
-            labels=labels_2d,
-            weights=weights_arr,
-            feature_names=list(feature_names) if feature_names else None,
-            categorical_features=all_cats if all_cats else None,
+        instance = cast(
+            "Dataset",
+            _RustDataset.__new__(
+                cls,
+                features=features_arr,
+                labels=labels_2d,
+                weights=weights_arr,
+                feature_names=list(feature_names) if feature_names else None,
+                categorical_features=all_cats if all_cats else None,
+            ),
         )
 
         # Store Python-only attributes
