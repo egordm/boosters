@@ -74,7 +74,7 @@ impl PyGBDTModel {
             Some(c) => c,
             None => {
                 // Create default config using Python interface
-                let boosters_mod = py.import_bound("boosters._boosters_rs")?;
+                let boosters_mod = py.import("boosters._boosters_rs")?;
                 let config_class = boosters_mod.getattr("GBDTConfig")?;
                 let config_obj = config_class.call0()?;
                 config_obj.extract::<Py<PyGBDTConfig>>()?
@@ -203,7 +203,7 @@ impl PyGBDTModel {
         match importance {
             Ok(fi) => {
                 let scores = fi.values();
-                let arr = PyArray1::from_slice_bound(py, scores);
+                let arr = PyArray1::from_slice(py, scores);
                 Ok(arr.into_any().unbind())
             }
             Err(e) => Err(BoostersError::ExplainError(e.to_string()).into()),
@@ -285,13 +285,13 @@ impl PyGBDTModel {
                     // Convert f64 to f32 for consistency with predict()
                     let squeezed = arr.slice(ndarray::s![.., .., 0]);
                     let squeezed_owned: Array2<f32> = squeezed.mapv(|v| v as f32);
-                    let py_arr = PyArray2::from_owned_array_bound(py, squeezed_owned);
+                    let py_arr = PyArray2::from_owned_array(py, squeezed_owned);
                     Ok(py_arr.into_any().unbind())
                 } else {
                     // Multi-output: keep 3D [n_samples, n_features + 1, n_outputs]
                     // Convert f64 to f32
                     let arr_f32: ndarray::Array3<f32> = arr.mapv(|v| v as f32);
-                    let py_arr = PyArray3::from_owned_array_bound(py, arr_f32);
+                    let py_arr = PyArray3::from_owned_array(py, arr_f32);
                     Ok(py_arr.into_any().unbind())
                 }
             }
@@ -518,7 +518,7 @@ impl PyGBDTModel {
         // Transpose to [n_samples, n_groups] for Python convention
         // Always return 2D array for consistent shape
         let output_t = transpose_to_c_order(output.view());
-        let arr = PyArray2::from_owned_array_bound(py, output_t);
+        let arr = PyArray2::from_owned_array(py, output_t);
         Ok(arr.into_any().unbind())
     }
 

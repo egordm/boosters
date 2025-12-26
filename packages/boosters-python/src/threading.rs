@@ -85,7 +85,7 @@ impl EvalLogger {
         }
 
         // Convert to Python dict
-        let dict = PyDict::new_bound(py);
+        let dict = PyDict::new(py);
         for (name, values) in metric_values {
             dict.set_item(name, values)?;
         }

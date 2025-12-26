@@ -272,7 +272,7 @@ impl PyDataset {
 
     /// Check if an object is a scipy sparse matrix.
     fn is_sparse_matrix(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
-        if let Ok(scipy_sparse) = py.import_bound("scipy.sparse") {
+        if let Ok(scipy_sparse) = py.import("scipy.sparse") {
             if let Ok(issparse) = scipy_sparse.getattr("issparse") {
                 if let Ok(result) = issparse.call1((obj,)) {
                     if let Ok(is_sparse) = result.extract::<bool>() {
@@ -337,7 +337,7 @@ impl PyDataset {
         };
 
         // Convert to numpy float32 and extract
-        let numpy = py.import_bound("numpy")?;
+        let numpy = py.import("numpy")?;
         let arr_f32 = numpy
             .getattr("ascontiguousarray")?
             .call1((values, numpy.getattr("float32")?))?;
@@ -384,7 +384,7 @@ impl PyDataset {
         }
 
         // Convert to float32 and ensure C-contiguous
-        let numpy = py.import_bound("numpy")?;
+        let numpy = py.import("numpy")?;
         let arr_f32 = numpy
             .getattr("ascontiguousarray")?
             .call1((obj, numpy.getattr("float32")?))?;
@@ -448,7 +448,7 @@ impl PyDataset {
         }
 
         // Check for NaN/Inf in labels
-        let numpy = py.import_bound("numpy")?;
+        let numpy = py.import("numpy")?;
         let isfinite = numpy.getattr("isfinite")?;
         let all_fn = numpy.getattr("all")?;
         let all_finite: bool = all_fn.call1((isfinite.call1((labels_bound,))?,))?.extract()?;
@@ -527,7 +527,7 @@ impl PyDataset {
         }
 
         // Convert to float32 if needed
-        let numpy = py.import_bound("numpy")?;
+        let numpy = py.import("numpy")?;
         let arr_f32 = numpy
             .getattr("ascontiguousarray")?
             .call1((weights_bound, numpy.getattr("float32")?))?;

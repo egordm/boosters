@@ -77,7 +77,7 @@ impl PyGBLinearModel {
             Some(c) => c,
             None => {
                 // Create default config using Python interface
-                let boosters_mod = py.import_bound("boosters._boosters_rs")?;
+                let boosters_mod = py.import("boosters._boosters_rs")?;
                 let config_class = boosters_mod.getattr("GBLinearConfig")?;
                 let config_obj = config_class.call0()?;
                 config_obj.extract::<Py<PyGBLinearConfig>>()?
@@ -139,12 +139,12 @@ impl PyGBLinearModel {
             // Single output: return 1D array (n_features,)
             // Extract feature weights (excluding bias)
             let weights: Vec<f32> = (0..n_features).map(|f| linear.weight(f, 0)).collect();
-            let arr = PyArray1::from_vec_bound(py, weights);
+            let arr = PyArray1::from_vec(py, weights);
             Ok(arr.into_any().unbind())
         } else {
             // Multi-output: return 2D array (n_features, n_groups)
             let coefs = linear.weight_view().to_owned();
-            let arr = PyArray2::from_owned_array_bound(py, coefs);
+            let arr = PyArray2::from_owned_array(py, coefs);
             Ok(arr.into_any().unbind())
         }
     }
@@ -170,7 +170,7 @@ impl PyGBLinearModel {
         let biases = linear.biases();
 
         // Return 1D array of biases
-        let arr = PyArray1::from_iter_bound(py, biases.iter().copied());
+        let arr = PyArray1::from_iter(py, biases.iter().copied());
         Ok(arr.into_any().unbind())
     }
 
@@ -394,7 +394,7 @@ impl PyGBLinearModel {
         // Transpose to [n_samples, n_groups] for Python convention
         // Always return 2D array for consistent shape
         let output_t = transpose_to_c_order(output.view());
-        let arr = PyArray2::from_owned_array_bound(py, output_t);
+        let arr = PyArray2::from_owned_array(py, output_t);
         Ok(arr.into_any().unbind())
     }
 
