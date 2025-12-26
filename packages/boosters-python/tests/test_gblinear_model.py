@@ -70,9 +70,10 @@ class TestGBLinearModelFit:
         X_val, y_val = _make_linear_data(50, seed=123)
         config = GBLinearConfig(n_estimators=10, metric=Rmse())
         model = GBLinearModel(config=config)
+        val_ds = Dataset(X_val, y_val)
         model.fit(
             Dataset(X, y),
-            eval_set=[EvalSet("valid", Dataset(X_val, y_val))],
+            eval_set=[EvalSet("valid", val_ds._inner)],
         )
         assert model.is_fitted
 
@@ -86,9 +87,10 @@ class TestGBLinearModelFit:
             metric=Rmse(),
         )
         model = GBLinearModel(config=config)
+        val_ds = Dataset(X_val, y_val)
         model.fit(
             Dataset(X, y),
-            eval_set=[EvalSet("valid", Dataset(X_val, y_val))],
+            eval_set=[EvalSet("valid", val_ds._inner)],
         )
         # Model should be fitted
         assert model.is_fitted

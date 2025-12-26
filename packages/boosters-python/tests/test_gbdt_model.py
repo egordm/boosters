@@ -128,10 +128,11 @@ class TestGBDTModelFit:
         y_train, y_val = y[:80], y[80:]
 
         train = Dataset(X_train, y_train)
-        valid = EvalSet("valid", Dataset(X_val, y_val))
+        val_ds = Dataset(X_val, y_val)
+        valid = EvalSet("valid", val_ds._inner)
 
         model = GBDTModel(config=GBDTConfig(n_estimators=10))
-        model.fit(train, valid=[valid])
+        model.fit(train._inner, valid=[valid])
 
         assert model.is_fitted
         # eval_results will be populated in story 4.6
@@ -144,10 +145,11 @@ class TestGBDTModelFit:
         y_train, y_val = y[:80], y[80:]
 
         train = Dataset(X_train, y_train)
-        valid = EvalSet("valid", Dataset(X_val, y_val))
+        val_ds = Dataset(X_val, y_val)
+        valid = EvalSet("valid", val_ds._inner)
 
         model = GBDTModel(config=GBDTConfig(n_estimators=100, early_stopping_rounds=5))
-        model.fit(train, valid=[valid])
+        model.fit(train._inner, valid=[valid])
 
         assert model.is_fitted
         # May have stopped early

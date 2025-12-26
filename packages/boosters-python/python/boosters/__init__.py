@@ -62,6 +62,9 @@ from boosters.objectives import (
     SquaredLoss,
 )
 
+# Type aliases
+from boosters.types import GrowthStrategy
+
 __all__ = [
     "AbsoluteLoss",
     "Accuracy",
@@ -75,6 +78,7 @@ __all__ = [
     "GBDTModel",
     "GBLinearConfig",
     "GBLinearModel",
+    "GrowthStrategy",
     "HingeLoss",
     "HuberLoss",
     "LambdaRankLoss",

@@ -31,10 +31,10 @@ class TestGBDTRegressor:
         """Test default parameter values."""
         reg = GBDTRegressor()
         assert reg.n_estimators == 100
-        assert reg.learning_rate == 0.3
-        assert reg.max_depth == -1
-        assert reg.n_leaves == 31
-        assert reg.l2 == 1.0
+        assert reg.learning_rate == 0.1  # XGBoost-style default
+        assert reg.max_depth == 6  # XGBoost-style default
+        assert reg.max_leaves == 31
+        assert reg.reg_lambda == 1.0
 
     def test_get_set_params(self) -> None:
         """Test sklearn get_params/set_params interface."""

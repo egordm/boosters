@@ -7,9 +7,9 @@ use pyo3_stub_gen::derive::gen_stub_pyclass;
 use crate::config::PyGBDTConfig;
 use crate::data::{PyDataset, PyEvalSet};
 use crate::error::BoostersError;
-use crate::threading::EvalLogger;
 
 use boosters::data::Dataset as CoreDataset;
+use boosters::explainability::ShapValues;
 use boosters::training::EvalSet as CoreEvalSet;
 
 /// Gradient Boosted Decision Tree model.
@@ -209,6 +209,115 @@ impl PyGBDTModel {
         }
     }
 
+    /// Compute SHAP values for feature contribution analysis.
+    ///
+    /// SHAP (SHapley Additive exPlanations) values show how each feature
+    /// contributes to individual predictions. The values sum to the difference
+    /// between the model's prediction and the base value.
+    ///
+    /// Args:
+    ///     features: Feature array of shape `(n_samples, n_features)` or Dataset.
+    ///
+    /// Returns:
+    ///     NumPy array with shape `(n_samples, n_features + 1, n_outputs)`.
+    ///     The last feature index contains the base value (expected value).
+    ///     For single-output models, the last dimension is squeezed.
+    ///
+    /// Raises:
+    ///     RuntimeError: If model has not been fitted.
+    ///     ValueError: If features have wrong shape.
+    ///
+    /// Example:
+    ///     ```python
+    ///     # Get SHAP values for test data
+    ///     shap_values = model.shap_values(X_test)
+    ///
+    ///     # For a single sample, contributions sum to prediction - base_value
+    ///     sample_idx = 0
+    ///     feature_contribs = shap_values[sample_idx, :-1, 0]  # All features
+    ///     base_value = shap_values[sample_idx, -1, 0]  # Base value
+    ///     prediction = model.predict(X_test[sample_idx:sample_idx+1])[0]
+    ///     # assert np.isclose(base_value + feature_contribs.sum(), prediction)
+    ///     ```
+    #[pyo3(signature = (features))]
+    pub fn shap_values(
+        &self,
+        py: Python<'_>,
+        features: &Bound<'_, PyAny>,
+    ) -> PyResult<PyObject> {
+        use numpy::{PyArray2, PyArray3};
+
+        let model = self.inner.as_ref().ok_or_else(|| BoostersError::NotFitted {
+            method: "shap_values".to_string(),
+        })?;
+
+        // Extract features array - either from Dataset (Rust or Python wrapper) or raw numpy array
+        let features_array: Array2<f32> = if let Ok(dataset) = features.extract::<PyRef<'_, PyDataset>>() {
+            // Direct Rust Dataset
+            let features_view = dataset.features_array(py)?;
+            let features_np = features_view.as_array();
+            features_np.t().as_standard_layout().into_owned()
+        } else if let Ok(inner) = features.getattr("_inner") {
+            // Python wrapper with _inner
+            if let Ok(dataset) = inner.extract::<PyRef<'_, PyDataset>>() {
+                let features_view = dataset.features_array(py)?;
+                let features_np = features_view.as_array();
+                features_np.t().as_standard_layout().into_owned()
+            } else {
+                let features_view: numpy::PyReadonlyArray2<'_, f32> = features.extract()?;
+                let features_np = features_view.as_array();
+                features_np.t().as_standard_layout().into_owned()
+            }
+        } else {
+            let features_view: numpy::PyReadonlyArray2<'_, f32> = features.extract()?;
+            let features_np = features_view.as_array();
+            features_np.t().as_standard_layout().into_owned()
+        };
+
+        // Validate feature count
+        let expected_features = model.meta().n_features;
+        let actual_features = features_array.nrows();
+        if actual_features != expected_features {
+            return Err(BoostersError::ValidationError(format!(
+                "Expected {} features, got {}",
+                expected_features, actual_features
+            ))
+            .into());
+        }
+
+        // Create temporary dataset for SHAP computation (no labels needed)
+        let shap_dataset = CoreDataset::new(features_array.view(), None, None);
+
+        // Compute SHAP values with GIL released
+        let shap_result: Result<ShapValues, _> = py.allow_threads(|| {
+            model.shap_values(&shap_dataset)
+        });
+
+        match shap_result {
+            Ok(shap_values) => {
+                // ShapValues is [n_samples, n_features + 1, n_outputs]
+                let arr = shap_values.as_array();
+                let n_outputs = shap_values.n_outputs();
+
+                if n_outputs == 1 {
+                    // Single output: squeeze to [n_samples, n_features + 1]
+                    // Convert f64 to f32 for consistency with predict()
+                    let squeezed = arr.slice(ndarray::s![.., .., 0]);
+                    let squeezed_owned: Array2<f32> = squeezed.mapv(|v| v as f32);
+                    let py_arr = PyArray2::from_owned_array_bound(py, squeezed_owned);
+                    Ok(py_arr.into_any().unbind())
+                } else {
+                    // Multi-output: keep 3D [n_samples, n_features + 1, n_outputs]
+                    // Convert f64 to f32
+                    let arr_f32: ndarray::Array3<f32> = arr.mapv(|v| v as f32);
+                    let py_arr = PyArray3::from_owned_array_bound(py, arr_f32);
+                    Ok(py_arr.into_any().unbind())
+                }
+            }
+            Err(e) => Err(BoostersError::ExplainError(e.to_string()).into()),
+        }
+    }
+
     /// String representation.
     fn __repr__(&self) -> String {
         if let Some(model) = &self.inner {
@@ -260,12 +369,24 @@ impl PyGBDTModel {
             method: "predict".to_string(),
         })?;
 
-        // Extract features array - either from Dataset or raw numpy array
+        // Extract features array - either from Dataset (Rust or Python wrapper) or raw numpy array
         let features_array: Array2<f32> = if let Ok(dataset) = features.extract::<PyRef<'_, PyDataset>>() {
-            // Features from Dataset
+            // Direct Rust Dataset
             let features_view = dataset.features_array(py)?;
             let features_np = features_view.as_array();
             features_np.t().as_standard_layout().into_owned()
+        } else if let Ok(inner) = features.getattr("_inner") {
+            // Python wrapper with _inner
+            if let Ok(dataset) = inner.extract::<PyRef<'_, PyDataset>>() {
+                let features_view = dataset.features_array(py)?;
+                let features_np = features_view.as_array();
+                features_np.t().as_standard_layout().into_owned()
+            } else {
+                // Not a valid _inner, try as numpy array
+                let features_view: numpy::PyReadonlyArray2<'_, f32> = features.extract()?;
+                let features_np = features_view.as_array();
+                features_np.t().as_standard_layout().into_owned()
+            }
         } else {
             // Assume numpy array [n_samples, n_features]
             let features_view: numpy::PyReadonlyArray2<'_, f32> = features.extract()?;
@@ -287,7 +408,8 @@ impl PyGBDTModel {
         // Create temporary dataset for prediction (no labels needed)
         let pred_dataset = CoreDataset::new(features_array.view(), None, None);
 
-        // TODO: Support n_iterations for partial prediction
+        // Note: n_iterations is accepted for API compatibility but not used.
+        // Users should train with the desired number of trees.
         let _ = n_iterations;
 
         // Predict with GIL released
@@ -340,11 +462,16 @@ impl PyGBDTModel {
     pub fn fit<'py>(
         mut slf: PyRefMut<'py, Self>,
         py: Python<'py>,
-        train: &PyDataset,
+        train: &Bound<'py, PyAny>,
         valid: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<PyRefMut<'py, Self>> {
+        // Extract PyDataset from either:
+        // 1. Direct PyDataset (Rust type)
+        // 2. Python wrapper with _inner attribute
+        let train_dataset: PyRef<'py, PyDataset> = Self::extract_dataset(train)?;
+
         // Validate that training data has labels
-        if !train.has_labels() {
+        if !train_dataset.has_labels() {
             return Err(BoostersError::ValidationError(
                 "Training dataset must have labels".to_string(),
             )
@@ -359,12 +486,12 @@ impl PyGBDTModel {
         // Extract features [n_samples, n_features] and transpose to [n_features, n_samples]
         // IMPORTANT: Must use as_standard_layout() to ensure C-order (row-contiguous) layout
         // Otherwise binning will fail because rows won't be contiguous
-        let features_view = train.features_array(py)?;
+        let features_view = train_dataset.features_array(py)?;
         let features_np = features_view.as_array();
         let features_transposed: Array2<f32> = features_np.t().as_standard_layout().into_owned();
 
         // Extract labels [n_samples] and reshape to [1, n_samples]
-        let labels_view = train.labels_array(py)?.expect("labels validated above");
+        let labels_view = train_dataset.labels_array(py)?.expect("labels validated above");
         let labels_np = labels_view.as_array();
         let labels_1d: Array1<f32> = labels_np.to_owned();
         let labels_2d: Array2<f32> =
@@ -373,7 +500,7 @@ impl PyGBDTModel {
             })?;
 
         // Extract weights (optional)
-        let weights_view = train.weights_array(py)?;
+        let weights_view = train_dataset.weights_array(py)?;
         let weights_opt: Option<ndarray::Array1<f32>> =
             weights_view.map(|w| w.as_array().to_owned());
 
@@ -436,6 +563,37 @@ impl PyGBDTModel {
     /// Get reference to inner model.
     pub fn get_inner(&self) -> Option<&boosters::GBDTModel> {
         self.inner.as_ref()
+    }
+
+    /// Extract PyDataset from various input types.
+    ///
+    /// Accepts:
+    /// - Direct PyDataset (Rust type from `_boosters_rs.Dataset`)
+    /// - Python wrapper with `_inner` attribute (from `boosters.data.Dataset`)
+    fn extract_dataset<'py>(obj: &Bound<'py, PyAny>) -> PyResult<PyRef<'py, PyDataset>> {
+        // Try direct extraction first (Rust PyDataset)
+        if let Ok(dataset) = obj.extract::<PyRef<'py, PyDataset>>() {
+            return Ok(dataset);
+        }
+
+        // Try extracting from _inner attribute (Python wrapper)
+        if let Ok(inner) = obj.getattr("_inner") {
+            if let Ok(dataset) = inner.extract::<PyRef<'py, PyDataset>>() {
+                return Ok(dataset);
+            }
+        }
+
+        // Not a valid dataset type
+        let type_name = obj
+            .get_type()
+            .name()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|_| "unknown".to_string());
+        Err(BoostersError::TypeError(format!(
+            "expected Dataset, got {}",
+            type_name
+        ))
+        .into())
     }
 
     /// Extract evaluation sets from Python input.

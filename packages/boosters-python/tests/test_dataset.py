@@ -109,7 +109,7 @@ class TestDataset:
         r = repr(ds)
         assert "n_samples=100" in r
         assert "n_features=10" in r
-        assert "has_labels=true" in r  # Rust uses lowercase boolean
+        assert "has_labels=True" in r  # Python uses Title case boolean
         assert "categorical_features=2" in r
 
     # Validation tests
@@ -135,8 +135,8 @@ class TestDataset:
         """Test that 1D features raises error."""
         X = np.random.rand(100).astype(np.float32)
 
-        # 1D arrays are not recognized as valid numpy arrays for features
-        with pytest.raises(TypeError):
+        # 1D arrays are not valid features
+        with pytest.raises(ValueError, match="2D array"):
             Dataset(X)
 
     def test_invalid_labels_nan(self) -> None:
@@ -201,7 +201,8 @@ class TestEvalSet:
         y = np.random.rand(50).astype(np.float32)
         ds = Dataset(X, y)
 
-        es = EvalSet("validation", ds)
+        # EvalSet expects the inner Rust Dataset
+        es = EvalSet("validation", ds._inner)
         assert es.name == "validation"
 
     def test_dataset_access(self) -> None:
@@ -210,10 +211,10 @@ class TestEvalSet:
         y = np.random.rand(50).astype(np.float32)
         ds = Dataset(X, y)
 
-        es = EvalSet("test", ds)
+        es = EvalSet("test", ds._inner)
         retrieved = es.dataset
 
-        # Should get a usable dataset
+        # Should get a usable dataset (Rust Dataset)
         assert retrieved.n_samples == 50
         assert retrieved.n_features == 10
 
@@ -222,7 +223,7 @@ class TestEvalSet:
         X = np.random.rand(50, 10).astype(np.float32)
         y = np.random.rand(50).astype(np.float32)
         ds = Dataset(X, y)
-        es = EvalSet("validation", ds)
+        es = EvalSet("validation", ds._inner)
 
         r = repr(es)
         assert "validation" in r

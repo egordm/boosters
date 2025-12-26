@@ -129,9 +129,10 @@ class TestGBDTModelIntegration:
         )
 
         model = GBDTModel(config=config)
+        val_ds = Dataset(X_val, y_val)
         model.fit(
             Dataset(X_train, y_train),
-            valid=[EvalSet("validation", Dataset(X_val, y_val))],
+            valid=[EvalSet("validation", val_ds._inner)],
         )
 
         assert model.is_fitted
@@ -152,9 +153,10 @@ class TestGBDTModelIntegration:
         )
 
         model = GBDTModel(config=config)
+        val_ds = Dataset(X_val, y_val)
         model.fit(
             Dataset(X_train, y_train),
-            valid=[EvalSet("validation", Dataset(X_val, y_val))],
+            valid=[EvalSet("validation", val_ds._inner)],
         )
 
         assert model.is_fitted
@@ -326,9 +328,10 @@ class TestGBLinearModelIntegration:
         )
 
         model = GBLinearModel(config=config)
+        val_ds = Dataset(X_val, y_val)
         model.fit(
             Dataset(X_train, y_train),
-            eval_set=[EvalSet("validation", Dataset(X_val, y_val))],
+            eval_set=[EvalSet("validation", val_ds._inner)],
         )
 
         assert model.is_fitted

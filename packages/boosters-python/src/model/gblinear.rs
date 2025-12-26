@@ -246,7 +246,8 @@ impl PyGBLinearModel {
         })?;
 
         // Extract features array - either from Dataset or raw numpy array
-        let features_array: Array2<f32> = if let Ok(dataset) = features.extract::<PyRef<'_, PyDataset>>() {
+        // Also handle Python wrapper with _inner attribute
+        let features_array: Array2<f32> = if let Ok(dataset) = Self::extract_dataset(features) {
             let features_view = dataset.features_array(py)?;
             let features_np = features_view.as_array();
             features_np.t().as_standard_layout().into_owned()
@@ -310,11 +311,16 @@ impl PyGBLinearModel {
     pub fn fit<'py>(
         mut slf: PyRefMut<'py, Self>,
         py: Python<'py>,
-        train: &PyDataset,
+        train: &Bound<'py, PyAny>,
         eval_set: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<PyRefMut<'py, Self>> {
+        // Extract PyDataset from either:
+        // 1. Direct PyDataset (Rust type)
+        // 2. Python wrapper with _inner attribute
+        let train_dataset: PyRef<'py, PyDataset> = Self::extract_dataset(train)?;
+
         // Validate that training data has labels
-        if !train.has_labels() {
+        if !train_dataset.has_labels() {
             return Err(BoostersError::ValidationError(
                 "Training dataset must have labels".to_string(),
             )
@@ -327,12 +333,12 @@ impl PyGBLinearModel {
         drop(config);
 
         // Extract features [n_samples, n_features] and transpose to [n_features, n_samples]
-        let features_view = train.features_array(py)?;
+        let features_view = train_dataset.features_array(py)?;
         let features_np = features_view.as_array();
         let features_transposed: Array2<f32> = features_np.t().as_standard_layout().into_owned();
 
         // Extract labels [n_samples] and reshape to [1, n_samples]
-        let labels_view = train.labels_array(py)?.expect("labels validated above");
+        let labels_view = train_dataset.labels_array(py)?.expect("labels validated above");
         let labels_np = labels_view.as_array();
         let labels_1d: Array1<f32> = labels_np.to_owned();
         let labels_2d: Array2<f32> =
@@ -341,7 +347,7 @@ impl PyGBLinearModel {
             })?;
 
         // Extract weights (optional)
-        let weights_view = train.weights_array(py)?;
+        let weights_view = train_dataset.weights_array(py)?;
         let weights_opt: Option<ndarray::Array1<f32>> =
             weights_view.map(|w| w.as_array().to_owned());
 
@@ -449,4 +455,34 @@ impl PyGBLinearModel {
 
         Ok((name, core_ds))
     }
-}
+
+    /// Extract a Dataset from a Python object.
+    ///
+    /// Accepts:
+    /// - Direct PyDataset (Rust type from `_boosters_rs.Dataset`)
+    /// - Python wrapper with `_inner` attribute (from `boosters.data.Dataset`)
+    fn extract_dataset<'py>(obj: &Bound<'py, PyAny>) -> PyResult<PyRef<'py, PyDataset>> {
+        // Try direct extraction first (Rust PyDataset)
+        if let Ok(dataset) = obj.extract::<PyRef<'py, PyDataset>>() {
+            return Ok(dataset);
+        }
+
+        // Try extracting from _inner attribute (Python wrapper)
+        if let Ok(inner) = obj.getattr("_inner") {
+            if let Ok(dataset) = inner.extract::<PyRef<'py, PyDataset>>() {
+                return Ok(dataset);
+            }
+        }
+
+        // Not a valid dataset type
+        let type_name = obj
+            .get_type()
+            .name()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|_| "unknown".to_string());
+        Err(BoostersError::TypeError(format!(
+            "expected Dataset, got {}",
+            type_name
+        ))
+        .into())
+    }}
