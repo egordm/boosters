@@ -273,24 +273,6 @@ pub enum FeatureView<'a> {
         row_indices: &'a [u32],
         bin_values: &'a [u16],
     },
-    /// Bundled u8 bins (multiple features encoded in one column).
-    ///
-    /// Contains decode info to map encoded bins back to original features.
-    /// Used during histogram building to scatter gradients to correct bins.
-    BundledU8 {
-        bins: &'a [u8],
-        stride: usize,
-        /// For each feature in bundle: (bin_offset, hist_offset)
-        /// - bin_offset: where this feature's bins start in encoded space
-        /// - hist_offset: where this feature's histogram starts
-        decode: &'a [(u32, u32)],
-    },
-    /// Bundled u16 bins.
-    BundledU16 {
-        bins: &'a [u16],
-        stride: usize,
-        decode: &'a [(u32, u32)],
-    },
 }
 
 impl<'a> FeatureView<'a> {
@@ -315,10 +297,7 @@ impl<'a> FeatureView<'a> {
     #[inline]
     pub fn is_contiguous(&self) -> bool {
         match self {
-            FeatureView::U8 { stride, .. }
-            | FeatureView::U16 { stride, .. }
-            | FeatureView::BundledU8 { stride, .. }
-            | FeatureView::BundledU16 { stride, .. } => *stride == 1,
+            FeatureView::U8 { stride, .. } | FeatureView::U16 { stride, .. } => *stride == 1,
             FeatureView::SparseU8 { .. } | FeatureView::SparseU16 { .. } => true,
         }
     }
@@ -327,10 +306,7 @@ impl<'a> FeatureView<'a> {
     #[inline]
     pub fn stride(&self) -> usize {
         match self {
-            FeatureView::U8 { stride, .. }
-            | FeatureView::U16 { stride, .. }
-            | FeatureView::BundledU8 { stride, .. }
-            | FeatureView::BundledU16 { stride, .. } => *stride,
+            FeatureView::U8 { stride, .. } | FeatureView::U16 { stride, .. } => *stride,
             FeatureView::SparseU8 { .. } | FeatureView::SparseU16 { .. } => 1,
         }
     }
@@ -364,23 +340,10 @@ impl<'a> FeatureView<'a> {
     #[inline(always)]
     pub fn get_bin_unchecked(&self, row: usize) -> u32 {
         match self {
-            FeatureView::U8 { bins, stride } | FeatureView::BundledU8 { bins, stride, .. } => {
-                bins[row * stride] as u32
-            }
-            FeatureView::U16 { bins, stride } | FeatureView::BundledU16 { bins, stride, .. } => {
-                bins[row * stride] as u32
-            }
+            FeatureView::U8 { bins, stride } => bins[row * stride] as u32,
+            FeatureView::U16 { bins, stride } => bins[row * stride] as u32,
             FeatureView::SparseU8 { .. } | FeatureView::SparseU16 { .. } => 0,
         }
-    }
-
-    /// Check if this is a bundled view (multiple features in one column).
-    #[inline]
-    pub fn is_bundled(&self) -> bool {
-        matches!(
-            self,
-            FeatureView::BundledU8 { .. } | FeatureView::BundledU16 { .. }
-        )
     }
 }
 

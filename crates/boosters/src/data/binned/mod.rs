@@ -32,8 +32,7 @@ pub use bin_mapper::{BinMapper, FeatureType, MissingType};
 pub use builder::{BinnedDatasetBuilder, BinningConfig, BinningStrategy, BuildError};
 pub use bundling::BundlingFeatures;
 pub use bundling::{
-    BundleDecoder, BundleHistogramCache, BundlePlan, BundlingConfig, FeatureBundle,
-    FeatureLocation, SubFeatureInfo, create_bundle_plan,
+    BundlePlan, BundlingConfig, FeatureBundle, FeatureLocation, create_bundle_plan,
 };
 pub use dataset::{BinnedDataset, BinnedSample, BundlingStats};
 pub use feature_analysis::{FeatureInfo, analyze_features, analyze_features_sequential};

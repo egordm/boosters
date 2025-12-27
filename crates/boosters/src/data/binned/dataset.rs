@@ -251,7 +251,7 @@ impl BinnedDataset {
     ///
     /// # Note
     /// Call `compute_bundled_columns()` during dataset construction to enable this.
-    pub fn bundled_feature_views(&self) -> Vec<FeatureView<'_>> {
+    pub fn effective_feature_views(&self) -> Vec<FeatureView<'_>> {
         if let Some(bc) = &self.bundled_columns {
             let mut views = Vec::with_capacity(bc.n_columns);
 
@@ -274,41 +274,45 @@ impl BinnedDataset {
         }
     }
 
-    /// Get a single bundled column's view by bundled column index.
+    /// Get a feature view by index in the effective (bundled) layout.
     ///
-    /// If bundling is active:
-    /// - `col_idx < n_bundles`: returns the bundle's u16 encoded bins
-    /// - `col_idx >= n_bundles`: returns the standalone feature view
+    /// After bundling, the feature layout changes: bundles come first, then standalone features.
+    /// This method returns the view for a feature at the given index in the effective layout:
+    /// - For bundle features: returns the u16 encoded bins
+    /// - For standalone features: returns the original feature view
+    /// - When bundling is not active: equivalent to `feature_view()`
     ///
-    /// If bundling is not active (no bundles computed):
-    /// - `col_idx` is treated as original feature index
+    /// # Arguments
+    /// * `feature_idx` - Feature index in effective layout (0..n_bundled_columns)
     ///
     /// # Panics
-    /// - If col_idx >= n_bundled_columns()
-    pub fn bundled_feature_view(&self, col_idx: usize) -> FeatureView<'_> {
+    /// - If feature_idx >= n_bundled_columns()
+    pub fn effective_feature_view(&self, feature_idx: usize) -> FeatureView<'_> {
         if let Some(bc) = &self.bundled_columns {
             let n_bundles = bc.bundle_bins.len();
-            if col_idx < n_bundles {
+            if feature_idx < n_bundles {
                 FeatureView::U16 {
-                    bins: &bc.bundle_bins[col_idx],
+                    bins: &bc.bundle_bins[feature_idx],
                     stride: 1,
                 }
             } else {
-                let standalone_idx = col_idx - n_bundles;
+                let standalone_idx = feature_idx - n_bundles;
                 let orig_feat = bc.standalone_features[standalone_idx];
                 self.feature_view(orig_feat)
             }
         } else {
-            // No bundling: col_idx is original feature index
-            self.feature_view(col_idx)
+            // No bundling: feature_idx is original feature index
+            self.feature_view(feature_idx)
         }
     }
 
-    /// Get bin counts for bundled columns (for histogram layout).
+    /// Get bin counts for effective features (after bundling).
     ///
-    /// Returns bin counts per bundled column if bundling is effective,
-    /// otherwise returns bin counts for original features.
-    pub fn bundled_bin_counts(&self) -> Vec<u32> {
+    /// Returns bin counts per feature in the effective layout.
+    /// When bundling is active, bundles come first with their combined bin counts,
+    /// then standalone features with their original bin counts.
+    /// When bundling is not active, returns bin counts for original features.
+    pub fn effective_bin_counts(&self) -> Vec<u32> {
         if let Some(bc) = &self.bundled_columns {
             let mut counts = bc.bundle_n_bins.clone();
             for &feature_idx in &bc.standalone_features {
@@ -505,90 +509,106 @@ impl BinnedDataset {
             .unwrap_or(&[])
     }
 
-    /// Check if a bundled column is categorical.
+    /// Check if a feature (in effective/bundled layout) is categorical.
     ///
-    /// Bundle columns are always numeric (categorical features are not bundled).
-    /// Standalone columns inherit their original feature's type.
-    /// When bundling is not active, col_idx is the original feature index.
+    /// After bundling, the feature layout changes: bundles come first, then standalone features.
+    /// This method checks if a feature at the given index (in effective layout) is categorical:
+    /// - Bundle features are always numeric (categorical features are never bundled)
+    /// - Standalone features inherit their original type
+    /// - When bundling is not active, this is equivalent to `is_categorical()`
     ///
     /// # Arguments
-    /// * `col_idx` - Bundled column index (0..n_bundled_columns)
-    pub fn bundled_column_is_categorical(&self, col_idx: usize) -> bool {
+    /// * `feature_idx` - Feature index in effective layout (0..n_bundled_columns)
+    pub fn effective_is_categorical(&self, feature_idx: usize) -> bool {
         let n_bundles = self.n_bundles();
-        if col_idx < n_bundles {
+        if feature_idx < n_bundles {
             // Bundle columns are always numeric
             false
         } else if let Some(bc) = &self.bundled_columns {
-            // Standalone column with bundling active: check original feature
-            let standalone_idx = col_idx - n_bundles;
+            // Standalone feature with bundling active: check original feature
+            let standalone_idx = feature_idx - n_bundles;
             if standalone_idx < bc.standalone_features.len() {
                 let orig_feat = bc.standalone_features[standalone_idx];
                 return self.is_categorical(orig_feat);
             }
             false
         } else {
-            // No bundling: col_idx IS original feature index
-            self.is_categorical(col_idx)
+            // No bundling: feature_idx IS original feature index
+            self.is_categorical(feature_idx)
         }
     }
 
-    /// Check if a bundled column has missing values.
+    /// Check if a feature (in effective/bundled layout) has missing values.
     ///
-    /// Bundle columns: bin 0 represents "all features at default", which
-    /// acts like a missing indicator. We return true for bundles.
-    ///
-    /// Standalone columns inherit their original feature's missing status.
-    /// When bundling is not active, col_idx is the original feature index.
+    /// After bundling, the feature layout changes: bundles come first, then standalone features.
+    /// For bundle features, bin 0 represents "all features at default", acting as missing.
+    /// Standalone features inherit their original missing status.
+    /// When bundling is not active, this is equivalent to `has_missing()`.
     ///
     /// # Arguments
-    /// * `col_idx` - Bundled column index (0..n_bundled_columns)
-    pub fn bundled_column_has_missing(&self, col_idx: usize) -> bool {
+    /// * `feature_idx` - Feature index in effective layout (0..n_bundled_columns)
+    pub fn effective_has_missing(&self, feature_idx: usize) -> bool {
         let n_bundles = self.n_bundles();
-        if col_idx < n_bundles {
+        if feature_idx < n_bundles {
             // Bundle columns have "missing" semantics via bin 0
             true
         } else if let Some(bc) = &self.bundled_columns {
-            // Standalone column with bundling active: check original feature
-            let standalone_idx = col_idx - n_bundles;
+            // Standalone feature with bundling active: check original feature
+            let standalone_idx = feature_idx - n_bundles;
             if standalone_idx < bc.standalone_features.len() {
                 let orig_feat = bc.standalone_features[standalone_idx];
                 return self.has_missing(orig_feat);
             }
             false
         } else {
-            // No bundling: col_idx IS original feature index
-            self.has_missing(col_idx)
+            // No bundling: feature_idx IS original feature index
+            self.has_missing(feature_idx)
         }
     }
 
-    /// Convert a bundled column split to original feature split.
+    /// Decode a split from effective layout to original feature.
     ///
-    /// This is used when storing a split in the tree. The tree must use
-    /// original feature indices so prediction works without bundling.
+    /// During training, splits are found on the effective feature layout (after bundling).
+    /// When storing in the tree, we must convert back to original feature indices
+    /// so predictions work without bundling context.
     ///
     /// # Arguments
-    /// * `col_idx` - Bundled column index (0..n_bundled_columns)
-    /// * `bin` - Split threshold in the bundled column
+    /// * `feature_idx` - Feature index in effective layout (0..n_bundled_columns)
+    /// * `bin` - Split threshold in the effective feature
     ///
     /// # Returns
-    /// * `Some((original_feature, original_bin))` if the split is valid
-    /// * `None` if the split is invalid (e.g., bin 0 on a bundle)
-    pub fn bundled_column_to_split(&self, col_idx: usize, bin: u32) -> Option<(usize, u32)> {
+    /// * `(original_feature, original_bin)` - Always returns a valid split
+    ///
+    /// # Special Cases
+    /// * For bundle features with bin 0 (all defaults), returns the first feature
+    ///   in the bundle with bin 0. This creates a valid split that sends samples
+    ///   with all-default values to the appropriate direction.
+    pub fn decode_split_to_original(&self, feature_idx: usize, bin: u32) -> (usize, u32) {
         let n_bundles = self.n_bundles();
-        if col_idx < n_bundles {
-            // Bundle column: decode to original feature
-            self.decode_bundle_split(col_idx, bin)
+        if feature_idx < n_bundles {
+            // Bundle feature: decode to original feature
+            if let Some((orig_feat, orig_bin)) = self.decode_bundle_split(feature_idx, bin) {
+                (orig_feat, orig_bin)
+            } else {
+                // bin 0 = all defaults. Pick the first feature in the bundle with bin 0.
+                // This creates a valid split where default values go left.
+                let first_feat = self
+                    .bundle_features(feature_idx)
+                    .and_then(|feats| feats.first().copied())
+                    .unwrap_or(0);
+                (first_feat, 0)
+            }
         } else {
-            // Standalone column: direct mapping
-            let standalone_idx = col_idx - n_bundles;
+            // Standalone feature: direct mapping
+            let standalone_idx = feature_idx - n_bundles;
             if let Some(bc) = &self.bundled_columns {
                 if standalone_idx < bc.standalone_features.len() {
                     let orig_feat = bc.standalone_features[standalone_idx];
-                    return Some((orig_feat, bin));
+                    return (orig_feat, bin);
                 }
             }
-            // Fallback: no bundling active, col_idx IS the original feature
-            Some((col_idx, bin))
+            // Fallback: no bundling active, feature_idx IS the original feature
+            (feature_idx, bin)
         }
     }
 }

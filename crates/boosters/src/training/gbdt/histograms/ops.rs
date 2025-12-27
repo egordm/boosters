@@ -172,10 +172,6 @@ fn build_feature_gathered(
         FeatureView::SparseU8 { .. } | FeatureView::SparseU16 { .. } => {
             // Sparse features not supported in gathered path
         }
-        FeatureView::BundledU8 { .. } | FeatureView::BundledU16 { .. } => {
-            // Bundled views are handled separately by build_bundled_gathered
-            unreachable!("bundled views should not reach build_feature_gathered")
-        }
     }
 }
 
@@ -297,10 +293,6 @@ fn build_feature_contiguous(
                 histogram,
                 start_row,
             );
-        }
-        FeatureView::BundledU8 { .. } | FeatureView::BundledU16 { .. } => {
-            // Bundled views are handled separately by build_bundled_contiguous
-            unreachable!("bundled views should not reach build_feature_contiguous")
         }
     }
 }

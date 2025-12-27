@@ -104,6 +104,7 @@ impl GreedySplitter {
     /// * `parent_count` - Number of samples in the node
     /// * `feature_types` - Whether each feature is categorical (true = categorical)
     /// * `feature_has_missing` - Whether each feature has missing values
+    /// * `feature_is_bundle` - Whether each feature is a bundle column (bin 0 reserved)
     /// * `features` - Slice of feature indices to consider for split finding
     ///
     /// # Returns
@@ -117,6 +118,7 @@ impl GreedySplitter {
         parent_count: u32,
         feature_types: &[bool],
         feature_has_missing: &[bool],
+        feature_is_bundle: &[bool],
         features: &[u32],
     ) -> SplitInfo {
         // Use sequential for small workloads
@@ -134,6 +136,7 @@ impl GreedySplitter {
                 parent_count,
                 feature_types,
                 feature_has_missing,
+                feature_is_bundle,
                 features,
             )
         } else {
@@ -144,6 +147,7 @@ impl GreedySplitter {
                 parent_count,
                 feature_types,
                 feature_has_missing,
+                feature_is_bundle,
                 features,
             )
         }
@@ -159,6 +163,7 @@ impl GreedySplitter {
         parent_count: u32,
         feature_types: &[bool],
         feature_has_missing: &[bool],
+        feature_is_bundle: &[bool],
         features: &[u32],
     ) -> SplitInfo {
         let mut best = SplitInfo::invalid();
@@ -171,6 +176,7 @@ impl GreedySplitter {
             let feature = feature as usize;
             let is_categorical = feature_types.get(feature).copied().unwrap_or(false);
             let has_missing = feature_has_missing.get(feature).copied().unwrap_or(false);
+            let is_bundle = feature_is_bundle.get(feature).copied().unwrap_or(false);
             let bins = histogram.feature_bins(feature);
 
             // Find best split for this feature (type-specific)
@@ -191,6 +197,7 @@ impl GreedySplitter {
                     parent_hess,
                     parent_count,
                     has_missing,
+                    is_bundle,
                     &ctx,
                 )
             };
@@ -217,6 +224,7 @@ impl GreedySplitter {
         parent_count: u32,
         feature_types: &[bool],
         feature_has_missing: &[bool],
+        feature_is_bundle: &[bool],
         features: &[u32],
     ) -> SplitInfo {
         // Pre-compute parent score context once for all features
@@ -230,6 +238,7 @@ impl GreedySplitter {
                 let feature = feature as usize;
                 let is_categorical = feature_types.get(feature).copied().unwrap_or(false);
                 let has_missing = feature_has_missing.get(feature).copied().unwrap_or(false);
+                let is_bundle = feature_is_bundle.get(feature).copied().unwrap_or(false);
                 let bins = histogram.feature_bins(feature);
 
                 if is_categorical {
@@ -249,6 +258,7 @@ impl GreedySplitter {
                         parent_hess,
                         parent_count,
                         has_missing,
+                        is_bundle,
                         &ctx,
                     )
                 }
@@ -269,6 +279,9 @@ impl GreedySplitter {
     /// 1. **Forward scan**: Accumulate left stats, missing goes right
     /// 2. **Backward scan**: Accumulate right stats, missing goes left (only if `has_missing`)
     /// 3. Return best split with optimal missing value handling
+    ///
+    /// For bundle columns (`is_bundle = true`), bin 0 is reserved for "all features at default"
+    /// and cannot be used as a split point since it doesn't map to a representable threshold.
     #[allow(clippy::too_many_arguments)]
     fn find_numerical_split(
         &self,
@@ -278,6 +291,7 @@ impl GreedySplitter {
         parent_hess: f64,
         parent_count: u32,
         has_missing: bool,
+        is_bundle: bool,
         ctx: &NodeGainContext,
     ) -> SplitInfo {
         let n_bins = bins.len();
@@ -287,12 +301,23 @@ impl GreedySplitter {
 
         let mut best = SplitInfo::invalid();
 
+        // For bundles, skip bin 0 (reserved for "all defaults").
+        // This bin cannot be represented as a single-feature threshold split.
+        let start_bin = if is_bundle { 1 } else { 0 };
+
         // Forward scan: missing values go right
         let mut left_grad = 0.0;
         let mut left_hess = 0.0;
         let mut left_count = 0u32;
 
-        for (bin, &(bin_grad, bin_hess)) in bins.iter().enumerate().take(n_bins - 1) {
+        // Pre-accumulate bins before start_bin (they all go left but can't be split points)
+        for &(bin_grad, bin_hess) in bins.iter().take(start_bin) {
+            left_grad += bin_grad;
+            left_hess += bin_hess;
+            left_count += 1;
+        }
+
+        for (bin, &(bin_grad, bin_hess)) in bins.iter().enumerate().skip(start_bin).take(n_bins - 1 - start_bin) {
             // Accumulate current bin into left child
             left_grad += bin_grad;
             left_hess += bin_hess;
@@ -309,7 +334,13 @@ impl GreedySplitter {
             {
                 let gain = ctx.compute_gain(left_grad, left_hess, right_grad, right_hess);
                 if gain > best.gain {
-                    best = SplitInfo::numerical(feature, bin as u16, gain, false);
+                    // For bundles, bin 0 was pre-accumulated into LEFT, so we must set
+                    // default_left=true to match. The partitioner uses default_left to
+                    // determine where bin 0 (the "all defaults" bin) goes.
+                    // For non-bundles, bin 0 is a regular bin, and missing values should
+                    // go right (default_left=false) per the forward scan semantics.
+                    let default_left = is_bundle;
+                    best = SplitInfo::numerical(feature, bin as u16, gain, default_left);
                 }
             }
         }
@@ -320,7 +351,10 @@ impl GreedySplitter {
             let mut right_hess = 0.0;
             let mut right_count = 0u32;
 
-            for bin in (1..n_bins).rev() {
+            // For bundles, don't allow splitting at bin 0 (so stop backward scan at bin 1)
+            let min_split_bin = if is_bundle { 1 } else { 0 };
+
+            for bin in (min_split_bin + 1..n_bins).rev() {
                 // Accumulate current bin into right child
                 let (bin_grad, bin_hess) = bins[bin];
                 right_grad += bin_grad;
@@ -621,6 +655,7 @@ mod tests {
             parent_hess,
             20,
             false, // no missing values in test
+            false, // not a bundle
             &ctx,
         );
 
@@ -696,6 +731,7 @@ mod tests {
         let histogram = pool.slot(slot);
         let feature_types = [false, false, false];
         let feature_has_missing = [false, false, false];
+        let feature_is_bundle = [false, false, false];
         let features: Vec<u32> = (0..3).collect();
         let mut splitter = GreedySplitter::default();
 
@@ -706,6 +742,7 @@ mod tests {
             45,
             &feature_types,
             &feature_has_missing,
+            &feature_is_bundle,
             &features,
         );
         assert!(split.is_valid());
@@ -720,7 +757,7 @@ mod tests {
         let parent_hess = 5.0;
         let ctx = NodeGainContext::new(parent_grad, parent_hess, &splitter.gain_params);
         let split =
-            splitter.find_numerical_split(&bins, 0, parent_grad, parent_hess, 5, false, &ctx);
+            splitter.find_numerical_split(&bins, 0, parent_grad, parent_hess, 5, false, false, &ctx);
         assert!(!split.is_valid());
     }
 
@@ -749,6 +786,7 @@ mod tests {
         let histogram = pool.slot(slot);
         let feature_types = [false, false, false];
         let feature_has_missing = [false, false, false];
+        let feature_is_bundle = [false, false, false];
         let mut splitter = GreedySplitter::default();
 
         // All features: should pick feature 1 (strongest)
@@ -760,6 +798,7 @@ mod tests {
             45,
             &feature_types,
             &feature_has_missing,
+            &feature_is_bundle,
             &all_features,
         );
         assert_eq!(split_all.feature, 1);
@@ -773,6 +812,7 @@ mod tests {
             45,
             &feature_types,
             &feature_has_missing,
+            &feature_is_bundle,
             &filtered,
         );
         assert!(split_filtered.is_valid());
@@ -787,6 +827,7 @@ mod tests {
             45,
             &feature_types,
             &feature_has_missing,
+            &feature_is_bundle,
             &single,
         );
         assert!(split_single.is_valid());

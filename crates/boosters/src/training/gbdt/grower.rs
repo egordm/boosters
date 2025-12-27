@@ -71,6 +71,10 @@ pub struct TreeGrower {
     feature_types: Vec<bool>,
     /// Feature has missing values (true = has missing) for original features.
     feature_has_missing: Vec<bool>,
+    /// Whether each effective feature is a bundle (true = bundle column).
+    /// Bundles require special handling in split finding: bin 0 is reserved
+    /// for "all defaults" and cannot be used as a split point.
+    feature_is_bundle: Vec<bool>,
     /// Feature metadata for histogram building (always original features).
     feature_metas: Vec<HistogramLayout>,
     /// Split strategy.
@@ -111,12 +115,12 @@ impl TreeGrower {
         // Decoding to original features happens only at split time (cold path).
         let n_bundled_columns = dataset.n_bundled_columns();
 
-        // Get bin counts for bundled columns (bundles first, then standalone features)
-        let bundled_bin_counts = dataset.bundled_bin_counts();
+        // Get bin counts for effective features (bundles first, then standalone features)
+        let effective_bin_counts = dataset.effective_bin_counts();
 
-        // Build histogram layout for bundled columns
+        // Build histogram layout for effective features
         let mut offset = 0u32;
-        let feature_metas: Vec<HistogramLayout> = bundled_bin_counts
+        let feature_metas: Vec<HistogramLayout> = effective_bin_counts
             .iter()
             .map(|&n_bins| {
                 let layout = HistogramLayout { offset, n_bins };
@@ -125,14 +129,20 @@ impl TreeGrower {
             })
             .collect();
 
-        // Feature types for bundled columns (bundles are never categorical)
+        // Feature types for effective features (bundles are never categorical)
         let feature_types: Vec<bool> = (0..n_bundled_columns)
-            .map(|col| dataset.bundled_column_is_categorical(col))
+            .map(|col| dataset.effective_is_categorical(col))
             .collect();
 
-        // Missing indicators for bundled columns (bundles have bin 0 = default/missing)
+        // Missing indicators for effective features (bundles have bin 0 = default/missing)
         let feature_has_missing: Vec<bool> = (0..n_bundled_columns)
-            .map(|col| dataset.bundled_column_has_missing(col))
+            .map(|col| dataset.effective_has_missing(col))
+            .collect();
+
+        // Bundle indicators: columns [0, n_bundles) are bundles, the rest are standalone
+        let n_bundles = dataset.n_bundles();
+        let feature_is_bundle: Vec<bool> = (0..n_bundled_columns)
+            .map(|col| col < n_bundles)
             .collect();
 
         // Maximum nodes: 2*max_leaves - 1 for a full binary tree
@@ -149,8 +159,7 @@ impl TreeGrower {
             GreedySplitter::with_config(params.gain.clone(), params.max_onehot_cats, parallelism);
 
         // Column sampler uses BUNDLED columns for sampling
-        let col_sampler =
-            ColSampler::new(params.col_sampling.clone(), n_bundled_columns as u32, 0);
+        let col_sampler = ColSampler::new(params.col_sampling.clone(), n_bundled_columns as u32, 0);
 
         Self {
             params,
@@ -159,6 +168,7 @@ impl TreeGrower {
             tree_builder: MutableTree::with_capacity(max_nodes),
             feature_types,
             feature_has_missing,
+            feature_is_bundle,
             feature_metas,
             split_strategy,
             col_sampler,
@@ -264,8 +274,8 @@ impl TreeGrower {
         self.col_sampler.sample_level(0);
 
         // Pre-compute feature views once per tree (avoids per-node Vec allocation)
-        // Use bundled views if bundling is active (fewer columns = faster)
-        let bin_views = dataset.bundled_feature_views();
+        // Use effective views if bundling is active (fewer columns = faster)
+        let bin_views = dataset.effective_feature_views();
 
         // Initialize growth state
         let strategy = self.params.growth_strategy;
@@ -563,14 +573,25 @@ impl TreeGrower {
 
         match &split.split_type {
             SplitType::Numerical { bin } => {
-                // Decode bundle split to original feature + bin
+                // Decode effective feature split to original feature + bin
                 // For bundles: uses binary search to find original feature
                 // For standalone: direct mapping
-                let (orig_feature, orig_bin) = dataset
-                    .bundled_column_to_split(bundled_col, *bin as u32)
-                    .expect("split should have valid bin > 0 for bundles");
+                let (orig_feature, orig_bin) =
+                    dataset.decode_split_to_original(bundled_col, *bin as u32);
 
                 let mapper = dataset.bin_mapper(orig_feature);
+                
+                // Debug: ensure bin is in valid range
+                debug_assert!(
+                    orig_bin < mapper.n_bins(),
+                    "decode_split_to_original returned bin {} but feature {} has only {} bins (bundled_col={}, split_bin={})",
+                    orig_bin,
+                    orig_feature,
+                    mapper.n_bins(),
+                    bundled_col,
+                    *bin
+                );
+                
                 let bin_upper = mapper.bin_to_value(orig_bin) as f32;
                 let threshold = Self::next_up_f32(bin_upper);
                 builder.apply_numeric_split(
@@ -582,10 +603,8 @@ impl TreeGrower {
             }
             SplitType::Categorical { left_cats } => {
                 // Categorical splits only happen on standalone columns (bundles are numeric-only).
-                // For standalone, bundled_column_to_split returns the original feature directly.
-                let (orig_feature, _) = dataset
-                    .bundled_column_to_split(bundled_col, 0) // bin doesn't matter for categorical
-                    .unwrap_or((bundled_col, 0)); // fallback for no-bundling case
+                // For standalone, decode_split_to_original returns the original feature directly.
+                let (orig_feature, _) = dataset.decode_split_to_original(bundled_col, 0);
 
                 // Convert training categorical bitset to inference format.
                 // Training: categories in left_cats go LEFT
@@ -714,6 +733,7 @@ impl TreeGrower {
             count,
             &self.feature_types,
             &self.feature_has_missing,
+            &self.feature_is_bundle,
             features,
         )
     }

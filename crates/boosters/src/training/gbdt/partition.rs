@@ -229,12 +229,12 @@ impl RowPartitioner {
         let count = self.leaf_count[leaf as usize] as usize;
         let end = begin + count;
 
-        // Get bundled column view and metadata.
+        // Get effective feature view and metadata.
         // For bundles: bin 0 is the "default" bin, has_missing is true
         // For standalone: maps to original feature's properties
         // For no-bundling: col_idx is original feature index
         let bundled_col = split.feature as usize;
-        let view = dataset.bundled_feature_view(bundled_col);
+        let view = dataset.effective_feature_view(bundled_col);
 
         // Get default_bin and has_missing for bundled column
         let n_bundles = dataset.n_bundles();
