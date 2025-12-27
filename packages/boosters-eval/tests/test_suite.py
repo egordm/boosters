@@ -8,10 +8,13 @@ import pytest
 from boosters_eval.config import BoosterType, DatasetConfig, Task
 from boosters_eval.datasets import DATASETS
 from boosters_eval.suite import (
+    ABLATION_GROWTH,
+    ABLATION_THREADING,
     FULL_SUITE,
     MINIMAL_SUITE,
     QUICK_SUITE,
     compare,
+    create_ablation_suite,
     run_suite,
     SuiteConfig,
 )
@@ -38,6 +41,60 @@ class TestSuiteConfigs:
         assert MINIMAL_SUITE is not None
         assert MINIMAL_SUITE.name == "minimal"
         assert len(MINIMAL_SUITE.seeds) == 1
+
+    def test_ablation_suites_exist(self) -> None:
+        """Test ablation suites are defined."""
+        assert ABLATION_GROWTH is not None
+        assert ABLATION_GROWTH.name == "ablation_growth"
+        assert ABLATION_THREADING is not None
+        assert ABLATION_THREADING.name == "ablation_threading"
+
+
+class TestAblationSuites:
+    """Tests for ablation suite generation."""
+
+    def test_create_ablation_suite(self) -> None:
+        """Test creating ablation suites from variants."""
+        base = SuiteConfig(
+            name="base",
+            description="Base suite",
+            datasets=["synthetic_reg_small"],
+            n_estimators=10,
+            seeds=[42],
+            libraries=["boosters"],
+        )
+
+        variants = {
+            "small": {"n_estimators": 5},
+            "large": {"n_estimators": 20},
+        }
+
+        suites = create_ablation_suite("test", base, variants)
+
+        assert len(suites) == 2
+        assert suites[0].name == "test_small"
+        assert suites[0].n_estimators == 5
+        assert suites[1].name == "test_large"
+        assert suites[1].n_estimators == 20
+
+    def test_ablation_preserves_base(self) -> None:
+        """Test ablation preserves non-overridden fields."""
+        base = SuiteConfig(
+            name="base",
+            description="Base suite",
+            datasets=["synthetic_reg_small"],
+            n_estimators=10,
+            seeds=[42, 123],
+            libraries=["boosters", "xgboost"],
+        )
+
+        variants = {"variant": {"n_estimators": 5}}
+
+        suites = create_ablation_suite("test", base, variants)
+
+        assert suites[0].seeds == [42, 123]
+        assert suites[0].libraries == ["boosters", "xgboost"]
+        assert suites[0].datasets == ["synthetic_reg_small"]
 
 
 class TestRunSuite:

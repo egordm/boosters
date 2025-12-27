@@ -706,7 +706,7 @@ Predefined suites for different use cases.
 
 ---
 
-### Story 6.2: Ablation Suites
+### Story 6.2: Ablation Suites ✅ COMPLETE
 
 **As a** developer  
 **I want** ablation suites for comparing settings  
@@ -716,10 +716,10 @@ Predefined suites for different use cases.
 
 **Tasks:**
 
-- [ ] 6.2.1: Implement `create_ablation_suite()` helper [M]
-- [ ] 6.2.2: Create `ABLATION_GROWTH` suite (depthwise vs leafwise) [S]
-- [ ] 6.2.3: Create `ABLATION_THREADING` suite (single vs multi-threaded) [S]
-- [ ] 6.2.4: Write unit tests for ablation suite generation [M]
+- [x] 6.2.1: Implement `create_ablation_suite()` helper [M]
+- [x] 6.2.2: Create `ABLATION_GROWTH` suite (depthwise vs leafwise) [S]
+- [x] 6.2.3: Create `ABLATION_THREADING` suite (single vs multi-threaded) [S]
+- [x] 6.2.4: Write unit tests for ablation suite generation [M]
 
 **Definition of Done:**
 
@@ -737,7 +737,7 @@ Predefined suites for different use cases.
 
 Documentation and final polish.
 
-### Story 7.1: README and Examples
+### Story 7.1: README and Examples ✅ COMPLETE
 
 **As a** user  
 **I want** clear documentation  
@@ -745,10 +745,10 @@ Documentation and final polish.
 
 **Tasks:**
 
-- [ ] 7.1.1: Write README.md with Quick Start [M]
-- [ ] 7.1.2: Add example scripts [M]
-- [ ] 7.1.3: Document all CLI commands [M]
-- [ ] 7.1.4: Add troubleshooting section [S]
+- [x] 7.1.1: Write README.md with Quick Start [M]
+- [x] 7.1.2: Add example scripts [M] (inline in README)
+- [x] 7.1.3: Document all CLI commands [M]
+- [x] 7.1.4: Add troubleshooting section [S]
 
 **Definition of Done:**
 

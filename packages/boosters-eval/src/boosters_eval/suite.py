@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from rich.console import Console
@@ -12,6 +12,7 @@ from sklearn.model_selection import train_test_split
 from boosters_eval.config import (
     BenchmarkConfig,
     BoosterType,
+    GrowthStrategy,
     SuiteConfig,
     TrainingConfig,
 )
@@ -55,6 +56,67 @@ MINIMAL_SUITE = SuiteConfig(
     seeds=[42],
     libraries=["boosters", "xgboost", "lightgbm"],
 )
+
+
+# =============================================================================
+# Ablation Suites
+# =============================================================================
+
+ABLATION_GROWTH = SuiteConfig(
+    name="ablation_growth",
+    description="Compare depthwise vs leafwise growth strategies",
+    datasets=["california", "breast_cancer"],
+    n_estimators=50,
+    seeds=[42, 1379],
+    libraries=["boosters", "lightgbm"],
+    booster_type=BoosterType.GBDT,
+    growth_strategy=GrowthStrategy.DEPTHWISE,
+)
+
+ABLATION_THREADING = SuiteConfig(
+    name="ablation_threading",
+    description="Compare single vs multi-threaded execution",
+    datasets=["california"],
+    n_estimators=50,
+    seeds=[42],
+    libraries=["boosters", "xgboost", "lightgbm"],
+)
+
+
+def create_ablation_suite(
+    name: str,
+    base_suite: SuiteConfig,
+    variants: dict[str, dict[str, Any]],
+) -> list[SuiteConfig]:
+    """Create ablation suites from a base suite and variants.
+
+    Args:
+        name: Base name for the ablation suites.
+        base_suite: Base suite configuration.
+        variants: Dictionary of variant name -> config overrides.
+
+    Returns:
+        List of SuiteConfig objects, one per variant.
+
+    Example:
+        >>> from boosters_eval.suite import QUICK_SUITE, create_ablation_suite
+        >>> variants = {
+        ...     "depth_4": {"max_depth": 4},
+        ...     "depth_8": {"max_depth": 8},
+        ... }
+        >>> suites = create_ablation_suite("depth_ablation", QUICK_SUITE, variants)
+        >>> len(suites)
+        2
+    """
+    result = []
+    for variant_name, overrides in variants.items():
+        suite_dict = base_suite.model_dump()
+        suite_dict["name"] = f"{name}_{variant_name}"
+        suite_dict["description"] = f"{base_suite.description} - {variant_name}"
+        for k, v in overrides.items():
+            suite_dict[k] = v
+        result.append(SuiteConfig(**suite_dict))
+    return result
 
 
 # =============================================================================

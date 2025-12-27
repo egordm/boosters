@@ -37,16 +37,28 @@ from boosters_eval.report import (
 )
 from boosters_eval.results import BenchmarkError, BenchmarkResult, ResultCollection
 from boosters_eval.runners import Runner, get_available_runners, get_runner
-from boosters_eval.suite import FULL_SUITE, MINIMAL_SUITE, QUICK_SUITE, compare, run_suite
+from boosters_eval.suite import (
+    ABLATION_GROWTH,
+    ABLATION_THREADING,
+    FULL_SUITE,
+    MINIMAL_SUITE,
+    QUICK_SUITE,
+    compare,
+    create_ablation_suite,
+    run_suite,
+)
 
 __all__ = [
     # Main API
     "compare",
     "run_suite",
+    "create_ablation_suite",
     # Suite constants
     "QUICK_SUITE",
     "FULL_SUITE",
     "MINIMAL_SUITE",
+    "ABLATION_GROWTH",
+    "ABLATION_THREADING",
     # Configuration
     "BenchmarkConfig",
     "BoosterType",
