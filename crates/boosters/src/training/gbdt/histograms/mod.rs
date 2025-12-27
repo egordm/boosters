@@ -35,8 +35,8 @@ pub mod slices;
 
 // Re-export main types
 pub use ops::{
-    HistogramBin, HistogramBuilder, clear_histogram, merge_histogram, subtract_histogram,
-    sum_histogram,
+    BundleDecoder, HistogramBin, HistogramBuilder, build_unbundled_contiguous,
+    build_unbundled_gathered, clear_histogram, merge_histogram, subtract_histogram, sum_histogram,
 };
 pub use pool::{
     AcquireResult, HistogramLayout, HistogramPool, HistogramSlot, HistogramSlotMut, SlotId,

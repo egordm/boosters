@@ -215,12 +215,17 @@ impl FeatureBundle {
     ///
     /// # Arguments
     /// * `n_bins_per_feature` - A function that returns the number of bins for a feature
+    ///
+    /// # Note
+    /// Offsets start at 1 to reserve bin 0 for "all features have default values".
+    /// This ensures bundle bin 0 is unambiguous (always means all defaults).
     pub fn finalize<F>(&mut self, n_bins_per_feature: F)
     where
         F: Fn(usize) -> u32,
     {
         self.bin_offsets.clear();
-        let mut offset = 0u32;
+        // Start at offset 1 to reserve bin 0 for "all defaults"
+        let mut offset = 1u32;
         for &feat_idx in &self.feature_indices {
             self.bin_offsets.push(offset);
             offset += n_bins_per_feature(feat_idx);
@@ -230,22 +235,22 @@ impl FeatureBundle {
 
     /// Encode a value for this bundle.
     ///
-    /// Finds the first non-zero feature and returns its offset + bin.
-    /// Returns 0 if all features are zero (default bin).
+    /// Finds the first non-default feature and returns its offset + bin.
+    /// Returns 0 if all features have default values.
     ///
     /// # Arguments
-    /// * `get_bin` - A function that returns (is_non_zero, bin) for a given feature index
+    /// * `get_bin` - A function that returns (is_non_default, bin) for a given feature index
     pub fn encode<F>(&self, get_bin: F) -> u32
     where
         F: Fn(usize) -> (bool, u32),
     {
         for (i, &feat_idx) in self.feature_indices.iter().enumerate() {
-            let (is_non_zero, bin) = get_bin(feat_idx);
-            if is_non_zero {
+            let (is_non_default, bin) = get_bin(feat_idx);
+            if is_non_default {
                 return self.bin_offsets[i] + bin;
             }
         }
-        // All features are zero - use bin 0 of first feature
+        // All features have default values - use reserved bin 0
         0
     }
 
@@ -257,22 +262,24 @@ impl FeatureBundle {
     ///
     /// # Returns
     /// * `Some((feature_idx, original_bin))` if the bin belongs to a known feature
-    /// * `None` if the bin is out of range
+    /// * `None` if encoded_bin is 0 (all defaults) or out of range
     ///
     /// # Example
     ///
     /// ```ignore
     /// // Bundle with features [0, 1, 2] having bins [4, 4, 4]
-    /// // Offsets would be [0, 4, 8], total_bins = 12
+    /// // Offsets would be [1, 5, 9], total_bins = 13
     ///
-    /// bundle.decode(0);  // -> Some((0, 0))  - first bin of feature 0
-    /// bundle.decode(3);  // -> Some((0, 3))  - last bin of feature 0
-    /// bundle.decode(4);  // -> Some((1, 0))  - first bin of feature 1
-    /// bundle.decode(11); // -> Some((2, 3))  - last bin of feature 2
-    /// bundle.decode(12); // -> None          - out of range
+    /// bundle.decode(0);  // -> None          - all defaults (reserved)
+    /// bundle.decode(1);  // -> Some((0, 0))  - first bin of feature 0
+    /// bundle.decode(4);  // -> Some((0, 3))  - last bin of feature 0
+    /// bundle.decode(5);  // -> Some((1, 0))  - first bin of feature 1
+    /// bundle.decode(12); // -> Some((2, 3))  - last bin of feature 2
+    /// bundle.decode(13); // -> None          - out of range
     /// ```
     pub fn decode(&self, encoded_bin: u32) -> Option<(usize, u32)> {
-        if encoded_bin >= self.total_bins || self.feature_indices.is_empty() {
+        // Bin 0 is reserved for "all defaults" - no feature to decode
+        if encoded_bin == 0 || encoded_bin >= self.total_bins || self.feature_indices.is_empty() {
             return None;
         }
 
@@ -286,6 +293,50 @@ impl FeatureBundle {
         let original_bin = encoded_bin - self.bin_offsets[pos];
 
         Some((feature_idx, original_bin))
+    }
+
+    /// Get the bin range [min_bin, max_bin] for the sub-feature containing a split.
+    ///
+    /// When partitioning on a bundled column split, rows with encoded bins outside
+    /// this range belong to a different sub-feature and should go to the default direction.
+    ///
+    /// # Arguments
+    /// * `encoded_bin` - The split threshold (encoded bin value)
+    ///
+    /// # Returns
+    /// * `Some((min_bin, max_bin))` - The range of encoded bins for this sub-feature
+    /// * `None` if encoded_bin is 0 (all defaults) or invalid
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Bundle with features [0, 1] having bins [4, 4]
+    /// // Offsets would be [1, 5], total_bins = 9
+    ///
+    /// bundle.bin_range_for_split(3);  // -> Some((1, 4))   - feature 0's range
+    /// bundle.bin_range_for_split(6);  // -> Some((5, 8))   - feature 1's range
+    /// bundle.bin_range_for_split(0);  // -> None           - all defaults
+    /// ```
+    pub fn bin_range_for_split(&self, encoded_bin: u32) -> Option<(u32, u32)> {
+        // Bin 0 is reserved for "all defaults" - no range to return
+        if encoded_bin == 0 || encoded_bin >= self.total_bins || self.bin_offsets.is_empty() {
+            return None;
+        }
+
+        // Binary search to find which feature's range contains the bin
+        let pos = self
+            .bin_offsets
+            .partition_point(|&offset| offset <= encoded_bin)
+            .saturating_sub(1);
+
+        let min_bin = self.bin_offsets[pos];
+        let max_bin = if pos + 1 < self.bin_offsets.len() {
+            self.bin_offsets[pos + 1] - 1
+        } else {
+            self.total_bins - 1
+        };
+
+        Some((min_bin, max_bin))
     }
 }
 
@@ -404,6 +455,29 @@ impl BundlePlan {
         self.bundles
             .get(bundle_idx)
             .and_then(|b| b.decode(encoded_bin))
+    }
+
+    /// Get the bin range [min_bin, max_bin] for the sub-feature containing a split.
+    ///
+    /// Used during partitioning to determine if a row's encoded bin belongs to
+    /// the same sub-feature as the split. Rows outside this range should go to
+    /// the default direction.
+    ///
+    /// # Arguments
+    /// * `bundle_idx` - Index of the bundle
+    /// * `encoded_bin` - The split threshold (encoded bin value)
+    ///
+    /// # Returns
+    /// * `Some((min_bin, max_bin))` - The range of encoded bins for this sub-feature
+    /// * `None` if bundle_idx is invalid or encoded_bin is 0 (all defaults)
+    pub fn bundle_split_bin_range(
+        &self,
+        bundle_idx: usize,
+        encoded_bin: u32,
+    ) -> Option<(u32, u32)> {
+        self.bundles
+            .get(bundle_idx)
+            .and_then(|b| b.bin_range_for_split(encoded_bin))
     }
 
     /// Get all original feature indices that belong to a bundle.
@@ -1243,6 +1317,7 @@ mod tests {
         bundle.add(2);
 
         // Feature 0 has 10 bins, feature 1 has 20 bins, feature 2 has 5 bins
+        // Offsets start at 1 to reserve bin 0 for "all defaults"
         bundle.finalize(|idx| match idx {
             0 => 10,
             1 => 20,
@@ -1250,8 +1325,10 @@ mod tests {
             _ => 0,
         });
 
-        assert_eq!(bundle.bin_offsets, vec![0, 10, 30]);
-        assert_eq!(bundle.total_bins, 35);
+        // Offsets: [1, 11, 31] (starting at 1, not 0)
+        assert_eq!(bundle.bin_offsets, vec![1, 11, 31]);
+        // Total bins: 1 (reserved) + 10 + 20 + 5 = 36
+        assert_eq!(bundle.total_bins, 36);
     }
 
     #[test]
@@ -1260,23 +1337,23 @@ mod tests {
         bundle.add(1);
         bundle.finalize(|idx| if idx == 0 { 10 } else { 20 });
 
-        // Simulate: feature 0 is non-zero with bin 5
+        // Simulate: feature 0 is non-default with bin 5
         let result = bundle.encode(|idx| {
             if idx == 0 {
-                (true, 5) // non-zero, bin 5
+                (true, 5) // non-default, bin 5
             } else {
-                (false, 0) // zero
+                (false, 0) // default
             }
         });
-        assert_eq!(result, 5); // offset 0 + bin 5
+        assert_eq!(result, 1 + 5); // offset 1 + bin 5 = 6
 
-        // Simulate: feature 1 is non-zero with bin 15
+        // Simulate: feature 1 is non-default with bin 15
         let result = bundle.encode(|idx| if idx == 0 { (false, 0) } else { (true, 15) });
-        assert_eq!(result, 10 + 15); // offset 10 + bin 15
+        assert_eq!(result, 11 + 15); // offset 11 + bin 15 = 26
 
-        // Simulate: both features are zero
+        // Simulate: both features have default values
         let result = bundle.encode(|_| (false, 0));
-        assert_eq!(result, 0); // default bin
+        assert_eq!(result, 0); // reserved bin for "all defaults"
     }
 
     #[test]
@@ -1373,23 +1450,58 @@ mod tests {
         bundle.add(2);
 
         // Feature 0 has 4 bins, feature 1 has 4 bins, feature 2 has 4 bins
-        // Offsets: [0, 4, 8], total_bins = 12
+        // Offsets: [1, 5, 9] (starting at 1), total_bins = 13
         bundle.finalize(|_| 4);
 
-        // Decode bin 0 -> feature 0, bin 0
-        assert_eq!(bundle.decode(0), Some((0, 0)));
-        // Decode bin 3 -> feature 0, bin 3
-        assert_eq!(bundle.decode(3), Some((0, 3)));
-        // Decode bin 4 -> feature 1, bin 0
-        assert_eq!(bundle.decode(4), Some((1, 0)));
-        // Decode bin 7 -> feature 1, bin 3
-        assert_eq!(bundle.decode(7), Some((1, 3)));
-        // Decode bin 8 -> feature 2, bin 0
-        assert_eq!(bundle.decode(8), Some((2, 0)));
-        // Decode bin 11 -> feature 2, bin 3
-        assert_eq!(bundle.decode(11), Some((2, 3)));
-        // Decode bin 12 -> out of range
-        assert_eq!(bundle.decode(12), None);
+        // Decode bin 0 -> None (reserved for "all defaults")
+        assert_eq!(bundle.decode(0), None);
+        // Decode bin 1 -> feature 0, bin 0
+        assert_eq!(bundle.decode(1), Some((0, 0)));
+        // Decode bin 4 -> feature 0, bin 3
+        assert_eq!(bundle.decode(4), Some((0, 3)));
+        // Decode bin 5 -> feature 1, bin 0
+        assert_eq!(bundle.decode(5), Some((1, 0)));
+        // Decode bin 8 -> feature 1, bin 3
+        assert_eq!(bundle.decode(8), Some((1, 3)));
+        // Decode bin 9 -> feature 2, bin 0
+        assert_eq!(bundle.decode(9), Some((2, 0)));
+        // Decode bin 12 -> feature 2, bin 3
+        assert_eq!(bundle.decode(12), Some((2, 3)));
+        // Decode bin 13 -> out of range
+        assert_eq!(bundle.decode(13), None);
+    }
+
+    #[test]
+    fn test_feature_bundle_bin_range_for_split() {
+        let mut bundle = FeatureBundle::new(0);
+        bundle.add(1);
+        bundle.add(2);
+
+        // Feature 0 has 4 bins, feature 1 has 4 bins, feature 2 has 4 bins
+        // Offsets: [1, 5, 9] (starting at 1), total_bins = 13
+        bundle.finalize(|_| 4);
+
+        // Bin 0 is reserved (all defaults) -> None
+        assert_eq!(bundle.bin_range_for_split(0), None);
+
+        // Bins 1-4 belong to feature 0
+        assert_eq!(bundle.bin_range_for_split(1), Some((1, 4)));
+        assert_eq!(bundle.bin_range_for_split(3), Some((1, 4)));
+        assert_eq!(bundle.bin_range_for_split(4), Some((1, 4)));
+
+        // Bins 5-8 belong to feature 1
+        assert_eq!(bundle.bin_range_for_split(5), Some((5, 8)));
+        assert_eq!(bundle.bin_range_for_split(7), Some((5, 8)));
+        assert_eq!(bundle.bin_range_for_split(8), Some((5, 8)));
+
+        // Bins 9-12 belong to feature 2
+        assert_eq!(bundle.bin_range_for_split(9), Some((9, 12)));
+        assert_eq!(bundle.bin_range_for_split(11), Some((9, 12)));
+        assert_eq!(bundle.bin_range_for_split(12), Some((9, 12)));
+
+        // Bin 13+ is out of range
+        assert_eq!(bundle.bin_range_for_split(13), None);
+        assert_eq!(bundle.bin_range_for_split(100), None);
     }
 
     #[test]
@@ -1425,6 +1537,7 @@ mod tests {
     fn test_bundle_plan_decode_bundle_split() {
         let mut bundle = FeatureBundle::new(0);
         bundle.add(1);
+        // Offsets: [1, 11] (starting at 1), total_bins = 31
         bundle.finalize(|idx| if idx == 0 { 10 } else { 20 });
 
         let plan = BundlePlan {
@@ -1449,11 +1562,14 @@ mod tests {
             skip_reason: None,
         };
 
-        // Decode split on bundle 0 at bin 5 -> feature 0, bin 5
-        assert_eq!(plan.decode_bundle_split(0, 5), Some((0, 5)));
+        // Decode bin 0 -> None (reserved for "all defaults")
+        assert_eq!(plan.decode_bundle_split(0, 0), None);
 
-        // Decode split on bundle 0 at bin 15 -> feature 1, bin 5
-        assert_eq!(plan.decode_bundle_split(0, 15), Some((1, 5)));
+        // Decode split on bundle 0 at bin 6 -> feature 0, bin 5 (offset 1 + 5 = 6)
+        assert_eq!(plan.decode_bundle_split(0, 6), Some((0, 5)));
+
+        // Decode split on bundle 0 at bin 16 -> feature 1, bin 5 (offset 11 + 5 = 16)
+        assert_eq!(plan.decode_bundle_split(0, 16), Some((1, 5)));
 
         // Invalid bundle index
         assert_eq!(plan.decode_bundle_split(1, 0), None);

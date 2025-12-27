@@ -342,31 +342,48 @@ impl BinnedDataset {
             .map(|bundle| bundle.total_bins)
             .collect();
 
+        // Pre-compute the default (most frequent) bin for each feature in each bundle.
+        // A feature is "active" when its bin differs from its default bin.
+        // This correctly handles features where the default bin is not 0.
+        let bundle_default_bins: Vec<Vec<u32>> = plan
+            .bundles
+            .iter()
+            .map(|bundle| {
+                bundle
+                    .feature_indices
+                    .iter()
+                    .map(|&feat_idx| self.bin_mapper(feat_idx).most_freq_bin())
+                    .collect()
+            })
+            .collect();
+
         // Compute encoded bins for each bundle
         let bundle_bins: Vec<Vec<u16>> = plan
             .bundles
             .iter()
-            .map(|bundle| {
+            .zip(bundle_default_bins.iter())
+            .map(|(bundle, default_bins)| {
                 let mut encoded = vec![0u16; n_rows];
 
-                // For each row, find the non-zero feature and encode its bin
+                // For each row, find the first feature with a non-default bin value
                 for row in 0..n_rows {
-                    let mut found_nonzero = false;
+                    let mut found_active = false;
 
                     for (i, &feat_idx) in bundle.feature_indices.iter().enumerate() {
                         if let Some(bin) = self.get_bin(row, feat_idx) {
-                            if bin > 0 {
-                                // Found non-zero feature, encode as offset + bin
+                            let default_bin = default_bins[i];
+                            if bin != default_bin {
+                                // Found active feature (non-default bin), encode it
                                 let offset = bundle.bin_offsets[i];
                                 encoded[row] = (offset + bin) as u16;
-                                found_nonzero = true;
+                                found_active = true;
                                 break;
                             }
                         }
                     }
 
-                    if !found_nonzero {
-                        encoded[row] = 0; // All features zero
+                    if !found_active {
+                        encoded[row] = 0; // All features have default values
                     }
                 }
 
@@ -412,6 +429,29 @@ impl BinnedDataset {
         self.bundle_plan
             .as_ref()?
             .decode_bundle_split(bundle_idx, encoded_bin)
+    }
+
+    /// Get the bin range [min_bin, max_bin] for a bundled split.
+    ///
+    /// Used during partitioning to determine if a row's encoded bin belongs to
+    /// the same sub-feature as the split. Rows outside this range should go to
+    /// the default direction.
+    ///
+    /// # Arguments
+    /// * `bundle_idx` - Index of the bundle
+    /// * `encoded_bin` - The split threshold (encoded bin value)
+    ///
+    /// # Returns
+    /// * `Some((min_bin, max_bin))` - The range of encoded bins for this sub-feature
+    /// * `None` if no bundling or encoded_bin is 0 (all defaults)
+    pub fn bundle_split_bin_range(
+        &self,
+        bundle_idx: usize,
+        encoded_bin: u32,
+    ) -> Option<(u32, u32)> {
+        self.bundle_plan
+            .as_ref()?
+            .bundle_split_bin_range(bundle_idx, encoded_bin)
     }
 
     /// Get the location of an original feature after bundling.

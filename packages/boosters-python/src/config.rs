@@ -232,6 +232,20 @@ pub struct PyGBDTConfig {
     #[pyo3(get)]
     pub max_bins: u32,
 
+    // === Feature Bundling (EFB) ===
+    /// Enable exclusive feature bundling for sparse data. Default: true.
+    /// Bundles sparse/one-hot features to reduce memory and speed up training.
+    #[pyo3(get)]
+    pub enable_bundling: bool,
+    /// Maximum allowed conflict rate for bundling (0.0-1.0). Default: 0.0001.
+    /// Higher values allow more aggressive bundling but may reduce accuracy.
+    #[pyo3(get)]
+    pub bundling_conflict_rate: f64,
+    /// Minimum sparsity for a feature to be bundled (0.0-1.0). Default: 0.9.
+    /// Features with fewer than this fraction of zeros are not bundled.
+    #[pyo3(get)]
+    pub bundling_min_sparsity: f64,
+
     // === Training control ===
     /// Early stopping rounds (None = disabled).
     #[pyo3(get)]
@@ -274,6 +288,9 @@ impl PyGBDTConfig {
         linear_coefficient_threshold = 1e-6,
         linear_max_features = 10,
         max_bins = 256,
+        enable_bundling = true,
+        bundling_conflict_rate = 0.0001,
+        bundling_min_sparsity = 0.9,
         early_stopping_rounds = None,
         seed = 42,
         verbosity = PyVerbosity::Silent
@@ -305,6 +322,9 @@ impl PyGBDTConfig {
         linear_coefficient_threshold: f64,
         linear_max_features: u32,
         max_bins: u32,
+        enable_bundling: bool,
+        bundling_conflict_rate: f64,
+        bundling_min_sparsity: f64,
         early_stopping_rounds: Option<u32>,
         seed: u64,
         verbosity: PyVerbosity,
@@ -319,6 +339,8 @@ impl PyGBDTConfig {
         validate_non_negative("l2", l2)?;
         validate_non_negative("min_child_weight", min_child_weight)?;
         validate_non_negative("min_gain_to_split", min_gain_to_split)?;
+        validate_ratio("bundling_conflict_rate", bundling_conflict_rate)?;
+        validate_ratio("bundling_min_sparsity", bundling_min_sparsity)?;
 
         Ok(Self {
             n_estimators,
@@ -346,6 +368,9 @@ impl PyGBDTConfig {
             linear_coefficient_threshold,
             linear_max_features,
             max_bins,
+            enable_bundling,
+            bundling_conflict_rate,
+            bundling_min_sparsity,
             early_stopping_rounds,
             seed,
             verbosity,
@@ -402,6 +427,9 @@ impl Default for PyGBDTConfig {
             linear_coefficient_threshold: 1e-6,
             linear_max_features: 10,
             max_bins: 256,
+            enable_bundling: true,
+            bundling_conflict_rate: 0.0001,
+            bundling_min_sparsity: 0.9,
             early_stopping_rounds: None,
             seed: 42,
             verbosity: PyVerbosity::Silent,
@@ -460,7 +488,17 @@ impl From<&PyGBDTConfig> for boosters::GBDTConfig {
             colsample_bytree: py_config.colsample_bytree as f32,
             colsample_bylevel: py_config.colsample_bylevel as f32,
             binning: py_config.max_bins.into(),
-            bundling: BundlingConfig::auto(),
+            // EFB bundling with user-configurable parameters
+            bundling: if py_config.enable_bundling {
+                BundlingConfig {
+                    enable_bundling: true,
+                    max_conflict_rate: py_config.bundling_conflict_rate as f32,
+                    min_sparsity: py_config.bundling_min_sparsity as f32,
+                    ..BundlingConfig::default()
+                }
+            } else {
+                BundlingConfig::disabled()
+            },
             linear_leaves,
             early_stopping_rounds: py_config.early_stopping_rounds,
             cache_size: 8,
