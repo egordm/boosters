@@ -519,7 +519,7 @@ Command-line interface using Typer.
 
 ---
 
-### Story 4.3: Baseline Commands
+### Story 4.3: Baseline Commands ✅ COMPLETE
 
 **As a** user  
 **I want** to record and check baselines  
@@ -529,11 +529,11 @@ Command-line interface using Typer.
 
 **Tasks:**
 
-- [ ] 4.3.1: Implement `baseline record` command [M]
-- [ ] 4.3.2: Implement `baseline check` command [M]
-- [ ] 4.3.3: Add `--tolerance` and `--fail-on-regression` options [S]
-- [ ] 4.3.4: Show clear regression report on failure [M]
-- [ ] 4.3.5: Write CLI integration tests [M]
+- [x] 4.3.1: Implement `baseline record` command [M]
+- [x] 4.3.2: Implement `baseline check` command [M]
+- [x] 4.3.3: Add `--tolerance` and `--fail-on-regression` options [S]
+- [x] 4.3.4: Show clear regression report on failure [M]
+- [x] 4.3.5: Write CLI integration tests [M]
 
 **Definition of Done:**
 

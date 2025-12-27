@@ -9,6 +9,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from boosters_eval.baseline import check_baseline, load_baseline, record_baseline
 from boosters_eval.config import BoosterType, Task, TrainingConfig
 from boosters_eval.datasets import DATASETS
 from boosters_eval.runners import get_available_runners
@@ -19,6 +20,8 @@ app = typer.Typer(
     help="Evaluate and compare gradient boosting libraries.",
     no_args_is_help=True,
 )
+baseline_app = typer.Typer(help="Manage baselines for regression detection.")
+app.add_typer(baseline_app, name="baseline")
 console = Console()
 
 
@@ -210,6 +213,112 @@ def list_tasks() -> None:
         table.add_row(task.value, desc, metric)
 
     console.print(table)
+
+
+@baseline_app.command(name="record")
+def baseline_record(
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Output path for baseline JSON."),
+    ],
+    suite: Annotated[
+        str,
+        typer.Option("--suite", "-s", help="Suite to run: quick or full."),
+    ] = "quick",
+) -> None:
+    """Record current results as a baseline."""
+    if suite == "quick":
+        benchmark_suite = QUICK_SUITE
+    elif suite == "full":
+        benchmark_suite = FULL_SUITE
+    else:
+        console.print(f"[red]Unknown suite: {suite}[/red]")
+        console.print("Valid options: quick, full")
+        raise typer.Exit(1)
+
+    console.print(f"[bold]Recording baseline using {suite} suite[/bold]\n")
+    results = run_suite(benchmark_suite)
+
+    baseline = record_baseline(results, output_path=output)
+    console.print(f"\n[green]Baseline saved to {output}[/green]")
+    console.print(f"  Results: {len(baseline.results)}")
+    console.print(f"  Git SHA: {baseline.git_sha or 'unknown'}")
+
+
+@baseline_app.command(name="check")
+def baseline_check(
+    baseline_file: Annotated[
+        Path,
+        typer.Argument(help="Path to baseline JSON file."),
+    ],
+    suite: Annotated[
+        str,
+        typer.Option("--suite", "-s", help="Suite to run: quick or full."),
+    ] = "quick",
+    tolerance: Annotated[
+        float,
+        typer.Option("--tolerance", "-t", help="Regression tolerance (0.02 = 2%)."),
+    ] = 0.02,
+    fail_on_regression: Annotated[
+        bool,
+        typer.Option("--fail-on-regression", help="Exit with code 1 if regression detected."),
+    ] = True,
+) -> None:
+    """Check current results against a baseline for regressions."""
+    if not baseline_file.exists():
+        console.print(f"[red]Baseline file not found: {baseline_file}[/red]")
+        raise typer.Exit(2)
+
+    if suite == "quick":
+        benchmark_suite = QUICK_SUITE
+    elif suite == "full":
+        benchmark_suite = FULL_SUITE
+    else:
+        console.print(f"[red]Unknown suite: {suite}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[bold]Checking against baseline: {baseline_file}[/bold]")
+    console.print(f"  Suite: {suite}")
+    console.print(f"  Tolerance: {tolerance:.1%}\n")
+
+    # Load baseline
+    baseline = load_baseline(baseline_file)
+
+    # Run current benchmarks
+    results = run_suite(benchmark_suite)
+
+    # Check for regressions
+    report = check_baseline(results, baseline, tolerance=tolerance)
+
+    if report.has_regressions:
+        console.print("[bold red]Regressions detected![/bold red]\n")
+
+        table = Table(title="Regressions")
+        table.add_column("Config", style="cyan")
+        table.add_column("Metric", style="yellow")
+        table.add_column("Baseline", style="green")
+        table.add_column("Current", style="red")
+        table.add_column("Change", style="red")
+
+        for reg in report.regressions:
+            change_pct = ((reg["current"] - reg["baseline"]) / reg["baseline"]) * 100
+            table.add_row(
+                reg["config"],
+                reg["metric"],
+                f"{reg['baseline']:.4f}",
+                f"{reg['current']:.4f}",
+                f"{change_pct:+.1f}%",
+            )
+
+        console.print(table)
+
+        if fail_on_regression:
+            raise typer.Exit(1)
+    else:
+        console.print("[bold green]No regressions detected![/bold green]")
+
+        if report.improvements:
+            console.print(f"\n[green]Improvements: {len(report.improvements)}[/green]")
 
 
 def main() -> None:

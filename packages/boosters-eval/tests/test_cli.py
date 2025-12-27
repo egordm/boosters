@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
+
 from typer.testing import CliRunner
 
 from boosters_eval.cli import app
@@ -29,6 +32,13 @@ class TestCliHelp:
         result = runner.invoke(app, ["compare", "--help"])
         assert result.exit_code == 0
         assert "dataset" in result.stdout.lower()
+
+    def test_baseline_help(self) -> None:
+        """Test baseline subcommand help."""
+        result = runner.invoke(app, ["baseline", "--help"])
+        assert result.exit_code == 0
+        assert "record" in result.stdout
+        assert "check" in result.stdout
 
 
 class TestListCommands:
@@ -99,3 +109,38 @@ class TestCompareCommand:
             ],
         )
         assert result.exit_code == 1
+
+
+class TestBaselineCommands:
+    """Tests for baseline record and check commands."""
+
+    def test_baseline_record_help(self) -> None:
+        """Test baseline record help."""
+        result = runner.invoke(app, ["baseline", "record", "--help"])
+        assert result.exit_code == 0
+        assert "output" in result.stdout.lower()
+
+    def test_baseline_check_help(self) -> None:
+        """Test baseline check help."""
+        result = runner.invoke(app, ["baseline", "check", "--help"])
+        assert result.exit_code == 0
+        assert "tolerance" in result.stdout.lower()
+
+    def test_baseline_check_missing_file(self) -> None:
+        """Test baseline check with missing file."""
+        result = runner.invoke(app, ["baseline", "check", "/nonexistent/baseline.json"])
+        assert result.exit_code == 2
+        assert "not found" in result.stdout.lower()
+
+    def test_baseline_record_invalid_suite(self) -> None:
+        """Test baseline record with invalid suite."""
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            path = Path(f.name)
+        try:
+            result = runner.invoke(
+                app, ["baseline", "record", "-o", str(path), "-s", "invalid"]
+            )
+            assert result.exit_code == 1
+        finally:
+            if path.exists():
+                path.unlink()
