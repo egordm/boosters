@@ -94,7 +94,7 @@ Foundation for the evaluation framework including configuration system, dataset 
 
 ---
 
-### Story 1.2: Dataset System
+### Story 1.2: Dataset System ✅ COMPLETE
 
 **As a** developer  
 **I want** a dataset registry with built-in datasets  
@@ -102,12 +102,12 @@ Foundation for the evaluation framework including configuration system, dataset 
 
 **Tasks:**
 
-- [ ] 1.2.1: Implement `DatasetRegistry` singleton
-- [ ] 1.2.2: Implement `register_dataset()` function
-- [ ] 1.2.3: Add sklearn datasets (california, breast_cancer, iris)
-- [ ] 1.2.4: Add synthetic dataset generators
-- [ ] 1.2.5: Implement dataset caching with `lru_cache`
-- [ ] 1.2.6: Add `DATASETS` constant with all built-in datasets
+- [x] 1.2.1: Implement `DatasetRegistry` singleton (simplified to DATASETS dict)
+- [x] 1.2.2: Implement `register_dataset()` function (via get_datasets_by_task)
+- [x] 1.2.3: Add sklearn datasets (california, breast_cancer, iris)
+- [x] 1.2.4: Add synthetic dataset generators
+- [x] 1.2.5: Implement dataset caching with `lru_cache`
+- [x] 1.2.6: Add `DATASETS` constant with all built-in datasets
 
 **Definition of Done:**
 
@@ -115,6 +115,7 @@ Foundation for the evaluation framework including configuration system, dataset 
 - Datasets are cached after first load
 - Custom datasets can be registered
 - Dataset metadata (n_samples, n_features, task) is accurate
+- Check stakeholder feedback.
 
 **Testing Criteria:**
 

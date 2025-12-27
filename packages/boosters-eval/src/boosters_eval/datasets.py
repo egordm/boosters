@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any
 
 import numpy as np
@@ -18,24 +19,28 @@ from sklearn.datasets import (
 from boosters_eval.config import DatasetConfig, Task
 
 
+@lru_cache(maxsize=1)
 def california_housing() -> tuple[NDArray[np.floating[Any]], NDArray[np.floating[Any]]]:
     """California housing regression dataset."""
     data = fetch_california_housing()
     return data.data.astype(np.float32), data.target.astype(np.float32)  # pyright: ignore[reportAttributeAccessIssue]
 
 
+@lru_cache(maxsize=1)
 def breast_cancer() -> tuple[NDArray[np.floating[Any]], NDArray[np.floating[Any]]]:
     """Breast cancer binary classification dataset."""
     data = load_breast_cancer()
     return data.data.astype(np.float32), data.target.astype(np.float32)  # pyright: ignore[reportAttributeAccessIssue]
 
 
+@lru_cache(maxsize=1)
 def iris() -> tuple[NDArray[np.floating[Any]], NDArray[np.floating[Any]]]:
     """Iris multiclass classification dataset."""
     data = load_iris()
     return data.data.astype(np.float32), data.target.astype(np.float32)  # pyright: ignore[reportAttributeAccessIssue]
 
 
+@lru_cache(maxsize=1)
 def covertype() -> tuple[NDArray[np.floating[Any]], NDArray[np.floating[Any]]]:
     """Covertype multiclass classification dataset (subsampled)."""
     data = fetch_covtype()
@@ -75,26 +80,31 @@ def _synthetic_classification(
 
 
 # Dataset loader factories
+@lru_cache(maxsize=1)
 def synthetic_regression_small() -> tuple[NDArray[np.floating[Any]], NDArray[np.floating[Any]]]:
     """Small synthetic regression dataset."""
     return _synthetic_regression(2000, 50)
 
 
+@lru_cache(maxsize=1)
 def synthetic_regression_medium() -> tuple[NDArray[np.floating[Any]], NDArray[np.floating[Any]]]:
     """Medium synthetic regression dataset."""
     return _synthetic_regression(10000, 100)
 
 
+@lru_cache(maxsize=1)
 def synthetic_binary_small() -> tuple[NDArray[np.floating[Any]], NDArray[np.floating[Any]]]:
     """Small synthetic binary classification dataset."""
     return _synthetic_classification(2000, 50, 2)
 
 
+@lru_cache(maxsize=1)
 def synthetic_binary_medium() -> tuple[NDArray[np.floating[Any]], NDArray[np.floating[Any]]]:
     """Medium synthetic binary classification dataset."""
     return _synthetic_classification(10000, 100, 2)
 
 
+@lru_cache(maxsize=1)
 def synthetic_multi_small() -> tuple[NDArray[np.floating[Any]], NDArray[np.floating[Any]]]:
     """Small synthetic multiclass classification dataset."""
     return _synthetic_classification(2000, 50, 5)
