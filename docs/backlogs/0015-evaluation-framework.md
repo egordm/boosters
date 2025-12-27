@@ -895,6 +895,24 @@ The following items are explicitly out of scope for v1.0 but documented for futu
 - **Custom Datasets**: Support for user-provided datasets beyond sklearn
 - **HTML Reports**: Generate interactive HTML reports with charts and comparisons
 
+### Multiclass Training Performance Optimization
+
+**Problem**: Boosters is ~5x slower than LightGBM/XGBoost on covertype benchmark (7 classes, 50k samples).
+
+**Root Cause**: Boosters treats multiclass as independent single-output problems, growing 7 separate trees per round. This causes:
+
+1. Redundant row partitioning (7× per round instead of 1×)
+2. Separate histogram building per class instead of batched
+3. Suboptimal cache utilization
+
+**Recommended Fixes**:
+
+1. **Multi-class histogram building in single pass** (2-3× improvement): Build histograms for all classes in one pass over the data instead of 7 separate passes.
+2. **Shared partitioning across classes** (1.5-2× improvement): Use a single partition structure for all classes since they split on the same split point.
+3. **Vectorized softmax gradient computation** (1.2× improvement): Process samples in blocks for better SIMD utilization.
+
+**Location**: `crates/boosters/src/training/gbdt/` (trainer.rs, histograms/ops.rs, grower.rs)
+
 ---
 
 ## Changelog

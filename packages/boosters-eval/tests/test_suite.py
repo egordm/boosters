@@ -8,13 +8,13 @@ import pytest
 from boosters_eval.config import BoosterType, DatasetConfig, Task
 from boosters_eval.datasets import DATASETS
 from boosters_eval.suite import (
-    ABLATION_GROWTH,
-    ABLATION_THREADING,
+    ABLATION_SUITES,
     FULL_SUITE,
     MINIMAL_SUITE,
     QUICK_SUITE,
     compare,
     create_ablation_suite,
+    run_ablation,
     run_suite,
     SuiteConfig,
 )
@@ -44,10 +44,13 @@ class TestSuiteConfigs:
 
     def test_ablation_suites_exist(self) -> None:
         """Test ablation suites are defined."""
-        assert ABLATION_GROWTH is not None
-        assert ABLATION_GROWTH.name == "ablation_growth"
-        assert ABLATION_THREADING is not None
-        assert ABLATION_THREADING.name == "ablation_threading"
+        assert "depth" in ABLATION_SUITES
+        assert "lr" in ABLATION_SUITES
+        assert "growth" in ABLATION_SUITES
+        # Each should be a list of suite configs
+        assert len(ABLATION_SUITES["depth"]) == 3
+        assert len(ABLATION_SUITES["lr"]) == 3
+        assert len(ABLATION_SUITES["growth"]) == 2
 
 
 class TestAblationSuites:

@@ -272,14 +272,24 @@ class ResultCollection:
         task: Task,
         dataset: str,
         metric: str,
+        booster_type: str | None = None,
     ) -> dict[str, list[float]]:
         """Get raw metric values per library for significance testing.
+
+        Args:
+            task: Task type to filter by.
+            dataset: Dataset name to filter by.
+            metric: Metric name to extract values for.
+            booster_type: Optional booster type to filter by. If None, includes all.
 
         Returns a dict mapping library name to list of values across seeds.
         """
         result: dict[str, list[float]] = {}
         for r in self.results:
             if r.task != task.value or r.dataset_name != dataset:
+                continue
+            # Filter by booster type if specified
+            if booster_type is not None and r.booster_type != booster_type:
                 continue
             # Check if metric is in the result
             if metric in r.metrics:
@@ -519,8 +529,8 @@ class ResultCollection:
                     # Highlight best without significance check
                     significant_winners[metric] = best_lib
                 else:
-                    # Check statistical significance
-                    raw_values = self._get_raw_values_by_library(task, dataset, metric)
+                    # Check statistical significance (filter by booster type)
+                    raw_values = self._get_raw_values_by_library(task, dataset, metric, str(booster))
                     best_vals = raw_values.get(best_lib, [])
                     second_vals = raw_values.get(second_lib, [])
 

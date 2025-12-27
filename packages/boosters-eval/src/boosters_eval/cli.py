@@ -16,7 +16,7 @@ from boosters_eval.metrics import LOWER_BETTER_METRICS
 from boosters_eval.reports import format_results_terminal, generate_report
 from boosters_eval.results import ResultCollection
 from boosters_eval.runners import get_available_runners
-from boosters_eval.suite import FULL_SUITE, QUICK_SUITE, compare, run_suite
+from boosters_eval.suite import ABLATION_SUITES, FULL_SUITE, QUICK_SUITE, compare, run_ablation, run_suite
 
 app = typer.Typer(
     name="boosters-eval",
@@ -115,6 +115,87 @@ def full(
             booster_types=[bt.value for bt in booster_types],
         )
         console.print(f"[green]Results saved to {output}[/green]")
+
+
+@app.command()
+def ablation(
+    study: Annotated[
+        str,
+        typer.Argument(help="Ablation study to run: depth, lr, growth."),
+    ],
+    output: Annotated[
+        Optional[Path],
+        typer.Option("--output", "-o", help="Output file path for results."),
+    ] = None,
+) -> None:
+    """Run an ablation study comparing different hyperparameter settings.
+
+    Available studies:
+    - depth: Compare max_depth values (4, 6, 8)
+    - lr: Compare learning rates (0.01, 0.1, 0.3)
+    - growth: Compare growth strategies (depthwise, leafwise)
+    """
+    if study not in ABLATION_SUITES:
+        console.print(f"[red]Unknown ablation study: {study}[/red]")
+        console.print(f"Available: {', '.join(ABLATION_SUITES.keys())}")
+        raise typer.Exit(1)
+
+    console.print(f"[bold]Running ablation study: {study}[/bold]\n")
+
+    # Run all variants in the ablation study
+    variant_results = run_ablation(study)
+
+    # Display results for each variant
+    for variant_name, results in variant_results.items():
+        console.print(f"\n[bold cyan]{variant_name}[/bold cyan]")
+        format_results_terminal(results, require_significance=False)
+
+    # Save combined report if output specified
+    if output:
+        # Combine all results
+        combined = ResultCollection()
+        for results in variant_results.values():
+            for r in results.results:
+                combined.add_result(r)
+            for e in results.errors:
+                combined.add_error(e)
+
+        # Get training config from first variant
+        first_suite = ABLATION_SUITES[study][0]
+        tc = first_suite.to_training_config()
+        booster_types = first_suite.get_booster_types()
+
+        generate_report(
+            combined,
+            suite_name=f"ablation_{study}",
+            output_path=output,
+            title=f"Ablation Study: {study.upper()}",
+            training_config=tc,
+            booster_types=[bt.value for bt in booster_types],
+        )
+        console.print(f"\n[green]Results saved to {output}[/green]")
+
+
+@app.command(name="list-ablations")
+def list_ablations() -> None:
+    """List available ablation studies."""
+    table = Table(title="Available Ablation Studies")
+    table.add_column("Name", style="cyan")
+    table.add_column("Variants", style="green")
+    table.add_column("Description", style="yellow")
+
+    study_descriptions = {
+        "depth": "Compare tree max_depth (4, 6, 8)",
+        "lr": "Compare learning rates (0.01, 0.1, 0.3)",
+        "growth": "Compare growth strategies (depthwise, leafwise)",
+    }
+
+    for name, suites in ABLATION_SUITES.items():
+        variants = ", ".join(s.name.split("_")[-1] for s in suites)
+        desc = study_descriptions.get(name, "")
+        table.add_row(name, variants, desc)
+
+    console.print(table)
 
 
 @app.command(name="compare")

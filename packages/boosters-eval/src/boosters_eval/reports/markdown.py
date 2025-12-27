@@ -104,7 +104,7 @@ def format_dataset_table(
 
             if require_significance and highlight_best:
                 second_lib = str(sorted_df.iloc[1]["library"])
-                raw_values = results._get_raw_values_by_library(task, dataset, pm)
+                raw_values = results._get_raw_values_by_library(task, dataset, pm, booster)
                 best_vals = raw_values.get(best_lib_pm, [])
                 second_vals = raw_values.get(second_lib, [])
                 if not results._is_significantly_better(best_vals, second_vals, alpha):
@@ -118,7 +118,7 @@ def format_dataset_table(
 
                 if require_significance and highlight_best:
                     second_time_lib = str(sorted_time.iloc[1]["library"])
-                    raw_time = results._get_raw_values_by_library(task, dataset, "train_time_s")
+                    raw_time = results._get_raw_values_by_library(task, dataset, "train_time_s", booster)
                     best_time_vals = raw_time.get(best_lib_time, [])
                     second_time_vals = raw_time.get(second_time_lib, [])
                     if not results._is_significantly_better(best_time_vals, second_time_vals, alpha):

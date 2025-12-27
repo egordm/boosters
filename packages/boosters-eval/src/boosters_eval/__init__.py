@@ -46,13 +46,13 @@ from boosters_eval.results import (
 )
 from boosters_eval.runners import Runner, get_available_runners, get_runner
 from boosters_eval.suite import (
-    ABLATION_GROWTH,
-    ABLATION_THREADING,
+    ABLATION_SUITES,
     FULL_SUITE,
     MINIMAL_SUITE,
     QUICK_SUITE,
     compare,
     create_ablation_suite,
+    run_ablation,
     run_suite,
 )
 
@@ -60,13 +60,13 @@ __all__ = [
     # Main API
     "compare",
     "run_suite",
+    "run_ablation",
     "create_ablation_suite",
     # Suite constants
     "QUICK_SUITE",
     "FULL_SUITE",
     "MINIMAL_SUITE",
-    "ABLATION_GROWTH",
-    "ABLATION_THREADING",
+    "ABLATION_SUITES",
     # Configuration
     "BenchmarkConfig",
     "BoosterType",

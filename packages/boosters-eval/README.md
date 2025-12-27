@@ -182,7 +182,6 @@ Available parameters for ablation:
 - `booster_type`: BoosterType.GBDT, GBLINEAR, or LINEAR_TREES
 - `datasets`: List of dataset names to include
 - `libraries`: List of libraries to compare
-```
 
 ### Baseline Regression Testing
 

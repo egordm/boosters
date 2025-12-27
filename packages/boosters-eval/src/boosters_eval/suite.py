@@ -63,25 +63,133 @@ MINIMAL_SUITE = SuiteConfig(
 # Ablation Suites
 # =============================================================================
 
-ABLATION_GROWTH = SuiteConfig(
-    name="ablation_growth",
-    description="Compare depthwise vs leafwise growth strategies",
-    datasets=["california", "breast_cancer"],
-    n_estimators=50,
-    seeds=[42, 1379],
-    libraries=["boosters", "lightgbm"],
-    booster_type=BoosterType.GBDT,
-    growth_strategy=GrowthStrategy.DEPTHWISE,
-)
+# Depth ablation: compare different max_depth values
+ABLATION_DEPTH = [
+    SuiteConfig(
+        name="ablation_depth_4",
+        description="Depth ablation: max_depth=4",
+        datasets=["california", "breast_cancer", "iris"],
+        n_estimators=100,
+        max_depth=4,
+        seeds=[42, 1379, 2716],
+        libraries=["boosters", "xgboost", "lightgbm"],
+        booster_type=BoosterType.GBDT,
+    ),
+    SuiteConfig(
+        name="ablation_depth_6",
+        description="Depth ablation: max_depth=6",
+        datasets=["california", "breast_cancer", "iris"],
+        n_estimators=100,
+        max_depth=6,
+        seeds=[42, 1379, 2716],
+        libraries=["boosters", "xgboost", "lightgbm"],
+        booster_type=BoosterType.GBDT,
+    ),
+    SuiteConfig(
+        name="ablation_depth_8",
+        description="Depth ablation: max_depth=8",
+        datasets=["california", "breast_cancer", "iris"],
+        n_estimators=100,
+        max_depth=8,
+        seeds=[42, 1379, 2716],
+        libraries=["boosters", "xgboost", "lightgbm"],
+        booster_type=BoosterType.GBDT,
+    ),
+]
 
-ABLATION_THREADING = SuiteConfig(
-    name="ablation_threading",
-    description="Compare single vs multi-threaded execution",
-    datasets=["california"],
-    n_estimators=50,
-    seeds=[42],
-    libraries=["boosters", "xgboost", "lightgbm"],
-)
+# Learning rate ablation: compare different learning rates
+ABLATION_LR = [
+    SuiteConfig(
+        name="ablation_lr_0.01",
+        description="Learning rate ablation: lr=0.01",
+        datasets=["california", "breast_cancer", "iris"],
+        n_estimators=100,
+        learning_rate=0.01,
+        seeds=[42, 1379, 2716],
+        libraries=["boosters", "xgboost", "lightgbm"],
+        booster_type=BoosterType.GBDT,
+    ),
+    SuiteConfig(
+        name="ablation_lr_0.1",
+        description="Learning rate ablation: lr=0.1",
+        datasets=["california", "breast_cancer", "iris"],
+        n_estimators=100,
+        learning_rate=0.1,
+        seeds=[42, 1379, 2716],
+        libraries=["boosters", "xgboost", "lightgbm"],
+        booster_type=BoosterType.GBDT,
+    ),
+    SuiteConfig(
+        name="ablation_lr_0.3",
+        description="Learning rate ablation: lr=0.3",
+        datasets=["california", "breast_cancer", "iris"],
+        n_estimators=100,
+        learning_rate=0.3,
+        seeds=[42, 1379, 2716],
+        libraries=["boosters", "xgboost", "lightgbm"],
+        booster_type=BoosterType.GBDT,
+    ),
+]
+
+# Growth strategy ablation: depthwise vs leafwise
+ABLATION_GROWTH = [
+    SuiteConfig(
+        name="ablation_growth_depthwise",
+        description="Growth strategy ablation: depthwise",
+        datasets=["california", "breast_cancer", "iris"],
+        n_estimators=100,
+        seeds=[42, 1379, 2716],
+        libraries=["boosters", "lightgbm"],
+        booster_type=BoosterType.GBDT,
+        growth_strategy=GrowthStrategy.DEPTHWISE,
+    ),
+    SuiteConfig(
+        name="ablation_growth_leafwise",
+        description="Growth strategy ablation: leafwise",
+        datasets=["california", "breast_cancer", "iris"],
+        n_estimators=100,
+        seeds=[42, 1379, 2716],
+        libraries=["boosters", "lightgbm"],
+        booster_type=BoosterType.GBDT,
+        growth_strategy=GrowthStrategy.LEAFWISE,
+    ),
+]
+
+# All ablation suites by name
+ABLATION_SUITES: dict[str, list[SuiteConfig]] = {
+    "depth": ABLATION_DEPTH,
+    "lr": ABLATION_LR,
+    "growth": ABLATION_GROWTH,
+}
+
+
+def run_ablation(
+    ablation_name: str,
+    *,
+    verbose: bool = True,
+) -> dict[str, ResultCollection]:
+    """Run an ablation study and return results keyed by variant name.
+
+    Args:
+        ablation_name: Name of the ablation study (depth, lr, growth).
+        verbose: Print progress information.
+
+    Returns:
+        Dictionary mapping variant name to ResultCollection.
+    """
+    if ablation_name not in ABLATION_SUITES:
+        raise ValueError(f"Unknown ablation: {ablation_name}. Available: {list(ABLATION_SUITES.keys())}")
+
+    suites = ABLATION_SUITES[ablation_name]
+    results: dict[str, ResultCollection] = {}
+
+    for suite in suites:
+        if verbose:
+            console.print(f"[bold]Running {suite.name}[/bold]")
+        collection = run_suite(suite, verbose=verbose)
+        results[suite.name] = collection
+
+    return results
 
 
 def create_ablation_suite(
