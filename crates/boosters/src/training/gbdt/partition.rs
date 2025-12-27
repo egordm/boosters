@@ -205,6 +205,12 @@ impl RowPartitioner {
     /// The original leaf keeps the left-going rows.
     /// A new leaf is allocated for the right-going rows.
     ///
+    /// # Arguments
+    /// * `leaf` - Leaf to split
+    /// * `split` - Split decision (feature index refers to bundled column if n_bundles > 0)
+    /// * `dataset` - The binned dataset
+    /// * `n_bundles` - Number of bundled columns (0 if no bundling)
+    ///
     /// # Returns
     /// `(right_leaf, left_count, right_count)` where:
     /// - `right_leaf`: ID of the newly allocated right leaf
@@ -215,32 +221,29 @@ impl RowPartitioner {
         leaf: LeafId,
         split: &SplitInfo,
         dataset: &BinnedDataset,
+        n_bundles: usize,
     ) -> (LeafId, u32, u32) {
         let begin = self.leaf_begin[leaf as usize] as usize;
         let count = self.leaf_count[leaf as usize] as usize;
         let end = begin + count;
 
-        // Pre-compute feature-specific data once (not per-row!)
-        let feature_view = dataset.feature_view(split.feature as usize);
-        let bin_mapper = dataset.bin_mapper(split.feature as usize);
-        let default_bin = bin_mapper.default_bin();
-        let has_missing = bin_mapper.missing_type() != MissingType::None;
+        // Get feature view - use bundled view if split is on bundled column
+        let (feature_view, default_bin, has_missing) =
+            if n_bundles > 0 && dataset.has_bundled_columns() {
+                // Using bundled columns
+                let view = dataset.bundled_feature_view(split.feature as usize);
+                // Bundled columns don't have traditional missing handling
+                // (offset encoding handles zero values naturally)
+                (view, 0u32, false)
+            } else {
+                // Using original features
+                let view = dataset.feature_view(split.feature as usize);
+                let bin_mapper = dataset.bin_mapper(split.feature as usize);
+                let default_bin = bin_mapper.default_bin();
+                let has_missing = bin_mapper.missing_type() != MissingType::None;
+                (view, default_bin, has_missing)
+            };
         let default_left = split.default_left;
-
-        let eval_generic = |row: u32| -> bool {
-            let bin = dataset
-                .get_bin(row as usize, split.feature as usize)
-                .expect("partition requires dense storage");
-
-            if bin == default_bin && has_missing {
-                return default_left;
-            }
-
-            match &split.split_type {
-                SplitType::Numerical { bin: threshold } => bin <= *threshold as u32,
-                SplitType::Categorical { left_cats } => left_cats.contains(bin),
-            }
-        };
 
         // Single-pass stable partition: write left from start, right from end of scratch,
         // then reverse right portion in-place for stable ordering.
@@ -386,8 +389,20 @@ impl RowPartitioner {
                 }
             }
             _ => {
+                // Fallback for sparse views or other unhandled combinations
                 for &idx in &indices[begin..end] {
-                    let goes_left = eval_generic(idx);
+                    let row = idx as usize;
+                    let bin = feature_view
+                        .get_bin(row)
+                        .unwrap_or(default_bin);
+                    let goes_left = if bin == default_bin && has_missing {
+                        default_left
+                    } else {
+                        match &split.split_type {
+                            SplitType::Numerical { bin: threshold } => bin <= *threshold as u32,
+                            SplitType::Categorical { left_cats } => left_cats.contains(bin),
+                        }
+                    };
                     if goes_left {
                         scratch[left_write] = idx;
                         left_write += 1;
@@ -497,7 +512,7 @@ mod tests {
 
         // Split on feature 1 at bin 0 (rows 0-3 go left, rows 4-7 go right)
         let split = SplitInfo::numerical(1, 0, 1.0, false);
-        let (right_leaf, left_count, right_count) = partitioner.split(0, &split, &dataset);
+        let (right_leaf, left_count, right_count) = partitioner.split(0, &split, &dataset, 0);
 
         assert_eq!(left_count, 4);
         assert_eq!(right_count, 4);
@@ -527,7 +542,7 @@ mod tests {
 
         // Split on feature 0 at bin 0 (even indices go left, odd go right)
         let split = SplitInfo::numerical(0, 0, 1.0, false);
-        let (right_leaf, left_count, right_count) = partitioner.split(0, &split, &dataset);
+        let (right_leaf, left_count, right_count) = partitioner.split(0, &split, &dataset, 0);
 
         assert_eq!(left_count, 4);
         assert_eq!(right_count, 4);
@@ -553,11 +568,11 @@ mod tests {
 
         // First split: feature 1 at bin 0 → leaf 0 has 0-3, leaf 1 has 4-7
         let split1 = SplitInfo::numerical(1, 0, 1.0, false);
-        let (leaf1, _, _) = partitioner.split(0, &split1, &dataset);
+        let (leaf1, _, _) = partitioner.split(0, &split1, &dataset, 0);
 
         // Split leaf 0 on feature 0 → even (0,2) stay, odd (1,3) go to new leaf
         let split2 = SplitInfo::numerical(0, 0, 1.0, false);
-        let (leaf2, left_count, right_count) = partitioner.split(0, &split2, &dataset);
+        let (leaf2, left_count, right_count) = partitioner.split(0, &split2, &dataset, 0);
 
         assert_eq!(left_count, 2);
         assert_eq!(right_count, 2);

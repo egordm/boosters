@@ -67,11 +67,11 @@ pub struct TreeGrower {
     partitioner: RowPartitioner,
     /// Tree builder (builds inference-ready Tree directly).
     tree_builder: MutableTree<ScalarLeaf>,
-    /// Feature types (true = categorical).
+    /// Feature types (true = categorical) for bundled columns.
     feature_types: Vec<bool>,
-    /// Feature has missing values (true = has missing).
+    /// Feature has missing values (true = has missing) for bundled columns.
     feature_has_missing: Vec<bool>,
-    /// Feature metadata for histogram building.
+    /// Feature metadata for histogram building (bundled columns if EFB active).
     feature_metas: Vec<HistogramLayout>,
     /// Split strategy.
     split_strategy: GreedySplitter,
@@ -89,6 +89,10 @@ pub struct TreeGrower {
 
     /// Histogram builder (encapsulates parallelism and kernel dispatch).
     histogram_builder: HistogramBuilder,
+
+    /// Number of bundled columns (0 if bundling not active).
+    /// Columns 0..n_bundles are bundled, columns n_bundles.. are standalone.
+    n_bundles: usize,
 }
 
 impl TreeGrower {
@@ -104,16 +108,62 @@ impl TreeGrower {
         cache_size: usize,
         parallelism: Parallelism,
     ) -> Self {
-        let n_features = dataset.n_features();
         let n_samples = dataset.n_rows();
 
+        // Check if bundling is effective
+        let use_bundling = dataset.has_bundled_columns();
+        let n_bundles = if use_bundling {
+            dataset
+                .bundle_plan()
+                .map(|p| p.bundles.len())
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
         // Build feature metadata for histogram pool
-        let feature_metas: Vec<HistogramLayout> = (0..n_features)
-            .map(|f| HistogramLayout {
-                offset: dataset.global_bin_offset(f),
-                n_bins: dataset.n_bins(f),
-            })
-            .collect();
+        // Use bundled columns if available, otherwise use original features
+        let (n_columns, feature_metas, feature_types, feature_has_missing) = if use_bundling {
+            let bin_counts = dataset.bundled_bin_counts();
+            let n_cols = bin_counts.len();
+            let mut offset = 0u32;
+            let metas: Vec<HistogramLayout> = bin_counts
+                .iter()
+                .map(|&n_bins| {
+                    let layout = HistogramLayout { offset, n_bins };
+                    offset += n_bins;
+                    layout
+                })
+                .collect();
+
+            // For bundled columns, we need feature_types and feature_has_missing
+            // Bundles are always numerical (encoded bins) with no missing
+            // Standalone features keep their original types
+            let bundle_plan = dataset.bundle_plan().unwrap();
+            let mut types = vec![false; n_cols]; // Bundles are numerical
+            let mut has_missing = vec![false; n_cols]; // Bundles have no missing
+
+            // Update standalone features with their actual types
+            for (i, &feat_idx) in bundle_plan.standalone_features.iter().enumerate() {
+                let col_idx = n_bundles + i;
+                types[col_idx] = dataset.is_categorical(feat_idx);
+                has_missing[col_idx] = dataset.has_missing(feat_idx);
+            }
+
+            (n_cols, metas, types, has_missing)
+        } else {
+            let n_features = dataset.n_features();
+            let metas: Vec<HistogramLayout> = (0..n_features)
+                .map(|f| HistogramLayout {
+                    offset: dataset.global_bin_offset(f),
+                    n_bins: dataset.n_bins(f),
+                })
+                .collect();
+            let types: Vec<bool> =
+                (0..n_features).map(|f| dataset.is_categorical(f)).collect();
+            let missing: Vec<bool> = (0..n_features).map(|f| dataset.has_missing(f)).collect();
+            (n_features, metas, types, missing)
+        };
 
         // Maximum nodes: 2*max_leaves - 1 for a full binary tree
         let max_leaves = params.max_leaves();
@@ -123,18 +173,13 @@ impl TreeGrower {
             HistogramPool::new(feature_metas.clone(), cache_size.max(2), max_nodes);
         let partitioner = RowPartitioner::new(n_samples, max_nodes);
 
-        // Collect feature types and missing info
-        let feature_types: Vec<bool> = (0..n_features).map(|f| dataset.is_categorical(f)).collect();
-        let feature_has_missing: Vec<bool> =
-            (0..n_features).map(|f| dataset.has_missing(f)).collect();
-
         // Build split strategy with gain params encapsulated
         // Parallelism self-corrects based on workload
         let split_strategy =
             GreedySplitter::with_config(params.gain.clone(), params.max_onehot_cats, parallelism);
 
         // Create column sampler (handles all/none case gracefully)
-        let col_sampler = ColSampler::new(params.col_sampling.clone(), n_features as u32, 0);
+        let col_sampler = ColSampler::new(params.col_sampling.clone(), n_columns as u32, 0);
 
         Self {
             params,
@@ -150,6 +195,7 @@ impl TreeGrower {
             ordered_grad_hess: Vec::with_capacity(n_samples),
             leaf_node_map: Vec::with_capacity(max_nodes / 2 + 1),
             histogram_builder: HistogramBuilder::new(parallelism),
+            n_bundles,
         }
     }
 
@@ -248,7 +294,8 @@ impl TreeGrower {
         self.col_sampler.sample_level(0);
 
         // Pre-compute feature views once per tree (avoids per-node Vec allocation)
-        let bin_views = dataset.feature_views();
+        // Use bundled views if bundling is active (fewer columns = faster)
+        let bin_views = dataset.bundled_feature_views();
 
         // Initialize growth state
         let strategy = self.params.growth_strategy;
@@ -346,12 +393,13 @@ impl TreeGrower {
             candidate.tree_node,
             &candidate.split,
             dataset,
+            self.n_bundles,
         );
 
-        // Partition rows
+        // Partition rows (pass n_bundles for bundled split handling)
         let (right_node, left_count, right_count) =
             self.partitioner
-                .split(candidate.node, &candidate.split, dataset);
+                .split(candidate.node, &candidate.split, dataset, self.n_bundles);
 
         // Use original node as left (now owns only left rows)
         let left_node = candidate.node;
@@ -530,19 +578,63 @@ impl TreeGrower {
     ///
     /// Important: categorical split categories are treated as **category indices** (0..K-1),
     /// i.e. the same domain as categorical bin indices in `BinnedDataset`.
+    ///
+    /// For bundled splits (when n_bundles > 0 and split.feature < n_bundles):
+    /// - Decode the bundled split to get the original feature and bin
+    /// - Use the original feature's bin_mapper for threshold conversion
     fn apply_split_to_builder(
         builder: &mut MutableTree<ScalarLeaf>,
         node: u32,
         split: &SplitInfo,
         dataset: &BinnedDataset,
+        n_bundles: usize,
     ) -> (u32, u32) {
-        let feature = split.feature;
+        // Decode bundled split if necessary
+        let (feature, bin_for_threshold) = if n_bundles > 0
+            && (split.feature as usize) < n_bundles
+        {
+            // This is a bundled column - decode to original feature
+            match &split.split_type {
+                SplitType::Numerical { bin } => {
+                    if let Some((orig_feat, orig_bin)) =
+                        dataset.decode_bundle_split(split.feature as usize, *bin as u32)
+                    {
+                        (orig_feat as u32, orig_bin)
+                    } else {
+                        // Fallback: shouldn't happen, but use split as-is
+                        (split.feature, *bin as u32)
+                    }
+                }
+                SplitType::Categorical { .. } => {
+                    // Bundled columns are never categorical
+                    (split.feature, 0)
+                }
+            }
+        } else if n_bundles > 0 {
+            // Standalone feature - adjust index to account for bundles
+            // standalone_features are stored after bundles in the bundled column order
+            // We need to map back to original feature index
+            let bundle_plan = dataset.bundle_plan().unwrap();
+            let standalone_idx = (split.feature as usize) - n_bundles;
+            let orig_feat = bundle_plan.standalone_features[standalone_idx];
+            match &split.split_type {
+                SplitType::Numerical { bin } => (orig_feat as u32, *bin as u32),
+                SplitType::Categorical { .. } => (orig_feat as u32, 0),
+            }
+        } else {
+            // No bundling - use split as-is
+            match &split.split_type {
+                SplitType::Numerical { bin } => (split.feature, *bin as u32),
+                SplitType::Categorical { .. } => (split.feature, 0),
+            }
+        };
+
         let mapper = dataset.bin_mapper(feature as usize);
 
         match &split.split_type {
-            SplitType::Numerical { bin } => {
+            SplitType::Numerical { .. } => {
                 // Convert bin threshold to float value
-                let bin_upper = mapper.bin_to_value(*bin as u32) as f32;
+                let bin_upper = mapper.bin_to_value(bin_for_threshold) as f32;
                 let threshold = Self::next_up_f32(bin_upper);
                 builder.apply_numeric_split(node, feature, threshold, split.default_left)
             }
@@ -764,7 +856,7 @@ mod tests {
         // Training semantics: bin <= 0 goes left.
         let split = SplitInfo::numerical(0, 0, 1.0, true);
         let (left, right) =
-            TreeGrower::apply_split_to_builder(&mut builder, root, &split, &dataset);
+            TreeGrower::apply_split_to_builder(&mut builder, root, &split, &dataset, 0);
         builder.make_leaf(left, ScalarLeaf(10.0));
         builder.make_leaf(right, ScalarLeaf(20.0));
         let tree = builder.freeze();
@@ -799,7 +891,7 @@ mod tests {
         left_cats.insert(3);
         let split = SplitInfo::categorical(0, left_cats, 1.0, false);
         let (left, right) =
-            TreeGrower::apply_split_to_builder(&mut builder, root, &split, &dataset);
+            TreeGrower::apply_split_to_builder(&mut builder, root, &split, &dataset, 0);
         builder.make_leaf(left, ScalarLeaf(10.0));
         builder.make_leaf(right, ScalarLeaf(20.0));
         let tree = builder.freeze();

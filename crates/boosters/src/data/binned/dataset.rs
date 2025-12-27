@@ -6,6 +6,27 @@ use super::storage::{BinStorage, FeatureView, GroupLayout};
 use crate::data::FeatureType;
 use crate::data::{DataAccessor, SampleAccessor};
 
+// =============================================================================
+// BundledColumns - Pre-computed bundled bin data for EFB training
+// =============================================================================
+
+/// Pre-computed bundled column data for efficient histogram building.
+///
+/// When EFB is effective, this stores the encoded bins for each bundled column,
+/// avoiding on-the-fly computation during histogram building.
+#[derive(Clone, Debug)]
+pub struct BundledColumns {
+    /// Encoded bins for each bundled column (column-major: column × n_rows).
+    /// Each bundle becomes one column with offset-encoded bins.
+    bundle_bins: Vec<Vec<u16>>,
+    /// Number of bins per bundled column (for histogram allocation).
+    bundle_n_bins: Vec<u32>,
+    /// Standalone feature indices (not bundled, passed through unchanged).
+    standalone_features: Vec<usize>,
+    /// Total number of bundled columns (bundles + standalone).
+    n_columns: usize,
+}
+
 /// The main binned dataset for GBDT training.
 ///
 /// Contains quantized feature values organized in feature groups.
@@ -41,6 +62,9 @@ pub struct BinnedDataset {
     global_bin_offsets: Box<[u32]>,
     /// Optional bundle plan if bundling was applied.
     bundle_plan: Option<BundlePlan>,
+    /// Pre-computed bundled columns for efficient histogram building.
+    /// Only populated when bundling is effective.
+    bundled_columns: Option<BundledColumns>,
 }
 
 impl BinnedDataset {
@@ -68,6 +92,7 @@ impl BinnedDataset {
             groups,
             global_bin_offsets: global_bin_offsets.into_boxed_slice(),
             bundle_plan,
+            bundled_columns: None, // Computed lazily via compute_bundled_columns()
         }
     }
 
@@ -79,6 +104,7 @@ impl BinnedDataset {
             groups: Vec::new(),
             global_bin_offsets: vec![0].into_boxed_slice(),
             bundle_plan: None,
+            bundled_columns: None,
         }
     }
 
@@ -195,6 +221,170 @@ impl BinnedDataset {
             reduction_ratio: plan.reduction_ratio(),
             binned_columns: plan.binned_column_count(),
         })
+    }
+
+    /// Check if bundled columns are available for histogram building.
+    ///
+    /// Returns true if bundling is effective AND bundled columns have been computed.
+    pub fn has_bundled_columns(&self) -> bool {
+        self.bundled_columns.is_some()
+    }
+
+    /// Get the number of bundled columns (bundles + standalone features).
+    ///
+    /// Returns n_features if bundling is not effective.
+    pub fn n_bundled_columns(&self) -> usize {
+        if let Some(bc) = &self.bundled_columns {
+            bc.n_columns
+        } else {
+            self.features.len()
+        }
+    }
+
+    /// Get feature views for bundled columns (fewer than original features).
+    ///
+    /// If bundled columns are available, returns:
+    /// - One view per bundle (encoded bins for mutually exclusive sparse features)
+    /// - One view per standalone dense feature
+    ///
+    /// If bundling is not effective, returns same as `feature_views()`.
+    ///
+    /// # Note
+    /// Call `compute_bundled_columns()` during dataset construction to enable this.
+    pub fn bundled_feature_views(&self) -> Vec<FeatureView<'_>> {
+        if let Some(bc) = &self.bundled_columns {
+            let mut views = Vec::with_capacity(bc.n_columns);
+
+            // Add bundle views (u16 encoded bins)
+            for bundle_bins in &bc.bundle_bins {
+                views.push(FeatureView::U16 {
+                    bins: bundle_bins,
+                    stride: 1,
+                });
+            }
+
+            // Add standalone feature views (unchanged)
+            for &feature_idx in &bc.standalone_features {
+                views.push(self.feature_view(feature_idx));
+            }
+
+            views
+        } else {
+            self.feature_views()
+        }
+    }
+
+    /// Get a single bundled column's view by bundled column index.
+    ///
+    /// If `col_idx < n_bundles`, returns the bundle's u16 encoded bins.
+    /// Otherwise returns the standalone feature view.
+    ///
+    /// # Panics
+    /// - If bundled columns not computed
+    /// - If col_idx >= n_bundled_columns()
+    pub fn bundled_feature_view(&self, col_idx: usize) -> FeatureView<'_> {
+        let bc = self
+            .bundled_columns
+            .as_ref()
+            .expect("bundled_feature_view requires compute_bundled_columns");
+
+        let n_bundles = bc.bundle_bins.len();
+        if col_idx < n_bundles {
+            FeatureView::U16 {
+                bins: &bc.bundle_bins[col_idx],
+                stride: 1,
+            }
+        } else {
+            let standalone_idx = col_idx - n_bundles;
+            let orig_feat = bc.standalone_features[standalone_idx];
+            self.feature_view(orig_feat)
+        }
+    }
+
+    /// Get bin counts for bundled columns (for histogram layout).
+    ///
+    /// Returns bin counts per bundled column if bundling is effective,
+    /// otherwise returns bin counts for original features.
+    pub fn bundled_bin_counts(&self) -> Vec<u32> {
+        if let Some(bc) = &self.bundled_columns {
+            let mut counts = bc.bundle_n_bins.clone();
+            for &feature_idx in &bc.standalone_features {
+                counts.push(self.features[feature_idx].n_bins());
+            }
+            counts
+        } else {
+            self.features.iter().map(|f| f.n_bins()).collect()
+        }
+    }
+
+    /// Compute and store bundled columns for efficient histogram building.
+    ///
+    /// This pre-computes the offset-encoded bins for each bundle, enabling
+    /// efficient histogram building during training. Should be called once
+    /// after dataset construction when bundling is effective.
+    ///
+    /// # Returns
+    /// - `true` if bundled columns were computed
+    /// - `false` if bundling is not effective (no-op)
+    pub fn compute_bundled_columns(&mut self) -> bool {
+        let plan = match &self.bundle_plan {
+            Some(p) if p.is_effective() => p,
+            _ => return false,
+        };
+
+        let n_rows = self.n_rows;
+        let n_bundles = plan.bundles.len();
+
+        // Pre-compute bin counts for each bundle
+        let bundle_n_bins: Vec<u32> = plan
+            .bundles
+            .iter()
+            .map(|bundle| bundle.total_bins)
+            .collect();
+
+        // Compute encoded bins for each bundle
+        let bundle_bins: Vec<Vec<u16>> = plan
+            .bundles
+            .iter()
+            .map(|bundle| {
+                let mut encoded = vec![0u16; n_rows];
+
+                // For each row, find the non-zero feature and encode its bin
+                for row in 0..n_rows {
+                    let mut found_nonzero = false;
+
+                    for (i, &feat_idx) in bundle.feature_indices.iter().enumerate() {
+                        if let Some(bin) = self.get_bin(row, feat_idx) {
+                            if bin > 0 {
+                                // Found non-zero feature, encode as offset + bin
+                                let offset = bundle.bin_offsets[i];
+                                encoded[row] = (offset + bin) as u16;
+                                found_nonzero = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if !found_nonzero {
+                        encoded[row] = 0; // All features zero
+                    }
+                }
+
+                encoded
+            })
+            .collect();
+
+        let standalone_features = plan.standalone_features.clone();
+        let n_columns = n_bundles + standalone_features.len();
+
+        self.bundled_columns = Some(BundledColumns {
+            bundle_bins,
+            bundle_n_bins,
+            standalone_features,
+            n_columns,
+        });
+
+        true
     }
 
     /// Decode an encoded bin from a bundled column to (original_feature, original_bin).

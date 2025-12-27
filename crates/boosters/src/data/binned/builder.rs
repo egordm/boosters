@@ -554,7 +554,10 @@ impl BinnedDatasetBuilder {
         // Create bundle plan if bundling is enabled
         let bundle_plan = if let Some(config) = &self.bundling_config {
             if config.enable_bundling {
-                Some(self.create_bundle_plan(n_rows, config))
+                let mut plan = self.create_bundle_plan(n_rows, config);
+                // Finalize the plan with bin counts
+                plan.finalize(|feat_idx| self.features[feat_idx].n_bins());
+                Some(plan)
             } else {
                 None
             }
@@ -562,12 +565,15 @@ impl BinnedDatasetBuilder {
             None
         };
 
-        Ok(BinnedDataset::with_bundle_plan(
-            n_rows,
-            features,
-            groups,
-            bundle_plan,
-        ))
+        let mut dataset = BinnedDataset::with_bundle_plan(n_rows, features, groups, bundle_plan);
+
+        // Pre-compute bundled columns if bundling is effective
+        // This enables efficient histogram building during training
+        if dataset.has_effective_bundling() {
+            dataset.compute_bundled_columns();
+        }
+
+        Ok(dataset)
     }
 
     /// Create a bundle plan by analyzing feature sparsity and conflicts.
