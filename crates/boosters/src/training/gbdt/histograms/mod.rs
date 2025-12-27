@@ -44,4 +44,4 @@ pub use pool::{
 pub use slices::HistogramFeatureIter;
 
 // Re-export FeatureView and BundleDecoder from data module for convenience
-pub use crate::data::binned::{BundleDecoder, FeatureView};
+pub use crate::data::binned::{BundleDecoder, BundleHistogramCache, FeatureView};

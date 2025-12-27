@@ -12,7 +12,8 @@ use crate::training::{Gradients, GradsTuple};
 
 use super::expansion::{GrowthState, GrowthStrategy, NodeCandidate};
 use super::histograms::{
-    BundleDecoder, FeatureView, HistogramBuilder, HistogramLayout, HistogramPool,
+    BundleDecoder, BundleHistogramCache, FeatureView, HistogramBuilder, HistogramLayout,
+    HistogramPool,
 };
 use super::partition::RowPartitioner;
 use super::split::{GainParams, GreedySplitter, SplitInfo, SplitType};
@@ -92,10 +93,8 @@ pub struct TreeGrower {
     /// Histogram builder (encapsulates parallelism and kernel dispatch).
     histogram_builder: HistogramBuilder,
 
-    /// Bundle decoder for decoding bundled bins to original features.
-    /// When Some, EFB bundling is active and histograms are built by decoding
-    /// bundled bins to original features.
-    bundle_decoder: Option<BundleDecoder>,
+    /// Pre-computed histogram cache for EFB (eliminates allocations in hot path).
+    bundle_histogram_cache: Option<BundleHistogramCache>,
 }
 
 impl TreeGrower {
@@ -131,10 +130,16 @@ impl TreeGrower {
         let feature_has_missing: Vec<bool> =
             (0..n_features).map(|f| dataset.has_missing(f)).collect();
 
-        // Create bundle decoder if bundling is active
-        let bundle_decoder = if use_bundling {
+        // Create histogram cache for fast EFB histogram building (no allocations in hot path)
+        let bundle_histogram_cache = if use_bundling {
             let plan = dataset.bundle_plan().unwrap();
-            Some(BundleDecoder::from_plan(plan))
+            let decoder = BundleDecoder::from_plan(plan);
+            // Convert feature_metas to the format expected by BundleHistogramCache
+            let meta_tuples: Vec<(u32, u32)> = feature_metas
+                .iter()
+                .map(|m| (m.offset, m.n_bins))
+                .collect();
+            Some(BundleHistogramCache::new(&decoder, &meta_tuples))
         } else {
             None
         };
@@ -169,7 +174,7 @@ impl TreeGrower {
             ordered_grad_hess: Vec::with_capacity(n_samples),
             leaf_node_map: Vec::with_capacity(max_nodes / 2 + 1),
             histogram_builder: HistogramBuilder::new(parallelism),
-            bundle_decoder,
+            bundle_histogram_cache,
         }
     }
 
@@ -636,20 +641,20 @@ impl TreeGrower {
         // Get gradient slices for this output
         let grad_hess_slice = gradients.output_pairs(output);
 
-        // Build histogram - the builder handles bundling internally if a decoder is present
-        let decoder = self.bundle_decoder.as_ref();
+        // Build histogram - use pre-computed cache for zero-allocation bundling
+        let cache = self.bundle_histogram_cache.as_ref();
 
         if let Some(start) = self.partitioner.leaf_sequential_start(node) {
             // Contiguous rows: direct access without gathering
             let start = start as usize;
             let end = start + rows.len();
-            self.histogram_builder.build_contiguous_with_decoder(
+            self.histogram_builder.build_contiguous_with_cache(
                 hist.bins,
                 &grad_hess_slice[start..end],
                 start,
                 bin_views,
                 &self.feature_metas,
-                decoder,
+                cache,
             );
         } else {
             // Non-sequential: gather gradients first
@@ -666,13 +671,13 @@ impl TreeGrower {
                     *gh_ptr.add(i) = *grad_hess_slice.get_unchecked(row);
                 }
             }
-            self.histogram_builder.build_gathered_with_decoder(
+            self.histogram_builder.build_gathered_with_cache(
                 hist.bins,
                 &self.ordered_grad_hess,
                 rows,
                 bin_views,
                 &self.feature_metas,
-                decoder,
+                cache,
             );
         }
     }

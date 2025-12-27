@@ -661,6 +661,155 @@ impl BundleDecoder {
     pub fn bin_range_for_split(&self, bundle_idx: usize, encoded_bin: u32) -> Option<(u32, u32)> {
         self.bundles[bundle_idx].bin_range_for_split(encoded_bin)
     }
+
+    /// Get direct access to a bundle for decoding.
+    #[inline]
+    pub fn bundle(&self, bundle_idx: usize) -> &FeatureBundle {
+        &self.bundles[bundle_idx]
+    }
+
+    /// Get direct access to all bundles.
+    #[inline]
+    pub fn bundles(&self) -> &[FeatureBundle] {
+        &self.bundles
+    }
+
+    /// Get the standalone feature to original mapping.
+    #[inline]
+    pub fn standalone_features(&self) -> &[usize] {
+        &self.standalone_to_original
+    }
+}
+
+// =============================================================================
+// BundleHistogramCache - Pre-computed data for fast histogram building
+// =============================================================================
+
+/// Pre-computed data for fast histogram building with EFB.
+///
+/// This cache eliminates all allocations from the histogram building hot path
+/// by pre-computing bundle metadata using the histogram layouts.
+///
+/// # Design
+///
+/// - Flat arrays for cache-friendly access (no nested Vecs)
+/// - Bundle data stored as contiguous ranges into flat arrays
+/// - Standalone features stored with their histogram offsets for batch processing
+///
+/// # Usage
+///
+/// Create once when the tree grower is initialized, then pass to histogram
+/// building functions for zero-allocation operation.
+#[derive(Clone, Debug)]
+pub struct BundleHistogramCache {
+    // === Bundle decoding data ===
+    /// Bundles for decoding encoded bins (borrowed from BundleDecoder).
+    bundles: Vec<FeatureBundle>,
+
+    // === Bundle histogram data (flat arrays) ===
+    /// For each bundle: (start_idx, end_idx) into the flat arrays below
+    bundle_ranges: Vec<(u32, u32)>,
+    /// Flat array of original feature indices for all bundles
+    bundle_feature_indices: Vec<usize>,
+    /// Flat array of bin0 histogram offsets for all bundles
+    bundle_bin0_offsets: Vec<usize>,
+
+    // === Standalone data ===
+    /// For each standalone: (view_col_idx, hist_offset, n_bins)
+    /// view_col_idx = n_bundles + standalone_idx
+    standalone_info: Vec<(usize, usize, u32)>,
+}
+
+impl BundleHistogramCache {
+    /// Create a histogram cache from a bundle decoder and histogram layouts.
+    ///
+    /// # Arguments
+    /// * `decoder` - The bundle decoder
+    /// * `feature_metas` - Histogram layouts for original features (offset, n_bins)
+    ///
+    /// # Returns
+    /// A cache with all data pre-computed for zero-allocation histogram building.
+    pub fn new(decoder: &BundleDecoder, feature_metas: &[(u32, u32)]) -> Self {
+        let n_bundles = decoder.n_bundles();
+        let n_standalone = decoder.n_standalone();
+
+        // Clone bundles for decoding (one-time cost)
+        let bundles = decoder.bundles().to_vec();
+
+        // Pre-allocate based on total features across all bundles
+        let total_bundled_features: usize = bundles.iter().map(|b| b.feature_indices.len()).sum();
+
+        let mut bundle_ranges = Vec::with_capacity(n_bundles);
+        let mut bundle_feature_indices = Vec::with_capacity(total_bundled_features);
+        let mut bundle_bin0_offsets = Vec::with_capacity(total_bundled_features);
+
+        // Build flat arrays for bundles
+        for bundle in &bundles {
+            let start = bundle_feature_indices.len() as u32;
+            for &feat_idx in &bundle.feature_indices {
+                bundle_feature_indices.push(feat_idx);
+                bundle_bin0_offsets.push(feature_metas[feat_idx].0 as usize);
+            }
+            let end = bundle_feature_indices.len() as u32;
+            bundle_ranges.push((start, end));
+        }
+
+        // Build standalone info
+        let mut standalone_info = Vec::with_capacity(n_standalone);
+        for (i, &orig_feat) in decoder.standalone_features().iter().enumerate() {
+            let view_col_idx = n_bundles + i;
+            let (offset, n_bins) = feature_metas[orig_feat];
+            standalone_info.push((view_col_idx, offset as usize, n_bins));
+        }
+
+        Self {
+            bundles,
+            bundle_ranges,
+            bundle_feature_indices,
+            bundle_bin0_offsets,
+            standalone_info,
+        }
+    }
+
+    /// Number of bundles.
+    #[inline]
+    pub fn n_bundles(&self) -> usize {
+        self.bundles.len()
+    }
+
+    /// Number of standalone features.
+    #[inline]
+    pub fn n_standalone(&self) -> usize {
+        self.standalone_info.len()
+    }
+
+    /// Decode an encoded bundle bin to (original_feature_idx, original_bin).
+    #[inline]
+    pub fn decode(&self, bundle_idx: usize, encoded_bin: u32) -> Option<(usize, u32)> {
+        self.bundles[bundle_idx].decode(encoded_bin)
+    }
+
+    /// Get feature indices and bin0 offsets for a bundle.
+    ///
+    /// Returns slices into pre-computed flat arrays (no allocation).
+    #[inline]
+    pub fn bundle_data(&self, bundle_idx: usize) -> (&[usize], &[usize]) {
+        let (start, end) = self.bundle_ranges[bundle_idx];
+        let start = start as usize;
+        let end = end as usize;
+        (
+            &self.bundle_feature_indices[start..end],
+            &self.bundle_bin0_offsets[start..end],
+        )
+    }
+
+    /// Get standalone feature info.
+    ///
+    /// Returns slice of (view_col_idx, hist_offset, n_bins).
+    #[inline]
+    pub fn standalone_info(&self) -> &[(usize, usize, u32)] {
+        &self.standalone_info
+    }
 }
 
 /// Conflict graph for sparse features.
