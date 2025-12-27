@@ -7,6 +7,15 @@ Example:
     >>> results = compare(["california"], seeds=[42])  # doctest: +SKIP
 """
 
+from boosters_eval.baseline import (
+    Baseline,
+    BaselineResult,
+    MetricStats,
+    RegressionReport,
+    check_baseline,
+    load_baseline,
+    record_baseline,
+)
 from boosters_eval.config import (
     BenchmarkConfig,
     BoosterType,
@@ -51,6 +60,14 @@ __all__ = [
     "Runner",
     "get_available_runners",
     "get_runner",
+    # Baseline
+    "Baseline",
+    "BaselineResult",
+    "MetricStats",
+    "RegressionReport",
+    "check_baseline",
+    "load_baseline",
+    "record_baseline",
 ]
 
 __version__ = "0.1.0"

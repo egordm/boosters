@@ -359,7 +359,7 @@ Library-specific runners that implement the benchmark protocol.
 
 Baseline recording, comparison, and regression detection.
 
-### Story 3.1: Baseline Schema
+### Story 3.1: Baseline Schema ✅ COMPLETE
 
 **As a** developer  
 **I want** a versioned baseline JSON schema  
@@ -369,12 +369,12 @@ Baseline recording, comparison, and regression detection.
 
 **Tasks:**
 
-- [ ] 3.1.1: Define `MetricStats` model (mean, std, n) [S]
-- [ ] 3.1.2: Define `BaselineResult` model [S]
-- [ ] 3.1.3: Define `Baseline` model with schema_version [S]
-- [ ] 3.1.4: Implement schema validation with Pydantic [M]
-- [ ] 3.1.5: Add schema version check on load [S]
-- [ ] 3.1.6: Write unit tests for schema validation [M]
+- [x] 3.1.1: Define `MetricStats` model (mean, std, n) [S]
+- [x] 3.1.2: Define `BaselineResult` model [S]
+- [x] 3.1.3: Define `Baseline` model with schema_version [S]
+- [x] 3.1.4: Implement schema validation with Pydantic [M]
+- [x] 3.1.5: Add schema version check on load [S]
+- [x] 3.1.6: Write unit tests for schema validation [M]
 
 **Definition of Done:**
 
@@ -390,7 +390,7 @@ Baseline recording, comparison, and regression detection.
 
 ---
 
-### Story 3.2: Baseline Recording
+### Story 3.2: Baseline Recording ✅ COMPLETE
 
 **As a** developer  
 **I want** to record current results as a baseline  
@@ -400,11 +400,11 @@ Baseline recording, comparison, and regression detection.
 
 **Tasks:**
 
-- [ ] 3.2.1: Implement `record_baseline()` function [M]
-- [ ] 3.2.2: Add git SHA and version metadata [S]
-- [ ] 3.2.3: Aggregate results by config and library [M]
-- [ ] 3.2.4: Write baseline to JSON file [S]
-- [ ] 3.2.5: Write unit tests for baseline recording [M]
+- [x] 3.2.1: Implement `record_baseline()` function [M]
+- [x] 3.2.2: Add git SHA and version metadata [S]
+- [x] 3.2.3: Aggregate results by config and library [M]
+- [x] 3.2.4: Write baseline to JSON file [S]
+- [x] 3.2.5: Write unit tests for baseline recording [M]
 
 **Definition of Done:**
 
@@ -420,7 +420,7 @@ Baseline recording, comparison, and regression detection.
 
 ---
 
-### Story 3.3: Regression Detection
+### Story 3.3: Regression Detection ✅ COMPLETE
 
 **As a** developer  
 **I want** to compare current results against a baseline  
@@ -430,11 +430,11 @@ Baseline recording, comparison, and regression detection.
 
 **Tasks:**
 
-- [ ] 3.3.1: Implement `is_regression()` function with tolerance [M]
-- [ ] 3.3.2: Implement `check_baseline()` function [M]
-- [ ] 3.3.3: Handle edge cases (missing configs, crashed libraries) [M]
-- [ ] 3.3.4: Return structured regression report [S]
-- [ ] 3.3.5: Write unit tests for regression detection [M]
+- [x] 3.3.1: Implement `is_regression()` function with tolerance [M]
+- [x] 3.3.2: Implement `check_baseline()` function [M]
+- [x] 3.3.3: Handle edge cases (missing configs, crashed libraries) [M]
+- [x] 3.3.4: Return structured regression report [S]
+- [x] 3.3.5: Write unit tests for regression detection [M]
 
 **Definition of Done:**
 
@@ -676,7 +676,7 @@ Full benchmark reports with machine fingerprinting.
 
 Predefined suites for different use cases.
 
-### Story 6.1: Quick and Full Suites
+### Story 6.1: Quick and Full Suites ✅ COMPLETE
 
 **As a** user  
 **I want** predefined quick and full suites  
@@ -686,11 +686,11 @@ Predefined suites for different use cases.
 
 **Tasks:**
 
-- [ ] 6.1.1: Define `QUICK_SUITE` (3 seeds, 2 datasets, 50 estimators) [S]
-- [ ] 6.1.2: Define `FULL_SUITE` (5 seeds, 9 datasets, 100 estimators) [S]
-- [ ] 6.1.3: Define `MINIMAL_SUITE` for CI (1 seed, 2 datasets) [S]
-- [ ] 6.1.4: Add suite registry [S]
-- [ ] 6.1.5: Write integration tests for suite execution [M]
+- [x] 6.1.1: Define `QUICK_SUITE` (3 seeds, 2 datasets, 50 estimators) [S]
+- [x] 6.1.2: Define `FULL_SUITE` (5 seeds, 9 datasets, 100 estimators) [S]
+- [x] 6.1.3: Define `MINIMAL_SUITE` for CI (1 seed, 2 datasets) [S]
+- [x] 6.1.4: Add suite registry [S]
+- [x] 6.1.5: Write integration tests for suite execution [M]
 
 **Definition of Done:**
 
