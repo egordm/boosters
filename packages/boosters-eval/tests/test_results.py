@@ -274,3 +274,111 @@ class TestResultCollection:
         assert len(restored) == 2
         assert len(restored.errors) == 1
         assert restored.results[0].library == original.results[0].library
+
+
+class TestSummaryByTask:
+    """Tests for task-grouped summary functionality."""
+
+    def make_regression_result(
+        self,
+        library: str = "boosters",
+        dataset: str = "california",
+        seed: int = 42,
+        rmse: float = 0.5,
+    ) -> BenchmarkResult:
+        """Create a regression benchmark result."""
+        return BenchmarkResult(
+            config_name=f"{dataset}/gbdt",
+            library=library,
+            seed=seed,
+            task="regression",
+            booster_type="gbdt",
+            dataset_name=dataset,
+            metrics={"rmse": rmse, "mae": rmse * 0.8, "r2": 0.9 - rmse},
+            train_time_s=1.0,
+            predict_time_s=0.1,
+        )
+
+    def make_binary_result(
+        self,
+        library: str = "boosters",
+        dataset: str = "breast_cancer",
+        seed: int = 42,
+        logloss: float = 0.1,
+    ) -> BenchmarkResult:
+        """Create a binary classification benchmark result."""
+        return BenchmarkResult(
+            config_name=f"{dataset}/gbdt",
+            library=library,
+            seed=seed,
+            task="binary",
+            booster_type="gbdt",
+            dataset_name=dataset,
+            metrics={"logloss": logloss, "accuracy": 0.95},
+            train_time_s=0.5,
+            predict_time_s=0.05,
+        )
+
+    def test_summary_by_task_separates_tasks(self) -> None:
+        """Test that summary_by_task separates results by task type."""
+        from boosters_eval.config import Task
+
+        collection = ResultCollection()
+        collection.add_result(self.make_regression_result())
+        collection.add_result(self.make_binary_result())
+
+        summaries = collection.summary_by_task()
+
+        assert Task.REGRESSION in summaries
+        assert Task.BINARY in summaries
+        assert Task.MULTICLASS not in summaries
+
+    def test_summary_by_task_only_relevant_metrics(self) -> None:
+        """Test that each task summary only includes relevant metrics."""
+        from boosters_eval.config import Task
+
+        collection = ResultCollection()
+        collection.add_result(self.make_regression_result())
+        collection.add_result(self.make_binary_result())
+
+        summaries = collection.summary_by_task()
+
+        reg_df = summaries[Task.REGRESSION]
+        assert "rmse_mean" in reg_df.columns
+        assert "logloss_mean" not in reg_df.columns
+
+        bin_df = summaries[Task.BINARY]
+        assert "logloss_mean" in bin_df.columns
+        assert "rmse_mean" not in bin_df.columns
+
+    def test_format_summary_table_highlights_best(self) -> None:
+        """Test that format_summary_table highlights best values."""
+        from boosters_eval.config import Task
+
+        collection = ResultCollection()
+        # Add results with different values
+        collection.add_result(self.make_regression_result(library="boosters", rmse=0.4))
+        collection.add_result(self.make_regression_result(library="xgboost", rmse=0.5))
+        collection.add_result(self.make_regression_result(library="lightgbm", rmse=0.6))
+
+        table = collection.format_summary_table(Task.REGRESSION, highlight_best=True)
+
+        # Best rmse (0.4) from boosters should be bold
+        assert "**0.4000**" in table
+        # xgboost rmse (0.5) should not be bold
+        lines = table.split("\n")
+        xgboost_line = [l for l in lines if "xgboost" in l][0]
+        # Check that 0.5000 appears without bold markers in xgboost line
+        assert "| 0.5000 |" in xgboost_line or "| 0.5000±" in xgboost_line
+
+    def test_to_markdown_groups_by_task(self) -> None:
+        """Test that to_markdown creates sections per task."""
+        collection = ResultCollection()
+        collection.add_result(self.make_regression_result())
+        collection.add_result(self.make_binary_result())
+
+        markdown = collection.to_markdown()
+
+        assert "### Regression" in markdown
+        assert "### Binary Classification" in markdown
+        assert "### Multiclass Classification" not in markdown

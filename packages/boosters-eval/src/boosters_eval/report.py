@@ -180,10 +180,9 @@ def render_report(
         "",
     ])
 
-    # Add summary table with significance highlighting
-    summary = results.summary()
-    if not summary.empty:
-        lines.append(summary.to_markdown(index=False))
+    # Add task-grouped summary tables with best values highlighted
+    formatted = results.to_markdown(highlight_best=True)
+    lines.append(formatted)
 
     lines.extend([
         "",
@@ -195,12 +194,11 @@ def render_report(
         "",
     ])
 
-    if require_significance:
-        lines.extend([
-            "---",
-            "",
-            "*Winners bolded only when statistically significant (p < 0.05).*",
-        ])
+    lines.extend([
+        "---",
+        "",
+        "*Best values per metric are **bolded**. Lower is better for loss/time metrics.*",
+    ])
 
     return "\n".join(lines)
 

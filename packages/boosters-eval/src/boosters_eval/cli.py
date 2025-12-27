@@ -12,7 +12,9 @@ from rich.table import Table
 from boosters_eval.baseline import check_baseline, load_baseline, record_baseline
 from boosters_eval.config import BoosterType, Task, TrainingConfig
 from boosters_eval.datasets import DATASETS
+from boosters_eval.metrics import LOWER_BETTER_METRICS
 from boosters_eval.report import generate_report
+from boosters_eval.results import TASK_METRICS, TIMING_METRICS
 from boosters_eval.runners import get_available_runners
 from boosters_eval.suite import FULL_SUITE, QUICK_SUITE, compare, run_suite
 
@@ -26,6 +28,78 @@ app.add_typer(baseline_app, name="baseline")
 console = Console()
 
 
+def _format_results_terminal(results: "ResultCollection") -> None:  # noqa: F821
+    """Display results as Rich tables grouped by task type."""
+    summaries = results.summary_by_task()
+
+    task_names = {
+        Task.REGRESSION: "Regression Results",
+        Task.BINARY: "Binary Classification Results",
+        Task.MULTICLASS: "Multiclass Classification Results",
+    }
+
+    for task in [Task.REGRESSION, Task.BINARY, Task.MULTICLASS]:
+        if task not in summaries:
+            continue
+
+        df = summaries[task]
+        metrics = TASK_METRICS[task] + TIMING_METRICS
+
+        # Create compact table for this task
+        table = Table(title=task_names[task], show_header=True, header_style="bold")
+        table.add_column("Dataset", style="cyan", no_wrap=True)
+        table.add_column("Library", style="green")
+
+        # Add only relevant metric columns
+        for metric in metrics:
+            mean_col = f"{metric}_mean"
+            if mean_col in df.columns:
+                table.add_column(metric, justify="right")
+
+        # Find best values per dataset
+        for dataset in df["dataset"].unique():
+            dataset_df = df[df["dataset"] == dataset]
+
+            # Find best for each metric
+            best_libs: dict[str, str] = {}
+            for metric in metrics:
+                mean_col = f"{metric}_mean"
+                if mean_col not in dataset_df.columns:
+                    continue
+                valid = dataset_df.dropna(subset=[mean_col])
+                if valid.empty:
+                    continue
+                lower_better = metric in LOWER_BETTER_METRICS or metric.endswith("_time_s")
+                best_idx = valid[mean_col].idxmin() if lower_better else valid[mean_col].idxmax()
+                best_libs[metric] = str(valid.loc[best_idx, "library"])  # pyright: ignore[reportArgumentType]
+
+            # Add rows
+            for _, row in dataset_df.iterrows():
+                lib = str(row["library"])
+                row_data = [str(dataset), lib]
+
+                for metric in metrics:
+                    mean_col = f"{metric}_mean"
+                    if mean_col not in df.columns:
+                        continue
+
+                    import pandas as pd
+                    mean_val = row[mean_col]
+                    if pd.isna(mean_val):
+                        row_data.append("-")
+                    else:
+                        val_str = f"{mean_val:.4f}"
+                        # Highlight best
+                        if best_libs.get(metric) == lib:
+                            val_str = f"[bold green]{val_str}[/bold green]"
+                        row_data.append(val_str)
+
+                table.add_row(*row_data)
+
+        console.print(table)
+        console.print()
+
+
 @app.command()
 def quick(
     output: Annotated[
@@ -37,12 +111,15 @@ def quick(
     console.print("[bold]Running quick benchmark suite[/bold]\n")
 
     results = run_suite(QUICK_SUITE)
-    markdown = results.to_markdown()
-    console.print(markdown)
 
+    # Terminal display: compact Rich tables
+    _format_results_terminal(results)
+
+    # File output: markdown with task sections
     if output:
+        markdown = results.to_markdown()
         output.write_text(markdown)
-        console.print(f"\n[green]Results saved to {output}[/green]")
+        console.print(f"[green]Results saved to {output}[/green]")
 
 
 @app.command()
@@ -56,12 +133,15 @@ def full(
     console.print("[bold]Running full benchmark suite[/bold]\n")
 
     results = run_suite(FULL_SUITE)
-    markdown = results.to_markdown()
-    console.print(markdown)
 
+    # Terminal display: compact Rich tables
+    _format_results_terminal(results)
+
+    # File output: markdown with task sections
     if output:
+        markdown = results.to_markdown()
         output.write_text(markdown)
-        console.print(f"\n[green]Results saved to {output}[/green]")
+        console.print(f"[green]Results saved to {output}[/green]")
 
 
 @app.command(name="compare")
@@ -149,12 +229,14 @@ def compare_cmd(
         booster_type=booster_type,
     )
 
-    markdown = results.to_markdown()
-    console.print(markdown)
+    # Terminal display: compact Rich tables
+    _format_results_terminal(results)
 
+    # File output: markdown with task sections
     if output:
+        markdown = results.to_markdown()
         output.write_text(markdown)
-        console.print(f"\n[green]Results saved to {output}[/green]")
+        console.print(f"[green]Results saved to {output}[/green]")
 
 
 @app.command()

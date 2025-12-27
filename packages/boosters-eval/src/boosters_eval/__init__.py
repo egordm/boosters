@@ -35,7 +35,13 @@ from boosters_eval.report import (
     is_significant,
     render_report,
 )
-from boosters_eval.results import BenchmarkError, BenchmarkResult, ResultCollection
+from boosters_eval.results import (
+    BenchmarkError,
+    BenchmarkResult,
+    ResultCollection,
+    TASK_METRICS,
+    TIMING_METRICS,
+)
 from boosters_eval.runners import Runner, get_available_runners, get_runner
 from boosters_eval.suite import (
     ABLATION_GROWTH,
@@ -73,6 +79,8 @@ __all__ = [
     "BenchmarkError",
     "BenchmarkResult",
     "ResultCollection",
+    "TASK_METRICS",
+    "TIMING_METRICS",
     # Metrics
     "compute_metrics",
     "is_lower_better",

@@ -10,8 +10,19 @@ import numpy as np
 import pandas as pd
 from pydantic import BaseModel, ConfigDict
 
-if TYPE_CHECKING:
-    from boosters_eval.config import Task
+from boosters_eval.config import Task
+from boosters_eval.metrics import LOWER_BETTER_METRICS, primary_metric
+
+
+# Metrics relevant to each task type
+TASK_METRICS: dict[Task, list[str]] = {
+    Task.REGRESSION: ["rmse", "mae", "r2"],
+    Task.BINARY: ["logloss", "accuracy"],
+    Task.MULTICLASS: ["mlogloss", "accuracy"],
+}
+
+# Timing metrics included in all reports
+TIMING_METRICS: list[str] = ["train_time_s", "predict_time_s"]
 
 
 class BenchmarkResult(BaseModel):
@@ -167,21 +178,175 @@ class ResultCollection:
 
         return pd.DataFrame(summary)
 
-    def to_markdown(self, precision: int = 4) -> str:
-        """Generate markdown table from results.
+    def summary_by_task(self) -> dict[Task, pd.DataFrame]:
+        """Get separate summary tables for each task type.
+
+        Returns task-specific tables with only relevant metrics.
+        """
+        result = {}
+        df = self.to_dataframe()
+        if df.empty:
+            return result
+
+        for task in Task:
+            task_df = df[df["task"] == task.value]
+            if task_df.empty:
+                continue
+
+            # Get relevant metrics for this task
+            metrics = TASK_METRICS[task] + TIMING_METRICS
+            group_cols = ["dataset", "library"]
+
+            # Build aggregation for relevant metrics only
+            numeric_cols = task_df.select_dtypes(include=[np.number]).columns
+            relevant_cols = [c for c in numeric_cols if c in metrics]
+
+            if not relevant_cols:
+                continue
+
+            agg_funcs = {col: ["mean", "std"] for col in relevant_cols}
+            summary = task_df.groupby(group_cols, as_index=False).agg(agg_funcs)
+
+            # Flatten column names
+            summary.columns = [  # pyright: ignore[reportAttributeAccessIssue]
+                f"{col}_{agg}" if agg else col for col, agg in summary.columns
+            ]
+
+            result[task] = pd.DataFrame(summary)
+
+        return result
+
+    def format_summary_table(
+        self,
+        task: Task,
+        *,
+        highlight_best: bool = True,
+        precision: int = 4,
+    ) -> str:
+        """Format a summary table for a specific task with highlighting.
 
         Args:
+            task: Task type to format.
+            highlight_best: Bold the best value in each metric.
             precision: Decimal precision for values.
 
         Returns:
             Markdown formatted string.
         """
-        df = self.to_dataframe()
-        if df.empty:
+        summaries = self.summary_by_task()
+        if task not in summaries:
+            return f"No results for {task.value} task."
+
+        df = summaries[task]
+        metrics = TASK_METRICS[task] + TIMING_METRICS
+
+        # Build formatted table
+        lines = []
+        header = ["Dataset", "Library"]
+
+        # Add metric columns (without _mean suffix for cleaner display)
+        for metric in metrics:
+            mean_col = f"{metric}_mean"
+            if mean_col in df.columns:
+                header.append(metric)
+
+        lines.append("| " + " | ".join(header) + " |")
+        lines.append("|" + "|".join(["---"] * len(header)) + "|")
+
+        # Group by dataset to find best values
+        for dataset in df["dataset"].unique():
+            dataset_df = df[df["dataset"] == dataset]
+
+            # Find best library for each metric
+            best_values: dict[str, tuple[str, float]] = {}
+            for metric in metrics:
+                mean_col = f"{metric}_mean"
+                if mean_col not in dataset_df.columns:
+                    continue
+
+                valid = dataset_df.dropna(subset=[mean_col])
+                if valid.empty:
+                    continue
+
+                lower_better = metric in LOWER_BETTER_METRICS or metric.endswith("_time_s")
+                if lower_better:
+                    best_idx = valid[mean_col].idxmin()
+                else:
+                    best_idx = valid[mean_col].idxmax()
+
+                best_lib = valid.loc[best_idx, "library"]  # pyright: ignore[reportArgumentType]
+                best_val = valid.loc[best_idx, mean_col]  # pyright: ignore[reportArgumentType]
+                best_values[metric] = (best_lib, best_val)
+
+            # Format rows
+            for _, row in dataset_df.iterrows():
+                lib = row["library"]
+                row_data = [str(dataset), str(lib)]
+
+                for metric in metrics:
+                    mean_col = f"{metric}_mean"
+                    std_col = f"{metric}_std"
+
+                    if mean_col not in df.columns:
+                        continue
+
+                    mean_val = row[mean_col]
+                    std_val = row.get(std_col, np.nan)
+
+                    if pd.isna(mean_val):
+                        row_data.append("-")
+                    else:
+                        # Format value with optional std
+                        if pd.isna(std_val) or std_val == 0:
+                            val_str = f"{mean_val:.{precision}f}"
+                        else:
+                            val_str = f"{mean_val:.{precision}f}±{std_val:.{precision}f}"
+
+                        # Bold if best
+                        if highlight_best and metric in best_values:
+                            best_lib, _ = best_values[metric]
+                            if lib == best_lib:
+                                val_str = f"**{val_str}**"
+
+                        row_data.append(val_str)
+
+                lines.append("| " + " | ".join(row_data) + " |")
+
+        return "\n".join(lines)
+
+    def to_markdown(self, precision: int = 4, highlight_best: bool = True) -> str:
+        """Generate markdown tables grouped by task type.
+
+        Args:
+            precision: Decimal precision for values.
+            highlight_best: Bold the best value in each metric.
+
+        Returns:
+            Markdown formatted string with sections per task.
+        """
+        summaries = self.summary_by_task()
+        if not summaries:
             return "No results to display."
 
-        summary = self.summary()
-        return summary.to_markdown(index=False, floatfmt=f".{precision}f")
+        sections = []
+
+        # Task display order and names
+        task_names = {
+            Task.REGRESSION: "Regression",
+            Task.BINARY: "Binary Classification",
+            Task.MULTICLASS: "Multiclass Classification",
+        }
+
+        for task in [Task.REGRESSION, Task.BINARY, Task.MULTICLASS]:
+            if task not in summaries:
+                continue
+
+            sections.append(f"### {task_names[task]}")
+            sections.append("")
+            sections.append(self.format_summary_table(task, highlight_best=highlight_best, precision=precision))
+            sections.append("")
+
+        return "\n".join(sections)
 
     def to_json(self) -> str:
         """Export results to JSON string."""
