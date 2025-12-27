@@ -126,7 +126,7 @@ Foundation for the evaluation framework including configuration system, dataset 
 
 ---
 
-### Story 1.3: Result Collection
+### Story 1.3: Result Collection ✅ COMPLETE
 
 **As a** developer  
 **I want** a result collection system  
@@ -134,16 +134,16 @@ Foundation for the evaluation framework including configuration system, dataset 
 
 **Tasks:**
 
-- [ ] 1.3.1: Create `BenchmarkResult` dataclass [S]
-- [ ] 1.3.2: Create `BenchmarkError` dataclass for failures [S]
-- [ ] 1.3.3: Create `ResultCollection` class with results and errors [M]
-- [ ] 1.3.4: Implement `to_dataframe()` method [S]
-- [ ] 1.3.5: Implement `filter()` method (by library, dataset, task) [M]
-- [ ] 1.3.6: Implement `summary()` method with mean ± std aggregation [M]
-- [ ] 1.3.7: Implement `to_markdown()` method (raw output, no significance) [M]
-- [ ] 1.3.8: Implement `to_json()` and `to_csv()` methods [S]
-- [ ] 1.3.9: Implement `derive_seed()` formula: `hash((base, config, lib)) % 2^32` [S]
-- [ ] 1.3.10: Write unit tests for result collection [M]
+- [x] 1.3.1: Create `BenchmarkResult` dataclass [S]
+- [x] 1.3.2: Create `BenchmarkError` dataclass for failures [S]
+- [x] 1.3.3: Create `ResultCollection` class with results and errors [M]
+- [x] 1.3.4: Implement `to_dataframe()` method [S]
+- [x] 1.3.5: Implement `filter()` method (by library, dataset, task) [M]
+- [x] 1.3.6: Implement `summary()` method with mean ± std aggregation [M]
+- [x] 1.3.7: Implement `to_markdown()` method (raw output, no significance) [M]
+- [x] 1.3.8: Implement `to_json()` and `to_csv()` methods [S]
+- [x] 1.3.9: Implement `derive_seed()` formula: `hash((base, config, lib)) % 2^32` [S]
+- [x] 1.3.10: Write unit tests for result collection [M]
 
 **Definition of Done:**
 
