@@ -60,7 +60,7 @@ Initialize package structure and development environment.
 
 Foundation for the evaluation framework including configuration system, dataset loading, and result collection.
 
-### Story 1.1: Configuration Dataclasses
+### Story 1.1: Configuration Dataclasses ✅ COMPLETE
 
 **As a** developer  
 **I want** type-safe configuration dataclasses  
@@ -68,15 +68,15 @@ Foundation for the evaluation framework including configuration system, dataset 
 
 **Tasks:**
 
-- [ ] 1.1.1: Create `Task` enum (regression, binary, multiclass, ranking) [S]
-- [ ] 1.1.2: Create `BoosterType` enum (gbdt, gblinear, linear_trees) [S]
-- [ ] 1.1.3: Create `GrowthStrategy` enum (depthwise, leafwise) [S]
-- [ ] 1.1.4: Create `TrainingConfig` dataclass with canonical parameters [M]
-- [ ] 1.1.5: Create `DatasetConfig` dataclass with loader function [S]
-- [ ] 1.1.6: Create `BenchmarkConfig` dataclass combining dataset, task, training [M]
-- [ ] 1.1.7: Create `BenchmarkSuite` dataclass for grouping configs [S]
-- [ ] 1.1.8: Add Pydantic validation for all configs [M]
-- [ ] 1.1.9: Write unit tests for config validation [M]
+- [x] 1.1.1: Create `Task` enum (regression, binary, multiclass, ranking) [S]
+- [x] 1.1.2: Create `BoosterType` enum (gbdt, gblinear, linear_trees) [S]
+- [x] 1.1.3: Create `GrowthStrategy` enum (depthwise, leafwise) [S]
+- [x] 1.1.4: Create `TrainingConfig` dataclass with canonical parameters [M]
+- [x] 1.1.5: Create `DatasetConfig` dataclass with loader function [S]
+- [x] 1.1.6: Create `BenchmarkConfig` dataclass combining dataset, task, training [M]
+- [x] 1.1.7: Create `BenchmarkSuite` dataclass for grouping configs [S]
+- [x] 1.1.8: Add Pydantic validation for all configs [M]
+- [x] 1.1.9: Write unit tests for config validation [M]
 
 **Definition of Done:**
 
