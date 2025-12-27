@@ -10,6 +10,7 @@ Example:
 from boosters_eval.baseline import (
     Baseline,
     BaselineResult,
+    MetricChange,
     MetricStats,
     RegressionReport,
     check_baseline,
@@ -71,6 +72,7 @@ __all__ = [
     # Baseline
     "Baseline",
     "BaselineResult",
+    "MetricChange",
     "MetricStats",
     "RegressionReport",
     "check_baseline",

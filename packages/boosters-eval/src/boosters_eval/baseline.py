@@ -6,9 +6,9 @@ import json
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TypedDict
 
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from boosters_eval.metrics import is_lower_better
 from boosters_eval.results import ResultCollection
@@ -62,14 +62,23 @@ class Baseline(BaseModel):
         return v
 
 
+class MetricChange(TypedDict):
+    """A metric that changed between baseline and current."""
+
+    config: str
+    metric: str
+    baseline: float
+    current: float
+
+
 class RegressionReport(BaseModel):
     """Report of regressions found."""
 
     model_config = ConfigDict(frozen=True)
 
     has_regressions: bool
-    regressions: list[dict[str, Any]]
-    improvements: list[dict[str, Any]]
+    regressions: list[MetricChange]
+    improvements: list[MetricChange]
     tolerance: float
 
 
@@ -233,8 +242,8 @@ def check_baseline(
             current_agg[key] = []
         current_agg[key].append(r.metrics)
 
-    regressions: list[dict[str, Any]] = []
-    improvements: list[dict[str, Any]] = []
+    regressions: list[MetricChange] = []
+    improvements: list[MetricChange] = []
 
     for key, metrics_list in current_agg.items():
         config_name, library = key
@@ -259,26 +268,22 @@ def check_baseline(
 
             if is_regression(current_mean, baseline_mean, metric_key, tolerance):
                 regressions.append(
-                    {
-                        "config": config_name,
-                        "library": library,
-                        "metric": metric_key,
-                        "baseline": baseline_mean,
-                        "current": current_mean,
-                        "change": (current_mean - baseline_mean) / baseline_mean,
-                    }
+                    MetricChange(
+                        config=config_name,
+                        metric=metric_key,
+                        baseline=baseline_mean,
+                        current=current_mean,
+                    )
                 )
             elif is_regression(baseline_mean, current_mean, metric_key, tolerance):
                 # Improvement (baseline regressed compared to current)
                 improvements.append(
-                    {
-                        "config": config_name,
-                        "library": library,
-                        "metric": metric_key,
-                        "baseline": baseline_mean,
-                        "current": current_mean,
-                        "change": (current_mean - baseline_mean) / baseline_mean,
-                    }
+                    MetricChange(
+                        config=config_name,
+                        metric=metric_key,
+                        baseline=baseline_mean,
+                        current=current_mean,
+                    )
                 )
 
     return RegressionReport(
