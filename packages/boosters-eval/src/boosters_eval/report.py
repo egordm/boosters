@@ -6,14 +6,22 @@ import platform
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import psutil
 from pydantic import BaseModel, ConfigDict
+from rich.console import Console
+from rich.table import Table
 from scipy import stats
 
-from boosters_eval.metrics import LOWER_BETTER_METRICS
-from boosters_eval.results import ResultCollection
+from boosters_eval.config import Task
+from boosters_eval.metrics import LOWER_BETTER_METRICS, primary_metric
+from boosters_eval.results import TIMING_METRICS, ResultCollection
+
+if TYPE_CHECKING:
+    pass
+
+console = Console()
 
 
 class MachineInfo(BaseModel):
@@ -85,6 +93,13 @@ class ReportMetadata(BaseModel):
     machine: MachineInfo
     suite_name: str
     n_seeds: int
+    # Training configuration for reproducibility
+    n_estimators: Optional[int] = None
+    max_depth: Optional[int] = None
+    learning_rate: Optional[float] = None
+    reg_lambda: Optional[float] = None
+    reg_alpha: Optional[float] = None
+    booster_types: Optional[list[str]] = None
 
 
 def get_git_sha() -> Optional[str]:
@@ -175,6 +190,23 @@ def render_report(
         "",
         f"- **Suite**: {metadata.suite_name}",
         f"- **Seeds**: {metadata.n_seeds}",
+    ])
+
+    # Add training parameters if available
+    if metadata.n_estimators is not None:
+        lines.append(f"- **n_estimators**: {metadata.n_estimators}")
+    if metadata.max_depth is not None:
+        lines.append(f"- **max_depth**: {metadata.max_depth}")
+    if metadata.learning_rate is not None:
+        lines.append(f"- **learning_rate**: {metadata.learning_rate}")
+    if metadata.reg_lambda is not None:
+        lines.append(f"- **reg_lambda (L2)**: {metadata.reg_lambda}")
+    if metadata.reg_alpha is not None:
+        lines.append(f"- **reg_alpha (L1)**: {metadata.reg_alpha}")
+    if metadata.booster_types:
+        lines.append(f"- **booster_types**: {', '.join(metadata.booster_types)}")
+
+    lines.extend([
         "",
         "## Results",
         "",
@@ -203,11 +235,101 @@ def render_report(
     return "\n".join(lines)
 
 
+def format_results_terminal(results: ResultCollection) -> None:
+    """Display results as Rich tables grouped by task type.
+
+    Shows only the primary metric for each task type plus timing metrics.
+    - Regression: rmse + timing
+    - Binary: logloss + timing
+    - Multiclass: mlogloss + timing
+
+    Args:
+        results: ResultCollection to display
+    """
+    summaries = results.summary_by_task()
+
+    task_names = {
+        Task.REGRESSION: "Regression Results",
+        Task.BINARY: "Binary Classification Results",
+        Task.MULTICLASS: "Multiclass Classification Results",
+    }
+
+    for task in [Task.REGRESSION, Task.BINARY, Task.MULTICLASS]:
+        if task not in summaries:
+            continue
+
+        df = summaries[task]
+        # Show only primary metric + timing (reduced from showing all metrics)
+        metrics = [primary_metric(task)] + TIMING_METRICS
+
+        # Create compact table for this task
+        table = Table(title=task_names[task], show_header=True, header_style="bold")
+        table.add_column("Dataset", style="cyan", no_wrap=True)
+        table.add_column("Library", style="green")
+
+        # Add only relevant metric columns
+        for metric in metrics:
+            mean_col = f"{metric}_mean"
+            if mean_col in df.columns:
+                table.add_column(metric, justify="right")
+
+        # Find best values per dataset
+        for dataset in df["dataset"].unique():
+            dataset_df = df[df["dataset"] == dataset]
+
+            # Find best for each metric
+            best_libs: dict[str, str] = {}
+            for metric in metrics:
+                mean_col = f"{metric}_mean"
+                if mean_col not in dataset_df.columns:
+                    continue
+                valid = dataset_df.dropna(subset=[mean_col])
+                if valid.empty:
+                    continue
+                lower_better = metric in LOWER_BETTER_METRICS or metric.endswith("_time_s")
+                best_idx = valid[mean_col].idxmin() if lower_better else valid[mean_col].idxmax()
+                best_libs[metric] = str(valid.loc[best_idx, "library"])  # pyright: ignore[reportArgumentType]
+
+            # Add rows
+            for _, row in dataset_df.iterrows():
+                import pandas as pd
+
+                lib = str(row["library"])
+                row_data = [str(dataset), lib]
+
+                for metric in metrics:
+                    mean_col = f"{metric}_mean"
+                    if mean_col not in df.columns:
+                        continue
+
+                    mean_val = row[mean_col]
+                    if pd.isna(mean_val):
+                        row_data.append("-")
+                    else:
+                        val_str = f"{mean_val:.4f}"
+                        # Highlight best
+                        if best_libs.get(metric) == lib:
+                            val_str = f"[bold green]{val_str}[/bold green]"
+                        row_data.append(val_str)
+
+                table.add_row(*row_data)
+
+        console.print(table)
+        console.print()
+
+
 def generate_report(
     results: ResultCollection,
     suite_name: str,
     output_path: Optional[Path] = None,
     title: str = "Benchmark Report",
+    *,
+    n_estimators: Optional[int] = None,
+    max_depth: Optional[int] = None,
+    learning_rate: Optional[float] = None,
+    reg_lambda: Optional[float] = None,
+    reg_alpha: Optional[float] = None,
+    booster_types: Optional[list[str]] = None,
 ) -> str:
     """Generate a benchmark report.
 
@@ -216,6 +338,12 @@ def generate_report(
         suite_name: Name of the suite that was run
         output_path: Optional path to save the report
         title: Report title
+        n_estimators: Number of boosting iterations
+        max_depth: Maximum tree depth
+        learning_rate: Learning rate / shrinkage
+        reg_lambda: L2 regularization
+        reg_alpha: L1 regularization
+        booster_types: List of booster types evaluated
 
     Returns:
         Rendered markdown report
@@ -246,6 +374,12 @@ def generate_report(
         machine=machine,
         suite_name=suite_name,
         n_seeds=len(seeds),
+        n_estimators=n_estimators,
+        max_depth=max_depth,
+        learning_rate=learning_rate,
+        reg_lambda=reg_lambda,
+        reg_alpha=reg_alpha,
+        booster_types=booster_types,
     )
 
     report = render_report(results, metadata)

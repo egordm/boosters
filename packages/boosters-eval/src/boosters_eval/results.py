@@ -24,6 +24,9 @@ TASK_METRICS: dict[Task, list[str]] = {
 # Timing metrics included in all reports
 TIMING_METRICS: list[str] = ["train_time_s", "predict_time_s"]
 
+# Memory metrics (included when measured)
+MEMORY_METRICS: list[str] = ["peak_memory_mb"]
+
 
 class BenchmarkResult(BaseModel):
     """Results from a single benchmark run."""
@@ -193,8 +196,8 @@ class ResultCollection:
             if task_df.empty:
                 continue
 
-            # Get relevant metrics for this task
-            metrics = TASK_METRICS[task] + TIMING_METRICS
+            # Get relevant metrics for this task (including memory if measured)
+            metrics = TASK_METRICS[task] + TIMING_METRICS + MEMORY_METRICS
             group_cols = ["dataset", "library"]
 
             # Build aggregation for relevant metrics only
@@ -238,7 +241,7 @@ class ResultCollection:
             return f"No results for {task.value} task."
 
         df = summaries[task]
-        metrics = TASK_METRICS[task] + TIMING_METRICS
+        metrics = TASK_METRICS[task] + TIMING_METRICS + MEMORY_METRICS
 
         # Build formatted table
         lines = []

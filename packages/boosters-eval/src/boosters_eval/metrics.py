@@ -22,7 +22,7 @@ from boosters_eval.config import Task
 BINARY_THRESHOLD = 0.5
 
 # Metrics where lower values are better
-LOWER_BETTER_METRICS = frozenset({"rmse", "mae", "logloss", "mlogloss"})
+LOWER_BETTER_METRICS = frozenset({"rmse", "mae", "logloss", "mlogloss", "peak_memory_mb"})
 
 
 def compute_metrics(

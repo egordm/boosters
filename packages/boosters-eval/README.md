@@ -49,6 +49,11 @@ Run the full benchmark suite (5 seeds, all datasets, 100 trees):
 ```bash
 boosters-eval full
 boosters-eval full -o results.md
+
+# Run with a specific booster type
+boosters-eval full --booster gbdt          # Gradient boosted trees (default)
+boosters-eval full --booster gblinear      # Linear booster
+boosters-eval full --booster linear_trees  # Trees with linear leaves (LightGBM only)
 ```
 
 ### Compare Libraries
@@ -136,19 +141,47 @@ results = run_suite(suite)
 
 ### Ablation Studies
 
-```python
-from boosters_eval import QUICK_SUITE, create_ablation_suite
+Run ablation studies to compare different hyperparameter settings:
 
-# Create suites with different settings
-variants = {
+```python
+from boosters_eval import QUICK_SUITE, create_ablation_suite, run_suite
+
+# Compare different tree depths
+depth_variants = {
     "depth_4": {"max_depth": 4},
+    "depth_6": {"max_depth": 6},
     "depth_8": {"max_depth": 8},
 }
-
-suites = create_ablation_suite("depth_study", QUICK_SUITE, variants)
-for suite in suites:
+depth_suites = create_ablation_suite("depth_study", QUICK_SUITE, depth_variants)
+for suite in depth_suites:
     results = run_suite(suite)
-    print(f"{suite.name}: {results.summary()}")
+    print(f"{suite.name}:")
+    print(results.to_markdown())
+
+# Compare learning rates
+lr_variants = {
+    "lr_0.01": {"learning_rate": 0.01},
+    "lr_0.1": {"learning_rate": 0.1},
+    "lr_0.3": {"learning_rate": 0.3},
+}
+lr_suites = create_ablation_suite("lr_study", QUICK_SUITE, lr_variants)
+
+# Compare number of trees
+tree_variants = {
+    "trees_50": {"n_estimators": 50},
+    "trees_100": {"n_estimators": 100},
+    "trees_200": {"n_estimators": 200},
+}
+tree_suites = create_ablation_suite("tree_study", QUICK_SUITE, tree_variants)
+```
+
+Available parameters for ablation:
+- `n_estimators`: Number of boosting rounds
+- `max_depth`: Maximum tree depth (default: 6)
+- `learning_rate`: Step size shrinkage (default: 0.1)
+- `booster_type`: BoosterType.GBDT, GBLINEAR, or LINEAR_TREES
+- `datasets`: List of dataset names to include
+- `libraries`: List of libraries to compare
 ```
 
 ### Baseline Regression Testing

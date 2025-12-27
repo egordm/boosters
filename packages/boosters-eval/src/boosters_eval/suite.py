@@ -156,8 +156,8 @@ def run_suite(
             console.print("[yellow]No libraries available to run![/yellow]")
         return collection
 
-    # Build configs
-    training = TrainingConfig(n_estimators=suite.n_estimators)
+    # Build configs from suite's training parameters
+    training = suite.to_training_config()
 
     configs: list[BenchmarkConfig] = []
     for ds_name in suite.datasets:

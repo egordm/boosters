@@ -13,8 +13,8 @@ from boosters_eval.baseline import check_baseline, load_baseline, record_baselin
 from boosters_eval.config import BoosterType, Task, TrainingConfig
 from boosters_eval.datasets import DATASETS
 from boosters_eval.metrics import LOWER_BETTER_METRICS
-from boosters_eval.report import generate_report
-from boosters_eval.results import TASK_METRICS, TIMING_METRICS
+from boosters_eval.report import format_results_terminal, generate_report
+from boosters_eval.results import ResultCollection
 from boosters_eval.runners import get_available_runners
 from boosters_eval.suite import FULL_SUITE, QUICK_SUITE, compare, run_suite
 
@@ -26,78 +26,6 @@ app = typer.Typer(
 baseline_app = typer.Typer(help="Manage baselines for regression detection.")
 app.add_typer(baseline_app, name="baseline")
 console = Console()
-
-
-def _format_results_terminal(results: "ResultCollection") -> None:  # noqa: F821
-    """Display results as Rich tables grouped by task type."""
-    summaries = results.summary_by_task()
-
-    task_names = {
-        Task.REGRESSION: "Regression Results",
-        Task.BINARY: "Binary Classification Results",
-        Task.MULTICLASS: "Multiclass Classification Results",
-    }
-
-    for task in [Task.REGRESSION, Task.BINARY, Task.MULTICLASS]:
-        if task not in summaries:
-            continue
-
-        df = summaries[task]
-        metrics = TASK_METRICS[task] + TIMING_METRICS
-
-        # Create compact table for this task
-        table = Table(title=task_names[task], show_header=True, header_style="bold")
-        table.add_column("Dataset", style="cyan", no_wrap=True)
-        table.add_column("Library", style="green")
-
-        # Add only relevant metric columns
-        for metric in metrics:
-            mean_col = f"{metric}_mean"
-            if mean_col in df.columns:
-                table.add_column(metric, justify="right")
-
-        # Find best values per dataset
-        for dataset in df["dataset"].unique():
-            dataset_df = df[df["dataset"] == dataset]
-
-            # Find best for each metric
-            best_libs: dict[str, str] = {}
-            for metric in metrics:
-                mean_col = f"{metric}_mean"
-                if mean_col not in dataset_df.columns:
-                    continue
-                valid = dataset_df.dropna(subset=[mean_col])
-                if valid.empty:
-                    continue
-                lower_better = metric in LOWER_BETTER_METRICS or metric.endswith("_time_s")
-                best_idx = valid[mean_col].idxmin() if lower_better else valid[mean_col].idxmax()
-                best_libs[metric] = str(valid.loc[best_idx, "library"])  # pyright: ignore[reportArgumentType]
-
-            # Add rows
-            for _, row in dataset_df.iterrows():
-                lib = str(row["library"])
-                row_data = [str(dataset), lib]
-
-                for metric in metrics:
-                    mean_col = f"{metric}_mean"
-                    if mean_col not in df.columns:
-                        continue
-
-                    import pandas as pd
-                    mean_val = row[mean_col]
-                    if pd.isna(mean_val):
-                        row_data.append("-")
-                    else:
-                        val_str = f"{mean_val:.4f}"
-                        # Highlight best
-                        if best_libs.get(metric) == lib:
-                            val_str = f"[bold green]{val_str}[/bold green]"
-                        row_data.append(val_str)
-
-                table.add_row(*row_data)
-
-        console.print(table)
-        console.print()
 
 
 @app.command()
@@ -113,12 +41,23 @@ def quick(
     results = run_suite(QUICK_SUITE)
 
     # Terminal display: compact Rich tables
-    _format_results_terminal(results)
+    format_results_terminal(results)
 
-    # File output: markdown with task sections
+    # File output: full report with training config
     if output:
-        markdown = results.to_markdown()
-        output.write_text(markdown)
+        tc = QUICK_SUITE.to_training_config()
+        generate_report(
+            results,
+            suite_name="quick",
+            output_path=output,
+            title="Quick Benchmark Report",
+            n_estimators=tc.n_estimators,
+            max_depth=tc.max_depth,
+            learning_rate=tc.learning_rate,
+            reg_lambda=tc.reg_lambda,
+            reg_alpha=tc.reg_alpha,
+            booster_types=[QUICK_SUITE.booster_type.value],
+        )
         console.print(f"[green]Results saved to {output}[/green]")
 
 
@@ -128,19 +67,53 @@ def full(
         Optional[Path],
         typer.Option("--output", "-o", help="Output file path for results."),
     ] = None,
+    booster: Annotated[
+        Optional[str],
+        typer.Option(
+            "--booster",
+            "-b",
+            help="Booster type to run: gbdt, gblinear, or linear_trees. Default: gbdt.",
+        ),
+    ] = None,
 ) -> None:
-    """Run the full benchmark suite (all datasets, more seeds)."""
-    console.print("[bold]Running full benchmark suite[/bold]\n")
+    """Run the full benchmark suite (all datasets, more seeds).
 
-    results = run_suite(FULL_SUITE)
+    By default runs GBDT models. Use --booster to select a specific model type.
+    """
+    # Determine booster type
+    booster_type = BoosterType.GBDT
+    if booster:
+        try:
+            booster_type = BoosterType(booster.lower())
+        except ValueError:
+            console.print(f"[red]Unknown booster type: {booster}[/red]")
+            console.print(f"Valid options: {', '.join(b.value for b in BoosterType)}")
+            raise typer.Exit(1)  # noqa: B904
+
+    console.print(f"[bold]Running full benchmark suite ({booster_type.value})[/bold]\n")
+
+    # Create modified suite with selected booster type
+    suite = FULL_SUITE.model_copy(update={"booster_type": booster_type})
+    results = run_suite(suite)
 
     # Terminal display: compact Rich tables
-    _format_results_terminal(results)
+    format_results_terminal(results)
 
-    # File output: markdown with task sections
+    # File output: full report with training config
     if output:
-        markdown = results.to_markdown()
-        output.write_text(markdown)
+        tc = suite.to_training_config()
+        generate_report(
+            results,
+            suite_name="full",
+            output_path=output,
+            title="Full Benchmark Report",
+            n_estimators=tc.n_estimators,
+            max_depth=tc.max_depth,
+            learning_rate=tc.learning_rate,
+            reg_lambda=tc.reg_lambda,
+            reg_alpha=tc.reg_alpha,
+            booster_types=[booster_type.value],
+        )
         console.print(f"[green]Results saved to {output}[/green]")
 
 
@@ -230,7 +203,7 @@ def compare_cmd(
     )
 
     # Terminal display: compact Rich tables
-    _format_results_terminal(results)
+    format_results_terminal(results)
 
     # File output: markdown with task sections
     if output:
@@ -439,11 +412,20 @@ def report_cmd(
     # Determine output path
     save_path = None if dry_run else output
 
+    # Get training config for report
+    tc = benchmark_suite.to_training_config()
+
     report = generate_report(
         results,
         suite_name=suite,
         output_path=save_path,
         title=title,
+        n_estimators=tc.n_estimators,
+        max_depth=tc.max_depth,
+        learning_rate=tc.learning_rate,
+        reg_lambda=tc.reg_lambda,
+        reg_alpha=tc.reg_alpha,
+        booster_types=[benchmark_suite.booster_type.value],
     )
 
     if dry_run or not output:

@@ -261,7 +261,17 @@ class XGBoostRunner(Runner):
 
 
 class LightGBMRunner(Runner):
-    """Runner for LightGBM library."""
+    """Runner for LightGBM library.
+
+    Parameter mapping from canonical TrainingConfig:
+    - learning_rate -> learning_rate
+    - max_depth -> max_depth (also sets num_leaves = 2^max_depth - 1 for depth-wise equivalence)
+    - reg_lambda -> lambda_l2 (L2 regularization)
+    - reg_alpha -> lambda_l1 (L1 regularization)
+    - min_child_weight -> min_sum_hessian_in_leaf (also set min_data_in_leaf=1 to match XGBoost)
+    - subsample -> bagging_fraction (requires bagging_freq=1)
+    - colsample_bytree -> feature_fraction
+    """
 
     name = "lightgbm"
 
@@ -289,19 +299,27 @@ class LightGBMRunner(Runner):
         task = config.dataset.task
         tc = config.training
 
+        # Compute num_leaves from max_depth for depth-wise growth equivalence
+        # This ensures LightGBM produces trees similar to XGBoost/boosters
+        num_leaves = tc.num_leaves
+
         params: dict[str, Any] = {
             "boosting_type": "gbdt",
             "learning_rate": tc.learning_rate,
             "max_depth": tc.max_depth,
-            "reg_lambda": tc.reg_lambda,
-            "reg_alpha": tc.reg_alpha,
-            "subsample": tc.subsample,
-            "colsample_bytree": tc.colsample_bytree,
-            "min_child_weight": tc.min_child_weight,
+            "num_leaves": num_leaves,  # Constrain to match depth-wise growth
+            "lambda_l1": tc.reg_alpha,  # Note: LightGBM naming is opposite
+            "lambda_l2": tc.reg_lambda,
+            "min_sum_hessian_in_leaf": tc.min_child_weight,
+            "min_data_in_leaf": 1,  # Match XGBoost (LightGBM default is 20)
+            "bagging_fraction": tc.subsample,
+            "bagging_freq": 1 if tc.subsample < 1.0 else 0,
+            "feature_fraction": tc.colsample_bytree,
             "n_jobs": tc.n_threads,
             "seed": seed,
             "verbose": -1,
             "force_col_wise": True,
+            "early_stopping_round": None,  # Disable early stopping for fair comparison
         }
 
         if config.booster_type == BoosterType.LINEAR_TREES:

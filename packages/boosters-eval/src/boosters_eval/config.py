@@ -50,20 +50,32 @@ class DatasetConfig(BaseModel):
 
 
 class TrainingConfig(BaseModel):
-    """Training hyperparameters - consistent across libraries."""
+    """Training hyperparameters - consistent across libraries.
+
+    Parameter alignment notes:
+    - learning_rate: 0.1 (XGBoost default is 0.3, but 0.1 is standard)
+    - reg_lambda/reg_alpha: 0.0 (no regularization for fair quality comparison)
+    - max_depth: 6 (same across all libraries)
+    - For LightGBM, num_leaves is computed as 2^max_depth - 1 to match depth-wise
+    """
 
     model_config = ConfigDict(frozen=True)
 
     n_estimators: int = 100
     max_depth: int = 6
     learning_rate: float = 0.1
-    reg_lambda: float = 1.0
-    reg_alpha: float = 0.0
-    min_child_weight: float = 1.0
+    reg_lambda: float = 0.0  # L2 regularization - 0 for fair comparison
+    reg_alpha: float = 0.0  # L1 regularization - 0 for fair comparison
+    min_child_weight: float = 1.0  # Minimum hessian sum in leaf
     subsample: float = 1.0
     colsample_bytree: float = 1.0
     n_threads: int = 1
     growth_strategy: GrowthStrategy = GrowthStrategy.DEPTHWISE
+
+    @property
+    def num_leaves(self) -> int:
+        """Compute num_leaves from max_depth for LightGBM depth-wise equivalence."""
+        return (2 ** self.max_depth) - 1
 
     @field_validator("learning_rate")
     @classmethod
@@ -103,6 +115,18 @@ class SuiteConfig(BaseModel):
     description: str
     datasets: list[str]
     n_estimators: int = 100
+    max_depth: int = 6
+    learning_rate: float = 0.1
     seeds: list[int] = [42, 1379, 2716]
     libraries: list[str] = ["boosters", "xgboost", "lightgbm"]
     booster_type: BoosterType = BoosterType.GBDT
+    growth_strategy: GrowthStrategy = GrowthStrategy.DEPTHWISE
+
+    def to_training_config(self) -> TrainingConfig:
+        """Convert suite config to training config."""
+        return TrainingConfig(
+            n_estimators=self.n_estimators,
+            max_depth=self.max_depth,
+            learning_rate=self.learning_rate,
+            growth_strategy=self.growth_strategy,
+        )
