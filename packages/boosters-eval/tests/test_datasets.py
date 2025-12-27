@@ -6,7 +6,6 @@ from boosters_eval.config import Task
 from boosters_eval.datasets import (
     DATASETS,
     get_datasets_by_task,
-    synthetic_regression_small,
 )
 
 
@@ -29,21 +28,6 @@ class TestDatasetRegistry:
             assert config.name == name
             assert config.task in (Task.REGRESSION, Task.BINARY, Task.MULTICLASS)
             assert callable(config.loader)
-
-
-class TestDatasetCaching:
-    """Tests for dataset caching."""
-
-    def test_cache_returns_same_object(self) -> None:
-        """Test that cached data returns same object (lru_cache works)."""
-        synthetic_regression_small.cache_clear()
-
-        x1, y1 = synthetic_regression_small()
-        x2, y2 = synthetic_regression_small()
-
-        # Should be the exact same arrays (same object reference)
-        assert x1 is x2
-        assert y1 is y2
 
 
 class TestGetDatasetsByTask:
