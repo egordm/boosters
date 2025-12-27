@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from boosters_eval.report import (
+from boosters_eval.reports import (
     LibraryVersions,
     MachineInfo,
     ReportMetadata,

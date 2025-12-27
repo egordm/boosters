@@ -13,7 +13,7 @@ from boosters_eval.baseline import check_baseline, load_baseline, record_baselin
 from boosters_eval.config import BoosterType, Task, TrainingConfig
 from boosters_eval.datasets import DATASETS
 from boosters_eval.metrics import LOWER_BETTER_METRICS
-from boosters_eval.report import format_results_terminal, generate_report
+from boosters_eval.reports import format_results_terminal, generate_report
 from boosters_eval.results import ResultCollection
 from boosters_eval.runners import get_available_runners
 from boosters_eval.suite import FULL_SUITE, QUICK_SUITE, compare, run_suite
