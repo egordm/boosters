@@ -106,10 +106,10 @@ class TestRunnerSupports:
         config = make_config(booster_type=BoosterType.GBLINEAR)
         assert BoostersRunner.supports(config)
 
-    def test_boosters_not_supports_linear_trees(self) -> None:
-        """Test boosters does not support LINEAR_TREES."""
+    def test_boosters_supports_linear_trees(self) -> None:
+        """Test boosters supports LINEAR_TREES."""
         config = make_config(booster_type=BoosterType.LINEAR_TREES)
-        assert not BoostersRunner.supports(config)
+        assert BoostersRunner.supports(config)
 
     def test_xgboost_supports_gbdt(self) -> None:
         """Test xgboost supports GBDT."""

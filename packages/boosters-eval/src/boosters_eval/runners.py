@@ -66,7 +66,11 @@ class BoostersRunner(Runner):
     @classmethod
     def supports(cls, config: BenchmarkConfig) -> bool:
         """Check if boosters supports the given configuration."""
-        return config.booster_type in (BoosterType.GBDT, BoosterType.GBLINEAR)
+        return config.booster_type in (
+            BoosterType.GBDT,
+            BoosterType.GBLINEAR,
+            BoosterType.LINEAR_TREES,
+        )
 
     @classmethod
     def run(
@@ -113,6 +117,30 @@ class BoostersRunner(Runner):
                     if tc.growth_strategy.value == "leafwise"
                     else boosters.GrowthStrategy.Depthwise
                 ),
+                objective=objective,
+                seed=seed,
+            )
+            model = boosters.GBDTModel(model_config)
+        elif config.booster_type == BoosterType.LINEAR_TREES:
+            # Linear trees: GBDT with linear_leaves enabled
+            model_config = boosters.GBDTConfig(
+                n_estimators=tc.n_estimators,
+                max_depth=tc.max_depth,
+                learning_rate=tc.learning_rate,
+                l2=tc.reg_lambda,
+                l1=tc.reg_alpha,
+                min_child_weight=tc.min_child_weight,
+                min_samples_leaf=tc.min_samples_leaf,
+                subsample=tc.subsample,
+                colsample_bytree=tc.colsample_bytree,
+                max_bins=tc.max_bins,
+                growth_strategy=(
+                    boosters.GrowthStrategy.Leafwise
+                    if tc.growth_strategy.value == "leafwise"
+                    else boosters.GrowthStrategy.Depthwise
+                ),
+                linear_leaves=True,
+                linear_l2=tc.linear_l2,
                 objective=objective,
                 seed=seed,
             )
@@ -173,6 +201,7 @@ class BoostersRunner(Runner):
             train_time_s=train_time,
             predict_time_s=predict_time,
             peak_memory_mb=peak_memory,
+            dataset_primary_metric=config.dataset.primary_metric,
         )
 
 
@@ -266,6 +295,7 @@ class XGBoostRunner(Runner):
             train_time_s=train_time,
             predict_time_s=predict_time,
             peak_memory_mb=peak_memory,
+            dataset_primary_metric=config.dataset.primary_metric,
         )
 
 
@@ -334,6 +364,7 @@ class LightGBMRunner(Runner):
 
         if config.booster_type == BoosterType.LINEAR_TREES:
             params["linear_tree"] = True
+            params["linear_lambda"] = tc.linear_l2  # LightGBM uses linear_lambda for L2
 
         if task == Task.REGRESSION:
             params["objective"] = "regression"
@@ -391,6 +422,7 @@ class LightGBMRunner(Runner):
             train_time_s=train_time,
             predict_time_s=predict_time,
             peak_memory_mb=peak_memory,
+            dataset_primary_metric=config.dataset.primary_metric,
         )
 
 

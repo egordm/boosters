@@ -44,6 +44,8 @@ class BenchmarkResult(BaseModel):
     train_time_s: float | None = None
     predict_time_s: float | None = None
     peak_memory_mb: float | None = None
+    # Per-dataset primary metric override (e.g., "mape" for forecasting)
+    dataset_primary_metric: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to flat dictionary for DataFrame."""
@@ -62,6 +64,8 @@ class BenchmarkResult(BaseModel):
             result["predict_time_s"] = self.predict_time_s
         if self.peak_memory_mb is not None:
             result["peak_memory_mb"] = self.peak_memory_mb
+        if self.dataset_primary_metric is not None:
+            result["dataset_primary_metric"] = self.dataset_primary_metric
         return result
 
 
@@ -220,6 +224,49 @@ class ResultCollection:
 
         return result
 
+    def summary_by_dataset(self) -> dict[str, pd.DataFrame]:
+        """Get separate summary tables for each dataset.
+
+        Returns per-dataset tables with relevant metrics based on dataset's
+        primary_metric override or task default.
+        """
+        result: dict[str, pd.DataFrame] = {}
+        df = self.to_dataframe()
+        if df.empty:
+            return result
+
+        for dataset in df["dataset"].unique():
+            dataset_df = df[df["dataset"] == dataset]
+            if dataset_df.empty:
+                continue
+
+            # Get task type for this dataset
+            task_value = dataset_df["task"].iloc[0]
+            task = Task(task_value)
+
+            # Get relevant metrics for this task
+            metrics = TASK_METRICS[task] + TIMING_METRICS + MEMORY_METRICS
+            group_cols = ["dataset", "booster", "library"]
+
+            # Build aggregation for relevant metrics only
+            numeric_cols = dataset_df.select_dtypes(include=[np.number]).columns
+            relevant_cols = [c for c in numeric_cols if c in metrics]
+
+            if not relevant_cols:
+                continue
+
+            agg_funcs = {col: ["mean", "std"] for col in relevant_cols}
+            summary = dataset_df.groupby(group_cols, as_index=False).agg(agg_funcs)
+
+            # Flatten column names
+            summary.columns = [  # pyright: ignore[reportAttributeAccessIssue]
+                f"{col}_{agg}" if agg else col for col, agg in summary.columns
+            ]
+
+            result[str(dataset)] = pd.DataFrame(summary)
+
+        return result
+
     def _get_raw_values_by_library(
         self,
         task: Task,
@@ -249,6 +296,21 @@ class ResultCollection:
                 result[r.library] = []
             result[r.library].append(val)
         return result
+
+    def _get_primary_metric_for_dataset(self, dataset: str) -> str:
+        """Get primary metric for a dataset (override or task default).
+
+        Checks if any result for this dataset has a dataset_primary_metric set,
+        otherwise falls back to task-based primary metric.
+        """
+        for r in self.results:
+            if r.dataset_name == dataset:
+                if r.dataset_primary_metric:
+                    return r.dataset_primary_metric
+                # Fall back to task default
+                return primary_metric(Task(r.task))
+        # Default
+        return "rmse"
 
     def _is_significantly_better(
         self,
@@ -378,6 +440,133 @@ class ResultCollection:
 
         return output_df.to_markdown(index=False)
 
+    def format_dataset_table(
+        self,
+        dataset: str,
+        *,
+        highlight_best: bool = True,
+        require_significance: bool = True,
+        alpha: float = 0.05,
+        precision: int = 4,
+    ) -> str:
+        """Format a summary table for a specific dataset with significance-aware highlighting.
+
+        This is the per-dataset version that respects dataset-specific primary metrics.
+
+        Args:
+            dataset: Dataset name to format.
+            highlight_best: Bold the best value in each metric.
+            require_significance: Only bold if statistically significant (Welch's t-test).
+            alpha: Significance level for t-test (default 0.05).
+            precision: Decimal precision for values.
+
+        Returns:
+            Markdown formatted string (using pandas to_markdown).
+        """
+        summaries = self.summary_by_dataset()
+        if dataset not in summaries:
+            return f"No results for {dataset} dataset."
+
+        df = summaries[dataset]
+        
+        # Get task type for this dataset to determine relevant metrics
+        task = None
+        for r in self.results:
+            if r.dataset_name == dataset:
+                task = Task(r.task)
+                break
+        if task is None:
+            return f"No results for {dataset} dataset."
+
+        metrics = TASK_METRICS[task] + TIMING_METRICS + MEMORY_METRICS
+
+        # Determine which metrics are actually present
+        present_metrics = [
+            m for m in metrics if f"{m}_mean" in df.columns
+        ]
+
+        if not present_metrics:
+            return f"No metrics for {dataset} dataset."
+
+        # Build output DataFrame with formatted values
+        output_rows: list[dict[str, str]] = []
+
+        for booster in df["booster"].unique():
+            booster_df = df[df["booster"] == booster]
+
+            # For each metric, find best and determine if significant
+            significant_winners: dict[str, str | None] = {}
+            for metric in present_metrics:
+                mean_col = f"{metric}_mean"
+                valid = booster_df.dropna(subset=[mean_col])
+                if len(valid) < 2:
+                    # Can't compare if fewer than 2 libraries
+                    significant_winners[metric] = None
+                    continue
+
+                lower_better = metric in LOWER_BETTER_METRICS or metric.endswith("_time_s")
+                if lower_better:
+                    sorted_df = valid.sort_values(mean_col, ascending=True)
+                else:
+                    sorted_df = valid.sort_values(mean_col, ascending=False)
+
+                best_lib = str(sorted_df.iloc[0]["library"])
+                second_lib = str(sorted_df.iloc[1]["library"])
+
+                if not highlight_best:
+                    significant_winners[metric] = None
+                elif not require_significance:
+                    # Highlight best without significance check
+                    significant_winners[metric] = best_lib
+                else:
+                    # Check statistical significance
+                    raw_values = self._get_raw_values_by_library(task, dataset, metric)
+                    best_vals = raw_values.get(best_lib, [])
+                    second_vals = raw_values.get(second_lib, [])
+
+                    if self._is_significantly_better(best_vals, second_vals, alpha):
+                        significant_winners[metric] = best_lib
+                    else:
+                        # Not significant - don't highlight (tie)
+                        significant_winners[metric] = None
+
+            # Format rows for this booster
+            for _, row in booster_df.iterrows():
+                lib = str(row["library"])
+                row_dict: dict[str, str] = {"Booster": str(booster), "Library": lib}
+
+                for metric in present_metrics:
+                    mean_col = f"{metric}_mean"
+                    std_col = f"{metric}_std"
+
+                    mean_val = row[mean_col]
+                    std_val = row.get(std_col, np.nan)
+
+                    if pd.isna(mean_val):
+                        row_dict[metric] = "-"
+                    else:
+                        # Format value with optional std
+                        if pd.isna(std_val) or std_val == 0:
+                            val_str = f"{mean_val:.{precision}f}"
+                        else:
+                            val_str = f"{mean_val:.{precision}f}±{std_val:.{precision}f}"
+
+                        # Bold only if this library is the significant winner
+                        if significant_winners.get(metric) == lib:
+                            val_str = f"**{val_str}**"
+
+                        row_dict[metric] = val_str
+
+                output_rows.append(row_dict)
+
+        # Create DataFrame and use to_markdown
+        output_df = pd.DataFrame(output_rows)
+        # Reorder columns
+        col_order = ["Booster", "Library"] + present_metrics
+        output_df = output_df[[c for c in col_order if c in output_df.columns]]
+
+        return output_df.to_markdown(index=False)
+
     def to_markdown(
         self,
         *,
@@ -385,18 +574,83 @@ class ResultCollection:
         highlight_best: bool = True,
         require_significance: bool = True,
         alpha: float = 0.05,
+        group_by_dataset: bool = True,
     ) -> str:
-        """Generate markdown tables grouped by task type.
+        """Generate markdown tables grouped by dataset or task type.
 
         Args:
             precision: Decimal precision for values.
             highlight_best: Bold the best value in each metric.
             require_significance: Only highlight if statistically significant.
             alpha: Significance level for Welch's t-test.
+            group_by_dataset: If True, group by dataset. Otherwise by task.
 
         Returns:
-            Markdown formatted string with sections per task.
+            Markdown formatted string with sections per dataset or task.
         """
+        if group_by_dataset:
+            return self._to_markdown_by_dataset(
+                precision=precision,
+                highlight_best=highlight_best,
+                require_significance=require_significance,
+                alpha=alpha,
+            )
+        else:
+            return self._to_markdown_by_task(
+                precision=precision,
+                highlight_best=highlight_best,
+                require_significance=require_significance,
+                alpha=alpha,
+            )
+
+    def _to_markdown_by_dataset(
+        self,
+        *,
+        precision: int = 4,
+        highlight_best: bool = True,
+        require_significance: bool = True,
+        alpha: float = 0.05,
+    ) -> str:
+        """Generate markdown tables grouped by dataset."""
+        summaries = self.summary_by_dataset()
+        if not summaries:
+            return "No results to display."
+
+        sections = []
+
+        # Get task info for each dataset
+        dataset_tasks: dict[str, Task] = {}
+        for r in self.results:
+            if r.dataset_name not in dataset_tasks:
+                dataset_tasks[r.dataset_name] = Task(r.task)
+
+        for dataset in sorted(summaries.keys()):
+            task = dataset_tasks.get(dataset, Task.REGRESSION)
+            primary = self._get_primary_metric_for_dataset(dataset)
+            sections.append(f"### {dataset} ({task.value}, primary: {primary})")
+            sections.append("")
+            sections.append(
+                self.format_dataset_table(
+                    dataset,
+                    highlight_best=highlight_best,
+                    require_significance=require_significance,
+                    alpha=alpha,
+                    precision=precision,
+                )
+            )
+            sections.append("")
+
+        return "\n".join(sections)
+
+    def _to_markdown_by_task(
+        self,
+        *,
+        precision: int = 4,
+        highlight_best: bool = True,
+        require_significance: bool = True,
+        alpha: float = 0.05,
+    ) -> str:
+        """Generate markdown tables grouped by task type."""
         summaries = self.summary_by_task()
         if not summaries:
             return "No results to display."

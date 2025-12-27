@@ -8,9 +8,11 @@ from pathlib import Path
 import pytest
 
 from boosters_eval.report import (
+    LibraryVersions,
     MachineInfo,
     ReportMetadata,
     generate_report,
+    get_library_versions,
     get_machine_info,
     is_significant,
     render_report,
@@ -41,7 +43,6 @@ class TestMachineInfo:
         assert isinstance(info, MachineInfo)
         assert info.cores >= 1
         assert info.memory_gb > 0
-        assert info.python_version
 
     def test_machine_info_fields(self) -> None:
         """Test all fields are populated."""
@@ -56,6 +57,24 @@ class TestMachineInfo:
         info = get_machine_info()
         with pytest.raises(Exception):
             info.cores = 99  # type: ignore[misc]
+
+
+class TestLibraryVersions:
+    """Tests for library version collection."""
+
+    def test_get_library_versions(self) -> None:
+        """Test collecting library versions."""
+        versions = get_library_versions()
+
+        assert isinstance(versions, LibraryVersions)
+        assert versions.python  # Python version should always be present
+
+    def test_library_versions_fields(self) -> None:
+        """Test library version fields."""
+        versions = get_library_versions()
+
+        # At least numpy should be installed
+        assert versions.numpy is not None
 
 
 class TestIsSignificant:
@@ -103,15 +122,18 @@ class TestRenderReport:
             cores=4,
             memory_gb=16.0,
             os="Test OS",
-            python_version="3.12.0",
+        )
+        library_versions = LibraryVersions(
+            python="3.12.0",
+            boosters="0.1.0",
         )
 
         metadata = ReportMetadata(
             title="Test Report",
             created_at="2024-01-01T00:00:00",
             git_sha="abc123",
-            boosters_version="0.1.0",
             machine=machine,
+            library_versions=library_versions,
             suite_name="quick",
             n_seeds=3,
         )
@@ -136,10 +158,12 @@ class TestRenderReport:
         collection.add_result(make_result())
 
         machine = get_machine_info()
+        library_versions = get_library_versions()
         metadata = ReportMetadata(
             title="Test",
             created_at="2024-01-01T00:00:00",
             machine=machine,
+            library_versions=library_versions,
             suite_name="quick",
             n_seeds=1,
         )

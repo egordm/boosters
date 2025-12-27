@@ -420,14 +420,16 @@ class TestSummaryByTask:
         boosters_line = [l for l in lines if "boosters" in l][0]
         assert "**" in boosters_line
 
-    def test_to_markdown_groups_by_task(self) -> None:
-        """Test that to_markdown creates sections per task."""
+    def test_to_markdown_groups_by_dataset(self) -> None:
+        """Test that to_markdown creates sections per dataset."""
         collection = ResultCollection()
         collection.add_result(self.make_regression_result())
         collection.add_result(self.make_binary_result())
 
         markdown = collection.to_markdown()
 
-        assert "### Regression" in markdown
-        assert "### Binary Classification" in markdown
-        assert "### Multiclass Classification" not in markdown
+        # Now groups by dataset with primary metric info
+        assert "### california" in markdown
+        assert "### breast_cancer" in markdown
+        assert "regression" in markdown
+        assert "binary" in markdown

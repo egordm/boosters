@@ -8,13 +8,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+import numpy as np
 import psutil
 from pydantic import BaseModel, ConfigDict
 from rich.console import Console
 from rich.table import Table
 from scipy import stats
 
-from boosters_eval.config import Task, TrainingConfig
+from boosters_eval.config import BoosterType, Task, TrainingConfig
 from boosters_eval.metrics import LOWER_BETTER_METRICS, primary_metric
 from boosters_eval.results import TIMING_METRICS, ResultCollection
 
@@ -25,7 +26,12 @@ console = Console()
 
 
 class MachineInfo(BaseModel):
-    """Machine information for reproducibility."""
+    """Machine information for reproducibility.
+
+    Simplified to show just the essentials:
+    - Machine type (CPU model)
+    - Core count and memory for context
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -33,12 +39,22 @@ class MachineInfo(BaseModel):
     cores: int
     memory_gb: float
     os: str
-    python_version: str
-    blas_backend: Optional[str] = None
+
+
+class LibraryVersions(BaseModel):
+    """Library versions for reproducibility."""
+
+    model_config = ConfigDict(frozen=True)
+
+    python: str
+    boosters: Optional[str] = None
+    xgboost: Optional[str] = None
+    lightgbm: Optional[str] = None
+    numpy: Optional[str] = None
 
 
 def get_machine_info() -> MachineInfo:
-    """Collect machine information."""
+    """Collect machine information (simplified)."""
     # CPU info - try platform.processor first, fallback for Linux
     cpu = platform.processor()
     if not cpu and platform.system() == "Linux":
@@ -55,30 +71,51 @@ def get_machine_info() -> MachineInfo:
     # Memory
     memory_gb = round(psutil.virtual_memory().total / (1024**3), 1)
 
-    # BLAS backend (best effort via numpy)
-    blas_backend = None
-    try:
-        import numpy as np
-
-        config = np.__config__.show()
-        if isinstance(config, str):
-            if "openblas" in config.lower():
-                blas_backend = "OpenBLAS"
-            elif "mkl" in config.lower():
-                blas_backend = "MKL"
-            elif "accelerate" in config.lower():
-                blas_backend = "Accelerate"
-    except Exception:  # noqa: BLE001
-        pass
-
     return MachineInfo(
         cpu=cpu,
         cores=psutil.cpu_count(logical=False) or psutil.cpu_count() or 1,
         memory_gb=memory_gb,
         os=f"{platform.system()} {platform.release()}",
-        python_version=platform.python_version(),
-        blas_backend=blas_backend,
     )
+
+
+def get_library_versions() -> LibraryVersions:
+    """Collect versions of key libraries."""
+    versions = LibraryVersions(python=platform.python_version())
+
+    # boosters
+    try:
+        import boosters
+
+        versions = versions.model_copy(update={"boosters": getattr(boosters, "__version__", "unknown")})
+    except ImportError:
+        pass
+
+    # xgboost
+    try:
+        import xgboost
+
+        versions = versions.model_copy(update={"xgboost": getattr(xgboost, "__version__", "unknown")})
+    except ImportError:
+        pass
+
+    # lightgbm
+    try:
+        import lightgbm
+
+        versions = versions.model_copy(update={"lightgbm": getattr(lightgbm, "__version__", "unknown")})
+    except ImportError:
+        pass
+
+    # numpy
+    try:
+        import numpy
+
+        versions = versions.model_copy(update={"numpy": numpy.__version__})
+    except ImportError:
+        pass
+
+    return versions
 
 
 class ReportMetadata(BaseModel):
@@ -89,8 +126,8 @@ class ReportMetadata(BaseModel):
     title: str
     created_at: str
     git_sha: Optional[str] = None
-    boosters_version: Optional[str] = None
     machine: MachineInfo
+    library_versions: LibraryVersions
     suite_name: str
     n_seeds: int
     # Training configuration for reproducibility
@@ -137,7 +174,7 @@ def is_significant(
 
     try:
         result = stats.ttest_ind(values1, values2, equal_var=False)
-        return bool(result.pvalue < alpha)
+        return bool(result.pvalue < alpha)  # type: ignore[attr-defined]
     except Exception:  # noqa: BLE001
         return False
 
@@ -166,19 +203,33 @@ def render_report(
         "",
         "| Property | Value |",
         "|----------|-------|",
-        f"| CPU | {metadata.machine.cpu} |",
+        f"| Machine | {metadata.machine.cpu} |",
         f"| Cores | {metadata.machine.cores} |",
         f"| Memory | {metadata.machine.memory_gb} GB |",
         f"| OS | {metadata.machine.os} |",
-        f"| Python | {metadata.machine.python_version} |",
     ]
 
-    if metadata.machine.blas_backend:
-        lines.append(f"| BLAS | {metadata.machine.blas_backend} |")
     if metadata.git_sha:
         lines.append(f"| Git SHA | {metadata.git_sha} |")
-    if metadata.boosters_version:
-        lines.append(f"| Boosters | {metadata.boosters_version} |")
+
+    lines.extend([
+        "",
+        "## Library Versions",
+        "",
+        "| Library | Version |",
+        "|---------|---------|",
+        f"| Python | {metadata.library_versions.python} |",
+    ])
+
+    lv = metadata.library_versions
+    if lv.boosters:
+        lines.append(f"| boosters | {lv.boosters} |")
+    if lv.xgboost:
+        lines.append(f"| xgboost | {lv.xgboost} |")
+    if lv.lightgbm:
+        lines.append(f"| lightgbm | {lv.lightgbm} |")
+    if lv.numpy:
+        lines.append(f"| numpy | {lv.numpy} |")
 
     lines.extend([
         "",
@@ -188,17 +239,32 @@ def render_report(
         f"- **Seeds**: {metadata.n_seeds}",
     ])
 
-    # Add training parameters if available
+    # Add training parameters relevant to the booster types being run
     tc = metadata.training_config
+    booster_types = metadata.booster_types or []
     if tc is not None:
+        # Common parameters
         lines.append(f"- **n_estimators**: {tc.n_estimators}")
-        lines.append(f"- **max_depth**: {tc.max_depth}")
         lines.append(f"- **learning_rate**: {tc.learning_rate}")
+
+        # Tree-based parameters (GBDT or LINEAR_TREES only)
+        has_tree_based = any(bt in ("gbdt", "linear_trees") for bt in booster_types)
+        if has_tree_based or not booster_types:  # Show if no booster types specified
+            lines.append(f"- **max_depth**: {tc.max_depth}")
+            lines.append(f"- **growth_strategy**: {tc.growth_strategy.value}")
+            lines.append(f"- **max_bins**: {tc.max_bins}")
+            lines.append(f"- **min_samples_leaf**: {tc.min_samples_leaf}")
+
+        # Regularization (applies to all)
         lines.append(f"- **reg_lambda (L2)**: {tc.reg_lambda}")
         lines.append(f"- **reg_alpha (L1)**: {tc.reg_alpha}")
-        lines.append(f"- **growth_strategy**: {tc.growth_strategy.value}")
-    if metadata.booster_types:
-        lines.append(f"- **booster_types**: {', '.join(metadata.booster_types)}")
+
+        # Linear tree parameters
+        if "linear_trees" in booster_types:
+            lines.append(f"- **linear_l2**: {tc.linear_l2}")
+
+    if booster_types:
+        lines.append(f"- **booster_types**: {', '.join(booster_types)}")
 
     lines.extend([
         "",
@@ -206,7 +272,7 @@ def render_report(
         "",
     ])
 
-    # Add task-grouped summary tables with best values highlighted
+    # Add dataset-grouped summary tables with best values highlighted
     formatted = results.to_markdown(highlight_best=True)
     lines.append(formatted)
 
@@ -229,79 +295,95 @@ def render_report(
     return "\n".join(lines)
 
 
-def format_results_terminal(results: ResultCollection) -> None:
-    """Display results as Rich tables grouped by task type.
+def format_results_terminal(
+    results: ResultCollection,
+    *,
+    require_significance: bool = True,
+) -> None:
+    """Display results as Rich tables grouped by dataset.
 
-    Shows only the primary metric for each task type plus timing metrics.
-    - Regression: rmse + timing
-    - Binary: logloss + timing
-    - Multiclass: mlogloss + timing
+    Uses the same data and logic as the markdown formatter, just with Rich styling.
+    Shows all metrics relevant to each dataset's task type.
 
     Args:
         results: ResultCollection to display
+        require_significance: Only highlight winners if statistically significant
     """
-    summaries = results.summary_by_task()
+    from boosters_eval.results import TASK_METRICS, TIMING_METRICS, MEMORY_METRICS
 
-    task_names = {
-        Task.REGRESSION: "Regression Results",
-        Task.BINARY: "Binary Classification Results",
-        Task.MULTICLASS: "Multiclass Classification Results",
-    }
+    summaries = results.summary_by_dataset()
 
-    for task in [Task.REGRESSION, Task.BINARY, Task.MULTICLASS]:
-        if task not in summaries:
+    if not summaries:
+        console.print("[yellow]No results to display.[/yellow]")
+        return
+
+    for dataset in sorted(summaries.keys()):
+        df = summaries[dataset]
+
+        # Get task type for this dataset
+        task = None
+        for r in results.results:
+            if r.dataset_name == dataset:
+                task = Task(r.task)
+                break
+        if task is None:
             continue
 
-        df = summaries[task]
-        # Show only primary metric + timing (reduced from showing all metrics)
-        metrics = [primary_metric(task)] + TIMING_METRICS
+        # Get primary metric for this dataset
+        primary = results._get_primary_metric_for_dataset(dataset)
 
-        # Create compact table for this task
-        table = Table(title=task_names[task], show_header=True, header_style="bold")
-        table.add_column("Dataset", style="cyan", no_wrap=True)
+        # All metrics relevant to this dataset
+        metrics = TASK_METRICS[task] + TIMING_METRICS + MEMORY_METRICS
+
+        # Create table for this dataset
+        title = f"{dataset} ({task.value}, primary: {primary})"
+        table = Table(title=title, show_header=True, header_style="bold")
+        table.add_column("Booster", style="cyan", no_wrap=True)
         table.add_column("Library", style="green")
 
-        # Add only relevant metric columns
-        for metric in metrics:
-            mean_col = f"{metric}_mean"
-            if mean_col in df.columns:
-                table.add_column(metric, justify="right")
+        # Add metric columns that are present
+        present_metrics = [m for m in metrics if f"{m}_mean" in df.columns]
+        for metric in present_metrics:
+            table.add_column(metric, justify="right")
 
-        # Find best values per dataset
-        for dataset in df["dataset"].unique():
-            dataset_df = df[df["dataset"] == dataset]
+        # Find best values per booster
+        for booster in df["booster"].unique():
+            booster_df = df[df["booster"] == booster]
 
-            # Find best for each metric
+            # Determine best library for each metric
             best_libs: dict[str, str] = {}
-            for metric in metrics:
+            for metric in present_metrics:
                 mean_col = f"{metric}_mean"
-                if mean_col not in dataset_df.columns:
-                    continue
-                valid = dataset_df.dropna(subset=[mean_col])
-                if valid.empty:
+                valid = booster_df.dropna(subset=[mean_col])
+                if len(valid) < 2:
                     continue
                 lower_better = metric in LOWER_BETTER_METRICS or metric.endswith("_time_s")
                 best_idx = valid[mean_col].idxmin() if lower_better else valid[mean_col].idxmax()
                 best_libs[metric] = str(valid.loc[best_idx, "library"])  # pyright: ignore[reportArgumentType]
 
             # Add rows
-            for _, row in dataset_df.iterrows():
+            for _, row in booster_df.iterrows():
                 import pandas as pd
 
                 lib = str(row["library"])
-                row_data = [str(dataset), lib]
+                row_data = [str(booster), lib]
 
-                for metric in metrics:
+                for metric in present_metrics:
                     mean_col = f"{metric}_mean"
-                    if mean_col not in df.columns:
-                        continue
+                    std_col = f"{metric}_std"
 
                     mean_val = row[mean_col]
+                    std_val = row.get(std_col, np.nan) if std_col in row.index else np.nan
+
                     if pd.isna(mean_val):
                         row_data.append("-")
                     else:
-                        val_str = f"{mean_val:.4f}"
-                        # Highlight best
+                        if pd.isna(std_val) or std_val == 0:
+                            val_str = f"{mean_val:.4f}"
+                        else:
+                            val_str = f"{mean_val:.4f}±{std_val:.4f}"
+
+                        # Highlight best (simplified - use same logic as markdown)
                         if best_libs.get(metric) == lib:
                             val_str = f"[bold green]{val_str}[/bold green]"
                         row_data.append(val_str)
@@ -336,16 +418,8 @@ def generate_report(
     """
     # Collect metadata
     machine = get_machine_info()
+    library_versions = get_library_versions()
     git_sha = get_git_sha()
-
-    # Get boosters version
-    boosters_version = None
-    try:
-        import boosters
-
-        boosters_version = getattr(boosters, "__version__", None)
-    except ImportError:
-        pass
 
     # Count seeds
     seeds = set()
@@ -356,8 +430,8 @@ def generate_report(
         title=title,
         created_at=datetime.now().isoformat(),
         git_sha=git_sha,
-        boosters_version=boosters_version,
         machine=machine,
+        library_versions=library_versions,
         suite_name=suite_name,
         n_seeds=len(seeds),
         training_config=training_config,
