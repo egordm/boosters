@@ -2,6 +2,7 @@
 //!
 //! Flat config structure matching core Rust configs.
 
+use boosters::data::binned::BundlingConfig;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
@@ -459,6 +460,7 @@ impl From<&PyGBDTConfig> for boosters::GBDTConfig {
             colsample_bytree: py_config.colsample_bytree as f32,
             colsample_bylevel: py_config.colsample_bylevel as f32,
             binning: py_config.max_bins.into(),
+            bundling: BundlingConfig::auto(),
             linear_leaves,
             early_stopping_rounds: py_config.early_stopping_rounds,
             cache_size: 8,

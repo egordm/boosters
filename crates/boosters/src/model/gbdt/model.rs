@@ -144,9 +144,10 @@ impl GBDTModel {
         use crate::data::BinnedDatasetBuilder;
 
         run_with_threads(n_threads, |parallelism| {
-            // Bin the training dataset using config.binning
+            // Bin the training dataset using config.binning and config.bundling
             let binned = BinnedDatasetBuilder::new(config.binning.clone())
                 .add_features(dataset.features(), parallelism)
+                .with_bundling(config.bundling.clone())
                 .build()
                 .expect("binning should not fail on valid dataset");
 

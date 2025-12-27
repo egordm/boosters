@@ -27,6 +27,7 @@
 use bon::Builder;
 
 use crate::data::BinningConfig;
+use crate::data::binned::BundlingConfig;
 use crate::training::Verbosity;
 use crate::training::gbdt::{GrowthStrategy, LinearLeafConfig};
 use crate::training::{Metric, Objective};
@@ -195,6 +196,11 @@ pub struct GBDTConfig {
     /// Default: 256 bins with quantile binning.
     #[builder(default)]
     pub binning: BinningConfig,
+
+    /// Bundling configuration for exclusive feature bundling (EFB).
+    /// Default: auto (automatically detect bundleable sparse features).
+    #[builder(default = BundlingConfig::auto())]
+    pub bundling: BundlingConfig,
 
     // === Linear leaves ===
     /// Linear leaf configuration. If set, fit linear models in leaves.
