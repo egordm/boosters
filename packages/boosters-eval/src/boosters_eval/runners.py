@@ -101,31 +101,40 @@ class BoostersRunner(Runner):
                 n_estimators=tc.n_estimators,
                 max_depth=tc.max_depth,
                 learning_rate=tc.learning_rate,
-                reg_lambda=tc.reg_lambda,
-                reg_alpha=tc.reg_alpha,
+                l2=tc.reg_lambda,
+                l1=tc.reg_alpha,
                 min_child_weight=tc.min_child_weight,
                 subsample=tc.subsample,
                 colsample_bytree=tc.colsample_bytree,
                 objective=objective,
                 seed=seed,
-                n_threads=tc.n_threads,
             )
-            model = boosters.GBDT(model_config)
+            model = boosters.GBDTModel(model_config)
         else:  # GBLINEAR
             model_config = boosters.GBLinearConfig(
-                n_rounds=tc.n_estimators,
+                n_estimators=tc.n_estimators,
                 learning_rate=tc.learning_rate,
-                reg_lambda=tc.reg_lambda,
-                reg_alpha=tc.reg_alpha,
+                l2=tc.reg_lambda,
+                l1=tc.reg_alpha,
                 objective=objective,
                 seed=seed,
-                n_threads=tc.n_threads,
             )
-            model = boosters.GBLinear(model_config)
+            model = boosters.GBLinearModel(model_config)
+
+        # Create Dataset objects
+        train_ds = boosters.Dataset(x_train.astype("float32"), y_train.astype("float32"))
+        valid_ds = boosters.Dataset(x_valid.astype("float32"), y_valid.astype("float32"))
 
         # Warmup for timing mode
         if timing_mode:
-            model.fit(x_train[:100], y_train[:100])
+            warmup_ds = boosters.Dataset(
+                x_train[:100].astype("float32"), y_train[:100].astype("float32")
+            )
+            if config.booster_type == BoosterType.GBDT:
+                warmup_model = boosters.GBDTModel(model_config)
+            else:
+                warmup_model = boosters.GBLinearModel(model_config)
+            warmup_model.fit(warmup_ds, n_threads=tc.n_threads)
 
         # Memory tracking
         if measure_memory:
@@ -133,12 +142,12 @@ class BoostersRunner(Runner):
 
         # Train
         start_train = time.perf_counter()
-        model.fit(x_train, y_train)
+        model.fit(train_ds, n_threads=tc.n_threads)
         train_time = time.perf_counter() - start_train
 
         # Predict
         start_predict = time.perf_counter()
-        y_pred = model.predict(x_valid)
+        y_pred = model.predict(valid_ds, n_threads=tc.n_threads)
         predict_time = time.perf_counter() - start_predict
 
         peak_memory = _get_peak_memory() if measure_memory else None

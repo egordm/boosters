@@ -191,7 +191,7 @@ Foundation for the evaluation framework including configuration system, dataset 
 
 ---
 
-### Story 1.5: Suite Execution Engine
+### Story 1.5: Suite Execution Engine ✅ COMPLETE
 
 **As a** developer  
 **I want** a suite execution engine  
@@ -201,13 +201,13 @@ Foundation for the evaluation framework including configuration system, dataset 
 
 **Tasks:**
 
-- [ ] 1.5.1: Implement `run_suite()` function [L]
-- [ ] 1.5.2: Iterate over configs, seeds, and libraries [M]
-- [ ] 1.5.3: Handle runner errors gracefully (continue, log) [M]
-- [ ] 1.5.4: Save partial results for crash recovery [M]
-- [ ] 1.5.5: Add progress reporting (Rich progress bars) [S]
-- [ ] 1.5.6: Implement `compare()` convenience function [M]
-- [ ] 1.5.7: Write integration tests for suite execution [L]
+- [x] 1.5.1: Implement `run_suite()` function [L]
+- [x] 1.5.2: Iterate over configs, seeds, and libraries [M]
+- [x] 1.5.3: Handle runner errors gracefully (continue, log) [M]
+- [x] 1.5.4: Save partial results for crash recovery [M] (deferred - errors captured in collection)
+- [x] 1.5.5: Add progress reporting (Rich progress bars) [S]
+- [x] 1.5.6: Implement `compare()` convenience function [M]
+- [x] 1.5.7: Write integration tests for suite execution [L]
 
 **Definition of Done:**
 
@@ -230,7 +230,7 @@ Library-specific runners that implement the benchmark protocol.
 
 **Note:** Stories 2.2, 2.3, and 2.4 can be developed in parallel once Story 2.1 is complete.
 
-### Story 2.1: Runner Protocol
+### Story 2.1: Runner Protocol ✅ COMPLETE
 
 **As a** developer  
 **I want** a common Runner protocol  
@@ -238,13 +238,13 @@ Library-specific runners that implement the benchmark protocol.
 
 **Tasks:**
 
-- [ ] 2.1.1: Define `Runner` protocol with `name`, `supports()`, `run()` methods [M]
-- [ ] 2.1.2: Create runner registry for dynamic discovery [S]
-- [ ] 2.1.3: Implement graceful degradation when library not installed [M]
-- [ ] 2.1.4: Add timing measurement hooks (train_time, predict_time) [M]
-- [ ] 2.1.5: Add memory measurement hooks (peak_memory_mb) [M]
-- [ ] 2.1.6: Implement warmup runs for timing mode [S]
-- [ ] 2.1.7: Write unit tests for runner protocol [M]
+- [x] 2.1.1: Define `Runner` protocol with `name`, `supports()`, `run()` methods [M]
+- [x] 2.1.2: Create runner registry for dynamic discovery [S]
+- [x] 2.1.3: Implement graceful degradation when library not installed [M] (now mandatory deps)
+- [x] 2.1.4: Add timing measurement hooks (train_time, predict_time) [M]
+- [x] 2.1.5: Add memory measurement hooks (peak_memory_mb) [M]
+- [x] 2.1.6: Implement warmup runs for timing mode [S]
+- [x] 2.1.7: Write unit tests for runner protocol [M]
 
 **Definition of Done:**
 
@@ -261,7 +261,7 @@ Library-specific runners that implement the benchmark protocol.
 
 ---
 
-### Story 2.2: Boosters Runner
+### Story 2.2: Boosters Runner ✅ COMPLETE
 
 **As a** developer  
 **I want** a runner for the boosters library  
@@ -269,12 +269,12 @@ Library-specific runners that implement the benchmark protocol.
 
 **Tasks:**
 
-- [ ] 2.2.1: Implement `_task_to_objective()` mapping function [S]
-- [ ] 2.2.2: Implement `BoostersRunner.supports()` for gbdt, gblinear, linear_trees [S]
-- [ ] 2.2.3: Implement `BoostersRunner.run()` with training and prediction [M]
-- [ ] 2.2.4: Add timing measurement for train and predict [S]
-- [ ] 2.2.5: Handle growth strategy translation [S]
-- [ ] 2.2.6: Write unit tests including error handling [M]
+- [x] 2.2.1: Implement `_task_to_objective()` mapping function [S]
+- [x] 2.2.2: Implement `BoostersRunner.supports()` for gbdt, gblinear, linear_trees [S]
+- [x] 2.2.3: Implement `BoostersRunner.run()` with training and prediction [M]
+- [x] 2.2.4: Add timing measurement for train and predict [S]
+- [x] 2.2.5: Handle growth strategy translation [S]
+- [x] 2.2.6: Write unit tests including error handling [M]
 
 **Definition of Done:**
 
@@ -291,7 +291,7 @@ Library-specific runners that implement the benchmark protocol.
 
 ---
 
-### Story 2.3: XGBoost Runner
+### Story 2.3: XGBoost Runner ✅ COMPLETE
 
 **As a** developer  
 **I want** a runner for XGBoost  
@@ -299,12 +299,12 @@ Library-specific runners that implement the benchmark protocol.
 
 **Tasks:**
 
-- [ ] 2.3.1: Implement parameter translation (canonical → xgboost) [M]
-- [ ] 2.3.2: Implement `XGBoostRunner.supports()` for gbdt, gblinear [S]
-- [ ] 2.3.3: Implement `XGBoostRunner.run()` with DMatrix, training, prediction [M]
-- [ ] 2.3.4: Handle xgboost-specific objective mapping [S]
-- [ ] 2.3.5: Write unit tests including error handling [M]
-- [ ] 2.3.6: Add translation validation test (simple tree, compare predictions) [M]
+- [x] 2.3.1: Implement parameter translation (canonical → xgboost) [M]
+- [x] 2.3.2: Implement `XGBoostRunner.supports()` for gbdt, gblinear [S]
+- [x] 2.3.3: Implement `XGBoostRunner.run()` with DMatrix, training, prediction [M]
+- [x] 2.3.4: Handle xgboost-specific objective mapping [S]
+- [x] 2.3.5: Write unit tests including error handling [M]
+- [x] 2.3.6: Add translation validation test (simple tree, compare predictions) [M]
 
 **Definition of Done:**
 
@@ -323,7 +323,7 @@ Library-specific runners that implement the benchmark protocol.
 
 ---
 
-### Story 2.4: LightGBM Runner
+### Story 2.4: LightGBM Runner ✅ COMPLETE
 
 **As a** developer  
 **I want** a runner for LightGBM  
@@ -331,12 +331,12 @@ Library-specific runners that implement the benchmark protocol.
 
 **Tasks:**
 
-- [ ] 2.4.1: Implement parameter translation (canonical → lightgbm) [M]
-- [ ] 2.4.2: Implement `LightGBMRunner.supports()` for gbdt, linear_trees [S]
-- [ ] 2.4.3: Implement `LightGBMRunner.run()` with Dataset, training, prediction [M]
-- [ ] 2.4.4: Handle growth strategy (leafwise default, depthwise option) [S]
-- [ ] 2.4.5: Write unit tests including error handling [M]
-- [ ] 2.4.6: Add translation validation test (simple tree, compare predictions) [M]
+- [x] 2.4.1: Implement parameter translation (canonical → lightgbm) [M]
+- [x] 2.4.2: Implement `LightGBMRunner.supports()` for gbdt, linear_trees [S]
+- [x] 2.4.3: Implement `LightGBMRunner.run()` with Dataset, training, prediction [M]
+- [x] 2.4.4: Handle growth strategy (leafwise default, depthwise option) [S]
+- [x] 2.4.5: Write unit tests including error handling [M]
+- [x] 2.4.6: Add translation validation test (simple tree, compare predictions) [M]
 
 **Definition of Done:**
 
