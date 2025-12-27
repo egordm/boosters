@@ -73,6 +73,7 @@ Before 1.0.0, a thorough audit is required:
 - [ ] Identify unnecessary allocations
 - [ ] Profile hot paths
 - [ ] Validate benchmark results are reproducible
+- [ ] **Single-threaded training optimization**: Currently 6x slower than LightGBM in single-threaded mode (but 1.7x faster in multi-threaded mode). The histogram building and split finding code paths have room for optimization when not parallelizing.
 
 ### 1.1.0+ Planned Features
 
@@ -106,6 +107,8 @@ These are opportunities noted during development:
 1. **Batch prediction in training**: Use optimized inference pipeline for evaluation instead of per-row prediction
 2. **Thread pool control**: Add `num_threads` parameter to `par_predict`
 3. **Max bins parameter**: Allow users to specify `max_bins` globally and per-feature
+4. **Tree introspection API**: Expose trained tree structure (nodes, thresholds, linear coefficients) for debugging and visualization. Discovered during linear leaves bug investigation - currently no way to inspect tree internals without digging through code.
+5. **Training diagnostics logging**: Add optional verbose output during training showing per-tree metrics, prediction updates, and gradient statistics. Would help catch training/inference prediction mismatches earlier.
 
 ## Development Philosophy
 

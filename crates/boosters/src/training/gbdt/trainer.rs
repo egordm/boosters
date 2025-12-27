@@ -703,16 +703,13 @@ mod tests {
     /// The fix ensures training predictions match inference predictions.
     #[test]
     fn test_linear_leaves_improve_rmse() {
-        use crate::data::{BinnedDatasetBuilder, BinningConfig, FeaturesView};
+        use crate::data::FeaturesView;
+        use crate::inference::SimplePredictor;
         use crate::testing::synthetic_datasets::synthetic_regression;
 
         // Create a synthetic regression dataset with linear structure
         let data = synthetic_regression(200, 10, 42, 0.05);
-        let features_view = FeaturesView::from_array(data.features.view());
-        let dataset = BinnedDatasetBuilder::new(BinningConfig::default())
-            .add_features(features_view, Parallelism::Sequential)
-            .build()
-            .unwrap();
+        let dataset = data.to_binned(256);
         let targets_arr = data.targets.clone().insert_axis(ndarray::Axis(0));
         let targets = TargetsView::new(targets_arr.view());
 
@@ -757,45 +754,18 @@ mod tests {
             )
             .unwrap();
 
-        // Compute predictions and RMSE
-        use crate::inference::SimplePredictor;
-
-        let n_samples = data.targets.len();
-        let mut preds_base = vec![0.0f32; n_samples];
-        let mut preds_linear = vec![0.0f32; n_samples];
-        let mut output = vec![0.0f32; 1];
-
+        // Compute predictions using predict_into with ndarray
+        let features_view = FeaturesView::from_array(data.features.view());
         let predictor_base = SimplePredictor::new(&forest_base);
         let predictor_linear = SimplePredictor::new(&forest_linear);
+        let preds_base = predictor_base.predict(features_view, Parallelism::Sequential);
+        let preds_linear = predictor_linear.predict(features_view, Parallelism::Sequential);
 
-        // Features are in feature-major [n_features, n_samples], need sample-major for predict
-        for sample in 0..n_samples {
-            let row_features: Vec<f32> = (0..data.features.nrows())
-                .map(|f| data.features[[f, sample]])
-                .collect();
-
-            predictor_base.predict_row_into(&row_features, None, &mut output);
-            preds_base[sample] = output[0];
-
-            predictor_linear.predict_row_into(&row_features, None, &mut output);
-            preds_linear[sample] = output[0];
-        }
-
-        let rmse_base = (preds_base
-            .iter()
-            .zip(data.targets.iter())
-            .map(|(p, t)| (p - t).powi(2))
-            .sum::<f32>()
-            / n_samples as f32)
-            .sqrt();
-
-        let rmse_linear = (preds_linear
-            .iter()
-            .zip(data.targets.iter())
-            .map(|(p, t)| (p - t).powi(2))
-            .sum::<f32>()
-            / n_samples as f32)
-            .sqrt();
+        // Compute RMSE using the metrics module
+        let rmse_base =
+            Rmse.compute(preds_base.view(), targets, WeightsView::None);
+        let rmse_linear =
+            Rmse.compute(preds_linear.view(), targets, WeightsView::None);
 
         // Linear leaves should improve RMSE (at least not make it significantly worse)
         // On synthetic linear data, we expect meaningful improvement
