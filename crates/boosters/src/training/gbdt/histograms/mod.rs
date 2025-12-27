@@ -35,13 +35,13 @@ pub mod slices;
 
 // Re-export main types
 pub use ops::{
-    BundleDecoder, HistogramBin, HistogramBuilder, build_unbundled_contiguous,
-    build_unbundled_gathered, clear_histogram, merge_histogram, subtract_histogram, sum_histogram,
+    HistogramBin, HistogramBuilder, clear_histogram, merge_histogram, subtract_histogram,
+    sum_histogram,
 };
 pub use pool::{
     AcquireResult, HistogramLayout, HistogramPool, HistogramSlot, HistogramSlotMut, SlotId,
 };
 pub use slices::HistogramFeatureIter;
 
-// Re-export FeatureView from data module for convenience
-pub use crate::data::binned::FeatureView;
+// Re-export FeatureView and BundleDecoder from data module for convenience
+pub use crate::data::binned::{BundleDecoder, FeatureView};

@@ -13,7 +13,6 @@ use crate::training::{Gradients, GradsTuple};
 use super::expansion::{GrowthState, GrowthStrategy, NodeCandidate};
 use super::histograms::{
     BundleDecoder, FeatureView, HistogramBuilder, HistogramLayout, HistogramPool,
-    build_unbundled_contiguous, build_unbundled_gathered,
 };
 use super::partition::RowPartitioner;
 use super::split::{GainParams, GreedySplitter, SplitInfo, SplitType};
@@ -135,7 +134,7 @@ impl TreeGrower {
         // Create bundle decoder if bundling is active
         let bundle_decoder = if use_bundling {
             let plan = dataset.bundle_plan().unwrap();
-            Some(BundleDecoder::from_plan(plan, |f| dataset.n_bins(f)))
+            Some(BundleDecoder::from_plan(plan))
         } else {
             None
         };
@@ -637,79 +636,44 @@ impl TreeGrower {
         // Get gradient slices for this output
         let grad_hess_slice = gradients.output_pairs(output);
 
-        // Choose building strategy based on bundling state
-        if let Some(decoder) = &self.bundle_decoder {
-            // Bundling is active: use unbundled histogram building
-            // This decodes bundled bins to original features during accumulation
-            if let Some(start) = self.partitioner.leaf_sequential_start(node) {
-                let start = start as usize;
-                let end = start + rows.len();
-                build_unbundled_contiguous(
-                    hist.bins,
-                    &grad_hess_slice[start..end],
-                    start,
-                    bin_views,
-                    &self.feature_metas,
-                    decoder,
-                );
-            } else {
-                // Non-sequential: gather gradients first
-                let n_rows = rows.len();
-                if self.ordered_grad_hess.capacity() < n_rows {
-                    self.ordered_grad_hess
-                        .reserve(n_rows - self.ordered_grad_hess.capacity());
-                }
-                unsafe {
-                    self.ordered_grad_hess.set_len(n_rows);
-                    let gh_ptr = self.ordered_grad_hess.as_mut_ptr();
-                    for i in 0..n_rows {
-                        let row = *rows.get_unchecked(i) as usize;
-                        *gh_ptr.add(i) = *grad_hess_slice.get_unchecked(row);
-                    }
-                }
-                build_unbundled_gathered(
-                    hist.bins,
-                    &self.ordered_grad_hess,
-                    rows,
-                    bin_views,
-                    &self.feature_metas,
-                    decoder,
-                );
-            }
+        // Build histogram - the builder handles bundling internally if a decoder is present
+        let decoder = self.bundle_decoder.as_ref();
+
+        if let Some(start) = self.partitioner.leaf_sequential_start(node) {
+            // Contiguous rows: direct access without gathering
+            let start = start as usize;
+            let end = start + rows.len();
+            self.histogram_builder.build_contiguous_with_decoder(
+                hist.bins,
+                &grad_hess_slice[start..end],
+                start,
+                bin_views,
+                &self.feature_metas,
+                decoder,
+            );
         } else {
-            // No bundling: use standard histogram building
-            if let Some(start) = self.partitioner.leaf_sequential_start(node) {
-                let start = start as usize;
-                let end = start + rows.len();
-                self.histogram_builder.build_contiguous(
-                    hist.bins,
-                    &grad_hess_slice[start..end],
-                    start,
-                    bin_views,
-                    &self.feature_metas,
-                );
-            } else {
-                let n_rows = rows.len();
-                if self.ordered_grad_hess.capacity() < n_rows {
-                    self.ordered_grad_hess
-                        .reserve(n_rows - self.ordered_grad_hess.capacity());
-                }
-                unsafe {
-                    self.ordered_grad_hess.set_len(n_rows);
-                    let gh_ptr = self.ordered_grad_hess.as_mut_ptr();
-                    for i in 0..n_rows {
-                        let row = *rows.get_unchecked(i) as usize;
-                        *gh_ptr.add(i) = *grad_hess_slice.get_unchecked(row);
-                    }
-                }
-                self.histogram_builder.build_gathered(
-                    hist.bins,
-                    &self.ordered_grad_hess,
-                    rows,
-                    bin_views,
-                    &self.feature_metas,
-                );
+            // Non-sequential: gather gradients first
+            let n_rows = rows.len();
+            if self.ordered_grad_hess.capacity() < n_rows {
+                self.ordered_grad_hess
+                    .reserve(n_rows - self.ordered_grad_hess.capacity());
             }
+            unsafe {
+                self.ordered_grad_hess.set_len(n_rows);
+                let gh_ptr = self.ordered_grad_hess.as_mut_ptr();
+                for i in 0..n_rows {
+                    let row = *rows.get_unchecked(i) as usize;
+                    *gh_ptr.add(i) = *grad_hess_slice.get_unchecked(row);
+                }
+            }
+            self.histogram_builder.build_gathered_with_decoder(
+                hist.bins,
+                &self.ordered_grad_hess,
+                rows,
+                bin_views,
+                &self.feature_metas,
+                decoder,
+            );
         }
     }
 

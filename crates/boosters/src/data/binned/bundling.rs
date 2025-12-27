@@ -167,10 +167,24 @@ impl BundlingConfig {
     }
 }
 
-/// A bundle of mutually exclusive features encoded as one.
+/// Information about a single sub-feature within a bundle.
 ///
-/// Features in a bundle share a single column in the binned dataset.
-/// Each feature's bins are offset to avoid collision.
+/// This provides a clean interface for iterating over features in a bundle
+/// without dealing with parallel Vec indexing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SubFeatureInfo {
+    /// Index of the original feature (before bundling).
+    pub original_idx: usize,
+    /// Bin offset within the bundle (bundle_bin = offset + original_bin).
+    pub bin_offset: u32,
+    /// Number of bins for this feature.
+    pub n_bins: u32,
+}
+
+/// A bundle of mutually exclusive features with offset-encoded bins.
+///
+/// Features in a bundle are stored in a single column. Each feature's bins
+/// are offset so they don't overlap. Bin 0 is reserved for "all defaults".
 #[derive(Clone, Debug)]
 pub struct FeatureBundle {
     /// Indices of features in this bundle (in original feature space).
@@ -181,7 +195,11 @@ pub struct FeatureBundle {
     /// Only populated after `finalize()` is called.
     pub bin_offsets: Vec<u32>,
 
-    /// Total bins in this bundle (sum of all feature bins).
+    /// Number of bins for each feature in the bundle.
+    /// Only populated after `finalize()` is called.
+    pub n_bins: Vec<u32>,
+
+    /// Total bins in this bundle (sum of all feature bins + 1 for default).
     /// Only populated after `finalize()` is called.
     pub total_bins: u32,
 }
@@ -192,6 +210,7 @@ impl FeatureBundle {
         Self {
             feature_indices: vec![feature_idx],
             bin_offsets: Vec::new(),
+            n_bins: Vec::new(),
             total_bins: 0,
         }
     }
@@ -224,13 +243,45 @@ impl FeatureBundle {
         F: Fn(usize) -> u32,
     {
         self.bin_offsets.clear();
+        self.n_bins.clear();
         // Start at offset 1 to reserve bin 0 for "all defaults"
         let mut offset = 1u32;
         for &feat_idx in &self.feature_indices {
+            let bins = n_bins_per_feature(feat_idx);
             self.bin_offsets.push(offset);
-            offset += n_bins_per_feature(feat_idx);
+            self.n_bins.push(bins);
+            offset += bins;
         }
         self.total_bins = offset;
+    }
+
+    /// Iterate over sub-features in this bundle as `SubFeatureInfo`.
+    ///
+    /// This provides a clean interface for accessing feature information
+    /// without dealing with parallel Vec indexing.
+    pub fn sub_features(&self) -> impl Iterator<Item = SubFeatureInfo> + '_ {
+        self.feature_indices
+            .iter()
+            .zip(self.bin_offsets.iter())
+            .zip(self.n_bins.iter())
+            .map(|((&idx, &offset), &n_bins)| SubFeatureInfo {
+                original_idx: idx,
+                bin_offset: offset,
+                n_bins,
+            })
+    }
+
+    /// Get sub-feature info by index within the bundle.
+    ///
+    /// # Panics
+    /// Panics if `idx >= self.len()`.
+    #[inline]
+    pub fn sub_feature(&self, idx: usize) -> SubFeatureInfo {
+        SubFeatureInfo {
+            original_idx: self.feature_indices[idx],
+            bin_offset: self.bin_offsets[idx],
+            n_bins: self.n_bins[idx],
+        }
     }
 
     /// Encode a value for this bundle.
@@ -491,6 +542,124 @@ impl BundlePlan {
         self.bundles
             .get(bundle_idx)
             .map(|b| b.feature_indices.as_slice())
+    }
+}
+
+// =============================================================================
+// BundleDecoder - Decoding bundled bins back to original features
+// =============================================================================
+
+/// Decoder for accessing original feature bins from bundled columns.
+///
+/// During histogram building with EFB, bundled columns contain encoded bins
+/// that combine multiple mutually exclusive features. This decoder translates
+/// those encoded bins back to original feature indices and bins.
+///
+/// # Example
+///
+/// ```ignore
+/// let decoder = BundleDecoder::from_plan(&bundle_plan);
+///
+/// // For bundled column 0, decode encoded bin 5 to original feature
+/// if let Some((orig_feat, orig_bin)) = decoder.decode(0, 5) {
+///     // orig_feat = 2, orig_bin = 3 (for example)
+/// }
+/// ```
+#[derive(Clone, Debug)]
+pub struct BundleDecoder {
+    /// Bundles with pre-computed offsets and n_bins (from BundlePlan.finalize()).
+    bundles: Vec<FeatureBundle>,
+    /// Mapping from standalone column index to original feature index.
+    standalone_to_original: Vec<usize>,
+}
+
+impl BundleDecoder {
+    /// Create a bundle decoder from a finalized BundlePlan.
+    ///
+    /// # Arguments
+    /// * `bundle_plan` - The bundle plan (must have been finalized via `finalize()`)
+    ///
+    /// # Panics
+    /// Panics if the bundle plan hasn't been finalized (bundles have empty bin_offsets).
+    pub fn from_plan(bundle_plan: &BundlePlan) -> Self {
+        debug_assert!(
+            bundle_plan.bundles.is_empty()
+                || !bundle_plan.bundles[0].bin_offsets.is_empty(),
+            "BundlePlan must be finalized before creating BundleDecoder"
+        );
+
+        Self {
+            bundles: bundle_plan.bundles.clone(),
+            standalone_to_original: bundle_plan.standalone_features.clone(),
+        }
+    }
+
+    /// Number of bundles.
+    #[inline]
+    pub fn n_bundles(&self) -> usize {
+        self.bundles.len()
+    }
+
+    /// Number of standalone features.
+    #[inline]
+    pub fn n_standalone(&self) -> usize {
+        self.standalone_to_original.len()
+    }
+
+    /// Total number of physical columns (bundles + standalone).
+    #[inline]
+    pub fn n_columns(&self) -> usize {
+        self.bundles.len() + self.standalone_to_original.len()
+    }
+
+    /// Decode an encoded bundle bin to (original_feature_idx, original_bin).
+    ///
+    /// # Arguments
+    /// * `bundle_idx` - Index of the bundle (0..n_bundles())
+    /// * `encoded_bin` - The encoded bin value from the bundled column
+    ///
+    /// # Returns
+    /// * `Some((original_feature_idx, original_bin))` if valid
+    /// * `None` if encoded_bin is 0 (all defaults) or out of range
+    #[inline]
+    pub fn decode(&self, bundle_idx: usize, encoded_bin: u32) -> Option<(usize, u32)> {
+        self.bundles[bundle_idx].decode(encoded_bin)
+    }
+
+    /// Get the original feature index for a standalone column.
+    ///
+    /// # Arguments
+    /// * `standalone_idx` - Index of the standalone column (0..n_standalone())
+    #[inline]
+    pub fn standalone_feature(&self, standalone_idx: usize) -> usize {
+        self.standalone_to_original[standalone_idx]
+    }
+
+    /// Get sub-feature info for all features in a bundle.
+    ///
+    /// This is useful when encoded_bin is 0 (all defaults) and we need to
+    /// accumulate gradients to bin 0 of ALL features in the bundle.
+    #[inline]
+    pub fn bundle_sub_features(
+        &self,
+        bundle_idx: usize,
+    ) -> impl Iterator<Item = SubFeatureInfo> + '_ {
+        self.bundles[bundle_idx].sub_features()
+    }
+
+    /// Get iterator over all original feature indices in a bundle.
+    #[inline]
+    pub fn bundle_features(&self, bundle_idx: usize) -> impl Iterator<Item = usize> + '_ {
+        self.bundles[bundle_idx].feature_indices.iter().copied()
+    }
+
+    /// Get the bin range for a sub-feature containing an encoded bin.
+    ///
+    /// Used during partitioning to determine if a row belongs to the same
+    /// sub-feature as the split.
+    #[inline]
+    pub fn bin_range_for_split(&self, bundle_idx: usize, encoded_bin: u32) -> Option<(u32, u32)> {
+        self.bundles[bundle_idx].bin_range_for_split(encoded_bin)
     }
 }
 

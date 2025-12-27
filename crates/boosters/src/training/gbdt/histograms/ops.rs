@@ -29,7 +29,7 @@
 
 use super::pool::HistogramLayout;
 use super::slices::HistogramFeatureIter;
-use crate::data::binned::FeatureView;
+use crate::data::binned::{BundleDecoder, FeatureView};
 use crate::training::GradsTuple;
 use crate::utils::Parallelism;
 
@@ -126,6 +126,78 @@ impl HistogramBuilder {
         }
     }
 
+    /// Build histograms for a contiguous row range with optional bundling.
+    ///
+    /// When a `BundleDecoder` is provided, bundled columns are decoded to original
+    /// features during accumulation. Otherwise, views are treated as original features.
+    pub fn build_contiguous_with_decoder(
+        &self,
+        histogram: &mut [HistogramBin],
+        ordered_grad_hess: &[GradsTuple],
+        start_row: usize,
+        bin_views: &[FeatureView<'_>],
+        feature_metas: &[HistogramLayout],
+        decoder: Option<&BundleDecoder>,
+    ) {
+        match decoder {
+            Some(dec) => {
+                build_unbundled_contiguous(
+                    histogram,
+                    ordered_grad_hess,
+                    start_row,
+                    bin_views,
+                    feature_metas,
+                    dec,
+                );
+            }
+            None => {
+                self.build_contiguous(
+                    histogram,
+                    ordered_grad_hess,
+                    start_row,
+                    bin_views,
+                    feature_metas,
+                );
+            }
+        }
+    }
+
+    /// Build histograms with gathered indices and optional bundling.
+    ///
+    /// When a `BundleDecoder` is provided, bundled columns are decoded to original
+    /// features during accumulation. Otherwise, views are treated as original features.
+    pub fn build_gathered_with_decoder(
+        &self,
+        histogram: &mut [HistogramBin],
+        ordered_grad_hess: &[GradsTuple],
+        indices: &[u32],
+        bin_views: &[FeatureView<'_>],
+        feature_metas: &[HistogramLayout],
+        decoder: Option<&BundleDecoder>,
+    ) {
+        match decoder {
+            Some(dec) => {
+                build_unbundled_gathered(
+                    histogram,
+                    ordered_grad_hess,
+                    indices,
+                    bin_views,
+                    feature_metas,
+                    dec,
+                );
+            }
+            None => {
+                self.build_gathered(
+                    histogram,
+                    ordered_grad_hess,
+                    indices,
+                    bin_views,
+                    feature_metas,
+                );
+            }
+        }
+    }
+
     /// Suggest parallelism based on workload (may downgrade to sequential).
     #[inline]
     fn suggest_parallelism(&self, n_rows: usize, n_features: usize) -> Parallelism {
@@ -147,102 +219,6 @@ impl HistogramBuilder {
 // EFB Bundled Histogram Building
 // =============================================================================
 
-/// Metadata for decoding bundled bins back to original features.
-///
-/// This is used during histogram building when EFB is active. Each bundle
-/// contains multiple mutually exclusive features with offset-encoded bins.
-#[derive(Clone, Debug)]
-pub struct BundleDecoder {
-    /// For each bundle: (bundle_total_bins, [(original_feature_idx, offset, n_bins), ...])
-    bundles: Vec<(u32, Vec<(usize, u32, u32)>)>,
-    /// Number of standalone features (not bundled).
-    n_standalone: usize,
-    /// Mapping from standalone index to original feature index.
-    standalone_to_original: Vec<usize>,
-}
-
-impl BundleDecoder {
-    /// Create a bundle decoder from a BundlePlan and dataset.
-    ///
-    /// # Arguments
-    /// * `bundle_plan` - The bundle plan from dataset construction
-    /// * `n_bins_fn` - Function to get number of bins for an original feature
-    pub fn from_plan<F>(bundle_plan: &crate::data::binned::BundlePlan, n_bins_fn: F) -> Self
-    where
-        F: Fn(usize) -> u32,
-    {
-        let bundles: Vec<(u32, Vec<(usize, u32, u32)>)> = bundle_plan
-            .bundles
-            .iter()
-            .map(|bundle| {
-                let sub_features: Vec<(usize, u32, u32)> = bundle
-                    .feature_indices
-                    .iter()
-                    .zip(bundle.bin_offsets.iter())
-                    .map(|(&feat_idx, &offset)| {
-                        let n_bins = n_bins_fn(feat_idx);
-                        (feat_idx, offset, n_bins)
-                    })
-                    .collect();
-                (bundle.total_bins, sub_features)
-            })
-            .collect();
-
-        Self {
-            bundles,
-            n_standalone: bundle_plan.standalone_features.len(),
-            standalone_to_original: bundle_plan.standalone_features.clone(),
-        }
-    }
-
-    /// Number of bundles.
-    #[inline]
-    pub fn n_bundles(&self) -> usize {
-        self.bundles.len()
-    }
-
-    /// Decode an encoded bundle bin to (original_feature_idx, original_bin).
-    ///
-    /// Returns None if encoded_bin is 0 (all defaults) or out of range.
-    #[inline]
-    pub fn decode(&self, bundle_idx: usize, encoded_bin: u32) -> Option<(usize, u32)> {
-        if encoded_bin == 0 {
-            return None;
-        }
-        let (total_bins, sub_features) = &self.bundles[bundle_idx];
-        if encoded_bin >= *total_bins {
-            return None;
-        }
-
-        // Binary search to find which sub-feature owns this bin
-        // Offsets are sorted, so we find the last offset <= encoded_bin
-        let pos = sub_features
-            .partition_point(|(_, offset, _)| *offset <= encoded_bin)
-            .saturating_sub(1);
-
-        let (orig_feat, offset, _) = sub_features[pos];
-        Some((orig_feat, encoded_bin - offset))
-    }
-
-    /// Get the original feature index for a standalone column.
-    #[inline]
-    pub fn standalone_feature(&self, standalone_idx: usize) -> usize {
-        self.standalone_to_original[standalone_idx]
-    }
-
-    /// Get iterator over all original feature indices in a bundle.
-    ///
-    /// When encoded_bin is 0 (all defaults), the gradient should be accumulated
-    /// to bin 0 of ALL features in the bundle.
-    #[inline]
-    pub fn bundle_features(&self, bundle_idx: usize) -> impl Iterator<Item = usize> + '_ {
-        self.bundles[bundle_idx]
-            .1
-            .iter()
-            .map(|(feat, _, _)| *feat)
-    }
-}
-
 /// Build histograms from bundled columns, decoding to original features.
 ///
 /// This function iterates over bundled columns (fewer than original features)
@@ -255,7 +231,7 @@ impl BundleDecoder {
 /// * `bundled_views` - Views over bundled columns (bundles + standalone)
 /// * `original_metas` - Histogram layouts for original features
 /// * `decoder` - Bundle decoder for mapping encoded bins to original features
-pub fn build_unbundled_contiguous(
+fn build_unbundled_contiguous(
     histogram: &mut [HistogramBin],
     ordered_grad_hess: &[GradsTuple],
     start_row: usize,
@@ -307,7 +283,7 @@ pub fn build_unbundled_contiguous(
     }
 
     // Process standalone columns: these map directly to original features
-    for standalone_idx in 0..decoder.n_standalone {
+    for standalone_idx in 0..decoder.n_standalone() {
         let col_idx = n_bundles + standalone_idx;
         let orig_feat = decoder.standalone_feature(standalone_idx);
         let view = &bundled_views[col_idx];
@@ -329,7 +305,7 @@ pub fn build_unbundled_contiguous(
 /// Build histograms from bundled columns with gathered (non-contiguous) indices.
 ///
 /// Similar to `build_unbundled_contiguous` but for non-contiguous row indices.
-pub fn build_unbundled_gathered(
+fn build_unbundled_gathered(
     histogram: &mut [HistogramBin],
     ordered_grad_hess: &[GradsTuple],
     indices: &[u32],
@@ -377,7 +353,7 @@ pub fn build_unbundled_gathered(
     }
 
     // Process standalone columns
-    for standalone_idx in 0..decoder.n_standalone {
+    for standalone_idx in 0..decoder.n_standalone() {
         let col_idx = n_bundles + standalone_idx;
         let orig_feat = decoder.standalone_feature(standalone_idx);
         let view = &bundled_views[col_idx];
