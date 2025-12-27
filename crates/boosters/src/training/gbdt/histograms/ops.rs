@@ -240,63 +240,86 @@ fn build_unbundled_contiguous(
     decoder: &BundleDecoder,
 ) {
     let n_bundles = decoder.n_bundles();
-    let n_rows = ordered_grad_hess.len();
 
-    // Process bundled columns: decode each bin to original feature
-    for (bundle_idx, bundle_view) in bundled_views.iter().enumerate().take(n_bundles) {
-        for i in 0..n_rows {
-            let row = start_row + i;
-            let encoded_bin = bundle_view.get_bin(row).unwrap_or(0);
-            let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
-
-            if encoded_bin == 0 {
-                // All features in this bundle have their default value (bin 0)
-                // Accumulate gradient to bin 0 of ALL features in the bundle
-                for orig_feat in decoder.bundle_features(bundle_idx) {
-                    let meta = &original_metas[orig_feat];
-                    let hist_idx = meta.offset as usize; // bin 0
-                    let slot = unsafe { histogram.get_unchecked_mut(hist_idx) };
-                    slot.0 += gh.grad as f64;
-                    slot.1 += gh.hess as f64;
-                }
-            } else if let Some((orig_feat, orig_bin)) = decoder.decode(bundle_idx, encoded_bin) {
-                // One feature in the bundle is non-default
-                // Accumulate to that feature's bin, and to bin 0 of all OTHER features
-                for feat in decoder.bundle_features(bundle_idx) {
-                    if feat == orig_feat {
-                        let meta = &original_metas[orig_feat];
-                        let hist_idx = (meta.offset + orig_bin) as usize;
-                        let slot = unsafe { histogram.get_unchecked_mut(hist_idx) };
-                        slot.0 += gh.grad as f64;
-                        slot.1 += gh.hess as f64;
-                    } else {
-                        // Other features in bundle are default (bin 0)
-                        let meta = &original_metas[feat];
-                        let hist_idx = meta.offset as usize;
-                        let slot = unsafe { histogram.get_unchecked_mut(hist_idx) };
-                        slot.0 += gh.grad as f64;
-                        slot.1 += gh.hess as f64;
-                    }
-                }
-            }
-        }
-    }
-
-    // Process standalone columns: these map directly to original features
+    // PASS 1: Standalone features - use fast specialized kernels
+    // These map 1:1 to physical columns and can reuse optimized build_feature_* functions
     for standalone_idx in 0..decoder.n_standalone() {
         let col_idx = n_bundles + standalone_idx;
         let orig_feat = decoder.standalone_feature(standalone_idx);
         let view = &bundled_views[col_idx];
         let meta = &original_metas[orig_feat];
 
+        // Get the histogram slice for this feature
+        let start = meta.offset as usize;
+        let end = start + meta.n_bins as usize;
+        let hist_slice = &mut histogram[start..end];
+
+        // Use fast specialized kernel (dispatches on U8/U16/sparse internally)
+        build_feature_contiguous(hist_slice, ordered_grad_hess, start_row, view);
+    }
+
+    // PASS 2: Bundled features - decode and accumulate
+    // This is inherently O(n_rows * n_bundles * features_per_bundle)
+    build_bundled_contiguous(
+        histogram,
+        ordered_grad_hess,
+        start_row,
+        bundled_views,
+        original_metas,
+        decoder,
+    );
+}
+
+/// Build histograms for bundled columns only, decoding to original features.
+///
+/// For each row and bundle, we decode the encoded bin and accumulate to the
+/// appropriate original feature histogram. When encoded_bin is 0, all features
+/// in the bundle are at their default (bin 0).
+#[inline]
+fn build_bundled_contiguous(
+    histogram: &mut [HistogramBin],
+    ordered_grad_hess: &[GradsTuple],
+    start_row: usize,
+    bundled_views: &[FeatureView<'_>],
+    original_metas: &[HistogramLayout],
+    decoder: &BundleDecoder,
+) {
+    let n_bundles = decoder.n_bundles();
+    let n_rows = ordered_grad_hess.len();
+
+    for (bundle_idx, bundle_view) in bundled_views.iter().enumerate().take(n_bundles) {
+        // Pre-fetch bin0 offsets for all features in this bundle to avoid repeated lookups
+        let bundle_features: Vec<usize> = decoder.bundle_features(bundle_idx).collect();
+        let bin0_offsets: Vec<usize> = bundle_features
+            .iter()
+            .map(|&f| original_metas[f].offset as usize)
+            .collect();
+
         for i in 0..n_rows {
             let row = start_row + i;
-            if let Some(bin) = view.get_bin(row) {
-                let hist_idx = (meta.offset + bin) as usize;
-                let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
-                let slot = unsafe { histogram.get_unchecked_mut(hist_idx) };
-                slot.0 += gh.grad as f64;
-                slot.1 += gh.hess as f64;
+            let encoded_bin = bundle_view.get_bin(row).unwrap_or(0);
+            let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
+            let (g, h) = (gh.grad as f64, gh.hess as f64);
+
+            if encoded_bin == 0 {
+                // All features at bin 0
+                for &offset in &bin0_offsets {
+                    let slot = unsafe { histogram.get_unchecked_mut(offset) };
+                    slot.0 += g;
+                    slot.1 += h;
+                }
+            } else if let Some((orig_feat, orig_bin)) = decoder.decode(bundle_idx, encoded_bin) {
+                // One feature is non-default, others at bin 0
+                for (idx, &feat) in bundle_features.iter().enumerate() {
+                    let hist_idx = if feat == orig_feat {
+                        original_metas[feat].offset as usize + orig_bin as usize
+                    } else {
+                        bin0_offsets[idx]
+                    };
+                    let slot = unsafe { histogram.get_unchecked_mut(hist_idx) };
+                    slot.0 += g;
+                    slot.1 += h;
+                }
             }
         }
     }
@@ -315,58 +338,79 @@ fn build_unbundled_gathered(
 ) {
     let n_bundles = decoder.n_bundles();
 
-    // Process bundled columns: decode each bin to original feature
-    for (bundle_idx, bundle_view) in bundled_views.iter().enumerate().take(n_bundles) {
-        for (i, &row_u32) in indices.iter().enumerate() {
-            let row = row_u32 as usize;
-            let encoded_bin = bundle_view.get_bin(row).unwrap_or(0);
-            let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
-
-            if encoded_bin == 0 {
-                // All features in this bundle have their default value (bin 0)
-                for orig_feat in decoder.bundle_features(bundle_idx) {
-                    let meta = &original_metas[orig_feat];
-                    let hist_idx = meta.offset as usize;
-                    let slot = unsafe { histogram.get_unchecked_mut(hist_idx) };
-                    slot.0 += gh.grad as f64;
-                    slot.1 += gh.hess as f64;
-                }
-            } else if let Some((orig_feat, orig_bin)) = decoder.decode(bundle_idx, encoded_bin) {
-                // One feature non-default, others are default
-                for feat in decoder.bundle_features(bundle_idx) {
-                    if feat == orig_feat {
-                        let meta = &original_metas[orig_feat];
-                        let hist_idx = (meta.offset + orig_bin) as usize;
-                        let slot = unsafe { histogram.get_unchecked_mut(hist_idx) };
-                        slot.0 += gh.grad as f64;
-                        slot.1 += gh.hess as f64;
-                    } else {
-                        let meta = &original_metas[feat];
-                        let hist_idx = meta.offset as usize;
-                        let slot = unsafe { histogram.get_unchecked_mut(hist_idx) };
-                        slot.0 += gh.grad as f64;
-                        slot.1 += gh.hess as f64;
-                    }
-                }
-            }
-        }
-    }
-
-    // Process standalone columns
+    // PASS 1: Standalone features - use fast specialized kernels
+    // These map 1:1 to physical columns and can reuse optimized build_feature_* functions
     for standalone_idx in 0..decoder.n_standalone() {
         let col_idx = n_bundles + standalone_idx;
         let orig_feat = decoder.standalone_feature(standalone_idx);
         let view = &bundled_views[col_idx];
         let meta = &original_metas[orig_feat];
 
+        // Get the histogram slice for this feature
+        let start = meta.offset as usize;
+        let end = start + meta.n_bins as usize;
+        let hist_slice = &mut histogram[start..end];
+
+        // Use fast specialized kernel (dispatches on U8/U16/sparse internally)
+        build_feature_gathered(hist_slice, ordered_grad_hess, indices, view);
+    }
+
+    // PASS 2: Bundled features - decode and accumulate
+    build_bundled_gathered(
+        histogram,
+        ordered_grad_hess,
+        indices,
+        bundled_views,
+        original_metas,
+        decoder,
+    );
+}
+
+/// Build histograms for bundled columns only with gathered indices.
+#[inline]
+fn build_bundled_gathered(
+    histogram: &mut [HistogramBin],
+    ordered_grad_hess: &[GradsTuple],
+    indices: &[u32],
+    bundled_views: &[FeatureView<'_>],
+    original_metas: &[HistogramLayout],
+    decoder: &BundleDecoder,
+) {
+    let n_bundles = decoder.n_bundles();
+
+    for (bundle_idx, bundle_view) in bundled_views.iter().enumerate().take(n_bundles) {
+        // Pre-fetch feature info for this bundle
+        let bundle_features: Vec<usize> = decoder.bundle_features(bundle_idx).collect();
+        let bin0_offsets: Vec<usize> = bundle_features
+            .iter()
+            .map(|&f| original_metas[f].offset as usize)
+            .collect();
+
         for (i, &row_u32) in indices.iter().enumerate() {
             let row = row_u32 as usize;
-            if let Some(bin) = view.get_bin(row) {
-                let hist_idx = (meta.offset + bin) as usize;
-                let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
-                let slot = unsafe { histogram.get_unchecked_mut(hist_idx) };
-                slot.0 += gh.grad as f64;
-                slot.1 += gh.hess as f64;
+            let encoded_bin = bundle_view.get_bin(row).unwrap_or(0);
+            let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
+            let (g, h) = (gh.grad as f64, gh.hess as f64);
+
+            if encoded_bin == 0 {
+                // All features at bin 0
+                for &offset in &bin0_offsets {
+                    let slot = unsafe { histogram.get_unchecked_mut(offset) };
+                    slot.0 += g;
+                    slot.1 += h;
+                }
+            } else if let Some((orig_feat, orig_bin)) = decoder.decode(bundle_idx, encoded_bin) {
+                // One feature non-default, others at bin 0
+                for (idx, &feat) in bundle_features.iter().enumerate() {
+                    let hist_idx = if feat == orig_feat {
+                        original_metas[feat].offset as usize + orig_bin as usize
+                    } else {
+                        bin0_offsets[idx]
+                    };
+                    let slot = unsafe { histogram.get_unchecked_mut(hist_idx) };
+                    slot.0 += g;
+                    slot.1 += h;
+                }
             }
         }
     }
