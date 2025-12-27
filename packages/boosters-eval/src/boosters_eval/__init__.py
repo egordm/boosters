@@ -26,6 +26,14 @@ from boosters_eval.config import (
 )
 from boosters_eval.datasets import DATASETS, get_datasets_by_task
 from boosters_eval.metrics import compute_metrics, is_lower_better, primary_metric
+from boosters_eval.report import (
+    MachineInfo,
+    ReportMetadata,
+    generate_report,
+    get_machine_info,
+    is_significant,
+    render_report,
+)
 from boosters_eval.results import BenchmarkError, BenchmarkResult, ResultCollection
 from boosters_eval.runners import Runner, get_available_runners, get_runner
 from boosters_eval.suite import FULL_SUITE, MINIMAL_SUITE, QUICK_SUITE, compare, run_suite
@@ -68,6 +76,13 @@ __all__ = [
     "check_baseline",
     "load_baseline",
     "record_baseline",
+    # Report
+    "MachineInfo",
+    "ReportMetadata",
+    "generate_report",
+    "get_machine_info",
+    "is_significant",
+    "render_report",
 ]
 
 __version__ = "0.1.0"

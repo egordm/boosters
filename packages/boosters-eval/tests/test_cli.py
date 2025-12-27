@@ -144,3 +144,19 @@ class TestBaselineCommands:
         finally:
             if path.exists():
                 path.unlink()
+
+
+class TestReportCommand:
+    """Tests for report command."""
+
+    def test_report_help(self) -> None:
+        """Test report command help."""
+        result = runner.invoke(app, ["report", "--help"])
+        assert result.exit_code == 0
+        assert "dry-run" in result.stdout.lower()
+        assert "output" in result.stdout.lower()
+
+    def test_report_invalid_suite(self) -> None:
+        """Test report with invalid suite."""
+        result = runner.invoke(app, ["report", "-s", "invalid"])
+        assert result.exit_code == 1

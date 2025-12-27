@@ -12,6 +12,7 @@ from rich.table import Table
 from boosters_eval.baseline import check_baseline, load_baseline, record_baseline
 from boosters_eval.config import BoosterType, Task, TrainingConfig
 from boosters_eval.datasets import DATASETS
+from boosters_eval.report import generate_report
 from boosters_eval.runners import get_available_runners
 from boosters_eval.suite import FULL_SUITE, QUICK_SUITE, compare, run_suite
 
@@ -319,6 +320,54 @@ def baseline_check(
 
         if report.improvements:
             console.print(f"\n[green]Improvements: {len(report.improvements)}[/green]")
+
+
+@app.command(name="report")
+def report_cmd(
+    suite: Annotated[
+        str,
+        typer.Option("--suite", "-s", help="Suite to run: quick or full."),
+    ] = "quick",
+    output: Annotated[
+        Optional[Path],
+        typer.Option("--output", "-o", help="Output path for report."),
+    ] = None,
+    title: Annotated[
+        str,
+        typer.Option("--title", "-t", help="Report title."),
+    ] = "Benchmark Report",
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Print report without saving."),
+    ] = False,
+) -> None:
+    """Generate a benchmark report."""
+    if suite == "quick":
+        benchmark_suite = QUICK_SUITE
+    elif suite == "full":
+        benchmark_suite = FULL_SUITE
+    else:
+        console.print(f"[red]Unknown suite: {suite}[/red]")
+        console.print("Valid options: quick, full")
+        raise typer.Exit(1)
+
+    console.print(f"[bold]Generating report using {suite} suite[/bold]\n")
+    results = run_suite(benchmark_suite)
+
+    # Determine output path
+    save_path = None if dry_run else output
+
+    report = generate_report(
+        results,
+        suite_name=suite,
+        output_path=save_path,
+        title=title,
+    )
+
+    if dry_run or not output:
+        console.print(report)
+    else:
+        console.print(f"\n[green]Report saved to {output}[/green]")
 
 
 def main() -> None:
