@@ -19,7 +19,7 @@
 
 Initialize package structure and development environment.
 
-### Story 0.1: Package Structure
+### Story 0.1: Package Structure ✅ COMPLETE
 
 **As a** developer  
 **I want** a well-organized package structure  
@@ -27,16 +27,16 @@ Initialize package structure and development environment.
 
 **Tasks:**
 
-- [ ] 0.1.1: Create `packages/boosters-eval/` directory [S]
-- [ ] 0.1.2: Create `pyproject.toml` with dependencies [M]
-- [ ] 0.1.3: Create `src/boosters_eval/` package structure [S]
-- [ ] 0.1.4: Set up optional dependencies `[all]`, `[xgboost]`, `[lightgbm]` [S]
-- [ ] 0.1.5: Configure CLI entry point (`boosters-eval`) [S]
-- [ ] 0.1.6: Add `py.typed` marker for type checking [S]
-- [ ] 0.1.7: Create `__init__.py` with public API exports: `compare()`, `run_suite()`, `QUICK_SUITE`, `FULL_SUITE` [S]
-- [ ] 0.1.8: Configure pytest markers (`@pytest.mark.xgboost`, `@pytest.mark.lightgbm`) [S]
-- [ ] 0.1.9: Add `conftest.py` with skip logic for missing optional deps [S]
-- [ ] 0.1.10: Configure pre-commit hooks (ruff, mypy) [S]
+- [x] 0.1.1: Create `packages/boosters-eval/` directory [S]
+- [x] 0.1.2: Create `pyproject.toml` with dependencies [M]
+- [x] 0.1.3: Create `src/boosters_eval/` package structure [S]
+- [x] 0.1.4: Set up optional dependencies `[all]`, `[xgboost]`, `[lightgbm]` [S]
+- [x] 0.1.5: Configure CLI entry point (`boosters-eval`) [S]
+- [x] 0.1.6: Add `py.typed` marker for type checking [S]
+- [x] 0.1.7: Create `__init__.py` with public API exports: `compare()`, `run_suite()`, `QUICK_SUITE`, `FULL_SUITE` [S]
+- [x] 0.1.8: Configure pytest markers (`@pytest.mark.xgboost`, `@pytest.mark.lightgbm`) [S]
+- [x] 0.1.9: Add `conftest.py` with skip logic for missing optional deps [S]
+- [x] 0.1.10: Configure pre-commit hooks (ruff, mypy) [S]
 
 **Definition of Done:**
 

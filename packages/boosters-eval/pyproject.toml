@@ -10,32 +10,40 @@ readme = "README.md"
 keywords = [ "benchmarking", "evaluation", "gradient-boosting", "machine-learning" ]
 
 license = { text = "MIT" }
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 classifiers = [
   "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
-  "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
   "boosters",
   "numpy>=2",
   "pandas>=2.2",
   "pydantic>=2",
+  "psutil>=5",
   "rich>=13",
   "scikit-learn>=1.5",
-  "tabulate>=0.9",
+  "scipy>=1.10",
   "typer>=0.12",
 ]
 
-optional-dependencies.all = [ "catboost>=1.2", "lightgbm>=4", "xgboost>=2" ]
-optional-dependencies.catboost = [ "catboost>=1.2" ]
+optional-dependencies.all = [ "lightgbm>=4", "xgboost>=2" ]
 optional-dependencies.lightgbm = [ "lightgbm>=4" ]
 optional-dependencies.xgboost = [ "xgboost>=2" ]
 scripts.boosters-eval = "boosters_eval.cli:app"
 
 [dependency-groups]
-dev = [ "pytest>=8" ]
+dev = [ "pytest>=8", "pytest-cov>=4" ]
 
 [tool.hatch.build.targets.wheel]
 packages = [ "src/boosters_eval" ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "xgboost: tests requiring xgboost",
+    "lightgbm: tests requiring lightgbm",
+]

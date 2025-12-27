@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import Annotated, Optional
 
 import typer
-
-if TYPE_CHECKING:
-    from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from boosters_eval.datasets import DATASETS, BenchmarkConfig, BoosterType, Task, TrainingConfig
+from boosters_eval.config import BoosterType, Task, TrainingConfig
+from boosters_eval.datasets import DATASETS
 from boosters_eval.runners import get_available_runners
-from boosters_eval.suite import BenchmarkSuite, run_all_combinations
+from boosters_eval.suite import FULL_SUITE, QUICK_SUITE, compare, run_suite
 
 app = typer.Typer(
     name="boosters-eval",
@@ -24,35 +23,81 @@ console = Console()
 
 
 @app.command()
-def compare(
-    datasets: list[str] = typer.Option(
-        ["california", "breast_cancer", "iris"],
-        "--dataset",
-        "-d",
-        help="Datasets to benchmark (can specify multiple).",
-    ),
-    libraries: list[str] = typer.Option(
-        None,
-        "--library",
-        "-l",
-        help="Libraries to compare. Default: all available.",
-    ),
-    booster: str = typer.Option(
-        "gbdt",
-        "--booster",
-        "-b",
-        help="Booster type: gbdt, gblinear, linear_trees.",
-    ),
-    n_trees: int = typer.Option(100, "--trees", "-t", help="Number of trees."),
-    max_depth: int = typer.Option(6, "--depth", help="Max tree depth."),
-    learning_rate: float = typer.Option(0.1, "--lr", help="Learning rate."),
-    seeds: int = typer.Option(3, "--seeds", "-s", help="Number of random seeds."),
-    output: Path | None = typer.Option(
-        None,
-        "--output",
-        "-o",
-        help="Output file path (markdown).",
-    ),
+def quick(
+    output: Annotated[
+        Optional[Path],
+        typer.Option("--output", "-o", help="Output file path for results."),
+    ] = None,
+) -> None:
+    """Run the quick benchmark suite (small datasets, few iterations)."""
+    console.print("[bold]Running quick benchmark suite[/bold]\n")
+
+    results = run_suite(QUICK_SUITE)
+    markdown = results.to_markdown()
+    console.print(markdown)
+
+    if output:
+        output.write_text(markdown)
+        console.print(f"\n[green]Results saved to {output}[/green]")
+
+
+@app.command()
+def full(
+    output: Annotated[
+        Optional[Path],
+        typer.Option("--output", "-o", help="Output file path for results."),
+    ] = None,
+) -> None:
+    """Run the full benchmark suite (all datasets, more seeds)."""
+    console.print("[bold]Running full benchmark suite[/bold]\n")
+
+    results = run_suite(FULL_SUITE)
+    markdown = results.to_markdown()
+    console.print(markdown)
+
+    if output:
+        output.write_text(markdown)
+        console.print(f"\n[green]Results saved to {output}[/green]")
+
+
+@app.command(name="compare")
+def compare_cmd(
+    datasets: Annotated[
+        Optional[list[str]],
+        typer.Option(
+            "--dataset",
+            "-d",
+            help="Datasets to benchmark (can specify multiple).",
+        ),
+    ] = None,
+    libraries: Annotated[
+        Optional[list[str]],
+        typer.Option("--library", "-l", help="Libraries to compare. Default: all available."),
+    ] = None,
+    booster: Annotated[
+        str,
+        typer.Option("--booster", "-b", help="Booster type: gbdt, gblinear, linear_trees."),
+    ] = "gbdt",
+    n_estimators: Annotated[
+        int,
+        typer.Option("--trees", "-t", help="Number of trees/rounds."),
+    ] = 100,
+    max_depth: Annotated[
+        int,
+        typer.Option("--depth", help="Max tree depth."),
+    ] = 6,
+    learning_rate: Annotated[
+        float,
+        typer.Option("--lr", help="Learning rate."),
+    ] = 0.1,
+    seeds: Annotated[
+        int,
+        typer.Option("--seeds", "-s", help="Number of random seeds."),
+    ] = 3,
+    output: Annotated[
+        Optional[Path],
+        typer.Option("--output", "-o", help="Output file path."),
+    ] = None,
 ) -> None:
     """Compare libraries on selected datasets."""
     available = get_available_runners()
@@ -70,116 +115,41 @@ def compare(
         console.print(f"Valid options: {[b.value for b in BoosterType]}")
         raise typer.Exit(1) from None
 
+    # Default datasets
+    dataset_names = datasets or ["california", "breast_cancer", "iris"]
+
+    # Filter valid datasets
+    valid_datasets = [d for d in dataset_names if d in DATASETS]
+    if not valid_datasets:
+        console.print("[red]No valid datasets specified![/red]")
+        console.print(f"Available: {list(DATASETS.keys())}")
+        raise typer.Exit(1)
+
     training = TrainingConfig(
-        n_trees=n_trees,
+        n_estimators=n_estimators,
         max_depth=max_depth,
         learning_rate=learning_rate,
     )
 
-    configs: list[BenchmarkConfig] = []
-    for dataset_name in datasets:
-        if dataset_name not in DATASETS:
-            console.print(f"[yellow]Unknown dataset: {dataset_name}[/yellow]")
-            continue
-
-        configs.append(
-            BenchmarkConfig(
-                name=f"{dataset_name}/{booster}",
-                dataset=DATASETS[dataset_name],
-                training=training,
-                booster_type=booster_type,
-                libraries=libs,
-            )
-        )
-
-    if not configs:
-        console.print("[red]No valid datasets specified![/red]")
-        raise typer.Exit(1)
-
-    console.print("[bold]Running benchmarks[/bold]")
-    console.print(f"  Datasets: {[c.dataset.name for c in configs]}")
+    console.print("[bold]Running comparison[/bold]")
+    console.print(f"  Datasets: {valid_datasets}")
     console.print(f"  Libraries: {libs}")
     console.print(f"  Booster: {booster_type.value}")
     console.print()
 
-    suite = BenchmarkSuite(configs, seeds=list(range(seeds)))
-    suite.run(verbose=True)
-
-    report = suite.report()
-    console.print(report)
-
-    if output:
-        output.write_text(report)
-        console.print(f"\n[green]Results saved to {output}[/green]")
-
-
-@app.command("all")
-def run_all(
-    tasks: list[str] = typer.Option(
-        None,
-        "--task",
-        "-t",
-        help="Task types to run: regression, binary, multiclass. Default: all.",
-    ),
-    boosters: list[str] = typer.Option(
-        ["gbdt"],
-        "--booster",
-        "-b",
-        help="Booster types: gbdt, gblinear, linear_trees.",
-    ),
-    libraries: list[str] = typer.Option(
-        None,
-        "--library",
-        "-l",
-        help="Libraries to compare. Default: all available.",
-    ),
-    seeds: int = typer.Option(3, "--seeds", "-s", help="Number of random seeds."),
-    output: Path | None = typer.Option(
-        None,
-        "--output",
-        "-o",
-        help="Output file path (markdown).",
-    ),
-) -> None:
-    """Run benchmarks on all datasets with specified configuration."""
-    available = get_available_runners()
-    libs = libraries or available
-    libs = [lib for lib in libs if lib in available]
-
-    if not libs:
-        console.print("[red]No libraries available![/red]")
-        raise typer.Exit(1)
-
-    # Filter datasets by task
-    task_filter = None
-    if tasks:
-        task_filter = [Task(t) for t in tasks]
-
-    ds_names = list(DATASETS.keys())
-    if task_filter:
-        ds_names = [name for name, ds in DATASETS.items() if ds.task in task_filter]
-
-    booster_types = [BoosterType(b) for b in boosters]
-
-    console.print("[bold]Running comprehensive benchmarks[/bold]")
-    console.print(f"  Datasets: {ds_names}")
-    console.print(f"  Libraries: {libs}")
-    console.print(f"  Boosters: {boosters}")
-    console.print()
-
-    suite = run_all_combinations(
-        datasets=ds_names,
-        booster_types=booster_types,
+    results = compare(
+        datasets=valid_datasets,
         libraries=libs,
         seeds=list(range(seeds)),
-        verbose=True,
+        n_estimators=training.n_estimators,
+        booster_type=booster_type,
     )
 
-    report = suite.report()
-    console.print(report)
+    markdown = results.to_markdown()
+    console.print(markdown)
 
     if output:
-        output.write_text(report)
+        output.write_text(markdown)
         console.print(f"\n[green]Results saved to {output}[/green]")
 
 
@@ -208,16 +178,36 @@ def list_libraries() -> None:
     table.add_column("Status", style="green")
     table.add_column("Supported Boosters", style="yellow")
 
-    library_boosters = {
+    library_info = {
+        "boosters": "gbdt, gblinear",
         "xgboost": "gbdt, gblinear",
         "lightgbm": "gbdt, linear_trees",
-        "catboost": "gbdt",
     }
 
-    for lib in ["xgboost", "lightgbm", "catboost"]:
-        status = "✓ Available" if lib in available else "✗ Not installed"
+    for lib, boosters_supported in library_info.items():
+        status = "Available" if lib in available else "Not installed"
         style = "green" if lib in available else "red"
-        table.add_row(lib, f"[{style}]{status}[/{style}]", library_boosters.get(lib, ""))
+        table.add_row(lib, f"[{style}]{status}[/{style}]", boosters_supported)
+
+    console.print(table)
+
+
+@app.command()
+def list_tasks() -> None:
+    """List supported ML task types."""
+    table = Table(title="Supported Tasks")
+    table.add_column("Task", style="cyan")
+    table.add_column("Description", style="green")
+    table.add_column("Primary Metric", style="yellow")
+
+    task_info = [
+        (Task.REGRESSION, "Predict continuous values", "RMSE"),
+        (Task.BINARY, "Binary classification", "Log Loss"),
+        (Task.MULTICLASS, "Multi-class classification", "Multi-class Log Loss"),
+    ]
+
+    for task, desc, metric in task_info:
+        table.add_row(task.value, desc, metric)
 
     console.print(table)
 

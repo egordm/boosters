@@ -15,7 +15,7 @@ from sklearn.metrics import (
     mean_squared_error,
 )
 
-from boosters_eval.datasets import Task
+from boosters_eval.config import Task
 
 # Classification threshold for binary classification
 BINARY_THRESHOLD = 0.5
