@@ -13,12 +13,16 @@ from sklearn.metrics import (
     log_loss,
     mean_absolute_error,
     mean_squared_error,
+    r2_score,
 )
 
 from boosters_eval.config import Task
 
 # Classification threshold for binary classification
 BINARY_THRESHOLD = 0.5
+
+# Metrics where lower values are better
+LOWER_BETTER_METRICS = frozenset({"rmse", "mae", "logloss", "mlogloss"})
 
 
 def compute_metrics(
@@ -42,6 +46,7 @@ def compute_metrics(
         return {
             "rmse": float(np.sqrt(mean_squared_error(y_true, y_pred))),
             "mae": float(mean_absolute_error(y_true, y_pred)),
+            "r2": float(r2_score(y_true, y_pred)),
         }
     if task == Task.BINARY:
         y_pred_class = (np.asarray(y_pred) >= BINARY_THRESHOLD).astype(int)
@@ -69,4 +74,4 @@ def primary_metric(task: Task) -> str:
 
 def is_lower_better(metric: str) -> bool:
     """Check if lower values are better for a metric."""
-    return metric in ("rmse", "mae", "logloss", "mlogloss")
+    return metric in LOWER_BETTER_METRICS

@@ -162,7 +162,7 @@ Foundation for the evaluation framework including configuration system, dataset 
 
 ---
 
-### Story 1.4: Metrics System
+### Story 1.4: Metrics System ✅ COMPLETE
 
 **As a** developer  
 **I want** consistent metric computation via sklearn  
@@ -170,12 +170,12 @@ Foundation for the evaluation framework including configuration system, dataset 
 
 **Tasks:**
 
-- [ ] 1.4.1: Implement `compute_metrics()` for regression (RMSE, MAE, R²) [S]
-- [ ] 1.4.2: Implement `compute_metrics()` for binary (LogLoss, Accuracy, AUC) [S]
-- [ ] 1.4.3: Implement `compute_metrics()` for multiclass (Multi-LogLoss, Accuracy) [S]
-- [ ] 1.4.4: Create `METRIC_DIRECTION` constant (lower/higher is better) [S]
-- [ ] 1.4.5: Add primary metric lookup per task [S]
-- [ ] 1.4.6: Write unit tests for metric computation [M]
+- [x] 1.4.1: Implement `compute_metrics()` for regression (RMSE, MAE, R²) [S]
+- [x] 1.4.2: Implement `compute_metrics()` for binary (LogLoss, Accuracy) [S]
+- [x] 1.4.3: Implement `compute_metrics()` for multiclass (Multi-LogLoss, Accuracy) [S]
+- [x] 1.4.4: Create `METRIC_DIRECTION` constant (lower/higher is better) [S]
+- [x] 1.4.5: Add primary metric lookup per task [S]
+- [x] 1.4.6: Write unit tests for metric computation [M]
 
 **Definition of Done:**
 
