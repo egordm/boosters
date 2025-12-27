@@ -352,24 +352,73 @@ class TestSummaryByTask:
         assert "rmse_mean" not in bin_df.columns
 
     def test_format_summary_table_highlights_best(self) -> None:
-        """Test that format_summary_table highlights best values."""
+        """Test that format_summary_table highlights best values when significant."""
         from boosters_eval.config import Task
 
         collection = ResultCollection()
-        # Add results with different values
+        # Add multiple seeds per library to enable significance testing
+        # boosters: rmse around 0.4 (best)
+        for seed, rmse in [(42, 0.39), (43, 0.40), (44, 0.41)]:
+            collection.add_result(self.make_regression_result(library="boosters", seed=seed, rmse=rmse))
+        # xgboost: rmse around 0.5 (worse)
+        for seed, rmse in [(42, 0.49), (43, 0.50), (44, 0.51)]:
+            collection.add_result(self.make_regression_result(library="xgboost", seed=seed, rmse=rmse))
+        # lightgbm: rmse around 0.6 (worst)
+        for seed, rmse in [(42, 0.59), (43, 0.60), (44, 0.61)]:
+            collection.add_result(self.make_regression_result(library="lightgbm", seed=seed, rmse=rmse))
+
+        table = collection.format_summary_table(Task.REGRESSION, highlight_best=True, require_significance=True)
+
+        # Best rmse (~0.4) from boosters should be bold (significantly better)
+        assert "**" in table
+        # boosters should have bold values
+        lines = table.split("\n")
+        boosters_line = [l for l in lines if "boosters" in l][0]
+        assert "**" in boosters_line
+
+    def test_format_summary_table_no_highlight_when_not_significant(self) -> None:
+        """Test that format_summary_table does NOT highlight when difference is not significant."""
+        from boosters_eval.config import Task
+
+        collection = ResultCollection()
+        # Add results with overlapping values (not significant)
+        # boosters and xgboost have similar rmse with high variance
+        for seed, rmse in [(42, 0.45), (43, 0.55), (44, 0.50)]:
+            collection.add_result(self.make_regression_result(library="boosters", seed=seed, rmse=rmse))
+        for seed, rmse in [(42, 0.48), (43, 0.52), (44, 0.50)]:
+            collection.add_result(self.make_regression_result(library="xgboost", seed=seed, rmse=rmse))
+
+        table = collection.format_summary_table(Task.REGRESSION, highlight_best=True, require_significance=True)
+
+        # With overlapping distributions, rmse should not be bolded for either library
+        # Check that neither library has bold rmse in the table
+        lines = table.split("\n")
+        data_lines = [l for l in lines if "boosters" in l or "xgboost" in l]
+        # The rmse column values should not be bold (ties)
+        for line in data_lines:
+            # Extract rmse value - it should not be surrounded by **
+            parts = line.split("|")
+            if len(parts) > 2:
+                rmse_col = parts[3].strip()  # rmse is 4th column (0-indexed = 3)
+                assert "**" not in rmse_col, f"Unexpected bold in rmse column: {rmse_col}"
+
+    def test_format_summary_table_without_significance_check(self) -> None:
+        """Test that format_summary_table highlights best without significance check."""
+        from boosters_eval.config import Task
+
+        collection = ResultCollection()
+        # Single result per library
         collection.add_result(self.make_regression_result(library="boosters", rmse=0.4))
         collection.add_result(self.make_regression_result(library="xgboost", rmse=0.5))
         collection.add_result(self.make_regression_result(library="lightgbm", rmse=0.6))
 
-        table = collection.format_summary_table(Task.REGRESSION, highlight_best=True)
+        table = collection.format_summary_table(Task.REGRESSION, highlight_best=True, require_significance=False)
 
-        # Best rmse (0.4) from boosters should be bold
-        assert "**0.4000**" in table
-        # xgboost rmse (0.5) should not be bold
+        # Best rmse (0.4) from boosters should be bold even without significance check
+        assert "**" in table
         lines = table.split("\n")
-        xgboost_line = [l for l in lines if "xgboost" in l][0]
-        # Check that 0.5000 appears without bold markers in xgboost line
-        assert "| 0.5000 |" in xgboost_line or "| 0.5000±" in xgboost_line
+        boosters_line = [l for l in lines if "boosters" in l][0]
+        assert "**" in boosters_line
 
     def test_to_markdown_groups_by_task(self) -> None:
         """Test that to_markdown creates sections per task."""

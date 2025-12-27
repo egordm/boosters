@@ -14,7 +14,7 @@ from rich.console import Console
 from rich.table import Table
 from scipy import stats
 
-from boosters_eval.config import Task
+from boosters_eval.config import Task, TrainingConfig
 from boosters_eval.metrics import LOWER_BETTER_METRICS, primary_metric
 from boosters_eval.results import TIMING_METRICS, ResultCollection
 
@@ -94,11 +94,7 @@ class ReportMetadata(BaseModel):
     suite_name: str
     n_seeds: int
     # Training configuration for reproducibility
-    n_estimators: Optional[int] = None
-    max_depth: Optional[int] = None
-    learning_rate: Optional[float] = None
-    reg_lambda: Optional[float] = None
-    reg_alpha: Optional[float] = None
+    training_config: Optional[TrainingConfig] = None
     booster_types: Optional[list[str]] = None
 
 
@@ -140,8 +136,8 @@ def is_significant(
         return values1[0] != values2[0]
 
     try:
-        _, p_value = stats.ttest_ind(values1, values2, equal_var=False)
-        return p_value < alpha
+        result = stats.ttest_ind(values1, values2, equal_var=False)
+        return bool(result.pvalue < alpha)
     except Exception:  # noqa: BLE001
         return False
 
@@ -193,16 +189,14 @@ def render_report(
     ])
 
     # Add training parameters if available
-    if metadata.n_estimators is not None:
-        lines.append(f"- **n_estimators**: {metadata.n_estimators}")
-    if metadata.max_depth is not None:
-        lines.append(f"- **max_depth**: {metadata.max_depth}")
-    if metadata.learning_rate is not None:
-        lines.append(f"- **learning_rate**: {metadata.learning_rate}")
-    if metadata.reg_lambda is not None:
-        lines.append(f"- **reg_lambda (L2)**: {metadata.reg_lambda}")
-    if metadata.reg_alpha is not None:
-        lines.append(f"- **reg_alpha (L1)**: {metadata.reg_alpha}")
+    tc = metadata.training_config
+    if tc is not None:
+        lines.append(f"- **n_estimators**: {tc.n_estimators}")
+        lines.append(f"- **max_depth**: {tc.max_depth}")
+        lines.append(f"- **learning_rate**: {tc.learning_rate}")
+        lines.append(f"- **reg_lambda (L2)**: {tc.reg_lambda}")
+        lines.append(f"- **reg_alpha (L1)**: {tc.reg_alpha}")
+        lines.append(f"- **growth_strategy**: {tc.growth_strategy.value}")
     if metadata.booster_types:
         lines.append(f"- **booster_types**: {', '.join(metadata.booster_types)}")
 
@@ -324,11 +318,7 @@ def generate_report(
     output_path: Optional[Path] = None,
     title: str = "Benchmark Report",
     *,
-    n_estimators: Optional[int] = None,
-    max_depth: Optional[int] = None,
-    learning_rate: Optional[float] = None,
-    reg_lambda: Optional[float] = None,
-    reg_alpha: Optional[float] = None,
+    training_config: Optional[TrainingConfig] = None,
     booster_types: Optional[list[str]] = None,
 ) -> str:
     """Generate a benchmark report.
@@ -338,11 +328,7 @@ def generate_report(
         suite_name: Name of the suite that was run
         output_path: Optional path to save the report
         title: Report title
-        n_estimators: Number of boosting iterations
-        max_depth: Maximum tree depth
-        learning_rate: Learning rate / shrinkage
-        reg_lambda: L2 regularization
-        reg_alpha: L1 regularization
+        training_config: Training configuration used for the benchmark
         booster_types: List of booster types evaluated
 
     Returns:
@@ -374,11 +360,7 @@ def generate_report(
         machine=machine,
         suite_name=suite_name,
         n_seeds=len(seeds),
-        n_estimators=n_estimators,
-        max_depth=max_depth,
-        learning_rate=learning_rate,
-        reg_lambda=reg_lambda,
-        reg_alpha=reg_alpha,
+        training_config=training_config,
         booster_types=booster_types,
     )
 

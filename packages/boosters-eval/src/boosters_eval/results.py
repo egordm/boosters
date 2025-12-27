@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 from pydantic import BaseModel, ConfigDict
+from scipy import stats
 
 from boosters_eval.config import Task
 from boosters_eval.metrics import LOWER_BETTER_METRICS, primary_metric
@@ -219,22 +220,69 @@ class ResultCollection:
 
         return result
 
+    def _get_raw_values_by_library(
+        self,
+        task: Task,
+        dataset: str,
+        metric: str,
+    ) -> dict[str, list[float]]:
+        """Get raw metric values per library for significance testing.
+
+        Returns a dict mapping library name to list of values across seeds.
+        """
+        result: dict[str, list[float]] = {}
+        for r in self.results:
+            if r.task != task.value or r.dataset_name != dataset:
+                continue
+            # Check if metric is in the result
+            if metric in r.metrics:
+                val = r.metrics[metric]
+            elif metric == "train_time_s" and r.train_time_s is not None:
+                val = r.train_time_s
+            elif metric == "predict_time_s" and r.predict_time_s is not None:
+                val = r.predict_time_s
+            elif metric == "peak_memory_mb" and r.peak_memory_mb is not None:
+                val = r.peak_memory_mb
+            else:
+                continue
+            if r.library not in result:
+                result[r.library] = []
+            result[r.library].append(val)
+        return result
+
+    def _is_significantly_better(
+        self,
+        values_best: list[float],
+        values_second: list[float],
+        alpha: float = 0.05,
+    ) -> bool:
+        """Test if best library is significantly better than second-best using Welch's t-test."""
+        if len(values_best) < 2 or len(values_second) < 2:
+            # Not enough data for statistical test
+            return False
+        _, p_value = stats.ttest_ind(values_best, values_second, equal_var=False)
+        return bool(p_value < alpha)
+
     def format_summary_table(
         self,
         task: Task,
         *,
         highlight_best: bool = True,
+        require_significance: bool = True,
+        alpha: float = 0.05,
         precision: int = 4,
     ) -> str:
-        """Format a summary table for a specific task with highlighting.
+        """Format a summary table for a specific task with significance-aware highlighting.
 
         Args:
             task: Task type to format.
             highlight_best: Bold the best value in each metric.
+            require_significance: Only bold if statistically significant (Welch's t-test).
+            alpha: Significance level for t-test (default 0.05).
             precision: Decimal precision for values.
 
         Returns:
-            Markdown formatted string.
+            Markdown formatted string (using pandas to_markdown).
         """
         summaries = self.summary_by_task()
         if task not in summaries:
@@ -243,61 +291,70 @@ class ResultCollection:
         df = summaries[task]
         metrics = TASK_METRICS[task] + TIMING_METRICS + MEMORY_METRICS
 
-        # Build formatted table
-        lines = []
-        header = ["Dataset", "Library"]
+        # Determine which metrics are actually present
+        present_metrics = [
+            m for m in metrics if f"{m}_mean" in df.columns
+        ]
 
-        # Add metric columns (without _mean suffix for cleaner display)
-        for metric in metrics:
-            mean_col = f"{metric}_mean"
-            if mean_col in df.columns:
-                header.append(metric)
+        if not present_metrics:
+            return f"No metrics for {task.value} task."
 
-        lines.append("| " + " | ".join(header) + " |")
-        lines.append("|" + "|".join(["---"] * len(header)) + "|")
+        # Build output DataFrame with formatted values
+        output_rows: list[dict[str, str]] = []
 
-        # Group by dataset to find best values
         for dataset in df["dataset"].unique():
             dataset_df = df[df["dataset"] == dataset]
 
-            # Find best library for each metric
-            best_values: dict[str, tuple[str, float]] = {}
-            for metric in metrics:
+            # For each metric, find best and determine if significant
+            significant_winners: dict[str, str | None] = {}
+            for metric in present_metrics:
                 mean_col = f"{metric}_mean"
-                if mean_col not in dataset_df.columns:
-                    continue
-
                 valid = dataset_df.dropna(subset=[mean_col])
-                if valid.empty:
+                if len(valid) < 2:
+                    # Can't compare if fewer than 2 libraries
+                    significant_winners[metric] = None
                     continue
 
                 lower_better = metric in LOWER_BETTER_METRICS or metric.endswith("_time_s")
                 if lower_better:
-                    best_idx = valid[mean_col].idxmin()
+                    sorted_df = valid.sort_values(mean_col, ascending=True)
                 else:
-                    best_idx = valid[mean_col].idxmax()
+                    sorted_df = valid.sort_values(mean_col, ascending=False)
 
-                best_lib = valid.loc[best_idx, "library"]  # pyright: ignore[reportArgumentType]
-                best_val = valid.loc[best_idx, mean_col]  # pyright: ignore[reportArgumentType]
-                best_values[metric] = (best_lib, best_val)
+                best_lib = str(sorted_df.iloc[0]["library"])
+                second_lib = str(sorted_df.iloc[1]["library"])
 
-            # Format rows
+                if not highlight_best:
+                    significant_winners[metric] = None
+                elif not require_significance:
+                    # Highlight best without significance check
+                    significant_winners[metric] = best_lib
+                else:
+                    # Check statistical significance
+                    raw_values = self._get_raw_values_by_library(task, str(dataset), metric)
+                    best_vals = raw_values.get(best_lib, [])
+                    second_vals = raw_values.get(second_lib, [])
+
+                    if self._is_significantly_better(best_vals, second_vals, alpha):
+                        significant_winners[metric] = best_lib
+                    else:
+                        # Not significant - don't highlight (tie)
+                        significant_winners[metric] = None
+
+            # Format rows for this dataset
             for _, row in dataset_df.iterrows():
-                lib = row["library"]
-                row_data = [str(dataset), str(lib)]
+                lib = str(row["library"])
+                row_dict: dict[str, str] = {"Dataset": str(dataset), "Library": lib}
 
-                for metric in metrics:
+                for metric in present_metrics:
                     mean_col = f"{metric}_mean"
                     std_col = f"{metric}_std"
-
-                    if mean_col not in df.columns:
-                        continue
 
                     mean_val = row[mean_col]
                     std_val = row.get(std_col, np.nan)
 
                     if pd.isna(mean_val):
-                        row_data.append("-")
+                        row_dict[metric] = "-"
                     else:
                         # Format value with optional std
                         if pd.isna(std_val) or std_val == 0:
@@ -305,24 +362,37 @@ class ResultCollection:
                         else:
                             val_str = f"{mean_val:.{precision}f}±{std_val:.{precision}f}"
 
-                        # Bold if best
-                        if highlight_best and metric in best_values:
-                            best_lib, _ = best_values[metric]
-                            if lib == best_lib:
-                                val_str = f"**{val_str}**"
+                        # Bold only if this library is the significant winner
+                        if significant_winners.get(metric) == lib:
+                            val_str = f"**{val_str}**"
 
-                        row_data.append(val_str)
+                        row_dict[metric] = val_str
 
-                lines.append("| " + " | ".join(row_data) + " |")
+                output_rows.append(row_dict)
 
-        return "\n".join(lines)
+        # Create DataFrame and use to_markdown
+        output_df = pd.DataFrame(output_rows)
+        # Reorder columns
+        col_order = ["Dataset", "Library"] + present_metrics
+        output_df = output_df[[c for c in col_order if c in output_df.columns]]
 
-    def to_markdown(self, precision: int = 4, highlight_best: bool = True) -> str:
+        return output_df.to_markdown(index=False)
+
+    def to_markdown(
+        self,
+        *,
+        precision: int = 4,
+        highlight_best: bool = True,
+        require_significance: bool = True,
+        alpha: float = 0.05,
+    ) -> str:
         """Generate markdown tables grouped by task type.
 
         Args:
             precision: Decimal precision for values.
             highlight_best: Bold the best value in each metric.
+            require_significance: Only highlight if statistically significant.
+            alpha: Significance level for Welch's t-test.
 
         Returns:
             Markdown formatted string with sections per task.
@@ -346,7 +416,15 @@ class ResultCollection:
 
             sections.append(f"### {task_names[task]}")
             sections.append("")
-            sections.append(self.format_summary_table(task, highlight_best=highlight_best, precision=precision))
+            sections.append(
+                self.format_summary_table(
+                    task,
+                    highlight_best=highlight_best,
+                    require_significance=require_significance,
+                    alpha=alpha,
+                    precision=precision,
+                )
+            )
             sections.append("")
 
         return "\n".join(sections)

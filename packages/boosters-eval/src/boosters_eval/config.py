@@ -57,6 +57,8 @@ class TrainingConfig(BaseModel):
     - reg_lambda/reg_alpha: 0.0 (no regularization for fair quality comparison)
     - max_depth: 6 (same across all libraries)
     - For LightGBM, num_leaves is computed as 2^max_depth - 1 to match depth-wise
+    - growth_strategy: LEAFWISE by default (LightGBM and boosters preferred mode)
+    - max_bins: 256 (binning resolution for histograms)
     """
 
     model_config = ConfigDict(frozen=True)
@@ -67,10 +69,12 @@ class TrainingConfig(BaseModel):
     reg_lambda: float = 0.0  # L2 regularization - 0 for fair comparison
     reg_alpha: float = 0.0  # L1 regularization - 0 for fair comparison
     min_child_weight: float = 1.0  # Minimum hessian sum in leaf
+    min_samples_leaf: int = 1  # Minimum samples in leaf (LightGBM default is 20)
     subsample: float = 1.0
     colsample_bytree: float = 1.0
+    max_bins: int = 256  # Binning resolution for histograms
     n_threads: int = 1
-    growth_strategy: GrowthStrategy = GrowthStrategy.DEPTHWISE
+    growth_strategy: GrowthStrategy = GrowthStrategy.LEAFWISE
 
     @property
     def num_leaves(self) -> int:
@@ -117,10 +121,13 @@ class SuiteConfig(BaseModel):
     n_estimators: int = 100
     max_depth: int = 6
     learning_rate: float = 0.1
+    reg_lambda: float = 0.0  # L2 regularization
+    reg_alpha: float = 0.0  # L1 regularization
     seeds: list[int] = [42, 1379, 2716]
     libraries: list[str] = ["boosters", "xgboost", "lightgbm"]
     booster_type: BoosterType = BoosterType.GBDT
-    growth_strategy: GrowthStrategy = GrowthStrategy.DEPTHWISE
+    booster_types: list[BoosterType] | None = None  # If set, runs multiple booster types
+    growth_strategy: GrowthStrategy = GrowthStrategy.LEAFWISE  # Default to leafwise
 
     def to_training_config(self) -> TrainingConfig:
         """Convert suite config to training config."""
@@ -128,5 +135,13 @@ class SuiteConfig(BaseModel):
             n_estimators=self.n_estimators,
             max_depth=self.max_depth,
             learning_rate=self.learning_rate,
+            reg_lambda=self.reg_lambda,
+            reg_alpha=self.reg_alpha,
             growth_strategy=self.growth_strategy,
         )
+
+    def get_booster_types(self) -> list[BoosterType]:
+        """Get list of booster types to run."""
+        if self.booster_types:
+            return self.booster_types
+        return [self.booster_type]

@@ -104,8 +104,15 @@ class BoostersRunner(Runner):
                 l2=tc.reg_lambda,
                 l1=tc.reg_alpha,
                 min_child_weight=tc.min_child_weight,
+                min_samples_leaf=tc.min_samples_leaf,
                 subsample=tc.subsample,
                 colsample_bytree=tc.colsample_bytree,
+                max_bins=tc.max_bins,
+                growth_strategy=(
+                    boosters.GrowthStrategy.Leafwise
+                    if tc.growth_strategy.value == "leafwise"
+                    else boosters.GrowthStrategy.Depthwise
+                ),
                 objective=objective,
                 seed=seed,
             )
@@ -207,6 +214,8 @@ class XGBoostRunner(Runner):
             "alpha": tc.reg_alpha,
             "subsample": tc.subsample,
             "colsample_bytree": tc.colsample_bytree,
+            "max_bin": tc.max_bins,
+            "tree_method": "hist",  # Use histogram-based method for binning
             "nthread": tc.n_threads,
             "seed": seed,
             "verbosity": 0,
@@ -311,10 +320,11 @@ class LightGBMRunner(Runner):
             "lambda_l1": tc.reg_alpha,  # Note: LightGBM naming is opposite
             "lambda_l2": tc.reg_lambda,
             "min_sum_hessian_in_leaf": tc.min_child_weight,
-            "min_data_in_leaf": 1,  # Match XGBoost (LightGBM default is 20)
+            "min_data_in_leaf": tc.min_samples_leaf,
             "bagging_fraction": tc.subsample,
             "bagging_freq": 1 if tc.subsample < 1.0 else 0,
             "feature_fraction": tc.colsample_bytree,
+            "max_bin": tc.max_bins,
             "n_jobs": tc.n_threads,
             "seed": seed,
             "verbose": -1,

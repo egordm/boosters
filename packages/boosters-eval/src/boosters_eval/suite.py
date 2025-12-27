@@ -41,11 +41,12 @@ QUICK_SUITE = SuiteConfig(
 
 FULL_SUITE = SuiteConfig(
     name="full",
-    description="Full benchmark suite (5 seeds, all datasets, 100 trees)",
+    description="Full benchmark suite (5 seeds, all datasets, 100 trees, all booster types)",
     datasets=list(DATASETS.keys()),
     n_estimators=100,
     seeds=[42, 1379, 2716, 4053, 5390],
     libraries=["boosters", "xgboost", "lightgbm"],
+    booster_types=[BoosterType.GBDT, BoosterType.GBLINEAR, BoosterType.LINEAR_TREES],
 )
 
 MINIMAL_SUITE = SuiteConfig(
@@ -159,6 +160,9 @@ def run_suite(
     # Build configs from suite's training parameters
     training = suite.to_training_config()
 
+    # Get all booster types to run
+    booster_types = suite.get_booster_types()
+
     configs: list[BenchmarkConfig] = []
     for ds_name in suite.datasets:
         if ds_name not in DATASETS:
@@ -166,19 +170,21 @@ def run_suite(
                 console.print(f"[yellow]Unknown dataset: {ds_name}[/yellow]")
             continue
 
-        configs.append(
-            BenchmarkConfig(
-                name=f"{ds_name}/{suite.booster_type.value}",
-                dataset=DATASETS[ds_name],
-                training=training,
-                booster_type=suite.booster_type,
-                libraries=libraries,
+        for booster_type in booster_types:
+            configs.append(
+                BenchmarkConfig(
+                    name=f"{ds_name}/{booster_type.value}",
+                    dataset=DATASETS[ds_name],
+                    training=training,
+                    booster_type=booster_type,
+                    libraries=libraries,
+                )
             )
-        )
 
     if verbose:
         console.print(f"[bold]Running suite: {suite.name}[/bold]")
-        console.print(f"  Datasets: {len(configs)}")
+        console.print(f"  Datasets: {len(suite.datasets)}")
+        console.print(f"  Booster types: {[bt.value for bt in booster_types]}")
         console.print(f"  Libraries: {libraries}")
         console.print(f"  Seeds: {len(suite.seeds)}")
         console.print()

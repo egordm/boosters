@@ -46,17 +46,14 @@ def quick(
     # File output: full report with training config
     if output:
         tc = QUICK_SUITE.to_training_config()
+        booster_types = QUICK_SUITE.get_booster_types()
         generate_report(
             results,
             suite_name="quick",
             output_path=output,
             title="Quick Benchmark Report",
-            n_estimators=tc.n_estimators,
-            max_depth=tc.max_depth,
-            learning_rate=tc.learning_rate,
-            reg_lambda=tc.reg_lambda,
-            reg_alpha=tc.reg_alpha,
-            booster_types=[QUICK_SUITE.booster_type.value],
+            training_config=tc,
+            booster_types=[bt.value for bt in booster_types],
         )
         console.print(f"[green]Results saved to {output}[/green]")
 
@@ -72,28 +69,35 @@ def full(
         typer.Option(
             "--booster",
             "-b",
-            help="Booster type to run: gbdt, gblinear, or linear_trees. Default: gbdt.",
+            help="Booster type to run: gbdt, gblinear, linear_trees, or 'all'. Default: all.",
         ),
     ] = None,
 ) -> None:
     """Run the full benchmark suite (all datasets, more seeds).
 
-    By default runs GBDT models. Use --booster to select a specific model type.
+    By default runs ALL booster types (GBDT, GBLinear, Linear Trees).
+    Use --booster to select a specific model type.
     """
-    # Determine booster type
-    booster_type = BoosterType.GBDT
-    if booster:
+    # Determine booster types to run
+    if booster is None or booster.lower() == "all":
+        # Run all booster types (default)
+        booster_types = [BoosterType.GBDT, BoosterType.GBLINEAR, BoosterType.LINEAR_TREES]
+        booster_label = "all booster types"
+        suite = FULL_SUITE
+    else:
         try:
             booster_type = BoosterType(booster.lower())
         except ValueError:
             console.print(f"[red]Unknown booster type: {booster}[/red]")
-            console.print(f"Valid options: {', '.join(b.value for b in BoosterType)}")
+            console.print(f"Valid options: {', '.join(b.value for b in BoosterType)}, all")
             raise typer.Exit(1)  # noqa: B904
+        booster_types = [booster_type]
+        booster_label = booster_type.value
+        # Override to run only selected booster type
+        suite = FULL_SUITE.model_copy(update={"booster_types": booster_types})
 
-    console.print(f"[bold]Running full benchmark suite ({booster_type.value})[/bold]\n")
+    console.print(f"[bold]Running full benchmark suite ({booster_label})[/bold]\n")
 
-    # Create modified suite with selected booster type
-    suite = FULL_SUITE.model_copy(update={"booster_type": booster_type})
     results = run_suite(suite)
 
     # Terminal display: compact Rich tables
@@ -107,12 +111,8 @@ def full(
             suite_name="full",
             output_path=output,
             title="Full Benchmark Report",
-            n_estimators=tc.n_estimators,
-            max_depth=tc.max_depth,
-            learning_rate=tc.learning_rate,
-            reg_lambda=tc.reg_lambda,
-            reg_alpha=tc.reg_alpha,
-            booster_types=[booster_type.value],
+            training_config=tc,
+            booster_types=[bt.value for bt in booster_types],
         )
         console.print(f"[green]Results saved to {output}[/green]")
 
@@ -414,18 +414,15 @@ def report_cmd(
 
     # Get training config for report
     tc = benchmark_suite.to_training_config()
+    booster_types = benchmark_suite.get_booster_types()
 
     report = generate_report(
         results,
         suite_name=suite,
         output_path=save_path,
         title=title,
-        n_estimators=tc.n_estimators,
-        max_depth=tc.max_depth,
-        learning_rate=tc.learning_rate,
-        reg_lambda=tc.reg_lambda,
-        reg_alpha=tc.reg_alpha,
-        booster_types=[benchmark_suite.booster_type.value],
+        training_config=tc,
+        booster_types=[bt.value for bt in booster_types],
     )
 
     if dry_run or not output:
