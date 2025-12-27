@@ -73,7 +73,7 @@ Before 1.0.0, a thorough audit is required:
 - [ ] Identify unnecessary allocations
 - [ ] Profile hot paths
 - [ ] Validate benchmark results are reproducible
-- [ ] **Single-threaded training optimization**: Currently 6x slower than LightGBM in single-threaded mode (but 1.7x faster in multi-threaded mode). The histogram building and split finding code paths have room for optimization when not parallelizing.
+- [ ] **Single-threaded training optimization**: Currently 6x slower than LightGBM in single-threaded mode (but 1.7x faster in multi-threaded mode). See [RFC-0016](./rfcs/0016-single-threaded-optimization.md) for comprehensive analysis and optimization plan (prefetching, quantized histograms, multi-feature building).
 
 ### 1.1.0+ Planned Features
 
