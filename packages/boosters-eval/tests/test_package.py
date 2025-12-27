@@ -9,10 +9,7 @@ def test_package_imports() -> None:
         DATASETS,
         FULL_SUITE,
         QUICK_SUITE,
-        ResultCollection,
-        compare,
         get_available_runners,
-        run_suite,
     )
 
     # Verify suite configs exist

@@ -11,10 +11,7 @@ use crate::training::sampling::{ColSampler, ColSamplingParams};
 use crate::training::{Gradients, GradsTuple};
 
 use super::expansion::{GrowthState, GrowthStrategy, NodeCandidate};
-use super::histograms::{
-    BundleDecoder, BundleHistogramCache, FeatureView, HistogramBuilder, HistogramLayout,
-    HistogramPool,
-};
+use super::histograms::{FeatureView, HistogramBuilder, HistogramLayout, HistogramPool};
 use super::partition::RowPartitioner;
 use super::split::{GainParams, GreedySplitter, SplitInfo, SplitType};
 use crate::utils::Parallelism;
@@ -92,9 +89,6 @@ pub struct TreeGrower {
 
     /// Histogram builder (encapsulates parallelism and kernel dispatch).
     histogram_builder: HistogramBuilder,
-
-    /// Pre-computed histogram cache for EFB (eliminates allocations in hot path).
-    bundle_histogram_cache: Option<BundleHistogramCache>,
 }
 
 impl TreeGrower {
@@ -111,38 +105,35 @@ impl TreeGrower {
         parallelism: Parallelism,
     ) -> Self {
         let n_samples = dataset.n_rows();
-        let n_features = dataset.n_features();
 
-        // Check if bundling is effective
-        let use_bundling = dataset.has_bundled_columns();
+        // LightGBM-style: histogram layout uses BUNDLED columns, not original features.
+        // Bundles are treated as regular columns with combined bin ranges.
+        // Decoding to original features happens only at split time (cold path).
+        let n_bundled_columns = dataset.n_bundled_columns();
 
-        // IMPORTANT: Always use ORIGINAL feature layouts for histograms.
-        // When EFB is active, we decode bundled bins to original features during
-        // histogram building, so histograms must be sized for original features.
-        let feature_metas: Vec<HistogramLayout> = (0..n_features)
-            .map(|f| HistogramLayout {
-                offset: dataset.global_bin_offset(f),
-                n_bins: dataset.n_bins(f),
+        // Get bin counts for bundled columns (bundles first, then standalone features)
+        let bundled_bin_counts = dataset.bundled_bin_counts();
+
+        // Build histogram layout for bundled columns
+        let mut offset = 0u32;
+        let feature_metas: Vec<HistogramLayout> = bundled_bin_counts
+            .iter()
+            .map(|&n_bins| {
+                let layout = HistogramLayout { offset, n_bins };
+                offset += n_bins;
+                layout
             })
             .collect();
-        let feature_types: Vec<bool> =
-            (0..n_features).map(|f| dataset.is_categorical(f)).collect();
-        let feature_has_missing: Vec<bool> =
-            (0..n_features).map(|f| dataset.has_missing(f)).collect();
 
-        // Create histogram cache for fast EFB histogram building (no allocations in hot path)
-        let bundle_histogram_cache = if use_bundling {
-            let plan = dataset.bundle_plan().unwrap();
-            let decoder = BundleDecoder::from_plan(plan);
-            // Convert feature_metas to the format expected by BundleHistogramCache
-            let meta_tuples: Vec<(u32, u32)> = feature_metas
-                .iter()
-                .map(|m| (m.offset, m.n_bins))
-                .collect();
-            Some(BundleHistogramCache::new(&decoder, &meta_tuples))
-        } else {
-            None
-        };
+        // Feature types for bundled columns (bundles are never categorical)
+        let feature_types: Vec<bool> = (0..n_bundled_columns)
+            .map(|col| dataset.bundled_column_is_categorical(col))
+            .collect();
+
+        // Missing indicators for bundled columns (bundles have bin 0 = default/missing)
+        let feature_has_missing: Vec<bool> = (0..n_bundled_columns)
+            .map(|col| dataset.bundled_column_has_missing(col))
+            .collect();
 
         // Maximum nodes: 2*max_leaves - 1 for a full binary tree
         let max_leaves = params.max_leaves();
@@ -157,8 +148,9 @@ impl TreeGrower {
         let split_strategy =
             GreedySplitter::with_config(params.gain.clone(), params.max_onehot_cats, parallelism);
 
-        // Create column sampler (always samples from ORIGINAL features)
-        let col_sampler = ColSampler::new(params.col_sampling.clone(), n_features as u32, 0);
+        // Column sampler uses BUNDLED columns for sampling
+        let col_sampler =
+            ColSampler::new(params.col_sampling.clone(), n_bundled_columns as u32, 0);
 
         Self {
             params,
@@ -174,7 +166,6 @@ impl TreeGrower {
             ordered_grad_hess: Vec::with_capacity(n_samples),
             leaf_node_map: Vec::with_capacity(max_nodes / 2 + 1),
             histogram_builder: HistogramBuilder::new(parallelism),
-            bundle_histogram_cache,
         }
     }
 
@@ -558,26 +549,44 @@ impl TreeGrower {
     /// Important: categorical split categories are treated as **category indices** (0..K-1),
     /// i.e. the same domain as categorical bin indices in `BinnedDataset`.
     ///
-    /// Note: Splits are always on original features (not bundled columns) since histograms
-    /// are built for original features even when EFB bundling is active.
+    /// Note: With LightGBM-style bundling, `split.feature` is a bundled column index.
+    /// We decode it to the original feature before storing in the tree, so predictions
+    /// work without bundling context.
     fn apply_split_to_builder(
         builder: &mut MutableTree<ScalarLeaf>,
         node: u32,
         split: &SplitInfo,
         dataset: &BinnedDataset,
     ) -> (u32, u32) {
-        // Splits are always on original features (no bundling decoding needed)
-        let feature = split.feature;
-        let mapper = dataset.bin_mapper(feature as usize);
+        // Decode bundled column to original feature
+        let bundled_col = split.feature as usize;
 
         match &split.split_type {
             SplitType::Numerical { bin } => {
-                // Convert bin threshold to float value
-                let bin_upper = mapper.bin_to_value(*bin as u32) as f32;
+                // Decode bundle split to original feature + bin
+                // For bundles: uses binary search to find original feature
+                // For standalone: direct mapping
+                let (orig_feature, orig_bin) = dataset
+                    .bundled_column_to_split(bundled_col, *bin as u32)
+                    .expect("split should have valid bin > 0 for bundles");
+
+                let mapper = dataset.bin_mapper(orig_feature);
+                let bin_upper = mapper.bin_to_value(orig_bin) as f32;
                 let threshold = Self::next_up_f32(bin_upper);
-                builder.apply_numeric_split(node, feature, threshold, split.default_left)
+                builder.apply_numeric_split(
+                    node,
+                    orig_feature as u32,
+                    threshold,
+                    split.default_left,
+                )
             }
             SplitType::Categorical { left_cats } => {
+                // Categorical splits only happen on standalone columns (bundles are numeric-only).
+                // For standalone, bundled_column_to_split returns the original feature directly.
+                let (orig_feature, _) = dataset
+                    .bundled_column_to_split(bundled_col, 0) // bin doesn't matter for categorical
+                    .unwrap_or((bundled_col, 0)); // fallback for no-bundling case
+
                 // Convert training categorical bitset to inference format.
                 // Training: categories in left_cats go LEFT
                 // Inference: categories in bitset go RIGHT
@@ -596,8 +605,12 @@ impl TreeGrower {
                 // Apply split with swapped children and inverted default.
                 // The inference builder's apply_categorical_split returns (left, right),
                 // but since we're inverting the semantics, we swap them here.
-                let (inf_left, inf_right) =
-                    builder.apply_categorical_split(node, feature, bitset, !split.default_left);
+                let (inf_left, inf_right) = builder.apply_categorical_split(
+                    node,
+                    orig_feature as u32,
+                    bitset,
+                    !split.default_left,
+                );
                 // Swap children to match training semantics
                 (inf_right, inf_left)
             }
@@ -641,28 +654,30 @@ impl TreeGrower {
         // Get gradient slices for this output
         let grad_hess_slice = gradients.output_pairs(output);
 
-        // Build histogram - use pre-computed cache for zero-allocation bundling
-        let cache = self.bundle_histogram_cache.as_ref();
-
         if let Some(start) = self.partitioner.leaf_sequential_start(node) {
             // Contiguous rows: direct access without gathering
             let start = start as usize;
             let end = start + rows.len();
-            self.histogram_builder.build_contiguous_with_cache(
+            self.histogram_builder.build_contiguous(
                 hist.bins,
                 &grad_hess_slice[start..end],
                 start,
                 bin_views,
                 &self.feature_metas,
-                cache,
             );
         } else {
-            // Non-sequential: gather gradients first
+            // Non-sequential indices: gather gradients into partition order.
+            // Invariant: `ordered_grad_hess[i]` must correspond to `rows[i]`.
             let n_rows = rows.len();
+
+            // Ensure buffers have capacity (reuses allocation across builds)
             if self.ordered_grad_hess.capacity() < n_rows {
                 self.ordered_grad_hess
                     .reserve(n_rows - self.ordered_grad_hess.capacity());
             }
+
+            // Gather gradients in partition order with direct writes (no capacity checks)
+            // SAFETY: We just ensured capacity >= n_rows, and row indices are valid
             unsafe {
                 self.ordered_grad_hess.set_len(n_rows);
                 let gh_ptr = self.ordered_grad_hess.as_mut_ptr();
@@ -671,13 +686,13 @@ impl TreeGrower {
                     *gh_ptr.add(i) = *grad_hess_slice.get_unchecked(row);
                 }
             }
-            self.histogram_builder.build_gathered_with_cache(
+
+            self.histogram_builder.build_gathered(
                 hist.bins,
                 &self.ordered_grad_hess,
                 rows,
                 bin_views,
                 &self.feature_metas,
-                cache,
             );
         }
     }

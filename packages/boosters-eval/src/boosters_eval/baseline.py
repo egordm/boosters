@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypedDict
 
@@ -56,9 +56,7 @@ class Baseline(BaseModel):
     def check_schema_version(cls, v: int) -> int:
         """Validate schema version."""
         if v > SCHEMA_VERSION:
-            raise ValueError(
-                f"Baseline schema version {v} is newer than supported version {SCHEMA_VERSION}"
-            )
+            raise ValueError(f"Baseline schema version {v} is newer than supported version {SCHEMA_VERSION}")
         return v
 
 
@@ -160,7 +158,7 @@ def record_baseline(
 
     baseline = Baseline(
         schema_version=SCHEMA_VERSION,
-        created_at=datetime.now(timezone.utc).isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
         git_sha=get_git_sha(),
         boosters_version=get_boosters_version(),
         results=baseline_results,
@@ -208,9 +206,8 @@ def is_regression(
     if is_lower_better(metric):
         # For lower-is-better: regression if current > baseline * (1 + tolerance)
         return current > baseline * (1 + tolerance)
-    else:
-        # For higher-is-better: regression if current < baseline * (1 - tolerance)
-        return current < baseline * (1 - tolerance)
+    # For higher-is-better: regression if current < baseline * (1 - tolerance)
+    return current < baseline * (1 - tolerance)
 
 
 def check_baseline(

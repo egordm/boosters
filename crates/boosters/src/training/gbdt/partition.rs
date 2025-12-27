@@ -217,8 +217,8 @@ impl RowPartitioner {
     /// - `left_count`: Number of rows going left (remaining in original leaf)
     /// - `right_count`: Number of rows going right (in new leaf)
     ///
-    /// Note: Splits are always on original features (not bundled columns) since histograms
-    /// are built for original features even when EFB bundling is active.
+    /// Note: With LightGBM-style bundling, `split.feature` is a bundled column index.
+    /// We use bundled feature views for partitioning (bins are already encoded correctly).
     pub fn split(
         &mut self,
         leaf: LeafId,
@@ -229,12 +229,36 @@ impl RowPartitioner {
         let count = self.leaf_count[leaf as usize] as usize;
         let end = begin + count;
 
-        // Get feature view and relevant info for partitioning.
-        // Splits are always on original features, so we always use original feature views.
-        let view = dataset.feature_view(split.feature as usize);
-        let bin_mapper = dataset.bin_mapper(split.feature as usize);
-        let default_bin = bin_mapper.default_bin();
-        let has_missing = bin_mapper.missing_type() != MissingType::None;
+        // Get bundled column view and metadata.
+        // For bundles: bin 0 is the "default" bin, has_missing is true
+        // For standalone: maps to original feature's properties
+        // For no-bundling: col_idx is original feature index
+        let bundled_col = split.feature as usize;
+        let view = dataset.bundled_feature_view(bundled_col);
+
+        // Get default_bin and has_missing for bundled column
+        let n_bundles = dataset.n_bundles();
+        let has_bundling = dataset.has_bundled_columns();
+        let (default_bin, has_missing) = if has_bundling && bundled_col < n_bundles {
+            // Bundle column: bin 0 is "default", has_missing is true
+            (0u32, true)
+        } else if has_bundling {
+            // Standalone column with bundling active: use original feature's properties
+            let standalone_idx = bundled_col - n_bundles;
+            let orig_feat = dataset.standalone_features()[standalone_idx];
+            let bin_mapper = dataset.bin_mapper(orig_feat);
+            (
+                bin_mapper.default_bin(),
+                bin_mapper.missing_type() != MissingType::None,
+            )
+        } else {
+            // No bundling: bundled_col is original feature index
+            let bin_mapper = dataset.bin_mapper(bundled_col);
+            (
+                bin_mapper.default_bin(),
+                bin_mapper.missing_type() != MissingType::None,
+            )
+        };
         let default_left = split.default_left;
 
         // Single-pass stable partition: write left from start, right from end of scratch,

@@ -3,20 +3,16 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
-from boosters_eval.config import BoosterType, DatasetConfig, Task
-from boosters_eval.datasets import DATASETS
 from boosters_eval.suite import (
     ABLATION_SUITES,
     FULL_SUITE,
     MINIMAL_SUITE,
     QUICK_SUITE,
+    SuiteConfig,
     compare,
     create_ablation_suite,
-    run_ablation,
     run_suite,
-    SuiteConfig,
 )
 
 

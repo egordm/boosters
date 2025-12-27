@@ -76,10 +76,14 @@ class TestCompareCommand:
             app,
             [
                 "compare",
-                "-d", "synthetic_reg_small",
-                "-l", "boosters",
-                "--trees", "5",
-                "--seeds", "1",
+                "-d",
+                "synthetic_reg_small",
+                "-l",
+                "boosters",
+                "--trees",
+                "5",
+                "--seeds",
+                "1",
             ],
         )
         # Should complete without error
@@ -91,8 +95,10 @@ class TestCompareCommand:
             app,
             [
                 "compare",
-                "-d", "nonexistent",
-                "-l", "boosters",
+                "-d",
+                "nonexistent",
+                "-l",
+                "boosters",
             ],
         )
         # Should exit with error
@@ -104,8 +110,10 @@ class TestCompareCommand:
             app,
             [
                 "compare",
-                "-d", "synthetic_reg_small",
-                "--booster", "invalid_type",
+                "-d",
+                "synthetic_reg_small",
+                "--booster",
+                "invalid_type",
             ],
         )
         assert result.exit_code == 1
@@ -137,9 +145,7 @@ class TestBaselineCommands:
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
             path = Path(f.name)
         try:
-            result = runner.invoke(
-                app, ["baseline", "record", "-o", str(path), "-s", "invalid"]
-            )
+            result = runner.invoke(app, ["baseline", "record", "-o", str(path), "-s", "invalid"])
             assert result.exit_code == 1
         finally:
             if path.exists():

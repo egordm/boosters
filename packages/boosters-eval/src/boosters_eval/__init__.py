@@ -38,11 +38,11 @@ from boosters_eval.reports import (
     render_report,
 )
 from boosters_eval.results import (
+    TASK_METRICS,
+    TIMING_METRICS,
     BenchmarkError,
     BenchmarkResult,
     ResultCollection,
-    TASK_METRICS,
-    TIMING_METRICS,
 )
 from boosters_eval.runners import Runner, get_available_runners, get_runner
 from boosters_eval.suite import (

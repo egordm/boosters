@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich.console import Console
@@ -12,7 +12,6 @@ from rich.table import Table
 from boosters_eval.baseline import check_baseline, load_baseline, record_baseline
 from boosters_eval.config import BoosterType, Task, TrainingConfig
 from boosters_eval.datasets import DATASETS
-from boosters_eval.metrics import LOWER_BETTER_METRICS
 from boosters_eval.reports import format_results_terminal, generate_report
 from boosters_eval.results import ResultCollection
 from boosters_eval.runners import get_available_runners
@@ -31,7 +30,7 @@ console = Console()
 @app.command()
 def quick(
     output: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--output", "-o", help="Output file path for results."),
     ] = None,
 ) -> None:
@@ -61,11 +60,11 @@ def quick(
 @app.command()
 def full(
     output: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--output", "-o", help="Output file path for results."),
     ] = None,
     booster: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--booster",
             "-b",
@@ -124,7 +123,7 @@ def ablation(
         typer.Argument(help="Ablation study to run: depth, lr, growth."),
     ],
     output: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--output", "-o", help="Output file path for results."),
     ] = None,
 ) -> None:
@@ -201,7 +200,7 @@ def list_ablations() -> None:
 @app.command(name="compare")
 def compare_cmd(
     datasets: Annotated[
-        Optional[list[str]],
+        list[str] | None,
         typer.Option(
             "--dataset",
             "-d",
@@ -209,7 +208,7 @@ def compare_cmd(
         ),
     ] = None,
     libraries: Annotated[
-        Optional[list[str]],
+        list[str] | None,
         typer.Option("--library", "-l", help="Libraries to compare. Default: all available."),
     ] = None,
     booster: Annotated[
@@ -233,7 +232,7 @@ def compare_cmd(
         typer.Option("--seeds", "-s", help="Number of random seeds."),
     ] = 3,
     output: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--output", "-o", help="Output file path."),
     ] = None,
 ) -> None:
@@ -465,7 +464,7 @@ def report_cmd(
         typer.Option("--suite", "-s", help="Suite to run: quick or full."),
     ] = "quick",
     output: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option("--output", "-o", help="Output path for report."),
     ] = None,
     title: Annotated[

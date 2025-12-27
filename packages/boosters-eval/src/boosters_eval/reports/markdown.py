@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -321,11 +321,11 @@ def render_report(
 def generate_report(
     results: ResultCollection,
     suite_name: str,
-    output_path: Optional[Path] = None,
+    output_path: Path | None = None,
     title: str = "Benchmark Report",
     *,
-    training_config: Optional[TrainingConfig] = None,
-    booster_types: Optional[list[str]] = None,
+    training_config: TrainingConfig | None = None,
+    booster_types: list[str] | None = None,
 ) -> str:
     """Generate a benchmark report.
 

@@ -205,8 +205,6 @@ class TestGenerateReport:
         collection = ResultCollection()
         collection.add_result(make_result())
 
-        report = generate_report(
-            collection, suite_name="full", title="My Custom Report"
-        )
+        report = generate_report(collection, suite_name="full", title="My Custom Report")
 
         assert "# My Custom Report" in report

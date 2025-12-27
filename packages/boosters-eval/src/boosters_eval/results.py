@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -13,7 +13,6 @@ from scipy import stats
 
 from boosters_eval.config import Task
 from boosters_eval.metrics import LOWER_BETTER_METRICS, primary_metric
-
 
 # Metrics relevant to each task type
 TASK_METRICS: dict[Task, list[str]] = {
@@ -364,9 +363,7 @@ class ResultCollection:
         metrics = TASK_METRICS[task] + TIMING_METRICS + MEMORY_METRICS
 
         # Determine which metrics are actually present
-        present_metrics = [
-            m for m in metrics if f"{m}_mean" in df.columns
-        ]
+        present_metrics = [m for m in metrics if f"{m}_mean" in df.columns]
 
         if not present_metrics:
             return f"No metrics for {task.value} task."
@@ -478,7 +475,7 @@ class ResultCollection:
             return f"No results for {dataset} dataset."
 
         df = summaries[dataset]
-        
+
         # Get task type for this dataset to determine relevant metrics
         task = None
         for r in self.results:
@@ -491,9 +488,7 @@ class ResultCollection:
         metrics = TASK_METRICS[task] + TIMING_METRICS + MEMORY_METRICS
 
         # Determine which metrics are actually present
-        present_metrics = [
-            m for m in metrics if f"{m}_mean" in df.columns
-        ]
+        present_metrics = [m for m in metrics if f"{m}_mean" in df.columns]
 
         if not present_metrics:
             return f"No metrics for {dataset} dataset."
@@ -605,13 +600,12 @@ class ResultCollection:
                 require_significance=require_significance,
                 alpha=alpha,
             )
-        else:
-            return self._to_markdown_by_task(
-                precision=precision,
-                highlight_best=highlight_best,
-                require_significance=require_significance,
-                alpha=alpha,
-            )
+        return self._to_markdown_by_task(
+            precision=precision,
+            highlight_best=highlight_best,
+            require_significance=require_significance,
+            alpha=alpha,
+        )
 
     def _to_markdown_by_dataset(
         self,

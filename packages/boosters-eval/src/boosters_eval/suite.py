@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
 from rich.console import Console
@@ -14,14 +14,9 @@ from boosters_eval.config import (
     BoosterType,
     GrowthStrategy,
     SuiteConfig,
-    TrainingConfig,
 )
 from boosters_eval.datasets import DATASETS
-from boosters_eval.metrics import compute_metrics
-from boosters_eval.results import BenchmarkError, BenchmarkResult, ResultCollection
-
-if TYPE_CHECKING:
-    pass
+from boosters_eval.results import BenchmarkError, ResultCollection
 
 console = Console()
 

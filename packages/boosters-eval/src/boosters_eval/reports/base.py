@@ -5,7 +5,6 @@ from __future__ import annotations
 import platform
 import subprocess
 from datetime import datetime
-from typing import Optional
 
 import psutil
 from pydantic import BaseModel, ConfigDict
@@ -36,10 +35,10 @@ class LibraryVersions(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     python: str
-    boosters: Optional[str] = None
-    xgboost: Optional[str] = None
-    lightgbm: Optional[str] = None
-    numpy: Optional[str] = None
+    boosters: str | None = None
+    xgboost: str | None = None
+    lightgbm: str | None = None
+    numpy: str | None = None
 
 
 class ReportMetadata(BaseModel):
@@ -49,14 +48,14 @@ class ReportMetadata(BaseModel):
 
     title: str
     created_at: str
-    git_sha: Optional[str] = None
+    git_sha: str | None = None
     machine: MachineInfo
     library_versions: LibraryVersions
     suite_name: str
     n_seeds: int
     # Training configuration for reproducibility
-    training_config: Optional[TrainingConfig] = None
-    booster_types: Optional[list[str]] = None
+    training_config: TrainingConfig | None = None
+    booster_types: list[str] | None = None
 
 
 def get_machine_info() -> MachineInfo:
@@ -124,7 +123,7 @@ def get_library_versions() -> LibraryVersions:
     return versions
 
 
-def get_git_sha() -> Optional[str]:
+def get_git_sha() -> str | None:
     """Get current git SHA."""
     try:
         result = subprocess.run(
@@ -173,8 +172,8 @@ def create_metadata(
     seeds: set[int],
     suite_name: str,
     title: str,
-    training_config: Optional[TrainingConfig] = None,
-    booster_types: Optional[list[str]] = None,
+    training_config: TrainingConfig | None = None,
+    booster_types: list[str] | None = None,
 ) -> ReportMetadata:
     """Create report metadata from results."""
     return ReportMetadata(

@@ -13,7 +13,7 @@ from rich.console import Console
 from rich.table import Table
 
 from boosters_eval.config import Task
-from boosters_eval.metrics import LOWER_BETTER_METRICS, primary_metric
+from boosters_eval.metrics import LOWER_BETTER_METRICS
 
 if TYPE_CHECKING:
     from boosters_eval.results import ResultCollection

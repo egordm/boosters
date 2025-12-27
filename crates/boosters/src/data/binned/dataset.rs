@@ -276,28 +276,31 @@ impl BinnedDataset {
 
     /// Get a single bundled column's view by bundled column index.
     ///
-    /// If `col_idx < n_bundles`, returns the bundle's u16 encoded bins.
-    /// Otherwise returns the standalone feature view.
+    /// If bundling is active:
+    /// - `col_idx < n_bundles`: returns the bundle's u16 encoded bins
+    /// - `col_idx >= n_bundles`: returns the standalone feature view
+    ///
+    /// If bundling is not active (no bundles computed):
+    /// - `col_idx` is treated as original feature index
     ///
     /// # Panics
-    /// - If bundled columns not computed
     /// - If col_idx >= n_bundled_columns()
     pub fn bundled_feature_view(&self, col_idx: usize) -> FeatureView<'_> {
-        let bc = self
-            .bundled_columns
-            .as_ref()
-            .expect("bundled_feature_view requires compute_bundled_columns");
-
-        let n_bundles = bc.bundle_bins.len();
-        if col_idx < n_bundles {
-            FeatureView::U16 {
-                bins: &bc.bundle_bins[col_idx],
-                stride: 1,
+        if let Some(bc) = &self.bundled_columns {
+            let n_bundles = bc.bundle_bins.len();
+            if col_idx < n_bundles {
+                FeatureView::U16 {
+                    bins: &bc.bundle_bins[col_idx],
+                    stride: 1,
+                }
+            } else {
+                let standalone_idx = col_idx - n_bundles;
+                let orig_feat = bc.standalone_features[standalone_idx];
+                self.feature_view(orig_feat)
             }
         } else {
-            let standalone_idx = col_idx - n_bundles;
-            let orig_feat = bc.standalone_features[standalone_idx];
-            self.feature_view(orig_feat)
+            // No bundling: col_idx is original feature index
+            self.feature_view(col_idx)
         }
     }
 
@@ -476,6 +479,117 @@ impl BinnedDataset {
     /// * `None` if no bundling or invalid bundle index
     pub fn bundle_features(&self, bundle_idx: usize) -> Option<&[usize]> {
         self.bundle_plan.as_ref()?.bundle_features(bundle_idx)
+    }
+
+    // =========================================================================
+    // Bundled Column Helpers (for LightGBM-style histogram building)
+    // =========================================================================
+
+    /// Get the number of bundles (not including standalone features).
+    ///
+    /// Returns 0 if bundling is not active.
+    pub fn n_bundles(&self) -> usize {
+        self.bundle_plan
+            .as_ref()
+            .map(|p| p.bundles.len())
+            .unwrap_or(0)
+    }
+
+    /// Get standalone feature indices (features not in bundles).
+    ///
+    /// Returns empty slice if bundling is not active.
+    pub fn standalone_features(&self) -> &[usize] {
+        self.bundled_columns
+            .as_ref()
+            .map(|bc| bc.standalone_features.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Check if a bundled column is categorical.
+    ///
+    /// Bundle columns are always numeric (categorical features are not bundled).
+    /// Standalone columns inherit their original feature's type.
+    /// When bundling is not active, col_idx is the original feature index.
+    ///
+    /// # Arguments
+    /// * `col_idx` - Bundled column index (0..n_bundled_columns)
+    pub fn bundled_column_is_categorical(&self, col_idx: usize) -> bool {
+        let n_bundles = self.n_bundles();
+        if col_idx < n_bundles {
+            // Bundle columns are always numeric
+            false
+        } else if let Some(bc) = &self.bundled_columns {
+            // Standalone column with bundling active: check original feature
+            let standalone_idx = col_idx - n_bundles;
+            if standalone_idx < bc.standalone_features.len() {
+                let orig_feat = bc.standalone_features[standalone_idx];
+                return self.is_categorical(orig_feat);
+            }
+            false
+        } else {
+            // No bundling: col_idx IS original feature index
+            self.is_categorical(col_idx)
+        }
+    }
+
+    /// Check if a bundled column has missing values.
+    ///
+    /// Bundle columns: bin 0 represents "all features at default", which
+    /// acts like a missing indicator. We return true for bundles.
+    ///
+    /// Standalone columns inherit their original feature's missing status.
+    /// When bundling is not active, col_idx is the original feature index.
+    ///
+    /// # Arguments
+    /// * `col_idx` - Bundled column index (0..n_bundled_columns)
+    pub fn bundled_column_has_missing(&self, col_idx: usize) -> bool {
+        let n_bundles = self.n_bundles();
+        if col_idx < n_bundles {
+            // Bundle columns have "missing" semantics via bin 0
+            true
+        } else if let Some(bc) = &self.bundled_columns {
+            // Standalone column with bundling active: check original feature
+            let standalone_idx = col_idx - n_bundles;
+            if standalone_idx < bc.standalone_features.len() {
+                let orig_feat = bc.standalone_features[standalone_idx];
+                return self.has_missing(orig_feat);
+            }
+            false
+        } else {
+            // No bundling: col_idx IS original feature index
+            self.has_missing(col_idx)
+        }
+    }
+
+    /// Convert a bundled column split to original feature split.
+    ///
+    /// This is used when storing a split in the tree. The tree must use
+    /// original feature indices so prediction works without bundling.
+    ///
+    /// # Arguments
+    /// * `col_idx` - Bundled column index (0..n_bundled_columns)
+    /// * `bin` - Split threshold in the bundled column
+    ///
+    /// # Returns
+    /// * `Some((original_feature, original_bin))` if the split is valid
+    /// * `None` if the split is invalid (e.g., bin 0 on a bundle)
+    pub fn bundled_column_to_split(&self, col_idx: usize, bin: u32) -> Option<(usize, u32)> {
+        let n_bundles = self.n_bundles();
+        if col_idx < n_bundles {
+            // Bundle column: decode to original feature
+            self.decode_bundle_split(col_idx, bin)
+        } else {
+            // Standalone column: direct mapping
+            let standalone_idx = col_idx - n_bundles;
+            if let Some(bc) = &self.bundled_columns {
+                if standalone_idx < bc.standalone_features.len() {
+                    let orig_feat = bc.standalone_features[standalone_idx];
+                    return Some((orig_feat, bin));
+                }
+            }
+            // Fallback: no bundling active, col_idx IS the original feature
+            Some((col_idx, bin))
+        }
     }
 }
 

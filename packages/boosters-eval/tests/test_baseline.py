@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import tempfile
 from pathlib import Path
 
@@ -14,7 +13,6 @@ from boosters_eval.baseline import (
     Baseline,
     BaselineResult,
     MetricStats,
-    RegressionReport,
     check_baseline,
     is_regression,
     load_baseline,

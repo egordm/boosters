@@ -15,7 +15,6 @@ from boosters_eval.config import (
 from boosters_eval.runners import (
     BoostersRunner,
     LightGBMRunner,
-    Runner,
     XGBoostRunner,
     get_available_runners,
     get_runner,
@@ -249,9 +248,7 @@ class TestTimingAndMemory:
         config = make_config()
         x_train, x_valid, y_train, y_valid = make_data()
 
-        result = BoostersRunner.run(
-            config, x_train, y_train, x_valid, y_valid, seed=42, timing_mode=True
-        )
+        result = BoostersRunner.run(config, x_train, y_train, x_valid, y_valid, seed=42, timing_mode=True)
 
         assert result.train_time_s is not None
         assert result.predict_time_s is not None
@@ -261,9 +258,7 @@ class TestTimingAndMemory:
         config = make_config()
         x_train, x_valid, y_train, y_valid = make_data()
 
-        result = BoostersRunner.run(
-            config, x_train, y_train, x_valid, y_valid, seed=42, measure_memory=True
-        )
+        result = BoostersRunner.run(config, x_train, y_train, x_valid, y_valid, seed=42, measure_memory=True)
 
         assert result.peak_memory_mb is not None
         assert result.peak_memory_mb >= 0

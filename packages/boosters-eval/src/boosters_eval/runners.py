@@ -162,9 +162,7 @@ class BoostersRunner(Runner):
 
         # Warmup for timing mode
         if timing_mode:
-            warmup_ds = boosters.Dataset(
-                x_train[:100].astype("float32"), y_train[:100].astype("float32")
-            )
+            warmup_ds = boosters.Dataset(x_train[:100].astype("float32"), y_train[:100].astype("float32"))
             if config.booster_type == BoosterType.GBDT:
                 warmup_model = boosters.GBDTModel(model_config)
             else:

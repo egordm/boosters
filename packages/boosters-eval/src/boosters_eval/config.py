@@ -61,7 +61,7 @@ class TrainingConfig(BaseModel):
     - For LightGBM, num_leaves is computed as 2^max_depth - 1 to match depth-wise
     - growth_strategy: LEAFWISE by default (LightGBM and boosters preferred mode)
     - max_bins: 256 (binning resolution for histograms)
-    
+
     Linear trees parameters:
     - linear_l2: L2 regularization for linear leaf coefficients
     - linear_max_features: Maximum number of features for linear leaves
@@ -82,7 +82,7 @@ class TrainingConfig(BaseModel):
     max_bins: int = 256  # Binning resolution for histograms
     n_threads: int = 1
     growth_strategy: GrowthStrategy = GrowthStrategy.LEAFWISE
-    
+
     # Linear trees parameters (aligned with LightGBM and boosters)
     linear_l2: float = 0.01  # L2 regularization for linear leaf coefficients
     linear_max_features: int | None = None  # Max features per linear leaf (None = use path)
@@ -90,7 +90,7 @@ class TrainingConfig(BaseModel):
     @property
     def num_leaves(self) -> int:
         """Compute num_leaves from max_depth for LightGBM depth-wise equivalence."""
-        return (2 ** self.max_depth) - 1
+        return (2**self.max_depth) - 1
 
     @field_validator("learning_rate")
     @classmethod

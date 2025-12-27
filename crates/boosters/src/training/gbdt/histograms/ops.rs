@@ -29,7 +29,7 @@
 
 use super::pool::HistogramLayout;
 use super::slices::HistogramFeatureIter;
-use crate::data::binned::{BundleHistogramCache, FeatureView};
+use crate::data::binned::FeatureView;
 use crate::training::GradsTuple;
 use crate::utils::Parallelism;
 
@@ -126,75 +126,6 @@ impl HistogramBuilder {
         }
     }
 
-    /// Build histograms for a contiguous row range with optional bundling.
-    ///
-    /// When a `BundleHistogramCache` is provided, bundled columns are decoded to original
-    /// features during accumulation. Otherwise, views are treated as original features.
-    pub fn build_contiguous_with_cache(
-        &self,
-        histogram: &mut [HistogramBin],
-        ordered_grad_hess: &[GradsTuple],
-        start_row: usize,
-        bin_views: &[FeatureView<'_>],
-        feature_metas: &[HistogramLayout],
-        cache: Option<&BundleHistogramCache>,
-    ) {
-        match cache {
-            Some(c) => {
-                build_unbundled_contiguous(
-                    histogram,
-                    ordered_grad_hess,
-                    start_row,
-                    bin_views,
-                    c,
-                );
-            }
-            None => {
-                self.build_contiguous(
-                    histogram,
-                    ordered_grad_hess,
-                    start_row,
-                    bin_views,
-                    feature_metas,
-                );
-            }
-        }
-    }
-
-    /// Build histograms with gathered indices and optional bundling.
-    ///
-    /// When a `BundleHistogramCache` is provided, bundled columns are decoded to original
-    /// features during accumulation. Otherwise, views are treated as original features.
-    pub fn build_gathered_with_cache(
-        &self,
-        histogram: &mut [HistogramBin],
-        ordered_grad_hess: &[GradsTuple],
-        indices: &[u32],
-        bin_views: &[FeatureView<'_>],
-        feature_metas: &[HistogramLayout],
-        cache: Option<&BundleHistogramCache>,
-    ) {
-        match cache {
-            Some(c) => {
-                build_unbundled_gathered(
-                    histogram,
-                    ordered_grad_hess,
-                    indices,
-                    bin_views,
-                    c,
-                );
-            }
-            None => {
-                self.build_gathered(
-                    histogram,
-                    ordered_grad_hess,
-                    indices,
-                    bin_views,
-                    feature_metas,
-                );
-            }
-        }
-    }
 
     /// Suggest parallelism based on workload (may downgrade to sequential).
     #[inline]
@@ -210,157 +141,6 @@ impl HistogramBuilder {
             return Parallelism::Sequential;
         }
         self.parallelism
-    }
-}
-
-// =============================================================================
-// EFB Bundled Histogram Building
-// =============================================================================
-
-/// Build histograms from bundled columns, decoding to original features.
-///
-/// Uses pre-computed cache for zero-allocation histogram building.
-///
-/// # Arguments
-/// * `histogram` - The histogram buffer (sized for original features)
-/// * `ordered_grad_hess` - Gradients in partition order
-/// * `start_row` - Starting row index (for contiguous access)
-/// * `bundled_views` - Views over bundled columns (bundles + standalone)
-/// * `cache` - Pre-computed histogram cache (no allocations in hot path)
-fn build_unbundled_contiguous(
-    histogram: &mut [HistogramBin],
-    ordered_grad_hess: &[GradsTuple],
-    start_row: usize,
-    bundled_views: &[FeatureView<'_>],
-    cache: &BundleHistogramCache,
-) {
-
-    // PASS 1: Standalone features - use fast specialized kernels
-    // Pre-computed info: (view_col_idx, hist_offset, n_bins)
-    for &(col_idx, hist_offset, n_bins) in cache.standalone_info() {
-        let view = &bundled_views[col_idx];
-        let hist_slice = &mut histogram[hist_offset..hist_offset + n_bins as usize];
-        build_feature_contiguous(hist_slice, ordered_grad_hess, start_row, view);
-    }
-
-    // PASS 2: Bundled features - decode and accumulate
-    build_bundled_contiguous(histogram, ordered_grad_hess, start_row, bundled_views, cache);
-}
-
-/// Build histograms for bundled columns only, decoding to original features.
-///
-/// Uses pre-computed cache data - no allocations in the hot path.
-#[inline]
-fn build_bundled_contiguous(
-    histogram: &mut [HistogramBin],
-    ordered_grad_hess: &[GradsTuple],
-    start_row: usize,
-    bundled_views: &[FeatureView<'_>],
-    cache: &BundleHistogramCache,
-) {
-    let n_bundles = cache.n_bundles();
-    let n_rows = ordered_grad_hess.len();
-
-    for bundle_idx in 0..n_bundles {
-        let bundle_view = &bundled_views[bundle_idx];
-
-        // Get pre-computed data (no allocation!)
-        let (feature_indices, bin0_offsets) = cache.bundle_data(bundle_idx);
-
-        for i in 0..n_rows {
-            let row = start_row + i;
-            let encoded_bin = bundle_view.get_bin(row).unwrap_or(0);
-            let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
-            let (g, h) = (gh.grad as f64, gh.hess as f64);
-
-            if encoded_bin == 0 {
-                // All features at bin 0 (most common case for sparse data)
-                for &offset in bin0_offsets {
-                    let slot = unsafe { histogram.get_unchecked_mut(offset) };
-                    slot.0 += g;
-                    slot.1 += h;
-                }
-            } else if let Some((orig_feat, orig_bin)) = cache.decode(bundle_idx, encoded_bin) {
-                // One feature is non-default, others at bin 0
-                for (idx, &feat) in feature_indices.iter().enumerate() {
-                    let hist_idx = if feat == orig_feat {
-                        bin0_offsets[idx] + orig_bin as usize
-                    } else {
-                        bin0_offsets[idx]
-                    };
-                    let slot = unsafe { histogram.get_unchecked_mut(hist_idx) };
-                    slot.0 += g;
-                    slot.1 += h;
-                }
-            }
-        }
-    }
-}
-
-/// Build histograms from bundled columns with gathered (non-contiguous) indices.
-fn build_unbundled_gathered(
-    histogram: &mut [HistogramBin],
-    ordered_grad_hess: &[GradsTuple],
-    indices: &[u32],
-    bundled_views: &[FeatureView<'_>],
-    cache: &BundleHistogramCache,
-) {
-
-    // PASS 1: Standalone features - use fast specialized kernels
-    for &(col_idx, hist_offset, n_bins) in cache.standalone_info() {
-        let view = &bundled_views[col_idx];
-        let hist_slice = &mut histogram[hist_offset..hist_offset + n_bins as usize];
-        build_feature_gathered(hist_slice, ordered_grad_hess, indices, view);
-    }
-
-    // PASS 2: Bundled features - decode and accumulate
-    build_bundled_gathered(histogram, ordered_grad_hess, indices, bundled_views, cache);
-}
-
-/// Build histograms for bundled columns only with gathered indices.
-#[inline]
-fn build_bundled_gathered(
-    histogram: &mut [HistogramBin],
-    ordered_grad_hess: &[GradsTuple],
-    indices: &[u32],
-    bundled_views: &[FeatureView<'_>],
-    cache: &BundleHistogramCache,
-) {
-    let n_bundles = cache.n_bundles();
-
-    for bundle_idx in 0..n_bundles {
-        let bundle_view = &bundled_views[bundle_idx];
-
-        // Get pre-computed data (no allocation!)
-        let (feature_indices, bin0_offsets) = cache.bundle_data(bundle_idx);
-
-        for (i, &row_u32) in indices.iter().enumerate() {
-            let row = row_u32 as usize;
-            let encoded_bin = bundle_view.get_bin(row).unwrap_or(0);
-            let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
-            let (g, h) = (gh.grad as f64, gh.hess as f64);
-
-            if encoded_bin == 0 {
-                // All features at bin 0
-                for &offset in bin0_offsets {
-                    let slot = unsafe { histogram.get_unchecked_mut(offset) };
-                    slot.0 += g;
-                    slot.1 += h;
-                }
-            } else if let Some((orig_feat, orig_bin)) = cache.decode(bundle_idx, encoded_bin) {
-                // One feature non-default, others at bin 0
-                for (idx, &feat) in feature_indices.iter().enumerate() {
-                    let hist_idx = if feat == orig_feat {
-                        bin0_offsets[idx] + orig_bin as usize
-                    } else {
-                        bin0_offsets[idx]
-                    };
-                    let slot = unsafe { histogram.get_unchecked_mut(hist_idx) };
-                    slot.0 += g;
-                    slot.1 += h;
-                }
-            }
-        }
     }
 }
 
@@ -391,6 +171,10 @@ fn build_feature_gathered(
         }
         FeatureView::SparseU8 { .. } | FeatureView::SparseU16 { .. } => {
             // Sparse features not supported in gathered path
+        }
+        FeatureView::BundledU8 { .. } | FeatureView::BundledU16 { .. } => {
+            // Bundled views are handled separately by build_bundled_gathered
+            unreachable!("bundled views should not reach build_feature_gathered")
         }
     }
 }
@@ -513,6 +297,10 @@ fn build_feature_contiguous(
                 histogram,
                 start_row,
             );
+        }
+        FeatureView::BundledU8 { .. } | FeatureView::BundledU16 { .. } => {
+            // Bundled views are handled separately by build_bundled_contiguous
+            unreachable!("bundled views should not reach build_feature_contiguous")
         }
     }
 }
