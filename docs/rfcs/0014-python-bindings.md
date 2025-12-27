@@ -1,7 +1,8 @@
 # RFC-0014: Python Bindings
 
-- **Status**: Accepted
+- **Status**: Implemented
 - **Created**: 2025-12-25
+- **Updated**: 2025-12-27
 - **Depends on**: RFC-0001 through RFC-0013
 - **Scope**: Python package for boosters library
 
@@ -9,7 +10,7 @@
 
 Python bindings for the boosters library, exposing all major functionality to Python users.
 Built with PyO3/Maturin, providing native performance with a Pythonic API. Supports common
-data formats (NumPy, pandas, PyArrow) and integrates with scikit-learn.
+data formats (NumPy, pandas, Polars) and integrates with scikit-learn.
 
 ## Motivation
 
@@ -109,70 +110,74 @@ packages/boosters-python/
 ├── pyproject.toml          # Python package metadata
 ├── src/
 │   ├── lib.rs              # PyO3 module registration
-│   ├── dataset.rs          # Dataset/features Rust conversion
-│   ├── model.rs            # Model training/prediction core
-│   ├── convert.rs          # Type conversion utilities
-│   └── error.rs            # Error handling
+│   ├── data.rs             # Dataset/EvalSet Rust bindings
+│   ├── config.rs           # GBDTConfig/GBLinearConfig bindings
+│   ├── objectives.rs       # Objective enum bindings
+│   ├── metrics.rs          # Metric enum bindings
+│   ├── types.rs            # GrowthStrategy, ImportanceType, Verbosity
+│   ├── validation.rs       # Input validation utilities
+│   ├── error.rs            # Error handling
+│   └── model/
+│       ├── mod.rs          # Model module
+│       ├── gbdt.rs         # GBDTModel bindings
+│       └── gblinear.rs     # GBLinearModel bindings
 └── python/
     └── boosters/
         ├── __init__.py     # Public API re-exports
-        ├── _boosters_rs.pyi # Type stubs for Rust extension
-        ├── dataset.py      # Dataset, EvalSet
-        ├── config.py       # GBDTConfig, TreeConfig, etc.
-        ├── objectives.py   # Loss classes (SquaredLoss, PinballLoss, ...)
-        ├── metrics.py      # Metric classes (Rmse, Mae, ...)
-        ├── model.py        # GBDTModel, GBLinearModel
-        ├── callbacks.py    # Callback, EarlyStopping, LogEvaluation
-        ├── sklearn.py      # scikit-learn estimators
-        ├── compat.py       # Optional dependency handling
-        └── plotting.py     # Visualization (optional)
+        ├── _boosters_rs.pyi # Type stubs for Rust extension (generated)
+        ├── config.py       # Re-exports GBDTConfig, GBLinearConfig
+        ├── data.py         # Dataset (extends Rust), EvalSet
+        ├── objectives.py   # Re-exports Objective enum
+        ├── metrics.py      # Re-exports Metric enum
+        ├── model.py        # Re-exports GBDTModel, GBLinearModel
+        ├── types.py        # Re-exports GrowthStrategy
+        └── sklearn/
+            ├── __init__.py # sklearn estimator exports
+            ├── gbdt.py     # GBDTRegressor, GBDTClassifier
+            └── gblinear.py # GBLinearRegressor, GBLinearClassifier
 ```
 
 ### Module Exports
 
 ```python
 # boosters/__init__.py
-from boosters._version import __version__
-
-# Data
-from boosters.dataset import Dataset, EvalSet
-
-# Configuration  
-from boosters.config import (
-    GBDTConfig, GBLinearConfig, TreeConfig,
-    RegularizationConfig, SamplingConfig,
+from boosters._boosters_rs import (
+    ImportanceType,
+    Verbosity,
+    __version__,
 )
 
-# Objectives
-from boosters.objectives import (
-    SquaredLoss, AbsoluteLoss, HuberLoss, PinballLoss, ArctanLoss,
-    PoissonLoss, LogisticLoss, HingeLoss, SoftmaxLoss, LambdaRankLoss,
-    Objective,  # Union type
-)
+# Config types (Rust-owned)
+from boosters.config import GBDTConfig, GBLinearConfig
 
-# Metrics
-from boosters.metrics import (
-    Rmse, Mae, Mape, LogLoss, Auc, Accuracy, Ndcg,
-    Metric,  # Union type
-)
+# Data types
+from boosters.data import Dataset, EvalSet
 
-# Models
+# Metric enum
+from boosters.metrics import Metric
+
+# Model types
 from boosters.model import GBDTModel, GBLinearModel
 
-# Callbacks
-from boosters.callbacks import Callback, EarlyStopping, LogEvaluation
+# Objective enum  
+from boosters.objectives import Objective
+
+# Type aliases
+from boosters.types import GrowthStrategy
 
 __all__ = [
-    "__version__",
-    "Dataset", "EvalSet",
-    "GBDTConfig", "GBLinearConfig", "TreeConfig",
-    "RegularizationConfig", "SamplingConfig",
-    "SquaredLoss", "AbsoluteLoss", "HuberLoss", "PinballLoss", "ArctanLoss",
-    "PoissonLoss", "LogisticLoss", "HingeLoss", "SoftmaxLoss", "LambdaRankLoss",
+    "Dataset",
+    "EvalSet",
+    "GBDTConfig",
+    "GBDTModel",
+    "GBLinearConfig",
+    "GBLinearModel",
+    "GrowthStrategy",
+    "ImportanceType",
+    "Metric",
     "Objective",
-    "Rmse", "Mae", "Mape", "LogLoss", "Auc", "Accuracy", "Ndcg", "Metric",
-    "GBDTModel", "GBLinearModel",
-    "Callback", "EarlyStopping", "LogEvaluation",
+    "Verbosity",
+    "__version__",
 ]
 ```
 
@@ -183,41 +188,43 @@ __all__ = [
 ### Design Principles
 
 1. **Strict typing**: All public APIs use Python 3.12+ type hints
-2. **Dataclass configs**: Configuration via typed dataclasses, not dicts
+2. **Flat configs**: Configuration via flat Rust-owned classes, not nested Python dataclasses
 3. **Pythonic naming**: `n_samples`, `n_features`, `labels` (not `num_data`, `get_label`)
 4. **Model separation**: `GBDTModel` and `GBLinearModel` as distinct classes (like Rust)
-5. **Google-style docstrings**: Brief, typed, no redundant parameter descriptions
+5. **Factory-method enums**: `Objective.squared()`, `Metric.rmse()` with validation
 6. **sklearn-like fit/predict**: Config in `__init__`, data in `fit`/`predict`
 
 ### Quick Start (Core API)
 
-This is the **core API**, not the sklearn wrapper. The core API uses explicit
-dataclass configuration and `Dataset` objects for maximum type safety and control.
+This is the **core API**, not the sklearn wrapper. The core API uses Rust-owned
+configuration classes and `Dataset` objects for maximum type safety and control.
 
 ```python
 import boosters as bst
 import numpy as np
 
 # Create dataset
-X, y = np.random.rand(1000, 10), np.random.rand(1000)
-train = bst.Dataset(features=X[:800], labels=y[:800])
-valid = bst.Dataset(features=X[800:], labels=y[800:])
+X = np.random.rand(1000, 10).astype(np.float32)
+y = np.random.rand(1000).astype(np.float32)
+train = bst.Dataset(X[:800], y[:800])
+valid = bst.Dataset(X[800:], y[800:])
 
-# Configure with explicit nested configs (Rust-owned types)
+# Configure with flat config (all parameters in one class)
 config = bst.GBDTConfig(
     n_estimators=100,
     learning_rate=0.1,
-    objective=bst.SquaredLoss(),
-    tree=bst.TreeConfig(max_depth=6, n_leaves=31),
-    regularization=bst.RegularizationConfig(l2=0.1),
+    objective=bst.Objective.squared(),
+    metric=bst.Metric.rmse(),
+    max_depth=6,
+    l2=1.0,
 )
 
 # Train
 model = bst.GBDTModel(config)
-model.fit(train, valid=[bst.EvalSet("valid", valid)])
+model.fit(train, valid=[bst.EvalSet(valid, "valid")])
 
 # Predict
-predictions = model.predict(X[800:])
+predictions = model.predict(bst.Dataset(X[800:]))
 ```
 
 **Multi-output quantile regression example:**
@@ -225,11 +232,11 @@ predictions = model.predict(X[800:])
 ```python
 # Multi-quantile prediction (3 output columns)
 config = bst.GBDTConfig(
-    objective=bst.PinballLoss(alpha=[0.1, 0.5, 0.9]),
+    objective=bst.Objective.pinball([0.1, 0.5, 0.9]),
 )
 model = bst.GBDTModel(config)
 model.fit(train)
-quantiles = model.predict(X_test)  # Shape: (n_samples, 3)
+quantiles = model.predict(bst.Dataset(X_test))  # Shape: (n_samples, 3)
 ```
 
 For sklearn-style usage, see the [scikit-learn Integration](#scikit-learn-integration) section.
@@ -250,25 +257,29 @@ print(boosters.__version__)  # "0.1.0"
 ### Dataset
 
 ```python
-from dataclasses import dataclass
-from numpy.typing import ArrayLike, NDArray
-import numpy as np
-
-@dataclass
 class Dataset:
     """Training dataset with features, labels, and optional metadata.
     
-    Dataset is a pure Python dataclass that holds references to numpy arrays.
-    When passed to model.fit(), arrays are converted to zero-copy Rust views
-    (if C/F-contiguous float32) or copied once (if conversion needed).
+    Dataset extends a Rust base class with Python-friendly constructors.
+    Data is converted to C-contiguous float32 arrays for efficient processing.
+    
+    Supports multiple input types:
+    - NumPy arrays (preferred, zero-copy when possible)
+    - Pandas DataFrames (auto-detects feature names and categorical columns)
+    - Polars DataFrames (auto-detects feature names and categorical columns)
+    - Any array-like that can be converted to NumPy
     """
     
-    features: NDArray[np.floating] | pd.DataFrame
-    labels: NDArray[np.floating] | None = None
-    weights: NDArray[np.floating] | None = None
-    groups: NDArray[np.integer] | None = None  # For ranking
-    feature_names: list[str] | None = None
-    categorical_features: list[int | str] | None = None
+    def __new__(
+        cls,
+        features: NDArray | pd.DataFrame | pl.DataFrame,
+        labels: NDArray | None = None,
+        weights: NDArray | None = None,
+        groups: NDArray | None = None,
+        feature_names: list[str] | None = None,
+        categorical_features: list[int] | None = None,
+    ) -> Dataset:
+        """Create a new Dataset instance."""
     
     @property
     def n_samples(self) -> int:
@@ -278,238 +289,260 @@ class Dataset:
     def n_features(self) -> int:
         """Number of features."""
     
+    @property
+    def has_labels(self) -> bool:
+        """Whether labels are present."""
+    
+    @property
+    def has_weights(self) -> bool:
+        """Whether weights are present."""
+    
+    @property
+    def feature_names(self) -> list[str] | None:
+        """Feature names if provided."""
+    
+    @property
+    def categorical_features(self) -> list[int]:
+        """Indices of categorical features."""
+    
+    @property
+    def shape(self) -> tuple[int, int]:
+        """Shape as (n_samples, n_features)."""
+    
     def __len__(self) -> int:
         return self.n_samples
 ```
 
-### Configuration Dataclasses
+### EvalSet (Named Evaluation Dataset)
 
 ```python
-from dataclasses import dataclass, field
-from enum import Enum
-
-# --- Objectives (parameterized, type-safe) ---
-
-@dataclass(frozen=True)
-class SquaredLoss:
-    """Mean squared error loss."""
-    pass
-
-@dataclass(frozen=True)
-class AbsoluteLoss:
-    """Mean absolute error loss."""
-    pass
-
-@dataclass(frozen=True)
-class HuberLoss:
-    """Pseudo-Huber loss, smooth approximation to MAE."""
-    delta: float = 1.0
-
-@dataclass(frozen=True)
-class PinballLoss:
-    """Pinball loss for quantile regression.
+class EvalSet:
+    """Named evaluation set for validation during training.
     
-    Standard piecewise-linear quantile loss. Prefer for most quantile
-    regression tasks. For outlier-robust quantile regression, see ArctanLoss.
+    An EvalSet wraps a Dataset with a name, which is used to identify
+    the evaluation set in training logs and `eval_results`.
     """
-    alpha: float | list[float] = 0.5  # Single or multiple quantiles
-
-@dataclass(frozen=True)
-class ArctanLoss:
-    """Arctan loss for robust quantile regression.
     
-    Smooth approximation to quantile loss, more robust to outliers than
-    PinballLoss. Use when data has extreme outliers that shouldn't dominate.
-    """
-    alpha: float = 0.5
-
-@dataclass(frozen=True)
-class PoissonLoss:
-    """Poisson deviance loss for count data."""
-    pass
-
-@dataclass(frozen=True)
-class LogisticLoss:
-    """Binary cross-entropy loss."""
-    pass
-
-@dataclass(frozen=True)
-class HingeLoss:
-    """SVM-style hinge loss."""
-    pass
-
-@dataclass(frozen=True)
-class SoftmaxLoss:
-    """Multi-class cross-entropy loss."""
-    n_classes: int
-
-@dataclass(frozen=True)
-class LambdaRankLoss:
-    """LambdaRank loss for learning to rank."""
-    ndcg_at: int = 10
-
-# Union type for all objectives
-type Objective = (
-    SquaredLoss | AbsoluteLoss | HuberLoss | PinballLoss | ArctanLoss |
-    PoissonLoss | LogisticLoss | HingeLoss | SoftmaxLoss | LambdaRankLoss
-)
-
-# --- Metrics (parameterized where needed) ---
-
-@dataclass(frozen=True)
-class Rmse:
-    """Root mean squared error."""
-    pass
-
-@dataclass(frozen=True)
-class Mae:
-    """Mean absolute error."""
-    pass
-
-@dataclass(frozen=True)
-class Mape:
-    """Mean absolute percentage error."""
-    pass
-
-@dataclass(frozen=True)
-class LogLoss:
-    """Binary log loss."""
-    pass
-
-@dataclass(frozen=True)
-class Auc:
-    """Area under ROC curve."""
-    pass
-
-@dataclass(frozen=True)
-class Accuracy:
-    """Classification accuracy."""
-    pass
-
-@dataclass(frozen=True)
-class Ndcg:
-    """Normalized discounted cumulative gain."""
-    at: int = 10  # NDCG@k
-
-type Metric = Rmse | Mae | Mape | LogLoss | Auc | Accuracy | Ndcg
+    def __new__(cls, dataset: Dataset, name: str) -> EvalSet:
+        """Create a new named evaluation set.
+        
+        Args:
+            dataset: Dataset containing features and labels.
+            name: Name for this evaluation set (e.g., "validation", "test")
+        """
+    
+    @property
+    def name(self) -> str:
+        """Name of this evaluation set."""
+    
+    @property
+    def dataset(self) -> Dataset:
+        """The underlying dataset."""
 ```
 
-### Objective Validation
+### Configuration Classes
 
-Objectives with parameters validate at construction time via `__post_init__`:
+Configuration is done via flat Rust-owned classes with factory constructors.
+All parameters are specified in the main config class rather than nested sub-configs.
 
 ```python
-@dataclass(frozen=True)
-class PinballLoss:
-    alpha: float | list[float] = 0.5
+class GBDTConfig:
+    """Main configuration for GBDT model.
     
-    def __post_init__(self):
-        alphas = [self.alpha] if isinstance(self.alpha, (int, float)) else self.alpha
-        if len(alphas) == 0:
-            raise ValueError("alpha must be non-empty")
-        for a in alphas:
-            if not 0 < a < 1:
-                raise ValueError(f"alpha values must be in (0, 1), got {a}")
+    All parameters are flat (no nested config objects) matching the core Rust API.
+    """
+    
+    def __new__(
+        cls,
+        n_estimators: int = 100,
+        learning_rate: float = 0.3,
+        objective: Objective | None = None,  # Default: Objective.Squared
+        metric: Metric | None = None,
+        growth_strategy: GrowthStrategy = GrowthStrategy.Depthwise,
+        max_depth: int = 6,
+        n_leaves: int = 31,
+        max_onehot_cats: int = 4,
+        l1: float = 0.0,
+        l2: float = 1.0,
+        min_gain_to_split: float = 0.0,
+        min_child_weight: float = 1.0,
+        min_samples_leaf: int = 1,
+        subsample: float = 1.0,
+        colsample_bytree: float = 1.0,
+        colsample_bylevel: float = 1.0,
+        linear_leaves: bool = False,
+        linear_l2: float = 0.01,
+        linear_l1: float = 0.0,
+        linear_max_iterations: int = 10,
+        linear_tolerance: float = 1e-6,
+        linear_min_samples: int = 50,
+        linear_coefficient_threshold: float = 1e-6,
+        linear_max_features: int = 10,
+        max_bins: int = 256,
+        early_stopping_rounds: int | None = None,
+        seed: int = 42,
+        verbosity: Verbosity = Verbosity.Silent,
+    ) -> GBDTConfig: ...
 
-@dataclass(frozen=True)
-class SoftmaxLoss:
-    n_classes: int
+class GBLinearConfig:
+    """Main configuration for GBLinear model.
     
-    def __post_init__(self):
-        if self.n_classes < 2:
-            raise ValueError(f"n_classes must be >= 2, got {self.n_classes}")
+    GBLinear uses gradient boosting to train a linear model via coordinate descent.
+    """
+    
+    def __new__(
+        cls,
+        n_estimators: int = 100,
+        learning_rate: float = 0.5,
+        objective: Objective | None = None,
+        metric: Metric | None = None,
+        l1: float = 0.0,
+        l2: float = 1.0,
+        early_stopping_rounds: int | None = None,
+        seed: int = 42,
+        verbosity: Verbosity = Verbosity.Silent,
+    ) -> GBLinearConfig: ...
+
+class GrowthStrategy(enum.Enum):
+    """Tree growth strategy for building decision trees."""
+    Depthwise = ...  # Level-by-level (like XGBoost)
+    Leafwise = ...   # Best-first split (like LightGBM)
+
+class Verbosity(enum.Enum):
+    """Verbosity level for training output."""
+    Silent = ...   # No output
+    Warning = ...  # Errors and warnings only
+    Info = ...     # Progress and important information
+    Debug = ...    # Detailed debugging information
+```
+
+### Objective Enum (Factory-Method Pattern)
+
+Objectives use a Rust-backed enum with static factory methods for validation:
+
+```python
+class Objective(enum.Enum):
+    """Objective (loss) functions for gradient boosting.
+    
+    Use static factory methods to create instances with validation.
+    Supports Python pattern matching for type inspection.
+    """
+    
+    # Enum variants
+    Squared = ...    # Mean squared error (L2)
+    Absolute = ...   # Mean absolute error (L1)
+    Huber = ...      # Pseudo-Huber loss (delta parameter)
+    Pinball = ...    # Quantile regression (alpha parameter)
+    Poisson = ...    # Poisson deviance for count data
+    Logistic = ...   # Binary cross-entropy
+    Hinge = ...      # SVM-style hinge loss
+    Softmax = ...    # Multiclass cross-entropy (n_classes parameter)
+    LambdaRank = ... # LambdaMART for ranking (ndcg_at parameter)
+    
+    # Factory methods with validation
+    @staticmethod
+    def squared() -> Objective:
+        """Create squared error loss (L2)."""
+    
+    @staticmethod
+    def absolute() -> Objective:
+        """Create absolute error loss (L1)."""
+    
+    @staticmethod
+    def huber(delta: float = 1.0) -> Objective:
+        """Create Huber loss with validation (delta > 0)."""
+    
+    @staticmethod
+    def pinball(alpha: Sequence[float]) -> Objective:
+        """Create pinball loss with validation (all alpha in (0, 1))."""
+    
+    @staticmethod
+    def poisson() -> Objective:
+        """Create Poisson loss."""
+    
+    @staticmethod
+    def logistic() -> Objective:
+        """Create logistic loss for binary classification."""
+    
+    @staticmethod
+    def hinge() -> Objective:
+        """Create hinge loss for binary classification."""
+    
+    @staticmethod
+    def softmax(n_classes: int) -> Objective:
+        """Create softmax loss with validation (n_classes >= 2)."""
+    
+    @staticmethod
+    def lambdarank(ndcg_at: int = 10) -> Objective:
+        """Create LambdaRank loss with validation (ndcg_at > 0)."""
+```
+
+**Pattern matching example:**
+
+```python
+match obj:
+    case Objective.Squared():
+        print("L2 loss")
+    case Objective.Pinball(alpha=a):
+        print(f"Quantile: {a}")
+    case Objective.Softmax(n_classes=k):
+        print(f"Multiclass with {k} classes")
+```
+
+### Metric Enum (Factory-Method Pattern)
+
+```python
+class Metric(enum.Enum):
+    """Evaluation metrics for gradient boosting.
+    
+    Use static factory methods to create instances with validation.
+    """
+    
+    # Enum variants
+    Rmse = ...      # Root Mean Squared Error
+    Mae = ...       # Mean Absolute Error
+    Mape = ...      # Mean Absolute Percentage Error
+    LogLoss = ...   # Binary cross-entropy
+    Auc = ...       # Area Under ROC Curve
+    Accuracy = ...  # Classification accuracy
+    Ndcg = ...      # Normalized Discounted Cumulative Gain (at parameter)
+    
+    # Factory methods
+    @staticmethod
+    def rmse() -> Metric: ...
+    
+    @staticmethod
+    def mae() -> Metric: ...
+    
+    @staticmethod
+    def mape() -> Metric: ...
+    
+    @staticmethod
+    def logloss() -> Metric: ...
+    
+    @staticmethod
+    def auc() -> Metric: ...
+    
+    @staticmethod
+    def accuracy() -> Metric: ...
+    
+    @staticmethod
+    def ndcg(at: int = 10) -> Metric:
+        """Create NDCG@k metric with validation (at > 0)."""
 ```
 
 ### Output Shape by Objective
 
 | Objective | Output Shape | Notes |
 | --------- | ------------ | ----- |
-| `SquaredLoss()` | `(n_samples,)` | Scalar regression |
-| `PinballLoss(alpha=0.5)` | `(n_samples,)` | Single quantile |
-| `PinballLoss(alpha=[0.1, 0.5, 0.9])` | `(n_samples, 3)` | Columns in alpha order |
-| `ArctanLoss(alpha=0.5)` | `(n_samples,)` | Robust quantile |
-| `LogisticLoss()` | `(n_samples,)` | Probability [0, 1] |
-| `SoftmaxLoss(n_classes=k)` | `(n_samples, k)` | Probabilities per class |
+| `Objective.squared()` | `(n_samples, 1)` | Scalar regression |
+| `Objective.pinball([0.5])` | `(n_samples, 1)` | Single quantile |
+| `Objective.pinball([0.1, 0.5, 0.9])` | `(n_samples, 3)` | Columns in alpha order |
+| `Objective.logistic()` | `(n_samples, 1)` | Probability [0, 1] |
+| `Objective.softmax(k)` | `(n_samples, k)` | Probabilities per class |
 
 **Note on multi-quantile**: Output columns are ordered by the `alpha` list. With `alpha=[0.1, 0.5, 0.9]`,
-column 0 is the 10th percentile, column 1 is median, column 2 is 90th percentile. Quantile crossing
-(where a higher quantile predicts lower than a lower quantile) can occur; users should post-process
-if monotonicity is required.
-
-### Evaluation Set (Named Datasets)
-
-```python
-@dataclass
-class EvalSet:
-    """Named evaluation dataset for validation during training."""
-    name: str
-    dataset: Dataset
-
-@dataclass
-class TreeConfig:
-    """Tree structure configuration."""
-    max_depth: int = -1  # -1 = unlimited
-    n_leaves: int = 31
-    min_samples_leaf: int = 20
-    min_gain_to_split: float = 0.0
-
-@dataclass  
-class RegularizationConfig:
-    """Regularization parameters."""
-    l1: float = 0.0
-    l2: float = 0.0
-    
-@dataclass
-class SamplingConfig:
-    """Row and column sampling."""
-    subsample: float = 1.0
-    colsample: float = 1.0
-    
-@dataclass
-class GBDTConfig:
-    """Configuration for GBDT training."""
-    
-    # Core
-    n_estimators: int = 100
-    learning_rate: float = 0.1
-    objective: Objective = field(default_factory=SquaredLoss)
-    metrics: list[Metric] | None = None
-    
-    # Tree structure
-    tree: TreeConfig = field(default_factory=TreeConfig)
-    
-    # Regularization
-    regularization: RegularizationConfig = field(default_factory=RegularizationConfig)
-    
-    # Sampling
-    sampling: SamplingConfig = field(default_factory=SamplingConfig)
-    
-    # Features
-    linear_trees: bool = False
-    enable_bundling: bool = True  # EFB
-    
-    # Runtime
-    n_threads: int = 0  # 0 = auto
-    seed: int | None = None
-    verbose: int = 1
-
-@dataclass
-class GBLinearConfig:
-    """Configuration for GBLinear training."""
-    
-    n_estimators: int = 100
-    learning_rate: float = 0.1
-    objective: Objective = field(default_factory=SquaredLoss)
-    metrics: list[Metric] | None = None
-    
-    # Regularization (critical for linear)
-    regularization: RegularizationConfig = field(default_factory=RegularizationConfig)
-    
-    # Runtime
-    n_threads: int = 0
-    seed: int | None = None
-    verbose: int = 1
-```
+column 0 is the 10th percentile, column 1 is median, column 2 is 90th percentile.
 
 ### GBDT Model
 
@@ -517,8 +550,8 @@ class GBLinearConfig:
 class GBDTModel:
     """Gradient Boosted Decision Trees model."""
     
-    def __init__(self, config: GBDTConfig | None = None) -> None:
-        """Initialize with configuration.
+    def __new__(cls, config: GBDTConfig | None = None) -> GBDTModel:
+        """Create a new GBDT model.
         
         Args:
             config: Training configuration. Uses defaults if None.
@@ -527,81 +560,52 @@ class GBDTModel:
     def fit(
         self,
         train: Dataset,
-        *,
-        valid: EvalSet | list[EvalSet] | None = None,
-        callbacks: list[Callback] | None = None,
-    ) -> Self:
+        valid: Sequence[EvalSet] | None = None,
+        n_threads: int = 0,
+    ) -> GBDTModel:
         """Train the model.
         
         Args:
-            train: Training dataset.
+            train: Training dataset with features and labels.
             valid: Named validation set(s) for early stopping and metrics.
-                   Each EvalSet has a name used in eval_results.
-            callbacks: Training callbacks (early stopping, logging).
+            n_threads: Number of threads (0 = auto).
         
         Returns:
             Self for method chaining.
-        
-        Example:
-            >>> model.fit(
-            ...     train_ds,
-            ...     valid=[
-            ...         EvalSet("train", train_ds),
-            ...         EvalSet("valid", valid_ds),
-            ...     ],
-            ... )
         """
     
     def predict(
         self,
-        features: NDArray[np.floating] | pd.DataFrame,
-        *,
-        n_iterations: int | None = None,
-        raw_score: bool = False,
-        pred_leaf: bool = False,
-        pred_contrib: bool = False,
-    ) -> NDArray[np.floating]:
+        data: Dataset,
+        n_threads: int = 0,
+    ) -> NDArray[np.float32]:
         """Make predictions.
         
+        Returns transformed predictions (e.g., probabilities for classification).
+        Output shape is (n_samples, n_outputs) - sklearn convention.
+        
         Args:
-            features: Feature matrix (n_samples, n_features).
-                      Must have same n_features as training.
-                      NaN values use default split direction.
-            n_iterations: Limit trees used. None = best_iteration or all.
-            raw_score: Return raw margins (no sigmoid/softmax).
-            pred_leaf: Return leaf indices instead of predictions.
-                       Cannot be combined with pred_contrib.
-            pred_contrib: Return SHAP values. Implies raw output.
-                          Cannot be combined with pred_leaf.
+            data: Dataset containing features for prediction.
+            n_threads: Number of threads (0 = auto).
         
         Returns:
-            Predictions array. Shape depends on objective and flags:
-            
-            Standard prediction:
-            - Regression: (n_samples,)
-            - Binary classification: (n_samples,) probabilities
-            - Multi-class (k classes): (n_samples, k) probabilities
-            - Quantile regression (q quantiles): (n_samples, q)
-            
-            With pred_leaf=True:
-            - (n_samples, n_trees) leaf indices
-            
-            With pred_contrib=True (SHAP):
-            - Regression/binary: (n_samples, n_features + 1)
-            - Multi-class: (n_samples, n_features + 1, k)
-            Last column is base value (expected value).
+            Predictions array with shape (n_samples, n_outputs).
+        """
+    
+    def predict_raw(
+        self,
+        data: Dataset,
+        n_threads: int = 0,
+    ) -> NDArray[np.float32]:
+        """Make raw (untransformed) predictions.
         
-        Raises:
-            ValueError: If both pred_leaf and pred_contrib are True.
-            ValueError: If features has wrong number of columns.
-        
-        Note:
-            For large datasets with pred_contrib, memory usage is
-            O(n_samples × n_features × n_outputs). Consider batching
-            manually for datasets >100k rows.
+        Returns raw margin scores without transformation.
         """
     
     # Model inspection
+    @property
+    def is_fitted(self) -> bool: ...
+    
     @property
     def n_features(self) -> int: ...
     
@@ -609,13 +613,13 @@ class GBDTModel:
     def n_trees(self) -> int: ...
     
     @property
-    def feature_names(self) -> list[str] | None: ...
-    
-    @property
     def best_iteration(self) -> int | None: ...
     
     @property
     def best_score(self) -> float | None: ...
+    
+    @property
+    def config(self) -> GBDTConfig: ...
     
     @property
     def eval_results(self) -> dict[str, dict[str, list[float]]] | None:
@@ -625,186 +629,111 @@ class GBDTModel:
             Nested dict: {dataset_name: {metric_name: [values_per_iteration]}}
             Example: {"valid": {"rmse": [0.5, 0.4, 0.35, ...]}}
         """
-        ...
     
     def feature_importance(
         self,
-        importance_type: Literal["gain", "split", "cover"] = "gain",
-    ) -> NDArray[np.floating]: ...
+        importance_type: ImportanceType = ImportanceType.Split,
+    ) -> NDArray[np.float32]: ...
     
-    def trees_to_dataframe(self) -> pd.DataFrame: ...
+    def shap_values(self, data: Dataset) -> NDArray[np.float32]:
+        """Compute SHAP values for feature contribution analysis.
+        
+        Returns:
+            Array with shape (n_samples, n_features + 1, n_outputs).
+        """
 
 class GBLinearModel:
     """Gradient Boosted Linear model."""
     
-    def __init__(self, config: GBLinearConfig | None = None) -> None:
-        """Initialize with configuration."""
+    def __new__(cls, config: GBLinearConfig | None = None) -> GBLinearModel:
+        """Create a new GBLinear model."""
     
     def fit(
         self,
         train: Dataset,
-        *,
-        valid: EvalSet | list[EvalSet] | None = None,
-        callbacks: list[Callback] | None = None,
-    ) -> Self:
-        """Train the model.
-        
-        Args:
-            train: Training dataset.
-            valid: Named validation set(s) for early stopping and metrics.
-            callbacks: Training callbacks (early stopping, logging).
-        
-        Returns:
-            Self for method chaining.
-        """
+        eval_set: Sequence[EvalSet] | None = None,
+        n_threads: int = 0,
+    ) -> GBLinearModel:
+        """Train the model."""
     
     def predict(
         self,
-        features: NDArray[np.floating] | pd.DataFrame,
-        *,
-        n_iterations: int | None = None,
-        raw_score: bool = False,
-    ) -> NDArray[np.floating]:
-        """Make predictions.
-        
-        Returns:
-            Predictions array. Shape matches objective output dimensions.
-        """
+        data: Dataset,
+        n_threads: int = 0,
+    ) -> NDArray[np.float32]:
+        """Make predictions."""
+    
+    def predict_raw(
+        self,
+        data: Dataset,
+        n_threads: int = 0,
+    ) -> NDArray[np.float32]:
+        """Make raw (untransformed) predictions."""
     
     @property
-    def weights(self) -> NDArray[np.floating]:
-        """Model weights (n_features,) or (n_features, n_outputs)."""
+    def coef_(self) -> NDArray[np.float32]:
+        """Model coefficients (n_features,) or (n_features, n_outputs)."""
     
     @property
-    def bias(self) -> float | NDArray[np.floating]:
-        """Model bias term."""
-```
-
-### Training Function (Alternative API)
-
-For users who prefer functional style:
-
-```python
-def train_gbdt(
-    config: GBDTConfig,
-    train: Dataset,
-    *,
-    valid: EvalSet | list[EvalSet] | None = None,
-    callbacks: list[Callback] | None = None,
-) -> GBDTModel:
-    """Train a GBDT model.
+    def intercept_(self) -> NDArray[np.float32]:
+        """Model intercept (bias) term."""
     
-    Args:
-        config: Training configuration.
-        train: Training dataset.
-        valid: Named validation set(s).
-        callbacks: Training callbacks.
+    @property
+    def is_fitted(self) -> bool: ...
     
-    Returns:
-        Trained model.
-    """
-
-def train_gblinear(
-    config: GBLinearConfig,
-    train: Dataset,
-    *,
-    valid: EvalSet | list[EvalSet] | None = None,
-    callbacks: list[Callback] | None = None,
-) -> GBLinearModel:
-    """Train a GBLinear model."""
-```
-
-### Callbacks
-
-```python
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
-
-class Callback(ABC):
-    """Base class for training callbacks."""
+    @property
+    def n_features_in_(self) -> int: ...
     
-    @abstractmethod
-    def __call__(
-        self,
-        iteration: int,
-        eval_results: dict[str, dict[str, float]],
-    ) -> bool:
-        """Called after each iteration.
-        
-        Args:
-            iteration: Current iteration number.
-            eval_results: Metric values for this iteration.
-                         Format: {dataset_name: {metric_name: value}}
-        
-        Returns:
-            True to stop training, False to continue.
-        """
-
-@dataclass
-class EarlyStopping(Callback):
-    """Stop training when validation metric stops improving."""
+    @property
+    def best_iteration(self) -> int | None: ...
     
-    patience: int = 50
-    min_delta: float = 0.0
-    monitor_set: str = "valid"  # Which EvalSet to monitor
-    monitor_metric: str | None = None  # None = use first metric
+    @property
+    def best_score(self) -> float | None: ...
     
-    def __call__(
-        self,
-        iteration: int,
-        eval_results: dict[str, dict[str, float]],
-    ) -> bool: ...
-
-@dataclass
-class LogEvaluation(Callback):
-    """Log evaluation metrics periodically."""
+    @property
+    def eval_results(self) -> dict[str, dict[str, list[float]]] | None: ...
     
-    period: int = 10
-    
-    def __call__(
-        self,
-        iteration: int,
-        eval_results: dict[str, dict[str, float]],
-    ) -> bool: ...
+    @property
+    def config(self) -> GBLinearConfig: ...
 ```
 
 ---
 
 ## Objective and Metric Mapping
 
-### Objective Classes
+### Objective Factory Methods
 
-| Python Objective | Rust Type | Parameters | Notes |
-| ---------------- | --------- | ---------- | ----- |
-| `SquaredLoss()` | `SquaredLoss` | — | Default for regression |
-| `AbsoluteLoss()` | `AbsoluteLoss` | — | Robust to outliers (L1) |
-| `HuberLoss(delta=1.0)` | `PseudoHuberLoss` | `delta: float` | Smooth L1/L2 blend |
-| `PinballLoss(alpha=0.5)` | `PinballLoss` | `alpha: float \| list[float]` | Single or multi-quantile |
-| `ArctanLoss(alpha=0.5)` | `ArctanLoss` | `alpha: float` | Robust quantile |
-| `PoissonLoss()` | `PoissonLoss` | — | For count data |
-| `LogisticLoss()` | `LogisticLoss` | — | Binary classification |
-| `HingeLoss()` | `HingeLoss` | — | SVM-style classification |
-| `SoftmaxLoss(n_classes=3)` | `SoftmaxLoss` | `n_classes: int` | Multiclass (required) |
-| `LambdaRankLoss(ndcg_at=10)` | `LambdaRankLoss` | `ndcg_at: int` | Learning to rank |
+| Python Factory | Parameters | Notes |
+| -------------- | ---------- | ----- |
+| `Objective.squared()` | — | Default for regression |
+| `Objective.absolute()` | — | Robust to outliers (L1) |
+| `Objective.huber(delta=1.0)` | `delta: float` | Smooth L1/L2 blend |
+| `Objective.pinball([0.5])` | `alpha: Sequence[float]` | Multi-quantile supported |
+| `Objective.poisson()` | — | For count data |
+| `Objective.logistic()` | — | Binary classification |
+| `Objective.hinge()` | — | SVM-style classification |
+| `Objective.softmax(n_classes)` | `n_classes: int` | Multiclass (required) |
+| `Objective.lambdarank(ndcg_at=10)` | `ndcg_at: int` | Learning to rank |
 
-### Metric Classes
+### Metric Factory Methods
 
-| Python Metric | Rust Type | Parameters | Task |
-| ------------- | --------- | ---------- | ---- |
-| `Rmse()` | `Rmse` | — | Regression |
-| `Mae()` | `Mae` | — | Regression |
-| `Mape()` | `Mape` | — | Regression |
-| `LogLoss()` | `LogLoss` | — | Classification |
-| `Auc()` | `Auc` | — | Binary classification |
-| `Accuracy()` | `Accuracy` | — | Classification |
-| `Ndcg(at=10)` | `Ndcg` | `at: int` | Ranking |
+| Python Factory | Parameters | Task |
+| ------------- | ---------- | ---- |
+| `Metric.rmse()` | — | Regression |
+| `Metric.mae()` | — | Regression |
+| `Metric.mape()` | — | Regression |
+| `Metric.logloss()` | — | Classification |
+| `Metric.auc()` | — | Binary classification |
+| `Metric.accuracy()` | — | Classification |
+| `Metric.ndcg(at=10)` | `at: int` | Ranking |
 
 ---
 
 ## scikit-learn Integration
 
 ```python
-from boosters.sklearn import GBDTRegressor, GBDTClassifier, GBDTRanker
+from boosters.sklearn import GBDTRegressor, GBDTClassifier
+from boosters.sklearn import GBLinearRegressor, GBLinearClassifier
 
 # Works like any sklearn estimator
 model = GBDTRegressor(
@@ -817,18 +746,10 @@ model = GBDTRegressor(
 model.fit(X_train, y_train)
 predictions = model.predict(X_test)
 
-# With validation for early stopping (sklearn-style shortcut)
+# With validation for early stopping
 model.fit(
     X_train, y_train,
     eval_set=[(X_val, y_val)],
-    early_stopping_rounds=50,  # Shortcut for EarlyStopping callback
-)
-
-# Or with explicit callbacks
-model.fit(
-    X_train, y_train,
-    eval_set=[(X_val, y_val)],
-    callbacks=[EarlyStopping(patience=50, min_delta=0.001)],
 )
 
 # Cross-validation works
@@ -837,6 +758,7 @@ scores = cross_val_score(model, X, y, cv=5)
 
 # Pipeline integration
 from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 pipe = Pipeline([
     ('scaler', StandardScaler()),
     ('model', GBDTClassifier()),
@@ -852,8 +774,7 @@ from typing import Self
 class GBDTRegressor(BaseEstimator, RegressorMixin):
     """GBDT regressor with sklearn interface.
     
-    All constructor parameters become sklearn-compatible attributes.
-    Configuration is flattened (no nested dataclasses) for sklearn compatibility.
+    All constructor parameters are flat (no nested config) for sklearn compatibility.
     """
     
     def __init__(
@@ -861,17 +782,21 @@ class GBDTRegressor(BaseEstimator, RegressorMixin):
         *,
         n_estimators: int = 100,
         learning_rate: float = 0.1,
-        max_depth: int = -1,
-        n_leaves: int = 31,
-        min_samples_leaf: int = 20,
-        l1: float = 0.0,
-        l2: float = 0.0,
+        max_depth: int = 6,
+        min_child_weight: float = 1.0,
+        max_leaves: int = 31,
+        grow_strategy: GrowthStrategy = GrowthStrategy.Depthwise,
+        colsample_bytree: float = 1.0,
         subsample: float = 1.0,
-        colsample: float = 1.0,
-        linear_trees: bool = False,
+        gamma: float = 0.0,
+        reg_alpha: float = 0.0,
+        reg_lambda: float = 1.0,
+        early_stopping_rounds: int | None = None,
+        seed: int = 42,
         n_threads: int = 0,
-        seed: int | None = None,
         verbose: int = 1,
+        objective: Objective | None = None,  # Default: Objective.squared()
+        metric: Metric | None = None,  # Default: Metric.rmse()
     ) -> None: ...
     
     def fit(
@@ -879,47 +804,33 @@ class GBDTRegressor(BaseEstimator, RegressorMixin):
         X: ArrayLike,
         y: ArrayLike,
         *,
+        eval_set: list[tuple[ArrayLike, ArrayLike]] | list[EvalSet] | None = None,
         sample_weight: ArrayLike | None = None,
-        eval_set: list[tuple[ArrayLike, ArrayLike]] | None = None,
-        early_stopping_rounds: int | None = None,
-        callbacks: list[Callback] | None = None,
     ) -> Self: ...
     
-    def predict(self, X: ArrayLike) -> NDArray[np.floating]: ...
+    def predict(self, X: ArrayLike) -> NDArray[np.float32]: ...
     
     # sklearn-standard attributes (set after fit)
     n_features_in_: int
-    feature_names_in_: NDArray[np.str_] | None
-    feature_importances_: NDArray[np.floating]
-    best_iteration_: int | None
+    feature_importances_: NDArray[np.float32]
+    model_: GBDTModel  # Underlying core model
 
 class GBDTClassifier(BaseEstimator, ClassifierMixin):
     """GBDT classifier with sklearn interface.
     
-    Automatically infers binary vs multiclass from labels:
-    - 2 classes: LogisticLoss()
-    - >2 classes: SoftmaxLoss(n_classes=k)
+    Auto-infers binary vs multiclass from labels:
+    - 2 classes: Uses Objective.logistic()
+    - >2 classes: Uses Objective.softmax(n_classes)
     """
     
-    def __init__(self, *, **kwargs) -> None: ...  # Same as GBDTRegressor
+    def __init__(self, **kwargs) -> None: ...  # Same params as GBDTRegressor
     
     def fit(self, X: ArrayLike, y: ArrayLike, **kwargs) -> Self: ...
-    def predict(self, X: ArrayLike) -> NDArray[np.integer]: ...
-    def predict_proba(self, X: ArrayLike) -> NDArray[np.floating]: ...
+    def predict(self, X: ArrayLike) -> NDArray: ...
+    def predict_proba(self, X: ArrayLike) -> NDArray[np.float32]: ...
     
     classes_: NDArray  # Set after fit
-
-class GBDTRanker(BaseEstimator):
-    """GBDT ranker for learning-to-rank."""
-    
-    def fit(
-        self,
-        X: ArrayLike,
-        y: ArrayLike,
-        *,
-        group: ArrayLike | None = None,
-        **kwargs,
-    ) -> Self: ...
+    n_classes_: int
 
 class GBLinearRegressor(BaseEstimator, RegressorMixin):
     """GBLinear regressor with sklearn interface."""
@@ -928,13 +839,18 @@ class GBLinearRegressor(BaseEstimator, RegressorMixin):
         self,
         *,
         n_estimators: int = 100,
-        learning_rate: float = 0.1,
+        learning_rate: float = 0.5,
         l1: float = 0.0,
-        l2: float = 1.0,  # Usually need regularization for linear
-        n_threads: int = 0,
-        seed: int | None = None,
+        l2: float = 1.0,
+        early_stopping_rounds: int | None = None,
+        seed: int = 42,
         verbose: int = 1,
+        objective: Objective | None = None,
+        metric: Metric | None = None,
     ) -> None: ...
+    
+    coef_: NDArray[np.float32]
+    intercept_: NDArray[np.float32]
 
 class GBLinearClassifier(BaseEstimator, ClassifierMixin):
     """GBLinear classifier with sklearn interface."""
@@ -942,20 +858,21 @@ class GBLinearClassifier(BaseEstimator, ClassifierMixin):
 
 ### sklearn Parameter Mapping
 
-sklearn flat parameters map to nested config:
+sklearn flat parameters map to GBDTConfig:
 
-| sklearn param | Core API config path |
-| ------------- | -------------------- |
-| `n_estimators` | `GBDTConfig.n_estimators` |
-| `learning_rate` | `GBDTConfig.learning_rate` |
-| `max_depth` | `GBDTConfig.tree.max_depth` |
-| `n_leaves` | `GBDTConfig.tree.n_leaves` |
-| `min_samples_leaf` | `GBDTConfig.tree.min_samples_leaf` |
-| `l1` | `GBDTConfig.regularization.l1` |
-| `l2` | `GBDTConfig.regularization.l2` |
-| `subsample` | `GBDTConfig.sampling.subsample` |
-| `colsample` | `GBDTConfig.sampling.colsample` |
-| `linear_trees` | `GBDTConfig.linear_trees` |
+| sklearn param | GBDTConfig param |
+| ------------- | ---------------- |
+| `n_estimators` | `n_estimators` |
+| `learning_rate` | `learning_rate` |
+| `max_depth` | `max_depth` |
+| `max_leaves` | `n_leaves` |
+| `min_child_weight` | `min_child_weight` |
+| `gamma` | `min_gain_to_split` |
+| `reg_alpha` | `l1` |
+| `reg_lambda` | `l2` |
+| `subsample` | `subsample` |
+| `colsample_bytree` | `colsample_bytree` |
+| `grow_strategy` | `growth_strategy` |
 
 ### sklearn Conversions
 
@@ -964,21 +881,16 @@ sklearn flat parameters map to nested config:
 eval_set = [(X_val1, y_val1), (X_val2, y_val2)]
 # Becomes:
 valid = [
-    EvalSet("valid_0", Dataset(X_val1, y_val1)),
-    EvalSet("valid_1", Dataset(X_val2, y_val2)),
+    EvalSet(Dataset(X_val1, y_val1), "valid_0"),
+    EvalSet(Dataset(X_val2, y_val2), "valid_1"),
 ]
-
-# early_stopping_rounds shortcut
-early_stopping_rounds = 50
-# Becomes:
-callbacks = [EarlyStopping(patience=50, monitor_set="valid_0")]
 
 # Classifier objective inference
 y = [0, 1, 0, 1]  # Binary
-# Infers: LogisticLoss()
+# Infers: Objective.logistic()
 
 y = [0, 1, 2, 0]  # Multiclass
-# Infers: SoftmaxLoss(n_classes=3)
+# Infers: Objective.softmax(n_classes=3)
 ```
 
 ---
@@ -987,72 +899,40 @@ y = [0, 1, 2, 0]  # Multiclass
 
 ### Recommended Input Format
 
-**Best performance**: `pandas.DataFrame` or F-contiguous NumPy array.
+**Best performance**: C-contiguous NumPy float32 array.
 
 ```python
 import pandas as pd
 import numpy as np
+from boosters import Dataset
 
-# Option 1: pandas DataFrame (recommended)
+# Option 1: NumPy array (preferred)
+X = np.random.rand(1000, 10).astype(np.float32)
+y = np.random.rand(1000).astype(np.float32)
+dataset = Dataset(X, y)
+
+# Option 2: pandas DataFrame
 # - Automatic categorical detection
 # - Feature names preserved
-# - Optimal memory layout extracted automatically
 df = pd.DataFrame(data, columns=feature_names)
-model.fit(df, y)
+dataset = Dataset(df, y)
 
-# Option 2: F-contiguous NumPy array (zero-copy)
-X = np.asfortranarray(data, dtype=np.float32)
-model.fit(X, y)
-
-# Option 3: C-contiguous array (will be transposed internally)
-X = np.ascontiguousarray(data, dtype=np.float32)
-model.fit(X, y)  # One-time transpose cost
+# Option 3: Polars DataFrame
+import polars as pl
+df = pl.DataFrame(data)
+dataset = Dataset(df, y)
 ```
 
 ### Input Formats
 
 | Format | Support | Conversion Cost |
 | ------ | ------- | --------------- |
-| pandas DataFrame | ✓ | Optimal (extracts F-contiguous) |
-| NumPy F-contiguous f32 | ✓ | Zero copy |
-| NumPy C-contiguous f32 | ✓ | Transpose O(n×m) |
-| NumPy f64 (any order) | ✓ | Cast + possible transpose |
-| PyArrow Table | ✓ | Usually copy (unless f32 chunked) |
-| scipy.sparse CSR/CSC | ✓ | Sparse path (efficient) |
-
-### Memory Layout Strategy
-
-**Rust core** uses feature-major layout `[n_features][n_samples]` for cache-efficient
-histogram building. The Python bindings handle conversion:
-
-```python
-def _convert_features(data: ArrayLike) -> FeatureMatrix:
-    """Convert Python data to Rust-compatible format.
-    
-    Priority:
-    1. If pandas DataFrame: extract underlying arrays optimally
-    2. If F-contiguous f32: zero-copy view
-    3. If C-contiguous: transpose to F-contiguous
-    4. Otherwise: copy to F-contiguous f32
-    """
-    if isinstance(data, pd.DataFrame):
-        # pandas stores columns contiguously - optimal for feature-major!
-        return _convert_dataframe(data)
-    
-    arr = np.asarray(data)
-    
-    if arr.flags['F_CONTIGUOUS'] and arr.dtype == np.float32:
-        # Zero-copy path
-        return FeatureMatrix.from_f_contiguous(arr)
-    
-    # Convert to optimal layout
-    return FeatureMatrix.from_array(
-        np.asfortranarray(arr, dtype=np.float32)
-    )
-```
-
-**Key insight**: pandas DataFrames naturally store columns contiguously, which
-aligns perfectly with our feature-major layout. Recommend DataFrame input in docs.
+| NumPy C-contiguous f32 | ✓ | Optimal |
+| NumPy C-contiguous f64 | ✓ | Cast O(n×m) |
+| NumPy F-contiguous | ✓ | Copy + transpose |
+| pandas DataFrame | ✓ | Extract + convert |
+| Polars DataFrame | ✓ | Extract + convert |
+| scipy.sparse | ✗ | Not yet supported |
 
 ### Type Handling
 
@@ -1069,6 +949,13 @@ df = pd.DataFrame({
     'score': [0.5, 0.8, 0.6],
 })
 ds = Dataset(df, label=y)  # 'city' automatically categorical
+
+# Polars categorical support
+import polars as pl
+df = pl.DataFrame({
+    'city': pl.Series(['NYC', 'LA', 'SF']).cast(pl.Categorical),
+})
+ds = Dataset(df, label=y)  # 'city' automatically categorical
 ```
 
 ---
@@ -1077,606 +964,183 @@ ds = Dataset(df, label=y)  # 'city' automatically categorical
 
 ### Configuration Types: Rust-Owned with Generated Stubs
 
-**Key design question**: Where do config types like `GBDTConfig`, `PinballLoss`, `EvalSet` live?
-
-**Decision**: **Rust-owned** — config types are defined in Rust with `#[pyclass]`,
-type stubs are auto-generated, Python uses Rust types directly.
+**Decision**: Configuration types are defined in Rust with `#[pyclass]`,
+type stubs are auto-generated via `pyo3-stub-gen`.
 
 | Type | Implementation | Rationale |
 | ---- | -------------- | --------- |
-| `GBDTConfig`, `TreeConfig`, etc. | Rust `#[pyclass]` | Single source of truth |
-| `PinballLoss`, `SoftmaxLoss`, etc. | Rust `#[pyclass]` | Compiler-enforced completeness |
+| `GBDTConfig`, `GBLinearConfig` | Rust `#[pyclass]` | Single source of truth |
+| `Objective`, `Metric` | Rust complex enums | Pattern matching support |
+| `GrowthStrategy`, `Verbosity`, `ImportanceType` | Rust simple enums | StrEnum-like behavior |
+| `Dataset` | Rust base + Python subclass | Data validation in Python |
 | `EvalSet` | Rust `#[pyclass]` | Type-safe validation set wrapper |
-| `Dataset` | Rust `#[pyclass]` | Holds data references, lazy conversion |
 | `GBDTModel`, `GBLinearModel` | Rust `#[pyclass]` | Training/prediction |
 
-**Why Rust-owned configs?**
+### Objective Implementation (Complex Enum)
 
-1. **Single source of truth**: Rust struct IS the definition
-2. **Compiler-enforced**: Adding a Rust field requires updating PyO3 bindings
-3. **No parser drift**: Direct field access, not dict parsing
-4. **CI catches sync**: Stub generation + pyright catches Python code drift
-5. **IDE support via stubs**: Generated `.pyi` files provide autocomplete
-
-**Risk with Python-owned configs** (rejected approach):
-
-```text
-Rust adds field → Python dataclass not updated → Parser silently ignores → Bug
-```
-
-**Safe failure mode with Rust-owned configs**:
-
-```text
-Rust adds field → Stub regenerated → Python code using old API fails pyright → Caught in CI
-```
-
-### Rust Config Implementation
+Objectives are implemented as a Rust enum with data, exposed to Python with
+factory methods for validation:
 
 ```rust
 use pyo3::prelude::*;
 
-/// Tree structure configuration.
-#[pyclass(get_all, set_all)]
-#[derive(Clone, Default)]
-pub struct TreeConfig {
-    /// Maximum tree depth. -1 for unlimited.
-    pub max_depth: i32,
-    /// Maximum number of leaves.
-    pub n_leaves: u32,
-    /// Minimum samples per leaf.
-    pub min_samples_leaf: u32,
-    /// Minimum gain to make a split.
-    pub min_gain_to_split: f64,
+/// Objective function enum exposed to Python.
+#[pyclass(eq, eq_int)]
+#[derive(Clone, PartialEq)]
+pub enum Objective {
+    #[pyo3(constructor = ())]
+    Squared,
+    #[pyo3(constructor = ())]
+    Absolute,
+    #[pyo3(constructor = ())]
+    Poisson,
+    #[pyo3(constructor = ())]
+    Logistic,
+    #[pyo3(constructor = ())]
+    Hinge,
+    #[pyo3(constructor = (delta))]
+    Huber { delta: f64 },
+    #[pyo3(constructor = (alpha))]
+    Pinball { alpha: Vec<f64> },
+    #[pyo3(constructor = (n_classes))]
+    Softmax { n_classes: u32 },
+    #[pyo3(constructor = (ndcg_at))]
+    LambdaRank { ndcg_at: u32 },
 }
 
 #[pymethods]
-impl TreeConfig {
-    #[new]
-    #[pyo3(signature = (max_depth=-1, n_leaves=31, min_samples_leaf=20, min_gain_to_split=0.0))]
-    fn new(max_depth: i32, n_leaves: u32, min_samples_leaf: u32, min_gain_to_split: f64) -> Self {
-        Self { max_depth, n_leaves, min_samples_leaf, min_gain_to_split }
+impl Objective {
+    /// Create squared error loss (L2).
+    #[staticmethod]
+    fn squared() -> Self {
+        Self::Squared
     }
-}
-
-/// Regularization parameters.
-#[pyclass(get_all, set_all)]
-#[derive(Clone, Default)]
-pub struct RegularizationConfig {
-    pub l1: f64,
-    pub l2: f64,
-}
-
-#[pymethods]
-impl RegularizationConfig {
-    #[new]
-    #[pyo3(signature = (l1=0.0, l2=0.0))]
-    fn new(l1: f64, l2: f64) -> Self {
-        Self { l1, l2 }
-    }
-}
-
-/// GBDT training configuration.
-#[pyclass(get_all, set_all)]
-#[derive(Clone)]
-pub struct GBDTConfig {
-    pub n_estimators: u32,
-    pub learning_rate: f64,
-    pub objective: PyObject,  // Union type handled via PyObject
-    pub metrics: Option<Vec<PyObject>>,
-    pub tree: Py<TreeConfig>,
-    pub regularization: Py<RegularizationConfig>,
-    // ...
-}
-
-#[pymethods]
-impl GBDTConfig {
-    #[new]
-    #[pyo3(signature = (
-        n_estimators=100,
-        learning_rate=0.1,
-        objective=None,
-        metrics=None,
-        tree=None,
-        regularization=None,
-        // ...
-    ))]
-    fn new(
-        py: Python<'_>,
-        n_estimators: u32,
-        learning_rate: f64,
-        objective: Option<PyObject>,
-        metrics: Option<Vec<PyObject>>,
-        tree: Option<Py<TreeConfig>>,
-        regularization: Option<Py<RegularizationConfig>>,
-    ) -> PyResult<Self> {
-        Ok(Self {
-            n_estimators,
-            learning_rate,
-            objective: objective.unwrap_or_else(|| {
-                Py::new(py, SquaredLoss {}).unwrap().into_py(py)
-            }),
-            metrics,
-            tree: tree.unwrap_or_else(|| Py::new(py, TreeConfig::default()).unwrap()),
-            regularization: regularization.unwrap_or_else(|| {
-                Py::new(py, RegularizationConfig::default()).unwrap()
-            }),
-        })
-    }
-}
-```
-
-### Objective Types (Enum Variants as Separate Classes)
-
-Each objective is a separate `#[pyclass]`:
-
-```rust
-/// Mean squared error loss.
-#[pyclass]
-#[derive(Clone)]
-pub struct SquaredLoss;
-
-#[pymethods]
-impl SquaredLoss {
-    #[new]
-    fn new() -> Self { Self }
-}
-
-/// Pinball loss for quantile regression.
-#[pyclass(get_all, set_all)]
-#[derive(Clone)]
-pub struct PinballLoss {
-    /// Quantile(s) to predict. Single value or list.
-    pub alpha: PyObject,  // f64 | Vec<f64>
-}
-
-#[pymethods]
-impl PinballLoss {
-    #[new]
-    #[pyo3(signature = (alpha=0.5))]
-    fn new(py: Python<'_>, alpha: PyObject) -> PyResult<Self> {
-        // Validate alpha in (0, 1)
-        validate_alpha(py, &alpha)?;
-        Ok(Self { alpha: alpha.into_py(py) })
-    }
-}
-
-/// Multi-class cross-entropy loss.
-#[pyclass(get_all)]
-#[derive(Clone)]
-pub struct SoftmaxLoss {
-    pub n_classes: u32,
-}
-
-#[pymethods]
-impl SoftmaxLoss {
-    #[new]
-    fn new(n_classes: u32) -> PyResult<Self> {
-        if n_classes < 2 {
-            return Err(PyValueError::new_err("n_classes must be >= 2"));
+    
+    /// Create pinball loss with validation.
+    #[staticmethod]
+    fn pinball(alpha: Vec<f64>) -> PyResult<Self> {
+        if alpha.is_empty() {
+            return Err(PyValueError::new_err("alpha must be non-empty"));
         }
-        Ok(Self { n_classes })
+        for &a in &alpha {
+            if a <= 0.0 || a >= 1.0 {
+                return Err(PyValueError::new_err(
+                    format!("alpha values must be in (0, 1), got {}", a)
+                ));
+            }
+        }
+        Ok(Self::Pinball { alpha })
+    }
+    
+    /// Create softmax loss with validation.
+    #[staticmethod]
+    fn softmax(n_classes: u32) -> PyResult<Self> {
+        if n_classes < 2 {
+            return Err(PyValueError::new_err(
+                format!("n_classes must be >= 2, got {}", n_classes)
+            ));
+        }
+        Ok(Self::Softmax { n_classes })
     }
 }
-```
-
-Python sees these as separate classes, and we define the union in the stub:
-
-```python
-# _boosters_rs.pyi (generated)
-class SquaredLoss:
-    def __init__(self) -> None: ...
-
-class PinballLoss:
-    alpha: float | list[float]
-    def __init__(self, alpha: float | list[float] = 0.5) -> None: ...
-
-class SoftmaxLoss:
-    n_classes: int
-    def __init__(self, n_classes: int) -> None: ...
-
-# Union defined in Python wrapper or stub
-Objective = SquaredLoss | AbsoluteLoss | HuberLoss | PinballLoss | ...
-```
-
-### Objective Union Handling in Rust
-
-To maintain type safety, use a Rust enum with `FromPyObject`:
-
-```rust
-use pyo3::prelude::*;
-
-/// Rust-side objective enum for type-safe extraction.
-#[derive(Clone, FromPyObject)]
-pub enum PyObjective {
-    Squared(SquaredLoss),
-    Absolute(AbsoluteLoss),
-    Huber(HuberLoss),
-    Pinball(PinballLoss),
-    Arctan(ArctanLoss),
-    Poisson(PoissonLoss),
-    Logistic(LogisticLoss),
-    Hinge(HingeLoss),
-    Softmax(SoftmaxLoss),
-    LambdaRank(LambdaRankLoss),
-}
-
-// Used in GBDTConfig
-#[pyclass(get_all, set_all)]
-pub struct GBDTConfig {
-    pub n_estimators: u32,
-    pub learning_rate: f64,
-    pub objective: PyObject,  // Stored as PyObject for Python access
-    pub tree: Py<TreeConfig>,
-    // ...
-}
-
-#[pymethods]
-impl GBDTConfig {
-    /// Extract objective as Rust enum (for internal use).
-    fn objective_kind(&self, py: Python<'_>) -> PyResult<PyObjective> {
-        self.objective.extract(py)
-    }
-}
-```
-
-**Error messages** for invalid objectives:
-
-```python
-# Wrong type
-config = GBDTConfig(objective="squared")
-# TypeError: 'str' object cannot be converted to 'SquaredLoss | AbsoluteLoss | ...'
-
-# Valid objective, invalid params
-config = GBDTConfig(objective=PinballLoss(alpha=1.5))
-# ValueError: alpha must be in (0, 1), got 1.5
-
-# Custom class (not supported)
-class MyLoss: pass
-config = GBDTConfig(objective=MyLoss())
-# TypeError: expected one of [SquaredLoss, AbsoluteLoss, ...], got 'MyLoss'
 ```
 
 ### Type Stub Generation
 
-**Tool**: `pyo3-stub-gen` or Maturin's built-in stub generation.
+**Tool**: `pyo3-stub-gen` crate for automatic stub generation.
 
 ```toml
-# pyproject.toml
-[tool.maturin]
-python-source = "python"
-module-name = "boosters._boosters_rs"
-
-[tool.maturin.generate-stubs]
-enabled = true
+# Cargo.toml
+[dependencies]
+pyo3-stub-gen = "0.17"
 ```
 
 **Generated stub example** (`_boosters_rs.pyi`):
 
 ```python
-from numpy.typing import NDArray
-import numpy as np
-
-class TreeConfig:
-    max_depth: int
-    n_leaves: int
-    min_samples_leaf: int
-    min_gain_to_split: float
+class Objective(enum.Enum):
+    Squared = ...
+    Absolute = ...
+    Huber = ...  # Has delta parameter
+    Pinball = ...  # Has alpha parameter
+    Softmax = ...  # Has n_classes parameter
     
-    def __init__(
-        self,
-        max_depth: int = -1,
-        n_leaves: int = 31,
-        min_samples_leaf: int = 20,
-        min_gain_to_split: float = 0.0,
-    ) -> None: ...
-
-class GBDTConfig:
-    n_estimators: int
-    learning_rate: float
-    objective: Objective
-    tree: TreeConfig
-    regularization: RegularizationConfig
+    @staticmethod
+    def squared() -> Objective: ...
     
-    def __init__(
-        self,
-        n_estimators: int = 100,
-        learning_rate: float = 0.1,
-        objective: Objective | None = None,
-        tree: TreeConfig | None = None,
-        regularization: RegularizationConfig | None = None,
-        # ...
-    ) -> None: ...
-
-class GBDTModel:
-    def __init__(self, config: GBDTConfig | None = None) -> None: ...
-    def fit(
-        self,
-        train: Dataset,
-        valid: EvalSet | list[EvalSet] | None = None,
-        callbacks: list[Callback] | None = None,
-    ) -> GBDTModel: ...
-    def predict(
-        self,
-        features: NDArray[np.floating],
-        n_iterations: int | None = None,
-        raw_score: bool = False,
-    ) -> NDArray[np.floating]: ...
+    @staticmethod
+    def pinball(alpha: Sequence[float]) -> Objective: ...
     
-    @property
-    def n_trees(self) -> int: ...
-    @property
-    def n_features(self) -> int: ...
+    @staticmethod
+    def softmax(n_classes: int) -> Objective: ...
 ```
-
-### CI Stub Verification
-
-```yaml
-# .github/workflows/ci.yml
-- name: Generate stubs
-  run: maturin develop --generate-stubs
-
-- name: Type check
-  run: pyright boosters/
-
-- name: Verify stubs match
-  run: |
-    # Ensure generated stubs are committed
-    git diff --exit-code python/boosters/_boosters_rs.pyi
-```
-
-If a developer adds a Rust field but forgets to regenerate stubs:
-
-1. CI regenerates stubs
-2. `git diff --exit-code` fails
-3. PR blocked until stubs committed
-
-### Python Re-exports (Thin Wrapper)
-
-The `boosters` package re-exports Rust types with Pythonic naming:
-
-```python
-# boosters/__init__.py
-from boosters._boosters_rs import (
-    # Config
-    GBDTConfig, GBLinearConfig, TreeConfig,
-    RegularizationConfig, SamplingConfig,
-    # Objectives
-    SquaredLoss, AbsoluteLoss, HuberLoss, PinballLoss, ArctanLoss,
-    PoissonLoss, LogisticLoss, HingeLoss, SoftmaxLoss, LambdaRankLoss,
-    # Metrics  
-    Rmse, Mae, Mape, LogLoss, Auc, Accuracy, Ndcg,
-    # Data
-    Dataset, EvalSet,
-    # Models
-    GBDTModel, GBLinearModel,
-    # Callbacks
-    EarlyStopping, LogEvaluation,
-)
-
-# Type aliases for documentation
-from typing import TypeAlias
-Objective: TypeAlias = (
-    SquaredLoss | AbsoluteLoss | HuberLoss | PinballLoss | ArctanLoss |
-    PoissonLoss | LogisticLoss | HingeLoss | SoftmaxLoss | LambdaRankLoss
-)
-Metric: TypeAlias = Rmse | Mae | Mape | LogLoss | Auc | Accuracy | Ndcg
-```
-
-### Validation in Rust
-
-With Rust-owned types, validation happens in Rust constructors:
-
-```rust
-#[pymethods]
-impl PinballLoss {
-    #[new]
-    #[pyo3(signature = (alpha=0.5))]
-    fn new(py: Python<'_>, alpha: PyObject) -> PyResult<Self> {
-        // Handle both f64 and Vec<f64>
-        if let Ok(single) = alpha.extract::<f64>(py) {
-            if single <= 0.0 || single >= 1.0 {
-                return Err(PyValueError::new_err(
-                    format!("alpha must be in (0, 1), got {}", single)
-                ));
-            }
-        } else if let Ok(multi) = alpha.extract::<Vec<f64>>(py) {
-            if multi.is_empty() {
-                return Err(PyValueError::new_err("alpha must be non-empty"));
-            }
-            for a in &multi {
-                if *a <= 0.0 || *a >= 1.0 {
-                    return Err(PyValueError::new_err(
-                        format!("alpha values must be in (0, 1), got {}", a)
-                    ));
-                }
-            }
-        } else {
-            return Err(PyTypeError::new_err(
-                "alpha must be float or list of floats"
-            ));
-        }
-        Ok(Self { alpha: alpha.into_py(py) })
-    }
-}
-```
-
-```rust
-use pyo3::prelude::*;
-use numpy::{PyArray1, PyArray2, PyReadonlyArray2};
-use boosters::{GBDTModel, GBLinearModel, GBDTConfig, GBLinearConfig};
-
-/// GBDT model wrapper.
-#[pyclass(name = "GBDTModel")]
-pub struct PyGBDTModel {
-    inner: Option<GBDTModel>,
-    config: GBDTConfig,
-    feature_names: Option<Vec<String>>,
-    best_iteration: Option<usize>,
-}
-
-#[pymethods]
-impl PyGBDTModel {
-    #[new]
-    fn new(config: Option<PyGBDTConfig>) -> Self {
-        Self {
-            inner: None,
-            config: config.map(Into::into).unwrap_or_default(),
-            feature_names: None,
-            best_iteration: None,
-        }
-    }
-    
-    fn fit(
-        &mut self,
-        py: Python<'_>,
-        train: &PyDataset,
-        valid: Option<&PyDataset>,
-        callbacks: Option<Vec<PyObject>>,
-    ) -> PyResult<()> {
-        // Threading is handled here at the bindings level
-        let n_threads = self.config.n_threads;
-        
-        py.allow_threads(|| {
-            boosters::run_with_threads(n_threads, |_| {
-                // Train model - Rust core does NOT manage threads
-                self.inner = Some(GBDTModel::train(&self.config, train.inner())?);
-                Ok(())
-            })
-        })
-    }
-    
-    fn predict<'py>(
-        &self,
-        py: Python<'py>,
-        features: PyReadonlyArray2<'py, f32>,
-        n_iterations: Option<usize>,
-        raw_score: bool,
-    ) -> PyResult<Bound<'py, PyArray1<f32>>> {
-        let model = self.inner.as_ref().ok_or_else(|| {
-            PyValueError::new_err("Model not trained. Call fit() first.")
-        })?;
-        
-        let n_threads = self.config.n_threads;
-        
-        py.allow_threads(|| {
-            boosters::run_with_threads(n_threads, |_| {
-                model.predict(&features.as_array(), n_iterations)
-            })
-        })
-        .map(|arr| PyArray1::from_vec_bound(py, arr))
-    }
-    
-    #[getter]
-    fn n_trees(&self) -> PyResult<usize> {
-        self.inner.as_ref()
-            .map(|m| m.forest().n_trees())
-            .ok_or_else(|| PyValueError::new_err("Model not trained"))
-    }
-}
-
-/// GBLinear model wrapper.
-#[pyclass(name = "GBLinearModel")]
-pub struct PyGBLinearModel {
-    inner: Option<GBLinearModel>,
-    config: GBLinearConfig,
-    // ... similar structure
-}
-```
-
-### Threading Strategy
-
-**Key decision**: Threading is managed at the Python bindings level, not in Rust core.
-
-```rust
-// Python bindings handle thread pool setup
-impl PyGBDTModel {
-    fn fit(&mut self, py: Python<'_>, ...) -> PyResult<()> {
-        let n_threads = convert_n_threads(self.config.n_threads);
-        
-        py.allow_threads(|| {
-            boosters::run_with_threads(n_threads, |_| {
-                // Rust core assumes thread pool is already set up
-                // No internal run_with_threads calls in GBDTModel::train
-                GBDTModel::train(...)
-            })
-        })
-    }
-}
-
-/// Convert Python n_threads convention to Rust.
-/// 
-/// Python: 0 = auto, -1 = auto, 1 = sequential, n > 1 = n threads
-/// Rust:   0 = auto, 1 = sequential, n > 1 = n threads
-fn convert_n_threads(n: i32) -> usize {
-    match n {
-        0 | -1 => 0,  // Auto
-        1 => 1,       // Sequential
-        n if n > 1 => n as usize,
-        _ => 0,       // Negative → auto
-    }
-}
-```
-
-**Implication for Rust core**: The `GBDTModel::train()` and `GBLinearModel::train()`
-methods should NOT call `run_with_threads` internally. They should assume the
-caller has already set up the thread pool. This allows:
-
-1. Python bindings to manage threads with GIL release
-2. Rust CLI/library users to manage threads at their level  
-3. No nested thread pool issues
 
 ### Dataset Architecture
 
 ```rust
-#[pyclass]
-struct Dataset {
-    // Store the raw Python object to prevent garbage collection
-    raw_data: Option<PyObject>,
-    // Rust representation (built lazily or on construct())
-    inner: Option<Arc<boosters::Dataset>>,
-    // Metadata
-    label: Option<PyObject>,
-    weight: Option<PyObject>,
+#[pyclass(subclass)]
+pub struct Dataset {
+    features: Arc<Array2<f32>>,
+    labels: Option<Arc<Array2<f32>>>,
+    weights: Option<Arc<Array1<f32>>>,
     feature_names: Option<Vec<String>>,
     categorical_features: Vec<usize>,
-    // Whether to free raw_data after building inner
-    free_raw_data: bool,
 }
 
+#[pymethods]
 impl Dataset {
-    fn construct(&mut self, py: Python<'_>) -> PyResult<()> {
-        if self.inner.is_some() { return Ok(()); }
-        
-        // Convert raw_data to Rust Dataset
-        let features = convert_features(py, &self.raw_data)?;
-        let dataset = boosters::Dataset::new(...);
-        self.inner = Some(Arc::new(dataset));
-        
-        // Free raw data if configured
-        if self.free_raw_data {
-            self.raw_data = None;
-        }
-        Ok(())
+    #[new]
+    #[pyo3(signature = (features, labels=None, weights=None, feature_names=None, categorical_features=None))]
+    fn new(
+        features: PyReadonlyArray2<f32>,
+        labels: Option<PyReadonlyArray2<f32>>,
+        weights: Option<PyReadonlyArray1<f32>>,
+        feature_names: Option<Vec<String>>,
+        categorical_features: Option<Vec<usize>>,
+    ) -> PyResult<Self> {
+        // Validation and construction
+        Ok(Self { ... })
+    }
+    
+    #[getter]
+    fn n_samples(&self) -> usize {
+        self.features.nrows()
+    }
+    
+    #[getter]
+    fn n_features(&self) -> usize {
+        self.features.ncols()
     }
 }
 ```
 
-**Key insight**: Like LightGBM, we store the raw Python object until construction,
-then optionally free it. This allows lazy construction while preventing GC issues.
+The Python `Dataset` class extends this base with user-friendly constructors:
+
+```python
+# python/boosters/data.py
+class Dataset(_RustDataset):
+    """Extended Dataset with DataFrame support."""
+    
+    def __new__(cls, features, labels=None, ...):
+        # Handle pandas/polars DataFrames
+        # Convert to numpy arrays
+        # Detect categorical columns
+        # Call Rust base constructor
+        return _RustDataset.__new__(cls, features_arr, ...)
+```
 
 ### GIL Management
 
 ```rust
-// Release GIL during expensive operations
-impl PyGBDTModel {
-    fn predict(&self, py: Python<'_>, features: PyReadonlyArray2<f32>) -> PyResult<...> {
-        let model = self.inner.as_ref().ok_or(...)?;
-        let n_threads = self.config.n_threads;
+impl GBDTModel {
+    fn fit(&mut self, py: Python<'_>, ...) -> PyResult<Self> {
+        let n_threads = self.config.n_threads();
         
-        // Release GIL, set up thread pool, run prediction
+        // Release GIL during training
         py.allow_threads(|| {
             boosters::run_with_threads(n_threads, |_| {
-                model.predict(&features.as_array())
+                // Training happens here with GIL released
+                self.train_internal(...)
             })
         })
     }
@@ -1688,7 +1152,6 @@ impl PyGBDTModel {
 ```rust
 use pyo3::exceptions::{PyValueError, PyTypeError, PyRuntimeError};
 
-// Map Rust errors to Python exceptions
 impl From<boosters::Error> for PyErr {
     fn from(err: boosters::Error) -> PyErr {
         match err {
@@ -1700,46 +1163,6 @@ impl From<boosters::Error> for PyErr {
     }
 }
 ```
-
-### Python-Side Validation
-
-Before calling Rust, validate in Python for better error messages:
-
-```python
-def _validate_predict_flags(
-    pred_leaf: bool,
-    pred_contrib: bool,
-) -> None:
-    """Validate mutually exclusive prediction flags."""
-    if pred_leaf and pred_contrib:
-        raise ValueError(
-            "pred_leaf and pred_contrib cannot both be True. "
-            "pred_leaf returns leaf indices, pred_contrib returns SHAP values."
-        )
-
-def _validate_feature_count(
-    features: NDArray,
-    expected: int,
-) -> None:
-    """Validate feature count matches model."""
-    actual = features.shape[1] if features.ndim == 2 else 1
-    if actual != expected:
-        raise ValueError(
-            f"Feature count mismatch: model expects {expected} features, "
-            f"got {actual}. Ensure predict input has same features as training."
-        )
-```
-
-### Common Error Scenarios
-
-| Scenario | Exception | Message |
-| -------- | --------- | ------- |
-| Model not fitted | `RuntimeError` | "Model not fitted. Call fit() first." |
-| Wrong feature count | `ValueError` | "Feature count mismatch: model expects N, got M." |
-| Invalid objective param | `ValueError` | "alpha must be in (0, 1), got 2.0" |
-| Duplicate EvalSet name | `ValueError` | "Duplicate EvalSet name: 'valid'" |
-| pred_leaf + pred_contrib | `ValueError` | "pred_leaf and pred_contrib cannot both be True." |
-| Empty features array | Returns | Empty array of correct shape (not error) |
 
 ---
 
@@ -1757,26 +1180,31 @@ def _validate_feature_count(
 
 **Rationale**: Matches Rust API, clearer type safety, avoid enum dispatch overhead.
 
-### DD-3: Rust-Owned Config Types with Generated Stubs
+### DD-3: Rust-Owned Config with Flat Structure
 
-**Decision**: Configuration types (`GBDTConfig`, `PinballLoss`, `EvalSet`) are defined in
-Rust using `#[pyclass]`. Type stubs are auto-generated via `pyo3-stub-gen` or Maturin.
-Python uses the Rust types directly (thin re-export wrapper only).
+**Decision**: Configuration types (`GBDTConfig`, `GBLinearConfig`) are defined in Rust
+with flat parameter structure (no nested sub-configs like `TreeConfig`).
 
 **Rationale**:
 
+- **Simpler API**: Users don't need to construct nested objects
+- **sklearn compatibility**: Flat parameters map directly to sklearn estimator kwargs
 - **Single source of truth**: Rust struct IS the definition, no sync risk
-- **Compiler-enforced**: Adding a Rust field requires updating PyO3 `#[new]`
-- **No parser drift**: Direct field access, not dict parsing that can miss fields
-- **CI catches sync**: `git diff --exit-code` on stubs blocks stale PRs
 - **IDE support via stubs**: Generated `.pyi` files provide autocomplete
 
-**Rejected alternative**: Pure Python dataclasses with parser conversion.
+### DD-4: Factory-Method Enums for Objectives/Metrics
 
-- Risk: Parser silently ignores missing fields → runtime bugs
-- Problem: No compile-time guarantee between Python dataclass and Rust struct
+**Decision**: Objectives and Metrics use Rust complex enums with static factory methods
+(`Objective.squared()`, `Metric.rmse()`) rather than separate classes.
 
-### DD-4: Pythonic Naming
+**Rationale**:
+
+- **Validation in factory**: Factory methods validate parameters before construction
+- **Pattern matching**: Python can pattern match on enum variants
+- **Exhaustive handling**: Rust compiler ensures all variants are handled
+- **Single type**: `Objective` is one type, not a union of many classes
+
+### DD-5: Pythonic Naming
 
 **Decision**: Use Python conventions (`n_samples`, `n_features`, `labels`).
 
@@ -1786,18 +1214,17 @@ Python uses the Rust types directly (thin re-export wrapper only).
 - `n_` prefix standard for counts
 - Plural for collections (`labels`, `weights`, `feature_names`)
 
-### DD-5: pandas DataFrame Recommended
+### DD-6: Dataset with Python Subclass
 
-**Decision**: Recommend DataFrame input, document as optimal path.
+**Decision**: `Dataset` has a Rust base class extended by Python for DataFrame support.
 
 **Rationale**:
 
-- pandas stores columns contiguously (matches feature-major layout)
-- Automatic categorical detection
-- Feature names preserved
-- Most users already have DataFrames
+- **Rust base**: Efficient storage and access
+- **Python extension**: User-friendly constructors with pandas/polars support
+- **Validation in Python**: Better error messages for data conversion issues
 
-### DD-6: Threading at Bindings Level
+### DD-7: Threading at Bindings Level
 
 **Decision**: Python bindings manage thread pool, Rust core is thread-agnostic.
 
@@ -1808,187 +1235,35 @@ Python uses the Rust types directly (thin re-export wrapper only).
 - Rust library users can manage threads their way
 - Clear separation of concerns
 
-### DD-7: Strict Typing + Google Docstrings
-
-**Decision**: Full Python 3.12+ type hints, Google-style docstrings.
-
-**Rationale**:
-
-- Type hints enable IDE autocomplete and static analysis
-- Google style is concise (no duplicate type info in docstrings)
-- Python 3.12+ unlocks cleaner syntax (`type X = ...`, `Self`)
-
 ### DD-8: sklearn Estimators Use Flat Config
 
-**Decision**: sklearn estimators take flat kwargs (not nested dataclasses).
+**Decision**: sklearn estimators take flat kwargs that map to `GBDTConfig` parameters.
 
 **Rationale**:
 
 - sklearn's `get_params()`/`set_params()` expect flat attributes
 - GridSearchCV and similar tools require flat parameter space
-- Core API uses dataclasses, sklearn API flattens them
+- Direct mapping to core API config
 
-### DD-9: Parameterized Objectives (Struct Initialization Pattern)
+### DD-9: EvalSet Wraps Dataset with Name
 
-**Decision**: Objectives and metrics are parameterized dataclasses, not simple enums.
-
-**Rationale**:
-
-- **Type safety**: `QuantileLoss(alpha=0.5)` vs `(Objective.QUANTILE, {"alpha": 0.5})`
-- **IDE support**: Autocomplete shows required parameters
-- **Validation**: Dataclass construction validates parameters
-- **Rust parity**: Mirrors Rust's struct initialization style
-- **Self-documenting**: Parameters are explicit in the type
-
-Example mapping Rust → Python:
-
-```rust
-// Rust API
-let objective = Objective::Quantile { alpha: 0.5 };
-let objective = Objective::Softmax { n_classes: 3 };
-```
-
-```python
-# Python API (struct initialization style)
-objective = QuantileLoss(alpha=0.5)
-objective = SoftmaxLoss(n_classes=3)
-```
-
-### DD-10: Named Evaluation Sets (EvalSet Pattern)
-
-**Decision**: Validation sets use `EvalSet(name, dataset)` wrapper.
+**Decision**: Validation sets use `EvalSet(dataset, name)` wrapper.
 
 **Rationale**:
 
 - **Named results**: `eval_results["valid"]["rmse"]` vs `eval_results[0]["rmse"]`
 - **Rust parity**: Matches Rust training API's named eval sets
 - **Multiple datasets**: Train metrics, validation metrics clearly distinguished
-- **Early stopping clarity**: `early_stopping_set="valid"` references by name
 
-### DD-11: Rust-Python API Synchronization Strategy
+### DD-10: Generated Type Stubs
 
-**Decision**: Python API mirrors Rust API structure; both use struct/dataclass initialization.
-
-**Strategy**:
-
-1. **Mirror types**: Each Rust struct gets a Python dataclass equivalent
-2. **Same naming**: `GBDTConfig` in Rust → `GBDTConfig` in Python
-3. **Same structure**: Nested configs in both (TreeConfig, RegularizationConfig)
-4. **Same defaults**: Default values match between Rust and Python
-5. **Generated checks**: CI runs a check that Python types cover all Rust fields
-
-**Naming alignment**: Where Rust uses technical names (e.g., `PinballLoss`), Python uses
-user-friendly names (e.g., `QuantileLoss`). The Rust API should align to user-friendly
-names where practical, as most users interact via Python.
-
-| Rust Name | Python Name | User-Friendly? |
-| --------- | ----------- | -------------- |
-| `SquaredLoss` | `SquaredLoss` | ✓ Same |
-| `PinballLoss` | `PinballLoss` | ✓ Same |
-| `ArctanLoss` | `ArctanLoss` | ✓ Same |
-| `PseudoHuberLoss` | `HuberLoss` | Python preferred |
-
-**Synchronization checkpoints**:
-
-- When adding a Rust config field → add to Python dataclass
-- When adding a Rust objective variant → add Python objective class
-- When renaming Rust types → rename Python types
-
-**Automated verification** (future):
-
-```python
-# Generated from Rust types via proc-macro or build script
-def verify_api_sync():
-    """Ensure Python API covers all Rust API surface."""
-    rust_fields = get_rust_config_fields()  # From cbindgen or similar
-    python_fields = get_dataclass_fields(GBDTConfig)
-    assert rust_fields == python_fields
-```
-
-### DD-12: Default Metric and Early Stopping Behavior
-
-**Decisions**:
-
-1. **Default metric**: If `config.metrics=None`, infer from objective:
-   - Regression objectives → `[Rmse()]`
-   - `LogisticLoss` → `[LogLoss(), Auc()]`
-   - `SoftmaxLoss` → `[LogLoss(), Accuracy()]`
-   - `LambdaRankLoss` → `[Ndcg(at=config.objective.ndcg_at)]`
-
-2. **Early stopping monitor**: `EarlyStopping.monitor_metric` defaults to first metric in list.
-
-3. **Duplicate EvalSet names**: Raise `ValueError` at fit time if two EvalSets have the same name.
-
-4. **Reserved names**: `"train"` is reserved for training metrics (if `eval_train=True`).
-
-**Rationale**: Explicit defaults reduce user confusion while allowing full customization.
-
-### DD-13: Nested Configs (Core API) vs Flat Kwargs (sklearn)
-
-**Decision**: Core API uses **nested configs only**. Sklearn wrapper provides **flat kwargs**.
-
-**Core API pattern** (explicit):
-
-```python
-# User must construct sub-configs explicitly
-config = GBDTConfig(
-    tree=TreeConfig(max_depth=5),
-    regularization=RegularizationConfig(l2=0.1),
-)
-model = GBDTModel(config)
-```
-
-**sklearn pattern** (flat):
-
-```python
-# Flat kwargs routed to appropriate sub-config
-model = GBDTRegressor(max_depth=5, reg_lambda=0.1)
-```
+**Decision**: Use `pyo3-stub-gen` to generate `.pyi` stub files automatically.
 
 **Rationale**:
 
-- **Core API clarity**: Explicit nesting shows which config owns each parameter
-- **IDE navigation**: Jump to `TreeConfig` definition to see all tree params
-- **No ambiguity**: `l1` could be tree regularization or linear leaf regularization
-- **sklearn compatibility**: Users expect flat kwargs from existing XGBoost/LightGBM usage
-- **Separation of concerns**: Core API prioritizes correctness, sklearn prioritizes convenience
-
-**Not supported in core API** (no flat kwargs routing):
-
-```python
-# This does NOT work in core API
-config = GBDTConfig(max_depth=5)  # Error: unexpected kwarg 'max_depth'
-```
-
-### DD-14: Objective Union Type Safety
-
-**Decision**: Objectives use a Rust enum (`PyObjective`) with `FromPyObject` for type-safe extraction.
-Config stores `PyObject` for Python accessibility, but extracts to enum for Rust usage.
-
-**Implementation**:
-
-```rust
-#[derive(Clone, FromPyObject)]
-pub enum PyObjective {
-    Squared(SquaredLoss),
-    Pinball(PinballLoss),
-    // ... all variants
-}
-```
-
-**Error message strategy**:
-
-| Error Type | Message Pattern |
-| ---------- | --------------- |
-| Wrong Python type | `TypeError: 'str' cannot be converted to 'SquaredLoss \| AbsoluteLoss \| ...'` |
-| Invalid params | `ValueError: PinballLoss.alpha must be in (0, 1), got 1.5` |
-| Unknown class | `TypeError: expected one of [SquaredLoss, ...], got 'MyCustomLoss'` |
-
-**Rationale**:
-
-- **Type safety**: Rust compiler ensures all objective variants are handled
-- **Clear errors**: Users get actionable error messages
-- **Extensibility**: Adding new objectives requires adding enum variant (compiler-enforced)
+- **IDE support**: Full autocomplete and type checking
+- **CI verification**: Stubs regenerated and verified in CI
+- **Single source**: Stubs derived from Rust, not manually maintained
 
 ---
 
@@ -1996,19 +1271,25 @@ pub enum PyObjective {
 
 ### SHAP Values
 
+SHAP (SHapley Additive exPlanations) values decompose predictions into per-feature
+contributions. The model provides a direct `shap_values()` method:
+
 ```python
-# Via prediction API (like LightGBM)
-shap_values = model.predict(X, pred_contrib=True)
-# Shape: (n_samples, n_features + 1) for regression
-# Shape: (n_samples, n_features + 1, n_classes) for multiclass
+import boosters as bst
+
+# Train model
+model = bst.GBDTModel(bst.GBDTConfig())
+model.fit(train)
+
+# Compute SHAP values
+test_data = bst.Dataset(X_test)
+shap_values = model.shap_values(test_data)
+# Shape: (n_samples, n_features + 1, n_outputs)
 # Last feature column is the base value (expected value)
 
-# Or via explicit API
-from boosters import TreeExplainer
-
-explainer = TreeExplainer(model)
-shap_values = explainer.shap_values(X)
-base_value = explainer.expected_value
+# For single-output models, squeeze the last dimension
+if shap_values.shape[2] == 1:
+    shap_values = shap_values[:, :, 0]  # (n_samples, n_features + 1)
 ```
 
 ---
@@ -2018,43 +1299,35 @@ base_value = explainer.expected_value
 ### Classification
 
 ```python
-from boosters import GBDTModel, GBDTConfig, LogisticLoss, SoftmaxLoss
+import boosters as bst
 
 # Binary classification
-config = GBDTConfig(objective=LogisticLoss())
-model = GBDTModel(config)
+config = bst.GBDTConfig(objective=bst.Objective.logistic())
+model = bst.GBDTModel(config)
 model.fit(train)
-probs = model.predict(X)  # (n_samples,) - probabilities
+probs = model.predict(test_data)  # (n_samples, 1) - probabilities
+logits = model.predict_raw(test_data)  # Raw logits
 
 # Multiclass classification
-config = GBDTConfig(objective=SoftmaxLoss(n_classes=3))
-model = GBDTModel(config)
+config = bst.GBDTConfig(objective=bst.Objective.softmax(n_classes=3))
+model = bst.GBDTModel(config)
 model.fit(train)
-probs = model.predict(X)              # (n_samples, n_classes)
-logits = model.predict(X, raw_score=True)  # Raw logits
+probs = model.predict(test_data)         # (n_samples, n_classes)
+logits = model.predict_raw(test_data)    # Raw logits
 ```
 
 ### Multi-Output Regression
 
 ```python
-from boosters import SquaredLoss, QuantileLoss
-
-# Native multi-output (one tree per output per round)
-config = GBDTConfig(
-    objective=SquaredLoss(),
-    n_outputs=2,
-)
-model = GBDTModel(config)
-model.fit(train)
-preds = model.predict(X)  # (n_samples, n_outputs)
+import boosters as bst
 
 # Quantile regression with multiple quantiles
-config = GBDTConfig(
-    objective=PinballLoss(alpha=[0.1, 0.5, 0.9]),  # 10th, 50th, 90th percentiles
+config = bst.GBDTConfig(
+    objective=bst.Objective.pinball([0.1, 0.5, 0.9]),  # 10th, 50th, 90th percentiles
 )
-model = GBDTModel(config)
+model = bst.GBDTModel(config)
 model.fit(train)
-preds = model.predict(X)  # (n_samples, 3) - one column per quantile
+quantiles = model.predict(test_data)  # (n_samples, 3) - one column per quantile
 ```
 
 ---
@@ -2064,29 +1337,27 @@ preds = model.predict(X)  # (n_samples, 3) - one column per quantile
 ### Feature Importance
 
 ```python
-# Multiple importance types
-importance_split = model.feature_importance(importance_type='split')
-importance_gain = model.feature_importance(importance_type='gain')
+from boosters import ImportanceType
 
-# As DataFrame with feature names
+# Multiple importance types using enum
+importance_split = model.feature_importance(ImportanceType.Split)
+importance_gain = model.feature_importance(ImportanceType.Gain)
+
+# As DataFrame with feature names (if set)
 import pandas as pd
 importance_df = pd.DataFrame({
-    'feature': model.feature_names,
-    'importance': model.feature_importance('gain'),
+    'feature': range(model.n_features),  # or use feature_names if available
+    'importance': model.feature_importance(ImportanceType.Gain),
 }).sort_values('importance', ascending=False)
 ```
 
-### Tree Structure Export
+### Tree Structure Export (Future)
+
+Tree structure export is planned for a future release:
 
 ```python
-# Export trees to DataFrame
-trees_df = model.trees_to_dataframe()
-# Columns: tree_index, node_depth, node_index, left_child, right_child,
-#          parent_index, split_feature, split_gain, threshold, 
-#          decision_type, missing_direction, n_samples, value
-
-# Filter to specific tree
-tree_0 = trees_df[trees_df['tree_index'] == 0]
+# PLANNED: Export trees to DataFrame
+# trees_df = model.trees_to_dataframe()
 ```
 
 ### Model Attributes
@@ -2123,26 +1394,7 @@ df = pd.DataFrame({
     'category': pd.Categorical(['a', 'b', 'c']),
 })
 dataset = Dataset(features=df, labels=y)
-# dataset.categorical_features == [1]  # index of 'category' column
-
-# Or specify manually
-dataset = Dataset(features=X, labels=y, categorical_features=[0, 5])
-```
-
-### Category Value Preservation
-
-```python
-# Original categories are preserved for interpretability
-dataset = Dataset(features=df, labels=y)
-model = GBDTModel()
-model.fit(dataset)
-
-# Access category mappings
-print(model.category_encodings)
-# {'category': ['a', 'b', 'c']}  # Original category order
-
-# Tree export shows category names in thresholds
-trees_df = model.trees_to_dataframe()
+# Categorical features auto-detected from pandas Categorical dtype
 ```
 
 ### Integer-Encoded Categoricals
@@ -2156,15 +1408,18 @@ dataset = Dataset(features=X, labels=y, categorical_features=[2, 5])
 ### Unseen Categories
 
 ```python
+import boosters as bst
+
 # Categories not seen during training are treated as missing
 train_df = pd.DataFrame({'cat': pd.Categorical(['a', 'b', 'c'])})
 test_df = pd.DataFrame({'cat': pd.Categorical(['a', 'd'])})  # 'd' is unseen
 
-train_ds = Dataset(features=train_df, labels=y)
-model = GBDTModel()
+train_ds = bst.Dataset(features=train_df, labels=y)
+model = bst.GBDTModel(bst.GBDTConfig())
 model.fit(train_ds)
 
-pred = model.predict(test_df)  # 'd' uses missing-value path
+test_ds = bst.Dataset(features=test_df)
+pred = model.predict(test_ds)  # 'd' uses missing-value path
 ```
 
 ---
@@ -2183,52 +1438,40 @@ With Rust-owned config types, validation is split across two stages:
 **Constructor-time validation** (Rust `#[new]` methods):
 
 ```python
-from boosters import GBDTConfig, TreeConfig, PinballLoss
+import boosters as bst
 
 # Type errors caught immediately
-config = GBDTConfig(learning_rate='fast')
+config = bst.GBDTConfig(learning_rate='fast')
 # TypeError: 'str' cannot be converted to 'float'
 
 # Value validation in Rust constructor
-config = GBDTConfig(n_estimators=0)
+config = bst.GBDTConfig(n_estimators=0)
 # ValueError: n_estimators must be positive, got 0
 
-# Nested config validation
-config = GBDTConfig(tree=TreeConfig(n_leaves=0))
-# ValueError: n_leaves must be positive, got 0
-
 # Parameterized objective validation
-obj = PinballLoss(alpha=1.5)
+obj = bst.Objective.pinball([1.5])  # alpha must be in (0, 1)
 # ValueError: alpha must be in (0, 1), got 1.5
 ```
 
 **Fit-time validation** (cross-field and data checks):
 
 ```python
-# Cross-field consistency
-config = GBDTConfig(tree=TreeConfig(max_depth=2, n_leaves=100))
-model = GBDTModel(config)
-model.fit(train)  
-# ValueError: max_depth=2 cannot produce n_leaves=100 (max 4 leaves at depth 2)
+import boosters as bst
 
 # Data compatibility
 model.fit(train)  # train has 100 features
-model.predict(X)  # X has 50 features
+model.predict(test_data)  # test_data has 50 features
 # ValueError: expected 100 features, got 50
 ```
 
-### Complete Sub-Config Reference
+### Flat Configuration
 
-All configuration types exposed via PyO3:
+All configuration uses flat parameters in `GBDTConfig` and `GBLinearConfig`:
 
-| Config | Fields | Purpose |
-| ------ | ------ | ------- |
-| `TreeConfig` | `max_depth`, `n_leaves`, `min_samples_leaf`, `min_gain_to_split` | Tree structure |
-| `RegularizationConfig` | `l1`, `l2` | L1/L2 penalties |
-| `SamplingConfig` | `subsample`, `colsample`, `goss_alpha`, `goss_beta` | Row/column sampling |
-| `EFBConfig` | `enable`, `max_conflict_rate` | Exclusive Feature Bundling |
-| `CategoricalConfig` | `max_categories`, `min_category_count` | Category handling |
-| `LinearLeavesConfig` | `enable`, `l2_regularization` | Linear models in leaves |
+| Config | Key Fields | Purpose |
+| ------ | ---------- | ------- |
+| `GBDTConfig` | `n_estimators`, `learning_rate`, `max_depth`, `n_leaves`, `l1`, `l2`, `subsample`, `colsample` | All GBDT hyperparameters |
+| `GBLinearConfig` | `n_estimators`, `learning_rate`, `l1`, `l2` | Linear booster hyperparameters |
 
 ### Edge Cases
 
@@ -2278,9 +1521,9 @@ with open('model.pkl', 'wb') as f:
 | Linear leaves | ✓ | ✓ | Parity |
 | Native categorical | ✓ | ✓ | Parity |
 | Feature bundling | ✓ | ✓ | Parity |
-| SHAP values | ✓ | ✓ | Via `pred_contrib` |
+| SHAP values | ✓ | ✓ | Via `model.shap_values(data)` |
 | Feature importance | ✓ | ✓ | Parity |
-| Early stopping | ✓ | ✓ | Via callbacks |
+| Early stopping | ✓ | ✓ | Via `early_stopping_rounds` |
 | Custom objectives | Future | ✓ | Planned |
 | Dask integration | Future | ✓ | Planned |
 
@@ -2290,7 +1533,7 @@ with open('model.pkl', 'wb') as f:
 
 ### Thread Management
 
-Threading is managed at the Python bindings level (see DD-6). The `n_threads`
+Threading is managed at the Python bindings level. The `n_threads`
 parameter uses sklearn-compatible semantics:
 
 ```python
@@ -2298,16 +1541,6 @@ n_threads = 0   # Auto (all available cores)
 n_threads = -1  # Same as 0 (sklearn convention)
 n_threads = 1   # Sequential (no parallelism)
 n_threads = 4   # Exactly 4 threads
-```
-
-The conversion happens in Python before calling Rust:
-
-```python
-def _to_rust_threads(n_threads: int) -> int:
-    """Convert sklearn n_threads to Rust convention."""
-    if n_threads <= 0:
-        return 0  # Auto in Rust
-    return n_threads
 ```
 
 ### Data Conversion Performance
@@ -2403,43 +1636,43 @@ These features are explicitly out of scope for the initial release:
 | XGBoost Parameter | boosters Equivalent |
 | ----------------- | ------------------- |
 | `n_estimators` | `n_estimators` |
-| `max_depth` | `tree.max_depth` (or flat `max_depth` in sklearn) |
+| `max_depth` | `max_depth` |
 | `learning_rate` / `eta` | `learning_rate` |
-| `reg_lambda` | `regularization.l2` (or flat `reg_lambda` in sklearn) |
-| `reg_alpha` | `regularization.l1` (or flat `reg_alpha` in sklearn) |
-| `subsample` | `sampling.subsample` |
-| `colsample_bytree` | `sampling.colsample` |
-| `min_child_weight` | `tree.min_samples_leaf` (approximate) |
-| `gamma` | `tree.min_gain_to_split` |
-| `objective="reg:squarederror"` | `objective=SquaredLoss()` |
-| `objective="binary:logistic"` | `objective=LogisticLoss()` |
-| `objective="multi:softmax"` | `objective=SoftmaxLoss(n_classes=k)` |
+| `reg_lambda` | `l2` |
+| `reg_alpha` | `l1` |
+| `subsample` | `subsample` |
+| `colsample_bytree` | `colsample` |
+| `min_child_weight` | `min_samples_leaf` (approximate) |
+| `gamma` | `min_gain_to_split` |
+| `objective="reg:squarederror"` | `objective=Objective.squared()` |
+| `objective="binary:logistic"` | `objective=Objective.logistic()` |
+| `objective="multi:softmax"` | `objective=Objective.softmax(n_classes=k)` |
 
 ### From LightGBM
 
 | LightGBM Parameter | boosters Equivalent |
 | ------------------ | ------------------- |
 | `n_estimators` / `num_iterations` | `n_estimators` |
-| `num_leaves` | `tree.n_leaves` |
-| `max_depth` | `tree.max_depth` |
+| `num_leaves` | `n_leaves` |
+| `max_depth` | `max_depth` |
 | `learning_rate` | `learning_rate` |
-| `lambda_l1` | `regularization.l1` |
-| `lambda_l2` | `regularization.l2` |
-| `bagging_fraction` | `sampling.subsample` |
-| `feature_fraction` | `sampling.colsample` |
-| `min_data_in_leaf` | `tree.min_samples_leaf` |
-| `min_gain_to_split` | `tree.min_gain_to_split` |
-| `objective="regression"` | `objective=SquaredLoss()` |
-| `objective="binary"` | `objective=LogisticLoss()` |
-| `objective="multiclass"` | `objective=SoftmaxLoss(n_classes=k)` |
+| `lambda_l1` | `l1` |
+| `lambda_l2` | `l2` |
+| `bagging_fraction` | `subsample` |
+| `feature_fraction` | `colsample` |
+| `min_data_in_leaf` | `min_samples_leaf` |
+| `min_gain_to_split` | `min_gain_to_split` |
+| `objective="regression"` | `objective=Objective.squared()` |
+| `objective="binary"` | `objective=Objective.logistic()` |
+| `objective="multiclass"` | `objective=Objective.softmax(n_classes=k)` |
 
 ### sklearn Wrapper vs Core API
 
 | sklearn Wrapper | Core API Equivalent |
 | --------------- | ------------------- |
-| `GBDTRegressor(max_depth=5)` | `GBDTModel(GBDTConfig(tree=TreeConfig(max_depth=5)))` |
-| `clf.fit(X, y, eval_set=[(X_val, y_val)])` | `model.fit(train, valid=[EvalSet("valid", valid)])` |
-| `clf.fit(..., early_stopping_rounds=10)` | `model.fit(..., callbacks=[EarlyStopping(patience=10)])` |
+| `GBDTRegressor(max_depth=5)` | `GBDTModel(GBDTConfig(max_depth=5))` |
+| `clf.fit(X, y, eval_set=[(X_val, y_val)])` | `model.fit(train, valid=[EvalSet(valid, "valid")])` |
+| `clf.fit(..., early_stopping_rounds=10)` | `GBDTConfig(early_stopping_rounds=10)` |
 
 ---
 
@@ -2450,14 +1683,14 @@ These features are explicitly out of scope for the initial release:
 1. **Unit Tests** (pytest, fast):
    - Data conversion: NumPy, pandas, PyArrow, scipy.sparse
    - Parameter parsing and validation
-   - Dataclass construction and validation
+   - Config construction and validation
    - Basic train/predict flow
 
 2. **Integration Tests** (pytest, medium):
    - sklearn estimator compliance (`check_estimator()`)
    - Cross-validation compatibility
    - Pipeline integration
-   - Early stopping callbacks
+   - Early stopping
    - EvalSet handling
 
 3. **Numerical Parity Tests** (pytest, slow):
@@ -2465,7 +1698,7 @@ These features are explicitly out of scope for the initial release:
    - Compare with LightGBM on standard datasets
    - SHAP value consistency
 
-4. **Round-Trip Tests**:
+4. **Round-Trip Tests** (future):
    - Train in Python → Save → Load in Rust → Predict
    - Train in Rust → Save → Load in Python → Predict
    - pandas categorical preservation
@@ -2487,70 +1720,36 @@ For each objective type, verify:
 
 | Objective | Output Range | Shape | Loss Decreases | Reference Comparison |
 | --------- | ------------ | ----- | -------------- | -------------------- |
-| `SquaredLoss()` | (-∞, ∞) | (n,) | ✓ RMSE | XGBoost correlation > 0.99 |
-| `LogisticLoss()` | [0, 1] | (n,) | ✓ LogLoss | XGBoost AUC within 1% |
-| `SoftmaxLoss(k)` | [0, 1], sum=1 | (n, k) | ✓ LogLoss | XGBoost accuracy within 2% |
-| `PinballLoss([α])` | (-∞, ∞) | (n, len(α)) | ✓ Pinball | Calibration check |
+| `Objective.squared()` | (-∞, ∞) | (n, 1) | ✓ RMSE | XGBoost correlation > 0.99 |
+| `Objective.logistic()` | [0, 1] | (n, 1) | ✓ LogLoss | XGBoost AUC within 1% |
+| `Objective.softmax(k)` | [0, 1], sum=1 | (n, k) | ✓ LogLoss | XGBoost accuracy within 2% |
+| `Objective.pinball([α])` | (-∞, ∞) | (n, len(α)) | ✓ Pinball | Calibration check |
 
 ### Edge Case Tests
 
 ```python
+import boosters as bst
+
 # Zero samples
 def test_predict_empty_input():
-    preds = model.predict(np.zeros((0, 10)))
-    assert preds.shape == (0,)
+    empty_data = bst.Dataset(np.zeros((0, 10), dtype=np.float32))
+    preds = model.predict(empty_data)
+    assert preds.shape == (0, 1)
 
 # All same labels
 def test_all_same_labels():
-    y = np.ones(100)
-    model.fit(Dataset(X, y))
-    preds = model.predict(X)
+    y = np.ones(100, dtype=np.float32)
+    model.fit(bst.Dataset(X, y))
+    preds = model.predict(bst.Dataset(X))
     assert np.allclose(preds, 1.0, atol=0.1)
-
-# Category not seen in training
-def test_unseen_category():
-    # Training has categories [0, 1, 2]
-    # Predict has category [3]
-    # Should use default split direction (not crash)
 
 # Duplicate EvalSet names
 def test_duplicate_evalset_names():
     with pytest.raises(ValueError, match="Duplicate EvalSet name"):
         model.fit(train, valid=[
-            EvalSet("valid", ds1),
-            EvalSet("valid", ds2),  # Duplicate!
+            bst.EvalSet(ds1, "valid"),
+            bst.EvalSet(ds2, "valid"),  # Duplicate!
         ])
-```
-
-### API Synchronization Tests
-
-```python
-def test_rust_python_api_sync():
-    """Verify Python API covers all Rust config fields."""
-    from boosters._internal import get_rust_config_schema
-    
-    rust_fields = get_rust_config_schema("GBDTConfig")
-    python_fields = set(f.name for f in fields(GBDTConfig))
-    
-    missing = rust_fields - python_fields
-    assert not missing, f"Python missing Rust fields: {missing}"
-    
-    extra = python_fields - rust_fields
-    assert not extra, f"Python has extra fields not in Rust: {extra}"
-```
-
-### Zero-Copy Verification
-
-```python
-def test_numpy_zero_copy():
-    """Verify large arrays aren't copied when passed to Rust."""
-    arr = np.random.rand(100_000, 10).astype(np.float32)
-    original_ptr = arr.ctypes.data
-    
-    # Internal helper to check data pointer in Rust
-    rust_ptr = model._get_data_pointer(arr)
-    
-    assert original_ptr == rust_ptr, "Array was copied!"
 ```
 
 ### CI Matrix
@@ -2573,6 +1772,7 @@ pytest --doctest-modules boosters/
 
 ```python
 from sklearn.utils.estimator_checks import check_estimator
+from boosters.sklearn import GBDTRegressor, GBDTClassifier
 
 def test_sklearn_compliance():
     # Run standard sklearn estimator checks
@@ -2627,3 +1827,14 @@ def test_sklearn_compliance():
   - Quick Start updated with full Rust-owned type examples
   - Migration guide: XGBoost and LightGBM parameter mapping
   - Known Limitations section for v1 scope
+- 2025-12-27: **Post-implementation revision** - Updated RFC to match actual implementation:
+  - Status changed from Accepted to Implemented
+  - Flat config pattern: `GBDTConfig` has all parameters directly (no nested TreeConfig, RegularizationConfig)
+  - Factory-method enums: `Objective.squared()`, `Metric.rmse()` instead of separate classes
+  - EvalSet signature: `EvalSet(dataset, name)` order
+  - SHAP API: `model.shap_values(data)` instead of `pred_contrib` parameter
+  - Removed `TreeExplainer` class (not implemented)
+  - Removed `trees_to_dataframe()` (future work)
+  - Updated all code examples to use correct import patterns
+  - Simplified design decisions to 10 key decisions matching implementation
+
