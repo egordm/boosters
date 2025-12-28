@@ -234,11 +234,13 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 
 ### Story 1.4: Create BundleStorage
 
-**Status**: Not Started  
+**Status**: Deferred (not blocking)  
 **Estimate**: ~80 LOC  
 **Depends on**: 1.1
 
 **Description**: Consolidate EFB bundle handling into dedicated storage type.
+
+**Note (Refinement Round 3)**: This is optimization/consolidation work. EFB bundling already works via `bundling.rs`. Moving to v2 module can happen after core migration is complete. Not on critical path.
 
 **Tasks**:
 
@@ -639,11 +641,13 @@ This consolidated story combines feature analysis, grouping strategy, and builde
 
 ### Story 4.4: Migrate Prediction Code to RowBlocks
 
-**Status**: Not Started  
+**Status**: Deferred (not on critical path)  
 **Estimate**: ~-50 LOC (net removal)  
 **Depends on**: 4.3
 
 **Description**: Update prediction code to use RowBlocks instead of custom transpose.
+
+**Note (Refinement Round 3)**: This is optimization work. The existing predictor transpose code works. Consolidation to RowBlocks can happen after core migration is complete.
 
 **Tasks**:
 
@@ -715,11 +719,15 @@ This consolidated story combines feature analysis, grouping strategy, and builde
 
 ## Epic 5: Serialization
 
+**Status**: DEFERRED (Refinement Round 3)
+
 *Update serialization to handle raw values.*
+
+**Note (Refinement Round 3)**: This epic is not on the critical path. The core value of this redesign is enabling linear trees with raw values in memory. Serialization format changes can be addressed in a future iteration. All stories in this epic are deferred.
 
 ### Story 5.1: Update Serialization Format
 
-**Status**: Not Started  
+**Status**: Deferred  
 **Estimate**: ~100 LOC
 
 **Description**: Include raw values in serialization by default.
@@ -1112,21 +1120,38 @@ This consolidated story combines feature analysis, grouping strategy, and builde
 | Epic | Stories | Status | Description |
 | ---- | ------- | ------ | ----------- |
 | 0. Prework | 4 | ✅ COMPLETE | Baselines, GroupLayout removal, v2 module |
-| 1. Storage Types | 6 | 5/6 COMPLETE | BinData, NumericStorage, etc. (BundleStorage pending) |
+| 1. Storage Types | 6 | 5/6 COMPLETE | BinData, NumericStorage, etc. (1.4 deferred) |
 | 2. FeatureGroup Migration | 4 | 1/4 COMPLETE | Use v2 storage (2.2 done in 0.2) |
-| 3. Builder Unification | 4 | Not Started | from_array, FeatureMetadata (merged 3.1a-c → 3.1) |
-| 4. Dataset API | 6 | Not Started | Raw access, RowBlocks |
-| 5. Serialization | 3 | Not Started | Raw values in format |
-| 6. Cleanup | 7 | 3/7 COMPLETE | Remove dead code (6.1, 6.3 done; 6.2 pending migration) |
+| 3. Builder Unification | 4 | Not Started | from_array, FeatureMetadata |
+| 4. Dataset API | 6 | Not Started | Raw access, RowBlocks (4.4 deferred) |
+| 5. Serialization | 3 | DEFERRED | Raw values in format |
+| 6. Cleanup | 7 | 3/7 COMPLETE | Remove dead code (6.1, 6.3 done) |
 | 7. Validation | 6 | Not Started | Tests and quality gates |
 | **Total** | **40** | **13 COMPLETE** | |
+
+### Critical Path (Refinement Round 3)
+
+The minimal path to "linear trees working with raw values":
+
+1. ✅ **Story 3.1**: Implement from_array() with v2 storage (~300 LOC)
+2. ✅ **Story 2.1**: FeatureGroup uses v2 FeatureStorage (~100 LOC)
+3. ✅ **Story 4.2**: raw_value() access methods (~100 LOC)
+4. ✅ **Story 7.1**: Verify linear trees quality (no regression)
+5. ✅ **Story 7.2**: Performance benchmarks (no regression)
+
+**Deferred work** (not blocking core functionality):
+
+- Story 1.4: BundleStorage (EFB consolidation)
+- Story 4.4: RowBlocks migration (predictor optimization)
+- Epic 5: Serialization (format changes)
+- Stories 7.3-7.4: Extended testing
 
 ### Progress Summary (2025-01-26)
 
 **Completed Stories**: 13 of 40
 
 - Epic 0: 4/4 ✅
-- Epic 1: 5/6 (Story 1.4 BundleStorage pending)
+- Epic 1: 5/6 (Story 1.4 deferred)
 - Epic 2: 1/4 (Story 2.2 done in 0.2)
 - Epic 6: 3/7 (Stories 6.1, 6.3 done in 0.2; Story 6.2 pending migration)
 
@@ -1135,7 +1160,8 @@ This consolidated story combines feature analysis, grouping strategy, and builde
 **Refinement Notes**:
 
 - Round 1: Updated Epics 1 and 6 with prework completions
-- Round 2: Merged Stories 3.1a-c into 3.1; marked Story 2.2 complete; added dependency note (Epic 3 before Epic 2)
+- Round 2: Merged Stories 3.1a-c into 3.1; marked Story 2.2 complete; clarified dependency (Epic 3 before Epic 2)
+- Round 3: Identified critical path; deferred non-blocking work (1.4, 4.4, Epic 5)
 
 ### Dependency Graph
 
