@@ -38,6 +38,7 @@ use super::views::{FeaturesView, TargetsView, WeightsView};
 /// assert_eq!(ds.n_features(), 2);
 /// ```
 #[derive(Debug, Clone)]
+#[deprecated]
 pub struct Dataset {
     /// Feature data: `[n_features, n_samples]` (feature-major).
     features: Array2<f32>,
@@ -253,6 +254,7 @@ impl Dataset {
 /// assert!(ds.has_categorical());
 /// ```
 #[derive(Debug, Default)]
+#[deprecated]
 pub struct DatasetBuilder {
     columns: Vec<Column>,
     metas: Vec<FeatureMeta>,

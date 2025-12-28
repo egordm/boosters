@@ -594,6 +594,7 @@ This consolidated story combines feature analysis, grouping strategy, and builde
 **Status**: Not Started  
 **Estimate**: ~100 LOC  
 **Depends on**: Epic 3 (builder stores raw values)
+**Priority**: CRITICAL PATH
 
 **Description**: Add methods for accessing raw feature values.
 
@@ -617,6 +618,39 @@ This consolidated story combines feature analysis, grouping strategy, and builde
 - Test raw access for numeric features
 - Test None for categorical
 - Test CowArray allocation behavior
+
+---
+
+### Story 4.2b: Update BinnedSample to Use Raw Values
+
+**Status**: Not Started  
+**Estimate**: ~30 LOC  
+**Depends on**: 4.2
+**Priority**: CRITICAL PATH
+
+**Description**: Update `BinnedSample::feature()` to return actual raw values instead of bin midpoints.
+
+**Background (Refinement Round 5)**:
+Currently, `BinnedSample::feature()` converts bin values to midpoints using `bin_to_midpoint()`. This is an approximation. With raw values stored, we can return exact original values, improving linear trees accuracy.
+
+**Tasks**:
+
+- Update `BinnedSample::feature()` to:
+  - Return raw value when available (numeric features with `store_raw_values=true`)
+  - Fall back to `bin_to_midpoint()` when raw values not stored (backward compatibility)
+- Add `has_raw_values()` method to BinnedDataset
+
+**Definition of Done**:
+
+- `BinnedSample::feature()` returns exact raw values when available
+- Backward compatible: falls back to midpoint for datasets without raw values
+- Linear trees automatically benefit without code changes
+
+**Testing**:
+
+- Test exact value returned for numeric features with raw values
+- Test midpoint fallback for datasets without raw values
+- Test categorical features (no raw values available)
 
 ---
 
@@ -1141,15 +1175,18 @@ This consolidated story combines feature analysis, grouping strategy, and builde
 | 7. Validation | 6 | Not Started | Tests and quality gates |
 | **Total** | **40** | **13 COMPLETE** | |
 
-### Critical Path (Refinement Round 3)
+### Critical Path (Refinement Round 5)
 
 The minimal path to "linear trees working with raw values":
 
-1. ✅ **Story 3.1**: Implement from_array() with v2 storage (~300 LOC)
-2. ✅ **Story 2.1**: FeatureGroup uses v2 FeatureStorage (~100 LOC)
-3. ✅ **Story 4.2**: raw_value() access methods (~100 LOC)
-4. ✅ **Story 7.1**: Verify linear trees quality (no regression)
-5. ✅ **Story 7.2**: Performance benchmarks (no regression)
+1. **Story 3.1**: Modify add_features() to produce v2 storage with raw values (~300 LOC)
+2. **Story 2.1**: FeatureGroup uses v2 FeatureStorage (~100 LOC)
+3. **Story 4.2**: raw_value() access methods (~100 LOC)
+4. **Story 4.2b**: Update BinnedSample::feature() to use raw values (~30 LOC)
+5. **Story 7.1**: Verify linear trees quality (no regression)
+6. **Story 7.2**: Performance benchmarks (no regression)
+
+**Why Story 4.2b is critical**: Currently `BinnedSample::feature()` estimates values via `bin_to_midpoint()`. Linear trees use this via `DataAccessor` trait. Updating it to return real raw values automatically improves linear trees—no other code changes needed.
 
 **Deferred work** (not blocking core functionality):
 
@@ -1160,12 +1197,14 @@ The minimal path to "linear trees working with raw values":
 
 ### Progress Summary (2025-01-26)
 
-**Completed Stories**: 13 of 40
+**Completed Stories**: 13 of 41
 
 - Epic 0: 4/4 ✅
 - Epic 1: 5/6 (Story 1.4 deferred)
 - Epic 2: 1/4 (Story 2.2 done in 0.2)
 - Epic 6: 3/7 (Stories 6.1, 6.3 done in 0.2; Story 6.2 pending migration)
+
+**Critical Path Stories Remaining**: 6 (Stories 3.1, 2.1, 4.2, 4.2b, 7.1, 7.2)
 
 **Lines Changed**: ~-1,300 net (exceeded original -130 estimate)
 
@@ -1174,6 +1213,8 @@ The minimal path to "linear trees working with raw values":
 - Round 1: Updated Epics 1 and 6 with prework completions
 - Round 2: Merged Stories 3.1a-c into 3.1; marked Story 2.2 complete; clarified dependency (Epic 3 before Epic 2)
 - Round 3: Identified critical path; deferred non-blocking work (1.4, 4.4, Epic 5)
+- Round 4: Refined Story 3.1 approach (modify add_features vs new from_array); marked 3.2, 3.3 as lower priority
+- Round 5: Added Story 4.2b (BinnedSample raw values); documented how linear trees connect to raw values
 
 ### Dependency Graph
 
