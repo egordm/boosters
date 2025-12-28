@@ -68,15 +68,20 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 
 ---
 
-## Epic 1: Storage Types Foundation
+## Epic 1: Storage Types Foundation ✅ COMPLETED
 
 *Create the new typed storage hierarchy that encodes numeric vs categorical semantics.*
 
 **Milestone**: After this epic, new storage types exist but aren't used yet.
 
-### Story 1.1: Create BinData Enum and Module Structure
+**Completed**: 2025-12-28  
+**Commit**: 6acd69f  
+**LOC Added**: ~1458 lines (including tests)  
+**Tests**: 39 new tests for all storage types
 
-**Status**: Not Started  
+### Story 1.1: Create BinData Enum and Module Structure ✅
+
+**Status**: Completed  
 **Estimate**: ~80 LOC
 
 **Description**: Create storage module and `BinData` enum replacing `BinType`.
@@ -103,9 +108,9 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 
 ---
 
-### Story 1.2: Create NumericStorage and CategoricalStorage
+### Story 1.2: Create NumericStorage and CategoricalStorage ✅
 
-**Status**: Not Started  
+**Status**: Completed  
 **Estimate**: ~120 LOC  
 **Depends on**: 1.1
 
@@ -133,9 +138,9 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 
 ---
 
-### Story 1.3: Create Sparse Storage Types
+### Story 1.3: Create Sparse Storage Types ✅
 
-**Status**: Not Started  
+**Status**: Completed  
 **Estimate**: ~100 LOC  
 **Depends on**: 1.1
 
@@ -163,9 +168,9 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 
 ---
 
-### Story 1.4: Create BundleStorage
+### Story 1.4: Create BundleStorage ✅
 
-**Status**: Not Started  
+**Status**: Completed  
 **Estimate**: ~80 LOC  
 **Depends on**: 1.1
 
@@ -192,9 +197,9 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 
 ---
 
-### Story 1.5: Create FeatureStorage Enum
+### Story 1.5: Create FeatureStorage Enum ✅
 
-**Status**: Not Started  
+**Status**: Completed  
 **Estimate**: ~50 LOC  
 **Depends on**: 1.2, 1.3, 1.4
 
@@ -221,9 +226,9 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 
 ---
 
-### Story 1.6: Stakeholder Feedback Check - Epic 1
+### Story 1.6: Stakeholder Feedback Check - Epic 1 ✅
 
-**Status**: Not Started
+**Status**: Completed
 
 **Description**: Review stakeholder feedback after storage types are complete.
 
