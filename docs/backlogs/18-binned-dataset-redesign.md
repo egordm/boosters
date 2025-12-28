@@ -305,18 +305,20 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 
 **Milestone**: After this epic, FeatureGroup uses new storage; old API still works.
 
+**Note (Refinement Round 2)**: Epic 2 and Epic 3 are somewhat intertwined. Story 2.1 (FeatureGroup uses FeatureStorage) depends on having a builder that creates FeatureStorage with raw values. Consider implementing Story 3.1 first, then Story 2.1.
+
 ### Story 2.1: Update FeatureGroup to Use FeatureStorage
 
 **Status**: Not Started  
 **Estimate**: ~100 LOC  
-**Depends on**: Epic 1 complete
+**Depends on**: Epic 1 complete, Story 3.1 (builder produces v2 storage)
 
 **Description**: Replace current FeatureGroup internals with FeatureStorage.
 
 **Tasks**:
 
 - Replace bins/data fields with `storage: FeatureStorage`
-- Remove `layout` field (always column-major)
+- Remove `layout` field (already removed in 0.2)
 - Update all FeatureGroup methods
 - Migrate from `BinStorage` to `FeatureStorage`
 
@@ -337,30 +339,19 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 
 ### Story 2.2: Simplify FeatureView
 
-**Status**: Not Started  
-**Estimate**: ~60 LOC  
-**Depends on**: 2.1
+**Status**: COMPLETE (done in Story 0.2)  
+**Completed**: 2025-01-26
 
 **Description**: Remove stride from FeatureView (always 1 now).
 
-**Tasks**:
+**Results**:
 
-- Update `FeatureView` enum to remove stride field
-- Rename `row_indices` → `sample_indices`
-- Update all histogram kernels (lines 738-745 in dataset.rs)
+- ✅ FeatureView already has 4 variants (U8, U16, SparseU8, SparseU16)
+- ✅ Stride field already removed
+- ✅ All histogram tests pass
+- Note: Renaming `row_indices` → `sample_indices` deferred (cosmetic)
 
-**Definition of Done**:
-
-- FeatureView has 4 variants (U8, U16, SparseU8, SparseU16)
-- No stride field
-- All histogram tests pass
-
-**Public API Changed**: `FeatureView` (stride field removed)
-
-**Testing**:
-
-- Histogram building benchmarks show no regression
-- All training tests pass
+**Definition of Done**: ✅ All criteria met
 
 ---
 
@@ -417,92 +408,55 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 
 *Create unified `DatasetBuilder` with batch and single-feature APIs.*
 
-### Story 3.1a: Feature Analysis for Batch Ingestion
+**Note (Refinement Round 2)**: This epic should be implemented before Epic 2 (FeatureGroup Migration) since the builder produces the v2 storage types that FeatureGroup will consume.
+
+### Story 3.1: Implement from_array() with v2 Storage
 
 **Status**: Not Started  
-**Estimate**: ~100 LOC  
-**Depends on**: Epic 1 complete
+**Estimate**: ~300 LOC  
+**Depends on**: Epic 1 complete (v2 storage types exist)
 
-**Description**: Implement feature analysis for auto-detection of types and bin widths.
+**Description**: Implement `DatasetBuilder::from_array()` that produces v2 FeatureStorage with raw values.
+
+This consolidated story combines feature analysis, grouping strategy, and builder integration into one cohesive implementation.
 
 **Tasks**:
 
+**Part A - Feature Analysis**:
 - Create `FeatureAnalysis` struct with detected type, bin count, sparsity
 - Implement `analyze_feature(column: ArrayView1<f32>, config: &BinningConfig) -> FeatureAnalysis`
 - Auto-detect: numeric vs categorical (based on cardinality)
 - Auto-detect: required bins (U8 vs U16)
 - Auto-detect: sparsity
 
+**Part B - Grouping Strategy**:
+- Implement `GroupingStrategy` that assigns features to groups
+- Partition: numeric_u8, numeric_u16, categorical_u8, categorical_u16, sparse
+- Create `GroupSpec` for each group with feature indices
+
+**Part C - Builder Integration**:
+- Implement `DatasetBuilder::from_array(data: ArrayView2<f32>, config: &BinningConfig)`
+- Use feature analysis to detect types
+- Use grouping strategy to build homogeneous groups
+- Store raw values for numeric features using v2::NumericStorage
+- Store categorical using v2::CategoricalStorage
+
 **Definition of Done**:
 
-- Feature analysis function implemented
-- Returns correct type, bin width, sparsity for test cases
+- `from_array()` implemented and working
+- Raw values stored in v2 storage types
+- Homogeneous groups created
+- All v2 storage types (NumericStorage, CategoricalStorage, etc.) populated correctly
 
-**Public API Added**: `FeatureAnalysis` (internal)
+**Public API Added**: `DatasetBuilder::from_array()`, `FeatureAnalysis` (internal)
 
 **Testing**:
 
 - Test numeric detection (continuous values)
 - Test categorical detection (low cardinality integers)
-- Test bin width detection
+- Test bin width detection (U8 vs U16)
 - Test sparsity detection
-
----
-
-### Story 3.1b: Homogeneous Group Building Strategy
-
-**Status**: Not Started  
-**Estimate**: ~100 LOC  
-**Depends on**: 3.1a
-
-**Description**: Implement grouping strategy that partitions features by type and bin width.
-
-**Tasks**:
-
-- Implement `GroupingStrategy` that assigns features to groups
-- Partition: numeric_u8, numeric_u16, categorical_u8, categorical_u16, sparse
-- Create `GroupSpec` for each group with feature indices
-
-**Definition of Done**:
-
-- Grouping strategy implemented
-- Features correctly partitioned by type/width
-
-**Public API Added**: `GroupingStrategy` (internal)
-
-**Testing**:
-
-- Test with mixed feature types
-- Test with mixed bin widths
-- Verify homogeneous groups
-
----
-
-### Story 3.1c: from_array Builder Integration
-
-**Status**: Not Started  
-**Estimate**: ~100 LOC  
-**Depends on**: 3.1a, 3.1b
-
-**Description**: Wire feature analysis and grouping into DatasetBuilder.
-
-**Tasks**:
-
-- Implement `DatasetBuilder::from_array(data: ArrayView2<f32>, config: &BinningConfig)`
-- Use feature analysis to detect types
-- Use grouping strategy to build homogeneous groups
-- Store raw values for numeric features
-
-**Definition of Done**:
-
-- `from_array()` implemented and working
-- Raw values stored
-- Homogeneous groups created
-
-**Public API Added**: `DatasetBuilder::from_array()`
-
-**Testing**:
-
+- Test with mixed feature types and bin widths
 - End-to-end test: matrix → builder → dataset
 - Verify raw values accessible
 - Verify grouping correct
@@ -513,7 +467,7 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 
 **Status**: Not Started  
 **Estimate**: ~80 LOC  
-**Depends on**: 3.1c
+**Depends on**: 3.1
 
 **Description**: Implement `from_array_with_metadata()` for user-specified metadata.
 
@@ -1159,22 +1113,29 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 | ---- | ------- | ------ | ----------- |
 | 0. Prework | 4 | ✅ COMPLETE | Baselines, GroupLayout removal, v2 module |
 | 1. Storage Types | 6 | 5/6 COMPLETE | BinData, NumericStorage, etc. (BundleStorage pending) |
-| 2. FeatureGroup Migration | 4 | Not Started | Use new storage, simplify FeatureView |
-| 3. Builder Unification | 5 | Not Started | from_array, FeatureMetadata |
+| 2. FeatureGroup Migration | 4 | 1/4 COMPLETE | Use v2 storage (2.2 done in 0.2) |
+| 3. Builder Unification | 4 | Not Started | from_array, FeatureMetadata (merged 3.1a-c → 3.1) |
 | 4. Dataset API | 6 | Not Started | Raw access, RowBlocks |
 | 5. Serialization | 3 | Not Started | Raw values in format |
 | 6. Cleanup | 7 | 3/7 COMPLETE | Remove dead code (6.1, 6.3 done; 6.2 pending migration) |
 | 7. Validation | 6 | Not Started | Tests and quality gates |
-| **Total** | **41** | **12 COMPLETE** | |
+| **Total** | **40** | **13 COMPLETE** | |
 
 ### Progress Summary (2025-01-26)
 
-**Completed Stories**: 12 of 41
+**Completed Stories**: 13 of 40
+
 - Epic 0: 4/4 ✅
 - Epic 1: 5/6 (Story 1.4 BundleStorage pending)
+- Epic 2: 1/4 (Story 2.2 done in 0.2)
 - Epic 6: 3/7 (Stories 6.1, 6.3 done in 0.2; Story 6.2 pending migration)
 
 **Lines Changed**: ~-1,300 net (exceeded original -130 estimate)
+
+**Refinement Notes**:
+
+- Round 1: Updated Epics 1 and 6 with prework completions
+- Round 2: Merged Stories 3.1a-c into 3.1; marked Story 2.2 complete; added dependency note (Epic 3 before Epic 2)
 
 ### Dependency Graph
 
@@ -1183,11 +1144,11 @@ Epic 0 (Prework) ✅ COMPLETE
     ↓
 Epic 1 (Storage Types) [mostly complete, v2 module done]
     ↓
-Epic 2 (FeatureGroup) ←──────────────┐
+Epic 3 (Builder) ─────────────────────┐ [implement first]
     ↓                                 │
-Epic 3 (Builder) ─────────────────────┤
-    ↓                                 │
-Epic 4 (API) ←────────────────────────┘
+Epic 2 (FeatureGroup) ←───────────────┘ [uses v2 storage from builder]
+    ↓                                
+Epic 4 (API)
     ↓
 Epic 5 (Serialization)
     ↓
