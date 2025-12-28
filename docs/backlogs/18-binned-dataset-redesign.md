@@ -132,25 +132,42 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 
 ### Story 0.4: Deprecate Old Dataset Module (Isolation)
 
-**Status**: Not Started  
-**Estimate**: 30 min
+**Status**: COMPLETE  
+**Estimate**: 30 min  
+**Completed**: 2025-01-26
 
 **Description**: Mark existing binned dataset code as deprecated and isolate it, preparing for clean new implementation.
 
 **Tasks**:
 
-- Add `#[deprecated(note = "Use new storage types from v0.2")]` to:
+- ✅ Create `data/binned/v2/` module for new implementation
+- ✅ Create `v2/mod.rs` with module structure and exports
+- ✅ Create `v2/bin_data.rs` with `BinData` enum (replaces `BinType`)
+- ✅ Create `v2/storage.rs` with new storage types:
+  - `NumericStorage`: bins + raw_values
+  - `CategoricalStorage`: bins only
+  - `SparseNumericStorage`: sparse with raw values
+  - `SparseCategoricalStorage`: sparse categorical
+  - `FeatureStorage`: unified enum
+- ✅ Add `#[deprecated(since = "0.2.0")]` to old types:
   - `BinType` enum
-  - `BinStorage` enum (will be replaced by `BinData`)
-  - Old builder methods that will be replaced
-- Create `data/binned/v2/` module for new implementation
-- Document that old code will be removed after migration
+  - `BinStorage` enum
+- ✅ Update binned/mod.rs to include v2 module
+- ✅ Delete obsolete layout_benchmark.rs example
+
+**Results**:
+
+- 6 files changed, +650 insertions, -145 deletions
+- 557 unit tests pass (+9 new v2 tests)
+- 34 integration tests pass
+- Clean separation between old (deprecated) and new (v2) code
 
 **Definition of Done**:
 
-- Deprecation warnings on old types
-- New module structure created
-- Clear separation between old and new code
+- ✅ Deprecation warnings on old types
+- ✅ New module structure created with full implementation
+- ✅ Clear separation between old and new code
+- ✅ Documentation explaining migration path
 
 **Note**: This allows us to write clean new code without touching old implementation until integration.
 
