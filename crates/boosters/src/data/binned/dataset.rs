@@ -1,4 +1,11 @@
 //! BinnedDataset - the main dataset structure.
+//!
+//! # Deprecation Notice
+//!
+//! Some types in this module (`BundledColumns`) will be consolidated into
+//! the `v2` module. See RFC-0018 for the migration plan.
+
+#![allow(deprecated)] // Allow internal use of deprecated types during migration
 
 use super::bundling::{BundlePlan, FeatureLocation};
 use super::group::{BinnedFeatureInfo, FeatureGroup};
@@ -14,6 +21,14 @@ use crate::data::{DataAccessor, SampleAccessor};
 ///
 /// When EFB is effective, this stores the encoded bins for each bundled column,
 /// avoiding on-the-fly computation during histogram building.
+///
+/// # Deprecation
+///
+/// This type will be replaced by `v2::BundleStorage` in a future release.
+#[deprecated(
+    since = "0.2.0",
+    note = "Will be replaced by v2::BundleStorage"
+)]
 #[derive(Clone, Debug)]
 pub struct BundledColumns {
     /// Encoded bins for each bundled column (column-major: column × n_rows).

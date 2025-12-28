@@ -1,6 +1,13 @@
 //! Dataset container and builder.
 //!
+//! # Deprecation Notice
+//!
+//! The types in this module (`Dataset`, `DatasetBuilder`) are deprecated.
+//! Use `BinnedDataset` and `BinnedDatasetBuilder` instead. See RFC-0018.
+//!
 //! This module provides [`Dataset`] and [`DatasetBuilder`].
+
+#![allow(deprecated)] // Allow internal use of deprecated types
 
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
 

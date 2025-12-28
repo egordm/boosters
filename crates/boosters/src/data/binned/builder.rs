@@ -1,4 +1,11 @@
 //! Builder for BinnedDataset.
+//!
+//! # Deprecation Notice
+//!
+//! This module uses deprecated types (`BinStorage`, `BinType`, `BundlePlan`)
+//! that will be migrated to v2 in a future release. See RFC-0018.
+
+#![allow(deprecated)] // Allow internal use of deprecated types during migration
 
 use bon::Builder;
 

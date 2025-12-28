@@ -1,4 +1,11 @@
 //! Feature group - a collection of features with shared storage layout.
+//!
+//! # Deprecation Notice
+//!
+//! This module uses deprecated types (`BinStorage`, `BinType`)
+//! that will be migrated to v2 in a future release. See RFC-0018.
+
+#![allow(deprecated)] // Allow internal use of deprecated types during migration
 
 use super::BinMapper;
 use super::storage::{BinStorage, BinType};

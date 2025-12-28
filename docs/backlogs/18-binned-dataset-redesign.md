@@ -3,7 +3,7 @@
 **RFC**: [RFC-0018](../rfcs/0018-raw-feature-storage.md)  
 **Created**: 2025-12-28  
 **Status**: Ready for Implementation  
-**Refinement Rounds**: 6
+**Refinement Rounds**: 7
 
 ## Overview
 
@@ -170,6 +170,70 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 - ✅ Documentation explaining migration path
 
 **Note**: This allows us to write clean new code without touching old implementation until integration.
+
+---
+
+### Story 0.5: Complete Deprecation Coverage
+
+**Status**: Not Started  
+**Estimate**: 30 min  
+**Priority**: HIGH
+
+**Description**: Add deprecation notices to remaining types that will be removed/replaced, ensuring no gaps in deprecation coverage.
+
+**Context (Refinement Round 6)**: User noted that `Dataset`/`DatasetBuilder` were deprecated but related types were missed. This story completes the deprecation audit.
+
+**Types to Deprecate**:
+
+1. **`Column` and `SparseColumn`** in `data/column.rs`:
+   - Only used by deprecated `DatasetBuilder`
+   - Add: `#[deprecated(since = "0.2.0", note = "Use BinnedDatasetBuilder::add_features() instead")]`
+
+2. **`BundledColumns`** in `data/binned/dataset.rs`:
+   - Will be consolidated into v2's BundleStorage
+   - Add: `#[deprecated(since = "0.2.0", note = "Will be replaced by v2::BundleStorage")]`
+
+3. **`BundlePlan`** in `data/binned/bundling.rs`:
+   - Will be consolidated into integrated bundle handling
+   - Add: `#[deprecated(since = "0.2.0", note = "Will be replaced by v2::BundleStorage")]`
+
+4. **`FeatureLocation`** in `data/binned/bundling.rs`:
+   - v2 module will have its own FeatureLocation enum (Story 4.1)
+   - Add: `#[deprecated(since = "0.2.0", note = "Use v2::FeatureLocation instead")]`
+
+**Types Already Deprecated** (verified):
+
+- ✅ `Dataset` in `data/dataset.rs`
+- ✅ `DatasetBuilder` in `data/dataset.rs`
+- ✅ `BinType` in `data/binned/storage.rs`
+- ✅ `BinStorage` in `data/binned/storage.rs`
+
+**Types NOT to Deprecate** (still actively used):
+
+- `FeaturesView`, `TargetsView`, `WeightsView`, `SamplesView` - Views for training input
+- `DatasetSchema`, `FeatureMeta`, `FeatureType` in schema.rs - Still useful for specifying feature metadata
+- `BinMapper`, `BinningConfig`, `BinningStrategy` - Core binning functionality
+- `BinnedDataset`, `BinnedDatasetBuilder`, `FeatureGroup` - Will be modified, not replaced
+
+**Implementation Details** (Refinement Round 7):
+
+Where to add `#[allow(deprecated)]`:
+
+1. `data/column.rs`: Add `#![allow(deprecated)]` at module level (entire module is deprecated)
+2. `data/binned/bundling.rs`: Add `#![allow(deprecated)]` at module level (internally uses deprecated types)
+3. `data/binned/dataset.rs`: Add `#[allow(deprecated)]` on:
+   - `BinnedDataset` struct (uses `BundledColumns` field)
+   - Methods that return/use deprecated types
+4. `data/binned/builder.rs`: Add `#[allow(deprecated)]` where bundling functions are called
+
+**Note**: v2::FeatureLocation will be created as part of Story 4.1 (FeatureLocation and Introspection).
+
+**Definition of Done**:
+
+- All types listed above have `#[deprecated]` attribute
+- Code compiles with deprecation warnings (no errors)
+- `#[allow(deprecated)]` added where internal usage is intentional
+- All tests pass
 
 ---
 
@@ -955,28 +1019,29 @@ Currently, `BinnedSample::feature()` converts bin values to midpoints using `bin
 
 ### Story 6.5: Deprecate Dataset Type
 
-**Status**: Not Started  
+**Status**: COMPLETE (done by user)  
 **Estimate**: ~20 LOC + docs
+**Completed**: 2025-12-28
 
 **Description**: Mark old Dataset type as deprecated.
 
 **Tasks**:
 
-- Add `#[deprecated]` attribute with migration message
-- Add migration guide in `docs/migration/dataset-to-binneddataset.md`
-- Update examples to use BinnedDataset
+- ✅ Add `#[deprecated]` attribute with migration message to `Dataset`
+- ✅ Add `#[deprecated]` attribute to `DatasetBuilder`
+- Add migration guide in `docs/migration/dataset-to-binneddataset.md` (deferred)
+- Update examples to use BinnedDataset (deferred)
+
+**Note (Refinement Round 7)**: User already added deprecation to `Dataset` and `DatasetBuilder`. Migration guide and example updates can happen later.
 
 **Definition of Done**:
 
-- Dataset deprecated with clear message
-- Migration guide written
-- Examples updated
+- ✅ Dataset deprecated with clear message
+- ✅ DatasetBuilder deprecated
+- Migration guide (future)
+- Examples updated (future)
 
-**Public API Deprecated**: `Dataset`
-
-**Testing**:
-
-- Deprecation warning shown when Dataset used
+**Public API Deprecated**: `Dataset`, `DatasetBuilder`
 
 ---
 
@@ -984,18 +1049,35 @@ Currently, `BinnedSample::feature()` converts bin values to midpoints using `bin
 
 **Status**: Not Started
 
-**Description**: Verify all deprecated symbols are removed.
+**Description**: Verify all deprecated symbols are removed after migration complete.
+
+**Deprecated Types to Remove** (once migration is done):
+
+From `data/`:
+- `Dataset` struct
+- `DatasetBuilder` struct
+- `Column` enum
+- `SparseColumn` struct
+
+From `data/binned/`:
+- `BinType` enum
+- `BinStorage` enum
+- `BundledColumns` struct
+- `BundlePlan` struct
+- `FeatureLocation` enum (in bundling.rs; v2 has replacement)
 
 **Tasks**:
 
-- Grep for: `GroupLayout`, `BinType`, `BundledColumns`, `BundlePlan`
-- Verify no remaining usages except deprecation notices
+- Grep for deprecated types
+- Verify no remaining usages except test compatibility code
+- Remove deprecated types and their `#[allow(deprecated)]` blocks
 - Update `mod.rs` exports
 
 **Definition of Done**:
 
-- All removed symbols confirmed gone
+- All deprecated symbols removed from codebase
 - Public API exports updated
+- No compilation errors
 
 ---
 
@@ -1161,19 +1243,29 @@ Currently, `BinnedSample::feature()` converts bin values to midpoints using `bin
 
 ---
 
+## Known Issues / Future Work
+
+> Added in Refinement Round 8
+
+1. **FeatureType Duplication**: `data::schema::FeatureType` and `data::binned::bin_mapper::FeatureType` are identical enums. Should be consolidated to use a single definition. Not blocking for current work—both are actively used. Consider consolidating in a future cleanup story.
+
+2. **FeatureLocation Location**: Currently in `bundling.rs` (to be deprecated). The v2 equivalent will be created in Story 4.1 as `v2::FeatureLocation`. Consider whether this belongs in `v2/` or a more general location.
+
+---
+
 ## Summary
 
 | Epic | Stories | Status | Description |
 | ---- | ------- | ------ | ----------- |
-| 0. Prework | 4 | ✅ COMPLETE | Baselines, GroupLayout removal, v2 module |
+| 0. Prework | 5 | 4/5 (80%) | Baselines, GroupLayout removal, v2 module, deprecation |
 | 1. Storage Types | 6 | 5/6 COMPLETE | BinData, NumericStorage, etc. (1.4 deferred) |
 | 2. FeatureGroup Migration | 4 | 1/4 COMPLETE | Use v2 storage (2.2 done in 0.2) |
 | 3. Builder Unification | 4 | Not Started | from_array, FeatureMetadata |
 | 4. Dataset API | 6 | Not Started | Raw access, RowBlocks (4.4 deferred) |
 | 5. Serialization | 3 | DEFERRED | Raw values in format |
-| 6. Cleanup | 7 | 3/7 COMPLETE | Remove dead code (6.1, 6.3 done) |
+| 6. Cleanup | 7 | 4/7 COMPLETE | Remove dead code (6.1, 6.3, 6.5 done) |
 | 7. Validation | 6 | Not Started | Tests and quality gates |
-| **Total** | **40** | **13 COMPLETE** | |
+| **Total** | **42** | **14 COMPLETE** | |
 
 ### Critical Path (Refinement Round 5)
 
@@ -1195,14 +1287,14 @@ The minimal path to "linear trees working with raw values":
 - Epic 5: Serialization (format changes)
 - Stories 7.3-7.4: Extended testing
 
-### Progress Summary (2025-01-26)
+### Progress Summary (2025-12-28)
 
-**Completed Stories**: 13 of 41
+**Completed Stories**: 14 of 42 (Story 0.5 added, Story 6.5 already done by user)
 
-- Epic 0: 4/4 ✅
+- Epic 0: 4/5 (Story 0.5 pending)
 - Epic 1: 5/6 (Story 1.4 deferred)
 - Epic 2: 1/4 (Story 2.2 done in 0.2)
-- Epic 6: 3/7 (Stories 6.1, 6.3 done in 0.2; Story 6.2 pending migration)
+- Epic 6: 4/7 (Stories 6.1, 6.3 done in 0.2; Story 6.5 done by user; Story 6.2 pending migration)
 
 **Critical Path Stories Remaining**: 6 (Stories 3.1, 2.1, 4.2, 4.2b, 7.1, 7.2)
 
@@ -1215,6 +1307,7 @@ The minimal path to "linear trees working with raw values":
 - Round 3: Identified critical path; deferred non-blocking work (1.4, 4.4, Epic 5)
 - Round 4: Refined Story 3.1 approach (modify add_features vs new from_array); marked 3.2, 3.3 as lower priority
 - Round 5: Added Story 4.2b (BinnedSample raw values); documented how linear trees connect to raw values
+- Round 6: Added Story 0.5 (Complete Deprecation Coverage) to address missing deprecations: Column, SparseColumn, BundledColumns, BundlePlan, FeatureLocation
 
 ### Dependency Graph
 

@@ -11,6 +11,13 @@
 //! 3. **Bundle Assignment**: Greedy assignment to minimize bundles
 //!
 //! See RFC-0017 for detailed design rationale.
+//!
+//! # Deprecation Notice
+//!
+//! Some types in this module (`BundlePlan`, `FeatureLocation`) will be consolidated
+//! into the `v2` module. See RFC-0018 for the migration plan.
+
+#![allow(deprecated)] // Allow internal use of deprecated types
 
 use super::FeatureInfo;
 use crate::data::FeaturesView;
@@ -392,6 +399,14 @@ impl FeatureBundle {
 }
 
 /// Where a feature ended up after bundling.
+///
+/// # Deprecation
+///
+/// This type will be replaced by `v2::FeatureLocation` in Story 4.1.
+#[deprecated(
+    since = "0.2.0",
+    note = "Will be replaced by v2::FeatureLocation"
+)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FeatureLocation {
     /// Feature is standalone at this binned column index.
@@ -413,6 +428,14 @@ pub enum FeatureLocation {
 ///
 /// Contains bundles for sparse features and tracks which features
 /// are standalone (not bundled) or skipped.
+///
+/// # Deprecation
+///
+/// This type will be consolidated into `v2::BundleStorage` in a future release.
+#[deprecated(
+    since = "0.2.0",
+    note = "Will be consolidated into v2::BundleStorage"
+)]
 #[derive(Clone, Debug)]
 pub struct BundlePlan {
     /// The computed bundles for sparse features.

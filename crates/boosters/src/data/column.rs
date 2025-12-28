@@ -1,10 +1,25 @@
 //! Feature column storage types.
 //!
+//! # Deprecation Notice
+//!
+//! This module is being replaced by the types in [`super::binned::v2`].
+//! Use `BinnedDatasetBuilder::add_features()` instead of building columns manually.
+//!
 //! This module defines [`Column`] and [`SparseColumn`] for storing feature data.
+
+#![allow(deprecated)] // Allow internal use of deprecated types
 
 use ndarray::Array1;
 
 /// Single feature column storage.
+///
+/// # Deprecation
+///
+/// This type is deprecated. Use `BinnedDatasetBuilder::add_features()` instead.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use BinnedDatasetBuilder::add_features() instead of building columns manually"
+)]
 ///
 /// All values are `f32`. Categorical features store category IDs as floats
 /// (e.g., `0.0, 1.0, 2.0`) and are cast to `i32` during binning.
@@ -76,6 +91,14 @@ impl Column {
 /// Sparse column storage.
 ///
 /// Stores non-default values at specified indices. Missing indices get the default value.
+///
+/// # Deprecation
+///
+/// This type is deprecated. Use `BinnedDatasetBuilder::add_features()` instead.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use BinnedDatasetBuilder::add_features() instead of building columns manually"
+)]
 #[derive(Debug, Clone)]
 pub struct SparseColumn {
     /// Non-default row indices (must be sorted, no duplicates).
