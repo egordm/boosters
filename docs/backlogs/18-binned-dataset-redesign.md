@@ -417,31 +417,39 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 **Status**: Not Started  
 **Estimate**: ~300 LOC  
 **Depends on**: Epic 1 complete (v2 storage types exist)
+**Priority**: CRITICAL PATH
 
-**Description**: Implement `DatasetBuilder::from_array()` that produces v2 FeatureStorage with raw values.
+**Description**: Modify `BinnedDatasetBuilder::add_features()` to produce v2 FeatureStorage with raw values stored.
+
+**Refined Approach (Round 4)**: Rather than creating a new `from_array()` method, we modify the existing builder:
+1. Add `store_raw_values: bool` field to `BinningConfig` (default: true)
+2. Modify `add_features()` to store raw values in `v2::NumericStorage`
+3. Update grouping to produce `v2::FeatureStorage` variants
 
 This consolidated story combines feature analysis, grouping strategy, and builder integration into one cohesive implementation.
 
 **Tasks**:
 
-**Part A - Feature Analysis**:
-- Create `FeatureAnalysis` struct with detected type, bin count, sparsity
-- Implement `analyze_feature(column: ArrayView1<f32>, config: &BinningConfig) -> FeatureAnalysis`
+**Part A - Config and Feature Analysis**:
+
+- Add `store_raw_values: bool` to `BinningConfig` (default: true)
+- Update `FeatureAnalysis` to track raw value requirements
 - Auto-detect: numeric vs categorical (based on cardinality)
 - Auto-detect: required bins (U8 vs U16)
 - Auto-detect: sparsity
 
 **Part B - Grouping Strategy**:
-- Implement `GroupingStrategy` that assigns features to groups
+
+- Update `GroupingStrategy` to assign features to homogeneous groups
 - Partition: numeric_u8, numeric_u16, categorical_u8, categorical_u16, sparse
 - Create `GroupSpec` for each group with feature indices
 
 **Part C - Builder Integration**:
-- Implement `DatasetBuilder::from_array(data: ArrayView2<f32>, config: &BinningConfig)`
-- Use feature analysis to detect types
-- Use grouping strategy to build homogeneous groups
-- Store raw values for numeric features using v2::NumericStorage
-- Store categorical using v2::CategoricalStorage
+
+- Update `add_features()` to build `v2::NumericStorage` (bins + raw_values) for numeric features
+- Build `v2::CategoricalStorage` (bins only) for categorical features
+- Produce `v2::FeatureStorage` enum wrapping appropriate variant
+- Wire through to FeatureGroup construction
 
 **Definition of Done**:
 
@@ -467,11 +475,13 @@ This consolidated story combines feature analysis, grouping strategy, and builde
 
 ### Story 3.2: Create FeatureMetadata Support
 
-**Status**: Not Started  
+**Status**: Not Started (lower priority)  
 **Estimate**: ~80 LOC  
 **Depends on**: 3.1
 
 **Description**: Implement `from_array_with_metadata()` for user-specified metadata.
+
+**Note (Refinement Round 4)**: This is API ergonomics, not blocking core functionality. Auto-detection in Story 3.1 handles most cases. Can be deferred.
 
 **Tasks**:
 
@@ -497,11 +507,13 @@ This consolidated story combines feature analysis, grouping strategy, and builde
 
 ### Story 3.3: Update Single-Feature API
 
-**Status**: Not Started  
+**Status**: Not Started (lower priority)  
 **Estimate**: ~60 LOC  
-**Depends on**: 3.1c
+**Depends on**: 3.1
 
 **Description**: Update `add_feature()`, `add_numeric()`, `add_categorical()` methods.
+
+**Note (Refinement Round 4)**: Single-feature API is less commonly used than batch `add_features()`. Can be updated after core migration. Not on critical path.
 
 **Tasks**:
 
