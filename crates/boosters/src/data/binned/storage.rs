@@ -1,6 +1,17 @@
 //! Storage types for binned data.
+//!
+//! # Deprecation Notice
+//!
+//! These types are being replaced by the types in [`super::v2`].
+//! See the v2 module documentation for migration guide.
+
+#![allow(deprecated)] // Allow internal use of deprecated types during migration
 
 /// Bin data type for a feature group.
+#[deprecated(
+    since = "0.2.0",
+    note = "Use `v2::BinData` instead - it owns the actual data rather than just being a type marker"
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum BinType {
     /// 8-bit bins (max 256 bins per feature).
@@ -49,6 +60,11 @@ impl BinType {
 /// Match on this enum to get typed access to the underlying data.
 /// This design forces exhaustive handling of all storage types.
 ///
+/// # Deprecation
+///
+/// This type is being replaced by [`super::v2::FeatureStorage`] which
+/// encodes whether raw values are available at the type level.
+///
 /// # Example
 ///
 /// ```ignore
@@ -62,6 +78,10 @@ impl BinType {
 ///     BinStorage::SparseU16 { row_indices, bin_values, .. } => { ... }
 /// }
 /// ```
+#[deprecated(
+    since = "0.2.0",
+    note = "Use `v2::FeatureStorage` instead - it encodes raw value availability at the type level"
+)]
 #[derive(Clone, Debug)]
 pub enum BinStorage {
     /// Dense 8-bit bins.

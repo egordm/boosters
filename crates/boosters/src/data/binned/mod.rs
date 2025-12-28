@@ -19,6 +19,11 @@
 //! - Dense numeric features: column-major u8 for fast histogram building
 //! - Wide features (>256 bins): column-major u16
 //! - Sparse features: column-major with optional bundling
+//!
+//! # Migration (v0.2)
+//!
+//! The `v2` submodule contains new storage types that will replace the current types.
+//! See [`v2`] module documentation for migration guide.
 
 mod bin_mapper;
 mod builder;
@@ -27,6 +32,7 @@ mod dataset;
 mod feature_analysis;
 mod group;
 mod storage;
+pub mod v2;
 
 pub use bin_mapper::{BinMapper, FeatureType, MissingType};
 pub use builder::{BinnedDatasetBuilder, BinningConfig, BinningStrategy, BuildError};
