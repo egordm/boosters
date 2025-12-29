@@ -1161,7 +1161,7 @@ Key demonstrations:
 
 ### Story 8.4: Retrospective
 
-**Status**: Not Started  
+**Status**: COMPLETE  
 **Estimate**: 30 min
 
 **Description**: Conduct retrospective after full implementation is complete.
@@ -1172,11 +1172,20 @@ Key demonstrations:
 2. Discuss what went well / not well
 3. Identify process improvements
 4. Capture action items as new backlog stories where appropriate
-5. Document in `workdir/tmp/retrospective.md`
+5. Document in `tmp/retrospective_rfc0018_bundling.md`
 
 **Definition of Done**:
 
 - Retrospective completed
+- Action items documented
+- Key lessons captured
+
+**Key Findings**:
+
+- Critical bug found and fixed (FeatureLocation::Direct vs Bundled)
+- API simplified (removed unused bundling field from GBDTConfig)
+- deprecated/ folder cannot be fully deleted (public API dependencies)
+- Follow-up work identified for future epic
 - Documentation written to `workdir/tmp/retrospective.md`
 - Action items captured
 
