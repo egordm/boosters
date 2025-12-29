@@ -175,6 +175,100 @@ impl NumericStorage {
     }
 }
 
+/// Dense categorical storage: [n_features × n_samples], column-major.
+///
+/// For feature `f` at sample `s` with `n_samples` total:
+/// - Index: `f * n_samples + s`
+///
+/// No raw values - bin = category ID (lossless). This is because categorical
+/// features are encoded directly as their category index.
+///
+/// # Examples
+///
+/// ```
+/// use boosters::data::binned::{BinData, CategoricalStorage};
+///
+/// // 2 features, 3 samples each
+/// let bins = BinData::from(vec![
+///     0u8, 1, 0,   // Feature 0: categories 0, 1, 0
+///     2, 0, 1,     // Feature 1: categories 2, 0, 1
+/// ]);
+///
+/// let storage = CategoricalStorage::new(bins);
+/// let n_samples = 3;
+///
+/// // Access category values (bins)
+/// assert_eq!(storage.bin(0, 0, n_samples), 0);
+/// assert_eq!(storage.bin(1, 0, n_samples), 1);
+/// assert_eq!(storage.bin(0, 1, n_samples), 2);
+/// ```
+#[derive(Debug, Clone)]
+pub struct CategoricalStorage {
+    /// Bin values (bin index = category ID): [n_features × n_samples], column-major.
+    bins: BinData,
+}
+
+impl CategoricalStorage {
+    /// Creates a new CategoricalStorage.
+    #[inline]
+    pub fn new(bins: BinData) -> Self {
+        Self { bins }
+    }
+
+    /// Returns the bin (category) value for the given sample and feature.
+    ///
+    /// # Parameters
+    /// - `sample`: Sample index (0..n_samples)
+    /// - `feature_in_group`: Feature index within this storage group
+    /// - `n_samples`: Total number of samples
+    #[inline]
+    pub fn bin(&self, sample: usize, feature_in_group: usize, n_samples: usize) -> u32 {
+        let idx = feature_in_group * n_samples + sample;
+        self.bins.get(idx).expect("index out of bounds")
+    }
+
+    /// Returns the bin (category) value without bounds checking.
+    ///
+    /// # Safety
+    ///
+    /// The index `feature_in_group * n_samples + sample` must be within bounds.
+    #[inline]
+    pub unsafe fn bin_unchecked(
+        &self,
+        sample: usize,
+        feature_in_group: usize,
+        n_samples: usize,
+    ) -> u32 {
+        let idx = feature_in_group * n_samples + sample;
+        // SAFETY: Caller guarantees index is within bounds
+        unsafe { self.bins.get_unchecked(idx) }
+    }
+
+    /// Returns the number of features in this storage.
+    ///
+    /// Computed from `total_elements / n_samples`.
+    #[inline]
+    pub fn n_features(&self, n_samples: usize) -> usize {
+        if n_samples == 0 {
+            0
+        } else {
+            self.bins.len() / n_samples
+        }
+    }
+
+    /// Returns the total size in bytes used by this storage.
+    #[inline]
+    pub fn size_bytes(&self) -> usize {
+        self.bins.size_bytes()
+    }
+
+    /// Returns a reference to the underlying bin data.
+    #[inline]
+    pub fn bins(&self) -> &BinData {
+        &self.bins
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,6 +422,96 @@ mod tests {
         let bins = BinData::from(vec![256u16, 512, 1000]);
         let raw = vec![1.0, 2.0, 3.0].into_boxed_slice();
         let storage = NumericStorage::new(bins, raw);
+        let n_samples = 3;
+
+        assert_eq!(storage.bin(0, 0, n_samples), 256);
+        assert_eq!(storage.bin(1, 0, n_samples), 512);
+        assert_eq!(storage.bin(2, 0, n_samples), 1000);
+    }
+
+    // =========================================================================
+    // CategoricalStorage tests
+    // =========================================================================
+
+    #[test]
+    fn test_categorical_storage_new() {
+        let bins = BinData::from(vec![0u8, 1, 2, 3, 4, 5]);
+        let storage = CategoricalStorage::new(bins);
+        assert_eq!(storage.bins().len(), 6);
+    }
+
+    #[test]
+    fn test_categorical_bin_access() {
+        // 2 features, 3 samples
+        let bins = BinData::from(vec![
+            0u8, 1, 2, // Feature 0: categories
+            5, 6, 7,   // Feature 1: categories
+        ]);
+        let storage = CategoricalStorage::new(bins);
+        let n_samples = 3;
+
+        // Feature 0
+        assert_eq!(storage.bin(0, 0, n_samples), 0);
+        assert_eq!(storage.bin(1, 0, n_samples), 1);
+        assert_eq!(storage.bin(2, 0, n_samples), 2);
+
+        // Feature 1
+        assert_eq!(storage.bin(0, 1, n_samples), 5);
+        assert_eq!(storage.bin(1, 1, n_samples), 6);
+        assert_eq!(storage.bin(2, 1, n_samples), 7);
+    }
+
+    #[test]
+    fn test_categorical_n_features() {
+        // 3 features, 4 samples
+        let bins = BinData::from(vec![0u8; 12]);
+        let storage = CategoricalStorage::new(bins);
+
+        assert_eq!(storage.n_features(4), 3);
+        assert_eq!(storage.n_features(12), 1);
+        assert_eq!(storage.n_features(1), 12);
+        assert_eq!(storage.n_features(0), 0);
+    }
+
+    #[test]
+    fn test_categorical_size_bytes() {
+        // U8 bins: 6 bytes (no raw values)
+        let bins = BinData::from(vec![0u8; 6]);
+        let storage = CategoricalStorage::new(bins);
+        assert_eq!(storage.size_bytes(), 6);
+
+        // U16 bins: 6 * 2 = 12 bytes (no raw values)
+        let bins = BinData::from(vec![0u16; 6]);
+        let storage = CategoricalStorage::new(bins);
+        assert_eq!(storage.size_bytes(), 12);
+    }
+
+    #[test]
+    fn test_categorical_unchecked_access() {
+        let bins = BinData::from(vec![5u8, 10, 15]);
+        let storage = CategoricalStorage::new(bins);
+        let n_samples = 3;
+
+        unsafe {
+            assert_eq!(storage.bin_unchecked(0, 0, n_samples), 5);
+            assert_eq!(storage.bin_unchecked(1, 0, n_samples), 10);
+            assert_eq!(storage.bin_unchecked(2, 0, n_samples), 15);
+        }
+    }
+
+    #[test]
+    fn test_categorical_single_feature_single_sample() {
+        let bins = BinData::from(vec![42u8]);
+        let storage = CategoricalStorage::new(bins);
+
+        assert_eq!(storage.n_features(1), 1);
+        assert_eq!(storage.bin(0, 0, 1), 42);
+    }
+
+    #[test]
+    fn test_categorical_u16_bins() {
+        let bins = BinData::from(vec![256u16, 512, 1000]);
+        let storage = CategoricalStorage::new(bins);
         let n_samples = 3;
 
         assert_eq!(storage.bin(0, 0, n_samples), 256);
