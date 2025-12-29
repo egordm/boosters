@@ -1,7 +1,13 @@
 //! BinnedDataset - Feature group-based quantized data for GBDT training.
 //!
-//! This module re-exports from the deprecated implementation during migration.
-//! New implementation will be added here following RFC-0018.
+//! This module contains the new implementation following RFC-0018.
+//! Deprecated types are re-exported for backward compatibility during migration.
+
+// New RFC-0018 implementation
+mod bin_data;
+
+// Public exports for new types
+pub use bin_data::BinData;
 
 // Re-export everything from deprecated for backward compatibility
 #[allow(deprecated)]
