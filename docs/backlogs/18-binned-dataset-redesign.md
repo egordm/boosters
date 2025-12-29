@@ -346,7 +346,7 @@ impl FeatureStorage {
 
 ### Story 1.6: Create BundleStorage (CRITICAL - Un-deferred)
 
-**Status**: Not Started  
+**Status**: COMPLETE  
 **Estimate**: 4 hours  
 **Priority**: BLOCKING (blocks Epic 7 Switchover and Epic 8 Cleanup)
 
@@ -997,7 +997,7 @@ Either could be used by gblinear if/when it migrates to the new dataset. However
 
 ### Story 7.1: Update Re-exports to Use New Implementation
 
-**Status**: Not Started  
+**Status**: COMPLETE  
 **Estimate**: 45 min
 
 **Description**: Change `data/binned/mod.rs` and `data/mod.rs` to export new types instead of deprecated.
@@ -1038,10 +1038,12 @@ pub use self::sample_blocks::SampleBlocks;
 
 ### Story 7.2: Run Full Test Suite
 
-**Status**: Not Started  
+**Status**: COMPLETE  
 **Estimate**: 30 min
 
 **Description**: Verify everything works with new implementation.
+
+**Results**: 729 unit tests + all integration tests pass.
 
 ---
 
