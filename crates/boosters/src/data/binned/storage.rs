@@ -570,6 +570,165 @@ impl SparseCategoricalStorage {
     }
 }
 
+/// Unified feature storage with bins and optional raw values.
+///
+/// This enum wraps all storage types for homogeneous groups.
+/// The variant determines whether raw values are available.
+///
+/// # Storage Type Properties
+///
+/// | Variant          | Raw Values | Sparse |
+/// |------------------|------------|--------|
+/// | Numeric          | ✓          | ✗      |
+/// | Categorical      | ✗          | ✗      |
+/// | SparseNumeric    | ✓          | ✓      |
+/// | SparseCategorical| ✗          | ✓      |
+///
+/// # Examples
+///
+/// ```
+/// use boosters::data::binned::{BinData, NumericStorage, CategoricalStorage, FeatureStorage};
+///
+/// // Numeric storage has raw values
+/// let numeric = FeatureStorage::Numeric(NumericStorage::new(
+///     BinData::from(vec![0u8, 1, 2]),
+///     vec![1.0, 2.0, 3.0].into_boxed_slice(),
+/// ));
+/// assert!(numeric.has_raw_values());
+/// assert!(!numeric.is_categorical());
+/// assert!(!numeric.is_sparse());
+///
+/// // Categorical storage does not have raw values
+/// let categorical = FeatureStorage::Categorical(CategoricalStorage::new(
+///     BinData::from(vec![0u8, 1, 2]),
+/// ));
+/// assert!(!categorical.has_raw_values());
+/// assert!(categorical.is_categorical());
+/// ```
+#[derive(Debug, Clone)]
+pub enum FeatureStorage {
+    /// Dense numeric features with bins + raw values.
+    Numeric(NumericStorage),
+    /// Dense categorical features with bins only (lossless).
+    Categorical(CategoricalStorage),
+    /// Sparse numeric features with bins + raw values.
+    SparseNumeric(SparseNumericStorage),
+    /// Sparse categorical features with bins only (lossless).
+    SparseCategorical(SparseCategoricalStorage),
+    // Note: Bundle variant will be added in a future story if needed.
+}
+
+impl FeatureStorage {
+    /// Returns `true` if this storage has raw values.
+    ///
+    /// Numeric and SparseNumeric storage have raw values.
+    /// Categorical and SparseCategorical storage do not (bin = category ID).
+    #[inline]
+    pub fn has_raw_values(&self) -> bool {
+        matches!(
+            self,
+            FeatureStorage::Numeric(_) | FeatureStorage::SparseNumeric(_)
+        )
+    }
+
+    /// Returns `true` if this storage is for categorical features.
+    ///
+    /// Categorical and SparseCategorical storage are for categorical features.
+    #[inline]
+    pub fn is_categorical(&self) -> bool {
+        matches!(
+            self,
+            FeatureStorage::Categorical(_) | FeatureStorage::SparseCategorical(_)
+        )
+    }
+
+    /// Returns `true` if this storage is sparse.
+    #[inline]
+    pub fn is_sparse(&self) -> bool {
+        matches!(
+            self,
+            FeatureStorage::SparseNumeric(_) | FeatureStorage::SparseCategorical(_)
+        )
+    }
+
+    /// Returns `true` if this storage is dense.
+    #[inline]
+    pub fn is_dense(&self) -> bool {
+        !self.is_sparse()
+    }
+
+    /// Returns the total size in bytes used by this storage.
+    #[inline]
+    pub fn size_bytes(&self) -> usize {
+        match self {
+            FeatureStorage::Numeric(s) => s.size_bytes(),
+            FeatureStorage::Categorical(s) => s.size_bytes(),
+            FeatureStorage::SparseNumeric(s) => s.size_bytes(),
+            FeatureStorage::SparseCategorical(s) => s.size_bytes(),
+        }
+    }
+
+    /// Returns the underlying storage as a NumericStorage reference, if applicable.
+    #[inline]
+    pub fn as_numeric(&self) -> Option<&NumericStorage> {
+        match self {
+            FeatureStorage::Numeric(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Returns the underlying storage as a CategoricalStorage reference, if applicable.
+    #[inline]
+    pub fn as_categorical(&self) -> Option<&CategoricalStorage> {
+        match self {
+            FeatureStorage::Categorical(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Returns the underlying storage as a SparseNumericStorage reference, if applicable.
+    #[inline]
+    pub fn as_sparse_numeric(&self) -> Option<&SparseNumericStorage> {
+        match self {
+            FeatureStorage::SparseNumeric(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Returns the underlying storage as a SparseCategoricalStorage reference, if applicable.
+    #[inline]
+    pub fn as_sparse_categorical(&self) -> Option<&SparseCategoricalStorage> {
+        match self {
+            FeatureStorage::SparseCategorical(s) => Some(s),
+            _ => None,
+        }
+    }
+}
+
+impl From<NumericStorage> for FeatureStorage {
+    fn from(storage: NumericStorage) -> Self {
+        FeatureStorage::Numeric(storage)
+    }
+}
+
+impl From<CategoricalStorage> for FeatureStorage {
+    fn from(storage: CategoricalStorage) -> Self {
+        FeatureStorage::Categorical(storage)
+    }
+}
+
+impl From<SparseNumericStorage> for FeatureStorage {
+    fn from(storage: SparseNumericStorage) -> Self {
+        FeatureStorage::SparseNumeric(storage)
+    }
+}
+
+impl From<SparseCategoricalStorage> for FeatureStorage {
+    fn from(storage: SparseCategoricalStorage) -> Self {
+        FeatureStorage::SparseCategorical(storage)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1014,5 +1173,145 @@ mod tests {
         assert_eq!(storage.bin(5), 256);
         assert_eq!(storage.bin(20), 512);
         assert_eq!(storage.bin(0), 0);
+    }
+
+    // =========================================================================
+    // FeatureStorage tests
+    // =========================================================================
+
+    fn make_numeric_storage() -> NumericStorage {
+        NumericStorage::new(
+            BinData::from(vec![0u8, 1, 2]),
+            vec![1.0, 2.0, 3.0].into_boxed_slice(),
+        )
+    }
+
+    fn make_categorical_storage() -> CategoricalStorage {
+        CategoricalStorage::new(BinData::from(vec![0u8, 1, 2]))
+    }
+
+    fn make_sparse_numeric_storage() -> SparseNumericStorage {
+        SparseNumericStorage::new(
+            vec![1u32, 5].into_boxed_slice(),
+            BinData::from(vec![1u8, 2]),
+            vec![10.0, 20.0].into_boxed_slice(),
+            10,
+        )
+    }
+
+    fn make_sparse_categorical_storage() -> SparseCategoricalStorage {
+        SparseCategoricalStorage::new(
+            vec![1u32, 5].into_boxed_slice(),
+            BinData::from(vec![1u8, 2]),
+            10,
+        )
+    }
+
+    #[test]
+    fn test_feature_storage_has_raw_values() {
+        let numeric = FeatureStorage::Numeric(make_numeric_storage());
+        let categorical = FeatureStorage::Categorical(make_categorical_storage());
+        let sparse_numeric = FeatureStorage::SparseNumeric(make_sparse_numeric_storage());
+        let sparse_categorical = FeatureStorage::SparseCategorical(make_sparse_categorical_storage());
+
+        assert!(numeric.has_raw_values());
+        assert!(!categorical.has_raw_values());
+        assert!(sparse_numeric.has_raw_values());
+        assert!(!sparse_categorical.has_raw_values());
+    }
+
+    #[test]
+    fn test_feature_storage_is_categorical() {
+        let numeric = FeatureStorage::Numeric(make_numeric_storage());
+        let categorical = FeatureStorage::Categorical(make_categorical_storage());
+        let sparse_numeric = FeatureStorage::SparseNumeric(make_sparse_numeric_storage());
+        let sparse_categorical = FeatureStorage::SparseCategorical(make_sparse_categorical_storage());
+
+        assert!(!numeric.is_categorical());
+        assert!(categorical.is_categorical());
+        assert!(!sparse_numeric.is_categorical());
+        assert!(sparse_categorical.is_categorical());
+    }
+
+    #[test]
+    fn test_feature_storage_is_sparse() {
+        let numeric = FeatureStorage::Numeric(make_numeric_storage());
+        let categorical = FeatureStorage::Categorical(make_categorical_storage());
+        let sparse_numeric = FeatureStorage::SparseNumeric(make_sparse_numeric_storage());
+        let sparse_categorical = FeatureStorage::SparseCategorical(make_sparse_categorical_storage());
+
+        assert!(!numeric.is_sparse());
+        assert!(!categorical.is_sparse());
+        assert!(sparse_numeric.is_sparse());
+        assert!(sparse_categorical.is_sparse());
+
+        assert!(numeric.is_dense());
+        assert!(categorical.is_dense());
+        assert!(!sparse_numeric.is_dense());
+        assert!(!sparse_categorical.is_dense());
+    }
+
+    #[test]
+    fn test_feature_storage_size_bytes() {
+        let numeric = FeatureStorage::Numeric(make_numeric_storage());
+        let categorical = FeatureStorage::Categorical(make_categorical_storage());
+        let sparse_numeric = FeatureStorage::SparseNumeric(make_sparse_numeric_storage());
+        let sparse_categorical = FeatureStorage::SparseCategorical(make_sparse_categorical_storage());
+
+        // Numeric: 3 u8 bins + 3 f32 raw = 3 + 12 = 15
+        assert_eq!(numeric.size_bytes(), 15);
+        // Categorical: 3 u8 bins = 3
+        assert_eq!(categorical.size_bytes(), 3);
+        // SparseNumeric: 2 u32 indices + 2 u8 bins + 2 f32 raw = 8 + 2 + 8 = 18
+        assert_eq!(sparse_numeric.size_bytes(), 18);
+        // SparseCategorical: 2 u32 indices + 2 u8 bins = 8 + 2 = 10
+        assert_eq!(sparse_categorical.size_bytes(), 10);
+    }
+
+    #[test]
+    fn test_feature_storage_as_methods() {
+        let numeric = FeatureStorage::Numeric(make_numeric_storage());
+        let categorical = FeatureStorage::Categorical(make_categorical_storage());
+        let sparse_numeric = FeatureStorage::SparseNumeric(make_sparse_numeric_storage());
+        let sparse_categorical = FeatureStorage::SparseCategorical(make_sparse_categorical_storage());
+
+        // Numeric
+        assert!(numeric.as_numeric().is_some());
+        assert!(numeric.as_categorical().is_none());
+        assert!(numeric.as_sparse_numeric().is_none());
+        assert!(numeric.as_sparse_categorical().is_none());
+
+        // Categorical
+        assert!(categorical.as_numeric().is_none());
+        assert!(categorical.as_categorical().is_some());
+        assert!(categorical.as_sparse_numeric().is_none());
+        assert!(categorical.as_sparse_categorical().is_none());
+
+        // SparseNumeric
+        assert!(sparse_numeric.as_numeric().is_none());
+        assert!(sparse_numeric.as_categorical().is_none());
+        assert!(sparse_numeric.as_sparse_numeric().is_some());
+        assert!(sparse_numeric.as_sparse_categorical().is_none());
+
+        // SparseCategorical
+        assert!(sparse_categorical.as_numeric().is_none());
+        assert!(sparse_categorical.as_categorical().is_none());
+        assert!(sparse_categorical.as_sparse_numeric().is_none());
+        assert!(sparse_categorical.as_sparse_categorical().is_some());
+    }
+
+    #[test]
+    fn test_feature_storage_from() {
+        let numeric: FeatureStorage = make_numeric_storage().into();
+        assert!(numeric.as_numeric().is_some());
+
+        let categorical: FeatureStorage = make_categorical_storage().into();
+        assert!(categorical.as_categorical().is_some());
+
+        let sparse_numeric: FeatureStorage = make_sparse_numeric_storage().into();
+        assert!(sparse_numeric.as_sparse_numeric().is_some());
+
+        let sparse_categorical: FeatureStorage = make_sparse_categorical_storage().into();
+        assert!(sparse_categorical.as_sparse_categorical().is_some());
     }
 }

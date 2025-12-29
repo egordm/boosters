@@ -10,7 +10,8 @@ mod storage;
 // Public exports for new types
 pub use bin_data::BinData;
 pub use storage::{
-    CategoricalStorage, NumericStorage, SparseCategoricalStorage, SparseNumericStorage,
+    CategoricalStorage, FeatureStorage, NumericStorage, SparseCategoricalStorage,
+    SparseNumericStorage,
 };
 
 // Re-export everything from deprecated for backward compatibility
