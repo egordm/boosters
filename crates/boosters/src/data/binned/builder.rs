@@ -24,12 +24,16 @@ use ndarray::{ArrayView1, ArrayView2};
 use std::collections::HashMap;
 
 use super::bin_mapper::BinMapper;
+use super::bundling::{apply_bundling, create_bundle_plan, BundlingConfig as NewBundlingConfig};
 use super::feature_analysis::{
     analyze_features, compute_groups, BinningConfig, FeatureAnalysis, FeatureMetadata, GroupSpec,
     GroupType, GroupingResult,
 };
 use super::group::FeatureGroup;
-use super::storage::{CategoricalStorage, NumericStorage, SparseCategoricalStorage, SparseNumericStorage};
+use super::storage::{
+    BundleStorage, CategoricalStorage, NumericStorage, SparseCategoricalStorage,
+    SparseNumericStorage,
+};
 use super::{BinData, FeatureStorage};
 use crate::data::FeaturesView;
 
@@ -266,8 +270,18 @@ impl DatasetBuilder {
         // Analyze features using parallel analysis
         let analyses = analyze_features(features_view, config, metadata);
 
-        // Compute grouping strategy
-        let grouping = compute_groups(&analyses, config);
+        // Compute grouping strategy (without bundling first)
+        let mut grouping = compute_groups(&analyses, config);
+
+        // Apply bundling if enabled
+        if config.enable_bundling {
+            let bundling_config = NewBundlingConfig {
+                min_sparsity: config.sparsity_threshold,
+                ..Default::default()
+            };
+            let bundle_plan = create_bundle_plan(&analyses, &batch_data, &bundling_config);
+            grouping = apply_bundling(grouping, &bundle_plan, &analyses);
+        }
 
         // Create bin mappers for each feature
         let bin_mappers = create_bin_mappers(&analyses, &batch_data, config, metadata);
@@ -475,8 +489,18 @@ impl DatasetBuilder {
         // Analyze features
         let analyses = analyze_features(features_view, &self.config, Some(&metadata));
 
-        // Compute grouping
-        let grouping = compute_groups(&analyses, &self.config);
+        // Compute grouping (without bundling first)
+        let mut grouping = compute_groups(&analyses, &self.config);
+
+        // Apply bundling if enabled
+        if self.config.enable_bundling {
+            let bundling_config = NewBundlingConfig {
+                min_sparsity: self.config.sparsity_threshold,
+                ..Default::default()
+            };
+            let bundle_plan = create_bundle_plan(&analyses, &batch_data, &bundling_config);
+            grouping = apply_bundling(grouping, &bundle_plan, &analyses);
+        }
 
         // Create bin mappers
         let bin_mappers = create_bin_mappers(&analyses, &batch_data, &self.config, Some(&metadata));
@@ -646,11 +670,7 @@ fn build_feature_group(
         GroupType::CategoricalDense => build_categorical_dense(spec, bin_mappers, data, n_samples),
         GroupType::SparseNumeric => build_sparse_numeric(spec, bin_mappers, data, n_samples),
         GroupType::SparseCategorical => build_sparse_categorical(spec, bin_mappers, data, n_samples),
-        GroupType::Bundle => {
-            // EFB bundling - for now just treat as sparse categorical
-            // Full EFB support is deferred to Story 1.6
-            build_sparse_categorical(spec, bin_mappers, data, n_samples)
-        }
+        GroupType::Bundle => build_bundle(spec, bin_mappers, data, n_samples),
     };
 
     // Get bin counts from bin mappers
@@ -805,6 +825,84 @@ fn build_sparse_categorical(
     FeatureStorage::SparseCategorical(SparseCategoricalStorage::new(
         indices.into_boxed_slice(),
         bins_data,
+        n_samples,
+    ))
+}
+
+/// Build BundleStorage for an EFB bundle (multiple sparse features).
+///
+/// The bundle encoding scheme:
+/// - Bin 0 = all features at default (zero)
+/// - Bins 1+ are offset-encoded: each feature's bins are placed at a unique offset
+///
+/// For features with n_bins [4, 6, 3]:
+/// - Feature 0: offset=1, bins 1-4
+/// - Feature 1: offset=5, bins 5-10
+/// - Feature 2: offset=11, bins 11-13
+/// - Total bins = 14
+fn build_bundle(
+    spec: &GroupSpec,
+    bin_mappers: &[BinMapper],
+    data: &[Vec<f32>],
+    n_samples: usize,
+) -> FeatureStorage {
+    let n_features = spec.n_features();
+    assert!(n_features >= 2, "Bundle must have at least 2 features");
+
+    // Compute bin offsets and total bins
+    let mut bin_offsets = Vec::with_capacity(n_features);
+    let mut feature_n_bins = Vec::with_capacity(n_features);
+    let mut offset = 1u32; // Start at 1, bin 0 is reserved for "all defaults"
+
+    for &feature_idx in &spec.feature_indices {
+        let n_bins = bin_mappers[feature_idx].n_bins();
+        bin_offsets.push(offset);
+        feature_n_bins.push(n_bins);
+        offset += n_bins;
+    }
+    let total_bins = offset;
+
+    // Get default bins for each feature (bin for value 0.0)
+    let default_bins: Vec<u32> = spec
+        .feature_indices
+        .iter()
+        .map(|&idx| bin_mappers[idx].value_to_bin(0.0))
+        .collect();
+
+    // Encode samples: for each sample, find the first non-default feature
+    let mut encoded_bins = Vec::with_capacity(n_samples);
+
+    for sample_idx in 0..n_samples {
+        let mut encoded = 0u16; // 0 = all defaults
+
+        for (pos, &feature_idx) in spec.feature_indices.iter().enumerate() {
+            let value = data[feature_idx][sample_idx];
+            
+            // Check if this feature is non-default (non-zero)
+            if value != 0.0 && !value.is_nan() {
+                let bin = bin_mappers[feature_idx].value_to_bin(value as f64);
+                encoded = (bin_offsets[pos] + bin) as u16;
+                break; // First non-default wins (EFB assumption: exclusive features)
+            }
+        }
+
+        encoded_bins.push(encoded);
+    }
+
+    // Convert feature indices to u32
+    let feature_indices_u32: Box<[u32]> = spec
+        .feature_indices
+        .iter()
+        .map(|&idx| idx as u32)
+        .collect();
+
+    FeatureStorage::Bundle(BundleStorage::new(
+        encoded_bins.into_boxed_slice(),
+        feature_indices_u32,
+        bin_offsets.into_boxed_slice(),
+        feature_n_bins.into_boxed_slice(),
+        total_bins,
+        default_bins.into_boxed_slice(),
         n_samples,
     ))
 }
@@ -1017,5 +1115,102 @@ mod tests {
             built.groups[0].storage(),
             FeatureStorage::Numeric(_)
         ));
+    }
+
+    #[test]
+    fn test_bundling_creates_bundle_storage() {
+        // Create two sparse categorical features that are mutually exclusive
+        // Feature 0: non-zero only for rows 0-4
+        // Feature 1: non-zero only for rows 50-54
+        // These are mutually exclusive (no overlap) so should bundle perfectly
+        let n_samples = 100;
+        
+        // ndarray uses row-major by default: shape (n_samples, n_features)
+        // Each row is [feature0_value, feature1_value]
+        let mut data_vec = Vec::with_capacity(n_samples * 2);
+        for sample in 0..n_samples {
+            // Feature 0: non-zero only for rows 0-4
+            let f0 = if sample < 5 { (sample % 3 + 1) as f32 } else { 0.0 };
+            // Feature 1: non-zero only for rows 50-54  
+            let f1 = if (50..55).contains(&sample) { ((sample - 50) % 3 + 1) as f32 } else { 0.0 };
+            data_vec.push(f0);
+            data_vec.push(f1);
+        }
+
+        let data = Array2::from_shape_vec((n_samples, 2), data_vec).unwrap();
+
+        // Mark both as categorical to enable bundling
+        let metadata = FeatureMetadata::default().categorical(vec![0, 1]);
+        let config = BinningConfig::builder()
+            .enable_bundling(true)
+            .sparsity_threshold(0.9)
+            .build();
+
+        let groups = DatasetBuilder::from_array_with_metadata(data.view(), Some(&metadata), &config)
+            .unwrap()
+            .build_groups()
+            .unwrap();
+
+        // Should have exactly one Bundle group (both sparse categoricals bundled)
+        let bundle_count = groups
+            .groups
+            .iter()
+            .filter(|g| matches!(g.storage(), FeatureStorage::Bundle(_)))
+            .count();
+
+        assert_eq!(bundle_count, 1, "Expected one bundle group");
+
+        // Verify the bundle has both features
+        let bundle_group = groups
+            .groups
+            .iter()
+            .find(|g| matches!(g.storage(), FeatureStorage::Bundle(_)))
+            .unwrap();
+
+        assert_eq!(bundle_group.n_features(), 2, "Bundle should have 2 features");
+    }
+
+    #[test]
+    fn test_bundling_disabled() {
+        // Same setup as above, but bundling disabled
+        let n_samples = 100;
+        
+        let mut data_vec = Vec::with_capacity(n_samples * 2);
+        for sample in 0..n_samples {
+            let f0 = if sample < 5 { (sample % 3 + 1) as f32 } else { 0.0 };
+            let f1 = if (50..55).contains(&sample) { ((sample - 50) % 3 + 1) as f32 } else { 0.0 };
+            data_vec.push(f0);
+            data_vec.push(f1);
+        }
+
+        let data = Array2::from_shape_vec((n_samples, 2), data_vec).unwrap();
+        let metadata = FeatureMetadata::default().categorical(vec![0, 1]);
+        let config = BinningConfig::builder()
+            .enable_bundling(false)
+            .sparsity_threshold(0.9)
+            .build();
+
+        let groups = DatasetBuilder::from_array_with_metadata(data.view(), Some(&metadata), &config)
+            .unwrap()
+            .build_groups()
+            .unwrap();
+
+        // Should have NO Bundle groups when bundling is disabled
+        let bundle_count = groups
+            .groups
+            .iter()
+            .filter(|g| matches!(g.storage(), FeatureStorage::Bundle(_)))
+            .count();
+
+        assert_eq!(bundle_count, 0, "Expected no bundle groups when disabled");
+
+        // Should have 2 sparse categorical groups instead
+        let sparse_cat_count = groups
+            .groups
+            .iter()
+            .filter(|g| matches!(g.storage(), FeatureStorage::SparseCategorical(_)))
+            .count();
+
+        assert_eq!(sparse_cat_count, 2, "Expected 2 sparse categorical groups");
     }
 }

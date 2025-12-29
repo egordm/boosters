@@ -7,6 +7,7 @@
 mod bin_data;
 mod bin_mapper;
 pub(crate) mod builder;
+pub(crate) mod bundling;
 pub(crate) mod dataset;
 pub(crate) mod feature_analysis;
 pub(crate) mod group;
@@ -32,6 +33,9 @@ pub use view::FeatureView;
 // Builder types
 pub use builder::{BuiltGroups, DatasetBuilder, DatasetError};
 pub use feature_analysis::{BinningConfig, FeatureAnalysis, FeatureMetadata, GroupSpec};
+
+// Bundling types (RFC-0018 native)
+pub use bundling::{BundlePlan as NewBundlePlan, BundlingConfig as NewBundlingConfig};
 
 // For backward compatibility during migration, re-export some builder types with old names
 pub use builder::DatasetBuilder as BinnedDatasetBuilder;
