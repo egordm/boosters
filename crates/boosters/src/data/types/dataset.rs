@@ -1,13 +1,8 @@
 //! Dataset container and builder.
 //!
-//! # Deprecation Notice
-//!
-//! The types in this module (`Dataset`, `DatasetBuilder`) are deprecated.
-//! Use `BinnedDataset` and `BinnedDatasetBuilder` instead. See RFC-0018.
-//!
-//! This module provides [`Dataset`] and [`DatasetBuilder`].
-
-#![allow(deprecated)] // Allow internal use of deprecated types
+//! This module provides [`Dataset`] and [`DatasetBuilder`] for creating
+//! raw feature datasets. For training, create a [`crate::data::BinnedDataset`]
+//! using [`crate::data::BinnedDatasetBuilder`].
 
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
 
@@ -45,7 +40,6 @@ use crate::data::error::DatasetError;
 /// assert_eq!(ds.n_features(), 2);
 /// ```
 #[derive(Debug, Clone)]
-#[deprecated]
 pub struct Dataset {
     /// Feature data: `[n_features, n_samples]` (feature-major).
     features: Array2<f32>,

@@ -1,25 +1,11 @@
 //! Feature column storage types.
 //!
-//! # Deprecation Notice
-//!
-//! This module is being replaced by the types in [`super::binned::v2`].
-//! Use `BinnedDatasetBuilder::add_features()` instead of building columns manually.
-//!
 //! This module defines [`Column`] and [`SparseColumn`] for storing feature data.
-
-#![allow(deprecated)] // Allow internal use of deprecated types
+//! These are internal types used by [`super::dataset::Dataset`].
 
 use ndarray::Array1;
 
 /// Single feature column storage.
-///
-/// # Deprecation
-///
-/// This type is deprecated. Use `BinnedDatasetBuilder::add_features()` instead.
-#[deprecated(
-    since = "0.2.0",
-    note = "Use BinnedDatasetBuilder::add_features() instead of building columns manually"
-)]
 ///
 /// All values are `f32`. Categorical features store category IDs as floats
 /// (e.g., `0.0, 1.0, 2.0`) and are cast to `i32` during binning.

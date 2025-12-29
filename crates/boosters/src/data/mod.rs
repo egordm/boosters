@@ -31,34 +31,27 @@ pub mod binned;
 mod error;
 mod ndarray;
 
-// Deprecated module containing old implementation during RFC-0018 migration
-// All old data types (Dataset, Column, accessor, schema, views) live here
-#[allow(deprecated)]
-pub(crate) mod deprecated;
+// Core data types (Dataset, views, accessors, schema)
+pub(crate) mod types;
 
 #[cfg(feature = "io-parquet")]
 pub mod io;
 
 // =============================================================================
-// Core Dataset Types (user-facing) - re-exported from deprecated
+// Core Dataset Types (user-facing)
 // =============================================================================
 
-#[allow(deprecated)]
-pub use deprecated::column::{Column, SparseColumn};
-#[allow(deprecated)]
-pub use deprecated::dataset::{Dataset, DatasetBuilder};
+pub use types::column::{Column, SparseColumn};
+pub use types::dataset::{Dataset, DatasetBuilder};
 pub use error::DatasetError;
-#[allow(deprecated)]
-pub use deprecated::schema::{DatasetSchema, FeatureMeta, FeatureType};
-#[allow(deprecated)]
-pub use deprecated::views::{FeaturesView, SamplesView, TargetsView, WeightsIter, WeightsView};
+pub use types::schema::{DatasetSchema, FeatureMeta, FeatureType};
+pub use types::views::{FeaturesView, SamplesView, TargetsView, WeightsIter, WeightsView};
 
 // =============================================================================
-// Accessor Traits (internal) - re-exported from deprecated
+// Accessor Traits (internal)
 // =============================================================================
 
-#[allow(deprecated)]
-pub use deprecated::accessor::{DataAccessor, SampleAccessor};
+pub use types::accessor::{DataAccessor, SampleAccessor};
 
 // =============================================================================
 // ndarray Utilities

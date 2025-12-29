@@ -1,9 +1,5 @@
 //! Feature Bundling (EFB) benchmark: compare performance with bundling enabled vs disabled.
 //!
-//! NOTE: Bundling is not yet implemented in the new BinnedDataset (RFC-0018).
-//! This benchmark is a placeholder that shows the intended API and compares
-//! against LightGBM's bundling implementation.
-//!
 //! Tests on one-hot encoded sparse data where EFB provides maximum benefit.
 //! Measures:
 //! - Binning time: dataset construction
@@ -150,32 +146,42 @@ fn bench_boosters_binning(c: &mut Criterion) {
         let features_fm = transpose_to_c_order(sample_major_view);
         let features_dataset = Dataset::new(features_fm.view(), None, None);
 
-        // NOTE: Bundling not yet implemented - this is placeholder showing API
-        // Currently both run identical code paths
+        // Benchmark WITHOUT bundling
         group.bench_function(BenchmarkId::new("no_bundling", config.name), |b| {
             b.iter(|| {
                 black_box(
-                    BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
-                        .add_features(features_dataset.features(), Parallelism::Parallel)
-                        .build()
-                        .unwrap(),
+                    BinnedDatasetBuilder::with_config(
+                        BinningConfig::builder()
+                            .max_bins(256)
+                            .enable_bundling(false)
+                            .build(),
+                    )
+                    .add_features(features_dataset.features(), Parallelism::Parallel)
+                    .build()
+                    .unwrap(),
                 )
             })
         });
 
+        // Benchmark WITH bundling (default)
         group.bench_function(BenchmarkId::new("with_bundling", config.name), |b| {
             b.iter(|| {
                 black_box(
-                    BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
-                        .add_features(features_dataset.features(), Parallelism::Parallel)
-                        .build()
-                        .unwrap(),
+                    BinnedDatasetBuilder::with_config(
+                        BinningConfig::builder()
+                            .max_bins(256)
+                            .enable_bundling(true)
+                            .build(),
+                    )
+                    .add_features(features_dataset.features(), Parallelism::Parallel)
+                    .build()
+                    .unwrap(),
                 )
             })
         });
 
         eprintln!(
-            "[{}] Features: {} (bundling not yet implemented)",
+            "[{}] Features: {} (testing bundling enabled vs disabled)",
             config.name, n_features
         );
     }
@@ -220,24 +226,38 @@ fn bench_boosters_training(c: &mut Criterion) {
         let features_fm = transpose_to_c_order(sample_major_view);
         let features_dataset = Dataset::new(features_fm.view(), None, None);
 
-        // Pre-build binned datasets (bundling not yet implemented - both identical)
-        let binned_dataset =
-            BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
-                .add_features(features_dataset.features(), Parallelism::Parallel)
-                .build()
-                .unwrap();
+        // Pre-build binned datasets with different bundling settings
+        let binned_no_bundling = BinnedDatasetBuilder::with_config(
+            BinningConfig::builder()
+                .max_bins(256)
+                .enable_bundling(false)
+                .build(),
+        )
+        .add_features(features_dataset.features(), Parallelism::Parallel)
+        .build()
+        .unwrap();
+
+        let binned_with_bundling = BinnedDatasetBuilder::with_config(
+            BinningConfig::builder()
+                .max_bins(256)
+                .enable_bundling(true)
+                .build(),
+        )
+        .add_features(features_dataset.features(), Parallelism::Parallel)
+        .build()
+        .unwrap();
 
         // Convert targets to 2D
         let targets_2d = Array2::from_shape_vec((1, targets.len()), targets.clone()).unwrap();
 
-        // NOTE: Both benchmarks use same dataset since bundling not yet implemented
+        // Benchmark WITHOUT bundling
         group.bench_function(BenchmarkId::new("no_bundling", config.name), |b| {
             let targets_view = TargetsView::new(targets_2d.view());
             b.iter(|| {
                 black_box(
                     trainer
                         .train(
-                            black_box(&binned_dataset),
+                            black_box(&binned_no_bundling),
                             targets_view,
                             WeightsView::None,
                             &[],
@@ -248,13 +268,14 @@ fn bench_boosters_training(c: &mut Criterion) {
             })
         });
 
+        // Benchmark WITH bundling
         group.bench_function(BenchmarkId::new("with_bundling", config.name), |b| {
             let targets_view = TargetsView::new(targets_2d.view());
             b.iter(|| {
                 black_box(
                     trainer
                         .train(
-                            black_box(&binned_dataset),
+                            black_box(&binned_with_bundling),
                             targets_view,
                             WeightsView::None,
                             &[],

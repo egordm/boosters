@@ -11,8 +11,8 @@ use super::bin_mapper::BinMapper;
 use super::builder::BuiltGroups;
 use super::group::FeatureGroup;
 use super::view::FeatureView;
-use crate::data::deprecated::accessor::{DataAccessor, SampleAccessor};
-use crate::data::deprecated::schema::FeatureType;
+use crate::data::types::accessor::{DataAccessor, SampleAccessor};
+use crate::data::types::schema::FeatureType;
 
 /// Where a feature's data lives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
