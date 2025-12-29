@@ -7,6 +7,7 @@
 // Allow dead code during migration - this will be used when we switch over in Epic 7
 #![allow(dead_code)]
 
+use super::view::FeatureView;
 use super::FeatureStorage;
 
 /// A group of features with homogeneous storage.
@@ -248,6 +249,67 @@ impl FeatureGroup {
         let offsets_size = self.bin_offsets.len() * std::mem::size_of::<u32>();
         let storage_size = self.storage.size_bytes();
         indices_size + counts_size + offsets_size + storage_size
+    }
+
+    /// Returns a zero-cost view into the bins for a feature in this group.
+    ///
+    /// Use this for histogram building hot path.
+    ///
+    /// # Parameters
+    /// - `feature_in_group`: Feature index within this group (0..n_features)
+    ///
+    /// # Panics
+    ///
+    /// Panics if `feature_in_group >= n_features()`.
+    pub fn feature_view(&self, feature_in_group: usize) -> FeatureView<'_> {
+        assert!(
+            feature_in_group < self.n_features(),
+            "feature_in_group index out of bounds"
+        );
+
+        match &self.storage {
+            FeatureStorage::Numeric(s) => {
+                let start = feature_in_group * self.n_samples;
+                let end = start + self.n_samples;
+                match s.bins() {
+                    super::BinData::U8(bins) => FeatureView::U8(&bins[start..end]),
+                    super::BinData::U16(bins) => FeatureView::U16(&bins[start..end]),
+                }
+            }
+            FeatureStorage::Categorical(s) => {
+                let start = feature_in_group * self.n_samples;
+                let end = start + self.n_samples;
+                match s.bins() {
+                    super::BinData::U8(bins) => FeatureView::U8(&bins[start..end]),
+                    super::BinData::U16(bins) => FeatureView::U16(&bins[start..end]),
+                }
+            }
+            FeatureStorage::SparseNumeric(s) => {
+                // Sparse storage: return sparse view
+                match s.bins() {
+                    super::BinData::U8(bins) => FeatureView::SparseU8 {
+                        sample_indices: s.sample_indices(),
+                        bin_values: bins,
+                    },
+                    super::BinData::U16(bins) => FeatureView::SparseU16 {
+                        sample_indices: s.sample_indices(),
+                        bin_values: bins,
+                    },
+                }
+            }
+            FeatureStorage::SparseCategorical(s) => {
+                match s.bins() {
+                    super::BinData::U8(bins) => FeatureView::SparseU8 {
+                        sample_indices: s.sample_indices(),
+                        bin_values: bins,
+                    },
+                    super::BinData::U16(bins) => FeatureView::SparseU16 {
+                        sample_indices: s.sample_indices(),
+                        bin_values: bins,
+                    },
+                }
+            }
+        }
     }
 }
 
@@ -521,5 +583,62 @@ mod tests {
 
         assert_eq!(group.bin_offsets(), &[0, 0]);
         assert_eq!(group.total_bins(), 0);
+    }
+
+    #[test]
+    fn test_feature_view_dense_numeric() {
+        let group = make_numeric_group();
+
+        // Feature 0: bins [0, 1, 2]
+        let view0 = group.feature_view(0);
+        assert!(view0.is_dense());
+        assert!(view0.is_u8());
+        match view0 {
+            crate::data::binned::view::FeatureView::U8(bins) => {
+                assert_eq!(bins, &[0, 1, 2]);
+            }
+            _ => panic!("Expected U8"),
+        }
+
+        // Feature 1: bins [5, 6, 7]
+        let view1 = group.feature_view(1);
+        match view1 {
+            crate::data::binned::view::FeatureView::U8(bins) => {
+                assert_eq!(bins, &[5, 6, 7]);
+            }
+            _ => panic!("Expected U8"),
+        }
+    }
+
+    #[test]
+    fn test_feature_view_sparse() {
+        let group = make_sparse_numeric_group();
+        let view = group.feature_view(0);
+
+        assert!(view.is_sparse());
+        match view {
+            crate::data::binned::view::FeatureView::SparseU8 {
+                sample_indices,
+                bin_values,
+            } => {
+                assert_eq!(sample_indices, &[2, 7]);
+                assert_eq!(bin_values, &[1, 2]);
+            }
+            _ => panic!("Expected SparseU8"),
+        }
+    }
+
+    #[test]
+    fn test_feature_view_categorical() {
+        let group = make_categorical_group();
+        let view = group.feature_view(0);
+
+        assert!(view.is_dense());
+        match view {
+            crate::data::binned::view::FeatureView::U8(bins) => {
+                assert_eq!(bins, &[0, 1, 2]);
+            }
+            _ => panic!("Expected U8"),
+        }
     }
 }
