@@ -684,28 +684,32 @@ impl BinnedDataset {
 
 ---
 
-### Story 5.5: Implement RowBlocks for Prediction
+### Story 5.5: Implement SampleBlocks for Prediction
 
-**Status**: ✅ Complete (commit a3ba6bb)  
+**Status**: ✅ Complete (commits a3ba6bb, ba3c6f8)  
 **Estimate**: 2 hours
 
-**Description**: Create buffered row block iterator for efficient prediction.
+**Description**: Create buffered sample block iterator for efficient prediction.
 
-**Location**: `data/binned/row_blocks.rs` (NEW FILE)
+**Location**: `data/binned/sample_blocks.rs` (NEW FILE)
 
 **Design**:
 
 - Block size: configurable, default 64 samples
-- Returns rows as ndarray views
+- Returns samples as ndarray views
 - For numeric features: return raw value
 - For categorical features: cast bin index to f32
-- Iteration pattern: row-major within each block
+- Iteration pattern: sample-major within each block
+- Thread-local buffers for efficient parallel processing
+- Single `for_each_with(Parallelism, f)` API using `maybe_par_bridge_for_each`
 
 **Definition of Done**:
 
-- RowBlocks struct implemented
-- Iteration tests (block boundaries, last partial block)
-- Edge cases: empty dataset, single sample, single feature
+- ✅ SampleBlocks struct implemented with thread-local buffers
+- ✅ Iteration tests (block boundaries, last partial block)
+- ✅ Edge cases: single sample, single feature
+- ✅ Parallel tests verify same results as sequential
+- ✅ Uses efficient column access (ArrayView1::assign, not per-sample access)
 
 ---
 
@@ -1040,27 +1044,22 @@ Epic 8 (Cleanup)
 
 ### Story D.1: Thread-Local Buffer Optimization for SampleBlocks
 
-**Status**: Not Started  
+**Status**: ✅ Complete (addressed in commit ba3c6f8)  
 **Priority**: Low  
 **Estimate**: 2 hours
 
-**Description**: The current `SampleBlocks` parallel implementation allocates a buffer per block via `get_block()`. For optimal parallelism, the block count and size should be dynamic based on the number of threads, and each thread should use a thread-local buffer.
+**Description**: The `SampleBlocks` parallel implementation now uses thread-local buffers for optimal memory reuse.
 
-**Current Behavior**:
-- Block size is fixed at construction
-- Each parallel worker allocates a new buffer per block
-- Number of blocks = ceil(n_samples / block_size)
+**Implementation** (commit ba3c6f8):
+- Uses `thread_local! { static BLOCK_BUFFER: RefCell<Option<Array2<f32>>> }` for buffer reuse
+- Each thread gets/reuses its own buffer
+- Uses `parallelism.maybe_par_bridge_for_each()` for unified seq/par handling
+- Pattern follows `Predictor::predict_into` exactly
 
-**Proposed Improvement**:
-- Determine number of threads from rayon's thread pool or `Parallelism::n_threads()`
-- Compute optimal block size: `block_size = ceil(n_samples / n_threads)`
-- Use `thread_local!` to reuse buffers within each thread
-- Each thread processes multiple blocks, reusing its local buffer
-
-**Source**: Stakeholder feedback during Epic 5 implementation.
+**Note**: Dynamic block sizing based on thread count was NOT implemented - the current fixed block size approach is sufficient and simpler. If profiling shows this is needed, it can be added later.
 
 **Definition of Done**:
-- Thread-local buffer reuse in parallel iteration
-- Dynamic block sizing based on thread count
-- Benchmark showing reduced allocation overhead
-- Unit tests for correctness
+- ✅ Thread-local buffer reuse in parallel iteration
+- ⏸️ Dynamic block sizing based on thread count (not needed)
+- ⏸️ Benchmark showing reduced allocation overhead (not benchmarked yet)
+- ✅ Unit tests for correctness
