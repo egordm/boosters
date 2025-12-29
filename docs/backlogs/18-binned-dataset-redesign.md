@@ -464,7 +464,7 @@ pub enum FeatureView<'a> {
 
 ### Story 3.1: Copy and Adapt BinMapper
 
-**Status**: Not Started  
+**Status**: COMPLETE  
 **Estimate**: 1 hour
 
 **Description**: Copy `BinMapper` from deprecated to new `data/binned/bin_mapper.rs` and adapt as needed.
