@@ -1186,67 +1186,61 @@ Raw values are stored as f32 for memory efficiency. Linear tree implementations 
 
 **Recommendation**: Accept the small overhead. The simplicity of a single dataset type outweighs the minor performance cost.
 
-### Row Block Iterator for Prediction
+### Sample Block Iterator for Prediction
 
-Prediction typically processes samples row-by-row, but `BinnedDataset` stores data column-major. We observed a **2x speedup** by buffering row blocks before prediction rather than random column access.
+Prediction typically processes samples row-by-row, but `BinnedDataset` stores data column-major. We observed a **2x speedup** by buffering sample blocks before prediction rather than random column access.
 
 This iterator is a **reusable component** that should be extracted from prediction code and live in the dataset module.
 
 ```rust
 impl BinnedDataset {
-    /// Create a buffered row block iterator for prediction.
-    /// Buffers `block_size` rows at a time into row-major layout.
+    /// Create a buffered sample block iterator for prediction.
+    /// Buffers `block_size` samples at a time into sample-major layout.
     /// This provides ~2x speedup for prediction vs random column access.
     ///
     /// Parallelism controls whether blocks are processed in parallel.
-    pub fn row_blocks(&self, block_size: usize) -> RowBlocks<'_>;
+    pub fn sample_blocks(&self, block_size: usize) -> SampleBlocks<'_>;
     
-    /// Get a single row's raw values (allocates).
-    /// Use `row_blocks()` for batch prediction.
-    pub fn get_row(&self, sample: usize) -> Vec<f32>;
+    /// Get a single sample's raw values (allocates).
+    /// Use `sample_blocks()` for batch prediction.
+    pub fn get_sample(&self, sample: usize) -> Vec<f32>;
 }
 
-/// Buffered row block iterator with parallel support.
-/// Transposes column-major storage to row-major blocks on demand.
-pub struct RowBlocks<'a> {
+/// Buffered sample block iterator with parallel support.
+/// Transposes column-major storage to sample-major blocks on demand.
+/// Uses thread-local buffers for efficient memory reuse.
+pub struct SampleBlocks<'a> {
     dataset: &'a BinnedDataset,
     block_size: usize,
 }
 
-impl<'a> RowBlocks<'a> {
+impl<'a> SampleBlocks<'a> {
     /// Number of blocks.
     pub fn n_blocks(&self) -> usize;
     
-    /// Process blocks sequentially, calling `f` for each block.
-    /// `f` receives (start_sample_idx, block: ArrayView2<f32>).
-    /// Block is row-major: [block_size, n_features].
-    pub fn for_each<F>(&self, f: F)
-    where
-        F: FnMut(usize, ArrayView2<f32>);
-    
-    /// Process blocks with parallelism control.
-    /// When `Parallelism::Parallel`, blocks are processed in parallel using rayon.
-    /// When `Parallelism::Sequential`, blocks are processed sequentially.
+    /// Process blocks with parallelism control and thread-local buffer reuse.
+    ///
+    /// Uses thread-local Array2 buffers sized at [block_size, n_features].
+    /// Each thread gets/reuses its own buffer, providing efficient memory usage
+    /// in both sequential and parallel modes.
+    ///
+    /// This follows the same pattern as `Predictor::predict_into` in the inference module.
+    ///
+    /// When `Parallelism::Parallel`, blocks are processed in parallel using
+    /// `parallelism.maybe_par_bridge_for_each()`.
+    /// When `Parallelism::Sequential`, blocks are processed sequentially with
+    /// thread-local buffer reuse.
     ///
     /// `f` receives (start_sample_idx, block: ArrayView2<f32>).
+    /// Block is sample-major: [block_size, n_features].
     pub fn for_each_with<F>(&self, parallelism: Parallelism, f: F)
     where
         F: Fn(usize, ArrayView2<f32>) + Sync + Send;
     
-    /// Collect results from each block with parallelism control.
-    /// `f` receives (start_sample_idx, block: ArrayView2<f32>) -> Vec<T>.
-    /// Results are concatenated in order.
-    pub fn flat_map_with<T, F>(&self, parallelism: Parallelism, f: F) -> Vec<T>
-    where
-        T: Send,
-        F: Fn(usize, ArrayView2<f32>) -> Vec<T> + Sync + Send;
-    
-    /// Get a specific block by index (useful for parallel iteration).
-    /// Returns (start_sample_idx, block: Array2<f32>).
-    pub fn block(&self, block_idx: usize) -> (usize, Array2<f32>);
-    
-    /// Iterate over block indices (for external parallel iteration).
-    pub fn block_indices(&self) -> impl Iterator<Item = usize>;
+    /// Iterate over blocks yielding owned arrays.
+    /// **Note**: Allocates a new array for each block.
+    /// For buffer reuse, use `for_each_with` instead.
+    pub fn iter(&self) -> SampleBlocksIter<'_>;
 }
 ```
 
@@ -1256,44 +1250,28 @@ impl<'a> RowBlocks<'a> {
 let dataset = BinnedDataset::load("data.bin")?;
 let model = Model::load("model.bin")?;
 
-// Sequential prediction
-let mut predictions = Vec::with_capacity(dataset.n_samples());
-dataset.row_blocks(256).for_each(|start_idx, block| {
-    for row in block.rows() {
-        predictions.push(model.predict_one(row.as_slice().unwrap()));
+// Sequential or parallel prediction with thread-local buffer reuse
+let parallelism = Parallelism::from_threads(n_threads);
+let predictions = Mutex::new(Vec::with_capacity(dataset.n_samples()));
+
+dataset.sample_blocks(256).for_each_with(parallelism, |start_idx, block| {
+    let mut preds = predictions.lock().unwrap();
+    for (i, sample) in block.outer_iter().enumerate() {
+        preds.push((start_idx + i, model.predict_one(sample.as_slice().unwrap())));
     }
 });
-
-// Parallel prediction (uses rayon when Parallelism::Parallel)
-let parallelism = Parallelism::from_threads(n_threads);
-let predictions: Vec<f32> = dataset.row_blocks(256).flat_map_with(parallelism, |start_idx, block| {
-    block.rows()
-        .into_iter()
-        .map(|row| model.predict_one(row.as_slice().unwrap()))
-        .collect()
-});
-
-// External parallel iteration (when you need more control)
-use rayon::prelude::*;
-let blocks = dataset.row_blocks(256);
-let predictions: Vec<f32> = blocks.block_indices()
-    .into_par_iter()
-    .flat_map(|block_idx| {
-        let (start, block) = blocks.block(block_idx);
-        block.rows().into_iter().map(|row| model.predict_one(row.as_slice().unwrap())).collect::<Vec<_>>()
-    })
-    .collect();
 ```
 
 **Why this works**:
 
 - Column-major storage is optimal for training (feature iteration)
-- Row-major access is optimal for prediction (sample iteration)
-- Buffering amortizes the column→row transpose cost
+- Sample-major access is optimal for prediction (sample iteration)
+- Buffering amortizes the column→sample transpose cost
 - Block size of 256-1024 fits in L2 cache
+- Thread-local buffers eliminate allocation overhead in parallel mode
 - Parallelism via `Parallelism` enum integrates with existing infrastructure
 
-**Cleanup**: Prediction code should delegate to `RowBlocks` rather than implementing its own transpose logic.
+**Cleanup**: Prediction code should delegate to `SampleBlocks` rather than implementing its own transpose logic.
 
 ### Future Considerations
 

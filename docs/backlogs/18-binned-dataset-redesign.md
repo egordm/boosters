@@ -1031,3 +1031,36 @@ Epic 8 (Cleanup)
 - **Full Rewrite**: 2025-12-29
 - **Refinement Complete**: 2025-12-29
 - **Ready for Implementation**: Yes
+
+---
+
+## Deferred Optimizations
+
+*Optimization stories identified during implementation but deferred for later.*
+
+### Story D.1: Thread-Local Buffer Optimization for SampleBlocks
+
+**Status**: Not Started  
+**Priority**: Low  
+**Estimate**: 2 hours
+
+**Description**: The current `SampleBlocks` parallel implementation allocates a buffer per block via `get_block()`. For optimal parallelism, the block count and size should be dynamic based on the number of threads, and each thread should use a thread-local buffer.
+
+**Current Behavior**:
+- Block size is fixed at construction
+- Each parallel worker allocates a new buffer per block
+- Number of blocks = ceil(n_samples / block_size)
+
+**Proposed Improvement**:
+- Determine number of threads from rayon's thread pool or `Parallelism::n_threads()`
+- Compute optimal block size: `block_size = ceil(n_samples / n_threads)`
+- Use `thread_local!` to reuse buffers within each thread
+- Each thread processes multiple blocks, reusing its local buffer
+
+**Source**: Stakeholder feedback during Epic 5 implementation.
+
+**Definition of Done**:
+- Thread-local buffer reuse in parallel iteration
+- Dynamic block sizing based on thread count
+- Benchmark showing reduced allocation overhead
+- Unit tests for correctness
