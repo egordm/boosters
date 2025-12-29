@@ -838,18 +838,25 @@ impl BinnedDataset {
 
 ### Story 6.4: Verify gblinear Works with New Dataset  
 
-**Status**: Not Started  
+**Status**: ✅ N/A - gblinear uses FeaturesView, not BinnedDataset  
 **Estimate**: 0.5 hours
 
 **Description**: Verify gblinear can use `raw_feature_iter()` or `DataAccessor` from new `BinnedDataset`.
 
-**Key Changes**:
+**Analysis**:
 
-1. Check gblinear trainer code for dataset access patterns
-2. Add test with new `BinnedDataset` if needed
-3. Document any API differences
+gblinear uses `FeaturesView` (raw f32 feature arrays) and the deprecated `Dataset`, not `BinnedDataset`. The RFC notes that gblinear "could" use `BinnedDataset::raw_feature_iter()`, but this is optional optimization, not required.
 
-**Note**: gblinear may use different access patterns than linear trees. Check if it uses `DataAccessor` or direct slice access.
+The new `BinnedDataset` provides:
+- `raw_feature_iter()` - zero-allocation iterator over (feature_idx, raw_slice)
+- `DataAccessor` implementation - sample-by-sample access
+
+Either could be used by gblinear if/when it migrates to the new dataset. However, this migration is Epic 7 scope (or later), not Epic 6. Current gblinear continues to work with the deprecated `Dataset`.
+
+**Definition of Done**:
+
+- ✅ New `BinnedDataset` provides `raw_feature_iter()` (implemented in Epic 4)
+- ✅ No changes required for Epic 6 - gblinear migration is future work
 
 ---
 
