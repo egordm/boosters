@@ -1103,30 +1103,59 @@ Key demonstrations:
 
 ### Story 8.1: Delete Deprecated Folder
 
-**Status**: Not Started  
+**Status**: PARTIAL (bundling API cleaned)  
 **Estimate**: 15 min
 
 **Description**: Delete `data/deprecated/` folder entirely.
 
 **Prerequisite**: All tests pass with new implementation.
 
+**Completed Work**:
+
+- Removed `GBDTConfig.bundling` field (was ignored)
+- Removed `with_bundling()` stub from builder
+- Removed deprecated `BundlingConfig` re-export
+- Renamed `NewBundlingConfig` to `BundlingConfig` in public API
+
+**Remaining Work**:
+
+- Cannot fully delete deprecated/ folder yet
+- Still contains `Dataset`, `TargetsView`, `WeightsView` etc. used by public API
+- These types need full migration before folder can be deleted
+- Captured as future story in "Final Deprecated Removal" backlog
+
 ---
 
 ### Story 8.2: Final Code Review
 
-**Status**: Not Started  
+**Status**: COMPLETE  
 **Estimate**: 30 min
 
 **Description**: Review codebase for any remaining references to old patterns.
+
+**Findings**:
+
+- 2 TODOs remain in `dataset.rs` for bundled feature access in legacy methods
+- These are in `bin()` and `all_feature_views()` which are NOT used by grower
+- The grower uses `effective_feature_views()` which properly handles bundles
+- These TODOs mark dead code paths to be removed in future deprecated cleanup
+- All 61 bundling tests pass
+- All 741 unit tests pass
 
 ---
 
 ### Story 8.3: Documentation Update
 
-**Status**: Not Started  
+**Status**: COMPLETE  
 **Estimate**: 1 hour
 
 **Description**: Update documentation to reflect new API.
+
+**Changes**:
+
+- Updated RFC-0011 Configuration section to show new API
+- Updated RFC-0011 API section with BinningConfig::enable_bundling()
+- train_bundling.rs example updated with correct comments
 
 ---
 

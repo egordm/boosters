@@ -42,19 +42,30 @@ Raw Features ──► Feature Analysis ──► Bundle Planning ──► Bund
 
 ### Configuration
 
+Bundling is controlled via `BinningConfig`:
+
+```rust
+// Enable bundling (default)
+let config = BinningConfig::builder()
+    .enable_bundling(true)
+    .build();
+
+// Disable bundling
+let config = BinningConfig::builder()
+    .enable_bundling(false)
+    .build();
+```
+
+Advanced bundling parameters are available via `BundlingConfig`:
+
 ```rust
 pub struct BundlingConfig {
-    pub enable_bundling: bool,         // Default: true
     pub max_conflict_rate: f32,        // Default: 0.0001 (0.01%)
     pub min_sparsity: f32,             // Default: 0.9
     pub max_bundle_size: usize,        // Default: 256 (fits u8)
-    pub bundle_hints: Option<Vec<Vec<usize>>>,  // Skip conflict detection
-}
-
-impl BundlingConfig {
-    fn auto() -> Self { Self::default() }           // Good default
-    fn disabled() -> Self { /* bundling off */ }    // For debugging
-    fn aggressive() -> Self { /* 0.1% conflicts, 0.8 sparsity */ }
+    pub max_sparse_features: usize,    // Default: 1000
+    pub max_sample_rows: usize,        // Default: 10000
+    pub seed: u64,                     // Default: 42
 }
 ```
 
@@ -102,15 +113,17 @@ Bin 0 = "all features zero", bins 1..N encode active feature + its bin.
 
 ```rust
 // Default: bundling enabled
-let dataset = BinnedDatasetBuilder::new()
-    .with_bundling(BundlingConfig::auto())
-    .build(&matrix, &labels)?;
+let dataset = BinnedDatasetBuilder::with_config(
+    BinningConfig::builder()
+        .enable_bundling(true)
+        .build()
+)
+.add_features(features, Parallelism::Parallel)
+.build()?;
 
-// Check effectiveness
-let stats = dataset.bundling_stats().unwrap();
-if stats.is_effective() {
-    println!("Bundled {} → {} columns", stats.original_features, stats.after_bundling);
-}
+// Check effective columns (bundles reduce column count)
+println!("Original features: {}", features.n_features());
+println!("Effective columns: {}", dataset.n_effective_columns());
 ```
 
 ---
