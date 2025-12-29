@@ -269,6 +269,307 @@ impl CategoricalStorage {
     }
 }
 
+/// Sparse numeric storage: CSC-like, single feature.
+///
+/// Only stores non-zero/non-default sample entries. Samples not in
+/// `sample_indices` have implicit bin=0, raw=0.0.
+///
+/// **Important**: Sparse storage assumes zeros are meaningful values, not missing.
+/// For features where missing should be NaN, use dense storage instead.
+///
+/// # Examples
+///
+/// ```
+/// use boosters::data::binned::{BinData, SparseNumericStorage};
+///
+/// // Feature with 100 samples, only 3 non-zero entries
+/// let sample_indices = vec![5u32, 20, 50].into_boxed_slice();
+/// let bins = BinData::from(vec![1u8, 2, 3]);
+/// let raw_values = vec![10.0, 20.0, 30.0].into_boxed_slice();
+///
+/// let storage = SparseNumericStorage::new(sample_indices, bins, raw_values, 100);
+///
+/// // Access non-zero entries
+/// assert_eq!(storage.get(5), (1, 10.0));
+/// assert_eq!(storage.get(20), (2, 20.0));
+///
+/// // Access zero entries (not in sample_indices)
+/// assert_eq!(storage.get(0), (0, 0.0));
+/// assert_eq!(storage.get(99), (0, 0.0));
+/// ```
+#[derive(Debug, Clone)]
+pub struct SparseNumericStorage {
+    /// Sample indices of non-zero entries (sorted).
+    sample_indices: Box<[u32]>,
+    /// Bin values for non-zero entries (parallel to sample_indices).
+    bins: BinData,
+    /// Raw values for non-zero entries (parallel to bins).
+    raw_values: Box<[f32]>,
+    /// Total number of samples.
+    n_samples: usize,
+}
+
+impl SparseNumericStorage {
+    /// Creates a new SparseNumericStorage.
+    ///
+    /// # Arguments
+    /// - `sample_indices`: Sorted indices of non-zero samples
+    /// - `bins`: Bin values for non-zero samples
+    /// - `raw_values`: Raw values for non-zero samples
+    /// - `n_samples`: Total number of samples
+    ///
+    /// # Panics
+    ///
+    /// Panics if lengths don't match or sample_indices is not sorted.
+    pub fn new(
+        sample_indices: Box<[u32]>,
+        bins: BinData,
+        raw_values: Box<[f32]>,
+        n_samples: usize,
+    ) -> Self {
+        assert_eq!(
+            sample_indices.len(),
+            bins.len(),
+            "sample_indices and bins must have the same length"
+        );
+        assert_eq!(
+            sample_indices.len(),
+            raw_values.len(),
+            "sample_indices and raw_values must have the same length"
+        );
+        debug_assert!(
+            sample_indices.windows(2).all(|w| w[0] < w[1]),
+            "sample_indices must be sorted and unique"
+        );
+        Self {
+            sample_indices,
+            bins,
+            raw_values,
+            n_samples,
+        }
+    }
+
+    /// Returns (bin, raw) for the given sample.
+    /// Returns (0, 0.0) if sample is not in the sparse indices.
+    #[inline]
+    pub fn get(&self, sample: usize) -> (u32, f32) {
+        match self.sample_indices.binary_search(&(sample as u32)) {
+            Ok(pos) => {
+                // SAFETY: pos is within bounds from binary_search
+                let bin = unsafe { self.bins.get_unchecked(pos) };
+                let raw = self.raw_values[pos];
+                (bin, raw)
+            }
+            Err(_) => (0, 0.0),
+        }
+    }
+
+    /// Returns the bin value for the given sample.
+    /// Returns 0 if sample is not in the sparse indices.
+    #[inline]
+    pub fn bin(&self, sample: usize) -> u32 {
+        self.get(sample).0
+    }
+
+    /// Returns the raw value for the given sample.
+    /// Returns 0.0 if sample is not in the sparse indices.
+    #[inline]
+    pub fn raw(&self, sample: usize) -> f32 {
+        self.get(sample).1
+    }
+
+    /// Returns the number of non-zero entries.
+    #[inline]
+    pub fn nnz(&self) -> usize {
+        self.sample_indices.len()
+    }
+
+    /// Returns the total number of samples.
+    #[inline]
+    pub fn n_samples(&self) -> usize {
+        self.n_samples
+    }
+
+    /// Returns the sparsity ratio (fraction of zeros).
+    #[inline]
+    pub fn sparsity(&self) -> f64 {
+        if self.n_samples == 0 {
+            1.0
+        } else {
+            1.0 - (self.nnz() as f64 / self.n_samples as f64)
+        }
+    }
+
+    /// Returns the total size in bytes used by this storage.
+    #[inline]
+    pub fn size_bytes(&self) -> usize {
+        self.sample_indices.len() * std::mem::size_of::<u32>()
+            + self.bins.size_bytes()
+            + self.raw_values.len() * std::mem::size_of::<f32>()
+    }
+
+    /// Returns a reference to the sample indices.
+    #[inline]
+    pub fn sample_indices(&self) -> &[u32] {
+        &self.sample_indices
+    }
+
+    /// Returns a reference to the bin data.
+    #[inline]
+    pub fn bins(&self) -> &BinData {
+        &self.bins
+    }
+
+    /// Returns a reference to the raw values.
+    #[inline]
+    pub fn raw_values(&self) -> &[f32] {
+        &self.raw_values
+    }
+
+    /// Iterates over (sample_index, bin, raw) for non-zero entries.
+    pub fn iter(&self) -> impl Iterator<Item = (u32, u32, f32)> + '_ {
+        self.sample_indices
+            .iter()
+            .enumerate()
+            .map(|(pos, &sample_idx)| {
+                // SAFETY: pos is within bounds
+                let bin = unsafe { self.bins.get_unchecked(pos) };
+                let raw = self.raw_values[pos];
+                (sample_idx, bin, raw)
+            })
+    }
+}
+
+/// Sparse categorical storage: CSC-like, single feature.
+///
+/// Only stores non-zero/non-default sample entries. Samples not in
+/// `sample_indices` have implicit bin=0 (default category).
+///
+/// No raw values - bin = category ID (lossless).
+///
+/// # Examples
+///
+/// ```
+/// use boosters::data::binned::{BinData, SparseCategoricalStorage};
+///
+/// // Feature with 100 samples, only 3 non-default entries
+/// let sample_indices = vec![5u32, 20, 50].into_boxed_slice();
+/// let bins = BinData::from(vec![1u8, 2, 3]);
+///
+/// let storage = SparseCategoricalStorage::new(sample_indices, bins, 100);
+///
+/// // Access non-default entries
+/// assert_eq!(storage.bin(5), 1);
+/// assert_eq!(storage.bin(20), 2);
+///
+/// // Access default entries (not in sample_indices)
+/// assert_eq!(storage.bin(0), 0);
+/// assert_eq!(storage.bin(99), 0);
+/// ```
+#[derive(Debug, Clone)]
+pub struct SparseCategoricalStorage {
+    /// Sample indices of non-zero entries (sorted).
+    sample_indices: Box<[u32]>,
+    /// Bin values for non-zero entries (parallel to sample_indices).
+    bins: BinData,
+    /// Total number of samples.
+    n_samples: usize,
+}
+
+impl SparseCategoricalStorage {
+    /// Creates a new SparseCategoricalStorage.
+    ///
+    /// # Arguments
+    /// - `sample_indices`: Sorted indices of non-zero samples
+    /// - `bins`: Bin values for non-zero samples
+    /// - `n_samples`: Total number of samples
+    ///
+    /// # Panics
+    ///
+    /// Panics if lengths don't match or sample_indices is not sorted.
+    pub fn new(sample_indices: Box<[u32]>, bins: BinData, n_samples: usize) -> Self {
+        assert_eq!(
+            sample_indices.len(),
+            bins.len(),
+            "sample_indices and bins must have the same length"
+        );
+        debug_assert!(
+            sample_indices.windows(2).all(|w| w[0] < w[1]),
+            "sample_indices must be sorted and unique"
+        );
+        Self {
+            sample_indices,
+            bins,
+            n_samples,
+        }
+    }
+
+    /// Returns the bin (category) value for the given sample.
+    /// Returns 0 if sample is not in the sparse indices.
+    #[inline]
+    pub fn bin(&self, sample: usize) -> u32 {
+        match self.sample_indices.binary_search(&(sample as u32)) {
+            Ok(pos) => {
+                // SAFETY: pos is within bounds from binary_search
+                unsafe { self.bins.get_unchecked(pos) }
+            }
+            Err(_) => 0,
+        }
+    }
+
+    /// Returns the number of non-zero entries.
+    #[inline]
+    pub fn nnz(&self) -> usize {
+        self.sample_indices.len()
+    }
+
+    /// Returns the total number of samples.
+    #[inline]
+    pub fn n_samples(&self) -> usize {
+        self.n_samples
+    }
+
+    /// Returns the sparsity ratio (fraction of zeros).
+    #[inline]
+    pub fn sparsity(&self) -> f64 {
+        if self.n_samples == 0 {
+            1.0
+        } else {
+            1.0 - (self.nnz() as f64 / self.n_samples as f64)
+        }
+    }
+
+    /// Returns the total size in bytes used by this storage.
+    #[inline]
+    pub fn size_bytes(&self) -> usize {
+        self.sample_indices.len() * std::mem::size_of::<u32>() + self.bins.size_bytes()
+    }
+
+    /// Returns a reference to the sample indices.
+    #[inline]
+    pub fn sample_indices(&self) -> &[u32] {
+        &self.sample_indices
+    }
+
+    /// Returns a reference to the bin data.
+    #[inline]
+    pub fn bins(&self) -> &BinData {
+        &self.bins
+    }
+
+    /// Iterates over (sample_index, bin) for non-zero entries.
+    pub fn iter(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
+        self.sample_indices
+            .iter()
+            .enumerate()
+            .map(|(pos, &sample_idx)| {
+                // SAFETY: pos is within bounds
+                let bin = unsafe { self.bins.get_unchecked(pos) };
+                (sample_idx, bin)
+            })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -517,5 +818,201 @@ mod tests {
         assert_eq!(storage.bin(0, 0, n_samples), 256);
         assert_eq!(storage.bin(1, 0, n_samples), 512);
         assert_eq!(storage.bin(2, 0, n_samples), 1000);
+    }
+
+    // =========================================================================
+    // SparseNumericStorage tests
+    // =========================================================================
+
+    #[test]
+    fn test_sparse_numeric_new() {
+        let indices = vec![1u32, 5, 10].into_boxed_slice();
+        let bins = BinData::from(vec![1u8, 2, 3]);
+        let raw = vec![10.0, 50.0, 100.0].into_boxed_slice();
+        let storage = SparseNumericStorage::new(indices, bins, raw, 100);
+
+        assert_eq!(storage.nnz(), 3);
+        assert_eq!(storage.n_samples(), 100);
+    }
+
+    #[test]
+    #[should_panic(expected = "sample_indices and bins must have the same length")]
+    fn test_sparse_numeric_mismatched_bins() {
+        let indices = vec![1u32, 5, 10].into_boxed_slice();
+        let bins = BinData::from(vec![1u8, 2]);
+        let raw = vec![10.0, 50.0, 100.0].into_boxed_slice();
+        SparseNumericStorage::new(indices, bins, raw, 100);
+    }
+
+    #[test]
+    #[should_panic(expected = "sample_indices and raw_values must have the same length")]
+    fn test_sparse_numeric_mismatched_raw() {
+        let indices = vec![1u32, 5, 10].into_boxed_slice();
+        let bins = BinData::from(vec![1u8, 2, 3]);
+        let raw = vec![10.0, 50.0].into_boxed_slice();
+        SparseNumericStorage::new(indices, bins, raw, 100);
+    }
+
+    #[test]
+    fn test_sparse_numeric_get() {
+        let indices = vec![5u32, 20, 50].into_boxed_slice();
+        let bins = BinData::from(vec![1u8, 2, 3]);
+        let raw = vec![10.0, 20.0, 30.0].into_boxed_slice();
+        let storage = SparseNumericStorage::new(indices, bins, raw, 100);
+
+        // Non-zero entries
+        assert_eq!(storage.get(5), (1, 10.0));
+        assert_eq!(storage.get(20), (2, 20.0));
+        assert_eq!(storage.get(50), (3, 30.0));
+
+        // Zero entries (not in indices)
+        assert_eq!(storage.get(0), (0, 0.0));
+        assert_eq!(storage.get(10), (0, 0.0));
+        assert_eq!(storage.get(99), (0, 0.0));
+    }
+
+    #[test]
+    fn test_sparse_numeric_bin_and_raw() {
+        let indices = vec![5u32].into_boxed_slice();
+        let bins = BinData::from(vec![42u8]);
+        let raw = vec![3.14].into_boxed_slice();
+        let storage = SparseNumericStorage::new(indices, bins, raw, 10);
+
+        assert_eq!(storage.bin(5), 42);
+        assert_eq!(storage.raw(5), 3.14);
+        assert_eq!(storage.bin(0), 0);
+        assert_eq!(storage.raw(0), 0.0);
+    }
+
+    #[test]
+    fn test_sparse_numeric_sparsity() {
+        let indices = vec![1u32, 5].into_boxed_slice();
+        let bins = BinData::from(vec![1u8, 2]);
+        let raw = vec![1.0, 2.0].into_boxed_slice();
+        let storage = SparseNumericStorage::new(indices, bins, raw, 10);
+
+        assert!((storage.sparsity() - 0.8).abs() < 1e-6); // 8/10 zeros
+    }
+
+    #[test]
+    fn test_sparse_numeric_size_bytes() {
+        let indices = vec![1u32, 5, 10].into_boxed_slice(); // 12 bytes
+        let bins = BinData::from(vec![1u8, 2, 3]); // 3 bytes
+        let raw = vec![1.0, 2.0, 3.0].into_boxed_slice(); // 12 bytes
+        let storage = SparseNumericStorage::new(indices, bins, raw, 100);
+
+        assert_eq!(storage.size_bytes(), 12 + 3 + 12);
+    }
+
+    #[test]
+    fn test_sparse_numeric_iter() {
+        let indices = vec![5u32, 20, 50].into_boxed_slice();
+        let bins = BinData::from(vec![1u8, 2, 3]);
+        let raw = vec![10.0, 20.0, 30.0].into_boxed_slice();
+        let storage = SparseNumericStorage::new(indices, bins, raw, 100);
+
+        let items: Vec<_> = storage.iter().collect();
+        assert_eq!(items, vec![(5, 1, 10.0), (20, 2, 20.0), (50, 3, 30.0)]);
+    }
+
+    #[test]
+    fn test_sparse_numeric_empty() {
+        let indices = vec![].into_boxed_slice();
+        let bins = BinData::from(vec![0u8; 0]);
+        let raw = vec![].into_boxed_slice();
+        let storage = SparseNumericStorage::new(indices, bins, raw, 100);
+
+        assert_eq!(storage.nnz(), 0);
+        assert_eq!(storage.get(50), (0, 0.0));
+        assert!((storage.sparsity() - 1.0).abs() < 1e-6);
+    }
+
+    // =========================================================================
+    // SparseCategoricalStorage tests
+    // =========================================================================
+
+    #[test]
+    fn test_sparse_categorical_new() {
+        let indices = vec![1u32, 5, 10].into_boxed_slice();
+        let bins = BinData::from(vec![1u8, 2, 3]);
+        let storage = SparseCategoricalStorage::new(indices, bins, 100);
+
+        assert_eq!(storage.nnz(), 3);
+        assert_eq!(storage.n_samples(), 100);
+    }
+
+    #[test]
+    #[should_panic(expected = "sample_indices and bins must have the same length")]
+    fn test_sparse_categorical_mismatched() {
+        let indices = vec![1u32, 5, 10].into_boxed_slice();
+        let bins = BinData::from(vec![1u8, 2]);
+        SparseCategoricalStorage::new(indices, bins, 100);
+    }
+
+    #[test]
+    fn test_sparse_categorical_bin() {
+        let indices = vec![5u32, 20, 50].into_boxed_slice();
+        let bins = BinData::from(vec![1u8, 2, 3]);
+        let storage = SparseCategoricalStorage::new(indices, bins, 100);
+
+        // Non-zero entries
+        assert_eq!(storage.bin(5), 1);
+        assert_eq!(storage.bin(20), 2);
+        assert_eq!(storage.bin(50), 3);
+
+        // Zero entries (not in indices)
+        assert_eq!(storage.bin(0), 0);
+        assert_eq!(storage.bin(10), 0);
+        assert_eq!(storage.bin(99), 0);
+    }
+
+    #[test]
+    fn test_sparse_categorical_sparsity() {
+        let indices = vec![1u32, 5].into_boxed_slice();
+        let bins = BinData::from(vec![1u8, 2]);
+        let storage = SparseCategoricalStorage::new(indices, bins, 10);
+
+        assert!((storage.sparsity() - 0.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_sparse_categorical_size_bytes() {
+        let indices = vec![1u32, 5, 10].into_boxed_slice(); // 12 bytes
+        let bins = BinData::from(vec![1u8, 2, 3]); // 3 bytes
+        let storage = SparseCategoricalStorage::new(indices, bins, 100);
+
+        assert_eq!(storage.size_bytes(), 12 + 3);
+    }
+
+    #[test]
+    fn test_sparse_categorical_iter() {
+        let indices = vec![5u32, 20, 50].into_boxed_slice();
+        let bins = BinData::from(vec![1u8, 2, 3]);
+        let storage = SparseCategoricalStorage::new(indices, bins, 100);
+
+        let items: Vec<_> = storage.iter().collect();
+        assert_eq!(items, vec![(5, 1), (20, 2), (50, 3)]);
+    }
+
+    #[test]
+    fn test_sparse_categorical_empty() {
+        let indices = vec![].into_boxed_slice();
+        let bins = BinData::from(vec![0u8; 0]);
+        let storage = SparseCategoricalStorage::new(indices, bins, 100);
+
+        assert_eq!(storage.nnz(), 0);
+        assert_eq!(storage.bin(50), 0);
+        assert!((storage.sparsity() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_sparse_categorical_u16() {
+        let indices = vec![5u32, 20].into_boxed_slice();
+        let bins = BinData::from(vec![256u16, 512]);
+        let storage = SparseCategoricalStorage::new(indices, bins, 100);
+
+        assert_eq!(storage.bin(5), 256);
+        assert_eq!(storage.bin(20), 512);
+        assert_eq!(storage.bin(0), 0);
     }
 }
