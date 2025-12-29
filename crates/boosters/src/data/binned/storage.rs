@@ -1255,4 +1255,236 @@ mod tests {
         let sparse_categorical: FeatureStorage = make_sparse_categorical_storage().into();
         assert!(matches!(sparse_categorical, FeatureStorage::SparseCategorical(_)));
     }
+
+    // =========================================================================
+    // Property-based tests using randomized inputs
+    // =========================================================================
+
+    use rand::{Rng, SeedableRng};
+    use rand_chacha::ChaCha8Rng;
+
+    /// Generate random NumericStorage and verify invariants
+    #[test]
+    fn test_property_numeric_storage_invariants() {
+        let mut rng = ChaCha8Rng::seed_from_u64(12345);
+
+        for _ in 0..20 {
+            let n_features = rng.gen_range(1..=10);
+            let n_samples = rng.gen_range(1..=100);
+            let total_len = n_features * n_samples;
+
+            // Generate random data
+            let bins: Vec<u8> = (0..total_len).map(|_| rng.gen_range(0..=255)).collect();
+            let raw: Vec<f32> = (0..total_len)
+                .map(|_| rng.gen_range(-1000.0..1000.0))
+                .collect();
+
+            let storage = NumericStorage::new(BinData::from(bins.clone()), raw.clone().into_boxed_slice());
+
+            // Property 1: bins.len() == raw_values.len() == n_features * n_samples
+            assert_eq!(storage.bins().len(), total_len);
+            assert_eq!(storage.raw_values().len(), total_len);
+
+            // Property 2: All elements accessible and match input
+            for f in 0..n_features {
+                for s in 0..n_samples {
+                    let idx = f * n_samples + s;
+                    assert_eq!(storage.bin(s, f, n_samples), bins[idx] as u32);
+                    assert_eq!(storage.raw(s, f, n_samples), raw[idx]);
+                }
+            }
+
+            // Property 3: raw_slice returns correct slice
+            for f in 0..n_features {
+                let slice = storage.raw_slice(f, n_samples);
+                let start = f * n_samples;
+                assert_eq!(slice.len(), n_samples);
+                for s in 0..n_samples {
+                    assert_eq!(slice[s], raw[start + s]);
+                }
+            }
+
+            // Property 4: n_features computed correctly
+            assert_eq!(storage.n_features(n_samples), n_features);
+        }
+    }
+
+    /// Generate random CategoricalStorage and verify invariants
+    #[test]
+    fn test_property_categorical_storage_invariants() {
+        let mut rng = ChaCha8Rng::seed_from_u64(67890);
+
+        for _ in 0..20 {
+            let n_features = rng.gen_range(1..=10);
+            let n_samples = rng.gen_range(1..=100);
+            let max_categories = rng.gen_range(2..=50);
+            let total_len = n_features * n_samples;
+
+            // Generate random data with valid category range
+            let bins: Vec<u8> = (0..total_len)
+                .map(|_| rng.gen_range(0..max_categories) as u8)
+                .collect();
+
+            let storage = CategoricalStorage::new(BinData::from(bins.clone()));
+
+            // Property 1: All bin values accessible and match input
+            for f in 0..n_features {
+                for s in 0..n_samples {
+                    let idx = f * n_samples + s;
+                    assert_eq!(storage.bin(s, f, n_samples), bins[idx] as u32);
+                }
+            }
+
+            // Property 2: All values within expected range
+            for f in 0..n_features {
+                for s in 0..n_samples {
+                    let bin = storage.bin(s, f, n_samples);
+                    assert!(bin < max_categories as u32);
+                }
+            }
+
+            // Property 3: n_features computed correctly
+            assert_eq!(storage.n_features(n_samples), n_features);
+        }
+    }
+
+    /// Generate random SparseNumericStorage and verify invariants
+    #[test]
+    fn test_property_sparse_numeric_storage_invariants() {
+        let mut rng = ChaCha8Rng::seed_from_u64(11111);
+
+        for _ in 0..20 {
+            let n_samples = rng.gen_range(10..=100);
+            let nnz = rng.gen_range(1..=n_samples.min(20));
+
+            // Generate sorted unique indices
+            let mut indices: Vec<u32> = (0..n_samples as u32).collect();
+            use rand::seq::SliceRandom;
+            indices.shuffle(&mut rng);
+            indices.truncate(nnz);
+            indices.sort();
+
+            let bins: Vec<u8> = (0..nnz).map(|_| rng.gen_range(1..=255)).collect();
+            let raw: Vec<f32> = (0..nnz)
+                .map(|_| rng.gen_range(-100.0..100.0))
+                .collect();
+
+            let storage = SparseNumericStorage::new(
+                indices.clone().into_boxed_slice(),
+                BinData::from(bins.clone()),
+                raw.clone().into_boxed_slice(),
+                n_samples,
+            );
+
+            // Property 1: nnz() returns correct count
+            assert_eq!(storage.nnz(), nnz);
+
+            // Property 2: n_samples() returns correct count
+            assert_eq!(storage.n_samples(), n_samples);
+
+            // Property 3: Indexed samples return correct values
+            for (pos, &sample_idx) in indices.iter().enumerate() {
+                let (bin, raw_val) = storage.get(sample_idx as usize);
+                assert_eq!(bin, bins[pos] as u32);
+                assert_eq!(raw_val, raw[pos]);
+            }
+
+            // Property 4: Non-indexed samples return (0, 0.0)
+            for s in 0..n_samples {
+                if !indices.contains(&(s as u32)) {
+                    let (bin, raw_val) = storage.get(s);
+                    assert_eq!(bin, 0);
+                    assert_eq!(raw_val, 0.0);
+                }
+            }
+
+            // Property 5: Iteration yields all entries in order
+            let iter_entries: Vec<_> = storage.iter().collect();
+            assert_eq!(iter_entries.len(), nnz);
+            for (i, (idx, bin, raw_val)) in iter_entries.into_iter().enumerate() {
+                assert_eq!(idx, indices[i]);
+                assert_eq!(bin, bins[i] as u32);
+                assert_eq!(raw_val, raw[i]);
+            }
+        }
+    }
+
+    /// Edge case: empty storages
+    #[test]
+    fn test_property_empty_storages() {
+        // Empty NumericStorage - this would be unusual but valid for 0 samples
+        let empty_bins = BinData::from(Vec::<u8>::new());
+        let empty_raw: Box<[f32]> = vec![].into_boxed_slice();
+        let storage = NumericStorage::new(empty_bins, empty_raw);
+        assert_eq!(storage.bins().len(), 0);
+        assert_eq!(storage.n_features(0), 0); // 0/0 division handled
+        assert_eq!(storage.n_features(1), 0); // 0/1 = 0 features
+
+        // Empty SparseNumericStorage
+        let sparse = SparseNumericStorage::new(
+            vec![].into_boxed_slice(),
+            BinData::from(Vec::<u8>::new()),
+            vec![].into_boxed_slice(),
+            10, // 10 samples, all implicit zeros
+        );
+        assert_eq!(sparse.nnz(), 0);
+        assert_eq!(sparse.n_samples(), 10);
+        assert_eq!(sparse.sparsity(), 1.0); // 100% sparse
+
+        // Access any sample should return default
+        for s in 0..10 {
+            let (bin, raw_val) = sparse.get(s);
+            assert_eq!(bin, 0);
+            assert_eq!(raw_val, 0.0);
+        }
+    }
+
+    /// Edge case: single sample, single feature
+    #[test]
+    fn test_property_single_element() {
+        let storage = NumericStorage::new(
+            BinData::from(vec![42u8]),
+            vec![3.14].into_boxed_slice(),
+        );
+
+        assert_eq!(storage.n_features(1), 1);
+        assert_eq!(storage.bin(0, 0, 1), 42);
+        assert_eq!(storage.raw(0, 0, 1), 3.14);
+        assert_eq!(storage.raw_slice(0, 1), &[3.14]);
+    }
+
+    /// Test U16 storage with values > 255
+    #[test]
+    fn test_property_u16_large_bins() {
+        let mut rng = ChaCha8Rng::seed_from_u64(22222);
+
+        let n_features = 3;
+        let n_samples = 10;
+        let total_len = n_features * n_samples;
+
+        // Generate bins with values requiring U16
+        let bins: Vec<u16> = (0..total_len)
+            .map(|_| rng.gen_range(256..=1000))
+            .collect();
+        let raw: Vec<f32> = (0..total_len)
+            .map(|_| rng.gen_range(-100.0..100.0))
+            .collect();
+
+        let storage = NumericStorage::new(
+            BinData::from(bins.clone()),
+            raw.clone().into_boxed_slice(),
+        );
+
+        // Verify all values accessible
+        for f in 0..n_features {
+            for s in 0..n_samples {
+                let idx = f * n_samples + s;
+                assert_eq!(storage.bin(s, f, n_samples), bins[idx] as u32);
+                assert_eq!(storage.raw(s, f, n_samples), raw[idx]);
+            }
+        }
+
+        // Verify storage type
+        assert!(storage.bins().is_u16());
+    }
 }
