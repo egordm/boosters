@@ -5,9 +5,11 @@
 
 // New RFC-0018 implementation
 mod bin_data;
+mod storage;
 
 // Public exports for new types
 pub use bin_data::BinData;
+pub use storage::NumericStorage;
 
 // Re-export everything from deprecated for backward compatibility
 #[allow(deprecated)]
