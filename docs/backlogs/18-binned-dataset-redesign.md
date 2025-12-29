@@ -635,10 +635,17 @@ impl BinnedDataset {
 
 ### Story 5.3: Implement Feature Views for Histogram Building
 
-**Status**: Not Started  
+**Status**: COMPLETE  
 **Estimate**: 1.5 hours
 
 **Description**: Implement `feature_views()` for histogram building (hot path).
+
+**Implementation**:
+- `feature_views() -> Vec<FeatureView<'_>>`: Returns views for all non-trivial features in order
+- `original_feature_view(feature) -> FeatureView<'_>`: Get view for a single feature
+- Delegates to `FeatureGroup::feature_view()` internally
+- Skips trivial features, handles bundled (panics - not yet implemented)
+- 5 new unit tests
 
 **Methods**:
 ```rust

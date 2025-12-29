@@ -427,13 +427,56 @@ impl BinnedDataset {
     }
 
     // =========================================================================
-    // Linear trees support
+    // Linear trees support / gblinear
     // =========================================================================
 
     /// Check if any feature has raw values (for linear trees).
     /// True if there's at least one numeric group.
     pub fn has_raw_values(&self) -> bool {
         self.groups.iter().any(|g| g.has_raw_values())
+    }
+
+    /// Get indices of numeric features (for linear tree feature selection).
+    ///
+    /// Linear trees use this to identify which features to include in regression.
+    /// Features with `FeatureStorageType::Bundled` are excluded (splits only, no regression).
+    pub fn numeric_feature_indices(&self) -> impl Iterator<Item = usize> + '_ {
+        self.features.iter().enumerate().filter_map(|(idx, info)| {
+            if info.location.is_direct() && !info.is_categorical() {
+                Some(idx)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Iterator over (feature_index, raw_slice) for all numeric features.
+    ///
+    /// Zero-allocation access to raw values. Use this when you don't need a
+    /// contiguous matrix.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// for (feature_idx, raw_values) in dataset.raw_feature_iter() {
+    ///     // raw_values is &[f32] with n_samples elements
+    /// }
+    /// ```
+    pub fn raw_feature_iter(&self) -> impl Iterator<Item = (usize, &[f32])> + '_ {
+        self.features.iter().enumerate().filter_map(|(idx, info)| {
+            match info.location {
+                FeatureLocation::Direct {
+                    group_idx,
+                    idx_in_group,
+                } => {
+                    // Only numeric features have raw values
+                    self.groups[group_idx as usize]
+                        .raw_slice(idx_in_group as usize)
+                        .map(|slice| (idx, slice))
+                }
+                FeatureLocation::Bundled { .. } | FeatureLocation::Skipped => None,
+            }
+        })
     }
 }
 
@@ -705,5 +748,62 @@ mod tests {
             assert!(view.is_dense());
             assert_eq!(view.len(), 5);
         }
+    }
+
+    #[test]
+    fn test_numeric_feature_indices() {
+        let built = DatasetBuilder::new()
+            .add_numeric("num1", array![1.1, 2.2, 3.3, 4.4, 5.5].view())
+            .add_categorical("cat", array![0.0, 1.0, 2.0, 1.0, 0.0].view())
+            .add_numeric("num2", array![10.1, 20.2, 30.3, 40.4, 50.5].view())
+            .build_groups()
+            .unwrap();
+
+        let dataset = BinnedDataset::from_built_groups(built);
+        let indices: Vec<_> = dataset.numeric_feature_indices().collect();
+
+        // Features 0 and 2 are numeric
+        assert_eq!(indices, vec![0, 2]);
+    }
+
+    #[test]
+    fn test_raw_feature_iter() {
+        let built = DatasetBuilder::new()
+            .add_numeric("x", array![1.5, 2.5, 3.5, 4.5, 5.5].view())
+            .add_categorical("cat", array![0.0, 1.0, 2.0, 1.0, 0.0].view())
+            .add_numeric("y", array![10.5, 20.5, 30.5, 40.5, 50.5].view())
+            .build_groups()
+            .unwrap();
+
+        let dataset = BinnedDataset::from_built_groups(built);
+
+        // Collect raw feature iterator results
+        let raw_features: Vec<_> = dataset.raw_feature_iter().collect();
+
+        // Should have 2 numeric features with raw values
+        assert_eq!(raw_features.len(), 2);
+
+        // Feature 0 (numeric)
+        assert_eq!(raw_features[0].0, 0);
+        assert_eq!(raw_features[0].1, &[1.5, 2.5, 3.5, 4.5, 5.5]);
+
+        // Feature 2 (numeric)
+        assert_eq!(raw_features[1].0, 2);
+        assert_eq!(raw_features[1].1, &[10.5, 20.5, 30.5, 40.5, 50.5]);
+    }
+
+    #[test]
+    fn test_raw_feature_iter_all_categorical() {
+        let built = DatasetBuilder::new()
+            .add_categorical("cat1", array![0.0, 1.0, 2.0, 1.0, 0.0].view())
+            .add_categorical("cat2", array![1.0, 0.0, 1.0, 0.0, 1.0].view())
+            .build_groups()
+            .unwrap();
+
+        let dataset = BinnedDataset::from_built_groups(built);
+
+        // No numeric features, so raw_feature_iter should be empty
+        let raw_features: Vec<_> = dataset.raw_feature_iter().collect();
+        assert!(raw_features.is_empty());
     }
 }
