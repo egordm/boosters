@@ -11,7 +11,9 @@ use crate::training::sampling::{ColSampler, ColSamplingParams};
 use crate::training::{Gradients, GradsTuple};
 
 use super::expansion::{GrowthState, GrowthStrategy, NodeCandidate};
-use super::histograms::{FeatureView, HistogramBuilder, HistogramLayout, HistogramPool};
+use super::histograms::{
+    FeatureView, HistogramBuilder, HistogramLayout, HistogramPool, convert_feature_views,
+};
 use super::partition::RowPartitioner;
 use super::split::{GainParams, GreedySplitter, SplitInfo, SplitType};
 use crate::utils::Parallelism;
@@ -275,7 +277,8 @@ impl TreeGrower {
 
         // Pre-compute feature views once per tree (avoids per-node Vec allocation)
         // Use effective views if bundling is active (fewer columns = faster)
-        let bin_views = dataset.effective_feature_views();
+        // Convert from deprecated FeatureView to new FeatureView (will be removed in Epic 7)
+        let bin_views = convert_feature_views(&dataset.effective_feature_views());
 
         // Initialize growth state
         let strategy = self.params.growth_strategy;

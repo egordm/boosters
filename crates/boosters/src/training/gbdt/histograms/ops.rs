@@ -29,7 +29,7 @@
 
 use super::pool::HistogramLayout;
 use super::slices::HistogramFeatureIter;
-use crate::data::binned::FeatureView;
+use super::FeatureView;
 use crate::training::GradsTuple;
 use crate::utils::Parallelism;
 
@@ -157,10 +157,10 @@ fn build_feature_gathered(
     view: &FeatureView<'_>,
 ) {
     match view {
-        FeatureView::U8 { bins } => {
+        FeatureView::U8(bins) => {
             build_u8_gathered(bins, ordered_grad_hess, histogram, indices);
         }
-        FeatureView::U16 { bins } => {
+        FeatureView::U16(bins) => {
             build_u16_gathered(bins, ordered_grad_hess, histogram, indices);
         }
         FeatureView::SparseU8 { .. } | FeatureView::SparseU16 { .. } => {
@@ -216,18 +216,18 @@ fn build_feature_contiguous(
     view: &FeatureView<'_>,
 ) {
     match view {
-        FeatureView::U8 { bins } => {
+        FeatureView::U8(bins) => {
             build_u8_contiguous(bins, ordered_grad_hess, histogram, start_row);
         }
-        FeatureView::U16 { bins } => {
+        FeatureView::U16(bins) => {
             build_u16_contiguous(bins, ordered_grad_hess, histogram, start_row);
         }
         FeatureView::SparseU8 {
-            row_indices,
+            sample_indices,
             bin_values,
         } => {
             build_sparse_u8_contiguous(
-                row_indices,
+                sample_indices,
                 bin_values,
                 ordered_grad_hess,
                 histogram,
@@ -235,11 +235,11 @@ fn build_feature_contiguous(
             );
         }
         FeatureView::SparseU16 {
-            row_indices,
+            sample_indices,
             bin_values,
         } => {
             build_sparse_u16_contiguous(
-                row_indices,
+                sample_indices,
                 bin_values,
                 ordered_grad_hess,
                 histogram,
@@ -399,7 +399,7 @@ mod tests {
         let mut histogram = vec![(0.0, 0.0); 3];
 
         let features = make_features(&[3]);
-        let bin_views = vec![FeatureView::U8 { bins: &bins }];
+        let bin_views = vec![FeatureView::U8(&bins)];
         let ordered_grad_hess: Vec<GradsTuple> = grad
             .iter()
             .zip(&hess)
@@ -424,7 +424,7 @@ mod tests {
         let indices: Vec<u32> = vec![0, 2, 4];
 
         let features = make_features(&[3]);
-        let bin_views = vec![FeatureView::U8 { bins: &bins }];
+        let bin_views = vec![FeatureView::U8(&bins)];
         let ordered_grad_hess: Vec<GradsTuple> = indices
             .iter()
             .map(|&r| {
@@ -461,7 +461,7 @@ mod tests {
 
     #[test]
     fn test_sparse_histogram() {
-        let row_indices: Vec<u32> = vec![0, 2, 4];
+        let sample_indices: Vec<u32> = vec![0, 2, 4];
         let bin_values: Vec<u8> = vec![1, 0, 2];
         let grad = [1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0];
         let hess = [0.5f32, 1.0, 1.5, 2.0, 2.5, 3.0];
@@ -469,7 +469,7 @@ mod tests {
 
         let features = make_features(&[3]);
         let bin_views = vec![FeatureView::SparseU8 {
-            row_indices: &row_indices,
+            sample_indices: &sample_indices,
             bin_values: &bin_values,
         }];
         let ordered_grad_hess: Vec<GradsTuple> = grad
@@ -495,9 +495,9 @@ mod tests {
         let bins_f2: Vec<u8> = (0..n_samples).map(|i| ((i + 2) % 4) as u8).collect();
 
         let bin_views = vec![
-            FeatureView::U8 { bins: &bins_f0 },
-            FeatureView::U8 { bins: &bins_f1 },
-            FeatureView::U8 { bins: &bins_f2 },
+            FeatureView::U8(&bins_f0),
+            FeatureView::U8(&bins_f1),
+            FeatureView::U8(&bins_f2),
         ];
 
         let grad: Vec<f32> = (0..n_samples).map(|i| i as f32).collect();
@@ -528,8 +528,8 @@ mod tests {
         let bins_f1: Vec<u8> = (0..n_samples).map(|i| ((i + 1) % 4) as u8).collect();
 
         let bin_views = vec![
-            FeatureView::U8 { bins: &bins_f0 },
-            FeatureView::U8 { bins: &bins_f1 },
+            FeatureView::U8(&bins_f0),
+            FeatureView::U8(&bins_f1),
         ];
 
         let indices: Vec<u32> = (0..n_samples as u32).step_by(3).collect();
@@ -584,7 +584,7 @@ mod tests {
         let bins: Vec<u8> = (0..n_samples).map(|i| (i % 4) as u8).collect();
 
         let bin_views: Vec<_> = (0..4)
-            .map(|_| FeatureView::U8 { bins: &bins })
+            .map(|_| FeatureView::U8(&bins))
             .collect();
 
         let ordered_grad_hess: Vec<GradsTuple> = (0..n_samples)

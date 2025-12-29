@@ -43,5 +43,54 @@ pub use pool::{
 };
 pub use slices::HistogramFeatureIter;
 
-// Re-export FeatureView from data module for convenience
-pub use crate::data::binned::FeatureView;
+// Re-export new FeatureView from data module
+// Note: Uses the new RFC-0018 FeatureView with tuple variants (U8, U16) and
+// sample_indices field (instead of row_indices) for sparse variants.
+pub use crate::data::binned::view::FeatureView;
+
+// Deprecated FeatureView for transition - will be removed in Epic 7 switchover
+#[allow(deprecated)]
+pub use crate::data::deprecated::binned::FeatureView as DeprecatedFeatureView;
+
+/// Convert deprecated FeatureView to new FeatureView.
+///
+/// This is a zero-cost conversion since the underlying data is the same,
+/// just the enum variant syntax differs.
+///
+/// # Transition Note
+///
+/// This function exists only during the Epic 6-7 migration period.
+/// Once grower.rs uses the new BinnedDataset, this can be removed.
+#[allow(deprecated)]
+pub fn convert_feature_view<'a>(deprecated: &DeprecatedFeatureView<'a>) -> FeatureView<'a> {
+    match deprecated {
+        DeprecatedFeatureView::U8 { bins } => FeatureView::U8(bins),
+        DeprecatedFeatureView::U16 { bins } => FeatureView::U16(bins),
+        DeprecatedFeatureView::SparseU8 {
+            row_indices,
+            bin_values,
+        } => FeatureView::SparseU8 {
+            sample_indices: row_indices,
+            bin_values,
+        },
+        DeprecatedFeatureView::SparseU16 {
+            row_indices,
+            bin_values,
+        } => FeatureView::SparseU16 {
+            sample_indices: row_indices,
+            bin_values,
+        },
+    }
+}
+
+/// Convert a slice of deprecated FeatureViews to new FeatureViews.
+///
+/// Allocates a new Vec since we can't do in-place conversion between different types.
+///
+/// # Transition Note
+///
+/// This function exists only during the Epic 6-7 migration period.
+#[allow(deprecated)]
+pub fn convert_feature_views<'a>(deprecated: &[DeprecatedFeatureView<'a>]) -> Vec<FeatureView<'a>> {
+    deprecated.iter().map(convert_feature_view).collect()
+}

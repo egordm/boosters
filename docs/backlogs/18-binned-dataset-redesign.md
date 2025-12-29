@@ -744,17 +744,32 @@ impl BinnedDataset {
 
 ### Story 6.1: Update Histogram Building to Use New FeatureView
 
-**Status**: Not Started  
+**Status**: ✅ Complete (commit pending)  
 **Estimate**: 2 hours
 
 **Description**: Update histogram kernels to work with new `FeatureView` (no stride).
 
 **Key Files**:
+
 - `training/gbdt/histogram/*.rs`
 
 **Changes**:
-- Remove strided match arms
-- Use new 4-variant `FeatureView`
+
+- Updated import in `histograms/mod.rs` to use new `FeatureView` from `crate::data::binned::view::FeatureView`
+- Updated all match patterns in `ops.rs` to use new syntax:
+  - `FeatureView::U8 { bins }` → `FeatureView::U8(bins)`
+  - `FeatureView::U16 { bins }` → `FeatureView::U16(bins)`
+  - `row_indices` → `sample_indices` in sparse variants
+- Added `convert_feature_views()` helper for transition period (converts deprecated to new)
+- Updated `grower.rs` to use conversion helper
+- Updated all tests to use new FeatureView syntax
+
+**Definition of Done**:
+
+- ✅ Histogram code uses new FeatureView
+- ✅ All 19 histogram tests pass
+- ✅ All 708 tests pass
+- ✅ Transition helper added for grower
 
 ---
 
