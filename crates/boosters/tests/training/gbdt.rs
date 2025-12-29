@@ -4,7 +4,7 @@
 
 use boosters::Parallelism;
 use boosters::data::{
-    BinnedDatasetBuilder, BinningConfig, GroupStrategy, transpose_to_c_order,
+    BinnedDatasetBuilder, BinningConfig, transpose_to_c_order,
 };
 use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::inference::gbdt::SimplePredictor;

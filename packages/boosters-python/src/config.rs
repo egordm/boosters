@@ -2,7 +2,7 @@
 //!
 //! Flat config structure matching core Rust configs.
 
-use boosters::data::binned::BundlingConfig;
+use boosters::data::BinningConfig;
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
@@ -487,17 +487,12 @@ impl From<&PyGBDTConfig> for boosters::GBDTConfig {
             subsample: py_config.subsample as f32,
             colsample_bytree: py_config.colsample_bytree as f32,
             colsample_bylevel: py_config.colsample_bylevel as f32,
-            binning: py_config.max_bins.into(),
-            // EFB bundling with user-configurable parameters
-            bundling: if py_config.enable_bundling {
-                BundlingConfig {
-                    enable_bundling: true,
-                    max_conflict_rate: py_config.bundling_conflict_rate as f32,
-                    min_sparsity: py_config.bundling_min_sparsity as f32,
-                    ..BundlingConfig::default()
-                }
-            } else {
-                BundlingConfig::disabled()
+            // Binning config with bundling settings
+            binning: BinningConfig {
+                max_bins: py_config.max_bins,
+                enable_bundling: py_config.enable_bundling,
+                sparsity_threshold: py_config.bundling_min_sparsity as f32,
+                ..BinningConfig::default()
             },
             linear_leaves,
             early_stopping_rounds: py_config.early_stopping_rounds,

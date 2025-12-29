@@ -40,14 +40,3 @@ pub use bundling::{BundlePlan, BundlingConfig};
 // For backward compatibility during migration, re-export some builder types with old names
 pub use builder::DatasetBuilder as BinnedDatasetBuilder;
 pub use builder::DatasetError as BuildError;
-
-// =============================================================================
-// Deprecated re-exports (still part of public API)
-// These are used by deprecated::binned internals and exported in data/mod.rs
-// =============================================================================
-
-#[allow(deprecated)]
-pub use super::deprecated::binned::{
-    BinStorage, BinType, BundlingFeatures, GroupStrategy, BinningStrategy,
-};
-

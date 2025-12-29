@@ -17,7 +17,6 @@
 #![allow(dead_code)] // Fields may be unused during migration period
 
 pub mod accessor;
-pub mod binned;
 pub mod column;
 pub mod dataset;
 pub mod schema;
