@@ -10,6 +10,7 @@
 use super::bin_mapper::BinMapper;
 use super::builder::BuiltGroups;
 use super::group::FeatureGroup;
+use super::view::FeatureView;
 
 /// Where a feature's data lives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -361,6 +362,71 @@ impl BinnedDataset {
     }
 
     // =========================================================================
+    // Histogram Building (Hot Path)
+    // =========================================================================
+
+    /// Get feature views for histogram building.
+    ///
+    /// Returns views for all non-trivial features, in global feature index order.
+    /// This is the primary API for training - the hot path for histogram building.
+    ///
+    /// # Returns
+    ///
+    /// A vector of `FeatureView`s, one per non-trivial feature, in order of
+    /// global feature index.
+    pub fn feature_views(&self) -> Vec<FeatureView<'_>> {
+        let mut views = Vec::with_capacity(self.features.len());
+
+        for feature_idx in 0..self.features.len() {
+            let location = self.features[feature_idx].location;
+            match location {
+                FeatureLocation::Direct {
+                    group_idx,
+                    idx_in_group,
+                } => {
+                    let view = self.groups[group_idx as usize].feature_view(idx_in_group as usize);
+                    views.push(view);
+                }
+                FeatureLocation::Bundled { .. } => {
+                    // TODO: Handle bundled features when EFB is implemented
+                    // For now, skip bundled features
+                }
+                FeatureLocation::Skipped => {
+                    // Trivial features are skipped - don't add a view
+                }
+            }
+        }
+
+        views
+    }
+
+    /// Get view for a single original feature.
+    ///
+    /// Use this when you need access to a specific feature, not for bulk iteration.
+    ///
+    /// # Parameters
+    /// - `feature`: Global feature index (0..n_features)
+    ///
+    /// # Panics
+    ///
+    /// Panics if the feature is skipped (trivial) or bundled.
+    pub fn original_feature_view(&self, feature: usize) -> FeatureView<'_> {
+        let location = self.features[feature].location;
+        match location {
+            FeatureLocation::Direct {
+                group_idx,
+                idx_in_group,
+            } => self.groups[group_idx as usize].feature_view(idx_in_group as usize),
+            FeatureLocation::Bundled { .. } => {
+                panic!("Cannot get view for bundled feature {feature} - use feature_views() instead")
+            }
+            FeatureLocation::Skipped => {
+                panic!("Cannot get view for skipped feature {feature}")
+            }
+        }
+    }
+
+    // =========================================================================
     // Linear trees support
     // =========================================================================
 
@@ -559,5 +625,85 @@ mod tests {
         // Categorical features don't have raw values
         assert_eq!(dataset.raw_value(0, 0), None);
         assert_eq!(dataset.raw_feature_slice(0), None);
+    }
+
+    #[test]
+    fn test_feature_views_count() {
+        let data = make_array(
+            &[1.1, 2.2, 3.3, 10.1, 20.2, 30.3],
+            3,
+            2,
+        );
+        let config = BinningConfig::default();
+
+        let built = DatasetBuilder::from_array(data.view(), &config)
+            .unwrap()
+            .build_groups()
+            .unwrap();
+
+        let dataset = BinnedDataset::from_built_groups(built);
+        let views = dataset.feature_views();
+
+        // Should have exactly 2 views (one per non-trivial feature)
+        assert_eq!(views.len(), 2);
+    }
+
+    #[test]
+    fn test_feature_views_dense() {
+        let data = make_array(&[1.1, 2.2, 3.3, 4.4, 5.5], 5, 1);
+        let config = BinningConfig::default();
+
+        let built = DatasetBuilder::from_array(data.view(), &config)
+            .unwrap()
+            .build_groups()
+            .unwrap();
+
+        let dataset = BinnedDataset::from_built_groups(built);
+        let views = dataset.feature_views();
+
+        assert_eq!(views.len(), 1);
+        assert!(views[0].is_dense());
+        assert_eq!(views[0].len(), 5); // 5 samples
+    }
+
+    #[test]
+    fn test_original_feature_view() {
+        let built = DatasetBuilder::new()
+            .add_numeric("x", array![1.1, 2.2, 3.3, 4.4, 5.5].view())
+            .add_numeric("y", array![10.1, 20.2, 30.3, 40.4, 50.5].view())
+            .build_groups()
+            .unwrap();
+
+        let dataset = BinnedDataset::from_built_groups(built);
+
+        // Get views for individual features
+        let view0 = dataset.original_feature_view(0);
+        let view1 = dataset.original_feature_view(1);
+
+        assert!(view0.is_dense());
+        assert!(view1.is_dense());
+        assert_eq!(view0.len(), 5);
+        assert_eq!(view1.len(), 5);
+    }
+
+    #[test]
+    fn test_mixed_feature_views() {
+        let built = DatasetBuilder::new()
+            .add_numeric("num", array![1.1, 2.2, 3.3, 4.4, 5.5].view())
+            .add_categorical("cat", array![0.0, 1.0, 2.0, 1.0, 0.0].view())
+            .build_groups()
+            .unwrap();
+
+        let dataset = BinnedDataset::from_built_groups(built);
+        let views = dataset.feature_views();
+
+        // Should have 2 views (one numeric, one categorical)
+        assert_eq!(views.len(), 2);
+
+        // Both should be dense (not sparse)
+        for view in &views {
+            assert!(view.is_dense());
+            assert_eq!(view.len(), 5);
+        }
     }
 }

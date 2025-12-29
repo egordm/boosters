@@ -607,10 +607,17 @@ impl DatasetBuilder {
 
 ### Story 5.2: Implement Basic Access Methods
 
-**Status**: Not Started  
+**Status**: COMPLETE  
 **Estimate**: 1.5 hours
 
 **Description**: Implement bin/raw access methods.
+
+**Implementation**:
+- `bin(sample, feature) -> u32`: Access bin value via FeatureLocation
+- `raw_value(sample, feature) -> Option<f32>`: Access raw value (None for categorical)
+- `raw_feature_slice(feature) -> Option<&[f32]>`: Contiguous raw access
+- Handles Direct, Bundled (panics - not yet implemented), and Skipped (panics) locations
+- 4 new unit tests
 
 **Methods**:
 ```rust
