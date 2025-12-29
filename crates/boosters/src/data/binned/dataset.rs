@@ -86,6 +86,65 @@ impl BinnedFeatureInfo {
     }
 }
 
+/// Result of `effective_feature_views()` - views in the effective layout.
+///
+/// The effective layout puts bundles first, then standalone features:
+/// ```text
+/// [bundle_0, bundle_1, ..., standalone_0, standalone_1, ...]
+/// ```
+///
+/// This struct provides both the views and metadata needed by the grower.
+#[derive(Debug)]
+pub struct EffectiveViews<'a> {
+    /// Feature views in effective order.
+    pub views: Vec<FeatureView<'a>>,
+    /// Bin counts for each effective column.
+    pub bin_counts: Vec<u32>,
+    /// Whether each effective column is a bundle.
+    pub is_bundle: Vec<bool>,
+    /// Number of bundle columns (first `n_bundles` entries are bundles).
+    pub n_bundles: usize,
+    /// Group indices for bundle columns (for decoding splits).
+    pub bundle_groups: Vec<usize>,
+    /// Original feature indices for standalone columns (effective_idx - n_bundles → original_feature).
+    pub standalone_features: Vec<usize>,
+    /// Whether each effective column is categorical.
+    /// For bundles: always true (encoded bins are categorical-like).
+    /// For standalone: matches the original feature type.
+    pub is_categorical: Vec<bool>,
+    /// Whether each effective column has missing values.
+    /// For bundles: always true (bin 0 is "all defaults" / missing).
+    /// For standalone: matches the original feature.
+    pub has_missing: Vec<bool>,
+}
+
+impl<'a> EffectiveViews<'a> {
+    /// Get the number of effective columns (bundles + standalone features).
+    #[inline]
+    pub fn n_columns(&self) -> usize {
+        self.views.len()
+    }
+
+    /// Check if the dataset has any bundles.
+    #[inline]
+    pub fn has_bundles(&self) -> bool {
+        self.n_bundles > 0
+    }
+
+    /// Map an effective column index to the original feature index.
+    ///
+    /// For bundle columns, returns `None` (bundles contain multiple features).
+    /// For standalone columns, returns `Some(original_feature_idx)`.
+    #[inline]
+    pub fn effective_to_original(&self, effective_idx: usize) -> Option<usize> {
+        if effective_idx < self.n_bundles {
+            None // Bundle column - contains multiple features
+        } else {
+            Some(self.standalone_features[effective_idx - self.n_bundles])
+        }
+    }
+}
+
 /// The unified dataset type for training and inference.
 ///
 /// Contains both binned data (for tree splits) and raw data (for linear regression).
@@ -402,6 +461,94 @@ impl BinnedDataset {
         views
     }
 
+    /// Get effective feature views for histogram building.
+    ///
+    /// This returns views in the "effective" feature layout used by the grower:
+    /// - First: One view per bundle (the encoded bundle column)
+    /// - Then: One view per standalone (non-bundled) feature
+    ///
+    /// The returned `EffectiveViews` struct contains both the views and metadata
+    /// about which columns are bundles.
+    ///
+    /// # Layout
+    ///
+    /// ```text
+    /// Effective columns: [bundle_0, bundle_1, ..., standalone_0, standalone_1, ...]
+    /// ```
+    ///
+    /// For datasets without bundling, this is equivalent to `feature_views()`.
+    pub fn effective_feature_views(&self) -> EffectiveViews<'_> {
+        use crate::data::MissingType;
+
+        let mut views = Vec::new();
+        let mut bin_counts = Vec::new();
+        let mut is_bundle = Vec::new();
+        let mut is_categorical = Vec::new();
+        let mut has_missing = Vec::new();
+        let mut bundle_groups = Vec::new();
+        let mut standalone_features = Vec::new();
+        let mut n_bundles = 0;
+
+        // Phase 1: Collect bundle views (bundle groups)
+        for (group_idx, group) in self.groups.iter().enumerate() {
+            if group.is_bundle() {
+                // Bundle group: one view for the encoded bundle
+                views.push(group.feature_view(0));
+                if let Some(bundle) = group.as_bundle() {
+                    bin_counts.push(bundle.total_bins());
+                } else {
+                    // Should not happen, but fallback to bin_counts[0]
+                    bin_counts.push(group.bin_counts()[0]);
+                }
+                is_bundle.push(true);
+                // Bundles are treated as categorical (encoded bin space)
+                is_categorical.push(true);
+                // Bundles always have "missing" (bin 0 = all defaults)
+                has_missing.push(true);
+                bundle_groups.push(group_idx);
+                n_bundles += 1;
+            }
+        }
+
+        // Phase 2: Collect standalone feature views (non-bundle features)
+        for feature_idx in 0..self.features.len() {
+            let location = self.features[feature_idx].location;
+            match location {
+                FeatureLocation::Direct {
+                    group_idx,
+                    idx_in_group,
+                } => {
+                    let group = &self.groups[group_idx as usize];
+                    views.push(group.feature_view(idx_in_group as usize));
+                    bin_counts.push(group.bin_counts()[idx_in_group as usize]);
+                    is_bundle.push(false);
+                    // Use original feature's categorical flag
+                    is_categorical.push(self.features[feature_idx].is_categorical());
+                    // Check if original feature has missing
+                    has_missing.push(
+                        self.features[feature_idx].bin_mapper.missing_type() != MissingType::None,
+                    );
+                    standalone_features.push(feature_idx);
+                }
+                FeatureLocation::Bundled { .. } | FeatureLocation::Skipped => {
+                    // Bundled features are accessed via their bundle
+                    // Skipped features are not included
+                }
+            }
+        }
+
+        EffectiveViews {
+            views,
+            bin_counts,
+            is_bundle,
+            n_bundles,
+            bundle_groups,
+            standalone_features,
+            is_categorical,
+            has_missing,
+        }
+    }
+
     /// Get view for a single original feature.
     ///
     /// Use this when you need access to a specific feature, not for bulk iteration.
@@ -425,6 +572,54 @@ impl BinnedDataset {
             FeatureLocation::Skipped => {
                 panic!("Cannot get view for skipped feature {feature}")
             }
+        }
+    }
+
+    /// Decode a split on an effective column to the original feature and bin.
+    ///
+    /// When working with effective columns (from `effective_feature_views()`), splits
+    /// need to be decoded back to original feature indices for tree storage.
+    ///
+    /// # Parameters
+    /// - `effective_views`: The EffectiveViews from `effective_feature_views()`
+    /// - `effective_col`: The effective column index (0..n_effective_columns)
+    /// - `bin`: The bin value for the split
+    ///
+    /// # Returns
+    /// `(original_feature_idx, original_bin)` for use in tree split nodes.
+    ///
+    /// # Bundle Handling
+    /// For bundle columns, decodes the encoded bin to find which original feature
+    /// owns that bin. If bin is 0 (all defaults), returns the first feature in the
+    /// bundle with bin 0.
+    pub fn decode_split_to_original(
+        &self,
+        effective_views: &EffectiveViews<'_>,
+        effective_col: usize,
+        bin: u32,
+    ) -> (usize, u32) {
+        if effective_col < effective_views.n_bundles {
+            // Bundle column: decode using BundleStorage
+            let group_idx = effective_views.bundle_groups[effective_col];
+            let group = &self.groups[group_idx];
+            if let Some(bundle) = group.as_bundle() {
+                if let Some((pos_in_bundle, orig_bin)) = bundle.decode(bin as u16) {
+                    // Map position in bundle to original feature
+                    let orig_feature = bundle.feature_indices()[pos_in_bundle] as usize;
+                    (orig_feature, orig_bin)
+                } else {
+                    // bin 0 = all defaults. Pick the first feature in the bundle with bin 0.
+                    let first_feature = bundle.feature_indices()[0] as usize;
+                    (first_feature, 0)
+                }
+            } else {
+                panic!("Bundle group {} has no BundleStorage", group_idx);
+            }
+        } else {
+            // Standalone column: direct mapping
+            let standalone_idx = effective_col - effective_views.n_bundles;
+            let orig_feature = effective_views.standalone_features[standalone_idx];
+            (orig_feature, bin)
         }
     }
 

@@ -32,7 +32,7 @@
 
 use super::split::{SplitInfo, SplitType};
 use crate::data::binned::FeatureView;
-use crate::data::{BinnedDataset, MissingType};
+use crate::data::{BinnedDataset, EffectiveViews, MissingType};
 
 /// Leaf identifier (index during training).
 pub type LeafId = u32;
@@ -217,28 +217,38 @@ impl RowPartitioner {
     /// - `left_count`: Number of rows going left (remaining in original leaf)
     /// - `right_count`: Number of rows going right (in new leaf)
     ///
-    /// Note: With LightGBM-style bundling, `split.feature` is a bundled column index.
-    /// We use bundled feature views for partitioning (bins are already encoded correctly).
+    /// Note: With LightGBM-style bundling, `split.feature` is an effective column index.
+    /// We use effective feature views for partitioning (bins are already encoded correctly).
     pub fn split(
         &mut self,
         leaf: LeafId,
         split: &SplitInfo,
         dataset: &BinnedDataset,
+        effective: &EffectiveViews<'_>,
     ) -> (LeafId, u32, u32) {
         let begin = self.leaf_begin[leaf as usize] as usize;
         let count = self.leaf_count[leaf as usize] as usize;
         let end = begin + count;
 
-        // Get feature view and metadata.
-        // Without bundling, the split feature is the original feature directly.
-        let feature = split.feature as usize;
-        let views = dataset.feature_views();
-        let view = views[feature];
+        // Get feature view and metadata from effective layout.
+        // split.feature is an effective column index (bundles first, then standalone).
+        let effective_col = split.feature as usize;
+        let view = effective.views[effective_col];
 
-        // Get default_bin and has_missing for the feature
-        let bin_mapper = dataset.bin_mapper(feature);
-        let default_bin = bin_mapper.default_bin();
-        let has_missing = bin_mapper.missing_type() != MissingType::None;
+        // For bundles: default_bin is 0 (all defaults), has_missing is true
+        // For standalone: use the original feature's bin_mapper
+        let (default_bin, has_missing) = if effective.is_bundle[effective_col] {
+            (0u32, true)
+        } else {
+            // Map effective column to original feature
+            if let Some(orig_feature) = effective.effective_to_original(effective_col) {
+                let bin_mapper = dataset.bin_mapper(orig_feature);
+                (bin_mapper.default_bin(), bin_mapper.missing_type() != MissingType::None)
+            } else {
+                // Should not happen for non-bundle columns
+                (0u32, false)
+            }
+        };
         let default_left = split.default_left;
 
         // Single-pass stable partition: write left from start, right from end of scratch,
@@ -503,12 +513,13 @@ mod tests {
     #[test]
     fn test_split_numerical() {
         let dataset = make_test_dataset();
+        let effective = dataset.effective_feature_views();
         let mut partitioner = RowPartitioner::new(8, 16);
         partitioner.reset(8, None);
 
         // Split on feature 1 at bin 0 (rows 0-3 go left, rows 4-7 go right)
         let split = SplitInfo::numerical(1, 0, 1.0, false);
-        let (right_leaf, left_count, right_count) = partitioner.split(0, &split, &dataset);
+        let (right_leaf, left_count, right_count) = partitioner.split(0, &split, &dataset, &effective);
 
         assert_eq!(left_count, 4);
         assert_eq!(right_count, 4);
@@ -533,12 +544,13 @@ mod tests {
     #[test]
     fn test_split_alternating() {
         let dataset = make_test_dataset();
+        let effective = dataset.effective_feature_views();
         let mut partitioner = RowPartitioner::new(8, 16);
         partitioner.reset(8, None);
 
         // Split on feature 0 at bin 0 (even indices go left, odd go right)
         let split = SplitInfo::numerical(0, 0, 1.0, false);
-        let (right_leaf, left_count, right_count) = partitioner.split(0, &split, &dataset);
+        let (right_leaf, left_count, right_count) = partitioner.split(0, &split, &dataset, &effective);
 
         assert_eq!(left_count, 4);
         assert_eq!(right_count, 4);
@@ -559,16 +571,17 @@ mod tests {
     #[test]
     fn test_multiple_splits() {
         let dataset = make_test_dataset();
+        let effective = dataset.effective_feature_views();
         let mut partitioner = RowPartitioner::new(8, 32);
         partitioner.reset(8, None);
 
         // First split: feature 1 at bin 0 → leaf 0 has 0-3, leaf 1 has 4-7
         let split1 = SplitInfo::numerical(1, 0, 1.0, false);
-        let (leaf1, _, _) = partitioner.split(0, &split1, &dataset);
+        let (leaf1, _, _) = partitioner.split(0, &split1, &dataset, &effective);
 
         // Split leaf 0 on feature 0 → even (0,2) stay, odd (1,3) go to new leaf
         let split2 = SplitInfo::numerical(0, 0, 1.0, false);
-        let (leaf2, left_count, right_count) = partitioner.split(0, &split2, &dataset);
+        let (leaf2, left_count, right_count) = partitioner.split(0, &split2, &dataset, &effective);
 
         assert_eq!(left_count, 2);
         assert_eq!(right_count, 2);

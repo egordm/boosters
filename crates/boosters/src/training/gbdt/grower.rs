@@ -108,22 +108,16 @@ impl TreeGrower {
         cache_size: usize,
         parallelism: Parallelism,
     ) -> Self {
-        use crate::data::MissingType;
-
         let n_samples = dataset.n_samples();
 
-        // Number of effective columns for histogram building.
-        // Without bundling (RFC-0018), this is just n_features().
-        let n_effective_columns = dataset.n_features();
+        // Get effective feature layout (bundles + standalone features)
+        let effective = dataset.effective_feature_views();
+        let n_effective_columns = effective.n_columns();
 
-        // Get bin counts for each feature
-        let effective_bin_counts: Vec<u32> = (0..n_effective_columns)
-            .map(|f| dataset.n_bins(f))
-            .collect();
-
-        // Build histogram layout for features
+        // Build histogram layout from effective bin counts
         let mut offset = 0u32;
-        let feature_metas: Vec<HistogramLayout> = effective_bin_counts
+        let feature_metas: Vec<HistogramLayout> = effective
+            .bin_counts
             .iter()
             .map(|&n_bins| {
                 let layout = HistogramLayout { offset, n_bins };
@@ -132,18 +126,10 @@ impl TreeGrower {
             })
             .collect();
 
-        // Feature types (categorical vs numeric)
-        let feature_types: Vec<bool> = (0..n_effective_columns)
-            .map(|col| dataset.is_categorical(col))
-            .collect();
-
-        // Missing indicators (features with NaN bin)
-        let feature_has_missing: Vec<bool> = (0..n_effective_columns)
-            .map(|col| dataset.bin_mapper(col).missing_type() != MissingType::None)
-            .collect();
-
-        // No bundles in new implementation
-        let feature_is_bundle: Vec<bool> = vec![false; n_effective_columns];
+        // Use effective feature metadata directly
+        let feature_types = effective.is_categorical.clone();
+        let feature_has_missing = effective.has_missing.clone();
+        let feature_is_bundle = effective.is_bundle.clone();
 
         // Maximum nodes: 2*max_leaves - 1 for a full binary tree
         let max_leaves = params.max_leaves();
@@ -158,7 +144,7 @@ impl TreeGrower {
         let split_strategy =
             GreedySplitter::with_config(params.gain.clone(), params.max_onehot_cats, parallelism);
 
-        // Column sampler uses feature columns for sampling
+        // Column sampler uses effective columns for sampling
         let col_sampler = ColSampler::new(params.col_sampling.clone(), n_effective_columns as u32, 0);
 
         Self {
@@ -273,9 +259,10 @@ impl TreeGrower {
         self.col_sampler.sample_tree();
         self.col_sampler.sample_level(0);
 
-        // Pre-compute feature views once per tree
-        // New BinnedDataset returns new FeatureView directly (no conversion needed)
-        let bin_views = dataset.feature_views();
+        // Pre-compute effective feature views once per tree
+        // This includes bundle views (if any) followed by standalone feature views
+        let effective = dataset.effective_feature_views();
+        let bin_views = &effective.views;
 
         // Initialize growth state
         let strategy = self.params.growth_strategy;
@@ -285,7 +272,7 @@ impl TreeGrower {
         let root_tree_node = self.tree_builder.init_root();
 
         // Build root histogram first
-        self.build_histogram(0, gradients, output, &bin_views);
+        self.build_histogram(0, gradients, output, bin_views);
 
         // Compute root gradient sums from histogram (O(n_bins) instead of O(n_samples))
         let (total_grad, total_hess) = self
@@ -315,7 +302,7 @@ impl TreeGrower {
 
             for candidate in candidates {
                 self.process_candidate(
-                    candidate, dataset, gradients, output, &bin_views, &mut state,
+                    candidate, dataset, &effective, gradients, output, bin_views, &mut state,
                 );
             }
 
@@ -339,6 +326,7 @@ impl TreeGrower {
         &mut self,
         candidate: NodeCandidate,
         dataset: &BinnedDataset,
+        effective: &crate::data::EffectiveViews<'_>,
         gradients: &Gradients,
         output: usize,
         bin_views: &[FeatureView<'_>],
@@ -368,18 +356,19 @@ impl TreeGrower {
         );
 
         // Apply split (translating bin thresholds to float values)
-        // Since histograms are always built for original features, splits are on original features
+        // For bundled columns, decode the effective column index to original feature
         let (left_tree, right_tree) = Self::apply_split_to_builder(
             &mut self.tree_builder,
             candidate.tree_node,
             &candidate.split,
             dataset,
+            effective,
         );
 
         // Partition rows based on the split.
-        // Splits are always on original features, so partition uses original feature views.
+        // For bundled columns, the partitioner needs effective views to decode the split
         let (right_node, left_count, right_count) =
-            self.partitioner.split(candidate.node, &candidate.split, dataset);
+            self.partitioner.split(candidate.node, &candidate.split, dataset, effective);
 
         // Use original node as left (now owns only left rows)
         let left_node = candidate.node;
@@ -559,7 +548,7 @@ impl TreeGrower {
     /// Important: categorical split categories are treated as **category indices** (0..K-1),
     /// i.e. the same domain as categorical bin indices in `BinnedDataset`.
     ///
-    /// Note: With LightGBM-style bundling, `split.feature` is a bundled column index.
+    /// Note: With LightGBM-style bundling, `split.feature` is an effective column index.
     /// We decode it to the original feature before storing in the tree, so predictions
     /// work without bundling context.
     fn apply_split_to_builder(
@@ -567,15 +556,19 @@ impl TreeGrower {
         node: u32,
         split: &SplitInfo,
         dataset: &BinnedDataset,
+        effective: &crate::data::EffectiveViews<'_>,
     ) -> (u32, u32) {
-        // Without bundling, the split feature is the original feature directly
-        let feature = split.feature as usize;
+        // Decode effective column index to original feature and bin
+        let effective_col = split.feature as usize;
 
         match &split.split_type {
             SplitType::Numerical { bin } => {
-                // Without bundling, feature and bin map directly
-                let orig_feature = feature;
-                let orig_bin = *bin as u32;
+                // Decode effective column + bin to original feature + bin
+                let (orig_feature, orig_bin) = dataset.decode_split_to_original(
+                    effective,
+                    effective_col,
+                    *bin as u32,
+                );
 
                 let mapper = dataset.bin_mapper(orig_feature);
                 
@@ -598,8 +591,14 @@ impl TreeGrower {
                 )
             }
             SplitType::Categorical { left_cats } => {
-                // Without bundling, categorical splits use the feature directly
-                let orig_feature = feature;
+                // For categorical splits on bundles, we need to decode the effective column.
+                // But categorical splits accumulate bins, not individual thresholds.
+                // For now, assume categorical features are not bundled (TODO: support this).
+                let (orig_feature, _) = dataset.decode_split_to_original(
+                    effective,
+                    effective_col,
+                    0, // bin doesn't matter for categorical - we just need the feature
+                );
 
                 // Convert training categorical bitset to inference format.
                 // Training: categories in left_cats go LEFT
@@ -823,6 +822,7 @@ mod tests {
     #[test]
     fn phase4_numeric_threshold_translation_preserves_boundary() {
         let dataset = make_numeric_boundary_dataset();
+        let effective = dataset.effective_feature_views();
 
         let mut builder = MutableTree::<ScalarLeaf>::with_capacity(3);
         let root = builder.init_root();
@@ -830,7 +830,7 @@ mod tests {
         // Training semantics: bin <= 0 goes left.
         let split = SplitInfo::numerical(0, 0, 1.0, true);
         let (left, right) =
-            TreeGrower::apply_split_to_builder(&mut builder, root, &split, &dataset);
+            TreeGrower::apply_split_to_builder(&mut builder, root, &split, &dataset, &effective);
         builder.make_leaf(left, ScalarLeaf(10.0));
         builder.make_leaf(right, ScalarLeaf(20.0));
         let tree = builder.freeze();
@@ -855,6 +855,7 @@ mod tests {
     #[test]
     fn phase5_categorical_domain_is_bin_indices_and_semantics_match() {
         let dataset = make_categorical_domain_dataset();
+        let effective = dataset.effective_feature_views();
 
         let mut builder = MutableTree::<ScalarLeaf>::with_capacity(3);
         let root = builder.init_root();
@@ -865,7 +866,7 @@ mod tests {
         left_cats.insert(3);
         let split = SplitInfo::categorical(0, left_cats, 1.0, false);
         let (left, right) =
-            TreeGrower::apply_split_to_builder(&mut builder, root, &split, &dataset);
+            TreeGrower::apply_split_to_builder(&mut builder, root, &split, &dataset, &effective);
         builder.make_leaf(left, ScalarLeaf(10.0));
         builder.make_leaf(right, ScalarLeaf(20.0));
         let tree = builder.freeze();
