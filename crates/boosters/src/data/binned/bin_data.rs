@@ -58,6 +58,25 @@ impl BinData {
     }
 
     /// Returns the bin value at the given index, or `None` if out of bounds.
+    ///
+    /// # Performance Note
+    ///
+    /// This method matches on the variant for every access. **Do not use in hot
+    /// paths** like histogram building. Instead, match once on the `BinData` variant
+    /// using [`as_u8()`](Self::as_u8) or [`as_u16()`](Self::as_u16), then iterate
+    /// the slice directly:
+    ///
+    /// ```ignore
+    /// match bin_data {
+    ///     BinData::U8(bins) => {
+    ///         for sample in samples {
+    ///             let bin = bins[sample];  // Direct slice access, no branch
+    ///             // ... use bin
+    ///         }
+    ///     }
+    ///     BinData::U16(bins) => { /* same pattern */ }
+    /// }
+    /// ```
     #[inline]
     pub fn get(&self, idx: usize) -> Option<u32> {
         match self {
@@ -71,6 +90,25 @@ impl BinData {
     /// # Safety
     ///
     /// Calling this method with an out-of-bounds index is undefined behavior.
+    ///
+    /// # Performance Note
+    ///
+    /// Despite being `unsafe`, this method still matches on the variant for every
+    /// access. **Do not use in hot paths** like histogram building. Instead, match
+    /// once on the variant using [`as_u8()`](Self::as_u8) or [`as_u16()`](Self::as_u16),
+    /// then use `get_unchecked` on the raw slice:
+    ///
+    /// ```ignore
+    /// match bin_data {
+    ///     BinData::U8(bins) => {
+    ///         for sample in samples {
+    ///             let bin = unsafe { *bins.get_unchecked(sample) };
+    ///             // ... use bin
+    ///         }
+    ///     }
+    ///     BinData::U16(bins) => { /* same pattern */ }
+    /// }
+    /// ```
     #[inline]
     pub unsafe fn get_unchecked(&self, idx: usize) -> u32 {
         // SAFETY: Caller must ensure idx is within bounds

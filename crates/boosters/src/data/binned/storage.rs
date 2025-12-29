@@ -668,41 +668,10 @@ impl FeatureStorage {
         }
     }
 
-    /// Returns the underlying storage as a NumericStorage reference, if applicable.
-    #[inline]
-    pub fn as_numeric(&self) -> Option<&NumericStorage> {
-        match self {
-            FeatureStorage::Numeric(s) => Some(s),
-            _ => None,
-        }
-    }
-
-    /// Returns the underlying storage as a CategoricalStorage reference, if applicable.
-    #[inline]
-    pub fn as_categorical(&self) -> Option<&CategoricalStorage> {
-        match self {
-            FeatureStorage::Categorical(s) => Some(s),
-            _ => None,
-        }
-    }
-
-    /// Returns the underlying storage as a SparseNumericStorage reference, if applicable.
-    #[inline]
-    pub fn as_sparse_numeric(&self) -> Option<&SparseNumericStorage> {
-        match self {
-            FeatureStorage::SparseNumeric(s) => Some(s),
-            _ => None,
-        }
-    }
-
-    /// Returns the underlying storage as a SparseCategoricalStorage reference, if applicable.
-    #[inline]
-    pub fn as_sparse_categorical(&self) -> Option<&SparseCategoricalStorage> {
-        match self {
-            FeatureStorage::SparseCategorical(s) => Some(s),
-            _ => None,
-        }
-    }
+    // Note: as_*() accessor methods intentionally omitted.
+    // Use exhaustive match to access the underlying storage types.
+    // This encourages correct handling of all variants and prevents bugs
+    // from non-exhaustive matching patterns.
 }
 
 impl From<NumericStorage> for FeatureStorage {
@@ -1268,50 +1237,22 @@ mod tests {
         assert_eq!(sparse_categorical.size_bytes(), 10);
     }
 
-    #[test]
-    fn test_feature_storage_as_methods() {
-        let numeric = FeatureStorage::Numeric(make_numeric_storage());
-        let categorical = FeatureStorage::Categorical(make_categorical_storage());
-        let sparse_numeric = FeatureStorage::SparseNumeric(make_sparse_numeric_storage());
-        let sparse_categorical = FeatureStorage::SparseCategorical(make_sparse_categorical_storage());
-
-        // Numeric
-        assert!(numeric.as_numeric().is_some());
-        assert!(numeric.as_categorical().is_none());
-        assert!(numeric.as_sparse_numeric().is_none());
-        assert!(numeric.as_sparse_categorical().is_none());
-
-        // Categorical
-        assert!(categorical.as_numeric().is_none());
-        assert!(categorical.as_categorical().is_some());
-        assert!(categorical.as_sparse_numeric().is_none());
-        assert!(categorical.as_sparse_categorical().is_none());
-
-        // SparseNumeric
-        assert!(sparse_numeric.as_numeric().is_none());
-        assert!(sparse_numeric.as_categorical().is_none());
-        assert!(sparse_numeric.as_sparse_numeric().is_some());
-        assert!(sparse_numeric.as_sparse_categorical().is_none());
-
-        // SparseCategorical
-        assert!(sparse_categorical.as_numeric().is_none());
-        assert!(sparse_categorical.as_categorical().is_none());
-        assert!(sparse_categorical.as_sparse_numeric().is_none());
-        assert!(sparse_categorical.as_sparse_categorical().is_some());
-    }
+    // Note: test_feature_storage_as_methods removed - as_*() methods were deleted
+    // to encourage exhaustive pattern matching.
 
     #[test]
     fn test_feature_storage_from() {
+        // Test From trait implementations using exhaustive matching
         let numeric: FeatureStorage = make_numeric_storage().into();
-        assert!(numeric.as_numeric().is_some());
+        assert!(matches!(numeric, FeatureStorage::Numeric(_)));
 
         let categorical: FeatureStorage = make_categorical_storage().into();
-        assert!(categorical.as_categorical().is_some());
+        assert!(matches!(categorical, FeatureStorage::Categorical(_)));
 
         let sparse_numeric: FeatureStorage = make_sparse_numeric_storage().into();
-        assert!(sparse_numeric.as_sparse_numeric().is_some());
+        assert!(matches!(sparse_numeric, FeatureStorage::SparseNumeric(_)));
 
         let sparse_categorical: FeatureStorage = make_sparse_categorical_storage().into();
-        assert!(sparse_categorical.as_sparse_categorical().is_some());
+        assert!(matches!(sparse_categorical, FeatureStorage::SparseCategorical(_)));
     }
 }
