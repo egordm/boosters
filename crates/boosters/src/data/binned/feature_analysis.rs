@@ -51,7 +51,11 @@ impl Default for BinningConfig {
             max_bins: 256,
             sparsity_threshold: 0.9,
             enable_bundling: true,
-            max_categorical_cardinality: 256,
+            // Disable auto-detection of categorical features by default.
+            // Integer features should be treated as ordinal/numeric unless
+            // explicitly marked as categorical via FeatureMetadata.
+            // This matches XGBoost behavior where categorical support is opt-in.
+            max_categorical_cardinality: 0,
             sample_cnt: 200_000,
         }
     }
@@ -467,7 +471,9 @@ pub fn analyze_features(
     }
 
     // Track enough unique values for categorical detection + some margin
-    let max_unique = (config.max_categorical_cardinality as usize) + 10;
+    let max_unique = (config.max_categorical_cardinality as usize)
+        .max(config.max_bins as usize)
+        .saturating_add(10);
 
     (0..n_features)
         .into_par_iter()
@@ -512,7 +518,13 @@ pub fn analyze_features_sequential(
             .collect();
     }
 
-    let max_unique = (config.max_categorical_cardinality as usize) + 10;
+    // Track enough unique values to determine:
+    // 1. Categorical detection (up to max_categorical_cardinality)
+    // 2. needs_u16 calculation (up to max_bins + buffer)
+    // We need at least max_bins + 1 to determine if we exceed 256 unique values
+    let max_unique = (config.max_categorical_cardinality as usize)
+        .max(config.max_bins as usize)
+        .saturating_add(10);
 
     (0..n_features)
         .map(|col| {
@@ -737,7 +749,8 @@ mod tests {
         assert_eq!(config.max_bins, 256);
         assert!((config.sparsity_threshold - 0.9).abs() < 0.001);
         assert!(config.enable_bundling);
-        assert_eq!(config.max_categorical_cardinality, 256);
+        // Auto-detection of categorical features is disabled by default
+        assert_eq!(config.max_categorical_cardinality, 0);
     }
 
     #[test]
@@ -798,14 +811,24 @@ mod tests {
 
     #[test]
     fn test_categorical_detection_integers() {
-        // Low cardinality integers should be auto-detected as categorical
+        // Low cardinality integers can be auto-detected as categorical when enabled
         let data = [0.0f32, 1.0, 2.0, 0.0, 1.0, 2.0, 0.0, 1.0];
         let features = make_features(&data, 8, 1);
+        
+        // With auto-detection disabled (default), integers remain numeric
         let analysis = analyze_features_sequential(features, &default_config(), None);
-
-        assert!(!analysis[0].is_numeric); // Should be categorical
-        assert!(!analysis[0].is_binary);
+        assert!(analysis[0].is_numeric); // Should be numeric when auto-detection is disabled
         assert_eq!(analysis[0].n_unique, 3);
+        
+        // With auto-detection enabled, low-cardinality integers become categorical
+        let config_with_auto = BinningConfig::builder()
+            .max_categorical_cardinality(256)
+            .build();
+        let features2 = make_features(&data, 8, 1);
+        let analysis_auto = analyze_features_sequential(features2, &config_with_auto, None);
+        assert!(!analysis_auto[0].is_numeric); // Should be categorical
+        assert!(!analysis_auto[0].is_binary);
+        assert_eq!(analysis_auto[0].n_unique, 3);
     }
 
     #[test]
@@ -918,19 +941,40 @@ mod tests {
             0.1, 0.2, 0.3, 0.4,
         ];
         let features = make_features(&data, 4, 3);
+        
+        // With auto-detection disabled (default), all features are numeric
         let analysis = analyze_features_sequential(features, &default_config(), None);
 
         // Feature 0: binary → numeric
         assert!(analysis[0].is_binary);
         assert!(analysis[0].is_numeric);
 
-        // Feature 1: integer → categorical
+        // Feature 1: integer but auto-detection disabled → still numeric
         assert!(!analysis[1].is_binary);
-        assert!(!analysis[1].is_numeric); // Auto-detected categorical
+        assert!(analysis[1].is_numeric);
 
         // Feature 2: floats → numeric
         assert!(!analysis[2].is_binary);
         assert!(analysis[2].is_numeric);
+        
+        // With auto-detection enabled, integers become categorical
+        let config_with_auto = BinningConfig::builder()
+            .max_categorical_cardinality(256)
+            .build();
+        let features2 = make_features(&data, 4, 3);
+        let analysis_auto = analyze_features_sequential(features2, &config_with_auto, None);
+        
+        // Feature 0: binary → still numeric (binary defaults to numeric)
+        assert!(analysis_auto[0].is_binary);
+        assert!(analysis_auto[0].is_numeric);
+        
+        // Feature 1: integer → categorical with auto-detection
+        assert!(!analysis_auto[1].is_binary);
+        assert!(!analysis_auto[1].is_numeric); // Auto-detected categorical
+        
+        // Feature 2: floats → numeric
+        assert!(!analysis_auto[2].is_binary);
+        assert!(analysis_auto[2].is_numeric);
     }
 
     #[test]

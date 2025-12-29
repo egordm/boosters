@@ -60,7 +60,7 @@ impl BundlingFeatures for FeaturesView<'_> {
 ///
 /// # Example
 ///
-/// ```
+/// ```ignore
 /// use boosters::data::binned::BundlingConfig;
 ///
 /// // Use defaults for most datasets

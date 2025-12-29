@@ -589,15 +589,17 @@ fn bin_numeric(data: &[f32], max_bins: u32) -> BinMapper {
     // Collect non-NaN values and compute min/max
     let mut min_val = f32::MAX;
     let mut max_val = f32::MIN;
-    let mut n_valid = 0usize;
+    let mut values: Vec<f32> = Vec::with_capacity(data.len());
 
     for &val in data.iter() {
         if val.is_finite() {
             min_val = min_val.min(val);
             max_val = max_val.max(val);
-            n_valid += 1;
+            values.push(val);
         }
     }
+
+    let n_valid = values.len();
 
     // Handle degenerate cases
     if n_valid == 0 || min_val >= max_val {
@@ -606,17 +608,38 @@ fn bin_numeric(data: &[f32], max_bins: u32) -> BinMapper {
 
     let n_bins = max_bins.min(n_valid as u32);
 
-    // Compute equal-width bin boundaries
-    let width = (max_val - min_val) / n_bins as f32;
-    let bounds: Vec<f64> = (1..=n_bins)
-        .map(|i| {
-            if i == n_bins {
-                f64::MAX
-            } else {
-                (min_val + i as f32 * width) as f64
+    // Use quantile binning (like LightGBM/XGBoost)
+    // Sort values to compute exact quantiles
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Deduplicate to get unique values for boundary computation
+    values.dedup();
+    let n_unique = values.len();
+
+    let mut bounds = Vec::with_capacity(n_bins as usize);
+
+    if n_unique <= n_bins as usize {
+        // Fewer unique values than bins: put boundary between each pair of unique values
+        for i in 0..n_unique.saturating_sub(1) {
+            let bound = (values[i] as f64 + values[i + 1] as f64) / 2.0;
+            bounds.push(bound);
+        }
+    } else {
+        // More unique values than bins: use quantile positions
+        for i in 1..n_bins {
+            let q = i as f64 / n_bins as f64;
+            // Find the index in the unique values array
+            let idx = ((q * (n_unique - 1) as f64).floor() as usize).min(n_unique - 2);
+            // Place boundary between values[idx] and values[idx+1]
+            let bound = (values[idx] as f64 + values[idx + 1] as f64) / 2.0;
+
+            // Only add if distinct from previous bound
+            if bounds.is_empty() || bound > *bounds.last().unwrap() {
+                bounds.push(bound);
             }
-        })
-        .collect();
+        }
+    }
+    bounds.push(f64::MAX);
 
     BinMapper::numerical(bounds, MissingType::None, 0, 0, 0.0, min_val as f64, max_val as f64)
 }
