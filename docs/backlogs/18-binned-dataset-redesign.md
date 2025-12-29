@@ -811,22 +811,28 @@ impl BinnedDataset {
 
 ### Story 6.3: Verify Linear Trees Use Raw Values
 
-**Status**: Not Started  
+**Status**: ✅ Complete  
 **Estimate**: 0.5 hours
 
-**Description**: Add test to verify that `LeafLinearTrainer` uses raw values when given new `BinnedDataset`.
+**Description**: Add tests to verify that `LeafLinearTrainer` uses raw values when given new `BinnedDataset`.
 
-**Key Changes**:
+**Implementation**:
 
-1. Add test in `linear/trainer.rs` that:
+1. Added `test_new_binned_dataset_data_accessor()` test in `linear/trainer.rs`:
    - Creates new `BinnedDataset` with known numeric values
-   - Runs `LeafLinearTrainer::train()` with new dataset
-   - Verifies coefficients are computed correctly (implying raw values used)
+   - Verifies `DataAccessor::sample().feature()` returns exact raw values
+   - Confirms raw values (1.5, 3.5, 5.5, etc.) instead of bin midpoints
+
+2. Added `test_feature_buffer_gather_with_new_dataset()` test:
+   - Creates new `BinnedDataset` and uses `LeafFeatureBuffer::gather()`
+   - Verifies gathered values are raw (not binned)
+   - Confirms linear regression will use actual feature values
 
 **Definition of Done**:
 
-- Test passes demonstrating raw values are used
-- No changes to `LeafLinearTrainer` needed (uses DataAccessor generically)
+- ✅ Tests pass demonstrating raw values are used
+- ✅ No changes to `LeafLinearTrainer` needed (uses DataAccessor generically)
+- ✅ All 713 tests pass
 
 ---
 

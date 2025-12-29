@@ -6,9 +6,9 @@
 // New RFC-0018 implementation
 mod bin_data;
 mod bin_mapper;
-mod builder;
-mod dataset;
-mod feature_analysis;
+pub(crate) mod builder;
+pub(crate) mod dataset;
+pub(crate) mod feature_analysis;
 pub(crate) mod group;
 mod sample_blocks;
 mod storage;
