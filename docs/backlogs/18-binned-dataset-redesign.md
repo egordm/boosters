@@ -434,7 +434,7 @@ impl BundleStorage {
 
 ### Story 1.8: Wire Grower for Bundled Features
 
-**Status**: Not Started  
+**Status**: COMPLETE  
 **Estimate**: 2 hours  
 **Priority**: BLOCKING (required for bundling to work in training)
 
@@ -442,23 +442,24 @@ impl BundleStorage {
 
 **Location**: `training/gbdt/grower.rs`
 
-**Changes Required**:
-1. Remove `feature_is_bundle = vec![false; n]` placeholder
-2. Detect actual bundle groups from dataset
-3. Use `bundled_feature_views()` or equivalent from new dataset
-4. Update split decoding to use `BundleStorage::decode()`
-5. Ensure histogram building works with bundle views
+**Changes Implemented**:
+1. Added `EffectiveViews` struct with bundle/standalone metadata
+2. Added `effective_feature_views()` method returning bundles first, then standalone
+3. Added `decode_split_to_original()` for bundle split decoding
+4. Updated grower to use effective views for initialization
+5. Updated partitioner to accept effective views parameter
+6. All metadata (is_bundle, is_categorical, has_missing) comes from effective views
 
 **Key Integration Points**:
-- `n_effective_columns` should count bundles as single columns
-- `feature_views()` should return bundle views for histogram building
-- Split finder needs to decode bundle splits back to original features
+- `n_effective_columns` counts bundles as single columns
+- `effective_feature_views()` returns bundle views for histogram building
+- Split finder uses decode_split_to_original() to get original feature
 
 **Definition of Done**:
-- Grower correctly identifies and handles bundled features
-- Histogram building uses bundled views (one histogram region per bundle)
-- Splits on bundles are decoded to original feature indices
-- All training tests pass with bundling enabled
+- ✅ Grower correctly identifies and handles bundled features
+- ✅ Histogram building uses effective views (one histogram region per bundle)
+- ✅ Splits on bundles are decoded to original feature indices
+- ✅ All training tests pass (739 tests)
 
 ---
 

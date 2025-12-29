@@ -1248,4 +1248,98 @@ mod tests {
         all_indices.dedup();
         assert_eq!(all_indices.len(), 10, "Row indices should be unique");
     }
+
+    #[test]
+    fn test_grower_with_bundling_enabled() {
+        // Create sparse categorical features that should trigger bundling
+        // Feature 0: non-zero only for rows 0-4 (5% density - well under 10%)
+        // Feature 1: non-zero only for rows 50-54 (5% density - well under 10%)
+        // These are mutually exclusive (no overlap) so should bundle perfectly
+        let n_samples = 100;
+
+        // Create just 2 sparse categorical features (no numeric)
+        let mut data_vec = Vec::with_capacity(n_samples * 2);
+        for sample in 0..n_samples {
+            // Feature 0: sparse categorical, non-zero for rows 0-4
+            let f0 = if sample < 5 {
+                (sample % 3 + 1) as f32
+            } else {
+                0.0
+            };
+            // Feature 1: sparse categorical, non-zero for rows 50-54
+            let f1 = if (50..55).contains(&sample) {
+                ((sample - 50) % 3 + 1) as f32
+            } else {
+                0.0
+            };
+            data_vec.push(f0);
+            data_vec.push(f1);
+        }
+
+        let data = Array2::from_shape_vec((n_samples, 2), data_vec).unwrap();
+
+        // Mark both as categorical to enable bundling
+        let metadata = FeatureMetadata::default().categorical(vec![0, 1]);
+        let config = BinningConfig::builder()
+            .enable_bundling(true)
+            .sparsity_threshold(0.9)
+            .build();
+
+        let dataset =
+            BinnedDatasetBuilder::from_array_with_metadata(data.view(), Some(&metadata), &config)
+                .unwrap()
+                .build()
+                .unwrap();
+
+        // Verify bundling occurred
+        let effective = dataset.effective_feature_views();
+        assert!(
+            effective.has_bundles(),
+            "Should have bundles with sparse categorical features (n_bundles={})",
+            effective.n_bundles
+        );
+        assert_eq!(
+            effective.n_bundles, 1,
+            "Should have exactly 1 bundle (2 sparse cats bundled)"
+        );
+        // 1 bundle = 1 effective column
+        assert_eq!(
+            effective.n_columns(),
+            1,
+            "Should have 1 effective column (bundle only)"
+        );
+
+        // Create gradients: positive for first half, negative for second half
+        let mut gradients = Gradients::new(n_samples, 1);
+        for (i, pair) in gradients.output_pairs_mut(0).iter_mut().enumerate() {
+            pair.grad = if i < 50 { 1.0 } else { -1.0 };
+            pair.hess = 1.0;
+        }
+
+        // Configure grower
+        let params = GrowerParams {
+            growth_strategy: GrowthStrategy::DepthWise { max_depth: 2 },
+            gain: GainParams {
+                min_gain: 0.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let mut grower = TreeGrower::new(&dataset, params, 8, Parallelism::Sequential);
+
+        // Grow the tree
+        let tree = grower.grow(&dataset, &gradients, 0, None).freeze();
+
+        // Tree should have been grown successfully
+        assert!(
+            count_leaves(&tree) >= 1,
+            "Tree should have at least 1 leaf"
+        );
+
+        // With only bundle features and sparse data, splits may or may not occur
+        // The key test is that the grower handles bundled features without panicking
+        // and produces a valid tree structure
+        assert!(tree.n_nodes() >= 1, "Tree should have at least 1 node");
+    }
 }

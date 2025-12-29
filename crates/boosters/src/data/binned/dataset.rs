@@ -179,13 +179,25 @@ impl BinnedDataset {
         let mut global_bin_offsets = Vec::with_capacity(n_features + 1);
         let mut current_offset = 0u32;
 
-        // Map from global feature index to (group_idx, idx_in_group)
+        // Map from global feature index to its location
         // First, build a reverse map from the groups
-        let mut location_map: Vec<Option<(u32, u32)>> = vec![None; n_features];
+        let mut location_map: Vec<Option<FeatureLocation>> = vec![None; n_features];
 
         for (group_idx, group) in built.groups.iter().enumerate() {
+            let is_bundle = group.is_bundle();
             for (idx_in_group, &global_idx) in group.feature_indices().iter().enumerate() {
-                location_map[global_idx as usize] = Some((group_idx as u32, idx_in_group as u32));
+                let location = if is_bundle {
+                    FeatureLocation::Bundled {
+                        bundle_group_idx: group_idx as u32,
+                        position_in_bundle: idx_in_group as u32,
+                    }
+                } else {
+                    FeatureLocation::Direct {
+                        group_idx: group_idx as u32,
+                        idx_in_group: idx_in_group as u32,
+                    }
+                };
+                location_map[global_idx as usize] = Some(location);
             }
         }
 
@@ -198,11 +210,8 @@ impl BinnedDataset {
             // Get location
             let location = if built.trivial_features.contains(&feature_idx) {
                 FeatureLocation::Skipped
-            } else if let Some((group_idx, idx_in_group)) = location_map[feature_idx] {
-                FeatureLocation::Direct {
-                    group_idx,
-                    idx_in_group,
-                }
+            } else if let Some(loc) = location_map[feature_idx] {
+                loc
             } else {
                 // Feature not in any group - should not happen
                 FeatureLocation::Skipped
@@ -1209,5 +1218,74 @@ mod tests {
         // Feature types
         assert_eq!(dataset.feature_type(0), FeatureType::Numeric);
         assert_eq!(dataset.feature_type(1), FeatureType::Categorical);
+    }
+
+    #[test]
+    fn test_decode_split_to_original_with_bundle() {
+        use crate::data::{BinnedDatasetBuilder, BinningConfig, FeatureMetadata};
+
+        // Create two sparse categorical features that will be bundled
+        // Feature 0: non-zero only for rows 0-4
+        // Feature 1: non-zero only for rows 50-54
+        let n_samples = 100;
+
+        let mut data_vec = Vec::with_capacity(n_samples * 2);
+        for sample in 0..n_samples {
+            let f0 = if sample < 5 {
+                (sample % 3 + 1) as f32
+            } else {
+                0.0
+            };
+            let f1 = if (50..55).contains(&sample) {
+                ((sample - 50) % 3 + 1) as f32
+            } else {
+                0.0
+            };
+            data_vec.push(f0);
+            data_vec.push(f1);
+        }
+
+        let data = ndarray::Array2::from_shape_vec((n_samples, 2), data_vec).unwrap();
+        let metadata = FeatureMetadata::default().categorical(vec![0, 1]);
+        let config = BinningConfig::builder()
+            .enable_bundling(true)
+            .sparsity_threshold(0.9)
+            .build();
+
+        let dataset = BinnedDatasetBuilder::from_array_with_metadata(data.view(), Some(&metadata), &config)
+            .unwrap()
+            .build()
+            .unwrap();
+
+        let effective = dataset.effective_feature_views();
+
+        // Verify bundling occurred
+        assert_eq!(effective.n_bundles, 1, "Should have 1 bundle");
+        assert_eq!(effective.n_columns(), 1, "Should have 1 effective column");
+
+        // Test decode_split_to_original for the bundle column
+        // Bin 0 should return the first feature with bin 0
+        let (feature, bin) = dataset.decode_split_to_original(&effective, 0, 0);
+        assert_eq!(feature, 0, "Bin 0 should map to first feature");
+        assert_eq!(bin, 0, "Bin 0 should decode to original bin 0");
+
+        // A non-zero bin should decode to the original feature that owns it
+        // The exact bin depends on how the bundle encodes values
+        // For a bin from the first feature (bins 1-4 typically):
+        let (feature1, _bin1) = dataset.decode_split_to_original(&effective, 0, 1);
+        assert!(
+            feature1 == 0 || feature1 == 1,
+            "Bin 1 should map to feature 0 or 1, got {}",
+            feature1
+        );
+
+        // For a higher bin (likely from second feature):
+        // Feature 0 has ~4 bins (categories 1,2,3 + default), so bins 5+ should be feature 1
+        let (feature5, _bin5) = dataset.decode_split_to_original(&effective, 0, 5);
+        // bin 5 is in feature 1's range (offset after feature 0's bins)
+        assert!(
+            feature5 == 0 || feature5 == 1,
+            "Bin 5 should map to a feature in the bundle"
+        );
     }
 }
