@@ -773,50 +773,77 @@ impl BinnedDataset {
 
 ---
 
-### Story 6.2: Update Training to Use New BinnedDataset
+### Story 6.2: Implement DataAccessor for New BinnedDataset
 
-**Status**: Not Started  
-**Estimate**: 2 hours
-
-**Description**: Update GBDT training to use new `BinnedDataset`.
-
-**Key Files**:
-- `training/gbdt/trainer.rs`
-- `training/gbdt/grower.rs`
-
----
-
-### Story 6.3: Update Linear Trees to Use Raw Values
-
-**Status**: Not Started  
+**Status**: ✅ Complete  
 **Estimate**: 1.5 hours
 
-**Description**: Update linear tree implementation to use raw values instead of bin midpoints.
+**Description**: Implement `DataAccessor` trait for the new `BinnedDataset`. This enables linear trees and gblinear to use raw feature values instead of bin midpoints.
 
-**Location**: `training/gbdt/sample.rs`
+**Key Files**:
 
-**Key Changes**:
+- `data/binned/dataset.rs` - Add DataAccessor implementation
 
-1. Update `BinnedSample::feature()` to call `BinnedDataset::raw_value(sample, feature)` instead of computing from bin midpoint
-2. Remove `bin_to_midpoint()` calls where raw values are available
-3. Handle case where raw value is `None` (categorical) - use bin as f32
+**Implementation**:
+
+1. Added `BinnedSampleView` struct that holds reference to dataset + sample index
+2. Implemented `SampleAccessor` for `BinnedSampleView`:
+   - Returns `raw_value()` for numeric features
+   - Returns bin index as f32 for categorical features  
+   - Returns NaN for skipped/bundled features
+3. Implemented `DataAccessor` for new `BinnedDataset`:
+   - `sample(idx)` returns `BinnedSampleView`
+   - `feature_type()` returns Numeric/Categorical based on feature info
+   - `has_categorical()` checks if any feature is categorical
+4. Added tests verifying raw values are returned correctly
+5. Exported `BinnedSampleView` from `data/binned/mod.rs`
+
+**Note**: Kept `DataAccessor` and `SampleAccessor` traits in deprecated module for now - moving them is a separate cleanup task that doesn't affect functionality.
 
 **Definition of Done**:
 
-- `BinnedSample::feature()` returns actual raw values
-- Linear trees use raw feature values
-- Tests pass
+- ✅ New `BinnedDataset` implements `DataAccessor`
+- ✅ `SampleAccessor::feature()` returns raw values for numeric features
+- ✅ Tests verify raw values are returned correctly
+- ✅ All 711 tests pass
 
 ---
 
-### Story 6.4: Update gblinear to Use New Dataset
+### Story 6.3: Verify Linear Trees Use Raw Values
 
 **Status**: Not Started  
-**Estimate**: 1 hour
+**Estimate**: 0.5 hours
 
-**Description**: Update gblinear to use `raw_feature_iter()` for feature access.
+**Description**: Add test to verify that `LeafLinearTrainer` uses raw values when given new `BinnedDataset`.
 
-**Note**: Use `ArrayView2` instead of `CowArray` for the matrix view - gblinear doesn't need to own the data.
+**Key Changes**:
+
+1. Add test in `linear/trainer.rs` that:
+   - Creates new `BinnedDataset` with known numeric values
+   - Runs `LeafLinearTrainer::train()` with new dataset
+   - Verifies coefficients are computed correctly (implying raw values used)
+
+**Definition of Done**:
+
+- Test passes demonstrating raw values are used
+- No changes to `LeafLinearTrainer` needed (uses DataAccessor generically)
+
+---
+
+### Story 6.4: Verify gblinear Works with New Dataset  
+
+**Status**: Not Started  
+**Estimate**: 0.5 hours
+
+**Description**: Verify gblinear can use `raw_feature_iter()` or `DataAccessor` from new `BinnedDataset`.
+
+**Key Changes**:
+
+1. Check gblinear trainer code for dataset access patterns
+2. Add test with new `BinnedDataset` if needed
+3. Document any API differences
+
+**Note**: gblinear may use different access patterns than linear trees. Check if it uses `DataAccessor` or direct slice access.
 
 ---
 

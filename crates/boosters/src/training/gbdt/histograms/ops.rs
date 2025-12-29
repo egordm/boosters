@@ -285,7 +285,7 @@ fn build_u16_contiguous(
 
 #[inline]
 fn build_sparse_u8_contiguous(
-    row_indices: &[u32],
+    sample_indices: &[u32],
     bin_values: &[u8],
     ordered_grad_hess: &[GradsTuple],
     histogram: &mut [HistogramBin],
@@ -293,7 +293,7 @@ fn build_sparse_u8_contiguous(
 ) {
     let start = start_row as u32;
     let end = start + ordered_grad_hess.len() as u32;
-    for (i, &row) in row_indices.iter().enumerate() {
+    for (i, &row) in sample_indices.iter().enumerate() {
         if row < start || row >= end {
             continue;
         }

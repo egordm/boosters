@@ -11,6 +11,8 @@ use super::bin_mapper::BinMapper;
 use super::builder::BuiltGroups;
 use super::group::FeatureGroup;
 use super::view::FeatureView;
+use crate::data::deprecated::accessor::{DataAccessor, SampleAccessor};
+use crate::data::deprecated::schema::FeatureType;
 
 /// Where a feature's data lives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -481,6 +483,112 @@ impl BinnedDataset {
 }
 
 // ============================================================================
+// DataAccessor Implementation
+// ============================================================================
+
+/// A view into a single sample (row) of a BinnedDataset.
+///
+/// Implements `SampleAccessor` to provide feature values for tree traversal
+/// and linear model fitting. Returns actual raw values for numeric features.
+#[derive(Clone, Copy)]
+pub struct BinnedSampleView<'a> {
+    dataset: &'a BinnedDataset,
+    sample: usize,
+}
+
+impl<'a> BinnedSampleView<'a> {
+    /// Create a new sample view.
+    #[inline]
+    fn new(dataset: &'a BinnedDataset, sample: usize) -> Self {
+        Self { dataset, sample }
+    }
+
+    /// Get the sample index.
+    #[inline]
+    pub fn index(&self) -> usize {
+        self.sample
+    }
+}
+
+impl SampleAccessor for BinnedSampleView<'_> {
+    /// Get the feature value at the given index.
+    ///
+    /// For numeric features, returns the actual raw value.
+    /// For categorical features, returns the bin index as f32.
+    /// For skipped features, returns NaN.
+    #[inline]
+    fn feature(&self, feature: usize) -> f32 {
+        // Try to get raw value first (for numeric features)
+        if let Some(raw) = self.dataset.raw_value(self.sample, feature) {
+            return raw;
+        }
+
+        // Fall back to bin value for categorical features
+        let location = self.dataset.features[feature].location;
+        match location {
+            FeatureLocation::Direct {
+                group_idx,
+                idx_in_group,
+            } => {
+                // Categorical feature - return bin as f32
+                self.dataset.groups[group_idx as usize].bin(self.sample, idx_in_group as usize)
+                    as f32
+            }
+            FeatureLocation::Bundled { .. } => {
+                // Bundled features don't have raw values - return NaN for now
+                // (bundled features shouldn't be used for linear regression)
+                f32::NAN
+            }
+            FeatureLocation::Skipped => {
+                // Skipped features are constant/trivial - return NaN
+                f32::NAN
+            }
+        }
+    }
+
+    #[inline]
+    fn n_features(&self) -> usize {
+        self.dataset.n_features()
+    }
+}
+
+impl DataAccessor for BinnedDataset {
+    type Sample<'a>
+        = BinnedSampleView<'a>
+    where
+        Self: 'a;
+
+    #[inline]
+    fn sample(&self, index: usize) -> Self::Sample<'_> {
+        BinnedSampleView::new(self, index)
+    }
+
+    #[inline]
+    fn n_samples(&self) -> usize {
+        self.n_samples
+    }
+
+    #[inline]
+    fn n_features(&self) -> usize {
+        self.features.len()
+    }
+
+    #[inline]
+    fn feature_type(&self, feature: usize) -> FeatureType {
+        if self.features[feature].is_categorical() {
+            FeatureType::Categorical
+        } else {
+            FeatureType::Numeric
+        }
+    }
+
+    #[inline]
+    fn has_categorical(&self) -> bool {
+        self.features.iter().any(|f| f.is_categorical())
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -805,5 +913,106 @@ mod tests {
         // No numeric features, so raw_feature_iter should be empty
         let raw_features: Vec<_> = dataset.raw_feature_iter().collect();
         assert!(raw_features.is_empty());
+    }
+
+    // ========================================================================
+    // DataAccessor Tests
+    // ========================================================================
+
+    #[test]
+    fn test_data_accessor_numeric() {
+        use crate::data::DataAccessor;
+        use crate::data::SampleAccessor;
+
+        // Create dataset with numeric features
+        // Use non-integer values to avoid auto-categorical detection
+        let built = DatasetBuilder::new()
+            .add_numeric("x", array![1.5, 2.5, 3.5, 4.5, 5.5].view())
+            .add_numeric("y", array![10.1, 20.2, 30.3, 40.4, 50.5].view())
+            .build_groups()
+            .unwrap();
+
+        let dataset = BinnedDataset::from_built_groups(built);
+
+        // Use DataAccessor trait
+        assert_eq!(dataset.n_samples(), 5);
+        assert_eq!(dataset.n_features(), 2);
+
+        // Both features should be numeric (not auto-detected as categorical)
+        assert!(!dataset.is_categorical(0));
+        assert!(!dataset.is_categorical(1));
+
+        // Check raw values via SampleAccessor
+        let sample = dataset.sample(0);
+        assert_eq!(sample.n_features(), 2);
+        // Raw values should be preserved (not bin midpoints)
+        assert!((sample.feature(0) - 1.5).abs() < 0.01, "feature(0) = {}", sample.feature(0));
+        assert!((sample.feature(1) - 10.1).abs() < 0.01, "feature(1) = {}", sample.feature(1));
+
+        // Check other samples
+        let sample2 = dataset.sample(2);
+        assert!((sample2.feature(0) - 3.5).abs() < 0.01);
+        assert!((sample2.feature(1) - 30.3).abs() < 0.01);
+
+        let sample4 = dataset.sample(4);
+        assert!((sample4.feature(0) - 5.5).abs() < 0.01);
+        assert!((sample4.feature(1) - 50.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_data_accessor_categorical() {
+        use crate::data::DataAccessor;
+        use crate::data::SampleAccessor;
+
+        // Create dataset with categorical features
+        let built = DatasetBuilder::new()
+            .add_categorical("cat", array![0.0, 1.0, 2.0, 1.0, 0.0].view())
+            .build_groups()
+            .unwrap();
+
+        let dataset = BinnedDataset::from_built_groups(built);
+
+        // Categorical returns bin as f32
+        let sample0 = dataset.sample(0);
+        let sample1 = dataset.sample(1);
+        let sample2 = dataset.sample(2);
+
+        // Categories should be preserved as bin indices
+        // The exact bin depends on how categoricals are encoded, but
+        // they should be small integers
+        assert!(sample0.feature(0) >= 0.0);
+        assert!(sample1.feature(0) >= 0.0);
+        assert!(sample2.feature(0) >= 0.0);
+
+        // Feature type should be categorical
+        assert!(dataset.has_categorical());
+        assert_eq!(dataset.feature_type(0), FeatureType::Categorical);
+    }
+
+    #[test]
+    fn test_data_accessor_mixed() {
+        use crate::data::DataAccessor;
+        use crate::data::SampleAccessor;
+
+        // Create dataset with mixed numeric and categorical
+        // Use non-integer values for numeric to avoid auto-categorical detection
+        let built = DatasetBuilder::new()
+            .add_numeric("num", array![1.1, 2.2, 3.3, 4.4, 5.5].view())
+            .add_categorical("cat", array![0.0, 1.0, 0.0, 1.0, 0.0].view())
+            .build_groups()
+            .unwrap();
+
+        let dataset = BinnedDataset::from_built_groups(built);
+
+        assert_eq!(dataset.n_features(), 2);
+        assert!(dataset.has_categorical());
+
+        // Numeric feature should return raw value
+        let sample = dataset.sample(2);
+        assert!((sample.feature(0) - 3.3).abs() < 0.01, "feature(0) = {}", sample.feature(0));
+
+        // Feature types
+        assert_eq!(dataset.feature_type(0), FeatureType::Numeric);
+        assert_eq!(dataset.feature_type(1), FeatureType::Categorical);
     }
 }

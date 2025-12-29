@@ -20,6 +20,7 @@ pub(crate) mod view;
 // Note: BinMapper and FeatureAnalysis are also NOT exported yet - deprecated versions
 // are still used via re-export. New types will be used by the new builder.
 pub use bin_data::BinData;
+pub use dataset::BinnedSampleView;
 pub use storage::{
     CategoricalStorage, FeatureStorage, NumericStorage, SparseCategoricalStorage,
     SparseNumericStorage,
