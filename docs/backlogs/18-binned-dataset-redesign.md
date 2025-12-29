@@ -580,44 +580,28 @@ impl DatasetBuilder {
 
 ### Story 5.1: Create New BinnedDataset Struct
 
-**Status**: Not Started  
+**Status**: COMPLETE  
 **Estimate**: 2 hours
 
 **Description**: Create the main `BinnedDataset` struct and supporting types.
 
 **Location**: `data/binned/dataset.rs` (NEW FILE)
 
-**Implementation** (from RFC):
-
-```rust
-/// Per-feature metadata
-pub struct BinnedFeatureInfo {
-    /// The bin mapper for this feature (contains thresholds)
-    pub bin_mapper: BinMapper,
-    // Note: is_categorical can be derived from bin_mapper
-}
-
-/// Maps global feature index to group location
-pub struct FeatureLocation {
-    pub group_idx: usize,
-    pub feature_in_group: usize,
-}
-
-pub struct BinnedDataset {
-    n_samples: usize,
-    features: Box<[BinnedFeatureInfo]>,
-    groups: Vec<FeatureGroup>,
-    global_bin_offsets: Box<[u32]>,
-    feature_locations: Box<[FeatureLocation]>,
-    // Labels, weights, etc.
-}
-```
+**Implementation**:
+- `FeatureLocation` enum: Direct, Bundled, Skipped
+- `BinnedFeatureInfo` with name, bin_mapper, location
+- `BinnedDataset` with from_built_groups() constructor
+- Basic accessors: n_samples, n_features, n_groups, total_bins
+- Labels/weights support
+- global_bin_offsets for histogram indexing
+- has_raw_values() for linear tree support
+- 5 unit tests
 
 **Definition of Done**:
 
-- `BinnedFeatureInfo`, `FeatureLocation`, and `BinnedDataset` structs created
-- Basic constructor
-- Unit tests
+- ✅ `BinnedFeatureInfo`, `FeatureLocation`, and `BinnedDataset` structs created
+- ✅ Basic constructor from BuiltGroups
+- ✅ Unit tests
 
 ---
 

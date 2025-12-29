@@ -273,6 +273,94 @@ impl BinnedDataset {
     }
 
     // =========================================================================
+    // Bin/Raw Access Methods
+    // =========================================================================
+
+    /// Get the bin value for a sample and feature.
+    ///
+    /// # Parameters
+    /// - `sample`: Sample index (0..n_samples)
+    /// - `feature`: Global feature index (0..n_features)
+    ///
+    /// # Panics
+    ///
+    /// Panics if the feature is skipped (trivial) or indices are out of bounds.
+    #[inline]
+    pub fn bin(&self, sample: usize, feature: usize) -> u32 {
+        let location = self.features[feature].location;
+        match location {
+            FeatureLocation::Direct {
+                group_idx,
+                idx_in_group,
+            } => self.groups[group_idx as usize].bin(sample, idx_in_group as usize),
+            FeatureLocation::Bundled { .. } => {
+                // TODO: Implement bundled feature access
+                panic!("Bundled feature access not yet implemented")
+            }
+            FeatureLocation::Skipped => {
+                panic!("Cannot access bin for skipped feature {feature}")
+            }
+        }
+    }
+
+    /// Get the raw value for a sample and feature.
+    ///
+    /// Returns `None` for categorical features.
+    ///
+    /// # Parameters
+    /// - `sample`: Sample index (0..n_samples)
+    /// - `feature`: Global feature index (0..n_features)
+    ///
+    /// # Panics
+    ///
+    /// Panics if the feature is skipped (trivial) or indices are out of bounds.
+    #[inline]
+    pub fn raw_value(&self, sample: usize, feature: usize) -> Option<f32> {
+        let location = self.features[feature].location;
+        match location {
+            FeatureLocation::Direct {
+                group_idx,
+                idx_in_group,
+            } => self.groups[group_idx as usize].raw(sample, idx_in_group as usize),
+            FeatureLocation::Bundled { .. } => {
+                // Bundled features don't have raw values
+                None
+            }
+            FeatureLocation::Skipped => {
+                panic!("Cannot access raw value for skipped feature {feature}")
+            }
+        }
+    }
+
+    /// Get a contiguous slice of raw values for a feature.
+    ///
+    /// Returns `None` for categorical features or sparse storage.
+    ///
+    /// # Parameters
+    /// - `feature`: Global feature index (0..n_features)
+    ///
+    /// # Panics
+    ///
+    /// Panics if the feature is skipped (trivial).
+    #[inline]
+    pub fn raw_feature_slice(&self, feature: usize) -> Option<&[f32]> {
+        let location = self.features[feature].location;
+        match location {
+            FeatureLocation::Direct {
+                group_idx,
+                idx_in_group,
+            } => self.groups[group_idx as usize].raw_slice(idx_in_group as usize),
+            FeatureLocation::Bundled { .. } => {
+                // Bundled features don't have raw slices
+                None
+            }
+            FeatureLocation::Skipped => {
+                panic!("Cannot access raw slice for skipped feature {feature}")
+            }
+        }
+    }
+
+    // =========================================================================
     // Linear trees support
     // =========================================================================
 
@@ -398,5 +486,78 @@ mod tests {
 
         assert!(!dataset.is_categorical(0)); // Numeric
         assert!(dataset.is_categorical(1)); // Categorical
+    }
+
+    #[test]
+    fn test_bin_access() {
+        // Create a simple dataset with known values
+        let data = make_array(&[1.1, 2.2, 3.3, 4.4, 5.5], 5, 1);
+        let config = BinningConfig::builder().max_bins(5).build();
+
+        let built = DatasetBuilder::from_array(data.view(), &config)
+            .unwrap()
+            .build_groups()
+            .unwrap();
+
+        let dataset = BinnedDataset::from_built_groups(built);
+
+        // Bin values should be 0..n_bins-1 for evenly spaced values
+        // With 5 unique values and max_bins=5, each value should map to its own bin
+        for sample in 0..5 {
+            let bin = dataset.bin(sample, 0);
+            assert!(bin < dataset.n_bins(0));
+        }
+    }
+
+    #[test]
+    fn test_raw_value_access() {
+        let data = make_array(&[1.5, 2.5, 3.5, 4.5, 5.5], 5, 1);
+        let config = BinningConfig::default();
+
+        let built = DatasetBuilder::from_array(data.view(), &config)
+            .unwrap()
+            .build_groups()
+            .unwrap();
+
+        let dataset = BinnedDataset::from_built_groups(built);
+
+        // Raw values should be preserved exactly
+        assert_eq!(dataset.raw_value(0, 0), Some(1.5));
+        assert_eq!(dataset.raw_value(1, 0), Some(2.5));
+        assert_eq!(dataset.raw_value(2, 0), Some(3.5));
+        assert_eq!(dataset.raw_value(3, 0), Some(4.5));
+        assert_eq!(dataset.raw_value(4, 0), Some(5.5));
+    }
+
+    #[test]
+    fn test_raw_feature_slice() {
+        let data = make_array(&[1.5, 2.5, 3.5, 4.5, 5.5], 5, 1);
+        let config = BinningConfig::default();
+
+        let built = DatasetBuilder::from_array(data.view(), &config)
+            .unwrap()
+            .build_groups()
+            .unwrap();
+
+        let dataset = BinnedDataset::from_built_groups(built);
+
+        // Get the raw slice for the feature
+        let slice = dataset.raw_feature_slice(0);
+        assert!(slice.is_some());
+        assert_eq!(slice.unwrap(), &[1.5, 2.5, 3.5, 4.5, 5.5]);
+    }
+
+    #[test]
+    fn test_categorical_no_raw_values() {
+        let built = DatasetBuilder::new()
+            .add_categorical("cat", array![0.0, 1.0, 2.0, 1.0, 0.0].view())
+            .build_groups()
+            .unwrap();
+
+        let dataset = BinnedDataset::from_built_groups(built);
+
+        // Categorical features don't have raw values
+        assert_eq!(dataset.raw_value(0, 0), None);
+        assert_eq!(dataset.raw_feature_slice(0), None);
     }
 }
