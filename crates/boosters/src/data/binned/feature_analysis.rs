@@ -529,6 +529,188 @@ pub fn analyze_features_sequential(
 }
 
 // ============================================================================
+// GroupSpec - Feature Grouping Strategy
+// ============================================================================
+
+/// Type of feature group storage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GroupType {
+    /// Dense numeric storage (bins + raw values).
+    NumericDense,
+    /// Dense categorical storage (bins only).
+    CategoricalDense,
+    /// Sparse numeric storage (single feature, bins + raw values).
+    SparseNumeric,
+    /// Sparse categorical storage (single feature, bins only).
+    SparseCategorical,
+    /// Bundled sparse categorical features (EFB).
+    Bundle,
+}
+
+/// Specification for a feature group.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GroupSpec {
+    /// Feature indices in this group.
+    pub feature_indices: Vec<usize>,
+    /// Type of storage for this group.
+    pub group_type: GroupType,
+    /// Whether bins need U16 (vs U8).
+    pub needs_u16: bool,
+}
+
+impl GroupSpec {
+    /// Create a new group specification.
+    pub fn new(feature_indices: Vec<usize>, group_type: GroupType, needs_u16: bool) -> Self {
+        Self {
+            feature_indices,
+            group_type,
+            needs_u16,
+        }
+    }
+
+    /// Number of features in this group.
+    pub fn n_features(&self) -> usize {
+        self.feature_indices.len()
+    }
+
+    /// Whether this group has raw values.
+    pub fn has_raw_values(&self) -> bool {
+        matches!(
+            self.group_type,
+            GroupType::NumericDense | GroupType::SparseNumeric
+        )
+    }
+}
+
+/// Result of feature grouping computation.
+#[derive(Clone, Debug)]
+pub struct GroupingResult {
+    /// Feature groups.
+    pub groups: Vec<GroupSpec>,
+    /// Indices of trivial features (skipped).
+    pub trivial_features: Vec<usize>,
+}
+
+/// Compute homogeneous feature groups from analysis results.
+///
+/// Groups features by:
+/// 1. Type (numeric vs categorical)
+/// 2. Density (dense vs sparse)
+/// 3. Bin width (U8 vs U16)
+///
+/// # Arguments
+///
+/// * `analyses` - Feature analysis results from `analyze_features()`
+/// * `config` - Binning configuration
+///
+/// # Returns
+///
+/// `GroupingResult` containing feature groups and trivial feature indices.
+///
+/// # Grouping Rules
+///
+/// Per RFC-0018:
+/// - Numeric dense U8: all numeric, non-sparse, ≤256 bins → one group
+/// - Numeric dense U16: all numeric, non-sparse, >256 bins → one group
+/// - Categorical dense U8: all categorical, non-sparse, ≤256 bins → one group
+/// - Categorical dense U16: all categorical, non-sparse, >256 bins → one group
+/// - Sparse features: each sparse feature → its own group
+/// - Trivial features: skipped (not grouped)
+pub fn compute_groups(analyses: &[FeatureAnalysis], _config: &BinningConfig) -> GroupingResult {
+    let mut numeric_dense_u8: Vec<usize> = Vec::new();
+    let mut numeric_dense_u16: Vec<usize> = Vec::new();
+    let mut categorical_dense_u8: Vec<usize> = Vec::new();
+    let mut categorical_dense_u16: Vec<usize> = Vec::new();
+    let mut sparse_numeric: Vec<usize> = Vec::new();
+    let mut sparse_categorical: Vec<usize> = Vec::new();
+    let mut trivial_features: Vec<usize> = Vec::new();
+
+    for analysis in analyses {
+        if analysis.is_trivial {
+            trivial_features.push(analysis.feature_idx);
+            continue;
+        }
+
+        if analysis.is_sparse {
+            if analysis.is_numeric {
+                sparse_numeric.push(analysis.feature_idx);
+            } else {
+                sparse_categorical.push(analysis.feature_idx);
+            }
+        } else if analysis.is_numeric {
+            if analysis.needs_u16 {
+                numeric_dense_u16.push(analysis.feature_idx);
+            } else {
+                numeric_dense_u8.push(analysis.feature_idx);
+            }
+        } else {
+            // Categorical
+            if analysis.needs_u16 {
+                categorical_dense_u16.push(analysis.feature_idx);
+            } else {
+                categorical_dense_u8.push(analysis.feature_idx);
+            }
+        }
+    }
+
+    let mut groups = Vec::new();
+
+    // Create dense numeric groups
+    if !numeric_dense_u8.is_empty() {
+        groups.push(GroupSpec::new(
+            numeric_dense_u8,
+            GroupType::NumericDense,
+            false,
+        ));
+    }
+    if !numeric_dense_u16.is_empty() {
+        groups.push(GroupSpec::new(
+            numeric_dense_u16,
+            GroupType::NumericDense,
+            true,
+        ));
+    }
+
+    // Create dense categorical groups
+    if !categorical_dense_u8.is_empty() {
+        groups.push(GroupSpec::new(
+            categorical_dense_u8,
+            GroupType::CategoricalDense,
+            false,
+        ));
+    }
+    if !categorical_dense_u16.is_empty() {
+        groups.push(GroupSpec::new(
+            categorical_dense_u16,
+            GroupType::CategoricalDense,
+            true,
+        ));
+    }
+
+    // Create individual sparse groups
+    for idx in sparse_numeric {
+        let needs_u16 = analyses[idx].needs_u16;
+        groups.push(GroupSpec::new(vec![idx], GroupType::SparseNumeric, needs_u16));
+    }
+    for idx in sparse_categorical {
+        let needs_u16 = analyses[idx].needs_u16;
+        groups.push(GroupSpec::new(
+            vec![idx],
+            GroupType::SparseCategorical,
+            needs_u16,
+        ));
+    }
+
+    // TODO: Story 1.6 - Bundle sparse categorical features together when
+    // config.enable_bundling is true and conflict graph allows.
+
+    GroupingResult {
+        groups,
+        trivial_features,
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -788,5 +970,283 @@ mod tests {
         let analysis = analyze_features_sequential(features, &config, None);
 
         assert!(analysis[0].is_numeric); // Too many categories → numeric
+    }
+
+    // -------------------------------------------------------------------------
+    // GroupSpec and compute_groups tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_group_spec_properties() {
+        let group = GroupSpec::new(vec![0, 1, 2], GroupType::NumericDense, false);
+        assert_eq!(group.n_features(), 3);
+        assert!(group.has_raw_values());
+
+        let cat_group = GroupSpec::new(vec![3], GroupType::CategoricalDense, false);
+        assert!(!cat_group.has_raw_values());
+
+        let sparse_num = GroupSpec::new(vec![4], GroupType::SparseNumeric, false);
+        assert!(sparse_num.has_raw_values());
+
+        let sparse_cat = GroupSpec::new(vec![5], GroupType::SparseCategorical, false);
+        assert!(!sparse_cat.has_raw_values());
+    }
+
+    #[test]
+    fn test_compute_groups_mixed() {
+        // Create analyses manually for testing
+        let analyses = vec![
+            // Feature 0: numeric dense U8
+            FeatureAnalysis {
+                feature_idx: 0,
+                is_numeric: true,
+                is_sparse: false,
+                needs_u16: false,
+                is_trivial: false,
+                is_binary: true,
+                n_unique: 2,
+                n_nonzero: 50,
+                n_valid: 100,
+                n_samples: 100,
+                min_val: 0.0,
+                max_val: 1.0,
+            },
+            // Feature 1: numeric dense U8
+            FeatureAnalysis {
+                feature_idx: 1,
+                is_numeric: true,
+                is_sparse: false,
+                needs_u16: false,
+                is_trivial: false,
+                is_binary: false,
+                n_unique: 100,
+                n_nonzero: 100,
+                n_valid: 100,
+                n_samples: 100,
+                min_val: 0.0,
+                max_val: 99.0,
+            },
+            // Feature 2: categorical dense U8
+            FeatureAnalysis {
+                feature_idx: 2,
+                is_numeric: false,
+                is_sparse: false,
+                needs_u16: false,
+                is_trivial: false,
+                is_binary: false,
+                n_unique: 5,
+                n_nonzero: 100,
+                n_valid: 100,
+                n_samples: 100,
+                min_val: 0.0,
+                max_val: 4.0,
+            },
+            // Feature 3: sparse numeric
+            FeatureAnalysis {
+                feature_idx: 3,
+                is_numeric: true,
+                is_sparse: true,
+                needs_u16: false,
+                is_trivial: false,
+                is_binary: false,
+                n_unique: 10,
+                n_nonzero: 5,
+                n_valid: 100,
+                n_samples: 100,
+                min_val: 0.0,
+                max_val: 9.0,
+            },
+            // Feature 4: trivial
+            FeatureAnalysis {
+                feature_idx: 4,
+                is_numeric: true,
+                is_sparse: false,
+                needs_u16: false,
+                is_trivial: true,
+                is_binary: false,
+                n_unique: 1,
+                n_nonzero: 0,
+                n_valid: 100,
+                n_samples: 100,
+                min_val: 0.0,
+                max_val: 0.0,
+            },
+        ];
+
+        let result = compute_groups(&analyses, &default_config());
+
+        // Should have:
+        // - 1 numeric dense U8 group (features 0, 1)
+        // - 1 categorical dense U8 group (feature 2)
+        // - 1 sparse numeric group (feature 3)
+        // - 1 trivial feature (feature 4)
+
+        assert_eq!(result.groups.len(), 3);
+        assert_eq!(result.trivial_features, vec![4]);
+
+        // Find numeric dense group
+        let num_dense = result
+            .groups
+            .iter()
+            .find(|g| g.group_type == GroupType::NumericDense)
+            .unwrap();
+        assert_eq!(num_dense.feature_indices, vec![0, 1]);
+        assert!(!num_dense.needs_u16);
+
+        // Find categorical dense group
+        let cat_dense = result
+            .groups
+            .iter()
+            .find(|g| g.group_type == GroupType::CategoricalDense)
+            .unwrap();
+        assert_eq!(cat_dense.feature_indices, vec![2]);
+
+        // Find sparse numeric group
+        let sparse_num = result
+            .groups
+            .iter()
+            .find(|g| g.group_type == GroupType::SparseNumeric)
+            .unwrap();
+        assert_eq!(sparse_num.feature_indices, vec![3]);
+    }
+
+    #[test]
+    fn test_compute_groups_u16() {
+        let analyses = vec![
+            FeatureAnalysis {
+                feature_idx: 0,
+                is_numeric: true,
+                is_sparse: false,
+                needs_u16: true, // U16
+                is_trivial: false,
+                is_binary: false,
+                n_unique: 500,
+                n_nonzero: 100,
+                n_valid: 100,
+                n_samples: 100,
+                min_val: 0.0,
+                max_val: 499.0,
+            },
+            FeatureAnalysis {
+                feature_idx: 1,
+                is_numeric: true,
+                is_sparse: false,
+                needs_u16: false, // U8
+                is_trivial: false,
+                is_binary: false,
+                n_unique: 100,
+                n_nonzero: 100,
+                n_valid: 100,
+                n_samples: 100,
+                min_val: 0.0,
+                max_val: 99.0,
+            },
+        ];
+
+        let result = compute_groups(&analyses, &default_config());
+
+        // Should have 2 groups: one U8, one U16
+        assert_eq!(result.groups.len(), 2);
+
+        let u8_group = result.groups.iter().find(|g| !g.needs_u16).unwrap();
+        let u16_group = result.groups.iter().find(|g| g.needs_u16).unwrap();
+
+        assert_eq!(u8_group.feature_indices, vec![1]);
+        assert_eq!(u16_group.feature_indices, vec![0]);
+    }
+
+    #[test]
+    fn test_compute_groups_all_sparse() {
+        let analyses = vec![
+            FeatureAnalysis {
+                feature_idx: 0,
+                is_numeric: true,
+                is_sparse: true,
+                needs_u16: false,
+                is_trivial: false,
+                is_binary: false,
+                n_unique: 10,
+                n_nonzero: 5,
+                n_valid: 100,
+                n_samples: 100,
+                min_val: 0.0,
+                max_val: 9.0,
+            },
+            FeatureAnalysis {
+                feature_idx: 1,
+                is_numeric: false,
+                is_sparse: true,
+                needs_u16: false,
+                is_trivial: false,
+                is_binary: false,
+                n_unique: 3,
+                n_nonzero: 5,
+                n_valid: 100,
+                n_samples: 100,
+                min_val: 0.0,
+                max_val: 2.0,
+            },
+        ];
+
+        let result = compute_groups(&analyses, &default_config());
+
+        // Each sparse feature gets its own group
+        assert_eq!(result.groups.len(), 2);
+        assert!(result
+            .groups
+            .iter()
+            .any(|g| g.group_type == GroupType::SparseNumeric));
+        assert!(result
+            .groups
+            .iter()
+            .any(|g| g.group_type == GroupType::SparseCategorical));
+    }
+
+    #[test]
+    fn test_compute_groups_all_trivial() {
+        let analyses = vec![
+            FeatureAnalysis {
+                feature_idx: 0,
+                is_numeric: true,
+                is_sparse: false,
+                needs_u16: false,
+                is_trivial: true,
+                is_binary: false,
+                n_unique: 0,
+                n_nonzero: 0,
+                n_valid: 0,
+                n_samples: 100,
+                min_val: f32::NAN,
+                max_val: f32::NAN,
+            },
+            FeatureAnalysis {
+                feature_idx: 1,
+                is_numeric: true,
+                is_sparse: false,
+                needs_u16: false,
+                is_trivial: true,
+                is_binary: false,
+                n_unique: 1,
+                n_nonzero: 0,
+                n_valid: 100,
+                n_samples: 100,
+                min_val: 0.0,
+                max_val: 0.0,
+            },
+        ];
+
+        let result = compute_groups(&analyses, &default_config());
+
+        assert_eq!(result.groups.len(), 0);
+        assert_eq!(result.trivial_features, vec![0, 1]);
+    }
+
+    #[test]
+    fn test_compute_groups_empty() {
+        let analyses: Vec<FeatureAnalysis> = vec![];
+        let result = compute_groups(&analyses, &default_config());
+
+        assert_eq!(result.groups.len(), 0);
+        assert_eq!(result.trivial_features.len(), 0);
     }
 }

@@ -488,7 +488,7 @@ pub enum FeatureView<'a> {
 
 ### Story 4.1: Create FeatureAnalysis
 
-**Status**: Not Started  
+**Status**: COMPLETE  
 **Estimate**: 1 hour
 
 **Description**: Create feature analysis to detect numeric vs categorical, sparsity, bin width.
