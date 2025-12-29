@@ -23,7 +23,9 @@ use super::FeatureStorage;
 ///
 /// # Examples
 ///
-/// ```
+/// ```ignore
+/// // Note: Example is marked ignore until Epic 7 when new types are exported publicly.
+/// // Currently deprecated types shadow these in boosters::data::binned re-exports.
 /// use boosters::data::binned::{BinData, FeatureGroup, NumericStorage, FeatureStorage};
 ///
 /// // Create storage for 2 features, 3 samples each

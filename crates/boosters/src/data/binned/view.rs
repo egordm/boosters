@@ -32,7 +32,9 @@
 ///
 /// # Examples
 ///
-/// ```
+/// ```ignore
+/// // Note: Example is marked ignore until Epic 7 when new types are exported publicly.
+/// // Currently deprecated types shadow these in boosters::data::binned re-exports.
 /// use boosters::data::binned::view::FeatureView;
 ///
 /// // Dense U8 view

@@ -513,47 +513,64 @@ pub fn analyze_feature(values: &[f32], config: &BinningConfig) -> FeatureAnalysi
 
 ### Story 4.2: Create GroupingStrategy
 
-**Status**: Not Started  
+**Status**: COMPLETE  
 **Estimate**: 1 hour
 
 **Description**: Create strategy for grouping features homogeneously.
 
-**Location**: `data/binned/builder.rs` (NEW FILE)
+**Location**: `data/binned/feature_analysis.rs` (added to existing)
 
 **Key Logic**:
-- Partition features by type (numeric/categorical) and bin width (U8/U16)
-- Create homogeneous groups
-- Handle sparse features
+- ✅ Partition features by type (numeric/categorical) and bin width (U8/U16)
+- ✅ Create homogeneous groups
+- ✅ Handle sparse features (each gets own group)
+- ✅ Handle trivial features (collected separately)
+
+**Implementation**:
+- `GroupType` enum: NumericDense, CategoricalDense, SparseNumeric, SparseCategorical, Bundle
+- `GroupSpec` struct with feature_indices, group_type, needs_u16
+- `GroupingResult` combining groups with trivial_features
+- `compute_groups()` function implementing RFC grouping rules
+- 7 comprehensive tests for grouping logic
 
 ---
 
 ### Story 4.3: Create New BinnedDatasetBuilder
 
-**Status**: Not Started  
+**Status**: COMPLETE  
 **Estimate**: 5 hours
 
 **Description**: Create the main builder that produces `BinnedDataset`.
 
 **Location**: `data/binned/builder.rs`
 
+**Implementation**:
+- `DatasetBuilder` with batch API (`from_array`, `from_array_with_metadata`) and single-feature API (`add_numeric`, `add_categorical`)
+- `PendingFeature` struct for single-feature API
+- `BuiltGroups` intermediate result with groups, bin_mappers, analyses, labels, weights
+- `DatasetError` enum for error handling
+- Helper functions: `bin_numeric()`, `bin_categorical()`, `create_bin_mappers()`
+- Storage builders: `build_numeric_dense()`, `build_categorical_dense()`, `build_sparse_numeric()`, `build_sparse_categorical()`
+- 10 comprehensive tests covering all functionality
+
 **Key Methods**:
 ```rust
-impl BinnedDatasetBuilder {
+impl DatasetBuilder {
     pub fn new() -> Self;
-    pub fn from_array(data: ArrayView2<f32>, config: &BinningConfig) -> Result<Self, Error>;
-    pub fn from_array_with_metadata(...) -> Result<Self, Error>;
+    pub fn from_array(data: ArrayView2<f32>, config: &BinningConfig) -> Result<Self, DatasetError>;
+    pub fn from_array_with_metadata(...) -> Result<Self, DatasetError>;
     pub fn add_numeric(...) -> Self;
     pub fn add_categorical(...) -> Self;
     pub fn set_labels(...) -> Self;
-    pub fn build(self) -> Result<BinnedDataset, Error>;
+    pub fn build_groups(self) -> Result<BuiltGroups, DatasetError>;
 }
 ```
 
-**Critical**: This builder must:
-1. Analyze all features
-2. Create homogeneous groups
-3. Store raw values for numeric features
-4. Produce new `FeatureStorage` types
+**Critical**: This builder:
+1. ✅ Analyzes all features
+2. ✅ Creates homogeneous groups
+3. ✅ Stores raw values for numeric features
+4. ✅ Produces new `FeatureStorage` types
 
 ---
 

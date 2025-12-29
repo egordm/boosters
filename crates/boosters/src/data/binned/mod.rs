@@ -6,6 +6,7 @@
 // New RFC-0018 implementation
 mod bin_data;
 mod bin_mapper;
+mod builder;
 mod feature_analysis;
 pub(crate) mod group;
 mod storage;
@@ -25,3 +26,4 @@ pub use storage::{
 // Re-export everything from deprecated for backward compatibility
 #[allow(deprecated)]
 pub use super::deprecated::binned::*;
+
