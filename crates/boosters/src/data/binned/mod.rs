@@ -5,6 +5,7 @@
 
 // New RFC-0018 implementation
 mod bin_data;
+mod bin_mapper;
 pub(crate) mod group;
 mod storage;
 pub(crate) mod view;
@@ -12,6 +13,7 @@ pub(crate) mod view;
 // Public exports for new types
 // Note: FeatureGroup and FeatureView are NOT exported publicly yet to avoid
 // conflict with deprecated types. They will be exported when we switch over in Epic 7.
+// Note: BinMapper is also NOT exported yet - deprecated BinMapper is still used via re-export.
 pub use bin_data::BinData;
 pub use storage::{
     CategoricalStorage, FeatureStorage, NumericStorage, SparseCategoricalStorage,

@@ -151,7 +151,7 @@ data/column.rs                → data/deprecated/column.rs
 
 ### Story 1.1: Create BinData Enum
 
-**Status**: Not Started  
+**Status**: COMPLETE  
 **Estimate**: 30 min
 
 **Description**: Create the new `BinData` enum in `data/binned/bin_data.rs`.
@@ -198,7 +198,7 @@ impl BinData {
 
 ### Story 1.2: Create NumericStorage
 
-**Status**: Not Started  
+**Status**: COMPLETE  
 **Estimate**: 45 min
 
 **Description**: Create dense numeric storage with bins + raw values.
@@ -241,7 +241,7 @@ impl NumericStorage {
 
 ### Story 1.3: Create CategoricalStorage
 
-**Status**: Not Started  
+**Status**: COMPLETE  
 **Estimate**: 30 min
 
 **Description**: Create dense categorical storage (bins only, no raw values).
@@ -276,7 +276,7 @@ impl CategoricalStorage {
 
 ### Story 1.4: Create Sparse Storage Types
 
-**Status**: Not Started  
+**Status**: COMPLETE  
 **Estimate**: 1 hour
 
 **Description**: Create CSC-like sparse storage for numeric and categorical features.
@@ -311,7 +311,7 @@ pub struct SparseCategoricalStorage {
 
 ### Story 1.5: Create FeatureStorage Enum
 
-**Status**: Not Started  
+**Status**: COMPLETE  
 **Estimate**: 30 min
 
 **Description**: Create unified enum wrapping all storage types.
@@ -361,7 +361,7 @@ impl FeatureStorage {
 
 ### Story 2.1: Create New FeatureGroup
 
-**Status**: Not Started  
+**Status**: COMPLETE  
 **Estimate**: 1.5 hours
 
 **Description**: Create new `FeatureGroup` struct using `FeatureStorage`.
@@ -406,7 +406,7 @@ impl FeatureGroup {
 
 ### Story 2.2: Create New FeatureView
 
-**Status**: Not Started  
+**Status**: COMPLETE  
 **Estimate**: 30 min
 
 **Description**: Create simplified `FeatureView` with no stride.
@@ -435,7 +435,7 @@ pub enum FeatureView<'a> {
 
 ### Story 2.3: Property-Based Tests for Storage Types
 
-**Status**: Not Started  
+**Status**: COMPLETE  
 **Estimate**: 1 hour
 
 **Description**: Add property-based tests (proptest) for core storage types.
