@@ -711,7 +711,7 @@ impl BinnedDataset {
 
 ### Story 5.6: Review/Demo: New Dataset API
 
-**Status**: Not Started  
+**Status**: ✅ Complete (documented in tmp/development_review_2025-12-29_epic5.md)  
 **Estimate**: 30 min
 
 **Description**: Demo the new dataset API to stakeholders before integration.
