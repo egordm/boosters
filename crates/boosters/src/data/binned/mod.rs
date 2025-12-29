@@ -5,9 +5,12 @@
 
 // New RFC-0018 implementation
 mod bin_data;
+pub(crate) mod group;
 mod storage;
 
 // Public exports for new types
+// Note: FeatureGroup is NOT exported publicly yet to avoid conflict with deprecated.
+// It will be exported when we switch over in Epic 7.
 pub use bin_data::BinData;
 pub use storage::{
     CategoricalStorage, FeatureStorage, NumericStorage, SparseCategoricalStorage,
