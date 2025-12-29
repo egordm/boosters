@@ -10,6 +10,7 @@ mod builder;
 mod dataset;
 mod feature_analysis;
 pub(crate) mod group;
+mod row_blocks;
 mod storage;
 pub(crate) mod view;
 

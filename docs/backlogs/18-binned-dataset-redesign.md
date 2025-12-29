@@ -686,7 +686,7 @@ impl BinnedDataset {
 
 ### Story 5.5: Implement RowBlocks for Prediction
 
-**Status**: Not Started  
+**Status**: ✅ Complete (commit a3ba6bb)  
 **Estimate**: 2 hours
 
 **Description**: Create buffered row block iterator for efficient prediction.
