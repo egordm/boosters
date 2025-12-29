@@ -402,17 +402,6 @@ impl DatasetBuilder {
         Ok(super::dataset::BinnedDataset::from_built_groups(built))
     }
 
-    /// Configure bundling (ignored - new implementation doesn't support bundling).
-    ///
-    /// This method exists for API compatibility with the deprecated builder.
-    /// Bundling is not supported in the new implementation.
-    #[allow(unused_variables)]
-    pub fn with_bundling(self, bundling: super::super::deprecated::binned::BundlingConfig) -> Self {
-        // Bundling is not supported in the new implementation
-        // We just ignore the configuration
-        self
-    }
-
     fn build_groups_batch(self) -> Result<BuiltGroups, DatasetError> {
         let analyses = self.analyses.unwrap();
         let grouping = self.grouping.unwrap();

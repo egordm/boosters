@@ -1,8 +1,8 @@
 //! Feature bundling example.
 //!
-//! NOTE: Exclusive Feature Bundling (EFB) is not yet implemented in the new
-//! BinnedDataset. This example demonstrates the API but bundling is effectively
-//! disabled until RFC-0018 bundling support is added.
+//! This example demonstrates Exclusive Feature Bundling (EFB) which automatically
+//! groups sparse one-hot encoded features into bundles for more efficient
+//! histogram building. The bundling is controlled via `BinningConfig::enable_bundling()`.
 //!
 //! Run with:
 //! ```bash
@@ -81,11 +81,15 @@ fn main() {
     println!("=== Training WITHOUT bundling ===\n");
 
     let start = Instant::now();
-    let dataset_no_bundle =
-        BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
-            .add_features(features_dataset.features(), Parallelism::Parallel)
-            .build()
-            .expect("Failed to build dataset");
+    let dataset_no_bundle = BinnedDatasetBuilder::with_config(
+        BinningConfig::builder()
+            .max_bins(256)
+            .enable_bundling(false)
+            .build(),
+    )
+    .add_features(features_dataset.features(), Parallelism::Parallel)
+    .build()
+    .expect("Failed to build dataset");
     let binning_time_no_bundle = start.elapsed();
 
     // Without bundling, binned columns = original features
@@ -102,22 +106,23 @@ fn main() {
     println!("Binning time: {:?}", binning_time_no_bundle);
 
     // =========================================================================
-    // Train WITH bundling (optimized) - NOTE: bundling not yet implemented
+    // Train WITH bundling (optimized)
     // =========================================================================
-    println!("\n=== Training WITH bundling (placeholder) ===\n");
-    println!("NOTE: Bundling is not yet implemented in new BinnedDataset.");
-    println!("      This is a placeholder showing the intended API.\n");
+    println!("\n=== Training WITH bundling ===\n");
 
     let start = Instant::now();
-    let dataset_bundled =
-        BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
-            .add_features(features_dataset.features(), Parallelism::Parallel)
-            // Note: with_bundling() is ignored in the new implementation
-            .build()
-            .expect("Failed to build dataset");
+    let dataset_bundled = BinnedDatasetBuilder::with_config(
+        BinningConfig::builder()
+            .max_bins(256)
+            .enable_bundling(true)
+            .build(),
+    )
+    .add_features(features_dataset.features(), Parallelism::Parallel)
+    .build()
+    .expect("Failed to build dataset");
     let binning_time_bundled = start.elapsed();
 
-    // For now, bundled is the same as non-bundled
+    // With bundling, sparse one-hot features should be combined
     let binned_cols_bundled = dataset_bundled.n_features();
     let mem_bundled = n_samples * binned_cols_bundled;
 
@@ -202,15 +207,12 @@ fn main() {
     println!("      Training time is dominated by tree building, not histogram storage.");
 
     // =========================================================================
-    // Bundling Presets
+    // Bundling Configuration
     // =========================================================================
-    println!("\n=== Available Bundling Presets ===");
-    println!("  BundlingConfig::auto()       - Default, works well for most cases");
-    println!("  BundlingConfig::disabled()   - Disable bundling");
-    println!(
-        "  BundlingConfig::aggressive() - Bundle more aggressively (higher conflict tolerance)"
-    );
-    println!("  BundlingConfig::strict()     - Only bundle truly exclusive features");
+    println!("\n=== Bundling Configuration ===");
+    println!("  BinningConfig::builder().enable_bundling(true)  - Enable bundling (default)");
+    println!("  BinningConfig::builder().enable_bundling(false) - Disable bundling");
+    println!("\nBundling algorithm parameters can be customized via BundlingConfig.");
 }
 
 fn compute_rmse(predictions: &[f32], labels: &[f32]) -> f64 {

@@ -35,26 +35,19 @@ pub use builder::{BuiltGroups, DatasetBuilder, DatasetError};
 pub use feature_analysis::{BinningConfig, FeatureAnalysis, FeatureMetadata, GroupSpec};
 
 // Bundling types (RFC-0018 native)
-pub use bundling::{BundlePlan as NewBundlePlan, BundlingConfig as NewBundlingConfig};
+pub use bundling::{BundlePlan, BundlingConfig};
 
 // For backward compatibility during migration, re-export some builder types with old names
 pub use builder::DatasetBuilder as BinnedDatasetBuilder;
 pub use builder::DatasetError as BuildError;
 
 // =============================================================================
-// Deprecated re-exports (bundling and legacy storage)
-// These will be removed once all consumers migrate away from bundling
+// Deprecated re-exports (still part of public API)
+// These are used by deprecated::binned internals and exported in data/mod.rs
 // =============================================================================
 
-// Bundling types - still needed for deprecated BinnedDataset consumers
-// Note: New BinnedDataset does NOT support bundling yet
 #[allow(deprecated)]
 pub use super::deprecated::binned::{
-    BinStorage, BinType, BundlePlan, BundlingConfig, BundlingFeatures, BundlingStats,
-    FeatureBundle, GroupStrategy,
+    BinStorage, BinType, BundlingFeatures, GroupStrategy, BinningStrategy,
 };
-
-// Legacy builder types for backward compat
-#[allow(deprecated)]
-pub use super::deprecated::binned::BinningStrategy;
 
