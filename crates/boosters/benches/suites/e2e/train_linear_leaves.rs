@@ -36,7 +36,7 @@ fn bench_linear_training_overhead(c: &mut Criterion) {
 
     // Build binned dataset for training (x_train is already feature-major)
     let x_train_dataset = Dataset::new(x_train.view(), None, None);
-    let binned_train = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+    let binned_train = BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
         .add_features(x_train_dataset.features(), Parallelism::Parallel)
         .build()
         .unwrap();

@@ -344,14 +344,143 @@ impl FeatureStorage {
 
 ---
 
-### Story 1.6: Create BundleStorage (Optional/Deferred)
+### Story 1.6: Create BundleStorage (CRITICAL - Un-deferred)
 
-**Status**: Deferred  
-**Estimate**: 1.5 hours
+**Status**: Not Started  
+**Estimate**: 4 hours  
+**Priority**: BLOCKING (blocks Epic 7 Switchover and Epic 8 Cleanup)
 
-**Description**: Create EFB bundle storage type.
+**Description**: Create EFB bundle storage type following RFC-0018 design. Bundling is a critical feature that must work before we can clean up deprecated code.
 
-**Note**: This can be deferred until after core functionality works. EFB bundling is an optimization.
+**Stakeholder Feedback**: "Where did bundling go? Do we still support it? It has to be implemented before we clean up. In fact, it's quite a critical feature."
+
+**Location**: `data/binned/storage.rs`
+
+**Implementation** (from RFC-0018):
+```rust
+/// EFB bundle: multiple sparse features encoded into one column.
+/// Bundles are lossless - no raw values needed.
+pub struct BundleStorage {
+    /// Encoded bins: [n_samples], always U16.
+    encoded_bins: Box<[u16]>,
+    /// Original feature indices in this bundle.
+    feature_indices: Box<[u32]>,
+    /// Bin offset for each feature in the bundle.
+    bin_offsets: Box<[u32]>,
+    /// Number of bins per feature.
+    feature_n_bins: Box<[u32]>,
+    /// Total bins in this bundle.
+    total_bins: u32,
+    /// Default bin for each feature.
+    default_bins: Box<[u32]>,
+    /// Number of samples.
+    n_samples: usize,
+}
+
+impl BundleStorage {
+    pub fn decode(&self, encoded_bin: u16) -> Option<(usize, u32)>;
+    pub fn feature_indices(&self) -> &[u32];
+    pub fn bins(&self) -> &[u16];
+    pub fn n_samples(&self) -> usize;
+    pub fn total_bins(&self) -> u32;
+    pub fn size_bytes(&self) -> usize;
+}
+```
+
+**Sub-tasks**:
+1. Create `BundleStorage` struct with all fields
+2. Implement `decode()` method for split decoding
+3. Add `Bundle(BundleStorage)` variant to `FeatureStorage` enum
+4. Update `FeatureStorage::has_raw_values()` to return false for Bundle
+5. Unit tests for encoding/decoding
+
+**Definition of Done**:
+- `BundleStorage` struct implemented following RFC-0018
+- `decode()` correctly maps encoded bin to (feature_position, original_bin)
+- Unit tests verify encoding/decoding roundtrip
+- Tests cover edge cases: bin 0 (all defaults), single-feature bundle
+
+---
+
+### Story 1.7: Integrate Bundling into Builder
+
+**Status**: Not Started  
+**Estimate**: 3 hours  
+**Priority**: BLOCKING (required for bundling to work)
+
+**Description**: Update `DatasetBuilder` to create `BundleStorage` groups when `enable_bundling = true`.
+
+**Location**: `data/binned/builder.rs`
+
+**Tasks**:
+1. Port bundle plan creation logic from deprecated `bundling.rs` (conflict detection, greedy assignment)
+2. Add `GroupType::Bundle` handling in `build_groups()`
+3. Create `build_bundle_storage()` helper to encode features into `BundleStorage`
+4. Update `FeatureLocation::Bundled` assignment for bundled features
+5. Integration tests with bundling enabled
+
+**Key functions to port/adapt**:
+- `create_bundle_plan()` - conflict detection and bundle assignment
+- `FeatureBundle::finalize()` - compute bin offsets
+- Encoding logic - convert sparse features to encoded bins
+
+**Definition of Done**:
+- `DatasetBuilder` creates `BundleStorage` groups when bundling enabled
+- `FeatureLocation::Bundled` correctly set for bundled features
+- Integration test: create dataset with sparse features, verify bundles created
+- Test: encoded bins decode correctly via `BundleStorage::decode()`
+
+---
+
+### Story 1.8: Wire Grower for Bundled Features
+
+**Status**: Not Started  
+**Estimate**: 2 hours  
+**Priority**: BLOCKING (required for bundling to work in training)
+
+**Description**: Update `grower.rs` to properly handle bundled features from new `BinnedDataset`.
+
+**Location**: `training/gbdt/grower.rs`
+
+**Changes Required**:
+1. Remove `feature_is_bundle = vec![false; n]` placeholder
+2. Detect actual bundle groups from dataset
+3. Use `bundled_feature_views()` or equivalent from new dataset
+4. Update split decoding to use `BundleStorage::decode()`
+5. Ensure histogram building works with bundle views
+
+**Key Integration Points**:
+- `n_effective_columns` should count bundles as single columns
+- `feature_views()` should return bundle views for histogram building
+- Split finder needs to decode bundle splits back to original features
+
+**Definition of Done**:
+- Grower correctly identifies and handles bundled features
+- Histogram building uses bundled views (one histogram region per bundle)
+- Splits on bundles are decoded to original feature indices
+- All training tests pass with bundling enabled
+
+---
+
+### Story 1.9: Validate Bundling End-to-End
+
+**Status**: Not Started  
+**Estimate**: 1 hour  
+**Priority**: HIGH
+
+**Description**: Comprehensive validation that bundling works end-to-end.
+
+**Tests Required**:
+1. **Benchmark validation**: Run bundling benchmark, verify "with_bundling" is faster than "no_bundling"
+2. **Accuracy validation**: Train with bundling enabled, verify same accuracy as without
+3. **Feature importance**: Verify importance attributes to original features, not bundles
+4. **Prediction**: Verify prediction works correctly after training with bundles
+
+**Definition of Done**:
+- Bundling benchmark shows measurable speedup
+- No accuracy regression with bundling enabled
+- Feature importance is correct
+- All bundling-related tests pass
 
 ---
 
@@ -864,6 +993,8 @@ Either could be used by gblinear if/when it migrates to the new dataset. However
 
 *Switch from deprecated to new implementation.*
 
+**Prerequisite**: Stories 1.6, 1.7, 1.8, 1.9 (Bundling) must be complete before switchover.
+
 ### Story 7.1: Update Re-exports to Use New Implementation
 
 **Status**: Not Started  
@@ -885,30 +1016,22 @@ pub use self::bin_data::BinData;
 pub use self::storage::{
     NumericStorage, CategoricalStorage, 
     SparseNumericStorage, SparseCategoricalStorage, 
-    FeatureStorage
+    FeatureStorage, BundleStorage
 };
 pub use self::group::FeatureGroup;
 pub use self::view::FeatureView;
 pub use self::bin_mapper::{BinMapper, BinningConfig, BinningStrategy};
 pub use self::builder::BinnedDatasetBuilder;
 pub use self::dataset::BinnedDataset;
-pub use self::row_blocks::RowBlocks;
+pub use self::sample_blocks::SampleBlocks;
 ```
 
-**Bundle Handling**: If deprecated code has bundled features enabled, the new code does not support bundles yet. Add a runtime check in the builder:
-
-```rust
-if config.enable_bundling {
-    // For now, bundles are not supported in new implementation
-    // Fall back to deprecated or return error
-    return Err(Error::BundlingNotYetSupported);
-}
-```
+**Note**: Bundling must be implemented (Stories 1.6-1.9) before this switchover. No fallback or error needed.
 
 **Definition of Done**:
 
 - New exports in place
-- Bundle handling addressed (error or fallback)
+- Bundling works via new `BundleStorage`
 - All tests pass
 
 ---

@@ -51,7 +51,7 @@ fn run_synthetic_regression(
     // Transpose to feature-major for training
     let col_train = transpose_to_c_order(x_train.view());
     let dataset_train = Dataset::new(col_train.view(), None, None);
-    let binned_train = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+    let binned_train = BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
         .add_features(dataset_train.features(), Parallelism::Parallel)
         .build()
         .unwrap();
@@ -104,7 +104,7 @@ fn run_synthetic_binary(rows: usize, cols: usize, trees: u32, depth: u32, seed: 
     // Transpose to feature-major for training
     let col_train = transpose_to_c_order(x_train.view());
     let dataset_train = Dataset::new(col_train.view(), None, None);
-    let binned_train = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+    let binned_train = BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
         .add_features(dataset_train.features(), Parallelism::Parallel)
         .build()
         .unwrap();
@@ -164,7 +164,7 @@ fn run_synthetic_multiclass(
     // Transpose to feature-major for training
     let col_train = transpose_to_c_order(x_train.view());
     let dataset_train = Dataset::new(col_train.view(), None, None);
-    let binned_train = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+    let binned_train = BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
         .add_features(dataset_train.features(), Parallelism::Parallel)
         .build()
         .unwrap();
@@ -297,7 +297,7 @@ fn test_quality_improvement_linear_leaves() {
     // Convert to matrices - transpose to feature-major for training
     let col_train = transpose_to_c_order(x_train.view());
     let dataset_train = Dataset::new(col_train.view(), None, None);
-    let binned_train = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+    let binned_train = BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
         .add_features(dataset_train.features(), Parallelism::Parallel)
         .build()
         .unwrap();

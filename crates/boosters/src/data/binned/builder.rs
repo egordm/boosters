@@ -130,6 +130,97 @@ impl DatasetBuilder {
         }
     }
 
+    /// Create a builder with a specific configuration.
+    ///
+    /// This is the legacy API for compatibility with existing code.
+    /// Use `from_array()` for new code.
+    pub fn with_config(config: BinningConfig) -> Self {
+        Self {
+            pending_features: Vec::new(),
+            analyses: None,
+            grouping: None,
+            bin_mappers: None,
+            batch_data: None,
+            labels: None,
+            weights: None,
+            config,
+            n_samples: None,
+        }
+    }
+
+    /// Add features from a FeaturesView.
+    ///
+    /// This is the legacy API for compatibility with existing code.
+    /// For new code, use `from_array()` which auto-detects feature types.
+    ///
+    /// # Arguments
+    /// * `features` - View of feature data (feature-major layout)
+    /// * `_parallelism` - Parallelism setting (currently ignored, analysis is always parallel)
+    ///
+    /// # Returns
+    /// Updated builder with all features added
+    pub fn add_features(self, features: FeaturesView<'_>, _parallelism: crate::Parallelism) -> Self {
+        let n_features = features.n_features();
+        let n_samples = features.n_samples();
+
+        if n_features == 0 || n_samples == 0 {
+            return self;
+        }
+
+        // Convert FeaturesView to the format expected by from_array_with_metadata
+        // We need to create a contiguous sample-major array
+        use ndarray::Array2;
+        let mut data = Array2::zeros((n_samples, n_features));
+        for f in 0..n_features {
+            let feature_data = features.feature(f);
+            if let Some(slice) = feature_data.as_slice() {
+                for (s, &val) in slice.iter().enumerate() {
+                    data[[s, f]] = val;
+                }
+            }
+        }
+
+        // Build metadata from FeaturesView schema
+        let metadata = if let Some(schema) = features.schema() {
+            // Collect names
+            let names: Vec<String> = schema
+                .iter()
+                .map(|m| m.name.clone().unwrap_or_default())
+                .collect();
+
+            // Collect categorical indices
+            let categorical: Vec<usize> = schema
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| m.feature_type.is_categorical())
+                .map(|(i, _)| i)
+                .collect();
+
+            Some(
+                FeatureMetadata::default()
+                    .names(names)
+                    .categorical(categorical),
+            )
+        } else {
+            None
+        };
+
+        // Use from_array_with_metadata to process
+        match Self::from_array_with_metadata(data.view(), metadata.as_ref(), &self.config) {
+            Ok(mut builder) => {
+                // Preserve labels/weights from self if any
+                if self.labels.is_some() {
+                    builder.labels = self.labels;
+                }
+                if self.weights.is_some() {
+                    builder.weights = self.weights;
+                }
+                builder
+            }
+            Err(_) => self, // Return unchanged on error (legacy behavior)
+        }
+    }
+
     /// Create builder from a 2D array with auto-detection.
     ///
     /// Analyzes all features to detect:
@@ -287,6 +378,25 @@ impl DatasetBuilder {
         } else {
             Err(DatasetError::EmptyDataset)
         }
+    }
+
+    /// Build the complete BinnedDataset.
+    ///
+    /// This is the main entry point for constructing a dataset.
+    pub fn build(self) -> Result<super::dataset::BinnedDataset, DatasetError> {
+        let built = self.build_groups()?;
+        Ok(super::dataset::BinnedDataset::from_built_groups(built))
+    }
+
+    /// Configure bundling (ignored - new implementation doesn't support bundling).
+    ///
+    /// This method exists for API compatibility with the deprecated builder.
+    /// Bundling is not supported in the new implementation.
+    #[allow(unused_variables)]
+    pub fn with_bundling(self, bundling: super::super::deprecated::binned::BundlingConfig) -> Self {
+        // Bundling is not supported in the new implementation
+        // We just ignore the configuration
+        self
     }
 
     fn build_groups_batch(self) -> Result<BuiltGroups, DatasetError> {

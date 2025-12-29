@@ -11,9 +11,7 @@ use crate::training::sampling::{ColSampler, ColSamplingParams};
 use crate::training::{Gradients, GradsTuple};
 
 use super::expansion::{GrowthState, GrowthStrategy, NodeCandidate};
-use super::histograms::{
-    FeatureView, HistogramBuilder, HistogramLayout, HistogramPool, convert_feature_views,
-};
+use super::histograms::{FeatureView, HistogramBuilder, HistogramLayout, HistogramPool};
 use super::partition::RowPartitioner;
 use super::split::{GainParams, GreedySplitter, SplitInfo, SplitType};
 use crate::utils::Parallelism;
@@ -110,17 +108,20 @@ impl TreeGrower {
         cache_size: usize,
         parallelism: Parallelism,
     ) -> Self {
-        let n_samples = dataset.n_rows();
+        use crate::data::MissingType;
 
-        // LightGBM-style: histogram layout uses BUNDLED columns, not original features.
-        // Bundles are treated as regular columns with combined bin ranges.
-        // Decoding to original features happens only at split time (cold path).
-        let n_bundled_columns = dataset.n_bundled_columns();
+        let n_samples = dataset.n_samples();
 
-        // Get bin counts for effective features (bundles first, then standalone features)
-        let effective_bin_counts = dataset.effective_bin_counts();
+        // Number of effective columns for histogram building.
+        // Without bundling (RFC-0018), this is just n_features().
+        let n_effective_columns = dataset.n_features();
 
-        // Build histogram layout for effective features
+        // Get bin counts for each feature
+        let effective_bin_counts: Vec<u32> = (0..n_effective_columns)
+            .map(|f| dataset.n_bins(f))
+            .collect();
+
+        // Build histogram layout for features
         let mut offset = 0u32;
         let feature_metas: Vec<HistogramLayout> = effective_bin_counts
             .iter()
@@ -131,21 +132,18 @@ impl TreeGrower {
             })
             .collect();
 
-        // Feature types for effective features (bundles are never categorical)
-        let feature_types: Vec<bool> = (0..n_bundled_columns)
-            .map(|col| dataset.effective_is_categorical(col))
+        // Feature types (categorical vs numeric)
+        let feature_types: Vec<bool> = (0..n_effective_columns)
+            .map(|col| dataset.is_categorical(col))
             .collect();
 
-        // Missing indicators for effective features (bundles have bin 0 = default/missing)
-        let feature_has_missing: Vec<bool> = (0..n_bundled_columns)
-            .map(|col| dataset.effective_has_missing(col))
+        // Missing indicators (features with NaN bin)
+        let feature_has_missing: Vec<bool> = (0..n_effective_columns)
+            .map(|col| dataset.bin_mapper(col).missing_type() != MissingType::None)
             .collect();
 
-        // Bundle indicators: columns [0, n_bundles) are bundles, the rest are standalone
-        let n_bundles = dataset.n_bundles();
-        let feature_is_bundle: Vec<bool> = (0..n_bundled_columns)
-            .map(|col| col < n_bundles)
-            .collect();
+        // No bundles in new implementation
+        let feature_is_bundle: Vec<bool> = vec![false; n_effective_columns];
 
         // Maximum nodes: 2*max_leaves - 1 for a full binary tree
         let max_leaves = params.max_leaves();
@@ -160,8 +158,8 @@ impl TreeGrower {
         let split_strategy =
             GreedySplitter::with_config(params.gain.clone(), params.max_onehot_cats, parallelism);
 
-        // Column sampler uses BUNDLED columns for sampling
-        let col_sampler = ColSampler::new(params.col_sampling.clone(), n_bundled_columns as u32, 0);
+        // Column sampler uses feature columns for sampling
+        let col_sampler = ColSampler::new(params.col_sampling.clone(), n_effective_columns as u32, 0);
 
         Self {
             params,
@@ -265,7 +263,7 @@ impl TreeGrower {
         output: usize,
         sampled_rows: Option<&[u32]>,
     ) -> MutableTree<ScalarLeaf> {
-        let n_samples = dataset.n_rows();
+        let n_samples = dataset.n_samples();
         assert_eq!(gradients.n_samples(), n_samples);
 
         // Reset state for new tree (partitioner initialized with sampled rows)
@@ -275,10 +273,9 @@ impl TreeGrower {
         self.col_sampler.sample_tree();
         self.col_sampler.sample_level(0);
 
-        // Pre-compute feature views once per tree (avoids per-node Vec allocation)
-        // Use effective views if bundling is active (fewer columns = faster)
-        // Convert from deprecated FeatureView to new FeatureView (will be removed in Epic 7)
-        let bin_views = convert_feature_views(&dataset.effective_feature_views());
+        // Pre-compute feature views once per tree
+        // New BinnedDataset returns new FeatureView directly (no conversion needed)
+        let bin_views = dataset.feature_views();
 
         // Initialize growth state
         let strategy = self.params.growth_strategy;
@@ -571,28 +568,24 @@ impl TreeGrower {
         split: &SplitInfo,
         dataset: &BinnedDataset,
     ) -> (u32, u32) {
-        // Decode bundled column to original feature
-        let bundled_col = split.feature as usize;
+        // Without bundling, the split feature is the original feature directly
+        let feature = split.feature as usize;
 
         match &split.split_type {
             SplitType::Numerical { bin } => {
-                // Decode effective feature split to original feature + bin
-                // For bundles: uses binary search to find original feature
-                // For standalone: direct mapping
-                let (orig_feature, orig_bin) =
-                    dataset.decode_split_to_original(bundled_col, *bin as u32);
+                // Without bundling, feature and bin map directly
+                let orig_feature = feature;
+                let orig_bin = *bin as u32;
 
                 let mapper = dataset.bin_mapper(orig_feature);
                 
                 // Debug: ensure bin is in valid range
                 debug_assert!(
                     orig_bin < mapper.n_bins(),
-                    "decode_split_to_original returned bin {} but feature {} has only {} bins (bundled_col={}, split_bin={})",
+                    "split bin {} but feature {} has only {} bins",
                     orig_bin,
                     orig_feature,
                     mapper.n_bins(),
-                    bundled_col,
-                    *bin
                 );
                 
                 let bin_upper = mapper.bin_to_value(orig_bin) as f32;
@@ -605,9 +598,8 @@ impl TreeGrower {
                 )
             }
             SplitType::Categorical { left_cats } => {
-                // Categorical splits only happen on standalone columns (bundles are numeric-only).
-                // For standalone, decode_split_to_original returns the original feature directly.
-                let (orig_feature, _) = dataset.decode_split_to_original(bundled_col, 0);
+                // Without bundling, categorical splits use the feature directly
+                let orig_feature = feature;
 
                 // Convert training categorical bitset to inference format.
                 // Training: categories in left_cats go LEFT
@@ -746,10 +738,11 @@ impl TreeGrower {
 mod tests {
     use super::*;
     use crate::data::{
-        BinMapper, BinnedDataset, BinnedDatasetBuilder, BinningConfig, DataAccessor,
-        GroupStrategy, MissingType, SampleAccessor,
+        BinnedDataset, BinnedDatasetBuilder, BinningConfig, DataAccessor, FeatureMetadata,
+        SampleAccessor,
     };
     use crate::repr::gbdt::{Tree, TreeView};
+    use ndarray::Array2;
 
     /// Helper to count leaves in a Tree.
     fn count_leaves<L: crate::repr::gbdt::LeafValue>(tree: &Tree<L>) -> usize {
@@ -759,65 +752,72 @@ mod tests {
     }
 
     fn make_simple_dataset() -> BinnedDataset {
-        // 10 samples, 1 feature with 4 bins
-        let bins = vec![0, 0, 0, 1, 1, 2, 2, 3, 3, 3];
-        let mapper = BinMapper::numerical(
-            vec![0.5, 1.5, 2.5, 3.5],
-            MissingType::None,
-            0,
-            0,
-            0.0,
-            0.0,
-            3.0,
-        );
-        BinnedDatasetBuilder::new(BinningConfig::default())
-            .add_binned(bins, None, mapper, None)
-            .group_strategy(GroupStrategy::SingleGroup)
+        // 10 samples, 1 feature
+        // Raw values 0,0,0,1,1,2,2,3,3,3 bin to bins 0,0,0,1,1,2,2,3,3,3
+        let data = Array2::from_shape_vec(
+            (10, 1),
+            vec![0.0, 0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 3.0],
+        )
+        .unwrap();
+
+        BinnedDatasetBuilder::from_array(data.view(), &BinningConfig::default())
+            .unwrap()
             .build()
             .unwrap()
     }
 
     fn make_two_feature_dataset() -> BinnedDataset {
-        let f0_bins = vec![0, 0, 1, 1, 0, 0, 1, 1];
-        let f0_mapper =
-            BinMapper::numerical(vec![0.5, 1.5], MissingType::None, 0, 0, 0.0, 0.0, 1.0);
+        // 8 samples, 2 features
+        // Feature 0: [0,0,1,1,0,0,1,1] → bins based on 0/1 values
+        // Feature 1: [0,0,0,0,1,1,1,1] → bins based on 0/1 values
+        let data = Array2::from_shape_vec(
+            (8, 2),
+            vec![
+                0.0, 0.0, // sample 0
+                0.0, 0.0, // sample 1
+                1.0, 0.0, // sample 2
+                1.0, 0.0, // sample 3
+                0.0, 1.0, // sample 4
+                0.0, 1.0, // sample 5
+                1.0, 1.0, // sample 6
+                1.0, 1.0, // sample 7
+            ],
+        )
+        .unwrap();
 
-        let f1_bins = vec![0, 0, 0, 0, 1, 1, 1, 1];
-        let f1_mapper =
-            BinMapper::numerical(vec![0.5, 1.5], MissingType::None, 0, 0, 0.0, 0.0, 1.0);
-
-        BinnedDatasetBuilder::new(BinningConfig::default())
-            .add_binned(f0_bins, None, f0_mapper, None)
-            .add_binned(f1_bins, None, f1_mapper, None)
-            .group_strategy(GroupStrategy::SingleGroup)
+        BinnedDatasetBuilder::from_array(data.view(), &BinningConfig::default())
+            .unwrap()
             .build()
             .unwrap()
     }
 
     fn make_numeric_boundary_dataset() -> BinnedDataset {
-        // 2 samples, 1 feature, 2 bins.
-        // Bin 0 upper bound is 0.5, bin 1 upper bound is 1.5.
-        let bins = vec![0, 1];
-        let mapper = BinMapper::numerical(vec![0.5, 1.5], MissingType::None, 0, 0, 0.0, 0.0, 1.0);
-        BinnedDatasetBuilder::new(BinningConfig::default())
-            .add_binned(bins, None, mapper, None)
-            .group_strategy(GroupStrategy::SingleGroup)
+        // 2 samples, 1 feature, targeting 2 bins
+        // Values 0 and 1 should bin to bins 0 and 1
+        let data = Array2::from_shape_vec((2, 1), vec![0.0, 1.0]).unwrap();
+
+        BinnedDatasetBuilder::from_array(data.view(), &BinningConfig::default())
+            .unwrap()
             .build()
             .unwrap()
     }
 
     fn make_categorical_domain_dataset() -> BinnedDataset {
-        // 4 samples, 1 categorical feature with 4 categories.
-        // The raw category values are intentionally large to catch accidental use of
-        // raw values as bitset indices.
-        let bins = vec![0, 1, 2, 3];
-        let mapper =
-            BinMapper::categorical(vec![1000, 2000, 3000, 4000], MissingType::None, 0, 0, 0.0);
-        BinnedDatasetBuilder::new(BinningConfig::default())
-            .add_binned(bins, None, mapper, None)
-            .group_strategy(GroupStrategy::SingleGroup)
-            .build()
-            .unwrap()
+        // 4 samples, 1 categorical feature with 4 categories
+        // Category values 0, 1, 2, 3 map to bins 0, 1, 2, 3
+        let data = Array2::from_shape_vec((4, 1), vec![0.0, 1.0, 2.0, 3.0]).unwrap();
+
+        // Force categorical detection by using feature metadata
+        let metadata = FeatureMetadata::with_categorical(vec![0]);
+
+        BinnedDatasetBuilder::from_array_with_metadata(
+            data.view(),
+            Some(&metadata),
+            &BinningConfig::default(),
+        )
+        .unwrap()
+        .build()
+        .unwrap()
     }
 
     #[test]

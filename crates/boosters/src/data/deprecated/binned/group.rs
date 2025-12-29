@@ -298,13 +298,13 @@ impl BinnedFeatureInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::binned::MissingType;
+    use super::super::bin_mapper::MissingType as DeprecatedMissingType;
 
     fn make_simple_mapper(n_bins: u32) -> BinMapper {
         let bounds: Vec<f64> = (0..n_bins).map(|i| i as f64 + 0.5).collect();
         BinMapper::numerical(
             bounds,
-            MissingType::None,
+            DeprecatedMissingType::None,
             0,
             0,
             0.0,

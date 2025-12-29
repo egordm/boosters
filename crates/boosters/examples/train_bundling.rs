@@ -1,10 +1,8 @@
 //! Feature bundling example.
 //!
-//! This example demonstrates how to use Exclusive Feature Bundling (EFB) to
-//! reduce memory usage when training with one-hot encoded or sparse features.
-//!
-//! When features are mutually exclusive (never non-zero simultaneously), they
-//! can be bundled into a single feature, reducing memory by up to 40x.
+//! NOTE: Exclusive Feature Bundling (EFB) is not yet implemented in the new
+//! BinnedDataset. This example demonstrates the API but bundling is effectively
+//! disabled until RFC-0018 bundling support is added.
 //!
 //! Run with:
 //! ```bash
@@ -14,7 +12,7 @@
 use std::time::Instant;
 
 use boosters::data::BinningConfig;
-use boosters::data::binned::{BinnedDatasetBuilder, BundlingConfig};
+use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::training::GrowthStrategy;
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism};
@@ -84,9 +82,8 @@ fn main() {
 
     let start = Instant::now();
     let dataset_no_bundle =
-        BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+        BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
             .add_features(features_dataset.features(), Parallelism::Parallel)
-            .with_bundling(BundlingConfig::disabled())
             .build()
             .expect("Failed to build dataset");
     let binning_time_no_bundle = start.elapsed();
@@ -105,22 +102,23 @@ fn main() {
     println!("Binning time: {:?}", binning_time_no_bundle);
 
     // =========================================================================
-    // Train WITH bundling (optimized)
+    // Train WITH bundling (optimized) - NOTE: bundling not yet implemented
     // =========================================================================
-    println!("\n=== Training WITH bundling ===\n");
+    println!("\n=== Training WITH bundling (placeholder) ===\n");
+    println!("NOTE: Bundling is not yet implemented in new BinnedDataset.");
+    println!("      This is a placeholder showing the intended API.\n");
 
     let start = Instant::now();
-    let dataset_bundled = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
-        .add_features(features_dataset.features(), Parallelism::Parallel)
-        .with_bundling(BundlingConfig::auto())
-        .build()
-        .expect("Failed to build dataset");
+    let dataset_bundled =
+        BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
+            .add_features(features_dataset.features(), Parallelism::Parallel)
+            // Note: with_bundling() is ignored in the new implementation
+            .build()
+            .expect("Failed to build dataset");
     let binning_time_bundled = start.elapsed();
 
-    let binned_cols_bundled = dataset_bundled
-        .bundling_stats()
-        .map(|s| s.binned_columns)
-        .unwrap_or(dataset_bundled.n_features());
+    // For now, bundled is the same as non-bundled
+    let binned_cols_bundled = dataset_bundled.n_features();
     let mem_bundled = n_samples * binned_cols_bundled;
 
     println!("Features: {}", dataset_bundled.n_features());
@@ -131,28 +129,6 @@ fn main() {
         mem_bundled as f64 / 1024.0
     );
     println!("Binning time: {:?}", binning_time_bundled);
-    println!(
-        "Bundling effective: {}",
-        dataset_bundled.has_effective_bundling()
-    );
-
-    if let Some(stats) = dataset_bundled.bundling_stats() {
-        println!("\n--- Bundling Statistics ---");
-        println!("  Bundles created: {}", stats.bundles_created);
-        println!("  Standalone features: {}", stats.standalone_features);
-        println!("  Skipped features: {}", stats.skipped_features);
-        println!(
-            "  Sparse features analyzed: {}",
-            stats.original_sparse_features
-        );
-        println!("  Total conflicts: {}", stats.total_conflicts);
-        println!("  Is effective: {}", stats.is_effective);
-        println!(
-            "  Reduction ratio: {:.1}% of original",
-            stats.reduction_ratio * 100.0
-        );
-        println!("  Binned columns after bundling: {}", stats.binned_columns);
-    }
 
     // =========================================================================
     // Train and compare

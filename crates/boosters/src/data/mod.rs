@@ -70,14 +70,12 @@ pub use ndarray::{axis, init_predictions, init_predictions_into, transpose_to_c_
 // Binned Data Types (re-exports for convenience)
 // =============================================================================
 
-#[allow(deprecated)]
 pub use binned::{
     BinMapper, BinStorage, BinType, BinnedDataset, BinnedDatasetBuilder, BinnedFeatureInfo,
-    BinnedSample, BinningConfig, BinningStrategy, BuildError, FeatureGroup, FeatureView,
-    MissingType,
+    BinnedSampleView, BinningConfig, BinningStrategy, BuildError, FeatureGroup, FeatureMetadata,
+    FeatureView, MissingType,
 };
 
 // Internal types for tests/benchmarks
 #[doc(hidden)]
-#[allow(deprecated)]
 pub use binned::{GroupSpec, GroupStrategy};

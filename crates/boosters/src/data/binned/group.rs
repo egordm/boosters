@@ -184,6 +184,7 @@ impl FeatureGroup {
     /// # Panics
     ///
     /// Panics if indices are out of bounds.
+    /// Panics for Bundle storage (use bundle-specific methods instead).
     #[inline]
     pub fn bin(&self, sample: usize, feature_in_group: usize) -> u32 {
         debug_assert!(sample < self.n_samples, "sample index out of bounds");
@@ -197,12 +198,16 @@ impl FeatureGroup {
             FeatureStorage::Categorical(s) => s.bin(sample, feature_in_group, self.n_samples),
             FeatureStorage::SparseNumeric(s) => s.get(sample).0,
             FeatureStorage::SparseCategorical(s) => s.bin(sample),
+            FeatureStorage::Bundle(_) => {
+                panic!("bin() not supported for Bundle storage - use bundle-specific methods")
+            }
         }
     }
 
     /// Returns the raw value for a sample and feature within this group.
     ///
     /// Returns `None` for categorical features (they don't have raw values).
+    /// Returns `None` for bundle storage (bundles are lossless categorical).
     ///
     /// # Parameters
     /// - `sample`: Sample index (0..n_samples)
@@ -218,13 +223,15 @@ impl FeatureGroup {
         match &self.storage {
             FeatureStorage::Numeric(s) => Some(s.raw(sample, feature_in_group, self.n_samples)),
             FeatureStorage::SparseNumeric(s) => Some(s.get(sample).1),
-            FeatureStorage::Categorical(_) | FeatureStorage::SparseCategorical(_) => None,
+            FeatureStorage::Categorical(_)
+            | FeatureStorage::SparseCategorical(_)
+            | FeatureStorage::Bundle(_) => None,
         }
     }
 
     /// Returns a contiguous slice of raw values for a feature.
     ///
-    /// Returns `None` for categorical features or sparse storage.
+    /// Returns `None` for categorical features, sparse storage, or bundles.
     ///
     /// # Parameters
     /// - `feature_in_group`: Feature index within this group
@@ -239,7 +246,9 @@ impl FeatureGroup {
             FeatureStorage::Numeric(s) => Some(s.raw_slice(feature_in_group, self.n_samples)),
             // Sparse storage doesn't have contiguous slices for all samples
             FeatureStorage::SparseNumeric(_) => None,
-            FeatureStorage::Categorical(_) | FeatureStorage::SparseCategorical(_) => None,
+            FeatureStorage::Categorical(_)
+            | FeatureStorage::SparseCategorical(_)
+            | FeatureStorage::Bundle(_) => None,
         }
     }
 
@@ -311,7 +320,30 @@ impl FeatureGroup {
                     },
                 }
             }
+            FeatureStorage::Bundle(s) => {
+                // Bundle storage: return U16 view of encoded bins
+                // Note: For bundles, this is the encoded column view for histogram building.
+                // The bundle is treated as a single feature for histogram purposes.
+                FeatureView::U16(s.encoded_bins())
+            }
         }
+    }
+
+    /// Returns the bundle storage if this group is a bundle.
+    ///
+    /// Returns `None` for non-bundle storage types.
+    #[inline]
+    pub fn as_bundle(&self) -> Option<&super::BundleStorage> {
+        match &self.storage {
+            FeatureStorage::Bundle(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Returns `true` if this group is a bundle storage.
+    #[inline]
+    pub fn is_bundle(&self) -> bool {
+        self.storage.is_bundle()
     }
 }
 

@@ -229,36 +229,16 @@ impl RowPartitioner {
         let count = self.leaf_count[leaf as usize] as usize;
         let end = begin + count;
 
-        // Get effective feature view and metadata.
-        // For bundles: bin 0 is the "default" bin, has_missing is true
-        // For standalone: maps to original feature's properties
-        // For no-bundling: col_idx is original feature index
-        let bundled_col = split.feature as usize;
-        let view = dataset.effective_feature_view(bundled_col);
+        // Get feature view and metadata.
+        // Without bundling, the split feature is the original feature directly.
+        let feature = split.feature as usize;
+        let views = dataset.feature_views();
+        let view = views[feature];
 
-        // Get default_bin and has_missing for bundled column
-        let n_bundles = dataset.n_bundles();
-        let has_bundling = dataset.has_bundled_columns();
-        let (default_bin, has_missing) = if has_bundling && bundled_col < n_bundles {
-            // Bundle column: bin 0 is "default", has_missing is true
-            (0u32, true)
-        } else if has_bundling {
-            // Standalone column with bundling active: use original feature's properties
-            let standalone_idx = bundled_col - n_bundles;
-            let orig_feat = dataset.standalone_features()[standalone_idx];
-            let bin_mapper = dataset.bin_mapper(orig_feat);
-            (
-                bin_mapper.default_bin(),
-                bin_mapper.missing_type() != MissingType::None,
-            )
-        } else {
-            // No bundling: bundled_col is original feature index
-            let bin_mapper = dataset.bin_mapper(bundled_col);
-            (
-                bin_mapper.default_bin(),
-                bin_mapper.missing_type() != MissingType::None,
-            )
-        };
+        // Get default_bin and has_missing for the feature
+        let bin_mapper = dataset.bin_mapper(feature);
+        let default_bin = bin_mapper.default_bin();
+        let has_missing = bin_mapper.missing_type() != MissingType::None;
         let default_left = split.default_left;
 
         // Single-pass stable partition: write left from start, right from end of scratch,
@@ -297,8 +277,8 @@ impl RowPartitioner {
             }
         }
 
-        match (&split.split_type, &view) {
-            (SplitType::Numerical { bin: threshold }, FeatureView::U8 { bins }) => {
+        match (&split.split_type, view) {
+            (SplitType::Numerical { bin: threshold }, FeatureView::U8(bins)) => {
                 let threshold = *threshold as u8;
                 for &idx in &indices[begin..end] {
                     let row = idx as usize;
@@ -324,7 +304,7 @@ impl RowPartitioner {
                     }
                 }
             }
-            (SplitType::Numerical { bin: threshold }, FeatureView::U16 { bins }) => {
+            (SplitType::Numerical { bin: threshold }, FeatureView::U16(bins)) => {
                 let threshold = *threshold;
                 for &idx in &indices[begin..end] {
                     let row = idx as usize;
@@ -350,7 +330,7 @@ impl RowPartitioner {
                     }
                 }
             }
-            (SplitType::Categorical { left_cats }, FeatureView::U8 { bins }) => {
+            (SplitType::Categorical { left_cats }, FeatureView::U8(bins)) => {
                 for &idx in &indices[begin..end] {
                     let row = idx as usize;
                     let bin = bins[row] as u32;
@@ -375,7 +355,7 @@ impl RowPartitioner {
                     }
                 }
             }
-            (SplitType::Categorical { left_cats }, FeatureView::U16 { bins }) => {
+            (SplitType::Categorical { left_cats }, FeatureView::U16(bins)) => {
                 for &idx in &indices[begin..end] {
                     let row = idx as usize;
                     let bin = bins[row] as u32;
@@ -463,27 +443,33 @@ impl RowPartitioner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{
-        BinMapper, BinnedDataset, BinnedDatasetBuilder, BinningConfig, GroupStrategy,
-        MissingType,
-    };
+    use crate::data::{BinnedDataset, BinnedDatasetBuilder, BinningConfig};
+    use ndarray::Array2;
 
     fn make_test_dataset() -> BinnedDataset {
         // 8 samples, 2 features
         // Feature 0: bins [0,1,0,1,0,1,0,1] - alternating
         // Feature 1: bins [0,0,0,0,1,1,1,1] - first half 0, second half 1
-        let f0_bins = vec![0, 1, 0, 1, 0, 1, 0, 1];
-        let f0_mapper =
-            BinMapper::numerical(vec![0.5, 1.5], MissingType::None, 0, 0, 0.0, 0.0, 1.0);
+        //
+        // With default binning (256 bins), we need raw values that bin appropriately.
+        // Using values 0.0 and 1.0 that will bin to different bins.
+        let data = Array2::from_shape_vec(
+            (8, 2),
+            vec![
+                0.0, 0.0, // row 0: f0=0, f1=0
+                1.0, 0.0, // row 1: f0=1, f1=0
+                0.0, 0.0, // row 2: f0=0, f1=0
+                1.0, 0.0, // row 3: f0=1, f1=0
+                0.0, 1.0, // row 4: f0=0, f1=1
+                1.0, 1.0, // row 5: f0=1, f1=1
+                0.0, 1.0, // row 6: f0=0, f1=1
+                1.0, 1.0, // row 7: f0=1, f1=1
+            ],
+        )
+        .unwrap();
 
-        let f1_bins = vec![0, 0, 0, 0, 1, 1, 1, 1];
-        let f1_mapper =
-            BinMapper::numerical(vec![0.5, 1.5], MissingType::None, 0, 0, 0.0, 0.0, 1.0);
-
-        BinnedDatasetBuilder::new(BinningConfig::default())
-            .add_binned(f0_bins, None, f0_mapper, None)
-            .add_binned(f1_bins, None, f1_mapper, None)
-            .group_strategy(GroupStrategy::SingleGroup)
+        BinnedDatasetBuilder::from_array(data.view(), &BinningConfig::default())
+            .unwrap()
             .build()
             .unwrap()
     }

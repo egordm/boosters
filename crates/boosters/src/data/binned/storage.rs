@@ -570,6 +570,294 @@ impl SparseCategoricalStorage {
     }
 }
 
+/// EFB bundle storage: multiple sparse features encoded into one column.
+///
+/// Bundles are used for Exclusive Feature Bundling (EFB) where multiple sparse
+/// features (typically categorical) that rarely have non-zero values simultaneously
+/// are encoded into a single column with offset-encoded bins.
+///
+/// **Key properties**:
+/// - Bundles are lossless - no raw values needed
+/// - Linear trees skip bundled features for regression (use only for splits)
+/// - During histogram building, bundles are treated as regular columns
+/// - Decoding only happens at split time (cold path)
+///
+/// # Bin Encoding Scheme
+///
+/// For a bundle containing features [A, B, C] with bin counts [5, 10, 8]:
+///
+/// ```text
+/// Bin offsets (computed during bundling):
+///   Feature A: offset = 1,  bins 0-4 → encoded as 1-5
+///   Feature B: offset = 6,  bins 0-9 → encoded as 6-15  
+///   Feature C: offset = 16, bins 0-7 → encoded as 16-23
+///
+/// Special bin 0: "All features at default value"
+///   - Rows where all features have their default (most frequent) bin
+///   - Does not represent any actual feature bin
+///   - decode(0) returns None
+///
+/// Total bundle bins: 1 + 5 + 10 + 8 = 24
+/// ```
+///
+/// # Examples
+///
+/// ```
+/// use boosters::data::binned::BundleStorage;
+///
+/// // Bundle of 3 features with bin counts [5, 10, 8]
+/// // Feature indices in original dataset: [2, 7, 12]
+/// let storage = BundleStorage::new(
+///     vec![0u16, 4, 10, 20].into_boxed_slice(),  // encoded bins for 4 samples
+///     vec![2u32, 7, 12].into_boxed_slice(),      // original feature indices
+///     vec![1u32, 6, 16].into_boxed_slice(),      // bin offsets  
+///     vec![5u32, 10, 8].into_boxed_slice(),      // bins per feature
+///     24,                                         // total bins
+///     vec![0u32, 0, 0].into_boxed_slice(),       // default bins
+///     4,                                          // n_samples
+/// );
+///
+/// // Decode encoded bins
+/// assert_eq!(storage.decode(0), None);           // All defaults
+/// assert_eq!(storage.decode(4), Some((0, 3)));   // Feature A (idx 0), bin 3
+/// assert_eq!(storage.decode(10), Some((1, 4)));  // Feature B (idx 1), bin 4
+/// assert_eq!(storage.decode(20), Some((2, 4)));  // Feature C (idx 2), bin 4
+/// ```
+#[derive(Debug, Clone)]
+pub struct BundleStorage {
+    /// Encoded bins: [n_samples], always U16.
+    /// Bin 0 = all features have default value.
+    /// Bin k = offset[i] + original_bin for active feature i.
+    encoded_bins: Box<[u16]>,
+
+    /// Original feature indices in this bundle (in original feature space).
+    feature_indices: Box<[u32]>,
+
+    /// Bin offset for each feature in the bundle.
+    /// Offsets start at 1 (bin 0 is reserved for "all defaults").
+    bin_offsets: Box<[u32]>,
+
+    /// Number of bins per feature.
+    feature_n_bins: Box<[u32]>,
+
+    /// Total bins in this bundle (sum of all feature bins + 1 for default).
+    total_bins: u32,
+
+    /// Default bin for each feature (bin when value is "zero" / most common).
+    default_bins: Box<[u32]>,
+
+    /// Number of samples.
+    n_samples: usize,
+}
+
+impl BundleStorage {
+    /// Creates a new BundleStorage.
+    ///
+    /// # Arguments
+    /// - `encoded_bins`: Encoded bin values for each sample
+    /// - `feature_indices`: Original feature indices in this bundle
+    /// - `bin_offsets`: Bin offset for each feature (starts at 1)
+    /// - `feature_n_bins`: Number of bins per feature
+    /// - `total_bins`: Total bins including the default bin 0
+    /// - `default_bins`: Default bin value for each feature
+    /// - `n_samples`: Number of samples
+    ///
+    /// # Panics
+    ///
+    /// Panics if array lengths are inconsistent.
+    pub fn new(
+        encoded_bins: Box<[u16]>,
+        feature_indices: Box<[u32]>,
+        bin_offsets: Box<[u32]>,
+        feature_n_bins: Box<[u32]>,
+        total_bins: u32,
+        default_bins: Box<[u32]>,
+        n_samples: usize,
+    ) -> Self {
+        let n_features = feature_indices.len();
+        assert_eq!(
+            bin_offsets.len(),
+            n_features,
+            "bin_offsets length must match feature_indices"
+        );
+        assert_eq!(
+            feature_n_bins.len(),
+            n_features,
+            "feature_n_bins length must match feature_indices"
+        );
+        assert_eq!(
+            default_bins.len(),
+            n_features,
+            "default_bins length must match feature_indices"
+        );
+        assert_eq!(
+            encoded_bins.len(),
+            n_samples,
+            "encoded_bins length must match n_samples"
+        );
+
+        Self {
+            encoded_bins,
+            feature_indices,
+            bin_offsets,
+            feature_n_bins,
+            total_bins,
+            default_bins,
+            n_samples,
+        }
+    }
+
+    /// Decode an encoded bin to (position_in_bundle, original_bin).
+    ///
+    /// Returns `None` if encoded_bin is 0 (all features at default).
+    ///
+    /// The returned position is the index within this bundle's `feature_indices`,
+    /// NOT the original feature index. To get the original feature index:
+    /// ```ignore
+    /// if let Some((pos, bin)) = storage.decode(encoded_bin) {
+    ///     let original_feature = storage.feature_indices()[pos];
+    /// }
+    /// ```
+    ///
+    /// # Implementation Note
+    ///
+    /// For bundles with ≤4 features, uses linear scan for better cache performance.
+    /// For larger bundles, uses binary search.
+    #[inline]
+    pub fn decode(&self, encoded_bin: u16) -> Option<(usize, u32)> {
+        if encoded_bin == 0 {
+            return None; // All features at default
+        }
+
+        let encoded = encoded_bin as u32;
+        let n_features = self.bin_offsets.len();
+
+        // For small bundles, linear scan is faster due to better cache locality
+        if n_features <= 4 {
+            // Linear scan: find the feature whose offset range contains this bin
+            for i in (0..n_features).rev() {
+                if encoded >= self.bin_offsets[i] {
+                    let original_bin = encoded - self.bin_offsets[i];
+                    if original_bin < self.feature_n_bins[i] {
+                        return Some((i, original_bin));
+                    }
+                }
+            }
+            None
+        } else {
+            // Binary search for larger bundles
+            match self.bin_offsets.binary_search(&encoded) {
+                Ok(i) => Some((i, 0)), // Exactly at offset = bin 0 of feature i
+                Err(i) => {
+                    if i == 0 {
+                        return None;
+                    }
+                    let feature_idx = i - 1;
+                    let original_bin = encoded - self.bin_offsets[feature_idx];
+                    if original_bin < self.feature_n_bins[feature_idx] {
+                        Some((feature_idx, original_bin))
+                    } else {
+                        None // Out of range
+                    }
+                }
+            }
+        }
+    }
+
+    /// Decode an encoded bin to (original_feature_index, original_bin).
+    ///
+    /// This is a convenience method that returns the original feature index
+    /// directly, rather than the position within the bundle.
+    ///
+    /// Returns `None` if encoded_bin is 0 (all features at default).
+    #[inline]
+    pub fn decode_to_original(&self, encoded_bin: u16) -> Option<(u32, u32)> {
+        self.decode(encoded_bin)
+            .map(|(pos, bin)| (self.feature_indices[pos], bin))
+    }
+
+    /// Returns the encoded bin for the given sample.
+    #[inline]
+    pub fn bin(&self, sample: usize) -> u16 {
+        self.encoded_bins[sample]
+    }
+
+    /// Returns the encoded bin without bounds checking.
+    ///
+    /// # Safety
+    ///
+    /// `sample` must be less than `n_samples`.
+    #[inline]
+    pub unsafe fn bin_unchecked(&self, sample: usize) -> u16 {
+        // SAFETY: Caller guarantees sample < n_samples
+        unsafe { *self.encoded_bins.get_unchecked(sample) }
+    }
+
+    /// Returns the original feature indices in this bundle.
+    #[inline]
+    pub fn feature_indices(&self) -> &[u32] {
+        &self.feature_indices
+    }
+
+    /// Returns the encoded bins array.
+    #[inline]
+    pub fn encoded_bins(&self) -> &[u16] {
+        &self.encoded_bins
+    }
+
+    /// Returns the bin offsets for each feature.
+    #[inline]
+    pub fn bin_offsets(&self) -> &[u32] {
+        &self.bin_offsets
+    }
+
+    /// Returns the number of bins per feature.
+    #[inline]
+    pub fn feature_n_bins(&self) -> &[u32] {
+        &self.feature_n_bins
+    }
+
+    /// Returns the total number of bins in this bundle.
+    #[inline]
+    pub fn total_bins(&self) -> u32 {
+        self.total_bins
+    }
+
+    /// Returns the default bin for each feature.
+    #[inline]
+    pub fn default_bins(&self) -> &[u32] {
+        &self.default_bins
+    }
+
+    /// Returns the number of samples.
+    #[inline]
+    pub fn n_samples(&self) -> usize {
+        self.n_samples
+    }
+
+    /// Returns the number of features in this bundle.
+    #[inline]
+    pub fn n_features(&self) -> usize {
+        self.feature_indices.len()
+    }
+
+    /// Returns the total size in bytes used by this storage.
+    #[inline]
+    pub fn size_bytes(&self) -> usize {
+        self.encoded_bins.len() * std::mem::size_of::<u16>()
+            + self.feature_indices.len() * std::mem::size_of::<u32>()
+            + self.bin_offsets.len() * std::mem::size_of::<u32>()
+            + self.feature_n_bins.len() * std::mem::size_of::<u32>()
+            + self.default_bins.len() * std::mem::size_of::<u32>()
+    }
+
+    /// Returns whether a sample is "all defaults" (encoded bin == 0).
+    #[inline]
+    pub fn is_all_defaults(&self, sample: usize) -> bool {
+        self.encoded_bins[sample] == 0
+    }
+}
+
 /// Unified feature storage with bins and optional raw values.
 ///
 /// This enum wraps all storage types for homogeneous groups.
@@ -583,6 +871,7 @@ impl SparseCategoricalStorage {
 /// | Categorical      | ✗          | ✗      |
 /// | SparseNumeric    | ✓          | ✓      |
 /// | SparseCategorical| ✗          | ✓      |
+/// | Bundle           | ✗          | ✗      |
 ///
 /// # Examples
 ///
@@ -615,7 +904,8 @@ pub enum FeatureStorage {
     SparseNumeric(SparseNumericStorage),
     /// Sparse categorical features with bins only (lossless).
     SparseCategorical(SparseCategoricalStorage),
-    // Note: Bundle variant will be added in a future story if needed.
+    /// EFB bundle: multiple sparse features encoded into one column.
+    Bundle(BundleStorage),
 }
 
 impl FeatureStorage {
@@ -657,6 +947,12 @@ impl FeatureStorage {
         !self.is_sparse()
     }
 
+    /// Returns `true` if this storage is a bundle.
+    #[inline]
+    pub fn is_bundle(&self) -> bool {
+        matches!(self, FeatureStorage::Bundle(_))
+    }
+
     /// Returns the total size in bytes used by this storage.
     #[inline]
     pub fn size_bytes(&self) -> usize {
@@ -665,6 +961,7 @@ impl FeatureStorage {
             FeatureStorage::Categorical(s) => s.size_bytes(),
             FeatureStorage::SparseNumeric(s) => s.size_bytes(),
             FeatureStorage::SparseCategorical(s) => s.size_bytes(),
+            FeatureStorage::Bundle(s) => s.size_bytes(),
         }
     }
 
@@ -695,6 +992,12 @@ impl From<SparseNumericStorage> for FeatureStorage {
 impl From<SparseCategoricalStorage> for FeatureStorage {
     fn from(storage: SparseCategoricalStorage) -> Self {
         FeatureStorage::SparseCategorical(storage)
+    }
+}
+
+impl From<BundleStorage> for FeatureStorage {
+    fn from(storage: BundleStorage) -> Self {
+        FeatureStorage::Bundle(storage)
     }
 }
 
@@ -1486,5 +1789,225 @@ mod tests {
 
         // Verify storage type
         assert!(storage.bins().is_u16());
+    }
+
+    // =========================================================================
+    // BundleStorage tests
+    // =========================================================================
+
+    fn make_test_bundle() -> BundleStorage {
+        // Bundle of 3 features with bin counts [5, 10, 8]
+        // Offsets: [1, 6, 16] (starts at 1, then 1+5=6, then 6+10=16)
+        // Total bins: 1 + 5 + 10 + 8 = 24
+        BundleStorage::new(
+            vec![0u16, 4, 10, 20].into_boxed_slice(),  // encoded bins
+            vec![2u32, 7, 12].into_boxed_slice(),      // feature indices
+            vec![1u32, 6, 16].into_boxed_slice(),      // bin offsets
+            vec![5u32, 10, 8].into_boxed_slice(),      // n_bins per feature
+            24,                                         // total bins
+            vec![0u32, 0, 0].into_boxed_slice(),       // default bins
+            4,                                          // n_samples
+        )
+    }
+
+    #[test]
+    fn test_bundle_storage_new() {
+        let storage = make_test_bundle();
+        assert_eq!(storage.n_samples(), 4);
+        assert_eq!(storage.n_features(), 3);
+        assert_eq!(storage.total_bins(), 24);
+        assert_eq!(storage.feature_indices(), &[2, 7, 12]);
+        assert_eq!(storage.bin_offsets(), &[1, 6, 16]);
+        assert_eq!(storage.feature_n_bins(), &[5, 10, 8]);
+    }
+
+    #[test]
+    #[should_panic(expected = "bin_offsets length must match feature_indices")]
+    fn test_bundle_storage_mismatched_offsets() {
+        BundleStorage::new(
+            vec![0u16].into_boxed_slice(),
+            vec![1u32, 2].into_boxed_slice(),  // 2 features
+            vec![1u32].into_boxed_slice(),     // only 1 offset
+            vec![5u32, 10].into_boxed_slice(),
+            16,
+            vec![0u32, 0].into_boxed_slice(),
+            1,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "encoded_bins length must match n_samples")]
+    fn test_bundle_storage_mismatched_samples() {
+        BundleStorage::new(
+            vec![0u16, 1, 2].into_boxed_slice(),  // 3 encoded bins
+            vec![1u32, 2].into_boxed_slice(),
+            vec![1u32, 6].into_boxed_slice(),
+            vec![5u32, 10].into_boxed_slice(),
+            16,
+            vec![0u32, 0].into_boxed_slice(),
+            5,  // but says 5 samples
+        );
+    }
+
+    #[test]
+    fn test_bundle_decode_all_defaults() {
+        let storage = make_test_bundle();
+        // Encoded bin 0 means all features at default
+        assert_eq!(storage.decode(0), None);
+    }
+
+    #[test]
+    fn test_bundle_decode_feature_a() {
+        let storage = make_test_bundle();
+        // Feature A: offset=1, n_bins=5, so encoded 1-5 → bins 0-4
+        assert_eq!(storage.decode(1), Some((0, 0)));  // pos 0, bin 0
+        assert_eq!(storage.decode(2), Some((0, 1)));  // pos 0, bin 1
+        assert_eq!(storage.decode(3), Some((0, 2)));  // pos 0, bin 2
+        assert_eq!(storage.decode(4), Some((0, 3)));  // pos 0, bin 3
+        assert_eq!(storage.decode(5), Some((0, 4)));  // pos 0, bin 4
+    }
+
+    #[test]
+    fn test_bundle_decode_feature_b() {
+        let storage = make_test_bundle();
+        // Feature B: offset=6, n_bins=10, so encoded 6-15 → bins 0-9
+        assert_eq!(storage.decode(6), Some((1, 0)));   // pos 1, bin 0
+        assert_eq!(storage.decode(10), Some((1, 4)));  // pos 1, bin 4
+        assert_eq!(storage.decode(15), Some((1, 9)));  // pos 1, bin 9
+    }
+
+    #[test]
+    fn test_bundle_decode_feature_c() {
+        let storage = make_test_bundle();
+        // Feature C: offset=16, n_bins=8, so encoded 16-23 → bins 0-7
+        assert_eq!(storage.decode(16), Some((2, 0)));  // pos 2, bin 0
+        assert_eq!(storage.decode(20), Some((2, 4)));  // pos 2, bin 4
+        assert_eq!(storage.decode(23), Some((2, 7)));  // pos 2, bin 7
+    }
+
+    #[test]
+    fn test_bundle_decode_out_of_range() {
+        let storage = make_test_bundle();
+        // Encoded bin 24 is out of range (total_bins = 24, valid range is 0-23)
+        assert_eq!(storage.decode(24), None);
+        assert_eq!(storage.decode(100), None);
+    }
+
+    #[test]
+    fn test_bundle_decode_to_original() {
+        let storage = make_test_bundle();
+        // Feature indices are [2, 7, 12]
+        assert_eq!(storage.decode_to_original(0), None);             // all defaults
+        assert_eq!(storage.decode_to_original(4), Some((2, 3)));     // feature 2, bin 3
+        assert_eq!(storage.decode_to_original(10), Some((7, 4)));    // feature 7, bin 4
+        assert_eq!(storage.decode_to_original(20), Some((12, 4)));   // feature 12, bin 4
+    }
+
+    #[test]
+    fn test_bundle_bin_access() {
+        let storage = make_test_bundle();
+        // Encoded bins are [0, 4, 10, 20]
+        assert_eq!(storage.bin(0), 0);
+        assert_eq!(storage.bin(1), 4);
+        assert_eq!(storage.bin(2), 10);
+        assert_eq!(storage.bin(3), 20);
+    }
+
+    #[test]
+    fn test_bundle_is_all_defaults() {
+        let storage = make_test_bundle();
+        assert!(storage.is_all_defaults(0));   // bin 0
+        assert!(!storage.is_all_defaults(1));  // bin 4
+        assert!(!storage.is_all_defaults(2));  // bin 10
+        assert!(!storage.is_all_defaults(3));  // bin 20
+    }
+
+    #[test]
+    fn test_bundle_size_bytes() {
+        let storage = make_test_bundle();
+        // encoded_bins: 4 * 2 = 8
+        // feature_indices: 3 * 4 = 12
+        // bin_offsets: 3 * 4 = 12
+        // feature_n_bins: 3 * 4 = 12
+        // default_bins: 3 * 4 = 12
+        // Total: 8 + 12 + 12 + 12 + 12 = 56
+        assert_eq!(storage.size_bytes(), 56);
+    }
+
+    #[test]
+    fn test_bundle_single_feature() {
+        // Bundle with just 1 feature - should still work
+        let storage = BundleStorage::new(
+            vec![0u16, 3, 5].into_boxed_slice(),
+            vec![42u32].into_boxed_slice(),     // original feature index
+            vec![1u32].into_boxed_slice(),      // offset starts at 1
+            vec![10u32].into_boxed_slice(),     // 10 bins
+            11,                                  // 1 + 10
+            vec![0u32].into_boxed_slice(),
+            3,
+        );
+
+        assert_eq!(storage.n_features(), 1);
+        assert_eq!(storage.decode(0), None);
+        assert_eq!(storage.decode(1), Some((0, 0)));
+        assert_eq!(storage.decode(5), Some((0, 4)));
+        assert_eq!(storage.decode(10), Some((0, 9)));
+        assert_eq!(storage.decode(11), None);  // out of range
+    }
+
+    #[test]
+    fn test_bundle_large_for_binary_search() {
+        // Bundle with 10 features to trigger binary search path
+        let n_features = 10;
+        let bins_per_feature = 5;
+        let feature_indices: Vec<u32> = (0..n_features as u32).collect();
+        let mut offsets = vec![1u32];
+        for i in 1..n_features {
+            offsets.push(offsets[i - 1] + bins_per_feature);
+        }
+        let n_bins: Vec<u32> = vec![bins_per_feature; n_features];
+        let total_bins = 1 + n_features as u32 * bins_per_feature;
+        let defaults: Vec<u32> = vec![0; n_features];
+
+        let storage = BundleStorage::new(
+            vec![0u16, 3, 8, 25, 47].into_boxed_slice(),  // some sample encoded bins
+            feature_indices.into_boxed_slice(),
+            offsets.into_boxed_slice(),
+            n_bins.into_boxed_slice(),
+            total_bins,
+            defaults.into_boxed_slice(),
+            5,
+        );
+
+        // Verify decoding works for all features
+        // Feature 0: offset=1, bins 0-4 → encoded 1-5
+        assert_eq!(storage.decode(1), Some((0, 0)));
+        assert_eq!(storage.decode(5), Some((0, 4)));
+
+        // Feature 5: offset=1+5*5=26, bins 0-4 → encoded 26-30
+        assert_eq!(storage.decode(26), Some((5, 0)));
+        assert_eq!(storage.decode(30), Some((5, 4)));
+
+        // Feature 9: offset=1+5*9=46, bins 0-4 → encoded 46-50
+        assert_eq!(storage.decode(46), Some((9, 0)));
+        assert_eq!(storage.decode(50), Some((9, 4)));
+    }
+
+    #[test]
+    fn test_feature_storage_bundle_properties() {
+        let bundle = FeatureStorage::Bundle(make_test_bundle());
+
+        assert!(!bundle.has_raw_values());
+        assert!(!bundle.is_categorical());
+        assert!(!bundle.is_sparse());
+        assert!(bundle.is_dense());
+        assert!(bundle.is_bundle());
+        assert_eq!(bundle.size_bytes(), 56);
+    }
+
+    #[test]
+    fn test_feature_storage_bundle_from() {
+        let bundle: FeatureStorage = make_test_bundle().into();
+        assert!(matches!(bundle, FeatureStorage::Bundle(_)));
     }
 }

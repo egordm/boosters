@@ -1,14 +1,13 @@
 //! Feature Bundling (EFB) benchmark: compare performance with bundling enabled vs disabled.
 //!
+//! NOTE: Bundling is not yet implemented in the new BinnedDataset (RFC-0018).
+//! This benchmark is a placeholder that shows the intended API and compares
+//! against LightGBM's bundling implementation.
+//!
 //! Tests on one-hot encoded sparse data where EFB provides maximum benefit.
 //! Measures:
-//! - Binning time: dataset construction with bundling on vs off
+//! - Binning time: dataset construction
 //! - Training time: short training (10 rounds) to see histogram effect
-//! - Memory: reports binned column count as memory proxy
-//!
-//! Compares:
-//! - booste-rs: BundlingConfig::auto() vs BundlingConfig::disabled()
-//! - LightGBM: enable_bundle=true vs enable_bundle=false
 //!
 //! Run with: `cargo bench --features bench-compare --bench bundling`
 
@@ -18,7 +17,7 @@ mod common;
 use common::criterion_config::default_criterion;
 
 use boosters::Parallelism;
-use boosters::data::binned::{BinnedDatasetBuilder, BundlingConfig};
+use boosters::data::binned::BinnedDatasetBuilder;
 use boosters::data::{BinningConfig, transpose_to_c_order};
 use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
@@ -151,49 +150,34 @@ fn bench_boosters_binning(c: &mut Criterion) {
         let features_fm = transpose_to_c_order(sample_major_view);
         let features_dataset = Dataset::new(features_fm.view(), None, None);
 
-        // WITHOUT bundling
+        // NOTE: Bundling not yet implemented - this is placeholder showing API
+        // Currently both run identical code paths
         group.bench_function(BenchmarkId::new("no_bundling", config.name), |b| {
             b.iter(|| {
                 black_box(
-                    BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+                    BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
                         .add_features(features_dataset.features(), Parallelism::Parallel)
-                        .with_bundling(BundlingConfig::disabled())
                         .build()
                         .unwrap(),
                 )
             })
         });
 
-        // WITH bundling (auto)
         group.bench_function(BenchmarkId::new("with_bundling", config.name), |b| {
             b.iter(|| {
                 black_box(
-                    BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+                    BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
                         .add_features(features_dataset.features(), Parallelism::Parallel)
-                        .with_bundling(BundlingConfig::auto())
                         .build()
                         .unwrap(),
                 )
             })
         });
 
-        // Report bundling statistics
-        let binned = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
-            .add_features(features_dataset.features(), Parallelism::Parallel)
-            .with_bundling(BundlingConfig::auto())
-            .build()
-            .unwrap();
-        let stats = binned.bundling_stats();
-        if let Some(s) = stats {
-            eprintln!(
-                "[{}] Features: {} → {} binned columns ({:.1}% reduction)",
-                config.name,
-                n_features,
-                s.bundles_created + s.standalone_features,
-                (1.0 - (s.bundles_created + s.standalone_features) as f64 / n_features as f64)
-                    * 100.0
-            );
-        }
+        eprintln!(
+            "[{}] Features: {} (bundling not yet implemented)",
+            config.name, n_features
+        );
     }
 
     group.finish();
@@ -236,31 +220,24 @@ fn bench_boosters_training(c: &mut Criterion) {
         let features_fm = transpose_to_c_order(sample_major_view);
         let features_dataset = Dataset::new(features_fm.view(), None, None);
 
-        // Pre-build binned datasets
-        let binned_no_bundle =
-            BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+        // Pre-build binned datasets (bundling not yet implemented - both identical)
+        let binned_dataset =
+            BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
                 .add_features(features_dataset.features(), Parallelism::Parallel)
-                .with_bundling(BundlingConfig::disabled())
-                .build()
-                .unwrap();
-        let binned_with_bundle =
-            BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
-                .add_features(features_dataset.features(), Parallelism::Parallel)
-                .with_bundling(BundlingConfig::auto())
                 .build()
                 .unwrap();
 
         // Convert targets to 2D
         let targets_2d = Array2::from_shape_vec((1, targets.len()), targets.clone()).unwrap();
 
-        // WITHOUT bundling (training only)
+        // NOTE: Both benchmarks use same dataset since bundling not yet implemented
         group.bench_function(BenchmarkId::new("no_bundling", config.name), |b| {
             let targets_view = TargetsView::new(targets_2d.view());
             b.iter(|| {
                 black_box(
                     trainer
                         .train(
-                            black_box(&binned_no_bundle),
+                            black_box(&binned_dataset),
                             targets_view,
                             WeightsView::None,
                             &[],
@@ -271,14 +248,13 @@ fn bench_boosters_training(c: &mut Criterion) {
             })
         });
 
-        // WITH bundling (training only)
         group.bench_function(BenchmarkId::new("with_bundling", config.name), |b| {
             let targets_view = TargetsView::new(targets_2d.view());
             b.iter(|| {
                 black_box(
                     trainer
                         .train(
-                            black_box(&binned_with_bundle),
+                            black_box(&binned_dataset),
                             targets_view,
                             WeightsView::None,
                             &[],

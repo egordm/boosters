@@ -902,13 +902,13 @@ impl DataAccessor for BinnedDataset {
 mod tests {
     use super::super::storage::BinStorage;
     use super::*;
-    use crate::data::binned::{BinMapper, MissingType};
+    use super::super::bin_mapper::{BinMapper as DeprecatedBinMapper, MissingType as DeprecatedMissingType};
 
-    fn make_simple_mapper(n_bins: u32) -> BinMapper {
+    fn make_simple_mapper(n_bins: u32) -> DeprecatedBinMapper {
         let bounds: Vec<f64> = (0..n_bins).map(|i| i as f64 + 0.5).collect();
-        BinMapper::numerical(
+        DeprecatedBinMapper::numerical(
             bounds,
-            MissingType::None,
+            DeprecatedMissingType::None,
             0,
             0,
             0.0,

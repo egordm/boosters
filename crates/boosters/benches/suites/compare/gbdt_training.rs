@@ -89,7 +89,7 @@ fn bench_train_regression(c: &mut Criterion) {
                 // Use single-threaded binning to match training parallelism
                 // This mirrors how LightGBM's num_threads=1 affects its entire pipeline
                 let binned =
-                    BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+                    BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
                         .add_features(features_dataset.features(), Parallelism::Sequential)
                         .build()
                         .unwrap();

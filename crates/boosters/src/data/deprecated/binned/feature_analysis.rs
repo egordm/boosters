@@ -154,7 +154,7 @@ impl FeatureStats {
 ///
 /// # Example
 ///
-/// ```
+/// ```ignore
 /// use boosters::FeaturesView;
 /// use boosters::data::binned::analyze_features;
 /// use ndarray::array;

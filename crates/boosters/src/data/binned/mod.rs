@@ -1,9 +1,9 @@
 //! BinnedDataset - Feature group-based quantized data for GBDT training.
 //!
-//! This module contains the new implementation following RFC-0018.
-//! Deprecated types are re-exported for backward compatibility during migration.
+//! This module contains the RFC-0018 implementation for binned datasets
+//! with raw feature storage for linear leaf fitting.
 
-// New RFC-0018 implementation
+// RFC-0018 implementation modules
 mod bin_data;
 mod bin_mapper;
 pub(crate) mod builder;
@@ -14,19 +14,43 @@ mod sample_blocks;
 mod storage;
 pub(crate) mod view;
 
-// Public exports for new types
-// Note: FeatureGroup and FeatureView are NOT exported publicly yet to avoid
-// conflict with deprecated types. They will be exported when we switch over in Epic 7.
-// Note: BinMapper and FeatureAnalysis are also NOT exported yet - deprecated versions
-// are still used via re-export. New types will be used by the new builder.
+// =============================================================================
+// Public API (RFC-0018 types)
+// =============================================================================
+
+// Core types
 pub use bin_data::BinData;
-pub use dataset::BinnedSampleView;
+pub use bin_mapper::{BinMapper, FeatureType, MissingType};
+pub use dataset::{BinnedDataset, BinnedFeatureInfo, BinnedSampleView, FeatureLocation};
+pub use group::FeatureGroup;
 pub use storage::{
-    CategoricalStorage, FeatureStorage, NumericStorage, SparseCategoricalStorage,
+    BundleStorage, CategoricalStorage, FeatureStorage, NumericStorage, SparseCategoricalStorage,
     SparseNumericStorage,
 };
+pub use view::FeatureView;
 
-// Re-export everything from deprecated for backward compatibility
+// Builder types
+pub use builder::{BuiltGroups, DatasetBuilder, DatasetError};
+pub use feature_analysis::{BinningConfig, FeatureAnalysis, FeatureMetadata, GroupSpec};
+
+// For backward compatibility during migration, re-export some builder types with old names
+pub use builder::DatasetBuilder as BinnedDatasetBuilder;
+pub use builder::DatasetError as BuildError;
+
+// =============================================================================
+// Deprecated re-exports (bundling and legacy storage)
+// These will be removed once all consumers migrate away from bundling
+// =============================================================================
+
+// Bundling types - still needed for deprecated BinnedDataset consumers
+// Note: New BinnedDataset does NOT support bundling yet
 #[allow(deprecated)]
-pub use super::deprecated::binned::*;
+pub use super::deprecated::binned::{
+    BinStorage, BinType, BundlePlan, BundlingConfig, BundlingFeatures, BundlingStats,
+    FeatureBundle, GroupStrategy,
+};
+
+// Legacy builder types for backward compat
+#[allow(deprecated)]
+pub use super::deprecated::binned::BinningStrategy;
 

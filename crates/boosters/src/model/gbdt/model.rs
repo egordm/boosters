@@ -145,7 +145,7 @@ impl GBDTModel {
 
         run_with_threads(n_threads, |parallelism| {
             // Bin the training dataset using config.binning and config.bundling
-            let binned = BinnedDatasetBuilder::new(config.binning.clone())
+            let binned = BinnedDatasetBuilder::with_config(config.binning.clone())
                 .add_features(dataset.features(), parallelism)
                 .with_bundling(config.bundling.clone())
                 .build()

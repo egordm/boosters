@@ -118,6 +118,38 @@ impl<'a> FeatureView<'a> {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// Get the bin value for a sample.
+    ///
+    /// For dense views, this is O(1). For sparse views, this is O(log n).
+    /// Returns `None` if the sample is not in the sparse view (default bin).
+    #[inline]
+    pub fn get_bin(&self, sample: usize) -> Option<u32> {
+        match self {
+            FeatureView::U8(bins) => bins.get(sample).map(|&b| b as u32),
+            FeatureView::U16(bins) => bins.get(sample).map(|&b| b as u32),
+            FeatureView::SparseU8 {
+                sample_indices,
+                bin_values,
+            } => {
+                // Binary search for sample in sparse indices
+                sample_indices
+                    .binary_search(&(sample as u32))
+                    .ok()
+                    .map(|idx| bin_values[idx] as u32)
+            }
+            FeatureView::SparseU16 {
+                sample_indices,
+                bin_values,
+            } => {
+                // Binary search for sample in sparse indices
+                sample_indices
+                    .binary_search(&(sample as u32))
+                    .ok()
+                    .map(|idx| bin_values[idx] as u32)
+            }
+        }
+    }
 }
 
 #[cfg(test)]

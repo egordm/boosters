@@ -27,7 +27,7 @@ fn main() {
 
     // Create binned dataset for training (using feature-major data)
     let dataset = Dataset::new(features.view(), None, None);
-    let binned_dataset = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+    let binned_dataset = BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
         .add_features(dataset.features(), Parallelism::Parallel)
         .build()
         .expect("Failed to build binned dataset");

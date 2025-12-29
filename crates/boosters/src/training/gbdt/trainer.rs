@@ -170,7 +170,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
         eval_sets: &[EvalSet<'_>],
         parallelism: Parallelism,
     ) -> Option<Forest<ScalarLeaf>> {
-        let n_rows = dataset.n_rows();
+        let n_rows = dataset.n_samples();
         let n_outputs = self.objective.n_outputs();
 
         // Validate inputs
@@ -396,43 +396,34 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
 mod tests {
     use super::*;
     use crate::data::WeightsView;
-    use crate::data::{
-        BinMapper, BinStorage, BinnedDataset, BinnedFeatureInfo, FeatureGroup,
-        MissingType,
-    };
+    use crate::data::{BinnedDataset, BinnedDatasetBuilder, BinningConfig};
     use crate::training::metrics::Rmse;
     use crate::training::objectives::SquaredLoss;
-    use ndarray::arr2;
-
-    fn make_simple_mapper(n_bins: u32) -> BinMapper {
-        let bounds: Vec<f64> = (0..n_bins).map(|i| i as f64 + 0.5).collect();
-        BinMapper::numerical(
-            bounds,
-            MissingType::None,
-            0,
-            0,
-            0.0,
-            0.0,
-            (n_bins - 1) as f64,
-        )
-    }
+    use ndarray::{arr2, Array2};
 
     fn make_test_dataset() -> BinnedDataset {
-        // 8 rows, 2 features (column-major)
-        // Column-major: [f0r0, f0r1, ..., f0r7, f1r0, f1r1, ..., f1r7]
-        let storage = BinStorage::from_u8(vec![
-            0, 1, 2, 3, 0, 1, 2, 3, // feature 0: 8 rows
-            1, 2, 0, 1, 2, 0, 1, 2, // feature 1: 8 rows
-        ]);
+        // 8 rows, 2 features
+        // Feature 0: [0, 1, 2, 3, 0, 1, 2, 3]
+        // Feature 1: [1, 2, 0, 1, 2, 0, 1, 2]
+        let data = Array2::from_shape_vec(
+            (8, 2),
+            vec![
+                0.0, 1.0, // row 0
+                1.0, 2.0, // row 1
+                2.0, 0.0, // row 2
+                3.0, 1.0, // row 3
+                0.0, 2.0, // row 4
+                1.0, 0.0, // row 5
+                2.0, 1.0, // row 6
+                3.0, 2.0, // row 7
+            ],
+        )
+        .unwrap();
 
-        let group = FeatureGroup::new(vec![0, 1], 8, storage, vec![4, 3]);
-
-        let features = vec![
-            BinnedFeatureInfo::new(make_simple_mapper(4), 0, 0),
-            BinnedFeatureInfo::new(make_simple_mapper(3), 0, 1),
-        ];
-
-        BinnedDataset::with_bundle_plan(8, features, vec![group], None)
+        BinnedDatasetBuilder::from_array(data.view(), &BinningConfig::default())
+            .unwrap()
+            .build()
+            .unwrap()
     }
 
     #[test]
@@ -734,6 +725,7 @@ mod tests {
             growth_strategy: GrowthStrategy::DepthWise { max_depth: 4 },
             linear_leaves: Some(LinearLeafConfig {
                 lambda: 0.01,
+                min_samples: 5, // Lower threshold for test
                 ..Default::default()
             }),
             ..Default::default()

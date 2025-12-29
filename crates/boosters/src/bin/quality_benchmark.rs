@@ -789,7 +789,7 @@ fn train_boosters(
     let feature_major = sample_major.t().as_standard_layout().into_owned();
     // Wrap in Dataset for BinnedDatasetBuilder (feature_major is already feature-major)
     let dataset_train = Dataset::new(feature_major.view(), None, None);
-    let binned_train = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+    let binned_train = BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
         .add_features(dataset_train.features(), Parallelism::Parallel)
         .build()
         .unwrap();

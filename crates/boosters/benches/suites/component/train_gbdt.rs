@@ -28,7 +28,7 @@ fn build_binned_dataset(
 ) -> (boosters::data::binned::BinnedDataset, Array2<f32>) {
     let synth_dataset = synthetic_regression(rows, cols, seed, 0.05);
     let features_dataset = Dataset::new(synth_dataset.features.view(), None, None);
-    let binned = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+    let binned = BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
         .add_features(features_dataset.features(), Parallelism::Parallel)
         .build()
         .unwrap();
@@ -56,7 +56,7 @@ fn bench_gbdt_quantize(c: &mut Criterion) {
             |b, ds| {
                 b.iter(|| {
                     black_box(
-                        BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+                        BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
                             .add_features(black_box(ds).features(), Parallelism::Parallel)
                             .build()
                             .unwrap(),
@@ -129,7 +129,7 @@ fn bench_gbdt_train_binary(c: &mut Criterion) {
     )
     .unwrap();
     let features_dataset = Dataset::new(synth_dataset.features.view(), None, None);
-    let binned = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+    let binned = BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
         .add_features(features_dataset.features(), Parallelism::Parallel)
         .build()
         .unwrap();
@@ -179,7 +179,7 @@ fn bench_gbdt_train_multiclass(c: &mut Criterion) {
     )
     .unwrap();
     let features_dataset = Dataset::new(synth_dataset.features.view(), None, None);
-    let binned = BinnedDatasetBuilder::new(BinningConfig::builder().max_bins(256).build())
+    let binned = BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
         .add_features(features_dataset.features(), Parallelism::Parallel)
         .build()
         .unwrap();
