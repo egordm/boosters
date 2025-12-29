@@ -7,6 +7,7 @@
 mod bin_data;
 mod bin_mapper;
 mod builder;
+mod dataset;
 mod feature_analysis;
 pub(crate) mod group;
 mod storage;
