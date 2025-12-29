@@ -27,33 +27,38 @@
 //!
 //! Missing values are represented as `f32::NAN`.
 
-mod accessor;
 pub mod binned;
-mod column;
-mod dataset;
 mod error;
 mod ndarray;
-mod schema;
-mod views;
+
+// Deprecated module containing old implementation during RFC-0018 migration
+// All old data types (Dataset, Column, accessor, schema, views) live here
+#[allow(deprecated)]
+pub(crate) mod deprecated;
 
 #[cfg(feature = "io-parquet")]
 pub mod io;
 
 // =============================================================================
-// Core Dataset Types (user-facing)
+// Core Dataset Types (user-facing) - re-exported from deprecated
 // =============================================================================
 
-pub use column::{Column, SparseColumn};
-pub use dataset::{Dataset, DatasetBuilder};
+#[allow(deprecated)]
+pub use deprecated::column::{Column, SparseColumn};
+#[allow(deprecated)]
+pub use deprecated::dataset::{Dataset, DatasetBuilder};
 pub use error::DatasetError;
-pub use schema::{DatasetSchema, FeatureMeta, FeatureType};
-pub use views::{FeaturesView, SamplesView, TargetsView, WeightsIter, WeightsView};
+#[allow(deprecated)]
+pub use deprecated::schema::{DatasetSchema, FeatureMeta, FeatureType};
+#[allow(deprecated)]
+pub use deprecated::views::{FeaturesView, SamplesView, TargetsView, WeightsIter, WeightsView};
 
 // =============================================================================
-// Accessor Traits (internal)
+// Accessor Traits (internal) - re-exported from deprecated
 // =============================================================================
 
-pub use accessor::{DataAccessor, SampleAccessor};
+#[allow(deprecated)]
+pub use deprecated::accessor::{DataAccessor, SampleAccessor};
 
 // =============================================================================
 // ndarray Utilities
@@ -65,6 +70,7 @@ pub use ndarray::{axis, init_predictions, init_predictions_into, transpose_to_c_
 // Binned Data Types (re-exports for convenience)
 // =============================================================================
 
+#[allow(deprecated)]
 pub use binned::{
     BinMapper, BinStorage, BinType, BinnedDataset, BinnedDatasetBuilder, BinnedFeatureInfo,
     BinnedSample, BinningConfig, BinningStrategy, BuildError, FeatureGroup, FeatureView,
@@ -73,4 +79,5 @@ pub use binned::{
 
 // Internal types for tests/benchmarks
 #[doc(hidden)]
+#[allow(deprecated)]
 pub use binned::{GroupSpec, GroupStrategy};

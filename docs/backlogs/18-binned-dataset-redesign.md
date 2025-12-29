@@ -2,12 +2,25 @@
 
 **RFC**: [RFC-0018](../rfcs/0018-raw-feature-storage.md)  
 **Created**: 2025-12-28  
+**Revised**: 2025-12-29  
 **Status**: Ready for Implementation  
-**Refinement Rounds**: 7
+**Refinement Rounds**: 4 of 4 (Complete)
 
 ## Overview
 
 Comprehensive redesign of `BinnedDataset` storage to store raw feature values alongside bins, enabling architectural cleanup and improved API.
+
+### Approach: Full Isolation + Parallel Implementation
+
+**Key insight**: Rather than incrementally modifying existing code, we:
+
+1. **Physically move** ALL existing binned/dataset/bundling code into a `deprecated/` folder
+2. **Fix imports** so existing code continues to work during migration
+3. **Build new implementation from scratch** in the main modules, following RFC-0018 exactly
+4. **Switch over** once new implementation is complete and tested
+5. **Delete deprecated folder** after migration is verified
+
+This gives us a clean slate without mixing old and new patterns. The old code remains working during the transition.
 
 ### Primary Goals
 
@@ -22,17 +35,11 @@ Comprehensive redesign of `BinnedDataset` storage to store raw feature values al
 - Memory overhead <50% of binned size
 - ~130 net lines removed
 
-### Key Discovery During Refinement
-
-Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (better than LightGBM's 0.4053). This contradicts RFC's claim of ~0.80. Story 0.1 will investigate this discrepancy. The backlog remains valuable for cleanup regardless.
-
 ---
 
-## Epic 0: Prework and Baselines
+## Epic 0: Deprecation and Isolation
 
-*Establish baselines, verify assumptions, and prepare codebase for clean implementation.*
-
-**Approach**: We deprecate/isolate old code FIRST, then write new implementation from scratch. This gives us a clean slate without mixing old and new patterns.
+*Physically move ALL code that will be replaced into a `deprecated/` folder.*
 
 ### Story 0.1: Baseline Benchmarks (Speed + Quality)
 
@@ -40,9 +47,7 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 **Estimate**: 30 min  
 **Priority**: BLOCKING
 
-**Description**: Run full benchmark suite to capture current performance and quality baselines across ALL models.
-
-**Command**: `uv run boosters-eval full`
+**Description**: Run full benchmark suite to capture current performance and quality baselines.
 
 **Baseline Results** (captured 2025-12-28):
 
@@ -54,1283 +59,999 @@ Results.md shows linear_trees on covertype already achieves 0.3754 mlogloss (bet
 | california | linear_trees | boosters | rmse | 0.4726±0.0074 |
 | synthetic_reg_medium | linear_trees | boosters | rmse | 18.7762±0.9837 |
 
-**Quality Gate**: No regression >5% in any metric after implementation.
-
 **Definition of Done**:
-
-- Full benchmark run completed
-- Results documented
-- Baseline established for regression testing
+- ✅ Full benchmark run completed
+- ✅ Results documented
 
 ---
 
-### Story 0.2: Remove GroupLayout Enum
-
-**Status**: COMPLETE  
-**Estimate**: 1 hour  
-**Priority**: HIGH (do NOW)
-**Completed**: 2025-01-26
-
-**Description**: Delete `GroupLayout` enum and all strided access code. Always use column-major layout.
-
-**Tasks**:
-
-- ✅ Remove `GroupLayout` enum from `storage.rs`
-- ✅ Remove `layout` field from `FeatureGroup`
-- ✅ Update `FeatureGroup::new()` to not take layout parameter
-- ✅ Remove row-major match arms in `feature_view()` (lines 738-745 in dataset.rs)
-- ✅ Update `FeatureView` to remove stride field (always 1)
-- ✅ Update all tests that use `GroupLayout::RowMajor` to use column-major data
-- ✅ Delete any layout-specific benchmarks
-- ✅ Delete strided histogram kernels (build_u8_strided_gathered, etc.)
-- ✅ Simplify partition.rs bin access
-
-**Results**:
-
-- 12 files changed, 289 insertions(+), 2091 deletions(-) (net -1802 lines)
-- 548 unit tests pass
-- 34 integration tests pass
-
-**Definition of Done**:
-
-- ✅ `GroupLayout` enum deleted
-- ✅ All code compiles without layout parameter
-- ✅ All tests pass
-- ✅ ~80 lines removed (actually -1802 lines including dead strided code)
-
-**Public API Removed**: `GroupLayout`, `FeatureGroup::layout()`, `FeatureGroup::is_row_major()`, `FeatureGroup::is_column_major()`, `FeatureGroup::row_stride()`
-
----
-
-### Story 0.3: Verify ndarray CowArray Availability
-
-**Status**: COMPLETE  
-**Estimate**: 15 min
-**Completed**: 2025-01-26
-
-**Description**: Confirm CowArray is available and suitable for raw_numeric_matrix.
-
-**Tasks**:
-
-- ✅ Check ndarray version in Cargo.toml (0.16.1)
-- ✅ Verify CowArray import works (confirmed in ndarray docs)
-- ✅ CowArray semantics verified: `is_view()`, `is_owned()` methods available
-
-**Results**:
-
-- ndarray 0.16.1 with features `["rayon", "approx"]` is already in use
-- `CowArray<'a, A, D>` is a type alias for `ArrayBase<CowRepr<'a, A>, D>`
-- Has `is_view()` and `is_owned()` methods for checking state
-- Supports `From<ArrayView>` (no copy) and `From<Array>` (no copy)
-
-**Definition of Done**:
-
-- ✅ CowArray confirmed available
-- ✅ Import path documented: `ndarray::CowArray`
-
----
-
-### Story 0.4: Deprecate Old Dataset Module (Isolation)
-
-**Status**: COMPLETE  
-**Estimate**: 30 min  
-**Completed**: 2025-01-26
-
-**Description**: Mark existing binned dataset code as deprecated and isolate it, preparing for clean new implementation.
-
-**Tasks**:
-
-- ✅ Create `data/binned/v2/` module for new implementation
-- ✅ Create `v2/mod.rs` with module structure and exports
-- ✅ Create `v2/bin_data.rs` with `BinData` enum (replaces `BinType`)
-- ✅ Create `v2/storage.rs` with new storage types:
-  - `NumericStorage`: bins + raw_values
-  - `CategoricalStorage`: bins only
-  - `SparseNumericStorage`: sparse with raw values
-  - `SparseCategoricalStorage`: sparse categorical
-  - `FeatureStorage`: unified enum
-- ✅ Add `#[deprecated(since = "0.2.0")]` to old types:
-  - `BinType` enum
-  - `BinStorage` enum
-- ✅ Update binned/mod.rs to include v2 module
-- ✅ Delete obsolete layout_benchmark.rs example
-
-**Results**:
-
-- 6 files changed, +650 insertions, -145 deletions
-- 557 unit tests pass (+9 new v2 tests)
-- 34 integration tests pass
-- Clean separation between old (deprecated) and new (v2) code
-
-**Definition of Done**:
-
-- ✅ Deprecation warnings on old types
-- ✅ New module structure created with full implementation
-- ✅ Clear separation between old and new code
-- ✅ Documentation explaining migration path
-
-**Note**: This allows us to write clean new code without touching old implementation until integration.
-
----
-
-### Story 0.5: Complete Deprecation Coverage
+### Story 0.2: Move All Deprecated Code to Deprecated Folder
 
 **Status**: Not Started  
-**Estimate**: 30 min  
+**Estimate**: 1.5 hours  
+**Priority**: BLOCKING
+
+**Description**: Move the entire `data/binned/` directory AND `data/dataset.rs` AND `data/column.rs` to `data/deprecated/`. The `deprecated` module itself should be marked with `#![deprecated]` at the module level.
+
+**Files to Move**:
+```
+data/binned/*                 → data/deprecated/binned/
+data/dataset.rs               → data/deprecated/dataset.rs
+data/column.rs                → data/deprecated/column.rs
+```
+
+**Tasks**:
+1. Create `data/deprecated/` directory
+2. Create `data/deprecated/mod.rs` with `#![deprecated(note = "Use new binned implementation")]` 
+3. Move entire `data/binned/` to `data/deprecated/binned/`
+4. Move `data/dataset.rs` to `data/deprecated/dataset.rs`
+5. Move `data/column.rs` to `data/deprecated/column.rs`
+6. Create new empty `data/binned/` directory
+7. Create stub `data/binned/mod.rs` that re-exports from deprecated for now
+
+**Definition of Done**:
+- `data/deprecated/` contains all old binned/dataset/column code
+- `deprecated` module has `#![deprecated]` attribute at module level
+- `data/binned/mod.rs` re-exports from deprecated
+- All existing code compiles and tests pass
+- No behavior change
+
+---
+
+### Story 0.3: Fix All Imports After Move
+
+**Status**: Not Started  
+**Estimate**: 1 hour  
 **Priority**: HIGH
 
-**Description**: Add deprecation notices to remaining types that will be removed/replaced, ensuring no gaps in deprecation coverage.
+**Description**: After moving files, fix all imports throughout the codebase to use the re-exports.
 
-**Context (Refinement Round 6)**: User noted that `Dataset`/`DatasetBuilder` were deprecated but related types were missed. This story completes the deprecation audit.
+**Key Files to Update**:
+- `data/mod.rs` - Set up re-exports
+- `training/gbdt/*.rs` - Uses BinnedDataset extensively
+- `training/gblinear/*.rs` - Uses Dataset
+- `inference/*.rs` - Uses datasets
+- Tests throughout the codebase
 
-**Types to Deprecate**:
+**Re-export Strategy** (`data/mod.rs`):
+```rust
+// Internal deprecated module (not exposed publicly)
+pub(crate) mod deprecated;
 
-1. **`Column` and `SparseColumn`** in `data/column.rs`:
-   - Only used by deprecated `DatasetBuilder`
-   - Add: `#[deprecated(since = "0.2.0", note = "Use BinnedDatasetBuilder::add_features() instead")]`
-
-2. **`BundledColumns`** in `data/binned/dataset.rs`:
-   - Will be consolidated into v2's BundleStorage
-   - Add: `#[deprecated(since = "0.2.0", note = "Will be replaced by v2::BundleStorage")]`
-
-3. **`BundlePlan`** in `data/binned/bundling.rs`:
-   - Will be consolidated into integrated bundle handling
-   - Add: `#[deprecated(since = "0.2.0", note = "Will be replaced by v2::BundleStorage")]`
-
-4. **`FeatureLocation`** in `data/binned/bundling.rs`:
-   - v2 module will have its own FeatureLocation enum (Story 4.1)
-   - Add: `#[deprecated(since = "0.2.0", note = "Use v2::FeatureLocation instead")]`
-
-**Types Already Deprecated** (verified):
-
-- ✅ `Dataset` in `data/dataset.rs`
-- ✅ `DatasetBuilder` in `data/dataset.rs`
-- ✅ `BinType` in `data/binned/storage.rs`
-- ✅ `BinStorage` in `data/binned/storage.rs`
-
-**Types NOT to Deprecate** (still actively used):
-
-- `FeaturesView`, `TargetsView`, `WeightsView`, `SamplesView` - Views for training input
-- `DatasetSchema`, `FeatureMeta`, `FeatureType` in schema.rs - Still useful for specifying feature metadata
-- `BinMapper`, `BinningConfig`, `BinningStrategy` - Core binning functionality
-- `BinnedDataset`, `BinnedDatasetBuilder`, `FeatureGroup` - Will be modified, not replaced
-
-**Implementation Details** (Refinement Round 7):
-
-Where to add `#[allow(deprecated)]`:
-
-1. `data/column.rs`: Add `#![allow(deprecated)]` at module level (entire module is deprecated)
-2. `data/binned/bundling.rs`: Add `#![allow(deprecated)]` at module level (internally uses deprecated types)
-3. `data/binned/dataset.rs`: Add `#[allow(deprecated)]` on:
-   - `BinnedDataset` struct (uses `BundledColumns` field)
-   - Methods that return/use deprecated types
-4. `data/binned/builder.rs`: Add `#[allow(deprecated)]` where bundling functions are called
-
-**Note**: v2::FeatureLocation will be created as part of Story 4.1 (FeatureLocation and Introspection).
+// Temporary re-exports from deprecated - same public paths
+pub mod binned {
+    pub use super::deprecated::binned::*;
+}
+pub use deprecated::dataset::{Dataset, DatasetBuilder};
+pub use deprecated::column::{Column, SparseColumn};
+```
 
 **Definition of Done**:
 
-- All types listed above have `#[deprecated]` attribute
-- Code compiles with deprecation warnings (no errors)
-- `#[allow(deprecated)]` added where internal usage is intentional
-- All tests pass
+- All files compile
+- All tests pass: `cargo test`
+- Clippy passes: `cargo clippy -- -D warnings`
+- Docs build: `cargo doc`
+- Deprecated module is `pub(crate)` not fully public
+- No behavior change
+- Clean separation: deprecated code in `deprecated/`, new code (empty for now) in main modules
 
 ---
 
-## Epic 1: Storage Types Foundation
+### Story 0.4: Verify Clean Separation
 
-*Create the new typed storage hierarchy that encodes numeric vs categorical semantics.*
+**Status**: Not Started  
+**Estimate**: 15 min
 
-**Milestone**: After this epic, new storage types exist but aren't used yet.
+**Description**: Verify the codebase is in a clean state with deprecated code isolated.
 
-**Note (2025-01-26)**: Most of this epic was completed during Story 0.4 prework. The v2 module now contains all core storage types.
+**Tasks**:
 
-### Story 1.1: Create BinData Enum and Module Structure
+1. Run full test suite: `cargo test`
+2. Run benchmarks: `cargo bench`
+3. Check that deprecated folder contains ALL old binned/dataset code
+4. Check that `data/binned/` is empty (except re-export mod.rs)
+5. Commit with message: "chore: move binned/dataset code to deprecated folder"
 
-**Status**: COMPLETE (done in Story 0.4)  
-**Completed**: 2025-01-26
+**Important**: Use `git mv` to preserve file history.
 
-**Description**: Create storage module and `BinData` enum replacing `BinType`.
+**Definition of Done**:
 
-**Implementation**: Located at `data/binned/v2/bin_data.rs`
-- `BinData::U8(Box<[u8]>)` and `BinData::U16(Box<[u16]>)` variants
-- Methods: `is_u8()`, `is_u16()`, `len()`, `is_empty()`, `get()`, `get_unchecked()`, `size_bytes()`, `max_bins()`, `needs_u16()`, `as_u8()`, `as_u16()`
-- Full test coverage (4 tests)
-
-**Definition of Done**: ✅ All criteria met
-
----
-
-### Story 1.2: Create NumericStorage and CategoricalStorage
-
-**Status**: COMPLETE (done in Story 0.4)  
-**Completed**: 2025-01-26
-
-**Description**: Create dense storage types for numeric and categorical features.
-
-**Implementation**: Located at `data/binned/v2/storage.rs`
-- `NumericStorage`: bins + raw_values, with `bin()`, `raw()`, `raw_slice()` accessors
-- `CategoricalStorage`: bins only, with `bin()` accessor
-- Column-major layout documented
-- Full test coverage (2 tests)
-
-**Definition of Done**: ✅ All criteria met
+- Full test suite passes
+- Benchmarks run without regression
+- Clean git commit marking the isolation
 
 ---
 
-### Story 1.3: Create Sparse Storage Types
+### Story 0.5: Stakeholder Feedback Check (Epic 0)
 
-**Status**: COMPLETE (done in Story 0.4)  
-**Completed**: 2025-01-26
+**Status**: Not Started  
+**Estimate**: 15 min
+
+**Description**: Review stakeholder feedback file before proceeding to implementation of new storage types.
+
+**Tasks**:
+
+1. Read `workdir/tmp/stakeholder_feedback.md`
+2. Discuss any feedback relevant to the deprecation approach
+3. Capture any new stories if feedback suggests additional work
+4. Update feedback file to mark items as addressed
+
+**Definition of Done**:
+
+- Stakeholder feedback reviewed
+- Any relevant feedback incorporated or captured as new stories
+
+---
+
+## Epic 1: New Storage Types
+
+*Create new typed storage hierarchy from scratch, following RFC-0018 exactly.*
+
+### Story 1.1: Create BinData Enum
+
+**Status**: Not Started  
+**Estimate**: 30 min
+
+**Description**: Create the new `BinData` enum in `data/binned/bin_data.rs`.
+
+**Location**: `data/binned/bin_data.rs` (NEW FILE)
+
+**Implementation** (from RFC):
+
+```rust
+/// Bin data container. The variant encodes the bin width.
+pub enum BinData {
+    U8(Box<[u8]>),
+    U16(Box<[u16]>),
+}
+
+impl BinData {
+    pub fn is_u8(&self) -> bool;
+    pub fn is_u16(&self) -> bool;
+    pub fn len(&self) -> usize;
+    pub fn is_empty(&self) -> bool;
+    pub fn get(&self, idx: usize) -> Option<u32>;
+    pub fn get_unchecked(&self, idx: usize) -> u32;
+    pub fn size_bytes(&self) -> usize;
+    pub fn max_bins(&self) -> u32;
+    pub fn needs_u16(n_bins: u32) -> bool;
+    pub fn as_u8(&self) -> Option<&[u8]>;
+    pub fn as_u16(&self) -> Option<&[u16]>;
+}
+```
+
+**Testing Requirements**:
+
+- Unit tests for all methods
+- Edge cases: empty data, single element, max u8 bins (255), u16 threshold
+- Size calculation tests
+
+**Definition of Done**:
+
+- `BinData` enum created with all methods
+- Unit tests for all methods (including edge cases)
+- Compiles without using any deprecated code
+
+---
+
+### Story 1.2: Create NumericStorage
+
+**Status**: Not Started  
+**Estimate**: 45 min
+
+**Description**: Create dense numeric storage with bins + raw values.
+
+**Location**: `data/binned/storage.rs` (NEW FILE)
+
+**Implementation** (from RFC):
+```rust
+/// Dense numeric storage: [n_features × n_samples], column-major.
+/// Raw values store actual f32 values including NaN for missing.
+pub struct NumericStorage {
+    bins: BinData,
+    raw_values: Box<[f32]>,
+}
+
+impl NumericStorage {
+    pub fn new(bins: BinData, raw_values: Box<[f32]>) -> Self;
+    
+    #[inline]
+    pub fn bin(&self, sample: usize, feature_in_group: usize, n_samples: usize) -> u32;
+    
+    #[inline]
+    pub fn raw(&self, sample: usize, feature_in_group: usize, n_samples: usize) -> f32;
+    
+    #[inline]
+    pub fn raw_slice(&self, feature_in_group: usize, n_samples: usize) -> &[f32];
+    
+    pub fn n_features(&self, n_samples: usize) -> usize;
+    pub fn size_bytes(&self) -> usize;
+}
+```
+
+**Definition of Done**:
+- `NumericStorage` struct implemented
+- All access methods working
+- Unit tests for bin/raw access
+- No use of deprecated code
+
+---
+
+### Story 1.3: Create CategoricalStorage
+
+**Status**: Not Started  
+**Estimate**: 30 min
+
+**Description**: Create dense categorical storage (bins only, no raw values).
+
+**Location**: `data/binned/storage.rs`
+
+**Implementation** (from RFC):
+```rust
+/// Dense categorical storage: [n_features × n_samples], column-major.
+/// No raw values - bin = category ID (lossless).
+pub struct CategoricalStorage {
+    bins: BinData,
+}
+
+impl CategoricalStorage {
+    pub fn new(bins: BinData) -> Self;
+    
+    #[inline]
+    pub fn bin(&self, sample: usize, feature_in_group: usize, n_samples: usize) -> u32;
+    
+    pub fn n_features(&self, n_samples: usize) -> usize;
+    pub fn size_bytes(&self) -> usize;
+}
+```
+
+**Definition of Done**:
+- `CategoricalStorage` struct implemented
+- Unit tests
+- No raw value methods (categorical is lossless)
+
+---
+
+### Story 1.4: Create Sparse Storage Types
+
+**Status**: Not Started  
+**Estimate**: 1 hour
 
 **Description**: Create CSC-like sparse storage for numeric and categorical features.
 
-**Implementation**: Located at `data/binned/v2/storage.rs`
-- `SparseNumericStorage`: sample_indices, bins, raw_values
-- `SparseCategoricalStorage`: sample_indices, bins
-- Binary search `bin()` and `raw()` accessors
-- Returns 0/0.0 for samples not in indices
-- Full test coverage (1 test)
+**Location**: `data/binned/storage.rs`
 
-**Definition of Done**: ✅ All criteria met
+**Implementation**:
+```rust
+/// Sparse numeric storage: CSC-like, single feature.
+pub struct SparseNumericStorage {
+    sample_indices: Box<[u32]>,
+    bins: BinData,
+    raw_values: Box<[f32]>,
+    n_samples: usize,
+}
 
----
-
-### Story 1.4: Create BundleStorage
-
-**Status**: Deferred (not blocking)  
-**Estimate**: ~80 LOC  
-**Depends on**: 1.1
-
-**Description**: Consolidate EFB bundle handling into dedicated storage type.
-
-**Note (Refinement Round 3)**: This is optimization/consolidation work. EFB bundling already works via `bundling.rs`. Moving to v2 module can happen after core migration is complete. Not on critical path.
-
-**Tasks**:
-
-- Create `BundleStorage` in v2 module with encoded_bins, feature_indices, bin_offsets, etc.
-- Implement `decode()` method (encoded_bin → original feature + bin)
-- Migrate logic from `bundling.rs`
+/// Sparse categorical storage: CSC-like, single feature.
+pub struct SparseCategoricalStorage {
+    sample_indices: Box<[u32]>,
+    bins: BinData,
+    n_samples: usize,
+}
+```
 
 **Definition of Done**:
-
-- `BundleStorage` implemented with decode
-- Lossless encoding verified
-- Integration with existing EFB logic
-
-**Public API Added**: `BundleStorage`
-
-**Testing**:
-
-- Unit tests for encode/decode roundtrip
-- Property test: decode(encode(f, b)) == (f, b)
-
-**Note**: This is lower priority—can be deferred until EFB integration work.
+- Both sparse storage types implemented
+- Binary search for random access
+- Iteration methods for sequential access
+- Unit tests
 
 ---
 
 ### Story 1.5: Create FeatureStorage Enum
 
-**Status**: COMPLETE (done in Story 0.4)  
-**Completed**: 2025-01-26
+**Status**: Not Started  
+**Estimate**: 30 min
 
 **Description**: Create unified enum wrapping all storage types.
 
-**Implementation**: Located at `data/binned/v2/storage.rs`
-- `FeatureStorage` with Numeric, Categorical, SparseNumeric, SparseCategorical variants
-- TODO comment for Bundle variant (Story 1.4)
-- `has_raw_values()`, `is_categorical()`, `is_sparse()`, `size_bytes()` methods
-- Full test coverage (1 test)
+**Location**: `data/binned/storage.rs`
 
-**Definition of Done**: ✅ All criteria met
+**Implementation**:
+```rust
+/// Feature storage with bins and optional raw values.
+pub enum FeatureStorage {
+    Numeric(NumericStorage),
+    Categorical(CategoricalStorage),
+    SparseNumeric(SparseNumericStorage),
+    SparseCategorical(SparseCategoricalStorage),
+    // Bundle variant added in Story 1.6
+}
 
----
-
-### Story 1.6: Stakeholder Feedback Check - Epic 1
-
-**Status**: Not Started
-
-**Description**: Review stakeholder feedback after storage types are complete.
-
-**Tasks**:
-
-- Check `workdir/tmp/stakeholder_feedback.md` for relevant input
-- Discuss feedback with team
-- Create follow-up stories if needed
-
-**Definition of Done**:
-
-- Feedback reviewed and documented
-- Any new stories added to backlog
-
----
-
-## Epic 2: FeatureGroup Migration
-
-*Update `FeatureGroup` to use new storage types and remove dead code.*
-
-**Milestone**: After this epic, FeatureGroup uses new storage; old API still works.
-
-**Note (Refinement Round 2)**: Epic 2 and Epic 3 are somewhat intertwined. Story 2.1 (FeatureGroup uses FeatureStorage) depends on having a builder that creates FeatureStorage with raw values. Consider implementing Story 3.1 first, then Story 2.1.
-
-### Story 2.1: Update FeatureGroup to Use FeatureStorage
-
-**Status**: Not Started  
-**Estimate**: ~100 LOC  
-**Depends on**: Epic 1 complete, Story 3.1 (builder produces v2 storage)
-
-**Description**: Replace current FeatureGroup internals with FeatureStorage.
-
-**Tasks**:
-
-- Replace bins/data fields with `storage: FeatureStorage`
-- Remove `layout` field (already removed in 0.2)
-- Update all FeatureGroup methods
-- Migrate from `BinStorage` to `FeatureStorage`
+impl FeatureStorage {
+    pub fn has_raw_values(&self) -> bool;
+    pub fn is_categorical(&self) -> bool;
+    pub fn is_sparse(&self) -> bool;
+    pub fn size_bytes(&self) -> usize;
+}
+```
 
 **Definition of Done**:
-
-- FeatureGroup uses FeatureStorage internally
-- All existing tests pass
-- No layout field
-
-**Public API Changed**: `FeatureGroup` internals (internal)
-
-**Testing**:
-
-- Existing FeatureGroup tests pass
-- New tests for storage access
-
----
-
-### Story 2.2: Simplify FeatureView
-
-**Status**: COMPLETE (done in Story 0.2)  
-**Completed**: 2025-01-26
-
-**Description**: Remove stride from FeatureView (always 1 now).
-
-**Results**:
-
-- ✅ FeatureView already has 4 variants (U8, U16, SparseU8, SparseU16)
-- ✅ Stride field already removed
-- ✅ All histogram tests pass
-- Note: Renaming `row_indices` → `sample_indices` deferred (cosmetic)
-
-**Definition of Done**: ✅ All criteria met
-
----
-
-### Story 2.3: Add Runtime Assertions for Homogeneous Groups
-
-**Status**: Not Started  
-**Estimate**: ~30 LOC  
-**Depends on**: 2.1
-
-**Description**: Ensure groups are homogeneous (all numeric OR all categorical).
-
-**Tasks**:
-
-- Add debug assertions in group construction
-- Add `has_raw_values()` and `is_categorical()` to FeatureGroup
-- Document invariant
-
-**Definition of Done**:
-
-- Assertions catch mixed groups in debug builds
+- `FeatureStorage` enum with all variants
 - Helper methods implemented
-
-**Public API Added**: `FeatureGroup::has_raw_values()`, `FeatureGroup::is_categorical()`
-
-**Testing**:
-
-- Test that mixed groups panic in debug
-- Test helper methods
+- Unit tests
 
 ---
 
-### Story 2.4: Review/Demo - Storage and FeatureGroup
+### Story 1.6: Create BundleStorage (Optional/Deferred)
 
-**Status**: Not Started
+**Status**: Deferred  
+**Estimate**: 1.5 hours
 
-**Description**: Demo storage types and FeatureGroup migration.
+**Description**: Create EFB bundle storage type.
 
-**Tasks**:
-
-- Prepare demo showing new storage hierarchy
-- Show benchmark results (no regression)
-- Show lines of code removed
-- Document in `workdir/tmp/development_review_*.md`
-
-**Definition of Done**:
-
-- Demo completed
-- Review documented
-- No performance regression confirmed
+**Note**: This can be deferred until after core functionality works. EFB bundling is an optimization.
 
 ---
 
-## Epic 3: Dataset Builder Unification
+## Epic 2: New FeatureGroup
 
-*Create unified `DatasetBuilder` with batch and single-feature APIs.*
+*Create new FeatureGroup that uses FeatureStorage.*
 
-**Note (Refinement Round 2)**: This epic should be implemented before Epic 2 (FeatureGroup Migration) since the builder produces the v2 storage types that FeatureGroup will consume.
-
-### Story 3.1: Implement from_array() with v2 Storage
+### Story 2.1: Create New FeatureGroup
 
 **Status**: Not Started  
-**Estimate**: ~300 LOC  
-**Depends on**: Epic 1 complete (v2 storage types exist)
-**Priority**: CRITICAL PATH
+**Estimate**: 1.5 hours
 
-**Description**: Modify `BinnedDatasetBuilder::add_features()` to produce v2 FeatureStorage with raw values stored.
+**Description**: Create new `FeatureGroup` struct using `FeatureStorage`.
 
-**Refined Approach (Round 4)**: Rather than creating a new `from_array()` method, we modify the existing builder:
-1. Add `store_raw_values: bool` field to `BinningConfig` (default: true)
-2. Modify `add_features()` to store raw values in `v2::NumericStorage`
-3. Update grouping to produce `v2::FeatureStorage` variants
+**Location**: `data/binned/group.rs` (NEW FILE)
 
-This consolidated story combines feature analysis, grouping strategy, and builder integration into one cohesive implementation.
+**Implementation** (from RFC):
+```rust
+pub struct FeatureGroup {
+    /// Global feature indices in this group.
+    feature_indices: Box<[u32]>,
+    /// Number of samples.
+    n_samples: usize,
+    /// Storage (bins + optional raw values).
+    storage: FeatureStorage,
+    /// Per-feature bin counts.
+    bin_counts: Box<[u32]>,
+    /// Cumulative bin offsets within group histogram.
+    bin_offsets: Box<[u32]>,
+}
 
-**Tasks**:
-
-**Part A - Config and Feature Analysis**:
-
-- Add `store_raw_values: bool` to `BinningConfig` (default: true)
-- Update `FeatureAnalysis` to track raw value requirements
-- Auto-detect: numeric vs categorical (based on cardinality)
-- Auto-detect: required bins (U8 vs U16)
-- Auto-detect: sparsity
-
-**Part B - Grouping Strategy**:
-
-- Update `GroupingStrategy` to assign features to homogeneous groups
-- Partition: numeric_u8, numeric_u16, categorical_u8, categorical_u16, sparse
-- Create `GroupSpec` for each group with feature indices
-
-**Part C - Builder Integration**:
-
-- Update `add_features()` to build `v2::NumericStorage` (bins + raw_values) for numeric features
-- Build `v2::CategoricalStorage` (bins only) for categorical features
-- Produce `v2::FeatureStorage` enum wrapping appropriate variant
-- Wire through to FeatureGroup construction
+impl FeatureGroup {
+    pub fn new(...) -> Self;
+    pub fn n_features(&self) -> usize;
+    pub fn n_samples(&self) -> usize;
+    pub fn has_raw_values(&self) -> bool;
+    pub fn is_categorical(&self) -> bool;
+    pub fn bin(&self, sample: usize, feature_in_group: usize) -> u32;
+    pub fn raw(&self, sample: usize, feature_in_group: usize) -> Option<f32>;
+    pub fn raw_slice(&self, feature_in_group: usize) -> Option<&[f32]>;
+    pub fn feature_view(&self, feature_in_group: usize) -> FeatureView;
+}
+```
 
 **Definition of Done**:
-
-- `from_array()` implemented and working
-- Raw values stored in v2 storage types
-- Homogeneous groups created
-- All v2 storage types (NumericStorage, CategoricalStorage, etc.) populated correctly
-
-**Public API Added**: `DatasetBuilder::from_array()`, `FeatureAnalysis` (internal)
-
-**Testing**:
-
-- Test numeric detection (continuous values)
-- Test categorical detection (low cardinality integers)
-- Test bin width detection (U8 vs U16)
-- Test sparsity detection
-- Test with mixed feature types and bin widths
-- End-to-end test: matrix → builder → dataset
-- Verify raw values accessible
-- Verify grouping correct
+- New `FeatureGroup` struct implemented
+- All access methods working
+- Unit tests
+- No use of deprecated code
 
 ---
 
-### Story 3.2: Create FeatureMetadata Support
-
-**Status**: Not Started (lower priority)  
-**Estimate**: ~80 LOC  
-**Depends on**: 3.1
-
-**Description**: Implement `from_array_with_metadata()` for user-specified metadata.
-
-**Note (Refinement Round 4)**: This is API ergonomics, not blocking core functionality. Auto-detection in Story 3.1 handles most cases. Can be deferred.
-
-**Tasks**:
-
-- Create `FeatureMetadata` struct with names, categorical_features, max_bins (HashMap)
-- Implement builder pattern methods: `names()`, `categorical()`, `max_bins_for()`
-- Implement `from_array_with_metadata()`
-
-**Definition of Done**:
-
-- `FeatureMetadata` implemented
-- User can specify names, categorical columns, per-feature max_bins
-- Metadata overrides auto-detection
-
-**Public API Added**: `FeatureMetadata`, `DatasetBuilder::from_array_with_metadata()`
-
-**Testing**:
-
-- Test with partial metadata
-- Test max_bins overrides
-- Test categorical feature specification
-
----
-
-### Story 3.3: Update Single-Feature API
-
-**Status**: Not Started (lower priority)  
-**Estimate**: ~60 LOC  
-**Depends on**: 3.1
-
-**Description**: Update `add_feature()`, `add_numeric()`, `add_categorical()` methods.
-
-**Note (Refinement Round 4)**: Single-feature API is less commonly used than batch `add_features()`. Can be updated after core migration. Not on critical path.
-
-**Tasks**:
-
-- Update methods to store raw values
-- Defer grouping to `build()`
-- Implement homogeneous group building at build time
-
-**Definition of Done**:
-
-- Single-feature API stores raw values
-- Grouping happens at build()
-- Existing tests pass
-
-**Public API Changed**: `add_feature()`, `add_numeric()`, `add_categorical()` now store raw values
-
-**Testing**:
-
-- Test mixed feature types via single-feature API
-- Verify grouping at build time
-
----
-
-### Story 3.4: Stakeholder Feedback Check - Epic 3
-
-**Status**: Not Started
-
-**Description**: Review stakeholder feedback after builder unification.
-
-**Tasks**:
-
-- Check `workdir/tmp/stakeholder_feedback.md`
-- Incorporate feedback
-- Create follow-up stories if needed
-
-**Definition of Done**:
-
-- Feedback reviewed
-- Any new stories added
-
----
-
-## Epic 4: Dataset API and Access Methods
-
-*Implement access methods on BinnedDataset for raw values and introspection.*
-
-**Milestone**: After this epic, full new API is available.
-
-### Story 4.1: Implement FeatureLocation and Introspection
+### Story 2.2: Create New FeatureView
 
 **Status**: Not Started  
-**Estimate**: ~80 LOC  
-**Depends on**: Epic 2
+**Estimate**: 30 min
 
-**Description**: Add feature location tracking and introspection APIs.
+**Description**: Create simplified `FeatureView` with no stride.
 
-**Tasks**:
+**Location**: `data/binned/view.rs` (NEW FILE - separate from group.rs for clarity)
 
-- Create `FeatureLocation` enum (Direct, Bundled, Skipped)
-- Add `feature_locations` to BinnedDataset
-- Implement `feature_storage_type()`, `bundle_features()`
+**Implementation** (from RFC):
 
-**Definition of Done**:
-
-- Feature location tracking complete
-- Introspection APIs working
-
-**Public API Added**: `FeatureLocation`, `BinnedDataset::feature_storage_type()`, `BinnedDataset::bundle_features()`
-
-**Testing**:
-
-- Test all FeatureLocation variants
-- Test introspection on mixed datasets
-
----
-
-### Story 4.2: Implement Raw Value Access Methods
-
-**Status**: Not Started  
-**Estimate**: ~100 LOC  
-**Depends on**: Epic 3 (builder stores raw values)
-**Priority**: CRITICAL PATH
-
-**Description**: Add methods for accessing raw feature values.
-
-**Tasks**:
-
-- Implement `raw_value(sample, feature) -> Option<f32>`
-- Implement `raw_feature_slice(feature) -> Option<&[f32]>`
-- Implement `raw_feature_iter()` for zero-allocation iteration
-- Implement `raw_numeric_matrix() -> Option<CowArray<f32, Ix2>>`
+```rust
+/// Zero-cost view into feature bins. No stride.
+pub enum FeatureView<'a> {
+    U8(&'a [u8]),
+    U16(&'a [u16]),
+    SparseU8 { sample_indices: &'a [u32], bin_values: &'a [u8] },
+    SparseU16 { sample_indices: &'a [u32], bin_values: &'a [u16] },
+}
+```
 
 **Definition of Done**:
 
-- All raw access methods implemented
-- Returns None for categorical/bundled features
-- Uses ndarray types
-
-**Public API Added**: `raw_value()`, `raw_feature_slice()`, `raw_feature_iter()`, `raw_numeric_matrix()`
-
-**Testing**:
-
-- Test raw access for numeric features
-- Test None for categorical
-- Test CowArray allocation behavior
+- `FeatureView` enum with 4 variants (no strided variants!)
+- No stride field
+- Unit tests
 
 ---
 
-### Story 4.2b: Update BinnedSample to Use Raw Values
+### Story 2.3: Property-Based Tests for Storage Types
 
 **Status**: Not Started  
-**Estimate**: ~30 LOC  
-**Depends on**: 4.2
-**Priority**: CRITICAL PATH
+**Estimate**: 1 hour
 
-**Description**: Update `BinnedSample::feature()` to return actual raw values instead of bin midpoints.
+**Description**: Add property-based tests (proptest) for core storage types.
 
-**Background (Refinement Round 5)**:
-Currently, `BinnedSample::feature()` converts bin values to midpoints using `bin_to_midpoint()`. This is an approximation. With raw values stored, we can return exact original values, improving linear trees accuracy.
+**Location**: Tests in `data/binned/storage.rs` or separate test module
 
-**Tasks**:
+**Properties to test**:
 
-- Update `BinnedSample::feature()` to:
-  - Return raw value when available (numeric features with `store_raw_values=true`)
-  - Fall back to `bin_to_midpoint()` when raw values not stored (backward compatibility)
-- Add `has_raw_values()` method to BinnedDataset
+1. NumericStorage: bins.len() == raw_values.len() == n_features * n_samples
+2. NumericStorage: raw_slice returns correct slice bounds
+3. CategoricalStorage: bin values within valid range
+4. Round-trip: construct storage, access all elements, verify match input
+5. Edge cases: empty storage, single sample, single feature
 
 **Definition of Done**:
 
-- `BinnedSample::feature()` returns exact raw values when available
-- Backward compatible: falls back to midpoint for datasets without raw values
-- Linear trees automatically benefit without code changes
-
-**Testing**:
-
-- Test exact value returned for numeric features with raw values
-- Test midpoint fallback for datasets without raw values
-- Test categorical features (no raw values available)
+- Property-based tests written using proptest
+- All storage types covered
+- Tests pass
 
 ---
 
-### Story 4.3: Implement RowBlocks for Prediction
+## Epic 3: New BinMapper
+
+*Copy and adapt existing BinMapper to new location.*
+
+### Story 3.1: Copy and Adapt BinMapper
 
 **Status**: Not Started  
-**Estimate**: ~120 LOC  
-**Depends on**: 4.2
+**Estimate**: 1 hour
+
+**Description**: Copy `BinMapper` from deprecated to new `data/binned/bin_mapper.rs` and adapt as needed.
+
+**Location**: `data/binned/bin_mapper.rs` (NEW FILE)
+
+**Rationale**: The existing BinMapper is fairly standalone and clean. Rather than evaluate whether to reuse, we simply copy it to the new location and adapt as needed. This maintains the "fresh start" principle.
+
+**Tasks**:
+
+1. Copy `deprecated/binned/bin_mapper.rs` to `data/binned/bin_mapper.rs`
+2. Remove any dependencies on deprecated types
+3. Ensure it works with new `BinData` enum
+4. Update tests
+
+---
+
+## Epic 4: New Dataset Builder
+
+*Create new DatasetBuilder that produces new storage types.*
+
+### Story 4.1: Create FeatureAnalysis
+
+**Status**: Not Started  
+**Estimate**: 1 hour
+
+**Description**: Create feature analysis to detect numeric vs categorical, sparsity, bin width.
+
+**Location**: `data/binned/feature_analysis.rs` (NEW FILE)
+
+**Key Functions**:
+```rust
+pub struct FeatureAnalysis {
+    pub is_numeric: bool,
+    pub is_sparse: bool,
+    pub needs_u16: bool,
+    pub n_unique: usize,
+    pub n_zeros: usize,
+    // etc.
+}
+
+pub fn analyze_feature(values: &[f32], config: &BinningConfig) -> FeatureAnalysis;
+```
+
+---
+
+### Story 4.2: Create GroupingStrategy
+
+**Status**: Not Started  
+**Estimate**: 1 hour
+
+**Description**: Create strategy for grouping features homogeneously.
+
+**Location**: `data/binned/builder.rs` (NEW FILE)
+
+**Key Logic**:
+- Partition features by type (numeric/categorical) and bin width (U8/U16)
+- Create homogeneous groups
+- Handle sparse features
+
+---
+
+### Story 4.3: Create New BinnedDatasetBuilder
+
+**Status**: Not Started  
+**Estimate**: 5 hours
+
+**Description**: Create the main builder that produces `BinnedDataset`.
+
+**Location**: `data/binned/builder.rs`
+
+**Key Methods**:
+```rust
+impl BinnedDatasetBuilder {
+    pub fn new() -> Self;
+    pub fn from_array(data: ArrayView2<f32>, config: &BinningConfig) -> Result<Self, Error>;
+    pub fn from_array_with_metadata(...) -> Result<Self, Error>;
+    pub fn add_numeric(...) -> Self;
+    pub fn add_categorical(...) -> Self;
+    pub fn set_labels(...) -> Self;
+    pub fn build(self) -> Result<BinnedDataset, Error>;
+}
+```
+
+**Critical**: This builder must:
+1. Analyze all features
+2. Create homogeneous groups
+3. Store raw values for numeric features
+4. Produce new `FeatureStorage` types
+
+---
+
+## Epic 5: New BinnedDataset
+
+*Create new BinnedDataset with full API.*
+
+### Story 5.1: Create New BinnedDataset Struct
+
+**Status**: Not Started  
+**Estimate**: 2 hours
+
+**Description**: Create the main `BinnedDataset` struct and supporting types.
+
+**Location**: `data/binned/dataset.rs` (NEW FILE)
+
+**Implementation** (from RFC):
+
+```rust
+/// Per-feature metadata
+pub struct BinnedFeatureInfo {
+    /// The bin mapper for this feature (contains thresholds)
+    pub bin_mapper: BinMapper,
+    // Note: is_categorical can be derived from bin_mapper
+}
+
+/// Maps global feature index to group location
+pub struct FeatureLocation {
+    pub group_idx: usize,
+    pub feature_in_group: usize,
+}
+
+pub struct BinnedDataset {
+    n_samples: usize,
+    features: Box<[BinnedFeatureInfo]>,
+    groups: Vec<FeatureGroup>,
+    global_bin_offsets: Box<[u32]>,
+    feature_locations: Box<[FeatureLocation]>,
+    // Labels, weights, etc.
+}
+```
+
+**Definition of Done**:
+
+- `BinnedFeatureInfo`, `FeatureLocation`, and `BinnedDataset` structs created
+- Basic constructor
+- Unit tests
+
+---
+
+### Story 5.2: Implement Basic Access Methods
+
+**Status**: Not Started  
+**Estimate**: 1.5 hours
+
+**Description**: Implement bin/raw access methods.
+
+**Methods**:
+```rust
+impl BinnedDataset {
+    pub fn bin(&self, sample: usize, feature: usize) -> u32;
+    pub fn raw_value(&self, sample: usize, feature: usize) -> Option<f32>;
+    pub fn raw_feature_slice(&self, feature: usize) -> Option<&[f32]>;
+    pub fn has_raw_values(&self) -> bool;
+    pub fn n_samples(&self) -> usize;
+    pub fn n_features(&self) -> usize;
+}
+```
+
+---
+
+### Story 5.3: Implement Feature Views for Histogram Building
+
+**Status**: Not Started  
+**Estimate**: 1.5 hours
+
+**Description**: Implement `feature_views()` for histogram building (hot path).
+
+**Methods**:
+```rust
+impl BinnedDataset {
+    /// Get feature views for histogram building.
+    pub fn feature_views(&self) -> Vec<FeatureView<'_>>;
+    
+    /// Get view for a single original feature.
+    pub fn original_feature_view(&self, feature: usize) -> FeatureView<'_>;
+}
+```
+
+---
+
+### Story 5.4: Implement Raw Matrix Access (for gblinear)
+
+**Status**: Not Started  
+**Estimate**: 1 hour
+
+**Description**: Implement bulk raw access methods.
+
+**Methods**:
+
+```rust
+impl BinnedDataset {
+    /// Returns a view into raw numeric values as a matrix.
+    /// Returns None if not all features have raw values.
+    pub fn raw_numeric_view(&self) -> Option<ArrayView2<'_, f32>>;
+    
+    /// Iterate over features that have raw values.
+    pub fn raw_feature_iter(&self) -> impl Iterator<Item = (usize, &[f32])>;
+}
+```
+
+**Note**: Use `ArrayView2` instead of `CowArray` - gblinear doesn't need to own the data.
+
+---
+
+### Story 5.5: Implement RowBlocks for Prediction
+
+**Status**: Not Started  
+**Estimate**: 2 hours
 
 **Description**: Create buffered row block iterator for efficient prediction.
 
-**Tasks**:
+**Location**: `data/binned/row_blocks.rs` (NEW FILE)
 
-- Create `RowBlocks` struct in dataset module
-- Implement `for_each()`, `for_each_with(Parallelism)`, `flat_map_with()`
-- Implement `block()`, `block_indices()` for external iteration
-- Use ndarray `ArrayView2` for blocks
+**Design**:
 
-**Definition of Done**:
-
-- RowBlocks implemented with parallelism support
-- Uses existing `Parallelism` enum
-- Returns ndarray views
-
-**Public API Added**: `RowBlocks`, `BinnedDataset::row_blocks()`
-
-**Testing**:
-
-- Test sequential iteration
-- Test parallel iteration
-- Benchmark: ~2x speedup vs column access
-
----
-
-### Story 4.4: Migrate Prediction Code to RowBlocks
-
-**Status**: Deferred (not on critical path)  
-**Estimate**: ~-50 LOC (net removal)  
-**Depends on**: 4.3
-
-**Description**: Update prediction code to use RowBlocks instead of custom transpose.
-
-**Note (Refinement Round 3)**: This is optimization work. The existing predictor transpose code works. Consolidation to RowBlocks can happen after core migration is complete.
-
-**Tasks**:
-
-- Identify prediction code with transpose logic
-- Replace with `dataset.row_blocks()`
-- Remove duplicate transpose implementations
+- Block size: configurable, default 64 samples
+- Returns rows as ndarray views
+- For numeric features: return raw value
+- For categorical features: cast bin index to f32
+- Iteration pattern: row-major within each block
 
 **Definition of Done**:
 
-- Prediction uses RowBlocks
-- Duplicate code removed
-- No regression in prediction speed
-
-**Public API Removed**: Custom prediction transpose code (internal)
-
-**Testing**:
-
-- End-to-end prediction tests
-- Benchmark prediction performance
+- RowBlocks struct implemented
+- Iteration tests (block boundaries, last partial block)
+- Edge cases: empty dataset, single sample, single feature
 
 ---
 
-### Story 4.5: Add describe() and Debugging APIs
+### Story 5.6: Review/Demo: New Dataset API
 
 **Status**: Not Started  
-**Estimate**: ~60 LOC
+**Estimate**: 30 min
 
-**Description**: Add debugging and summary methods.
-
-**Tasks**:
-
-- Implement `describe() -> DatasetSummary`
-- Include: n_samples, n_features, n_numeric, n_categorical, n_bundled, memory
-- Add `raw_storage_bytes()`
-
-**Definition of Done**:
-
-- `describe()` returns useful summary
-- Memory accounting accurate
-
-**Public API Added**: `BinnedDataset::describe()`, `DatasetSummary`, `BinnedDataset::raw_storage_bytes()`
-
-**Testing**:
-
-- Test summary on various datasets
-- Verify memory calculations
-
----
-
-### Story 4.6: Review/Demo - Dataset API
-
-**Status**: Not Started
-
-**Description**: Demo raw access APIs and RowBlocks.
+**Description**: Demo the new dataset API to stakeholders before integration.
 
 **Tasks**:
 
-- Demo raw value access for linear trees
-- Demo RowBlocks for prediction
-- Show memory usage stats
-- Document in `workdir/tmp/development_review_*.md`
+1. Prepare demonstration materials showing:
+   - New `BinnedDataset` API with `from_array()` and raw access
+   - `FeatureView` with exactly 4 variants (compare to old 6+ variants)
+   - Memory usage comparison (new vs old)
+   - Code examples showing usage
+2. Present to stakeholders
+3. Document in `workdir/tmp/development_review_<timestamp>.md`
 
 **Definition of Done**:
 
 - Demo completed
-- Review documented
+- Stakeholder feedback captured
+- Documentation written
 
 ---
 
-## Epic 5: Serialization
+## Epic 6: Integration
 
-**Status**: DEFERRED (Refinement Round 3)
+*Connect new implementation to training code.*
 
-*Update serialization to handle raw values.*
-
-**Note (Refinement Round 3)**: This epic is not on the critical path. The core value of this redesign is enabling linear trees with raw values in memory. Serialization format changes can be addressed in a future iteration. All stories in this epic are deferred.
-
-### Story 5.1: Update Serialization Format
-
-**Status**: Deferred  
-**Estimate**: ~100 LOC
-
-**Description**: Include raw values in serialization by default.
-
-**Tasks**:
-
-- Generate test file with OLD format BEFORE changes (for Story 5.3)
-- Update save format to include raw values
-- Add version field for compatibility
-- Implement `save()` with raw values
-
-**Definition of Done**:
-
-- Serialization includes raw values
-- Version field present
-- Old format test file committed
-
-**Testing**:
-
-- Roundtrip test: save → load → compare
-- Test with various feature types
-
----
-
-### Story 5.2: Implement save_without_raw
+### Story 6.1: Update Histogram Building to Use New FeatureView
 
 **Status**: Not Started  
-**Estimate**: ~50 LOC  
-**Depends on**: 5.1
+**Estimate**: 2 hours
 
-**Description**: Add option to save without raw values for smaller files.
+**Description**: Update histogram kernels to work with new `FeatureView` (no stride).
 
-**Tasks**:
+**Key Files**:
+- `training/gbdt/histogram/*.rs`
 
-- Implement `save_without_raw()`
-- Document that linear trees won't work after reload
-
-**Definition of Done**:
-
-- `save_without_raw()` implemented
-- File size measurably smaller
-
-**Public API Added**: `BinnedDataset::save_without_raw()`
-
-**Testing**:
-
-- Compare file sizes
-- Verify `has_raw_values() = false` after reload
+**Changes**:
+- Remove strided match arms
+- Use new 4-variant `FeatureView`
 
 ---
 
-### Story 5.3: Backward Compatibility
+### Story 6.2: Update Training to Use New BinnedDataset
 
 **Status**: Not Started  
-**Estimate**: ~50 LOC  
-**Depends on**: 5.1
+**Estimate**: 2 hours
 
-**Description**: Handle loading old format files.
+**Description**: Update GBDT training to use new `BinnedDataset`.
 
-**Tasks**:
-
-- Use test file generated in Story 5.1
-- Detect old format via version field
-- Load with `has_raw_values() = false`
-- Document migration path
-
-**Definition of Done**:
-
-- Old files load successfully
-- Clear error/warning for linear trees
-
-**Testing**:
-
-- Test loading old format test file
-- Verify graceful degradation
+**Key Files**:
+- `training/gbdt/trainer.rs`
+- `training/gbdt/grower.rs`
 
 ---
 
-## Epic 6: Cleanup and Removal
-
-*Remove deprecated code and consolidate.*
-
-**Note (2025-01-26)**: Story 6.1 was completed as part of Story 0.2 prework. Some cleanup is already done.
-
-### Story 6.1: Remove GroupLayout Enum
-
-**Status**: COMPLETE (done in Story 0.2)  
-**Completed**: 2025-01-26
-
-**Description**: Delete unused GroupLayout enum and related code.
-
-**Results**:
-
-- ✅ `GroupLayout` enum removed from `storage.rs`
-- ✅ Layout field removed from FeatureGroup
-- ✅ All references updated
-- ✅ `layout_benchmark.rs` example deleted
-- ✅ Strided histogram kernels deleted
-- ✅ ~1,802 net lines removed (exceeded estimate)
-
-**Definition of Done**: ✅ All criteria met
-
----
-
-### Story 6.2: Remove BinType and BinStorage Enums
+### Story 6.3: Update Linear Trees to Use Raw Values
 
 **Status**: Not Started  
-**Estimate**: ~-20 LOC  
-**Depends on**: Epic 2 complete (FeatureGroup uses v2 types)
+**Estimate**: 1.5 hours
 
-**Description**: Delete deprecated BinType and BinStorage enums after migration complete.
+**Description**: Update linear tree implementation to use raw values instead of bin midpoints.
 
-**Tasks**:
+**Location**: `training/gbdt/sample.rs`
 
-- Remove `BinType` enum (currently deprecated)
-- Remove `BinStorage` enum (currently deprecated)
-- Remove `#[allow(deprecated)]` from storage.rs
-- Update any remaining references to use v2 types
+**Key Changes**:
+
+1. Update `BinnedSample::feature()` to call `BinnedDataset::raw_value(sample, feature)` instead of computing from bin midpoint
+2. Remove `bin_to_midpoint()` calls where raw values are available
+3. Handle case where raw value is `None` (categorical) - use bin as f32
 
 **Definition of Done**:
 
-- BinType deleted
-- BinStorage deleted
-- ~100 lines removed
+- `BinnedSample::feature()` returns actual raw values
+- Linear trees use raw feature values
+- Tests pass
 
-**Public API Removed**: `BinType`, `BinStorage`
+---
 
-**Testing**:
+### Story 6.4: Update gblinear to Use New Dataset
 
+**Status**: Not Started  
+**Estimate**: 1 hour
+
+**Description**: Update gblinear to use `raw_feature_iter()` for feature access.
+
+**Note**: Use `ArrayView2` instead of `CowArray` for the matrix view - gblinear doesn't need to own the data.
+
+---
+
+## Epic 7: Switchover
+
+*Switch from deprecated to new implementation.*
+
+### Story 7.1: Update Re-exports to Use New Implementation
+
+**Status**: Not Started  
+**Estimate**: 45 min
+
+**Description**: Change `data/binned/mod.rs` and `data/mod.rs` to export new types instead of deprecated.
+
+**Before**:
+
+```rust
+pub use deprecated::binned::*;
+```
+
+**After**:
+
+```rust
+// New implementation exports
+pub use self::bin_data::BinData;
+pub use self::storage::{
+    NumericStorage, CategoricalStorage, 
+    SparseNumericStorage, SparseCategoricalStorage, 
+    FeatureStorage
+};
+pub use self::group::FeatureGroup;
+pub use self::view::FeatureView;
+pub use self::bin_mapper::{BinMapper, BinningConfig, BinningStrategy};
+pub use self::builder::BinnedDatasetBuilder;
+pub use self::dataset::BinnedDataset;
+pub use self::row_blocks::RowBlocks;
+```
+
+**Bundle Handling**: If deprecated code has bundled features enabled, the new code does not support bundles yet. Add a runtime check in the builder:
+
+```rust
+if config.enable_bundling {
+    // For now, bundles are not supported in new implementation
+    // Fall back to deprecated or return error
+    return Err(Error::BundlingNotYetSupported);
+}
+```
+
+**Definition of Done**:
+
+- New exports in place
+- Bundle handling addressed (error or fallback)
 - All tests pass
 
 ---
 
-### Story 6.3: Remove Strided Histogram Kernels
-
-**Status**: COMPLETE (done in Story 0.2)  
-**Completed**: 2025-01-26
-
-**Description**: Delete dead strided access code in histogram building.
-
-**Results**:
-
-- ✅ Strided variants removed from histogram kernels
-- ✅ Lines 738-745 (strided match arms) deleted from dataset.rs
-- ✅ All strided ops.rs code deleted
-- ✅ ~1,802 net lines removed (including this work)
-
-**Definition of Done**: ✅ All criteria met
-
----
-
-### Story 6.4: Consolidate Bundle Code
+### Story 7.2: Run Full Test Suite
 
 **Status**: Not Started  
-**Estimate**: ~-150 LOC  
-**Depends on**: 1.4 (BundleStorage exists)
+**Estimate**: 30 min
 
-**Description**: Remove `BundledColumns`, `BundlePlan` (now in BundleStorage).
-
-**Tasks**:
-
-- Remove `BundledColumns` struct
-- Remove `bundle_plan`, `bundled_columns` fields
-- Update all callers to use BundleStorage
-
-**Definition of Done**:
-
-- Old bundle structs deleted
-- ~150 lines removed
-
-**Public API Removed**: `BundledColumns`, `BundlePlan` (if public)
-
-**Testing**:
-
-- EFB tests pass
-- Bundling benchmarks stable
+**Description**: Verify everything works with new implementation.
 
 ---
 
-### Story 6.5: Deprecate Dataset Type
+### Story 7.3: Run Benchmarks and Validate Quality
 
-**Status**: COMPLETE (done by user)  
-**Estimate**: ~20 LOC + docs
-**Completed**: 2025-12-28
+**Status**: Not Started  
+**Estimate**: 1 hour
 
-**Description**: Mark old Dataset type as deprecated.
+**Description**: Run full benchmark suite and compare to baselines.
 
-**Tasks**:
-
-- ✅ Add `#[deprecated]` attribute with migration message to `Dataset`
-- ✅ Add `#[deprecated]` attribute to `DatasetBuilder`
-- Add migration guide in `docs/migration/dataset-to-binneddataset.md` (deferred)
-- Update examples to use BinnedDataset (deferred)
-
-**Note (Refinement Round 7)**: User already added deprecation to `Dataset` and `DatasetBuilder`. Migration guide and example updates can happen later.
-
-**Definition of Done**:
-
-- ✅ Dataset deprecated with clear message
-- ✅ DatasetBuilder deprecated
-- Migration guide (future)
-- Examples updated (future)
-
-**Public API Deprecated**: `Dataset`, `DatasetBuilder`
-
----
-
-### Story 6.6: Cleanup Verification
-
-**Status**: Not Started
-
-**Description**: Verify all deprecated symbols are removed after migration complete.
-
-**Deprecated Types to Remove** (once migration is done):
-
-From `data/`:
-- `Dataset` struct
-- `DatasetBuilder` struct
-- `Column` enum
-- `SparseColumn` struct
-
-From `data/binned/`:
-- `BinType` enum
-- `BinStorage` enum
-- `BundledColumns` struct
-- `BundlePlan` struct
-- `FeatureLocation` enum (in bundling.rs; v2 has replacement)
-
-**Tasks**:
-
-- Grep for deprecated types
-- Verify no remaining usages except test compatibility code
-- Remove deprecated types and their `#[allow(deprecated)]` blocks
-- Update `mod.rs` exports
-
-**Definition of Done**:
-
-- All deprecated symbols removed from codebase
-- Public API exports updated
-- No compilation errors
-
----
-
-### Story 6.7: Stakeholder Feedback Check - Cleanup
-
-**Status**: Not Started
-
-**Description**: Final feedback check before validation.
-
-**Tasks**:
-
-- Check `workdir/tmp/stakeholder_feedback.md`
-- Ensure nothing missed
-- Create follow-up stories if needed
-
-**Definition of Done**:
-
-- All feedback addressed or captured
-
----
-
-## Epic 7: Validation and Quality Gates
-
-*Verify the changes meet quality targets.*
-
-### Story 7.1: Linear Trees Quality Validation
-
-**Status**: Not Started
-
-**Description**: Verify linear trees quality is same or better.
-
-**Tasks**:
-
-- Run linear trees on covertype
-- Compare with baseline from Story 0.1
-- Target: same or better mlogloss (no regression)
-
-**Definition of Done**:
-
-- Covertype mlogloss same or better than baseline
-- Results documented
-
-**Testing**:
-
-- End-to-end covertype benchmark
-- Comparison table in review
-
----
-
-### Story 7.2: Performance Benchmarks
-
-**Status**: Not Started
-
-**Description**: Ensure no performance regression.
-
-**Tasks**:
-
-- Run `bench_histogram_building`
-- Run `bench_training_covertype`
-- Measure memory overhead (raw values vs baseline)
-
-**Definition of Done**:
-
+**Quality Gates**:
+- covertype linear_trees mlogloss ≤ baseline (0.3772)
 - No regression >5% in histogram building
-- Memory overhead <50% of binned size
-- Results documented
-
-**Testing**:
-
-- Criterion benchmarks
-- Memory profiling
+- All tests pass
 
 ---
 
-### Story 7.3: Integration Tests
+### Story 7.4: Review/Demo: Full Integration
 
-**Status**: Not Started
+**Status**: Not Started  
+**Estimate**: 1 hour
 
-**Description**: End-to-end tests for all features.
-
-**Specific Test Scenarios**:
-
-1. Mixed feature types (numeric + categorical)
-2. All categorical (no raw values)
-3. All bundled (EFB)
-4. Empty dataset (0 samples, 0 features)
-5. Single sample dataset
-6. Serialization roundtrip with raw values
-7. Serialization roundtrip without raw values
-8. RowBlocks prediction
-
-**Definition of Done**:
-
-- All 8 scenarios pass
-
-**Testing**:
-
-- Integration test suite
-
----
-
-### Story 7.4: Property-Based Tests
-
-**Status**: Not Started
-
-**Description**: Add property-based tests for invariants.
-
-**Properties to Test**:
-
-1. Roundtrip: build → serialize → deserialize → same data
-2. Invariant: numeric groups have `raw_values.len() == n_features * n_samples`
-3. Invariant: categorical groups return None for raw access
-4. Invariant: `feature_views().len()` equals training feature count
-
-**Definition of Done**:
-
-- Property tests pass with proptest
-- At least 1000 iterations per property
-
-**Testing**:
-
-- proptest integration
-
----
-
-### Story 7.5: Final Review/Demo
-
-**Status**: Not Started
-
-**Description**: Final demo of completed work.
+**Description**: Demo the full integration with benchmarks to stakeholders.
 
 **Tasks**:
 
-- Demo linear trees with raw values
-- Show code reduction stats (target: ~130 net lines removed)
-- Present benchmark results
-- Document in `workdir/tmp/development_review_*.md`
+1. Prepare demonstration materials showing:
+   - Performance benchmarks (before/after)
+   - Quality metrics (linear trees mlogloss comparison)
+   - Code cleanup metrics (lines removed, methods deleted)
+   - Interface simplification (old vs new FeatureView variants)
+2. Present to stakeholders
+3. Document in `workdir/tmp/development_review_<timestamp>.md`
 
 **Definition of Done**:
 
-- Review completed
-- All quality gates passed
+- Demo completed with performance tables
+- Stakeholder feedback captured
+- Documentation written
 
 ---
 
-### Story 7.6: Retrospective
+## Epic 8: Cleanup
 
-**Status**: Not Started
+*Delete deprecated code.*
 
-**Description**: Team retrospective on implementation.
+### Story 8.1: Delete Deprecated Folder
+
+**Status**: Not Started  
+**Estimate**: 15 min
+
+**Description**: Delete `data/deprecated/` folder entirely.
+
+**Prerequisite**: All tests pass with new implementation.
+
+---
+
+### Story 8.2: Final Code Review
+
+**Status**: Not Started  
+**Estimate**: 30 min
+
+**Description**: Review codebase for any remaining references to old patterns.
+
+---
+
+### Story 8.3: Documentation Update
+
+**Status**: Not Started  
+**Estimate**: 1 hour
+
+**Description**: Update documentation to reflect new API.
+
+---
+
+### Story 8.4: Retrospective
+
+**Status**: Not Started  
+**Estimate**: 30 min
+
+**Description**: Conduct retrospective after full implementation is complete.
 
 **Tasks**:
 
-- Reflect on what went well/not well
-- Identify improvements
-- Document in `workdir/tmp/retrospective.md`
-- Create follow-up stories for action items
+1. Each team member reflects on the implementation process
+2. Discuss what went well / not well
+3. Identify process improvements
+4. Capture action items as new backlog stories where appropriate
+5. Document in `workdir/tmp/retrospective.md`
 
 **Definition of Done**:
 
 - Retrospective completed
-- Action items captured as stories (if any)
-
----
-
-## Known Issues / Future Work
-
-> Added in Refinement Round 8
-
-1. **FeatureType Duplication**: `data::schema::FeatureType` and `data::binned::bin_mapper::FeatureType` are identical enums. Should be consolidated to use a single definition. Not blocking for current work—both are actively used. Consider consolidating in a future cleanup story.
-
-2. **FeatureLocation Location**: Currently in `bundling.rs` (to be deprecated). The v2 equivalent will be created in Story 4.1 as `v2::FeatureLocation`. Consider whether this belongs in `v2/` or a more general location.
+- Documentation written to `workdir/tmp/retrospective.md`
+- Action items captured
 
 ---
 
 ## Summary
 
-| Epic | Stories | Status | Description |
-| ---- | ------- | ------ | ----------- |
-| 0. Prework | 5 | 4/5 (80%) | Baselines, GroupLayout removal, v2 module, deprecation |
-| 1. Storage Types | 6 | 5/6 COMPLETE | BinData, NumericStorage, etc. (1.4 deferred) |
-| 2. FeatureGroup Migration | 4 | 1/4 COMPLETE | Use v2 storage (2.2 done in 0.2) |
-| 3. Builder Unification | 4 | Not Started | from_array, FeatureMetadata |
-| 4. Dataset API | 6 | Not Started | Raw access, RowBlocks (4.4 deferred) |
-| 5. Serialization | 3 | DEFERRED | Raw values in format |
-| 6. Cleanup | 7 | 4/7 COMPLETE | Remove dead code (6.1, 6.3, 6.5 done) |
-| 7. Validation | 6 | Not Started | Tests and quality gates |
-| **Total** | **42** | **14 COMPLETE** | |
+| Epic | Stories | Description |
+| ---- | ------- | ----------- |
+| 0. Deprecation | 5 | Move all old code to deprecated folder + stakeholder check |
+| 1. Storage Types | 6 | Create new BinData, NumericStorage, etc. |
+| 2. FeatureGroup | 3 | Create FeatureGroup, FeatureView + property tests |
+| 3. BinMapper | 1 | Copy and adapt BinMapper |
+| 4. Builder | 3 | Create new BinnedDatasetBuilder |
+| 5. Dataset | 6 | Create new BinnedDataset with full API + demo |
+| 6. Integration | 4 | Connect to training code |
+| 7. Switchover | 4 | Switch from deprecated to new + demo |
+| 8. Cleanup | 4 | Delete deprecated code + retrospective |
+| **Total** | **36** | |
 
-### Critical Path (Refinement Round 5)
-
-The minimal path to "linear trees working with raw values":
-
-1. **Story 3.1**: Modify add_features() to produce v2 storage with raw values (~300 LOC)
-2. **Story 2.1**: FeatureGroup uses v2 FeatureStorage (~100 LOC)
-3. **Story 4.2**: raw_value() access methods (~100 LOC)
-4. **Story 4.2b**: Update BinnedSample::feature() to use raw values (~30 LOC)
-5. **Story 7.1**: Verify linear trees quality (no regression)
-6. **Story 7.2**: Performance benchmarks (no regression)
-
-**Why Story 4.2b is critical**: Currently `BinnedSample::feature()` estimates values via `bin_to_midpoint()`. Linear trees use this via `DataAccessor` trait. Updating it to return real raw values automatically improves linear trees—no other code changes needed.
-
-**Deferred work** (not blocking core functionality):
-
-- Story 1.4: BundleStorage (EFB consolidation)
-- Story 4.4: RowBlocks migration (predictor optimization)
-- Epic 5: Serialization (format changes)
-- Stories 7.3-7.4: Extended testing
-
-### Progress Summary (2025-12-28)
-
-**Completed Stories**: 14 of 42 (Story 0.5 added, Story 6.5 already done by user)
-
-- Epic 0: 4/5 (Story 0.5 pending)
-- Epic 1: 5/6 (Story 1.4 deferred)
-- Epic 2: 1/4 (Story 2.2 done in 0.2)
-- Epic 6: 4/7 (Stories 6.1, 6.3 done in 0.2; Story 6.5 done by user; Story 6.2 pending migration)
-
-**Critical Path Stories Remaining**: 6 (Stories 3.1, 2.1, 4.2, 4.2b, 7.1, 7.2)
-
-**Lines Changed**: ~-1,300 net (exceeded original -130 estimate)
-
-**Refinement Notes**:
-
-- Round 1: Updated Epics 1 and 6 with prework completions
-- Round 2: Merged Stories 3.1a-c into 3.1; marked Story 2.2 complete; clarified dependency (Epic 3 before Epic 2)
-- Round 3: Identified critical path; deferred non-blocking work (1.4, 4.4, Epic 5)
-- Round 4: Refined Story 3.1 approach (modify add_features vs new from_array); marked 3.2, 3.3 as lower priority
-- Round 5: Added Story 4.2b (BinnedSample raw values); documented how linear trees connect to raw values
-- Round 6: Added Story 0.5 (Complete Deprecation Coverage) to address missing deprecations: Column, SparseColumn, BundledColumns, BundlePlan, FeatureLocation
-
-### Dependency Graph
+### Critical Path
 
 ```text
-Epic 0 (Prework) ✅ COMPLETE
+Epic 0 (Deprecation/Isolation)
     ↓
-Epic 1 (Storage Types) [mostly complete, v2 module done]
+Epic 1 (Storage Types) + Epic 3 (BinMapper)
     ↓
-Epic 3 (Builder) ─────────────────────┐ [implement first]
-    ↓                                 │
-Epic 2 (FeatureGroup) ←───────────────┘ [uses v2 storage from builder]
-    ↓                                
-Epic 4 (API)
+Epic 2 (FeatureGroup)
     ↓
-Epic 5 (Serialization)
+Epic 4 (Builder)
     ↓
-Epic 6 (Cleanup) [3/7 complete, rest needs migration]
+Epic 5 (Dataset)
     ↓
-Epic 7 (Validation)
+Epic 6 (Integration)
+    ↓
+Epic 7 (Switchover)
+    ↓
+Epic 8 (Cleanup)
 ```
+
+### Key Principles
+
+1. **No modification of old code** - it's moved to deprecated folder
+2. **New code follows RFC exactly** - no shortcuts or deviations
+3. **Old code remains working** - via re-exports during transition
+4. **Clean separation** - easy to reason about what's old vs new
+5. **Delete when done** - deprecated folder is temporary
+
+### Time Estimates
+
+| Epic | Estimate |
+| ---- | -------- |
+| 0. Deprecation | ~3 hours |
+| 1. Storage Types | ~4 hours |
+| 2. FeatureGroup | ~3 hours |
+| 3. BinMapper | ~1 hour |
+| 4. Builder | ~7 hours |
+| 5. Dataset | ~8 hours |
+| 6. Integration | ~6 hours |
+| 7. Switchover | ~3 hours |
+| 8. Cleanup | ~2.5 hours |
+| **Total** | **~37.5 hours** (~5 days focused work) |
+
+### Risk Assessment
+
+| Risk | Likelihood | Impact | Mitigation |
+| ---- | ---------- | ------ | ---------- |
+| Builder complexity (Story 4.3) | Medium | High | Build incrementally, test each storage type independently |
+| Histogram integration regression (Story 6.1) | Low | High | Keep deprecated code working; frequent benchmarks |
+| Linear tree accuracy regression (Story 6.3) | Low | High | Verify exact mlogloss values match baseline |
+| Memory overhead exceeds 50% | Low | Medium | Track memory usage throughout; optimize if needed |
 
 ### Key Dates
 
 - **Created**: 2025-12-28
-- **Refinement Complete**: 2025-12-28 (6 rounds)
+- **Full Rewrite**: 2025-12-29
+- **Refinement Complete**: 2025-12-29
 - **Ready for Implementation**: Yes

@@ -164,7 +164,7 @@ pub struct StridedSample<'a> {
     data: ArrayView1<'a, f32>,
 }
 
-impl<'a> crate::data::SampleAccessor for StridedSample<'a> {
+impl<'a> super::accessor::SampleAccessor for StridedSample<'a> {
     #[inline]
     fn feature(&self, index: usize) -> f32 {
         self.data[index]
@@ -177,7 +177,7 @@ impl<'a> crate::data::SampleAccessor for StridedSample<'a> {
 }
 
 // Enable tree traversal with FeaturesView (feature-major layout)
-impl<'a> crate::data::DataAccessor for FeaturesView<'a> {
+impl<'a> super::accessor::DataAccessor for FeaturesView<'a> {
     type Sample<'b>
         = StridedSample<'b>
     where
@@ -632,7 +632,7 @@ impl<'a> std::fmt::Debug for SamplesView<'a> {
 }
 
 // Enable tree traversal with SamplesView (sample-major layout)
-impl<'a> crate::data::DataAccessor for SamplesView<'a> {
+impl<'a> super::accessor::DataAccessor for SamplesView<'a> {
     // Samples are contiguous, so we can return a slice directly
     type Sample<'b>
         = &'b [f32]
@@ -675,7 +675,7 @@ impl<'a> crate::data::DataAccessor for SamplesView<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{DataAccessor, SampleAccessor};
+    use super::super::accessor::{DataAccessor, SampleAccessor};
     use ndarray::array;
 
     #[test]

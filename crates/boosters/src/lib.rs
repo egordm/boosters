@@ -20,6 +20,10 @@
 //! Use [`compat::xgboost::XgbModel`] to load JSON models.
 //! See the [`compat`] module for details.
 
+// RFC-0018 Migration: Allow deprecated types throughout crate during migration.
+// This will be removed once migration is complete and deprecated module is deleted.
+#![allow(deprecated)]
+
 // Re-export approx traits for users who want to compare predictions
 pub use approx;
 
@@ -48,6 +52,8 @@ pub use model::gblinear::GBLinearConfig;
 pub use training::{Metric, MetricFn, Objective, ObjectiveFn};
 
 // Data types (for preparing training data)
+// Allow deprecated: These are re-exported for backward compatibility during RFC-0018 migration
+#[allow(deprecated)]
 pub use data::{
     Column, Dataset, DatasetBuilder, DatasetError, DatasetSchema, FeatureMeta, FeatureType,
     FeaturesView, SparseColumn, TargetsView, WeightsView,

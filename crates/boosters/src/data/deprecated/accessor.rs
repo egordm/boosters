@@ -31,7 +31,7 @@
 //! }
 //! ```
 
-use crate::data::FeatureType;
+use super::schema::FeatureType;
 
 // ============================================================================
 // SampleAccessor Trait

@@ -12,9 +12,9 @@
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
 
 use super::column::Column;
-use super::error::DatasetError;
 use super::schema::{DatasetSchema, FeatureMeta};
 use super::views::{FeaturesView, TargetsView, WeightsView};
+use crate::data::error::DatasetError;
 
 /// The unified dataset container for all boosters models.
 ///
@@ -454,7 +454,7 @@ impl DatasetBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::FeatureType;
+    use super::super::schema::FeatureType;
     use ndarray::array;
 
     #[test]

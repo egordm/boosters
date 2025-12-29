@@ -768,7 +768,7 @@ mod tests {
             3.0,
         );
         BinnedDatasetBuilder::new(BinningConfig::default())
-            .add_binned(bins, mapper, None)
+            .add_binned(bins, None, mapper, None)
             .group_strategy(GroupStrategy::SingleGroup)
             .build()
             .unwrap()
@@ -784,8 +784,8 @@ mod tests {
             BinMapper::numerical(vec![0.5, 1.5], MissingType::None, 0, 0, 0.0, 0.0, 1.0);
 
         BinnedDatasetBuilder::new(BinningConfig::default())
-            .add_binned(f0_bins, f0_mapper, None)
-            .add_binned(f1_bins, f1_mapper, None)
+            .add_binned(f0_bins, None, f0_mapper, None)
+            .add_binned(f1_bins, None, f1_mapper, None)
             .group_strategy(GroupStrategy::SingleGroup)
             .build()
             .unwrap()
@@ -797,7 +797,7 @@ mod tests {
         let bins = vec![0, 1];
         let mapper = BinMapper::numerical(vec![0.5, 1.5], MissingType::None, 0, 0, 0.0, 0.0, 1.0);
         BinnedDatasetBuilder::new(BinningConfig::default())
-            .add_binned(bins, mapper, None)
+            .add_binned(bins, None, mapper, None)
             .group_strategy(GroupStrategy::SingleGroup)
             .build()
             .unwrap()
@@ -811,7 +811,7 @@ mod tests {
         let mapper =
             BinMapper::categorical(vec![1000, 2000, 3000, 4000], MissingType::None, 0, 0, 0.0);
         BinnedDatasetBuilder::new(BinningConfig::default())
-            .add_binned(bins, mapper, None)
+            .add_binned(bins, None, mapper, None)
             .group_strategy(GroupStrategy::SingleGroup)
             .build()
             .unwrap()

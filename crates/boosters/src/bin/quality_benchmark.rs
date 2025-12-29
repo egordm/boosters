@@ -29,6 +29,9 @@
 //!   # Full benchmark (synthetic + real-world)
 //!   cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm,io-parquet" -- \
 //!       --seeds 5 --out docs/benchmarks/quality-report.md
+
+// RFC-0018 Migration: Allow deprecated types during migration period
+#![allow(deprecated)]
 //!
 //!   # Synthetic only
 //!   cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm" -- \
