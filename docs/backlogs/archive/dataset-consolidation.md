@@ -567,7 +567,7 @@ impl BinnedDataset {
 
 ### Story 4.2: Update GBLinear Signatures (predict + train)
 
-**Status**: ✅ Complete  
+**Status**: 🔄 In Progress (EvalSet migration pending)  
 **Estimate**: 2 hours
 
 **Description**: Update both `predict_into()` and training flow to use `BinnedDataset` directly.
@@ -591,22 +591,140 @@ impl BinnedDataset {
 **Changes**:
 
 1. ✅ `GBLinearTrainer::train()`: Now takes `(&BinnedDataset, TargetsView, WeightsView, &[EvalSet])`
-2. ✅ All callers updated
-3. ✅ Bit-identical results with old implementation (DD-6)
+2. ❌ EvalSet still uses deprecated Dataset type (see Story 4.2a-4.2d)
+3. ❌ Eval prediction updates are skipped (TODO at trainer.rs:285)
 
 **Definition of Done**:
 
 - ✅ Both signatures updated (breaking changes)
-- ✅ All callers updated
+- ❌ EvalSet must use BinnedDataset (Story 4.2a)
+- ❌ All callers updated to provide BinnedDataset for eval sets
 - ✅ Bit-identical results with old implementation (DD-6)
-- ✅ Training and prediction tests pass (778 tests, 0 failures)
-- ✅ No parallel methods (`train_binned`, `predict_binned`)—single code path
+- ✅ Training tests pass (778 tests, 0 failures)
+- ❌ No TODOs remaining in trainer.rs
+
+---
+
+### Story 4.2a: Migrate EvalSet to Use BinnedDataset
+
+**Status**: Not Started  
+**Estimate**: 1.5 hours  
+**Priority**: HIGH - Blocking full migration
+
+**Description**: Update `EvalSet` struct to use `BinnedDataset` instead of `Dataset`.
+
+**Current State** (in `training/eval.rs`):
+```rust
+pub struct EvalSet<'a> {
+    pub name: &'a str,
+    pub dataset: &'a Dataset,  // deprecated type
+}
+```
+
+**Target State**:
+```rust
+pub struct EvalSet<'a> {
+    pub name: &'a str,
+    pub dataset: &'a BinnedDataset,
+    pub targets: TargetsView<'a>,
+    pub weights: WeightsView<'a>,
+}
+```
+
+**Why targets and weights**: Consistent with training signature. EvalSet needs targets for metric computation and weights for weighted metrics.
+
+**Changes Required**:
+1. Update `EvalSet` struct definition
+2. Update `EvalSet::new()` constructor
+3. Update `EvalSet::n_samples()` to use `dataset.n_samples()`
+4. All callers must be updated (Stories 4.2b, 4.2c)
+
+**Definition of Done**:
+- [ ] `EvalSet` uses `&'a BinnedDataset`
+- [ ] Includes `targets` and `weights` fields
+- [ ] No references to deprecated `Dataset` type
+- [ ] Unit tests for EvalSet pass
+
+---
+
+### Story 4.2b: Update GBLinear Trainer Eval Set Handling
+
+**Status**: Not Started  
+**Estimate**: 1 hour  
+**Priority**: HIGH
+
+**Description**: Update GBLinear trainer to properly use eval sets with BinnedDataset.
+
+**Current Issue** (trainer.rs:285):
+```rust
+// TODO: Once EvalSet uses BinnedDataset, update this
+// For now, skip eval prediction updates for weight deltas
+let _ = (set_idx, eval_set);
+```
+
+**Target**: Remove TODO, implement proper eval prediction updates.
+
+**Changes Required**:
+1. Remove the TODO and dead code
+2. Implement `apply_weight_deltas_to_predictions` for eval sets using `for_each_feature_value()`
+3. Update `evaluate_round` call to use BinnedDataset from EvalSet
+
+**Definition of Done**:
+- [ ] TODO at trainer.rs:285 removed
+- [ ] Eval predictions updated incrementally during training
+- [ ] All GBLinear tests pass
+- [ ] No skipped code paths
+
+---
+
+### Story 4.2c: Update GBDT Trainer Eval Set Handling
+
+**Status**: Not Started  
+**Estimate**: 1 hour  
+**Priority**: MEDIUM
+
+**Description**: Update GBDT trainer for consistency with new EvalSet signature.
+
+**Current State**: GBDT trainer uses `es.dataset.n_samples()` which will break when EvalSet changes.
+
+**Changes Required**:
+1. Update all references to `eval_set.dataset` to use new struct
+2. Update prediction initialization for eval sets
+3. Update tree prediction application for eval sets
+
+**Definition of Done**:
+- [ ] GBDT trainer works with new EvalSet
+- [ ] Eval predictions computed correctly
+- [ ] All GBDT tests pass
+
+---
+
+### Story 4.2d: Update Model API Layers for New EvalSet
+
+**Status**: Not Started  
+**Estimate**: 1 hour  
+**Priority**: HIGH
+
+**Description**: Update model layer (`model/gbdt/model.rs`, `model/gblinear/model.rs`) to construct EvalSets with BinnedDataset.
+
+**Current State**: Model layer receives data and constructs EvalSets to pass to trainers.
+
+**Changes Required**:
+1. GBDTModel: Build BinnedDataset for each eval set before calling trainer
+2. GBLinearModel: Build BinnedDataset for each eval set before calling trainer
+3. Construct EvalSet with dataset, targets, and weights
+
+**Definition of Done**:
+- [ ] GBDTModel constructs proper EvalSets
+- [ ] GBLinearModel constructs proper EvalSets
+- [ ] All model-level tests pass
+- [ ] No deprecated Dataset usage in model layer
 
 ---
 
 ### Story 4.3: GBLinear Benchmark Validation
 
-**Status**: ✅ Complete  
+**Status**: 🔄 Pending (EvalSet migration required)  
 **Estimate**: 1 hour
 
 **Description**: Verify GBLinear training/prediction meets overhead thresholds.
@@ -616,7 +734,7 @@ impl BinnedDataset {
 - Training: < 2x overhead on small datasets (≤10K samples)
 - Prediction: < 10% overhead
 
-**Results** (2025-12-30):
+**Results** (2025-12-30 - Preliminary, eval sets not fully migrated):
 
 | Samples | Baseline (Dataset) | Current (BinnedDataset) | Overhead |
 |---------|-------------------|------------------------|----------|
@@ -626,42 +744,53 @@ impl BinnedDataset {
 
 **Analysis**: End-to-end GBLinear training with the unified BinnedDataset path shows 1.14x-1.25x overhead compared to the baseline. This is well within the <2x threshold for small datasets.
 
+**Note**: These benchmarks were captured before EvalSet migration (Stories 4.2a-4.2d). Final validation required after EvalSet uses BinnedDataset.
+
 The overhead comes from:
+
 - `for_each_feature_value()` closure dispatch vs direct slice iteration
 - BinnedDataset construction (done in model.rs, amortized over training rounds)
 
 **Definition of Done**:
 
-- ✅ Benchmarks captured
+- ✅ Initial benchmarks captured
 - ✅ Overhead within thresholds (1.14x-1.25x, well below <2x)
-- ✅ Results documented
+- [ ] Final validation after EvalSet migration
+- [ ] Results documented
 
 ---
 
 ### Story 4.4: Review/Demo: GBLinear Migration
 
-**Status**: ✅ Complete  
+**Status**: 🔄 Pending (EvalSet migration required)  
 **Estimate**: 30 min
 
 **Description**: Demo GBLinear working with unified Dataset.
 
-**Review Summary** (2025-12-30):
+**Preliminary Review** (2025-12-30):
 
 1. **Architecture**: GBLinear trainer now uses same data abstraction as GBDT
 2. **Performance**: 1.14x-1.25x overhead, well within <2x threshold
 3. **Interface**: Clean 4-argument signature matching GBDT pattern
 4. **Tests**: 778 tests pass, no regressions
 
+**Note**: Final review pending after EvalSet migration completes.
+
 ---
 
 ### Story 4.5: Stakeholder Feedback Check (Epic 4)
 
-**Status**: ✅ Complete  
+**Status**: 🔄 Pending  
 **Estimate**: 15 min
 
 **Description**: Review `tmp/stakeholder_feedback.md` for GBLinear migration concerns.
 
-**Findings** (2025-12-30): No new feedback. Stakeholder feedback file has no pending items related to GBLinear migration.
+**Findings** (2025-12-30): Stakeholder identified incomplete migration:
+- EvalSet still uses deprecated Dataset type
+- TODO at trainer.rs:285 skips eval prediction updates
+- Stories 4.2a-4.2d created to address this feedback
+
+**Action Required**: Complete Stories 4.2a-4.2d before marking Epic 4 complete.
 
 ---
 

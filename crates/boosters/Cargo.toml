@@ -31,10 +31,6 @@ serde_with = { version = "3.16.0", features = ["json"], optional = true }
 # Optional: dataset loaders for benches/tools
 zstd = { version = "0.13", optional = true }
 
-# Optional: Arrow/Parquet I/O (RFC-0029)
-arrow = { version = "54", optional = true, default-features = false }
-parquet = { version = "54", optional = true, default-features = false, features = ["arrow", "snap"] }
-
 # Optional: XGBoost C++ bindings for benchmark comparison
 # Fork with reset() method for accurate benchmarking (clears internal caches)
 # Requires: libclang-dev (Debian/Ubuntu), clang (Arch), or Xcode (macOS)
@@ -55,7 +51,7 @@ serde_json = "1.0"  # Always available in tests
 criterion = { version = "0.5", features = ["html_reports"] }
 rand = "0.8"  # For generating random benchmark inputs
 rand_chacha = "0.3"  # For reproducible RNG in benchmarks
-tempfile = "3.20"  # For Arrow/Parquet I/O tests
+tempfile = "3.20"  # For temporary file tests
 
 [features]
 default = ["xgboost-compat"]
@@ -67,7 +63,6 @@ bench-xgboost = ["dep:xgb", "xgboost-compat"]
 bench-lightgbm = ["dep:lightgbm3", "lightgbm-compat"]
 bench-training = []
 testing-utils = ["dep:serde", "dep:serde_json", "dep:zstd"]
-io-parquet = ["dep:parquet", "dep:arrow"]
 
 [[bench]]
 name = "prediction_core"

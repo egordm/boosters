@@ -34,9 +34,6 @@ mod ndarray;
 // Core data types (Dataset, views, accessors, schema)
 pub(crate) mod types;
 
-#[cfg(feature = "io-parquet")]
-pub mod io;
-
 // =============================================================================
 // Core Dataset Types (user-facing)
 // =============================================================================

@@ -4,31 +4,45 @@
 **Created**: 2025-12-30  
 **Updated**: 2025-12-30  
 **Author**: Team  
-**Related**: RFC-0018 (Raw Feature Storage)
+**Related**: RFC-0021 (Dataset/BinnedDataset Separation)
 
 ## Summary
 
 Several components need efficient per-feature iteration over raw values:
 
 - **GBLinear** (training and prediction): iterate all samples for each feature
-- **Linear SHAP**: same pattern as GBLinear prediction (currently uses `FeaturesView`)
+- **Linear SHAP**: same pattern as GBLinear prediction
 - **Linear tree fitting**: iterate a *subset* of samples (leaf rows) for each feature
-- **Tree SHAP**: per-sample access across features—migrate to `SampleBlocks` for consistency
+- **Tree SHAP**: per-sample access across features—uses `SampleBlocks`
+- **GBDT prediction**: per-sample batches—uses `SampleBlocks`
+
+### Key Design Decision: Methods Live on Dataset
+
+Per RFC-0021, `Dataset` contains raw feature values (dense or sparse), while `BinnedDataset`
+contains only bins and is internal to the library. All raw value iteration methods therefore
+belong on `Dataset`, not `BinnedDataset`.
+
+**Why Dataset, not BinnedDataset?**
+
+- `Dataset` owns raw values; `BinnedDataset` only has bins
+- `Dataset` is the public API; users pass it to models
+- Prediction, SHAP, GBLinear, linear trees all work with raw values
+- Only histogram building needs bins (which uses `BinnedDataset` internally)
 
 ### Access Patterns
 
-| Component           | Pattern                        | Current Implementation                  | New Pattern                |
-| ------------------- | ------------------------------ | --------------------------------------- | -------------------------- |
-| GBLinear training   | all samples, per feature       | `FeaturesView::feature(f)`              | `for_each_feature_value()` |
-| GBLinear prediction | all samples, per feature       | `FeaturesView::feature(f)`              | `for_each_feature_value()` |
-| Linear SHAP         | all samples, per feature       | `FeaturesView::feature(f)[i]`           | `for_each_feature_value()` |
-| Linear tree fitting | subset of samples, per feature | `DataAccessor::sample(row).feature(f)`  | `gather_feature_values()`  |
-| Tree SHAP           | per-sample, all features       | `FeaturesView::get(sample, feat)`       | `SampleBlocks`             |
-| GBDT prediction     | per-sample batches             | `SampleBlocks`                          | (already efficient)        |
+| Component           | Pattern                        | Current Implementation                  | New Pattern                       |
+| ------------------- | ------------------------------ | --------------------------------------- | --------------------------------- |
+| GBLinear training   | all samples, per feature       | `FeaturesView::feature(f)`              | `Dataset::for_each_feature_value()` |
+| GBLinear prediction | all samples, per feature       | `FeaturesView::feature(f)`              | `Dataset::for_each_feature_value()` |
+| Linear SHAP         | all samples, per feature       | `FeaturesView::feature(f)[i]`           | `Dataset::for_each_feature_value()` |
+| Linear tree fitting | subset of samples, per feature | `DataAccessor::sample(row).feature(f)`  | `Dataset::gather_feature_values()` |
+| Tree SHAP           | per-sample, all features       | `FeaturesView::get(sample, feat)`       | `Dataset::SampleBlocks` |
+| GBDT prediction     | per-sample batches             | `SampleBlocks` (on BinnedDataset)       | `Dataset::SampleBlocks` |
 
 ### Key Design Decisions
 
-**1. `for_each_feature_value()` for full iteration** (GBLinear, Linear SHAP):
+**1. `for_each_feature_value()` on Dataset** (GBLinear, Linear SHAP):
 
 ```rust
 dataset.for_each_feature_value(feat_idx, |sample_idx, value| {
@@ -36,16 +50,17 @@ dataset.for_each_feature_value(feat_idx, |sample_idx, value| {
 });
 ```
 
-**2. `gather_feature_values()` for filtered iteration** (Linear tree fitting):
+**2. `gather_feature_values()` on Dataset** (Linear tree fitting):
 
 ```rust
 dataset.gather_feature_values(feat_idx, &sample_indices, &mut buffer);
 // buffer now contains values for only the specified samples
 ```
 
-**3. `SampleBlocks` for row-major access** (Tree SHAP):
+**3. `SampleBlocks` on Dataset** (Tree SHAP, GBDT prediction):
 
 ```rust
+// SampleBlocks ported from BinnedDataset to Dataset
 for block in SampleBlocks::new(dataset, sample_indices) {
     for sample in block.iter() {
         let value = sample.feature(feat_idx);
@@ -65,7 +80,11 @@ for block in SampleBlocks::new(dataset, sample_indices) {
 - Even though the branch is predictable, it adds overhead (~5-10% in microbenchmarks)
 - The iterator is still provided for ergonomics but documented as having overhead
 
-**Key principle**: No legacy compatibility layer. We delete the old code and update all callers to work directly with `BinnedDataset`.
+**Key principles:**
+
+1. **All iteration methods on `Dataset`** - BinnedDataset only has bins, not raw values
+2. **No legacy compatibility layer** - Delete old code, update all callers
+3. **FeaturesView removed** - It assumed dense contiguous data; Dataset handles both dense and sparse
 
 ## Motivation
 
@@ -136,51 +155,67 @@ for sample_idx in 0..n_samples {
 
 ## Design
 
-### Primary Pattern: `for_each_feature_value`
+### Primary Pattern: `for_each_feature_value` on Dataset
 
 The `for_each` pattern is the **recommended approach** because it's truly zero-cost for dense features:
 
 ```rust
-impl BinnedDataset {
+impl Dataset {
     /// Apply a function to each (sample_idx, raw_value) pair for a feature.
     ///
     /// This is the recommended pattern for iterating over feature values.
     /// The storage type is matched ONCE, then we iterate directly on the
-    /// underlying slice—no per-iteration branching.
+    /// underlying data—no per-iteration branching.
     ///
     /// # Performance
     /// - Dense: Equivalent to `for (i, &v) in slice.iter().enumerate()`
-    /// - Sparse: Iterates only stored (non-zero) values
-    /// - Bundled: Extracts values from bundle encoding on-the-fly
+    /// - Sparse: Iterates only stored (non-default) values
     #[inline]
     pub fn for_each_feature_value<F>(&self, feature: usize, mut f: F)
     where
         F: FnMut(usize, f32),
     {
-        let info = &self.features[feature];
-        
-        match info.location {
-            FeatureLocation::Direct { group_idx, idx_in_group } => {
-                let group = &self.groups[group_idx as usize];
-                if let Some(slice) = group.raw_slice(idx_in_group as usize) {
-                    // Dense: direct iteration, fully inlined
-                    for (idx, &val) in slice.iter().enumerate() {
-                        f(idx, val);
-                    }
-                } else if group.is_sparse() {
-                    // Sparse: iterate stored values
-                    group.for_each_sparse_value(idx_in_group as usize, |idx, val| f(idx, val));
-                } else {
-                    panic!("Feature {} is categorical", feature)
+        match &self.features[feature] {
+            Feature::Dense(values) => {
+                // Dense: direct iteration, fully inlined
+                for (idx, &val) in values.iter().enumerate() {
+                    f(idx, val);
                 }
             }
-            FeatureLocation::Bundled { bundle_group_idx, position_in_bundle } => {
-                // Bundled: extract from bundle
-                let bundle = &self.groups[bundle_group_idx as usize];
-                bundle.for_each_unbundled_value(position_in_bundle, |idx, val| f(idx, val));
+            Feature::Sparse { indices, values, default: _ } => {
+                // Sparse: iterate only stored values
+                for (&idx, &val) in indices.iter().zip(values.iter()) {
+                    f(idx as usize, val);
+                }
             }
-            FeatureLocation::Skipped => {
-                panic!("Feature {} was skipped", feature)
+        }
+    }
+    
+    /// Iterate over all samples, filling in defaults for sparse features.
+    ///
+    /// Use this when you need ALL samples, including default values.
+    #[inline]
+    pub fn for_each_feature_value_dense<F>(&self, feature: usize, mut f: F)
+    where
+        F: FnMut(usize, f32),
+    {
+        match &self.features[feature] {
+            Feature::Dense(values) => {
+                for (idx, &val) in values.iter().enumerate() {
+                    f(idx, val);
+                }
+            }
+            Feature::Sparse { indices, values, default } => {
+                // For sparse, we need to iterate all samples and fill gaps
+                let mut sparse_pos = 0;
+                for sample_idx in 0..self.n_samples {
+                    if sparse_pos < indices.len() && indices[sparse_pos] == sample_idx as u32 {
+                        f(sample_idx, values[sparse_pos]);
+                        sparse_pos += 1;
+                    } else {
+                        f(sample_idx, *default);
+                    }
+                }
             }
         }
     }
@@ -195,15 +230,12 @@ For cases where an `Iterator` is needed (e.g., chaining with other iterators, ea
 /// Iterator yielding (sample_idx, raw_value) for a feature.
 /// 
 /// This abstracts over different storage strategies:
-/// - Contiguous: Direct slice iteration (zero-cost)
-/// - Bundled: Extracts values from EFB encoding
-/// - Sparse: Yields only non-zero samples
+/// - Dense: Direct slice iteration (near zero-cost)
+/// - Sparse: Yields only stored (non-default) samples
 pub enum FeatureValueIter<'a> {
-    /// Contiguous storage - wraps slice::iter().enumerate()
+    /// Dense storage - wraps slice::iter().enumerate()
     Dense(std::iter::Enumerate<std::slice::Iter<'a, f32>>),
-    /// Bundled feature - extracts from bundle per sample
-    Bundled(BundledFeatureIter<'a>),
-    /// Sparse numeric feature - yields only stored samples
+    /// Sparse storage - yields only stored samples
     Sparse(SparseFeatureIter<'a>),
 }
 
@@ -212,9 +244,8 @@ impl<'a> Iterator for FeatureValueIter<'a> {
     
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        match self {
+        match self {  // <-- branch on EVERY iteration
             Self::Dense(iter) => iter.next().map(|(idx, &val)| (idx, val)),
-            Self::Bundled(iter) => iter.next(),
             Self::Sparse(iter) => iter.next(),
         }
     }
@@ -223,21 +254,24 @@ impl<'a> Iterator for FeatureValueIter<'a> {
     fn size_hint(&self) -> (usize, Option<usize>) {
         match self {
             Self::Dense(iter) => iter.size_hint(),
-            Self::Bundled(iter) => iter.size_hint(),
             Self::Sparse(iter) => iter.size_hint(),
         }
     }
 }
 ```
 
-### Gather Pattern: `gather_feature_values` (Linear Tree Fitting)
+**Note**: No `Bundled` variant. EFB bundling is a `BinnedDataset` concern for histogram building.
+`Dataset` stores features as simple dense or sparse columns—no bundles.
+```
+
+### Gather Pattern: `gather_feature_values` on Dataset (Linear Tree Fitting)
 
 Linear tree fitting needs to iterate a **subset** of samples (leaf rows) for each feature. Currently it uses the `DataAccessor` trait with per-sample access (`sample(row).feature(feat)`), which has poor cache locality for per-feature operations.
 
-We introduce a `gather_feature_values` pattern that fills a buffer with values for specified sample indices:
+We introduce a `gather_feature_values` pattern on `Dataset` that fills a buffer with values for specified sample indices:
 
 ```rust
-impl BinnedDataset {
+impl Dataset {
     /// Gather raw values for a feature at specified sample indices into a buffer.
     ///
     /// This is the recommended pattern for linear tree fitting where we need
@@ -251,7 +285,6 @@ impl BinnedDataset {
     /// # Performance
     /// - Dense: Simple indexed gather, O(k) where k = sample_indices.len()
     /// - Sparse: Merge-join since both indices and sparse storage are sorted
-    /// - Bundled: Extract from bundle at each index
     ///
     /// # Note
     /// Linear trees only use numeric features, never categorical.
@@ -263,31 +296,17 @@ impl BinnedDataset {
         buffer: &mut [f32],
     ) {
         debug_assert!(buffer.len() >= sample_indices.len());
-        let info = &self.features[feature];
         
-        match info.location {
-            FeatureLocation::Direct { group_idx, idx_in_group } => {
-                let group = &self.groups[group_idx as usize];
-                if let Some(slice) = group.raw_slice(idx_in_group as usize) {
-                    // Dense: trivial indexed gather
-                    for (out_idx, &sample_idx) in sample_indices.iter().enumerate() {
-                        buffer[out_idx] = slice[sample_idx as usize];
-                    }
-                } else if group.is_sparse() {
-                    // Sparse: merge-join (both are sorted)
-                    group.gather_sparse_values(idx_in_group as usize, sample_indices, buffer);
-                } else {
-                    panic!("Feature {} is categorical, linear trees don't use categorical", feature)
+        match &self.features[feature] {
+            Feature::Dense(values) => {
+                // Dense: trivial indexed gather
+                for (out_idx, &sample_idx) in sample_indices.iter().enumerate() {
+                    buffer[out_idx] = values[sample_idx as usize];
                 }
             }
-            FeatureLocation::Bundled { bundle_group_idx, position_in_bundle } => {
-                // Bundled: extract at each index
-                let bundle = &self.groups[bundle_group_idx as usize];
-                bundle.gather_unbundled_values(position_in_bundle, sample_indices, buffer);
-            }
-            FeatureLocation::Skipped => {
-                // Skipped features have constant value (usually 0)
-                buffer[..sample_indices.len()].fill(0.0);
+            Feature::Sparse { indices, values, default } => {
+                // Sparse: merge-join (both are sorted)
+                Self::gather_sparse_values(indices, values, *default, sample_indices, buffer);
             }
         }
     }
@@ -305,31 +324,15 @@ impl BinnedDataset {
     where
         F: FnMut(usize, f32),  // (index into sample_indices, value)
     {
-        let info = &self.features[feature];
-        
-        match info.location {
-            FeatureLocation::Direct { group_idx, idx_in_group } => {
-                let group = &self.groups[group_idx as usize];
-                if let Some(slice) = group.raw_slice(idx_in_group as usize) {
-                    // Dense: direct indexed access
-                    for (out_idx, &sample_idx) in sample_indices.iter().enumerate() {
-                        f(out_idx, slice[sample_idx as usize]);
-                    }
-                } else if group.is_sparse() {
-                    // Sparse: merge-join iteration
-                    group.for_each_gathered_sparse(idx_in_group as usize, sample_indices, |idx, val| f(idx, val));
-                } else {
-                    panic!("Feature {} is categorical", feature)
+        match &self.features[feature] {
+            Feature::Dense(values) => {
+                for (out_idx, &sample_idx) in sample_indices.iter().enumerate() {
+                    f(out_idx, values[sample_idx as usize]);
                 }
             }
-            FeatureLocation::Bundled { bundle_group_idx, position_in_bundle } => {
-                let bundle = &self.groups[bundle_group_idx as usize];
-                bundle.for_each_gathered_unbundled(position_in_bundle, sample_indices, |idx, val| f(idx, val));
-            }
-            FeatureLocation::Skipped => {
-                for out_idx in 0..sample_indices.len() {
-                    f(out_idx, 0.0);
-                }
+            Feature::Sparse { indices, values, default } => {
+                // Sparse: merge-join iteration
+                Self::for_each_gathered_sparse(indices, values, *default, sample_indices, |idx, val| f(idx, val));
             }
         }
     }
@@ -341,12 +344,16 @@ impl BinnedDataset {
 For sparse features, both the sparse storage indices and the requested `sample_indices` are sorted. This enables an efficient merge-join:
 
 ```rust
-impl FeatureGroup {
-    fn gather_sparse_values(&self, feature_in_group: usize, sample_indices: &[u32], buffer: &mut [f32]) {
-        // Initialize buffer with zeros (sparse default)
-        buffer[..sample_indices.len()].fill(0.0);
-        
-        let (sparse_indices, sparse_values) = self.sparse_data(feature_in_group);
+impl Dataset {
+    fn gather_sparse_values(
+        sparse_indices: &[u32],
+        sparse_values: &[f32],
+        default: f32,
+        sample_indices: &[u32],
+        buffer: &mut [f32],
+    ) {
+        // Initialize buffer with default (sparse default value)
+        buffer[..sample_indices.len()].fill(default);
         
         // Merge-join: both are sorted
         let mut sparse_pos = 0;
@@ -358,7 +365,7 @@ impl FeatureGroup {
             if sparse_pos < sparse_indices.len() && sparse_indices[sparse_pos] == sample_idx {
                 buffer[out_idx] = sparse_values[sparse_pos];
             }
-            // else: remains 0.0 (sparse default)
+            // else: remains default
         }
     }
 }
@@ -384,9 +391,9 @@ fn fit_linear_model(
     // ... fit linear model
 }
 
-// After (uses gather_feature_values per-feature)
+// After (uses Dataset.gather_feature_values per-feature)
 fn fit_linear_model(
-    dataset: &BinnedDataset,
+    dataset: &Dataset,
     leaf_samples: &[u32],  // sorted due to stable partitioning
     features: &[usize],
     feature_buffer: &mut [f32],  // reusable buffer, size = leaf_samples.len()
@@ -402,12 +409,16 @@ fn fit_linear_model(
 }
 ```
 
-### Tree SHAP: Migrate to SampleBlocks
+### Tree SHAP and GBDT Prediction: SampleBlocks on Dataset
 
-Tree SHAP currently uses per-sample access (`features.get(sample_idx, feature)`). For consistency with GBDT prediction and better cache locality, migrate to `SampleBlocks`:
+Tree SHAP and GBDT prediction both use row-major access patterns. The existing `SampleBlocks`
+pattern (currently on `BinnedDataset`) is ported to work on `Dataset`:
 
 ```rust
-// Before (per-sample access)
+// SampleBlocks ported from BinnedDataset to Dataset
+// Provides efficient batched row-major access for prediction
+
+// Before (SampleBlocks on BinnedDataset with FeaturesView)
 fn explain_sample(
     &self,
     features: &FeaturesView,
@@ -420,88 +431,61 @@ fn explain_sample(
     }
 }
 
-// After (using SampleBlocks for batched access)
+// After (SampleBlocks on Dataset)
 fn explain_batch(
     &self,
-    blocks: &SampleBlocks,
-    batch_start: usize,
-    batch_size: usize,
+    dataset: &Dataset,
+    sample_indices: &[u32],
     shap_values: &mut Array2<f64>,
 ) {
-    for local_idx in 0..batch_size {
-        let sample = blocks.sample(batch_start + local_idx);
+    SampleBlocks::for_each_with(dataset, sample_indices, |local_idx, sample| {
         for node in tree.nodes() {
             let feature_value = sample.feature(node.feature);
             // ... tree traversal logic
         }
-    }
+    });
 }
 ```
 
-This aligns Tree SHAP with GBDT prediction, which already uses `SampleBlocks` for efficient row-major access.
+This aligns Tree SHAP with GBDT prediction, which already uses `SampleBlocks` for efficient
+row-major access. The port to `Dataset` means prediction works with both dense and sparse
+features without needing bins.
 
-Add a single method to `BinnedDataset`:
+**Key change**: `SampleBlocks` is moved from `crates/boosters/src/data/binned/sample_blocks.rs`
+and generalized to work on `Dataset`. The buffered block pattern remains the same, but now
+operates on `Feature` (dense or sparse) instead of binned storage.
+
+### Convenience Method: `feature_values()` on Dataset
+
+For ergonomics, we add a method that returns an iterator:
 
 ```rust
-impl BinnedDataset {
+impl Dataset {
     /// Iterate over raw values for a feature.
     ///
     /// Returns an iterator yielding (sample_idx, raw_value) pairs.
-    /// Panics if the feature is categorical (use binned access for those).
     ///
     /// # Feature Types
-    /// - Dense numeric: yields all n_samples values in order
-    /// - Sparse numeric: yields only non-zero samples  
-    /// - Bundled (EFB): extracts and yields values from bundle encoding
+    /// - Dense: yields all n_samples values in order
+    /// - Sparse: yields only stored (non-default) samples
     #[inline]
     pub fn feature_values(&self, feature: usize) -> FeatureValueIter<'_> {
-        let info = &self.features[feature];
-        
-        match info.location {
-            FeatureLocation::Direct { group_idx, idx_in_group } => {
-                let group = &self.groups[group_idx as usize];
-                if let Some(slice) = group.raw_slice(idx_in_group as usize) {
-                    // Dense: direct slice iteration
-                    FeatureValueIter::Dense(slice.iter().enumerate())
-                } else if group.is_sparse() {
-                    // Sparse: create sparse iterator
-                    FeatureValueIter::Sparse(SparseFeatureIter::new(group, idx_in_group))
-                } else {
-                    panic!("Feature {} is categorical, use binned access", feature)
-                }
+        match &self.features[feature] {
+            Feature::Dense(values) => {
+                FeatureValueIter::Dense(values.iter().enumerate())
             }
-            FeatureLocation::Bundled { bundle_group_idx, position_in_bundle } => {
-                // Bundled: extract from bundle encoding
-                let bundle = &self.groups[bundle_group_idx as usize];
-                FeatureValueIter::Bundled(BundledFeatureIter::new(
-                    bundle, 
-                    position_in_bundle,
-                    self.n_samples,
-                ))
-            }
-            FeatureLocation::Skipped => {
-                panic!("Feature {} was skipped (trivial)", feature)
+            Feature::Sparse { indices, values, .. } => {
+                FeatureValueIter::Sparse(SparseFeatureIter::new(indices, values))
             }
         }
     }
     
-    /// Iterate over all features that have raw values, yielding feature iterators.
-    ///
-    /// Skips categorical features. For each numeric feature, yields
-    /// (feature_idx, FeatureValueIter).
+    /// Iterate over all features, yielding feature iterators.
     pub fn iter_feature_values(&self) 
         -> impl Iterator<Item = (usize, FeatureValueIter<'_>)> + '_ 
     {
-        (0..self.n_features()).filter_map(move |idx| {
-            // Skip categorical features
-            if self.features[idx].is_categorical() {
-                return None;
-            }
-            // Skip skipped features
-            if self.features[idx].location.is_skipped() {
-                return None;
-            }
-            Some((idx, self.feature_values(idx)))
+        (0..self.n_features()).map(move |idx| {
+            (idx, self.feature_values(idx))
         })
     }
 }
@@ -524,19 +508,8 @@ pub fn predict_into(&self, features: FeaturesView<'_>, mut output: ArrayViewMut2
     }
 }
 
-// After (uses BinnedDataset directly)
-pub fn predict_into(&self, dataset: &BinnedDataset, mut output: ArrayViewMut2<'_, f32>) {
-    for feat_idx in 0..n_features {
-        for (sample_idx, value) in dataset.feature_values(feat_idx) {
-            for group in 0..n_groups {
-                output[[group, sample_idx]] += value * self.weight(feat_idx, group);
-            }
-        }
-    }
-}
-
-// Or with for_each pattern:
-pub fn predict_into(&self, dataset: &BinnedDataset, mut output: ArrayViewMut2<'_, f32>) {
+// After (uses Dataset directly)
+pub fn predict_into(&self, dataset: &Dataset, mut output: ArrayViewMut2<'_, f32>) {
     for feat_idx in 0..n_features {
         dataset.for_each_feature_value(feat_idx, |sample_idx, value| {
             for group in 0..n_groups {
@@ -567,19 +540,19 @@ fn compute_weight_update(
     // ...
 }
 
-// After
+// After (uses Dataset directly)
 fn compute_weight_update(
     model: &LinearModel,
-    data: &BinnedDataset,
+    data: &Dataset,
     buffer: &Gradients,
     feature: usize,
     output: usize,
     config: &UpdateConfig,
 ) -> f32 {
-    for (row, value) in data.feature_values(feature) {
+    data.for_each_feature_value(feature, |row, value| {
         sum_grad += grad_hess[row].grad * value;
         sum_hess += grad_hess[row].hess * value * value;
-    }
+    });
     // ...
 }
 ```
@@ -623,58 +596,57 @@ fn next(&mut self) -> Option<Self::Item> {
 - When you need early return (can't easily do with `for_each`)
 - When the overhead is acceptable for your use case
 
-### Bundled Features (EFB)
-
-For bundled features, we extract values from the bundle per sample. This is inherently more expensive than direct slice access, but:
-
-1. We're not materializing a full slice upfront
-2. The extraction is done lazily during iteration
-3. GBLinear typically has few bundled features (EFB bundles correlated features)
-
 ### Sparse Features
 
-Sparse iteration yields only non-zero samples, which is the correct behavior for linear models (zero values don't contribute to the sum).
+Sparse iteration yields only stored (non-default) samples, which is the correct behavior for
+linear models (default values contribute `default × weight` to the sum). For the common case
+where default is 0, this is optimal.
 
 ## Migration Plan
 
 **No legacy compatibility**. The migration is:
 
-### Phase 1: Core API
+### Phase 1: Dataset Core API (with RFC-0021)
 
-1. Add `for_each_feature_value()` to `BinnedDataset` (full iteration pattern)
-2. Add `gather_feature_values()` and `for_each_gathered_value()` (filtered iteration pattern)
-3. Add `FeatureValueIter` enum and `feature_values()` (secondary, for ergonomics)
+1. Implement `Dataset` type with `Feature::Dense` and `Feature::Sparse`
+2. Add `for_each_feature_value()` to `Dataset` (full iteration pattern)
+3. Add `for_each_feature_value_dense()` for cases needing all samples including defaults
+4. Add `gather_feature_values()` and `for_each_gathered_value()` (filtered iteration)
+5. Add `FeatureValueIter` enum and `feature_values()` (secondary, for ergonomics)
+6. Port `SampleBlocks` from BinnedDataset to Dataset
 
 ### Phase 2: GBLinear Migration
 
-1. Update `LinearModel::predict_into()` to take `&BinnedDataset`
-2. Update `Updater` methods to take `&BinnedDataset`
-3. Update `GBLinearTrainer::train()` to pass `&BinnedDataset`
+1. Update `LinearModel::predict_into()` to take `&Dataset`
+2. Update `Updater` methods to take `&Dataset`
+3. Update `GBLinearTrainer::train()` to pass `&Dataset`
 
 ### Phase 3: Linear SHAP Migration
 
-1. Update `LinearExplainer` to use `for_each_feature_value()`
+1. Update `LinearExplainer` to use `Dataset::for_each_feature_value()`
    - Currently uses `features.feature(f)[i]` pattern
    - Same migration pattern as GBLinear prediction
 
 ### Phase 4: Linear Tree Fitting Migration
 
-1. Update `LeafLinearTrainer` to use `gather_feature_values()`
+1. Update `LeafLinearTrainer` to use `Dataset::gather_feature_values()`
    - Currently uses `DataAccessor::sample(row).feature(feat)`
    - Switch to per-feature gather into reusable buffer
    - Note: sample indices are sorted due to stable partitioning
 
-### Phase 5: Tree SHAP Migration
+### Phase 5: Tree SHAP and GBDT Prediction Migration
 
-1. Update `TreeExplainer` to use `SampleBlocks`
-   - Currently uses `FeaturesView::get(sample_idx, feature)`
-   - Migrate to batched `SampleBlocks` access for consistency with GBDT prediction
-   - Better cache locality for row-major access pattern
+1. Update `TreeExplainer` to use `SampleBlocks` on `Dataset`
+2. Update GBDT prediction to use `SampleBlocks` on `Dataset`
+   - Currently uses `SampleBlocks` on BinnedDataset
+   - Migrate to Dataset-based SampleBlocks
 
 ### Phase 6: Cleanup
 
 1. Update Python bindings
-2. Delete `FeaturesView`, `DataAccessor` trait, and old `Dataset` type
+2. Delete `FeaturesView` (assumed dense data—replaced by Dataset patterns)
+3. Delete `DataAccessor` trait
+4. Delete old `Dataset` type (if any remnants)
 
 The library will not compile during phases 2-6. That's acceptable—we fix all callers and then it compiles again.
 
@@ -682,26 +654,29 @@ The library will not compile during phases 2-6. That's acceptable—we fix all c
 
 1. **~~Iterator vs for_each~~**: **Resolved.** `for_each` is the primary pattern (zero-cost for dense). Iterator is provided for ergonomics but documented as having ~5-10% overhead.
 
-2. **Sparse handling in GBLinear**: When a sparse feature yields only non-zero samples, the gradient update skips zero samples. This is mathematically correct (zero × weight = 0), but we need to ensure the outer loop handles this correctly.
+2. **Sparse handling in GBLinear**: When a sparse feature yields only non-default samples, the gradient update skips default samples. For linear models this is mathematically correct when default=0 (zero × weight = 0). Need to verify this holds for all cases.
 
-3. **Bundle extraction cost**: How expensive is extracting a value from a bundle? If significant, consider caching or batch extraction.
+3. **~~Linear tree fitting~~**: **Resolved.** Use `gather_feature_values()` with sorted sample indices. Merge-join algorithm for sparse features leverages the fact that indices are sorted due to stable partitioning.
 
-4. **~~Linear tree fitting~~**: **Resolved.** Use `gather_feature_values()` with sorted sample indices. Merge-join algorithm for sparse features leverages the fact that indices are sorted due to stable partitioning.
-
-5. **~~Tree SHAP~~**: **Resolved.** Migrate to `SampleBlocks` for consistency with GBDT prediction and better cache locality.
+4. **~~Tree SHAP~~**: **Resolved.** Migrate to `SampleBlocks` on Dataset for consistency with GBDT prediction and better cache locality.
 
 ## Success Criteria
 
-- [ ] `for_each_feature_value()` implemented on `BinnedDataset`
-- [ ] `gather_feature_values()` implemented on `BinnedDataset`
-- [ ] `for_each_gathered_value()` implemented on `BinnedDataset`
+- [ ] `Dataset` type implemented with `Feature::Dense` and `Feature::Sparse`
+- [ ] `for_each_feature_value()` implemented on `Dataset`
+- [ ] `for_each_feature_value_dense()` implemented on `Dataset`
+- [ ] `gather_feature_values()` implemented on `Dataset`
+- [ ] `for_each_gathered_value()` implemented on `Dataset`
 - [ ] `FeatureValueIter` enum implemented (secondary API)
-- [ ] GBLinear training works with `BinnedDataset` (bundled features included)
-- [ ] GBLinear prediction works with `BinnedDataset`
-- [ ] Linear SHAP works with `BinnedDataset`
-- [ ] Linear tree fitting works with `gather_feature_values()`
-- [ ] Tree SHAP works with `SampleBlocks`
-- [ ] Old `FeaturesView`, `DataAccessor`, and `Dataset` types deleted
+- [ ] `SampleBlocks` ported from BinnedDataset to Dataset
+- [ ] GBLinear training works with `Dataset`
+- [ ] GBLinear prediction works with `Dataset`
+- [ ] Linear SHAP works with `Dataset`
+- [ ] Linear tree fitting works with `Dataset::gather_feature_values()`
+- [ ] Tree SHAP works with `SampleBlocks` on `Dataset`
+- [ ] GBDT prediction works with `SampleBlocks` on `Dataset`
+- [ ] Old `FeaturesView` deleted (assumed dense data)
+- [ ] Old `DataAccessor` trait deleted
 - [ ] No O(n×m) allocations in the path
 - [ ] Benchmark shows `for_each` has 0% overhead for dense features
 - [ ] Benchmark shows iterator has <10% overhead for dense features

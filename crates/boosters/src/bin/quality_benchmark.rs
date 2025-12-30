@@ -4,42 +4,23 @@
 //! aggregating results with confidence intervals.
 //!
 //! Usage:
-//!   cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm,io-parquet" -- \[options\]
+//!   cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm" -- \[options\]
 //!
 //! Options:
 //!   --seeds N            Number of seeds to run (default: 5)
 //!   --out PATH           Output markdown file (default: stdout)
 //!   --quick              Quick mode: fewer rows, fewer trees
-//!   --mode MODE          Benchmark mode: all (default), synthetic, real
-//!   --no-real            Alias for --mode synthetic (deprecated)
 //!   --libsvm PATH        Add libsvm regression dataset (label + index:value, 1-based)
 //!   --uci-machine PATH   Add UCI machine.data regression dataset
 //!   --label0 PATH        Add label0 dataset (tab/space-separated: label first)
 //!
-//! Real-world Datasets:
-//!   By default, if parquet files exist in packages/boosters-datagen/data/, they are included:
-//!   - california_housing.parquet (regression, 20k samples)
-//!   - adult.parquet (binary classification, 48k samples)
-//!   - covertype.parquet (multiclass, 581k samples - subsampled to 50k)
-//!
-//!   Generate these files with:
-//!     cd packages/boosters-datagen && uv run python scripts/generate_benchmark_datasets.py
-//!
 //! Examples:
-//!   # Full benchmark (synthetic + real-world)
-//!   cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm,io-parquet" -- \
+//!   # Full benchmark (synthetic)
+//!   cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm" -- \
 //!       --seeds 5 --out docs/benchmarks/quality-report.md
 
 // RFC-0018 Migration: Allow deprecated types during migration period
 #![allow(deprecated)]
-//!
-//!   # Synthetic only
-//!   cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm" -- \
-//!       --mode synthetic --seeds 3
-//!
-//!   # Real-world only  
-//!   cargo run --bin quality_benchmark --release --features "bench-xgboost,bench-lightgbm,io-parquet" -- \
-//!       --mode real --seeds 5
 
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
 
@@ -62,9 +43,6 @@ use boosters::training::{
     MulticlassLogLoss, Objective, Rmse,
 };
 use ndarray::{Array2, ArrayView2};
-
-#[cfg(feature = "io-parquet")]
-use boosters::data::io::parquet::load_parquet_xy_row_major_f32;
 
 #[cfg(feature = "bench-xgboost")]
 use xgb::parameters::tree::{GrowPolicy, TreeBoosterParametersBuilder, TreeMethod};
@@ -108,11 +86,6 @@ enum DataSource {
     Synthetic {
         rows: usize,
         cols: usize,
-    },
-    #[cfg(feature = "io-parquet")]
-    Parquet {
-        path: PathBuf,
-        subsample: Option<usize>,
     },
     LibSvm(PathBuf),
     UciMachine(PathBuf),
@@ -241,94 +214,6 @@ fn default_configs(quick: bool) -> Vec<BenchmarkConfig> {
             linear_leaves: false,
         },
     ]
-}
-
-/// Default paths for real-world benchmark datasets.
-#[cfg(feature = "io-parquet")]
-const CALIFORNIA_HOUSING_PATH: &str = "packages/boosters-datagen/data/california_housing.parquet";
-#[cfg(feature = "io-parquet")]
-const ADULT_PATH: &str = "packages/boosters-datagen/data/adult.parquet";
-#[cfg(feature = "io-parquet")]
-const COVERTYPE_PATH: &str = "packages/boosters-datagen/data/covertype.parquet";
-
-/// Get real-world dataset configs if parquet files exist.
-#[cfg(feature = "io-parquet")]
-fn real_world_configs(quick: bool) -> Vec<BenchmarkConfig> {
-    let trees = if quick { 50 } else { 100 };
-    let covertype_subsample = if quick { Some(10_000) } else { Some(50_000) };
-
-    let mut configs = Vec::new();
-
-    // California Housing (regression)
-    let california_path = PathBuf::from(CALIFORNIA_HOUSING_PATH);
-    if california_path.exists() {
-        configs.push(BenchmarkConfig {
-            name: "california_housing".to_string(),
-            task: Task::Regression,
-            data_source: DataSource::Parquet {
-                path: california_path.clone(),
-                subsample: None,
-            },
-            trees,
-            depth: 6,
-            classes: None,
-            linear_leaves: false,
-        });
-        // Linear GBDT variant for California Housing
-        configs.push(BenchmarkConfig {
-            name: "california_housing_linear".to_string(),
-            task: Task::Regression,
-            data_source: DataSource::Parquet {
-                path: california_path,
-                subsample: None,
-            },
-            trees,
-            depth: 6,
-            classes: None,
-            linear_leaves: true,
-        });
-    }
-
-    // Adult (binary classification)
-    let adult_path = PathBuf::from(ADULT_PATH);
-    if adult_path.exists() {
-        configs.push(BenchmarkConfig {
-            name: "adult".to_string(),
-            task: Task::Binary,
-            data_source: DataSource::Parquet {
-                path: adult_path,
-                subsample: None,
-            },
-            trees,
-            depth: 6,
-            classes: None,
-            linear_leaves: false,
-        });
-    }
-
-    // Covertype (multiclass - subsampled for speed)
-    let covertype_path = PathBuf::from(COVERTYPE_PATH);
-    if covertype_path.exists() {
-        configs.push(BenchmarkConfig {
-            name: "covertype".to_string(),
-            task: Task::Multiclass,
-            data_source: DataSource::Parquet {
-                path: covertype_path,
-                subsample: covertype_subsample,
-            },
-            trees,
-            depth: 6,
-            classes: Some(7),
-            linear_leaves: false,
-        });
-    }
-
-    configs
-}
-
-#[cfg(not(feature = "io-parquet"))]
-fn real_world_configs(_quick: bool) -> Vec<BenchmarkConfig> {
-    Vec::new()
 }
 
 // =============================================================================
@@ -672,49 +557,6 @@ fn load_data(
                 y_valid,
                 valid_idx.len(),
                 *cols,
-            )
-        }
-        #[cfg(feature = "io-parquet")]
-        DataSource::Parquet { path, subsample } => {
-            let (x_all, y_all, rows_orig, cols) =
-                load_parquet_xy_row_major_f32(path).expect("failed to load parquet");
-
-            // Optionally subsample large datasets
-            let (x, y, rows) = if let Some(max_rows) = subsample {
-                if rows_orig > *max_rows {
-                    // Deterministic subsampling based on seed
-                    use rand::SeedableRng;
-                    use rand::prelude::*;
-                    let mut rng =
-                        rand_xoshiro::Xoshiro256PlusPlus::seed_from_u64(seed ^ 0x5B5A_AAAA);
-                    let mut indices: Vec<usize> = (0..rows_orig).collect();
-                    indices.shuffle(&mut rng);
-                    indices.truncate(*max_rows);
-                    indices.sort_unstable();
-
-                    let x_sub = select_rows_row_major(&x_all, rows_orig, cols, &indices);
-                    let y_sub = select_targets(&y_all, &indices);
-                    (x_sub, y_sub, *max_rows)
-                } else {
-                    (x_all, y_all, rows_orig)
-                }
-            } else {
-                (x_all, y_all, rows_orig)
-            };
-
-            let (train_idx, valid_idx) = split_indices(rows, valid_fraction, seed ^ 0x51EED);
-            let x_train = select_rows_row_major(&x, rows, cols, &train_idx);
-            let y_train = select_targets(&y, &train_idx);
-            let x_valid = select_rows_row_major(&x, rows, cols, &valid_idx);
-            let y_valid = select_targets(&y, &valid_idx);
-            (
-                x_train,
-                y_train,
-                train_idx.len(),
-                x_valid,
-                y_valid,
-                valid_idx.len(),
-                cols,
             )
         }
         DataSource::LibSvm(path) => {
@@ -1386,18 +1228,6 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
     for r in results {
         let source = match &r.config.data_source {
             DataSource::Synthetic { rows, cols } => format!("Synthetic {}x{}", rows, cols),
-            #[cfg(feature = "io-parquet")]
-            DataSource::Parquet { path, subsample } => {
-                let name = path
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "parquet".to_string());
-                if let Some(n) = subsample {
-                    format!("{} (subsampled to {})", name, n)
-                } else {
-                    name
-                }
-            }
             DataSource::LibSvm(p) => format!("libsvm: {}", p.display()),
             DataSource::UciMachine(p) => format!("uci-machine: {}", p.display()),
             DataSource::Label0(p) => format!("label0: {}", p.display()),
@@ -1425,18 +1255,10 @@ fn generate_report(results: &[BenchmarkResult], seeds: &[u64]) -> String {
 // Main
 // =============================================================================
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BenchmarkMode {
-    All,
-    Synthetic,
-    Real,
-}
-
 struct Args {
     n_seeds: usize,
     out: Option<PathBuf>,
     quick: bool,
-    mode: BenchmarkMode,
     libsvm_paths: Vec<PathBuf>,
     uci_machine_paths: Vec<PathBuf>,
     label0_paths: Vec<PathBuf>,
@@ -1446,7 +1268,6 @@ fn parse_args() -> Args {
     let mut n_seeds = 5usize;
     let mut out: Option<PathBuf> = None;
     let mut quick = false;
-    let mut mode = BenchmarkMode::All;
     let mut libsvm_paths: Vec<PathBuf> = Vec::new();
     let mut uci_machine_paths: Vec<PathBuf> = Vec::new();
     let mut label0_paths: Vec<PathBuf> = Vec::new();
@@ -1457,17 +1278,6 @@ fn parse_args() -> Args {
             "--seeds" => n_seeds = it.next().expect("--seeds value").parse().unwrap(),
             "--out" => out = Some(PathBuf::from(it.next().expect("--out path"))),
             "--quick" => quick = true,
-            "--mode" => {
-                let val = it.next().expect("--mode value");
-                mode = match val.as_str() {
-                    "all" => BenchmarkMode::All,
-                    "synthetic" => BenchmarkMode::Synthetic,
-                    "real" => BenchmarkMode::Real,
-                    other => panic!("invalid mode: {other} (expected: all, synthetic, real)"),
-                };
-            }
-            // Legacy flag, kept for backwards compatibility
-            "--no-real" => mode = BenchmarkMode::Synthetic,
             "--libsvm" => libsvm_paths.push(PathBuf::from(it.next().expect("--libsvm path"))),
             "--uci-machine" => {
                 uci_machine_paths.push(PathBuf::from(it.next().expect("--uci-machine path")))
@@ -1475,7 +1285,7 @@ fn parse_args() -> Args {
             "--label0" => label0_paths.push(PathBuf::from(it.next().expect("--label0 path"))),
             "--help" => {
                 eprintln!(
-                    "quality_benchmark\n\n  --seeds <n>         Number of seeds (default: 5)\n  --out <path>        Output markdown file\n  --quick             Quick mode (fewer rows/trees)\n  --mode <mode>       Benchmark mode: all (default), synthetic, real\n  --no-real           Alias for --mode synthetic\n  --libsvm <path>     Add libsvm regression dataset\n  --uci-machine <path> Add UCI machine.data dataset\n  --label0 <path>     Add label0 regression dataset"
+                    "quality_benchmark\n\n  --seeds <n>         Number of seeds (default: 5)\n  --out <path>        Output markdown file\n  --quick             Quick mode (fewer rows/trees)\n  --libsvm <path>     Add libsvm regression dataset\n  --uci-machine <path> Add UCI machine.data dataset\n  --label0 <path>     Add label0 regression dataset"
                 );
                 std::process::exit(0);
             }
@@ -1487,7 +1297,6 @@ fn parse_args() -> Args {
         n_seeds,
         out,
         quick,
-        mode,
         libsvm_paths,
         uci_machine_paths,
         label0_paths,
@@ -1502,25 +1311,8 @@ fn main() {
 
     let mut configs = Vec::new();
 
-    // Add synthetic datasets if mode is All or Synthetic
-    if args.mode == BenchmarkMode::All || args.mode == BenchmarkMode::Synthetic {
-        configs.extend(default_configs(args.quick));
-    }
-
-    // Add real-world datasets if mode is All or Real
-    if args.mode == BenchmarkMode::All || args.mode == BenchmarkMode::Real {
-        let real_configs = real_world_configs(args.quick);
-        if !real_configs.is_empty() {
-            println!("Found {} real-world dataset(s)", real_configs.len());
-            configs.extend(real_configs);
-        } else if args.mode == BenchmarkMode::Real {
-            eprintln!("Warning: --mode real specified but no real-world datasets found.");
-            eprintln!(
-                "Generate them with: cd packages/boosters-datagen && uv run python scripts/generate_benchmark_datasets.py"
-            );
-            eprintln!("Make sure to compile with --features io-parquet");
-        }
-    }
+    // Add synthetic datasets
+    configs.extend(default_configs(args.quick));
 
     // Add user-specified datasets
     let trees = if args.quick { 50 } else { 100 };
