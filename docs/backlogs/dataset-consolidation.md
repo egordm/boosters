@@ -499,16 +499,29 @@ Stakeholder feedback confirmed that `SampleBlocks` is the correct approach:
 
 ### Story 3.3: Add BinnedDataset Support to GBLinear Prediction
 
-**Status**: Not Started  
+**Status**: ✅ Complete  
 **Estimate**: 1 hour
 
 **Description**: Enable GBLinearModel.predict to use BinnedDataset.
 
-**Definition of Done**:
+**Implementation**:
+- Added `predict_binned(&BinnedDataset) -> Option<Array2<f32>>` to `GBLinearModel`
+- Added `predict_binned_raw(&BinnedDataset) -> Option<Array2<f32>>` for raw margin scores
+- Uses `to_raw_feature_matrix()` + `FeaturesView::from_array()` pattern
+- Added `predict_binned_matches_dataset` test verifying identical output
 
-- predict() works with BinnedDataset
-- Tests pass
-- Benchmark numbers captured
+**Benchmark Results**:
+
+| Samples | predict(Dataset) | predict_binned(BinnedDataset) | Overhead |
+|---------|------------------|-------------------------------|----------|
+| 1,000   | 128.7 µs         | 133.6 µs                      | **1.04x** ✅ |
+| 10,000  | 1.29 ms          | 1.31 ms                       | **1.02x** ✅ |
+| 50,000  | 6.63 ms          | 6.61 ms                       | **1.00x** ✅ |
+
+**Definition of Done**:
+- ✅ predict() works with BinnedDataset
+- ✅ Tests pass
+- ✅ Benchmark numbers captured: 0-4% overhead
 
 ---
 

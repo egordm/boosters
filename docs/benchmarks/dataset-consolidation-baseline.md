@@ -83,10 +83,25 @@ End-to-end comparison of `GBLinearTrainer::train(&Dataset)` vs `GBLinearTrainer:
 **Analysis**: The overhead of using `train_binned()` with BinnedDataset is **4-11%**, well within the <2x threshold.
 
 The slight overhead comes from `BinnedDataset::to_raw_feature_matrix()` which extracts a contiguous `[n_features, n_samples]` matrix from raw values stored alongside binned data. This cost is:
+
 - Amortized over all training rounds (10 rounds in benchmark)
 - Acceptable for users who want to use the same BinnedDataset for both GBDT and GBLinear training
 
 **Status**: ✅ **PASS** - 4-11% overhead is negligible
+
+#### 2c. predict() vs predict_binned() Comparison (Story 3.3)
+
+End-to-end comparison of `GBLinearModel::predict(Dataset)` vs `GBLinearModel::predict_binned(BinnedDataset)`:
+
+| Samples | predict(Dataset) | predict_binned(BinnedDataset) | Overhead |
+|---------|------------------|-------------------------------|----------|
+| 1,000   | 128.7 µs         | 133.6 µs                      | **1.04x** ✅ |
+| 10,000  | 1.29 ms          | 1.31 ms                       | **1.02x** ✅ |
+| 50,000  | 6.63 ms          | 6.61 ms                       | **1.00x** ✅ |
+
+**Analysis**: Prediction overhead is **0-4%** - essentially negligible. The `to_raw_feature_matrix()` copy cost is well-amortized because linear model prediction is O(n_features × n_samples) anyway.
+
+**Status**: ✅ **PASS** - 0-4% overhead is negligible
 
 ---
 

@@ -8,6 +8,9 @@ use common::criterion_config::default_criterion;
 use boosters::data::binned::{BinningConfig, DatasetBuilder, BinnedDataset};
 use boosters::data::{TargetsView, WeightsView};
 use boosters::data::Dataset;
+use boosters::model::gblinear::GBLinearModel;
+use boosters::model::ModelMeta;
+use boosters::repr::gblinear::LinearModel;
 use boosters::testing::synthetic_datasets::synthetic_regression;
 use boosters::training::{
     GBLinearParams, GBLinearTrainer, MulticlassLogLoss, Rmse, SoftmaxLoss, SquaredLoss, Verbosity,
@@ -258,6 +261,63 @@ fn bench_gblinear_binned_overhead(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark: predict(Dataset) vs predict_binned(BinnedDataset)
+///
+/// Story 3.3: Measures overhead of using BinnedDataset for GBLinear prediction.
+fn bench_gblinear_predict_overhead(c: &mut Criterion) {
+    let n_features = 100;
+    let mut group = c.benchmark_group("component/predict/gblinear/binned_overhead");
+    group.sample_size(50);
+
+    for n_rows in [1_000usize, 10_000, 50_000] {
+        let syn_dataset = synthetic_regression(n_rows, n_features, 42, 0.05);
+
+        // Create a simple linear model for prediction
+        let weights = ndarray::Array2::from_shape_fn((n_features + 1, 1), |(i, _)| {
+            if i < n_features { 0.1 * i as f32 } else { 0.0 }
+        });
+        let linear = LinearModel::new(weights);
+        let meta = ModelMeta::for_regression(n_features);
+        let model = GBLinearModel::from_linear_model(linear, meta);
+
+        // Build BinnedDataset (what predict_binned() uses)
+        let features_sample_major: ndarray::Array2<f32> = {
+            let fm = syn_dataset.features.view();
+            let mut arr = ndarray::Array2::zeros((n_rows, n_features));
+            for f in 0..n_features {
+                for s in 0..n_rows {
+                    arr[[s, f]] = fm[[f, s]];
+                }
+            }
+            arr
+        };
+        let config = BinningConfig::default();
+        let built = DatasetBuilder::from_array(features_sample_major.view(), &config)
+            .unwrap()
+            .build_groups()
+            .unwrap();
+        let binned_dataset = BinnedDataset::from_built_groups(built);
+
+        group.throughput(Throughput::Elements((n_rows * n_features) as u64));
+
+        // Benchmark predict(Dataset)
+        group.bench_function(BenchmarkId::new("Dataset_predict", n_rows), |b| {
+            // Clone dataset each iteration since predict takes ownership
+            b.iter(|| {
+                let ds = Dataset::new(syn_dataset.features.view(), None, None);
+                black_box(model.predict_raw(black_box(ds)))
+            })
+        });
+
+        // Benchmark predict_binned(BinnedDataset)
+        group.bench_function(BenchmarkId::new("BinnedDataset_predict_binned", n_rows), |b| {
+            b.iter(|| black_box(model.predict_binned_raw(black_box(&binned_dataset)).unwrap()))
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = default_criterion();
@@ -265,6 +325,7 @@ criterion_group! {
         bench_gblinear_updater,
         bench_gblinear_feature_scaling,
         bench_gblinear_multiclass,
-        bench_gblinear_binned_overhead
+        bench_gblinear_binned_overhead,
+        bench_gblinear_predict_overhead
 }
 criterion_main!(benches);

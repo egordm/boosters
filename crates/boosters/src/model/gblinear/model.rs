@@ -202,6 +202,50 @@ impl GBLinearModel {
         self.model.predict(dataset.features())
     }
 
+    /// Predict from [`BinnedDataset`], returning transformed predictions.
+    ///
+    /// Extracts raw feature values from the binned dataset and applies the
+    /// objective's transformation (sigmoid for logistic, softmax for multiclass).
+    ///
+    /// Returns `None` if the dataset contains categorical-only features
+    /// (which don't store raw values).
+    ///
+    /// # Returns
+    ///
+    /// Array2 with shape `[n_groups, n_samples]`, or `None` if raw values unavailable.
+    pub fn predict_binned(&self, dataset: &crate::data::binned::BinnedDataset) -> Option<Array2<f32>> {
+        let mut output = self.predict_binned_raw(dataset)?;
+
+        // Apply transformation if we have config with objective
+        self.config
+            .objective
+            .transform_predictions_inplace(output.view_mut());
+
+        Some(output)
+    }
+
+    /// Predict from [`BinnedDataset`], returning raw margin scores (no transform).
+    ///
+    /// Returns `None` if the dataset contains categorical-only features.
+    pub fn predict_binned_raw(&self, dataset: &crate::data::binned::BinnedDataset) -> Option<Array2<f32>> {
+        // GBLinear requires raw values, not just binned data
+        if dataset.has_categorical() {
+            return None;
+        }
+
+        let n_samples = dataset.n_samples();
+        let n_groups = self.meta.n_groups;
+
+        if n_samples == 0 {
+            return Some(Array2::zeros((n_groups, 0)));
+        }
+
+        // Extract raw feature matrix and predict
+        let raw_matrix = dataset.to_raw_feature_matrix();
+        let features_view = crate::data::FeaturesView::from_array(raw_matrix.view());
+        Some(self.model.predict(features_view))
+    }
+
     // =========================================================================
     // Explainability
     // =========================================================================
@@ -387,5 +431,38 @@ mod tests {
         assert_eq!(preds.dim(), (1, 2));
         assert!((preds[[0, 0]] - 1.2).abs() < 1e-6);
         assert!((preds[[0, 1]] - 0.1).abs() < 1e-6);
+    }
+
+    #[test]
+    fn predict_binned_matches_dataset() {
+        use crate::data::binned::{BinningConfig, DatasetBuilder, BinnedDataset};
+
+        let linear = make_simple_model();
+        let meta = ModelMeta::for_regression(2);
+        let model = GBLinearModel::from_linear_model(linear, meta);
+
+        // Feature-major layout: [n_features=2, n_samples=2]
+        let feature_major = array![[1.0, 0.0], [2.0, 0.0]];
+
+        // Path 1: Dataset prediction
+        let dataset = Dataset::new(feature_major.view(), None, None);
+        let preds_dataset = model.predict_raw(dataset);
+
+        // Path 2: BinnedDataset prediction
+        // DatasetBuilder expects sample-major [n_samples, n_features]
+        let sample_major = array![[1.0, 2.0], [0.0, 0.0]];
+        let config = BinningConfig::default();
+        let built = DatasetBuilder::from_array(sample_major.view(), &config)
+            .unwrap()
+            .build_groups()
+            .unwrap();
+        let binned_dataset = BinnedDataset::from_built_groups(built);
+        let preds_binned = model.predict_binned_raw(&binned_dataset).unwrap();
+
+        // Should be identical
+        assert_eq!(preds_dataset.dim(), preds_binned.dim());
+        for (pd, pb) in preds_dataset.iter().zip(preds_binned.iter()) {
+            assert!((pd - pb).abs() < 1e-6);
+        }
     }
 }
