@@ -318,39 +318,54 @@ No additional code needed - `BinnedSampleView` implements `SampleAccessor`.
 
 ### Story 2.2: Add BinnedDataset Support to Predictor
 
-**Status**: ✅ Complete  
+**Status**: 🔄 Revised - Approach Changed  
 **Estimate**: 2 hours
 
 **Description**: Enable `UnrolledPredictor6` to use `BinnedDataset`.
 
-**Implementation**:
-- Added `predict_from<D: DataAccessor>(&self, data: &D) -> Array2<f32>` method
-- Added `predict_from_into<D: DataAccessor>(&self, data: &D, ...)` for buffer reuse
-- Added `predict_block_from<D>` internal method (generic over DataAccessor)
-- Kept existing `predict_block_into(SamplesView)` for FeaturesView path
+**Initial Implementation** (Reverted):
+- Added `predict_from<D: DataAccessor>` and `predict_from_into` methods
+- Used per-sample `DataAccessor` access
 
-**Tests Added**:
-- `predict_from_matches_predict` - verifies DataAccessor path matches FeaturesView
-- `predict_from_binned_dataset` - verifies single-feature BinnedDataset
-- `predict_from_binned_multifeature` - verifies multi-feature BinnedDataset matches FeaturesView
+**Stakeholder Feedback** (2025-12-30):
+- New methods clutter the minimal API (should be just `predict_row_into`, `predict_into`, `predict`)
+- Per-sample access is inefficient compared to `SampleBlocks` block iteration
+- "predict_from" naming is confusing ("predict from what?")
+- Should use `SampleBlocks::for_each_with()` to get contiguous blocks, not per-sample access
+
+**Revised Approach**:
+- Removed `predict_from`, `predict_from_into`, `predict_block_from` methods
+- Kept minimal API: `predict_row_into`, `predict_into`, `predict`
+- BinnedDataset prediction should use `SampleBlocks` → `SamplesView::from_array(block)` → existing `predict_block_into`
+- This is Story 2.2a's approach - use efficient block access, not per-sample access
+
+**Current State**:
+- Predictor has clean minimal API restored
+- `SampleBlocks` provides efficient block iteration from BinnedDataset
+- Story 2.2a should integrate `SampleBlocks` for actual BinnedDataset prediction
 
 **Definition of Done**:
 
-- ✅ Predictor works with `BinnedDataset` input
-- ✅ Unit tests added confirming correct behavior
-- No performance regression in existing prediction path
+- ✅ Predictor API kept minimal (no new public methods)
+- ⏳ BinnedDataset prediction via SampleBlocks (→ Story 2.2a)
+- ✅ Unit tests for core predictor pass (17 tests)
 
 ---
 
 ### Story 2.2a: Integrate SampleBlocks for Block-Based Prediction
 
-**Status**: Not Started  
-**Priority**: Nice-to-Have (not blocking)  
+**Status**: Not Started → Now Primary Path  
+**Priority**: Required (stakeholder feedback confirms SampleBlocks is the right approach)  
 **Estimate**: 1.5 hours
 
-**Description**: Export and integrate `SampleBlocks` (currently unused dead code) for efficient prediction.
+**Description**: Export and integrate `SampleBlocks` for efficient BinnedDataset prediction.
 
-**Decision Gate**: Only implement if Story 2.3 benchmark shows SampleBlocks improves prediction by >10%. Otherwise, delete SampleBlocks in Story 5.2a.
+**Background** (2025-12-30):
+Stakeholder feedback confirmed that `SampleBlocks` is the correct approach:
+- Default prediction already uses block iteration because it's more efficient
+- Per-sample access (via `DataAccessor`) is discouraged for prediction
+- `SampleBlocks::for_each_with()` provides cache-efficient contiguous blocks
+- These blocks can be passed to existing `predict_block_into(SamplesView)` via `SamplesView::from_array(block)`
 
 **Current State**:
 
@@ -366,54 +381,63 @@ No additional code needed - `BinnedSampleView` implements `SampleAccessor`.
    pub use sample_blocks::{SampleBlocks, SampleBlocksIter};
    ```
 2. Remove `#![allow(dead_code)]` from `sample_blocks.rs`
-3. Use `SampleBlocks` in predictor for block-based prediction
+3. Add convenience method or example showing how to predict from BinnedDataset:
+   ```rust
+   let blocks = SampleBlocks::new(&dataset, predictor.block_size());
+   blocks.for_each_with(parallelism, |start_idx, block| {
+       let samples = SamplesView::from_array(block);
+       predictor.predict_block_into(samples, tree_weights, output_chunk);
+   });
+   ```
 
 **Definition of Done**:
 
 - `SampleBlocks` exported and usable
 - Dead code marker removed
-- Predictor can use `SampleBlocks::for_each_with()` for parallel prediction
-- **Bit-identical predictions**: SampleBlocks path produces same results as direct access
-- Benchmark shows improvement for large datasets
+- Example/test showing BinnedDataset → SampleBlocks → predict_block_into workflow
+- **Bit-identical predictions**: SampleBlocks path produces same results as FeaturesView path
 
 ---
 
 ### Story 2.3: Benchmark Prediction Overhead
 
 **Status**: Not Started  
-**Estimate**: 1.5 hours
+**Estimate**: 1 hour (reduced - no decision gate needed)
 
-**Description**: Compare prediction performance between Dataset and BinnedDataset. Also benchmark SampleBlocks to determine if Story 2.2a should be implemented.
+**Description**: Compare prediction performance between Dataset and BinnedDataset via SampleBlocks.
 
 **Benchmarks to Run**:
 
-1. **Dataset types comparison**:
-   - `types/Dataset` prediction performance
-   - `BinnedDataset` raw feature prediction performance
+1. **FeaturesView vs SampleBlocks comparison**:
+   - `FeaturesView` prediction performance (current default)
+   - `BinnedDataset` + `SampleBlocks` prediction performance
    - Measure: throughput (predictions/sec), latency (μs/sample)
+   - Measure on various sizes (1K, 10K, 100K samples)
 
-2. **SampleBlocks evaluation** (determines Story 2.2a fate):
-   - Direct iteration: `for sample in 0..n_samples { features[sample] }`
-   - SampleBlocks: `sample_blocks.for_each_with(|block| ...)`
-   - Measure on large dataset (100K+ samples)
-   - **Decision**: If SampleBlocks shows >10% improvement → implement Story 2.2a. Otherwise → delete in Story 5.2a.
+2. **Verify no regression**:
+   - SampleBlocks should match or beat FeaturesView performance
+   - If slower, investigate root cause (stakeholder confirmed SampleBlocks is already used in default path)
 
 **Results Document**: Update `docs/benchmarks/dataset-consolidation-baseline.md`
 
 **Definition of Done**:
 
-- Prediction benchmarks captured
-- SampleBlocks benchmark captured with decision recorded
-- Story 2.2a fate determined
+- Prediction benchmarks captured comparing FeaturesView vs SampleBlocks path
+- Performance documented
 
 ---
 
 ### Story 2.4: Stakeholder Feedback Check
 
-**Status**: Not Started  
+**Status**: ✅ Complete (2025-12-30)  
 **Estimate**: 15 min
 
 **Description**: Review `tmp/stakeholder_feedback.md` for prediction-related concerns.
+
+**Feedback Received**:
+- `predict_from*` methods clutter API - keep minimal: `predict_row_into`, `predict_into`, `predict`
+- Per-sample DataAccessor access is inefficient - use SampleBlocks
+- SampleBlocks is already proven to work (used in default prediction path)
 
 ---
 
@@ -422,7 +446,7 @@ No additional code needed - `BinnedSampleView` implements `SampleAccessor`.
 **Status**: Not Started  
 **Estimate**: 30 min
 
-**Description**: Demo BinnedDataset prediction working with no performance regression.
+**Description**: Demo BinnedDataset prediction working via SampleBlocks with no performance regression.
 
 ---
 
