@@ -197,6 +197,158 @@ impl Dataset {
     }
 
     // =========================================================================
+    // Feature Value Iteration (RFC-0019)
+    // =========================================================================
+
+    /// Apply a function to each (sample_idx, raw_value) pair for a feature.
+    ///
+    /// This is the recommended pattern for iterating over feature values.
+    /// The storage type is matched ONCE, then we iterate directly on the
+    /// underlying data—no per-iteration branching.
+    ///
+    /// # Performance
+    ///
+    /// - Dense: Equivalent to `for (i, &v) in slice.iter().enumerate()`
+    /// - Sparse: Iterates only stored (non-default) values
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use boosters::data::Dataset;
+    /// use ndarray::array;
+    ///
+    /// let ds = Dataset::new(
+    ///     array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]].view(),
+    ///     None,
+    ///     None,
+    /// );
+    ///
+    /// let mut sum = 0.0;
+    /// ds.for_each_feature_value(0, |_idx, value| {
+    ///     sum += value;
+    /// });
+    /// assert_eq!(sum, 6.0); // 1 + 2 + 3
+    /// ```
+    #[inline]
+    pub fn for_each_feature_value<F>(&self, feature: usize, mut f: F)
+    where
+        F: FnMut(usize, f32),
+    {
+        // Current implementation: features stored as Array2<f32> (dense)
+        // Future: will handle Feature::Sparse when Dataset preserves sparse storage
+        let row = self.features.row(feature);
+        if let Some(slice) = row.as_slice() {
+            // Fast path: contiguous slice
+            for (idx, &val) in slice.iter().enumerate() {
+                f(idx, val);
+            }
+        } else {
+            // Fallback: non-contiguous (shouldn't happen with feature-major layout)
+            for (idx, &val) in row.iter().enumerate() {
+                f(idx, val);
+            }
+        }
+    }
+
+    /// Iterate over all samples for a feature, filling in defaults for sparse features.
+    ///
+    /// For dense features, this is identical to `for_each_feature_value()`.
+    /// For sparse features (when supported), this yields all n_samples values
+    /// including default values for unspecified indices.
+    ///
+    /// Use this when you need ALL samples, including default values.
+    #[inline]
+    pub fn for_each_feature_value_dense<F>(&self, feature: usize, f: F)
+    where
+        F: FnMut(usize, f32),
+    {
+        // Current implementation: all features are dense
+        // Future: will expand sparse features when Dataset preserves sparse storage
+        self.for_each_feature_value(feature, f);
+    }
+
+    /// Gather raw values for a feature at specified sample indices into a buffer.
+    ///
+    /// This is the recommended pattern for linear tree fitting where we need
+    /// values for a subset of samples (e.g., samples that landed in a leaf).
+    ///
+    /// # Arguments
+    ///
+    /// - `feature`: The feature index
+    /// - `sample_indices`: Slice of sample indices to gather (should be sorted for sparse efficiency)
+    /// - `buffer`: Output buffer, must have length >= sample_indices.len()
+    ///
+    /// # Performance
+    ///
+    /// - Dense: Simple indexed gather, O(k) where k = sample_indices.len()
+    /// - Sparse: Merge-join since both indices and sparse storage are sorted
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use boosters::data::Dataset;
+    /// use ndarray::array;
+    ///
+    /// let ds = Dataset::new(
+    ///     array![[1.0, 2.0, 3.0, 4.0, 5.0]].view(),
+    ///     None,
+    ///     None,
+    /// );
+    ///
+    /// let indices = [1, 3]; // gather samples 1 and 3
+    /// let mut buffer = vec![0.0; 2];
+    /// ds.gather_feature_values(0, &indices, &mut buffer);
+    /// assert_eq!(buffer, vec![2.0, 4.0]);
+    /// ```
+    #[inline]
+    pub fn gather_feature_values(&self, feature: usize, sample_indices: &[u32], buffer: &mut [f32]) {
+        debug_assert!(
+            buffer.len() >= sample_indices.len(),
+            "buffer must have length >= sample_indices.len()"
+        );
+
+        // Current implementation: dense array
+        // Future: will handle sparse features with merge-join
+        let row = self.features.row(feature);
+        for (out_idx, &sample_idx) in sample_indices.iter().enumerate() {
+            buffer[out_idx] = row[sample_idx as usize];
+        }
+    }
+
+    /// Similar to gather but with a callback for each (local_idx, value) pair.
+    ///
+    /// Useful when you need to process values immediately without allocating.
+    ///
+    /// # Arguments
+    ///
+    /// - `feature`: The feature index
+    /// - `sample_indices`: Slice of sample indices to gather
+    /// - `f`: Callback receiving (index into sample_indices, value)
+    #[inline]
+    pub fn for_each_gathered_value<F>(&self, feature: usize, sample_indices: &[u32], mut f: F)
+    where
+        F: FnMut(usize, f32),
+    {
+        // Current implementation: dense array
+        // Future: will handle sparse features with merge-join
+        let row = self.features.row(feature);
+        for (out_idx, &sample_idx) in sample_indices.iter().enumerate() {
+            f(out_idx, row[sample_idx as usize]);
+        }
+    }
+
+    /// Get a single feature value at a specific sample index.
+    ///
+    /// # Performance
+    ///
+    /// This is O(1) for dense features but O(log n) for sparse features
+    /// due to binary search. For bulk access, prefer the iteration methods.
+    #[inline]
+    pub fn get_feature_value(&self, feature: usize, sample: usize) -> f32 {
+        self.features[[feature, sample]]
+    }
+
+    // =========================================================================
     // Builder-style methods
     // =========================================================================
 
@@ -688,5 +840,135 @@ mod tests {
                 f
             );
         }
+    }
+
+    // =========================================================================
+    // Feature Value Iteration Tests (RFC-0019)
+    // =========================================================================
+
+    #[test]
+    fn for_each_feature_value_dense() {
+        let ds = Dataset::new(
+            array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]].view(),
+            None,
+            None,
+        );
+
+        // Test feature 0
+        let mut values = Vec::new();
+        ds.for_each_feature_value(0, |idx, val| {
+            values.push((idx, val));
+        });
+        assert_eq!(values, vec![(0, 1.0), (1, 2.0), (2, 3.0)]);
+
+        // Test feature 1
+        values.clear();
+        ds.for_each_feature_value(1, |idx, val| {
+            values.push((idx, val));
+        });
+        assert_eq!(values, vec![(0, 4.0), (1, 5.0), (2, 6.0)]);
+    }
+
+    #[test]
+    fn for_each_feature_value_sum() {
+        let ds = Dataset::new(
+            array![[1.0, 2.0, 3.0, 4.0, 5.0]].view(),
+            None,
+            None,
+        );
+
+        let mut sum = 0.0;
+        ds.for_each_feature_value(0, |_idx, value| {
+            sum += value;
+        });
+        assert_eq!(sum, 15.0);
+    }
+
+    #[test]
+    fn for_each_feature_value_dense_same_as_for_each() {
+        let ds = Dataset::new(
+            array![[1.0, 2.0, 3.0]].view(),
+            None,
+            None,
+        );
+
+        let mut values1 = Vec::new();
+        let mut values2 = Vec::new();
+
+        ds.for_each_feature_value(0, |idx, val| values1.push((idx, val)));
+        ds.for_each_feature_value_dense(0, |idx, val| values2.push((idx, val)));
+
+        assert_eq!(values1, values2);
+    }
+
+    #[test]
+    fn gather_feature_values_basic() {
+        let ds = Dataset::new(
+            array![[1.0, 2.0, 3.0, 4.0, 5.0]].view(),
+            None,
+            None,
+        );
+
+        let indices = [1u32, 3];
+        let mut buffer = vec![0.0; 2];
+        ds.gather_feature_values(0, &indices, &mut buffer);
+        assert_eq!(buffer, vec![2.0, 4.0]);
+    }
+
+    #[test]
+    fn gather_feature_values_all() {
+        let ds = Dataset::new(
+            array![[10.0, 20.0, 30.0]].view(),
+            None,
+            None,
+        );
+
+        let indices: Vec<u32> = (0..3).collect();
+        let mut buffer = vec![0.0; 3];
+        ds.gather_feature_values(0, &indices, &mut buffer);
+        assert_eq!(buffer, vec![10.0, 20.0, 30.0]);
+    }
+
+    #[test]
+    fn gather_feature_values_empty() {
+        let ds = Dataset::new(
+            array![[1.0, 2.0, 3.0]].view(),
+            None,
+            None,
+        );
+
+        let indices: &[u32] = &[];
+        let mut buffer: Vec<f32> = vec![];
+        ds.gather_feature_values(0, indices, &mut buffer);
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn for_each_gathered_value_basic() {
+        let ds = Dataset::new(
+            array![[1.0, 2.0, 3.0, 4.0, 5.0]].view(),
+            None,
+            None,
+        );
+
+        let indices = [0u32, 2, 4];
+        let mut values = Vec::new();
+        ds.for_each_gathered_value(0, &indices, |local_idx, val| {
+            values.push((local_idx, val));
+        });
+        assert_eq!(values, vec![(0, 1.0), (1, 3.0), (2, 5.0)]);
+    }
+
+    #[test]
+    fn get_feature_value_basic() {
+        let ds = Dataset::new(
+            array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]].view(),
+            None,
+            None,
+        );
+
+        assert_eq!(ds.get_feature_value(0, 0), 1.0);
+        assert_eq!(ds.get_feature_value(0, 2), 3.0);
+        assert_eq!(ds.get_feature_value(1, 1), 5.0);
     }
 }
