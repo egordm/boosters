@@ -9,8 +9,8 @@
 //!
 //! # Data Format
 //!
-//! The updaters work with [`BinnedDataset`] which provides efficient per-feature
-//! iteration via [`for_each_feature_value()`].
+//! The updaters work with [`Dataset`] which provides efficient per-feature
+//! iteration via [`Dataset::for_each_feature_value()`].
 //!
 //! # Gradient Storage
 //!
@@ -21,7 +21,7 @@
 use ndarray::ArrayViewMut2;
 use rayon::prelude::*;
 
-use crate::data::BinnedDataset;
+use crate::data::Dataset;
 use crate::repr::gblinear::LinearModel;
 use crate::training::Gradients;
 
@@ -99,7 +99,7 @@ impl Updater {
     /// # Arguments
     ///
     /// * `model` - Linear model to update
-    /// * `data` - Training data as BinnedDataset (uses `for_each_feature_value()`)
+    /// * `data` - Training data as Dataset (uses `for_each_feature_value()`)
     /// * `buffer` - Gradient buffer with shape `[n_samples, n_outputs]`
     /// * `selector` - Feature selection strategy
     /// * `output` - Which output (group) to update (0 to n_outputs-1)
@@ -110,7 +110,7 @@ impl Updater {
     pub fn update_round<Sel>(
         &self,
         model: &mut LinearModel,
-        data: &BinnedDataset,
+        data: &Dataset,
         buffer: &Gradients,
         selector: &mut Sel,
         output: usize,
@@ -161,13 +161,13 @@ impl Updater {
     ///
     /// # Arguments
     ///
-    /// * `data` - Training data as BinnedDataset
+    /// * `data` - Training data as Dataset
     /// * `deltas` - Weight deltas from coordinate descent: (feature_idx, delta) pairs
     /// * `output` - Which output group these deltas apply to
     /// * `predictions` - Prediction buffer `[n_outputs, n_samples]`
     pub fn apply_weight_deltas_to_predictions(
         &self,
-        data: &BinnedDataset,
+        data: &Dataset,
         deltas: &[(usize, f32)],
         output: usize,
         mut predictions: ArrayViewMut2<'_, f32>,
@@ -214,7 +214,7 @@ impl Updater {
 /// Returns deltas for incremental prediction updates.
 fn sequential_update<Sel>(
     model: &mut LinearModel,
-    data: &BinnedDataset,
+    data: &Dataset,
     buffer: &Gradients,
     selector: &mut Sel,
     output: usize,
@@ -244,7 +244,7 @@ where
 /// Returns deltas for incremental prediction updates.
 fn parallel_update<Sel>(
     model: &mut LinearModel,
-    data: &BinnedDataset,
+    data: &Dataset,
     buffer: &Gradients,
     selector: &mut Sel,
     output: usize,
@@ -284,7 +284,7 @@ where
 /// ```
 fn compute_weight_update(
     model: &LinearModel,
-    data: &BinnedDataset,
+    data: &Dataset,
     buffer: &Gradients,
     feature: usize,
     output: usize,
@@ -351,22 +351,17 @@ fn soft_threshold(x: f32, threshold: f32) -> f32 {
 mod tests {
     use super::super::selector::CyclicSelector;
     use super::*;
-    use crate::data::binned::builder::DatasetBuilder;
     use ndarray::array;
 
-    fn make_test_data() -> (BinnedDataset, Gradients) {
+    fn make_test_data() -> (Dataset, Gradients) {
         // Simple 2 features x 4 samples dataset
-        // Original feature-major layout transposed to sample-major for DatasetBuilder
-        // Row 0: feature 0 = 1.0, feature 1 = 0.0
-        // Row 1: feature 0 = 0.0, feature 1 = 1.0
-        // Row 2: feature 0 = 1.0, feature 1 = 1.0
-        // Row 3: feature 0 = 2.0, feature 1 = 0.5
+        // Feature-major layout: [n_features, n_samples]
+        let features = array![
+            [1.0f32, 0.0, 1.0, 2.0], // feature 0
+            [0.0f32, 1.0, 1.0, 0.5]  // feature 1
+        ];
 
-        let dataset = DatasetBuilder::new()
-            .add_numeric("f0", array![1.0f32, 0.0, 1.0, 2.0].view())
-            .add_numeric("f1", array![0.0f32, 1.0, 1.0, 0.5].view())
-            .build()
-            .unwrap();
+        let dataset = Dataset::new(features.view(), None, None);
 
         // Gradients (simulating squared error loss)
         let mut buffer = Gradients::new(4, 1);

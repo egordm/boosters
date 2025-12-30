@@ -4,7 +4,7 @@
 //! Access components via [`linear()`](GBLinearModel::linear), [`meta()`](GBLinearModel::meta),
 //! and [`config()`](GBLinearModel::config).
 
-use crate::data::{BinnedDataset, BinningConfig, Dataset};
+use crate::data::Dataset;
 use crate::explainability::{ExplainError, LinearExplainer, ShapValues};
 use crate::model::meta::ModelMeta;
 use crate::repr::gblinear::LinearModel;
@@ -61,7 +61,7 @@ impl GBLinearModel {
         dataset: &Dataset,
         val_set: Option<&Dataset>,
         config: GBLinearConfig,
-        _parallelism: Parallelism, // Reserved for future parallel binning
+        _parallelism: Parallelism, // Reserved for future use
     ) -> Option<Self> {
         let n_features = dataset.n_features();
         let n_outputs = config.objective.n_outputs();
@@ -70,14 +70,7 @@ impl GBLinearModel {
         // This correctly handles multi-output regression (e.g., multi-quantile)
         let task = config.objective.task_kind();
 
-        // Build BinnedDataset for training (without binning - GBLinear uses raw values)
-        // The BinnedDataset storage keeps raw f32 values for numeric features
-        let binning_config = BinningConfig::builder()
-            .enable_bundling(false) // GBLinear doesn't use bundling
-            .build();
-        let binned = BinnedDataset::from_dataset(dataset, &binning_config)
-            .expect("dataset binning should not fail");
-
+        // GBLinear uses Dataset directly - no binning needed!
         // Extract targets and weights from Dataset
         let targets = dataset
             .targets()
@@ -92,7 +85,7 @@ impl GBLinearModel {
 
         // Create trainer with objective and metric from config
         let trainer = GBLinearTrainer::new(config.objective.clone(), metric, params);
-        let linear_model = trainer.train(&binned, targets, weights, val_set)?;
+        let linear_model = trainer.train(dataset, targets, weights, val_set)?;
 
         let meta = ModelMeta {
             n_features,

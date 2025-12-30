@@ -24,7 +24,7 @@
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 
-use crate::data::BinnedDataset;
+use crate::data::Dataset;
 use crate::repr::gblinear::LinearModel;
 use crate::training::Gradients;
 
@@ -107,7 +107,7 @@ impl SelectorState {
     pub fn setup_round(
         &mut self,
         model: &LinearModel,
-        data: &BinnedDataset,
+        data: &Dataset,
         buffer: &Gradients,
         output: usize,
         alpha: f32,
@@ -392,7 +392,7 @@ impl GreedySelector {
     /// # Arguments
     ///
     /// * `model` - Current model weights
-    /// * `data` - Training data (BinnedDataset)
+    /// * `data` - Training data (Dataset)
     /// * `buffer` - Gradient buffer
     /// * `output` - Which output (group) to compute for
     /// * `alpha` - L1 regularization strength
@@ -400,7 +400,7 @@ impl GreedySelector {
     pub fn setup(
         &mut self,
         model: &LinearModel,
-        data: &BinnedDataset,
+        data: &Dataset,
         buffer: &Gradients,
         output: usize,
         alpha: f32,
@@ -537,7 +537,7 @@ impl ThriftySelector {
     /// # Arguments
     ///
     /// * `model` - Current model weights
-    /// * `data` - Training data (BinnedDataset)
+    /// * `data` - Training data (Dataset)
     /// * `buffer` - Gradient buffer
     /// * `output` - Which output (group) to compute for
     /// * `alpha` - L1 regularization strength
@@ -545,7 +545,7 @@ impl ThriftySelector {
     pub fn setup(
         &mut self,
         model: &LinearModel,
-        data: &BinnedDataset,
+        data: &Dataset,
         buffer: &Gradients,
         output: usize,
         alpha: f32,
@@ -799,19 +799,19 @@ mod tests {
 
     #[test]
     fn greedy_selector_with_setup() {
-        use crate::data::binned::DatasetBuilder;
+        use crate::data::Dataset;
         use crate::repr::gblinear::LinearModel;
         use crate::training::Gradients;
         use ndarray::array;
 
         // Create simple test data: 3 features, 3 samples
-        // Build BinnedDataset using DatasetBuilder
-        let dataset = DatasetBuilder::new()
-            .add_numeric("f0", array![1.0, 0.0, 1.0].view())
-            .add_numeric("f1", array![0.0, 1.0, 1.0].view())
-            .add_numeric("f2", array![0.5, 0.5, 0.5].view())
-            .build()
-            .unwrap();
+        // Feature-major layout: [n_features, n_samples]
+        let features = array![
+            [1.0f32, 0.0, 1.0], // f0
+            [0.0f32, 1.0, 1.0], // f1
+            [0.5f32, 0.5, 0.5]  // f2
+        ];
+        let dataset = Dataset::new(features.view(), None, None);
 
         let model = LinearModel::zeros(3, 1);
 
@@ -857,18 +857,19 @@ mod tests {
 
     #[test]
     fn thrifty_selector_with_setup() {
-        use crate::data::binned::DatasetBuilder;
+        use crate::data::Dataset;
         use crate::repr::gblinear::LinearModel;
         use crate::training::Gradients;
         use ndarray::array;
 
         // Same setup as greedy test: 3 features, 3 samples
-        let dataset = DatasetBuilder::new()
-            .add_numeric("f0", array![1.0, 0.0, 1.0].view())
-            .add_numeric("f1", array![0.0, 1.0, 1.0].view())
-            .add_numeric("f2", array![0.5, 0.5, 0.5].view())
-            .build()
-            .unwrap();
+        // Feature-major layout: [n_features, n_samples]
+        let features = array![
+            [1.0f32, 0.0, 1.0], // f0
+            [0.0f32, 1.0, 1.0], // f1
+            [0.5f32, 0.5, 0.5]  // f2
+        ];
+        let dataset = Dataset::new(features.view(), None, None);
 
         let model = LinearModel::zeros(3, 1);
 

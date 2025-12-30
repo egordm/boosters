@@ -6,7 +6,7 @@
 use ndarray::Array2;
 
 use crate::data::init_predictions;
-use crate::data::{BinnedDataset, Dataset, TargetsView, WeightsView};
+use crate::data::{Dataset, TargetsView, WeightsView};
 use crate::repr::gblinear::LinearModel;
 use crate::training::eval;
 use crate::training::{
@@ -103,7 +103,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
     ///
     /// # Arguments
     ///
-    /// * `train` - Training dataset as BinnedDataset (must have numeric features only)
+    /// * `train` - Training dataset (must have numeric features only)
     /// * `targets` - Training targets
     /// * `weights` - Optional sample weights
     /// * `val_set` - Optional validation set for early stopping
@@ -115,7 +115,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
     /// - Validation set has categorical features
     pub fn train(
         &self,
-        train: &BinnedDataset,
+        train: &Dataset,
         targets: TargetsView<'_>,
         weights: WeightsView<'_>,
         val_set: Option<&Dataset>,
@@ -338,32 +338,23 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{binned::DatasetBuilder, transpose_to_c_order, BinnedDataset, TargetsView, WeightsView};
+    use crate::data::{transpose_to_c_order, Dataset, TargetsView, WeightsView};
     use crate::training::{
         LogLoss, LogisticLoss, MulticlassLogLoss, Rmse, SoftmaxLoss, SquaredLoss,
     };
     use ndarray::{Array2, array};
 
-    /// Helper to create a BinnedDataset and TargetsView from row-major feature data.
+    /// Helper to create a Dataset and TargetsView from row-major feature data.
     /// Accepts features in [n_samples, n_features] layout (standard user format)
     /// and targets in [n_samples, n_outputs], then converts to feature-major internally.
-    /// Returns (BinnedDataset, targets_array) where targets_array is in [n_outputs, n_samples].
-    fn make_dataset(features: Array2<f32>, targets: Array2<f32>) -> (BinnedDataset, Array2<f32>) {
-        let n_samples = features.nrows();
-        let n_features = features.ncols();
-
+    /// Returns (Dataset, targets_array) where targets_array is in [n_outputs, n_samples].
+    fn make_dataset(features: Array2<f32>, targets: Array2<f32>) -> (Dataset, Array2<f32>) {
+        // Transpose features to [n_features, n_samples] (feature-major)
+        let features_fm = transpose_to_c_order(features.view());
         // Transpose targets to [n_outputs, n_samples]
         let targets_fm = transpose_to_c_order(targets.view());
 
-        // Build BinnedDataset from features using DatasetBuilder
-        // Add each feature column
-        let mut builder = DatasetBuilder::new();
-        for f in 0..n_features {
-            let name = format!("f{}", f);
-            let col: Vec<f32> = (0..n_samples).map(|s| features[[s, f]]).collect();
-            builder = builder.add_numeric(&name, ndarray::ArrayView1::from(&col));
-        }
-        let dataset = builder.build().expect("dataset build should succeed");
+        let dataset = Dataset::new(features_fm.view(), Some(targets_fm.view()), None);
 
         (dataset, targets_fm)
     }
