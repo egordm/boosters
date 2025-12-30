@@ -5,8 +5,9 @@
 
 use ndarray::Array2;
 
+use crate::data::binned::BinnedDataset;
 use crate::data::init_predictions;
-use crate::data::{Dataset, FeaturesView};
+use crate::data::{Dataset, FeaturesView, TargetsView, WeightsView};
 use crate::repr::gblinear::LinearModel;
 use crate::training::eval;
 use crate::training::{
@@ -347,6 +348,169 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
             Some(model)
         }
     }
+
+    /// Train a linear model from a `BinnedDataset`.
+    ///
+    /// This is the consolidation path where `BinnedDataset` becomes the single
+    /// source of truth for training data. The raw feature values stored in
+    /// `BinnedDataset` are used directly (bins are ignored for linear models).
+    ///
+    /// **Note:** This method does NOT create a thread pool. The caller must set up
+    /// parallelism via `rayon::ThreadPool::install()` if desired.
+    ///
+    /// # Arguments
+    ///
+    /// * `train` - Training dataset with raw feature values
+    /// * `targets` - Target values `[n_outputs, n_samples]`
+    /// * `weights` - Optional sample weights
+    ///
+    /// # Returns
+    ///
+    /// Returns `None` if:
+    /// - Dataset contains categorical features (not supported by GBLinear)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use boosters::data::binned::{BinnedDataset, DatasetBuilder};
+    /// use boosters::training::{GBLinearTrainer, GBLinearParams, SquaredLoss, Rmse};
+    ///
+    /// let dataset = DatasetBuilder::from_array(features.view(), &config)?
+    ///     .set_labels(targets.view())
+    ///     .build()?;
+    ///
+    /// let params = GBLinearParams::default();
+    /// let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
+    ///
+    /// let targets_view = TargetsView::new(targets_2d.view());
+    /// let model = trainer.train_binned(&dataset, targets_view, WeightsView::None)?;
+    /// ```
+    pub fn train_binned(
+        &self,
+        train: &BinnedDataset,
+        targets: TargetsView<'_>,
+        weights: WeightsView<'_>,
+    ) -> Option<LinearModel> {
+        // Validate: GBLinear doesn't support categorical features
+        if train.has_categorical() {
+            return None;
+        }
+
+        // Extract raw feature matrix from BinnedDataset
+        // This creates a contiguous [n_features, n_samples] matrix
+        let raw_matrix = train.to_raw_feature_matrix();
+        let train_data = FeaturesView::from_array(raw_matrix.view());
+
+        let n_features = train.n_features();
+        let n_samples = train.n_samples();
+        let n_outputs = self.objective.n_outputs();
+
+        assert!(
+            n_outputs >= 1,
+            "Objective must have at least 1 output, got {}",
+            n_outputs
+        );
+        debug_assert_eq!(targets.n_samples(), n_samples);
+
+        // Compute base scores using objective
+        let base_scores = self.objective.compute_base_score(targets, weights);
+
+        // Initialize model with base scores as biases
+        let mut model = LinearModel::zeros(n_features, n_outputs);
+        for (group, &base_score) in base_scores.iter().enumerate() {
+            model.set_bias(group, base_score);
+        }
+
+        // Create updater and selector
+        let updater_kind = if self.params.parallel {
+            UpdaterKind::Parallel
+        } else {
+            UpdaterKind::Sequential
+        };
+        let mut selector = self.params.feature_selector.create_state(self.params.seed);
+
+        let update_config = UpdateConfig {
+            alpha: self.params.alpha,
+            lambda: self.params.lambda,
+            learning_rate: self.params.learning_rate,
+        };
+        let updater = Updater::new(updater_kind, update_config);
+
+        // Gradient and prediction buffers
+        let mut gradients = Gradients::new(n_samples, n_outputs);
+        let mut predictions = init_predictions(&base_scores, n_samples);
+
+        // Logger
+        let mut logger = TrainingLogger::new(self.params.verbosity);
+        logger.start_training(self.params.n_rounds as usize);
+
+        // Training loop (simplified - no eval sets for now)
+        for round in 0..self.params.n_rounds {
+            // Compute gradients from current predictions
+            self.objective.compute_gradients_into(
+                predictions.view(),
+                targets,
+                weights,
+                gradients.pairs_array_mut(),
+            );
+
+            // Update each output
+            for output in 0..n_outputs {
+                let bias_delta = updater.update_bias(&mut model, &gradients, output);
+
+                // Apply bias delta to predictions incrementally
+                if bias_delta.abs() > 1e-10 {
+                    updater.apply_bias_delta_to_predictions(
+                        bias_delta,
+                        output,
+                        predictions.view_mut(),
+                    );
+
+                    // Recompute gradients after bias update
+                    self.objective.compute_gradients_into(
+                        predictions.view(),
+                        targets,
+                        weights,
+                        gradients.pairs_array_mut(),
+                    );
+                }
+
+                selector.setup_round(
+                    &model,
+                    &train_data,
+                    &gradients,
+                    output,
+                    self.params.alpha,
+                    self.params.lambda,
+                );
+
+                let weight_deltas = updater.update_round(
+                    &mut model,
+                    &train_data,
+                    &gradients,
+                    &mut selector,
+                    output,
+                );
+
+                // Apply weight deltas to predictions incrementally
+                if !weight_deltas.is_empty() {
+                    updater.apply_weight_deltas_to_predictions(
+                        &train_data,
+                        &weight_deltas,
+                        output,
+                        predictions.view_mut(),
+                    );
+                }
+            }
+
+            if self.params.verbosity >= Verbosity::Info {
+                logger.log_round(round as usize, &[]);
+            }
+        }
+
+        logger.finish_training();
+        Some(model)
+    }
 }
 
 // ============================================================================
@@ -563,5 +727,84 @@ mod tests {
         let model = trainer.train(&train, &[]).unwrap();
 
         assert_eq!(model.n_groups(), 1);
+    }
+
+    #[test]
+    fn train_binned_matches_train() {
+        // Verify bit-identical output between train() and train_binned()
+        // This is the key acceptance test for Story 3.1
+        use crate::data::binned::{DatasetBuilder, BinningConfig};
+        use approx::assert_abs_diff_eq;
+
+        // Create data: y = 2*x1 + 0.5*x2 + 1
+        let features = array![
+            [1.0, 2.0],
+            [2.0, 1.0],
+            [3.0, 3.0],
+            [4.0, 0.5],
+            [0.5, 2.5],
+            [2.5, 1.5],
+        ];
+        let targets = array![[6.0], [5.5], [9.5], [9.25], [3.25], [6.75]];
+
+        // Path 1: Train with Dataset
+        let dataset = make_dataset(features.clone(), targets.clone());
+        let params = GBLinearParams {
+            n_rounds: 20,
+            learning_rate: 0.3,
+            lambda: 0.1,
+            parallel: false, // Deterministic
+            verbosity: Verbosity::Silent,
+            ..Default::default()
+        };
+        let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params.clone());
+        let model_dataset = trainer.train(&dataset, &[]).unwrap();
+
+        // Path 2: Train with BinnedDataset
+        // DatasetBuilder::from_array expects [n_samples, n_features] - same as original
+        // TargetsView expects [n_outputs, n_samples] - need transpose
+        let targets_fm = transpose_to_c_order(targets.view());
+        let config = BinningConfig::default();
+        let built = DatasetBuilder::from_array(features.view(), &config)
+            .unwrap()
+            .build_groups()
+            .unwrap();
+        let binned_dataset = BinnedDataset::from_built_groups(built);
+
+        let targets_view = TargetsView::new(targets_fm.view());
+        let model_binned = trainer
+            .train_binned(&binned_dataset, targets_view, WeightsView::None)
+            .unwrap();
+
+        // Verify bit-identical weights
+        assert_eq!(model_dataset.n_features(), model_binned.n_features());
+        assert_eq!(model_dataset.n_groups(), model_binned.n_groups());
+
+        for group in 0..model_dataset.n_groups() {
+            assert_abs_diff_eq!(
+                model_dataset.bias(group),
+                model_binned.bias(group),
+                epsilon = 1e-6
+            );
+            for feat in 0..model_dataset.n_features() {
+                assert_abs_diff_eq!(
+                    model_dataset.weight(feat, group),
+                    model_binned.weight(feat, group),
+                    epsilon = 1e-6
+                );
+            }
+        }
+
+        // Verify predictions are identical
+        let test_features = array![[5.0, 1.0], [1.5, 3.0]];
+        let test_fm = transpose_to_c_order(test_features.view());
+        let test_view = FeaturesView::from_array(test_fm.view());
+
+        let preds_dataset = model_dataset.predict(test_view);
+        let preds_binned = model_binned.predict(test_view);
+
+        for (p_d, p_b) in preds_dataset.iter().zip(preds_binned.iter()) {
+            assert_abs_diff_eq!(p_d, p_b, epsilon = 1e-6);
+        }
     }
 }

@@ -454,47 +454,23 @@ Stakeholder feedback confirmed that `SampleBlocks` is the correct approach:
 
 ### Story 3.1: Add BinnedDataset Support to GBLinear Training
 
-**Status**: Not Started  
+**Status**: ✅ Complete  
 **Estimate**: 2 hours
 
 **Description**: Enable `GBLinearTrainer` to accept `BinnedDataset`.
 
-**Current Flow**:
-```rust
-// GBLinearTrainer::train(dataset: &Dataset, ...)
-let features = dataset.features();  // FeaturesView
-// Uses features.feature(idx) -> ArrayView1<f32>
-```
-
-**Required**:
-GBLinear should use `BinnedDataset` directly with its existing raw access methods:
-```rust
-// Use BinnedDataset's raw_feature_iter() for efficient iteration
-for (feature_idx, raw_values) in dataset.raw_feature_iter() {
-    // raw_values is &[f32] with n_samples elements
-}
-
-// Or raw_feature_slice(feature) for single-feature access
-if let Some(feature_data) = dataset.raw_feature_slice(feature_idx) {
-    // feature_data is &[f32]
-}
-
-// Labels and weights
-let labels = dataset.labels();  // Option<&[f32]>
-let weights = dataset.weights();  // Option<&[f32]>
-```
-
-**Implementation Notes**:
-- Replace `features.feature(idx) -> ArrayView1<f32>` with `raw_feature_slice(idx) -> Option<&[f32]>`
-- Use `raw_feature_iter()` for bulk iteration instead of random access per feature
-- No new traits needed - use `BinnedDataset` methods directly
-- Error if raw values not stored (categorical-only features)
+**Implementation**:
+- Added `train_binned(&BinnedDataset, TargetsView, WeightsView) -> Option<LinearModel>` to `GBLinearTrainer`
+- Uses `BinnedDataset::to_raw_feature_matrix()` to extract contiguous `[n_features, n_samples]` matrix
+- Wraps matrix in `FeaturesView::from_array()` for updater compatibility
+- Added `has_categorical()` method to reject categorical-only datasets (GBLinear requires raw values)
+- Added `train_binned_matches_train` test verifying bit-identical output
 
 **Definition of Done**:
-- GBLinearTrainer works with BinnedDataset
-- Tests pass
-- No accuracy regression
-- **Bit-identical output test**: Train with Dataset, train with BinnedDataset, verify predictions are identical (GBLinear is deterministic)
+- ✅ GBLinearTrainer works with BinnedDataset
+- ✅ Tests pass
+- ✅ No accuracy regression
+- ✅ **Bit-identical output test**: Train with Dataset, train with BinnedDataset, verify predictions are identical
 
 ---
 

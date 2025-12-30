@@ -7,6 +7,8 @@
 // Allow dead code during migration - this will be used when we switch over in Epic 7
 #![allow(dead_code)]
 
+use ndarray::Array2;
+
 use super::bin_mapper::BinMapper;
 use super::builder::BuiltGroups;
 use super::group::FeatureGroup;
@@ -683,6 +685,55 @@ impl BinnedDataset {
                 }
                 FeatureLocation::Bundled { .. } | FeatureLocation::Skipped => None,
             }
+        })
+    }
+
+    /// Create a contiguous feature-major matrix of raw values.
+    ///
+    /// Returns an owned `Array2<f32>` with shape `[n_features, n_samples]`.
+    /// Features without raw values (categorical, sparse) are filled with `0.0`.
+    ///
+    /// This method allocates and copies data. Use `raw_feature_iter()` for
+    /// zero-copy iteration when possible.
+    ///
+    /// # Use Case
+    ///
+    /// This is primarily for GBLinear training, which needs a contiguous
+    /// feature matrix compatible with `FeaturesView::from_array()`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let raw_matrix = dataset.to_raw_feature_matrix();
+    /// let features_view = FeaturesView::from_array(raw_matrix.view());
+    /// // Use features_view for GBLinear training...
+    /// ```
+    pub fn to_raw_feature_matrix(&self) -> Array2<f32> {
+        let n_features = self.n_features();
+        let n_samples = self.n_samples();
+
+        let mut matrix = Array2::zeros((n_features, n_samples));
+
+        for (feature_idx, raw_slice) in self.raw_feature_iter() {
+            matrix
+                .row_mut(feature_idx)
+                .as_slice_mut()
+                .unwrap()
+                .copy_from_slice(raw_slice);
+        }
+
+        matrix
+    }
+
+    /// Check if the dataset contains any categorical features.
+    ///
+    /// GBLinear requires all features to be numeric (have raw values).
+    /// Use this to validate before calling GBLinear training.
+    pub fn has_categorical(&self) -> bool {
+        self.features.iter().any(|f| {
+            matches!(f.location, FeatureLocation::Direct { group_idx, .. } if {
+                self.groups[group_idx as usize].is_categorical()
+            })
         })
     }
 
