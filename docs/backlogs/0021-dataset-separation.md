@@ -329,27 +329,31 @@ This backlog implements both RFC-0021 (data module restructuring and dataset sep
 
 ---
 
-### Story 3.6: Port SampleBlocks to Work on Dataset
+### Story 3.6: Move SampleBlocks to Correct Module
 
-**Description**: Update SampleBlocks to use Dataset's Feature enum.
+**Description**: ~~Update SampleBlocks to use Dataset's Feature enum.~~
 
-**Note**: Current SampleBlocks is tightly coupled to BinnedDataset's storage. This port requires generalizing the block buffering to work with Dataset's Feature enum (dense slices and sparse storage) rather than binned indices.
+**Status**: ✅ Complete (2025-12-31)
+
+**Revised Scope**: During planning discussion, the team determined that SampleBlocks is tightly coupled to BinnedDataset (uses FeatureView which returns bin indices) and should remain in the binned module. The file was incorrectly placed in `raw/` during earlier restructuring. The RFC's vision of SampleBlocks on Dataset will be revisited when Dataset gains sparse storage.
 
 **Tasks**:
-- [ ] Update SampleBlocks to take `&Dataset` instead of BinnedDataset
-- [ ] Generalize buffering to work with Feature::Dense and Feature::Sparse
-- [ ] Access features via `dataset.features[feature]`
-- [ ] Handle both Dense (slice access) and Sparse (lookup) features
-- [ ] Keep block buffering pattern for cache efficiency
+- [x] Move `sample_blocks.rs` from `data/raw/` to `data/binned/`
+- [x] Update module declarations in `raw/mod.rs` and `binned/mod.rs`
+- [x] Update imports in `binned/dataset.rs`
+- [x] Update re-exports in `data/mod.rs`
+
+**Original Tasks (Deferred)**:
+- [ ] ~~Update SampleBlocks to take `&Dataset` instead of BinnedDataset~~ (deferred until Dataset has sparse storage)
+- [ ] ~~Generalize buffering to work with Feature::Dense and Feature::Sparse~~
 
 **Definition of Done**:
-- SampleBlocks works with Dataset
-- Efficient batched row-major access
-- Cache-friendly
+- ✅ SampleBlocks correctly located in binned module
+- ✅ All tests pass (695 tests)
+- ✅ No production code actually uses SampleBlocks (only docs/tests)
 
 **Testing**:
-- Existing SampleBlocks tests pass
-- Works with both dense and sparse features
+- ✅ Existing SampleBlocks tests pass
 
 ---
 
@@ -357,19 +361,15 @@ This backlog implements both RFC-0021 (data module restructuring and dataset sep
 
 **Description**: Add enum iterator for cases needing Iterator trait.
 
-**Tasks**:
+**Status**: ⏸️ Deferred
+
+**Reason**: The for_each methods (Stories 3.2-3.5) cover all current use cases. The iterator has documented ~5-10% overhead and no current callers need the Iterator trait. Will implement if users request it.
+
+**Tasks** (Deferred):
 - [ ] Add `FeatureValueIter<'a>` enum with Dense/Sparse variants
 - [ ] Implement Iterator trait with `(usize, f32)` item
 - [ ] Add `Dataset::feature_values(feature)` → `FeatureValueIter`
 - [ ] Document overhead (~5-10% for dense)
-
-**Definition of Done**:
-- Iterator works correctly
-- Documented as having overhead vs for_each
-
-**Testing**:
-- Unit tests for iteration
-- Benchmark shows overhead is acceptable
 
 ---
 

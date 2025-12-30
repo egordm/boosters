@@ -7,12 +7,12 @@
 //! - [`Dataset`]: Main container for features, targets, and weights
 //! - [`DatasetBuilder`]: Fluent builder for complex dataset construction
 //! - [`FeaturesView`] / [`TargetsView`] / [`WeightsView`]: Read-only views
-//! - [`SampleBlocks`]: Efficient block-based iteration for prediction
 //!
 //! # Training-Specific Types
 //!
 //! - [`binned::BinnedDataset`]: Quantized feature data for histogram-based GBDT
 //! - [`BinningConfig`]: Configuration for feature quantization
+//! - [`SampleBlocks`]: Efficient block-based iteration (for BinnedDataset)
 //!
 //! # Internal Types
 //!
@@ -44,7 +44,6 @@ pub use raw::dataset::{Dataset, DatasetBuilder};
 pub use error::DatasetError;
 pub use raw::schema::{DatasetSchema, FeatureMeta, FeatureType};
 pub use raw::views::{FeaturesView, SamplesView, TargetsView, WeightsIter, WeightsView};
-pub use raw::sample_blocks::{SampleBlocks, SampleBlocksIter};
 
 // Legacy compatibility aliases (will be removed in Epic 6)
 #[allow(deprecated)]
@@ -69,7 +68,7 @@ pub use ndarray::{axis, init_predictions, init_predictions_into, transpose_to_c_
 pub use binned::{
     BinMapper, BinnedDataset, BinnedDatasetBuilder, BinnedFeatureInfo,
     BinnedSampleView, BinningConfig, BuildError, EffectiveViews, FeatureGroup,
-    FeatureMetadata, FeatureView, MissingType,
+    FeatureMetadata, FeatureView, MissingType, SampleBlocks, SampleBlocksIter,
 };
 
 // Internal types for tests/benchmarks

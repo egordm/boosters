@@ -11,6 +11,7 @@ pub(crate) mod bundling;
 pub(crate) mod dataset;
 pub(crate) mod feature_analysis;
 pub(crate) mod group;
+pub mod sample_blocks;
 mod storage;
 pub(crate) mod view;
 
@@ -28,6 +29,7 @@ pub use storage::{
     SparseNumericStorage,
 };
 pub use view::FeatureView;
+pub use sample_blocks::{SampleBlocks, SampleBlocksIter};
 
 // Builder types
 pub use builder::{BuiltGroups, DatasetBuilder, DatasetError};

@@ -10,7 +10,7 @@
 use super::bin_mapper::BinMapper;
 use super::builder::BuiltGroups;
 use super::group::FeatureGroup;
-use crate::data::raw::sample_blocks::SampleBlocks;
+use super::sample_blocks::SampleBlocks;
 use super::view::FeatureView;
 use crate::data::raw::accessor::{DataAccessor, SampleAccessor};
 use crate::data::raw::schema::FeatureType;
