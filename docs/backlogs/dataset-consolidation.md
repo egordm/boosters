@@ -49,8 +49,6 @@ Epic 0: Baselines
     ↓
   Gate 1 (Evaluate overhead)
     ↓
-Epic 1: Core Traits
-    ↓
 Epic 2: Prediction Support
     ↓
 Epic 3: GBLinear Support
@@ -60,12 +58,15 @@ Epic 4: Python Migration
 Epic 5: Cleanup
 ```
 
+Note: Epic 1 (Core Traits) was removed after stakeholder feedback - we don't need new traits.
+`BinnedDataset` already implements `DataAccessor` for prediction, and has direct methods
+(`raw_feature_slice()`, `raw_feature_iter()`, `labels()`, `weights()`) for linear models.
+
 ### Rollback Plan
 
 If issues are discovered post-merge:
 1. Revert migration commits
-2. Keep trait infrastructure (Epic 1) - useful regardless
-3. Re-evaluate approach based on learnings
+2. Re-evaluate approach based on learnings
 
 ### Backlog Complete Criteria
 
@@ -279,80 +280,19 @@ Before declaring NO-GO, investigate:
 
 ---
 
-## Epic 1: Core Trait Infrastructure
+## ~~Epic 1: Core Trait Infrastructure~~ (REMOVED)
 
-*Define shared traits for unified dataset access.*
+**Status**: ❌ Removed after stakeholder feedback
 
-### Story 1.1: Define Dataset Access Traits
+**Reason**: Creating new traits (`DatasetAccess`, `FeatureAccess`, `RawFeatureAccess`) was over-engineering. The stakeholder feedback identified several issues:
 
-**Status**: Not Started  
-**Estimate**: 1.5 hours  
-**Priority**: BLOCKING (before Stories 2.1, 3.1)
+1. **FeatureAccess encourages inefficient patterns**: `get(sample, feature)` is O(log n) for sparse storage - encouraging per-sample random access is a performance anti-pattern.
 
-**Description**: Create unified trait hierarchy in `data/traits.rs`.
+2. **RawFeatureAccess mixes concerns**: Combining feature access with `targets()` and `weights()` implies multiple dataset types, but our goal is ONE type.
 
-**Location**: `crates/boosters/src/data/traits.rs` (NEW FILE)
+3. **Existing infrastructure suffices**: `DataAccessor`/`SampleAccessor` traits already exist for prediction. `BinnedDataset` already has `raw_feature_slice()`, `raw_feature_iter()`, `labels()`, `weights()`.
 
-**Traits**:
-
-```rust
-/// Base trait for dataset dimensions.
-pub trait DatasetAccess: Send + Sync {
-    fn n_samples(&self) -> usize;
-    fn n_features(&self) -> usize;
-}
-
-/// Per-sample feature access for prediction.
-/// All methods should be #[inline] for monomorphization.
-pub trait FeatureAccess: DatasetAccess {
-    /// Get feature value at (sample, feature). Returns NaN for missing.
-    #[inline]
-    fn get(&self, sample: usize, feature: usize) -> f32;
-    
-    /// Get contiguous feature slice for efficient iteration.
-    /// Returns None for sparse features.
-    #[inline]
-    fn feature_contiguous(&self, feature: usize) -> Option<&[f32]>;
-}
-
-/// Contiguous feature access for linear models.
-/// All methods should be #[inline] for monomorphization.
-pub trait RawFeatureAccess: DatasetAccess {
-    /// Get contiguous feature slice. Returns None if feature is sparse/categorical.
-    #[inline]
-    fn feature_slice(&self, feature: usize) -> Option<&[f32]>;
-    
-    /// Get targets view.
-    fn targets(&self) -> TargetsView<'_>;
-    
-    /// Get weights view.
-    fn weights(&self) -> WeightsView<'_>;
-}
-```
-
-**Implementations**:
-
-- `impl DatasetAccess for types::Dataset`
-- `impl FeatureAccess for types::Dataset`
-- `impl RawFeatureAccess for types::Dataset`
-- `impl DatasetAccess for BinnedDataset`
-- `impl FeatureAccess for BinnedDataset`
-- `impl RawFeatureAccess for BinnedDataset`
-
-**Verification**:
-
-Add micro-benchmark `benches/trait_dispatch.rs` to verify monomorphization:
-
-- Compare generic function `predict<D: FeatureAccess>` vs direct call
-- Should show zero overhead if monomorphization is working
-
-**Definition of Done**:
-
-- Traits defined in `crates/boosters/src/data/traits.rs`
-- All implementations compile
-- Unit tests for each implementation
-- Exported from `data/mod.rs`
-- Trait dispatch benchmark shows zero overhead
+**Revised Approach**: Use `BinnedDataset` directly with its existing methods. No new traits needed.
 
 ---
 
@@ -362,62 +302,42 @@ Add micro-benchmark `benches/trait_dispatch.rs` to verify monomorphization:
 
 ### Story 2.1: Implement Feature Access for Prediction
 
-**Status**: Not Started  
+**Status**: ✅ Complete  
 **Estimate**: 1.5 hours
 
 **Description**: Add efficient feature access methods for prediction flow.
 
-**Current State**:
-- `UnrolledPredictor6` uses `FeaturesView` from `types/Dataset`
-- `FeaturesView::get(sample, feature) -> f32` for random access
+**Resolution**: Feature access already exists via `BinnedSampleView::feature()` which:
+- Returns raw values for numeric features
+- Returns bin index as f32 for categorical features
+- Returns NaN for skipped features
 
-**Required for BinnedDataset**:
-```rust
-impl BinnedDataset {
-    /// Get raw feature value for prediction.
-    /// Returns NaN for missing.
-    #[inline]
-    pub fn feature_value(&self, sample: usize, feature: usize) -> f32 {
-        self.raw_value(sample, feature).unwrap_or(f32::NAN)
-    }
-}
-```
-
-**Definition of Done**:
-- Feature access method added
-- Unit tests for all storage types (numeric, categorical, sparse)
+No additional code needed - `BinnedSampleView` implements `SampleAccessor`.
 
 ---
 
 ### Story 2.2: Add BinnedDataset Support to Predictor
 
-**Status**: Not Started  
+**Status**: ✅ Complete  
 **Estimate**: 2 hours
 
 **Description**: Enable `UnrolledPredictor6` to use `BinnedDataset`.
 
-**Options**:
+**Implementation**:
+- Added `predict_from<D: DataAccessor>(&self, data: &D) -> Array2<f32>` method
+- Added `predict_from_into<D: DataAccessor>(&self, data: &D, ...)` for buffer reuse
+- Added `predict_block_from<D>` internal method (generic over DataAccessor)
+- Kept existing `predict_block_into(SamplesView)` for FeaturesView path
 
-A. **Trait-based** - Create `FeatureAccess` trait, implement for both types
-B. **Wrapper** - Create `PredictionDataset` enum wrapping either type  
-C. **Direct** - Add separate `predict_binned` method
-
-**Recommended**: Option A (trait-based)
-```rust
-pub trait FeatureAccess {
-    fn n_samples(&self) -> usize;
-    fn n_features(&self) -> usize;
-    fn get(&self, sample: usize, feature: usize) -> f32;
-}
-
-impl FeatureAccess for FeaturesView<'_> { ... }
-impl FeatureAccess for BinnedDataset { ... }
-```
+**Tests Added**:
+- `predict_from_matches_predict` - verifies DataAccessor path matches FeaturesView
+- `predict_from_binned_dataset` - verifies single-feature BinnedDataset
+- `predict_from_binned_multifeature` - verifies multi-feature BinnedDataset matches FeaturesView
 
 **Definition of Done**:
-- `FeatureAccess` trait defined
-- Both `FeaturesView` and `BinnedDataset` implement it
-- Predictor works with either type
+
+- ✅ Predictor works with `BinnedDataset` input
+- ✅ Unit tests added confirming correct behavior
 - No performance regression in existing prediction path
 
 ---
@@ -525,28 +445,28 @@ let features = dataset.features();  // FeaturesView
 ```
 
 **Required**:
+GBLinear should use `BinnedDataset` directly with its existing raw access methods:
 ```rust
-// Option A: Trait-based
-impl GBLinearTrainer {
-    pub fn train<D: RawFeatureAccess>(&self, dataset: &D, ...) -> ...
+// Use BinnedDataset's raw_feature_iter() for efficient iteration
+for (feature_idx, raw_values) in dataset.raw_feature_iter() {
+    // raw_values is &[f32] with n_samples elements
 }
 
-// Option B: Separate method
-impl GBLinearTrainer {
-    pub fn train_binned(&self, dataset: &BinnedDataset, ...) -> ...
+// Or raw_feature_slice(feature) for single-feature access
+if let Some(feature_data) = dataset.raw_feature_slice(feature_idx) {
+    // feature_data is &[f32]
 }
+
+// Labels and weights
+let labels = dataset.labels();  // Option<&[f32]>
+let weights = dataset.weights();  // Option<&[f32]>
 ```
 
-**Recommended**: Option A with `RawFeatureAccess` trait:
-```rust
-pub trait RawFeatureAccess {
-    fn n_samples(&self) -> usize;
-    fn n_features(&self) -> usize;
-    fn feature_slice(&self, feature: usize) -> Option<&[f32]>;
-    fn targets(&self) -> TargetsView<'_>;
-    fn weights(&self) -> WeightsView<'_>;
-}
-```
+**Implementation Notes**:
+- Replace `features.feature(idx) -> ArrayView1<f32>` with `raw_feature_slice(idx) -> Option<&[f32]>`
+- Use `raw_feature_iter()` for bulk iteration instead of random access per feature
+- No new traits needed - use `BinnedDataset` methods directly
+- Error if raw values not stored (categorical-only features)
 
 **Definition of Done**:
 - GBLinearTrainer works with BinnedDataset
@@ -947,24 +867,24 @@ pub struct PyBinnedDataset {
 | Epic | Stories | Description                                 |
 | ---- | ------- | ------------------------------------------- |
 | 0    | 5       | Benchmark infrastructure + baseline capture |
-| 1    | 1       | Core trait infrastructure                   |
+| 1    | 0       | ~~Core trait infrastructure~~ REMOVED (DD-32) |
 | 2    | 6       | BinnedDataset Prediction + SampleBlocks     |
 | 3    | 4       | GBLinear with BinnedDataset                 |
 | 4    | 8       | Python migration (split 4.1a/b/c)           |
 | 5    | 9       | Cleanup + docs + dead code audit            |
-| **Total** | **33** |                                        |
+| **Total** | **32** |                                        |
 
 ### Time Estimates
 
 | Epic      | Estimate     |
 | --------- | ------------ |
 | 0         | ~4.5 hours   |
-| 1         | ~1.5 hours   |
+| 1         | ~~1.5 hours~~ 0 (removed) |
 | 2         | ~7 hours     |
 | 3         | ~4.5 hours   |
 | 4         | ~8.5 hours   |
 | 5         | ~6.5 hours   |
-| **Total** | **~32.5 hours** |
+| **Total** | **~31 hours** |
 
 ### Risk Assessment
 
@@ -985,20 +905,20 @@ pub struct PyBinnedDataset {
 - **DD-2 (Round 1)**: Added explicit overhead thresholds: <2x for GBLinear training, <10% for predictions.
 - **DD-3 (Round 1)**: Added memory profiling story (0.4) to capture memory overhead.
 - **DD-4 (Round 1)**: Benchmark configuration standardized: fixed seed 42, 5 runs, mean±std reporting.
-- **DD-5 (Round 2)**: Added Story 1.1 for unified trait infrastructure before Epic 2/3 stories.
+- **DD-5 (Round 2)**: ~~Added Story 1.1 for unified trait infrastructure before Epic 2/3 stories.~~ **SUPERSEDED by DD-32.**
 - **DD-6 (Round 2)**: GBLinear bit-identical output test required - deterministic models must match exactly.
 - **DD-7 (Round 2)**: TargetsView/WeightsView to be preserved and moved, not deleted.
 - **DD-8 (Round 3)**: Per-feature max bins removed from this backlog (scope creep) - will be separate backlog if needed.
 - **DD-9 (Round 3)**: Predictor must use generics (monomorphization), NOT trait objects, for performance.
-- **DD-10 (Round 3)**: RawFeatureAccess::feature_slice() returns None for sparse - caller must handle.
-- **DD-11 (Round 4)**: Added `feature_contiguous()` to FeatureAccess for efficient prediction (avoids per-sample access).
-- **DD-12 (Round 4)**: All trait methods marked `#[inline]` for monomorphization.
+- **DD-10 (Round 3)**: ~~RawFeatureAccess::feature_slice() returns None for sparse - caller must handle.~~ **SUPERSEDED by DD-32.**
+- **DD-11 (Round 4)**: ~~Added `feature_contiguous()` to FeatureAccess for efficient prediction (avoids per-sample access).~~ **SUPERSEDED by DD-32.**
+- **DD-12 (Round 4)**: ~~All trait methods marked `#[inline]` for monomorphization.~~ **SUPERSEDED by DD-32.**
 - **DD-13 (Round 4)**: Critical path and rollback plan added to overview.
 - **DD-14 (Round 5)**: Story 4.1 split into 4.1a/b/c for safer incremental migration.
 - **DD-15 (Round 5)**: Added Story 4.5 (Smoke Test) using boosters-eval before final validation.
 - **DD-16 (Round 5)**: Added Story 5.0 (Move Reusable Views) - analyze and move shared types before deletion.
 - **DD-17 (Round 6)**: Added Story 0.5 (Risk Review Gate) - explicit go/no-go checkpoint after baselines.
-- **DD-18 (Round 6)**: Added trait dispatch micro-benchmark to Story 1.1 to verify monomorphization.
+- **DD-18 (Round 6)**: ~~Added trait dispatch micro-benchmark to Story 1.1 to verify monomorphization.~~ **SUPERSEDED by DD-32.**
 - **DD-19 (Round 6)**: Memory thresholds defined: <20% acceptable, 20-50% monitor, >50% consider mitigation.
 - **DD-20 (Round 7)**: Story 0.5 expanded with investigation checklist - don't give up easily, find root cause.
 - **DD-21 (Round 7)**: Story 2.2a added - integrate SampleBlocks (currently dead code) for prediction.
@@ -1012,3 +932,4 @@ pub struct PyBinnedDataset {
 - **DD-29 (Round 10)**: Story 5.5 expanded with required report sections and pass/fail structure.
 - **DD-30 (Round 10)**: Story 5.6 clarified as final review covering ALL epics.
 - **DD-31 (Round 10)**: Added "Backlog Complete Criteria" checklist to overview.
+- **DD-32 (Implementation)**: **Epic 1 removed entirely** after stakeholder feedback. Creating new traits (`DatasetAccess`, `FeatureAccess`, `RawFeatureAccess`) was over-engineering. Existing `DataAccessor` suffices for prediction; `BinnedDataset` methods (`raw_feature_slice()`, `raw_feature_iter()`, `labels()`, `weights()`) suffice for linear models. No new traits needed.
