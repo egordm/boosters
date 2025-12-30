@@ -25,10 +25,9 @@ use rand::prelude::*;
 use ndarray::{Array1, Array2, ArrayView2};
 
 use crate::data::{
-    BinnedDatasetBuilder, BinningConfig, binned::BinnedDataset, transpose_to_c_order,
+    BinnedDataset, BinningConfig, transpose_to_c_order,
 };
 use crate::data::{Dataset, FeaturesView};
-use crate::utils::Parallelism;
 
 // =============================================================================
 // Synthetic Dataset (ndarray-based API)
@@ -87,10 +86,7 @@ impl SyntheticDataset {
     pub fn to_binned(&self, max_bins: u32) -> BinnedDataset {
         let dataset = Dataset::new(self.features.view(), None, None);
         let config = BinningConfig::builder().max_bins(max_bins).build();
-        BinnedDatasetBuilder::with_config(config)
-            .add_features(dataset.features(), Parallelism::Parallel)
-            .build()
-            .expect("binning failed")
+        BinnedDataset::from_dataset(&dataset, &config).expect("binning failed")
     }
 }
 

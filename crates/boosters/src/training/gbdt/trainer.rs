@@ -152,13 +152,13 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
     ///
     /// # Arguments
     ///
-    /// * `dataset` - Binned dataset created with [`BinnedDatasetBuilder`]
+    /// * `dataset` - Binned dataset created with [`BinnedDataset::from_dataset`]
     /// * `targets` - Target values (length = n_rows × n_outputs)
     /// * `weights` - Sample weights (None for uniform)
     /// * `val_set` - Optional validation set for early stopping
     /// * `parallelism` - Sequential or Parallel iteration hint
     ///
-    /// [`BinnedDatasetBuilder`]: crate::data::BinnedDatasetBuilder
+    /// [`BinnedDataset::from_dataset`]: crate::data::BinnedDataset::from_dataset
     pub fn train(
         &self,
         dataset: &BinnedDataset,
@@ -388,7 +388,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
 mod tests {
     use super::*;
     use crate::data::WeightsView;
-    use crate::data::{BinnedDataset, BinnedDatasetBuilder, BinningConfig};
+    use crate::data::{BinnedDataset, BinningConfig};
     use crate::training::metrics::Rmse;
     use crate::training::objectives::SquaredLoss;
     use ndarray::{arr2, Array2};
@@ -412,10 +412,7 @@ mod tests {
         )
         .unwrap();
 
-        BinnedDatasetBuilder::from_array(data.view(), &BinningConfig::default())
-            .unwrap()
-            .build()
-            .unwrap()
+        BinnedDataset::from_array(data.view(), &BinningConfig::default()).unwrap()
     }
 
     #[test]

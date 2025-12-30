@@ -29,9 +29,8 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use boosters::Parallelism;
 use boosters::data::BinningConfig;
-use boosters::data::binned::BinnedDatasetBuilder;
+use boosters::data::binned::BinnedDataset;
 use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::model::gbdt::{GBDTConfig, GBDTModel};
 use boosters::testing::synthetic_datasets::{
@@ -629,12 +628,10 @@ fn train_boosters(
         .expect("train features must be contiguous");
     // Transpose to feature-major [n_features, n_samples] with C-order layout
     let feature_major = sample_major.t().as_standard_layout().into_owned();
-    // Wrap in Dataset for BinnedDatasetBuilder (feature_major is already feature-major)
+    // Wrap in Dataset for BinnedDataset
     let dataset_train = Dataset::new(feature_major.view(), None, None);
-    let binned_train = BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
-        .add_features(dataset_train.features(), Parallelism::Parallel)
-        .build()
-        .unwrap();
+    let config_binning = BinningConfig::builder().max_bins(256).build();
+    let binned_train = BinnedDataset::from_dataset(&dataset_train, &config_binning).unwrap();
     // Create feature-major array for validation predictions
     let sample_major_valid = ArrayView2::from_shape((rows_valid, cols), x_valid)
         .expect("valid features must be contiguous");

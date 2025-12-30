@@ -2,7 +2,7 @@
 //!
 //! This module provides [`Dataset`] and [`DatasetBuilder`] for creating
 //! raw feature datasets. For training, create a [`crate::data::BinnedDataset`]
-//! using [`crate::data::BinnedDatasetBuilder`].
+//! using [`BinnedDataset::from_dataset()`](crate::data::BinnedDataset::from_dataset).
 
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
 

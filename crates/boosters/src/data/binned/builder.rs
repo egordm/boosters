@@ -1,22 +1,17 @@
-//! BinnedDatasetBuilder - constructs BinnedDataset from raw data.
+//! BinnedDataset internal builder - constructs BinnedDataset from raw data.
 //!
-//! This module provides the `DatasetBuilder` which is the primary way to create
-//! a `BinnedDataset` from raw feature data. It supports two usage patterns:
+//! This module provides the internal `DatasetBuilder` which constructs
+//! `BinnedDataset` from raw feature data. **Users should not use this directly**.
 //!
-//! 1. **Batch ingestion** (recommended): Provide a full matrix, auto-detect types
+//! Instead, use the factory methods on `BinnedDataset`:
+//! - [`BinnedDataset::from_dataset`](super::BinnedDataset::from_dataset) - from Dataset
+//! - [`BinnedDataset::from_array`](super::BinnedDataset::from_array) - from raw array (tests)
+//!
+//! # Internal Usage
+//!
+//! The builder supports:
+//! 1. **Batch ingestion**: Provide a full matrix, auto-detect types
 //! 2. **Single-feature**: Add features one-by-one for fine-grained control
-//!
-//! # Example: Batch Ingestion
-//!
-//! ```ignore
-//! use boosters::data::{DatasetBuilder, BinningConfig};
-//! use ndarray::Array2;
-//!
-//! let data: Array2<f32> = load_data();
-//! let dataset = DatasetBuilder::from_array(data.view(), &BinningConfig::default())?
-//!     .set_labels(labels.view())
-//!     .build()?;
-//! ```
 
 #![allow(dead_code)] // During migration
 

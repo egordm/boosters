@@ -66,7 +66,7 @@ pub use ndarray::{axis, init_predictions, init_predictions_into, transpose_to_c_
 // =============================================================================
 
 pub use binned::{
-    BinMapper, BinnedDataset, BinnedDatasetBuilder, BinnedFeatureInfo,
+    BinMapper, BinnedDataset, BinnedFeatureInfo,
     BinnedSampleView, BinningConfig, BuildError, EffectiveViews, FeatureGroup,
     FeatureMetadata, FeatureView, MissingType, SampleBlocks, SampleBlocksIter,
 };

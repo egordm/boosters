@@ -453,7 +453,7 @@ impl RowPartitioner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{BinnedDataset, BinnedDatasetBuilder, BinningConfig};
+    use crate::data::{BinnedDataset, BinningConfig};
     use ndarray::Array2;
 
     fn make_test_dataset() -> BinnedDataset {
@@ -478,10 +478,7 @@ mod tests {
         )
         .unwrap();
 
-        BinnedDatasetBuilder::from_array(data.view(), &BinningConfig::default())
-            .unwrap()
-            .build()
-            .unwrap()
+        BinnedDataset::from_array(data.view(), &BinningConfig::default()).unwrap()
     }
 
     #[test]

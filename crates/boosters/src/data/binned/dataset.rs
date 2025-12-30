@@ -272,10 +272,53 @@ impl BinnedDataset {
         use crate::Parallelism;
 
         // Use the existing builder infrastructure
-        // In Story 5.2, this logic will be inlined and the builder deleted
         DatasetBuilder::with_config(config.clone())
             .add_features(dataset.features(), Parallelism::Sequential)
             .build()
+    }
+
+    /// Create a BinnedDataset from a raw 2D array.
+    ///
+    /// This is a convenience method for creating binned data directly from arrays.
+    /// The input array should be in sample-major layout: `[n_samples, n_features]`.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - 2D array in sample-major layout `[n_samples, n_features]`
+    /// * `config` - Binning configuration
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use boosters::data::{BinnedDataset, BinningConfig};
+    /// use ndarray::array;
+    ///
+    /// let data = array![[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]; // 3 samples, 2 features
+    /// let binned = BinnedDataset::from_array(data.view(), &BinningConfig::default())?;
+    /// ```
+    pub fn from_array(
+        data: ndarray::ArrayView2<f32>,
+        config: &BinningConfig,
+    ) -> Result<Self, DatasetError> {
+        Self::from_array_with_metadata(data, None, config)
+    }
+
+    /// Create a BinnedDataset from a raw 2D array with feature metadata.
+    ///
+    /// Like `from_array`, but allows specifying feature metadata (names, types).
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - 2D array in sample-major layout `[n_samples, n_features]`
+    /// * `metadata` - Optional feature metadata (names, categorical indices)
+    /// * `config` - Binning configuration
+    pub fn from_array_with_metadata(
+        data: ndarray::ArrayView2<f32>,
+        metadata: Option<&super::feature_analysis::FeatureMetadata>,
+        config: &BinningConfig,
+    ) -> Result<Self, DatasetError> {
+        // Delegate to the existing builder
+        DatasetBuilder::from_array_with_metadata(data, metadata, config)?.build()
     }
 
     // =========================================================================
@@ -1570,7 +1613,7 @@ mod tests {
 
     #[test]
     fn test_decode_split_to_original_with_bundle() {
-        use crate::data::{BinnedDatasetBuilder, BinningConfig, FeatureMetadata};
+        use crate::data::{BinningConfig, FeatureMetadata};
 
         // Create two sparse categorical features that will be bundled
         // Feature 0: non-zero only for rows 0-4
@@ -1600,9 +1643,7 @@ mod tests {
             .sparsity_threshold(0.9)
             .build();
 
-        let dataset = BinnedDatasetBuilder::from_array_with_metadata(data.view(), Some(&metadata), &config)
-            .unwrap()
-            .build()
+        let dataset = BinnedDataset::from_array_with_metadata(data.view(), Some(&metadata), &config)
             .unwrap();
 
         let effective = dataset.effective_feature_views();
@@ -1840,13 +1881,11 @@ mod tests {
             .sparsity_threshold(0.9)
             .build();
 
-        let dataset = crate::data::BinnedDatasetBuilder::from_array_with_metadata(
+        let dataset = BinnedDataset::from_array_with_metadata(
             data.view(),
             Some(&metadata),
             &config,
         )
-        .unwrap()
-        .build()
         .unwrap();
 
         // Should panic when trying to iterate a bundled feature

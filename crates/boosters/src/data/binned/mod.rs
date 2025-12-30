@@ -38,6 +38,5 @@ pub use feature_analysis::{BinningConfig, FeatureAnalysis, FeatureMetadata, Grou
 // Bundling types (RFC-0018 native)
 pub use bundling::{BundlePlan, BundlingConfig};
 
-// For backward compatibility during migration, re-export some builder types with old names
-pub use builder::DatasetBuilder as BinnedDatasetBuilder;
+// Error type re-export
 pub use builder::DatasetError as BuildError;

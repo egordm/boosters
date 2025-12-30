@@ -737,7 +737,7 @@ impl TreeGrower {
 mod tests {
     use super::*;
     use crate::data::{
-        BinnedDataset, BinnedDatasetBuilder, BinningConfig, DataAccessor, FeatureMetadata,
+        BinnedDataset, BinningConfig, DataAccessor, FeatureMetadata,
         SampleAccessor,
     };
     use crate::repr::gbdt::{Tree, TreeView};
@@ -759,10 +759,7 @@ mod tests {
         )
         .unwrap();
 
-        BinnedDatasetBuilder::from_array(data.view(), &BinningConfig::default())
-            .unwrap()
-            .build()
-            .unwrap()
+        BinnedDataset::from_array(data.view(), &BinningConfig::default()).unwrap()
     }
 
     fn make_two_feature_dataset() -> BinnedDataset {
@@ -784,10 +781,7 @@ mod tests {
         )
         .unwrap();
 
-        BinnedDatasetBuilder::from_array(data.view(), &BinningConfig::default())
-            .unwrap()
-            .build()
-            .unwrap()
+        BinnedDataset::from_array(data.view(), &BinningConfig::default()).unwrap()
     }
 
     fn make_numeric_boundary_dataset() -> BinnedDataset {
@@ -795,10 +789,7 @@ mod tests {
         // Values 0 and 1 should bin to bins 0 and 1
         let data = Array2::from_shape_vec((2, 1), vec![0.0, 1.0]).unwrap();
 
-        BinnedDatasetBuilder::from_array(data.view(), &BinningConfig::default())
-            .unwrap()
-            .build()
-            .unwrap()
+        BinnedDataset::from_array(data.view(), &BinningConfig::default()).unwrap()
     }
 
     fn make_categorical_domain_dataset() -> BinnedDataset {
@@ -809,13 +800,11 @@ mod tests {
         // Force categorical detection by using feature metadata
         let metadata = FeatureMetadata::with_categorical(vec![0]);
 
-        BinnedDatasetBuilder::from_array_with_metadata(
+        BinnedDataset::from_array_with_metadata(
             data.view(),
             Some(&metadata),
             &BinningConfig::default(),
         )
-        .unwrap()
-        .build()
         .unwrap()
     }
 
@@ -1286,9 +1275,7 @@ mod tests {
             .build();
 
         let dataset =
-            BinnedDatasetBuilder::from_array_with_metadata(data.view(), Some(&metadata), &config)
-                .unwrap()
-                .build()
+            BinnedDataset::from_array_with_metadata(data.view(), Some(&metadata), &config)
                 .unwrap();
 
         // Verify bundling occurred

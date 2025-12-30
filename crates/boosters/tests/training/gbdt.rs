@@ -2,15 +2,15 @@
 //!
 //! Focused on behavior and invariants (not default params or superficial shapes).
 
-use boosters::Parallelism;
 use boosters::data::{
-    BinnedDatasetBuilder, BinningConfig, transpose_to_c_order,
+    BinnedDataset, BinningConfig, transpose_to_c_order,
 };
 use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::inference::gbdt::SimplePredictor;
 use boosters::model::gbdt::{GBDTConfig, GBDTModel};
 use boosters::repr::gbdt::{Forest, SplitType, TreeView};
 use boosters::training::{GBDTParams, GBDTTrainer, GrowthStrategy, Rmse, SquaredLoss};
+use boosters::Parallelism;
 use ndarray::{Array2, ArrayView2};
 
 /// Predict a single row using the predictor.
@@ -36,9 +36,8 @@ fn train_rejects_invalid_targets_len() {
     let features_dataset = Dataset::new(features.view(), None, None);
     let targets: Vec<f32> = vec![1.0, 2.0]; // Too few targets
 
-    let dataset = BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(64).build())
-        .add_features(features_dataset.features(), Parallelism::Sequential)
-        .build()
+    let binning_config = BinningConfig::builder().max_bins(64).build();
+    let dataset = BinnedDataset::from_dataset(&features_dataset, &binning_config)
         .expect("Failed to build binned dataset");
 
     let trainer = GBDTTrainer::new(SquaredLoss, Rmse, GBDTParams::default());
@@ -65,9 +64,8 @@ fn trained_model_improves_over_base_score_on_simple_problem() {
     // Feature-major: shape [1, n_samples]
     let features = Array2::from_shape_vec((1, n_samples), features_raw.clone()).unwrap();
     let features_dataset = Dataset::new(features.view(), None, None);
-    let dataset = BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(64).build())
-        .add_features(features_dataset.features(), Parallelism::Sequential)
-        .build()
+    let binning_config = BinningConfig::builder().max_bins(64).build();
+    let dataset = BinnedDataset::from_dataset(&features_dataset, &binning_config)
         .expect("Failed to build binned dataset");
 
     let params = GBDTParams {
@@ -137,9 +135,8 @@ fn trained_model_improves_over_base_score_on_medium_problem() {
     let row_view = ArrayView2::from_shape((n_samples, n_features), &features_row_major).unwrap();
     let features = transpose_to_c_order(row_view.view());
     let features_dataset = Dataset::new(features.view(), None, None);
-    let dataset = BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(64).build())
-        .add_features(features_dataset.features(), Parallelism::Sequential)
-        .build()
+    let binning_config = BinningConfig::builder().max_bins(64).build();
+    let dataset = BinnedDataset::from_dataset(&features_dataset, &binning_config)
         .expect("Failed to build binned dataset");
 
     let params = GBDTParams {
@@ -224,9 +221,7 @@ fn train_with_categorical_features_produces_categorical_splits() {
     let features_dataset = Dataset::new(features.view(), None, None).with_schema(schema);
 
     // Build binned dataset - should detect categorical from schema
-    let dataset = BinnedDatasetBuilder::with_config(BinningConfig::default())
-        .add_features(features_dataset.features(), Parallelism::Sequential)
-        .build()
+    let dataset = BinnedDataset::from_dataset(&features_dataset, &BinningConfig::default())
         .expect("Failed to build binned dataset");
 
     // Verify the dataset reports the feature as categorical
