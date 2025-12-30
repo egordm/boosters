@@ -1,84 +1,77 @@
-# Backlog: Dataset Type Consolidation
+# Backlog: Dataset Consolidation
 
-**RFC**: Extends [RFC-0018](../rfcs/0018-raw-feature-storage.md)  
+**RFC**: [RFC-0018](../rfcs/0018-raw-feature-storage.md), [RFC-0019](../rfcs/0019-feature-value-iterator.md)  
 **Created**: 2025-12-29  
+**Updated**: 2025-12-30  
 **Status**: Ready for Implementation  
-**Refinement Rounds**: 10 of 10 (Complete)
+**Refinement Rounds**: 12 of 12 (Complete)
 
 ## Overview
 
-Consolidate the dual `Dataset`/`BinnedDataset` architecture into a single unified `BinnedDataset` type. Currently:
+Consolidate the dual `Dataset`/`BinnedDataset` architecture into a single unified `Dataset` type. After migration, `BinnedDataset` will be renamed to `Dataset`.
 
-- `types/Dataset` - Raw feature container, used by Python bindings and predictions
-- `BinnedDataset` - Binned data container with raw values (RFC-0018 implementation)
+### Current State
 
-Since `BinnedDataset` already stores both binned AND raw features, the separate `types/Dataset` is redundant. However, binning introduces overhead that may not be needed for:
+- `types/Dataset` - Raw feature container (used by Python bindings, GBLinear, predictions)
+- `BinnedDataset` - Binned data with raw values (RFC-0018 implementation)
+- `FeaturesView` - Column-major raw feature access
+- `DataAccessor` trait - Per-sample feature access for prediction
 
-1. **GBLinear training** - Linear models don't need bins, just raw features
-2. **GBDT/GBLinear prediction** - Inference uses raw features, not bins
+### Target State
 
-### Primary Goals
+- `Dataset` (renamed from `BinnedDataset`) - Single unified type for all operations
+- Feature iteration via existing methods plus new `for_each_feature_value()` pattern
+- Prediction via `SampleBlocks` (already integrated)
+- **No new public methods** beyond what RFC-0019 specifies
 
-1. **Unified data pipeline**: One dataset type for all operations
-2. **Measure overhead**: Quantify binning overhead for use cases that don't need it
-3. **Clean API**: Remove deprecated `types/Dataset` and related code
-4. **Per-feature max_bins**: Expose feature-level binning config to Python
+### Design Principle: Minimal API Surface
+
+**Do not clutter the API.** Instead of adding parallel methods:
+- Update existing `predict_into()` and `train()` signatures
+- Delete old types and force callers to adapt
+- Consolidate rather than proliferate
 
 ### Success Metrics
 
-| Metric | Target |
-|--------|--------|
-| GBLinear training overhead | < 2x on small datasets (≤10K samples) |
-| GBDT prediction overhead | < 10% regression |
-| GBLinear prediction overhead | < 10% regression |
-| Memory overhead | Documented (expected ~2x for raw storage) |
-| Net lines removed | > 200 |
-| Test coverage | No regression |
-
-### Decision Gates
-
-**Gate 1 (After Epic 0)**: Review baseline numbers. If GBLinear training overhead >2x on small datasets OR prediction overhead >10%, evaluate mitigation options before proceeding:
-- Option A: Lazy binning (defer bin computation until needed)
-- Option B: `from_array_without_binning()` for prediction-only datasets
-- Option C: Abandon consolidation, keep dual types
+| Metric                       | Target                          |
+| ---------------------------- | ------------------------------- |
+| GBLinear training overhead   | < 2x on small datasets (≤10K)   |
+| GBDT prediction overhead     | < 10% regression                |
+| GBLinear prediction overhead | < 10% regression                |
+| Memory overhead              | Documented (~23% measured)      |
+| Net lines removed            | > 500                           |
+| Types deleted                | Dataset, FeaturesView, DataAccessor |
+| Test coverage                | No regression                   |
 
 ### Critical Path
 
 ```
-Epic 0: Baselines
+Epic 0: Baselines ✅
     ↓
-  Gate 1 (Evaluate overhead)
+Epic 2: Prediction via SampleBlocks ✅
     ↓
-Epic 2: Prediction Support
+Epic 3: Feature Value Iteration (RFC-0019)
     ↓
-Epic 3: GBLinear Support
+Epic 4: GBLinear Migration
     ↓
-Epic 4: Python Migration
+Epic 5: Linear Trees & SHAP
     ↓
-Epic 5: Cleanup
+Epic 6: Python Bindings
+    ↓
+Epic 7: Cleanup & Rename
 ```
-
-Note: Epic 1 (Core Traits) was removed after stakeholder feedback - we don't need new traits.
-`BinnedDataset` already implements `DataAccessor` for prediction, and has direct methods
-(`raw_feature_slice()`, `raw_feature_iter()`, `labels()`, `weights()`) for linear models.
-
-### Rollback Plan
-
-If issues are discovered post-merge:
-1. Revert migration commits
-2. Re-evaluate approach based on learnings
 
 ### Backlog Complete Criteria
 
-This backlog is complete when ALL of the following are true:
-
-- [ ] All 33 stories marked complete
-- [ ] `types/Dataset` deleted from codebase
+- [ ] All stories marked complete
+- [ ] `types/Dataset` deleted
+- [ ] `FeaturesView` deleted
+- [ ] `DataAccessor` trait deleted
 - [ ] `deprecated/` folder deleted
-- [ ] All `#![allow(dead_code)]` removed from binned module
-- [ ] Success metrics from table above verified in Story 5.5
-- [ ] Final performance report published
-- [ ] Retrospective documented in `workdir/tmp/retrospective.md`
+- [ ] `BinnedDataset` renamed to `Dataset`
+- [ ] All `#![allow(dead_code)]` removed
+- [ ] Success metrics verified
+- [ ] Retrospective documented
 
 ---
 
@@ -448,482 +441,537 @@ Stakeholder feedback confirmed that `SampleBlocks` is the correct approach:
 
 ---
 
-## Epic 3: BinnedDataset for GBLinear
+## Epic 3: Feature Value Iteration (RFC-0019)
 
-*Enable GBLinear to train and predict using BinnedDataset.*
+*Implement efficient per-feature iteration patterns for linear models and SHAP.*
 
-**STATUS: ⚠️ REVERTED** - Approach rejected by stakeholder feedback. See stakeholder_feedback.md.
+**RFC Reference**: [RFC-0019](../rfcs/0019-feature-value-iterator.md)
 
-**Reason for Rejection**:
-1. `to_raw_feature_matrix()` adds O(n_features × n_samples) allocation - negates BinnedDataset benefits
-2. `train_binned()` duplicates `train()` code instead of consolidating to ONE path
-3. `predict_binned[_raw]()` adds parallel interfaces instead of replacing - goal is ONE dataset type
-4. Approach ignores sparse feature benefits
+**Design Principle**: Add minimal methods to `BinnedDataset`. Do NOT add parallel APIs—we update existing signatures to use `BinnedDataset` directly.
 
-**Resolution Options**:
-- Option A: Refactor `Updater` to work with per-feature slices from `raw_feature_iter()` (invasive refactor)
-- Option B: Defer GBLinear integration to Epic 5 when `types::Dataset` is deleted entirely (GBLinear would then accept only BinnedDataset)
+### Story 3.1: Implement `for_each_feature_value()` on BinnedDataset
 
-**All code from Stories 3.1-3.4 was reverted (commit efaf036). 504 lines deleted.**
-
-### Story 3.1: Add BinnedDataset Support to GBLinear Training
-
-**Status**: ❌ REVERTED  
+**Status**: ✅ Complete  
 **Estimate**: 2 hours
 
-**Original Implementation** (reverted):
-- Added `train_binned()` method - **duplicated code**
-- Used `to_raw_feature_matrix()` - **large allocation**
-- Was fundamentally wrong approach
-
----
-
-### Story 3.2: Benchmark GBLinear Training Overhead
-
-**Status**: ❌ REVERTED  
-**Estimate**: 1 hour
-
-Benchmark captured 4-11% overhead - numbers were acceptable but approach was wrong.
-
----
-
-### Story 3.3: Add BinnedDataset Support to GBLinear Prediction
-
-**Status**: ❌ REVERTED  
-**Estimate**: 1 hour
-
-**Original Implementation** (reverted):
-- Added `predict_binned()` and `predict_binned_raw()` - **parallel interfaces**
-- Used `to_raw_feature_matrix()` - **large allocation**
-
----
-
-### Story 3.4: Stakeholder Feedback Check
-
-**Status**: ❌ REVERTED  
-**Estimate**: 15 min
-
-This check did not catch the fundamental issues with the approach.
-
----
-
-## Epic 4: Python Bindings Migration
-
-*Migrate PyDataset to wrap BinnedDataset.*
-
-### Story 4.1a: Create New BinnedDataset-based PyDataset
-
-**Status**: Not Started  
-**Estimate**: 1.5 hours
-
-**Description**: Create `PyBinnedDataset` wrapper (or rename later) alongside existing `PyDataset`.
-
-**New Structure**:
+**Description**: Add the primary iteration pattern for GBLinear and Linear SHAP.
 
 ```rust
-pub struct PyBinnedDataset {
-    inner: BinnedDataset,
+impl BinnedDataset {
+    pub fn for_each_feature_value<F>(&self, feature: usize, f: F)
+    where
+        F: FnMut(usize, f32),  // (sample_idx, value)
+    {
+        // Match storage type ONCE, then iterate directly
+        match info.location {
+            FeatureLocation::Direct { .. } => { /* slice iter */ }
+            FeatureLocation::Bundled { .. } => { /* extract from bundle */ }
+            FeatureLocation::Skipped => panic!("Feature was skipped"),
+        }
+    }
 }
 ```
 
-**Key Implementation**:
-
-- Constructor creates BinnedDataset using PyGBDTConfig binning settings
-- n_samples, n_features delegate to BinnedDataset
+**Why `for_each` over iterator**: Storage type matched once at start; closure inlined into loop. Zero overhead for dense features.
 
 **Definition of Done**:
 
-- PyBinnedDataset compiles and has basic tests
-- Does not break existing code
+- ✅ Method implemented and tested
+- ✅ Works for dense, sparse, and bundled features (panic on bundled per design)
+- ✅ Panics on categorical features (intentional—linear models don't use them)
+- ✅ 8 tests covering dense, sparse, categorical panic, bundled panic, NaN, single sample, accumulation pattern
 
 ---
 
-### Story 4.1b: Migrate PyGBDTModel to Use PyBinnedDataset
+### Story 3.2: Implement `gather_feature_values()` on BinnedDataset
+
+**Status**: ✅ Complete  
+**Estimate**: 1.5 hours
+
+**Description**: Add filtered iteration for linear tree fitting (subset of samples per feature).
+
+```rust
+impl BinnedDataset {
+    pub fn gather_feature_values(
+        &self,
+        feature: usize,
+        sample_indices: &[u32],  // sorted due to stable partitioning
+        buffer: &mut [f32],
+    ) { ... }
+}
+```
+
+**Key insight**: Sample indices are sorted (stable partitioning in tree growing), enabling merge-join for sparse features.
+
+**Definition of Done**:
+
+- ✅ Method implemented and tested
+- ✅ Works for dense (indexed gather), sparse (merge-join)
+- ✅ Panics on categorical/bundled features (per design)
+- ✅ `debug_assert!` verifies buffer length
+- ✅ 7 tests: dense, sparse, empty, single sample, panic on categorical, merge-join algorithm
+
+---
+
+### Story 3.3: Add `FeatureValueIter` Enum
+
+**Status**: ⏸️ Deferred  
+**Estimate**: 1 hour  
+**Priority**: Low—add only if needed
+
+**Description**: Secondary API for cases needing iterator ergonomics (`.zip()`, early return).
+
+**Note**: Has ~5-10% overhead for dense features due to per-iteration match.
+
+**Reason for Deferral**: Team consensus (Round 11) that `for_each` covers all known use cases. No current consumer needs iterator semantics. If a use case emerges, revisit.
+
+---
+
+### Story 3.4: Stakeholder Feedback Check (Epic 3)
+
+**Status**: ✅ Complete  
+**Estimate**: 15 min
+
+**Description**: Review `tmp/stakeholder_feedback.md` for feature iteration concerns. Check for any new patterns needed beyond `for_each` and `gather`.
+
+**Outcome**: No new feedback to address. Proceeding to Epic 4.
+
+---
+
+## Epic 4: GBLinear Migration
+
+*Update GBLinear training and prediction to use BinnedDataset directly.*
+
+**Key Principle**: Modify existing `train()` and `predict_into()` signatures. Do NOT add `train_binned()` or `predict_binned()`.
+
+### Story 4.1: Update Updater to Use `for_each_feature_value()`
+
+**Status**: Not Started  
+**Estimate**: 2 hours
+
+**Description**: Refactor `Updater` methods to work with `BinnedDataset` via `for_each_feature_value()`.
+
+**Before** (uses FeaturesView):
+
+```rust
+fn compute_weight_update(data: &FeaturesView<'_>, feature: usize, ...) {
+    let feature_values = data.feature(feature);
+    for (row, &value) in feature_values.iter().enumerate() { ... }
+}
+```
+
+**After** (uses BinnedDataset):
+
+```rust
+fn compute_weight_update(data: &BinnedDataset, feature: usize, ...) {
+    data.for_each_feature_value(feature, |row, value| { ... });
+}
+```
+
+**Definition of Done**:
+
+- Updater uses BinnedDataset directly
+- All GBLinear training tests pass
+- Bit-identical results with old implementation (DD-6)
+
+---
+
+### Story 4.2: Update GBLinear Signatures (predict + train)
+
+**Status**: Not Started  
+**Estimate**: 2 hours
+
+**Description**: Update both `predict_into()` and training flow to use `BinnedDataset` directly.
+
+**Changes**:
+
+1. `LinearModel::predict_into()`: `FeaturesView` → `&BinnedDataset`
+2. `GBLinearTrainer::train()`: Pass `&BinnedDataset` to Updater
+3. Update all callers
+
+**Definition of Done**:
+
+- Both signatures updated (breaking changes)
+- All callers updated
+- Bit-identical results with old implementation (DD-6)
+- Training and prediction tests pass
+- No parallel methods (`train_binned`, `predict_binned`)—single code path
+
+---
+
+### Story 4.3: GBLinear Benchmark Validation
+
+**Status**: Not Started  
+**Estimate**: 1 hour
+
+**Description**: Verify GBLinear training/prediction meets overhead thresholds.
+
+**Thresholds**:
+
+- Training: < 2x overhead on small datasets (≤10K samples)
+- Prediction: < 10% overhead
+
+**Definition of Done**:
+
+- Benchmarks captured
+- Overhead within thresholds
+- Results documented in `docs/benchmarks/`
+
+---
+
+### Story 4.4: Review/Demo: GBLinear Migration
+
+**Status**: Not Started  
+**Estimate**: 30 min
+
+**Description**: Demo GBLinear working with unified Dataset.
+
+---
+
+### Story 4.5: Stakeholder Feedback Check (Epic 4)
+
+**Status**: Not Started  
+**Estimate**: 15 min
+
+**Description**: Review `tmp/stakeholder_feedback.md` for GBLinear migration concerns.
+
+---
+
+## Epic 5: Linear Trees & SHAP Migration
+
+*Update linear tree fitting and SHAP explainers to use BinnedDataset.*
+
+### Story 5.1: Update LeafLinearTrainer to Use `gather_feature_values()`
+
+**Status**: Not Started  
+**Estimate**: 2 hours
+
+**Description**: Refactor linear tree fitting from per-sample access to per-feature gather.
+
+**Before** (uses DataAccessor per-sample):
+
+```rust
+for &row in leaf_samples {
+    let sample = data.sample(row);
+    for &feat in features {
+        x_buffer.push(sample.feature(feat));  // poor cache locality
+    }
+}
+```
+
+**After** (uses gather per-feature):
+
+```rust
+for &feat_idx in features {
+    dataset.gather_feature_values(feat_idx, leaf_samples, &mut feature_buffer);
+    x_matrix.extend_from_slice(&feature_buffer[..n_samples]);
+}
+```
+
+**Definition of Done**:
+
+- LeafLinearTrainer uses BinnedDataset directly
+- Linear trees training tests pass
+- Cache-friendly access pattern
+
+---
+
+### Story 5.2: Update Linear SHAP Explainer
 
 **Status**: Not Started  
 **Estimate**: 1.5 hours
 
-**Description**: Update PyGBDTModel.fit() and predict() to use new wrapper.
+**Description**: Migrate LinearExplainer to use `for_each_feature_value()`.
 
-**Changes**:
-
-- fit(): Accept PyBinnedDataset, pass BinnedDataset directly to GBDTModel::train_binned()
-- predict(): Use BinnedDataset feature access
+**Current**: Uses `features.feature(f)[i]` pattern  
+**Target**: Uses `dataset.for_each_feature_value(f, |i, val| ...)`
 
 **Definition of Done**:
 
-- Training works with PyBinnedDataset
-- Prediction works with PyBinnedDataset
-- All GBDT Python tests pass
+- LinearExplainer uses BinnedDataset
+- SHAP values unchanged (bit-identical where applicable)
 
 ---
 
-### Story 4.1c: Rename and Delete Old PyDataset
+### Story 5.3: Update Tree SHAP to Use SampleBlocks
 
 **Status**: Not Started  
-**Estimate**: 1 hour  
-**Prerequisite**: All models migrated
+**Estimate**: 1.5 hours
 
-**Description**: Rename PyBinnedDataset to PyDataset and delete old implementation.
+**Description**: Migrate TreeExplainer from per-sample access to batched SampleBlocks.
+
+**Current**: Uses `features.get(sample_idx, feature)`  
+**Target**: Uses `SampleBlocks` iteration (consistent with GBDT prediction)
+
+**Definition of Done**:
+
+- TreeExplainer uses SampleBlocks
+- SHAP values unchanged
+- Better cache locality
+
+---
+
+### Story 5.4: Stakeholder Feedback Check (Epic 5)
+
+**Status**: Not Started  
+**Estimate**: 15 min
+
+---
+
+## Epic 6: Python Bindings Migration
+
+*Update Python bindings to use unified Dataset.*
+
+### Story 6.1: Update PyDataset to Wrap BinnedDataset
+
+**Status**: Not Started  
+**Estimate**: 1.5 hours
+
+**Description**: Change `PyDataset.inner` from `types::Dataset` to `BinnedDataset`.
+
+**Key Changes**:
+
+- Constructor creates BinnedDataset directly
+- Remove conversion code between types
+- Delegate n_samples, n_features, etc.
 
 **Definition of Done**:
 
 - PyDataset wraps BinnedDataset
 - All Python tests pass
-- No deprecated code remains
 
 ---
 
-### Story 4.2: Update PyGBDTModel to Use New PyDataset
-
-**Status**: Not Started  
-**Estimate**: 1.5 hours
-
-**Description**: Update PyGBDTModel.fit() and predict() for new PyDataset.
-
-**Changes**:
-
-- fit(): Pass BinnedDataset directly to GBDTModel::train_binned()
-- predict(): Use BinnedDataset feature access
-
-**Definition of Done**:
-
-- Training works with new PyDataset
-- Prediction works with new PyDataset
-- Tests pass
-
----
-
-### Story 4.3: Update PyGBLinearModel
-
-**Status**: Not Started  
-**Estimate**: 1.5 hours
-
-**Description**: Update PyGBLinearModel for new PyDataset.
-
----
-
-### Story 4.4: Python Performance Validation
+### Story 6.2: Update PyGBDTModel
 
 **Status**: Not Started  
 **Estimate**: 1 hour
 
-**Description**: Run Python benchmarks and validate no significant regression.
-
-**Benchmark**: `uv run boosters-eval full`
-
-**Test Matrix**:
-
-| Model    | Dataset Size  | Metric        | Threshold |
-| -------- | ------------- | ------------- | --------- |
-| GBDT     | Small (1K)    | Train time    | < 2x      |
-| GBDT     | Medium (100K) | Train time    | < 1.1x    |
-| GBDT     | Large (1M)    | Train time    | < 1.05x   |
-| GBLinear | Small (1K)    | Train time    | < 2x      |
-| GBLinear | Medium (100K) | Train time    | < 1.1x    |
-| Predict  | Any           | Predict time  | < 1.1x    |
-
----
-
-### Story 4.5: End-to-End Smoke Test
-
-**Status**: Not Started  
-**Estimate**: 30 min
-
-**Description**: Run full boosters-eval test suite as smoke test.
-
-**Command**: `uv run boosters-eval full`
+**Description**: Update fit() and predict() to work with BinnedDataset-backed PyDataset.
 
 **Definition of Done**:
 
-- All boosters-eval tests pass
-- No regressions in output
+- GBDT training and prediction work
+- All Python GBDT tests pass
 
 ---
 
-### Story 4.6: Review/Demo: Full Python Migration
-
-**Status**: Not Started  
-**Estimate**: 30 min
-
-**Description**: Demo complete Python migration with performance comparison.
-
-**Deliverables**:
-
-- Performance comparison table (baseline vs final)
-- Code reduction metrics
-- API examples showing unified interface
-
----
-
-## Epic 5: Cleanup and Documentation
-
-*Remove deprecated code and update docs.*
-
-### Story 5.0: Move Reusable Views to Common Location
+### Story 6.3: Update PyGBLinearModel
 
 **Status**: Not Started  
 **Estimate**: 1 hour
 
-**Description**: Before deleting types/, move any views/types that are reusable to a common location in BinnedDataset or a shared module.
-
-**Analysis Required**:
-
-- Review `types/views.rs` for types used by BinnedDataset
-- Review `types/schema.rs` for common schema types
-- Move reusable types to `data/binned/` or new `data/common/` module
+**Description**: Update fit() and predict() for BinnedDataset.
 
 **Definition of Done**:
 
-- Reusable views identified and moved
-- BinnedDataset uses moved types
-- No code duplication
+- GBLinear training and prediction work
+- All Python GBLinear tests pass
 
 ---
 
-### Story 5.1: Delete types/Dataset
+### Story 6.4: Python Performance Validation
 
 **Status**: Not Started  
-**Estimate**: 1 hour  
-**Prerequisite**: Story 5.0 complete
+**Estimate**: 1 hour
 
-**Description**: Remove `types/Dataset` and related types.
+**Description**: Run `uv run boosters-eval full` and validate no regressions.
 
-**Files to Delete/Modify**:
+**Thresholds** (from previous Epic 4):
 
-- `crates/boosters/src/data/types/dataset.rs` - Delete
-- `crates/boosters/src/data/types/views.rs` - Delete (after moving needed parts)
-- `crates/boosters/src/data/types/schema.rs` - Delete or consolidate
-- `crates/boosters/src/data/mod.rs` - Update exports
+| Model    | Size   | Threshold |
+| -------- | ------ | --------- |
+| GBDT     | Small  | < 2x      |
+| GBDT     | Medium | < 1.1x    |
+| GBLinear | Small  | < 2x      |
+| GBLinear | Medium | < 1.1x    |
+| Predict  | Any    | < 1.1x    |
+
+**Definition of Done**:
+
+- All benchmarks pass thresholds
+- Results documented
+
+---
+
+### Story 6.5: Review/Demo: Python Migration
+
+**Status**: Not Started  
+**Estimate**: 30 min
+
+---
+
+## Epic 7: Cleanup and Rename
+
+*Delete old types and rename BinnedDataset to Dataset.*
+
+### Story 7.1: Delete types/Dataset and FeaturesView
+
+**Status**: Not Started  
+**Estimate**: 1 hour
+
+**Description**: Remove deprecated types. Preserve and move `TargetsView` and `WeightsView` per DD-7.
+
+**Steps**:
+
+1. Move `TargetsView` and `WeightsView` to `data/binned/` (if not already there)
+2. Delete `data/types/dataset.rs`
+3. Delete `data/types/views.rs` (after confirming TargetsView/WeightsView moved)
+4. Update `data/mod.rs` exports
 
 **Definition of Done**:
 
 - types::Dataset deleted
-- No deprecated warnings in build
-- All tests pass
+- FeaturesView deleted
+- TargetsView and WeightsView preserved and accessible
+- No deprecated warnings
 
 ---
 
-### Story 5.2: Delete deprecated/ Folder
+### Story 7.2: Delete DataAccessor Trait
 
 **Status**: Not Started  
 **Estimate**: 30 min
 
-**Description**: Remove remaining deprecated code.
-
----
-
-### Story 5.2a: Dead Code Audit and Cleanup
-
-**Status**: Not Started  
-**Estimate**: 1.5 hours
-
-**Description**: Audit binned module for dead code, check for unexported modules, and remove `#![allow(dead_code)]` markers.
-
-**Audit Checklist**:
-
-1. **Unexported Modules**:
-   - Check `mod.rs` for modules declared but not `pub use`d
-   - Example: `sample_blocks` is `mod sample_blocks` but no `pub use sample_blocks::*`
-   - Either export them or decide in Story 2.2a
-
-2. **Files with Dead Code Markers**:
-   - `data/binned/dataset.rs` - `#![allow(dead_code)]`
-   - `data/binned/builder.rs` - `#![allow(dead_code)] // During migration`
-   - `data/binned/feature_analysis.rs` - `#![allow(dead_code)]`
-   - `data/binned/view.rs` - `#![allow(dead_code)]`
-   - `data/binned/group.rs` - `#![allow(dead_code)]`
-   - `data/binned/bin_mapper.rs` - `#![allow(dead_code)]`
-
-3. **Methods to Review**:
-   - `raw_value(sample, feature)` - superseded by `raw_feature_slice()`?
-   - `raw_numeric_matrix()` - used only in tests?
-   - `original_feature_view()` - same question
-   - Any other methods only used in tests
-
-**Handling SampleBlocks**:
-
-- If Story 2.2a is implemented → SampleBlocks will be exported and used
-- If Story 2.2a is skipped → Delete `sample_blocks.rs` in this story
+**Description**: Remove `DataAccessor` trait. All callers now use `BinnedDataset` or `SampleBlocks`.
 
 **Definition of Done**:
 
-- All `#![allow(dead_code)]` removed from binned module
-- All modules either exported or deleted (no hidden dead modules)
-- Compiler confirms no dead code (or dead code deleted)
-- Methods not used in production deleted or justified
+- Trait deleted
+- No remaining references
+
+---
+
+### Story 7.3: Delete deprecated/ Folder
+
+**Status**: Not Started  
+**Estimate**: 30 min
+
+---
+
+### Story 7.4: Remove Dead Code Markers
+
+**Status**: Not Started  
+**Estimate**: 1 hour
+
+**Description**: Remove all `#![allow(dead_code)]` from binned module.
+
+**Definition of Done**:
+
+- No dead code markers
 - `cargo clippy` clean
 
 ---
 
-### Story 5.3: Import Cleanup and Re-exports
+### Story 7.5: Rename BinnedDataset to Dataset
 
 **Status**: Not Started  
-**Estimate**: 30 min
+**Estimate**: 1 hour
 
-**Description**: Clean up imports throughout codebase after deletion.
-
-**Tasks**:
-
-- Update all `use data::types::*` imports
-- Verify re-exports from `data/mod.rs` are correct
-- Run `cargo check` to verify no broken imports
+**Description**: Global rename: `BinnedDataset` → `Dataset`.
 
 **Definition of Done**:
 
-- No broken imports
-- Clean re-export structure
-- `cargo check` passes
+- Rename complete
+- All tests pass
+- Python API still uses `Dataset` name (unchanged from user perspective)
 
 ---
 
-### Story 5.4: Update Documentation
+### Story 7.6: Final Performance Report
 
 **Status**: Not Started  
 **Estimate**: 1 hour
-
-**Description**: Update RFC-0018 and any affected docs.
-
----
-
-### Story 5.5: Final Performance Report
-
-**Status**: Not Started  
-**Estimate**: 1 hour
-
-**Description**: Write final performance comparison report.
 
 **Output**: `docs/benchmarks/dataset-consolidation-final.md`
 
 **Required Sections**:
 
-1. **Executive Summary**: Pass/fail for each success metric from Overview
-2. **Benchmark Comparison**:
-   - GBLinear training: baseline vs final
-   - GBDT training: baseline vs final  
-   - Prediction: baseline vs final
-   - For each: mean, std, overhead %
-3. **Memory Overhead**: Peak memory baseline vs final
-4. **Threshold Compliance**: 
-   - GBLinear training: < 2x? ✓/✗
-   - Prediction: < 10%? ✓/✗
-   - Memory: < 20%? ✓/✗
-5. **Code Metrics**: Lines deleted, public API surface change
-6. **Recommendations**: Any follow-up work needed
-
-**Definition of Done**:
-
-- Report covers all success metrics
-- Clear pass/fail for each threshold
-- Stakeholder can assess consolidation success at a glance
+1. Executive Summary (pass/fail for each metric)
+2. Benchmark Comparison (baseline vs final)
+3. Memory Overhead
+4. Code Metrics (lines deleted, types removed)
+5. Recommendations
 
 ---
 
-### Story 5.6: Review/Demo: Full Migration
+### Story 7.7: Review/Demo: Full Consolidation
 
 **Status**: Not Started  
 **Estimate**: 1 hour
 
-**Description**: Final review/demo session covering ALL epics. Present unified dataset architecture to stakeholders.
-
-**Scope**: This is the final demo for the entire consolidation effort (Epics 0-5).
-
-**Demo Contents**:
-
-- Live walkthrough of unified `BinnedDataset` API
-- Before/after code examples
-- Performance report summary from Story 5.5
-- Deleted code metrics
+**Description**: Final demo covering all epics.
 
 **Output**: `workdir/tmp/development_review_<timestamp>.md`
 
 ---
 
-### Story 5.7: Retrospective
+### Story 7.8: Retrospective
 
 **Status**: Not Started  
 **Estimate**: 30 min
 
-**Description**: Conduct retrospective and document learnings.
-
-**Output**: `tmp/retrospective.md`
-
-**Contents**:
-
-- What went well
-- What didn't go well
-- Process improvements for future work
+**Output**: `workdir/tmp/retrospective.md`
 
 ---
 
 ## Summary
 
-| Epic | Stories | Description                                 |
-| ---- | ------- | ------------------------------------------- |
-| 0    | 5       | Benchmark infrastructure + baseline capture |
-| 1    | 0       | ~~Core trait infrastructure~~ REMOVED (DD-32) |
-| 2    | 6       | BinnedDataset Prediction + SampleBlocks     |
-| 3    | 4       | GBLinear with BinnedDataset                 |
-| 4    | 8       | Python migration (split 4.1a/b/c)           |
-| 5    | 9       | Cleanup + docs + dead code audit            |
-| **Total** | **32** |                                        |
+| Epic      | Stories | Description                                    |
+| --------- | ------- | ---------------------------------------------- |
+| 0         | 5       | Benchmark infrastructure + baseline capture ✅ |
+| 2         | 6       | Prediction via SampleBlocks ✅                 |
+| 3         | 4       | Feature value iteration (RFC-0019)             |
+| 4         | 5       | GBLinear migration                             |
+| 5         | 4       | Linear trees & SHAP migration                  |
+| 6         | 5       | Python bindings migration                      |
+| 7         | 8       | Cleanup, rename, docs                          |
+| **Total** | **37**  |                                                |
 
 ### Time Estimates
 
-| Epic      | Estimate     |
-| --------- | ------------ |
-| 0         | ~4.5 hours   |
-| 1         | ~~1.5 hours~~ 0 (removed) |
-| 2         | ~7 hours     |
-| 3         | ~4.5 hours   |
-| 4         | ~8.5 hours   |
-| 5         | ~6.5 hours   |
-| **Total** | **~31 hours** |
+| Epic      | Estimate      |
+| --------- | ------------- |
+| 0         | 4.5 hours ✅  |
+| 2         | 7 hours ✅    |
+| 3         | 4.5 hours     |
+| 4         | 5.5 hours     |
+| 5         | 5.5 hours     |
+| 6         | 5 hours       |
+| 7         | 6 hours       |
+| **Total** | **~38 hours** |
 
 ### Risk Assessment
 
-| Risk                                | Likelihood | Impact | Mitigation                                  |
-| ----------------------------------- | ---------- | ------ | ------------------------------------------- |
-| Binning overhead too high           | Medium     | High   | Disable binning when bins not needed        |
-| GBLinear accuracy change            | Low        | High   | Comprehensive accuracy tests                |
-| Python API breaking changes         | Low        | Medium | Maintain signatures, new Dataset is drop-in |
-| Performance regression in hot paths | Medium     | Medium | Benchmark early and often                   |
+| Risk                             | Likelihood | Impact | Mitigation                               |
+| -------------------------------- | ---------- | ------ | ---------------------------------------- |
+| Bundled feature extraction slow  | Medium     | Medium | Profile, consider batch extraction       |
+| Sparse gather correctness        | Low        | High   | Thorough testing with sorted indices     |
+| GBLinear accuracy change         | Low        | High   | Bit-identical tests (DD-6)               |
+| Python API breaking              | Low        | Medium | Keep public API stable, change internals |
 
 ---
 
 ## Decision Log
 
-*Decisions made during refinement will be logged here.*
+*Decisions made during refinement.*
 
-- **DD-1 (Round 1)**: Added decision gate after Epic 0 - if overhead exceeds thresholds, evaluate mitigation before proceeding.
-- **DD-2 (Round 1)**: Added explicit overhead thresholds: <2x for GBLinear training, <10% for predictions.
-- **DD-3 (Round 1)**: Added memory profiling story (0.4) to capture memory overhead.
-- **DD-4 (Round 1)**: Benchmark configuration standardized: fixed seed 42, 5 runs, mean±std reporting.
-- **DD-5 (Round 2)**: ~~Added Story 1.1 for unified trait infrastructure before Epic 2/3 stories.~~ **SUPERSEDED by DD-32.**
-- **DD-6 (Round 2)**: GBLinear bit-identical output test required - deterministic models must match exactly.
-- **DD-7 (Round 2)**: TargetsView/WeightsView to be preserved and moved, not deleted.
-- **DD-8 (Round 3)**: Per-feature max bins removed from this backlog (scope creep) - will be separate backlog if needed.
-- **DD-9 (Round 3)**: Predictor must use generics (monomorphization), NOT trait objects, for performance.
-- **DD-10 (Round 3)**: ~~RawFeatureAccess::feature_slice() returns None for sparse - caller must handle.~~ **SUPERSEDED by DD-32.**
-- **DD-11 (Round 4)**: ~~Added `feature_contiguous()` to FeatureAccess for efficient prediction (avoids per-sample access).~~ **SUPERSEDED by DD-32.**
-- **DD-12 (Round 4)**: ~~All trait methods marked `#[inline]` for monomorphization.~~ **SUPERSEDED by DD-32.**
-- **DD-13 (Round 4)**: Critical path and rollback plan added to overview.
-- **DD-14 (Round 5)**: Story 4.1 split into 4.1a/b/c for safer incremental migration.
-- **DD-15 (Round 5)**: Added Story 4.5 (Smoke Test) using boosters-eval before final validation.
-- **DD-16 (Round 5)**: Added Story 5.0 (Move Reusable Views) - analyze and move shared types before deletion.
-- **DD-17 (Round 6)**: Added Story 0.5 (Risk Review Gate) - explicit go/no-go checkpoint after baselines.
-- **DD-18 (Round 6)**: ~~Added trait dispatch micro-benchmark to Story 1.1 to verify monomorphization.~~ **SUPERSEDED by DD-32.**
-- **DD-19 (Round 6)**: Memory thresholds defined: <20% acceptable, 20-50% monitor, >50% consider mitigation.
-- **DD-20 (Round 7)**: Story 0.5 expanded with investigation checklist - don't give up easily, find root cause.
-- **DD-21 (Round 7)**: Story 2.2a added - integrate SampleBlocks (currently dead code) for prediction.
-- **DD-22 (Round 7)**: Story 5.2a added - dead code audit, remove `#![allow(dead_code)]` markers.
-- **DD-23 (Round 8)**: Story 0.5 now includes flamegraph profiling (`cargo flamegraph`) and `BinnedDataset::raw_only()` as potential mitigation.
-- **DD-24 (Round 8)**: Story 2.2a marked Nice-to-Have with decision gate (>10% improvement required).
-- **DD-25 (Round 8)**: Story 5.2a expanded to check for unexported modules (like SampleBlocks).
-- **DD-26 (Round 9)**: Story 0.5 mitigations prioritized: existing config first, struct changes deferred to future backlog.
-- **DD-27 (Round 9)**: Story 2.3 expanded with explicit SampleBlocks benchmark methodology and decision criteria.
-- **DD-28 (Round 9)**: Added DEFER outcome to Story 0.5 - proceed with work even if overhead requires future architectural changes.
-- **DD-29 (Round 10)**: Story 5.5 expanded with required report sections and pass/fail structure.
-- **DD-30 (Round 10)**: Story 5.6 clarified as final review covering ALL epics.
-- **DD-31 (Round 10)**: Added "Backlog Complete Criteria" checklist to overview.
-- **DD-32 (Implementation)**: **Epic 1 removed entirely** after stakeholder feedback. Creating new traits (`DatasetAccess`, `FeatureAccess`, `RawFeatureAccess`) was over-engineering. Existing `DataAccessor` suffices for prediction; `BinnedDataset` methods (`raw_feature_slice()`, `raw_feature_iter()`, `labels()`, `weights()`) suffice for linear models. No new traits needed.
+- **DD-1 (Round 1)**: Added decision gate after Epic 0.
+- **DD-2 (Round 1)**: Overhead thresholds: <2x GBLinear training, <10% prediction.
+- **DD-3 (Round 1)**: Memory profiling added.
+- **DD-4 (Round 1)**: Benchmark config: seed 42, 5 runs, mean±std.
+- **DD-5 (Round 2)**: ~~Trait infrastructure~~ **SUPERSEDED by DD-32.**
+- **DD-6 (Round 2)**: GBLinear bit-identical output required.
+- **DD-7 (Round 2)**: TargetsView/WeightsView preserved.
+- **DD-13 (Round 4)**: Critical path and rollback plan added.
+- **DD-19 (Round 6)**: Memory: <20% acceptable, 20-50% monitor.
+- **DD-21 (Round 7)**: SampleBlocks integration added.
+- **DD-32 (Implementation)**: Epic 1 removed—no new traits needed.
+- **DD-33 (Round 11)**: RFC-0019 integration—`for_each_feature_value()` and `gather_feature_values()` patterns.
+- **DD-34 (Round 11)**: Minimal API principle—update existing methods, don't add parallel APIs.
+- **DD-35 (Round 11)**: `BinnedDataset` renamed to `Dataset` in cleanup phase.
+- **DD-36 (Round 11)**: Backlog restructured: Epic 3 = RFC-0019, Epic 4 = GBLinear, Epic 5 = Linear Trees/SHAP, Epic 6 = Python, Epic 7 = Cleanup.
+- **DD-37 (Round 11)**: Story 3.3 (`FeatureValueIter`) deferred—`for_each` covers all known use cases, iterator has overhead.
+- **DD-38 (Round 11)**: Stories 4.2/4.3 merged—predict and train signature changes are interdependent.
+- **DD-39 (Round 11)**: Story 3.2 requires `debug_assert!` for sorted indices and test coverage for assumption.
+- **DD-40 (Round 11)**: Story 7.1 clarified—`TargetsView` and `WeightsView` must be moved before deletion per DD-7.
