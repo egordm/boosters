@@ -39,12 +39,16 @@ pub(crate) mod raw;
 // Core Dataset Types (user-facing)
 // =============================================================================
 
-pub use raw::feature::{Column, SparseColumn};
+pub use raw::feature::Feature;
 pub use raw::dataset::{Dataset, DatasetBuilder};
 pub use error::DatasetError;
 pub use raw::schema::{DatasetSchema, FeatureMeta, FeatureType};
 pub use raw::views::{FeaturesView, SamplesView, TargetsView, WeightsIter, WeightsView};
 pub use raw::sample_blocks::{SampleBlocks, SampleBlocksIter};
+
+// Legacy compatibility aliases (will be removed in Epic 6)
+#[allow(deprecated)]
+pub use raw::feature::Column;
 
 // =============================================================================
 // Accessor Traits (internal)

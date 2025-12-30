@@ -32,7 +32,11 @@ pub mod views;
 // Re-export public types
 pub use accessor::{DataAccessor, SampleAccessor};
 pub use dataset::{Dataset, DatasetBuilder};
-pub use feature::{Column, SparseColumn};
+pub use feature::Feature;
 pub use sample_blocks::{SampleBlocks, SampleBlocksIter};
 pub use schema::{DatasetSchema, FeatureMeta, FeatureType};
 pub use views::{FeaturesView, SamplesView, TargetsView, WeightsIter, WeightsView};
+
+// Legacy compatibility aliases (will be removed in Epic 6)
+#[allow(deprecated)]
+pub use feature::Column;

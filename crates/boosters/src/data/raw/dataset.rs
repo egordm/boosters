@@ -6,7 +6,7 @@
 
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
 
-use super::feature::Column;
+use super::feature::Feature;
 use super::schema::{DatasetSchema, FeatureMeta};
 use super::views::{FeaturesView, TargetsView, WeightsView};
 use crate::data::error::DatasetError;
@@ -257,7 +257,7 @@ impl Dataset {
 #[derive(Debug, Default)]
 #[deprecated]
 pub struct DatasetBuilder {
-    columns: Vec<Column>,
+    features: Vec<Feature>,
     metas: Vec<FeatureMeta>,
     targets: Option<Array2<f32>>,
     weights: Option<Array1<f32>>,
@@ -271,14 +271,14 @@ impl DatasetBuilder {
 
     /// Add a numeric feature column.
     pub fn add_feature(mut self, name: &str, values: ArrayView1<f32>) -> Self {
-        self.columns.push(Column::dense(values.to_owned()));
+        self.features.push(Feature::dense(values.to_owned()));
         self.metas.push(FeatureMeta::numeric_named(name));
         self
     }
 
     /// Add an unnamed numeric feature column.
     pub fn add_feature_unnamed(mut self, values: ArrayView1<f32>) -> Self {
-        self.columns.push(Column::dense(values.to_owned()));
+        self.features.push(Feature::dense(values.to_owned()));
         self.metas.push(FeatureMeta::numeric());
         self
     }
@@ -288,14 +288,14 @@ impl DatasetBuilder {
     /// Values should be non-negative integers encoded as floats
     /// (e.g., 0.0, 1.0, 2.0).
     pub fn add_categorical(mut self, name: &str, values: ArrayView1<f32>) -> Self {
-        self.columns.push(Column::dense(values.to_owned()));
+        self.features.push(Feature::dense(values.to_owned()));
         self.metas.push(FeatureMeta::categorical_named(name));
         self
     }
 
     /// Add an unnamed categorical feature column.
     pub fn add_categorical_unnamed(mut self, values: ArrayView1<f32>) -> Self {
-        self.columns.push(Column::dense(values.to_owned()));
+        self.features.push(Feature::dense(values.to_owned()));
         self.metas.push(FeatureMeta::categorical());
         self
     }
@@ -317,8 +317,8 @@ impl DatasetBuilder {
         n_samples: usize,
         default: f32,
     ) -> Self {
-        self.columns
-            .push(Column::sparse(indices, values, n_samples, default));
+        self.features
+            .push(Feature::sparse(indices, values, n_samples, default));
         self.metas.push(FeatureMeta::numeric_named(name));
         self
     }
@@ -356,50 +356,46 @@ impl DatasetBuilder {
     ///
     /// Returns [`DatasetError`] if:
     /// - No features provided
-    /// - Columns have inconsistent sample counts
+    /// - Features have inconsistent sample counts
     /// - Targets have wrong sample count
     /// - Weights have wrong length
     /// - Sparse indices are unsorted or have duplicates
     pub fn build(self) -> Result<Dataset, DatasetError> {
-        if self.columns.is_empty() {
+        if self.features.is_empty() {
             return Err(DatasetError::EmptyFeatures);
         }
 
-        // Determine n_samples from first column
-        let n_samples = self.columns[0].n_samples();
-        let n_features = self.columns.len();
+        // Determine n_samples from first feature
+        let n_samples = self.features[0].n_samples();
+        let n_features = self.features.len();
 
-        // Validate all columns have same n_samples
-        for (i, col) in self.columns.iter().enumerate() {
-            if col.n_samples() != n_samples {
+        // Validate all features have same n_samples
+        for (i, feat) in self.features.iter().enumerate() {
+            if feat.n_samples() != n_samples {
                 return Err(DatasetError::ShapeMismatch {
                     expected: n_samples,
-                    got: col.n_samples(),
+                    got: feat.n_samples(),
                     field: "features",
                 });
             }
 
-            // Validate sparse columns
-            if let Column::Sparse(sparse) = col {
-                if let Err((pos, idx)) = sparse.validate() {
-                    // Check if it's unsorted or duplicate
-                    if pos > 0 && sparse.indices[pos] == sparse.indices[pos - 1] {
+            // Validate sparse features
+            if let Err((pos, idx)) = feat.validate() {
+                // Check if it's unsorted or duplicate
+                if let Feature::Sparse { indices, .. } = feat {
+                    if pos > 0 && indices[pos] == indices[pos - 1] {
                         return Err(DatasetError::DuplicateSparseIndices {
                             feature_idx: i,
                             index: idx,
                         });
-                    } else {
-                        return Err(DatasetError::UnsortedSparseIndices { feature_idx: i });
-                    }
-                }
-                // Check bounds
-                for &idx in &sparse.indices {
-                    if idx as usize >= n_samples {
+                    } else if idx as usize >= n_samples {
                         return Err(DatasetError::SparseIndexOutOfBounds {
                             feature_idx: i,
                             index: idx,
                             n_samples,
                         });
+                    } else {
+                        return Err(DatasetError::UnsortedSparseIndices { feature_idx: i });
                     }
                 }
             }
@@ -428,16 +424,18 @@ impl DatasetBuilder {
         }
 
         // Build feature matrix [n_features, n_samples]
-        let mut features = Array2::zeros((n_features, n_samples));
-        for (i, col) in self.columns.into_iter().enumerate() {
-            let dense = col.to_dense();
-            features.row_mut(i).assign(&dense);
+        // Note: Currently densifies sparse features. This will be changed
+        // to preserve sparse storage when Dataset is updated to use Box<[Feature]>.
+        let mut features_arr = Array2::zeros((n_features, n_samples));
+        for (i, feat) in self.features.into_iter().enumerate() {
+            let dense = feat.to_dense();
+            features_arr.row_mut(i).assign(&dense);
         }
 
         let schema = DatasetSchema::from_features(self.metas);
 
         Ok(Dataset {
-            features,
+            features: features_arr,
             schema,
             targets: self.targets,
             weights: self.weights,

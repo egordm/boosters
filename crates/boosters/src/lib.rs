@@ -52,11 +52,11 @@ pub use model::gblinear::GBLinearConfig;
 pub use training::{Metric, MetricFn, Objective, ObjectiveFn};
 
 // Data types (for preparing training data)
-// Allow deprecated: These are re-exported for backward compatibility during RFC-0018 migration
+// Allow deprecated: These are re-exported for backward compatibility during RFC-0021 migration
 #[allow(deprecated)]
 pub use data::{
-    Column, Dataset, DatasetBuilder, DatasetError, DatasetSchema, FeatureMeta, FeatureType,
-    FeaturesView, SparseColumn, TargetsView, WeightsView,
+    Column, Dataset, DatasetBuilder, DatasetError, DatasetSchema, Feature, FeatureMeta, FeatureType,
+    FeaturesView, TargetsView, WeightsView,
 };
 
 // Shared utilities
