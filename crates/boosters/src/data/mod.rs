@@ -7,6 +7,7 @@
 //! - [`Dataset`]: Main container for features, targets, and weights
 //! - [`DatasetBuilder`]: Fluent builder for complex dataset construction
 //! - [`FeaturesView`] / [`TargetsView`] / [`WeightsView`]: Read-only views
+//! - [`SampleBlocks`]: Efficient block-based iteration for prediction
 //!
 //! # Training-Specific Types
 //!
@@ -31,24 +32,25 @@ pub mod binned;
 mod error;
 mod ndarray;
 
-// Core data types (Dataset, views, accessors, schema)
-pub(crate) mod types;
+// Raw data types (Dataset, views, accessors, schema, sample_blocks)
+pub(crate) mod raw;
 
 // =============================================================================
 // Core Dataset Types (user-facing)
 // =============================================================================
 
-pub use types::column::{Column, SparseColumn};
-pub use types::dataset::{Dataset, DatasetBuilder};
+pub use raw::feature::{Column, SparseColumn};
+pub use raw::dataset::{Dataset, DatasetBuilder};
 pub use error::DatasetError;
-pub use types::schema::{DatasetSchema, FeatureMeta, FeatureType};
-pub use types::views::{FeaturesView, SamplesView, TargetsView, WeightsIter, WeightsView};
+pub use raw::schema::{DatasetSchema, FeatureMeta, FeatureType};
+pub use raw::views::{FeaturesView, SamplesView, TargetsView, WeightsIter, WeightsView};
+pub use raw::sample_blocks::{SampleBlocks, SampleBlocksIter};
 
 // =============================================================================
 // Accessor Traits (internal)
 // =============================================================================
 
-pub use types::accessor::{DataAccessor, SampleAccessor};
+pub use raw::accessor::{DataAccessor, SampleAccessor};
 
 // =============================================================================
 // ndarray Utilities

@@ -33,8 +33,8 @@
 //! });
 //! ```
 
-use super::dataset::BinnedDataset;
-use super::view::FeatureView;
+use crate::data::binned::dataset::BinnedDataset;
+use crate::data::binned::view::FeatureView;
 use crate::utils::Parallelism;
 use ndarray::{Array2, ArrayView2};
 use std::cell::RefCell;

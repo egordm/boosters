@@ -6,7 +6,7 @@
 
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
 
-use super::column::Column;
+use super::feature::Column;
 use super::schema::{DatasetSchema, FeatureMeta};
 use super::views::{FeaturesView, TargetsView, WeightsView};
 use crate::data::error::DatasetError;

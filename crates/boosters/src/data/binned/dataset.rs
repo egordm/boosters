@@ -10,10 +10,10 @@
 use super::bin_mapper::BinMapper;
 use super::builder::BuiltGroups;
 use super::group::FeatureGroup;
-use super::sample_blocks::SampleBlocks;
+use crate::data::raw::sample_blocks::SampleBlocks;
 use super::view::FeatureView;
-use crate::data::types::accessor::{DataAccessor, SampleAccessor};
-use crate::data::types::schema::FeatureType;
+use crate::data::raw::accessor::{DataAccessor, SampleAccessor};
+use crate::data::raw::schema::FeatureType;
 
 /// Where a feature's data lives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
