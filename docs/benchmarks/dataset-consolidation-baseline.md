@@ -70,6 +70,24 @@ Measures actual GBLinear training time with `Dataset` vs raw feature access patt
 
 **Status**: ✅ **PASS** - Well within <2x threshold
 
+#### 2b. train() vs train_binned() Comparison (Story 3.2)
+
+End-to-end comparison of `GBLinearTrainer::train(&Dataset)` vs `GBLinearTrainer::train_binned(&BinnedDataset)`:
+
+| Samples | train(Dataset) | train_binned(BinnedDataset) | Overhead |
+|---------|----------------|------------------------------|----------|
+| 1,000   | 946 µs         | 1.05 ms                      | **1.11x** ✅ |
+| 10,000  | 3.38 ms        | 3.51 ms                      | **1.04x** ✅ |
+| 50,000  | 16.96 ms       | 18.19 ms                     | **1.07x** ✅ |
+
+**Analysis**: The overhead of using `train_binned()` with BinnedDataset is **4-11%**, well within the <2x threshold.
+
+The slight overhead comes from `BinnedDataset::to_raw_feature_matrix()` which extracts a contiguous `[n_features, n_samples]` matrix from raw values stored alongside binned data. This cost is:
+- Amortized over all training rounds (10 rounds in benchmark)
+- Acceptable for users who want to use the same BinnedDataset for both GBDT and GBLinear training
+
+**Status**: ✅ **PASS** - 4-11% overhead is negligible
+
 ---
 
 ### 3. GBDT Training (Baseline)

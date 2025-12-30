@@ -476,14 +476,24 @@ Stakeholder feedback confirmed that `SampleBlocks` is the correct approach:
 
 ### Story 3.2: Benchmark GBLinear Training Overhead
 
-**Status**: Not Started  
+**Status**: ✅ Complete  
 **Estimate**: 1 hour
 
 **Description**: Measure overhead of using BinnedDataset for GBLinear.
 
-**Key Question**: How much slower is creating BinnedDataset vs Dataset for GBLinear, which never uses bins?
+**Key Question**: How much slower is using `train_binned(&BinnedDataset)` vs `train(&Dataset)` for GBLinear?
 
-**Results Document**: Update baseline document
+**Results**:
+
+| Samples | train(Dataset) | train_binned(BinnedDataset) | Overhead |
+|---------|----------------|------------------------------|----------|
+| 1,000   | 946 µs         | 1.05 ms                      | **1.11x** ✅ |
+| 10,000  | 3.38 ms        | 3.51 ms                      | **1.04x** ✅ |
+| 50,000  | 16.96 ms       | 18.19 ms                     | **1.07x** ✅ |
+
+**Conclusion**: 4-11% overhead - well within <2x threshold.
+
+**Results Document**: Updated `docs/benchmarks/dataset-consolidation-baseline.md` Section 2b
 
 ---
 
