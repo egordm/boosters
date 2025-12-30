@@ -527,10 +527,20 @@ Stakeholder feedback confirmed that `SampleBlocks` is the correct approach:
 
 ### Story 3.4: Stakeholder Feedback Check
 
-**Status**: Not Started  
+**Status**: ✅ Complete  
 **Estimate**: 15 min
 
 **Description**: Review `tmp/stakeholder_feedback.md` for GBLinear-related concerns.
+
+**Findings**: Reviewed stakeholder feedback file. No outstanding GBLinear-specific concerns:
+- Bundling concerns (blocking for Epic 5+) don't affect GBLinear (which uses raw values, not bins)
+- Quantile binning question doesn't affect GBLinear (which doesn't use binning)
+- Other open items relate to histogram building and row partitioning (GBDT hot paths)
+
+The GBLinear implementation correctly:
+- Uses `has_categorical()` to reject categorical-only datasets
+- Extracts raw values via `to_raw_feature_matrix()` 
+- Has negligible overhead (4-11% train, 0-4% predict)
 
 ---
 
