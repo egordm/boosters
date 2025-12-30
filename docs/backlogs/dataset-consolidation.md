@@ -452,95 +452,58 @@ Stakeholder feedback confirmed that `SampleBlocks` is the correct approach:
 
 *Enable GBLinear to train and predict using BinnedDataset.*
 
+**STATUS: ⚠️ REVERTED** - Approach rejected by stakeholder feedback. See stakeholder_feedback.md.
+
+**Reason for Rejection**:
+1. `to_raw_feature_matrix()` adds O(n_features × n_samples) allocation - negates BinnedDataset benefits
+2. `train_binned()` duplicates `train()` code instead of consolidating to ONE path
+3. `predict_binned[_raw]()` adds parallel interfaces instead of replacing - goal is ONE dataset type
+4. Approach ignores sparse feature benefits
+
+**Resolution Options**:
+- Option A: Refactor `Updater` to work with per-feature slices from `raw_feature_iter()` (invasive refactor)
+- Option B: Defer GBLinear integration to Epic 5 when `types::Dataset` is deleted entirely (GBLinear would then accept only BinnedDataset)
+
+**All code from Stories 3.1-3.4 was reverted (commit efaf036). 504 lines deleted.**
+
 ### Story 3.1: Add BinnedDataset Support to GBLinear Training
 
-**Status**: ✅ Complete  
+**Status**: ❌ REVERTED  
 **Estimate**: 2 hours
 
-**Description**: Enable `GBLinearTrainer` to accept `BinnedDataset`.
-
-**Implementation**:
-- Added `train_binned(&BinnedDataset, TargetsView, WeightsView) -> Option<LinearModel>` to `GBLinearTrainer`
-- Uses `BinnedDataset::to_raw_feature_matrix()` to extract contiguous `[n_features, n_samples]` matrix
-- Wraps matrix in `FeaturesView::from_array()` for updater compatibility
-- Added `has_categorical()` method to reject categorical-only datasets (GBLinear requires raw values)
-- Added `train_binned_matches_train` test verifying bit-identical output
-
-**Definition of Done**:
-- ✅ GBLinearTrainer works with BinnedDataset
-- ✅ Tests pass
-- ✅ No accuracy regression
-- ✅ **Bit-identical output test**: Train with Dataset, train with BinnedDataset, verify predictions are identical
+**Original Implementation** (reverted):
+- Added `train_binned()` method - **duplicated code**
+- Used `to_raw_feature_matrix()` - **large allocation**
+- Was fundamentally wrong approach
 
 ---
 
 ### Story 3.2: Benchmark GBLinear Training Overhead
 
-**Status**: ✅ Complete  
+**Status**: ❌ REVERTED  
 **Estimate**: 1 hour
 
-**Description**: Measure overhead of using BinnedDataset for GBLinear.
-
-**Key Question**: How much slower is using `train_binned(&BinnedDataset)` vs `train(&Dataset)` for GBLinear?
-
-**Results**:
-
-| Samples | train(Dataset) | train_binned(BinnedDataset) | Overhead |
-|---------|----------------|------------------------------|----------|
-| 1,000   | 946 µs         | 1.05 ms                      | **1.11x** ✅ |
-| 10,000  | 3.38 ms        | 3.51 ms                      | **1.04x** ✅ |
-| 50,000  | 16.96 ms       | 18.19 ms                     | **1.07x** ✅ |
-
-**Conclusion**: 4-11% overhead - well within <2x threshold.
-
-**Results Document**: Updated `docs/benchmarks/dataset-consolidation-baseline.md` Section 2b
+Benchmark captured 4-11% overhead - numbers were acceptable but approach was wrong.
 
 ---
 
 ### Story 3.3: Add BinnedDataset Support to GBLinear Prediction
 
-**Status**: ✅ Complete  
+**Status**: ❌ REVERTED  
 **Estimate**: 1 hour
 
-**Description**: Enable GBLinearModel.predict to use BinnedDataset.
-
-**Implementation**:
-- Added `predict_binned(&BinnedDataset) -> Option<Array2<f32>>` to `GBLinearModel`
-- Added `predict_binned_raw(&BinnedDataset) -> Option<Array2<f32>>` for raw margin scores
-- Uses `to_raw_feature_matrix()` + `FeaturesView::from_array()` pattern
-- Added `predict_binned_matches_dataset` test verifying identical output
-
-**Benchmark Results**:
-
-| Samples | predict(Dataset) | predict_binned(BinnedDataset) | Overhead |
-|---------|------------------|-------------------------------|----------|
-| 1,000   | 128.7 µs         | 133.6 µs                      | **1.04x** ✅ |
-| 10,000  | 1.29 ms          | 1.31 ms                       | **1.02x** ✅ |
-| 50,000  | 6.63 ms          | 6.61 ms                       | **1.00x** ✅ |
-
-**Definition of Done**:
-- ✅ predict() works with BinnedDataset
-- ✅ Tests pass
-- ✅ Benchmark numbers captured: 0-4% overhead
+**Original Implementation** (reverted):
+- Added `predict_binned()` and `predict_binned_raw()` - **parallel interfaces**
+- Used `to_raw_feature_matrix()` - **large allocation**
 
 ---
 
 ### Story 3.4: Stakeholder Feedback Check
 
-**Status**: ✅ Complete  
+**Status**: ❌ REVERTED  
 **Estimate**: 15 min
 
-**Description**: Review `tmp/stakeholder_feedback.md` for GBLinear-related concerns.
-
-**Findings**: Reviewed stakeholder feedback file. No outstanding GBLinear-specific concerns:
-- Bundling concerns (blocking for Epic 5+) don't affect GBLinear (which uses raw values, not bins)
-- Quantile binning question doesn't affect GBLinear (which doesn't use binning)
-- Other open items relate to histogram building and row partitioning (GBDT hot paths)
-
-The GBLinear implementation correctly:
-- Uses `has_categorical()` to reject categorical-only datasets
-- Extracts raw values via `to_raw_feature_matrix()` 
-- Has negligible overhead (4-11% train, 0-4% predict)
+This check did not catch the fundamental issues with the approach.
 
 ---
 
