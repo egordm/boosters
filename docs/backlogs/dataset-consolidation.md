@@ -342,19 +342,19 @@ No additional code needed - `BinnedSampleView` implements `SampleAccessor`.
 **Current State**:
 - Predictor has clean minimal API restored
 - `SampleBlocks` provides efficient block iteration from BinnedDataset
-- Story 2.2a should integrate `SampleBlocks` for actual BinnedDataset prediction
+- ✅ Story 2.2a complete - `SampleBlocks` exported and integrated
 
 **Definition of Done**:
 
 - ✅ Predictor API kept minimal (no new public methods)
-- ⏳ BinnedDataset prediction via SampleBlocks (→ Story 2.2a)
-- ✅ Unit tests for core predictor pass (17 tests)
+- ✅ BinnedDataset prediction via SampleBlocks (→ Story 2.2a complete)
+- ✅ Unit tests for core predictor pass (19 tests with new integration tests)
 
 ---
 
 ### Story 2.2a: Integrate SampleBlocks for Block-Based Prediction
 
-**Status**: Not Started → Now Primary Path  
+**Status**: ✅ Complete  
 **Priority**: Required (stakeholder feedback confirms SampleBlocks is the right approach)  
 **Estimate**: 1.5 hours
 
@@ -367,35 +367,21 @@ Stakeholder feedback confirmed that `SampleBlocks` is the correct approach:
 - `SampleBlocks::for_each_with()` provides cache-efficient contiguous blocks
 - These blocks can be passed to existing `predict_block_into(SamplesView)` via `SamplesView::from_array(block)`
 
-**Current State**:
+**Implementation (2025-12-30)**:
 
-- `sample_blocks.rs` exists with working implementation
-- Module is declared but NOT exported (`mod sample_blocks` vs `pub mod`)
-- Has `#![allow(dead_code)]` indicating it's unused
-- Purpose: Block-based sample iteration for cache-friendly prediction
-
-**Changes Required**:
-
-1. Export `SampleBlocks` from `data/binned/mod.rs`:
-   ```rust
-   pub use sample_blocks::{SampleBlocks, SampleBlocksIter};
-   ```
-2. Remove `#![allow(dead_code)]` from `sample_blocks.rs`
-3. Add convenience method or example showing how to predict from BinnedDataset:
-   ```rust
-   let blocks = SampleBlocks::new(&dataset, predictor.block_size());
-   blocks.for_each_with(parallelism, |start_idx, block| {
-       let samples = SamplesView::from_array(block);
-       predictor.predict_block_into(samples, tree_weights, output_chunk);
-   });
-   ```
+1. ✅ Exported `SampleBlocks` and `SampleBlocksIter` from `data/binned/mod.rs`
+2. ✅ Removed `#![allow(dead_code)]` from `sample_blocks.rs`
+3. ✅ Added `sample_blocks(block_size)` convenience method to `BinnedDataset`
+4. ✅ Added integration tests in `predictor.rs`:
+   - `sample_blocks_prediction_matches_features_view`: Verifies bit-identical output
+   - `sample_blocks_parallel_matches_sequential`: Verifies parallel/sequential equivalence
 
 **Definition of Done**:
 
-- `SampleBlocks` exported and usable
-- Dead code marker removed
-- Example/test showing BinnedDataset → SampleBlocks → predict_block_into workflow
-- **Bit-identical predictions**: SampleBlocks path produces same results as FeaturesView path
+- ✅ `SampleBlocks` exported and usable
+- ✅ Dead code marker removed
+- ✅ Example/test showing BinnedDataset → SampleBlocks → predict workflow
+- ✅ **Bit-identical predictions**: SampleBlocks path produces same results as FeaturesView path
 
 ---
 

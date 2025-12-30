@@ -747,4 +747,133 @@ mod tests {
 
         assert_eq!(output.shape(), &[1, 0]);
     }
+
+    // =========================================================================
+    // BinnedDataset + SampleBlocks integration tests
+    // =========================================================================
+
+    #[test]
+    fn sample_blocks_prediction_matches_features_view() {
+        use crate::data::binned::{BinnedDataset, DatasetBuilder};
+        use ndarray::array;
+
+        // Create a simple forest
+        let mut forest = Forest::for_regression();
+        forest.push_tree(build_simple_tree(1.0, 2.0, 0.5), 0);
+        forest.push_tree(build_simple_tree(0.5, 1.5, 0.5), 0);
+
+        let predictor = UnrolledPredictor6::new(&forest);
+
+        // Create test data - 10 samples, 2 features
+        let data = array![
+            [0.1, 0.2],
+            [0.2, 0.3],
+            [0.3, 0.4],
+            [0.4, 0.5],
+            [0.5, 0.6],
+            [0.6, 0.7],
+            [0.7, 0.8],
+            [0.8, 0.9],
+            [0.9, 1.0],
+            [1.0, 0.1],
+        ];
+        let n_samples = data.nrows();
+
+        // Create FeaturesView (feature-major)
+        let features_major = data.t().to_owned();
+        let features = FeaturesView::from_array(features_major.view());
+
+        // Predict using FeaturesView path
+        let expected_output = predictor.predict(features, Parallelism::Sequential);
+
+        // Create BinnedDataset
+        let built = DatasetBuilder::new()
+            .add_numeric("x", data.column(0).to_owned().view())
+            .add_numeric("y", data.column(1).to_owned().view())
+            .build_groups()
+            .unwrap();
+        let binned_dataset = BinnedDataset::from_built_groups(built);
+
+        // Predict using SampleBlocks path - collect samples then predict
+        let mut sample_blocks_output = Array2::<f32>::zeros((predictor.n_groups(), n_samples));
+
+        // Use the iterator variant to collect blocks, then process
+        for (block_idx, block) in binned_dataset.sample_blocks(4).iter().enumerate() {
+            let start_idx = block_idx * 4;
+            let block_size = block.nrows();
+
+            // Create FeaturesView from block (transpose to feature-major)
+            let block_transposed = block.t().to_owned();
+            let block_features = FeaturesView::from_array(block_transposed.view());
+
+            // Predict this block
+            let mut block_output = Array2::<f32>::zeros((predictor.n_groups(), block_size));
+            predictor.predict_into(
+                block_features,
+                None,
+                Parallelism::Sequential,
+                block_output.view_mut(),
+            );
+
+            // Copy to output
+            for (i, col) in block_output.axis_iter(ndarray::Axis(1)).enumerate() {
+                for (g, &val) in col.iter().enumerate() {
+                    sample_blocks_output[[g, start_idx + i]] = val;
+                }
+            }
+        }
+
+        // Verify bit-identical
+        assert_abs_diff_eq!(expected_output, sample_blocks_output, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn sample_blocks_parallel_matches_sequential() {
+        use crate::data::binned::{BinnedDataset, DatasetBuilder};
+        use std::sync::Mutex;
+
+        // Create BinnedDataset with 100 samples
+        let values: Vec<f32> = (0..100).map(|i| (i as f32) / 100.0).collect();
+        let built = DatasetBuilder::new()
+            .add_numeric("x", ndarray::ArrayView1::from(&values))
+            .build_groups()
+            .unwrap();
+        let binned_dataset = BinnedDataset::from_built_groups(built);
+
+        // Collect blocks in sequential mode
+        let seq_results = Mutex::new(Vec::new());
+        binned_dataset
+            .sample_blocks(16)
+            .for_each_with(Parallelism::Sequential, |start_idx, block| {
+                let mut results = seq_results.lock().unwrap();
+                for (i, row) in block.outer_iter().enumerate() {
+                    results.push((start_idx + i, row[0]));
+                }
+            });
+
+        // Collect blocks in parallel mode
+        let par_results = Mutex::new(Vec::new());
+        binned_dataset
+            .sample_blocks(16)
+            .for_each_with(Parallelism::Parallel, |start_idx, block| {
+                let mut results = par_results.lock().unwrap();
+                for (i, row) in block.outer_iter().enumerate() {
+                    results.push((start_idx + i, row[0]));
+                }
+            });
+
+        let mut seq = seq_results.into_inner().unwrap();
+        let mut par = par_results.into_inner().unwrap();
+
+        seq.sort_by_key(|(idx, _)| *idx);
+        par.sort_by_key(|(idx, _)| *idx);
+
+        assert_eq!(seq.len(), par.len());
+        assert_eq!(seq.len(), 100);
+
+        for (s, p) in seq.iter().zip(par.iter()) {
+            assert_eq!(s.0, p.0);
+            assert_abs_diff_eq!(s.1, p.1, epsilon = 1e-6);
+        }
+    }
 }

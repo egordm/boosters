@@ -10,6 +10,7 @@
 use super::bin_mapper::BinMapper;
 use super::builder::BuiltGroups;
 use super::group::FeatureGroup;
+use super::sample_blocks::SampleBlocks;
 use super::view::FeatureView;
 use crate::data::types::accessor::{DataAccessor, SampleAccessor};
 use crate::data::types::schema::FeatureType;
@@ -683,6 +684,37 @@ impl BinnedDataset {
                 FeatureLocation::Bundled { .. } | FeatureLocation::Skipped => None,
             }
         })
+    }
+
+    // =========================================================================
+    // Sample block iteration (for prediction)
+    // =========================================================================
+
+    /// Create a sample block iterator for efficient prediction.
+    ///
+    /// Buffers samples into contiguous blocks in sample-major layout,
+    /// providing ~2x speedup for prediction vs random column access.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_size` - Number of samples per block (default: 64)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use boosters::utils::Parallelism;
+    /// use boosters::data::SamplesView;
+    ///
+    /// let blocks = dataset.sample_blocks(64);
+    /// blocks.for_each_with(Parallelism::Parallel, |start_idx, block| {
+    ///     // block is ArrayView2<f32> with shape [block_size, n_features]
+    ///     let samples = SamplesView::from_array(block);
+    ///     // Use samples for prediction...
+    /// });
+    /// ```
+    #[inline]
+    pub fn sample_blocks(&self, block_size: usize) -> SampleBlocks<'_> {
+        SampleBlocks::new(self, block_size)
     }
 }
 

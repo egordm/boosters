@@ -15,6 +15,9 @@ mod sample_blocks;
 mod storage;
 pub(crate) mod view;
 
+// Sample block iterator for prediction
+pub use sample_blocks::{SampleBlocks, SampleBlocksIter};
+
 // =============================================================================
 // Public API (RFC-0018 types)
 // =============================================================================

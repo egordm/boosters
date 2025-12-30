@@ -33,9 +33,6 @@
 //! });
 //! ```
 
-// Allow dead code during migration - this will be used when we switch over in Epic 7
-#![allow(dead_code)]
-
 use super::dataset::BinnedDataset;
 use super::view::FeatureView;
 use crate::utils::Parallelism;
