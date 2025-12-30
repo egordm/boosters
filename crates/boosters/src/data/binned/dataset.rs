@@ -8,12 +8,14 @@
 #![allow(dead_code)]
 
 use super::bin_mapper::BinMapper;
-use super::builder::BuiltGroups;
+use super::builder::{BuiltGroups, DatasetBuilder, DatasetError};
+use super::feature_analysis::BinningConfig;
 use super::group::FeatureGroup;
 use super::sample_blocks::SampleBlocks;
 use super::view::FeatureView;
 use crate::data::raw::accessor::{DataAccessor, SampleAccessor};
 use crate::data::raw::schema::FeatureType;
+use crate::data::Dataset;
 
 /// Where a feature's data lives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -237,6 +239,43 @@ impl BinnedDataset {
             labels: built.labels.map(|v| v.into_boxed_slice()),
             weights: built.weights.map(|v| v.into_boxed_slice()),
         }
+    }
+
+    /// Create a BinnedDataset from a Dataset.
+    ///
+    /// This is the primary factory method for creating binned training data.
+    /// It analyzes features, creates bin mappers, groups features, and applies
+    /// Exclusive Feature Bundling (EFB) if enabled.
+    ///
+    /// # Arguments
+    ///
+    /// * `dataset` - Source dataset with raw feature values
+    /// * `config` - Binning configuration (max_bins, bundling settings, etc.)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use boosters::data::{Dataset, BinnedDataset, BinningConfig};
+    ///
+    /// let dataset = Dataset::new(features.view(), Some(targets.view()), None);
+    /// let binned = BinnedDataset::from_dataset(&dataset, &BinningConfig::default())?;
+    /// ```
+    ///
+    /// # Note
+    ///
+    /// Targets and weights are NOT copied to BinnedDataset. They should be
+    /// accessed from the source Dataset during training.
+    pub fn from_dataset(
+        dataset: &Dataset,
+        config: &BinningConfig,
+    ) -> Result<Self, DatasetError> {
+        use crate::Parallelism;
+
+        // Use the existing builder infrastructure
+        // In Story 5.2, this logic will be inlined and the builder deleted
+        DatasetBuilder::with_config(config.clone())
+            .add_features(dataset.features(), Parallelism::Sequential)
+            .build()
     }
 
     // =========================================================================
@@ -1098,6 +1137,41 @@ mod tests {
         assert_eq!(dataset.n_features(), 1);
         assert_eq!(dataset.n_groups(), 1);
         assert!(dataset.has_raw_values());
+    }
+
+    #[test]
+    fn test_from_dataset() {
+        // Create a raw Dataset
+        let features = array![[1.0, 2.0, 3.0, 4.0, 5.0], [10.0, 20.0, 30.0, 40.0, 50.0]]; // [2 features, 5 samples]
+        let targets = array![[0.0, 1.0, 0.0, 1.0, 0.0]]; // [1 output, 5 samples]
+        let raw_dataset = Dataset::new(features.view(), Some(targets.view()), None);
+
+        // Convert to BinnedDataset
+        let config = BinningConfig::default();
+        let binned = BinnedDataset::from_dataset(&raw_dataset, &config).unwrap();
+
+        // Verify structure matches
+        assert_eq!(binned.n_samples(), 5);
+        assert_eq!(binned.n_features(), 2);
+
+        // Verify both features are in the dataset
+        assert!(binned.feature_location(0).is_direct());
+        assert!(binned.feature_location(1).is_direct());
+
+        // Verify raw values are preserved
+        assert!(binned.has_raw_values());
+    }
+
+    #[test]
+    fn test_from_dataset_empty_dataset() {
+        // Empty dataset should fail
+        let features = Array2::<f32>::zeros((0, 0)); // [0 features, 0 samples]
+        let raw_dataset = Dataset::new(features.view(), None, None);
+
+        let config = BinningConfig::default();
+        let result = BinnedDataset::from_dataset(&raw_dataset, &config);
+
+        assert!(result.is_err());
     }
 
     #[test]

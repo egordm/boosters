@@ -4,7 +4,7 @@
 //! Access components via [`linear()`](GBLinearModel::linear), [`meta()`](GBLinearModel::meta),
 //! and [`config()`](GBLinearModel::config).
 
-use crate::data::{BinnedDatasetBuilder, BinningConfig, Dataset};
+use crate::data::{BinnedDataset, BinningConfig, Dataset};
 use crate::explainability::{ExplainError, LinearExplainer, ShapValues};
 use crate::model::meta::ModelMeta;
 use crate::repr::gblinear::LinearModel;
@@ -61,7 +61,7 @@ impl GBLinearModel {
         dataset: &Dataset,
         val_set: Option<&Dataset>,
         config: GBLinearConfig,
-        parallelism: Parallelism,
+        _parallelism: Parallelism, // Reserved for future parallel binning
     ) -> Option<Self> {
         let n_features = dataset.n_features();
         let n_outputs = config.objective.n_outputs();
@@ -75,9 +75,7 @@ impl GBLinearModel {
         let binning_config = BinningConfig::builder()
             .enable_bundling(false) // GBLinear doesn't use bundling
             .build();
-        let binned = BinnedDatasetBuilder::with_config(binning_config)
-            .add_features(dataset.features(), parallelism)
-            .build()
+        let binned = BinnedDataset::from_dataset(dataset, &binning_config)
             .expect("dataset binning should not fail");
 
         // Extract targets and weights from Dataset
