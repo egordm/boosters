@@ -110,22 +110,57 @@ However, this is only measuring the feature access portion. The actual predictio
 
 ---
 
+### 4b. End-to-End Prediction Overhead (Story 2.3)
+
+Measures complete prediction throughput comparing FeaturesView path vs BinnedDataset + SampleBlocks path.
+
+**Test Configuration**:
+- 10,000 samples × 100 features
+- 50 trees, depth 6
+- Block size: 64 samples
+
+| Path | Time | Throughput | Overhead |
+|------|------|------------|----------|
+| FeaturesView (Dataset) | 6.71 ms | 74.5 Melem/s | Baseline |
+| SampleBlocks (BinnedDataset) | 7.42 ms | 67.4 Melem/s | **+10.6%** |
+
+**Analysis**: The SampleBlocks path is ~10.6% slower. Root cause:
+
+1. **Block extraction**: SampleBlocks extracts raw values from BinnedDataset to sample-major blocks `[samples, features]`
+2. **Transpose to feature-major**: `predict_into` requires feature-major data `[features, samples]`
+3. **Internal re-transpose**: `predict_into` transposes back to sample-major for block prediction
+
+This "double transpose" is the overhead source. The SampleBlocks data is already sample-major, but the public API expects feature-major.
+
+**Potential Optimizations** (future work):
+- Expose sample-major prediction path (would require new API)
+- Use `predict_row_into` per sample (loses block benefits)
+- Direct feature-major view from BinnedDataset (requires contiguous raw storage)
+
+**Status**: ⚠️ **MONITOR** - 10.6% overhead slightly exceeds <10% target but is acceptable for:
+- BinnedDataset construction is already the common path for GBDT
+- The overhead is due to data layout conversion, not algorithmic issues
+- FeaturesView can still be used when raw arrays are available
+
+---
+
 ## Summary
 
 | Metric | Threshold | Measured | Status |
 |--------|-----------|----------|--------|
 | GBLinear raw access overhead | < 2x | 1.0-1.06x | ✅ PASS |
 | Prediction raw access overhead | < 10% | ~20% | ⚠️ MONITOR |
+| End-to-end prediction overhead | < 10% | ~10.6% | ⚠️ MONITOR |
 | Construction overhead | N/A | ~350x | ✅ Expected |
 
 ### Key Findings
 
 1. **GBLinear is safe**: Raw feature access from BinnedDataset is essentially identical to Dataset access. No performance concerns for linear model training.
 
-2. **Prediction needs investigation**: 20% overhead on raw feature access is higher than expected. However:
-   - This is feature access only, not full prediction
-   - Tree traversal dominates prediction time
-   - Need to measure actual end-to-end prediction overhead in Story 2.3
+2. **Prediction overhead is acceptable**: End-to-end prediction with SampleBlocks is ~10.6% slower than FeaturesView. This slightly exceeds the <10% target but is acceptable because:
+   - The overhead is due to data layout conversion (double transpose), not algorithmic issues
+   - FeaturesView can still be used when raw arrays are available
+   - For training workflows, BinnedDataset construction cost is already amortized
 
 3. **Construction overhead is expected**: The 350x overhead is the cost of binning, which is amortized over training rounds.
 
@@ -207,7 +242,7 @@ Per threshold definitions:
 
 ## Appendix: Raw Criterion Output
 
-```
+```text
 component/overhead/construction/Dataset/1000:        7.6 µs
 component/overhead/construction/BinnedDataset/1000: 3.2 ms
 component/overhead/construction/Dataset/10000:      86.5 µs  
@@ -227,7 +262,7 @@ component/overhead/gblinear_train/Dataset_raw_access/50000:       4.73 ms
 
 component/overhead/gbdt_train/BinnedDataset:        65.5 ms
 
-component/overhead/predict/Dataset/10000:           6.83 ms
-component/overhead/predict/BinnedDataset_raw_access/10000: 114.4 µs
-component/overhead/predict/Dataset_raw_access/10000:       95.5 µs
-```
+component/overhead/predict/Dataset/10000:           6.71 ms
+component/overhead/predict/BinnedDataset_raw_access/10000: 115.0 µs
+component/overhead/predict/Dataset_raw_access/10000:       93.4 µs
+component/overhead/predict/BinnedDataset_SampleBlocks/10000: 7.42 ms

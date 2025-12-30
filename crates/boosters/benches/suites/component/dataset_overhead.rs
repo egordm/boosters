@@ -353,6 +353,49 @@ fn bench_prediction_overhead(c: &mut Criterion) {
         },
     );
 
+    // End-to-end prediction using BinnedDataset + SampleBlocks
+    // This is the recommended path for BinnedDataset prediction per Story 2.2a
+    let block_size = predictor.block_size();
+    group.bench_with_input(
+        BenchmarkId::new("BinnedDataset_SampleBlocks", n_rows),
+        &(&binned, &predictor, block_size),
+        |b, (binned_ds, pred, blk_size)| {
+            b.iter(|| {
+                let n_groups = pred.n_groups();
+                let n_samples = binned_ds.n_samples();
+                let mut output = Array2::<f32>::zeros((n_groups, n_samples));
+
+                // Use SampleBlocks iterator to get contiguous sample-major blocks
+                // Then transpose to feature-major for predict_into
+                for (block_idx, block) in binned_ds.sample_blocks(*blk_size).iter().enumerate() {
+                    let start_idx = block_idx * *blk_size;
+                    let block_len = block.nrows();
+
+                    // Transpose to feature-major: [samples, features] -> [features, samples]
+                    let block_transposed = block.t().to_owned();
+                    let block_features =
+                        boosters::data::FeaturesView::from_array(block_transposed.view());
+
+                    // Predict this block
+                    let mut block_output = Array2::<f32>::zeros((n_groups, block_len));
+                    pred.predict_into(
+                        block_features,
+                        None,
+                        Parallelism::Sequential,
+                        block_output.view_mut(),
+                    );
+
+                    // Copy to output
+                    output
+                        .slice_mut(ndarray::s![.., start_idx..start_idx + block_len])
+                        .assign(&block_output);
+                }
+
+                black_box(output)
+            })
+        },
+    );
+
     group.finish();
 }
 
