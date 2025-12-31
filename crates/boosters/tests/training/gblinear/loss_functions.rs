@@ -57,7 +57,7 @@ fn train_pseudo_huber_with_delta(#[case] delta: f32, #[case] max_rmse: f64) {
 
     let trainer = GBLinearTrainer::new(PseudoHuberLoss::new(delta), Rmse, params);
     let model = trainer
-        .train(&train, targets_view, WeightsView::None, &[])
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
 
     use boosters::training::MetricFn;
@@ -108,13 +108,13 @@ fn pseudo_huber_large_delta_matches_squared() {
     // Train with large delta PseudoHuber
     let trainer_ph = GBLinearTrainer::new(PseudoHuberLoss::new(10.0), Rmse, base_params.clone());
     let ph_model = trainer_ph
-        .train(&train, targets_view.clone(), WeightsView::None, &[])
+        .train(&train, targets_view.clone(), WeightsView::None, None)
         .unwrap();
 
     // Train with squared loss for reference
     let trainer_sq = GBLinearTrainer::new(SquaredLoss, Rmse, base_params);
     let sq_model = trainer_sq
-        .train(&train, targets_view, WeightsView::None, &[])
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
 
     use boosters::training::MetricFn;
@@ -179,13 +179,13 @@ fn train_hinge_binary_classification() {
     let trainer_hinge =
         GBLinearTrainer::new(HingeLoss, MarginAccuracy::default(), base_params.clone());
     let hinge_model = trainer_hinge
-        .train(&train, targets_view.clone(), WeightsView::None, &[])
+        .train(&train, targets_view.clone(), WeightsView::None, None)
         .unwrap();
 
     // Also train with logistic for comparison
     let trainer_logistic = GBLinearTrainer::new(LogisticLoss, LogLoss, base_params);
     let logistic_model = trainer_logistic
-        .train(&train, targets_view, WeightsView::None, &[])
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
 
     // Compute accuracy.

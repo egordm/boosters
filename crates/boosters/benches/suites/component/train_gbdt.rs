@@ -105,7 +105,7 @@ fn bench_gbdt_train_regression(c: &mut Criterion) {
                             black_box(&binned),
                             targets_view,
                             WeightsView::None,
-                            &[],
+                            None,
                             Parallelism::Sequential,
                         )
                         .unwrap(),
@@ -157,7 +157,7 @@ fn bench_gbdt_train_binary(c: &mut Criterion) {
                         black_box(&binned),
                         targets_view,
                         WeightsView::None,
-                        &[],
+                        None,
                         Parallelism::Sequential,
                     )
                     .unwrap(),
@@ -207,7 +207,7 @@ fn bench_gbdt_train_multiclass(c: &mut Criterion) {
                         black_box(&binned),
                         targets_view,
                         WeightsView::None,
-                        &[],
+                        None,
                         Parallelism::Sequential,
                     )
                     .unwrap(),
@@ -248,7 +248,7 @@ fn bench_gbdt_thread_scaling(c: &mut Criterion) {
                                 black_box(&binned),
                                 targets_view,
                                 WeightsView::None,
-                                &[],
+                                None,
                                 Parallelism::Parallel,
                             )
                             .unwrap(),
@@ -310,7 +310,7 @@ fn bench_gbdt_growth_strategy(c: &mut Criterion) {
                             black_box(&binned),
                             targets_view,
                             WeightsView::None,
-                            &[],
+                            None,
                             Parallelism::Sequential,
                         )
                         .unwrap(),
@@ -329,7 +329,7 @@ fn bench_gbdt_growth_strategy(c: &mut Criterion) {
                             black_box(&binned),
                             targets_view,
                             WeightsView::None,
-                            &[],
+                            None,
                             Parallelism::Sequential,
                         )
                         .unwrap(),

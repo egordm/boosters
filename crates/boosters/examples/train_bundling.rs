@@ -158,7 +158,7 @@ fn main() {
         &dataset_no_bundle,
         targets,
         WeightsView::None,
-        &[],
+        None,
         config.clone(),
         1,
     )

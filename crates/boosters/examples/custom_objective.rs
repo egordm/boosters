@@ -160,7 +160,7 @@ fn main() {
             &dataset,
             targets,
             WeightsView::None,
-            &[],
+            None,
             Parallelism::Sequential,
         )
         .unwrap();

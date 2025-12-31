@@ -1,4 +1,4 @@
-"""Tests for Dataset and EvalSet types.
+"""Tests for Dataset types.
 
 Focuses on:
 - Core construction behavior (not just "does it accept values")
@@ -9,7 +9,7 @@ Focuses on:
 import numpy as np
 import pytest
 
-from boosters import Dataset, EvalSet
+from boosters import Dataset
 
 
 class TestDatasetConstruction:
@@ -140,17 +140,3 @@ class TestDatasetCategoricalFeatures:
         X = rng.random((100, 10)).astype(np.float32)  # noqa: N806
         ds = Dataset(X, categorical_features=[7, 0, 3])
         assert ds.categorical_features == [0, 3, 7]
-
-
-class TestEvalSet:
-    """Tests for EvalSet type."""
-
-    def test_basic_construction(self) -> None:
-        """EvalSet wraps a dataset with a name."""
-        rng = np.random.default_rng(42)
-        X = rng.random((50, 10)).astype(np.float32)  # noqa: N806
-        y = rng.random(50).astype(np.float32)
-        ds = Dataset(X, y)
-        es = EvalSet(ds, "validation")
-        assert es.name == "validation"
-        assert es.dataset.n_samples == 50

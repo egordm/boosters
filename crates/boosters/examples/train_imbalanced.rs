@@ -136,7 +136,7 @@ fn main() {
         &dataset,
         targets,
         WeightsView::from_array(ArrayView1::from(&class_weights[..])),
-        &[],
+        None,
         config,
         1,
     )

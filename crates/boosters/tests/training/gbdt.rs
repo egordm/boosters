@@ -48,7 +48,7 @@ fn train_rejects_invalid_targets_len() {
         &dataset,
         targets_view,
         WeightsView::None,
-        &[],
+        None,
         Parallelism::Sequential,
     );
 
@@ -85,7 +85,7 @@ fn trained_model_improves_over_base_score_on_simple_problem() {
             &dataset,
             targets_view,
             WeightsView::None,
-            &[],
+            None,
             Parallelism::Sequential,
         )
         .unwrap();
@@ -158,7 +158,7 @@ fn trained_model_improves_over_base_score_on_medium_problem() {
             &dataset,
             targets_view,
             WeightsView::None,
-            &[],
+            None,
             Parallelism::Sequential,
         )
         .unwrap();
@@ -248,7 +248,7 @@ fn train_with_categorical_features_produces_categorical_splits() {
             &dataset,
             targets_view,
             WeightsView::None,
-            &[],
+            None,
             Parallelism::Sequential,
         )
         .unwrap();
@@ -345,7 +345,7 @@ fn train_from_dataset_api() {
         .build()
         .unwrap();
 
-    let model = GBDTModel::train(&dataset, &[], config, 1).expect("training should succeed");
+    let model = GBDTModel::train(&dataset, None, config, 1).expect("training should succeed");
 
     // Verify model produces reasonable predictions
     let forest = model.forest();
@@ -416,8 +416,8 @@ fn train_from_dataset_with_eval_set() {
         .build()
         .unwrap();
 
-    // Train without eval set first (eval set integration is future work)
-    let model = GBDTModel::train(&train_ds, &[], config, 1).expect("training should succeed");
+    // Train without validation set first (validation set integration is future work)
+    let model = GBDTModel::train(&train_ds, None, config, 1).expect("training should succeed");
 
     // Verify predictions are reasonable
     let forest = model.forest();
@@ -470,7 +470,7 @@ fn predict_from_dataset_with_block_buffering() {
         .build()
         .unwrap();
 
-    let model = GBDTModel::train(&train_dataset, &[], config, 1).expect("training should succeed");
+    let model = GBDTModel::train(&train_dataset, None, config, 1).expect("training should succeed");
 
     // Create a prediction dataset (same data)
     let pred_dataset = Dataset::new(features_fm.view(), Some(targets_fm.view()), None);
@@ -528,7 +528,7 @@ fn predict_from_dataset_parallel_matches_sequential() {
         .build()
         .unwrap();
 
-    let model = GBDTModel::train(&dataset, &[], config, 1).expect("training should succeed");
+    let model = GBDTModel::train(&dataset, None, config, 1).expect("training should succeed");
 
     // Sequential prediction (n_threads=1)
     let seq_output = model.predict(&dataset, 1);

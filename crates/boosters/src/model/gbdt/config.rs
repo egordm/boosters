@@ -360,7 +360,6 @@ impl GBDTConfig {
             col_sampling,
             cache_size: self.cache_size,
             early_stopping_rounds: self.early_stopping_rounds.unwrap_or(0),
-            early_stopping_eval_set: 0, // Always use first eval set
             verbosity: self.verbosity,
             seed: self.seed,
             linear_leaves: self.linear_leaves.clone(),

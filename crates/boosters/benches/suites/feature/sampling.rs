@@ -78,7 +78,7 @@ fn bench_sampling_strategies(c: &mut Criterion) {
                             black_box(&binned),
                             black_box(targets),
                             WeightsView::None,
-                            &[],
+                            None,
                             Parallelism::Sequential,
                         )
                         .unwrap(),

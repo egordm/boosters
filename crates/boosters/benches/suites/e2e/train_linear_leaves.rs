@@ -66,7 +66,7 @@ fn bench_linear_training_overhead(c: &mut Criterion) {
                     black_box(&binned_train),
                     targets,
                     WeightsView::None,
-                    &[],
+                    None,
                     Parallelism::Sequential,
                 )
                 .unwrap();
@@ -88,7 +88,7 @@ fn bench_linear_training_overhead(c: &mut Criterion) {
                     black_box(&binned_train),
                     targets,
                     WeightsView::None,
-                    &[],
+                    None,
                     Parallelism::Sequential,
                 )
                 .unwrap();

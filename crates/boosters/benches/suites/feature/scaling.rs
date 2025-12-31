@@ -97,7 +97,7 @@ fn bench_row_scaling(c: &mut Criterion) {
                             black_box(&binned),
                             targets_view,
                             WeightsView::None,
-                            &[],
+                            None,
                             Parallelism::Sequential,
                         )
                         .unwrap(),
@@ -255,7 +255,7 @@ fn bench_feature_scaling(c: &mut Criterion) {
                             black_box(&binned),
                             targets_view,
                             WeightsView::None,
-                            &[],
+                            None,
                             Parallelism::Sequential,
                         )
                         .unwrap(),

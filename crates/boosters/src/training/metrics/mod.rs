@@ -15,16 +15,10 @@
 //! When `None`, unweighted computation is used. When `Some(&weights)`, weighted
 //! formulas are applied (e.g., `sum(w * error) / sum(w)`).
 //!
-//! # Evaluation Sets
+//! # Validation Set
 //!
-//! Use [`EvalSet`] to define named datasets for evaluation during training:
-//!
-//! ```ignore
-//! let eval_sets = vec![
-//!     EvalSet::new("train", &train_data, &train_labels),
-//!     EvalSet::new("val", &val_data, &val_labels),
-//! ];
-//! ```
+//! Pass a validation `Dataset` to training methods for early stopping and monitoring.
+//! The validation set is implicitly named "valid" in training logs.
 //!
 //! # Available Metrics
 //!

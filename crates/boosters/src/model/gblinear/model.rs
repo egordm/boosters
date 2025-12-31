@@ -9,7 +9,7 @@ use crate::explainability::{ExplainError, LinearExplainer, ShapValues};
 use crate::model::meta::ModelMeta;
 use crate::repr::gblinear::LinearModel;
 use crate::training::gblinear::GBLinearTrainer;
-use crate::training::{EvalSet, Metric, ObjectiveFn};
+use crate::training::{Metric, ObjectiveFn};
 use crate::Parallelism;
 
 use ndarray::Array2;
@@ -39,17 +39,17 @@ impl GBLinearModel {
     /// # Arguments
     ///
     /// * `dataset` - Training dataset (features, targets, optional weights)
-    /// * `eval_sets` - Evaluation sets for monitoring (`&[]` if not needed)
+    /// * `val_set` - Optional validation dataset for early stopping and monitoring
     /// * `config` - Training configuration
     /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
     pub fn train(
         dataset: &Dataset,
-        eval_sets: &[EvalSet<'_>],
+        val_set: Option<&Dataset>,
         config: GBLinearConfig,
         n_threads: usize,
     ) -> Option<Self> {
         crate::run_with_threads(n_threads, |parallelism| {
-            Self::train_inner(dataset, eval_sets, config, parallelism)
+            Self::train_inner(dataset, val_set, config, parallelism)
         })
     }
 
@@ -59,7 +59,7 @@ impl GBLinearModel {
     /// Use `train()` for the public API that handles threading automatically.
     fn train_inner(
         dataset: &Dataset,
-        eval_sets: &[EvalSet<'_>],
+        val_set: Option<&Dataset>,
         config: GBLinearConfig,
         parallelism: Parallelism,
     ) -> Option<Self> {
@@ -94,7 +94,7 @@ impl GBLinearModel {
 
         // Create trainer with objective and metric from config
         let trainer = GBLinearTrainer::new(config.objective.clone(), metric, params);
-        let linear_model = trainer.train(&binned, targets, weights, eval_sets)?;
+        let linear_model = trainer.train(&binned, targets, weights, val_set)?;
 
         let meta = ModelMeta {
             n_features,

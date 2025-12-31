@@ -14,7 +14,7 @@ use crate::inference::gbdt::UnrolledPredictor6;
 use crate::model::meta::ModelMeta;
 use crate::repr::gbdt::{Forest, ScalarLeaf};
 use crate::training::gbdt::GBDTTrainer;
-use crate::training::{EvalSet, Metric, ObjectiveFn};
+use crate::training::{Metric, ObjectiveFn};
 use crate::utils::{Parallelism, run_with_threads};
 
 use ndarray::Array2;
@@ -109,14 +109,14 @@ impl GBDTModel {
     /// # Arguments
     ///
     /// * `dataset` - Training dataset with features and targets
-    /// * `eval_sets` - Evaluation sets for monitoring and early stopping (pass `&[]` if not needed)
+    /// * `val_set` - Optional validation dataset for early stopping and monitoring
     /// * `config` - Training configuration
     /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
     ///
     /// # Example
     ///
     /// ```ignore
-    /// use boosters::{GBDTModel, GBDTConfig, dataset::Dataset, training::{Objective, EvalSet}};
+    /// use boosters::{GBDTModel, GBDTConfig, dataset::Dataset, training::Objective};
     /// use ndarray::array;
     ///
     /// let features = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]; // [n_features, n_samples]
@@ -128,16 +128,15 @@ impl GBDTModel {
     ///     .n_trees(10)
     ///     .build();
     ///
-    /// // Without eval sets
-    /// let model = GBDTModel::train(&dataset, &[], config.clone(), 0).unwrap();
+    /// // Without validation
+    /// let model = GBDTModel::train(&dataset, None, config.clone(), 0).unwrap();
     ///
-    /// // With eval sets
-    /// let eval = EvalSet::new("valid", &val_dataset);
-    /// let model = GBDTModel::train(&dataset, &[eval], config, 0).unwrap();
+    /// // With validation set for early stopping
+    /// let model = GBDTModel::train(&dataset, Some(&val_dataset), config, 0).unwrap();
     /// ```
     pub fn train(
         dataset: &Dataset,
-        eval_sets: &[EvalSet<'_>],
+        val_set: Option<&Dataset>,
         config: GBDTConfig,
         n_threads: usize,
     ) -> Option<Self> {
@@ -157,7 +156,7 @@ impl GBDTModel {
             // Get weights as WeightsView
             let weights = dataset.weights();
 
-            Self::train_inner(&binned, targets, weights, eval_sets, config, parallelism)
+            Self::train_inner(&binned, targets, weights, val_set, config, parallelism)
         })
     }
 
@@ -170,19 +169,19 @@ impl GBDTModel {
     /// * `dataset` - Binned training dataset
     /// * `targets` - Target values, shape `[n_outputs, n_rows]`
     /// * `weights` - Optional sample weights (`WeightsView::None` for uniform)
-    /// * `eval_sets` - Evaluation sets for monitoring and early stopping (`&[]` if not needed)
+    /// * `val_set` - Optional validation dataset for early stopping and monitoring
     /// * `config` - Training configuration
     /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
     pub fn train_binned(
         dataset: &BinnedDataset,
         targets: TargetsView<'_>,
         weights: WeightsView<'_>,
-        eval_sets: &[EvalSet<'_>],
+        val_set: Option<&Dataset>,
         config: GBDTConfig,
         n_threads: usize,
     ) -> Option<Self> {
         crate::run_with_threads(n_threads, |parallelism| {
-            Self::train_inner(dataset, targets, weights, eval_sets, config, parallelism)
+            Self::train_inner(dataset, targets, weights, val_set, config, parallelism)
         })
     }
 
@@ -194,7 +193,7 @@ impl GBDTModel {
         dataset: &BinnedDataset,
         targets: TargetsView<'_>,
         weights: WeightsView<'_>,
-        eval_sets: &[EvalSet<'_>],
+        val_set: Option<&Dataset>,
         config: GBDTConfig,
         parallelism: Parallelism,
     ) -> Option<Self> {
@@ -215,7 +214,7 @@ impl GBDTModel {
         let trainer = GBDTTrainer::new(config.objective.clone(), metric, params);
 
         // Components receive parallelism flag; thread pool is already set up
-        let forest = trainer.train(dataset, targets, weights, eval_sets, parallelism)?;
+        let forest = trainer.train(dataset, targets, weights, val_set, parallelism)?;
 
         let meta = ModelMeta {
             n_features,

@@ -6,7 +6,7 @@
 //!
 //! - [`Gradients`]: Interleaved gradient storage
 //! - [`Objective`]: Trait for computing gradients (supports single and multi-output)
-//! - [`Metric`], [`EvalSet`]: Evaluation during training
+//! - [`Metric`]: Evaluation metrics during training
 //! - [`EarlyStopping`]: Callback for stopping when validation metric plateaus
 //! - [`TrainingLogger`], [`Verbosity`]: Structured logging
 //!
@@ -53,7 +53,7 @@ pub mod sampling;
 
 // Re-export shared types at the training module level
 pub use callback::{EarlyStopAction, EarlyStopping};
-pub use eval::{EvalSet, Evaluator, MetricValue};
+pub use eval::{Evaluator, MetricValue};
 pub use gradients::{Gradients, GradsTuple};
 pub use logger::{TrainingLogger, Verbosity};
 pub use metrics::{

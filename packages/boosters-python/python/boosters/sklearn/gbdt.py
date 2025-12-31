@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
 
 from boosters import GBDTConfig, GBDTModel, GrowthStrategy, ImportanceType, Metric, Objective
-from boosters.data import Dataset, EvalSet
+from boosters.data import Dataset
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -142,7 +142,7 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
         self,
         X: NDArray[Any],  # noqa: N803 (sklearn convention for feature matrix)
         y: NDArray[Any],
-        eval_set: list[tuple[NDArray[Any], NDArray[Any]]] | list[EvalSet] | None = None,
+        eval_set: tuple[NDArray[Any], NDArray[Any]] | None = None,
         sample_weight: NDArray[np.float32] | None = None,
     ) -> Self:
         """Fit the estimator.
@@ -153,10 +153,8 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
             Training input samples.
         y : array-like of shape (n_samples,)
             Target values.
-        eval_set : list of tuples or list of EvalSet, optional
-            Validation sets. Can be:
-            - list of (X, y) tuples (auto-named as "valid_0", "valid_1", ...)
-            - list of EvalSet objects (with custom names)
+        eval_set : tuple of (X, y), optional
+            Validation set as (X_val, y_val) tuple.
         sample_weight : array-like of shape (n_samples,), optional
             Sample weights.
 
@@ -172,32 +170,24 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
         y_prepared = self._prepare_targets(y)
 
         train_data = Dataset(X, y_prepared, weights=sample_weight)
-        valid_list = self._build_eval_sets(eval_set)
+        val_data = self._build_val_set(eval_set)
 
         self.model_ = GBDTModel(config=self._config)
-        self.model_.fit(train_data, valid=valid_list)
+        self.model_.fit(train_data, val_set=val_data)
 
         return self
 
-    def _build_eval_sets(
-        self, eval_set: list[tuple[NDArray[Any], NDArray[Any]]] | list[EvalSet] | None
-    ) -> list[EvalSet] | None:
-        """Build evaluation sets from user input."""
+    def _build_val_set(
+        self, eval_set: tuple[NDArray[Any], NDArray[Any]] | None
+    ) -> Dataset | None:
+        """Build validation dataset from user input."""
         if eval_set is None:
             return None
 
-        valid_list: list[EvalSet] = []
-        for i, item in enumerate(eval_set):
-            if isinstance(item, EvalSet):
-                valid_list.append(item)
-            else:
-                X_val, y_val = item  # noqa: N806 (sklearn convention)
-                X_val = check_array(X_val, dtype=np.float32)  # noqa: N806 (sklearn convention)
-                y_val_prepared = self._prepare_eval_targets(y_val)
-                val_ds = Dataset(X_val, y_val_prepared)
-                valid_list.append(EvalSet(val_ds, f"valid_{i}"))
-
-        return valid_list
+        X_val, y_val = eval_set  # noqa: N806 (sklearn convention)
+        X_val = check_array(X_val, dtype=np.float32)  # noqa: N806 (sklearn convention)
+        y_val_prepared = self._prepare_eval_targets(y_val)
+        return Dataset(X_val, y_val_prepared)
 
     def predict(self, X: NDArray[Any]) -> NDArray[np.float32]:  # noqa: N803 (sklearn convention)
         """Predict using the fitted model.

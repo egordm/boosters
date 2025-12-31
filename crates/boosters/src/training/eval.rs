@@ -3,7 +3,7 @@
 //! Provides the [`Evaluator`] component for computing metrics during training,
 //! and [`MetricValue`] for wrapping computed metrics with metadata.
 
-use ndarray::{Array2, ArrayView2};
+use ndarray::ArrayView2;
 
 use crate::data::{Dataset, TargetsView, WeightsView};
 use crate::inference::PredictionKind;
@@ -64,35 +64,18 @@ impl std::fmt::Display for MetricValue {
 }
 
 // =============================================================================
-// EvalSet
-// =============================================================================
-
-/// Named evaluation dataset.
-#[derive(Debug, Clone, Copy)]
-pub struct EvalSet<'a> {
-    pub name: &'a str,
-    pub dataset: &'a Dataset,
-}
-
-impl<'a> EvalSet<'a> {
-    pub fn new(name: &'a str, dataset: &'a Dataset) -> Self {
-        Self { name, dataset }
-    }
-}
-
-// =============================================================================
 // Evaluator
 // =============================================================================
 
 /// Evaluation state for computing metrics during training.
 ///
 /// The Evaluator manages buffers and provides a clean interface for computing
-/// metrics on training and evaluation datasets.
+/// metrics on training and validation datasets.
 ///
 /// # Example
 ///
 /// ```ignore
-/// use boosters::training::{Evaluator, SquaredLoss, Rmse, EvalSet};
+/// use boosters::training::{Evaluator, SquaredLoss, Rmse};
 ///
 /// let objective = SquaredLoss;
 /// let metric = Rmse;
@@ -100,10 +83,10 @@ impl<'a> EvalSet<'a> {
 ///
 /// // During training loop:
 /// let metrics = evaluator.evaluate_round(
-///     train_predictions, train_targets, train_weights, train_n_rows,
-///     &eval_sets, &eval_predictions,
+///     train_predictions, train_targets, train_weights,
+///     val_set.as_ref(), val_predictions.as_ref().map(|p| p.view()),
 /// );
-/// let early_stop_value = evaluator.early_stop_value(&metrics, eval_set_idx);
+/// let early_stop_value = Evaluator::early_stop_value(&metrics, val_set.is_some());
 /// ```
 pub struct Evaluator<'a, O: ObjectiveFn, M: MetricFn> {
     objective: &'a O,
@@ -227,7 +210,7 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
         MetricValue::new(name, value, self.higher_is_better())
     }
 
-    /// Evaluate predictions on training and eval sets for one round.
+    /// Evaluate predictions on training and validation sets for one round.
     ///
     /// Returns a vector of metric values for all datasets.
     /// If the metric is not enabled (e.g., `Metric::None`), returns an empty vector.
@@ -237,22 +220,22 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
     /// * `train_predictions` - Training predictions, shape `[n_outputs, n_train_samples]`
     /// * `train_targets` - Training targets
     /// * `train_weights` - Training weights, `None` for uniform
-    /// * `eval_sets` - Evaluation datasets
-    /// * `eval_predictions` - Predictions for each eval set, same shape convention
+    /// * `val_set` - Optional validation dataset (with targets)
+    /// * `val_predictions` - Predictions for validation set (required if val_set is Some)
     pub fn evaluate_round(
         &mut self,
         train_predictions: ArrayView2<f32>,
         train_targets: TargetsView<'_>,
         train_weights: WeightsView<'_>,
-        eval_sets: &[EvalSet<'_>],
-        eval_predictions: &[Array2<f32>],
+        val_set: Option<&Dataset>,
+        val_predictions: Option<ArrayView2<f32>>,
     ) -> Vec<MetricValue> {
         // Skip evaluation entirely if metric is not enabled
         if !self.metric.is_enabled() {
             return Vec::new();
         }
 
-        let mut metrics = Vec::with_capacity(1 + eval_sets.len());
+        let mut metrics = Vec::with_capacity(if val_set.is_some() { 2 } else { 1 });
 
         // Compute training metric
         let train_metric = self.compute_metric(
@@ -263,18 +246,14 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
         );
         metrics.push(train_metric);
 
-        // Compute eval set metrics
-        for (set_idx, eval_set) in eval_sets.iter().enumerate() {
-            let preds = &eval_predictions[set_idx];
-            let targets = eval_set
-                .dataset
-                .targets()
-                .expect("eval set must have targets");
-            let weights = eval_set.dataset.weights();
+        // Compute validation metric if provided
+        if let (Some(val), Some(preds)) = (val_set, val_predictions) {
+            let targets = val.targets().expect("validation set must have targets");
+            let weights = val.weights();
 
             let metric = self.compute_metric(
-                format!("{}-{}", eval_set.name, self.metric_name()),
-                preds.view(),
+                format!("valid-{}", self.metric_name()),
+                preds,
                 targets,
                 weights,
             );
@@ -286,15 +265,10 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
 
     /// Get the early stopping value from metrics.
     ///
-    /// If `eval_set_idx` is valid, returns the corresponding eval set's metric.
-    /// Otherwise, returns the training metric.
-    pub fn early_stop_value(metrics: &[MetricValue], eval_set_idx: usize) -> f64 {
-        // Index 0 is training, eval sets are 1, 2, ...
-        let idx = if eval_set_idx + 1 < metrics.len() {
-            eval_set_idx + 1
-        } else {
-            0
-        };
+    /// Returns the validation metric if available, otherwise the training metric.
+    pub fn early_stop_value(metrics: &[MetricValue], has_val_set: bool) -> f64 {
+        // Index 0 is training, index 1 is validation (if present)
+        let idx = if has_val_set && metrics.len() > 1 { 1 } else { 0 };
         metrics.get(idx).map(|m| m.value).unwrap_or(f64::NAN)
     }
 }

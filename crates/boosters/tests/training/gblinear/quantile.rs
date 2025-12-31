@@ -54,7 +54,7 @@ fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
 
     let trainer = GBLinearTrainer::new(PinballLoss::new(alpha), Rmse, params);
     let model = trainer
-        .train(&train, targets_view, WeightsView::None, &[])
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
 
     // Compute predictions on test set
@@ -130,13 +130,13 @@ fn quantile_regression_predictions_differ() {
     let trainer_high = GBLinearTrainer::new(PinballLoss::new(0.9), Rmse, base_params);
 
     let model_low = trainer_low
-        .train(&train, targets_view.clone(), WeightsView::None, &[])
+        .train(&train, targets_view.clone(), WeightsView::None, None)
         .unwrap();
     let model_med = trainer_med
-        .train(&train, targets_view.clone(), WeightsView::None, &[])
+        .train(&train, targets_view.clone(), WeightsView::None, None)
         .unwrap();
     let model_high = trainer_high
-        .train(&train, targets_view, WeightsView::None, &[])
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
 
     // For prediction, data is already feature-major [n_features, n_samples]
@@ -231,7 +231,7 @@ fn train_multi_quantile_regression() {
         params,
     );
     let model = trainer
-        .train(&train, targets_view, WeightsView::None, &[])
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
 
     // Verify model has correct number of output groups
@@ -313,7 +313,7 @@ fn multi_quantile_vs_separate_models() {
         base_params.clone(),
     );
     let multi_model = multi_trainer
-        .train(&train, targets_view.clone(), WeightsView::None, &[])
+        .train(&train, targets_view.clone(), WeightsView::None, None)
         .unwrap();
 
     // Train 3 separate single-quantile models
@@ -322,7 +322,7 @@ fn multi_quantile_vs_separate_models() {
         .map(|&alpha| {
             let trainer = GBLinearTrainer::new(PinballLoss::new(alpha), Rmse, base_params.clone());
             trainer
-                .train(&train, targets_view.clone(), WeightsView::None, &[])
+                .train(&train, targets_view.clone(), WeightsView::None, None)
                 .unwrap()
         })
         .collect();

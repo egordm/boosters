@@ -4,7 +4,6 @@ This module provides dataset wrappers for training and evaluation.
 
 Types:
     - Dataset: Training/prediction dataset with features, labels, weights
-    - EvalSet: Named evaluation set for validation during training
 """
 
 from __future__ import annotations
@@ -16,7 +15,6 @@ import numpy as np
 from numpy.typing import NDArray
 
 from boosters._boosters_rs import Dataset as _RustDataset
-from boosters._boosters_rs import EvalSet
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -24,7 +22,6 @@ if TYPE_CHECKING:
 
 __all__: list[str] = [
     "Dataset",
-    "EvalSet",
 ]
 
 

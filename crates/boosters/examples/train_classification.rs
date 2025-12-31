@@ -150,7 +150,7 @@ fn main() {
         &dataset,
         targets,
         WeightsView::from_array(ArrayView1::from(&weights[..])),
-        &[],
+        None,
         config_weighted,
         1,
     )

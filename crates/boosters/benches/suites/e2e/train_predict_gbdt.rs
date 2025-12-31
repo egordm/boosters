@@ -69,7 +69,7 @@ fn bench_train_then_predict_regression(c: &mut Criterion) {
                     black_box(&binned_train),
                     targets,
                     WeightsView::None,
-                    &[],
+                    None,
                     Parallelism::Sequential,
                 )
                 .unwrap();

@@ -6,11 +6,11 @@
 use ndarray::Array2;
 
 use crate::data::init_predictions;
-use crate::data::{BinnedDataset, TargetsView, WeightsView};
+use crate::data::{BinnedDataset, Dataset, TargetsView, WeightsView};
 use crate::repr::gblinear::LinearModel;
 use crate::training::eval;
 use crate::training::{
-    EarlyStopAction, EarlyStopping, EvalSet, Gradients, MetricFn, ObjectiveFn, TrainingLogger,
+    EarlyStopAction, EarlyStopping, Gradients, MetricFn, ObjectiveFn, TrainingLogger,
     Verbosity,
 };
 
@@ -53,9 +53,6 @@ pub struct GBLinearParams {
     /// Set to 0 to disable.
     pub early_stopping_rounds: u32,
 
-    /// Index of eval set to use for early stopping (default: first eval set).
-    pub early_stopping_eval_set: usize,
-
     // --- Logging ---
     /// Verbosity level for training output.
     pub verbosity: Verbosity,
@@ -72,7 +69,6 @@ impl Default for GBLinearParams {
             feature_selector: FeatureSelectorKind::default(),
             seed: 42,
             early_stopping_rounds: 0,
-            early_stopping_eval_set: 0,
             verbosity: Verbosity::default(),
         }
     }
@@ -110,26 +106,26 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
     /// * `train` - Training dataset as BinnedDataset (must have numeric features only)
     /// * `targets` - Training targets
     /// * `weights` - Optional sample weights
-    /// * `eval_sets` - Evaluation sets for monitoring (`&[]` if not needed)
+    /// * `val_set` - Optional validation set for early stopping
     ///
     /// # Returns
     ///
     /// Returns `None` if:
     /// - Dataset contains categorical features (not supported by GBLinear)
-    /// - Evaluation set datasets have categorical features
+    /// - Validation set has categorical features
     pub fn train(
         &self,
         train: &BinnedDataset,
         targets: TargetsView<'_>,
         weights: WeightsView<'_>,
-        eval_sets: &[EvalSet<'_>],
+        val_set: Option<&Dataset>,
     ) -> Option<LinearModel> {
         // Validate: GBLinear doesn't support categorical features
         if train.has_categorical() {
             return None;
         }
-        for es in eval_sets {
-            if es.dataset.has_categorical() {
+        if let Some(vs) = val_set {
+            if vs.has_categorical() {
                 return None;
             }
         }
@@ -181,15 +177,12 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
         // Check if we need evaluation (metric is enabled)
         let needs_evaluation = self.metric.is_enabled();
 
-        // Initialize eval predictions with base scores
-        // Shape: [n_outputs, n_eval_samples] for each eval set
-        let mut eval_predictions: Vec<Array2<f32>> = if needs_evaluation {
-            eval_sets
-                .iter()
-                .map(|es| init_predictions(&base_scores, es.dataset.n_samples()))
-                .collect()
+        // Initialize validation predictions with base scores
+        // Shape: [n_outputs, n_val_samples]
+        let mut val_predictions: Option<Array2<f32>> = if needs_evaluation {
+            val_set.map(|vs| init_predictions(&base_scores, vs.n_samples()))
         } else {
-            Vec::new()
+            None
         };
 
         // Early stopping (always present, may be disabled)
@@ -232,15 +225,13 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                         predictions.view_mut(),
                     );
 
-                    // Also update eval predictions (only if evaluation is needed)
-                    if needs_evaluation {
-                        for eval_preds in eval_predictions.iter_mut() {
-                            updater.apply_bias_delta_to_predictions(
-                                bias_delta,
-                                output,
-                                eval_preds.view_mut(),
-                            );
-                        }
+                    // Also update validation predictions (only if evaluation is needed)
+                    if let Some(ref mut vp) = val_predictions {
+                        updater.apply_bias_delta_to_predictions(
+                            bias_delta,
+                            output,
+                            vp.view_mut(),
+                        );
                     }
 
                     // Recompute gradients after bias update
@@ -278,16 +269,10 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                         predictions.view_mut(),
                     );
 
-                    // Also update eval predictions (only if evaluation is needed)
-                    // Note: eval_set still uses Dataset, so we need FeaturesView temporarily
-                    if needs_evaluation {
-                        for (set_idx, eval_set) in eval_sets.iter().enumerate() {
-                            // TODO: Once EvalSet uses BinnedDataset, update this
-                            // For now, skip eval prediction updates for weight deltas
-                            // (The eval predictions will be computed from scratch if needed)
-                            let _ = (set_idx, eval_set);
-                        }
-                    }
+                    // Note: Validation prediction updates for weight deltas would require
+                    // BinnedDataset for the validation set. For now, validation metrics
+                    // are computed from accumulated bias updates only. This is a known
+                    // limitation that will be addressed when validation uses BinnedDataset.
                 }
             }
 
@@ -297,12 +282,12 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                     predictions.view(),
                     targets,
                     weights,
-                    eval_sets,
-                    &eval_predictions,
+                    val_set,
+                    val_predictions.as_ref().map(|p| p.view()),
                 );
                 let value = eval::Evaluator::<O, M>::early_stop_value(
                     &metrics,
-                    self.params.early_stopping_eval_set,
+                    val_set.is_some(),
                 );
                 (metrics, value)
             } else {
@@ -428,7 +413,7 @@ mod tests {
 
         let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
         let model = trainer
-            .train(&train, targets_view, WeightsView::None, &[])
+            .train(&train, targets_view, WeightsView::None, None)
             .unwrap();
 
         // Check predictions
@@ -460,7 +445,7 @@ mod tests {
         };
         let trainer_no_reg = GBLinearTrainer::new(SquaredLoss, Rmse, params_no_reg);
         let model_no_reg = trainer_no_reg
-            .train(&train, targets_view.clone(), WeightsView::None, &[])
+            .train(&train, targets_view.clone(), WeightsView::None, None)
             .unwrap();
 
         // Train with L2 regularization
@@ -473,7 +458,7 @@ mod tests {
         };
         let trainer_l2 = GBLinearTrainer::new(SquaredLoss, Rmse, params_l2);
         let model_l2 = trainer_l2
-            .train(&train, targets_view, WeightsView::None, &[])
+            .train(&train, targets_view, WeightsView::None, None)
             .unwrap();
 
         // L2 should produce smaller weights
@@ -507,7 +492,7 @@ mod tests {
 
         let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
         let model = trainer
-            .train(&train, targets_view, WeightsView::None, &[])
+            .train(&train, targets_view, WeightsView::None, None)
             .unwrap();
 
         let w0 = model.weight(0, 0);
@@ -545,7 +530,7 @@ mod tests {
 
         let trainer = GBLinearTrainer::new(SoftmaxLoss::new(3), MulticlassLogLoss, params);
         let model = trainer
-            .train(&train, targets_view, WeightsView::None, &[])
+            .train(&train, targets_view, WeightsView::None, None)
             .unwrap();
 
         // Model should have 3 output groups
@@ -586,7 +571,7 @@ mod tests {
 
         let trainer = GBLinearTrainer::new(LogisticLoss, LogLoss, params);
         let model = trainer
-            .train(&train, targets_view, WeightsView::None, &[])
+            .train(&train, targets_view, WeightsView::None, None)
             .unwrap();
 
         assert_eq!(model.n_groups(), 1);

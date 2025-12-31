@@ -692,7 +692,7 @@ fn train_boosters(
         &binned_train,
         targets,
         WeightsView::None,
-        &[],
+        None,
         gbdt_config,
         1,
     )

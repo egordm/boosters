@@ -102,7 +102,7 @@ fn bench_train_regression(c: &mut Criterion) {
                             black_box(&binned),
                             targets_view,
                             WeightsView::None,
-                            &[],
+                            None,
                             Parallelism::Sequential,
                         )
                         .unwrap(),

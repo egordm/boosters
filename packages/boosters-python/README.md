@@ -131,7 +131,6 @@ grid.fit(X, y)
 | `GBDTConfig` | Configuration for GBDT models |
 | `GBLinearConfig` | Configuration for linear models |
 | `Dataset` | Data wrapper for features and labels |
-| `EvalSet` | Named evaluation set for validation |
 
 ### Objectives
 

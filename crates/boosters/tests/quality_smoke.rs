@@ -73,7 +73,7 @@ fn run_synthetic_regression(
         &binned_train,
         TargetsView::new(y_train_2d.view()),
         WeightsView::None,
-        &[],
+        None,
         config,
         1,
     )
@@ -126,7 +126,7 @@ fn run_synthetic_binary(rows: usize, cols: usize, trees: u32, depth: u32, seed: 
         &binned_train,
         TargetsView::new(y_train_2d.view()),
         WeightsView::None,
-        &[],
+        None,
         config,
         1,
     )
@@ -186,7 +186,7 @@ fn run_synthetic_multiclass(
         &binned_train,
         TargetsView::new(y_train_2d.view()),
         WeightsView::None,
-        &[],
+        None,
         config,
         1,
     )
@@ -321,7 +321,7 @@ fn test_quality_improvement_linear_leaves() {
         &binned_train,
         TargetsView::new(y_train_2d.view()),
         WeightsView::None,
-        &[],
+        None,
         base_config,
         1,
     )
@@ -353,7 +353,7 @@ fn test_quality_improvement_linear_leaves() {
         &binned_train,
         TargetsView::new(y_train_2d.view()),
         WeightsView::None,
-        &[],
+        None,
         linear_config,
         1,
     )

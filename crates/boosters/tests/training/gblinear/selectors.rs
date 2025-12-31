@@ -58,7 +58,7 @@ fn train_all_selectors_regression() {
     };
     let shuffle_trainer = GBLinearTrainer::new(SquaredLoss, Rmse, shuffle_params);
     let shuffle_model = shuffle_trainer
-        .train(&train, targets_view.clone(), WeightsView::None, &[])
+        .train(&train, targets_view.clone(), WeightsView::None, None)
         .unwrap();
     use boosters::training::MetricFn;
     let shuffle_output = shuffle_model.predict(test_view);
@@ -81,7 +81,7 @@ fn train_all_selectors_regression() {
 
         let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
         let model = trainer
-            .train(&train, targets_view.clone(), WeightsView::None, &[])
+            .train(&train, targets_view.clone(), WeightsView::None, None)
             .unwrap();
         let output = model.predict(test_view);
         let rmse = Rmse.compute(output.view(), eval_targets, WeightsView::None);
@@ -141,7 +141,7 @@ fn train_all_selectors_multiclass() {
         shuffle_params,
     );
     let shuffle_model = shuffle_trainer
-        .train(&train, targets_view.clone(), WeightsView::None, &[])
+        .train(&train, targets_view.clone(), WeightsView::None, None)
         .unwrap();
     use boosters::training::{MetricFn, MulticlassAccuracy};
     let shuffle_output = shuffle_model.predict(test_view);
@@ -184,7 +184,7 @@ fn train_all_selectors_multiclass() {
         let trainer =
             GBLinearTrainer::new(SoftmaxLoss::new(num_classes), MulticlassLogLoss, params);
         let model = trainer
-            .train(&train, targets_view.clone(), WeightsView::None, &[])
+            .train(&train, targets_view.clone(), WeightsView::None, None)
             .unwrap();
         let output = model.predict(test_view);
         // output is [n_groups, n_samples]
@@ -256,10 +256,10 @@ fn train_greedy_selector_feature_priority() {
     let cyclic_trainer = GBLinearTrainer::new(SquaredLoss, Rmse, cyclic_params);
 
     let greedy_model = greedy_trainer
-        .train(&train, targets_view.clone(), WeightsView::None, &[])
+        .train(&train, targets_view.clone(), WeightsView::None, None)
         .unwrap();
     let cyclic_model = cyclic_trainer
-        .train(&train, targets_view, WeightsView::None, &[])
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
 
     // Both should produce valid models (non-zero weights somewhere)
@@ -308,7 +308,7 @@ fn train_thrifty_selector_convergence() {
 
     let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
     let model = trainer
-        .train(&train, targets_view, WeightsView::None, &[])
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
     use boosters::training::MetricFn;
     let output = model.predict(test_view);

@@ -260,7 +260,7 @@ fn bench_boosters_training(c: &mut Criterion) {
                             black_box(&binned_no_bundling),
                             targets_view,
                             WeightsView::None,
-                            &[],
+                            None,
                             Parallelism::Sequential,
                         )
                         .unwrap(),
@@ -278,7 +278,7 @@ fn bench_boosters_training(c: &mut Criterion) {
                             black_box(&binned_with_bundling),
                             targets_view,
                             WeightsView::None,
-                            &[],
+                            None,
                             Parallelism::Sequential,
                         )
                         .unwrap(),

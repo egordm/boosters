@@ -25,7 +25,7 @@
 //! ```ignore
 //! use boosters::model::{GBDTModel, TaskKind};
 //! use boosters::model::gbdt::GBDTConfig;
-//! use boosters::data::RowMatrix;
+//! use boosters::data::Dataset;
 //! use boosters::training::{Objective, Metric};
 //!
 //! // Train a model
@@ -36,12 +36,10 @@
 //!     .learning_rate(0.1)
 //!     .build()
 //!     .unwrap();
-//! let model = GBDTModel::train(&data, &labels, &[], config)?;
+//! let model = GBDTModel::train(&dataset, None, config, 0)?;
 //!
-//! // Make predictions with structured matrix
-//! let features = RowMatrix::from_vec(feature_data, n_rows, n_features);
-//! let predictions = model.predict(&features);
-//! let probs = predictions.col_slice(0); // Access first output column
+//! // Make predictions
+//! let predictions = model.predict(&dataset, 0);
 //! ```
 
 pub mod gbdt;

@@ -33,7 +33,7 @@ fn train_binary_classification() {
 
     let trainer = GBLinearTrainer::new(LogisticLoss, LogLoss, params);
     let model = trainer
-        .train(&train, targets_view, WeightsView::None, &[])
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
 
     // Verify predictions are in reasonable range for logits.
@@ -75,7 +75,7 @@ fn train_multioutput_classification() {
 
     let trainer = GBLinearTrainer::new(SoftmaxLoss::new(num_class), MulticlassLogLoss, params);
     let model = trainer
-        .train(&train, targets_view, WeightsView::None, &[])
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
 
     // Verify model has correct number of output groups

@@ -4,10 +4,8 @@ use numpy::{PyArray1, PyArray2};
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
-use boosters::training::EvalSet as CoreEvalSet;
-
 use crate::config::PyGBLinearConfig;
-use crate::data::{PyDataset, PyEvalSet};
+use crate::data::PyDataset;
 use crate::error::BoostersError;
 use crate::validation::{require_fitted, validate_feature_count};
 
@@ -240,17 +238,17 @@ impl PyGBLinearModel {
     ///
     /// Args:
     ///     train: Training dataset containing features and labels.
-    ///     eval_set: Validation set(s) for early stopping and evaluation.
+    ///     val_set: Optional validation dataset for early stopping and evaluation.
     ///     n_threads: Number of threads for parallel training (0 = auto).
     ///
     /// Returns:
     ///     Self (for method chaining).
-    #[pyo3(signature = (train, eval_set=None, n_threads=0))]
+    #[pyo3(signature = (train, val_set=None, n_threads=0))]
     pub fn fit<'py>(
         mut slf: PyRefMut<'py, Self>,
         py: Python<'py>,
         train: PyRef<'py, PyDataset>,
-        eval_set: Option<Vec<PyRef<'py, PyEvalSet>>>,
+        val_set: Option<PyRef<'py, PyDataset>>,
         n_threads: usize,
     ) -> PyResult<PyRefMut<'py, Self>> {
         if !train.has_labels() {
@@ -267,20 +265,12 @@ impl PyGBLinearModel {
 
         let core_train = train.inner();
 
-        // Build eval sets from PyEvalSet references
-        let py_eval_sets: Vec<_> = eval_set.unwrap_or_default();
-        let borrowed: Vec<_> = py_eval_sets
-            .iter()
-            .map(|es| (es.name_str(), es.dataset_ref().bind(py).borrow()))
-            .collect();
-        let eval_sets: Vec<CoreEvalSet<'_>> = borrowed
-            .iter()
-            .map(|(name, ds)| CoreEvalSet::new(name, ds.inner()))
-            .collect();
+        // Get validation dataset if provided
+        let core_val_set = val_set.as_ref().map(|ds| ds.inner());
 
         // Train with GIL released
         let trained_model = py.detach(|| {
-            boosters::GBLinearModel::train(core_train, &eval_sets, core_config, n_threads)
+            boosters::GBLinearModel::train(core_train, core_val_set, core_config, n_threads)
         });
 
         match trained_model {

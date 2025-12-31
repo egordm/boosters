@@ -3,12 +3,12 @@
 //! Orchestrates objective computation, tree growing, and prediction updates.
 //! Use [`GBDTTrainer::train`] to train a forest from a binned dataset.
 
-use crate::data::{BinnedDataset, init_predictions};
+use crate::data::{BinnedDataset, Dataset, init_predictions};
 use crate::data::{TargetsView, WeightsView};
 use crate::training::Gradients;
 use crate::training::Verbosity;
 use crate::training::callback::{EarlyStopAction, EarlyStopping};
-use crate::training::eval::{self, EvalSet};
+use crate::training::eval;
 use crate::training::logger::TrainingLogger;
 use crate::training::metrics::MetricFn;
 use crate::training::objectives::ObjectiveFn;
@@ -59,8 +59,6 @@ pub struct GBDTParams {
     /// Early stopping rounds. Training stops if no improvement for this many rounds.
     /// Set to 0 to disable.
     pub early_stopping_rounds: u32,
-    /// Index of eval set to use for early stopping (default: first eval set).
-    pub early_stopping_eval_set: usize,
 
     // --- Logging ---
     /// Verbosity level for training output.
@@ -88,7 +86,6 @@ impl Default for GBDTParams {
             col_sampling: ColSamplingParams::None,
             cache_size: 8,
             early_stopping_rounds: 0,
-            early_stopping_eval_set: 0,
             verbosity: Verbosity::default(),
             seed: 42,
             linear_leaves: None,
@@ -158,7 +155,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
     /// * `dataset` - Binned dataset created with [`BinnedDatasetBuilder`]
     /// * `targets` - Target values (length = n_rows × n_outputs)
     /// * `weights` - Sample weights (None for uniform)
-    /// * `eval_sets` - Validation sets for early stopping (`&[]` to skip)
+    /// * `val_set` - Optional validation set for early stopping
     /// * `parallelism` - Sequential or Parallel iteration hint
     ///
     /// [`BinnedDatasetBuilder`]: crate::data::BinnedDatasetBuilder
@@ -167,7 +164,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
         dataset: &BinnedDataset,
         targets: TargetsView<'_>,
         weights: WeightsView<'_>,
-        eval_sets: &[EvalSet<'_>],
+        val_set: Option<&Dataset>,
         parallelism: Parallelism,
     ) -> Option<Forest<ScalarLeaf>> {
         let n_rows = dataset.n_samples();
@@ -212,16 +209,13 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
         // Check if we need evaluation (metric is enabled)
         let needs_evaluation = self.metric.is_enabled();
 
-        // Initialize eval predictions with base scores
-        // Shape: [n_outputs, n_eval_samples] for each eval set
-        // Only allocate if evaluation is needed
-        let mut eval_predictions: Vec<Array2<f32>> = if needs_evaluation {
-            eval_sets
-                .iter()
-                .map(|es| init_predictions(&base_scores, es.dataset.n_samples()))
-                .collect()
+        // Initialize validation predictions with base scores
+        // Shape: [n_outputs, n_val_samples]
+        // Only allocate if evaluation is needed and val_set provided
+        let mut val_predictions: Option<Array2<f32>> = if needs_evaluation {
+            val_set.map(|vs| init_predictions(&base_scores, vs.n_samples()))
         } else {
-            Vec::new()
+            None
         };
         // Early stopping (always present, may be disabled)
         let mut early_stopping = EarlyStopping::new(
@@ -304,33 +298,31 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
                     tree.predict_into(dataset, pred_row, parallelism);
                 }
 
-                // Incremental eval set prediction: add this tree's contribution
-                // eval_predictions shape is [n_outputs, n_eval_samples] for each set
-                // Only compute if evaluation is needed
-                if needs_evaluation {
-                    for (set_idx, eval_set) in eval_sets.iter().enumerate() {
-                        let pred_row = eval_predictions[set_idx].row_mut(output);
-                        // Use FeaturesView directly - it implements FeatureAccessor
-                        tree.predict_into(&eval_set.dataset.features(), pred_row, parallelism);
-                    }
+                // Incremental validation prediction: add this tree's contribution
+                // val_predictions shape is [n_outputs, n_val_samples]
+                // Only compute if evaluation is needed and val_set provided
+                if let (Some(vs), Some(ref mut vp)) = (val_set, val_predictions.as_mut()) {
+                    let pred_row = vp.row_mut(output);
+                    // Use FeaturesView directly - it implements FeatureAccessor
+                    tree.predict_into(&vs.features(), pred_row, parallelism);
                 }
 
                 forest.push_tree(tree, output as u32);
             }
 
-            // Evaluate on eval sets (using accumulated predictions)
+            // Evaluate on validation set (using accumulated predictions)
             // Only evaluate if metric is enabled
             let (round_metrics, early_stop_value) = if needs_evaluation {
                 let metrics = evaluator.evaluate_round(
                     predictions.view(),
                     targets,
                     weights,
-                    eval_sets,
-                    &eval_predictions,
+                    val_set,
+                    val_predictions.as_ref().map(|p| p.view()),
                 );
                 let value = eval::Evaluator::<O, M>::early_stop_value(
                     &metrics,
-                    self.params.early_stopping_eval_set,
+                    val_set.is_some(),
                 );
                 (metrics, value)
             } else {
@@ -480,7 +472,7 @@ mod tests {
                 &dataset,
                 targets,
                 WeightsView::None,
-                &[],
+                None,
                 Parallelism::Sequential,
             )
             .unwrap();
@@ -507,7 +499,7 @@ mod tests {
                 &dataset,
                 targets,
                 WeightsView::None,
-                &[],
+                None,
                 Parallelism::Sequential,
             )
             .unwrap();
@@ -537,7 +529,7 @@ mod tests {
                 &dataset,
                 targets,
                 WeightsView::None,
-                &[],
+                None,
                 Parallelism::Sequential,
             )
             .unwrap();
@@ -563,7 +555,7 @@ mod tests {
                 &dataset,
                 targets,
                 WeightsView::from_array(weights.view()),
-                &[],
+                None,
                 Parallelism::Sequential,
             )
             .unwrap();
@@ -589,7 +581,7 @@ mod tests {
                 &dataset,
                 targets,
                 WeightsView::None,
-                &[],
+                None,
                 Parallelism::Sequential,
             )
             .unwrap();
@@ -610,7 +602,7 @@ mod tests {
             &dataset,
             targets,
             WeightsView::None,
-            &[],
+            None,
             Parallelism::Sequential,
         );
 
@@ -637,7 +629,7 @@ mod tests {
                 &dataset,
                 targets,
                 WeightsView::None,
-                &[],
+                None,
                 Parallelism::Sequential,
             )
             .unwrap();
@@ -669,7 +661,7 @@ mod tests {
                 &dataset,
                 targets,
                 WeightsView::None,
-                &[],
+                None,
                 Parallelism::Sequential,
             )
             .unwrap();
@@ -713,7 +705,7 @@ mod tests {
                 &dataset,
                 targets,
                 WeightsView::None,
-                &[],
+                None,
                 Parallelism::Sequential,
             )
             .unwrap();
@@ -736,7 +728,7 @@ mod tests {
                 &dataset,
                 targets,
                 WeightsView::None,
-                &[],
+                None,
                 Parallelism::Sequential,
             )
             .unwrap();
@@ -792,7 +784,7 @@ mod tests {
                 &dataset,
                 targets,
                 WeightsView::None,
-                &[],
+                None,
                 Parallelism::Sequential,
             )
             .unwrap();

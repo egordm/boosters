@@ -40,7 +40,7 @@ fn train_regression_matches_xgboost(#[case] name: &str) {
 
     let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
     let model = trainer
-        .train(&train, targets_view, WeightsView::None, &[])
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
 
     // Compare weights
@@ -82,7 +82,7 @@ fn train_l2_regularization_shrinks_weights() {
     };
     let trainer_no_reg = GBLinearTrainer::new(SquaredLoss, Rmse, params_no_reg);
     let no_reg_model = trainer_no_reg
-        .train(&train, targets_view.clone(), WeightsView::None, &[])
+        .train(&train, targets_view.clone(), WeightsView::None, None)
         .unwrap();
 
     // Train with L2 regularization
@@ -97,7 +97,7 @@ fn train_l2_regularization_shrinks_weights() {
     };
     let trainer_l2 = GBLinearTrainer::new(SquaredLoss, Rmse, params_l2);
     let l2_model = trainer_l2
-        .train(&train, targets_view, WeightsView::None, &[])
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
 
     // L2 should produce smaller weights on average
@@ -134,7 +134,7 @@ fn trained_model_predictions_reasonable() {
 
     let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
     let model = trainer
-        .train(&train, targets_view, WeightsView::None, &[])
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
 
     // Predictions should be close to actual values
@@ -182,7 +182,7 @@ fn parallel_vs_sequential_similar() {
     };
     let trainer_seq = GBLinearTrainer::new(SquaredLoss, Rmse, params_seq);
     let seq_model = trainer_seq
-        .train(&train, targets_view.clone(), WeightsView::None, &[])
+        .train(&train, targets_view.clone(), WeightsView::None, None)
         .unwrap();
 
     let params_par = GBLinearParams {
@@ -194,7 +194,7 @@ fn parallel_vs_sequential_similar() {
     };
     let trainer_par = GBLinearTrainer::new(SquaredLoss, Rmse, params_par);
     let par_model = trainer_par
-        .train(&train, targets_view, WeightsView::None, &[])
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
 
     // Predictions should be similar
@@ -239,7 +239,7 @@ fn weight_correlation_with_xgboost(#[case] name: &str) {
 
     let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
     let model = trainer
-        .train(&train, targets_view, WeightsView::None, &[])
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
 
     // Collect our weights (excluding bias)
@@ -290,7 +290,7 @@ fn test_set_prediction_quality(#[case] name: &str) {
 
     let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
     let model = trainer
-        .train(&train, targets_view, WeightsView::None, &[])
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
 
     use boosters::training::MetricFn;

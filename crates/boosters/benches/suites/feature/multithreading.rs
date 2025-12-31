@@ -100,7 +100,7 @@ fn bench_multithreading(c: &mut Criterion) {
                                 black_box(&binned),
                                 targets_view,
                                 WeightsView::None,
-                                &[],
+                                None,
                                 Parallelism::Parallel,
                             )
                             .unwrap(),
