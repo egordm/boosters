@@ -46,6 +46,12 @@ pub struct UpdateConfig {
     pub alpha: f32,
     /// L2 regularization strength (lambda).
     pub lambda: f32,
+    /// Sum of instance weights used to denormalize regularization.
+    ///
+    /// XGBoost's linear booster applies L1/L2 penalties scaled by the sum of
+    /// instance weights so that penalties are on the same scale as the summed
+    /// gradients/hessians.
+    pub sum_instance_weight: f32,
     /// Learning rate.
     pub learning_rate: f32,
     /// Maximum per-coordinate Newton step (stability), in absolute value.
@@ -58,7 +64,8 @@ impl Default for UpdateConfig {
     fn default() -> Self {
         Self {
             alpha: 0.0,
-            lambda: 1.0,
+            lambda: 0.0,
+            sum_instance_weight: 1.0,
             learning_rate: 0.5,
             max_delta_step: 0.0,
         }
@@ -148,7 +155,8 @@ impl Updater {
     pub fn update_bias(&self, model: &mut LinearModel, buffer: &Gradients, output: usize) -> f32 {
         let (sum_grad, sum_hess) = buffer.sum(output, None);
 
-        if sum_hess.abs() > 1e-10 {
+        // Match XGBoost's stability threshold (see CoordinateDeltaBias callers).
+        if sum_hess.abs() > 1e-5 {
             let mut delta = (-sum_grad / sum_hess) as f32 * self.config.learning_rate;
             if self.config.max_delta_step > 0.0 {
                 delta = delta.clamp(-self.config.max_delta_step, self.config.max_delta_step);
@@ -311,42 +319,35 @@ pub(super) fn compute_weight_update(
         sum_hess += grad_hess[row].hess * value * value;
     });
 
-    // Add L2 regularization
-    let grad_l2 = sum_grad + config.lambda * current_weight;
-    let hess_l2 = sum_hess + config.lambda;
+    // Denormalize penalties to match summed gradients/hessians.
+    // This follows XGBoost's `DenormalizePenalties(sum_instance_weight)`.
+    let sum_w = config.sum_instance_weight.max(0.0);
+    let alpha = config.alpha * sum_w;
+    let lambda = config.lambda * sum_w;
 
-    // Avoid division by zero
-    if hess_l2.abs() < 1e-10 {
+    // XGBoost-style coordinate delta (proximal Newton step with L1/L2).
+    // See: xgboost/src/linear/coordinate_common.h::CoordinateDelta
+    let sum_grad_l2 = sum_grad + lambda * current_weight;
+    let sum_hess_l2 = sum_hess + lambda;
+
+    // Match XGBoost's stability threshold (see CoordinateDelta).
+    if sum_hess_l2 < 1e-5 {
         return 0.0;
     }
 
-    // Compute raw update
-    let raw_update = -grad_l2 / hess_l2;
-
-    // Apply soft-thresholding for L1 (elastic net)
-    let threshold = config.alpha / hess_l2;
-    let thresholded = soft_threshold(raw_update, threshold);
+    let tmp = current_weight - (sum_grad_l2 / sum_hess_l2);
+    let raw_delta = if tmp >= 0.0 {
+        (-(sum_grad_l2 + alpha) / sum_hess_l2).max(-current_weight)
+    } else {
+        (-(sum_grad_l2 - alpha) / sum_hess_l2).min(-current_weight)
+    };
 
     // Apply learning rate
-    let mut delta = thresholded * config.learning_rate;
+    let mut delta = raw_delta * config.learning_rate;
     if config.max_delta_step > 0.0 {
         delta = delta.clamp(-config.max_delta_step, config.max_delta_step);
     }
     delta
-}
-
-/// Soft-thresholding operator for L1 regularization.
-///
-/// S(x, λ) = sign(x) × max(|x| - λ, 0)
-#[inline]
-fn soft_threshold(x: f32, threshold: f32) -> f32 {
-    if x > threshold {
-        x - threshold
-    } else if x < -threshold {
-        x + threshold
-    } else {
-        0.0
-    }
 }
 
 // =============================================================================
@@ -385,22 +386,6 @@ mod tests {
     }
 
     #[test]
-    fn soft_threshold_positive() {
-        assert!((soft_threshold(1.0, 0.3) - 0.7).abs() < 1e-6);
-    }
-
-    #[test]
-    fn soft_threshold_negative() {
-        assert!((soft_threshold(-1.0, 0.3) - (-0.7)).abs() < 1e-6);
-    }
-
-    #[test]
-    fn soft_threshold_within() {
-        assert_eq!(soft_threshold(0.2, 0.3), 0.0);
-        assert_eq!(soft_threshold(-0.2, 0.3), 0.0);
-    }
-
-    #[test]
     fn sequential_updater_changes_weights() {
         let (dataset, buffer) = make_test_data();
         let mut model = LinearModel::zeros(2, 1);
@@ -409,6 +394,7 @@ mod tests {
         let config = UpdateConfig {
             alpha: 0.0,
             lambda: 0.0,
+            sum_instance_weight: 1.0,
             learning_rate: 1.0,
             max_delta_step: 0.0,
         };
@@ -437,6 +423,7 @@ mod tests {
         let config = UpdateConfig {
             alpha: 0.0,
             lambda: 0.0,
+            sum_instance_weight: 1.0,
             learning_rate: 1.0,
             max_delta_step: 0.0,
         };
@@ -467,6 +454,7 @@ mod tests {
         let config_no_reg = UpdateConfig {
             alpha: 0.0,
             lambda: 0.0,
+            sum_instance_weight: 1.0,
             learning_rate: 1.0,
             max_delta_step: 0.0,
         };
@@ -487,6 +475,7 @@ mod tests {
         let config_l2 = UpdateConfig {
             alpha: 0.0,
             lambda: 10.0, // Strong L2
+            sum_instance_weight: 1.0,
             learning_rate: 1.0,
             max_delta_step: 0.0,
         };
@@ -517,6 +506,7 @@ mod tests {
         let config = UpdateConfig {
             alpha: 0.0,
             lambda: 0.0,
+            sum_instance_weight: 1.0,
             learning_rate: 1.0,
             max_delta_step: 0.0,
         };
@@ -551,6 +541,7 @@ mod tests {
         let config = UpdateConfig {
             alpha: 0.0,
             lambda: 0.0,
+            sum_instance_weight: 1.0,
             learning_rate: 1.0,
             max_delta_step: 0.0,
         };

@@ -44,11 +44,15 @@ fn train_pseudo_huber_with_delta(#[case] delta: f32, #[case] max_rmse: f64) {
         }
     };
 
+    // GBLinear denormalizes penalties by sum of instance weights (XGBoost-style).
+    // Keep the effective L2 penalty around 1.0 for this test dataset.
+    let lambda = 1.0 / train.n_samples() as f32;
+
     let params = GBLinearParams {
         n_rounds: 100,
         learning_rate: 0.5,
         alpha: 0.0,
-        lambda: 1.0,
+        lambda,
         update_strategy: UpdateStrategy::Sequential,
         seed: 42,
         verbosity: Verbosity::Silent,
@@ -94,11 +98,13 @@ fn pseudo_huber_large_delta_matches_squared() {
         }
     };
 
+    let lambda = 1.0 / train.n_samples() as f32;
+
     let base_params = GBLinearParams {
         n_rounds: 100,
         learning_rate: 0.5,
         alpha: 0.0,
-        lambda: 1.0,
+        lambda,
         update_strategy: UpdateStrategy::Sequential,
         seed: 42,
         verbosity: Verbosity::Silent,
@@ -164,11 +170,13 @@ fn train_hinge_binary_classification() {
         }
     };
 
+    let lambda = 1.0 / train.n_samples() as f32;
+
     let base_params = GBLinearParams {
         n_rounds: 50,
         learning_rate: 0.5,
         alpha: 0.0,
-        lambda: 1.0,
+        lambda,
         update_strategy: UpdateStrategy::Sequential,
         seed: 42,
         verbosity: Verbosity::Silent,

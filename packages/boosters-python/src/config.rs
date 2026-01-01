@@ -518,7 +518,7 @@ impl From<&PyGBDTConfig> for boosters::GBDTConfig {
 ///     objective: Loss function for training. Default: Objective.Squared().
 ///     metric: Evaluation metric. None uses objective's default.
 ///     l1: L1 regularization (alpha). Encourages sparse weights. Default: 0.0.
-///     l2: L2 regularization (lambda). Prevents large weights. Default: 1.0.
+///     l2: L2 regularization (lambda). Prevents large weights. Default: 0.0.
 ///     early_stopping_rounds: Stop if no improvement for this many rounds.
 ///     seed: Random seed for reproducibility. Default: 42.
 ///
@@ -578,7 +578,7 @@ impl PyGBLinearConfig {
         objective = None,
         metric = None,
         l1 = 0.0,
-        l2 = 1.0,
+        l2 = 0.0,
         update_strategy = PyGBLinearUpdateStrategy::Shotgun,
         max_delta_step = 0.0,
         early_stopping_rounds = None,
@@ -682,7 +682,7 @@ impl Default for PyGBLinearConfig {
             objective: PyObjective::default(),
             metric: None,
             l1: 0.0,
-            l2: 1.0,
+            l2: 0.0,
             update_strategy: PyGBLinearUpdateStrategy::Shotgun,
             max_delta_step: 0.0,
             early_stopping_rounds: None,

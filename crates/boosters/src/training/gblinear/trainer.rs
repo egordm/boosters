@@ -68,7 +68,7 @@ impl Default for GBLinearParams {
             n_rounds: 100,
             learning_rate: 0.5,
             alpha: 0.0,
-            lambda: 1.0,
+            lambda: 0.0,
             update_strategy: UpdateStrategy::default(),
             feature_selector: FeatureSelectorKind::default(),
             seed: 42,
@@ -161,9 +161,14 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
         // Create updater and selector
         let mut selector = self.params.feature_selector.create_state(self.params.seed);
 
+        // Denormalize regularization to the same scale as summed gradients.
+        // This mirrors XGBoost's GBLinear behavior.
+        let sum_instance_weight: f32 = weights.iter(n_samples).sum();
+
         let update_config = UpdateConfig {
             alpha: self.params.alpha,
             lambda: self.params.lambda,
+            sum_instance_weight,
             learning_rate: self.params.learning_rate,
             max_delta_step: self.params.max_delta_step,
         };
@@ -421,7 +426,7 @@ mod tests {
         let params = GBLinearParams::default();
         assert_eq!(params.n_rounds, 100);
         assert_eq!(params.learning_rate, 0.5);
-        assert_eq!(params.lambda, 1.0);
+        assert_eq!(params.lambda, 0.0);
     }
 
     #[test]

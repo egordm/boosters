@@ -73,7 +73,7 @@ impl std::error::Error for ConfigError {}
 pub struct RegularizationParams {
     /// L1 regularization (alpha). Encourages sparse weights. Default: 0.0.
     pub alpha: f32,
-    /// L2 regularization (lambda). Prevents large weights. Default: 1.0.
+    /// L2 regularization (lambda). Prevents large weights. Default: 0.0.
     pub lambda: f32,
 }
 
@@ -81,7 +81,7 @@ impl Default for RegularizationParams {
     fn default() -> Self {
         Self {
             alpha: 0.0,
-            lambda: 1.0,
+            lambda: 0.0,
         }
     }
 }
@@ -172,7 +172,9 @@ pub struct GBLinearConfig {
     pub alpha: f32,
 
     /// L2 regularization (lambda). Prevents large weights. Default: 1.0.
-    #[builder(default = 1.0)]
+    ///
+    /// Note: Matches XGBoost's `reg_lambda` default (0.0).
+    #[builder(default = 0.0)]
     pub lambda: f32,
 
     // === Update strategy ===

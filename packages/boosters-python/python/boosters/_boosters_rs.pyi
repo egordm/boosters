@@ -431,7 +431,7 @@ class GBLinearConfig:
         objective: Loss function for training. Default: Objective.Squared().
         metric: Evaluation metric. None uses objective's default.
         l1: L1 regularization (alpha). Encourages sparse weights. Default: 0.0.
-        l2: L2 regularization (lambda). Prevents large weights. Default: 1.0.
+        l2: L2 regularization (lambda). Prevents large weights. Default: 0.0.
         early_stopping_rounds: Stop if no improvement for this many rounds.
         seed: Random seed for reproducibility. Default: 42.
     
@@ -500,7 +500,7 @@ class GBLinearConfig:
         r"""
         Get the evaluation metric (or None).
         """
-    def __new__(cls, n_estimators: builtins.int = 100, learning_rate: builtins.float = 0.5, objective: Objective | None = None, metric: Metric | None = None, l1: builtins.float = 0.0, l2: builtins.float = 1.0, update_strategy: GBLinearUpdateStrategy = GBLinearUpdateStrategy.Shotgun, max_delta_step: builtins.float = 0.0, early_stopping_rounds: typing.Optional[builtins.int] = None, seed: builtins.int = 42, verbosity: Verbosity = Verbosity.Silent) -> GBLinearConfig: ...
+    def __new__(cls, n_estimators: builtins.int = 100, learning_rate: builtins.float = 0.5, objective: Objective | None = None, metric: Metric | None = None, l1: builtins.float = 0.0, l2: builtins.float = 0.0, update_strategy: GBLinearUpdateStrategy = GBLinearUpdateStrategy.Shotgun, max_delta_step: builtins.float = 0.0, early_stopping_rounds: typing.Optional[builtins.int] = None, seed: builtins.int = 42, verbosity: Verbosity = Verbosity.Silent) -> GBLinearConfig: ...
     def __repr__(self) -> builtins.str: ...
 
 @typing.final
