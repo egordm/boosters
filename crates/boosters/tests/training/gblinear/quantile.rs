@@ -9,9 +9,9 @@ use super::{
     TEST_CASES_DIR, load_config, load_test_data, load_train_data, make_dataset, pearson_correlation,
 };
 use approx::assert_relative_eq;
-use boosters::data::{FeaturesView, TargetsView, WeightsView};
+use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::data::transpose_to_c_order;
-use boosters::training::{GBLinearParams, GBLinearTrainer, PinballLoss, Rmse, Verbosity};
+use boosters::training::{GBLinearParams, GBLinearTrainer, PinballLoss, Rmse, UpdateStrategy, Verbosity};
 use rstest::rstest;
 use serde::Deserialize;
 use std::fs;
@@ -46,7 +46,7 @@ fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
         learning_rate: config.eta,
         alpha: config.alpha,
         lambda: config.lambda,
-        parallel: false,
+        update_strategy: UpdateStrategy::Sequential,
         seed: 42,
         verbosity: Verbosity::Silent,
         ..Default::default()
@@ -60,8 +60,8 @@ fn train_quantile_regression(#[case] name: &str, #[case] expected_alpha: f32) {
     // Compute predictions on test set
     // test_data is sample-major [n_samples, n_features], need feature-major [n_features, n_samples]
     let test_features = transpose_to_c_order(test_data.view());
-    let test_view = FeaturesView::from_array(test_features.view());
-    let output = model.predict(test_view);
+    let test_dataset = Dataset::from_array(test_features.view(), None, None);
+    let output = model.predict(&test_dataset);
     let test_preds: Vec<f32> = output.row(0).to_vec();
 
     // Compute pinball loss on test set
@@ -118,7 +118,7 @@ fn quantile_regression_predictions_differ() {
         learning_rate: config.eta,
         alpha: config.alpha,
         lambda: config.lambda,
-        parallel: false,
+        update_strategy: UpdateStrategy::Sequential,
         seed: 42,
         verbosity: Verbosity::Silent,
         ..Default::default()
@@ -140,12 +140,12 @@ fn quantile_regression_predictions_differ() {
         .unwrap();
 
     // For prediction, data is already feature-major [n_features, n_samples]
-    let features_view = FeaturesView::from_array(data.view());
+    let pred_dataset = Dataset::from_array(data.view(), None, None);
 
     // Get predictions for first sample - output is [n_groups, n_samples]
-    let pred_low = model_low.predict(features_view)[[0, 0]];
-    let pred_med = model_med.predict(features_view)[[0, 0]];
-    let pred_high = model_high.predict(features_view)[[0, 0]];
+    let pred_low = model_low.predict(&pred_dataset)[[0, 0]];
+    let pred_med = model_med.predict(&pred_dataset)[[0, 0]];
+    let pred_high = model_high.predict(&pred_dataset)[[0, 0]];
 
     // Lower quantile should produce lower predictions.
     assert!(
@@ -219,7 +219,7 @@ fn train_multi_quantile_regression() {
         learning_rate: config.eta,
         alpha: config.alpha,
         lambda: config.lambda,
-        parallel: false,
+        update_strategy: UpdateStrategy::Sequential,
         seed: 42,
         verbosity: Verbosity::Silent,
         ..Default::default()
@@ -240,9 +240,9 @@ fn train_multi_quantile_regression() {
     // Get predictions on test set
     // test_data is sample-major [n_samples, n_features], need feature-major
     let test_features = transpose_to_c_order(test_data.view());
-    let test_view = FeaturesView::from_array(test_features.view());
+    let test_dataset = Dataset::from_array(test_features.view(), None, None);
     let n_test_samples = test_data.nrows();
-    let output = model.predict(test_view);
+    let output = model.predict(&test_dataset);
 
     // output is [n_groups, n_samples], extract per-quantile predictions
     let mut our_predictions: Vec<Vec<f32>> = vec![vec![0.0; n_test_samples]; num_quantiles];
@@ -300,7 +300,7 @@ fn multi_quantile_vs_separate_models() {
         learning_rate: config.eta,
         alpha: config.alpha,
         lambda: config.lambda,
-        parallel: false,
+        update_strategy: UpdateStrategy::Sequential,
         seed: 42,
         verbosity: Verbosity::Silent,
         ..Default::default()
@@ -328,13 +328,13 @@ fn multi_quantile_vs_separate_models() {
         .collect();
 
     // Compare predictions on training set (data is already feature-major)
-    let features_view = FeaturesView::from_array(data.view());
+    let pred_dataset = Dataset::from_array(data.view(), None, None);
     let n_samples = data.ncols();
 
     // Predictions should be correlated
     for (q, single_model) in single_models.iter().enumerate() {
-        let multi_output = multi_model.predict(features_view);
-        let single_output = single_model.predict(features_view);
+        let multi_output = multi_model.predict(&pred_dataset);
+        let single_output = single_model.predict(&pred_dataset);
 
         // multi_output is [n_groups, n_samples], single_output is [1, n_samples]
         let mut multi_preds = Vec::with_capacity(n_samples);

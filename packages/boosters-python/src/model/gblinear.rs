@@ -189,12 +189,8 @@ impl PyGBLinearModel {
 
         validate_feature_count(model.meta().n_features, dataset.n_features())?;
 
-        // GBLinearModel::predict takes Dataset by value, so we need to create one
-        let features_owned = dataset.features().view().to_owned();
-        let output = py.detach(|| {
-            let pred_dataset = boosters::data::Dataset::new(features_owned.view(), None, None);
-            model.predict(pred_dataset)
-        });
+        // GBLinearModel::predict takes &Dataset
+        let output = py.detach(|| model.predict(dataset));
 
         // Transpose from (n_outputs, n_samples) to (n_samples, n_outputs) for sklearn
         Ok(PyArray2::from_owned_array(py, output.t().to_owned()))
@@ -223,12 +219,8 @@ impl PyGBLinearModel {
 
         validate_feature_count(model.meta().n_features, dataset.n_features())?;
 
-        // GBLinearModel::predict_raw takes Dataset by value, so we need to create one
-        let features_owned = dataset.features().view().to_owned();
-        let output = py.detach(|| {
-            let pred_dataset = boosters::data::Dataset::new(features_owned.view(), None, None);
-            model.predict_raw(pred_dataset)
-        });
+        // GBLinearModel::predict_raw takes &Dataset
+        let output = py.detach(|| model.predict_raw(dataset));
 
         // Transpose from (n_outputs, n_samples) to (n_samples, n_outputs) for sklearn
         Ok(PyArray2::from_owned_array(py, output.t().to_owned()))

@@ -10,8 +10,8 @@
 use super::{load_config, load_train_data, load_xgb_weights, make_dataset};
 use approx::assert_relative_eq;
 use boosters::data::transpose_to_c_order;
-use boosters::data::{FeaturesView, TargetsView, WeightsView};
-use boosters::training::{GBLinearParams, GBLinearTrainer, Rmse, SquaredLoss, Verbosity};
+use boosters::data::{Dataset, TargetsView, WeightsView};
+use boosters::training::{GBLinearParams, GBLinearTrainer, Rmse, SquaredLoss, UpdateStrategy, Verbosity};
 use ndarray::Array2;
 use rstest::rstest;
 
@@ -31,7 +31,7 @@ fn train_regression_matches_xgboost(#[case] name: &str) {
         learning_rate: config.eta,
         alpha: config.alpha,
         lambda: config.lambda,
-        parallel: false,
+        update_strategy: UpdateStrategy::Sequential,
         seed: 42,
         early_stopping_rounds: 0,
         verbosity: Verbosity::Silent,
@@ -76,7 +76,7 @@ fn train_l2_regularization_shrinks_weights() {
         learning_rate: config.eta,
         alpha: 0.0,
         lambda: 0.0,
-        parallel: false,
+        update_strategy: UpdateStrategy::Sequential,
         verbosity: Verbosity::Silent,
         ..Default::default()
     };
@@ -91,7 +91,7 @@ fn train_l2_regularization_shrinks_weights() {
         learning_rate: config.eta,
         alpha: config.alpha,
         lambda: config.lambda,
-        parallel: false,
+        update_strategy: UpdateStrategy::Sequential,
         verbosity: Verbosity::Silent,
         ..Default::default()
     };
@@ -127,7 +127,7 @@ fn trained_model_predictions_reasonable() {
         learning_rate: 0.5,
         alpha: 0.0,
         lambda: 0.0,
-        parallel: false,
+        update_strategy: UpdateStrategy::Sequential,
         verbosity: Verbosity::Silent,
         ..Default::default()
     };
@@ -176,7 +176,7 @@ fn parallel_vs_sequential_similar() {
     let params_seq = GBLinearParams {
         n_rounds: 50,
         learning_rate: 0.3,
-        parallel: false,
+        update_strategy: UpdateStrategy::Sequential,
         verbosity: Verbosity::Silent,
         ..Default::default()
     };
@@ -188,7 +188,7 @@ fn parallel_vs_sequential_similar() {
     let params_par = GBLinearParams {
         n_rounds: 50,
         learning_rate: 0.3,
-        parallel: true,
+        update_strategy: UpdateStrategy::Shotgun,
         verbosity: Verbosity::Silent,
         ..Default::default()
     };
@@ -232,7 +232,7 @@ fn weight_correlation_with_xgboost(#[case] name: &str) {
         learning_rate: config.eta,
         alpha: config.alpha,
         lambda: config.lambda,
-        parallel: false,
+        update_strategy: UpdateStrategy::Sequential,
         verbosity: Verbosity::Silent,
         ..Default::default()
     };
@@ -283,7 +283,7 @@ fn test_set_prediction_quality(#[case] name: &str) {
         learning_rate: config.eta,
         alpha: config.alpha,
         lambda: config.lambda,
-        parallel: false,
+        update_strategy: UpdateStrategy::Sequential,
         verbosity: Verbosity::Silent,
         ..Default::default()
     };
@@ -296,8 +296,8 @@ fn test_set_prediction_quality(#[case] name: &str) {
     use boosters::training::MetricFn;
     // test_data is sample-major [n_samples, n_features], need feature-major [n_features, n_samples]
     let test_features = transpose_to_c_order(test_data.view());
-    let test_view = FeaturesView::from_array(test_features.view());
-    let output = model.predict(test_view);
+    let test_dataset = Dataset::from_array(test_features.view(), None, None);
+    let output = model.predict(&test_dataset);
     // output is [n_groups, n_samples], metrics expect [n_outputs, n_samples]
     let targets_2d = Array2::from_shape_vec((1, test_labels.len()), test_labels.clone()).unwrap();
     let test_targets = TargetsView::new(targets_2d.view());

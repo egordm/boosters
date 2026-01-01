@@ -4,8 +4,8 @@
 //! incremental prediction updates for efficiency.
 //!
 //! Two variants:
-//! - [`UpdaterKind::Parallel`]: Parallel updates (faster, slight approximation)
-//! - [`UpdaterKind::Sequential`]: Sequential updates (exact gradients)
+//! - [`UpdateStrategy::Shotgun`]: Parallel updates (faster, approximate)
+//! - [`UpdateStrategy::Sequential`]: Sequential updates (deterministic ordering)
 //!
 //! # Data Format
 //!
@@ -27,17 +27,16 @@ use crate::training::Gradients;
 
 use super::selector::FeatureSelector;
 
-/// Coordinate descent updater selection.
+/// Coordinate descent update strategy.
 ///
-/// Use [`UpdaterKind::Parallel`] (shotgun) for better performance on most workloads.
-/// Use [`UpdaterKind::Sequential`] for exact gradient computation.
+/// Matches XGBoost naming (`shotgun` vs `coord_descent`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum UpdaterKind {
-    /// Sequential coordinate descent - exact gradients, slower
-    Sequential,
-    /// Parallel (shotgun) coordinate descent - approximate, faster
+pub enum UpdateStrategy {
+    /// Parallel (shotgun) coordinate descent - approximate, faster.
     #[default]
-    Parallel,
+    Shotgun,
+    /// Sequential coordinate descent - deterministic ordering.
+    Sequential,
 }
 
 /// Configuration for coordinate descent updates.
@@ -49,6 +48,10 @@ pub struct UpdateConfig {
     pub lambda: f32,
     /// Learning rate.
     pub learning_rate: f32,
+    /// Maximum per-coordinate Newton step (stability), in absolute value.
+    ///
+    /// Set to `0.0` to disable.
+    pub max_delta_step: f32,
 }
 
 impl Default for UpdateConfig {
@@ -57,6 +60,7 @@ impl Default for UpdateConfig {
             alpha: 0.0,
             lambda: 1.0,
             learning_rate: 0.5,
+            max_delta_step: 0.0,
         }
     }
 }
@@ -70,24 +74,24 @@ impl Default for UpdateConfig {
 /// # Example
 ///
 /// ```ignore
-/// use boosters::training::gblinear::{Updater, UpdaterKind, UpdateConfig};
+/// use boosters::training::gblinear::{UpdateStrategy, Updater, UpdateConfig};
 ///
 /// let config = UpdateConfig {
 ///     alpha: 0.5,
 ///     lambda: 1.0,
 ///     learning_rate: 0.3,
 /// };
-/// let updater = Updater::new(UpdaterKind::Parallel, config);
+/// let updater = Updater::new(UpdateStrategy::Shotgun, config);
 /// ```
 #[derive(Debug, Clone)]
 pub struct Updater {
-    kind: UpdaterKind,
+    kind: UpdateStrategy,
     config: UpdateConfig,
 }
 
 impl Updater {
     /// Create a new updater with the specified kind and configuration.
-    pub fn new(kind: UpdaterKind, config: UpdateConfig) -> Self {
+    pub fn new(kind: UpdateStrategy, config: UpdateConfig) -> Self {
         Self { kind, config }
     }
 
@@ -119,10 +123,10 @@ impl Updater {
         Sel: FeatureSelector,
     {
         match self.kind {
-            UpdaterKind::Sequential => {
+            UpdateStrategy::Sequential => {
                 sequential_update(model, data, buffer, selector, output, &self.config)
             }
-            UpdaterKind::Parallel => {
+            UpdateStrategy::Shotgun => {
                 parallel_update(model, data, buffer, selector, output, &self.config)
             }
         }
@@ -145,7 +149,10 @@ impl Updater {
         let (sum_grad, sum_hess) = buffer.sum(output, None);
 
         if sum_hess.abs() > 1e-10 {
-            let delta = (-sum_grad / sum_hess) as f32 * self.config.learning_rate;
+            let mut delta = (-sum_grad / sum_hess) as f32 * self.config.learning_rate;
+            if self.config.max_delta_step > 0.0 {
+                delta = delta.clamp(-self.config.max_delta_step, self.config.max_delta_step);
+            }
             model.add_bias(output, delta);
             delta
         } else {
@@ -282,7 +289,7 @@ where
 /// hess_l2 = Σ(hessian × feature²) + lambda
 /// delta = soft_threshold(-grad_l2 / hess_l2, alpha / hess_l2) × learning_rate
 /// ```
-fn compute_weight_update(
+pub(super) fn compute_weight_update(
     model: &LinearModel,
     data: &Dataset,
     buffer: &Gradients,
@@ -321,7 +328,11 @@ fn compute_weight_update(
     let thresholded = soft_threshold(raw_update, threshold);
 
     // Apply learning rate
-    thresholded * config.learning_rate
+    let mut delta = thresholded * config.learning_rate;
+    if config.max_delta_step > 0.0 {
+        delta = delta.clamp(-config.max_delta_step, config.max_delta_step);
+    }
+    delta
 }
 
 /// Soft-thresholding operator for L1 regularization.
@@ -361,7 +372,7 @@ mod tests {
             [0.0f32, 1.0, 1.0, 0.5]  // feature 1
         ];
 
-        let dataset = Dataset::new(features.view(), None, None);
+        let dataset = Dataset::from_array(features.view(), None, None);
 
         // Gradients (simulating squared error loss)
         let mut buffer = Gradients::new(4, 1);
@@ -399,8 +410,9 @@ mod tests {
             alpha: 0.0,
             lambda: 0.0,
             learning_rate: 1.0,
+            max_delta_step: 0.0,
         };
-        let updater = Updater::new(UpdaterKind::Sequential, config);
+        let updater = Updater::new(UpdateStrategy::Sequential, config);
 
         updater.update_round(
             &mut model,
@@ -426,8 +438,9 @@ mod tests {
             alpha: 0.0,
             lambda: 0.0,
             learning_rate: 1.0,
+            max_delta_step: 0.0,
         };
-        let updater = Updater::new(UpdaterKind::Parallel, config);
+        let updater = Updater::new(UpdateStrategy::Shotgun, config);
 
         updater.update_round(
             &mut model,
@@ -455,8 +468,9 @@ mod tests {
             alpha: 0.0,
             lambda: 0.0,
             learning_rate: 1.0,
+            max_delta_step: 0.0,
         };
-        let updater1 = Updater::new(UpdaterKind::Sequential, config_no_reg);
+        let updater1 = Updater::new(UpdateStrategy::Sequential, config_no_reg);
 
         updater1.update_round(
             &mut model1,
@@ -474,8 +488,9 @@ mod tests {
             alpha: 0.0,
             lambda: 10.0, // Strong L2
             learning_rate: 1.0,
+            max_delta_step: 0.0,
         };
-        let updater2 = Updater::new(UpdaterKind::Sequential, config_l2);
+        let updater2 = Updater::new(UpdateStrategy::Sequential, config_l2);
 
         updater2.update_round(
             &mut model2,
@@ -503,8 +518,9 @@ mod tests {
             alpha: 0.0,
             lambda: 0.0,
             learning_rate: 1.0,
+            max_delta_step: 0.0,
         };
-        let updater = Updater::new(UpdaterKind::Sequential, config);
+        let updater = Updater::new(UpdateStrategy::Sequential, config);
         updater.update_bias(&mut model, &buffer, 0);
 
         // Bias should have changed
@@ -536,8 +552,9 @@ mod tests {
             alpha: 0.0,
             lambda: 0.0,
             learning_rate: 1.0,
+            max_delta_step: 0.0,
         };
-        let updater = Updater::new(UpdaterKind::Sequential, config);
+        let updater = Updater::new(UpdateStrategy::Sequential, config);
         updater.update_bias(&mut model, &buffer, 0);
         updater.update_bias(&mut model, &buffer, 1);
 

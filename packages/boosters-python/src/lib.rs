@@ -20,7 +20,7 @@ use data::PyDataset;
 use metrics::PyMetric;
 use model::{PyGBDTModel, PyGBLinearModel};
 use objectives::PyObjective;
-use types::{PyImportanceType, PyVerbosity};
+use types::{PyGBLinearUpdateStrategy, PyImportanceType, PyVerbosity};
 
 /// Python module for boosters.
 ///
@@ -48,6 +48,9 @@ fn _boosters_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Explainability types
     m.add_class::<PyImportanceType>()?;
+
+    // GBLinear update strategy
+    m.add_class::<PyGBLinearUpdateStrategy>()?;
 
     // Verbosity
     m.add_class::<PyVerbosity>()?;

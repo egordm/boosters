@@ -6,10 +6,10 @@
 
 use super::{load_test_data, load_train_data, make_dataset};
 use boosters::data::transpose_to_c_order;
-use boosters::data::{FeaturesView, TargetsView, WeightsView};
+use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::training::{
     Accuracy, GBLinearParams, GBLinearTrainer, HingeLoss, LogLoss, LogisticLoss, MarginAccuracy,
-    ObjectiveFn, PseudoHuberLoss, Rmse, SquaredLoss, Verbosity,
+    ObjectiveFn, PseudoHuberLoss, Rmse, SquaredLoss, UpdateStrategy, Verbosity,
 };
 use ndarray::Array2;
 use rstest::rstest;
@@ -49,7 +49,7 @@ fn train_pseudo_huber_with_delta(#[case] delta: f32, #[case] max_rmse: f64) {
         learning_rate: 0.5,
         alpha: 0.0,
         lambda: 1.0,
-        parallel: false,
+        update_strategy: UpdateStrategy::Sequential,
         seed: 42,
         verbosity: Verbosity::Silent,
         ..Default::default()
@@ -64,8 +64,8 @@ fn train_pseudo_huber_with_delta(#[case] delta: f32, #[case] max_rmse: f64) {
 
     // test_data is sample-major [n_samples, n_features], transpose to feature-major
     let test_features = transpose_to_c_order(test_data.view());
-    let test_view = FeaturesView::from_array(test_features.view());
-    let output = model.predict(test_view);
+    let test_dataset = Dataset::from_array(test_features.view(), None, None);
+    let output = model.predict(&test_dataset);
     // output is [n_groups, n_samples]
     let targets_2d = Array2::from_shape_vec((1, test_labels.len()), test_labels.clone()).unwrap();
     let targets = TargetsView::new(targets_2d.view());
@@ -99,7 +99,7 @@ fn pseudo_huber_large_delta_matches_squared() {
         learning_rate: 0.5,
         alpha: 0.0,
         lambda: 1.0,
-        parallel: false,
+        update_strategy: UpdateStrategy::Sequential,
         seed: 42,
         verbosity: Verbosity::Silent,
         ..Default::default()
@@ -121,9 +121,9 @@ fn pseudo_huber_large_delta_matches_squared() {
 
     // test_data is sample-major [n_samples, n_features], transpose to feature-major
     let test_features = transpose_to_c_order(test_data.view());
-    let test_view = FeaturesView::from_array(test_features.view());
-    let ph_output = ph_model.predict(test_view);
-    let sq_output = sq_model.predict(test_view);
+    let test_dataset = Dataset::from_array(test_features.view(), None, None);
+    let ph_output = ph_model.predict(&test_dataset);
+    let sq_output = sq_model.predict(&test_dataset);
 
     // output is [n_groups, n_samples]
     let targets_2d = Array2::from_shape_vec((1, test_labels.len()), test_labels.clone()).unwrap();
@@ -169,7 +169,7 @@ fn train_hinge_binary_classification() {
         learning_rate: 0.5,
         alpha: 0.0,
         lambda: 1.0,
-        parallel: false,
+        update_strategy: UpdateStrategy::Sequential,
         seed: 42,
         verbosity: Verbosity::Silent,
         ..Default::default()
@@ -195,14 +195,14 @@ fn train_hinge_binary_classification() {
 
     // test_data is sample-major [n_samples, n_features], transpose to feature-major
     let test_features = transpose_to_c_order(test_data.view());
-    let test_view = FeaturesView::from_array(test_features.view());
-    let hinge_output = hinge_model.predict(test_view);
+    let test_dataset = Dataset::from_array(test_features.view(), None, None);
+    let hinge_output = hinge_model.predict(&test_dataset);
     let targets_2d = Array2::from_shape_vec((1, test_labels.len()), test_labels.clone()).unwrap();
     let targets = TargetsView::new(targets_2d.view());
     let hinge_acc =
         MarginAccuracy::default().compute(hinge_output.view(), targets, WeightsView::None) as f32;
 
-    let logistic_output = logistic_model.predict(test_view);
+    let logistic_output = logistic_model.predict(&test_dataset);
     // Apply transform to convert logits to probabilities
     let mut logistic_arr = logistic_output.clone();
     LogisticLoss.transform_predictions_inplace(logistic_arr.view_mut());

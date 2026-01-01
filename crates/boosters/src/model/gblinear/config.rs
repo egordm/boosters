@@ -27,6 +27,7 @@ use bon::Builder;
 
 use crate::training::Verbosity;
 use crate::training::gblinear::FeatureSelectorKind;
+use crate::training::gblinear::UpdateStrategy;
 use crate::training::{Metric, Objective};
 
 // =============================================================================
@@ -175,15 +176,19 @@ pub struct GBLinearConfig {
     pub lambda: f32,
 
     // === Update strategy ===
-    /// Use parallel (shotgun) coordinate descent updates. Default: true.
-    ///
-    /// When true, features are updated in parallel within each round.
-    #[builder(default = true)]
-    pub parallel: bool,
+    /// Coordinate descent update strategy. Default: `Shotgun`.
+    #[builder(default)]
+    pub update_strategy: UpdateStrategy,
 
     /// Feature selection strategy for coordinate descent. Default: Cyclic.
     #[builder(default)]
     pub feature_selector: FeatureSelectorKind,
+
+    /// Maximum per-coordinate Newton step (stability), in absolute value.
+    ///
+    /// Set to `0.0` to disable.
+    #[builder(default = 0.0)]
+    pub max_delta_step: f32,
 
     // === Early stopping ===
     /// Stop training if no improvement for this many rounds.
@@ -272,9 +277,10 @@ impl GBLinearConfig {
             learning_rate: self.learning_rate,
             alpha: self.alpha,
             lambda: self.lambda,
-            parallel: self.parallel,
+            update_strategy: self.update_strategy,
             feature_selector: self.feature_selector,
             seed: self.seed,
+            max_delta_step: self.max_delta_step,
             early_stopping_rounds: self.early_stopping_rounds.unwrap_or(0),
             verbosity: self.verbosity,
         }
@@ -414,8 +420,9 @@ mod tests {
             .learning_rate(0.3)
             .alpha(0.5)
             .lambda(2.0)
-            .parallel(false)
+            .update_strategy(UpdateStrategy::Sequential)
             .seed(123)
+            .max_delta_step(0.25)
             .early_stopping_rounds(10)
             .build()
             .unwrap();
@@ -427,8 +434,9 @@ mod tests {
         assert!((params.learning_rate - 0.3).abs() < 1e-6);
         assert!((params.alpha - 0.5).abs() < 1e-6);
         assert!((params.lambda - 2.0).abs() < 1e-6);
-        assert!(!params.parallel);
+        assert_eq!(params.update_strategy, UpdateStrategy::Sequential);
         assert_eq!(params.seed, 123);
+        assert!((params.max_delta_step - 0.25).abs() < 1e-6);
         assert_eq!(params.early_stopping_rounds, 10);
     }
 

@@ -51,9 +51,9 @@ use crate::training::Gradients;
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum FeatureSelectorKind {
     /// Cyclic: sequential order (0, 1, 2, ...).
+    #[default]
     Cyclic,
     /// Shuffle: random permutation each round (default).
-    #[default]
     Shuffle,
     /// Random: random selection with replacement.
     Random,
@@ -811,7 +811,7 @@ mod tests {
             [0.0f32, 1.0, 1.0], // f1
             [0.5f32, 0.5, 0.5]  // f2
         ];
-        let dataset = Dataset::new(features.view(), None, None);
+        let dataset = Dataset::from_array(features.view(), None, None);
 
         let model = LinearModel::zeros(3, 1);
 
@@ -869,7 +869,7 @@ mod tests {
             [0.0f32, 1.0, 1.0], // f1
             [0.5f32, 0.5, 0.5]  // f2
         ];
-        let dataset = Dataset::new(features.view(), None, None);
+        let dataset = Dataset::from_array(features.view(), None, None);
 
         let model = LinearModel::zeros(3, 1);
 

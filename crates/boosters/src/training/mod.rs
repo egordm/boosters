@@ -72,4 +72,4 @@ pub use gbdt::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, LinearLeafCo
 pub use sampling::{ColSamplingParams, RowSamplingParams};
 
 // Re-export gblinear trainer and params
-pub use gblinear::{GBLinearParams, GBLinearTrainer};
+pub use gblinear::{GBLinearParams, GBLinearTrainer, UpdateStrategy};

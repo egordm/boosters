@@ -151,6 +151,7 @@ class BoostersRunner(Runner):
                 learning_rate=tc.learning_rate,
                 l2=tc.reg_lambda,
                 l1=tc.reg_alpha,
+                update_strategy=boosters.GBLinearUpdateStrategy.Shotgun,
                 objective=objective,
                 seed=seed,
             )

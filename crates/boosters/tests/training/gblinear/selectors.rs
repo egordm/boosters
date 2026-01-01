@@ -9,10 +9,11 @@
 
 use super::{load_test_data, load_train_data, make_dataset};
 use boosters::data::transpose_to_c_order;
-use boosters::data::{FeaturesView, TargetsView, WeightsView};
+use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::training::gblinear::FeatureSelectorKind;
 use boosters::training::{
-    GBLinearParams, GBLinearTrainer, MulticlassLogLoss, Rmse, SoftmaxLoss, SquaredLoss, Verbosity,
+    GBLinearParams, GBLinearTrainer, MulticlassLogLoss, Rmse, SoftmaxLoss, SquaredLoss,
+    UpdateStrategy, Verbosity,
 };
 use ndarray::Array2;
 
@@ -35,7 +36,7 @@ fn train_all_selectors_regression() {
     };
     // Transpose test data from sample-major to feature-major
     let test_features_fm = transpose_to_c_order(test_data.view());
-    let test_view = FeaturesView::from_array(test_features_fm.view());
+    let test_dataset = Dataset::from_array(test_features_fm.view(), None, None);
 
     let selectors = vec![
         ("Cyclic", FeatureSelectorKind::Cyclic),
@@ -51,7 +52,7 @@ fn train_all_selectors_regression() {
         learning_rate: 0.5,
         alpha: 0.0,
         lambda: 1.0,
-        parallel: false,
+        update_strategy: UpdateStrategy::Sequential,
         seed: 42,
         verbosity: Verbosity::Silent,
         ..Default::default()
@@ -61,7 +62,7 @@ fn train_all_selectors_regression() {
         .train(&train, targets_view.clone(), WeightsView::None, None)
         .unwrap();
     use boosters::training::MetricFn;
-    let shuffle_output = shuffle_model.predict(test_view);
+    let shuffle_output = shuffle_model.predict(&test_dataset);
     let targets_2d = Array2::from_shape_vec((1, test_labels.len()), test_labels.clone()).unwrap();
     let eval_targets = TargetsView::new(targets_2d.view());
     let shuffle_rmse = Rmse.compute(shuffle_output.view(), eval_targets, WeightsView::None);
@@ -72,7 +73,7 @@ fn train_all_selectors_regression() {
             learning_rate: 0.5,
             alpha: 0.0,
             lambda: 1.0,
-            parallel: false,
+            update_strategy: UpdateStrategy::Sequential,
             seed: 42,
             feature_selector: selector,
             verbosity: Verbosity::Silent,
@@ -83,7 +84,7 @@ fn train_all_selectors_regression() {
         let model = trainer
             .train(&train, targets_view.clone(), WeightsView::None, None)
             .unwrap();
-        let output = model.predict(test_view);
+        let output = model.predict(&test_dataset);
         let rmse = Rmse.compute(output.view(), eval_targets, WeightsView::None);
 
         // All selectors should produce reasonable models
@@ -113,7 +114,7 @@ fn train_all_selectors_multiclass() {
     };
     // Transpose test data from sample-major to feature-major
     let test_features_fm = transpose_to_c_order(test_data.view());
-    let test_view = FeaturesView::from_array(test_features_fm.view());
+    let test_dataset = Dataset::from_array(test_features_fm.view(), None, None);
     let num_classes = 3;
 
     let selectors = vec![
@@ -130,7 +131,7 @@ fn train_all_selectors_multiclass() {
         learning_rate: 0.5,
         alpha: 0.0,
         lambda: 1.0,
-        parallel: false,
+        update_strategy: UpdateStrategy::Sequential,
         seed: 42,
         verbosity: Verbosity::Silent,
         ..Default::default()
@@ -144,7 +145,7 @@ fn train_all_selectors_multiclass() {
         .train(&train, targets_view.clone(), WeightsView::None, None)
         .unwrap();
     use boosters::training::{MetricFn, MulticlassAccuracy};
-    let shuffle_output = shuffle_model.predict(test_view);
+    let shuffle_output = shuffle_model.predict(&test_dataset);
     // output is [n_groups, n_samples] = [3, n_samples]
     let n_samples = shuffle_output.ncols();
     let shuffle_pred_classes: Vec<f32> = (0..n_samples)
@@ -174,7 +175,7 @@ fn train_all_selectors_multiclass() {
             learning_rate: 0.5,
             alpha: 0.0,
             lambda: 1.0,
-            parallel: false,
+            update_strategy: UpdateStrategy::Sequential,
             seed: 42,
             feature_selector: selector,
             verbosity: Verbosity::Silent,
@@ -186,7 +187,7 @@ fn train_all_selectors_multiclass() {
         let model = trainer
             .train(&train, targets_view.clone(), WeightsView::None, None)
             .unwrap();
-        let output = model.predict(test_view);
+        let output = model.predict(&test_dataset);
         // output is [n_groups, n_samples]
         let n_samples = output.ncols();
         let pred_classes: Vec<f32> = (0..n_samples)
@@ -233,7 +234,7 @@ fn train_greedy_selector_feature_priority() {
         learning_rate: 0.5,
         alpha: 0.0,
         lambda: 1.0,
-        parallel: false,
+        update_strategy: UpdateStrategy::Sequential,
         seed: 42,
         feature_selector: FeatureSelectorKind::Greedy { top_k: 2 },
         verbosity: Verbosity::Silent,
@@ -247,7 +248,7 @@ fn train_greedy_selector_feature_priority() {
         learning_rate: 0.5,
         alpha: 0.0,
         lambda: 1.0,
-        parallel: false,
+        update_strategy: UpdateStrategy::Sequential,
         seed: 42,
         feature_selector: FeatureSelectorKind::Cyclic,
         verbosity: Verbosity::Silent,
@@ -291,7 +292,7 @@ fn train_thrifty_selector_convergence() {
     };
     // Transpose test data from sample-major to feature-major
     let test_features_fm = transpose_to_c_order(test_data.view());
-    let test_view = FeaturesView::from_array(test_features_fm.view());
+    let test_dataset = Dataset::from_array(test_features_fm.view(), None, None);
 
     // Train with thrifty selector
     let params = GBLinearParams {
@@ -299,7 +300,7 @@ fn train_thrifty_selector_convergence() {
         learning_rate: 0.5,
         alpha: 0.0,
         lambda: 1.0,
-        parallel: false,
+        update_strategy: UpdateStrategy::Sequential,
         seed: 42,
         feature_selector: FeatureSelectorKind::Thrifty { top_k: 3 },
         verbosity: Verbosity::Silent,
@@ -311,7 +312,7 @@ fn train_thrifty_selector_convergence() {
         .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
     use boosters::training::MetricFn;
-    let output = model.predict(test_view);
+    let output = model.predict(&test_dataset);
     let targets_2d = Array2::from_shape_vec((1, test_labels.len()), test_labels.clone()).unwrap();
     let eval_targets = TargetsView::new(targets_2d.view());
     let rmse = Rmse.compute(output.view(), eval_targets, WeightsView::None);

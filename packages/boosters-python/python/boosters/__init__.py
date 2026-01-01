@@ -17,6 +17,7 @@ See Also:
 
 # Explainability types
 from boosters._boosters_rs import (
+    GBLinearUpdateStrategy,
     ImportanceType,
     Verbosity,
     __version__,  # pyright: ignore[reportAttributeAccessIssue]
@@ -26,7 +27,7 @@ from boosters._boosters_rs import (
 from boosters.config import GBDTConfig, GBLinearConfig
 
 # Data types
-from boosters.data import Dataset, EvalSet
+from boosters.data import Dataset
 
 # Metric enum
 from boosters.metrics import Metric
@@ -42,11 +43,11 @@ from boosters.types import GrowthStrategy
 
 __all__ = [
     "Dataset",
-    "EvalSet",
     "GBDTConfig",
     "GBDTModel",
     "GBLinearConfig",
     "GBLinearModel",
+    "GBLinearUpdateStrategy",
     "GrowthStrategy",
     "ImportanceType",
     "Metric",

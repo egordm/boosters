@@ -80,53 +80,6 @@ class Dataset:
     def __repr__(self) -> builtins.str: ...
 
 @typing.final
-class EvalSet:
-    r"""
-    Named evaluation set for model training.
-    
-    An EvalSet wraps a Dataset with a name, which is used to identify
-    the evaluation set in training logs and `eval_results`.
-    
-    # Example
-    
-    ```python
-    from boosters import Dataset, EvalSet
-    import numpy as np
-    
-    X_val = np.random.rand(50, 10).astype(np.float32)
-    y_val = np.random.rand(50).astype(np.float32)
-    
-    val_data = Dataset(X_val, y_val)
-    eval_set = EvalSet("validation", val_data)
-    
-    # Use in training:
-    # model.fit(train_data, valid=[eval_set])
-    ```
-    """
-    @property
-    def name(self) -> builtins.str:
-        r"""
-        Name of this evaluation set.
-        """
-    @property
-    def dataset(self) -> Dataset:
-        r"""
-        The underlying dataset.
-        """
-    def __new__(cls, dataset: Dataset, name: builtins.str) -> EvalSet:
-        r"""
-        Create a new named evaluation set.
-        
-        Args:
-            name: Name for this evaluation set (e.g., "validation", "test")
-            dataset: Dataset containing features and labels.
-        
-        Returns:
-            EvalSet ready for use in training
-        """
-    def __repr__(self) -> builtins.str: ...
-
-@typing.final
 class GBDTConfig:
     r"""
     Main configuration for GBDT model.
@@ -286,6 +239,24 @@ class GBDTConfig:
         Maximum bins per feature for binning (1-256).
         """
     @property
+    def enable_bundling(self) -> builtins.bool:
+        r"""
+        Enable exclusive feature bundling for sparse data. Default: true.
+        Bundles sparse/one-hot features to reduce memory and speed up training.
+        """
+    @property
+    def bundling_conflict_rate(self) -> builtins.float:
+        r"""
+        Maximum allowed conflict rate for bundling (0.0-1.0). Default: 0.0001.
+        Higher values allow more aggressive bundling but may reduce accuracy.
+        """
+    @property
+    def bundling_min_sparsity(self) -> builtins.float:
+        r"""
+        Minimum sparsity for a feature to be bundled (0.0-1.0). Default: 0.9.
+        Features with fewer than this fraction of zeros are not bundled.
+        """
+    @property
     def early_stopping_rounds(self) -> typing.Optional[builtins.int]:
         r"""
         Early stopping rounds (None = disabled).
@@ -310,7 +281,7 @@ class GBDTConfig:
         r"""
         Get the evaluation metric (or None).
         """
-    def __new__(cls, n_estimators: builtins.int = 100, learning_rate: builtins.float = 0.3, objective: Objective | None = None, metric: Metric | None = None, growth_strategy: GrowthStrategy = GrowthStrategy.Depthwise, max_depth: builtins.int = 6, n_leaves: builtins.int = 31, max_onehot_cats: builtins.int = 4, l1: builtins.float = 0.0, l2: builtins.float = 1.0, min_gain_to_split: builtins.float = 0.0, min_child_weight: builtins.float = 1.0, min_samples_leaf: builtins.int = 1, subsample: builtins.float = 1.0, colsample_bytree: builtins.float = 1.0, colsample_bylevel: builtins.float = 1.0, linear_leaves: builtins.bool = False, linear_l2: builtins.float = 0.01, linear_l1: builtins.float = 0.0, linear_max_iterations: builtins.int = 10, linear_tolerance: builtins.float = 1e-06, linear_min_samples: builtins.int = 50, linear_coefficient_threshold: builtins.float = 1e-06, linear_max_features: builtins.int = 10, max_bins: builtins.int = 256, early_stopping_rounds: typing.Optional[builtins.int] = None, seed: builtins.int = 42, verbosity: Verbosity = Verbosity.Silent) -> GBDTConfig: ...
+    def __new__(cls, n_estimators: builtins.int = 100, learning_rate: builtins.float = 0.3, objective: Objective | None = None, metric: Metric | None = None, growth_strategy: GrowthStrategy = GrowthStrategy.Depthwise, max_depth: builtins.int = 6, n_leaves: builtins.int = 31, max_onehot_cats: builtins.int = 4, l1: builtins.float = 0.0, l2: builtins.float = 1.0, min_gain_to_split: builtins.float = 0.0, min_child_weight: builtins.float = 1.0, min_samples_leaf: builtins.int = 1, subsample: builtins.float = 1.0, colsample_bytree: builtins.float = 1.0, colsample_bylevel: builtins.float = 1.0, linear_leaves: builtins.bool = False, linear_l2: builtins.float = 0.01, linear_l1: builtins.float = 0.0, linear_max_iterations: builtins.int = 10, linear_tolerance: builtins.float = 1e-06, linear_min_samples: builtins.int = 50, linear_coefficient_threshold: builtins.float = 1e-06, linear_max_features: builtins.int = 10, max_bins: builtins.int = 256, enable_bundling: builtins.bool = True, bundling_conflict_rate: builtins.float = 0.0001, bundling_min_sparsity: builtins.float = 0.9, early_stopping_rounds: typing.Optional[builtins.int] = None, seed: builtins.int = 42, verbosity: Verbosity = Verbosity.Silent) -> GBDTConfig: ...
     def __repr__(self) -> builtins.str: ...
 
 @typing.final
@@ -433,13 +404,13 @@ class GBDTModel:
         Returns:
             Raw scores array with shape (n_samples, n_outputs).
         """
-    def fit(self, train: Dataset, valid: typing.Optional[typing.Sequence[EvalSet]] = None, n_threads: builtins.int = 0) -> GBDTModel:
+    def fit(self, train: Dataset, val_set: typing.Optional[Dataset] = None, n_threads: builtins.int = 0) -> GBDTModel:
         r"""
         Train the model on a dataset.
         
         Args:
             train: Training dataset containing features and labels.
-            valid: Validation set(s) for early stopping and evaluation.
+            val_set: Optional validation dataset for early stopping and evaluation.
             n_threads: Number of threads for parallel training (0 = auto).
         
         Returns:
@@ -483,6 +454,11 @@ class GBLinearConfig:
         Learning rate (step size).
         """
     @property
+    def update_strategy(self) -> GBLinearUpdateStrategy:
+        r"""
+        Coordinate descent update strategy.
+        """
+    @property
     def l1(self) -> builtins.float:
         r"""
         L1 regularization (alpha).
@@ -491,6 +467,13 @@ class GBLinearConfig:
     def l2(self) -> builtins.float:
         r"""
         L2 regularization (lambda).
+        """
+    @property
+    def max_delta_step(self) -> builtins.float:
+        r"""
+        Maximum per-coordinate Newton step (stability), in absolute value.
+        
+        Set to `0.0` to disable.
         """
     @property
     def early_stopping_rounds(self) -> typing.Optional[builtins.int]:
@@ -517,7 +500,7 @@ class GBLinearConfig:
         r"""
         Get the evaluation metric (or None).
         """
-    def __new__(cls, n_estimators: builtins.int = 100, learning_rate: builtins.float = 0.5, objective: Objective | None = None, metric: Metric | None = None, l1: builtins.float = 0.0, l2: builtins.float = 1.0, early_stopping_rounds: typing.Optional[builtins.int] = None, seed: builtins.int = 42, verbosity: Verbosity = Verbosity.Silent) -> GBLinearConfig: ...
+    def __new__(cls, n_estimators: builtins.int = 100, learning_rate: builtins.float = 0.5, objective: Objective | None = None, metric: Metric | None = None, l1: builtins.float = 0.0, l2: builtins.float = 1.0, update_strategy: GBLinearUpdateStrategy = GBLinearUpdateStrategy.Shotgun, max_delta_step: builtins.float = 0.0, early_stopping_rounds: typing.Optional[builtins.int] = None, seed: builtins.int = 42, verbosity: Verbosity = Verbosity.Silent) -> GBLinearConfig: ...
     def __repr__(self) -> builtins.str: ...
 
 @typing.final
@@ -628,18 +611,39 @@ class GBLinearModel:
         Returns:
             Raw scores array with shape (n_samples, n_outputs).
         """
-    def fit(self, train: Dataset, eval_set: typing.Optional[typing.Sequence[EvalSet]] = None, n_threads: builtins.int = 0) -> GBLinearModel:
+    def fit(self, train: Dataset, val_set: typing.Optional[Dataset] = None, n_threads: builtins.int = 0) -> GBLinearModel:
         r"""
         Train the model on a dataset.
         
         Args:
             train: Training dataset containing features and labels.
-            eval_set: Validation set(s) for early stopping and evaluation.
+            val_set: Optional validation dataset for early stopping and evaluation.
             n_threads: Number of threads for parallel training (0 = auto).
         
         Returns:
             Self (for method chaining).
         """
+
+@typing.final
+class GBLinearUpdateStrategy(enum.Enum):
+    r"""
+    Coordinate descent update strategy for GBLinear.
+    
+    Attributes:
+        Shotgun: Parallel (shotgun) coordinate descent (fast, approximate).
+        Sequential: Sequential coordinate descent (slower, deterministic).
+    """
+    Shotgun = ...
+    r"""
+    Parallel (shotgun) coordinate descent.
+    """
+    Sequential = ...
+    r"""
+    Sequential coordinate descent.
+    """
+
+    def __str__(self) -> builtins.str: ...
+    def __repr__(self) -> builtins.str: ...
 
 @typing.final
 class GrowthStrategy(enum.Enum):

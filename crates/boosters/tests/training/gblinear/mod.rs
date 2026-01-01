@@ -177,7 +177,7 @@ pub fn make_dataset(features: &Array2<f32>, labels: &[f32]) -> (Dataset, Array2<
         Array2::from_shape_vec((1, n_samples), labels.to_vec()).expect("targets shape mismatch");
 
     // Create Dataset directly from feature-major array
-    let dataset = Dataset::new(features.view(), Some(targets.view()), None);
+    let dataset = Dataset::from_array(features.view(), Some(targets.to_owned()), None);
 
     (dataset, targets)
 }

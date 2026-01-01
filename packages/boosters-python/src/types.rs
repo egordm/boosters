@@ -7,8 +7,61 @@ use pyo3_stub_gen::derive::gen_stub_pymethods;
 
 use boosters::explainability::ImportanceType as CoreImportanceType;
 use boosters::training::Verbosity as CoreVerbosity;
+use boosters::training::gblinear::UpdateStrategy as CoreGBLinearUpdateStrategy;
 
 use crate::error::BoostersError;
+
+// =============================================================================
+// GBLinearUpdateStrategy
+// =============================================================================
+
+/// Coordinate descent update strategy for GBLinear.
+///
+/// Attributes:
+///     Shotgun: Parallel (shotgun) coordinate descent (fast, approximate).
+///     Sequential: Sequential coordinate descent (slower, deterministic).
+#[pyo3_stub_gen::derive::gen_stub_pyclass_enum]
+#[pyclass(
+    name = "GBLinearUpdateStrategy",
+    module = "boosters._boosters_rs",
+    eq,
+    eq_int
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum PyGBLinearUpdateStrategy {
+    /// Parallel (shotgun) coordinate descent.
+    #[default]
+    Shotgun = 0,
+    /// Sequential coordinate descent.
+    Sequential = 1,
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl PyGBLinearUpdateStrategy {
+    fn __str__(&self) -> &'static str {
+        match self {
+            PyGBLinearUpdateStrategy::Shotgun => "shotgun",
+            PyGBLinearUpdateStrategy::Sequential => "sequential",
+        }
+    }
+
+    fn __repr__(&self) -> &'static str {
+        match self {
+            PyGBLinearUpdateStrategy::Shotgun => "GBLinearUpdateStrategy.Shotgun",
+            PyGBLinearUpdateStrategy::Sequential => "GBLinearUpdateStrategy.Sequential",
+        }
+    }
+}
+
+impl From<PyGBLinearUpdateStrategy> for CoreGBLinearUpdateStrategy {
+    fn from(value: PyGBLinearUpdateStrategy) -> Self {
+        match value {
+            PyGBLinearUpdateStrategy::Shotgun => CoreGBLinearUpdateStrategy::Shotgun,
+            PyGBLinearUpdateStrategy::Sequential => CoreGBLinearUpdateStrategy::Sequential,
+        }
+    }
+}
 
 // =============================================================================
 // ImportanceType

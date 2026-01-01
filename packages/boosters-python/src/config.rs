@@ -8,7 +8,7 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use crate::metrics::PyMetric;
 use crate::objectives::PyObjective;
-use crate::types::PyVerbosity;
+use crate::types::{PyGBLinearUpdateStrategy, PyVerbosity};
 use crate::validation::{validate_non_negative, validate_positive, validate_ratio};
 
 // =============================================================================
@@ -539,6 +539,9 @@ pub struct PyGBLinearConfig {
     /// Learning rate (step size).
     #[pyo3(get)]
     pub learning_rate: f64,
+    /// Coordinate descent update strategy.
+    #[pyo3(get)]
+    pub update_strategy: PyGBLinearUpdateStrategy,
     /// Objective function.
     pub objective: PyObjective,
     /// Evaluation metric (optional).
@@ -549,6 +552,11 @@ pub struct PyGBLinearConfig {
     /// L2 regularization (lambda).
     #[pyo3(get)]
     pub l2: f64,
+    /// Maximum per-coordinate Newton step (stability), in absolute value.
+    ///
+    /// Set to `0.0` to disable.
+    #[pyo3(get)]
+    pub max_delta_step: f64,
     /// Early stopping rounds (None = disabled).
     #[pyo3(get)]
     pub early_stopping_rounds: Option<u32>,
@@ -571,6 +579,8 @@ impl PyGBLinearConfig {
         metric = None,
         l1 = 0.0,
         l2 = 1.0,
+        update_strategy = PyGBLinearUpdateStrategy::Shotgun,
+        max_delta_step = 0.0,
         early_stopping_rounds = None,
         seed = 42,
         verbosity = PyVerbosity::Silent
@@ -583,6 +593,8 @@ impl PyGBLinearConfig {
         #[gen_stub(override_type(type_repr = "Metric | None"))] metric: Option<PyMetric>,
         l1: f64,
         l2: f64,
+        update_strategy: PyGBLinearUpdateStrategy,
+        max_delta_step: f64,
         early_stopping_rounds: Option<u32>,
         seed: u64,
         verbosity: PyVerbosity,
@@ -592,14 +604,17 @@ impl PyGBLinearConfig {
         validate_positive("learning_rate", learning_rate)?;
         validate_non_negative("l1", l1)?;
         validate_non_negative("l2", l2)?;
+        validate_non_negative("max_delta_step", max_delta_step)?;
 
         Ok(Self {
             n_estimators,
             learning_rate,
+            update_strategy,
             objective: objective.unwrap_or_default(),
             metric,
             l1,
             l2,
+            max_delta_step,
             early_stopping_rounds,
             seed,
             verbosity,
@@ -608,8 +623,14 @@ impl PyGBLinearConfig {
 
     fn __repr__(&self) -> String {
         format!(
-            "GBLinearConfig(n_estimators={}, learning_rate={}, l1={}, l2={}, objective={:?})",
-            self.n_estimators, self.learning_rate, self.l1, self.l2, self.objective
+            "GBLinearConfig(n_estimators={}, learning_rate={}, l1={}, l2={}, update_strategy={:?}, max_delta_step={}, objective={:?})",
+            self.n_estimators,
+            self.learning_rate,
+            self.l1,
+            self.l2,
+            self.update_strategy,
+            self.max_delta_step,
+            self.objective
         )
     }
 
@@ -643,8 +664,9 @@ impl From<&PyGBLinearConfig> for boosters::GBLinearConfig {
             learning_rate: py_config.learning_rate as f32,
             alpha: py_config.l1 as f32,
             lambda: py_config.l2 as f32,
-            parallel: true,
+            update_strategy: py_config.update_strategy.into(),
             feature_selector: Default::default(),
+            max_delta_step: py_config.max_delta_step as f32,
             early_stopping_rounds: py_config.early_stopping_rounds,
             seed: py_config.seed,
             verbosity: py_config.verbosity.into(),
@@ -661,6 +683,8 @@ impl Default for PyGBLinearConfig {
             metric: None,
             l1: 0.0,
             l2: 1.0,
+            update_strategy: PyGBLinearUpdateStrategy::Shotgun,
+            max_delta_step: 0.0,
             early_stopping_rounds: None,
             seed: 42,
             verbosity: PyVerbosity::Silent,

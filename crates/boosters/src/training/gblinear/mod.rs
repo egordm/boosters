@@ -47,3 +47,4 @@ mod updater;
 
 pub use selector::FeatureSelectorKind;
 pub use trainer::{GBLinearParams, GBLinearTrainer};
+pub use updater::UpdateStrategy;

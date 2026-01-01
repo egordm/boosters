@@ -14,8 +14,8 @@ use crate::training::{
     Verbosity,
 };
 
-use super::selector::FeatureSelectorKind;
-use super::updater::{UpdateConfig, Updater, UpdaterKind};
+use super::selector::{FeatureSelector, FeatureSelectorKind};
+use super::updater::{compute_weight_update, UpdateConfig, Updater, UpdateStrategy};
 
 // ============================================================================
 // GBLinearParams
@@ -38,15 +38,19 @@ pub struct GBLinearParams {
     pub lambda: f32,
 
     // --- Update strategy ---
-    /// Use parallel (shotgun) coordinate descent updates.
-    /// When true, features are updated in parallel within each round.
-    pub parallel: bool,
+    /// Coordinate descent update strategy.
+    pub update_strategy: UpdateStrategy,
 
     /// Feature selection strategy for coordinate descent.
     pub feature_selector: FeatureSelectorKind,
 
     /// Random seed for feature shuffling.
     pub seed: u64,
+
+    /// Maximum per-coordinate Newton step (stability), in absolute value.
+    ///
+    /// Set to `0.0` to disable.
+    pub max_delta_step: f32,
 
     // --- Evaluation and early stopping ---
     /// Early stopping rounds. Training stops if no improvement for this many rounds.
@@ -65,9 +69,10 @@ impl Default for GBLinearParams {
             learning_rate: 0.5,
             alpha: 0.0,
             lambda: 1.0,
-            parallel: true,
+            update_strategy: UpdateStrategy::default(),
             feature_selector: FeatureSelectorKind::default(),
             seed: 42,
+            max_delta_step: 0.0,
             early_stopping_rounds: 0,
             verbosity: Verbosity::default(),
         }
@@ -154,19 +159,15 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
         }
 
         // Create updater and selector
-        let updater_kind = if self.params.parallel {
-            UpdaterKind::Parallel
-        } else {
-            UpdaterKind::Sequential
-        };
         let mut selector = self.params.feature_selector.create_state(self.params.seed);
 
         let update_config = UpdateConfig {
             alpha: self.params.alpha,
             lambda: self.params.lambda,
             learning_rate: self.params.learning_rate,
+            max_delta_step: self.params.max_delta_step,
         };
-        let updater = Updater::new(updater_kind, update_config);
+        let updater = Updater::new(self.params.update_strategy, update_config.clone());
 
         // Gradient and prediction buffers
         let mut gradients = Gradients::new(n_samples, n_outputs);
@@ -252,27 +253,83 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                     self.params.lambda,
                 );
 
-                let weight_deltas = updater.update_round(
-                    &mut model,
-                    train,
-                    &gradients,
-                    &mut selector,
-                    output,
-                );
+                // True coordinate descent for the Sequential strategy.
+                //
+                // Note: This recomputes gradients after each coordinate update. It's slower,
+                // but can be substantially more stable/accurate for some objectives.
+                if self.params.update_strategy == UpdateStrategy::Sequential {
+                    while let Some(feature) = selector.next() {
+                        let delta = compute_weight_update(
+                            &model,
+                            train,
+                            &gradients,
+                            feature,
+                            output,
+                            &update_config,
+                        );
 
-                // Apply weight deltas to predictions incrementally
-                if !weight_deltas.is_empty() {
-                    updater.apply_weight_deltas_to_predictions(
+                        if delta.abs() <= 1e-10 {
+                            continue;
+                        }
+
+                        model.add_weight(feature, output, delta);
+
+                        // Incrementally update train predictions for this feature.
+                        {
+                            let mut output_row = predictions.row_mut(output);
+                            train.for_each_feature_value(feature, |row, value| {
+                                output_row[row] += value * delta;
+                            });
+                        }
+
+                        // Keep validation predictions in sync (only if evaluation is needed).
+                        if let (Some(dataset_val), Some(ref mut predictions_val)) =
+                            (val_set, val_predictions.as_mut())
+                        {
+                            let mut output_row = predictions_val.row_mut(output);
+                            dataset_val.for_each_feature_value(feature, |row, value| {
+                                output_row[row] += value * delta;
+                            });
+                        }
+
+                        // Recompute gradients after each coordinate update.
+                        self.objective.compute_gradients_into(
+                            predictions.view(),
+                            targets,
+                            weights,
+                            gradients.pairs_array_mut(),
+                        );
+                    }
+                } else {
+                    let weight_deltas = updater.update_round(
+                        &mut model,
                         train,
-                        &weight_deltas,
+                        &gradients,
+                        &mut selector,
                         output,
-                        predictions.view_mut(),
                     );
 
-                    // Note: Validation prediction updates for weight deltas would require
-                    // BinnedDataset for the validation set. For now, validation metrics
-                    // are computed from accumulated bias updates only. This is a known
-                    // limitation that will be addressed when validation uses BinnedDataset.
+                    // Apply weight deltas to predictions incrementally
+                    if !weight_deltas.is_empty() {
+                        updater.apply_weight_deltas_to_predictions(
+                            train,
+                            &weight_deltas,
+                            output,
+                            predictions.view_mut(),
+                        );
+
+                        // Keep validation predictions in sync for correct metrics/early stopping.
+                        if let (Some(dataset_val), Some(ref mut predictions_val)) =
+                            (val_set, val_predictions.as_mut())
+                        {
+                            updater.apply_weight_deltas_to_predictions(
+                                dataset_val,
+                                &weight_deltas,
+                                output,
+                                predictions_val.view_mut(),
+                            );
+                        }
+                    }
                 }
             }
 
@@ -354,7 +411,7 @@ mod tests {
         // Transpose targets to [n_outputs, n_samples]
         let targets_fm = transpose_to_c_order(targets.view());
 
-        let dataset = Dataset::new(features_fm.view(), Some(targets_fm.view()), None);
+        let dataset = Dataset::from_array(features_fm.view(), Some(targets_fm.clone()), None);
 
         (dataset, targets_fm)
     }
@@ -397,7 +454,7 @@ mod tests {
             learning_rate: 0.5,
             alpha: 0.0,
             lambda: 0.0,
-            parallel: false,
+            update_strategy: UpdateStrategy::Sequential,
             verbosity: Verbosity::Silent,
             ..Default::default()
         };
@@ -430,7 +487,7 @@ mod tests {
         let params_no_reg = GBLinearParams {
             n_rounds: 50,
             lambda: 0.0,
-            parallel: false,
+            update_strategy: UpdateStrategy::Sequential,
             verbosity: Verbosity::Silent,
             ..Default::default()
         };
@@ -443,7 +500,7 @@ mod tests {
         let params_l2 = GBLinearParams {
             n_rounds: 50,
             lambda: 10.0,
-            parallel: false,
+            update_strategy: UpdateStrategy::Sequential,
             verbosity: Verbosity::Silent,
             ..Default::default()
         };
@@ -476,7 +533,7 @@ mod tests {
             n_rounds: 200,
             learning_rate: 0.3,
             lambda: 0.0,
-            parallel: false,
+            update_strategy: UpdateStrategy::Sequential,
             verbosity: Verbosity::Silent,
             ..Default::default()
         };
@@ -514,7 +571,7 @@ mod tests {
             n_rounds: 200,
             learning_rate: 0.3,
             lambda: 0.1,
-            parallel: false,
+            update_strategy: UpdateStrategy::Sequential,
             verbosity: Verbosity::Silent,
             ..Default::default()
         };

@@ -5,10 +5,10 @@
 //! - Multiclass classification with softmax loss
 
 use super::{load_config, load_train_data, make_dataset};
-use boosters::data::{FeaturesView, TargetsView, WeightsView};
+use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::training::{
     GBLinearParams, GBLinearTrainer, LogLoss, LogisticLoss, MulticlassLogLoss, SoftmaxLoss,
-    Verbosity,
+    UpdateStrategy, Verbosity,
 };
 use ndarray::Array2;
 
@@ -25,7 +25,7 @@ fn train_binary_classification() {
         learning_rate: config.eta,
         alpha: config.alpha,
         lambda: config.lambda,
-        parallel: false,
+        update_strategy: UpdateStrategy::Sequential,
         seed: 42,
         verbosity: Verbosity::Silent,
         ..Default::default()
@@ -38,8 +38,8 @@ fn train_binary_classification() {
 
     // Verify predictions are in reasonable range for logits.
     // Data is feature-major [n_features, n_samples]
-    let features_view = FeaturesView::from_array(data.view());
-    let output = model.predict(features_view);
+    let pred_dataset = Dataset::from_array(data.view(), None, None);
+    let output = model.predict(&pred_dataset);
 
     // output is Array2<f32> with shape [n_groups, n_samples]
     let predictions: Vec<f32> = output.row(0).iter().copied().take(10).collect();
@@ -67,7 +67,7 @@ fn train_multioutput_classification() {
         learning_rate: config.eta,
         alpha: config.alpha,
         lambda: config.lambda,
-        parallel: false,
+        update_strategy: UpdateStrategy::Sequential,
         seed: 42,
         verbosity: Verbosity::Silent,
         ..Default::default()
@@ -83,8 +83,8 @@ fn train_multioutput_classification() {
 
     // Verify predictions exist for all classes
     // Data is feature-major [n_features, n_samples]
-    let features_view = FeaturesView::from_array(data.view());
-    let output = model.predict(features_view);
+    let pred_dataset = Dataset::from_array(data.view(), None, None);
+    let output = model.predict(&pred_dataset);
 
     // output is Array2<f32> with shape [n_groups, n_samples]
     // Get first sample's predictions (column 0)
@@ -105,8 +105,8 @@ fn train_multioutput_classification() {
     // Compute training accuracy (argmax over logits).
     use boosters::training::{MetricFn, MulticlassAccuracy};
 
-    let features_view = FeaturesView::from_array(data.view());
-    let output = model.predict(features_view);
+    let pred_dataset = Dataset::from_array(data.view(), None, None);
+    let output = model.predict(&pred_dataset);
     let n_samples = output.ncols();
     let pred_classes: Vec<f32> = (0..n_samples)
         .map(|sample| {
