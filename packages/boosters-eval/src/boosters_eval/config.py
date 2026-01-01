@@ -77,7 +77,7 @@ class TrainingConfig(BaseModel):
     reg_alpha: float = 0.0  # L1 regularization - 0 for fair comparison
     min_child_weight: float = 1.0  # Minimum hessian sum in leaf
     min_samples_leaf: int = 1  # Minimum samples in leaf (boosters/LightGBM only)
-    subsample: float = 1.0
+    subsample: float = 1.0  # Row subsampling (default: no subsampling)
     colsample_bytree: float = 1.0
     max_bins: int = 256  # Binning resolution for histograms
     n_threads: int = 1
