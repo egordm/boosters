@@ -1,11 +1,11 @@
-//! Interleaved gradient buffer with column-major layout.
+//! Interleaved gradient buffer with output-major layout.
 //!
-//! Provides a `Gradients` struct that stores `(grad, hess)` pairs in a single
-//! contiguous array using **column-major** (output-major) order.
+//! Provides a `Gradients` struct that stores `(grad, hess)` pairs in a 2D array
+//! with shape `[n_outputs, n_samples]`.
 //!
 //! # Design Rationale
 //!
-//! Column-major layout optimizes for the histogram building hot path:
+//! Output-major layout optimizes for the histogram building hot path:
 //!
 //! 1. **Zero-copy output slicing**: `output_pairs(k)` returns a contiguous slice of all
 //!    samples for output `k`, enabling efficient histogram building
@@ -19,23 +19,18 @@
 //! For `n_samples` samples and `n_outputs` outputs (1 for regression, K for multiclass):
 //!
 //! ```text
-//! data:  [(s0_o0), (s1_o0), ..., (sN_o0), (s0_o1), (s1_o1), ..., (sN_o1), ...]
-//!        |------ output 0 -------|      |------ output 1 -------|
+//! Shape: [n_outputs, n_samples]
+//! data[output, sample] = GradsTuple { grad, hess }
 //! ```
 //!
-//! Index formula: `data[output * n_samples + sample]`
-//!
-//! # Performance Impact
-//!
-//! This layout keeps per-output slices contiguous (important for training), while
-//! improving locality in hot loops that need both gradient and hessian together.
+//! Row `k` contains all samples for output `k`, which is contiguous in memory.
 
-use ndarray::{ArrayView2, ArrayViewMut2, ShapeBuilder};
+use ndarray::{Array2, ArrayView1, ArrayView2, ArrayViewMut1, ArrayViewMut2};
 
-/// Structure-of-Arrays gradient buffer with column-major layout.
+/// Interleaved gradient buffer with output-major layout.
 ///
-/// Stores gradients and hessians in separate contiguous arrays, organized
-/// by output (column-major) for cache-efficient histogram building.
+/// Stores gradients and hessians as `Array2<GradsTuple>` with shape
+/// `[n_outputs, n_samples]` for cache-efficient histogram building.
 ///
 /// # Example
 ///
@@ -76,15 +71,13 @@ pub struct GradsTuple {
     pub hess: f32,
 }
 
-/// Interleaved gradient buffer with column-major layout.
+/// Interleaved gradient buffer with output-major layout.
+///
+/// Shape: `[n_outputs, n_samples]`
 #[derive(Debug, Clone)]
 pub struct Gradients {
-    /// Interleaved gradient/hessian pairs.
-    data: Vec<GradsTuple>,
-    /// Number of samples.
-    n_samples: usize,
-    /// Number of outputs per sample.
-    n_outputs: usize,
+    /// 2D array of gradient pairs: shape `[n_outputs, n_samples]`.
+    data: Array2<GradsTuple>,
 }
 
 impl Gradients {
@@ -102,24 +95,21 @@ impl Gradients {
         assert!(n_samples > 0, "n_samples must be positive");
         assert!(n_outputs > 0, "n_outputs must be positive");
 
-        let size = n_samples * n_outputs;
         Self {
-            data: vec![GradsTuple::default(); size],
-            n_samples,
-            n_outputs,
+            data: Array2::default((n_outputs, n_samples)),
         }
     }
 
     /// Number of samples in the buffer.
     #[inline]
     pub fn n_samples(&self) -> usize {
-        self.n_samples
+        self.data.ncols()
     }
 
     /// Number of outputs per sample.
     #[inline]
     pub fn n_outputs(&self) -> usize {
-        self.n_outputs
+        self.data.nrows()
     }
 
     /// Total number of gradient pairs (n_samples × n_outputs).
@@ -151,130 +141,76 @@ impl Gradients {
     /// * `output` - Output index (0 to n_outputs-1)
     #[inline]
     pub fn get(&self, sample: usize, output: usize) -> (f32, f32) {
-        let idx = self.index(sample, output);
-        let p = self.data[idx];
+        let p = self.data[[output, sample]];
         (p.grad, p.hess)
     }
 
     /// Set gradient and hessian for a (sample, output) pair.
     #[inline]
     pub fn set(&mut self, sample: usize, output: usize, grad: f32, hess: f32) {
-        let idx = self.index(sample, output);
-        self.data[idx] = GradsTuple { grad, hess };
+        self.data[[output, sample]] = GradsTuple { grad, hess };
     }
 
     // =========================================================================
-    // Slice access for bulk operations
+    // Array view access for bulk operations
     // =========================================================================
-
-    /// Get the full interleaved buffer.
-    #[inline]
-    pub fn pairs(&self) -> &[GradsTuple] {
-        &self.data
-    }
-
-    /// Get the full interleaved buffer (mutable).
-    #[inline]
-    pub fn pairs_mut(&mut self) -> &mut [GradsTuple] {
-        &mut self.data
-    }
 
     /// Get the gradient buffer as a 2D array view.
     ///
-    /// Shape: `[n_outputs, n_samples]` (column-major data viewed as row-major array)
+    /// Shape: `[n_outputs, n_samples]`
     #[inline]
     pub fn pairs_array(&self) -> ArrayView2<'_, GradsTuple> {
-        ArrayView2::from_shape(
-            (self.n_outputs, self.n_samples).strides((self.n_samples, 1)),
-            &self.data,
-        )
-        .unwrap()
+        self.data.view()
     }
 
     /// Get the gradient buffer as a mutable 2D array view.
     ///
-    /// Shape: `[n_outputs, n_samples]` (column-major data viewed as row-major array)
+    /// Shape: `[n_outputs, n_samples]`
     #[inline]
     pub fn pairs_array_mut(&mut self) -> ArrayViewMut2<'_, GradsTuple> {
-        ArrayViewMut2::from_shape(
-            (self.n_outputs, self.n_samples).strides((self.n_samples, 1)),
-            &mut self.data,
-        )
-        .unwrap()
-    }
-
-    // =========================================================================
-    // Per-sample access (for loss functions)
-    // =========================================================================
-
-    /// Get gradients for all outputs of a single sample.
-    ///
-    /// **Note**: With column-major layout, this requires strided access.
-    /// For bulk per-sample operations, iterate manually for better cache use.
-    ///
-    /// Returns a newly allocated Vec (not a slice) because data is non-contiguous.
-    #[inline]
-    pub fn sample_grads(&self, sample: usize) -> Vec<f32> {
-        (0..self.n_outputs)
-            .map(|output| self.data[self.index(sample, output)].grad)
-            .collect()
-    }
-
-    /// Get hessians for all outputs of a single sample.
-    ///
-    /// Returns a newly allocated Vec (not a slice) because data is non-contiguous.
-    #[inline]
-    pub fn sample_hess(&self, sample: usize) -> Vec<f32> {
-        (0..self.n_outputs)
-            .map(|output| self.data[self.index(sample, output)].hess)
-            .collect()
+        self.data.view_mut()
     }
 
     // =========================================================================
     // Per-output access (for histogram building - the hot path)
     // =========================================================================
 
+    /// Get row view for a specific output (all samples).
+    ///
+    /// Returns an `ArrayView1<GradsTuple>` of length `n_samples`.
+    #[inline]
+    pub fn output_view(&self, output: usize) -> ArrayView1<'_, GradsTuple> {
+        self.data.row(output)
+    }
+
+    /// Get mutable row view for a specific output (all samples).
+    ///
+    /// Returns an `ArrayViewMut1<GradsTuple>` of length `n_samples`.
+    #[inline]
+    pub fn output_view_mut(&mut self, output: usize) -> ArrayViewMut1<'_, GradsTuple> {
+        self.data.row_mut(output)
+    }
+
     /// Get contiguous `(grad, hess)` pairs for a specific output (all samples).
+    ///
+    /// This is a slice view into the row, valid because the array is row-major.
     #[inline]
     pub fn output_pairs(&self, output: usize) -> &[GradsTuple] {
-        debug_assert!(output < self.n_outputs);
-        let start = output * self.n_samples;
-        &self.data[start..start + self.n_samples]
+        debug_assert!(output < self.n_outputs());
+        // For C-contiguous row-major array, each row is contiguous
+        // Row `output` starts at offset `output * ncols` in the flat slice
+        let ncols = self.data.ncols();
+        let start = output * ncols;
+        &self.data.as_slice().expect("array should be contiguous")[start..start + ncols]
     }
 
     /// Get mutable contiguous `(grad, hess)` pairs for a specific output.
     #[inline]
     pub fn output_pairs_mut(&mut self, output: usize) -> &mut [GradsTuple] {
-        debug_assert!(output < self.n_outputs);
-        let start = output * self.n_samples;
-        &mut self.data[start..start + self.n_samples]
-    }
-
-    /// Iterator over (sample_idx, grad, hess) for a specific output.
-    ///
-    /// This is the key access pattern for coordinate descent: iterating
-    /// over all samples for one output (class).
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use boosters::training::Gradients;
-    ///
-    /// let mut buffer = Gradients::new(3, 2);
-    /// buffer.set(0, 0, 1.0, 0.5);
-    /// buffer.set(1, 0, 2.0, 0.5);
-    /// buffer.set(2, 0, 3.0, 0.5);
-    ///
-    /// // Iterate over output 0
-    /// let grads: Vec<f32> = buffer.output_iter(0).map(|(_, g, _)| g).collect();
-    /// assert_eq!(grads, vec![1.0, 2.0, 3.0]);
-    /// ```
-    pub fn output_iter(&self, output: usize) -> OutputIter<'_> {
-        debug_assert!(output < self.n_outputs);
-        OutputIter {
-            pairs: self.output_pairs(output),
-            sample: 0,
-        }
+        debug_assert!(output < self.n_outputs());
+        let ncols = self.data.ncols();
+        let start = output * ncols;
+        &mut self.data.as_slice_mut().expect("array should be contiguous")[start..start + ncols]
     }
 
     // =========================================================================
@@ -292,23 +228,23 @@ impl Gradients {
     /// in `f32` for performance.
     #[inline]
     pub fn sum(&self, output: usize, rows: Option<&[u32]>) -> (f64, f64) {
-        let pairs = self.output_pairs(output);
+        let row = self.data.row(output);
 
         let mut sum_grad = 0.0f64;
         let mut sum_hess = 0.0f64;
 
         match rows {
             None => {
-                for pair in pairs.iter().take(self.n_samples) {
+                for pair in row.iter() {
                     sum_grad += pair.grad as f64;
                     sum_hess += pair.hess as f64;
                 }
             }
             Some(rows) => {
-                for &row in rows {
-                    let row = row as usize;
-                    sum_grad += pairs[row].grad as f64;
-                    sum_hess += pairs[row].hess as f64;
+                for &idx in rows {
+                    let pair = row[idx as usize];
+                    sum_grad += pair.grad as f64;
+                    sum_hess += pair.hess as f64;
                 }
             }
         }
@@ -329,50 +265,7 @@ impl Gradients {
             (-sum_grad / sum_hess) as f32
         }
     }
-
-    // =========================================================================
-    // Private helpers
-    // =========================================================================
-
-    /// Convert (sample, output) to linear index (column-major).
-    #[inline]
-    fn index(&self, sample: usize, output: usize) -> usize {
-        debug_assert!(sample < self.n_samples);
-        debug_assert!(output < self.n_outputs);
-        output * self.n_samples + sample
-    }
 }
-
-/// Iterator over all samples for a specific output.
-///
-/// With column-major layout, this iterates over contiguous memory.
-pub struct OutputIter<'a> {
-    pairs: &'a [GradsTuple],
-    sample: usize,
-}
-
-impl<'a> Iterator for OutputIter<'a> {
-    /// (sample_index, gradient, hessian)
-    type Item = (usize, f32, f32);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.sample >= self.pairs.len() {
-            return None;
-        }
-
-        let p = self.pairs[self.sample];
-        let result = (self.sample, p.grad, p.hess);
-        self.sample += 1;
-        Some(result)
-    }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.pairs.len() - self.sample;
-        (remaining, Some(remaining))
-    }
-}
-
-impl ExactSizeIterator for OutputIter<'_> {}
 
 // =============================================================================
 // Tests
@@ -438,21 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn sample_grads_returns_vec() {
-        let mut buffer = Gradients::new(5, 3);
-
-        // Set sample 2's gradients (across outputs)
-        buffer.set(2, 0, 1.0, 0.5);
-        buffer.set(2, 1, 2.0, 0.5);
-        buffer.set(2, 2, 3.0, 0.5);
-
-        // sample_grads returns a Vec (not a slice) because data is non-contiguous
-        let grads = buffer.sample_grads(2);
-        assert_eq!(grads, vec![1.0, 2.0, 3.0]);
-    }
-
-    #[test]
-    fn output_iter() {
+    fn output_view() {
         let mut buffer = Gradients::new(3, 2);
 
         // Output 0: grads = [1, 2, 3]
@@ -465,16 +344,16 @@ mod tests {
         buffer.set(1, 1, 20.0, 0.5);
         buffer.set(2, 1, 30.0, 0.5);
 
-        // Iterate output 0
-        let collected: Vec<_> = buffer.output_iter(0).collect();
-        assert_eq!(collected.len(), 3);
-        assert_eq!(collected[0], (0, 1.0, 0.5));
-        assert_eq!(collected[1], (1, 2.0, 0.5));
-        assert_eq!(collected[2], (2, 3.0, 0.5));
+        // Use view for output 0
+        let view = buffer.output_view(0);
+        assert_eq!(view.len(), 3);
+        assert_eq!(view[0].grad, 1.0);
+        assert_eq!(view[1].grad, 2.0);
+        assert_eq!(view[2].grad, 3.0);
 
-        // Iterate output 1
-        let grads1: Vec<f32> = buffer.output_iter(1).map(|(_, g, _)| g).collect();
-        assert_eq!(grads1, vec![10.0, 20.0, 30.0]);
+        // Use view for output 1
+        let view = buffer.output_view(1);
+        assert_eq!(view[0].grad, 10.0);
     }
 
     #[test]
@@ -520,13 +399,9 @@ mod tests {
 
         buffer.reset();
 
-        // Verify all values are zero
-        assert!(
-            buffer
-                .pairs()
-                .iter()
-                .all(|p| p.grad == 0.0 && p.hess == 0.0)
-        );
+        // Verify all values are zero via array view
+        let view = buffer.pairs_array();
+        assert!(view.iter().all(|p| p.grad == 0.0 && p.hess == 0.0));
     }
 
     #[test]

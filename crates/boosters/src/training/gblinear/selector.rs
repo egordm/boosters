@@ -29,6 +29,8 @@ use ndarray::ArrayView1;
 use crate::data::Dataset;
 use crate::training::GradsTuple;
 
+use super::updater::Regularization;
+
 // =============================================================================
 // FeatureSelectorKind - Configuration enum
 // =============================================================================
@@ -105,19 +107,15 @@ impl SelectorState {
     ///
     /// For Greedy/Thrifty, this computes gradient magnitudes for ranking.
     /// For other selectors, this just resets the iteration state.
+    ///
+    /// The `reg` parameter should be pre-denormalized (scaled by sum_instance_weight).
     pub fn setup_round(
         &mut self,
         weights_and_bias: ArrayView1<'_, f32>,
         data: &Dataset,
         grad_pairs: &[GradsTuple],
-        alpha: f32,
-        lambda: f32,
-        sum_instance_weight: f32,
+        reg: Regularization,
     ) {
-        // Match XGBoost's `DenormalizePenalties(sum_instance_weight)`.
-        let alpha = alpha * sum_instance_weight;
-        let lambda = lambda * sum_instance_weight;
-
         let n_features = weights_and_bias.len() - 1;
 
         match self {
@@ -125,11 +123,11 @@ impl SelectorState {
             Self::Shuffle(s) => s.reset(n_features),
             Self::Random(s) => s.reset(n_features),
             Self::Greedy(s) => {
-                s.setup(weights_and_bias, data, grad_pairs, alpha, lambda);
+                s.setup(weights_and_bias, data, grad_pairs, reg.alpha, reg.lambda);
                 s.reset(n_features);
             }
             Self::Thrifty(s) => {
-                s.setup(weights_and_bias, data, grad_pairs, alpha, lambda);
+                s.setup(weights_and_bias, data, grad_pairs, reg.alpha, reg.lambda);
                 s.reset(n_features);
             }
         }

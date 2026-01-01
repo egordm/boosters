@@ -17,6 +17,23 @@
 //! Gradients are stored in Structure-of-Arrays (SoA) layout via [`Gradients`]:
 //! - Shape `[n_samples, n_outputs]` for unified single/multi-output handling
 //! - Separate `grads[]` and `hess[]` arrays for cache efficiency
+//!
+//! # Weight Handling and Regularization Denormalization
+//!
+//! Sample weights are applied during gradient computation by the objective function:
+//! - `grad[i] = dL/dp * weight[i]`
+//! - `hess[i] = d²L/dp² * weight[i]`
+//!
+//! This means gradient/hessian sums are scaled by the total weight. To keep
+//! regularization balanced, we "denormalize" the penalties by multiplying them
+//! by `sum_instance_weight` (matches XGBoost's `DenormalizePenalties`):
+//! - `effective_alpha = alpha * sum_instance_weight`
+//! - `effective_lambda = lambda * sum_instance_weight`
+//!
+//! This ensures consistent regularization strength regardless of weight scale.
+//! Note: This is specific to coordinate descent in linear models. GBDT tree
+//! regularization does NOT need this because the gain formula naturally handles
+//! weighted gradients: `gain = (sum_grad)² / (sum_hess + lambda)`.
 
 use ndarray::ArrayViewMut1;
 use rayon::prelude::*;
@@ -25,6 +42,50 @@ use crate::data::Dataset;
 use crate::training::GradsTuple;
 
 use super::selector::FeatureSelector;
+
+// =============================================================================
+// Denormalized Regularization
+// =============================================================================
+
+/// Regularization parameters scaled by sum of instance weights.
+///
+/// This encapsulates XGBoost's "DenormalizePenalties" pattern: since gradients
+/// are already weighted (scaled by per-sample weights), regularization terms
+/// must be scaled proportionally to maintain consistent behavior.
+///
+/// # Example
+///
+/// ```ignore
+/// let reg = Regularization::new(alpha, lambda);
+/// let denorm = reg.denormalize(sum_instance_weight);
+/// // Use denorm.alpha and denorm.lambda in coordinate descent
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct Regularization {
+    /// L1 regularization (lasso).
+    pub alpha: f32,
+    /// L2 regularization (ridge).
+    pub lambda: f32,
+}
+
+impl Regularization {
+    /// Create new regularization parameters.
+    pub fn new(alpha: f32, lambda: f32) -> Self {
+        Self { alpha, lambda }
+    }
+
+    /// Denormalize by sum of instance weights.
+    ///
+    /// This scales regularization to match weighted gradient sums.
+    /// See module docs for rationale.
+    #[inline]
+    pub fn denormalize(&self, sum_instance_weight: f32) -> Self {
+        Self {
+            alpha: self.alpha * sum_instance_weight,
+            lambda: self.lambda * sum_instance_weight,
+        }
+    }
+}
 
 /// Coordinate descent update strategy.
 ///
@@ -46,10 +107,8 @@ pub enum UpdateStrategy {
 #[derive(Debug, Clone)]
 pub(super) struct Updater {
     kind: UpdateStrategy,
-    // Base (user-configured) regularization parameters.
-    // We denormalize by `sum_instance_weight` at runtime in `update_round_inplace`.
-    alpha: f32,
-    lambda: f32,
+    /// Base regularization (before denormalization).
+    regularization: Regularization,
     learning_rate: f32,
     max_delta_step: f32,
 }
@@ -64,11 +123,15 @@ impl Updater {
     ) -> Self {
         Self {
             kind,
-            alpha,
-            lambda,
+            regularization: Regularization::new(alpha, lambda),
             learning_rate,
             max_delta_step,
         }
+    }
+
+    /// Get base regularization parameters (before denormalization).
+    pub(super) fn regularization(&self) -> Regularization {
+        self.regularization
     }
 
     pub(super) fn update_bias_inplace(
@@ -116,7 +179,7 @@ impl Updater {
         weights_and_bias: ArrayViewMut1<'_, f32>,
         grad_pairs: &mut [GradsTuple],
         selector: &mut Sel,
-        sum_instance_weight: f32,
+        reg: Regularization,
         predictions: ArrayViewMut1<'_, f32>,
     ) -> Vec<(usize, f32)> {
         match self.kind {
@@ -125,7 +188,7 @@ impl Updater {
                 weights_and_bias,
                 grad_pairs,
                 selector,
-                sum_instance_weight,
+                reg,
                 predictions,
             ),
             UpdateStrategy::Shotgun => {
@@ -134,7 +197,7 @@ impl Updater {
                     weights_and_bias,
                     grad_pairs,
                     selector,
-                    sum_instance_weight,
+                    reg,
                     predictions,
                 )
             }
@@ -147,13 +210,10 @@ impl Updater {
         mut weights_and_bias: ArrayViewMut1<'_, f32>,
         grad_pairs: &mut [GradsTuple],
         selector: &mut Sel,
-        sum_instance_weight: f32,
+        reg: Regularization,
         mut predictions: ArrayViewMut1<'_, f32>,
     ) -> Vec<(usize, f32)> {
         let mut deltas: Vec<(usize, f32)> = Vec::new();
-        // Match XGBoost's `DenormalizePenalties(sum_instance_weight)`.
-        let alpha = self.alpha * sum_instance_weight;
-        let lambda = self.lambda * sum_instance_weight;
         let n_features = weights_and_bias.len() - 1;
 
         while let Some(feature) = selector.next() {
@@ -172,8 +232,8 @@ impl Updater {
                 sum_grad,
                 sum_hess,
                 current_weight,
-                alpha,
-                lambda,
+                reg.alpha,
+                reg.lambda,
                 self.learning_rate,
                 self.max_delta_step,
             );
@@ -200,7 +260,7 @@ impl Updater {
         mut weights_and_bias: ArrayViewMut1<'_, f32>,
         grad_pairs: &mut [GradsTuple],
         selector: &mut Sel,
-        sum_instance_weight: f32,
+        reg: Regularization,
         mut predictions: ArrayViewMut1<'_, f32>,
     ) -> Vec<(usize, f32)> {
         // NOTE: This is "shotgun" in the sense that we compute coordinate deltas
@@ -211,10 +271,6 @@ impl Updater {
         if indices.is_empty() {
             return Vec::new();
         }
-
-        // Match XGBoost's `DenormalizePenalties(sum_instance_weight)`.
-        let alpha = self.alpha * sum_instance_weight;
-        let lambda = self.lambda * sum_instance_weight;
 
         let n_features = weights_and_bias.len() - 1;
         let weights_view = weights_and_bias.view();
@@ -239,8 +295,8 @@ impl Updater {
                     sum_grad,
                     sum_hess,
                     current_weight,
-                    alpha,
-                    lambda,
+                    reg.alpha,
+                    reg.lambda,
                     learning_rate,
                     max_delta_step,
                 );

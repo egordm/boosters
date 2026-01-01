@@ -222,6 +222,9 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
 
             // Update each output
             for output in 0..n_outputs {
+                // Compute denormalized regularization once per output (see updater docs)
+                let reg = self.updater.regularization().denormalize(sum_instance_weight);
+
                 let bias_delta = {
                     let weights_and_bias = model.weights_and_bias_mut(output);
                     let grad_pairs = gradients.output_pairs_mut(output);
@@ -240,9 +243,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                     model.weights_and_bias(output),
                     train,
                     gradients.output_pairs(output),
-                    self.params.alpha,
-                    self.params.lambda,
-                    sum_instance_weight,
+                    reg,
                 );
 
                 let weight_deltas = {
@@ -254,7 +255,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                         weights_and_bias,
                         grad_pairs,
                         &mut selector,
-                        sum_instance_weight,
+                        reg,
                         predictions_row,
                     )
                 };

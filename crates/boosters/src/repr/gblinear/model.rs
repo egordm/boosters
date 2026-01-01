@@ -152,12 +152,6 @@ impl LinearModel {
         self.weights.slice(s![..self.n_features(), ..])
     }
 
-    /// Set weight for a feature and group.
-    #[inline]
-    pub fn set_weight(&mut self, feature: usize, group: usize, value: f32) {
-        self.weights[[feature, group]] = value;
-    }
-
     /// Set bias for a group.
     #[inline]
     pub fn set_bias(&mut self, group: usize, value: f32) {
@@ -165,18 +159,6 @@ impl LinearModel {
         self.weights[[n_features, group]] = value;
     }
 
-    /// Add to weight for a feature and group.
-    #[inline]
-    pub fn add_weight(&mut self, feature: usize, group: usize, delta: f32) {
-        self.weights[[feature, group]] += delta;
-    }
-
-    /// Add to bias for a group.
-    #[inline]
-    pub fn add_bias(&mut self, group: usize, delta: f32) {
-        let n_features = self.n_features();
-        self.weights[[n_features, group]] += delta;
-    }
 
     // =========================================================================
     // Prediction
@@ -220,16 +202,20 @@ impl LinearModel {
             n_features
         );
 
-        // Initialize with bias
-        for group in 0..n_groups {
-            output.row_mut(group).fill(self.bias(group));
+        // Initialize with bias using row views
+        let biases = self.biases();
+        for (group, bias) in biases.iter().enumerate() {
+            output.row_mut(group).fill(*bias);
         }
 
-        // Add weighted features - iterate over features (rows in feature-major)
+        // Add weighted features
+        // For each feature, get the weights once (row of weight matrix)
         for feat_idx in 0..n_features {
+            let feat_weights = self.weights.row(feat_idx);
+
             dataset.for_each_feature_value(feat_idx, |sample_idx, value| {
-                for group in 0..n_groups {
-                    output[[group, sample_idx]] += value * self.weight(feat_idx, group);
+                for (group, &weight) in feat_weights.iter().enumerate() {
+                    output[[group, sample_idx]] += value * weight;
                 }
             });
         }
@@ -250,12 +236,18 @@ impl LinearModel {
         debug_assert!(features.len() >= n_features);
         debug_assert!(output.len() >= n_groups);
 
+        // Initialize with biases
+        let biases = self.biases();
         for (group, out) in output.iter_mut().enumerate().take(n_groups) {
-            let mut sum = self.bias(group);
-            for (feat_idx, &value) in features.iter().take(n_features).enumerate() {
-                sum += value * self.weight(feat_idx, group);
+            *out = biases[group];
+        }
+
+        // Accumulate weighted features
+        for (feat_idx, &value) in features.iter().take(n_features).enumerate() {
+            let feat_weights = self.weights.row(feat_idx);
+            for (group, out) in output.iter_mut().enumerate().take(n_groups) {
+                *out += value * feat_weights[group];
             }
-            *out = sum;
         }
     }
 }
@@ -313,22 +305,18 @@ mod tests {
     }
 
     #[test]
-    fn linear_model_mutation() {
+    fn linear_model_mutation_via_slice() {
         let mut model = LinearModel::zeros(2, 1);
 
-        model.set_weight(0, 0, 0.5);
-        model.set_weight(1, 0, 0.3);
-        model.set_bias(0, 0.1);
+        // Use weights_and_bias_mut for bulk modification
+        let mut wb = model.weights_and_bias_mut(0);
+        wb[0] = 0.5;  // feature 0
+        wb[1] = 0.3;  // feature 1
+        wb[2] = 0.1;  // bias
 
         assert_eq!(model.weight(0, 0), 0.5);
         assert_eq!(model.weight(1, 0), 0.3);
         assert_eq!(model.bias(0), 0.1);
-
-        model.add_weight(0, 0, 0.1);
-        model.add_bias(0, 0.2);
-
-        assert!((model.weight(0, 0) - 0.6).abs() < 1e-6);
-        assert!((model.bias(0) - 0.3).abs() < 1e-6);
     }
 
     #[test]

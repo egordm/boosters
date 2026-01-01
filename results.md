@@ -1,6 +1,6 @@
 # Full Benchmark Report
 
-Generated: 2025-12-27T17:54:15.213719
+Generated: 2026-01-01T14:40:10.049043
 
 ## Environment
 
@@ -10,7 +10,7 @@ Generated: 2025-12-27T17:54:15.213719
 | Cores | 10 |
 | Memory | 32.0 GB |
 | OS | Darwin 25.1.0 |
-| Git SHA | ef939ee |
+| Git SHA | 55e032d |
 
 ## Library Versions
 
@@ -45,75 +45,75 @@ Generated: 2025-12-27T17:54:15.213719
 
 | Booster      | Library   | rmse          | train_time_s      |
 |:-------------|:----------|:--------------|:------------------|
-| gbdt         | boosters  | 0.4677±0.0057 | **0.1201±0.0011** |
-| gbdt         | lightgbm  | 0.4718±0.0068 | 0.1794±0.0045     |
-| gbdt         | xgboost   | 0.4721±0.0067 | 0.1661±0.0020     |
-| gblinear     | boosters  | 0.8495±0.0263 | **0.0314±0.0005** |
-| gblinear     | xgboost   | 0.8507±0.0278 | 0.0597±0.0024     |
-| linear_trees | boosters  | 0.4726±0.0074 | 0.3779±0.0675     |
-| linear_trees | lightgbm  | 1.0324±0.6164 | **0.2788±0.0034** |
+| gbdt         | boosters  | 0.4699±0.0057 | **0.1137±0.0009** |
+| gbdt         | lightgbm  | 0.4718±0.0068 | 0.1768±0.0032     |
+| gbdt         | xgboost   | 0.4721±0.0067 | 0.1637±0.0011     |
+| gblinear     | boosters  | 0.8507±0.0278 | **0.0269±0.0000** |
+| gblinear     | xgboost   | 0.8507±0.0278 | 0.0592±0.0019     |
+| linear_trees | boosters  | 0.5242±0.0769 | **0.2151±0.0024** |
+| linear_trees | lightgbm  | 1.0324±0.6164 | 0.2758±0.0025     |
 
 **synthetic_reg_medium** (primary: rmse)
 
 | Booster      | Library   | rmse               | train_time_s      |
 |:-------------|:----------|:-------------------|:------------------|
-| gbdt         | boosters  | **33.5357±0.6317** | **0.8111±0.0821** |
-| gbdt         | lightgbm  | 39.7303±0.5938     | 1.0437±0.0037     |
-| gbdt         | xgboost   | 39.7124±0.6946     | 2.1240±0.0080     |
-| gblinear     | boosters  | 0.1021±0.0006      | **0.0994±0.0011** |
-| gblinear     | xgboost   | 0.1019±0.0006      | 0.2948±0.0009     |
-| linear_trees | boosters  | 18.7762±0.9837     | **0.9244±0.0052** |
-| linear_trees | lightgbm  | 18.0266±0.3594     | 1.1524±0.0038     |
+| gbdt         | boosters  | **33.2517±0.7987** | **0.7483±0.0073** |
+| gbdt         | lightgbm  | 39.7303±0.5938     | 1.0605±0.0394     |
+| gbdt         | xgboost   | 39.7124±0.6946     | 2.1194±0.0097     |
+| gblinear     | boosters  | 0.1019±0.0006      | **0.1350±0.0006** |
+| gblinear     | xgboost   | 0.1019±0.0006      | 0.2963±0.0025     |
+| linear_trees | boosters  | 17.6713±1.1195     | **0.8670±0.0072** |
+| linear_trees | lightgbm  | 18.0266±0.3594     | 1.1481±0.0026     |
 
 **synthetic_reg_small** (primary: rmse)
 
 | Booster      | Library   | rmse               | train_time_s      |
 |:-------------|:----------|:-------------------|:------------------|
-| gbdt         | boosters  | **39.3658±2.7246** | **0.2294±0.0007** |
-| gbdt         | lightgbm  | 46.8610±2.7768     | 0.3584±0.0035     |
-| gbdt         | xgboost   | 47.2707±2.6052     | 0.7986±0.0063     |
-| gblinear     | boosters  | 0.1038±0.0019      | **0.0202±0.0004** |
-| gblinear     | xgboost   | 0.1033±0.0021      | 0.0301±0.0001     |
-| linear_trees | boosters  | **28.1962±1.8004** | **0.2614±0.0010** |
-| linear_trees | lightgbm  | 30.8853±1.0862     | 0.4082±0.0138     |
+| gbdt         | boosters  | **38.2871±3.1588** | **0.2293±0.0015** |
+| gbdt         | lightgbm  | 46.8610±2.7768     | 0.3576±0.0021     |
+| gbdt         | xgboost   | 47.2707±2.6052     | 0.7963±0.0063     |
+| gblinear     | boosters  | 0.1033±0.0021      | **0.0139±0.0001** |
+| gblinear     | xgboost   | 0.1033±0.0021      | 0.0302±0.0001     |
+| linear_trees | boosters  | **28.0423±1.1177** | **0.2477±0.0012** |
+| linear_trees | lightgbm  | 30.8853±1.0862     | 0.4063±0.0108     |
 
 ### Binary Classification
 
 **breast_cancer** (primary: logloss)
 
-| Booster      | Library   | logloss           | train_time_s      |
-|:-------------|:----------|:------------------|:------------------|
-| gbdt         | boosters  | 0.0980±0.0343     | 0.0405±0.0012     |
-| gbdt         | lightgbm  | 0.0866±0.0270     | **0.0263±0.0007** |
-| gbdt         | xgboost   | 0.0978±0.0427     | 0.0584±0.0011     |
-| gblinear     | boosters  | 1.0628±0.5817     | 0.0070±0.0009     |
-| gblinear     | xgboost   | **0.1252±0.0397** | 0.0066±0.0001     |
-| linear_trees | boosters  | 0.0981±0.0318     | 0.0446±0.0012     |
-| linear_trees | lightgbm  | 0.0911±0.0207     | **0.0303±0.0004** |
+| Booster      | Library   | logloss       | train_time_s      |
+|:-------------|:----------|:--------------|:------------------|
+| gbdt         | boosters  | 0.0983±0.0307 | 0.0410±0.0010     |
+| gbdt         | lightgbm  | 0.0866±0.0270 | **0.0258±0.0003** |
+| gbdt         | xgboost   | 0.0978±0.0427 | 0.0580±0.0011     |
+| gblinear     | boosters  | 0.1252±0.0397 | **0.0026±0.0000** |
+| gblinear     | xgboost   | 0.1252±0.0397 | 0.0067±0.0002     |
+| linear_trees | boosters  | 0.0948±0.0319 | 0.0441±0.0009     |
+| linear_trees | lightgbm  | 0.0911±0.0207 | **0.0306±0.0006** |
 
 **synthetic_bin_medium** (primary: logloss)
 
 | Booster      | Library   | logloss       | train_time_s      |
 |:-------------|:----------|:--------------|:------------------|
-| gbdt         | boosters  | 0.1716±0.0114 | **0.7190±0.0024** |
-| gbdt         | lightgbm  | 0.1745±0.0125 | 0.7493±0.0102     |
-| gbdt         | xgboost   | 0.1745±0.0130 | 1.2807±0.0183     |
-| gblinear     | boosters  | 0.5063±0.0040 | **0.1034±0.0012** |
-| gblinear     | xgboost   | 0.5063±0.0040 | 0.2957±0.0005     |
-| linear_trees | boosters  | 0.1770±0.0136 | 0.8826±0.0036     |
-| linear_trees | lightgbm  | 0.1781±0.0121 | **0.8103±0.0075** |
+| gbdt         | boosters  | 0.1736±0.0107 | **0.6865±0.0053** |
+| gbdt         | lightgbm  | 0.1745±0.0125 | 0.7498±0.0117     |
+| gbdt         | xgboost   | 0.1745±0.0130 | 1.3201±0.1142     |
+| gblinear     | boosters  | 0.5063±0.0040 | **0.1369±0.0003** |
+| gblinear     | xgboost   | 0.5063±0.0040 | 0.2959±0.0017     |
+| linear_trees | boosters  | 0.1787±0.0145 | 0.8176±0.0034     |
+| linear_trees | lightgbm  | 0.1781±0.0121 | **0.8081±0.0058** |
 
 **synthetic_bin_small** (primary: logloss)
 
 | Booster      | Library   | logloss       | train_time_s      |
 |:-------------|:----------|:--------------|:------------------|
-| gbdt         | boosters  | 0.2984±0.0502 | 0.1962±0.0020     |
-| gbdt         | lightgbm  | 0.2768±0.0405 | 0.1974±0.0069     |
-| gbdt         | xgboost   | 0.2722±0.0349 | 0.3497±0.0095     |
-| gblinear     | boosters  | 0.6017±0.0258 | **0.0211±0.0005** |
-| gblinear     | xgboost   | 0.6017±0.0258 | 0.0305±0.0002     |
-| linear_trees | boosters  | 0.2982±0.0491 | 0.2153±0.0027     |
-| linear_trees | lightgbm  | 0.2850±0.0520 | 0.2108±0.0049     |
+| gbdt         | boosters  | 0.2910±0.0456 | 0.1941±0.0025     |
+| gbdt         | lightgbm  | 0.2768±0.0405 | 0.1965±0.0075     |
+| gbdt         | xgboost   | 0.2722±0.0349 | 0.3469±0.0096     |
+| gblinear     | boosters  | 0.6017±0.0258 | **0.0143±0.0001** |
+| gblinear     | xgboost   | 0.6017±0.0258 | 0.0307±0.0002     |
+| linear_trees | boosters  | 0.2926±0.0461 | **0.2026±0.0025** |
+| linear_trees | lightgbm  | 0.2850±0.0520 | 0.2091±0.0052     |
 
 ### Multiclass Classification
 
@@ -121,37 +121,37 @@ Generated: 2025-12-27T17:54:15.213719
 
 | Booster      | Library   | mlogloss          | train_time_s      |
 |:-------------|:----------|:------------------|:------------------|
-| gbdt         | boosters  | **0.3815±0.0053** | 12.7138±0.1147    |
-| gbdt         | lightgbm  | 0.4285±0.0074     | **2.4757±0.0819** |
-| gbdt         | xgboost   | 0.4698±0.0064     | 2.8685±0.0200     |
-| gblinear     | boosters  | 0.7539±0.0122     | **3.4402±0.1022** |
-| gblinear     | xgboost   | 0.7535±0.0084     | 6.0934±0.0643     |
-| linear_trees | boosters  | **0.3754±0.0064** | 15.5947±0.0404    |
-| linear_trees | lightgbm  | 0.4053±0.0091     | **3.5768±0.0580** |
+| gbdt         | boosters  | **0.4137±0.0092** | **2.2908±0.1071** |
+| gbdt         | lightgbm  | 0.4285±0.0074     | 2.4857±0.0288     |
+| gbdt         | xgboost   | 0.4698±0.0064     | 2.9410±0.0723     |
+| gblinear     | boosters  | 0.7532±0.0117     | **2.7619±0.0298** |
+| gblinear     | xgboost   | 0.7535±0.0084     | 6.0757±0.0409     |
+| linear_trees | boosters  | 0.4069±0.0080     | 4.7096±0.1592     |
+| linear_trees | lightgbm  | 0.4053±0.0091     | **3.5385±0.0405** |
 
 **iris** (primary: mlogloss)
 
 | Booster      | Library   | mlogloss          | train_time_s      |
 |:-------------|:----------|:------------------|:------------------|
-| gbdt         | boosters  | 0.1744±0.1042     | **0.0017±0.0000** |
-| gbdt         | lightgbm  | 0.1423±0.0872     | 0.0111±0.0010     |
-| gbdt         | xgboost   | 0.1846±0.1158     | 0.0106±0.0004     |
-| gblinear     | boosters  | **0.3162±0.0379** | 0.0097±0.0003     |
-| gblinear     | xgboost   | 0.4261±0.0304     | **0.0026±0.0001** |
-| linear_trees | boosters  | 0.1740±0.0974     | **0.0025±0.0002** |
-| linear_trees | lightgbm  | 0.1063±0.0652     | 0.0166±0.0011     |
+| gbdt         | boosters  | 0.1738±0.1038     | **0.0018±0.0001** |
+| gbdt         | lightgbm  | 0.1423±0.0872     | 0.0160±0.0115     |
+| gbdt         | xgboost   | 0.1846±0.1158     | 0.0104±0.0004     |
+| gblinear     | boosters  | **0.3106±0.0374** | **0.0007±0.0001** |
+| gblinear     | xgboost   | 0.4261±0.0304     | 0.0026±0.0000     |
+| linear_trees | boosters  | 0.1770±0.0970     | **0.0024±0.0002** |
+| linear_trees | lightgbm  | 0.1063±0.0652     | 0.0165±0.0009     |
 
 **synthetic_multi_small** (primary: mlogloss)
 
 | Booster      | Library   | mlogloss      | train_time_s      |
 |:-------------|:----------|:--------------|:------------------|
-| gbdt         | boosters  | 0.6916±0.1175 | **0.6500±0.0045** |
-| gbdt         | lightgbm  | 0.6668±0.1138 | 0.9659±0.1624     |
-| gbdt         | xgboost   | 0.6654±0.1010 | 2.1991±0.0348     |
-| gblinear     | boosters  | 1.0560±0.0461 | **0.1404±0.0007** |
-| gblinear     | xgboost   | 1.0546±0.0451 | 0.1455±0.0003     |
-| linear_trees | boosters  | 0.6726±0.1213 | **0.7015±0.0024** |
-| linear_trees | lightgbm  | 0.6876±0.1082 | 0.9023±0.0062     |
+| gbdt         | boosters  | 0.6864±0.1123 | **0.6532±0.0059** |
+| gbdt         | lightgbm  | 0.6668±0.1138 | 0.8929±0.0143     |
+| gbdt         | xgboost   | 0.6654±0.1010 | 2.2020±0.0554     |
+| gblinear     | boosters  | 1.0560±0.0461 | **0.0740±0.0001** |
+| gblinear     | xgboost   | 1.0546±0.0451 | 0.1446±0.0006     |
+| linear_trees | boosters  | 0.6566±0.1056 | **0.6657±0.0057** |
+| linear_trees | lightgbm  | 0.6876±0.1082 | 0.8943±0.0114     |
 
 ## Reproducing
 
