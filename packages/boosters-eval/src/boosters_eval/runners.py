@@ -121,6 +121,7 @@ class BoostersRunner(Runner):
                 seed=seed,
             )
             model = boosters.GBDTModel(model_config)
+            warmup_model = boosters.GBDTModel(model_config)
         elif config.booster_type == BoosterType.LINEAR_TREES:
             # Linear trees: GBDT with linear_leaves enabled
             model_config = boosters.GBDTConfig(
@@ -145,6 +146,7 @@ class BoostersRunner(Runner):
                 seed=seed,
             )
             model = boosters.GBDTModel(model_config)
+            warmup_model = boosters.GBDTModel(model_config)
         else:  # GBLINEAR
             model_config = boosters.GBLinearConfig(
                 n_estimators=tc.n_estimators,
