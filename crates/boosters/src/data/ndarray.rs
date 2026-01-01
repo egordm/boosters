@@ -13,9 +13,6 @@
 //! # Wrappers
 //!
 //! - [`SamplesView`]: View with shape `[n_samples, n_features]` - samples on rows
-//! - [`FeaturesView`]: View with shape `[n_features, n_samples]` - features on rows
-//!
-//! Both implement [`FeatureAccessor`] for uniform tree traversal access.
 //!
 //! # Layout Conversion
 //!
@@ -144,8 +141,7 @@ pub fn init_predictions_into(base_scores: &[f32], predictions: &mut Array2<f32>)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::DataAccessor;
-    use crate::data::{FeaturesView, SamplesView};
+    use crate::data::SamplesView;
     use ndarray::{arr2, array};
 
     #[test]
@@ -157,43 +153,6 @@ mod tests {
         assert_eq!(view.n_samples(), 2);
         assert_eq!(view.n_features(), 3);
         assert_eq!(view.view(), arr2(&[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]));
-    }
-
-    #[test]
-    fn test_features_view_creation() {
-        // 2 features, 3 samples (feature-major layout)
-        let data = array![[1.0f32, 2.0, 3.0], [10.0, 20.0, 30.0]];
-        let view = FeaturesView::from_array(data.view());
-
-        assert_eq!(view.n_samples(), 3);
-        assert_eq!(view.n_features(), 2);
-        // Access via (sample, feature) coordinates
-        assert_eq!(view.get(0, 0), 1.0); // sample 0, feature 0
-        assert_eq!(view.get(1, 0), 2.0); // sample 1, feature 0
-        assert_eq!(view.get(0, 1), 10.0); // sample 0, feature 1
-        assert_eq!(view.get(2, 1), 30.0); // sample 2, feature 1
-    }
-
-    #[test]
-    fn test_features_view_feature_values() {
-        let data = array![[1.0f32, 2.0, 3.0], [10.0, 20.0, 30.0]];
-        let view = FeaturesView::from_array(data.view());
-
-        // Feature 0 values (all samples)
-        assert_eq!(view.feature(0).as_slice().unwrap(), &[1.0, 2.0, 3.0]);
-        // Feature 1 values (all samples)
-        assert_eq!(view.feature(1).as_slice().unwrap(), &[10.0, 20.0, 30.0]);
-    }
-
-    #[test]
-    fn test_samples_view_sample_values() {
-        let data = array![[1.0f32, 2.0, 3.0], [4.0, 5.0, 6.0]];
-        let view = SamplesView::from_array(data.view());
-
-        // Sample 0 features - sample() now returns &[f32] directly via DataAccessor
-        assert_eq!(view.sample(0), &[1.0, 2.0, 3.0]);
-        // Sample 1 features
-        assert_eq!(view.sample(1), &[4.0, 5.0, 6.0]);
     }
 
     #[test]

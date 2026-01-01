@@ -29,12 +29,10 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use boosters::data::BinningConfig;
-use boosters::data::binned::BinnedDataset;
 use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::model::gbdt::{GBDTConfig, GBDTModel};
 use boosters::testing::synthetic_datasets::{
-    random_features_array, split_indices, synthetic_binary, synthetic_multiclass,
+    features_row_major_slice, split_indices, synthetic_binary, synthetic_multiclass,
     synthetic_regression,
 };
 use boosters::training::{
@@ -530,19 +528,21 @@ fn load_data(
 ) -> (Vec<f32>, Vec<f32>, usize, Vec<f32>, Vec<f32>, usize, usize) {
     match &config.data_source {
         DataSource::Synthetic { rows, cols } => {
-            let x = random_features_array(*rows, *cols, seed, -1.0, 1.0);
-            let y = match config.task {
-                Task::Regression => {
-                    synthetic_regression(*rows, *cols, seed ^ 0x0BAD_5EED, 0.05).targets
-                }
-                Task::Binary => synthetic_binary(*rows, *cols, seed ^ 0xB1A2_0001, 0.2).targets,
+            let dataset = match config.task {
+                Task::Regression => synthetic_regression(*rows, *cols, seed ^ 0x0BAD_5EED, 0.05),
+                Task::Binary => synthetic_binary(*rows, *cols, seed ^ 0xB1A2_0001, 0.2),
                 Task::Multiclass => {
                     let n_classes = config.classes.unwrap_or(3);
-                    synthetic_multiclass(*rows, *cols, n_classes, seed ^ 0x00C1_A550, 0.1).targets
+                    synthetic_multiclass(*rows, *cols, n_classes, seed ^ 0x00C1_A550, 0.1)
                 }
             };
-            let y_vec: Vec<f32> = y.to_vec();
-            let x_vec: Vec<f32> = x.as_slice().unwrap().to_vec();
+
+            let x_vec = features_row_major_slice(&dataset);
+            let y_vec = dataset
+                .targets()
+                .expect("synthetic datasets have targets")
+                .as_single_output()
+                .to_vec();
             let (train_idx, valid_idx) = split_indices(*rows, valid_fraction, seed ^ 0x51EED);
             let x_train = select_rows_row_major(&x_vec, *rows, *cols, &train_idx);
             let y_train = select_targets(&y_vec, &train_idx);
@@ -628,15 +628,14 @@ fn train_boosters(
         .expect("train features must be contiguous");
     // Transpose to feature-major [n_features, n_samples] with C-order layout
     let feature_major = sample_major.t().as_standard_layout().into_owned();
-    // Wrap in Dataset for BinnedDataset
-    let dataset_train = Dataset::new(feature_major.view(), None, None);
-    let config_binning = BinningConfig::builder().max_bins(256).build();
-    let binned_train = BinnedDataset::from_dataset(&dataset_train, &config_binning).unwrap();
+    let targets_arr =
+        Array2::from_shape_vec((1, y_train.len()), y_train.to_vec()).expect("valid shape");
+    let dataset_train = Dataset::from_array(feature_major.view(), Some(targets_arr), None);
     // Create feature-major array for validation predictions
     let sample_major_valid = ArrayView2::from_shape((rows_valid, cols), x_valid)
         .expect("valid features must be contiguous");
     let feature_major_valid = sample_major_valid.t().as_standard_layout().into_owned();
-    let dataset_valid = Dataset::new(feature_major_valid.view(), None, None);
+    let dataset_valid = Dataset::from_array(feature_major_valid.view(), None, None);
 
     let linear_leaves = if config.linear_leaves {
         Some(LinearLeafConfig::default())
@@ -681,19 +680,8 @@ fn train_boosters(
             .expect("valid config")
     };
 
-    // Train using model API
-    let targets_arr =
-        Array2::from_shape_vec((1, y_train.len()), y_train.to_vec()).expect("valid shape");
-    let targets = TargetsView::new(targets_arr.view());
-    let model = GBDTModel::train_binned(
-        &binned_train,
-        targets,
-        WeightsView::None,
-        None,
-        gbdt_config,
-        1,
-    )
-    .expect("training should succeed");
+    // Train using model API (binning handled internally)
+    let model = GBDTModel::train(&dataset_train, None, gbdt_config, 1).expect("training should succeed");
 
     // Predict using model API (applies transform automatically)
     let pred = model.predict(&dataset_valid, 1);

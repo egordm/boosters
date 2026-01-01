@@ -7,7 +7,7 @@ use common::criterion_config::default_criterion;
 use common::models::load_boosters_model;
 
 use boosters::Parallelism;
-use boosters::data::FeaturesView;
+use boosters::data::Dataset;
 use boosters::inference::gbdt::{Predictor, StandardTraversal, UnrolledTraversal6};
 use boosters::testing::synthetic_datasets::random_features_array;
 
@@ -28,9 +28,10 @@ fn bench_gbtree_batch_sizes(c: &mut Criterion) {
             BenchmarkId::new("medium", batch_size),
             &matrix,
             |b, matrix| {
+                let dataset = Dataset::from_array(matrix.t(), None, None);
                 b.iter(|| {
-                    let features = FeaturesView::from_array(matrix.view());
-                    let output = predictor.predict(black_box(features), Parallelism::Sequential);
+                    let output =
+                        predictor.predict(black_box(&dataset), Parallelism::Sequential);
                     black_box(output)
                 });
             },
@@ -61,12 +62,12 @@ fn bench_gbtree_model_sizes(c: &mut Criterion) {
 
         let predictor = Predictor::<UnrolledTraversal6>::new(&model.forest);
         let matrix = random_features_array(batch_size, model.n_features, 42, -5.0, 5.0);
+        let dataset = Dataset::from_array(matrix.t(), None, None);
 
         group.throughput(Throughput::Elements(batch_size as u64));
-        group.bench_with_input(BenchmarkId::new(label, batch_size), &matrix, |b, matrix| {
+        group.bench_with_input(BenchmarkId::new(label, batch_size), &dataset, |b, dataset| {
             b.iter(|| {
-                let features = FeaturesView::from_array(matrix.view());
-                let output = predictor.predict(black_box(features), Parallelism::Sequential);
+                let output = predictor.predict(black_box(dataset), Parallelism::Sequential);
                 black_box(output)
             });
         });
@@ -80,11 +81,11 @@ fn bench_gbtree_single_row(c: &mut Criterion) {
     let predictor = Predictor::<UnrolledTraversal6>::new(&model.forest);
 
     let matrix = random_features_array(1, model.n_features, 42, -5.0, 5.0);
+    let dataset = Dataset::from_array(matrix.t(), None, None);
 
     c.bench_function("component/predict/single_row/medium", |b| {
         b.iter(|| {
-            let features = FeaturesView::from_array(matrix.view());
-            let output = predictor.predict(black_box(features), Parallelism::Sequential);
+            let output = predictor.predict(black_box(&dataset), Parallelism::Sequential);
             black_box(output)
         })
     });
@@ -97,25 +98,24 @@ fn bench_traversal_strategies(c: &mut Criterion) {
 
     let batch_size = 10_000usize;
     let matrix = random_features_array(batch_size, n_features, 42, -5.0, 5.0);
+    let dataset = Dataset::from_array(matrix.t(), None, None);
 
     let mut group = c.benchmark_group("component/predict/traversal");
     group.throughput(Throughput::Elements(batch_size as u64));
 
     // Standard traversal (baseline)
     let standard = Predictor::<StandardTraversal>::new(&model.forest).with_block_size(64);
-    group.bench_with_input(BenchmarkId::new("standard", batch_size), &matrix, |b, m| {
-        let features = FeaturesView::from_array(m.view());
-        b.iter(|| black_box(standard.predict(black_box(features), Parallelism::Sequential)))
+    group.bench_with_input(BenchmarkId::new("standard", batch_size), &dataset, |b, d| {
+        b.iter(|| black_box(standard.predict(black_box(d), Parallelism::Sequential)))
     });
 
     // Unrolled traversal (6 levels)
     let unrolled = Predictor::<UnrolledTraversal6>::new(&model.forest).with_block_size(64);
     group.bench_with_input(
         BenchmarkId::new("unrolled6", batch_size),
-        &matrix,
-        |b, m| {
-            let features = FeaturesView::from_array(m.view());
-            b.iter(|| black_box(unrolled.predict(black_box(features), Parallelism::Sequential)))
+        &dataset,
+        |b, d| {
+            b.iter(|| black_box(unrolled.predict(black_box(d), Parallelism::Sequential)))
         },
     );
 

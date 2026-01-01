@@ -5,7 +5,7 @@
 //! - [`TreeValidationError`]: Structural validation errors  
 //! - [`validate_tree`]: Generic tree structure validation
 
-use crate::data::SampleAccessor;
+use ndarray::ArrayView1;
 
 use super::NodeId;
 use super::categories::{CategoriesStorage, float_to_category};
@@ -78,13 +78,13 @@ pub trait TreeView {
 
     /// Traverse the tree to find the leaf node for a sample.
     ///
-    /// This is the primary traversal method that works with any `SampleAccessor`.
+    /// This is the primary traversal method that works with a feature slice.
     /// The traversal handles NaN values using the tree's default direction,
     /// and supports both numeric and categorical splits.
     ///
     /// # Arguments
     ///
-    /// * `sample` - Feature values for the sample (implements [`SampleAccessor`])
+    /// * `sample` - Feature values for the sample
     ///
     /// # Returns
     ///
@@ -94,13 +94,11 @@ pub trait TreeView {
     ///
     /// ```ignore
     /// use boosters::repr::gbdt::TreeView;
-    /// use boosters::data::SampleAccessor;
-    ///
     /// let features: &[f32] = &[0.5, 1.0, 2.3];
-    /// let leaf_id = tree.traverse_to_leaf(features);
+    /// let leaf_id = tree.traverse_to_leaf(ndarray::ArrayView1::from(features));
     /// ```
     #[inline]
-    fn traverse_to_leaf<S: SampleAccessor + ?Sized>(&self, sample: &S) -> NodeId {
+    fn traverse_to_leaf(&self, sample: ArrayView1<'_, f32>) -> NodeId {
         self.traverse_to_leaf_from(0, sample)
     }
 
@@ -112,22 +110,23 @@ pub trait TreeView {
     /// # Arguments
     ///
     /// * `start_node` - Node ID to start traversal from
-    /// * `sample` - Feature values for the sample (implements [`SampleAccessor`])
+    /// * `sample` - Feature values for the sample
     ///
     /// # Returns
     ///
     /// The `NodeId` of the reached leaf node.
     #[inline]
-    fn traverse_to_leaf_from<S: SampleAccessor + ?Sized>(
-        &self,
-        start_node: NodeId,
-        sample: &S,
-    ) -> NodeId {
+    fn traverse_to_leaf_from(&self, start_node: NodeId, sample: ArrayView1<'_, f32>) -> NodeId {
         let mut node = start_node;
 
         while !self.is_leaf(node) {
             let feat_idx = self.split_index(node) as usize;
-            let fvalue = sample.feature(feat_idx);
+            debug_assert!(
+                feat_idx < sample.len(),
+                "sample has {} features but split needs feature {feat_idx}",
+                sample.len()
+            );
+            let fvalue = sample[feat_idx];
 
             node = if fvalue.is_nan() {
                 // Missing value: use default direction

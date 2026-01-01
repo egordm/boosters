@@ -152,7 +152,8 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
     ///
     /// # Arguments
     ///
-    /// * `dataset` - Binned dataset created with [`BinnedDataset::from_dataset`]
+    /// * `dataset` - Raw dataset with feature values (for prediction, linear trees, SHAP)
+    /// * `binned` - Binned dataset created with [`BinnedDataset::from_dataset`] (for histograms)
     /// * `targets` - Target values (length = n_rows × n_outputs)
     /// * `weights` - Sample weights (None for uniform)
     /// * `val_set` - Optional validation set for early stopping
@@ -161,13 +162,14 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
     /// [`BinnedDataset::from_dataset`]: crate::data::BinnedDataset::from_dataset
     pub fn train(
         &self,
-        dataset: &BinnedDataset,
+        dataset: &Dataset,
+        binned: &BinnedDataset,
         targets: TargetsView<'_>,
         weights: WeightsView<'_>,
         val_set: Option<&Dataset>,
         parallelism: Parallelism,
     ) -> Option<Forest<ScalarLeaf>> {
-        let n_rows = dataset.n_samples();
+        let n_rows = binned.n_samples();
         let n_outputs = self.objective.n_outputs();
 
         // Validate inputs
@@ -178,7 +180,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
         // Initialize components (train-local)
         let grower_params = self.params.to_grower_params();
         let mut grower =
-            TreeGrower::new(dataset, grower_params, self.params.cache_size, parallelism);
+            TreeGrower::new(binned, grower_params, self.params.cache_size, parallelism);
 
         // Initialize linear leaf trainer if configured
         let mut linear_trainer = self
@@ -249,7 +251,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
                 let sampled = row_sampler.sample(round as usize, grad_hess);
 
                 // Grow tree (returns MutableTree for potential linear fitting)
-                let mut mutable_tree = grower.grow(dataset, &gradients, output, sampled);
+                let mut mutable_tree = grower.grow(binned, &gradients, output, sampled);
 
                 // Fit linear models in leaves (skip round 0: homogeneous gradients)
                 // Only fit if linear_leaves config is set and we're past round 0
@@ -284,27 +286,26 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
                 let tree = mutable_tree.freeze();
 
                 // Update predictions (row of Array2)
-                let pred_row = predictions.row_mut(output);
+                let output_preds = predictions.row_mut(output);
                 // Use fast path only when no sampling AND no linear leaves.
                 // Linear leaves require tree.predict_into to compute correct predictions
                 // since grower.update_predictions_from_last_tree uses only scalar values.
                 let has_linear_leaves = tree.has_linear_leaves();
                 if sampled.is_none() && !has_linear_leaves {
                     // Fast path: use partitioner for O(n) prediction update
-                    grower.update_predictions_from_last_tree(pred_row);
+                    grower.update_predictions_from_last_tree(output_preds);
                 } else {
                     // Fallback: row sampling trains on a subset, or linear leaves
                     // require computing linear predictions for correct gradient updates.
-                    tree.predict_into(dataset, pred_row, parallelism);
+                    tree.predict_into(dataset, output_preds, parallelism);
                 }
 
                 // Incremental validation prediction: add this tree's contribution
                 // val_predictions shape is [n_outputs, n_val_samples]
                 // Only compute if evaluation is needed and val_set provided
-                if let (Some(vs), Some(ref mut vp)) = (val_set, val_predictions.as_mut()) {
-                    let pred_row = vp.row_mut(output);
-                    // Use FeaturesView directly - it implements FeatureAccessor
-                    tree.predict_into(&vs.features(), pred_row, parallelism);
+                if let (Some(dataset_val), Some(ref mut vp)) = (val_set, val_predictions.as_mut()) {
+                    let output_preds = vp.row_mut(output);
+                    tree.predict_into(dataset_val, output_preds, parallelism);
                 }
 
                 forest.push_tree(tree, output as u32);
@@ -388,31 +389,26 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
 mod tests {
     use super::*;
     use crate::data::WeightsView;
-    use crate::data::{BinnedDataset, BinningConfig};
+    use crate::data::{BinnedDataset, BinningConfig, Dataset};
     use crate::training::metrics::Rmse;
     use crate::training::objectives::SquaredLoss;
     use ndarray::{arr2, Array2};
 
-    fn make_test_dataset() -> BinnedDataset {
-        // 8 rows, 2 features
-        // Feature 0: [0, 1, 2, 3, 0, 1, 2, 3]
-        // Feature 1: [1, 2, 0, 1, 2, 0, 1, 2]
+    /// Create test datasets - returns (raw Dataset, BinnedDataset)
+    fn make_test_datasets() -> (Dataset, BinnedDataset) {
+        // 8 rows, 2 features - feature-major layout [n_features, n_samples]
         let data = Array2::from_shape_vec(
-            (8, 2),
+            (2, 8),
             vec![
-                0.0, 1.0, // row 0
-                1.0, 2.0, // row 1
-                2.0, 0.0, // row 2
-                3.0, 1.0, // row 3
-                0.0, 2.0, // row 4
-                1.0, 0.0, // row 5
-                2.0, 1.0, // row 6
-                3.0, 2.0, // row 7
+                0.0, 1.0, 2.0, 3.0, 0.0, 1.0, 2.0, 3.0, // feature 0
+                1.0, 2.0, 0.0, 1.0, 2.0, 0.0, 1.0, 2.0, // feature 1
             ],
         )
         .unwrap();
 
-        BinnedDataset::from_array(data.view(), &BinningConfig::default()).unwrap()
+        let raw = Dataset::from_array(data.view(), None, None);
+        let binned = BinnedDataset::from_dataset(&raw, &BinningConfig::default()).unwrap();
+        (raw, binned)
     }
 
     #[test]
@@ -454,7 +450,7 @@ mod tests {
 
     #[test]
     fn test_train_single_tree() {
-        let dataset = make_test_dataset();
+        let (dataset, binned) = make_test_datasets();
         let targets_arr = arr2(&[[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]]);
         let targets = TargetsView::new(targets_arr.view());
 
@@ -467,6 +463,7 @@ mod tests {
         let forest = trainer
             .train(
                 &dataset,
+                &binned,
                 targets,
                 WeightsView::None,
                 None,
@@ -480,7 +477,7 @@ mod tests {
 
     #[test]
     fn test_train_multiple_trees() {
-        let dataset = make_test_dataset();
+        let (dataset, binned) = make_test_datasets();
         let targets_arr = arr2(&[[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]]);
         let targets = TargetsView::new(targets_arr.view());
 
@@ -494,6 +491,7 @@ mod tests {
         let forest = trainer
             .train(
                 &dataset,
+                &binned,
                 targets,
                 WeightsView::None,
                 None,
@@ -506,7 +504,7 @@ mod tests {
 
     #[test]
     fn test_train_with_regularization() {
-        let dataset = make_test_dataset();
+        let (dataset, binned) = make_test_datasets();
         let targets_arr = arr2(&[[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]]);
         let targets = TargetsView::new(targets_arr.view());
 
@@ -524,6 +522,7 @@ mod tests {
         let forest = trainer
             .train(
                 &dataset,
+                &binned,
                 targets,
                 WeightsView::None,
                 None,
@@ -536,7 +535,7 @@ mod tests {
 
     #[test]
     fn test_train_weighted() {
-        let dataset = make_test_dataset();
+        let (dataset, binned) = make_test_datasets();
         let targets_arr = arr2(&[[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]]);
         let targets = TargetsView::new(targets_arr.view());
         let weights = ndarray::array![1.0f32, 2.0, 1.0, 2.0, 1.0, 2.0, 1.0, 2.0];
@@ -550,6 +549,7 @@ mod tests {
         let forest = trainer
             .train(
                 &dataset,
+                &binned,
                 targets,
                 WeightsView::from_array(weights.view()),
                 None,
@@ -562,7 +562,7 @@ mod tests {
 
     #[test]
     fn test_leaf_wise_growth() {
-        let dataset = make_test_dataset();
+        let (dataset, binned) = make_test_datasets();
         let targets_arr = arr2(&[[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]]);
         let targets = TargetsView::new(targets_arr.view());
 
@@ -576,6 +576,7 @@ mod tests {
         let forest = trainer
             .train(
                 &dataset,
+                &binned,
                 targets,
                 WeightsView::None,
                 None,
@@ -588,7 +589,7 @@ mod tests {
 
     #[test]
     fn test_train_invalid_targets() {
-        let dataset = make_test_dataset();
+        let (dataset, binned) = make_test_datasets();
         let targets_arr = arr2(&[[1.0f32, 2.0]]); // Too few targets
         let targets = TargetsView::new(targets_arr.view());
 
@@ -596,8 +597,9 @@ mod tests {
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
         let result = trainer.train(
-            &dataset,
-            targets,
+                &dataset,
+                &binned,
+                targets,
             WeightsView::None,
             None,
             Parallelism::Sequential,
@@ -608,7 +610,7 @@ mod tests {
 
     #[test]
     fn test_train_with_linear_leaves() {
-        let dataset = make_test_dataset();
+        let (dataset, binned) = make_test_datasets();
         // Targets have a linear pattern on feature 0
         let targets_arr = arr2(&[[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]]);
         let targets = TargetsView::new(targets_arr.view());
@@ -624,6 +626,7 @@ mod tests {
         let forest = trainer
             .train(
                 &dataset,
+                &binned,
                 targets,
                 WeightsView::None,
                 None,
@@ -642,7 +645,7 @@ mod tests {
 
     #[test]
     fn test_first_tree_no_linear_coefficients() {
-        let dataset = make_test_dataset();
+        let (dataset, binned) = make_test_datasets();
         let targets_arr = arr2(&[[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]]);
         let targets = TargetsView::new(targets_arr.view());
 
@@ -656,6 +659,7 @@ mod tests {
         let forest = trainer
             .train(
                 &dataset,
+                &binned,
                 targets,
                 WeightsView::None,
                 None,
@@ -678,15 +682,15 @@ mod tests {
     /// The fix ensures training predictions match inference predictions.
     #[test]
     fn test_linear_leaves_improve_rmse() {
-        use crate::data::FeaturesView;
+        use crate::data::{BinnedDataset, BinningConfig};
         use crate::inference::SimplePredictor;
         use crate::testing::synthetic_datasets::synthetic_regression;
 
         // Create a synthetic regression dataset with linear structure
-        let data = synthetic_regression(200, 10, 42, 0.05);
-        let dataset = data.to_binned(256);
-        let targets_arr = data.targets.clone().insert_axis(ndarray::Axis(0));
-        let targets = TargetsView::new(targets_arr.view());
+        let dataset = synthetic_regression(200, 10, 42, 0.05);
+        let binning_config = BinningConfig::builder().max_bins(256).build();
+        let binned_dataset = BinnedDataset::from_dataset(&dataset, &binning_config).unwrap();
+        let targets = dataset.targets().expect("synthetic datasets have targets");
 
         // Train WITHOUT linear leaves
         let params_base = GBDTParams {
@@ -700,6 +704,7 @@ mod tests {
         let forest_base = trainer_base
             .train(
                 &dataset,
+                &binned_dataset,
                 targets,
                 WeightsView::None,
                 None,
@@ -723,6 +728,7 @@ mod tests {
         let forest_linear = trainer_linear
             .train(
                 &dataset,
+                &binned_dataset,
                 targets,
                 WeightsView::None,
                 None,
@@ -730,12 +736,11 @@ mod tests {
             )
             .unwrap();
 
-        // Compute predictions using predict_into with ndarray
-        let features_view = FeaturesView::from_array(data.features.view());
+        // Compute predictions using predict (takes &Dataset)
         let predictor_base = SimplePredictor::new(&forest_base);
         let predictor_linear = SimplePredictor::new(&forest_linear);
-        let preds_base = predictor_base.predict(features_view, Parallelism::Sequential);
-        let preds_linear = predictor_linear.predict(features_view, Parallelism::Sequential);
+        let preds_base = predictor_base.predict(&dataset, Parallelism::Sequential);
+        let preds_linear = predictor_linear.predict(&dataset, Parallelism::Sequential);
 
         // Compute RMSE using the metrics module
         let rmse_base =
@@ -765,7 +770,7 @@ mod tests {
     fn test_training_populates_gains_and_covers() {
         use crate::repr::gbdt::TreeView;
 
-        let dataset = make_test_dataset();
+        let (dataset, binned) = make_test_datasets();
         let targets_arr = arr2(&[[1.0f32, 2.0, 3.0, 4.0, 1.5, 2.5, 3.5, 4.5]]);
         let targets = TargetsView::new(targets_arr.view());
 
@@ -779,6 +784,7 @@ mod tests {
         let forest = trainer
             .train(
                 &dataset,
+                &binned,
                 targets,
                 WeightsView::None,
                 None,

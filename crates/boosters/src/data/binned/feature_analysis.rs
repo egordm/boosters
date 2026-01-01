@@ -16,8 +16,9 @@ use std::collections::HashMap;
 
 use rayon::prelude::*;
 
+use crate::data::{Dataset, Feature};
+
 use super::BinData;
-use crate::data::FeaturesView;
 
 // ============================================================================
 // BinningConfig
@@ -427,29 +428,49 @@ impl FeatureStats {
             },
         }
     }
+
+    /// Include an implicit repeated value in min/max and uniqueness checks.
+    ///
+    /// This is used for sparse features where the default value is present for
+    /// many rows but is not explicitly stored.
+    #[inline]
+    fn include_implicit_value(&mut self, val: f32) {
+        if val.is_nan() {
+            return;
+        }
+
+        self.min = self.min.min(val);
+        self.max = self.max.max(val);
+
+        if self.all_integers && val.fract() != 0.0 {
+            self.all_integers = false;
+        }
+
+        if !self.exceeded_unique_limit && !self.unique_values.contains(&val) {
+            if self.unique_values.len() >= self.max_unique {
+                self.exceeded_unique_limit = true;
+            } else {
+                self.unique_values.push(val);
+            }
+        }
+    }
 }
 
-/// Analyze all features in a data matrix.
+// NOTE: In RFC-0021, `Dataset` owns raw values (dense/sparse). We intentionally
+// keep only the Dataset-based entrypoint to avoid duplicated analysis pipelines.
+
+/// Analyze all features in a [`Dataset`] without materializing a dense matrix.
 ///
-/// Performs single-pass analysis to detect feature properties.
-/// Analysis is parallelized across features using rayon.
-///
-/// # Arguments
-///
-/// * `features` - Feature-major view of the data matrix `[n_features, n_samples]`
-/// * `config` - Binning configuration
-/// * `metadata` - Optional user-provided metadata for categorical specification
-///
-/// # Returns
-///
-/// Vector of `FeatureAnalysis`, one per feature.
-pub fn analyze_features(
-    features: FeaturesView<'_>,
+/// This is the preferred analysis entrypoint for binning in RFC-0021:
+/// `Dataset` owns raw values (dense or sparse), and `BinnedDataset` should not
+/// force-densify sparse features during analysis.
+pub fn analyze_features_dataset(
+    dataset: &Dataset,
     config: &BinningConfig,
     metadata: Option<&FeatureMetadata>,
 ) -> Vec<FeatureAnalysis> {
-    let n_samples = features.n_samples();
-    let n_features = features.n_features();
+    let n_features = dataset.n_features();
+    let n_samples = dataset.n_samples();
 
     if n_features == 0 || n_samples == 0 {
         return (0..n_features)
@@ -470,75 +491,83 @@ pub fn analyze_features(
             .collect();
     }
 
-    // Track enough unique values for categorical detection + some margin
     let max_unique = (config.max_categorical_cardinality as usize)
         .max(config.max_bins as usize)
         .saturating_add(10);
 
     (0..n_features)
         .into_par_iter()
-        .map(|col| {
+        .map(|feature_idx| {
             let mut stats = FeatureStats::new(max_unique);
-            let feature_values = features.feature(col);
+            let feature = dataset.feature(feature_idx);
 
-            for &val in feature_values.iter() {
-                stats.update(val);
+            match feature {
+                Feature::Dense(values) => {
+                    if let Some(slice) = values.as_slice() {
+                        for &val in slice {
+                            stats.update(val);
+                        }
+                    } else {
+                        for &val in values.iter() {
+                            stats.update(val);
+                        }
+                    }
+                }
+                Feature::Sparse {
+                    indices,
+                    values,
+                    n_samples: _,
+                    default,
+                } => {
+                    // For sparse features, stored values represent non-default entries.
+                    // We still need to include the implicit default value in analysis
+                    // (usually 0.0) without materializing a dense column.
+
+                    // Update stats for stored values.
+                    for &val in values.iter() {
+                        stats.update(val);
+                    }
+
+                    // Account for implicit defaults.
+                    // This matches existing semantics that treat missing entries
+                    // as `default` (typically 0.0).
+                    let n_defaults = n_samples.saturating_sub(indices.len());
+                    if n_defaults > 0 {
+                        // Fold the default value into min/max and uniqueness.
+                        // We do NOT iterate `n_defaults` times.
+                        stats.include_implicit_value(*default);
+
+                        // Non-zero count: existing binning treats "sparse" as many zeros,
+                        // so we only increment if default is non-zero.
+                        if *default != 0.0 && !default.is_nan() {
+                            stats.non_zero_count = stats.non_zero_count.saturating_add(n_defaults);
+                        }
+
+                        // Valid count: default entries are valid unless default is NaN.
+                        if default.is_nan() {
+                            stats.nan_count = stats.nan_count.saturating_add(n_defaults);
+                        } else {
+                            stats.valid_count = stats.valid_count.saturating_add(n_defaults);
+                        }
+                    }
+                }
             }
 
-            stats.into_analysis(col, n_samples, config, metadata)
+            let mut analysis = stats.into_analysis(feature_idx, n_samples, config, metadata);
+
+            // If the feature is stored as sparse, treat it as sparse for grouping.
+            if feature.is_sparse() {
+                analysis.is_sparse = true;
+            }
+
+            analysis
         })
         .collect()
 }
 
-/// Analyze features sequentially (for small datasets or testing).
-pub fn analyze_features_sequential(
-    features: FeaturesView<'_>,
-    config: &BinningConfig,
-    metadata: Option<&FeatureMetadata>,
-) -> Vec<FeatureAnalysis> {
-    let n_samples = features.n_samples();
-    let n_features = features.n_features();
-
-    if n_features == 0 || n_samples == 0 {
-        return (0..n_features)
-            .map(|idx| FeatureAnalysis {
-                feature_idx: idx,
-                is_numeric: true,
-                is_sparse: false,
-                needs_u16: false,
-                is_trivial: true,
-                is_binary: false,
-                n_unique: 0,
-                n_nonzero: 0,
-                n_valid: 0,
-                n_samples,
-                min_val: f32::NAN,
-                max_val: f32::NAN,
-            })
-            .collect();
-    }
-
-    // Track enough unique values to determine:
-    // 1. Categorical detection (up to max_categorical_cardinality)
-    // 2. needs_u16 calculation (up to max_bins + buffer)
-    // We need at least max_bins + 1 to determine if we exceed 256 unique values
-    let max_unique = (config.max_categorical_cardinality as usize)
-        .max(config.max_bins as usize)
-        .saturating_add(10);
-
-    (0..n_features)
-        .map(|col| {
-            let mut stats = FeatureStats::new(max_unique);
-            let feature_values = features.feature(col);
-
-            for &val in feature_values.iter() {
-                stats.update(val);
-            }
-
-            stats.into_analysis(col, n_samples, config, metadata)
-        })
-        .collect()
-}
+// NOTE: A sequential implementation was removed to keep a single source of
+// truth. If we ever need it again, we can implement it by running the same
+// Dataset-based loop without rayon.
 
 // ============================================================================
 // GroupSpec - Feature Grouping Strategy
@@ -547,11 +576,11 @@ pub fn analyze_features_sequential(
 /// Type of feature group storage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GroupType {
-    /// Dense numeric storage (bins + raw values).
+    /// Dense numeric storage (bins).
     NumericDense,
     /// Dense categorical storage (bins only).
     CategoricalDense,
-    /// Sparse numeric storage (single feature, bins + raw values).
+    /// Sparse numeric storage (single feature, bins).
     SparseNumeric,
     /// Sparse categorical storage (single feature, bins only).
     SparseCategorical,
@@ -584,14 +613,6 @@ impl GroupSpec {
     pub fn n_features(&self) -> usize {
         self.feature_indices.len()
     }
-
-    /// Whether this group has raw values.
-    pub fn has_raw_values(&self) -> bool {
-        matches!(
-            self.group_type,
-            GroupType::NumericDense | GroupType::SparseNumeric
-        )
-    }
 }
 
 /// Result of feature grouping computation.
@@ -612,7 +633,7 @@ pub struct GroupingResult {
 ///
 /// # Arguments
 ///
-/// * `analyses` - Feature analysis results from `analyze_features()`
+/// * `analyses` - Feature analysis results from `analyze_features_dataset()`
 /// * `config` - Binning configuration
 ///
 /// # Returns
@@ -729,10 +750,14 @@ pub fn compute_groups(analyses: &[FeatureAnalysis], _config: &BinningConfig) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::FeaturesView;
 
-    fn make_features(data: &[f32], n_samples: usize, n_features: usize) -> FeaturesView<'_> {
-        FeaturesView::from_slice(data, n_samples, n_features).unwrap()
+    use ndarray::Array2;
+
+    fn make_dense_dataset(data: &[f32], n_samples: usize, n_features: usize) -> Dataset {
+        assert_eq!(data.len(), n_samples * n_features);
+        let features =
+            Array2::from_shape_vec((n_features, n_samples), data.to_vec()).expect("shape mismatch");
+        Dataset::from_array(features.view(), None, None)
     }
 
     fn default_config() -> BinningConfig {
@@ -800,8 +825,8 @@ mod tests {
     #[test]
     fn test_binary_feature() {
         let data = [0.0f32, 1.0, 0.0, 1.0];
-        let features = make_features(&data, 4, 1);
-        let analysis = analyze_features_sequential(features, &default_config(), None);
+        let ds = make_dense_dataset(&data, 4, 1);
+        let analysis = analyze_features_dataset(&ds, &default_config(), None);
 
         assert!(analysis[0].is_binary);
         assert!(analysis[0].is_numeric); // Binary defaults to numeric
@@ -813,10 +838,10 @@ mod tests {
     fn test_categorical_detection_integers() {
         // Low cardinality integers can be auto-detected as categorical when enabled
         let data = [0.0f32, 1.0, 2.0, 0.0, 1.0, 2.0, 0.0, 1.0];
-        let features = make_features(&data, 8, 1);
+        let ds = make_dense_dataset(&data, 8, 1);
         
         // With auto-detection disabled (default), integers remain numeric
-        let analysis = analyze_features_sequential(features, &default_config(), None);
+        let analysis = analyze_features_dataset(&ds, &default_config(), None);
         assert!(analysis[0].is_numeric); // Should be numeric when auto-detection is disabled
         assert_eq!(analysis[0].n_unique, 3);
         
@@ -824,8 +849,8 @@ mod tests {
         let config_with_auto = BinningConfig::builder()
             .max_categorical_cardinality(256)
             .build();
-        let features2 = make_features(&data, 8, 1);
-        let analysis_auto = analyze_features_sequential(features2, &config_with_auto, None);
+        let ds2 = make_dense_dataset(&data, 8, 1);
+        let analysis_auto = analyze_features_dataset(&ds2, &config_with_auto, None);
         assert!(!analysis_auto[0].is_numeric); // Should be categorical
         assert!(!analysis_auto[0].is_binary);
         assert_eq!(analysis_auto[0].n_unique, 3);
@@ -835,10 +860,9 @@ mod tests {
     fn test_user_specified_categorical() {
         // User specifies categorical, should override auto-detection
         let data = [0.0f32, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5];
-        let features = make_features(&data, 8, 1);
+        let ds = make_dense_dataset(&data, 8, 1);
         let metadata = FeatureMetadata::with_categorical(vec![0]);
-        let analysis =
-            analyze_features_sequential(features, &default_config(), Some(&metadata));
+        let analysis = analyze_features_dataset(&ds, &default_config(), Some(&metadata));
 
         assert!(!analysis[0].is_numeric); // User said categorical
     }
@@ -847,8 +871,8 @@ mod tests {
     fn test_numeric_floats() {
         // Non-integer values should be numeric
         let data = [0.1f32, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8];
-        let features = make_features(&data, 8, 1);
-        let analysis = analyze_features_sequential(features, &default_config(), None);
+        let ds = make_dense_dataset(&data, 8, 1);
+        let analysis = analyze_features_dataset(&ds, &default_config(), None);
 
         assert!(analysis[0].is_numeric);
     }
@@ -856,8 +880,8 @@ mod tests {
     #[test]
     fn test_trivial_all_zeros() {
         let data = [0.0f32, 0.0, 0.0, 0.0];
-        let features = make_features(&data, 4, 1);
-        let analysis = analyze_features_sequential(features, &default_config(), None);
+        let ds = make_dense_dataset(&data, 4, 1);
+        let analysis = analyze_features_dataset(&ds, &default_config(), None);
 
         assert!(analysis[0].is_trivial);
         assert_eq!(analysis[0].n_unique, 1);
@@ -867,8 +891,8 @@ mod tests {
     #[test]
     fn test_trivial_all_nan() {
         let data = [f32::NAN, f32::NAN, f32::NAN, f32::NAN];
-        let features = make_features(&data, 4, 1);
-        let analysis = analyze_features_sequential(features, &default_config(), None);
+        let ds = make_dense_dataset(&data, 4, 1);
+        let analysis = analyze_features_dataset(&ds, &default_config(), None);
 
         assert!(analysis[0].is_trivial);
         assert_eq!(analysis[0].n_unique, 0);
@@ -879,8 +903,8 @@ mod tests {
     fn test_sparse_detection() {
         // 1 non-zero out of 10 = 10% density = 90% sparse
         let data = [0.0f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0];
-        let features = make_features(&data, 10, 1);
-        let analysis = analyze_features_sequential(features, &default_config(), None);
+        let ds = make_dense_dataset(&data, 10, 1);
+        let analysis = analyze_features_dataset(&ds, &default_config(), None);
 
         assert!(analysis[0].is_sparse); // Default threshold is 0.9
         assert!((analysis[0].density() - 0.1).abs() < 0.001);
@@ -890,8 +914,8 @@ mod tests {
     fn test_not_sparse() {
         // 5 non-zero out of 10 = 50% density
         let data = [0.0f32, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0];
-        let features = make_features(&data, 10, 1);
-        let analysis = analyze_features_sequential(features, &default_config(), None);
+        let ds = make_dense_dataset(&data, 10, 1);
+        let analysis = analyze_features_dataset(&ds, &default_config(), None);
 
         assert!(!analysis[0].is_sparse);
     }
@@ -901,8 +925,8 @@ mod tests {
         // If we have many unique values and high max_bins, we might need U16
         let config = BinningConfig::builder().max_bins(500).build();
         let data: Vec<f32> = (0..300).map(|i| i as f32).collect();
-        let features = make_features(&data, 300, 1);
-        let analysis = analyze_features_sequential(features, &config, None);
+        let ds = make_dense_dataset(&data, 300, 1);
+        let analysis = analyze_features_dataset(&ds, &config, None);
 
         assert!(analysis[0].needs_u16); // 300 unique values > 256
     }
@@ -911,8 +935,8 @@ mod tests {
     fn test_no_u16_needed() {
         // Default max_bins is 256, so even with many values we stay U8
         let data: Vec<f32> = (0..300).map(|i| i as f32).collect();
-        let features = make_features(&data, 300, 1);
-        let analysis = analyze_features_sequential(features, &default_config(), None);
+        let ds = make_dense_dataset(&data, 300, 1);
+        let analysis = analyze_features_dataset(&ds, &default_config(), None);
 
         // Default max_bins is 256, but 300 unique values get capped
         // Actually, numeric features use quantile binning limited by max_bins
@@ -922,8 +946,8 @@ mod tests {
     #[test]
     fn test_min_max() {
         let data = [1.0f32, 5.0, 3.0, 2.0, 4.0];
-        let features = make_features(&data, 5, 1);
-        let analysis = analyze_features_sequential(features, &default_config(), None);
+        let ds = make_dense_dataset(&data, 5, 1);
+        let analysis = analyze_features_dataset(&ds, &default_config(), None);
 
         assert!((analysis[0].min_val - 1.0).abs() < 0.001);
         assert!((analysis[0].max_val - 5.0).abs() < 0.001);
@@ -940,10 +964,10 @@ mod tests {
             0.0, 1.0, 2.0, 0.0, // Feature 2 (4 samples)
             0.1, 0.2, 0.3, 0.4,
         ];
-        let features = make_features(&data, 4, 3);
+        let ds = make_dense_dataset(&data, 4, 3);
         
         // With auto-detection disabled (default), all features are numeric
-        let analysis = analyze_features_sequential(features, &default_config(), None);
+        let analysis = analyze_features_dataset(&ds, &default_config(), None);
 
         // Feature 0: binary → numeric
         assert!(analysis[0].is_binary);
@@ -961,8 +985,8 @@ mod tests {
         let config_with_auto = BinningConfig::builder()
             .max_categorical_cardinality(256)
             .build();
-        let features2 = make_features(&data, 4, 3);
-        let analysis_auto = analyze_features_sequential(features2, &config_with_auto, None);
+        let ds2 = make_dense_dataset(&data, 4, 3);
+        let analysis_auto = analyze_features_dataset(&ds2, &config_with_auto, None);
         
         // Feature 0: binary → still numeric (binary defaults to numeric)
         assert!(analysis_auto[0].is_binary);
@@ -982,20 +1006,20 @@ mod tests {
         let data = [
             0.0f32, 1.0, 0.0, 1.0, 0.0, 1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 0.0, -1.0, 1.0, -1.0, 1.0,
         ];
-        let features = make_features(&data, 4, 4);
         let config = default_config();
+        let ds = make_dense_dataset(&data, 4, 4);
 
-        let seq = analyze_features_sequential(features, &config, None);
-        let par = analyze_features(features, &config, None);
-
-        assert_eq!(seq, par);
+        // Determinism check: same input should yield identical analyses.
+        let a1 = analyze_features_dataset(&ds, &config, None);
+        let a2 = analyze_features_dataset(&ds, &config, None);
+        assert_eq!(a1, a2);
     }
 
     #[test]
     fn test_empty_features() {
         let data: [f32; 0] = [];
-        let features = make_features(&data, 0, 3);
-        let analysis = analyze_features_sequential(features, &default_config(), None);
+        let ds = make_dense_dataset(&data, 0, 3);
+        let analysis = analyze_features_dataset(&ds, &default_config(), None);
 
         assert_eq!(analysis.len(), 3);
         for a in &analysis {
@@ -1010,8 +1034,8 @@ mod tests {
             .max_categorical_cardinality(5)
             .build();
         let data: Vec<f32> = (0..20).map(|i| i as f32).collect();
-        let features = make_features(&data, 20, 1);
-        let analysis = analyze_features_sequential(features, &config, None);
+        let ds = make_dense_dataset(&data, 20, 1);
+        let analysis = analyze_features_dataset(&ds, &config, None);
 
         assert!(analysis[0].is_numeric); // Too many categories → numeric
     }
@@ -1024,16 +1048,16 @@ mod tests {
     fn test_group_spec_properties() {
         let group = GroupSpec::new(vec![0, 1, 2], GroupType::NumericDense, false);
         assert_eq!(group.n_features(), 3);
-        assert!(group.has_raw_values());
+        assert_eq!(group.group_type, GroupType::NumericDense);
 
         let cat_group = GroupSpec::new(vec![3], GroupType::CategoricalDense, false);
-        assert!(!cat_group.has_raw_values());
+        assert_eq!(cat_group.group_type, GroupType::CategoricalDense);
 
         let sparse_num = GroupSpec::new(vec![4], GroupType::SparseNumeric, false);
-        assert!(sparse_num.has_raw_values());
+        assert_eq!(sparse_num.group_type, GroupType::SparseNumeric);
 
         let sparse_cat = GroupSpec::new(vec![5], GroupType::SparseCategorical, false);
-        assert!(!sparse_cat.has_raw_values());
+        assert_eq!(sparse_cat.group_type, GroupType::SparseCategorical);
     }
 
     #[test]

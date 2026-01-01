@@ -1,8 +1,7 @@
-use boosters::data::{BinningConfig, binned::BinnedDataset, transpose_to_c_order};
-use boosters::data::{Dataset, TargetsView, WeightsView};
+use boosters::data::{Dataset, TargetsView, WeightsView, transpose_to_c_order};
 use boosters::model::gbdt::{GBDTConfig, GBDTModel};
 use boosters::testing::synthetic_datasets::{
-    random_features_array, split_indices, synthetic_binary, synthetic_multiclass,
+    features_row_major, random_features_array, split_indices, synthetic_binary, synthetic_multiclass,
     synthetic_regression,
 };
 use boosters::training::{
@@ -38,20 +37,23 @@ fn run_synthetic_regression(
     seed: u64,
 ) -> (f64, f64) {
     let dataset = synthetic_regression(rows, cols, seed, 0.05);
-    let x_all = random_features_array(rows, cols, seed, -1.0, 1.0);
-    let y_all = dataset.targets_slice();
+    let x_all = features_row_major(&dataset);
+    let y_all = dataset
+        .targets()
+        .expect("synthetic datasets have targets")
+        .as_single_output()
+        .to_vec();
     let (train_idx, valid_idx) = split_indices(rows, 0.2, seed ^ 0x51EED);
 
     let x_train = select_samples(&x_all, &train_idx);
-    let y_train = select_targets(y_all, &train_idx);
+    let y_train = select_targets(&y_all, &train_idx);
     let x_valid = select_samples(&x_all, &valid_idx);
-    let y_valid = select_targets(y_all, &valid_idx);
+    let y_valid = select_targets(&y_all, &valid_idx);
 
     // Transpose to feature-major for training
     let col_train = transpose_to_c_order(x_train.view());
-    let dataset_train = Dataset::new(col_train.view(), None, None);
-    let binning_config = BinningConfig::builder().max_bins(256).build();
-    let binned_train = BinnedDataset::from_dataset(&dataset_train, &binning_config).unwrap();
+    let y_train_2d = Array2::from_shape_vec((1, y_train.len()), y_train.clone()).unwrap();
+    let dataset_train = Dataset::from_array(col_train.view(), Some(y_train_2d), None);
     let row_valid = x_valid;
 
     let config = GBDTConfig::builder()
@@ -65,19 +67,10 @@ fn run_synthetic_regression(
         .build()
         .unwrap();
 
-    let y_train_2d = Array2::from_shape_vec((1, y_train.len()), y_train.clone()).unwrap();
-    let model = GBDTModel::train_binned(
-        &binned_train,
-        TargetsView::new(y_train_2d.view()),
-        WeightsView::None,
-        None,
-        config,
-        1,
-    )
-    .unwrap();
+    let model = GBDTModel::train(&dataset_train, None, config, 1).unwrap();
     // Transpose validation to feature-major for prediction
     let col_valid = transpose_to_c_order(row_valid.view());
-    let dataset_valid = Dataset::new(col_valid.view(), None, None);
+    let dataset_valid = Dataset::from_array(col_valid.view(), None, None);
     let pred = model.predict(&dataset_valid, 1);
     let targets_2d = Array2::from_shape_vec((1, y_valid.len()), y_valid).unwrap();
     let targets = TargetsView::new(targets_2d.view());
@@ -89,20 +82,23 @@ fn run_synthetic_regression(
 
 fn run_synthetic_binary(rows: usize, cols: usize, trees: u32, depth: u32, seed: u64) -> (f64, f64) {
     let dataset = synthetic_binary(rows, cols, seed, 0.2);
-    let x_all = random_features_array(rows, cols, seed, -1.0, 1.0);
-    let y_all = dataset.targets_slice();
+    let x_all = features_row_major(&dataset);
+    let y_all = dataset
+        .targets()
+        .expect("synthetic datasets have targets")
+        .as_single_output()
+        .to_vec();
     let (train_idx, valid_idx) = split_indices(rows, 0.2, seed ^ 0x51EED);
 
     let x_train = select_samples(&x_all, &train_idx);
-    let y_train = select_targets(y_all, &train_idx);
+    let y_train = select_targets(&y_all, &train_idx);
     let x_valid = select_samples(&x_all, &valid_idx);
-    let y_valid = select_targets(y_all, &valid_idx);
+    let y_valid = select_targets(&y_all, &valid_idx);
 
     // Transpose to feature-major for training
     let col_train = transpose_to_c_order(x_train.view());
-    let dataset_train = Dataset::new(col_train.view(), None, None);
-    let binning_config = BinningConfig::builder().max_bins(256).build();
-    let binned_train = BinnedDataset::from_dataset(&dataset_train, &binning_config).unwrap();
+    let y_train_2d = Array2::from_shape_vec((1, y_train.len()), y_train.clone()).unwrap();
+    let dataset_train = Dataset::from_array(col_train.view(), Some(y_train_2d), None);
     let row_valid = x_valid;
 
     let config = GBDTConfig::builder()
@@ -116,19 +112,10 @@ fn run_synthetic_binary(rows: usize, cols: usize, trees: u32, depth: u32, seed: 
         .build()
         .unwrap();
 
-    let y_train_2d = Array2::from_shape_vec((1, y_train.len()), y_train.clone()).unwrap();
-    let model = GBDTModel::train_binned(
-        &binned_train,
-        TargetsView::new(y_train_2d.view()),
-        WeightsView::None,
-        None,
-        config,
-        1,
-    )
-    .unwrap();
+    let model = GBDTModel::train(&dataset_train, None, config, 1).unwrap();
     // Transpose validation to feature-major for prediction
     let col_valid = transpose_to_c_order(row_valid.view());
-    let dataset_valid = Dataset::new(col_valid.view(), None, None);
+    let dataset_valid = Dataset::from_array(col_valid.view(), None, None);
     let pred = model.predict(&dataset_valid, 1);
     let targets_2d = Array2::from_shape_vec((1, y_valid.len()), y_valid).unwrap();
     let targets = TargetsView::new(targets_2d.view());
@@ -147,20 +134,23 @@ fn run_synthetic_multiclass(
     seed: u64,
 ) -> (f64, f64) {
     let dataset = synthetic_multiclass(rows, cols, classes, seed, 0.1);
-    let x_all = random_features_array(rows, cols, seed, -1.0, 1.0);
-    let y_all = dataset.targets_slice();
+    let x_all = features_row_major(&dataset);
+    let y_all = dataset
+        .targets()
+        .expect("synthetic datasets have targets")
+        .as_single_output()
+        .to_vec();
     let (train_idx, valid_idx) = split_indices(rows, 0.2, seed ^ 0x51EED);
 
     let x_train = select_samples(&x_all, &train_idx);
-    let y_train = select_targets(y_all, &train_idx);
+    let y_train = select_targets(&y_all, &train_idx);
     let x_valid = select_samples(&x_all, &valid_idx);
-    let y_valid = select_targets(y_all, &valid_idx);
+    let y_valid = select_targets(&y_all, &valid_idx);
 
     // Transpose to feature-major for training
     let col_train = transpose_to_c_order(x_train.view());
-    let dataset_train = Dataset::new(col_train.view(), None, None);
-    let binning_config = BinningConfig::builder().max_bins(256).build();
-    let binned_train = BinnedDataset::from_dataset(&dataset_train, &binning_config).unwrap();
+    let y_train_2d = Array2::from_shape_vec((1, y_train.len()), y_train.clone()).unwrap();
+    let dataset_train = Dataset::from_array(col_train.view(), Some(y_train_2d), None);
     let row_valid = x_valid;
 
     let config = GBDTConfig::builder()
@@ -174,19 +164,10 @@ fn run_synthetic_multiclass(
         .build()
         .unwrap();
 
-    let y_train_2d = Array2::from_shape_vec((1, y_train.len()), y_train.clone()).unwrap();
-    let model = GBDTModel::train_binned(
-        &binned_train,
-        TargetsView::new(y_train_2d.view()),
-        WeightsView::None,
-        None,
-        config,
-        1,
-    )
-    .unwrap();
+    let model = GBDTModel::train(&dataset_train, None, config, 1).unwrap();
     // Transpose validation to feature-major for prediction
     let col_valid = transpose_to_c_order(row_valid.view());
-    let dataset_valid = Dataset::new(col_valid.view(), None, None);
+    let dataset_valid = Dataset::from_array(col_valid.view(), None, None);
     let pred = model.predict(&dataset_valid, 1);
     let targets_2d = Array2::from_shape_vec((1, y_valid.len()), y_valid).unwrap();
     let targets = TargetsView::new(targets_2d.view());
@@ -289,9 +270,8 @@ fn test_quality_improvement_linear_leaves() {
 
     // Convert to matrices - transpose to feature-major for training
     let col_train = transpose_to_c_order(x_train.view());
-    let dataset_train = Dataset::new(col_train.view(), None, None);
-    let binning_config = BinningConfig::builder().max_bins(256).build();
-    let binned_train = BinnedDataset::from_dataset(&dataset_train, &binning_config).unwrap();
+    let y_train_2d = Array2::from_shape_vec((1, y_train.len()), y_train.clone()).unwrap();
+    let dataset_train = Dataset::from_array(col_train.view(), Some(y_train_2d), None);
     let row_valid = x_valid;
 
     // --- Train without linear leaves ---
@@ -307,19 +287,10 @@ fn test_quality_improvement_linear_leaves() {
         .build()
         .unwrap();
 
-    let y_train_2d = Array2::from_shape_vec((1, y_train.len()), y_train.clone()).unwrap();
-    let model_baseline = GBDTModel::train_binned(
-        &binned_train,
-        TargetsView::new(y_train_2d.view()),
-        WeightsView::None,
-        None,
-        base_config,
-        1,
-    )
-    .unwrap();
+    let model_baseline = GBDTModel::train(&dataset_train, None, base_config, 1).unwrap();
     // Transpose validation to feature-major for prediction
     let col_valid = transpose_to_c_order(row_valid.view());
-    let dataset_valid = Dataset::new(col_valid.view(), None, None);
+    let dataset_valid = Dataset::from_array(col_valid.view(), None, None);
     let pred_baseline = model_baseline.predict(&dataset_valid, 1);
     let targets_2d = Array2::from_shape_vec((1, y_valid.len()), y_valid).unwrap();
     let targets = TargetsView::new(targets_2d.view());
@@ -340,15 +311,7 @@ fn test_quality_improvement_linear_leaves() {
         .unwrap();
 
     eprintln!("Training with linear leaves...");
-    let model_linear = GBDTModel::train_binned(
-        &binned_train,
-        TargetsView::new(y_train_2d.view()),
-        WeightsView::None,
-        None,
-        linear_config,
-        1,
-    )
-    .unwrap();
+    let model_linear = GBDTModel::train(&dataset_train, None, linear_config, 1).unwrap();
     let pred_linear = model_linear.predict(&dataset_valid, 1);
     let rmse_linear = Rmse.compute(pred_linear.view(), targets, WeightsView::None);
 

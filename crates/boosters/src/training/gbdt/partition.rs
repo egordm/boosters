@@ -453,8 +453,8 @@ impl RowPartitioner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{BinnedDataset, BinningConfig};
-    use ndarray::Array2;
+    use crate::data::{BinnedDataset, BinningConfig, Dataset};
+    use ndarray::array;
 
     fn make_test_dataset() -> BinnedDataset {
         // 8 samples, 2 features
@@ -463,22 +463,12 @@ mod tests {
         //
         // With default binning (256 bins), we need raw values that bin appropriately.
         // Using values 0.0 and 1.0 that will bin to different bins.
-        let data = Array2::from_shape_vec(
-            (8, 2),
-            vec![
-                0.0, 0.0, // row 0: f0=0, f1=0
-                1.0, 0.0, // row 1: f0=1, f1=0
-                0.0, 0.0, // row 2: f0=0, f1=0
-                1.0, 0.0, // row 3: f0=1, f1=0
-                0.0, 1.0, // row 4: f0=0, f1=1
-                1.0, 1.0, // row 5: f0=1, f1=1
-                0.0, 1.0, // row 6: f0=0, f1=1
-                1.0, 1.0, // row 7: f0=1, f1=1
-            ],
-        )
-        .unwrap();
-
-        BinnedDataset::from_array(data.view(), &BinningConfig::default()).unwrap()
+        let raw = Dataset::builder()
+            .add_feature_unnamed(array![0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0])
+            .add_feature_unnamed(array![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0])
+            .build()
+            .unwrap();
+        BinnedDataset::from_dataset(&raw, &BinningConfig::default()).unwrap()
     }
 
     #[test]

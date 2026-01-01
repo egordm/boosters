@@ -2,7 +2,7 @@
 
 **Status**: Draft  
 **Created**: 2025-12-30  
-**Updated**: 2025-12-30  
+**Updated**: 2025-12-31  
 **Author**: Team  
 **Supersedes**: RFC-0018, RFC-0008 (io-parquet)  
 **Related**: RFC-0019 (updated to work on Dataset)
@@ -15,6 +15,8 @@ This RFC proposes a comprehensive restructuring of the data module with clear ar
 2. Difficult-to-test APIs because constructing a `BinnedDataset` requires going through the full binning pipeline
 3. Confusion about which type to use where
 4. Memory duplication (raw values stored in both `Dataset` and `BinnedDataset`)
+
+**Implementation note (2025-12-31)**: The codebase has been migrated to the intended split: `Dataset` owns raw values, and binned storage types are bins-only. The sections below describing raw-value duplication reflect the historical motivation and the desired end state.
 
 **Proposed solution**: Two distinct types with clear, separate responsibilities:
 
@@ -58,9 +60,9 @@ When training with linear trees or GBLinear:
 
 **3. Storage Type Explosion**
 
-We have 5 storage types because each must track both bins AND raw values:
-- `NumericStorage` (bins + raw)
-- `SparseNumericStorage` (sparse bins + sparse raw)
+We historically had 5 storage types because each needed to track both bins AND raw values:
+- `NumericStorage` (bins + raw, historical)
+- `SparseNumericStorage` (sparse bins + sparse raw, historical)
 - `CategoricalStorage` (bins only)
 - `SparseCategoricalStorage` (sparse bins only)
 - `BundleStorage` (encoded bins, no raw)
@@ -608,9 +610,6 @@ Total: 50 MB (44% reduction)
 // Model takes Dataset, bins internally
 GBDTModel::train(dataset: &Dataset, ...)
 
-// Or takes BinnedDataset with raw values inside
-GBDTModel::train_binned(dataset: &BinnedDataset, ...)
-
 // Prediction takes Dataset
 model.predict(&Dataset) -> predictions
 
@@ -622,8 +621,8 @@ binned_dataset.for_each_feature_value(...)  // panics for categorical!
 
 ```rust
 // HIGH-LEVEL: Model works only with Dataset
-let model = GBDTModel::fit(&dataset, &config)?;  // Internally creates BinnedDataset
-let predictions = model.predict(&dataset)?;      // Uses Dataset directly
+let model = GBDTModel::train(&dataset, None, config, 0).unwrap(); // Internally bins
+let predictions = model.predict(&dataset, 0);
 
 // MID-LEVEL: Trainer receives both (explicit control)
 let trainer = GBDTTrainer::new(&config)?;
@@ -921,3 +920,7 @@ Have one `Dataset` type with optional `bins` field that's populated on demand.
 - [ ] All tests pass
 - [ ] Python bindings updated
 - [ ] `quality_benchmark.rs` updated (remove parquet, remove DataSource::Parquet)
+
+## Changelog
+
+- 2025-12-31: Removed `GBDTModel::train_binned` from the API examples to match the implemented design (training accepts `&Dataset` only).

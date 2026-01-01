@@ -33,8 +33,7 @@ use super::FeatureStorage;
 ///     0u8, 1, 2,   // Feature 0
 ///     3, 4, 5,     // Feature 1
 /// ]);
-/// let raw = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0].into_boxed_slice();
-/// let storage = NumericStorage::new(bins, raw);
+/// let storage = NumericStorage::new(bins);
 ///
 /// let group = FeatureGroup::new(
 ///     vec![0, 1].into_boxed_slice(),  // Global feature indices
@@ -45,14 +44,10 @@ use super::FeatureStorage;
 ///
 /// assert_eq!(group.n_features(), 2);
 /// assert_eq!(group.n_samples(), 3);
-/// assert!(group.has_raw_values());
 ///
 /// // Access bins
 /// assert_eq!(group.bin(0, 0), 0);  // sample 0, feature_in_group 0
 /// assert_eq!(group.bin(1, 1), 4);  // sample 1, feature_in_group 1
-///
-/// // Access raw values (only for numeric)
-/// assert_eq!(group.raw(0, 0), Some(1.0));
 /// ```
 #[derive(Debug, Clone)]
 pub struct FeatureGroup {
@@ -60,7 +55,7 @@ pub struct FeatureGroup {
     feature_indices: Box<[u32]>,
     /// Number of samples.
     n_samples: usize,
-    /// Storage (bins + optional raw values).
+    /// Storage (bins).
     storage: FeatureStorage,
     /// Per-feature bin counts.
     bin_counts: Box<[u32]>,
@@ -157,12 +152,6 @@ impl FeatureGroup {
         &self.storage
     }
 
-    /// Returns `true` if this group has raw values (numeric features).
-    #[inline]
-    pub fn has_raw_values(&self) -> bool {
-        self.storage.has_raw_values()
-    }
-
     /// Returns `true` if this group contains categorical features.
     #[inline]
     pub fn is_categorical(&self) -> bool {
@@ -196,59 +185,11 @@ impl FeatureGroup {
         match &self.storage {
             FeatureStorage::Numeric(s) => s.bin(sample, feature_in_group, self.n_samples),
             FeatureStorage::Categorical(s) => s.bin(sample, feature_in_group, self.n_samples),
-            FeatureStorage::SparseNumeric(s) => s.get(sample).0,
+            FeatureStorage::SparseNumeric(s) => s.bin(sample),
             FeatureStorage::SparseCategorical(s) => s.bin(sample),
             FeatureStorage::Bundle(_) => {
                 panic!("bin() not supported for Bundle storage - use bundle-specific methods")
             }
-        }
-    }
-
-    /// Returns the raw value for a sample and feature within this group.
-    ///
-    /// Returns `None` for categorical features (they don't have raw values).
-    /// Returns `None` for bundle storage (bundles are lossless categorical).
-    ///
-    /// # Parameters
-    /// - `sample`: Sample index (0..n_samples)
-    /// - `feature_in_group`: Feature index within this group (0..n_features)
-    #[inline]
-    pub fn raw(&self, sample: usize, feature_in_group: usize) -> Option<f32> {
-        debug_assert!(sample < self.n_samples, "sample index out of bounds");
-        debug_assert!(
-            feature_in_group < self.n_features(),
-            "feature_in_group index out of bounds"
-        );
-
-        match &self.storage {
-            FeatureStorage::Numeric(s) => Some(s.raw(sample, feature_in_group, self.n_samples)),
-            FeatureStorage::SparseNumeric(s) => Some(s.get(sample).1),
-            FeatureStorage::Categorical(_)
-            | FeatureStorage::SparseCategorical(_)
-            | FeatureStorage::Bundle(_) => None,
-        }
-    }
-
-    /// Returns a contiguous slice of raw values for a feature.
-    ///
-    /// Returns `None` for categorical features, sparse storage, or bundles.
-    ///
-    /// # Parameters
-    /// - `feature_in_group`: Feature index within this group
-    #[inline]
-    pub fn raw_slice(&self, feature_in_group: usize) -> Option<&[f32]> {
-        debug_assert!(
-            feature_in_group < self.n_features(),
-            "feature_in_group index out of bounds"
-        );
-
-        match &self.storage {
-            FeatureStorage::Numeric(s) => Some(s.raw_slice(feature_in_group, self.n_samples)),
-            // Sparse storage doesn't have contiguous slices for all samples
-            FeatureStorage::SparseNumeric(_) => None,
-            FeatureStorage::Categorical(_)
-            | FeatureStorage::SparseCategorical(_)
-            | FeatureStorage::Bundle(_) => None,
         }
     }
 
@@ -361,8 +302,7 @@ mod tests {
             0u8, 1, 2, // Feature 0
             5, 6, 7, // Feature 1
         ]);
-        let raw = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0].into_boxed_slice();
-        let storage = FeatureStorage::Numeric(NumericStorage::new(bins, raw));
+        let storage = FeatureStorage::Numeric(NumericStorage::new(bins));
 
         FeatureGroup::new(
             vec![10, 20].into_boxed_slice(), // Global indices
@@ -393,7 +333,6 @@ mod tests {
         let storage = FeatureStorage::SparseNumeric(SparseNumericStorage::new(
             vec![2, 7].into_boxed_slice(),
             BinData::from(vec![1u8, 2]),
-            vec![1.5, 2.5].into_boxed_slice(),
             10,
         ));
 
@@ -426,7 +365,6 @@ mod tests {
         let group = make_numeric_group();
         assert_eq!(group.n_features(), 2);
         assert_eq!(group.n_samples(), 3);
-        assert!(group.has_raw_values());
         assert!(!group.is_categorical());
         assert!(!group.is_sparse());
     }
@@ -453,28 +391,6 @@ mod tests {
     }
 
     #[test]
-    fn test_numeric_group_raw_access() {
-        let group = make_numeric_group();
-
-        // Feature 0: raw [1.0, 2.0, 3.0]
-        assert_eq!(group.raw(0, 0), Some(1.0));
-        assert_eq!(group.raw(1, 0), Some(2.0));
-        assert_eq!(group.raw(2, 0), Some(3.0));
-
-        // Feature 1: raw [4.0, 5.0, 6.0]
-        assert_eq!(group.raw(0, 1), Some(4.0));
-        assert_eq!(group.raw(1, 1), Some(5.0));
-        assert_eq!(group.raw(2, 1), Some(6.0));
-    }
-
-    #[test]
-    fn test_numeric_group_raw_slice() {
-        let group = make_numeric_group();
-        assert_eq!(group.raw_slice(0), Some(&[1.0, 2.0, 3.0][..]));
-        assert_eq!(group.raw_slice(1), Some(&[4.0, 5.0, 6.0][..]));
-    }
-
-    #[test]
     fn test_numeric_group_bin_offsets() {
         let group = make_numeric_group();
         assert_eq!(group.bin_counts(), &[10, 8]);
@@ -487,17 +403,8 @@ mod tests {
         let group = make_categorical_group();
         assert_eq!(group.n_features(), 2);
         assert_eq!(group.n_samples(), 3);
-        assert!(!group.has_raw_values());
         assert!(group.is_categorical());
         assert!(!group.is_sparse());
-    }
-
-    #[test]
-    fn test_categorical_group_no_raw() {
-        let group = make_categorical_group();
-        assert_eq!(group.raw(0, 0), None);
-        assert_eq!(group.raw(1, 1), None);
-        assert_eq!(group.raw_slice(0), None);
     }
 
     #[test]
@@ -513,23 +420,16 @@ mod tests {
         let group = make_sparse_numeric_group();
         assert_eq!(group.n_features(), 1);
         assert_eq!(group.n_samples(), 10);
-        assert!(group.has_raw_values());
         assert!(group.is_sparse());
 
-        // Sample 2 has bin=1, raw=1.5
+        // Sample 2 has bin=1
         assert_eq!(group.bin(2, 0), 1);
-        assert_eq!(group.raw(2, 0), Some(1.5));
 
-        // Sample 7 has bin=2, raw=2.5
+        // Sample 7 has bin=2
         assert_eq!(group.bin(7, 0), 2);
-        assert_eq!(group.raw(7, 0), Some(2.5));
 
-        // Sample 0 is not in sparse list, defaults to (0, 0.0)
+        // Sample 0 is not in sparse list, defaults to bin=0
         assert_eq!(group.bin(0, 0), 0);
-        assert_eq!(group.raw(0, 0), Some(0.0));
-
-        // No contiguous raw slice for sparse
-        assert_eq!(group.raw_slice(0), None);
     }
 
     #[test]
@@ -537,7 +437,6 @@ mod tests {
         let group = make_sparse_categorical_group();
         assert_eq!(group.n_features(), 1);
         assert_eq!(group.n_samples(), 10);
-        assert!(!group.has_raw_values());
         assert!(group.is_categorical());
         assert!(group.is_sparse());
 
@@ -550,8 +449,6 @@ mod tests {
         // Sample 0 defaults to bin=0
         assert_eq!(group.bin(0, 0), 0);
 
-        // No raw values for categorical
-        assert_eq!(group.raw(0, 0), None);
     }
 
     #[test]
@@ -560,17 +457,16 @@ mod tests {
         // feature_indices: 2 * 4 = 8
         // bin_counts: 2 * 4 = 8
         // bin_offsets: 3 * 4 = 12
-        // storage: 6 bytes bins + 24 bytes raw = 30
-        // Total: 8 + 8 + 12 + 30 = 58
-        assert_eq!(group.size_bytes(), 58);
+        // storage: 6 bytes bins
+        // Total: 8 + 8 + 12 + 6 = 34
+        assert_eq!(group.size_bytes(), 34);
     }
 
     #[test]
     #[should_panic(expected = "feature_indices and bin_counts must have the same length")]
     fn test_mismatched_indices_counts() {
         let bins = BinData::from(vec![0u8, 1, 2]);
-        let raw = vec![1.0, 2.0, 3.0].into_boxed_slice();
-        let storage = FeatureStorage::Numeric(NumericStorage::new(bins, raw));
+        let storage = FeatureStorage::Numeric(NumericStorage::new(bins));
 
         FeatureGroup::new(
             vec![1, 2].into_boxed_slice(), // 2 features
@@ -583,8 +479,7 @@ mod tests {
     #[test]
     fn test_single_feature_single_sample() {
         let bins = BinData::from(vec![5u8]);
-        let raw = vec![3.14].into_boxed_slice();
-        let storage = FeatureStorage::Numeric(NumericStorage::new(bins, raw));
+        let storage = FeatureStorage::Numeric(NumericStorage::new(bins));
 
         let group = FeatureGroup::new(
             vec![0].into_boxed_slice(),
@@ -596,8 +491,6 @@ mod tests {
         assert_eq!(group.n_features(), 1);
         assert_eq!(group.n_samples(), 1);
         assert_eq!(group.bin(0, 0), 5);
-        assert_eq!(group.raw(0, 0), Some(3.14));
-        assert_eq!(group.raw_slice(0), Some(&[3.14][..]));
         assert_eq!(group.total_bins(), 10);
     }
 
@@ -605,8 +498,7 @@ mod tests {
     fn test_empty_bin_offsets() {
         // Edge case: single feature with 0 bins (shouldn't happen but let's handle it)
         let bins = BinData::from(vec![0u8]);
-        let raw = vec![1.0].into_boxed_slice();
-        let storage = FeatureStorage::Numeric(NumericStorage::new(bins, raw));
+        let storage = FeatureStorage::Numeric(NumericStorage::new(bins));
 
         let group = FeatureGroup::new(
             vec![0].into_boxed_slice(),

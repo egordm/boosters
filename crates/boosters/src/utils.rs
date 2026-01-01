@@ -72,6 +72,30 @@ impl Parallelism {
         }
     }
 
+    /// Parallel bridge for_each with per-thread initialization.
+    ///
+    /// Like [`maybe_par_bridge_for_each`](Self::maybe_par_bridge_for_each) but with
+    /// per-thread state initialization. The `init` closure is called once per worker
+    /// thread (in parallel mode) or once total (in sequential mode).
+    ///
+    /// This is ideal for iterators that don't implement `IntoParallelIterator`
+    /// (like `axis_chunks_iter_mut`) but need thread-local buffers.
+    #[inline]
+    pub fn maybe_par_bridge_for_each_init<T, I, INIT, S, F>(self, iter: I, init: INIT, f: F)
+    where
+        T: Send,
+        I: Iterator<Item = T> + Send,
+        INIT: Fn() -> S + Sync + Send,
+        F: Fn(&mut S, T) + Sync + Send,
+    {
+        if self.is_parallel() {
+            iter.par_bridge().for_each_init(init, f);
+        } else {
+            let mut state = init();
+            iter.for_each(|item| f(&mut state, item));
+        }
+    }
+
     #[inline]
     pub fn maybe_par_map<T, B, I, F>(self, iter: I, f: F) -> Vec<B>
     where
@@ -84,6 +108,29 @@ impl Parallelism {
             iter.into_par_iter().map(f).collect()
         } else {
             iter.into_iter().map(f).collect()
+        }
+    }
+
+    /// Parallel for_each with per-thread initialization.
+    ///
+    /// The `init` closure is called once per worker thread (in parallel mode)
+    /// or once total (in sequential mode). The resulting value is passed to `f`
+    /// and reused across iterations on the same thread.
+    ///
+    /// This is ideal for thread-local buffers that should persist across iterations.
+    #[inline]
+    pub fn maybe_par_for_each_init<T, I, INIT, S, F>(self, iter: I, init: INIT, f: F)
+    where
+        T: Send,
+        I: IntoIterator<Item = T> + IntoParallelIterator<Item = T>,
+        INIT: Fn() -> S + Sync + Send,
+        F: Fn(&mut S, T) + Sync + Send,
+    {
+        if self.is_parallel() {
+            iter.into_par_iter().for_each_init(init, f);
+        } else {
+            let mut state = init();
+            iter.into_iter().for_each(|item| f(&mut state, item));
         }
     }
 }

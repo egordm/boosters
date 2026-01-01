@@ -40,8 +40,9 @@
 //! - `UnrolledTreeLayout6` — 63 nodes, 64 exits (default, matches XGBoost)
 //! - `UnrolledTreeLayout8` — 255 nodes, 256 exits (deep trees)
 
-use crate::data::{DataAccessor, SampleAccessor};
+use crate::data::SamplesView;
 use crate::repr::gbdt::{LeafValue, SplitType, Tree, TreeView};
+use ndarray::ArrayView1;
 
 /// Maximum number of levels to unroll (matches XGBoost).
 /// 6 levels = 63 nodes, 8 levels = 255 nodes.
@@ -166,6 +167,9 @@ pub struct UnrolledTreeLayout<D: UnrollDepth = Depth6> {
     /// Split feature index per array node.
     split_indices: D::NodeArray<u32>,
 
+    /// Original tree node index per array node.
+    tree_node_indices: D::NodeArray<u32>,
+
     /// Split threshold per array node.
     split_thresholds: D::NodeArray<f32>,
 
@@ -196,6 +200,7 @@ impl<D: UnrollDepth> UnrolledTreeLayout<D> {
     pub fn from_tree<L: LeafValue>(tree: &Tree<L>) -> Self {
         // Initialize arrays with fill values
         let mut split_indices = D::node_array_fill(0u32);
+        let mut tree_node_indices = D::node_array_fill(0u32);
         let mut split_thresholds = D::node_array_fill(f32::NAN);
         let mut default_left = D::node_array_fill(false);
         let mut is_original_leaf = D::node_array_fill(false);
@@ -219,6 +224,7 @@ impl<D: UnrollDepth> UnrolledTreeLayout<D> {
             0,        // current level
             D::DEPTH, // target depth
             split_indices.as_mut(),
+            tree_node_indices.as_mut(),
             split_thresholds.as_mut(),
             default_left.as_mut(),
             is_original_leaf.as_mut(),
@@ -228,6 +234,7 @@ impl<D: UnrollDepth> UnrolledTreeLayout<D> {
 
         Self {
             split_indices,
+            tree_node_indices,
             split_thresholds,
             default_left,
             is_original_leaf,
@@ -333,14 +340,16 @@ impl<D: UnrollDepth> UnrolledTreeLayout<D> {
     }
 
     /// Check if category goes right using array-based storage.
-    fn category_goes_right_array(&self, _array_idx: usize, _category: u32) -> bool {
-        // TODO: Implement proper array-based categorical lookup
-        false
+    #[inline]
+    fn category_goes_right_array(&self, array_idx: usize, category: u32) -> bool {
+        debug_assert!(self.has_categorical);
+        let tree_node_idx = self.tree_node_indices.as_ref()[array_idx];
+        self.category_goes_right(tree_node_idx, category)
     }
 
-    /// Traverse the array layout for a single sample using SampleAccessor.
+    /// Traverse the array layout for a single sample.
     #[inline]
-    pub fn traverse_to_exit<S: SampleAccessor + ?Sized>(&self, sample: &S) -> usize {
+    pub fn traverse_to_exit(&self, sample: ArrayView1<'_, f32>) -> usize {
         let mut idx = 0usize;
         let split_indices = self.split_indices.as_ref();
         let split_thresholds = self.split_thresholds.as_ref();
@@ -349,11 +358,12 @@ impl<D: UnrollDepth> UnrolledTreeLayout<D> {
 
         for _ in 0..D::DEPTH {
             let feat_idx = split_indices[idx] as usize;
-            let fvalue = if feat_idx < sample.n_features() {
-                sample.feature(feat_idx)
-            } else {
-                f32::NAN
-            };
+            debug_assert!(
+                feat_idx < sample.len(),
+                "sample has {} features but split needs feature {feat_idx}",
+                sample.len()
+            );
+            let fvalue = sample[feat_idx];
 
             let go_left = if fvalue.is_nan() {
                 default_left[idx]
@@ -371,11 +381,11 @@ impl<D: UnrollDepth> UnrolledTreeLayout<D> {
         idx - nodes_at_depth(D::DEPTH)
     }
 
-    /// Process a block of rows through the array layout using DataAccessor.
+    /// Traverse a block of rows through the array layout.
     ///
-    /// This version works with any DataAccessor but may be slower than
-    /// `process_block` for contiguous data.
-    pub fn traverse_block<A: DataAccessor>(&self, data: &A, exit_indices: &mut [usize]) {
+    /// This uses `SamplesView` (from `Dataset::buffer_samples`) for cache-friendly
+    /// sample-major access.
+    pub fn traverse_block(&self, data: &SamplesView<'_>, exit_indices: &mut [usize]) {
         let split_indices = self.split_indices.as_ref();
         let split_thresholds = self.split_thresholds.as_ref();
         let default_left = self.default_left.as_ref();
@@ -394,12 +404,13 @@ impl<D: UnrollDepth> UnrolledTreeLayout<D> {
                 let array_idx = level_start + *pos;
 
                 let feat_idx = split_indices[array_idx] as usize;
-                let sample = data.sample(row_idx);
-                let fvalue = if feat_idx < sample.n_features() {
-                    sample.feature(feat_idx)
-                } else {
-                    f32::NAN
-                };
+                let sample = data.sample_view(row_idx);
+                debug_assert!(
+                    feat_idx < sample.len(),
+                    "sample has {} features but split needs feature {feat_idx}",
+                    sample.len()
+                );
+                let fvalue = sample[feat_idx];
 
                 let go_left = if fvalue.is_nan() {
                     default_left[array_idx]
@@ -441,6 +452,7 @@ fn populate_recursive<L: LeafValue>(
     level: usize,
     target_depth: usize,
     split_indices: &mut [u32],
+    tree_node_indices: &mut [u32],
     split_thresholds: &mut [f32],
     default_left: &mut [bool],
     is_original_leaf: &mut [bool],
@@ -453,6 +465,9 @@ fn populate_recursive<L: LeafValue>(
         exit_node_idx[exit_idx] = tree_nidx;
         return;
     }
+
+    // Internal node mapping (array_nidx is guaranteed < D::N_NODES here).
+    tree_node_indices[array_nidx] = tree_nidx;
 
     // If this is a leaf in the original tree
     if tree.is_leaf(tree_nidx) {
@@ -474,6 +489,7 @@ fn populate_recursive<L: LeafValue>(
             level + 1,
             target_depth,
             split_indices,
+            tree_node_indices,
             split_thresholds,
             default_left,
             is_original_leaf,
@@ -487,6 +503,7 @@ fn populate_recursive<L: LeafValue>(
             level + 1,
             target_depth,
             split_indices,
+            tree_node_indices,
             split_thresholds,
             default_left,
             is_original_leaf,
@@ -514,6 +531,7 @@ fn populate_recursive<L: LeafValue>(
             level + 1,
             target_depth,
             split_indices,
+            tree_node_indices,
             split_thresholds,
             default_left,
             is_original_leaf,
@@ -527,6 +545,7 @@ fn populate_recursive<L: LeafValue>(
             level + 1,
             target_depth,
             split_indices,
+            tree_node_indices,
             split_thresholds,
             default_left,
             is_original_leaf,
@@ -597,9 +616,8 @@ mod tests {
 
         let layout = UnrolledTreeLayout4::from_tree(&tree);
 
-        // Use SampleAccessor-based traverse_to_exit_sample (slices implement SampleAccessor)
-        let exit_left = layout.traverse_to_exit(&[0.3f32]);
-        let exit_right = layout.traverse_to_exit(&[0.7f32]);
+        let exit_left = layout.traverse_to_exit(ndarray::array![0.3f32].view());
+        let exit_right = layout.traverse_to_exit(ndarray::array![0.7f32].view());
 
         let left_node = layout.exit_node_idx(exit_left);
         let right_node = layout.exit_node_idx(exit_right);
@@ -665,7 +683,7 @@ mod tests {
 
         let layout = UnrolledTreeLayout4::from_tree(&tree);
 
-        let exit_nan = layout.traverse_to_exit(&[f32::NAN]);
+        let exit_nan = layout.traverse_to_exit(ndarray::array![f32::NAN].view());
         let node_idx = layout.exit_node_idx(exit_nan);
         assert_eq!(tree.leaf_value(node_idx).0, 1.0);
     }

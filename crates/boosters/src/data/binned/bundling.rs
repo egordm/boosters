@@ -18,6 +18,7 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 
 use super::feature_analysis::{FeatureAnalysis, GroupSpec, GroupType, GroupingResult};
+use crate::data::{Dataset, Feature};
 
 // =============================================================================
 // BundlingConfig
@@ -87,7 +88,7 @@ struct ConflictGraph {
 impl ConflictGraph {
     /// Build a conflict graph from sampled rows.
     fn build(
-        data: &[Vec<f32>], // Column-major: [feature][sample]
+        dataset: &Dataset,
         sparse_features: &[usize],
         sampled_rows: &[usize],
     ) -> Self {
@@ -106,10 +107,39 @@ impl ConflictGraph {
             .par_iter()
             .map(|&feat_idx| {
                 let mut bits = FixedBitSet::with_capacity(n_sampled);
-                let feature_data = &data[feat_idx];
-                for (row_pos, &row_idx) in sampled_rows.iter().enumerate() {
-                    if feature_data[row_idx] != 0.0 {
-                        bits.insert(row_pos);
+                match dataset.feature(feat_idx) {
+                    Feature::Dense(values) => {
+                        if let Some(slice) = values.as_slice() {
+                            for (row_pos, &row_idx) in sampled_rows.iter().enumerate() {
+                                let v = slice[row_idx];
+                                if v != 0.0 && !v.is_nan() {
+                                    bits.insert(row_pos);
+                                }
+                            }
+                        } else {
+                            for (row_pos, &row_idx) in sampled_rows.iter().enumerate() {
+                                let v = values[row_idx];
+                                if v != 0.0 && !v.is_nan() {
+                                    bits.insert(row_pos);
+                                }
+                            }
+                        }
+                    }
+                    Feature::Sparse { indices, values, .. } => {
+                        // Two-pointer scan: both `sampled_rows` and `indices` are sorted.
+                        let mut p = 0usize;
+                        for (row_pos, &row_idx) in sampled_rows.iter().enumerate() {
+                            let row_u32 = row_idx as u32;
+                            while p < indices.len() && indices[p] < row_u32 {
+                                p += 1;
+                            }
+                            if p < indices.len() && indices[p] == row_u32 {
+                                let v = values[p];
+                                if v != 0.0 && !v.is_nan() {
+                                    bits.insert(row_pos);
+                                }
+                            }
+                        }
                     }
                 }
                 bits
@@ -361,7 +391,7 @@ pub struct BundlePlan {
 /// A `BundlePlan` describing which features should be bundled.
 pub fn create_bundle_plan(
     analyses: &[FeatureAnalysis],
-    data: &[Vec<f32>],
+    dataset: &Dataset,
     config: &BundlingConfig,
 ) -> BundlePlan {
     // Identify sparse categorical features
@@ -410,12 +440,12 @@ pub fn create_bundle_plan(
         .collect();
 
     // Sample rows for conflict detection
-    let n_samples = data.get(0).map(|v| v.len()).unwrap_or(0);
+    let n_samples = dataset.n_samples();
     let sampled_rows = sample_rows(n_samples, config.max_sample_rows, config.seed);
     let n_sampled = sampled_rows.len();
 
     // Build conflict graph
-    let conflict_graph = ConflictGraph::build(data, &sparse_original, &sampled_rows);
+    let conflict_graph = ConflictGraph::build(dataset, &sparse_original, &sampled_rows);
 
     // Check for high conflict rate
     if conflict_graph.conflict_rate() > 0.5 {
@@ -501,6 +531,7 @@ pub fn apply_bundling(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ndarray::{array, Array2};
 
     fn make_analysis(idx: usize, is_numeric: bool, density: f32) -> FeatureAnalysis {
         FeatureAnalysis {
@@ -557,10 +588,11 @@ mod tests {
         let analyses = vec![
             make_analysis(0, false, 0.05), // Only one sparse categorical
         ];
-        let data = vec![vec![0.0; 100]];
+        let features = Array2::from_shape_vec((1, 100), vec![0.0; 100]).unwrap();
+        let dataset = Dataset::from_array(features.view(), None, None);
         let config = BundlingConfig::default();
 
-        let plan = create_bundle_plan(&analyses, &data, &config);
+        let plan = create_bundle_plan(&analyses, &dataset, &config);
 
         assert!(plan.skipped);
         assert_eq!(plan.bundles.len(), 0);
@@ -585,10 +617,12 @@ mod tests {
             data1[i] = 1.0;
         }
 
-        let data = vec![data0, data1];
+        let flat: Vec<f32> = data0.into_iter().chain(data1).collect();
+        let features = Array2::from_shape_vec((2, 100), flat).unwrap();
+        let dataset = Dataset::from_array(features.view(), None, None);
         let config = BundlingConfig::default();
 
-        let plan = create_bundle_plan(&analyses, &data, &config);
+        let plan = create_bundle_plan(&analyses, &dataset, &config);
 
         assert!(!plan.skipped);
         assert_eq!(plan.bundles.len(), 1);
@@ -598,14 +632,15 @@ mod tests {
     #[test]
     fn test_conflict_graph_no_conflicts() {
         // Two features with no overlap
-        let data = vec![
-            vec![1.0, 0.0, 0.0, 0.0],
-            vec![0.0, 0.0, 1.0, 0.0],
-        ];
+        let dataset = Dataset::from_array(
+            array![[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]].view(),
+            None,
+            None,
+        );
         let sparse_features = vec![0, 1];
         let sampled_rows: Vec<usize> = (0..4).collect();
 
-        let graph = ConflictGraph::build(&data, &sparse_features, &sampled_rows);
+        let graph = ConflictGraph::build(&dataset, &sparse_features, &sampled_rows);
 
         assert_eq!(graph.get_conflict(0, 1), 0);
         assert_eq!(graph.conflict_pair_count(), 0);
@@ -614,14 +649,15 @@ mod tests {
     #[test]
     fn test_conflict_graph_with_conflicts() {
         // Two features with overlap at row 0
-        let data = vec![
-            vec![1.0, 0.0, 0.0, 0.0],
-            vec![1.0, 0.0, 0.0, 0.0], // Both non-zero at row 0
-        ];
+        let dataset = Dataset::from_array(
+            array![[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]].view(),
+            None,
+            None,
+        );
         let sparse_features = vec![0, 1];
         let sampled_rows: Vec<usize> = (0..4).collect();
 
-        let graph = ConflictGraph::build(&data, &sparse_features, &sampled_rows);
+        let graph = ConflictGraph::build(&dataset, &sparse_features, &sampled_rows);
 
         assert_eq!(graph.get_conflict(0, 1), 1);
         assert_eq!(graph.conflict_pair_count(), 1);

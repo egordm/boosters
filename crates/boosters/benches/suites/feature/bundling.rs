@@ -13,7 +13,7 @@ mod common;
 use common::criterion_config::default_criterion;
 
 use boosters::Parallelism;
-use boosters::data::binned::BinnedDatasetBuilder;
+use boosters::data::binned::BinnedDataset;
 use boosters::data::{BinningConfig, transpose_to_c_order};
 use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
@@ -144,20 +144,25 @@ fn bench_boosters_binning(c: &mut Criterion) {
         let sample_major_view =
             ArrayView2::from_shape((config.rows, n_features), &features).unwrap();
         let features_fm = transpose_to_c_order(sample_major_view);
-        let features_dataset = Dataset::new(features_fm.view(), None, None);
+        let features_dataset = Dataset::from_array(features_fm.view(), None, None);
+
+        let binning_config_no_bundling = BinningConfig::builder()
+            .max_bins(256)
+            .enable_bundling(false)
+            .build();
+        let binning_config_with_bundling = BinningConfig::builder()
+            .max_bins(256)
+            .enable_bundling(true)
+            .build();
 
         // Benchmark WITHOUT bundling
         group.bench_function(BenchmarkId::new("no_bundling", config.name), |b| {
             b.iter(|| {
                 black_box(
-                    BinnedDatasetBuilder::with_config(
-                        BinningConfig::builder()
-                            .max_bins(256)
-                            .enable_bundling(false)
-                            .build(),
+                    BinnedDataset::from_dataset(
+                        black_box(&features_dataset),
+                        &binning_config_no_bundling,
                     )
-                    .add_features(features_dataset.features(), Parallelism::Parallel)
-                    .build()
                     .unwrap(),
                 )
             })
@@ -167,14 +172,10 @@ fn bench_boosters_binning(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("with_bundling", config.name), |b| {
             b.iter(|| {
                 black_box(
-                    BinnedDatasetBuilder::with_config(
-                        BinningConfig::builder()
-                            .max_bins(256)
-                            .enable_bundling(true)
-                            .build(),
+                    BinnedDataset::from_dataset(
+                        black_box(&features_dataset),
+                        &binning_config_with_bundling,
                     )
-                    .add_features(features_dataset.features(), Parallelism::Parallel)
-                    .build()
                     .unwrap(),
                 )
             })
@@ -224,27 +225,25 @@ fn bench_boosters_training(c: &mut Criterion) {
         let sample_major_view =
             ArrayView2::from_shape((config.rows, n_features), &features).unwrap();
         let features_fm = transpose_to_c_order(sample_major_view);
-        let features_dataset = Dataset::new(features_fm.view(), None, None);
+        let features_dataset = Dataset::from_array(features_fm.view(), None, None);
+
+        let binning_config_no_bundling = BinningConfig::builder()
+            .max_bins(256)
+            .enable_bundling(false)
+            .build();
+        let binning_config_with_bundling = BinningConfig::builder()
+            .max_bins(256)
+            .enable_bundling(true)
+            .build();
 
         // Pre-build binned datasets with different bundling settings
-        let binned_no_bundling = BinnedDatasetBuilder::with_config(
-            BinningConfig::builder()
-                .max_bins(256)
-                .enable_bundling(false)
-                .build(),
-        )
-        .add_features(features_dataset.features(), Parallelism::Parallel)
-        .build()
-        .unwrap();
+        let binned_no_bundling =
+            BinnedDataset::from_dataset(&features_dataset, &binning_config_no_bundling).unwrap();
 
-        let binned_with_bundling = BinnedDatasetBuilder::with_config(
-            BinningConfig::builder()
-                .max_bins(256)
-                .enable_bundling(true)
-                .build(),
+        let binned_with_bundling = BinnedDataset::from_dataset(
+            &features_dataset,
+            &binning_config_with_bundling,
         )
-        .add_features(features_dataset.features(), Parallelism::Parallel)
-        .build()
         .unwrap();
 
         // Convert targets to 2D

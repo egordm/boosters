@@ -97,7 +97,8 @@ fn assert_preds_match(actual: &[f32], expected: &[f64], tolerance: f64, context:
 fn predict_row(forest: &Forest, features: &[f32]) -> Vec<f32> {
     let predictor = SimplePredictor::new(forest);
     let mut output = vec![0.0; predictor.n_groups()];
-    predictor.predict_row_into(features, None, &mut output);
+    let sample = ndarray::ArrayView1::from(features);
+    predictor.predict_row_into(sample, None, &mut output);
     output
 }
 

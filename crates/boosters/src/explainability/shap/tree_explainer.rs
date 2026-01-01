@@ -3,7 +3,10 @@
 //! Implements the TreeSHAP algorithm from Lundberg et al. (2020):
 //! "From local explanations to global understanding with explainable AI for trees"
 
-use crate::data::FeaturesView;
+use ndarray::{Array2, ArrayView1, ArrayViewMut3, Axis};
+
+use crate::Parallelism;
+use crate::data::{Dataset, SamplesView};
 use crate::explainability::ExplainError;
 use crate::explainability::shap::{PathState, ShapValues};
 use crate::repr::gbdt::TreeView;
@@ -17,7 +20,14 @@ pub struct TreeExplainer<'a> {
     forest: &'a Forest<ScalarLeaf>,
     /// Background base value (mean prediction)
     base_value: f64,
+    /// Block size for sample buffering
+    block_size: usize,
+    /// Maximum tree depth (for PathState allocation)
+    max_depth: usize,
 }
+
+/// Default block size for SHAP computation (matches predictor).
+const DEFAULT_BLOCK_SIZE: usize = 64;
 
 impl<'a> TreeExplainer<'a> {
     /// Create a new TreeExplainer for the given forest.
@@ -41,7 +51,19 @@ impl<'a> TreeExplainer<'a> {
         // Compute base value as mean of tree predictions weighted by covers
         let base_value = Self::compute_base_value(forest);
 
-        Ok(Self { forest, base_value })
+        // Compute max depth for PathState allocation
+        let max_depth = forest
+            .trees()
+            .map(|t| tree_depth(t, 0))
+            .max()
+            .unwrap_or(10);
+
+        Ok(Self {
+            forest,
+            base_value,
+            block_size: DEFAULT_BLOCK_SIZE,
+            max_depth,
+        })
     }
 
     /// Compute the base value (expected prediction) from tree structure.
@@ -61,31 +83,26 @@ impl<'a> TreeExplainer<'a> {
         self.base_value
     }
 
+    /// Number of output groups.
+    pub fn n_groups(&self) -> usize {
+        self.forest.n_groups() as usize
+    }
+
     /// Compute SHAP values for a batch of samples.
     ///
     /// # Arguments
-    /// * `features` - Feature matrix with shape `[n_features, n_samples]` (feature-major layout)
+    /// * `dataset` - Dataset containing features (targets are ignored)
+    /// * `parallelism` - Whether to use parallel execution
     ///
     /// # Returns
     /// ShapValues container with shape `[n_samples, n_features + 1, n_outputs]`.
-    pub fn shap_values(&self, features: FeaturesView<'_>) -> ShapValues {
-        let n_samples = features.n_samples();
-        let n_features = features.n_features();
-        let n_outputs = self.forest.n_groups() as usize;
+    pub fn shap_values(&self, dataset: &Dataset, parallelism: Parallelism) -> ShapValues {
+        let n_samples = dataset.n_samples();
+        let n_features = dataset.n_features();
+        let n_outputs = self.n_groups();
         let mut shap = ShapValues::zeros(n_samples, n_features, n_outputs);
 
-        // Compute max depth for PathState allocation
-        let max_depth = self
-            .forest
-            .trees()
-            .map(|t| tree_depth(t, 0))
-            .max()
-            .unwrap_or(10);
-
-        // Process each sample - access feature values directly from FeaturesView
-        for sample_idx in 0..n_samples {
-            self.shap_for_sample(&mut shap, sample_idx, &features, max_depth);
-        }
+        self.shap_values_into(dataset, parallelism, &mut shap);
 
         // Set base values
         for sample_idx in 0..n_samples {
@@ -97,32 +114,95 @@ impl<'a> TreeExplainer<'a> {
         shap
     }
 
-    /// Compute SHAP values for a single sample.
-    fn shap_for_sample(
+    /// Compute SHAP values into provided buffer.
+    ///
+    /// # Arguments
+    /// * `dataset` - Dataset containing feature-major data `[n_features, n_samples]`
+    /// * `parallelism` - Whether to use parallel execution
+    /// * `output` - Output ShapValues container (must be pre-allocated with correct shape)
+    pub fn shap_values_into(
         &self,
-        shap: &mut ShapValues,
-        sample_idx: usize,
-        features: &FeaturesView<'_>,
-        max_depth: usize,
+        dataset: &Dataset,
+        parallelism: Parallelism,
+        output: &mut ShapValues,
     ) {
-        let mut path = PathState::new(max_depth);
+        let n_features = dataset.n_features();
+        let n_samples = dataset.n_samples();
+        let block_size = self.block_size;
 
-        for (tree_idx, tree) in self.forest.trees().enumerate() {
-            let group = self.forest.tree_groups()[tree_idx] as usize;
-            path.reset();
-            self.tree_shap(shap, sample_idx, group, tree, features, &mut path, 0);
+        if n_samples == 0 {
+            return;
+        }
+
+        // Process output chunks in parallel with per-thread buffer reuse
+        // Output is [n_samples, n_features+1, n_outputs], chunk along axis 0 (samples)
+        let mut output_array = output.as_array_mut();
+        let output_chunks = output_array.axis_chunks_iter_mut(Axis(0), block_size);
+
+        parallelism.maybe_par_bridge_for_each_init(
+            output_chunks.enumerate(),
+            || {
+                (
+                    Array2::<f32>::zeros((block_size, n_features)),
+                    PathState::new(self.max_depth),
+                )
+            },
+            |(buffer, path_state), (block_idx, output_chunk)| {
+                let start_sample = block_idx * block_size;
+
+                // Fill buffer with samples from dataset
+                let samples = dataset.buffer_samples(buffer, start_sample);
+
+                // Process block into output chunk
+                self.shap_values_block_into(samples, path_state, output_chunk);
+            },
+        );
+    }
+
+    /// Internal: compute SHAP values for a block of samples.
+    fn shap_values_block_into(
+        &self,
+        samples: SamplesView<'_>,
+        path_state: &mut PathState,
+        mut output: ArrayViewMut3<f32>,
+    ) {
+        let n_samples = samples.n_samples();
+
+        for local_idx in 0..n_samples {
+            let sample = samples.sample_view(local_idx);
+
+            // Get mutable slice for this sample: [n_features+1, n_outputs]
+            let mut sample_output = output.slice_mut(ndarray::s![local_idx, .., ..]);
+
+            for (tree_idx, tree) in self.forest.trees().enumerate() {
+                let group = self.forest.tree_groups()[tree_idx] as usize;
+                // Get mutable column for this output group: [n_features+1]
+                let mut group_output = sample_output.slice_mut(ndarray::s![.., group]);
+                path_state.reset();
+                self.tree_shap(
+                    &mut group_output,
+                    tree,
+                    sample,
+                    path_state,
+                    0,
+                );
+            }
         }
     }
 
     /// Recursive TreeSHAP algorithm for a single tree.
-    #[allow(clippy::too_many_arguments)]
+    ///
+    /// # Arguments
+    /// * `output` - Mutable view for this sample and group: `[n_features+1]`
+    /// * `tree` - Tree to traverse
+    /// * `sample` - Feature values for this sample
+    /// * `path` - PathState for tracking SHAP path
+    /// * `node` - Current node index
     fn tree_shap(
         &self,
-        shap: &mut ShapValues,
-        sample_idx: usize,
-        group: usize,
+        output: &mut ndarray::ArrayViewMut1<f32>,
         tree: &Tree<ScalarLeaf>,
-        features: &FeaturesView<'_>,
+        sample: ArrayView1<f32>,
         path: &mut PathState,
         node: u32,
     ) {
@@ -131,7 +211,7 @@ impl<'a> TreeExplainer<'a> {
         if tree.is_leaf(node) {
             // At a leaf: compute contributions for all features in path
             let leaf_value = tree.leaf_value(node).0 as f64;
-            self.compute_contributions(shap, sample_idx, group, path, leaf_value);
+            self.compute_contributions(output, path, leaf_value);
             return;
         }
 
@@ -148,9 +228,8 @@ impl<'a> TreeExplainer<'a> {
         let total_cover = left_cover + right_cover;
 
         // Determine hot/cold paths based on feature value
-        // Access directly from FeaturesView: get(sample_idx, feature_idx)
-        let fvalue = if feature < features.n_features() {
-            features.get(sample_idx, feature)
+        let fvalue = if feature < sample.len() {
+            sample[feature]
         } else {
             f32::NAN
         };
@@ -172,9 +251,9 @@ impl<'a> TreeExplainer<'a> {
         // Recurse down hot path (the way the sample goes)
         path.extend(feature as i32, zero_fraction, one_fraction);
         if go_left {
-            self.tree_shap(shap, sample_idx, group, tree, features, path, left);
+            self.tree_shap(output, tree, sample, path, left);
         } else {
-            self.tree_shap(shap, sample_idx, group, tree, features, path, right);
+            self.tree_shap(output, tree, sample, path, right);
         }
         path.unwind();
 
@@ -182,9 +261,9 @@ impl<'a> TreeExplainer<'a> {
         let cold_zero_fraction = cold_cover / total_cover;
         path.extend(feature as i32, cold_zero_fraction, 0.0);
         if go_left {
-            self.tree_shap(shap, sample_idx, group, tree, features, path, right);
+            self.tree_shap(output, tree, sample, path, right);
         } else {
-            self.tree_shap(shap, sample_idx, group, tree, features, path, left);
+            self.tree_shap(output, tree, sample, path, left);
         }
         path.unwind();
     }
@@ -192,18 +271,18 @@ impl<'a> TreeExplainer<'a> {
     /// Compute feature contributions at a leaf node.
     fn compute_contributions(
         &self,
-        shap: &mut ShapValues,
-        sample_idx: usize,
-        group: usize,
+        output: &mut ndarray::ArrayViewMut1<f32>,
         path: &PathState,
         leaf_value: f64,
     ) {
+        let n_features = output.len() - 1; // Exclude base value slot
+
         // For each feature in the path, compute its contribution
         for i in 0..path.depth() {
             let feature = path.feature(i);
-            if feature >= 0 {
-                let contribution = leaf_value * path.unwound_sum(i);
-                shap.add(sample_idx, feature as usize, group, contribution);
+            if feature >= 0 && (feature as usize) < n_features {
+                let contribution = (leaf_value * path.unwound_sum(i)) as f32;
+                output[feature as usize] += contribution;
             }
         }
     }
@@ -284,9 +363,9 @@ mod tests {
             [0.5, 0.3],    // feature 1 for samples 0, 1
             [0.7, 0.1],    // feature 2 for samples 0, 1
         ];
-        let view = FeaturesView::from_array(data.view());
+        let dataset = Dataset::from_array(data.view(), None, None);
 
-        let shap = explainer.shap_values(view);
+        let shap = explainer.shap_values(&dataset, Parallelism::Sequential);
 
         assert_eq!(shap.n_samples(), 2);
         assert_eq!(shap.n_features(), 3);
@@ -301,8 +380,8 @@ mod tests {
         // Single sample, goes left (feature 0 = 0.3 < 0.5)
         // Feature-major: [n_features=3, n_samples=1]
         let data = ndarray::array![[0.3f32], [0.5], [0.7]]; // f0, f1, f2 for one sample
-        let view = FeaturesView::from_array(data.view());
-        let shap = explainer.shap_values(view);
+        let dataset = Dataset::from_array(data.view(), None, None);
+        let shap = explainer.shap_values(&dataset, Parallelism::Sequential);
 
         // Sum SHAP values + base should equal prediction (-1.0)
         let sum: f32 = (0..3).map(|f| shap.get(0, f, 0)).sum();

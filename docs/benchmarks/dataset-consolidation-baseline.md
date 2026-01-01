@@ -5,6 +5,10 @@
 **Machine**: Apple M1 (local development)  
 **Rust**: stable (2024 edition)
 
+> NOTE: This report predates RFC-0021 landing.
+> Today, `Dataset` owns raw feature values and `BinnedDataset` is bins-only/internal.
+> Any discussion of “raw access from BinnedDataset” in this document is historical context.
+
 ## Overview
 
 This document captures baseline performance measurements for the Dataset consolidation effort.

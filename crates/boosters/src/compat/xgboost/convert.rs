@@ -1,7 +1,6 @@
 //! Conversion from XGBoost JSON types to native boosters types.
 
 use ndarray::Array2;
-
 use crate::repr::gbdt::{Forest, MutableTree, ScalarLeaf, Tree, categories_to_bitset};
 use crate::repr::gblinear::LinearModel;
 
@@ -431,10 +430,11 @@ mod tests {
         let forest = model.to_forest().expect("Conversion failed");
 
         // Simple smoke test: predict on dummy features
-        let features = vec![0.5; 5]; // 5 features
+        let features = vec![0.5f32; 5]; // 5 features
         let predictor = SimplePredictor::new(&forest);
         let mut predictions = vec![0.0f32; predictor.n_groups()];
-        predictor.predict_row_into(&features, None, &mut predictions);
+        let sample = ndarray::ArrayView1::from(features.as_slice());
+        predictor.predict_row_into(sample, None, &mut predictions);
 
         assert_eq!(predictions.len(), 1);
         // The prediction should be a finite number

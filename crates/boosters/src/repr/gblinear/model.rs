@@ -2,7 +2,7 @@
 
 use ndarray::{Array2, ArrayView1, ArrayViewMut2, s};
 
-use crate::data::FeaturesView;
+use crate::data::Dataset;
 
 /// Linear booster model (weights + bias).
 ///
@@ -172,13 +172,13 @@ impl LinearModel {
     ///
     /// # Arguments
     ///
-    /// * `features` - Feature matrix with shape `[n_features, n_samples]` (feature-major)
-    pub fn predict(&self, features: FeaturesView<'_>) -> Array2<f32> {
-        let n_samples = features.n_samples();
+    /// * `dataset` - Dataset containing features (targets are ignored)
+    pub fn predict(&self, dataset: &Dataset) -> Array2<f32> {
+        let n_samples = dataset.n_samples();
         let n_groups = self.n_groups();
 
         let mut output = Array2::zeros((n_groups, n_samples));
-        self.predict_into(features, output.view_mut());
+        self.predict_into(dataset, output.view_mut());
         output
     }
 
@@ -188,19 +188,19 @@ impl LinearModel {
     ///
     /// # Arguments
     ///
-    /// * `features` - Feature matrix with shape `[n_features, n_samples]` (feature-major)
+    /// * `dataset` - Dataset containing features (targets are ignored)
     /// * `output` - Mutable view with shape `[n_groups, n_samples]` to write predictions into
-    pub fn predict_into(&self, features: FeaturesView<'_>, mut output: ArrayViewMut2<'_, f32>) {
-        let n_samples = features.n_samples();
+    pub fn predict_into(&self, dataset: &Dataset, mut output: ArrayViewMut2<'_, f32>) {
+        let n_samples = dataset.n_samples();
         let n_groups = self.n_groups();
         let n_features = self.n_features();
 
         debug_assert_eq!(output.dim(), (n_groups, n_samples));
         debug_assert_eq!(
-            features.n_features(),
+            dataset.n_features(),
             n_features,
-            "features has {} features but model expects {}",
-            features.n_features(),
+            "dataset has {} features but model expects {}",
+            dataset.n_features(),
             n_features
         );
 
@@ -211,12 +211,11 @@ impl LinearModel {
 
         // Add weighted features - iterate over features (rows in feature-major)
         for feat_idx in 0..n_features {
-            let feature_values = features.feature(feat_idx);
-            for (sample_idx, &value) in feature_values.iter().enumerate() {
+            dataset.for_each_feature_value(feat_idx, |sample_idx, value| {
                 for group in 0..n_groups {
                     output[[group, sample_idx]] += value * self.weight(feat_idx, group);
                 }
-            }
+            });
         }
     }
 
@@ -249,6 +248,8 @@ impl LinearModel {
 mod tests {
     use super::*;
     use ndarray::{Array2, array};
+
+    use crate::data::Dataset;
 
     #[test]
     fn linear_model_new() {
@@ -378,9 +379,9 @@ mod tests {
             [2.0, 1.0], // feature 0
             [3.0, 1.0], // feature 1
         ];
-        let view = FeaturesView::from_array(features.view());
+        let dataset = Dataset::from_array(features.view(), None, None);
 
-        let output = model.predict(view);
+        let output = model.predict(&dataset);
 
         // Output: [n_groups=1, n_samples=2]
         assert_eq!(output.dim(), (1, 2));
@@ -405,8 +406,8 @@ mod tests {
             [1.0], // feature 0
             [1.0], // feature 1
         ];
-        let view = FeaturesView::from_array(features.view());
-        let output = model.predict(view);
+        let dataset = Dataset::from_array(features.view(), None, None);
+        let output = model.predict(&dataset);
 
         // Output: [n_groups=2, n_samples=1]
         assert_eq!(output.dim(), (2, 1));
@@ -428,10 +429,10 @@ mod tests {
             [2.0, 1.0], // feature 0
             [3.0, 1.0], // feature 1
         ];
-        let view = FeaturesView::from_array(features.view());
+        let dataset = Dataset::from_array(features.view(), None, None);
 
         let mut output = Array2::<f32>::zeros((1, 2)); // [n_groups=1, n_samples=2]
-        model.predict_into(view, output.view_mut());
+        model.predict_into(&dataset, output.view_mut());
 
         assert_eq!(output.dim(), (1, 2));
         assert!((output[[0, 0]] - 2.0).abs() < 1e-6);
@@ -455,9 +456,9 @@ mod tests {
             [1.0, 3.0], // feature 0
             [2.0, 4.0], // feature 1
         ];
-        let view = FeaturesView::from_array(feature_major.view());
+        let dataset = Dataset::from_array(feature_major.view(), None, None);
 
-        let output = model.predict(view);
+        let output = model.predict(&dataset);
 
         // Output: [n_groups=2, n_samples=2]
         assert_eq!(output.dim(), (2, 2));

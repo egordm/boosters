@@ -107,38 +107,6 @@ impl Feature {
         }
     }
 
-    /// Get sparse components (returns None for dense).
-    pub fn as_sparse(&self) -> Option<(&[u32], &[f32], f32)> {
-        match self {
-            Feature::Dense(_) => None,
-            Feature::Sparse {
-                indices,
-                values,
-                default,
-                ..
-            } => Some((indices.as_slice(), values.as_slice(), *default)),
-        }
-    }
-
-    /// Convert to dense array, expanding sparse if necessary.
-    pub fn to_dense(&self) -> Array1<f32> {
-        match self {
-            Feature::Dense(arr) => arr.clone(),
-            Feature::Sparse {
-                indices,
-                values,
-                n_samples,
-                default,
-            } => {
-                let mut arr = Array1::from_elem(*n_samples, *default);
-                for (&idx, &val) in indices.iter().zip(values) {
-                    arr[idx as usize] = val;
-                }
-                arr
-            }
-        }
-    }
-
     /// Number of non-default values (for sparse) or total samples (for dense).
     pub fn nnz(&self) -> usize {
         match self {
@@ -197,18 +165,6 @@ impl Feature {
     }
 }
 
-// =============================================================================
-// Legacy compatibility aliases
-// =============================================================================
-
-/// Alias for backward compatibility during migration.
-#[deprecated(note = "Use Feature instead of Column")]
-pub type Column = Feature;
-
-/// Alias for backward compatibility during migration.
-#[deprecated(note = "Use Feature::Sparse instead of SparseColumn")]
-pub struct SparseColumn;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,13 +193,6 @@ mod tests {
         assert_eq!(feat.get(3), 30.0);
         assert_eq!(feat.get(4), 0.0); // default
         assert!(feat.as_slice().is_none());
-    }
-
-    #[test]
-    fn feature_sparse_to_dense() {
-        let sparse = Feature::sparse(vec![1, 3], vec![10.0, 30.0], 5, 0.0);
-        let dense = sparse.to_dense();
-        assert_eq!(dense.as_slice().unwrap(), &[0.0, 10.0, 0.0, 30.0, 0.0]);
     }
 
     #[test]
@@ -276,27 +225,6 @@ mod tests {
         // Out of bounds
         let sparse = Feature::sparse(vec![0, 15], vec![1.0, 2.0], 10, 0.0);
         assert!(sparse.validate().is_err());
-    }
-
-    #[test]
-    fn feature_to_dense() {
-        let feat = Feature::dense(array![1.0, 2.0]);
-        assert_eq!(feat.to_dense(), array![1.0, 2.0]);
-
-        let feat = Feature::sparse(vec![0], vec![5.0], 3, 0.0);
-        assert_eq!(feat.to_dense(), array![5.0, 0.0, 0.0]);
-    }
-
-    #[test]
-    fn feature_as_sparse() {
-        let dense = Feature::dense(array![1.0]);
-        assert!(dense.as_sparse().is_none());
-
-        let sparse = Feature::sparse(vec![0, 2], vec![1.0, 2.0], 5, 0.5);
-        let (indices, values, default) = sparse.as_sparse().unwrap();
-        assert_eq!(indices, &[0, 2]);
-        assert_eq!(values, &[1.0, 2.0]);
-        assert_eq!(default, 0.5);
     }
 
     // Verify Send + Sync

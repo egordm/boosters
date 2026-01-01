@@ -17,12 +17,10 @@
 //! cargo run --example train_classification
 //! ```
 
-use boosters::data::BinningConfig;
-use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::data::{Dataset, TargetsView, WeightsView};
+use boosters::data::Dataset;
 use boosters::training::GrowthStrategy;
-use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism};
-use ndarray::{Array1, Array2, ArrayView1};
+use boosters::{GBDTConfig, GBDTModel, Metric, Objective};
+use ndarray::{Array1, Array2};
 
 fn main() {
     // =========================================================================
@@ -53,14 +51,9 @@ fn main() {
         labels[i] = class;
     }
 
-    // Create binned dataset for training
-    let features_dataset = Dataset::new(features.view(), None, None);
-
-    // Create binned dataset
-    let dataset = BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
-        .add_features(features_dataset.features(), Parallelism::Parallel)
-        .build()
-        .expect("Failed to build binned dataset");
+    // Wrap labels in targets array (shape [n_outputs=1, n_samples])
+    let targets_2d = labels.clone().insert_axis(ndarray::Axis(0));
+    let dataset = Dataset::from_array(features.view(), Some(targets_2d.clone()), None);
 
     // =========================================================================
     // Train with depth-wise growth (XGBoost style)
@@ -77,16 +70,9 @@ fn main() {
         .build()
         .expect("Invalid configuration");
 
-    // Wrap labels in TargetsView (shape [n_outputs=1, n_samples])
-    let targets_2d = labels.clone().insert_axis(ndarray::Axis(0));
-    let targets = TargetsView::new(targets_2d.view());
+    let model_depth = GBDTModel::train(&dataset, None, config_depth, 1).expect("Training failed");
 
-    let model_depth =
-        GBDTModel::train_binned(&dataset, targets, WeightsView::None, &[], config_depth, 1)
-            .expect("Training failed");
-
-    // Predict: features_dataset is already feature-major
-    let predictions = model_depth.predict(&features_dataset, 1);
+    let predictions = model_depth.predict(&dataset, 1);
 
     let acc = compute_accuracy(predictions.as_slice().unwrap(), labels.as_slice().unwrap());
     println!("Depth-wise: {} trees", model_depth.forest().n_trees());
@@ -107,11 +93,9 @@ fn main() {
         .build()
         .expect("Invalid configuration");
 
-    let model_leaf =
-        GBDTModel::train_binned(&dataset, targets, WeightsView::None, &[], config_leaf, 1)
-            .expect("Training failed");
+    let model_leaf = GBDTModel::train(&dataset, None, config_leaf, 1).expect("Training failed");
 
-    let predictions = model_leaf.predict(&features_dataset, 1);
+    let predictions = model_leaf.predict(&dataset, 1);
 
     let acc = compute_accuracy(predictions.as_slice().unwrap(), labels.as_slice().unwrap());
     println!("Leaf-wise: {} trees", model_leaf.forest().n_trees());
@@ -146,17 +130,15 @@ fn main() {
         .build()
         .expect("Invalid configuration");
 
-    let model_weighted = GBDTModel::train_binned(
-        &dataset,
-        targets,
-        WeightsView::from_array(ArrayView1::from(&weights[..])),
-        None,
-        config_weighted,
-        1,
-    )
-    .expect("Training failed");
+    let dataset_weighted = Dataset::from_array(
+        features.view(),
+        Some(targets_2d),
+        Some(Array1::from_vec(weights)),
+    );
+    let model_weighted =
+        GBDTModel::train(&dataset_weighted, None, config_weighted, 1).expect("Training failed");
 
-    let predictions = model_weighted.predict(&features_dataset, 1);
+    let predictions = model_weighted.predict(&dataset_weighted, 1);
 
     let acc = compute_accuracy(predictions.as_slice().unwrap(), labels.as_slice().unwrap());
     println!(

@@ -11,7 +11,7 @@ mod common;
 use common::criterion_config::default_criterion;
 
 use boosters::Parallelism;
-use boosters::data::{TargetsView, WeightsView};
+use boosters::data::{BinnedDataset, BinningConfig, WeightsView};
 use boosters::testing::synthetic_datasets::synthetic_regression;
 use boosters::training::{
     GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, RowSamplingParams, SquaredLoss,
@@ -37,8 +37,9 @@ fn bench_sampling_strategies(c: &mut Criterion) {
 
     let (rows, cols) = DATASET;
     let dataset = synthetic_regression(rows, cols, 42, 0.05);
-    let binned = dataset.to_binned(256);
-    let targets = TargetsView::new(dataset.targets.view().insert_axis(ndarray::Axis(0)));
+    let config = BinningConfig::builder().max_bins(256).build();
+    let binned = BinnedDataset::from_dataset(&dataset, &config).unwrap();
+    let targets = dataset.targets().expect("synthetic datasets have targets");
 
     group.throughput(Throughput::Elements((rows * cols) as u64));
 
@@ -75,6 +76,7 @@ fn bench_sampling_strategies(c: &mut Criterion) {
                 black_box(
                     trainer
                         .train(
+                            black_box(&dataset),
                             black_box(&binned),
                             black_box(targets),
                             WeightsView::None,

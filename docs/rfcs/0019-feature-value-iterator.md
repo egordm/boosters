@@ -13,8 +13,8 @@ Several components need efficient per-feature iteration over raw values:
 - **GBLinear** (training and prediction): iterate all samples for each feature
 - **Linear SHAP**: same pattern as GBLinear prediction
 - **Linear tree fitting**: iterate a *subset* of samples (leaf rows) for each feature
-- **Tree SHAP**: per-sample access across features—uses `SampleBlocks`
-- **GBDT prediction**: per-sample batches—uses `SampleBlocks`
+- **Tree SHAP**: per-sample access across features—uses `buffer_samples()`
+- **GBDT prediction**: per-sample batches—uses `buffer_samples()`
 
 ### Key Design Decision: Methods Live on Dataset
 
@@ -37,8 +37,8 @@ belong on `Dataset`, not `BinnedDataset`.
 | GBLinear prediction | all samples, per feature       | `FeaturesView::feature(f)`              | `Dataset::for_each_feature_value()` |
 | Linear SHAP         | all samples, per feature       | `FeaturesView::feature(f)[i]`           | `Dataset::for_each_feature_value()` |
 | Linear tree fitting | subset of samples, per feature | `DataAccessor::sample(row).feature(f)`  | `Dataset::gather_feature_values()` |
-| Tree SHAP           | per-sample, all features       | `FeaturesView::get(sample, feat)`       | `Dataset::SampleBlocks` |
-| GBDT prediction     | per-sample batches             | `SampleBlocks` (on BinnedDataset)       | `Dataset::SampleBlocks` |
+| Tree SHAP           | per-sample, all features       | `FeaturesView::get(sample, feat)`       | `Dataset::buffer_samples()` + caller loop |
+| GBDT prediction     | per-sample batches             | `SampleBlocks` (on BinnedDataset)       | `Dataset::buffer_samples()` + caller loop |
 
 ### Key Design Decisions
 
@@ -57,16 +57,40 @@ dataset.gather_feature_values(feat_idx, &sample_indices, &mut buffer);
 // buffer now contains values for only the specified samples
 ```
 
-**3. `SampleBlocks` on Dataset** (Tree SHAP, GBDT prediction):
+**3. `buffer_samples()` on Dataset** (Tree SHAP, GBDT prediction):
+
+Instead of a dedicated `SampleBlocks` iterator type, callers manage their own sample-major
+buffers and use `Parallelism::maybe_par_for_each_init` for parallel processing with
+per-thread buffer reuse:
 
 ```rust
-// SampleBlocks ported from BinnedDataset to Dataset
-for block in SampleBlocks::new(dataset, sample_indices) {
-    for sample in block.iter() {
-        let value = sample.feature(feat_idx);
-    }
-}
+// Caller allocates buffer once per thread via for_each_init
+let n_blocks = (n_samples + block_size - 1) / block_size;
+
+parallelism.maybe_par_for_each_init(
+    0..n_blocks,
+    // Init: create buffer once per thread
+    || Array2::<f32>::zeros((block_size, n_features)),
+    // Process: fill buffer and use it
+    |buffer, block_idx| {
+        let start = block_idx * block_size;
+        let filled = dataset.buffer_samples(&mut buffer.view_mut(), start);
+        
+        // Process samples 0..filled in the buffer
+        for sample_idx in 0..filled {
+            let sample = buffer.row(sample_idx);
+            // ... prediction or SHAP computation
+        }
+    },
+);
 ```
+
+**Why caller-managed buffers instead of SampleBlocks:**
+
+- Simpler design—no iterator wrapper type with lifetime management
+- More flexible—caller can decide buffer size and parallelism strategy
+- Less unsafe code—no raw pointer tricks for parallel output access
+- Rayon's `for_each_init` handles per-thread buffer reuse naturally
 
 **Why `for_each` is zero-cost for dense features:**
 
@@ -151,7 +175,7 @@ for sample_idx in 0..n_samples {
 
 **Problem**: Random access pattern with poor cache locality. Each `get(sample_idx, feature)` may touch different cache lines.
 
-**Solution**: Migrate to `SampleBlocks` (already used by GBDT prediction). This batches samples into cache-friendly blocks and provides row-major access within each block.
+**Solution**: Use `buffer_samples()` with caller-managed buffers. This batches samples into cache-friendly blocks and provides row-major access within each block.
 
 ## Design
 
@@ -409,15 +433,12 @@ fn fit_linear_model(
 }
 ```
 
-### Tree SHAP and GBDT Prediction: SampleBlocks on Dataset
+### Tree SHAP and GBDT Prediction: buffer_samples on Dataset
 
-Tree SHAP and GBDT prediction both use row-major access patterns. The existing `SampleBlocks`
-pattern (currently on `BinnedDataset`) is ported to work on `Dataset`:
+Tree SHAP and GBDT prediction both use row-major access patterns. Instead of a dedicated
+`SampleBlocks` type, we use `Dataset::buffer_samples()` with caller-managed buffers:
 
 ```rust
-// SampleBlocks ported from BinnedDataset to Dataset
-// Provides efficient batched row-major access for prediction
-
 // Before (SampleBlocks on BinnedDataset with FeaturesView)
 fn explain_sample(
     &self,
@@ -431,29 +452,41 @@ fn explain_sample(
     }
 }
 
-// After (SampleBlocks on Dataset)
+// After (buffer_samples with caller-managed buffers)
 fn explain_batch(
     &self,
     dataset: &Dataset,
-    sample_indices: &[u32],
     shap_values: &mut Array2<f64>,
+    parallelism: Parallelism,
 ) {
-    SampleBlocks::for_each_with(dataset, sample_indices, |local_idx, sample| {
-        for node in tree.nodes() {
-            let feature_value = sample.feature(node.feature);
-            // ... tree traversal logic
-        }
-    });
+    let n_samples = dataset.n_samples();
+    let n_features = dataset.n_features();
+    let block_size = 64;
+    let n_blocks = (n_samples + block_size - 1) / block_size;
+
+    parallelism.maybe_par_for_each_init(
+        0..n_blocks,
+        || Array2::<f32>::zeros((block_size, n_features)),
+        |buffer, block_idx| {
+            let start = block_idx * block_size;
+            let filled = dataset.buffer_samples(&mut buffer.view_mut(), start);
+            
+            for local_idx in 0..filled {
+                let sample = buffer.row(local_idx);
+                let sample_idx = start + local_idx;
+                for node in tree.nodes() {
+                    let feature_value = sample[node.feature];
+                    // ... tree traversal logic
+                }
+            }
+        },
+    );
 }
 ```
 
-This aligns Tree SHAP with GBDT prediction, which already uses `SampleBlocks` for efficient
-row-major access. The port to `Dataset` means prediction works with both dense and sparse
-features without needing bins.
-
-**Key change**: `SampleBlocks` is moved from `crates/boosters/src/data/binned/sample_blocks.rs`
-and generalized to work on `Dataset`. The buffered block pattern remains the same, but now
-operates on `Feature` (dense or sparse) instead of binned storage.
+**Key change**: No `SampleBlocks` type. Callers manage their own buffers and use
+`Parallelism::maybe_par_for_each_init` for per-thread buffer reuse. This is simpler
+and more flexible.
 
 ### Convenience Method: `feature_values()` on Dataset
 
@@ -613,7 +646,7 @@ where default is 0, this is optimal.
 3. Add `for_each_feature_value_dense()` for cases needing all samples including defaults
 4. Add `gather_feature_values()` and `for_each_gathered_value()` (filtered iteration)
 5. Add `FeatureValueIter` enum and `feature_values()` (secondary, for ergonomics)
-6. Port `SampleBlocks` from BinnedDataset to Dataset
+6. Add `buffer_samples()` for sample-major buffer filling
 
 ### Phase 2: GBLinear Migration
 
@@ -636,10 +669,10 @@ where default is 0, this is optimal.
 
 ### Phase 5: Tree SHAP and GBDT Prediction Migration
 
-1. Update `TreeExplainer` to use `SampleBlocks` on `Dataset`
-2. Update GBDT prediction to use `SampleBlocks` on `Dataset`
+1. Update `TreeExplainer` to use `buffer_samples()` on `Dataset`
+2. Update GBDT prediction to use `buffer_samples()` on `Dataset`
    - Currently uses `SampleBlocks` on BinnedDataset
-   - Migrate to Dataset-based SampleBlocks
+   - Migrate to caller-managed buffers with `buffer_samples()`
 
 ### Phase 6: Cleanup
 
@@ -658,7 +691,7 @@ The library will not compile during phases 2-6. That's acceptable—we fix all c
 
 3. **~~Linear tree fitting~~**: **Resolved.** Use `gather_feature_values()` with sorted sample indices. Merge-join algorithm for sparse features leverages the fact that indices are sorted due to stable partitioning.
 
-4. **~~Tree SHAP~~**: **Resolved.** Migrate to `SampleBlocks` on Dataset for consistency with GBDT prediction and better cache locality.
+4. **~~Tree SHAP~~**: **Resolved.** Use `buffer_samples()` on Dataset with caller-managed buffers for consistency with GBDT prediction and better cache locality.
 
 ## Success Criteria
 
@@ -668,13 +701,13 @@ The library will not compile during phases 2-6. That's acceptable—we fix all c
 - [ ] `gather_feature_values()` implemented on `Dataset`
 - [ ] `for_each_gathered_value()` implemented on `Dataset`
 - [ ] `FeatureValueIter` enum implemented (secondary API)
-- [ ] `SampleBlocks` ported from BinnedDataset to Dataset
+- [ ] `buffer_samples()` implemented on Dataset
 - [ ] GBLinear training works with `Dataset`
 - [ ] GBLinear prediction works with `Dataset`
 - [ ] Linear SHAP works with `Dataset`
 - [ ] Linear tree fitting works with `Dataset::gather_feature_values()`
-- [ ] Tree SHAP works with `SampleBlocks` on `Dataset`
-- [ ] GBDT prediction works with `SampleBlocks` on `Dataset`
+- [ ] Tree SHAP works with `buffer_samples()` on `Dataset`
+- [ ] GBDT prediction works with `buffer_samples()` on `Dataset`
 - [ ] Old `FeaturesView` deleted (assumed dense data)
 - [ ] Old `DataAccessor` trait deleted
 - [ ] No O(n×m) allocations in the path

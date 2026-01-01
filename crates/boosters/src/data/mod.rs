@@ -6,18 +6,18 @@
 //!
 //! - [`Dataset`]: Main container for features, targets, and weights
 //! - [`DatasetBuilder`]: Fluent builder for complex dataset construction
-//! - [`FeaturesView`] / [`TargetsView`] / [`WeightsView`]: Read-only views
+//! - [`SamplesView`] / [`TargetsView`] / [`WeightsView`]: Read-only views
 //!
 //! # Training-Specific Types
 //!
 //! - [`binned::BinnedDataset`]: Quantized feature data for histogram-based GBDT
 //! - [`BinningConfig`]: Configuration for feature quantization
-//! - [`SampleBlocks`]: Efficient block-based iteration (for BinnedDataset)
 //!
-//! # Internal Types
+//! # Sample-Major Access
 //!
-//! - [`SampleAccessor`]: Access features for a single sample (row)
-//! - [`DataAccessor`]: Access samples from a dataset (matrix)
+//! Use [`Dataset::buffer_samples`] to fill a sample-major buffer for prediction.
+//! Callers manage their own buffers and use [`crate::Parallelism::maybe_par_for_each_init`]
+//! for parallel processing with per-thread buffer reuse.
 //!
 //! # Storage Layout
 //!
@@ -43,17 +43,7 @@ pub use raw::feature::Feature;
 pub use raw::dataset::{Dataset, DatasetBuilder};
 pub use error::DatasetError;
 pub use raw::schema::{DatasetSchema, FeatureMeta, FeatureType};
-pub use raw::views::{FeaturesView, SamplesView, TargetsView, WeightsIter, WeightsView};
-
-// Legacy compatibility aliases (will be removed in Epic 6)
-#[allow(deprecated)]
-pub use raw::feature::Column;
-
-// =============================================================================
-// Accessor Traits (internal)
-// =============================================================================
-
-pub use raw::accessor::{DataAccessor, SampleAccessor};
+pub use raw::views::{SamplesView, TargetsView, WeightsIter, WeightsView};
 
 // =============================================================================
 // ndarray Utilities
@@ -67,8 +57,8 @@ pub use ndarray::{axis, init_predictions, init_predictions_into, transpose_to_c_
 
 pub use binned::{
     BinMapper, BinnedDataset, BinnedFeatureInfo,
-    BinnedSampleView, BinningConfig, BuildError, EffectiveViews, FeatureGroup,
-    FeatureMetadata, FeatureView, MissingType, SampleBlocks, SampleBlocksIter,
+    BinningConfig, BuildError, EffectiveViews, FeatureGroup,
+    FeatureMetadata, FeatureView, MissingType,
 };
 
 // Internal types for tests/benchmarks

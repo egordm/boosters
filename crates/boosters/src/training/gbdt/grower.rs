@@ -736,12 +736,9 @@ impl TreeGrower {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{
-        BinnedDataset, BinningConfig, DataAccessor, FeatureMetadata,
-        SampleAccessor,
-    };
+    use crate::data::{BinnedDataset, BinningConfig, Dataset};
     use crate::repr::gbdt::{Tree, TreeView};
-    use ndarray::Array2;
+    use ndarray::{array, Array1};
 
     /// Helper to count leaves in a Tree.
     fn count_leaves<L: crate::repr::gbdt::LeafValue>(tree: &Tree<L>) -> usize {
@@ -753,59 +750,44 @@ mod tests {
     fn make_simple_dataset() -> BinnedDataset {
         // 10 samples, 1 feature
         // Raw values 0,0,0,1,1,2,2,3,3,3 bin to bins 0,0,0,1,1,2,2,3,3,3
-        let data = Array2::from_shape_vec(
-            (10, 1),
-            vec![0.0, 0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 3.0],
-        )
-        .unwrap();
-
-        BinnedDataset::from_array(data.view(), &BinningConfig::default()).unwrap()
+        let raw = Dataset::builder()
+            .add_feature_unnamed(array![0.0, 0.0, 0.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 3.0])
+            .build()
+            .unwrap();
+        BinnedDataset::from_dataset(&raw, &BinningConfig::default()).unwrap()
     }
 
     fn make_two_feature_dataset() -> BinnedDataset {
         // 8 samples, 2 features
         // Feature 0: [0,0,1,1,0,0,1,1] → bins based on 0/1 values
         // Feature 1: [0,0,0,0,1,1,1,1] → bins based on 0/1 values
-        let data = Array2::from_shape_vec(
-            (8, 2),
-            vec![
-                0.0, 0.0, // sample 0
-                0.0, 0.0, // sample 1
-                1.0, 0.0, // sample 2
-                1.0, 0.0, // sample 3
-                0.0, 1.0, // sample 4
-                0.0, 1.0, // sample 5
-                1.0, 1.0, // sample 6
-                1.0, 1.0, // sample 7
-            ],
-        )
-        .unwrap();
-
-        BinnedDataset::from_array(data.view(), &BinningConfig::default()).unwrap()
+        let raw = Dataset::builder()
+            .add_feature_unnamed(array![0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 1.0])
+            .add_feature_unnamed(array![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0])
+            .build()
+            .unwrap();
+        BinnedDataset::from_dataset(&raw, &BinningConfig::default()).unwrap()
     }
 
     fn make_numeric_boundary_dataset() -> BinnedDataset {
         // 2 samples, 1 feature, targeting 2 bins
         // Values 0 and 1 should bin to bins 0 and 1
-        let data = Array2::from_shape_vec((2, 1), vec![0.0, 1.0]).unwrap();
-
-        BinnedDataset::from_array(data.view(), &BinningConfig::default()).unwrap()
+        let raw = Dataset::builder()
+            .add_feature_unnamed(array![0.0, 1.0])
+            .build()
+            .unwrap();
+        BinnedDataset::from_dataset(&raw, &BinningConfig::default()).unwrap()
     }
 
     fn make_categorical_domain_dataset() -> BinnedDataset {
         // 4 samples, 1 categorical feature with 4 categories
         // Category values 0, 1, 2, 3 map to bins 0, 1, 2, 3
-        let data = Array2::from_shape_vec((4, 1), vec![0.0, 1.0, 2.0, 3.0]).unwrap();
+        let raw = Dataset::builder()
+            .add_categorical_unnamed(array![0.0, 1.0, 2.0, 3.0])
+            .build()
+            .unwrap();
 
-        // Force categorical detection by using feature metadata
-        let metadata = FeatureMetadata::with_categorical(vec![0]);
-
-        BinnedDataset::from_array_with_metadata(
-            data.view(),
-            Some(&metadata),
-            &BinningConfig::default(),
-        )
-        .unwrap()
+        BinnedDataset::from_dataset(&raw, &BinningConfig::default()).unwrap()
     }
 
     #[test]
@@ -834,11 +816,14 @@ mod tests {
         assert_eq!(tree.predict_row(&[threshold]).0, 20.0);
 
         // And the binned path must match training semantics.
-        // BinnedDataset implements DataAccessor directly.
-        let sample0 = dataset.sample(0);
-        let sample1 = dataset.sample(1);
-        assert_eq!(tree.predict_row(&[sample0.feature(0)]).0, 10.0);
-        assert_eq!(tree.predict_row(&[sample1.feature(0)]).0, 20.0);
+        let x0 = dataset
+            .bin_mapper(0)
+            .bin_to_value(dataset.bin(0, 0)) as f32;
+        let x1 = dataset
+            .bin_mapper(0)
+            .bin_to_value(dataset.bin(1, 0)) as f32;
+        assert_eq!(tree.predict_row(&[x0]).0, 10.0);
+        assert_eq!(tree.predict_row(&[x1]).0, 20.0);
     }
 
     #[test]
@@ -869,11 +854,10 @@ mod tests {
         assert_eq!(tree.predict_row(&[2.0]).0, 20.0);
 
         // Binned path should match too (bins are the category indices).
-        // BinnedDataset implements DataAccessor directly.
-        let sample1 = dataset.sample(1); // bin 1
-        let sample2 = dataset.sample(2); // bin 2
-        assert_eq!(tree.predict_row(&[sample1.feature(0)]).0, 10.0);
-        assert_eq!(tree.predict_row(&[sample2.feature(0)]).0, 20.0);
+        let x1 = dataset.bin(1, 0) as f32; // bin 1
+        let x2 = dataset.bin(2, 0) as f32; // bin 2
+        assert_eq!(tree.predict_row(&[x1]).0, 10.0);
+        assert_eq!(tree.predict_row(&[x2]).0, 20.0);
     }
 
     #[test]
@@ -1247,36 +1231,37 @@ mod tests {
         let n_samples = 100;
 
         // Create just 2 sparse categorical features (no numeric)
-        let mut data_vec = Vec::with_capacity(n_samples * 2);
+        let mut f0_values = Vec::with_capacity(n_samples);
+        let mut f1_values = Vec::with_capacity(n_samples);
         for sample in 0..n_samples {
             // Feature 0: sparse categorical, non-zero for rows 0-4
-            let f0 = if sample < 5 {
+            let v0 = if sample < 5 {
                 (sample % 3 + 1) as f32
             } else {
                 0.0
             };
             // Feature 1: sparse categorical, non-zero for rows 50-54
-            let f1 = if (50..55).contains(&sample) {
+            let v1 = if (50..55).contains(&sample) {
                 ((sample - 50) % 3 + 1) as f32
             } else {
                 0.0
             };
-            data_vec.push(f0);
-            data_vec.push(f1);
+            f0_values.push(v0);
+            f1_values.push(v1);
         }
 
-        let data = Array2::from_shape_vec((n_samples, 2), data_vec).unwrap();
-
-        // Mark both as categorical to enable bundling
-        let metadata = FeatureMetadata::default().categorical(vec![0, 1]);
         let config = BinningConfig::builder()
             .enable_bundling(true)
             .sparsity_threshold(0.9)
             .build();
 
-        let dataset =
-            BinnedDataset::from_array_with_metadata(data.view(), Some(&metadata), &config)
-                .unwrap();
+        let raw = Dataset::builder()
+            .add_categorical_unnamed(Array1::from_vec(f0_values))
+            .add_categorical_unnamed(Array1::from_vec(f1_values))
+            .build()
+            .unwrap();
+
+        let dataset = BinnedDataset::from_dataset(&raw, &config).unwrap();
 
         // Verify bundling occurred
         let effective = dataset.effective_feature_views();

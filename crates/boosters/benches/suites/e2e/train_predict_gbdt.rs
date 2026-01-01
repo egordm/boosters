@@ -6,8 +6,8 @@ mod common;
 use common::criterion_config::default_criterion;
 
 use boosters::Parallelism;
-use boosters::data::{BinningConfig, binned::BinnedDatasetBuilder};
-use boosters::data::{Dataset, FeaturesView, TargetsView, WeightsView};
+use boosters::data::{BinningConfig, binned::BinnedDataset};
+use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
 use boosters::testing::synthetic_datasets::{
     select_rows, select_targets, split_indices, synthetic_regression,
@@ -32,21 +32,15 @@ fn bench_train_then_predict_regression(c: &mut Criterion) {
     let x_valid = select_rows(dataset.features.view(), &valid_idx);
 
     // Build binned dataset for training (x_train is already feature-major)
-    let x_train_dataset = Dataset::new(x_train.view(), None, None);
-    let binned_train = BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
-        .add_features(x_train_dataset.features(), Parallelism::Parallel)
-        .build()
-        .unwrap();
+    let x_train_dataset = Dataset::from_array(x_train.view(), None, None);
+    let binning_config = BinningConfig::builder().max_bins(256).build();
+    let binned_train = BinnedDataset::from_dataset(&x_train_dataset, &binning_config).unwrap();
 
-    // Transpose validation features to row-major for prediction
-    let valid_row_major = x_valid.t().to_owned();
+    let x_valid_dataset = Dataset::from_array(x_valid.view(), None, None);
 
     // Convert targets to 2D
     let y_train_2d =
         Array2::from_shape_vec((1, y_train.len()), y_train.iter().cloned().collect()).unwrap();
-
-    // Create features view for validation
-    let valid_features = FeaturesView::from_array(valid_row_major.view());
 
     let params = GBDTParams {
         n_trees: 50,
@@ -74,7 +68,7 @@ fn bench_train_then_predict_regression(c: &mut Criterion) {
                 )
                 .unwrap();
             let predictor = Predictor::<UnrolledTraversal6>::new(&forest).with_block_size(64);
-            let preds = predictor.predict(black_box(valid_features), Parallelism::Sequential);
+            let preds = predictor.predict(black_box(&x_valid_dataset), Parallelism::Sequential);
             black_box(preds)
         })
     });

@@ -121,7 +121,7 @@ impl GBDTModel {
     ///
     /// let features = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]; // [n_features, n_samples]
     /// let targets = array![[0.0, 1.0, 0.0]]; // [n_outputs, n_samples]
-    /// let dataset = Dataset::new(features.view(), Some(targets.view()), None);
+    /// let dataset = Dataset::from_array(features.view(), Some(targets.view()), None);
     ///
     /// let config = GBDTConfig::builder()
     ///     .objective(Objective::squared_loss())
@@ -140,8 +140,6 @@ impl GBDTModel {
         config: GBDTConfig,
         n_threads: usize,
     ) -> Option<Self> {
-        use crate::data::BinnedDataset;
-
         run_with_threads(n_threads, |parallelism| {
             // Bin the training dataset using config.binning (includes bundling)
             let binned = BinnedDataset::from_dataset(dataset, &config.binning)
@@ -154,32 +152,7 @@ impl GBDTModel {
             // Get weights as WeightsView
             let weights = dataset.weights();
 
-            Self::train_inner(&binned, targets, weights, val_set, config, parallelism)
-        })
-    }
-
-    /// Train a new GBDT model from pre-binned data.
-    ///
-    /// Use this for advanced scenarios where you want control over binning.
-    ///
-    /// # Arguments
-    ///
-    /// * `dataset` - Binned training dataset
-    /// * `targets` - Target values, shape `[n_outputs, n_rows]`
-    /// * `weights` - Optional sample weights (`WeightsView::None` for uniform)
-    /// * `val_set` - Optional validation dataset for early stopping and monitoring
-    /// * `config` - Training configuration
-    /// * `n_threads` - Thread count: 0 = auto, 1 = sequential, >1 = exact count
-    pub fn train_binned(
-        dataset: &BinnedDataset,
-        targets: TargetsView<'_>,
-        weights: WeightsView<'_>,
-        val_set: Option<&Dataset>,
-        config: GBDTConfig,
-        n_threads: usize,
-    ) -> Option<Self> {
-        crate::run_with_threads(n_threads, |parallelism| {
-            Self::train_inner(dataset, targets, weights, val_set, config, parallelism)
+            Self::train_inner(dataset, &binned, targets, weights, val_set, config, parallelism)
         })
     }
 
@@ -188,14 +161,15 @@ impl GBDTModel {
     /// This method assumes the caller has already set up any necessary thread pool.
     /// Use `train()` for the public API that handles threading automatically.
     fn train_inner(
-        dataset: &BinnedDataset,
+        dataset: &Dataset,
+        binned: &BinnedDataset,
         targets: TargetsView<'_>,
         weights: WeightsView<'_>,
         val_set: Option<&Dataset>,
         config: GBDTConfig,
         parallelism: Parallelism,
     ) -> Option<Self> {
-        let n_features = dataset.n_features();
+        let n_features = binned.n_features();
         let n_outputs = config.objective.n_outputs();
 
         // Get task kind from objective (not inferred from n_outputs)
@@ -212,7 +186,7 @@ impl GBDTModel {
         let trainer = GBDTTrainer::new(config.objective.clone(), metric, params);
 
         // Components receive parallelism flag; thread pool is already set up
-        let forest = trainer.train(dataset, targets, weights, val_set, parallelism)?;
+        let forest = trainer.train(dataset, binned, targets, weights, val_set, parallelism)?;
 
         let meta = ModelMeta {
             n_features,
@@ -280,8 +254,7 @@ impl GBDTModel {
     ///
     /// Array2 with shape `[n_groups, n_samples]`.
     pub fn predict_raw(&self, data: &Dataset, n_threads: usize) -> Array2<f32> {
-        let features = data.features();
-        let n_samples = features.n_samples();
+        let n_samples = data.n_samples();
         let n_groups = self.meta.n_groups;
 
         if n_samples == 0 {
@@ -295,8 +268,8 @@ impl GBDTModel {
         run_with_threads(n_threads, |parallelism| {
             let predictor = UnrolledPredictor6::new(&self.forest);
 
-            // predict_into takes FeaturesView directly
-            predictor.predict_into(features, None, parallelism, output_array.view_mut());
+            // predict_into takes &Dataset directly
+            predictor.predict_into(data, None, parallelism, output_array.view_mut());
         });
 
         output_array
@@ -334,8 +307,8 @@ impl GBDTModel {
     pub fn shap_values(&self, data: &Dataset) -> Result<ShapValues, ExplainError> {
         let explainer = TreeExplainer::new(&self.forest)?;
 
-        // TreeExplainer now takes FeaturesView directly
-        Ok(explainer.shap_values(data.features()))
+        // TreeExplainer takes &Dataset directly
+        Ok(explainer.shap_values(data, crate::Parallelism::Parallel))
     }
 }
 
@@ -402,13 +375,13 @@ mod tests {
         // x0 < 0.5 → leaf 1.0
         // Feature-major: [n_features=2, n_samples=1]
         let features1_fm = arr2(&[[0.3], [0.5]]);
-        let dataset1 = Dataset::new(features1_fm.view(), None, None);
+        let dataset1 = Dataset::from_array(features1_fm.view(), None, None);
         let preds1 = model.predict(&dataset1, 1);
         assert_eq!(preds1.row(0).as_slice().unwrap(), &[1.0]);
 
         // x0 >= 0.5, x1 >= 0.3 → leaf 3.0
         let features2_fm = arr2(&[[0.7], [0.5]]);
-        let dataset2 = Dataset::new(features2_fm.view(), None, None);
+        let dataset2 = Dataset::from_array(features2_fm.view(), None, None);
         let preds2 = model.predict(&dataset2, 1);
         assert_eq!(preds2.row(0).as_slice().unwrap(), &[3.0]);
     }
@@ -425,7 +398,7 @@ mod tests {
             [0.3, 0.7], // feature 0 values
             [0.5, 0.5], // feature 1 values
         ]);
-        let dataset = Dataset::new(features_fm.view(), None, None);
+        let dataset = Dataset::from_array(features_fm.view(), None, None);
         let preds = model.predict(&dataset, 1);
 
         // Shape is [n_groups, n_samples] = [1, 2]
@@ -524,7 +497,7 @@ mod tests {
 
         // Compute SHAP values - feature-major: [n_features=2, n_samples=1]
         let features = arr2(&[[0.3], [0.7]]);
-        let dataset = Dataset::new(features.view(), None, None);
+        let dataset = Dataset::from_array(features.view(), None, None);
         let shap = model.shap_values(&dataset);
         assert!(shap.is_ok());
 

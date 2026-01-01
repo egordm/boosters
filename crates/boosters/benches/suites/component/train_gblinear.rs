@@ -17,7 +17,7 @@ use rand::prelude::*;
 /// Helper to build a Dataset from synthetic data
 fn make_dataset(features: ndarray::ArrayView2<'_, f32>, targets: &[f32]) -> Dataset {
     let targets_2d = ndarray::Array2::from_shape_vec((1, targets.len()), targets.to_vec()).unwrap();
-    Dataset::new(features, Some(targets_2d.view()), None)
+    Dataset::from_array(features, Some(targets_2d), None)
 }
 
 fn bench_gblinear_regression_train(c: &mut Criterion) {

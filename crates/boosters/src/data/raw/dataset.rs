@@ -4,25 +4,25 @@
 //! raw feature datasets. For training, create a [`crate::data::BinnedDataset`]
 //! using [`BinnedDataset::from_dataset()`](crate::data::BinnedDataset::from_dataset).
 
-use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
+use ndarray::{s, Array1, Array2, ArrayView1, ArrayView2};
 
 use super::feature::Feature;
 use super::schema::{DatasetSchema, FeatureMeta};
-use super::views::{FeaturesView, TargetsView, WeightsView};
+use super::views::{TargetsView, WeightsView};
 use crate::data::error::DatasetError;
 
 /// The unified dataset container for all boosters models.
 ///
 /// # Storage Layout
 ///
-/// Features are stored in **feature-major** layout: `[n_features, n_samples]`.
-/// Each feature's values across all samples are contiguous in memory.
+/// Features are stored as individual columns (per RFC-0021), each containing
+/// either dense or sparse values. This enables efficient sparse dataset support.
 ///
 /// Targets are stored as `[n_outputs, n_samples]` for consistency.
 ///
 /// # Construction
 ///
-/// Use [`Dataset::new`] for construction from feature-major matrices,
+/// Use [`Dataset::from_array`] for construction from feature-major matrices,
 /// or [`Dataset::builder`] for complex scenarios with mixed feature types.
 ///
 /// # Example
@@ -32,17 +32,21 @@ use crate::data::error::DatasetError;
 /// use ndarray::array;
 ///
 /// // Feature-major format: 2 features, 3 samples
-/// let features = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]; // [n_features, n_samples]
-/// let targets = array![[0.0, 1.0, 0.0]]; // [n_outputs, n_samples]
-/// let ds = Dataset::new(features.view(), Some(targets.view()), None);
+/// let features = array![[1.0f32, 2.0, 3.0], [4.0, 5.0, 6.0]]; // [n_features, n_samples]
+/// let targets = array![[0.0f32, 1.0, 0.0]]; // [n_outputs, n_samples]
+/// let ds = Dataset::from_array(features.view(), Some(targets), None);
 ///
 /// assert_eq!(ds.n_samples(), 3);
 /// assert_eq!(ds.n_features(), 2);
 /// ```
 #[derive(Debug, Clone)]
 pub struct Dataset {
-    /// Feature data: `[n_features, n_samples]` (feature-major).
-    features: Array2<f32>,
+    /// Feature columns: each Feature contains values for all samples.
+    /// Supports both dense (Array1<f32>) and sparse (indices + values) storage.
+    features: Vec<Feature>,
+
+    /// Number of samples (cached from first feature).
+    n_samples: usize,
 
     /// Feature metadata.
     schema: DatasetSchema,
@@ -55,22 +59,68 @@ pub struct Dataset {
 }
 
 impl Dataset {
-    /// Create a dataset from feature-major data.
+    /// Create a Dataset from pre-built feature columns and an explicit schema.
     ///
-    /// This is the primary constructor. All data is expected in feature-major layout.
+    /// This is the canonical constructor. The schema is immutable and must be
+    /// fully determined at construction time.
     ///
-    /// # Arguments
-    ///
-    /// * `features` - Feature matrix `[n_features, n_samples]` (feature-major)
-    /// * `targets` - Optional target matrix `[n_outputs, n_samples]`
-    /// * `weights` - Optional sample weights (length = n_samples)
-    ///
-    /// All features are assumed to be numeric. For categorical features or
-    /// mixed types, use [`Dataset::builder`].
+    /// Prefer [`DatasetBuilder`] for most use cases.
     ///
     /// # Panics
     ///
-    /// Debug-asserts that sample counts match across features, targets, and weights.
+    /// Panics if features is empty or if sample counts don't match.
+    pub fn new(
+        schema: DatasetSchema,
+        features: Vec<Feature>,
+        targets: Option<Array2<f32>>,
+        weights: Option<Array1<f32>>,
+    ) -> Self {
+        assert!(!features.is_empty(), "features cannot be empty");
+        let n_samples = features[0].n_samples();
+
+        // Validate all features have same n_samples
+        for feat in &features {
+            assert_eq!(
+                feat.n_samples(),
+                n_samples,
+                "all features must have same n_samples"
+            );
+        }
+
+        if let Some(ref t) = targets {
+            assert_eq!(
+                t.ncols(),
+                n_samples,
+                "targets must have same sample count as features"
+            );
+        }
+        if let Some(ref w) = weights {
+            assert_eq!(
+                w.len(),
+                n_samples,
+                "weights must have same sample count as features"
+            );
+        }
+
+        Self {
+            features,
+            n_samples,
+            schema,
+            targets,
+            weights,
+        }
+    }
+
+    /// Create a dense dataset from a 2D feature array.
+    ///
+    /// This is a convenience constructor for creating datasets from dense
+    /// feature matrices. Each row of the input array becomes a dense feature.
+    ///
+    /// # Arguments
+    ///
+    /// * `features` - Feature-major array `[n_features, n_samples]`
+    /// * `targets` - Optional target array `[n_outputs, n_samples]`
+    /// * `weights` - Optional sample weights `[n_samples]`
     ///
     /// # Example
     ///
@@ -78,49 +128,51 @@ impl Dataset {
     /// use boosters::data::Dataset;
     /// use ndarray::array;
     ///
-    /// // Training: features with targets
-    /// let features = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
-    /// let targets = array![[0.0, 1.0, 0.0]];
-    /// let ds = Dataset::new(features.view(), Some(targets.view()), None);
+    /// // 2 features, 3 samples
+    /// let features = array![[1.0f32, 2.0, 3.0], [4.0, 5.0, 6.0]];
+    /// let targets = array![[0.0f32, 1.0, 0.0]];
+    /// let ds = Dataset::from_array(features.view(), Some(targets), None);
     ///
-    /// // Prediction: features only
-    /// let ds = Dataset::new(features.view(), None, None);
+    /// assert_eq!(ds.n_samples(), 3);
+    /// assert_eq!(ds.n_features(), 2);
     /// ```
-    pub fn new(
+    pub fn from_array(
         features: ArrayView2<f32>,
-        targets: Option<ArrayView2<f32>>,
-        weights: Option<ArrayView1<f32>>,
+        targets: Option<Array2<f32>>,
+        weights: Option<Array1<f32>>,
     ) -> Self {
-        let n_samples = features.ncols();
         let n_features = features.nrows();
 
-        // Validate sample counts match
-        if let Some(ref t) = targets {
-            debug_assert_eq!(
-                t.ncols(),
-                n_samples,
-                "targets must have same sample count as features"
-            );
-        }
-        if let Some(ref w) = weights {
-            debug_assert_eq!(
-                w.len(),
-                n_samples,
-                "weights must have same sample count as features"
-            );
-        }
+        // Convert each row to a dense Feature
+        let feature_vec: Vec<Feature> = (0..n_features)
+            .map(|i| Feature::dense(features.row(i).to_owned()))
+            .collect();
 
         let schema = DatasetSchema::all_numeric(n_features);
 
-        Self {
-            features: features.to_owned(),
-            schema,
-            targets: targets.map(|t| t.to_owned()),
-            weights: weights.map(|w| w.to_owned()),
-        }
+        Self::new(schema, feature_vec, targets, weights)
     }
 
-    /// Create a builder for complex dataset construction.
+    /// Create a builder for dataset construction.
+    ///
+    /// This is the recommended way to create a Dataset.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use boosters::data::Dataset;
+    /// use ndarray::array;
+    ///
+    /// let ds = Dataset::builder()
+    ///     .add_feature_unnamed(array![1.0, 2.0, 3.0])
+    ///     .add_feature_unnamed(array![4.0, 5.0, 6.0])
+    ///     .targets(array![[0.0, 1.0, 0.0]].view())
+    ///     .build()
+    ///     .unwrap();
+    ///
+    /// assert_eq!(ds.n_samples(), 3);
+    /// assert_eq!(ds.n_features(), 2);
+    /// ```
     pub fn builder() -> DatasetBuilder {
         DatasetBuilder::new()
     }
@@ -132,13 +184,13 @@ impl Dataset {
     /// Number of samples.
     #[inline]
     pub fn n_samples(&self) -> usize {
-        self.features.ncols()
+        self.n_samples
     }
 
     /// Number of features.
     #[inline]
     pub fn n_features(&self) -> usize {
-        self.features.nrows()
+        self.features.len()
     }
 
     /// Number of output dimensions (returns 0 if no targets).
@@ -168,14 +220,19 @@ impl Dataset {
     }
 
     // =========================================================================
-    // Views
+    // Feature access
     // =========================================================================
 
-    /// Get a view of the feature data.
-    ///
-    /// Shape: `[n_features, n_samples]` (feature-major).
-    pub fn features(&self) -> FeaturesView<'_> {
-        FeaturesView::new(self.features.view(), &self.schema)
+    /// Get a reference to a specific feature column.
+    #[inline]
+    pub fn feature(&self, idx: usize) -> &Feature {
+        &self.features[idx]
+    }
+
+    /// Get references to all feature columns.
+    #[inline]
+    pub fn feature_columns(&self) -> &[Feature] {
+        &self.features
     }
 
     /// Get a view of the target data.
@@ -217,7 +274,7 @@ impl Dataset {
     /// use boosters::data::Dataset;
     /// use ndarray::array;
     ///
-    /// let ds = Dataset::new(
+    /// let ds = Dataset::from_array(
     ///     array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]].view(),
     ///     None,
     ///     None,
@@ -234,37 +291,81 @@ impl Dataset {
     where
         F: FnMut(usize, f32),
     {
-        // Current implementation: features stored as Array2<f32> (dense)
-        // Future: will handle Feature::Sparse when Dataset preserves sparse storage
-        let row = self.features.row(feature);
-        if let Some(slice) = row.as_slice() {
-            // Fast path: contiguous slice
-            for (idx, &val) in slice.iter().enumerate() {
-                f(idx, val);
+        match &self.features[feature] {
+            Feature::Dense(values) => {
+                // Fast path: contiguous slice iteration
+                if let Some(slice) = values.as_slice() {
+                    for (idx, &val) in slice.iter().enumerate() {
+                        f(idx, val);
+                    }
+                } else {
+                    for (idx, &val) in values.iter().enumerate() {
+                        f(idx, val);
+                    }
+                }
             }
-        } else {
-            // Fallback: non-contiguous (shouldn't happen with feature-major layout)
-            for (idx, &val) in row.iter().enumerate() {
-                f(idx, val);
+            Feature::Sparse {
+                indices,
+                values,
+                ..
+            } => {
+                // Sparse: iterate only stored (non-default) values
+                for (&idx, &val) in indices.iter().zip(values.iter()) {
+                    f(idx as usize, val);
+                }
             }
         }
     }
 
-    /// Iterate over all samples for a feature, filling in defaults for sparse features.
+    /// Apply a function to each (sample_idx, raw_value) pair for a feature,
+    /// including default values for sparse features.
     ///
-    /// For dense features, this is identical to `for_each_feature_value()`.
-    /// For sparse features (when supported), this yields all n_samples values
-    /// including default values for unspecified indices.
+    /// This is useful when downstream code needs a dense stream of values for
+    /// all samples (e.g., binning / quantization), but we still want to avoid
+    /// materializing a full dense matrix.
     ///
-    /// Use this when you need ALL samples, including default values.
+    /// # Performance
+    ///
+    /// - Dense: $O(n)$ iteration over the underlying array
+    /// - Sparse: $O(n + nnz)$ merge-like iteration yielding defaults
     #[inline]
-    pub fn for_each_feature_value_dense<F>(&self, feature: usize, f: F)
+    pub fn for_each_feature_value_dense<F>(&self, feature: usize, mut f: F)
     where
         F: FnMut(usize, f32),
     {
-        // Current implementation: all features are dense
-        // Future: will expand sparse features when Dataset preserves sparse storage
-        self.for_each_feature_value(feature, f);
+        match &self.features[feature] {
+            Feature::Dense(values) => {
+                if let Some(slice) = values.as_slice() {
+                    for (idx, &val) in slice.iter().enumerate() {
+                        f(idx, val);
+                    }
+                } else {
+                    for (idx, &val) in values.iter().enumerate() {
+                        f(idx, val);
+                    }
+                }
+            }
+            Feature::Sparse {
+                indices,
+                values,
+                default,
+                ..
+            } => {
+                let mut sparse_pos = 0usize;
+                let n_samples = self.n_samples;
+
+                for sample_idx in 0..n_samples {
+                    let val = if sparse_pos < indices.len() && indices[sparse_pos] as usize == sample_idx {
+                        let v = values[sparse_pos];
+                        sparse_pos += 1;
+                        v
+                    } else {
+                        *default
+                    };
+                    f(sample_idx, val);
+                }
+            }
+        }
     }
 
     /// Gather raw values for a feature at specified sample indices into a buffer.
@@ -289,7 +390,7 @@ impl Dataset {
     /// use boosters::data::Dataset;
     /// use ndarray::array;
     ///
-    /// let ds = Dataset::new(
+    /// let ds = Dataset::from_array(
     ///     array![[1.0, 2.0, 3.0, 4.0, 5.0]].view(),
     ///     None,
     ///     None,
@@ -307,11 +408,33 @@ impl Dataset {
             "buffer must have length >= sample_indices.len()"
         );
 
-        // Current implementation: dense array
-        // Future: will handle sparse features with merge-join
-        let row = self.features.row(feature);
-        for (out_idx, &sample_idx) in sample_indices.iter().enumerate() {
-            buffer[out_idx] = row[sample_idx as usize];
+        match &self.features[feature] {
+            Feature::Dense(values) => {
+                // Dense: simple indexed gather
+                for (out_idx, &sample_idx) in sample_indices.iter().enumerate() {
+                    buffer[out_idx] = values[sample_idx as usize];
+                }
+            }
+            Feature::Sparse {
+                indices,
+                values,
+                default,
+                ..
+            } => {
+                // Sparse: merge-join algorithm (both sorted)
+                let mut sparse_pos = 0;
+                for (out_idx, &sample_idx) in sample_indices.iter().enumerate() {
+                    // Advance sparse_pos to find or pass sample_idx
+                    while sparse_pos < indices.len() && indices[sparse_pos] < sample_idx {
+                        sparse_pos += 1;
+                    }
+                    if sparse_pos < indices.len() && indices[sparse_pos] == sample_idx {
+                        buffer[out_idx] = values[sparse_pos];
+                    } else {
+                        buffer[out_idx] = *default;
+                    }
+                }
+            }
         }
     }
 
@@ -329,11 +452,31 @@ impl Dataset {
     where
         F: FnMut(usize, f32),
     {
-        // Current implementation: dense array
-        // Future: will handle sparse features with merge-join
-        let row = self.features.row(feature);
-        for (out_idx, &sample_idx) in sample_indices.iter().enumerate() {
-            f(out_idx, row[sample_idx as usize]);
+        match &self.features[feature] {
+            Feature::Dense(values) => {
+                for (out_idx, &sample_idx) in sample_indices.iter().enumerate() {
+                    f(out_idx, values[sample_idx as usize]);
+                }
+            }
+            Feature::Sparse {
+                indices,
+                values,
+                default,
+                ..
+            } => {
+                // Sparse: merge-join algorithm (both sorted)
+                let mut sparse_pos = 0;
+                for (out_idx, &sample_idx) in sample_indices.iter().enumerate() {
+                    while sparse_pos < indices.len() && indices[sparse_pos] < sample_idx {
+                        sparse_pos += 1;
+                    }
+                    if sparse_pos < indices.len() && indices[sparse_pos] == sample_idx {
+                        f(out_idx, values[sparse_pos]);
+                    } else {
+                        f(out_idx, *default);
+                    }
+                }
+            }
         }
     }
 
@@ -345,41 +488,87 @@ impl Dataset {
     /// due to binary search. For bulk access, prefer the iteration methods.
     #[inline]
     pub fn get_feature_value(&self, feature: usize, sample: usize) -> f32 {
-        self.features[[feature, sample]]
+        self.features[feature].get(sample)
     }
 
-    // =========================================================================
-    // Builder-style methods
-    // =========================================================================
+    /// Fill a block buffer with data from the dataset and return a view.
+    ///
+    /// Dataset stores features as `[n_features, n_samples]` (feature-major).
+    /// This transposes to `[block_size, n_features]` (sample-major) in the buffer.
+    ///
+    /// Returns a `SamplesView` covering only the filled portion (may be less
+    /// than block size at the end of the dataset).
+    ///
+    /// # Arguments
+    ///
+    /// * `buffer` - Mutable buffer with shape `[block_size, n_features]`
+    /// * `start_sample` - First sample index to copy
+    ///
+    /// # Returns
+    ///
+    /// A `SamplesView` borrowing from the buffer, covering `[0..samples_filled, ..]`
+    pub fn buffer_samples<'b>(
+        &self,
+        buffer: &'b mut ndarray::Array2<f32>,
+        start_sample: usize,
+    ) -> super::SamplesView<'b> {
+        let n_features = self.n_features();
+        let block_size = buffer.nrows();
+        debug_assert!(n_features == buffer.ncols(), "block shape mismatch");
 
-    /// Attach sample weights.
-    ///
-    /// # Panics
-    ///
-    /// Debug-asserts that weights length matches n_samples.
-    pub fn with_weights(mut self, weights: Array1<f32>) -> Self {
-        debug_assert_eq!(
-            weights.len(),
-            self.n_samples(),
-            "weights length must match n_samples"
-        );
-        self.weights = Some(weights);
-        self
+        let samples_filled = block_size.min(self.n_samples().saturating_sub(start_sample));
+
+        for feature_idx in 0..n_features {
+            // Get mutable column view in the output block
+            let mut feature_slice = buffer.column_mut(feature_idx);
+            self.buffer_feature_samples(&mut feature_slice, feature_idx, start_sample);
+        }
+
+        // Return a view covering only the filled samples
+        super::SamplesView::from_array(buffer.slice(s![..samples_filled, ..]))
     }
 
-    /// Set the schema.
-    ///
-    /// # Panics
-    ///
-    /// Debug-asserts that schema has same number of features.
-    pub fn with_schema(mut self, schema: DatasetSchema) -> Self {
-        debug_assert_eq!(
-            schema.n_features(),
-            self.n_features(),
-            "schema must have same number of features"
-        );
-        self.schema = schema;
-        self
+    fn buffer_feature_samples(
+        &self,
+        buffer: &mut ndarray::ArrayViewMut1<f32>,
+        feature_idx: usize,
+        start_sample: usize,
+    ) -> usize {
+        let block_size = buffer.len();
+        let samples_filled = block_size.min(self.n_samples() - start_sample);
+
+        match &self.features[feature_idx] {
+            Feature::Dense(values) => {
+                // Only fill the portion we have samples for
+                let src = values.slice(s![start_sample..start_sample + samples_filled]);
+                buffer.slice_mut(s![..samples_filled]).assign(&src);
+            }
+            Feature::Sparse {
+                indices,
+                values,
+                default,
+                ..
+            } => {
+                // Fill buffer with default value
+                buffer.slice_mut(s![..samples_filled]).fill(*default);
+
+                // Binary search to find first index >= start_sample
+                let start_index = indices
+                    .binary_search(&(start_sample as u32))
+                    .unwrap_or_else(|x| x);
+
+                // Fill non-default values
+                for i in start_index..indices.len() {
+                    let sample_idx = indices[i] as usize;
+                    if sample_idx >= start_sample + samples_filled {
+                        break;
+                    }
+                    buffer[sample_idx - start_sample] = values[i];
+                }
+            }
+        }
+
+        samples_filled
     }
 }
 
@@ -397,8 +586,8 @@ impl Dataset {
 /// use ndarray::array;
 ///
 /// let ds = DatasetBuilder::new()
-///     .add_feature("age", array![25.0, 30.0, 35.0].view())
-///     .add_categorical("color", array![0.0, 1.0, 2.0].view())
+///     .add_feature("age", array![25.0, 30.0, 35.0])
+///     .add_categorical("color", array![0.0, 1.0, 2.0])
 ///     .targets(array![[0.0, 1.0, 0.0]].view())
 ///     .build()
 ///     .unwrap();
@@ -407,7 +596,6 @@ impl Dataset {
 /// assert!(ds.has_categorical());
 /// ```
 #[derive(Debug, Default)]
-#[deprecated]
 pub struct DatasetBuilder {
     features: Vec<Feature>,
     metas: Vec<FeatureMeta>,
@@ -422,15 +610,15 @@ impl DatasetBuilder {
     }
 
     /// Add a numeric feature column.
-    pub fn add_feature(mut self, name: &str, values: ArrayView1<f32>) -> Self {
-        self.features.push(Feature::dense(values.to_owned()));
+    pub fn add_feature(mut self, name: &str, values: Array1<f32>) -> Self {
+        self.features.push(Feature::dense(values));
         self.metas.push(FeatureMeta::numeric_named(name));
         self
     }
 
     /// Add an unnamed numeric feature column.
-    pub fn add_feature_unnamed(mut self, values: ArrayView1<f32>) -> Self {
-        self.features.push(Feature::dense(values.to_owned()));
+    pub fn add_feature_unnamed(mut self, values: Array1<f32>) -> Self {
+        self.features.push(Feature::dense(values));
         self.metas.push(FeatureMeta::numeric());
         self
     }
@@ -439,15 +627,15 @@ impl DatasetBuilder {
     ///
     /// Values should be non-negative integers encoded as floats
     /// (e.g., 0.0, 1.0, 2.0).
-    pub fn add_categorical(mut self, name: &str, values: ArrayView1<f32>) -> Self {
-        self.features.push(Feature::dense(values.to_owned()));
+    pub fn add_categorical(mut self, name: &str, values: Array1<f32>) -> Self {
+        self.features.push(Feature::dense(values));
         self.metas.push(FeatureMeta::categorical_named(name));
         self
     }
 
     /// Add an unnamed categorical feature column.
-    pub fn add_categorical_unnamed(mut self, values: ArrayView1<f32>) -> Self {
-        self.features.push(Feature::dense(values.to_owned()));
+    pub fn add_categorical_unnamed(mut self, values: Array1<f32>) -> Self {
+        self.features.push(Feature::dense(values));
         self.metas.push(FeatureMeta::categorical());
         self
     }
@@ -519,7 +707,6 @@ impl DatasetBuilder {
 
         // Determine n_samples from first feature
         let n_samples = self.features[0].n_samples();
-        let n_features = self.features.len();
 
         // Validate all features have same n_samples
         for (i, feat) in self.features.iter().enumerate() {
@@ -575,23 +762,10 @@ impl DatasetBuilder {
             });
         }
 
-        // Build feature matrix [n_features, n_samples]
-        // Note: Currently densifies sparse features. This will be changed
-        // to preserve sparse storage when Dataset is updated to use Box<[Feature]>.
-        let mut features_arr = Array2::zeros((n_features, n_samples));
-        for (i, feat) in self.features.into_iter().enumerate() {
-            let dense = feat.to_dense();
-            features_arr.row_mut(i).assign(&dense);
-        }
-
+        // Preserve sparse storage - no densification!
         let schema = DatasetSchema::from_features(self.metas);
 
-        Ok(Dataset {
-            features: features_arr,
-            schema,
-            targets: self.targets,
-            weights: self.weights,
-        })
+        Ok(Dataset::new(schema, self.features, self.targets, self.weights))
     }
 }
 
@@ -602,11 +776,11 @@ mod tests {
     use ndarray::array;
 
     #[test]
-    fn dataset_new() {
+    fn dataset_from_array() {
         // Feature-major [n_features, n_samples] format: 2 features, 3 samples
-        let features = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
-        let targets = array![[0.0, 1.0, 0.0]]; // [n_outputs, n_samples]
-        let ds = Dataset::new(features.view(), Some(targets.view()), None);
+        let features = array![[1.0f32, 2.0, 3.0], [4.0, 5.0, 6.0]];
+        let targets = array![[0.0f32, 1.0, 0.0]]; // [n_outputs, n_samples]
+        let ds = Dataset::from_array(features.view(), Some(targets), None);
 
         assert_eq!(ds.n_samples(), 3);
         assert_eq!(ds.n_features(), 2);
@@ -615,33 +789,35 @@ mod tests {
         assert!(!ds.has_weights());
         assert!(!ds.has_categorical());
 
-        // Verify layout is correct (no transpose needed for feature-major)
-        let view = ds.features();
-        // Feature 0 should be [1, 2, 3]
-        assert_eq!(view.feature(0).to_vec(), vec![1.0, 2.0, 3.0]);
-        // Feature 1 should be [4, 5, 6]
-        assert_eq!(view.feature(1).to_vec(), vec![4.0, 5.0, 6.0]);
+        // Verify feature access matches input
+        assert_eq!(ds.get_feature_value(0, 0), 1.0);
+        assert_eq!(ds.get_feature_value(0, 1), 2.0);
+        assert_eq!(ds.get_feature_value(0, 2), 3.0);
+        assert_eq!(ds.get_feature_value(1, 0), 4.0);
+        assert_eq!(ds.get_feature_value(1, 1), 5.0);
+        assert_eq!(ds.get_feature_value(1, 2), 6.0);
     }
 
     #[test]
-    fn dataset_new_feature_major() {
+    fn dataset_from_array_feature_major() {
         // Feature-major [n_features, n_samples] format: 2 features, 3 samples
-        let features = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
-        let targets = array![[0.0, 1.0, 0.0]]; // [n_outputs, n_samples]
-        let ds = Dataset::new(features.view(), Some(targets.view()), None);
+        let features = array![[1.0f32, 2.0, 3.0], [4.0, 5.0, 6.0]];
+        let targets = array![[0.0f32, 1.0, 0.0]]; // [n_outputs, n_samples]
+        let ds = Dataset::from_array(features.view(), Some(targets), None);
 
         assert_eq!(ds.n_samples(), 3);
         assert_eq!(ds.n_features(), 2);
 
-        let view = ds.features();
-        assert_eq!(view.feature(0).to_vec(), vec![1.0, 2.0, 3.0]);
-        assert_eq!(view.feature(1).to_vec(), vec![4.0, 5.0, 6.0]);
+        assert_eq!(ds.get_feature_value(0, 0), 1.0);
+        assert_eq!(ds.get_feature_value(0, 2), 3.0);
+        assert_eq!(ds.get_feature_value(1, 0), 4.0);
+        assert_eq!(ds.get_feature_value(1, 2), 6.0);
     }
 
     #[test]
-    fn dataset_new_features_only() {
-        let features = array![[1.0, 2.0], [3.0, 4.0]]; // [n_features, n_samples]
-        let ds = Dataset::new(features.view(), None, None);
+    fn dataset_from_array_features_only() {
+        let features = array![[1.0f32, 2.0], [3.0, 4.0]]; // [n_features, n_samples]
+        let ds = Dataset::from_array(features.view(), None, None);
 
         assert_eq!(ds.n_samples(), 2);
         assert_eq!(ds.n_features(), 2);
@@ -651,34 +827,43 @@ mod tests {
 
     #[test]
     fn dataset_with_weights() {
-        let features = array![[1.0, 2.0]]; // [n_features=1, n_samples=2]
-        let targets = array![[0.0, 1.0]]; // [n_outputs=1, n_samples=2]
-        let weights = array![0.5, 1.5];
+        let features = array![[1.0f32, 2.0]]; // [n_features=1, n_samples=2]
+        let targets = array![[0.0f32, 1.0]]; // [n_outputs=1, n_samples=2]
+        let weights = array![0.5f32, 1.5];
 
-        let ds = Dataset::new(features.view(), Some(targets.view()), Some(weights.view()));
+        let ds = Dataset::from_array(features.view(), Some(targets), Some(weights));
 
         assert!(ds.has_weights());
         assert_eq!(ds.weights().as_array().unwrap().to_vec(), vec![0.5, 1.5]);
     }
 
     #[test]
-    fn dataset_features_view() {
-        let features = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]; // [n_features=2, n_samples=3]
-        let targets = array![[0.0, 1.0, 0.0]]; // [n_outputs=1, n_samples=3]
-        let ds = Dataset::new(features.view(), Some(targets.view()), None);
+    fn dataset_feature_access() {
+        let features = array![[1.0f32, 2.0, 3.0], [4.0, 5.0, 6.0]]; // [n_features=2, n_samples=3]
+        let targets = array![[0.0f32, 1.0, 0.0]]; // [n_outputs=1, n_samples=3]
+        let ds = Dataset::from_array(features.view(), Some(targets), None);
 
-        let view = ds.features();
-        assert_eq!(view.n_features(), 2);
-        assert_eq!(view.n_samples(), 3);
-        assert_eq!(view.feature(0).to_vec(), vec![1.0, 2.0, 3.0]);
-        assert_eq!(view.feature(1).to_vec(), vec![4.0, 5.0, 6.0]);
+        // Access via feature() method
+        assert_eq!(ds.n_features(), 2);
+        assert_eq!(ds.n_samples(), 3);
+        
+        // Feature 0 should be [1, 2, 3]
+        match ds.feature(0) {
+            Feature::Dense(values) => assert_eq!(values.to_vec(), vec![1.0, 2.0, 3.0]),
+            _ => panic!("Expected dense feature"),
+        }
+        // Feature 1 should be [4, 5, 6]  
+        match ds.feature(1) {
+            Feature::Dense(values) => assert_eq!(values.to_vec(), vec![4.0, 5.0, 6.0]),
+            _ => panic!("Expected dense feature"),
+        }
     }
 
     #[test]
     fn dataset_targets_view() {
-        let features = array![[1.0, 2.0]]; // [n_features=1, n_samples=2]
-        let targets = array![[0.0, 1.0], [1.0, 0.0]]; // [n_outputs=2, n_samples=2]
-        let ds = Dataset::new(features.view(), Some(targets.view()), None);
+        let features = array![[1.0f32, 2.0]]; // [n_features=1, n_samples=2]
+        let targets = array![[0.0f32, 1.0], [1.0, 0.0]]; // [n_outputs=2, n_samples=2]
+        let ds = Dataset::from_array(features.view(), Some(targets), None);
 
         let view = ds.targets().unwrap();
         assert_eq!(view.n_outputs(), 2);
@@ -689,9 +874,9 @@ mod tests {
 
     #[test]
     fn dataset_targets_1d() {
-        let features = array![[1.0, 2.0, 3.0]]; // [n_features=1, n_samples=3]
-        let targets = array![[0.0, 1.0, 0.0]]; // [n_outputs=1, n_samples=3]
-        let ds = Dataset::new(features.view(), Some(targets.view()), None);
+        let features = array![[1.0f32, 2.0, 3.0]]; // [n_features=1, n_samples=3]
+        let targets = array![[0.0f32, 1.0, 0.0]]; // [n_outputs=1, n_samples=3]
+        let ds = Dataset::from_array(features.view(), Some(targets), None);
 
         assert_eq!(
             ds.targets().unwrap().as_single_output().to_vec(),
@@ -702,8 +887,8 @@ mod tests {
     #[test]
     fn builder_basic() {
         let ds = DatasetBuilder::new()
-            .add_feature("x", array![1.0, 2.0, 3.0].view())
-            .add_feature("y", array![4.0, 5.0, 6.0].view())
+            .add_feature("x", array![1.0, 2.0, 3.0])
+            .add_feature("y", array![4.0, 5.0, 6.0])
             .targets(array![[0.0, 1.0, 0.0]].view())
             .build()
             .unwrap();
@@ -715,8 +900,8 @@ mod tests {
     #[test]
     fn builder_with_categorical() {
         let ds = DatasetBuilder::new()
-            .add_feature("age", array![25.0, 30.0].view())
-            .add_categorical("color", array![0.0, 1.0].view())
+            .add_feature("age", array![25.0, 30.0])
+            .add_categorical("color", array![0.0, 1.0])
             .targets(array![[0.0, 1.0]].view())
             .build()
             .unwrap();
@@ -737,10 +922,10 @@ mod tests {
         assert_eq!(ds.n_features(), 1);
         assert_eq!(ds.n_samples(), 5);
 
-        let view = ds.features();
-        assert_eq!(view.get(0, 0), 0.0); // default
-        assert_eq!(view.get(1, 0), 10.0);
-        assert_eq!(view.get(3, 0), 30.0);
+        // Test via get_feature_value (supports sparse)
+        assert_eq!(ds.get_feature_value(0, 0), 0.0); // default
+        assert_eq!(ds.get_feature_value(0, 1), 10.0);
+        assert_eq!(ds.get_feature_value(0, 3), 30.0);
     }
 
     #[test]
@@ -754,8 +939,8 @@ mod tests {
     #[test]
     fn builder_shape_mismatch_error() {
         let result = DatasetBuilder::new()
-            .add_feature("x", array![1.0, 2.0, 3.0].view())
-            .add_feature("y", array![4.0, 5.0].view()) // wrong length
+            .add_feature("x", array![1.0, 2.0, 3.0])
+            .add_feature("y", array![4.0, 5.0]) // wrong length
             .build();
         assert!(matches!(result, Err(DatasetError::ShapeMismatch { .. })));
     }
@@ -763,7 +948,7 @@ mod tests {
     #[test]
     fn builder_targets_mismatch_error() {
         let result = DatasetBuilder::new()
-            .add_feature("x", array![1.0, 2.0, 3.0].view())
+            .add_feature("x", array![1.0, 2.0, 3.0])
             .targets(array![[0.0, 1.0]].view()) // wrong length
             .build();
         assert!(matches!(result, Err(DatasetError::ShapeMismatch { .. })));
@@ -828,17 +1013,17 @@ mod tests {
             Array2::from_shape_vec((1, n_samples), (0..n_samples).map(|i| i as f32).collect())
                 .unwrap();
 
-        let ds = Dataset::new(features.view(), Some(targets.view()), None);
-        let view = ds.features();
+        let ds = Dataset::from_array(features.view(), Some(targets), None);
 
-        // Each feature should be contiguous (accessible as slice)
+        // Each feature should be contiguous when stored as Dense
         for f in 0..n_features {
-            let feature = view.feature(f);
-            assert!(
-                feature.as_slice().is_some(),
-                "feature {} should be contiguous",
-                f
-            );
+            match ds.feature(f) {
+                Feature::Dense(values) => {
+                    // Dense features have contiguous underlying storage
+                    assert!(!values.is_empty(), "feature {} should have values", f);
+                }
+                _ => panic!("Expected dense feature"),
+            }
         }
     }
 
@@ -848,31 +1033,46 @@ mod tests {
 
     #[test]
     fn for_each_feature_value_dense() {
-        let ds = Dataset::new(
-            array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]].view(),
+        let ds = Dataset::from_array(
+            array![[1.0f32, 2.0, 3.0], [4.0, 5.0, 6.0]].view(),
             None,
             None,
         );
 
         // Test feature 0
         let mut values = Vec::new();
-        ds.for_each_feature_value(0, |idx, val| {
+        ds.for_each_feature_value_dense(0, |idx, val| {
             values.push((idx, val));
         });
         assert_eq!(values, vec![(0, 1.0), (1, 2.0), (2, 3.0)]);
 
         // Test feature 1
         values.clear();
-        ds.for_each_feature_value(1, |idx, val| {
+        ds.for_each_feature_value_dense(1, |idx, val| {
             values.push((idx, val));
         });
         assert_eq!(values, vec![(0, 4.0), (1, 5.0), (2, 6.0)]);
     }
 
     #[test]
+    fn for_each_feature_value_dense_sparse_includes_defaults() {
+        let ds = DatasetBuilder::new()
+            .add_sparse("x", vec![1, 3], vec![10.0, 30.0], 5, 0.0)
+            .build()
+            .unwrap();
+
+        let mut values = Vec::new();
+        ds.for_each_feature_value_dense(0, |idx, val| values.push((idx, val)));
+        assert_eq!(
+            values,
+            vec![(0, 0.0), (1, 10.0), (2, 0.0), (3, 30.0), (4, 0.0)]
+        );
+    }
+
+    #[test]
     fn for_each_feature_value_sum() {
-        let ds = Dataset::new(
-            array![[1.0, 2.0, 3.0, 4.0, 5.0]].view(),
+        let ds = Dataset::from_array(
+            array![[1.0f32, 2.0, 3.0, 4.0, 5.0]].view(),
             None,
             None,
         );
@@ -885,26 +1085,9 @@ mod tests {
     }
 
     #[test]
-    fn for_each_feature_value_dense_same_as_for_each() {
-        let ds = Dataset::new(
-            array![[1.0, 2.0, 3.0]].view(),
-            None,
-            None,
-        );
-
-        let mut values1 = Vec::new();
-        let mut values2 = Vec::new();
-
-        ds.for_each_feature_value(0, |idx, val| values1.push((idx, val)));
-        ds.for_each_feature_value_dense(0, |idx, val| values2.push((idx, val)));
-
-        assert_eq!(values1, values2);
-    }
-
-    #[test]
     fn gather_feature_values_basic() {
-        let ds = Dataset::new(
-            array![[1.0, 2.0, 3.0, 4.0, 5.0]].view(),
+        let ds = Dataset::from_array(
+            array![[1.0f32, 2.0, 3.0, 4.0, 5.0]].view(),
             None,
             None,
         );
@@ -917,8 +1100,8 @@ mod tests {
 
     #[test]
     fn gather_feature_values_all() {
-        let ds = Dataset::new(
-            array![[10.0, 20.0, 30.0]].view(),
+        let ds = Dataset::from_array(
+            array![[10.0f32, 20.0, 30.0]].view(),
             None,
             None,
         );
@@ -931,8 +1114,8 @@ mod tests {
 
     #[test]
     fn gather_feature_values_empty() {
-        let ds = Dataset::new(
-            array![[1.0, 2.0, 3.0]].view(),
+        let ds = Dataset::from_array(
+            array![[1.0f32, 2.0, 3.0]].view(),
             None,
             None,
         );
@@ -945,8 +1128,8 @@ mod tests {
 
     #[test]
     fn for_each_gathered_value_basic() {
-        let ds = Dataset::new(
-            array![[1.0, 2.0, 3.0, 4.0, 5.0]].view(),
+        let ds = Dataset::from_array(
+            array![[1.0f32, 2.0, 3.0, 4.0, 5.0]].view(),
             None,
             None,
         );
@@ -961,8 +1144,8 @@ mod tests {
 
     #[test]
     fn get_feature_value_basic() {
-        let ds = Dataset::new(
-            array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]].view(),
+        let ds = Dataset::from_array(
+            array![[1.0f32, 2.0, 3.0], [4.0, 5.0, 6.0]].view(),
             None,
             None,
         );
@@ -970,5 +1153,140 @@ mod tests {
         assert_eq!(ds.get_feature_value(0, 0), 1.0);
         assert_eq!(ds.get_feature_value(0, 2), 3.0);
         assert_eq!(ds.get_feature_value(1, 1), 5.0);
+    }
+
+    // =========================================================================
+    // Buffer Samples Tests
+    // =========================================================================
+
+    #[test]
+    fn buffer_samples_single_block() {
+        // 2 features, 3 samples
+        // Feature 0: [1.0, 2.0, 3.0]
+        // Feature 1: [4.0, 5.0, 6.0]
+        let ds = Dataset::from_array(
+            array![[1.0f32, 2.0, 3.0], [4.0, 5.0, 6.0]].view(),
+            None,
+            None,
+        );
+
+        // Buffer for all 3 samples, shape [3, 2] (samples × features)
+        let mut buffer = Array2::<f32>::zeros((3, 2));
+        let samples = ds.buffer_samples(&mut buffer, 0);
+
+        assert_eq!(samples.n_samples(), 3);
+        // Row 0 = sample 0: [feat0=1.0, feat1=4.0]
+        assert_eq!(samples.get(0, 0), 1.0);
+        assert_eq!(samples.get(0, 1), 4.0);
+        // Row 1 = sample 1: [feat0=2.0, feat1=5.0]
+        assert_eq!(samples.get(1, 0), 2.0);
+        assert_eq!(samples.get(1, 1), 5.0);
+        // Row 2 = sample 2: [feat0=3.0, feat1=6.0]
+        assert_eq!(samples.get(2, 0), 3.0);
+        assert_eq!(samples.get(2, 1), 6.0);
+    }
+
+    #[test]
+    fn buffer_samples_partial_block() {
+        // 1 feature, 5 samples
+        let ds = Dataset::from_array(
+            array![[1.0f32, 2.0, 3.0, 4.0, 5.0]].view(),
+            None,
+            None,
+        );
+
+        // Buffer for 2 samples starting at index 3
+        let mut buffer = Array2::<f32>::zeros((2, 1));
+        let samples = ds.buffer_samples(&mut buffer, 3);
+
+        assert_eq!(samples.n_samples(), 2);
+        assert_eq!(samples.get(0, 0), 4.0); // sample 3
+        assert_eq!(samples.get(1, 0), 5.0); // sample 4
+    }
+
+    #[test]
+    fn buffer_samples_last_partial_block() {
+        // 1 feature, 5 samples
+        let ds = Dataset::from_array(
+            array![[1.0f32, 2.0, 3.0, 4.0, 5.0]].view(),
+            None,
+            None,
+        );
+
+        // Buffer for 3 samples starting at index 3 (only 2 available)
+        let mut buffer = Array2::<f32>::zeros((3, 1));
+        let samples = ds.buffer_samples(&mut buffer, 3);
+
+        assert_eq!(samples.n_samples(), 2); // Only 2 samples available
+        assert_eq!(samples.get(0, 0), 4.0); // sample 3
+        assert_eq!(samples.get(1, 0), 5.0); // sample 4
+    }
+
+    #[test]
+    fn buffer_samples_sparse_feature() {
+        // Sparse feature: indices [1, 3], values [10.0, 30.0], default 0.0, n_samples=5
+        let ds = DatasetBuilder::new()
+            .add_sparse("sparse", vec![1, 3], vec![10.0, 30.0], 5, 0.0)
+            .build()
+            .unwrap();
+
+        // Buffer for all 5 samples
+        let mut buffer = Array2::<f32>::zeros((5, 1));
+        let samples = ds.buffer_samples(&mut buffer, 0);
+
+        assert_eq!(samples.n_samples(), 5);
+        assert_eq!(samples.get(0, 0), 0.0);  // default
+        assert_eq!(samples.get(1, 0), 10.0); // sparse value
+        assert_eq!(samples.get(2, 0), 0.0);  // default
+        assert_eq!(samples.get(3, 0), 30.0); // sparse value
+        assert_eq!(samples.get(4, 0), 0.0);  // default
+    }
+
+    #[test]
+    fn buffer_samples_sparse_partial() {
+        // Sparse feature: indices [1, 3, 7], values [10.0, 30.0, 70.0], default 0.0, n_samples=10
+        let ds = DatasetBuilder::new()
+            .add_sparse("sparse", vec![1, 3, 7], vec![10.0, 30.0, 70.0], 10, 0.0)
+            .build()
+            .unwrap();
+
+        // Buffer for 4 samples starting at index 2
+        let mut buffer = Array2::<f32>::zeros((4, 1));
+        let samples = ds.buffer_samples(&mut buffer, 2);
+
+        assert_eq!(samples.n_samples(), 4);
+        assert_eq!(samples.get(0, 0), 0.0);  // sample 2: default
+        assert_eq!(samples.get(1, 0), 30.0); // sample 3: sparse value
+        assert_eq!(samples.get(2, 0), 0.0);  // sample 4: default
+        assert_eq!(samples.get(3, 0), 0.0);  // sample 5: default
+    }
+
+    #[test]
+    fn buffer_samples_mixed_features() {
+        // Feature 0: dense [1.0, 2.0, 3.0, 4.0]
+        // Feature 1: sparse indices [1, 3], values [100.0, 300.0], default -1.0
+        let ds = DatasetBuilder::new()
+            .add_feature_unnamed(array![1.0f32, 2.0, 3.0, 4.0])
+            .add_sparse("sparse", vec![1, 3], vec![100.0, 300.0], 4, -1.0)
+            .build()
+            .unwrap();
+
+        // Buffer for all 4 samples
+        let mut buffer = Array2::<f32>::zeros((4, 2));
+        let samples = ds.buffer_samples(&mut buffer, 0);
+
+        assert_eq!(samples.n_samples(), 4);
+        // Sample 0: [1.0, -1.0]
+        assert_eq!(samples.get(0, 0), 1.0);
+        assert_eq!(samples.get(0, 1), -1.0);
+        // Sample 1: [2.0, 100.0]
+        assert_eq!(samples.get(1, 0), 2.0);
+        assert_eq!(samples.get(1, 1), 100.0);
+        // Sample 2: [3.0, -1.0]
+        assert_eq!(samples.get(2, 0), 3.0);
+        assert_eq!(samples.get(2, 1), -1.0);
+        // Sample 3: [4.0, 300.0]
+        assert_eq!(samples.get(3, 0), 4.0);
+        assert_eq!(samples.get(3, 1), 300.0);
     }
 }

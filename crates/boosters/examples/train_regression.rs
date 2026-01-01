@@ -7,11 +7,9 @@
 //! cargo run --example train_regression
 //! ```
 
-use boosters::data::BinningConfig;
-use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::data::{Dataset, TargetsView, WeightsView};
+use boosters::data::Dataset;
 use boosters::training::GrowthStrategy;
-use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism};
+use boosters::{GBDTConfig, GBDTModel, Metric, Objective};
 use ndarray::{Array1, Array2};
 
 fn main() {
@@ -42,12 +40,9 @@ fn main() {
         labels[i] = x0 + 0.5 * x1 + 0.25 * x2 + noise;
     }
 
-    // Create binned dataset for training
-    let features_dataset = Dataset::new(features.view(), None, None);
-    let dataset = BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
-        .add_features(features_dataset.features(), Parallelism::Parallel)
-        .build()
-        .expect("Failed to build binned dataset");
+    // Create training dataset (feature-major) with targets.
+    let targets_2d = labels.clone().insert_axis(ndarray::Axis(0));
+    let dataset = Dataset::from_array(features.view(), Some(targets_2d), None);
 
     // =========================================================================
     // Train
@@ -67,17 +62,12 @@ fn main() {
     println!("  Learning rate: {}", config.learning_rate);
     println!("  Growth: {:?}\n", config.growth_strategy);
 
-    // Wrap labels in TargetsView (shape [n_outputs=1, n_samples])
-    let targets_2d = labels.clone().insert_axis(ndarray::Axis(0));
-    let targets = TargetsView::new(targets_2d.view());
-
-    let model = GBDTModel::train_binned(&dataset, targets, WeightsView::None, &[], config, 1)
-        .expect("Training failed");
+    let model = GBDTModel::train(&dataset, None, config, 1).expect("Training failed");
 
     // =========================================================================
-    // Evaluate - features_dataset is already feature-major
+    // Evaluate
     // =========================================================================
-    let predictions = model.predict(&features_dataset, 1);
+    let predictions = model.predict(&dataset, 1);
 
     let rmse = compute_rmse(predictions.as_slice().unwrap(), labels.as_slice().unwrap());
 

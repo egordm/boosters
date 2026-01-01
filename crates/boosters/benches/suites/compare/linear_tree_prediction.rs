@@ -8,7 +8,7 @@
 #[path = "../../common/mod.rs"]
 mod common;
 
-use boosters::data::FeaturesView;
+use boosters::data::Dataset;
 use boosters::repr::gbdt::{Forest, ScalarLeaf};
 use common::criterion_config::default_criterion;
 #[cfg(feature = "bench-lightgbm")]
@@ -83,9 +83,10 @@ fn bench_linear_gbdt_prediction(c: &mut Criterion) {
             BenchmarkId::new("boosters/linear", batch_size),
             &input_array,
             |b, m| {
+                let dataset = Dataset::from_array(m.t(), None, None);
                 b.iter(|| {
                     black_box(linear_predictor.predict(
-                        black_box(FeaturesView::from_array(m.view())),
+                        black_box(&dataset),
                         Parallelism::Sequential,
                     ))
                 })
@@ -97,9 +98,10 @@ fn bench_linear_gbdt_prediction(c: &mut Criterion) {
             BenchmarkId::new("boosters/standard", batch_size),
             &input_array,
             |b, m| {
+                let dataset = Dataset::from_array(m.t(), None, None);
                 b.iter(|| {
                     black_box(standard_predictor.predict(
-                        black_box(FeaturesView::from_array(m.view())),
+                        black_box(&dataset),
                         Parallelism::Sequential,
                     ))
                 })
@@ -158,6 +160,7 @@ fn bench_linear_gbdt_overhead(c: &mut Criterion) {
 
     let batch_size = 10_000;
     let input_array = random_features_array(batch_size, n_features, 42, -1.0, 1.0);
+    let dataset = Dataset::from_array(input_array.t(), None, None);
 
     let mut group = c.benchmark_group("overhead/linear_gbdt");
     group.throughput(Throughput::Elements(batch_size as u64));
@@ -165,7 +168,7 @@ fn bench_linear_gbdt_overhead(c: &mut Criterion) {
     group.bench_function("standard", |b| {
         b.iter(|| {
             black_box(standard_predictor.predict(
-                black_box(FeaturesView::from_array(input_array.view())),
+                black_box(&dataset),
                 Parallelism::Sequential,
             ))
         })
@@ -174,7 +177,7 @@ fn bench_linear_gbdt_overhead(c: &mut Criterion) {
     group.bench_function("linear", |b| {
         b.iter(|| {
             black_box(linear_predictor.predict(
-                black_box(FeaturesView::from_array(input_array.view())),
+                black_box(&dataset),
                 Parallelism::Sequential,
             ))
         })

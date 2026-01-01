@@ -1,21 +1,37 @@
-//! Unified BinnedDataset for training and inference.
+//! Internal binned dataset representation.
 //!
-//! This module contains the main `BinnedDataset` type which replaces the
-//! previous separate `Dataset` and `BinnedDataset` types. It contains both
-//! binned data (for tree splits) and raw data (for linear regression).
+//! `BinnedDataset` is an internal type used for histogram building during training.
+//! The only supported construction path is via [`BinnedDataset::from_dataset`].
 
 // Allow dead code during migration - this will be used when we switch over in Epic 7
 #![allow(dead_code)]
 
-use super::bin_mapper::BinMapper;
-use super::builder::{BuiltGroups, DatasetBuilder, DatasetError};
-use super::feature_analysis::BinningConfig;
+use thiserror::Error;
+
+use super::bin_mapper::{BinMapper, MissingType};
+use super::bundling::{apply_bundling, create_bundle_plan, BundlingConfig};
+use super::feature_analysis::{
+    analyze_features_dataset, compute_groups, BinningConfig, FeatureAnalysis, FeatureMetadata,
+    GroupSpec, GroupType,
+};
 use super::group::FeatureGroup;
-use super::sample_blocks::SampleBlocks;
+use super::storage::{
+    BundleStorage, CategoricalStorage, FeatureStorage, NumericStorage, SparseCategoricalStorage,
+    SparseNumericStorage,
+};
 use super::view::FeatureView;
-use crate::data::raw::accessor::{DataAccessor, SampleAccessor};
-use crate::data::raw::schema::FeatureType;
+use super::BinData;
 use crate::data::Dataset;
+
+/// Errors returned by binned dataset construction.
+#[derive(Debug, Clone, Error)]
+pub enum DatasetError {
+    #[error("dataset is empty")]
+    EmptyDataset,
+
+    #[error("binning error: {0}")]
+    BinningError(String),
+}
 
 /// Where a feature's data lives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,23 +186,87 @@ pub struct BinnedDataset {
 }
 
 impl BinnedDataset {
-    /// Create a new BinnedDataset from BuiltGroups.
+    /// Create a BinnedDataset from a Dataset.
     ///
-    /// This is the main constructor used by the DatasetBuilder.
-    pub fn from_built_groups(built: BuiltGroups) -> Self {
-        let n_samples = built.n_samples;
-        let n_features = built.analyses.len();
+    /// This is the primary factory method for creating binned training data.
+    /// It analyzes features, creates bin mappers, groups features, and applies
+    /// Exclusive Feature Bundling (EFB) if enabled.
+    ///
+    /// # Arguments
+    ///
+    /// * `dataset` - Source dataset with raw feature values
+    /// * `config` - Binning configuration (max_bins, bundling settings, etc.)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use boosters::data::{Dataset, BinnedDataset, BinningConfig};
+    ///
+    /// let dataset = Dataset::from_array(features.view(), Some(targets.view()), None);
+    /// let binned = BinnedDataset::from_dataset(&dataset, &BinningConfig::default())?;
+    /// ```
+    ///
+    /// # Note
+    ///
+    /// Targets and weights are NOT copied to BinnedDataset. They should be
+    /// accessed from the source Dataset during training.
+    pub fn from_dataset(dataset: &Dataset, config: &BinningConfig) -> Result<Self, DatasetError> {
+        let n_samples = dataset.n_samples();
+        let n_features = dataset.n_features();
+        if n_samples == 0 || n_features == 0 {
+            return Err(DatasetError::EmptyDataset);
+        }
 
-        // Build feature info and locations
+        // Build feature metadata from Dataset schema.
+        let mut names: Vec<String> = Vec::with_capacity(n_features);
+        let mut categorical = Vec::new();
+        for (idx, meta) in dataset.schema().iter_enumerated() {
+            names.push(meta.name.clone().unwrap_or_default());
+            if meta.feature_type.is_categorical() {
+                categorical.push(idx);
+            }
+        }
+        let metadata = FeatureMetadata::default().names(names).categorical(categorical);
+
+        // Analyze features and compute groups.
+        let analyses = analyze_features_dataset(dataset, config, Some(&metadata));
+        let mut grouping = compute_groups(&analyses, config);
+
+        // Optional Exclusive Feature Bundling (EFB).
+        if config.enable_bundling {
+            let bundling_config = BundlingConfig {
+                min_sparsity: config.sparsity_threshold,
+                ..Default::default()
+            };
+            let plan = create_bundle_plan(&analyses, dataset, &bundling_config);
+            grouping = apply_bundling(grouping, &plan, &analyses);
+        }
+
+        // Create bin mappers and build feature groups.
+        let bin_mappers = create_bin_mappers(&analyses, dataset, config, Some(&metadata));
+        let mut groups = Vec::with_capacity(grouping.groups.len());
+        for group_spec in &grouping.groups {
+            groups.push(build_feature_group(
+                group_spec,
+                &analyses,
+                &bin_mappers,
+                dataset,
+                n_samples,
+            ));
+        }
+
+        // Build per-feature info and global bin offsets.
         let mut features = Vec::with_capacity(n_features);
         let mut global_bin_offsets = Vec::with_capacity(n_features + 1);
         let mut current_offset = 0u32;
 
-        // Map from global feature index to its location
-        // First, build a reverse map from the groups
-        let mut location_map: Vec<Option<FeatureLocation>> = vec![None; n_features];
+        let mut is_trivial = vec![false; n_features];
+        for &idx in &grouping.trivial_features {
+            is_trivial[idx] = true;
+        }
 
-        for (group_idx, group) in built.groups.iter().enumerate() {
+        let mut location_map: Vec<Option<FeatureLocation>> = vec![None; n_features];
+        for (group_idx, group) in groups.iter().enumerate() {
             let is_bundle = group.is_bundle();
             for (idx_in_group, &global_idx) in group.feature_indices().iter().enumerate() {
                 let location = if is_bundle {
@@ -204,121 +284,32 @@ impl BinnedDataset {
             }
         }
 
-        // Now build the feature info
         for feature_idx in 0..n_features {
-            // Get bin mapper
-            let bin_mapper = built.bin_mappers[feature_idx].clone();
+            let bin_mapper = bin_mappers[feature_idx].clone();
             let n_bins = bin_mapper.n_bins();
 
-            // Get location
-            let location = if built.trivial_features.contains(&feature_idx) {
+            let location = if is_trivial[feature_idx] {
                 FeatureLocation::Skipped
-            } else if let Some(loc) = location_map[feature_idx] {
-                loc
             } else {
-                // Feature not in any group - should not happen
-                FeatureLocation::Skipped
+                location_map[feature_idx].unwrap_or(FeatureLocation::Skipped)
             };
 
-            // Get feature name from analysis if available
-            let name = None; // TODO: Add name to FeatureAnalysis if needed
-
+            let name = metadata.get_name(feature_idx).map(|s| s.to_owned());
             features.push(BinnedFeatureInfo::new(name, bin_mapper, location));
 
-            // Track global bin offsets
             global_bin_offsets.push(current_offset);
             current_offset += n_bins;
         }
-        global_bin_offsets.push(current_offset); // Final offset for total bins
+        global_bin_offsets.push(current_offset);
 
-        Self {
+        Ok(Self {
             n_samples,
             features: features.into_boxed_slice(),
-            groups: built.groups,
+            groups,
             global_bin_offsets: global_bin_offsets.into_boxed_slice(),
-            labels: built.labels.map(|v| v.into_boxed_slice()),
-            weights: built.weights.map(|v| v.into_boxed_slice()),
-        }
-    }
-
-    /// Create a BinnedDataset from a Dataset.
-    ///
-    /// This is the primary factory method for creating binned training data.
-    /// It analyzes features, creates bin mappers, groups features, and applies
-    /// Exclusive Feature Bundling (EFB) if enabled.
-    ///
-    /// # Arguments
-    ///
-    /// * `dataset` - Source dataset with raw feature values
-    /// * `config` - Binning configuration (max_bins, bundling settings, etc.)
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use boosters::data::{Dataset, BinnedDataset, BinningConfig};
-    ///
-    /// let dataset = Dataset::new(features.view(), Some(targets.view()), None);
-    /// let binned = BinnedDataset::from_dataset(&dataset, &BinningConfig::default())?;
-    /// ```
-    ///
-    /// # Note
-    ///
-    /// Targets and weights are NOT copied to BinnedDataset. They should be
-    /// accessed from the source Dataset during training.
-    pub fn from_dataset(
-        dataset: &Dataset,
-        config: &BinningConfig,
-    ) -> Result<Self, DatasetError> {
-        use crate::Parallelism;
-
-        // Use the existing builder infrastructure
-        DatasetBuilder::with_config(config.clone())
-            .add_features(dataset.features(), Parallelism::Sequential)
-            .build()
-    }
-
-    /// Create a BinnedDataset from a raw 2D array.
-    ///
-    /// This is a convenience method for creating binned data directly from arrays.
-    /// The input array should be in sample-major layout: `[n_samples, n_features]`.
-    ///
-    /// # Arguments
-    ///
-    /// * `data` - 2D array in sample-major layout `[n_samples, n_features]`
-    /// * `config` - Binning configuration
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use boosters::data::{BinnedDataset, BinningConfig};
-    /// use ndarray::array;
-    ///
-    /// let data = array![[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]; // 3 samples, 2 features
-    /// let binned = BinnedDataset::from_array(data.view(), &BinningConfig::default())?;
-    /// ```
-    pub fn from_array(
-        data: ndarray::ArrayView2<f32>,
-        config: &BinningConfig,
-    ) -> Result<Self, DatasetError> {
-        Self::from_array_with_metadata(data, None, config)
-    }
-
-    /// Create a BinnedDataset from a raw 2D array with feature metadata.
-    ///
-    /// Like `from_array`, but allows specifying feature metadata (names, types).
-    ///
-    /// # Arguments
-    ///
-    /// * `data` - 2D array in sample-major layout `[n_samples, n_features]`
-    /// * `metadata` - Optional feature metadata (names, categorical indices)
-    /// * `config` - Binning configuration
-    pub fn from_array_with_metadata(
-        data: ndarray::ArrayView2<f32>,
-        metadata: Option<&super::feature_analysis::FeatureMetadata>,
-        config: &BinningConfig,
-    ) -> Result<Self, DatasetError> {
-        // Delegate to the existing builder
-        DatasetBuilder::from_array_with_metadata(data, metadata, config)?.build()
+            labels: None,
+            weights: None,
+        })
     }
 
     // =========================================================================
@@ -453,63 +444,6 @@ impl BinnedDataset {
             }
             FeatureLocation::Skipped => {
                 panic!("Cannot access bin for skipped feature {feature}")
-            }
-        }
-    }
-
-    /// Get the raw value for a sample and feature.
-    ///
-    /// Returns `None` for categorical features.
-    ///
-    /// # Parameters
-    /// - `sample`: Sample index (0..n_samples)
-    /// - `feature`: Global feature index (0..n_features)
-    ///
-    /// # Panics
-    ///
-    /// Panics if the feature is skipped (trivial) or indices are out of bounds.
-    #[inline]
-    pub fn raw_value(&self, sample: usize, feature: usize) -> Option<f32> {
-        let location = self.features[feature].location;
-        match location {
-            FeatureLocation::Direct {
-                group_idx,
-                idx_in_group,
-            } => self.groups[group_idx as usize].raw(sample, idx_in_group as usize),
-            FeatureLocation::Bundled { .. } => {
-                // Bundled features don't have raw values
-                None
-            }
-            FeatureLocation::Skipped => {
-                panic!("Cannot access raw value for skipped feature {feature}")
-            }
-        }
-    }
-
-    /// Get a contiguous slice of raw values for a feature.
-    ///
-    /// Returns `None` for categorical features or sparse storage.
-    ///
-    /// # Parameters
-    /// - `feature`: Global feature index (0..n_features)
-    ///
-    /// # Panics
-    ///
-    /// Panics if the feature is skipped (trivial).
-    #[inline]
-    pub fn raw_feature_slice(&self, feature: usize) -> Option<&[f32]> {
-        let location = self.features[feature].location;
-        match location {
-            FeatureLocation::Direct {
-                group_idx,
-                idx_in_group,
-            } => self.groups[group_idx as usize].raw_slice(idx_in_group as usize),
-            FeatureLocation::Bundled { .. } => {
-                // Bundled features don't have raw slices
-                None
-            }
-            FeatureLocation::Skipped => {
-                panic!("Cannot access raw slice for skipped feature {feature}")
             }
         }
     }
@@ -715,293 +649,9 @@ impl BinnedDataset {
         }
     }
 
-    // =========================================================================
-    // Linear trees support / gblinear
-    // =========================================================================
-
-    /// Check if any feature has raw values (for linear trees).
-    /// True if there's at least one numeric group.
-    pub fn has_raw_values(&self) -> bool {
-        self.groups.iter().any(|g| g.has_raw_values())
-    }
-
-    /// Get indices of numeric features (for linear tree feature selection).
-    ///
-    /// Linear trees use this to identify which features to include in regression.
-    /// Features with `FeatureStorageType::Bundled` are excluded (splits only, no regression).
-    pub fn numeric_feature_indices(&self) -> impl Iterator<Item = usize> + '_ {
-        self.features.iter().enumerate().filter_map(|(idx, info)| {
-            if info.location.is_direct() && !info.is_categorical() {
-                Some(idx)
-            } else {
-                None
-            }
-        })
-    }
-
-    /// Iterator over (feature_index, raw_slice) for all numeric features.
-    ///
-    /// Zero-allocation access to raw values. Use this when you don't need a
-    /// contiguous matrix.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// for (feature_idx, raw_values) in dataset.raw_feature_iter() {
-    ///     // raw_values is &[f32] with n_samples elements
-    /// }
-    /// ```
-    pub fn raw_feature_iter(&self) -> impl Iterator<Item = (usize, &[f32])> + '_ {
-        self.features.iter().enumerate().filter_map(|(idx, info)| {
-            match info.location {
-                FeatureLocation::Direct {
-                    group_idx,
-                    idx_in_group,
-                } => {
-                    // Only numeric features have raw values
-                    self.groups[group_idx as usize]
-                        .raw_slice(idx_in_group as usize)
-                        .map(|slice| (idx, slice))
-                }
-                FeatureLocation::Bundled { .. } | FeatureLocation::Skipped => None,
-            }
-        })
-    }
-
-    // =========================================================================
-    // Feature Value Iteration (RFC-0019)
-    // =========================================================================
-
-    /// Apply a function to each (sample_idx, raw_value) pair for a feature.
-    ///
-    /// This is the recommended pattern for iterating over feature values in
-    /// GBLinear training/prediction and Linear SHAP. The storage type is
-    /// matched **once** at the start, then we iterate directly on the
-    /// underlying data—no per-iteration branching.
-    ///
-    /// # Performance
-    ///
-    /// - **Dense numeric**: Equivalent to `for (i, &v) in slice.iter().enumerate()`
-    /// - **Sparse numeric**: Iterates only stored (non-zero) values
-    ///
-    /// # Panics
-    ///
-    /// - Panics if the feature is categorical (linear models don't use them)
-    /// - Panics if the feature is bundled (EFB bundles are categorical)
-    /// - Panics if the feature is skipped (trivial/constant)
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// // GBLinear weight update pattern
-    /// let mut sum_grad = 0.0;
-    /// let mut sum_hess = 0.0;
-    /// dataset.for_each_feature_value(feature_idx, |sample_idx, value| {
-    ///     sum_grad += grad_hess[sample_idx].grad * value;
-    ///     sum_hess += grad_hess[sample_idx].hess * value * value;
-    /// });
-    /// ```
-    #[inline]
-    pub fn for_each_feature_value<F>(&self, feature: usize, mut f: F)
-    where
-        F: FnMut(usize, f32),
-    {
-        let info = &self.features[feature];
-
-        match info.location {
-            FeatureLocation::Direct {
-                group_idx,
-                idx_in_group,
-            } => {
-                let group = &self.groups[group_idx as usize];
-
-                // Match on storage type ONCE, then iterate directly
-                match group.storage() {
-                    super::FeatureStorage::Numeric(storage) => {
-                        // Dense numeric: direct slice iteration (zero-cost)
-                        let slice = storage.raw_slice(idx_in_group as usize, self.n_samples);
-                        for (idx, &val) in slice.iter().enumerate() {
-                            f(idx, val);
-                        }
-                    }
-                    super::FeatureStorage::SparseNumeric(storage) => {
-                        // Sparse numeric: iterate only stored (non-zero) values
-                        for (sample_idx, _bin, raw_val) in storage.iter() {
-                            f(sample_idx as usize, raw_val);
-                        }
-                    }
-                    super::FeatureStorage::Categorical(_)
-                    | super::FeatureStorage::SparseCategorical(_) => {
-                        panic!(
-                            "for_each_feature_value: feature {} is categorical, \
-                            linear models don't use categorical features",
-                            feature
-                        );
-                    }
-                    super::FeatureStorage::Bundle(_) => {
-                        panic!(
-                            "for_each_feature_value: feature {} is in a bundle, \
-                            bundles don't have raw values",
-                            feature
-                        );
-                    }
-                }
-            }
-            FeatureLocation::Bundled { .. } => {
-                panic!(
-                    "for_each_feature_value: feature {} is bundled, \
-                    bundles don't have raw values (they're categorical)",
-                    feature
-                );
-            }
-            FeatureLocation::Skipped => {
-                panic!(
-                    "for_each_feature_value: feature {} was skipped (trivial/constant)",
-                    feature
-                );
-            }
-        }
-    }
-
-    /// Gather raw values for a feature at specified sample indices into a buffer.
-    ///
-    /// This is the recommended pattern for linear tree fitting where we need
-    /// values for a subset of samples (e.g., samples that landed in a leaf).
-    ///
-    /// # Arguments
-    ///
-    /// * `feature` - The feature index
-    /// * `sample_indices` - Slice of sample indices to gather (should be sorted for sparse efficiency)
-    /// * `buffer` - Output buffer, must have length >= sample_indices.len()
-    ///
-    /// # Performance
-    ///
-    /// - **Dense numeric**: Simple indexed gather, O(k) where k = sample_indices.len()
-    /// - **Sparse numeric**: Merge-join leveraging sorted indices, O(k + nnz)
-    ///
-    /// # Panics
-    ///
-    /// - Panics if the feature is categorical (linear trees don't use them)
-    /// - Panics if the feature is bundled (EFB bundles are categorical)
-    /// - Panics if buffer.len() < sample_indices.len()
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// // Linear tree fitting: gather values for leaf samples
-    /// let leaf_samples: &[u32] = &[10, 25, 42, 100];
-    /// let mut buffer = vec![0.0f32; leaf_samples.len()];
-    /// dataset.gather_feature_values(feature_idx, leaf_samples, &mut buffer);
-    /// // buffer now contains values at indices 10, 25, 42, 100
-    /// ```
-    #[inline]
-    pub fn gather_feature_values(
-        &self,
-        feature: usize,
-        sample_indices: &[u32],
-        buffer: &mut [f32],
-    ) {
-        debug_assert!(
-            buffer.len() >= sample_indices.len(),
-            "buffer too small: {} < {}",
-            buffer.len(),
-            sample_indices.len()
-        );
-
-        let info = &self.features[feature];
-
-        match info.location {
-            FeatureLocation::Direct {
-                group_idx,
-                idx_in_group,
-            } => {
-                let group = &self.groups[group_idx as usize];
-
-                // Match on storage type ONCE, then gather efficiently
-                match group.storage() {
-                    super::FeatureStorage::Numeric(storage) => {
-                        // Dense numeric: simple indexed gather
-                        let slice = storage.raw_slice(idx_in_group as usize, self.n_samples);
-                        for (out_idx, &sample_idx) in sample_indices.iter().enumerate() {
-                            buffer[out_idx] = slice[sample_idx as usize];
-                        }
-                    }
-                    super::FeatureStorage::SparseNumeric(storage) => {
-                        // Sparse numeric: merge-join using sorted indices
-                        // Both sample_indices (from stable partitioning) and
-                        // storage.sample_indices() are sorted
-                        Self::gather_sparse_merge_join(
-                            storage.sample_indices(),
-                            storage.raw_values(),
-                            sample_indices,
-                            buffer,
-                        );
-                    }
-                    super::FeatureStorage::Categorical(_)
-                    | super::FeatureStorage::SparseCategorical(_) => {
-                        panic!(
-                            "gather_feature_values: feature {} is categorical, \
-                            linear trees don't use categorical features",
-                            feature
-                        );
-                    }
-                    super::FeatureStorage::Bundle(_) => {
-                        panic!(
-                            "gather_feature_values: feature {} is in a bundle, \
-                            bundles don't have raw values",
-                            feature
-                        );
-                    }
-                }
-            }
-            FeatureLocation::Bundled { .. } => {
-                panic!(
-                    "gather_feature_values: feature {} is bundled, \
-                    bundles don't have raw values (they're categorical)",
-                    feature
-                );
-            }
-            FeatureLocation::Skipped => {
-                // Skipped features have constant value (0.0)
-                buffer[..sample_indices.len()].fill(0.0);
-            }
-        }
-    }
-
-    /// Merge-join for gathering values from sparse storage.
-    ///
-    /// Both `sparse_indices` and `sample_indices` must be sorted.
-    /// For samples not in sparse storage, writes 0.0.
-    #[inline]
-    fn gather_sparse_merge_join(
-        sparse_indices: &[u32],
-        sparse_values: &[f32],
-        sample_indices: &[u32],
-        buffer: &mut [f32],
-    ) {
-        let mut sparse_pos = 0;
-        let sparse_len = sparse_indices.len();
-
-        for (out_idx, &sample_idx) in sample_indices.iter().enumerate() {
-            // Advance sparse pointer until we reach or pass sample_idx
-            while sparse_pos < sparse_len && sparse_indices[sparse_pos] < sample_idx {
-                sparse_pos += 1;
-            }
-
-            // Check if we have a match
-            if sparse_pos < sparse_len && sparse_indices[sparse_pos] == sample_idx {
-                buffer[out_idx] = sparse_values[sparse_pos];
-            } else {
-                // Sample not in sparse storage = zero value
-                buffer[out_idx] = 0.0;
-            }
-        }
-    }
-
     /// Check if the dataset contains any categorical features.
     ///
-    /// GBLinear requires all features to be numeric (have raw values).
-    /// Use this to validate before calling GBLinear training.
+    /// Primarily useful for validating configs that disallow categoricals.
     pub fn has_categorical(&self) -> bool {
         self.features.iter().any(|f| {
             matches!(f.location, FeatureLocation::Direct { group_idx, .. } if {
@@ -1010,142 +660,364 @@ impl BinnedDataset {
         })
     }
 
-    // =========================================================================
-    // Sample block iteration (for prediction)
-    // =========================================================================
-
-    /// Create a sample block iterator for efficient prediction.
-    ///
-    /// Buffers samples into contiguous blocks in sample-major layout,
-    /// providing ~2x speedup for prediction vs random column access.
-    ///
-    /// # Arguments
-    ///
-    /// * `block_size` - Number of samples per block (default: 64)
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use boosters::utils::Parallelism;
-    /// use boosters::data::SamplesView;
-    ///
-    /// let blocks = dataset.sample_blocks(64);
-    /// blocks.for_each_with(Parallelism::Parallel, |start_idx, block| {
-    ///     // block is ArrayView2<f32> with shape [block_size, n_features]
-    ///     let samples = SamplesView::from_array(block);
-    ///     // Use samples for prediction...
-    /// });
-    /// ```
-    #[inline]
-    pub fn sample_blocks(&self, block_size: usize) -> SampleBlocks<'_> {
-        SampleBlocks::new(self, block_size)
-    }
+    // NOTE: sample_blocks() method removed in RFC-0021.
+    // SampleBlocks now works on Dataset, not BinnedDataset.
+    // Use: SampleBlocks::new(&dataset, block_size).for_each_with(...)
 }
 
-// ============================================================================
-// DataAccessor Implementation
-// ============================================================================
+// =============================================================================
+// Internal helpers (inlined from the former builder module)
+// =============================================================================
 
-/// A view into a single sample (row) of a BinnedDataset.
-///
-/// Implements `SampleAccessor` to provide feature values for tree traversal
-/// and linear model fitting. Returns actual raw values for numeric features.
-#[derive(Clone, Copy)]
-pub struct BinnedSampleView<'a> {
-    dataset: &'a BinnedDataset,
-    sample: usize,
-}
-
-impl<'a> BinnedSampleView<'a> {
-    /// Create a new sample view.
-    #[inline]
-    fn new(dataset: &'a BinnedDataset, sample: usize) -> Self {
-        Self { dataset, sample }
-    }
-
-    /// Get the sample index.
-    #[inline]
-    pub fn index(&self) -> usize {
-        self.sample
-    }
-}
-
-impl SampleAccessor for BinnedSampleView<'_> {
-    /// Get the feature value at the given index.
-    ///
-    /// For numeric features, returns the actual raw value.
-    /// For categorical features, returns the bin index as f32.
-    /// For skipped features, returns NaN.
-    #[inline]
-    fn feature(&self, feature: usize) -> f32 {
-        // Try to get raw value first (for numeric features)
-        if let Some(raw) = self.dataset.raw_value(self.sample, feature) {
-            return raw;
+/// Create bin mappers for all features based on analysis results.
+/// Data is in column-major format: [feature][sample].
+fn create_bin_mappers(
+    analyses: &[FeatureAnalysis],
+    dataset: &Dataset,
+    config: &BinningConfig,
+    metadata: Option<&FeatureMetadata>,
+) -> Vec<BinMapper> {
+    fn sample_indices_for_binning(n_samples: usize, sample_cnt: usize) -> Option<Vec<u32>> {
+        if n_samples <= sample_cnt {
+            // Use all samples - no need to allocate indices
+            return None;
         }
 
-        // Fall back to bin value for categorical features
-        let location = self.dataset.features[feature].location;
-        match location {
-            FeatureLocation::Direct {
-                group_idx,
-                idx_in_group,
-            } => {
-                // Categorical feature - return bin as f32
-                self.dataset.groups[group_idx as usize].bin(self.sample, idx_in_group as usize)
-                    as f32
-            }
-            FeatureLocation::Bundled { .. } => {
-                // Bundled features don't have raw values - return NaN for now
-                // (bundled features shouldn't be used for linear regression)
-                f32::NAN
-            }
-            FeatureLocation::Skipped => {
-                // Skipped features are constant/trivial - return NaN
-                f32::NAN
+        // Deterministic pseudo-random sampling without extra dependencies.
+        // This keeps binning stable across runs while avoiding a full scan of every feature.
+        fn splitmix64_next(state: &mut u64) -> u64 {
+            *state = state.wrapping_add(0x9E3779B97F4A7C15);
+            let mut z = *state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+            z ^ (z >> 31)
+        }
+
+        let k = sample_cnt.min(n_samples);
+        let mut indices = Vec::with_capacity(k);
+        let mut seen = std::collections::HashSet::with_capacity(k * 2);
+
+        let mut state = 0xD1B54A32D192ED03u64 ^ (n_samples as u64);
+        while indices.len() < k {
+            let r = splitmix64_next(&mut state);
+            let idx = (r % n_samples as u64) as u32;
+            if seen.insert(idx) {
+                indices.push(idx);
             }
         }
+
+        indices.sort_unstable();
+        Some(indices)
     }
 
-    #[inline]
-    fn n_features(&self) -> usize {
-        self.dataset.n_features()
-    }
+    // None means use all samples, Some(indices) means sample
+    let sample_indices = sample_indices_for_binning(dataset.n_samples(), config.sample_cnt);
+
+    analyses
+        .iter()
+        .map(|analysis| {
+            let feature_idx = analysis.feature_idx;
+            let max_bins = metadata
+                .and_then(|m| m.max_bins.get(&feature_idx).copied())
+                .unwrap_or(config.max_bins);
+
+            if analysis.is_numeric {
+                // Optimize for common case: dense feature with all samples
+                if sample_indices.is_none() {
+                    if let Some(slice) = dataset.feature(feature_idx).as_slice() {
+                        // Fast path: direct slice access (no copy, no indirection)
+                        return bin_numeric(slice, max_bins);
+                    }
+                }
+
+                // Fall back to gathering (sampled or sparse features)
+                let indices = sample_indices.as_ref().map_or_else(
+                    || (0..dataset.n_samples() as u32).collect::<Vec<_>>(),
+                    |v| v.clone(),
+                );
+                let mut values = vec![0.0f32; indices.len()];
+                dataset.gather_feature_values(feature_idx, &indices, &mut values);
+                bin_numeric(&values, max_bins)
+            } else {
+                // For categorical features, sampling can miss categories that exist in the dataset.
+                // Build the category set directly without materializing the full column.
+                let mut seen = std::collections::HashSet::new();
+                dataset.for_each_feature_value_dense(feature_idx, |_idx, val| {
+                    if val.is_finite() {
+                        seen.insert(val as i32);
+                    }
+                });
+
+                let mut categories: Vec<i32> = seen.into_iter().collect();
+                categories.sort();
+                if categories.is_empty() {
+                    categories.push(0);
+                }
+
+                BinMapper::categorical(categories, MissingType::None, 0, 0, 0.0)
+            }
+        })
+        .collect()
 }
 
-impl DataAccessor for BinnedDataset {
-    type Sample<'a>
-        = BinnedSampleView<'a>
-    where
-        Self: 'a;
+fn bin_numeric(data: &[f32], max_bins: u32) -> BinMapper {
+    // Collect non-NaN values and compute min/max
+    let mut min_val = f32::MAX;
+    let mut max_val = f32::MIN;
+    let mut values: Vec<f32> = Vec::with_capacity(data.len());
 
-    #[inline]
-    fn sample(&self, index: usize) -> Self::Sample<'_> {
-        BinnedSampleView::new(self, index)
-    }
-
-    #[inline]
-    fn n_samples(&self) -> usize {
-        self.n_samples
-    }
-
-    #[inline]
-    fn n_features(&self) -> usize {
-        self.features.len()
-    }
-
-    #[inline]
-    fn feature_type(&self, feature: usize) -> FeatureType {
-        if self.features[feature].is_categorical() {
-            FeatureType::Categorical
-        } else {
-            FeatureType::Numeric
+    for &val in data.iter() {
+        if val.is_finite() {
+            min_val = min_val.min(val);
+            max_val = max_val.max(val);
+            values.push(val);
         }
     }
 
-    #[inline]
-    fn has_categorical(&self) -> bool {
-        self.features.iter().any(|f| f.is_categorical())
+    let n_valid = values.len();
+    if n_valid == 0 || min_val >= max_val {
+        return BinMapper::numerical(vec![f64::MAX], MissingType::None, 0, 0, 0.0, 0.0, 0.0);
     }
+
+    let n_bins = max_bins.min(n_valid as u32);
+
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    values.dedup();
+    let n_unique = values.len();
+
+    let mut bounds = Vec::with_capacity(n_bins as usize);
+    if n_unique <= n_bins as usize {
+        for i in 0..n_unique.saturating_sub(1) {
+            let bound = (values[i] as f64 + values[i + 1] as f64) / 2.0;
+            bounds.push(bound);
+        }
+    } else {
+        for i in 1..n_bins {
+            let q = i as f64 / n_bins as f64;
+            let idx = ((q * (n_unique - 1) as f64).floor() as usize).min(n_unique - 2);
+            let bound = (values[idx] as f64 + values[idx + 1] as f64) / 2.0;
+            if bounds.is_empty() || bound > *bounds.last().unwrap() {
+                bounds.push(bound);
+            }
+        }
+    }
+    bounds.push(f64::MAX);
+
+    BinMapper::numerical(
+        bounds,
+        MissingType::None,
+        0,
+        0,
+        0.0,
+        min_val as f64,
+        max_val as f64,
+    )
+}
+
+fn build_feature_group(
+    spec: &GroupSpec,
+    _analyses: &[FeatureAnalysis],
+    bin_mappers: &[BinMapper],
+    dataset: &Dataset,
+    n_samples: usize,
+) -> FeatureGroup {
+    let storage = match spec.group_type {
+        GroupType::NumericDense => build_numeric_dense(spec, bin_mappers, dataset, n_samples),
+        GroupType::CategoricalDense => build_categorical_dense(spec, bin_mappers, dataset, n_samples),
+        GroupType::SparseNumeric => build_sparse_numeric(spec, bin_mappers, dataset, n_samples),
+        GroupType::SparseCategorical => {
+            build_sparse_categorical(spec, bin_mappers, dataset, n_samples)
+        }
+        GroupType::Bundle => build_bundle(spec, bin_mappers, dataset, n_samples),
+    };
+
+    let bin_counts: Box<[u32]> = spec
+        .feature_indices
+        .iter()
+        .map(|&idx| bin_mappers[idx].n_bins())
+        .collect();
+
+    let feature_indices: Box<[u32]> = spec
+        .feature_indices
+        .iter()
+        .map(|&idx| idx as u32)
+        .collect();
+
+    FeatureGroup::new(feature_indices, n_samples, storage, bin_counts)
+}
+
+fn build_numeric_dense(
+    spec: &GroupSpec,
+    bin_mappers: &[BinMapper],
+    dataset: &Dataset,
+    n_samples: usize,
+) -> FeatureStorage {
+    let n_features = spec.n_features();
+
+    let bins = if spec.needs_u16 {
+        let mut bin_data = Vec::with_capacity(n_features * n_samples);
+        for &feature_idx in &spec.feature_indices {
+            let mapper = &bin_mappers[feature_idx];
+            dataset.for_each_feature_value_dense(feature_idx, |_idx, value| {
+                bin_data.push(mapper.value_to_bin(value as f64) as u16);
+            });
+        }
+        BinData::U16(bin_data.into_boxed_slice())
+    } else {
+        let mut bin_data = Vec::with_capacity(n_features * n_samples);
+        for &feature_idx in &spec.feature_indices {
+            let mapper = &bin_mappers[feature_idx];
+            dataset.for_each_feature_value_dense(feature_idx, |_idx, value| {
+                bin_data.push(mapper.value_to_bin(value as f64) as u8);
+            });
+        }
+        BinData::U8(bin_data.into_boxed_slice())
+    };
+
+    FeatureStorage::Numeric(NumericStorage::new(bins))
+}
+
+fn build_categorical_dense(
+    spec: &GroupSpec,
+    bin_mappers: &[BinMapper],
+    dataset: &Dataset,
+    n_samples: usize,
+) -> FeatureStorage {
+    let n_features = spec.n_features();
+
+    let bins = if spec.needs_u16 {
+        let mut bin_data = Vec::with_capacity(n_features * n_samples);
+        for &feature_idx in &spec.feature_indices {
+            let mapper = &bin_mappers[feature_idx];
+            dataset.for_each_feature_value_dense(feature_idx, |_idx, value| {
+                bin_data.push(mapper.value_to_bin(value as f64) as u16);
+            });
+        }
+        BinData::U16(bin_data.into_boxed_slice())
+    } else {
+        let mut bin_data = Vec::with_capacity(n_features * n_samples);
+        for &feature_idx in &spec.feature_indices {
+            let mapper = &bin_mappers[feature_idx];
+            dataset.for_each_feature_value_dense(feature_idx, |_idx, value| {
+                bin_data.push(mapper.value_to_bin(value as f64) as u8);
+            });
+        }
+        BinData::U8(bin_data.into_boxed_slice())
+    };
+
+    FeatureStorage::Categorical(CategoricalStorage::new(bins))
+}
+
+fn build_sparse_numeric(
+    spec: &GroupSpec,
+    bin_mappers: &[BinMapper],
+    dataset: &Dataset,
+    n_samples: usize,
+) -> FeatureStorage {
+    assert_eq!(spec.n_features(), 1, "Sparse groups must have exactly one feature");
+    let feature_idx = spec.feature_indices[0];
+    let mapper = &bin_mappers[feature_idx];
+
+    let mut indices = Vec::new();
+    let mut bins = Vec::new();
+
+    dataset.for_each_feature_value_dense(feature_idx, |i, value| {
+        if value != 0.0 && !value.is_nan() {
+            indices.push(i as u32);
+            bins.push(mapper.value_to_bin(value as f64) as u8);
+        }
+    });
+
+    let bins_data = BinData::U8(bins.into_boxed_slice());
+    FeatureStorage::SparseNumeric(SparseNumericStorage::new(
+        indices.into_boxed_slice(),
+        bins_data,
+        n_samples,
+    ))
+}
+
+fn build_sparse_categorical(
+    spec: &GroupSpec,
+    bin_mappers: &[BinMapper],
+    dataset: &Dataset,
+    n_samples: usize,
+) -> FeatureStorage {
+    assert_eq!(spec.n_features(), 1, "Sparse groups must have exactly one feature");
+    let feature_idx = spec.feature_indices[0];
+    let mapper = &bin_mappers[feature_idx];
+
+    let mut indices = Vec::new();
+    let mut bins = Vec::new();
+
+    dataset.for_each_feature_value_dense(feature_idx, |i, value| {
+        if value != 0.0 && !value.is_nan() {
+            indices.push(i as u32);
+            bins.push(mapper.value_to_bin(value as f64) as u8);
+        }
+    });
+
+    let bins_data = BinData::U8(bins.into_boxed_slice());
+    FeatureStorage::SparseCategorical(SparseCategoricalStorage::new(
+        indices.into_boxed_slice(),
+        bins_data,
+        n_samples,
+    ))
+}
+
+fn build_bundle(
+    spec: &GroupSpec,
+    bin_mappers: &[BinMapper],
+    dataset: &Dataset,
+    n_samples: usize,
+) -> FeatureStorage {
+    let n_features = spec.n_features();
+    assert!(n_features >= 2, "Bundle must have at least 2 features");
+
+    let mut bin_offsets = Vec::with_capacity(n_features);
+    let mut feature_n_bins = Vec::with_capacity(n_features);
+    let mut offset = 1u32;
+
+    for &feature_idx in &spec.feature_indices {
+        let n_bins = bin_mappers[feature_idx].n_bins();
+        bin_offsets.push(offset);
+        feature_n_bins.push(n_bins);
+        offset += n_bins;
+    }
+    let total_bins = offset;
+
+    let default_bins: Vec<u32> = spec
+        .feature_indices
+        .iter()
+        .map(|&idx| bin_mappers[idx].value_to_bin(0.0))
+        .collect();
+
+    let mut encoded_bins = vec![0u16; n_samples];
+    for (pos, &feature_idx) in spec.feature_indices.iter().enumerate() {
+        let mapper = &bin_mappers[feature_idx];
+        let offset = bin_offsets[pos];
+        dataset.for_each_feature_value_dense(feature_idx, |sample_idx, value| {
+            if encoded_bins[sample_idx] == 0 && value != 0.0 && !value.is_nan() {
+                let bin = mapper.value_to_bin(value as f64);
+                encoded_bins[sample_idx] = (offset + bin) as u16;
+            }
+        });
+    }
+
+    let feature_indices_u32: Box<[u32]> = spec
+        .feature_indices
+        .iter()
+        .map(|&idx| idx as u32)
+        .collect();
+
+    FeatureStorage::Bundle(BundleStorage::new(
+        encoded_bins.into_boxed_slice(),
+        feature_indices_u32,
+        bin_offsets.into_boxed_slice(),
+        feature_n_bins.into_boxed_slice(),
+        total_bins,
+        default_bins.into_boxed_slice(),
+        n_samples,
+    ))
 }
 
 // ============================================================================
@@ -1155,39 +1027,37 @@ impl DataAccessor for BinnedDataset {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::binned::builder::DatasetBuilder;
     use crate::data::binned::feature_analysis::BinningConfig;
-    use ndarray::{array, Array2};
-
-    fn make_array(values: &[f32], rows: usize, cols: usize) -> Array2<f32> {
-        Array2::from_shape_vec((rows, cols), values.to_vec()).unwrap()
-    }
+    use ndarray::{array, Array1};
 
     #[test]
-    fn test_create_from_built_groups() {
+    fn test_from_dataset_single_feature() {
         // Use floats to ensure numeric detection
-        let data = make_array(&[1.5, 2.5, 3.5, 4.5, 5.5], 5, 1);
         let config = BinningConfig::default();
 
-        let built = DatasetBuilder::from_array(data.view(), &config)
-            .unwrap()
-            .build_groups()
+        let raw = Dataset::builder()
+            .add_feature_unnamed(array![1.5, 2.5, 3.5, 4.5, 5.5])
+            .build()
             .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
+        let dataset = BinnedDataset::from_dataset(&raw, &config).unwrap();
 
         assert_eq!(dataset.n_samples(), 5);
         assert_eq!(dataset.n_features(), 1);
         assert_eq!(dataset.n_groups(), 1);
-        assert!(dataset.has_raw_values());
     }
 
     #[test]
     fn test_from_dataset() {
         // Create a raw Dataset
-        let features = array![[1.0, 2.0, 3.0, 4.0, 5.0], [10.0, 20.0, 30.0, 40.0, 50.0]]; // [2 features, 5 samples]
-        let targets = array![[0.0, 1.0, 0.0, 1.0, 0.0]]; // [1 output, 5 samples]
-        let raw_dataset = Dataset::new(features.view(), Some(targets.view()), None);
+        let f0 = array![1.0f32, 2.0, 3.0, 4.0, 5.0];
+        let f1 = array![10.0f32, 20.0, 30.0, 40.0, 50.0];
+        let targets = array![[0.0f32, 1.0, 0.0, 1.0, 0.0]]; // [1 output, 5 samples]
+        let raw_dataset = Dataset::builder()
+            .add_feature_unnamed(f0)
+            .add_feature_unnamed(f1)
+            .targets(targets.view())
+            .build()
+            .unwrap();
 
         // Convert to BinnedDataset
         let config = BinningConfig::default();
@@ -1200,16 +1070,15 @@ mod tests {
         // Verify both features are in the dataset
         assert!(binned.feature_location(0).is_direct());
         assert!(binned.feature_location(1).is_direct());
-
-        // Verify raw values are preserved
-        assert!(binned.has_raw_values());
     }
 
     #[test]
     fn test_from_dataset_empty_dataset() {
-        // Empty dataset should fail
-        let features = Array2::<f32>::zeros((0, 0)); // [0 features, 0 samples]
-        let raw_dataset = Dataset::new(features.view(), None, None);
+        // Empty dataset should fail (0 samples)
+        let raw_dataset = Dataset::builder()
+            .add_feature_unnamed(Array1::<f32>::zeros(0))
+            .build()
+            .unwrap();
 
         let config = BinningConfig::default();
         let result = BinnedDataset::from_dataset(&raw_dataset, &config);
@@ -1219,19 +1088,14 @@ mod tests {
 
     #[test]
     fn test_feature_location() {
-        let data = make_array(
-            &[1.1, 2.2, 3.3, 10.1, 20.2, 30.3],
-            3,
-            2,
-        );
         let config = BinningConfig::default();
 
-        let built = DatasetBuilder::from_array(data.view(), &config)
-            .unwrap()
-            .build_groups()
+        let raw = Dataset::builder()
+            .add_feature_unnamed(array![1.1, 3.3, 20.2])
+            .add_feature_unnamed(array![2.2, 10.1, 30.3])
+            .build()
             .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
+        let dataset = BinnedDataset::from_dataset(&raw, &config).unwrap();
 
         // Both features should be direct (not skipped or bundled)
         assert!(dataset.feature_location(0).is_direct());
@@ -1247,15 +1111,13 @@ mod tests {
 
     #[test]
     fn test_global_bin_offsets() {
-        let data = make_array(&[1.1, 2.2, 3.3, 4.4, 5.5], 5, 1);
         let config = BinningConfig::builder().max_bins(10).build();
 
-        let built = DatasetBuilder::from_array(data.view(), &config)
-            .unwrap()
-            .build_groups()
+        let raw = Dataset::builder()
+            .add_feature_unnamed(array![1.1, 2.2, 3.3, 4.4, 5.5])
+            .build()
             .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
+        let dataset = BinnedDataset::from_dataset(&raw, &config).unwrap();
 
         // Feature 0 should start at offset 0
         assert_eq!(dataset.global_bin_offset(0), 0);
@@ -1264,37 +1126,17 @@ mod tests {
     }
 
     #[test]
-    fn test_labels_and_weights() {
-        let data = make_array(&[1.1, 2.2, 3.3, 4.4, 5.5], 5, 1);
-        let labels = array![0.0, 1.0, 0.0, 1.0, 0.0];
-        let weights = array![1.0, 2.0, 1.0, 2.0, 1.0];
-        let config = BinningConfig::default();
-
-        let built = DatasetBuilder::from_array(data.view(), &config)
-            .unwrap()
-            .set_labels(labels.view())
-            .set_weights(weights.view())
-            .build_groups()
-            .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
-
-        assert!(dataset.has_labels());
-        assert!(dataset.has_weights());
-        assert_eq!(dataset.labels().unwrap(), &[0.0, 1.0, 0.0, 1.0, 0.0]);
-        assert_eq!(dataset.weights().unwrap(), &[1.0, 2.0, 1.0, 2.0, 1.0]);
-    }
-
-    #[test]
     fn test_feature_is_categorical() {
         // Mix of numeric and categorical
-        let built = DatasetBuilder::new()
-            .add_numeric("x", array![1.1, 2.2, 3.3, 4.4, 5.5].view())
-            .add_categorical("y", array![0.0, 1.0, 2.0, 1.0, 0.0].view())
-            .build_groups()
+        let config = BinningConfig::default();
+
+        let raw = Dataset::builder()
+            .add_feature_unnamed(array![1.1, 2.2, 3.3, 4.4, 5.5])
+            .add_categorical_unnamed(array![0.0, 1.0, 2.0, 1.0, 0.0])
+            .build()
             .unwrap();
 
-        let dataset = BinnedDataset::from_built_groups(built);
+        let dataset = BinnedDataset::from_dataset(&raw, &config).unwrap();
 
         assert!(!dataset.is_categorical(0)); // Numeric
         assert!(dataset.is_categorical(1)); // Categorical
@@ -1303,15 +1145,13 @@ mod tests {
     #[test]
     fn test_bin_access() {
         // Create a simple dataset with known values
-        let data = make_array(&[1.1, 2.2, 3.3, 4.4, 5.5], 5, 1);
         let config = BinningConfig::builder().max_bins(5).build();
 
-        let built = DatasetBuilder::from_array(data.view(), &config)
-            .unwrap()
-            .build_groups()
+        let raw = Dataset::builder()
+            .add_feature_unnamed(array![1.1, 2.2, 3.3, 4.4, 5.5])
+            .build()
             .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
+        let dataset = BinnedDataset::from_dataset(&raw, &config).unwrap();
 
         // Bin values should be 0..n_bins-1 for evenly spaced values
         // With 5 unique values and max_bins=5, each value should map to its own bin
@@ -1322,72 +1162,15 @@ mod tests {
     }
 
     #[test]
-    fn test_raw_value_access() {
-        let data = make_array(&[1.5, 2.5, 3.5, 4.5, 5.5], 5, 1);
-        let config = BinningConfig::default();
-
-        let built = DatasetBuilder::from_array(data.view(), &config)
-            .unwrap()
-            .build_groups()
-            .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
-
-        // Raw values should be preserved exactly
-        assert_eq!(dataset.raw_value(0, 0), Some(1.5));
-        assert_eq!(dataset.raw_value(1, 0), Some(2.5));
-        assert_eq!(dataset.raw_value(2, 0), Some(3.5));
-        assert_eq!(dataset.raw_value(3, 0), Some(4.5));
-        assert_eq!(dataset.raw_value(4, 0), Some(5.5));
-    }
-
-    #[test]
-    fn test_raw_feature_slice() {
-        let data = make_array(&[1.5, 2.5, 3.5, 4.5, 5.5], 5, 1);
-        let config = BinningConfig::default();
-
-        let built = DatasetBuilder::from_array(data.view(), &config)
-            .unwrap()
-            .build_groups()
-            .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
-
-        // Get the raw slice for the feature
-        let slice = dataset.raw_feature_slice(0);
-        assert!(slice.is_some());
-        assert_eq!(slice.unwrap(), &[1.5, 2.5, 3.5, 4.5, 5.5]);
-    }
-
-    #[test]
-    fn test_categorical_no_raw_values() {
-        let built = DatasetBuilder::new()
-            .add_categorical("cat", array![0.0, 1.0, 2.0, 1.0, 0.0].view())
-            .build_groups()
-            .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
-
-        // Categorical features don't have raw values
-        assert_eq!(dataset.raw_value(0, 0), None);
-        assert_eq!(dataset.raw_feature_slice(0), None);
-    }
-
-    #[test]
     fn test_feature_views_count() {
-        let data = make_array(
-            &[1.1, 2.2, 3.3, 10.1, 20.2, 30.3],
-            3,
-            2,
-        );
         let config = BinningConfig::default();
 
-        let built = DatasetBuilder::from_array(data.view(), &config)
-            .unwrap()
-            .build_groups()
+        let raw = Dataset::builder()
+            .add_feature_unnamed(array![1.1, 3.3, 20.2])
+            .add_feature_unnamed(array![2.2, 10.1, 30.3])
+            .build()
             .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
+        let dataset = BinnedDataset::from_dataset(&raw, &config).unwrap();
         let views = dataset.feature_views();
 
         // Should have exactly 2 views (one per non-trivial feature)
@@ -1396,15 +1179,13 @@ mod tests {
 
     #[test]
     fn test_feature_views_dense() {
-        let data = make_array(&[1.1, 2.2, 3.3, 4.4, 5.5], 5, 1);
         let config = BinningConfig::default();
 
-        let built = DatasetBuilder::from_array(data.view(), &config)
-            .unwrap()
-            .build_groups()
+        let raw = Dataset::builder()
+            .add_feature_unnamed(array![1.1, 2.2, 3.3, 4.4, 5.5])
+            .build()
             .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
+        let dataset = BinnedDataset::from_dataset(&raw, &config).unwrap();
         let views = dataset.feature_views();
 
         assert_eq!(views.len(), 1);
@@ -1414,13 +1195,13 @@ mod tests {
 
     #[test]
     fn test_original_feature_view() {
-        let built = DatasetBuilder::new()
-            .add_numeric("x", array![1.1, 2.2, 3.3, 4.4, 5.5].view())
-            .add_numeric("y", array![10.1, 20.2, 30.3, 40.4, 50.5].view())
-            .build_groups()
+        let config = BinningConfig::default();
+        let raw = Dataset::builder()
+            .add_feature_unnamed(array![1.1, 2.2, 3.3, 4.4, 5.5])
+            .add_feature_unnamed(array![10.1, 20.2, 30.3, 40.4, 50.5])
+            .build()
             .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
+        let dataset = BinnedDataset::from_dataset(&raw, &config).unwrap();
 
         // Get views for individual features
         let view0 = dataset.original_feature_view(0);
@@ -1434,13 +1215,15 @@ mod tests {
 
     #[test]
     fn test_mixed_feature_views() {
-        let built = DatasetBuilder::new()
-            .add_numeric("num", array![1.1, 2.2, 3.3, 4.4, 5.5].view())
-            .add_categorical("cat", array![0.0, 1.0, 2.0, 1.0, 0.0].view())
-            .build_groups()
+        let config = BinningConfig::default();
+
+        let raw = Dataset::builder()
+            .add_feature_unnamed(array![1.1, 2.2, 3.3, 4.4, 5.5])
+            .add_categorical_unnamed(array![0.0, 1.0, 2.0, 1.0, 0.0])
+            .build()
             .unwrap();
 
-        let dataset = BinnedDataset::from_built_groups(built);
+        let dataset = BinnedDataset::from_dataset(&raw, &config).unwrap();
         let views = dataset.feature_views();
 
         // Should have 2 views (one numeric, one categorical)
@@ -1454,197 +1237,43 @@ mod tests {
     }
 
     #[test]
-    fn test_numeric_feature_indices() {
-        let built = DatasetBuilder::new()
-            .add_numeric("num1", array![1.1, 2.2, 3.3, 4.4, 5.5].view())
-            .add_categorical("cat", array![0.0, 1.0, 2.0, 1.0, 0.0].view())
-            .add_numeric("num2", array![10.1, 20.2, 30.3, 40.4, 50.5].view())
-            .build_groups()
-            .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
-        let indices: Vec<_> = dataset.numeric_feature_indices().collect();
-
-        // Features 0 and 2 are numeric
-        assert_eq!(indices, vec![0, 2]);
-    }
-
-    #[test]
-    fn test_raw_feature_iter() {
-        let built = DatasetBuilder::new()
-            .add_numeric("x", array![1.5, 2.5, 3.5, 4.5, 5.5].view())
-            .add_categorical("cat", array![0.0, 1.0, 2.0, 1.0, 0.0].view())
-            .add_numeric("y", array![10.5, 20.5, 30.5, 40.5, 50.5].view())
-            .build_groups()
-            .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
-
-        // Collect raw feature iterator results
-        let raw_features: Vec<_> = dataset.raw_feature_iter().collect();
-
-        // Should have 2 numeric features with raw values
-        assert_eq!(raw_features.len(), 2);
-
-        // Feature 0 (numeric)
-        assert_eq!(raw_features[0].0, 0);
-        assert_eq!(raw_features[0].1, &[1.5, 2.5, 3.5, 4.5, 5.5]);
-
-        // Feature 2 (numeric)
-        assert_eq!(raw_features[1].0, 2);
-        assert_eq!(raw_features[1].1, &[10.5, 20.5, 30.5, 40.5, 50.5]);
-    }
-
-    #[test]
-    fn test_raw_feature_iter_all_categorical() {
-        let built = DatasetBuilder::new()
-            .add_categorical("cat1", array![0.0, 1.0, 2.0, 1.0, 0.0].view())
-            .add_categorical("cat2", array![1.0, 0.0, 1.0, 0.0, 1.0].view())
-            .build_groups()
-            .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
-
-        // No numeric features, so raw_feature_iter should be empty
-        let raw_features: Vec<_> = dataset.raw_feature_iter().collect();
-        assert!(raw_features.is_empty());
-    }
-
-    // ========================================================================
-    // DataAccessor Tests
-    // ========================================================================
-
-    #[test]
-    fn test_data_accessor_numeric() {
-        use crate::data::DataAccessor;
-        use crate::data::SampleAccessor;
-
-        // Create dataset with numeric features
-        // Use non-integer values to avoid auto-categorical detection
-        let built = DatasetBuilder::new()
-            .add_numeric("x", array![1.5, 2.5, 3.5, 4.5, 5.5].view())
-            .add_numeric("y", array![10.1, 20.2, 30.3, 40.4, 50.5].view())
-            .build_groups()
-            .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
-
-        // Use DataAccessor trait
-        assert_eq!(dataset.n_samples(), 5);
-        assert_eq!(dataset.n_features(), 2);
-
-        // Both features should be numeric (not auto-detected as categorical)
-        assert!(!dataset.is_categorical(0));
-        assert!(!dataset.is_categorical(1));
-
-        // Check raw values via SampleAccessor
-        let sample = dataset.sample(0);
-        assert_eq!(sample.n_features(), 2);
-        // Raw values should be preserved (not bin midpoints)
-        assert!((sample.feature(0) - 1.5).abs() < 0.01, "feature(0) = {}", sample.feature(0));
-        assert!((sample.feature(1) - 10.1).abs() < 0.01, "feature(1) = {}", sample.feature(1));
-
-        // Check other samples
-        let sample2 = dataset.sample(2);
-        assert!((sample2.feature(0) - 3.5).abs() < 0.01);
-        assert!((sample2.feature(1) - 30.3).abs() < 0.01);
-
-        let sample4 = dataset.sample(4);
-        assert!((sample4.feature(0) - 5.5).abs() < 0.01);
-        assert!((sample4.feature(1) - 50.5).abs() < 0.01);
-    }
-
-    #[test]
-    fn test_data_accessor_categorical() {
-        use crate::data::DataAccessor;
-        use crate::data::SampleAccessor;
-
-        // Create dataset with categorical features
-        let built = DatasetBuilder::new()
-            .add_categorical("cat", array![0.0, 1.0, 2.0, 1.0, 0.0].view())
-            .build_groups()
-            .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
-
-        // Categorical returns bin as f32
-        let sample0 = dataset.sample(0);
-        let sample1 = dataset.sample(1);
-        let sample2 = dataset.sample(2);
-
-        // Categories should be preserved as bin indices
-        // The exact bin depends on how categoricals are encoded, but
-        // they should be small integers
-        assert!(sample0.feature(0) >= 0.0);
-        assert!(sample1.feature(0) >= 0.0);
-        assert!(sample2.feature(0) >= 0.0);
-
-        // Feature type should be categorical
-        assert!(dataset.has_categorical());
-        assert_eq!(dataset.feature_type(0), FeatureType::Categorical);
-    }
-
-    #[test]
-    fn test_data_accessor_mixed() {
-        use crate::data::DataAccessor;
-        use crate::data::SampleAccessor;
-
-        // Create dataset with mixed numeric and categorical
-        // Use non-integer values for numeric to avoid auto-categorical detection
-        let built = DatasetBuilder::new()
-            .add_numeric("num", array![1.1, 2.2, 3.3, 4.4, 5.5].view())
-            .add_categorical("cat", array![0.0, 1.0, 0.0, 1.0, 0.0].view())
-            .build_groups()
-            .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
-
-        assert_eq!(dataset.n_features(), 2);
-        assert!(dataset.has_categorical());
-
-        // Numeric feature should return raw value
-        let sample = dataset.sample(2);
-        assert!((sample.feature(0) - 3.3).abs() < 0.01, "feature(0) = {}", sample.feature(0));
-
-        // Feature types
-        assert_eq!(dataset.feature_type(0), FeatureType::Numeric);
-        assert_eq!(dataset.feature_type(1), FeatureType::Categorical);
-    }
-
-    #[test]
     fn test_decode_split_to_original_with_bundle() {
-        use crate::data::{BinningConfig, FeatureMetadata};
+        use crate::data::BinningConfig;
 
         // Create two sparse categorical features that will be bundled
         // Feature 0: non-zero only for rows 0-4
         // Feature 1: non-zero only for rows 50-54
         let n_samples = 100;
 
-        let mut data_vec = Vec::with_capacity(n_samples * 2);
+        let mut f0_values = Vec::with_capacity(n_samples);
+        let mut f1_values = Vec::with_capacity(n_samples);
         for sample in 0..n_samples {
-            let f0 = if sample < 5 {
+            let v0 = if sample < 5 {
                 (sample % 3 + 1) as f32
             } else {
                 0.0
             };
-            let f1 = if (50..55).contains(&sample) {
+            let v1 = if (50..55).contains(&sample) {
                 ((sample - 50) % 3 + 1) as f32
             } else {
                 0.0
             };
-            data_vec.push(f0);
-            data_vec.push(f1);
+            f0_values.push(v0);
+            f1_values.push(v1);
         }
 
-        let data = ndarray::Array2::from_shape_vec((n_samples, 2), data_vec).unwrap();
-        let metadata = FeatureMetadata::default().categorical(vec![0, 1]);
         let config = BinningConfig::builder()
             .enable_bundling(true)
             .sparsity_threshold(0.9)
             .build();
 
-        let dataset = BinnedDataset::from_array_with_metadata(data.view(), Some(&metadata), &config)
+        let raw = Dataset::builder()
+            .add_categorical_unnamed(Array1::from_vec(f0_values))
+            .add_categorical_unnamed(Array1::from_vec(f1_values))
+            .build()
             .unwrap();
+
+        let dataset = BinnedDataset::from_dataset(&raw, &config).unwrap();
 
         let effective = dataset.effective_feature_views();
 
@@ -1652,15 +1281,12 @@ mod tests {
         assert_eq!(effective.n_bundles, 1, "Should have 1 bundle");
         assert_eq!(effective.n_columns(), 1, "Should have 1 effective column");
 
-        // Test decode_split_to_original for the bundle column
-        // Bin 0 should return the first feature with bin 0
+        // Test decode_split_to_original for the bundle column.
         let (feature, bin) = dataset.decode_split_to_original(&effective, 0, 0);
         assert_eq!(feature, 0, "Bin 0 should map to first feature");
         assert_eq!(bin, 0, "Bin 0 should decode to original bin 0");
 
-        // A non-zero bin should decode to the original feature that owns it
-        // The exact bin depends on how the bundle encodes values
-        // For a bin from the first feature (bins 1-4 typically):
+        // A non-zero bin should decode to the original feature that owns it.
         let (feature1, _bin1) = dataset.decode_split_to_original(&effective, 0, 1);
         assert!(
             feature1 == 0 || feature1 == 1,
@@ -1668,374 +1294,11 @@ mod tests {
             feature1
         );
 
-        // For a higher bin (likely from second feature):
-        // Feature 0 has ~4 bins (categories 1,2,3 + default), so bins 5+ should be feature 1
+        // For a higher bin (likely from second feature).
         let (feature5, _bin5) = dataset.decode_split_to_original(&effective, 0, 5);
-        // bin 5 is in feature 1's range (offset after feature 0's bins)
         assert!(
             feature5 == 0 || feature5 == 1,
             "Bin 5 should map to a feature in the bundle"
         );
-    }
-
-    // ========================================================================
-    // for_each_feature_value() Tests
-    // ========================================================================
-
-    #[test]
-    fn test_for_each_feature_value_dense_numeric() {
-        // Create a dataset with known numeric values
-        let built = DatasetBuilder::new()
-            .add_numeric("x", array![1.5, 2.5, 3.5, 4.5, 5.5].view())
-            .add_numeric("y", array![10.0, 20.0, 30.0, 40.0, 50.0].view())
-            .build_groups()
-            .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
-
-        // Collect values from feature 0
-        let mut values_0 = Vec::new();
-        dataset.for_each_feature_value(0, |idx, val| {
-            values_0.push((idx, val));
-        });
-
-        // Should iterate all 5 samples in order
-        assert_eq!(values_0.len(), 5);
-        assert_eq!(values_0[0], (0, 1.5));
-        assert_eq!(values_0[1], (1, 2.5));
-        assert_eq!(values_0[2], (2, 3.5));
-        assert_eq!(values_0[3], (3, 4.5));
-        assert_eq!(values_0[4], (4, 5.5));
-
-        // Collect values from feature 1
-        let mut values_1 = Vec::new();
-        dataset.for_each_feature_value(1, |idx, val| {
-            values_1.push((idx, val));
-        });
-
-        assert_eq!(values_1.len(), 5);
-        assert_eq!(values_1[0], (0, 10.0));
-        assert_eq!(values_1[4], (4, 50.0));
-    }
-
-    #[test]
-    fn test_for_each_feature_value_accumulation() {
-        // Simulate GBLinear weight update pattern
-        let built = DatasetBuilder::new()
-            .add_numeric("x", array![1.0, 2.0, 3.0, 4.0, 5.0].view())
-            .build_groups()
-            .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
-
-        // Compute sum of values (like sum_grad for unit gradients)
-        let mut sum = 0.0f64;
-        dataset.for_each_feature_value(0, |_idx, val| {
-            sum += val as f64;
-        });
-
-        assert!((sum - 15.0).abs() < 1e-6, "sum = {}", sum);
-
-        // Compute sum of squared values (like sum_hess for unit hessians)
-        let mut sum_sq = 0.0f64;
-        dataset.for_each_feature_value(0, |_idx, val| {
-            sum_sq += (val * val) as f64;
-        });
-
-        assert!((sum_sq - 55.0).abs() < 1e-6, "sum_sq = {}", sum_sq);
-    }
-
-    #[test]
-    fn test_for_each_feature_value_mixed_dataset() {
-        // Dataset with numeric and categorical - only iterate numeric
-        let built = DatasetBuilder::new()
-            .add_numeric("num", array![1.1, 2.2, 3.3].view())
-            .add_categorical("cat", array![0.0, 1.0, 2.0].view())
-            .build_groups()
-            .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
-
-        // Numeric feature should work
-        let mut values = Vec::new();
-        dataset.for_each_feature_value(0, |idx, val| {
-            values.push((idx, val));
-        });
-        assert_eq!(values.len(), 3);
-        assert!((values[0].1 - 1.1).abs() < 0.01);
-    }
-
-    #[test]
-    #[should_panic(expected = "categorical")]
-    fn test_for_each_feature_value_panics_on_categorical() {
-        let built = DatasetBuilder::new()
-            .add_categorical("cat", array![0.0, 1.0, 2.0].view())
-            .build_groups()
-            .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
-
-        // Should panic when trying to iterate a categorical feature
-        dataset.for_each_feature_value(0, |_idx, _val| {});
-    }
-
-    #[test]
-    fn test_for_each_feature_value_nan_handling() {
-        // NaN values should be passed through
-        let built = DatasetBuilder::new()
-            .add_numeric("x", array![1.0, f32::NAN, 3.0].view())
-            .build_groups()
-            .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
-
-        let mut values = Vec::new();
-        dataset.for_each_feature_value(0, |idx, val| {
-            values.push((idx, val));
-        });
-
-        assert_eq!(values.len(), 3);
-        assert_eq!(values[0], (0, 1.0));
-        assert!(values[1].1.is_nan(), "Expected NaN at index 1");
-        assert_eq!(values[2], (2, 3.0));
-    }
-
-    #[test]
-    fn test_for_each_feature_value_single_sample() {
-        let built = DatasetBuilder::new()
-            .add_numeric("x", array![42.0].view())
-            .build_groups()
-            .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
-
-        let mut values = Vec::new();
-        dataset.for_each_feature_value(0, |idx, val| {
-            values.push((idx, val));
-        });
-
-        assert_eq!(values, vec![(0, 42.0)]);
-    }
-
-    #[test]
-    fn test_for_each_feature_value_sparse_numeric() {
-        // Create sparse data: mostly zeros with a few non-zero values
-        // Need >90% zeros with sparsity_threshold(0.9)
-        let mut values = vec![0.0f32; 100];
-        values[5] = 1.5;
-        values[25] = 2.7;
-        values[75] = 3.9;
-        // 97% zeros = sparse
-
-        let data = ndarray::Array2::from_shape_vec((100, 1), values).unwrap();
-        let config = BinningConfig::builder().sparsity_threshold(0.9).build();
-
-        let dataset = DatasetBuilder::from_array(data.view(), &config)
-            .unwrap()
-            .build()
-            .unwrap();
-
-        // Verify it's actually sparse storage
-        let groups = &dataset.groups;
-        assert!(
-            matches!(
-                groups[0].storage(),
-                crate::data::binned::FeatureStorage::SparseNumeric(_)
-            ),
-            "Expected sparse numeric storage"
-        );
-
-        // Collect values using for_each_feature_value
-        let mut collected = Vec::new();
-        dataset.for_each_feature_value(0, |idx, val| {
-            collected.push((idx, val));
-        });
-
-        // Should only yield the 3 non-zero values (sparse iteration skips zeros)
-        assert_eq!(collected.len(), 3, "Should have 3 non-zero entries");
-
-        // Verify correct values at correct indices
-        assert!(collected.iter().any(|&(i, v)| i == 5 && (v - 1.5).abs() < 0.01));
-        assert!(collected.iter().any(|&(i, v)| i == 25 && (v - 2.7).abs() < 0.01));
-        assert!(collected.iter().any(|&(i, v)| i == 75 && (v - 3.9).abs() < 0.01));
-    }
-
-    #[test]
-    #[should_panic(expected = "bundled")]
-    fn test_for_each_feature_value_panics_on_bundled() {
-        // Create two sparse categorical features that will be bundled
-        let n_samples = 100;
-        let mut data_vec = Vec::with_capacity(n_samples * 2);
-
-        for i in 0..n_samples {
-            let f0 = if i < 10 { (i % 3 + 1) as f32 } else { 0.0 };
-            let f1 = if i >= 90 { ((i - 90) % 3 + 1) as f32 } else { 0.0 };
-            data_vec.push(f0);
-            data_vec.push(f1);
-        }
-
-        let data = ndarray::Array2::from_shape_vec((n_samples, 2), data_vec).unwrap();
-        let metadata = crate::data::FeatureMetadata::default().categorical(vec![0, 1]);
-        let config = BinningConfig::builder()
-            .enable_bundling(true)
-            .sparsity_threshold(0.9)
-            .build();
-
-        let dataset = BinnedDataset::from_array_with_metadata(
-            data.view(),
-            Some(&metadata),
-            &config,
-        )
-        .unwrap();
-
-        // Should panic when trying to iterate a bundled feature
-        dataset.for_each_feature_value(0, |_idx, _val| {});
-    }
-
-    // ========================================================================
-    // gather_feature_values() Tests
-    // ========================================================================
-
-    #[test]
-    fn test_gather_feature_values_dense_numeric() {
-        let built = DatasetBuilder::new()
-            .add_numeric("x", array![10.0, 20.0, 30.0, 40.0, 50.0].view())
-            .build_groups()
-            .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
-
-        // Gather subset of samples
-        let indices = [1u32, 3, 4];
-        let mut buffer = vec![0.0f32; indices.len()];
-        dataset.gather_feature_values(0, &indices, &mut buffer);
-
-        assert_eq!(buffer, vec![20.0, 40.0, 50.0]);
-    }
-
-    #[test]
-    fn test_gather_feature_values_dense_all_samples() {
-        let built = DatasetBuilder::new()
-            .add_numeric("x", array![1.0, 2.0, 3.0, 4.0].view())
-            .build_groups()
-            .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
-
-        let indices = [0u32, 1, 2, 3];
-        let mut buffer = vec![0.0f32; 4];
-        dataset.gather_feature_values(0, &indices, &mut buffer);
-
-        assert_eq!(buffer, vec![1.0, 2.0, 3.0, 4.0]);
-    }
-
-    #[test]
-    fn test_gather_feature_values_sparse_numeric() {
-        // Create sparse data: mostly zeros with a few non-zero values
-        let mut values = vec![0.0f32; 100];
-        values[10] = 1.5;
-        values[30] = 2.5;
-        values[50] = 3.5;
-        values[70] = 4.5;
-        values[90] = 5.5;
-
-        let data = ndarray::Array2::from_shape_vec((100, 1), values).unwrap();
-        let config = BinningConfig::builder().sparsity_threshold(0.9).build();
-
-        let dataset = DatasetBuilder::from_array(data.view(), &config)
-            .unwrap()
-            .build()
-            .unwrap();
-
-        // Verify sparse storage
-        assert!(matches!(
-            dataset.groups[0].storage(),
-            crate::data::binned::FeatureStorage::SparseNumeric(_)
-        ));
-
-        // Gather mix of sparse and zero samples
-        let indices = [5u32, 10, 30, 45, 70]; // 5,45 are zeros; 10,30,70 are non-zero
-        let mut buffer = vec![-1.0f32; indices.len()]; // Pre-fill to verify zeros are written
-        dataset.gather_feature_values(0, &indices, &mut buffer);
-
-        // Check: 5->0.0, 10->1.5, 30->2.5, 45->0.0, 70->4.5
-        assert!((buffer[0] - 0.0).abs() < 0.01, "idx 5 should be 0.0");
-        assert!((buffer[1] - 1.5).abs() < 0.01, "idx 10 should be 1.5");
-        assert!((buffer[2] - 2.5).abs() < 0.01, "idx 30 should be 2.5");
-        assert!((buffer[3] - 0.0).abs() < 0.01, "idx 45 should be 0.0");
-        assert!((buffer[4] - 4.5).abs() < 0.01, "idx 70 should be 4.5");
-    }
-
-    #[test]
-    fn test_gather_feature_values_empty_indices() {
-        let built = DatasetBuilder::new()
-            .add_numeric("x", array![1.0, 2.0, 3.0].view())
-            .build_groups()
-            .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
-
-        let indices: [u32; 0] = [];
-        let mut buffer: Vec<f32> = vec![];
-        dataset.gather_feature_values(0, &indices, &mut buffer);
-        // Should not panic, just do nothing
-    }
-
-    #[test]
-    #[should_panic(expected = "categorical")]
-    fn test_gather_feature_values_panics_on_categorical() {
-        let built = DatasetBuilder::new()
-            .add_categorical("cat", array![0.0, 1.0, 2.0].view())
-            .build_groups()
-            .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
-
-        let indices = [0u32, 1];
-        let mut buffer = vec![0.0f32; 2];
-        dataset.gather_feature_values(0, &indices, &mut buffer);
-    }
-
-    #[test]
-    fn test_gather_feature_values_single_sample() {
-        let built = DatasetBuilder::new()
-            .add_numeric("x", array![42.0, 99.0, 17.0].view())
-            .build_groups()
-            .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
-
-        let indices = [1u32];
-        let mut buffer = vec![0.0f32; 1];
-        dataset.gather_feature_values(0, &indices, &mut buffer);
-
-        assert_eq!(buffer, vec![99.0]);
-    }
-
-    #[test]
-    fn test_gather_sparse_merge_join_algorithm() {
-        // Direct test of the merge-join helper function
-        let sparse_indices = [10u32, 20, 30, 50, 70];
-        let sparse_values = [1.0f32, 2.0, 3.0, 5.0, 7.0];
-
-        // Query indices that partially overlap with sparse
-        let sample_indices = [5u32, 10, 25, 30, 40, 70, 80];
-        let mut buffer = vec![-1.0f32; sample_indices.len()];
-
-        BinnedDataset::gather_sparse_merge_join(
-            &sparse_indices,
-            &sparse_values,
-            &sample_indices,
-            &mut buffer,
-        );
-
-        // Expected: 5->0.0, 10->1.0, 25->0.0, 30->3.0, 40->0.0, 70->7.0, 80->0.0
-        assert_eq!(buffer[0], 0.0); // 5 not in sparse
-        assert_eq!(buffer[1], 1.0); // 10 in sparse
-        assert_eq!(buffer[2], 0.0); // 25 not in sparse
-        assert_eq!(buffer[3], 3.0); // 30 in sparse
-        assert_eq!(buffer[4], 0.0); // 40 not in sparse
-        assert_eq!(buffer[5], 7.0); // 70 in sparse
-        assert_eq!(buffer[6], 0.0); // 80 not in sparse
     }
 }

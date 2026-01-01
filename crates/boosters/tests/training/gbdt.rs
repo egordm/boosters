@@ -17,7 +17,8 @@ use ndarray::{Array2, ArrayView2};
 fn predict_row(forest: &Forest, features: &[f32]) -> Vec<f32> {
     let predictor = SimplePredictor::new(forest);
     let mut output = vec![0.0; predictor.n_groups()];
-    predictor.predict_row_into(features, None, &mut output);
+    let sample = ndarray::ArrayView1::from(features);
+    predictor.predict_row_into(sample, None, &mut output);
     output
 }
 
@@ -33,7 +34,7 @@ fn train_rejects_invalid_targets_len() {
         ],
     )
     .unwrap();
-    let features_dataset = Dataset::new(features.view(), None, None);
+    let features_dataset = Dataset::from_array(features.view(), None, None);
     let targets: Vec<f32> = vec![1.0, 2.0]; // Too few targets
 
     let binning_config = BinningConfig::builder().max_bins(64).build();
@@ -44,6 +45,7 @@ fn train_rejects_invalid_targets_len() {
     let targets_2d = Array2::from_shape_vec((1, targets.len()), targets).unwrap();
     let targets_view = TargetsView::new(targets_2d.view());
     let result = trainer.train(
+        &features_dataset,
         &dataset,
         targets_view,
         WeightsView::None,
@@ -63,7 +65,7 @@ fn trained_model_improves_over_base_score_on_simple_problem() {
 
     // Feature-major: shape [1, n_samples]
     let features = Array2::from_shape_vec((1, n_samples), features_raw.clone()).unwrap();
-    let features_dataset = Dataset::new(features.view(), None, None);
+    let features_dataset = Dataset::from_array(features.view(), None, None);
     let binning_config = BinningConfig::builder().max_bins(64).build();
     let dataset = BinnedDataset::from_dataset(&features_dataset, &binning_config)
         .expect("Failed to build binned dataset");
@@ -80,6 +82,7 @@ fn trained_model_improves_over_base_score_on_simple_problem() {
     let targets_view = TargetsView::new(targets_2d.view());
     let forest = trainer
         .train(
+            &features_dataset,
             &dataset,
             targets_view,
             WeightsView::None,
@@ -134,7 +137,7 @@ fn trained_model_improves_over_base_score_on_medium_problem() {
     // Convert to feature-major: [n_features, n_samples]
     let row_view = ArrayView2::from_shape((n_samples, n_features), &features_row_major).unwrap();
     let features = transpose_to_c_order(row_view.view());
-    let features_dataset = Dataset::new(features.view(), None, None);
+    let features_dataset = Dataset::from_array(features.view(), None, None);
     let binning_config = BinningConfig::builder().max_bins(64).build();
     let dataset = BinnedDataset::from_dataset(&features_dataset, &binning_config)
         .expect("Failed to build binned dataset");
@@ -152,6 +155,7 @@ fn trained_model_improves_over_base_score_on_medium_problem() {
     let targets_view = TargetsView::new(targets_2d.view());
     let forest = trainer
         .train(
+            &features_dataset,
             &dataset,
             targets_view,
             WeightsView::None,
@@ -197,8 +201,6 @@ fn trained_model_improves_over_base_score_on_medium_problem() {
 /// 4. Inference correctly handles categorical splits
 #[test]
 fn train_with_categorical_features_produces_categorical_splits() {
-    use boosters::data::{DatasetSchema, FeatureMeta};
-
     // Create a dataset where a categorical feature is the only useful predictor.
     // 4 categories: 0, 1, 2, 3
     // Target: category 0 or 2 → low value (1.0), category 1 or 3 → high value (10.0)
@@ -213,12 +215,11 @@ fn train_with_categorical_features_produces_categorical_splits() {
         .map(|&c| if c == 0.0 || c == 2.0 { 1.0 } else { 10.0 })
         .collect();
 
-    // Create feature-major array: [1 feature, n_samples]
-    let features = ndarray::Array2::from_shape_vec((1, n_samples), categories).unwrap();
-
-    // Create schema marking the feature as categorical
-    let schema = DatasetSchema::from_features(vec![FeatureMeta::categorical()]);
-    let features_dataset = Dataset::new(features.view(), None, None).with_schema(schema);
+    let categories = ndarray::Array1::from_vec(categories);
+    let features_dataset = Dataset::builder()
+        .add_categorical_unnamed(categories)
+        .build()
+        .unwrap();
 
     // Build binned dataset - should detect categorical from schema
     let dataset = BinnedDataset::from_dataset(&features_dataset, &BinningConfig::default())
@@ -240,6 +241,7 @@ fn train_with_categorical_features_produces_categorical_splits() {
     let targets_view = TargetsView::new(targets_2d.view());
     let forest = trainer
         .train(
+            &features_dataset,
             &dataset,
             targets_view,
             WeightsView::None,
@@ -327,7 +329,7 @@ fn train_from_dataset_api() {
     let features = Array2::from_shape_vec((n_samples, 2), features_data).unwrap();
     let features_fm = transpose_to_c_order(features.view());
     let targets_fm = Array2::from_shape_vec((1, n_samples), targets_data.clone()).unwrap();
-    let dataset = Dataset::new(features_fm.view(), Some(targets_fm.view()), None);
+    let dataset = Dataset::from_array(features_fm.view(), Some(targets_fm.clone()), None);
 
     assert_eq!(dataset.n_samples(), n_samples);
     assert_eq!(dataset.n_features(), 2);
@@ -400,7 +402,7 @@ fn train_from_dataset_with_eval_set() {
     let train_feat = Array2::from_shape_vec((n_train, 2), train_features).unwrap();
     let train_feat_fm = transpose_to_c_order(train_feat.view());
     let train_targ_fm = Array2::from_shape_vec((1, n_train), train_targets).unwrap();
-    let train_ds = Dataset::new(train_feat_fm.view(), Some(train_targ_fm.view()), None);
+    let train_ds = Dataset::from_array(train_feat_fm.view(), Some(train_targ_fm.clone()), None);
 
     // Create eval set using binned data (existing API)
     // For now, just test train() works. EvalSet integration will be story 3.3+
@@ -456,7 +458,7 @@ fn predict_from_dataset_with_block_buffering() {
     let features = Array2::from_shape_vec((n_samples, 2), features_data.clone()).unwrap();
     let features_fm = transpose_to_c_order(features.view());
     let targets_fm = Array2::from_shape_vec((1, n_samples), targets_data.clone()).unwrap();
-    let train_dataset = Dataset::new(features_fm.view(), Some(targets_fm.view()), None);
+    let train_dataset = Dataset::from_array(features_fm.view(), Some(targets_fm.clone()), None);
 
     let config = GBDTConfig::builder()
         .n_trees(10)
@@ -468,7 +470,7 @@ fn predict_from_dataset_with_block_buffering() {
     let model = GBDTModel::train(&train_dataset, None, config, 1).expect("training should succeed");
 
     // Create a prediction dataset (same data)
-    let pred_dataset = Dataset::new(features_fm.view(), Some(targets_fm.view()), None);
+    let pred_dataset = Dataset::from_array(features_fm.view(), Some(targets_fm.clone()), None);
 
     // Predict using Dataset API (feature-major with block buffering)
     let output = model.predict(&pred_dataset, 1);
@@ -514,7 +516,7 @@ fn predict_from_dataset_parallel_matches_sequential() {
     let features = Array2::from_shape_vec((n_samples, 3), features_data).unwrap();
     let features_fm = transpose_to_c_order(features.view());
     let targets_fm = Array2::from_shape_vec((1, n_samples), targets_data).unwrap();
-    let dataset = Dataset::new(features_fm.view(), Some(targets_fm.view()), None);
+    let dataset = Dataset::from_array(features_fm.view(), Some(targets_fm.clone()), None);
 
     let config = GBDTConfig::builder()
         .n_trees(10)

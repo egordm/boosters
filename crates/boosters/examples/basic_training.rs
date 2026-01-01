@@ -8,11 +8,9 @@
 //! cargo run --example basic_training
 //! ```
 
-use boosters::data::BinningConfig;
-use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::data::{Dataset, TargetsView, WeightsView};
+use boosters::data::Dataset;
 use boosters::training::GrowthStrategy;
-use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism};
+use boosters::{GBDTConfig, GBDTModel, Metric, Objective};
 use ndarray::{Array1, Array2};
 
 fn main() {
@@ -25,12 +23,9 @@ fn main() {
 
     let (features, labels) = generate_regression_data(n_samples, n_features);
 
-    // Create binned dataset for training (using feature-major data)
-    let dataset = Dataset::new(features.view(), None, None);
-    let binned_dataset = BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
-        .add_features(dataset.features(), Parallelism::Parallel)
-        .build()
-        .expect("Failed to build binned dataset");
+    // Create training dataset (feature-major) with targets.
+    let targets_2d = labels.clone().insert_axis(ndarray::Axis(0));
+    let dataset = Dataset::from_array(features.view(), Some(targets_2d), None);
 
     // =========================================================================
     // 2. Configure and Train
@@ -51,14 +46,8 @@ fn main() {
     println!("  Objective: {:?}", config.objective);
     println!("  Metric: {:?}\n", config.metric);
 
-    // Wrap labels in TargetsView (shape [n_outputs=1, n_samples])
-    let targets_2d = labels.clone().insert_axis(ndarray::Axis(0));
-    let targets = TargetsView::new(targets_2d.view());
-
     // Train using GBDTModel (high-level API)
-    let model =
-        GBDTModel::train_binned(&binned_dataset, targets, WeightsView::None, &[], config, 1)
-            .expect("Training failed");
+    let model = GBDTModel::train(&dataset, None, config, 1).expect("Training failed");
 
     // =========================================================================
     // 3. Make Predictions
@@ -66,7 +55,7 @@ fn main() {
     // Predict on single sample - create feature-major array [n_features, 1]
     let first_sample_data: Vec<f32> = (0..n_features).map(|f| features[(f, 0)]).collect();
     let sample_fm = Array2::from_shape_vec((n_features, 1), first_sample_data).unwrap();
-    let sample_dataset = Dataset::new(sample_fm.view(), None, None);
+    let sample_dataset = Dataset::from_array(sample_fm.view(), None, None);
     let pred = model.predict(&sample_dataset, 1);
     println!("Sample prediction: {:.4}", pred.as_slice().unwrap()[0]);
 

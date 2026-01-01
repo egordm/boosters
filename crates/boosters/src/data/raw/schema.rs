@@ -123,6 +123,23 @@ impl DatasetSchema {
         Self::from_features(features)
     }
 
+    /// Create a schema with specified categorical feature indices.
+    ///
+    /// Features at the specified indices are marked as categorical;
+    /// all others are marked as numeric.
+    pub fn with_categorical(n_features: usize, categorical_indices: &[usize]) -> Self {
+        let features: Vec<FeatureMeta> = (0..n_features)
+            .map(|i| {
+                if categorical_indices.contains(&i) {
+                    FeatureMeta::categorical()
+                } else {
+                    FeatureMeta::numeric()
+                }
+            })
+            .collect();
+        Self::from_features(features)
+    }
+
     /// Number of features in the schema.
     pub fn n_features(&self) -> usize {
         self.features.len()

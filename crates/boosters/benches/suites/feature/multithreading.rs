@@ -13,8 +13,8 @@ use common::matrix::THREAD_COUNTS;
 use common::threading::with_rayon_threads;
 
 use boosters::Parallelism;
-use boosters::data::{TargetsView, WeightsView};
-use boosters::testing::synthetic_datasets::synthetic_regression;
+use boosters::data::{BinnedDataset, BinningConfig, WeightsView};
+use boosters::testing::synthetic_datasets::{features_row_major_slice, synthetic_regression};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 
 use ndarray::Array2;
@@ -56,18 +56,20 @@ fn bench_multithreading(c: &mut Criterion) {
 
     // Get row-major features for XGBoost/LightGBM compatibility
     #[allow(unused_variables)]
-    let features = dataset.features_row_major_slice();
+    let features = features_row_major_slice(&dataset);
     #[allow(unused_variables)]
-    let targets = dataset.targets.to_vec();
+    let targets = dataset
+        .targets()
+        .expect("synthetic datasets have targets")
+        .as_single_output()
+        .to_vec();
 
     group.throughput(Throughput::Elements((rows * cols) as u64));
 
     // Pre-build binned dataset (we're benchmarking training, not binning)
-    let binned = dataset.to_binned(256);
-
-    // Convert targets to 2D
-    let targets_2d =
-        Array2::from_shape_vec((1, dataset.targets.len()), dataset.targets.to_vec()).unwrap();
+    let config = BinningConfig::builder().max_bins(256).build();
+    let binned = BinnedDataset::from_dataset(&dataset, &config).unwrap();
+    let targets_view = dataset.targets().expect("synthetic datasets have targets");
 
     for &n_threads in THREAD_COUNTS {
         let thread_label = format!("{}_threads", n_threads);
@@ -91,12 +93,12 @@ fn bench_multithreading(c: &mut Criterion) {
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
 
         group.bench_function(BenchmarkId::new("boosters", &thread_label), |b| {
-            let targets_view = TargetsView::new(targets_2d.view());
             b.iter(|| {
                 with_rayon_threads(n_threads, || {
                     black_box(
                         trainer
                             .train(
+                                black_box(&dataset),
                                 black_box(&binned),
                                 targets_view,
                                 WeightsView::None,

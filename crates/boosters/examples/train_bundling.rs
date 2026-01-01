@@ -12,10 +12,10 @@
 use std::time::Instant;
 
 use boosters::data::BinningConfig;
-use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::data::{Dataset, TargetsView, WeightsView};
+use boosters::data::binned::BinnedDataset;
+use boosters::data::Dataset;
 use boosters::training::GrowthStrategy;
-use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism};
+use boosters::{GBDTConfig, GBDTModel, Metric, Objective};
 use ndarray::{Array1, Array2};
 
 fn main() {
@@ -72,8 +72,9 @@ fn main() {
     println!("  - 1 categorical with {} categories (one-hot)", n_cat1);
     println!("  - 1 categorical with {} categories (one-hot)\n", n_cat2);
 
-    // Create FeaturesView for training
-    let features_dataset = Dataset::new(features.view(), None, None);
+    // Create dataset with targets
+    let targets_2d = labels.clone().insert_axis(ndarray::Axis(0));
+    let dataset = Dataset::from_array(features.view(), Some(targets_2d), None);
 
     // =========================================================================
     // Train WITHOUT bundling (baseline)
@@ -81,15 +82,12 @@ fn main() {
     println!("=== Training WITHOUT bundling ===\n");
 
     let start = Instant::now();
-    let dataset_no_bundle = BinnedDatasetBuilder::with_config(
-        BinningConfig::builder()
-            .max_bins(256)
-            .enable_bundling(false)
-            .build(),
-    )
-    .add_features(features_dataset.features(), Parallelism::Parallel)
-    .build()
-    .expect("Failed to build dataset");
+    let binning_config_no_bundle = BinningConfig::builder()
+        .max_bins(256)
+        .enable_bundling(false)
+        .build();
+    let dataset_no_bundle = BinnedDataset::from_dataset(&dataset, &binning_config_no_bundle)
+        .expect("binning failed");
     let binning_time_no_bundle = start.elapsed();
 
     // Without bundling, binned columns = original features
@@ -111,15 +109,12 @@ fn main() {
     println!("\n=== Training WITH bundling ===\n");
 
     let start = Instant::now();
-    let dataset_bundled = BinnedDatasetBuilder::with_config(
-        BinningConfig::builder()
-            .max_bins(256)
-            .enable_bundling(true)
-            .build(),
-    )
-    .add_features(features_dataset.features(), Parallelism::Parallel)
-    .build()
-    .expect("Failed to build dataset");
+    let binning_config_bundled = BinningConfig::builder()
+        .max_bins(256)
+        .enable_bundling(true)
+        .build();
+    let dataset_bundled = BinnedDataset::from_dataset(&dataset, &binning_config_bundled)
+        .expect("binning failed");
     let binning_time_bundled = start.elapsed();
 
     // With bundling, sparse one-hot features should be combined
@@ -138,7 +133,7 @@ fn main() {
     // =========================================================================
     // Train and compare
     // =========================================================================
-    let config = GBDTConfig::builder()
+    let config_base = GBDTConfig::builder()
         .objective(Objective::squared())
         .metric(Metric::rmse())
         .n_trees(20)
@@ -147,31 +142,28 @@ fn main() {
         .build()
         .expect("Invalid configuration");
 
+    let config_no_bundle = GBDTConfig {
+        binning: binning_config_no_bundle.clone(),
+        ..config_base.clone()
+    };
+    let config_bundled = GBDTConfig {
+        binning: binning_config_bundled.clone(),
+        ..config_base
+    };
+
     println!("\n=== Training Models ===\n");
 
-    // Wrap labels in TargetsView (shape [n_outputs=1, n_samples])
-    let targets_2d = labels.clone().insert_axis(ndarray::Axis(0));
-    let targets = TargetsView::new(targets_2d.view());
+    // Train without bundling (binning is handled internally)
+    let model_no_bundle =
+        GBDTModel::train(&dataset, None, config_no_bundle, 1).expect("Training failed");
 
-    // Train without bundling
-    let model_no_bundle = GBDTModel::train_binned(
-        &dataset_no_bundle,
-        targets,
-        WeightsView::None,
-        None,
-        config.clone(),
-        1,
-    )
-    .expect("Training failed");
-
-    // Train with bundling
+    // Train with bundling (binning is handled internally)
     let model_bundled =
-        GBDTModel::train_binned(&dataset_bundled, targets, WeightsView::None, &[], config, 1)
-            .expect("Training failed");
+        GBDTModel::train(&dataset, None, config_bundled, 1).expect("Training failed");
 
-    // Evaluate both - features_dataset is already feature-major
-    let predictions_no_bundle = model_no_bundle.predict(&features_dataset, 1);
-    let predictions_bundled = model_bundled.predict(&features_dataset, 1);
+    // Evaluate both - dataset is already feature-major
+    let predictions_no_bundle = model_no_bundle.predict(&dataset, 1);
+    let predictions_bundled = model_bundled.predict(&dataset, 1);
 
     let rmse_no_bundle = compute_rmse(
         predictions_no_bundle.as_slice().unwrap(),

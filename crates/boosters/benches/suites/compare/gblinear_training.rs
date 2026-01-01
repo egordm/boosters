@@ -60,7 +60,7 @@ fn build_dataset(
     let feature_major = build_features_array(features_row_major, rows, cols);
     // Build targets Array2: [1, n_samples]
     let targets_2d = ndarray::Array2::from_shape_vec((1, targets.len()), targets).unwrap();
-    Dataset::new(feature_major.view(), Some(targets_2d.view()), None)
+    Dataset::from_array(feature_major.view(), Some(targets_2d), None)
 }
 
 // =============================================================================

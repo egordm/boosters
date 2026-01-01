@@ -11,7 +11,6 @@ import pytest
 
 from boosters import (
     Dataset,
-    EvalSet,
     GBDTConfig,
     GBDTModel,
     GBLinearConfig,
@@ -92,7 +91,7 @@ class TestGBDTModelFitPredict:
         )
         model.fit(
             Dataset(X_train, y_train),
-            valid=[EvalSet(Dataset(X_val, y_val), "valid")],
+            val_set=Dataset(X_val, y_val),
         )
 
         assert model.n_trees < 1000

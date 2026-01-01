@@ -3,7 +3,7 @@
 //! This buffer is allocated once at training start and reused for each leaf.
 //! It gathers features into contiguous columns for efficient coordinate descent.
 
-use crate::data::{DataAccessor, SampleAccessor};
+use crate::data::Dataset;
 
 /// Column-major buffer for leaf feature data.
 ///
@@ -14,12 +14,13 @@ use crate::data::{DataAccessor, SampleAccessor};
 /// # Example
 ///
 /// ```ignore
-/// use boosters::data::FeaturesView;
+/// use boosters::data::Dataset;
 ///
 /// let mut buffer = LeafFeatureBuffer::new(1000, 10);
+/// let dataset = Dataset::from_array(features.view(), None, None);
 ///
-/// // Gather features for rows in this leaf (FeaturesView implements DataAccessor)
-/// buffer.gather(&leaf_rows, &features_view, &path_features);
+/// // Gather features for rows in this leaf
+/// buffer.gather(&leaf_rows, &dataset, &path_features);
 ///
 /// // Access feature columns for coordinate descent
 /// for feat_idx in 0..buffer.n_features() {
@@ -65,22 +66,20 @@ impl LeafFeatureBuffer {
         }
     }
 
-    /// Gather features from any DataAccessor into this buffer.
+    /// Gather features from a Dataset into this buffer.
     ///
-    /// Works with any type implementing `DataAccessor`, including:
-    /// - `FeaturesView` for raw feature values
-    /// - `BinnedDataset` for binned data (using midpoint values)
+    /// Gathers raw feature values using `Dataset::gather_feature_values`.
     ///
     /// # Arguments
     ///
     /// * `rows` - Row indices of samples in this leaf
-    /// * `data` - Data accessor
+    /// * `data` - Dataset containing raw feature values
     /// * `features` - Feature indices to gather (typically path features)
     ///
     /// # Panics
     ///
     /// Panics if `rows.len() > max_rows` or `features.len() > max_features`.
-    pub fn gather<D: DataAccessor>(&mut self, rows: &[u32], data: &D, features: &[u32]) {
+    pub fn gather(&mut self, rows: &[u32], data: &Dataset, features: &[u32]) {
         debug_assert!(
             rows.len() <= self.max_rows,
             "Too many rows: {} > max {}",
@@ -97,13 +96,11 @@ impl LeafFeatureBuffer {
         self.n_rows = rows.len();
         self.n_features = features.len();
 
-        // Iterate features first (column-major output)
+        // Gather each feature column using Dataset::gather_feature_values
         for (feat_idx, &feat) in features.iter().enumerate() {
             let col_offset = feat_idx * self.max_rows;
-            for (row_idx, &row) in rows.iter().enumerate() {
-                let sample = data.sample(row as usize);
-                self.data[col_offset + row_idx] = sample.feature(feat as usize);
-            }
+            let buffer = &mut self.data[col_offset..col_offset + rows.len()];
+            data.gather_feature_values(feat as usize, rows, buffer);
         }
     }
 
@@ -154,22 +151,22 @@ impl LeafFeatureBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::FeaturesView;
+    use ndarray::Array2;
 
     #[test]
     fn test_leaf_buffer_gather() {
-        // Create a 10x3 feature-major matrix
-        // FeaturesView has shape [n_features, n_samples]
+        // Create a 3x10 feature-major matrix (3 features, 10 samples)
         // Data layout: [f0_s0..f0_s9, f1_s0..f1_s9, f2_s0..f2_s9]
         let data: Vec<f32> = (0..30).map(|i| i as f32).collect();
-        let view = FeaturesView::from_slice(&data, 10, 3).unwrap();
+        let arr = Array2::from_shape_vec((3, 10), data).unwrap();
+        let dataset = Dataset::from_array(arr.view(), None, None);
 
         let mut buffer = LeafFeatureBuffer::new(10, 5);
 
         // Gather rows [1, 3, 5] for features [0, 2]
         let rows = vec![1, 3, 5];
         let features = vec![0, 2];
-        buffer.gather(&rows, &view, &features);
+        buffer.gather(&rows, &dataset, &features);
 
         assert_eq!(buffer.n_rows(), 3);
         assert_eq!(buffer.n_features(), 2);
@@ -185,18 +182,20 @@ mod tests {
 
     #[test]
     fn test_leaf_buffer_reuse() {
+        // 4 features, 5 samples
         let data: Vec<f32> = (0..20).map(|i| i as f32).collect();
-        let view = FeaturesView::from_slice(&data, 5, 4).unwrap();
+        let arr = Array2::from_shape_vec((4, 5), data).unwrap();
+        let dataset = Dataset::from_array(arr.view(), None, None);
 
         let mut buffer = LeafFeatureBuffer::new(10, 5);
 
         // First gather
-        buffer.gather(&[0, 1], &view, &[0, 1]);
+        buffer.gather(&[0, 1], &dataset, &[0, 1]);
         assert_eq!(buffer.n_rows(), 2);
         assert_eq!(buffer.feature_slice(0), &[0.0, 1.0]);
 
         // Second gather - should overwrite
-        buffer.gather(&[2, 3, 4], &view, &[2, 3]);
+        buffer.gather(&[2, 3, 4], &dataset, &[2, 3]);
         assert_eq!(buffer.n_rows(), 3);
         assert_eq!(buffer.n_features(), 2);
 
@@ -209,26 +208,30 @@ mod tests {
     #[should_panic(expected = "Too many rows")]
     #[cfg(debug_assertions)]
     fn test_leaf_buffer_overflow_rows() {
+        // 3 features, 10 samples
         let data: Vec<f32> = (0..30).map(|i| i as f32).collect();
-        let view = FeaturesView::from_slice(&data, 10, 3).unwrap();
+        let arr = Array2::from_shape_vec((3, 10), data).unwrap();
+        let dataset = Dataset::from_array(arr.view(), None, None);
 
         let mut buffer = LeafFeatureBuffer::new(5, 3); // Only 5 rows capacity
 
         // Try to gather 10 rows - should panic
         let rows: Vec<u32> = (0..10).collect();
-        buffer.gather(&rows, &view, &[0]);
+        buffer.gather(&rows, &dataset, &[0]);
     }
 
     #[test]
     #[should_panic(expected = "Too many features")]
     #[cfg(debug_assertions)]
     fn test_leaf_buffer_overflow_features() {
+        // 3 features, 10 samples
         let data: Vec<f32> = (0..30).map(|i| i as f32).collect();
-        let view = FeaturesView::from_slice(&data, 10, 3).unwrap();
+        let arr = Array2::from_shape_vec((3, 10), data).unwrap();
+        let dataset = Dataset::from_array(arr.view(), None, None);
 
         let mut buffer = LeafFeatureBuffer::new(10, 2); // Only 2 features capacity
 
         // Try to gather 3 features - should panic
-        buffer.gather(&[0, 1], &view, &[0, 1, 2]);
+        buffer.gather(&[0, 1], &dataset, &[0, 1, 2]);
     }
 }

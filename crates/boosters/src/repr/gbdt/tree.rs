@@ -9,9 +9,9 @@
 // Allow many constructor arguments for creating trees with all their fields.
 #![allow(clippy::too_many_arguments)]
 
-use ndarray::ArrayViewMut1;
+use ndarray::{ArrayView1, ArrayViewMut1, Axis};
 
-use crate::data::{DataAccessor, SampleAccessor};
+use crate::data::Dataset;
 
 use super::NodeId;
 use super::categories::CategoriesStorage;
@@ -224,67 +224,55 @@ impl<L: LeafValue> Tree<L> {
     ///
     /// Reference to the leaf value for this sample.
     pub fn predict_row(&self, features: &[f32]) -> &L {
-        let leaf_id = self.traverse_to_leaf(&features);
+        let leaf_id = self.traverse_to_leaf(ArrayView1::from(features));
         self.leaf_value(leaf_id)
     }
 
-    /// Unified batch prediction using any data accessor.
+    /// Block-buffered batch prediction over [`Dataset`].
     ///
-    /// Traverses the tree for each row and **adds** leaf values to the predictions
-    /// buffer (accumulate pattern). Supports both sequential and parallel execution.
-    ///
-    /// # Arguments
-    /// * `data` - Data source (SamplesView, FeaturesView, BinnedDataset, etc.)
-    /// * `predictions` - Pre-allocated buffer to update (length = `data.n_samples()`)
-    /// * `parallelism` - Whether to use parallel execution
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use boosters::repr::gbdt::{Tree, ScalarLeaf};
-    /// use boosters::data::SamplesView;
-    /// use boosters::Parallelism;
-    ///
-    /// let tree: Tree<ScalarLeaf> = /* ... */;
-    /// let data = SamplesView::from_slice(&[0.1, 0.2, 0.3, 0.4], 2, 2).unwrap();
-    /// let mut predictions = Array1::zeros(2);
-    /// tree.predict_into(&data, predictions.view_mut(), Parallelism::Parallel);
-    /// ```
-    pub fn predict_into<D: DataAccessor + Sync>(
+    /// This is crate-private because the public prediction API is provided by
+    /// the inference predictor; training uses this for incremental prediction
+    /// updates without going through `BinnedDataset`.
+    pub(crate) fn predict_into(
         &self,
-        data: &D,
+        dataset: &Dataset,
         mut predictions: ArrayViewMut1<'_, f32>,
         parallelism: crate::utils::Parallelism,
     ) where
         L: Into<f32> + Copy + Send + Sync,
     {
-        debug_assert_eq!(predictions.len(), data.n_samples());
+        debug_assert_eq!(predictions.len(), dataset.n_samples());
 
-        // Get underlying slice and iterate with index - this is safe because
-        // each (row_idx, pred) pair is unique and owned by a single thread
-        let pred_slice = predictions
-            .as_slice_mut()
-            .expect("predictions must be contiguous");
+        // Match inference defaults (XGBoost) without adding a dependency edge.
+        const BLOCK_SIZE: usize = 64;
 
-        if self.has_linear_leaves() {
-            parallelism.maybe_par_bridge_for_each(
-                pred_slice.iter_mut().enumerate(),
-                |(row_idx, pred)| {
-                    let sample = data.sample(row_idx);
-                    let leaf_idx = self.traverse_to_leaf(&sample);
-                    *pred += self.compute_leaf_value(leaf_idx, &sample);
-                },
-            );
-        } else {
-            parallelism.maybe_par_bridge_for_each(
-                pred_slice.iter_mut().enumerate(),
-                |(row_idx, pred)| {
-                    let sample = data.sample(row_idx);
-                    let leaf_idx = self.traverse_to_leaf(&sample);
-                    *pred += (*self.leaf_value(leaf_idx)).into();
-                },
-            );
-        }
+        let n_features = dataset.n_features();
+
+        parallelism.maybe_par_bridge_for_each_init(
+            predictions
+                .axis_chunks_iter_mut(Axis(0), BLOCK_SIZE)
+                .enumerate(),
+            || ndarray::Array2::<f32>::zeros((BLOCK_SIZE, n_features)),
+            |buffer, (block_idx, mut pred_chunk)| {
+                let start_sample = block_idx * BLOCK_SIZE;
+                let samples = dataset.buffer_samples(buffer, start_sample);
+                debug_assert_eq!(samples.n_samples(), pred_chunk.len());
+
+                if self.has_linear_leaves() {
+                    for (row_idx, pred) in pred_chunk.iter_mut().enumerate() {
+                        let row = samples.sample_view(row_idx);
+                        let leaf_idx = self.traverse_to_leaf(row);
+                        *pred += self.compute_leaf_value(leaf_idx, row);
+                    }
+                } else {
+                    for (row_idx, pred) in pred_chunk.iter_mut().enumerate() {
+                        let row = samples.sample_view(row_idx);
+                        let leaf_idx = self.traverse_to_leaf(row);
+                        *pred += (*self.leaf_value(leaf_idx)).into();
+                    }
+                }
+            },
+        );
     }
 
     /// Compute the prediction value for a leaf, including linear terms if present.
@@ -293,7 +281,7 @@ impl<L: LeafValue> Tree<L> {
     /// For linear leaves, returns `intercept + Σ(coef × feature)`.
     /// If any linear feature is NaN, falls back to the base leaf value.
     #[inline]
-    pub(crate) fn compute_leaf_value<S: SampleAccessor>(&self, leaf_idx: NodeId, sample: &S) -> f32
+    pub(crate) fn compute_leaf_value(&self, leaf_idx: NodeId, sample: ArrayView1<'_, f32>) -> f32
     where
         L: Into<f32> + Copy,
     {
@@ -302,7 +290,7 @@ impl<L: LeafValue> Tree<L> {
         if let Some((feat_indices, coefs)) = self.leaf_terms(leaf_idx) {
             // Check for NaN in any linear feature
             for &feat_idx in feat_indices {
-                let val = sample.feature(feat_idx as usize);
+                let val = sample[feat_idx as usize];
                 if val.is_nan() {
                     return base; // Fall back to constant leaf
                 }
@@ -313,7 +301,7 @@ impl<L: LeafValue> Tree<L> {
             let linear_sum: f32 = feat_indices
                 .iter()
                 .zip(coefs.iter())
-                .map(|(&f, &c)| c * sample.feature(f as usize))
+                .map(|(&f, &c)| c * sample[f as usize])
                 .sum();
 
             intercept + linear_sum
@@ -384,7 +372,7 @@ impl<L: LeafValue> TreeView for Tree<L> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{FeaturesView, SamplesView};
+    use crate::data::{Dataset, SamplesView};
     use crate::repr::gbdt::ScalarLeaf;
     use crate::repr::gbdt::mutable_tree::MutableTree;
     use ndarray::{Array2, array};
@@ -428,14 +416,14 @@ mod tests {
             2 => leaf(2.0),
         };
 
-        // 3 rows, 1 feature: [[0.3], [0.7], [0.5]]
-        let arr = Array2::from_shape_vec((3, 1), vec![0.3, 0.7, 0.5]).unwrap();
-        let data = SamplesView::from_array(arr.view());
+        // Feature-major [n_features, n_samples]
+        let features = array![[0.3f32, 0.7, 0.5]];
+        let dataset = Dataset::from_array(features.view(), None, None);
 
         // Test accumulate pattern (starts with existing values)
         let mut predictions = ndarray::Array1::from_vec(vec![10.0, 20.0, 30.0]);
         tree.predict_into(
-            &data,
+            &dataset,
             predictions.view_mut(),
             crate::utils::Parallelism::Sequential,
         );
@@ -461,15 +449,15 @@ mod tests {
 
         let frozen = tree.freeze();
 
-        // Test data: 3 rows, 1 feature: [[0.3], [0.7], [0.1]]
+        // Test data (feature-major): 1 feature, 3 samples
         // Row 0: x=0.3 -> left leaf -> 0.5 + 2.0*0.3 = 1.1
         // Row 1: x=0.7 -> right leaf -> 10.0
         // Row 2: x=0.1 -> left leaf -> 0.5 + 2.0*0.1 = 0.7
-        let arr = Array2::from_shape_vec((3, 1), vec![0.3, 0.7, 0.1]).unwrap();
-        let data = SamplesView::from_array(arr.view());
+        let features = array![[0.3f32, 0.7, 0.1]];
+        let dataset = Dataset::from_array(features.view(), None, None);
         let mut predictions = ndarray::Array1::zeros(3);
         frozen.predict_into(
-            &data,
+            &dataset,
             predictions.view_mut(),
             crate::utils::Parallelism::Sequential,
         );
@@ -502,14 +490,14 @@ mod tests {
 
         let frozen = tree.freeze();
 
-        // Test data: 2 rows, 1 feature: [[0.5], [NaN]]
+        // Test data (feature-major): 1 feature, 2 samples
         // Row 0: x=0.5 -> 1.0 + 2.0*0.5 = 2.0
         // Row 1: x=NaN -> fall back to base=5.0
-        let arr = Array2::from_shape_vec((2, 1), vec![0.5, f32::NAN]).unwrap();
-        let data = SamplesView::from_array(arr.view());
+        let features = array![[0.5f32, f32::NAN]];
+        let dataset = Dataset::from_array(features.view(), None, None);
         let mut predictions = ndarray::Array1::zeros(2);
         frozen.predict_into(
-            &data,
+            &dataset,
             predictions.view_mut(),
             crate::utils::Parallelism::Sequential,
         );
@@ -537,14 +525,14 @@ mod tests {
 
         let frozen = tree.freeze();
 
-        // Test data: 2 rows, 2 features: [[1.0, 1.0], [0.5, 2.0]]
+        // Test data (feature-major): 2 features, 2 samples
         // Row 0: [1.0, 1.0] -> 1.0 + 2.0*1.0 + 3.0*1.0 = 6.0
         // Row 1: [0.5, 2.0] -> 1.0 + 2.0*0.5 + 3.0*2.0 = 8.0
-        let arr = Array2::from_shape_vec((2, 2), vec![1.0, 1.0, 0.5, 2.0]).unwrap();
-        let data = SamplesView::from_array(arr.view());
+        let features = array![[1.0f32, 0.5], [1.0, 2.0]];
+        let dataset = Dataset::from_array(features.view(), None, None);
         let mut predictions = ndarray::Array1::zeros(2);
         frozen.predict_into(
-            &data,
+            &dataset,
             predictions.view_mut(),
             crate::utils::Parallelism::Sequential,
         );
@@ -603,39 +591,17 @@ mod tests {
         ];
         let samples_view = SamplesView::from_array(row_data.view());
 
-        // Feature-major data: same logical values but in feature-major layout
-        let col_data = array![
-            [0.3f32, 0.7, f32::NAN], // feature 0
-            [0.0, 0.0, 0.0],         // feature 1
-        ];
-        let features_view = FeaturesView::from_array(col_data.view());
-
-        // Test SamplesView accessor
-        let leaf_row_0 = tree.traverse_to_leaf(&samples_view.sample(0));
-        let leaf_row_1 = tree.traverse_to_leaf(&samples_view.sample(1));
-        let leaf_row_2 = tree.traverse_to_leaf(&samples_view.sample(2));
+        // Test SamplesView: sample-major rows are contiguous
+        let row0 = samples_view.sample_view(0);
+        let row1 = samples_view.sample_view(1);
+        let row2 = samples_view.sample_view(2);
+        let leaf_row_0 = tree.traverse_to_leaf(row0);
+        let leaf_row_1 = tree.traverse_to_leaf(row1);
+        let leaf_row_2 = tree.traverse_to_leaf(row2);
 
         assert_eq!(leaf_row_0, 1, "0.3 < 0.5 should go left");
         assert_eq!(leaf_row_1, 2, "0.7 >= 0.5 should go right");
         assert_eq!(leaf_row_2, 1, "NaN with default_left=true should go left");
-
-        // Test FeaturesView accessor - should reach same leaves
-        let leaf_col_0 = tree.traverse_to_leaf(&features_view.sample(0));
-        let leaf_col_1 = tree.traverse_to_leaf(&features_view.sample(1));
-        let leaf_col_2 = tree.traverse_to_leaf(&features_view.sample(2));
-
-        assert_eq!(
-            leaf_col_0, leaf_row_0,
-            "FeaturesView should match SamplesView"
-        );
-        assert_eq!(
-            leaf_col_1, leaf_row_1,
-            "FeaturesView should match SamplesView"
-        );
-        assert_eq!(
-            leaf_col_2, leaf_row_2,
-            "FeaturesView should match SamplesView"
-        );
     }
 
     #[test]
@@ -659,8 +625,10 @@ mod tests {
         // 2 samples, 1 feature each: [[0.3], [0.7]]
         let arr = Array2::from_shape_vec((2, 1), vec![0.3, 0.7]).unwrap();
         let row_data = SamplesView::from_array(arr.view());
-        let leaf_0 = tree.traverse_to_leaf(&row_data.sample(0));
-        let leaf_1 = tree.traverse_to_leaf(&row_data.sample(1));
+        let row0 = row_data.sample_view(0);
+        let row1 = row_data.sample_view(1);
+        let leaf_0 = tree.traverse_to_leaf(row0);
+        let leaf_1 = tree.traverse_to_leaf(row1);
 
         assert_eq!(leaf_0, left);
         assert_eq!(leaf_1, right);

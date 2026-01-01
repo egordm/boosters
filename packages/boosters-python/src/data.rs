@@ -14,7 +14,7 @@ use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
-use boosters::data::{transpose_to_c_order, Dataset as CoreDataset};
+use boosters::data::{transpose_to_c_order, Dataset as CoreDataset, DatasetSchema, Feature};
 
 // =============================================================================
 // Dataset
@@ -90,12 +90,17 @@ impl PyDataset {
         // Use provided categorical features or empty
         let cats = categorical_features.unwrap_or_default();
 
-        // Create the core dataset
-        let inner = CoreDataset::new(
-            features_transposed.view(),
-            labels_2d.as_ref().map(|l| l.view()),
-            weights_1d.as_ref().map(|w| w.view()),
-        );
+        // Create schema with categorical feature information
+        let n_features = features_transposed.nrows();
+        let schema = DatasetSchema::with_categorical(n_features, &cats);
+
+        // Convert each row to a dense Feature
+        let feature_vec: Vec<Feature> = (0..n_features)
+            .map(|i| Feature::dense(features_transposed.row(i).to_owned()))
+            .collect();
+
+        // Create the core dataset with new API
+        let inner = CoreDataset::new(schema, feature_vec, labels_2d, weights_1d);
 
         Ok(Self {
             inner,

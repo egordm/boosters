@@ -1,17 +1,19 @@
 # Backlog: Data Module Restructuring
 
-**Status**: Active  
+**Status**: Superseded by `docs/backlogs/0021-dataset-separation.md`  
 **Created**: 2025-01-25  
 **Epic**: Data Module Cleanup and Simplification
 
 ## Overview
 
-This backlog captures the work to restructure and simplify the data module based on RFC-0021 design decisions. The goal is to create a cleaner separation between raw datasets (public API) and binned datasets (internal training representation).
+This backlog captured early work to restructure and simplify the data module based on RFC-0021 design decisions.
+
+**Update (2025-12-31)**: This work was fully implemented and tracked under `docs/backlogs/0021-dataset-separation.md`. This document is kept for historical context, but should not be used for current status tracking.
 
 ## Epic 1: Remove Unused I/O Infrastructure
 
 ### Story 1.1: Remove io-parquet Feature and Module
-**Status**: Not Started
+**Status**: Superseded (implemented in `docs/backlogs/0021-dataset-separation.md`)
 
 Remove the unused io-parquet feature and all associated code:
 
@@ -28,7 +30,7 @@ Remove the unused io-parquet feature and all associated code:
 ---
 
 ### Story 1.2: Remove Parquet Support from Quality Benchmark
-**Status**: Not Started
+**Status**: Superseded (implemented in `docs/backlogs/0021-dataset-separation.md`)
 
 Remove all parquet/loaded dataset support from quality_benchmark.rs:
 
@@ -50,7 +52,7 @@ Remove all parquet/loaded dataset support from quality_benchmark.rs:
 ## Epic 2: Data Module Structure Cleanup
 
 ### Story 2.1: Restructure Data Module Layout
-**Status**: Not Started
+**Status**: Superseded (implemented in `docs/backlogs/0021-dataset-separation.md`)
 
 Reorganize the data module for clear separation:
 
@@ -105,7 +107,7 @@ Tasks:
 ## Epic 3: Simplify Evaluation API
 
 ### Story 3.1: Replace EvalSets with Single Validation Set
-**Status**: Not Started
+**Status**: Superseded (implemented in `docs/backlogs/0021-dataset-separation.md`)
 
 Simplify from `eval_sets: &[EvalSet<'_>]` to `val_set: Option<&Dataset>`:
 
@@ -137,7 +139,7 @@ Tasks:
 ## Epic 4: Simplify BinnedDataset
 
 ### Story 4.1: Remove Original/Effective Feature Distinction
-**Status**: Not Started
+**Status**: Superseded (implemented in `docs/backlogs/0021-dataset-separation.md`)
 
 Remove the original_feature vs effective_feature distinction:
 
@@ -173,7 +175,7 @@ Tasks:
 ---
 
 ### Story 4.2: Simplify BinnedDataset Builder
-**Status**: Not Started
+**Status**: Superseded (implemented in `docs/backlogs/0021-dataset-separation.md`)
 
 Since BinnedDataset is internal and always created from Dataset, simplify the builder:
 
@@ -206,7 +208,7 @@ Tasks:
 ---
 
 ### Story 4.3: Fix labels vs targets Inconsistency
-**Status**: Not Started
+**Status**: Superseded (implemented in `docs/backlogs/0021-dataset-separation.md`)
 
 BinnedDataset uses `labels` while Dataset uses `targets`. Standardize on `targets`:
 
@@ -225,7 +227,7 @@ Tasks:
 ## Epic 5: Review and Cleanup
 
 ### Story 5.1: Final Review and Documentation
-**Status**: Not Started
+**Status**: Superseded (implemented in `docs/backlogs/0021-dataset-separation.md`)
 
 - [ ] Update RFC-0021 with final implementation details
 - [ ] Verify all public APIs are documented
@@ -237,13 +239,13 @@ Tasks:
 ## Meta-Tasks
 
 ### Stakeholder Feedback Check
-**Status**: Not Started
+**Status**: Superseded (implemented in `docs/backlogs/0021-dataset-separation.md`)
 
 - [ ] Review `workdir/tmp/stakeholder_feedback.md` for relevant input
 - [ ] Incorporate feedback into implementation decisions
 
 ### Review/Demo Session
-**Status**: Not Started
+**Status**: Superseded (implemented in `docs/backlogs/0021-dataset-separation.md`)
 
 After Epic 4 completion:
 - [ ] Demonstrate simplified API

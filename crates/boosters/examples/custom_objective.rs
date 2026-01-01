@@ -9,7 +9,7 @@
 //! ```
 
 use boosters::data::BinningConfig;
-use boosters::data::binned::BinnedDatasetBuilder;
+use boosters::data::binned::BinnedDataset;
 use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::inference::PredictionKind;
 use boosters::inference::gbdt::SimplePredictor;
@@ -22,7 +22,8 @@ use ndarray::{Array2, ArrayView2, ArrayViewMut2};
 fn predict_row(forest: &Forest, features: &[f32]) -> Vec<f32> {
     let predictor = SimplePredictor::new(forest);
     let mut output = vec![0.0; predictor.n_groups()];
-    predictor.predict_row_into(features, None, &mut output);
+    let sample = ndarray::ArrayView1::from(features);
+    predictor.predict_row_into(sample, None, &mut output);
     output
 }
 
@@ -131,11 +132,10 @@ fn main() {
     let (features, labels) = generate_data_with_outliers(n_samples, n_features);
 
     // Create binned dataset
-    let features_dataset = Dataset::new(features.view(), None, None);
-    let dataset = BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
-        .add_features(features_dataset.features(), Parallelism::Parallel)
-        .build()
-        .expect("Failed to build binned dataset");
+    let features_dataset = Dataset::from_array(features.view(), None, None);
+    let binning_config = BinningConfig::builder().max_bins(256).build();
+    let dataset =
+        BinnedDataset::from_dataset(&features_dataset, &binning_config).expect("binning failed");
 
     // =========================================================================
     // 2. Train with Custom Objective
@@ -157,6 +157,7 @@ fn main() {
     let trainer = GBDTTrainer::new(huber, Rmse, params);
     let forest = trainer
         .train(
+            &features_dataset,
             &dataset,
             targets,
             WeightsView::None,

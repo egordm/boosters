@@ -19,12 +19,10 @@
 //! cargo run --example train_imbalanced
 //! ```
 
-use boosters::data::BinningConfig;
-use boosters::data::binned::BinnedDatasetBuilder;
-use boosters::data::{Dataset, TargetsView, WeightsView};
+use boosters::data::Dataset;
 use boosters::training::GrowthStrategy;
-use boosters::{GBDTConfig, GBDTModel, Metric, Objective, Parallelism};
-use ndarray::{Array1, Array2, ArrayView1};
+use boosters::{GBDTConfig, GBDTModel, Metric, Objective};
+use ndarray::{Array1, Array2};
 
 fn main() {
     // =========================================================================
@@ -58,12 +56,9 @@ fn main() {
         labels[sample_idx] = 1.0;
     }
 
-    // Create binned dataset
-    let features_dataset = Dataset::new(features.view(), None, None);
-    let dataset = BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
-        .add_features(features_dataset.features(), Parallelism::Parallel)
-        .build()
-        .expect("Failed to build binned dataset");
+    // Wrap labels in targets array (shape [n_outputs=1, n_samples])
+    let targets_2d = labels.clone().insert_axis(ndarray::Axis(0));
+    let dataset = Dataset::from_array(features.view(), Some(targets_2d.clone()), None);
 
     // =========================================================================
     // Compute Class Weights (inverse frequency)
@@ -104,20 +99,13 @@ fn main() {
         .build()
         .expect("Invalid configuration");
 
-    // Wrap labels in TargetsView (shape [n_outputs=1, n_samples])
-    let targets_2d = labels.clone().insert_axis(ndarray::Axis(0));
-    let targets = TargetsView::new(targets_2d.view());
-
     // =========================================================================
     // Train WITHOUT weights (baseline)
     // =========================================================================
     println!("--- Training WITHOUT weights ---");
-    let model_unweighted =
-        GBDTModel::train_binned(&dataset, targets, WeightsView::None, &[], config.clone(), 1)
-            .expect("Training failed");
+    let model_unweighted = GBDTModel::train(&dataset, None, config.clone(), 1).expect("Training failed");
 
-    // Predict: features_dataset is already feature-major
-    let probs_uw = model_unweighted.predict(&features_dataset, 1);
+    let probs_uw = model_unweighted.predict(&dataset, 1);
 
     let acc_uw = compute_accuracy(probs_uw.as_slice().unwrap(), labels.as_slice().unwrap());
     let recall_1_uw = compute_recall(
@@ -132,17 +120,15 @@ fn main() {
     // Train WITH class weights
     // =========================================================================
     println!("--- Training WITH class weights ---");
-    let model_weighted = GBDTModel::train_binned(
-        &dataset,
-        targets,
-        WeightsView::from_array(ArrayView1::from(&class_weights[..])),
-        None,
-        config,
-        1,
-    )
-    .expect("Training failed");
+    let dataset_weighted = Dataset::from_array(
+        features.view(),
+        Some(targets_2d),
+        Some(Array1::from_vec(class_weights)),
+    );
+    let model_weighted =
+        GBDTModel::train(&dataset_weighted, None, config, 1).expect("Training failed");
 
-    let probs_w = model_weighted.predict(&features_dataset, 1);
+    let probs_w = model_weighted.predict(&dataset_weighted, 1);
 
     let acc_w = compute_accuracy(probs_w.as_slice().unwrap(), labels.as_slice().unwrap());
     let recall_1_w = compute_recall(probs_w.as_slice().unwrap(), labels.as_slice().unwrap(), 1.0);

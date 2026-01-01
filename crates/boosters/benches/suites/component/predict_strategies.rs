@@ -7,7 +7,7 @@ use common::criterion_config::default_criterion;
 use common::models::load_boosters_model;
 
 use boosters::Parallelism;
-use boosters::data::FeaturesView;
+use boosters::data::Dataset;
 use boosters::inference::gbdt::{Predictor, StandardTraversal, UnrolledTraversal6};
 use boosters::testing::synthetic_datasets::random_features_array;
 
@@ -27,38 +27,38 @@ fn bench_gbtree_traversal_strategies(c: &mut Criterion) {
 
     for batch_size in [1_000usize, 10_000] {
         let matrix = random_features_array(batch_size, model.n_features, 42, -5.0, 5.0);
-        let features = FeaturesView::from_array(matrix.view());
+        let dataset = Dataset::from_array(matrix.t(), None, None);
         group.throughput(Throughput::Elements(batch_size as u64));
 
         group.bench_with_input(
             BenchmarkId::new("std_no_block", batch_size),
-            &features,
-            |b, f| {
-                b.iter(|| black_box(std_no_block.predict(black_box(*f), Parallelism::Sequential)))
+            &dataset,
+            |b, d| {
+                b.iter(|| black_box(std_no_block.predict(black_box(d), Parallelism::Sequential)))
             },
         );
         group.bench_with_input(
             BenchmarkId::new("std_block64", batch_size),
-            &features,
-            |b, f| {
-                b.iter(|| black_box(std_block64.predict(black_box(*f), Parallelism::Sequential)))
+            &dataset,
+            |b, d| {
+                b.iter(|| black_box(std_block64.predict(black_box(d), Parallelism::Sequential)))
             },
         );
 
         group.bench_with_input(
             BenchmarkId::new("unroll_no_block", batch_size),
-            &features,
-            |b, f| {
+            &dataset,
+            |b, d| {
                 b.iter(|| {
-                    black_box(unroll_no_block.predict(black_box(*f), Parallelism::Sequential))
+                    black_box(unroll_no_block.predict(black_box(d), Parallelism::Sequential))
                 })
             },
         );
         group.bench_with_input(
             BenchmarkId::new("unroll_block64", batch_size),
-            &features,
-            |b, f| {
-                b.iter(|| black_box(unroll_block64.predict(black_box(*f), Parallelism::Sequential)))
+            &dataset,
+            |b, d| {
+                b.iter(|| black_box(unroll_block64.predict(black_box(d), Parallelism::Sequential)))
             },
         );
     }

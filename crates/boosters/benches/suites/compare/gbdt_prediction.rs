@@ -12,7 +12,7 @@ use common::models::bench_models_dir;
 use common::models::load_boosters_model;
 
 use boosters::Parallelism;
-use boosters::data::FeaturesView;
+use boosters::data::Dataset;
 use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
 use boosters::testing::synthetic_datasets::random_features_array;
 
@@ -107,11 +107,11 @@ fn bench_predict_batch_sizes(c: &mut Criterion) {
         group.throughput(Throughput::Elements(batch_size as u64));
 
         // booste-rs
-        let features = FeaturesView::from_array(input_array.view());
+        let dataset = Dataset::from_array(input_array.t(), None, None);
         group.bench_with_input(
             BenchmarkId::new("boosters", batch_size),
-            &features,
-            |b, f| b.iter(|| black_box(predictor.predict(black_box(*f), Parallelism::Sequential))),
+            &dataset,
+            |b, d| b.iter(|| black_box(predictor.predict(black_box(d), Parallelism::Sequential))),
         );
 
         // Get raw slice for XGBoost/LightGBM
@@ -178,6 +178,7 @@ fn bench_predict_single_row(c: &mut Criterion) {
     let lgb_booster = load_native_lgb_booster("bench_medium");
 
     let input_array = random_features_array(1, n_features, 42, -5.0, 5.0);
+    let dataset = Dataset::from_array(input_array.t(), None, None);
 
     #[cfg(any(feature = "bench-xgboost", feature = "bench-lightgbm"))]
     let input_data: &[f32] = input_array.as_slice().unwrap();
@@ -185,9 +186,8 @@ fn bench_predict_single_row(c: &mut Criterion) {
     let mut group = c.benchmark_group("compare/predict/single_row/medium");
 
     // booste-rs
-    let features = FeaturesView::from_array(input_array.view());
     group.bench_function("boosters", |b| {
-        b.iter(|| black_box(predictor.predict(black_box(features), Parallelism::Sequential)))
+        b.iter(|| black_box(predictor.predict(black_box(&dataset), Parallelism::Sequential)))
     });
 
     // XGBoost
@@ -249,6 +249,7 @@ fn bench_predict_thread_scaling(c: &mut Criterion) {
 
     let batch_size = LARGE_BATCH;
     let input_array = random_features_array(batch_size, n_features, 42, -5.0, 5.0);
+    let dataset = Dataset::from_array(input_array.t(), None, None);
 
     #[cfg(any(feature = "bench-xgboost", feature = "bench-lightgbm"))]
     let input_data: &[f32] = input_array.as_slice().unwrap();
@@ -256,13 +257,12 @@ fn bench_predict_thread_scaling(c: &mut Criterion) {
     let mut group = c.benchmark_group("compare/predict/thread_scaling/medium");
     group.throughput(Throughput::Elements(batch_size as u64));
 
-    let features = FeaturesView::from_array(input_array.view());
     for &n_threads in common::matrix::THREAD_COUNTS {
         // booste-rs
         group.bench_with_input(
             BenchmarkId::new("boosters", n_threads),
-            &features,
-            |b, f| b.iter(|| black_box(predictor.predict(black_box(*f), Parallelism::Parallel))),
+            &dataset,
+            |b, d| b.iter(|| black_box(predictor.predict(black_box(d), Parallelism::Parallel))),
         );
 
         // XGBoost

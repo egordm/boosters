@@ -8,7 +8,7 @@
 //!
 //! See RFC-0015 for design rationale.
 
-use crate::data::DataAccessor;
+use crate::data::Dataset;
 use crate::repr::gbdt::{MutableTree, ScalarLeaf, SplitType, TreeView};
 use crate::training::gbdt::partition::RowPartitioner;
 use crate::training::{Gradients, GradsTuple};
@@ -86,7 +86,7 @@ impl LeafLinearTrainer {
     ///
     /// # Arguments
     /// * `tree` - The tree being trained (implements TreeView for path traversal)
-    /// * `data` - Data accessor (any type implementing DataAccessor)
+    /// * `data` - Dataset containing raw feature values
     /// * `partitioner` - Row partitioner with leaf assignments
     /// * `leaf_node_mapping` - Mapping from tree node IDs to partitioner node IDs
     /// * `gradients` - Gradient/hessian values
@@ -96,18 +96,15 @@ impl LeafLinearTrainer {
     /// # Example
     ///
     /// ```ignore
-    /// // With BinnedDataset (during GBDT training):
+    /// // During GBDT training:
     /// let mapping = grower.leaf_node_mapping();
-    /// let fitted = trainer.train(&tree, dataset, partitioner, mapping, gradients, 0, 0.1);
-    ///
-    /// // With FeaturesView (for testing):
-    /// let fitted = trainer.train(&tree, &features, partitioner, mapping, gradients, 0, 0.1);
+    /// let fitted = trainer.train(&tree, &dataset, partitioner, mapping, gradients, 0, 0.1);
     /// ```
     #[allow(clippy::too_many_arguments)]
-    pub fn train<D: DataAccessor>(
+    pub fn train(
         &mut self,
         tree: &MutableTree<ScalarLeaf>,
-        data: &D,
+        data: &Dataset,
         partitioner: &RowPartitioner,
         leaf_node_mapping: &[(u32, u32)],
         gradients: &Gradients,
@@ -211,12 +208,12 @@ impl LeafLinearTrainer {
 
     /// Fit a linear model for a single leaf.
     #[allow(clippy::too_many_arguments)]
-    fn fit_leaf<D: DataAccessor>(
+    fn fit_leaf(
         &mut self,
         node_id: u32,
         features: &[u32],
         rows: &[u32],
-        data: &D,
+        data: &Dataset,
         gradients: &Gradients,
         output: usize,
         learning_rate: f32,
@@ -224,7 +221,7 @@ impl LeafLinearTrainer {
         let n_features = features.len();
         let n_rows = rows.len();
 
-        // Gather features using data accessor
+        // Gather features using Dataset
         self.feature_buffer.gather(rows, data, features);
 
         // Reset solver and accumulate
@@ -461,71 +458,17 @@ mod tests {
         assert_eq!(trainer.config().max_features, 5);
     }
 
-    /// Test that the new RFC-0018 BinnedDataset works with DataAccessor trait.
-    /// This verifies that DataAccessor returns raw values (not bin midpoints)
-    /// which is essential for linear tree fitting.
-    #[test]
-    fn test_new_binned_dataset_data_accessor() {
-        use crate::data::binned::builder::DatasetBuilder;
-        use crate::data::binned::dataset::BinnedDataset;
-        use crate::data::{DataAccessor, SampleAccessor};
-        use ndarray::array;
-
-        // Create a dataset with known numeric values using the new builder
-        // Use non-integer values to ensure numeric detection
-        let built = DatasetBuilder::new()
-            .add_numeric("x", array![1.5, 2.5, 3.5, 4.5, 5.5].view())
-            .add_numeric("y", array![10.1, 20.2, 30.3, 40.4, 50.5].view())
-            .build_groups()
-            .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
-
-        // Verify the dataset has raw values
-        assert!(dataset.has_raw_values(), "Dataset should have raw values");
-
-        // Verify DataAccessor returns raw values (not bin midpoints)
-        // This is critical for linear tree quality - RFC-0018 motivation
-        let sample0 = dataset.sample(0);
-        let sample2 = dataset.sample(2);
-        let sample4 = dataset.sample(4);
-
-        // Feature 0: should be exact raw values
-        assert!((sample0.feature(0) - 1.5).abs() < 0.01, 
-            "Expected 1.5, got {}", sample0.feature(0));
-        assert!((sample2.feature(0) - 3.5).abs() < 0.01,
-            "Expected 3.5, got {}", sample2.feature(0));
-        assert!((sample4.feature(0) - 5.5).abs() < 0.01,
-            "Expected 5.5, got {}", sample4.feature(0));
-
-        // Feature 1: should also be exact raw values
-        assert!((sample0.feature(1) - 10.1).abs() < 0.01,
-            "Expected 10.1, got {}", sample0.feature(1));
-        assert!((sample2.feature(1) - 30.3).abs() < 0.01,
-            "Expected 30.3, got {}", sample2.feature(1));
-        assert!((sample4.feature(1) - 50.5).abs() < 0.01,
-            "Expected 50.5, got {}", sample4.feature(1));
-
-        // Verify n_features matches
-        assert_eq!(dataset.n_features(), 2);
-        assert_eq!(sample0.n_features(), 2);
-    }
-
     /// Test that LeafLinearTrainer can be instantiated with the buffer module.
     /// The actual fitting is tested in integration tests with full tree grower.
     #[test]
-    fn test_feature_buffer_gather_with_new_dataset() {
-        use crate::data::binned::builder::DatasetBuilder;
-        use crate::data::binned::dataset::BinnedDataset;
-        use ndarray::array;
+    fn test_feature_buffer_gather_with_dataset() {
+        use crate::data::Dataset;
+        use ndarray::Array2;
 
-        // Create dataset
-        let built = DatasetBuilder::new()
-            .add_numeric("x", array![1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8, 9.9, 10.0].view())
-            .build_groups()
-            .unwrap();
-
-        let dataset = BinnedDataset::from_built_groups(built);
+        // Create dataset with feature-major layout [n_features, n_samples]
+        let data: Vec<f32> = vec![1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8, 9.9, 10.0];
+        let arr = Array2::from_shape_vec((1, 10), data).unwrap();
+        let dataset = Dataset::from_array(arr.view(), None, None);
 
         // Create feature buffer
         let mut buffer = super::LeafFeatureBuffer::new(10, 5);

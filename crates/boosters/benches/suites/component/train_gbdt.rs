@@ -7,8 +7,8 @@ use common::criterion_config::default_criterion;
 use common::threading::with_rayon_threads;
 
 use boosters::Parallelism;
-use boosters::data::{BinningConfig, binned::BinnedDatasetBuilder, transpose_to_c_order};
-use boosters::data::{Dataset, TargetsView, WeightsView};
+use boosters::data::{BinningConfig, binned::BinnedDataset, transpose_to_c_order};
+use boosters::data::{Dataset, WeightsView};
 use boosters::testing::synthetic_datasets::{
     random_features_array, synthetic_binary, synthetic_multiclass, synthetic_regression,
 };
@@ -17,27 +17,17 @@ use boosters::training::{
     Rmse, SoftmaxLoss, SquaredLoss,
 };
 
-use ndarray::Array2;
-
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 fn build_binned_dataset(
     rows: usize,
     cols: usize,
     seed: u64,
-) -> (boosters::data::binned::BinnedDataset, Array2<f32>) {
-    let synth_dataset = synthetic_regression(rows, cols, seed, 0.05);
-    let features_dataset = Dataset::new(synth_dataset.features.view(), None, None);
-    let binned = BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
-        .add_features(features_dataset.features(), Parallelism::Parallel)
-        .build()
-        .unwrap();
-    let targets = Array2::from_shape_vec(
-        (1, synth_dataset.targets.len()),
-        synth_dataset.targets.to_vec(),
-    )
-    .unwrap();
-    (binned, targets)
+) -> (Dataset, boosters::data::binned::BinnedDataset) {
+    let dataset = synthetic_regression(rows, cols, seed, 0.05);
+    let binning_config = BinningConfig::builder().max_bins(256).build();
+    let binned = BinnedDataset::from_dataset(&dataset, &binning_config).unwrap();
+    (dataset, binned)
 }
 
 fn bench_gbdt_quantize(c: &mut Criterion) {
@@ -47,19 +37,17 @@ fn bench_gbdt_quantize(c: &mut Criterion) {
     for (rows, cols) in [(10_000usize, 50usize), (50_000, 100), (100_000, 20)] {
         let features = random_features_array(rows, cols, 42, -1.0, 1.0);
         let features_fm = transpose_to_c_order(features.view());
-        let features_dataset = Dataset::new(features_fm.view(), None, None);
+        let features_dataset = Dataset::from_array(features_fm.view(), None, None);
 
         group.throughput(Throughput::Elements((rows * cols) as u64));
         group.bench_with_input(
             BenchmarkId::new("to_binned/max_bins=256", format!("{rows}x{cols}")),
             &features_dataset,
             |b, ds| {
+                let binning_config = BinningConfig::builder().max_bins(256).build();
                 b.iter(|| {
                     black_box(
-                        BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
-                            .add_features(black_box(ds).features(), Parallelism::Parallel)
-                            .build()
-                            .unwrap(),
+                        BinnedDataset::from_dataset(black_box(ds), &binning_config).unwrap(),
                     )
                 })
             },
@@ -80,7 +68,7 @@ fn bench_gbdt_train_regression(c: &mut Criterion) {
     ];
 
     for (name, rows, cols, n_trees, max_depth) in configs {
-        let (binned, targets) = build_binned_dataset(rows, cols, 42);
+        let (dataset, binned) = build_binned_dataset(rows, cols, 42);
 
         let params = GBDTParams {
             n_trees,
@@ -97,18 +85,19 @@ fn bench_gbdt_train_regression(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements((rows * cols) as u64));
         group.bench_function(BenchmarkId::new("train", name), |b| {
-            let targets_view = TargetsView::new(targets.view());
             b.iter(|| {
+                let targets_view = dataset.targets().unwrap();
                 black_box(
                     trainer
                         .train(
+                            black_box(&dataset),
                             black_box(&binned),
                             targets_view,
                             WeightsView::None,
                             None,
                             Parallelism::Sequential,
                         )
-                        .unwrap(),
+                        .expect("training should succeed"),
                 )
             })
         });
@@ -122,17 +111,9 @@ fn bench_gbdt_train_binary(c: &mut Criterion) {
     group.sample_size(10);
 
     let (rows, cols, n_trees, max_depth) = (50_000usize, 100usize, 50u32, 6u32);
-    let synth_dataset = synthetic_binary(rows, cols, 42, 0.2);
-    let targets: Array2<f32> = Array2::from_shape_vec(
-        (1, synth_dataset.targets.len()),
-        synth_dataset.targets.to_vec(),
-    )
-    .unwrap();
-    let features_dataset = Dataset::new(synth_dataset.features.view(), None, None);
-    let binned = BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
-        .add_features(features_dataset.features(), Parallelism::Parallel)
-        .build()
-        .unwrap();
+    let dataset = synthetic_binary(rows, cols, 42, 0.2);
+    let binning_config = BinningConfig::builder().max_bins(256).build();
+    let binned = BinnedDataset::from_dataset(&dataset, &binning_config).unwrap();
 
     let params = GBDTParams {
         n_trees,
@@ -149,18 +130,19 @@ fn bench_gbdt_train_binary(c: &mut Criterion) {
 
     group.throughput(Throughput::Elements((rows * cols) as u64));
     group.bench_function("train_binary", |b| {
-        let targets_view = TargetsView::new(targets.view());
         b.iter(|| {
+            let targets_view = dataset.targets().unwrap();
             black_box(
                 trainer
                     .train(
+                        black_box(&dataset),
                         black_box(&binned),
                         targets_view,
                         WeightsView::None,
                         None,
                         Parallelism::Sequential,
                     )
-                    .unwrap(),
+                    .expect("training should succeed"),
             )
         })
     });
@@ -172,17 +154,9 @@ fn bench_gbdt_train_multiclass(c: &mut Criterion) {
     group.sample_size(10);
 
     let (rows, cols, n_trees, max_depth, n_classes) = (20_000usize, 50usize, 30u32, 6u32, 10usize);
-    let synth_dataset = synthetic_multiclass(rows, cols, n_classes, 42, 0.1);
-    let targets: Array2<f32> = Array2::from_shape_vec(
-        (1, synth_dataset.targets.len()),
-        synth_dataset.targets.to_vec(),
-    )
-    .unwrap();
-    let features_dataset = Dataset::new(synth_dataset.features.view(), None, None);
-    let binned = BinnedDatasetBuilder::with_config(BinningConfig::builder().max_bins(256).build())
-        .add_features(features_dataset.features(), Parallelism::Parallel)
-        .build()
-        .unwrap();
+    let dataset = synthetic_multiclass(rows, cols, n_classes, 42, 0.1);
+    let binning_config = BinningConfig::builder().max_bins(256).build();
+    let binned = BinnedDataset::from_dataset(&dataset, &binning_config).unwrap();
 
     let params = GBDTParams {
         n_trees,
@@ -199,18 +173,19 @@ fn bench_gbdt_train_multiclass(c: &mut Criterion) {
 
     group.throughput(Throughput::Elements((rows * cols) as u64));
     group.bench_function("train_multiclass", |b| {
-        let targets_view = TargetsView::new(targets.view());
         b.iter(|| {
+            let targets_view = dataset.targets().unwrap();
             black_box(
                 trainer
                     .train(
+                        black_box(&dataset),
                         black_box(&binned),
                         targets_view,
                         WeightsView::None,
                         None,
                         Parallelism::Sequential,
                     )
-                    .unwrap(),
+                    .expect("training should succeed"),
             )
         })
     });
@@ -222,7 +197,7 @@ fn bench_gbdt_thread_scaling(c: &mut Criterion) {
     group.sample_size(10);
 
     let (rows, cols, n_trees, max_depth) = (50_000usize, 100usize, 30u32, 6u32);
-    let (binned, targets) = build_binned_dataset(rows, cols, 42);
+    let (dataset, binned) = build_binned_dataset(rows, cols, 42);
 
     for &n_threads in common::matrix::THREAD_COUNTS {
         let params = GBDTParams {
@@ -241,17 +216,18 @@ fn bench_gbdt_thread_scaling(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("train", n_threads), |b| {
             b.iter(|| {
                 with_rayon_threads(n_threads, || {
-                    let targets_view = TargetsView::new(targets.view());
+                    let targets_view = dataset.targets().unwrap();
                     black_box(
                         trainer
                             .train(
+                                black_box(&dataset),
                                 black_box(&binned),
                                 targets_view,
                                 WeightsView::None,
                                 None,
                                 Parallelism::Parallel,
                             )
-                            .unwrap(),
+                            .expect("training should succeed"),
                     )
                 })
             })
@@ -268,7 +244,7 @@ fn bench_gbdt_growth_strategy(c: &mut Criterion) {
     let (rows, cols, n_trees, max_depth) = (50_000usize, 100usize, 50u32, 6u32);
     let max_leaves = 64u32;
 
-    let (binned, targets) = build_binned_dataset(rows, cols, 42);
+    let (dataset, binned) = build_binned_dataset(rows, cols, 42);
 
     let common = GBDTParams {
         n_trees,
@@ -302,18 +278,19 @@ fn bench_gbdt_growth_strategy(c: &mut Criterion) {
     group.bench_function(
         BenchmarkId::new("depthwise", format!("{rows}x{cols}")),
         |b| {
-            let targets_view = TargetsView::new(targets.view());
             b.iter(|| {
+                let targets_view = dataset.targets().unwrap();
                 black_box(
                     depthwise
                         .train(
+                            black_box(&dataset),
                             black_box(&binned),
                             targets_view,
                             WeightsView::None,
                             None,
                             Parallelism::Sequential,
                         )
-                        .unwrap(),
+                        .expect("training should succeed"),
                 )
             })
         },
@@ -321,18 +298,19 @@ fn bench_gbdt_growth_strategy(c: &mut Criterion) {
     group.bench_function(
         BenchmarkId::new("leafwise", format!("{rows}x{cols}")),
         |b| {
-            let targets_view = TargetsView::new(targets.view());
             b.iter(|| {
+                let targets_view = dataset.targets().unwrap();
                 black_box(
                     leafwise
                         .train(
+                            black_box(&dataset),
                             black_box(&binned),
                             targets_view,
                             WeightsView::None,
                             None,
                             Parallelism::Sequential,
                         )
-                        .unwrap(),
+                        .expect("training should succeed"),
                 )
             })
         },

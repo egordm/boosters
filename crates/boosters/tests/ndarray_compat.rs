@@ -72,7 +72,7 @@ fn predict_regression_shape_and_values() {
         [0.3f32, 0.7, 0.6], // feature 0 values
         [0.5, 0.5, 0.1],    // feature 1 values
     ];
-    let dataset = Dataset::new(features_fm.view(), None, None);
+    let dataset = Dataset::from_array(features_fm.view(), None, None);
     let preds = model.predict(&dataset, 1);
 
     // Verify shape: [n_groups=1, n_samples=3]
@@ -96,7 +96,7 @@ fn predict_raw_shape_and_values() {
         [0.3f32, 0.7], // feature 0 values
         [0.5, 0.5],    // feature 1 values
     ];
-    let dataset = Dataset::new(features_fm.view(), None, None);
+    let dataset = Dataset::from_array(features_fm.view(), None, None);
     let preds = model.predict_raw(&dataset, 1);
 
     // Verify shape: [n_groups=1, n_samples=2]
@@ -123,7 +123,7 @@ fn predict_multiclass_shape() {
         [0.3f32, 0.7], // feature 0 values (sample 0: goes left, sample 1: goes right)
         [0.5, 0.5],    // feature 1 values
     ];
-    let dataset = Dataset::new(features_fm.view(), None, None);
+    let dataset = Dataset::from_array(features_fm.view(), None, None);
     let preds = model.predict(&dataset, 1);
 
     // Array2 shape: (n_groups=3, n_samples=2)
@@ -156,7 +156,7 @@ fn array2_row_access_is_contiguous() {
         [0.3f32, 0.7, 0.4], // feature 0 values
         [0.5, 0.5, 0.6],    // feature 1 values
     ];
-    let dataset = Dataset::new(features_fm.view(), None, None);
+    let dataset = Dataset::from_array(features_fm.view(), None, None);
     let preds = model.predict(&dataset, 1);
 
     // Each row (group) should be contiguous (all samples for one group)
@@ -179,7 +179,7 @@ fn predict_empty_input() {
 
     // Feature-major: [n_features=2, n_samples=0]
     let features_fm = ndarray::Array2::<f32>::zeros((2, 0));
-    let dataset = Dataset::new(features_fm.view(), None, None);
+    let dataset = Dataset::from_array(features_fm.view(), None, None);
     let preds = model.predict(&dataset, 1);
 
     // Should have shape (n_groups=1, n_samples=0)
@@ -195,7 +195,7 @@ fn predict_single_sample() {
 
     // Feature-major: [n_features=2, n_samples=1]
     let features_fm = array![[0.3f32], [0.5]];
-    let dataset = Dataset::new(features_fm.view(), None, None);
+    let dataset = Dataset::from_array(features_fm.view(), None, None);
     let preds = model.predict(&dataset, 1);
 
     assert_eq!(preds.nrows(), 1);

@@ -229,7 +229,7 @@ mod tests {
     fn predict_row(forest: &Forest, features: &[f32]) -> Vec<f32> {
         let predictor = SimplePredictor::new(forest);
         let mut output = vec![0.0; predictor.n_groups()];
-        predictor.predict_row_into(features, None, &mut output);
+        predictor.predict_row_into(features.into(), None, &mut output);
         output
     }
 

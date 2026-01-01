@@ -168,7 +168,7 @@ impl GBLinearModel {
     ///
     /// # Arguments
     ///
-    /// * `features` - Feature-major data `[n_features, n_samples]`
+    /// * `dataset` - Dataset containing features (targets are ignored)
     ///
     /// # Returns
     ///
@@ -179,7 +179,7 @@ impl GBLinearModel {
     /// ```ignore
     /// let preds = model.predict(dataset);
     /// ```
-    pub fn predict(&self, dataset: Dataset) -> Array2<f32> {
+    pub fn predict(&self, dataset: &Dataset) -> Array2<f32> {
         // Use efficient feature-major prediction
         let mut output = self.predict_raw(dataset);
 
@@ -195,12 +195,12 @@ impl GBLinearModel {
     ///
     /// # Arguments
     ///
-    /// * `features` - Feature-major data `[n_features, n_samples]`
+    /// * `dataset` - Dataset containing features (targets are ignored)
     ///
     /// # Returns
     ///
     /// Array2 with shape `[n_groups, n_samples]`.
-    pub fn predict_raw(&self, dataset: Dataset) -> Array2<f32> {
+    pub fn predict_raw(&self, dataset: &Dataset) -> Array2<f32> {
         let n_samples = dataset.n_samples();
         let n_groups = self.meta.n_groups;
 
@@ -208,7 +208,7 @@ impl GBLinearModel {
             return Array2::zeros((n_groups, 0));
         }
 
-        self.model.predict(dataset.features())
+        self.model.predict(dataset)
     }
 
     // =========================================================================
@@ -234,8 +234,8 @@ impl GBLinearModel {
         let means = feature_means.unwrap_or_else(|| vec![0.0; self.meta.n_features]);
         let explainer = LinearExplainer::new(&self.model, means)?;
 
-        // LinearExplainer now takes FeaturesView directly
-        Ok(explainer.shap_values(data.features()))
+        // LinearExplainer takes &Dataset directly
+        Ok(explainer.shap_values(data))
     }
 }
 
@@ -291,8 +291,8 @@ mod tests {
         // y = 0.5*1.0 + 0.3*2.0 + 0.1 = 0.5 + 0.6 + 0.1 = 1.2
         // Feature-major: [n_features=2, n_samples=1]
         let features_fm = arr2(&[[1.0], [2.0]]);
-        let dataset = Dataset::new(features_fm.view(), None, None);
-        let preds = model.predict_raw(dataset);
+        let dataset = Dataset::from_array(features_fm.view(), None, None);
+        let preds = model.predict_raw(&dataset);
         assert!((preds[[0, 0]] - 1.2).abs() < 1e-6);
     }
 
@@ -309,8 +309,8 @@ mod tests {
             [1.0, 0.0], // feature 0 values for samples 0, 1
             [2.0, 0.0], // feature 1 values for samples 0, 1
         ]);
-        let dataset = Dataset::new(features_fm.view(), None, None);
-        let preds = model.predict_raw(dataset);
+        let dataset = Dataset::from_array(features_fm.view(), None, None);
+        let preds = model.predict_raw(&dataset);
 
         // Shape is [n_groups, n_samples] = [1, 2]
         // sample 0: 0.5*1.0 + 0.3*2.0 + 0.1 = 1.2
@@ -338,7 +338,7 @@ mod tests {
 
         // Test with means - feature-major layout [n_features=2, n_samples=1]
         let features = arr2(&[[1.0], [2.0]]);
-        let dataset = Dataset::new(features.view(), None, None);
+        let dataset = Dataset::from_array(features.view(), None, None);
         let means = vec![0.5, 1.0]; // Centered around different values
         let shap = model.shap_values(&dataset, Some(means)).unwrap();
 
@@ -360,7 +360,7 @@ mod tests {
 
         // Feature-major layout [n_features=2, n_samples=1]
         let features = arr2(&[[1.0], [2.0]]);
-        let dataset = Dataset::new(features.view(), None, None);
+        let dataset = Dataset::from_array(features.view(), None, None);
         // Use None for zero means (centered data assumption)
         let shap = model.shap_values(&dataset, None).unwrap();
 
@@ -385,10 +385,10 @@ mod tests {
         // feature 0: [1.0, 0.0]
         // feature 1: [2.0, 0.0]
         let feature_major = array![[1.0, 0.0], [2.0, 0.0]];
-        let dataset = Dataset::new(feature_major.view(), None, None);
+        let dataset = Dataset::from_array(feature_major.view(), None, None);
 
         // Use predict method taking Dataset
-        let preds = model.predict_raw(dataset);
+        let preds = model.predict_raw(&dataset);
 
         // Values should be:
         // sample 0: 0.5*1.0 + 0.3*2.0 + 0.1 = 1.2

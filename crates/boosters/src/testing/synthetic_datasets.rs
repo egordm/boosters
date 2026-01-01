@@ -3,16 +3,18 @@
 //! This module provides utilities for generating synthetic datasets for testing
 //! and benchmarking.
 //!
-//! # Preferred API (ndarray-based)
+//! # Preferred API
 //!
-//! Use [`SyntheticDataset`] and the `synthetic_*` functions for the cleanest API:
+//! Use the `synthetic_*` functions, which return a [`Dataset`] with targets set:
 //!
 //! ```
-//! use boosters::testing::synthetic_datasets::{synthetic_regression, synthetic_binary};
+//! use boosters::data::{BinnedDataset, BinningConfig};
+//! use boosters::testing::synthetic_datasets::synthetic_regression;
 //!
 //! let dataset = synthetic_regression(1000, 10, 42, 0.05);
-//! let binned = dataset.to_binned(256);
-//! let targets = dataset.targets.view();
+//! let config = BinningConfig::builder().max_bins(256).build();
+//! let binned = BinnedDataset::from_dataset(&dataset, &config).unwrap();
+//! assert!(dataset.targets().is_some());
 //! ```
 //!
 //! # Legacy API
@@ -24,70 +26,53 @@ use rand::prelude::*;
 
 use ndarray::{Array1, Array2, ArrayView2};
 
-use crate::data::{
-    BinnedDataset, BinningConfig, transpose_to_c_order,
-};
-use crate::data::{Dataset, FeaturesView};
+use crate::data::{Dataset, Feature, transpose_to_c_order};
 
-// =============================================================================
-// Synthetic Dataset (ndarray-based API)
-// =============================================================================
-
-/// A synthetic dataset with features and targets.
+/// Get features in sample-major (row-major) layout.
 ///
-/// Features are stored in feature-major layout (ready for binning/training).
-/// Targets are a 1D array.
-#[derive(Debug, Clone)]
-pub struct SyntheticDataset {
-    /// Features in feature-major layout `[n_features, n_samples]`.
-    pub features: Array2<f32>,
-    /// Target values `[n_samples]`.
-    pub targets: Array1<f32>,
+/// Returns an Array2 with shape `[n_samples, n_features]`.
+/// Useful for external libraries that expect row-major data.
+pub fn features_row_major(dataset: &Dataset) -> Array2<f32> {
+    let rows = dataset.n_samples();
+    let cols = dataset.n_features();
+    let data = features_row_major_slice(dataset);
+    Array2::from_shape_vec((rows, cols), data).expect("shape mismatch")
 }
 
-impl SyntheticDataset {
-    /// Number of samples (rows).
-    pub fn n_samples(&self) -> usize {
-        self.features.ncols()
+/// Get features in sample-major (row-major) layout as a contiguous slice.
+///
+/// Useful for external libraries that need raw `&[f32]`.
+pub fn features_row_major_slice(dataset: &Dataset) -> Vec<f32> {
+    let rows = dataset.n_samples();
+    let cols = dataset.n_features();
+
+    let mut out = vec![0.0f32; rows * cols];
+
+    for (feature_idx, feature) in dataset.feature_columns().iter().enumerate() {
+        match feature {
+            Feature::Dense(values) => {
+                for sample_idx in 0..rows {
+                    out[sample_idx * cols + feature_idx] = values[sample_idx];
+                }
+            }
+            Feature::Sparse {
+                indices,
+                values,
+                n_samples: _,
+                default,
+            } => {
+                for sample_idx in 0..rows {
+                    out[sample_idx * cols + feature_idx] = *default;
+                }
+                for (&row_idx, &val) in indices.iter().zip(values.iter()) {
+                    let r = row_idx as usize;
+                    out[r * cols + feature_idx] = val;
+                }
+            }
+        }
     }
 
-    /// Number of features.
-    pub fn n_features(&self) -> usize {
-        self.features.nrows()
-    }
-
-    /// Get features as a `FeaturesView` for binning/training.
-    pub fn features_view(&self) -> FeaturesView<'_> {
-        FeaturesView::from_array(self.features.view())
-    }
-
-    /// Get targets as a slice.
-    pub fn targets_slice(&self) -> &[f32] {
-        self.targets.as_slice().expect("targets not contiguous")
-    }
-
-    /// Get features in sample-major (row-major) layout.
-    ///
-    /// Returns an Array2 with shape `[n_samples, n_features]`.
-    /// Useful for XGBoost/LightGBM which expect row-major data.
-    pub fn features_row_major(&self) -> Array2<f32> {
-        transpose_to_c_order(self.features.view())
-    }
-
-    /// Get features in sample-major (row-major) layout as a contiguous slice.
-    ///
-    /// Useful for external libraries that need raw `&[f32]`.
-    pub fn features_row_major_slice(&self) -> Vec<f32> {
-        let row_major = self.features_row_major();
-        row_major.into_raw_vec_and_offset().0
-    }
-
-    /// Build a binned dataset from these features.
-    pub fn to_binned(&self, max_bins: u32) -> BinnedDataset {
-        let dataset = Dataset::new(self.features.view(), None, None);
-        let config = BinningConfig::builder().max_bins(max_bins).build();
-        BinnedDataset::from_dataset(&dataset, &config).expect("binning failed")
-    }
+    out
 }
 
 /// Generate a synthetic regression dataset with linear targets.
@@ -105,25 +90,25 @@ impl SyntheticDataset {
 /// # Example
 ///
 /// ```
+/// use boosters::data::{BinnedDataset, BinningConfig};
 /// use boosters::testing::synthetic_datasets::synthetic_regression;
 ///
 /// let dataset = synthetic_regression(1000, 10, 42, 0.05);
-/// let binned = dataset.to_binned(256);
+/// let config = BinningConfig::builder().max_bins(256).build();
+/// let _binned = BinnedDataset::from_dataset(&dataset, &config).unwrap();
 /// ```
 pub fn synthetic_regression(
     n_samples: usize,
     n_features: usize,
     seed: u64,
     noise: f32,
-) -> SyntheticDataset {
+) -> Dataset {
     let features_sm = random_features_array(n_samples, n_features, seed, -1.0, 1.0);
     let targets = generate_linear_targets(features_sm.view(), seed.wrapping_add(1), noise);
     let features_fm = transpose_to_c_order(features_sm.view());
 
-    SyntheticDataset {
-        features: features_fm,
-        targets,
-    }
+    let targets_2d = targets.insert_axis(ndarray::Axis(0));
+    Dataset::from_array(features_fm.view(), Some(targets_2d), None)
 }
 
 /// Generate a synthetic binary classification dataset.
@@ -134,16 +119,14 @@ pub fn synthetic_binary(
     n_features: usize,
     seed: u64,
     noise: f32,
-) -> SyntheticDataset {
+) -> Dataset {
     let features_sm = random_features_array(n_samples, n_features, seed, -1.0, 1.0);
     let scores = generate_linear_targets(features_sm.view(), seed.wrapping_add(1), noise);
     let targets = scores.mapv(|s| if s > 0.0 { 1.0 } else { 0.0 });
     let features_fm = transpose_to_c_order(features_sm.view());
 
-    SyntheticDataset {
-        features: features_fm,
-        targets,
-    }
+    let targets_2d = targets.insert_axis(ndarray::Axis(0));
+    Dataset::from_array(features_fm.view(), Some(targets_2d), None)
 }
 
 /// Generate a synthetic multiclass classification dataset.
@@ -155,17 +138,15 @@ pub fn synthetic_multiclass(
     n_classes: usize,
     seed: u64,
     noise: f32,
-) -> SyntheticDataset {
+) -> Dataset {
     assert!(n_classes >= 2);
     let features_sm = random_features_array(n_samples, n_features, seed, -1.0, 1.0);
     let targets =
         generate_multiclass_targets(features_sm.view(), n_classes, seed.wrapping_add(1), noise);
     let features_fm = transpose_to_c_order(features_sm.view());
 
-    SyntheticDataset {
-        features: features_fm,
-        targets,
-    }
+    let targets_2d = targets.insert_axis(ndarray::Axis(0));
+    Dataset::from_array(features_fm.view(), Some(targets_2d), None)
 }
 
 // =============================================================================
