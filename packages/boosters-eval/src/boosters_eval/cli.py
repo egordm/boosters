@@ -17,6 +17,9 @@ from boosters_eval.results import ResultCollection
 from boosters_eval.runners import get_available_runners
 from boosters_eval.suite import ABLATION_SUITES, FULL_SUITE, QUICK_SUITE, compare, run_ablation, run_suite
 
+# Default baseline path (relative to project root)
+DEFAULT_BASELINE_PATH = Path("tests/baselines/full.json")
+
 app = typer.Typer(
     name="boosters-eval",
     help="Evaluate and compare gradient boosting libraries.",
@@ -25,6 +28,41 @@ app = typer.Typer(
 baseline_app = typer.Typer(help="Manage baselines for regression detection.")
 app.add_typer(baseline_app, name="baseline")
 console = Console()
+
+
+def _find_baseline_path(baseline_path: Path | None = None) -> Path:
+    """Find baseline file, checking common locations.
+
+    Args:
+        baseline_path: Explicit path to use, or None to auto-detect.
+
+    Returns:
+        Path to baseline file.
+
+    Raises:
+        typer.Exit: If baseline file not found.
+    """
+    if baseline_path is not None:
+        if baseline_path.exists():
+            return baseline_path
+        console.print(f"[red]Baseline file not found: {baseline_path}[/red]")
+        raise typer.Exit(2)
+
+    # Try default locations
+    candidates = [
+        DEFAULT_BASELINE_PATH,
+        Path.cwd() / DEFAULT_BASELINE_PATH,
+        Path(__file__).parent.parent.parent.parent.parent.parent / DEFAULT_BASELINE_PATH,
+    ]
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    console.print("[red]No baseline file found![/red]")
+    console.print(f"Expected at: {DEFAULT_BASELINE_PATH}")
+    console.print("Run 'boosters-eval baseline record' to create one.")
+    raise typer.Exit(2)
 
 
 @app.command()
@@ -114,6 +152,100 @@ def full(
             booster_types=[bt.value for bt in booster_types],
         )
         console.print(f"[green]Results saved to {output}[/green]")
+
+
+@app.command()
+def check(
+    baseline_file: Annotated[
+        Path | None,
+        typer.Option("--baseline", "-b", help="Path to baseline JSON file."),
+    ] = None,
+    tolerance: Annotated[
+        float,
+        typer.Option("--tolerance", "-t", help="Regression tolerance (0.02 = 2%)."),
+    ] = 0.02,
+    fail_on_regression: Annotated[
+        bool,
+        typer.Option("--fail-on-regression/--no-fail-on-regression", help="Exit with code 1 if regression detected."),
+    ] = True,
+) -> None:
+    """Run regression check against recorded baseline.
+
+    Runs the full benchmark suite and compares results against a baseline.
+    Reports regressions (quality got worse) and improvements (quality got better).
+
+    Exit codes:
+      0 - No regressions detected
+      1 - Regressions detected (when --fail-on-regression is set)
+      2 - Baseline file not found
+    """
+    baseline_path = _find_baseline_path(baseline_file)
+
+    console.print("[bold]Running regression check[/bold]")
+    console.print(f"  Baseline: {baseline_path}")
+    console.print(f"  Tolerance: {tolerance:.1%}\n")
+
+    # Load baseline
+    baseline = load_baseline(baseline_path)
+    console.print(f"  Baseline recorded: {baseline.created_at}")
+    console.print(f"  Baseline git SHA: {baseline.git_sha or 'unknown'}")
+    console.print()
+
+    # Run current benchmarks with same suite used for baseline (full)
+    results = run_suite(FULL_SUITE)
+
+    # Check for regressions
+    report = check_baseline(results, baseline, tolerance=tolerance)
+
+    if report.improvements:
+        console.print(f"[bold green]✓ Improvements detected: {len(report.improvements)}[/bold green]\n")
+
+        table = Table(title="Improvements", style="green")
+        table.add_column("Config", style="cyan")
+        table.add_column("Metric", style="yellow")
+        table.add_column("Baseline", style="dim")
+        table.add_column("Current", style="green")
+        table.add_column("Change", style="green")
+
+        for imp in report.improvements:
+            change_pct = ((imp["current"] - imp["baseline"]) / imp["baseline"]) * 100
+            table.add_row(
+                imp["config"],
+                imp["metric"],
+                f"{imp['baseline']:.4f}",
+                f"{imp['current']:.4f}",
+                f"{change_pct:+.1f}%",
+            )
+
+        console.print(table)
+        console.print()
+
+    if report.has_regressions:
+        console.print(f"[bold red]✗ Regressions detected: {len(report.regressions)}[/bold red]\n")
+
+        table = Table(title="Regressions", style="red")
+        table.add_column("Config", style="cyan")
+        table.add_column("Metric", style="yellow")
+        table.add_column("Baseline", style="green")
+        table.add_column("Current", style="red")
+        table.add_column("Change", style="red")
+
+        for reg in report.regressions:
+            change_pct = ((reg["current"] - reg["baseline"]) / reg["baseline"]) * 100
+            table.add_row(
+                reg["config"],
+                reg["metric"],
+                f"{reg['baseline']:.4f}",
+                f"{reg['current']:.4f}",
+                f"{change_pct:+.1f}%",
+            )
+
+        console.print(table)
+
+        if fail_on_regression:
+            raise typer.Exit(1)
+    else:
+        console.print("[bold green]✓ No regressions detected![/bold green]")
 
 
 @app.command()
@@ -354,15 +486,19 @@ def list_tasks() -> None:
 @baseline_app.command(name="record")
 def baseline_record(
     output: Annotated[
-        Path,
-        typer.Option("--output", "-o", help="Output path for baseline JSON."),
-    ],
+        Path | None,
+        typer.Option("--output", "-o", help="Output path for baseline JSON (default: tests/baselines/full.json)."),
+    ] = None,
     suite: Annotated[
         str,
         typer.Option("--suite", "-s", help="Suite to run: quick or full."),
-    ] = "quick",
+    ] = "full",
 ) -> None:
-    """Record current results as a baseline."""
+    """Record current results as a baseline.
+
+    By default, records results from the full suite to tests/baselines/full.json.
+    This baseline is used by 'boosters-eval check' for regression testing.
+    """
     if suite == "quick":
         benchmark_suite = QUICK_SUITE
     elif suite == "full":
@@ -372,11 +508,15 @@ def baseline_record(
         console.print("Valid options: quick, full")
         raise typer.Exit(1)
 
+    # Default output path
+    output_path = output or DEFAULT_BASELINE_PATH
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
     console.print(f"[bold]Recording baseline using {suite} suite[/bold]\n")
     results = run_suite(benchmark_suite)
 
-    baseline = record_baseline(results, output_path=output)
-    console.print(f"\n[green]Baseline saved to {output}[/green]")
+    baseline = record_baseline(results, output_path=output_path)
+    console.print(f"\n[green]Baseline saved to {output_path}[/green]")
     console.print(f"  Results: {len(baseline.results)}")
     console.print(f"  Git SHA: {baseline.git_sha or 'unknown'}")
 

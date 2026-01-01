@@ -156,6 +156,7 @@ class BoostersRunner(Runner):
                 seed=seed,
             )
             model = boosters.GBLinearModel(model_config)
+            warmup_model = boosters.GBLinearModel(model_config)
 
         # Create Dataset objects
         train_ds = boosters.Dataset(x_train.astype("float32"), y_train.astype("float32"))
@@ -164,14 +165,6 @@ class BoostersRunner(Runner):
         # Warmup for timing mode
         if timing_mode:
             warmup_ds = boosters.Dataset(x_train[:100].astype("float32"), y_train[:100].astype("float32"))
-            if config.booster_type in (BoosterType.GBDT, BoosterType.LINEAR_TREES):
-                warmup_model: boosters.GBDTModel | boosters.GBLinearModel = boosters.GBDTModel(
-                    model_config  # pyright: ignore[reportArgumentType]
-                )
-            else:
-                warmup_model = boosters.GBLinearModel(
-                    model_config  # pyright: ignore[reportArgumentType]
-                )
             warmup_model.fit(warmup_ds, n_threads=tc.n_threads)
 
         # Memory tracking

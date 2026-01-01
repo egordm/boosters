@@ -1,0 +1,1310 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-01-01T15:56:27.224769+00:00",
+  "git_sha": "3622ade2d211",
+  "boosters_version": "0.1.0",
+  "results": [
+    {
+      "config_name": "california/gbdt",
+      "library": "boosters",
+      "task": "regression",
+      "booster_type": "gbdt",
+      "dataset_name": "california",
+      "metrics": {
+        "rmse": {
+          "mean": 0.46993780643712924,
+          "std": 0.005054945954616438,
+          "n": 5
+        },
+        "mae": {
+          "mean": 0.3137842357158661,
+          "std": 0.004438069921602791,
+          "n": 5
+        },
+        "r2": {
+          "mean": 0.8334195613861084,
+          "std": 0.005647893052029962,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "california/gbdt",
+      "library": "xgboost",
+      "task": "regression",
+      "booster_type": "gbdt",
+      "dataset_name": "california",
+      "metrics": {
+        "rmse": {
+          "mean": 0.4720622046638153,
+          "std": 0.005962569054229152,
+          "n": 5
+        },
+        "mae": {
+          "mean": 0.31484968066215513,
+          "std": 0.004868370092301298,
+          "n": 5
+        },
+        "r2": {
+          "mean": 0.8318909406661987,
+          "std": 0.0064042721645726376,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "california/gbdt",
+      "library": "lightgbm",
+      "task": "regression",
+      "booster_type": "gbdt",
+      "dataset_name": "california",
+      "metrics": {
+        "rmse": {
+          "mean": 0.47180859011847476,
+          "std": 0.0061012457910450445,
+          "n": 5
+        },
+        "mae": {
+          "mean": 0.3142567806676376,
+          "std": 0.00464885940220136,
+          "n": 5
+        },
+        "r2": {
+          "mean": 0.8320863238280619,
+          "std": 0.006037305272219907,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "california/gblinear",
+      "library": "boosters",
+      "task": "regression",
+      "booster_type": "gblinear",
+      "dataset_name": "california",
+      "metrics": {
+        "rmse": {
+          "mean": 0.8506986501887844,
+          "std": 0.02486097557295668,
+          "n": 5
+        },
+        "mae": {
+          "mean": 0.6461958169937134,
+          "std": 0.010627049084539798,
+          "n": 5
+        },
+        "r2": {
+          "mean": 0.4537672162055969,
+          "std": 0.035091763756049194,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "california/gblinear",
+      "library": "xgboost",
+      "task": "regression",
+      "booster_type": "gblinear",
+      "dataset_name": "california",
+      "metrics": {
+        "rmse": {
+          "mean": 0.8506986546244406,
+          "std": 0.024861063544327672,
+          "n": 5
+        },
+        "mae": {
+          "mean": 0.6461957931518555,
+          "std": 0.01062705321921401,
+          "n": 5
+        },
+        "r2": {
+          "mean": 0.453767204284668,
+          "std": 0.03509186051423625,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "california/linear_trees",
+      "library": "boosters",
+      "task": "regression",
+      "booster_type": "linear_trees",
+      "dataset_name": "california",
+      "metrics": {
+        "rmse": {
+          "mean": 0.5242400437708195,
+          "std": 0.06879105551250736,
+          "n": 5
+        },
+        "mae": {
+          "mean": 0.31555424332618714,
+          "std": 0.00739331972979617,
+          "n": 5
+        },
+        "r2": {
+          "mean": 0.7894768118858337,
+          "std": 0.05481903796895123,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "california/linear_trees",
+      "library": "lightgbm",
+      "task": "regression",
+      "booster_type": "linear_trees",
+      "dataset_name": "california",
+      "metrics": {
+        "rmse": {
+          "mean": 1.0324187025704976,
+          "std": 0.5512878290857585,
+          "n": 5
+        },
+        "mae": {
+          "mean": 0.3224305566268948,
+          "std": 0.02094247469133619,
+          "n": 5
+        },
+        "r2": {
+          "mean": -0.03450987304540347,
+          "std": 0.9879106081636825,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_reg_small/gbdt",
+      "library": "boosters",
+      "task": "regression",
+      "booster_type": "gbdt",
+      "dataset_name": "synthetic_reg_small",
+      "metrics": {
+        "rmse": {
+          "mean": 38.287080036985984,
+          "std": 2.825277450289951,
+          "n": 5
+        },
+        "mae": {
+          "mean": 29.23419609069824,
+          "std": 1.8561974989271632,
+          "n": 5
+        },
+        "r2": {
+          "mean": 0.9454625129699707,
+          "std": 0.00742434780524262,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_reg_small/gbdt",
+      "library": "xgboost",
+      "task": "regression",
+      "booster_type": "gbdt",
+      "dataset_name": "synthetic_reg_small",
+      "metrics": {
+        "rmse": {
+          "mean": 47.27071609001321,
+          "std": 2.330133560051424,
+          "n": 5
+        },
+        "mae": {
+          "mean": 35.86689453125,
+          "std": 1.3611716397405016,
+          "n": 5
+        },
+        "r2": {
+          "mean": 0.916997766494751,
+          "std": 0.008399395767139502,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_reg_small/gbdt",
+      "library": "lightgbm",
+      "task": "regression",
+      "booster_type": "gbdt",
+      "dataset_name": "synthetic_reg_small",
+      "metrics": {
+        "rmse": {
+          "mean": 46.860975775845766,
+          "std": 2.4836528510147744,
+          "n": 5
+        },
+        "mae": {
+          "mean": 35.28556566781039,
+          "std": 1.8377016838236409,
+          "n": 5
+        },
+        "r2": {
+          "mean": 0.9183259046309915,
+          "std": 0.009637897571413225,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_reg_small/gblinear",
+      "library": "boosters",
+      "task": "regression",
+      "booster_type": "gblinear",
+      "dataset_name": "synthetic_reg_small",
+      "metrics": {
+        "rmse": {
+          "mean": 0.10328740200905132,
+          "std": 0.0018534532372416655,
+          "n": 5
+        },
+        "mae": {
+          "mean": 0.08267259150743485,
+          "std": 0.0011355977792978141,
+          "n": 5
+        },
+        "r2": {
+          "mean": 0.9999996066093445,
+          "std": 2.920019319991086e-8,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_reg_small/gblinear",
+      "library": "xgboost",
+      "task": "regression",
+      "booster_type": "gblinear",
+      "dataset_name": "synthetic_reg_small",
+      "metrics": {
+        "rmse": {
+          "mean": 0.10328915411714738,
+          "std": 0.001853645450659894,
+          "n": 5
+        },
+        "mae": {
+          "mean": 0.0826734408736229,
+          "std": 0.0011357678666886477,
+          "n": 5
+        },
+        "r2": {
+          "mean": 0.9999996066093445,
+          "std": 2.920019319991086e-8,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_reg_small/linear_trees",
+      "library": "boosters",
+      "task": "regression",
+      "booster_type": "linear_trees",
+      "dataset_name": "synthetic_reg_small",
+      "metrics": {
+        "rmse": {
+          "mean": 28.042307799721776,
+          "std": 0.9996611359639515,
+          "n": 5
+        },
+        "mae": {
+          "mean": 20.568541717529296,
+          "std": 0.540124736685252,
+          "n": 5
+        },
+        "r2": {
+          "mean": 0.9708411574363709,
+          "std": 0.0018729322301317658,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_reg_small/linear_trees",
+      "library": "lightgbm",
+      "task": "regression",
+      "booster_type": "linear_trees",
+      "dataset_name": "synthetic_reg_small",
+      "metrics": {
+        "rmse": {
+          "mean": 30.885338711410657,
+          "std": 0.9715687566808602,
+          "n": 5
+        },
+        "mae": {
+          "mean": 22.878400810696466,
+          "std": 0.6720874343528086,
+          "n": 5
+        },
+        "r2": {
+          "mean": 0.9645949642614238,
+          "std": 0.002626361673814876,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_reg_medium/gbdt",
+      "library": "boosters",
+      "task": "regression",
+      "booster_type": "gbdt",
+      "dataset_name": "synthetic_reg_medium",
+      "metrics": {
+        "rmse": {
+          "mean": 33.251734677364865,
+          "std": 0.7143700300829064,
+          "n": 5
+        },
+        "mae": {
+          "mean": 25.087139511108397,
+          "std": 0.456848346060044,
+          "n": 5
+        },
+        "r2": {
+          "mean": 0.9707075357437134,
+          "std": 0.0015857517537236532,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_reg_medium/gbdt",
+      "library": "xgboost",
+      "task": "regression",
+      "booster_type": "gbdt",
+      "dataset_name": "synthetic_reg_medium",
+      "metrics": {
+        "rmse": {
+          "mean": 39.71238533876205,
+          "std": 0.621305897426662,
+          "n": 5
+        },
+        "mae": {
+          "mean": 30.080666732788085,
+          "std": 0.34688589864631686,
+          "n": 5
+        },
+        "r2": {
+          "mean": 0.9582419991493225,
+          "std": 0.0015257832764483696,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_reg_medium/gbdt",
+      "library": "lightgbm",
+      "task": "regression",
+      "booster_type": "gbdt",
+      "dataset_name": "synthetic_reg_medium",
+      "metrics": {
+        "rmse": {
+          "mean": 39.73028223954451,
+          "std": 0.531123711400716,
+          "n": 5
+        },
+        "mae": {
+          "mean": 30.136363318947353,
+          "std": 0.3628356185743037,
+          "n": 5
+        },
+        "r2": {
+          "mean": 0.9582075516362621,
+          "std": 0.0013632538608243264,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_reg_medium/gblinear",
+      "library": "boosters",
+      "task": "regression",
+      "booster_type": "gblinear",
+      "dataset_name": "synthetic_reg_medium",
+      "metrics": {
+        "rmse": {
+          "mean": 0.10194394517371874,
+          "std": 0.0005335998157836415,
+          "n": 5
+        },
+        "mae": {
+          "mean": 0.08086103051900864,
+          "std": 0.0005202764377282131,
+          "n": 5
+        },
+        "r2": {
+          "mean": 0.999999713897705,
+          "std": 2.384185791015625e-8,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_reg_medium/gblinear",
+      "library": "xgboost",
+      "task": "regression",
+      "booster_type": "gblinear",
+      "dataset_name": "synthetic_reg_medium",
+      "metrics": {
+        "rmse": {
+          "mean": 0.10194567523412121,
+          "std": 0.0005318926120723735,
+          "n": 5
+        },
+        "mae": {
+          "mean": 0.08086238205432891,
+          "std": 0.0005188606837389245,
+          "n": 5
+        },
+        "r2": {
+          "mean": 0.999999713897705,
+          "std": 2.384185791015625e-8,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_reg_medium/linear_trees",
+      "library": "boosters",
+      "task": "regression",
+      "booster_type": "linear_trees",
+      "dataset_name": "synthetic_reg_medium",
+      "metrics": {
+        "rmse": {
+          "mean": 17.671348051834926,
+          "std": 1.0013429818189752,
+          "n": 5
+        },
+        "mae": {
+          "mean": 13.495420837402344,
+          "std": 0.5922104583833699,
+          "n": 5
+        },
+        "r2": {
+          "mean": 0.991702401638031,
+          "std": 0.0009887124300416925,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_reg_medium/linear_trees",
+      "library": "lightgbm",
+      "task": "regression",
+      "booster_type": "linear_trees",
+      "dataset_name": "synthetic_reg_medium",
+      "metrics": {
+        "rmse": {
+          "mean": 18.026621101371113,
+          "std": 0.32143052663179905,
+          "n": 5
+        },
+        "mae": {
+          "mean": 13.86731812179299,
+          "std": 0.25137112756035335,
+          "n": 5
+        },
+        "r2": {
+          "mean": 0.9913986060457232,
+          "std": 0.00024514854007655313,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "breast_cancer/gbdt",
+      "library": "boosters",
+      "task": "binary",
+      "booster_type": "gbdt",
+      "dataset_name": "breast_cancer",
+      "metrics": {
+        "logloss": {
+          "mean": 0.09833684667428597,
+          "std": 0.02748320417307299,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.9614035087719298,
+          "std": 0.007017543859649145,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "breast_cancer/gbdt",
+      "library": "xgboost",
+      "task": "binary",
+      "booster_type": "gbdt",
+      "dataset_name": "breast_cancer",
+      "metrics": {
+        "logloss": {
+          "mean": 0.09776559736337065,
+          "std": 0.03820758301549277,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.9596491228070174,
+          "std": 0.013128622409733129,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "breast_cancer/gbdt",
+      "library": "lightgbm",
+      "task": "binary",
+      "booster_type": "gbdt",
+      "dataset_name": "breast_cancer",
+      "metrics": {
+        "logloss": {
+          "mean": 0.0866347941760564,
+          "std": 0.02417421999465647,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.9631578947368421,
+          "std": 0.008594700851870828,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "breast_cancer/gblinear",
+      "library": "boosters",
+      "task": "binary",
+      "booster_type": "gblinear",
+      "dataset_name": "breast_cancer",
+      "metrics": {
+        "logloss": {
+          "mean": 0.12516655856156417,
+          "std": 0.03549413838907853,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.9473684210526315,
+          "std": 0.02882750302658769,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "breast_cancer/gblinear",
+      "library": "xgboost",
+      "task": "binary",
+      "booster_type": "gblinear",
+      "dataset_name": "breast_cancer",
+      "metrics": {
+        "logloss": {
+          "mean": 0.12516645311970342,
+          "std": 0.035494150715790464,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.9473684210526315,
+          "std": 0.02882750302658769,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "breast_cancer/linear_trees",
+      "library": "boosters",
+      "task": "binary",
+      "booster_type": "linear_trees",
+      "dataset_name": "breast_cancer",
+      "metrics": {
+        "logloss": {
+          "mean": 0.0948346382013868,
+          "std": 0.028545609710095857,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.9631578947368421,
+          "std": 0.010229740166395296,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "breast_cancer/linear_trees",
+      "library": "lightgbm",
+      "task": "binary",
+      "booster_type": "linear_trees",
+      "dataset_name": "breast_cancer",
+      "metrics": {
+        "logloss": {
+          "mean": 0.09111323041619127,
+          "std": 0.018557325716152668,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.9631578947368421,
+          "std": 0.006564311204866584,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_bin_small/gbdt",
+      "library": "boosters",
+      "task": "binary",
+      "booster_type": "gbdt",
+      "dataset_name": "synthetic_bin_small",
+      "metrics": {
+        "logloss": {
+          "mean": 0.2910265637284045,
+          "std": 0.04074141417386646,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.9020000000000001,
+          "std": 0.014439529078193653,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_bin_small/gbdt",
+      "library": "xgboost",
+      "task": "binary",
+      "booster_type": "gbdt",
+      "dataset_name": "synthetic_bin_small",
+      "metrics": {
+        "logloss": {
+          "mean": 0.2721771818743216,
+          "std": 0.031176199641967148,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.9,
+          "std": 0.009746794344808983,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_bin_small/gbdt",
+      "library": "lightgbm",
+      "task": "binary",
+      "booster_type": "gbdt",
+      "dataset_name": "synthetic_bin_small",
+      "metrics": {
+        "logloss": {
+          "mean": 0.27675950533958044,
+          "std": 0.03618284446354774,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.898,
+          "std": 0.009669539802906857,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_bin_small/gblinear",
+      "library": "boosters",
+      "task": "binary",
+      "booster_type": "gblinear",
+      "dataset_name": "synthetic_bin_small",
+      "metrics": {
+        "logloss": {
+          "mean": 0.601683167288773,
+          "std": 0.02305584225853888,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.6935,
+          "std": 0.018814887722226756,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_bin_small/gblinear",
+      "library": "xgboost",
+      "task": "binary",
+      "booster_type": "gblinear",
+      "dataset_name": "synthetic_bin_small",
+      "metrics": {
+        "logloss": {
+          "mean": 0.6016831677683141,
+          "std": 0.023055845603643547,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.6935,
+          "std": 0.018814887722226756,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_bin_small/linear_trees",
+      "library": "boosters",
+      "task": "binary",
+      "booster_type": "linear_trees",
+      "dataset_name": "synthetic_bin_small",
+      "metrics": {
+        "logloss": {
+          "mean": 0.29257695288096586,
+          "std": 0.04119914559757699,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.9,
+          "std": 0.00707106781186549,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_bin_small/linear_trees",
+      "library": "lightgbm",
+      "task": "binary",
+      "booster_type": "linear_trees",
+      "dataset_name": "synthetic_bin_small",
+      "metrics": {
+        "logloss": {
+          "mean": 0.2849710915077898,
+          "std": 0.04651816795862969,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.8985,
+          "std": 0.014798648586948744,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_bin_medium/gbdt",
+      "library": "boosters",
+      "task": "binary",
+      "booster_type": "gbdt",
+      "dataset_name": "synthetic_bin_medium",
+      "metrics": {
+        "logloss": {
+          "mean": 0.17359687463019355,
+          "std": 0.00954871218351222,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.9316000000000001,
+          "std": 0.003397057550292606,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_bin_medium/gbdt",
+      "library": "xgboost",
+      "task": "binary",
+      "booster_type": "gbdt",
+      "dataset_name": "synthetic_bin_medium",
+      "metrics": {
+        "logloss": {
+          "mean": 0.17447511659471499,
+          "std": 0.011622223906815178,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.9287000000000001,
+          "std": 0.004130375285612668,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_bin_medium/gbdt",
+      "library": "lightgbm",
+      "task": "binary",
+      "booster_type": "gbdt",
+      "dataset_name": "synthetic_bin_medium",
+      "metrics": {
+        "logloss": {
+          "mean": 0.17451956478124736,
+          "std": 0.011193783868758085,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.9305000000000001,
+          "std": 0.003898717737923586,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_bin_medium/gblinear",
+      "library": "boosters",
+      "task": "binary",
+      "booster_type": "gblinear",
+      "dataset_name": "synthetic_bin_medium",
+      "metrics": {
+        "logloss": {
+          "mean": 0.5063071774020789,
+          "std": 0.0035921734735369078,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.7378,
+          "std": 0.005297169055259623,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_bin_medium/gblinear",
+      "library": "xgboost",
+      "task": "binary",
+      "booster_type": "gblinear",
+      "dataset_name": "synthetic_bin_medium",
+      "metrics": {
+        "logloss": {
+          "mean": 0.5063071775876473,
+          "std": 0.0035921747265874452,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.7378,
+          "std": 0.005297169055259623,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_bin_medium/linear_trees",
+      "library": "boosters",
+      "task": "binary",
+      "booster_type": "linear_trees",
+      "dataset_name": "synthetic_bin_medium",
+      "metrics": {
+        "logloss": {
+          "mean": 0.1787322169958105,
+          "std": 0.013003662721505448,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.93,
+          "std": 0.0035777087639996697,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_bin_medium/linear_trees",
+      "library": "lightgbm",
+      "task": "binary",
+      "booster_type": "linear_trees",
+      "dataset_name": "synthetic_bin_medium",
+      "metrics": {
+        "logloss": {
+          "mean": 0.1781081158901737,
+          "std": 0.010841292219220885,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.9297000000000001,
+          "std": 0.0020149441679609935,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "iris/gbdt",
+      "library": "boosters",
+      "task": "multiclass",
+      "booster_type": "gbdt",
+      "dataset_name": "iris",
+      "metrics": {
+        "mlogloss": {
+          "mean": 0.17380540231249533,
+          "std": 0.0928400470028718,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.9533333333333335,
+          "std": 0.02666666666666666,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "iris/gbdt",
+      "library": "xgboost",
+      "task": "multiclass",
+      "booster_type": "gbdt",
+      "dataset_name": "iris",
+      "metrics": {
+        "mlogloss": {
+          "mean": 0.18459177167273585,
+          "std": 0.10355855371832184,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.9466666666666667,
+          "std": 0.02666666666666666,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "iris/gbdt",
+      "library": "lightgbm",
+      "task": "multiclass",
+      "booster_type": "gbdt",
+      "dataset_name": "iris",
+      "metrics": {
+        "mlogloss": {
+          "mean": 0.14229843375291792,
+          "std": 0.07799617747054978,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.9600000000000002,
+          "std": 0.024944382578492935,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "iris/gblinear",
+      "library": "boosters",
+      "task": "multiclass",
+      "booster_type": "gblinear",
+      "dataset_name": "iris",
+      "metrics": {
+        "mlogloss": {
+          "mean": 0.3105695384948013,
+          "std": 0.033477496821818796,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.9466666666666667,
+          "std": 0.02666666666666666,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "iris/gblinear",
+      "library": "xgboost",
+      "task": "multiclass",
+      "booster_type": "gblinear",
+      "dataset_name": "iris",
+      "metrics": {
+        "mlogloss": {
+          "mean": 0.42607784549290784,
+          "std": 0.027226562807022372,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.9333333333333333,
+          "std": 0.02108185106778919,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "iris/linear_trees",
+      "library": "boosters",
+      "task": "multiclass",
+      "booster_type": "linear_trees",
+      "dataset_name": "iris",
+      "metrics": {
+        "mlogloss": {
+          "mean": 0.17704609594344264,
+          "std": 0.08678838534601452,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.9600000000000002,
+          "std": 0.024944382578492935,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "iris/linear_trees",
+      "library": "lightgbm",
+      "task": "multiclass",
+      "booster_type": "linear_trees",
+      "dataset_name": "iris",
+      "metrics": {
+        "mlogloss": {
+          "mean": 0.10626417403259984,
+          "std": 0.05827503227866759,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.9666666666666668,
+          "std": 0.02108185106778919,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "covertype/gbdt",
+      "library": "boosters",
+      "task": "multiclass",
+      "booster_type": "gbdt",
+      "dataset_name": "covertype",
+      "metrics": {
+        "mlogloss": {
+          "mean": 0.4137477902053403,
+          "std": 0.008225411329524736,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.8290000000000001,
+          "std": 0.002265391798343047,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "covertype/gbdt",
+      "library": "xgboost",
+      "task": "multiclass",
+      "booster_type": "gbdt",
+      "dataset_name": "covertype",
+      "metrics": {
+        "mlogloss": {
+          "mean": 0.4698182928592229,
+          "std": 0.005739925760324786,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.80202,
+          "std": 0.002410311183229254,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "covertype/gbdt",
+      "library": "lightgbm",
+      "task": "multiclass",
+      "booster_type": "gbdt",
+      "dataset_name": "covertype",
+      "metrics": {
+        "mlogloss": {
+          "mean": 0.4284859641338608,
+          "std": 0.006656499996898898,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.8218,
+          "std": 0.004838594837346912,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "covertype/gblinear",
+      "library": "boosters",
+      "task": "multiclass",
+      "booster_type": "gblinear",
+      "dataset_name": "covertype",
+      "metrics": {
+        "mlogloss": {
+          "mean": 0.7532038565714828,
+          "std": 0.010448288382519492,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.6477600000000001,
+          "std": 0.003528512434440343,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "covertype/gblinear",
+      "library": "xgboost",
+      "task": "multiclass",
+      "booster_type": "gblinear",
+      "dataset_name": "covertype",
+      "metrics": {
+        "mlogloss": {
+          "mean": 0.7534533008567862,
+          "std": 0.007485817054325541,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.64726,
+          "std": 0.0029397959112836395,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "covertype/linear_trees",
+      "library": "boosters",
+      "task": "multiclass",
+      "booster_type": "linear_trees",
+      "dataset_name": "covertype",
+      "metrics": {
+        "mlogloss": {
+          "mean": 0.4068846597584727,
+          "std": 0.00713655013205327,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.83288,
+          "std": 0.002656614386771253,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "covertype/linear_trees",
+      "library": "lightgbm",
+      "task": "multiclass",
+      "booster_type": "linear_trees",
+      "dataset_name": "covertype",
+      "metrics": {
+        "mlogloss": {
+          "mean": 0.4052828359881806,
+          "std": 0.008097959291934088,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.8352,
+          "std": 0.0028754130138121197,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_multi_small/gbdt",
+      "library": "boosters",
+      "task": "multiclass",
+      "booster_type": "gbdt",
+      "dataset_name": "synthetic_multi_small",
+      "metrics": {
+        "mlogloss": {
+          "mean": 0.6863956358487833,
+          "std": 0.10047790365134071,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.7625,
+          "std": 0.03670830968595531,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_multi_small/gbdt",
+      "library": "xgboost",
+      "task": "multiclass",
+      "booster_type": "gbdt",
+      "dataset_name": "synthetic_multi_small",
+      "metrics": {
+        "mlogloss": {
+          "mean": 0.6653855521186671,
+          "std": 0.09030967465470334,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.7630000000000001,
+          "std": 0.03858108344772086,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_multi_small/gbdt",
+      "library": "lightgbm",
+      "task": "multiclass",
+      "booster_type": "gbdt",
+      "dataset_name": "synthetic_multi_small",
+      "metrics": {
+        "mlogloss": {
+          "mean": 0.6667735736213357,
+          "std": 0.10175515583284801,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.7620000000000001,
+          "std": 0.0406939798987516,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_multi_small/gblinear",
+      "library": "boosters",
+      "task": "multiclass",
+      "booster_type": "gblinear",
+      "dataset_name": "synthetic_multi_small",
+      "metrics": {
+        "mlogloss": {
+          "mean": 1.056033675571401,
+          "std": 0.04124055634046931,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.618,
+          "std": 0.013453624047073688,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_multi_small/gblinear",
+      "library": "xgboost",
+      "task": "multiclass",
+      "booster_type": "gblinear",
+      "dataset_name": "synthetic_multi_small",
+      "metrics": {
+        "mlogloss": {
+          "mean": 1.0545580771797742,
+          "std": 0.040335790710909425,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.619,
+          "std": 0.012806248474865662,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_multi_small/linear_trees",
+      "library": "boosters",
+      "task": "multiclass",
+      "booster_type": "linear_trees",
+      "dataset_name": "synthetic_multi_small",
+      "metrics": {
+        "mlogloss": {
+          "mean": 0.6565868910877775,
+          "std": 0.094428035583277,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.7755000000000001,
+          "std": 0.036414282912066234,
+          "n": 5
+        }
+      }
+    },
+    {
+      "config_name": "synthetic_multi_small/linear_trees",
+      "library": "lightgbm",
+      "task": "multiclass",
+      "booster_type": "linear_trees",
+      "dataset_name": "synthetic_multi_small",
+      "metrics": {
+        "mlogloss": {
+          "mean": 0.6875757599028706,
+          "std": 0.09674231190193675,
+          "n": 5
+        },
+        "accuracy": {
+          "mean": 0.7625,
+          "std": 0.03914715826212678,
+          "n": 5
+        }
+      }
+    }
+  ]
+}

@@ -203,11 +203,19 @@ def is_regression(
     Returns:
         True if this is a regression beyond tolerance.
     """
+    # Calculate the absolute difference allowed
+    # Use absolute value of baseline for tolerance calculation to handle negatives correctly
+    abs_tolerance = abs(baseline) * tolerance
+
+    # Handle edge case where baseline is very close to zero
+    if abs_tolerance < 1e-10:
+        abs_tolerance = tolerance
+
     if is_lower_better(metric):
-        # For lower-is-better: regression if current > baseline * (1 + tolerance)
-        return current > baseline * (1 + tolerance)
-    # For higher-is-better: regression if current < baseline * (1 - tolerance)
-    return current < baseline * (1 - tolerance)
+        # For lower-is-better: regression if current is significantly higher
+        return current > baseline + abs_tolerance
+    # For higher-is-better: regression if current is significantly lower
+    return current < baseline - abs_tolerance
 
 
 def check_baseline(
