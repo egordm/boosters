@@ -1,6 +1,6 @@
 //! Linear model data structure.
 
-use ndarray::{Array2, ArrayView1, ArrayViewMut2, s};
+use ndarray::{Array2, ArrayView1, ArrayViewMut1, ArrayViewMut2, s};
 
 use crate::data::Dataset;
 
@@ -107,6 +107,22 @@ impl LinearModel {
     #[inline]
     pub fn biases(&self) -> ArrayView1<'_, f32> {
         self.weights.row(self.n_features())
+    }
+
+    /// Get all weights **and** the bias for a single output group.
+    ///
+    /// Returns a strided view of length `n_features + 1`:
+    /// - `view[0..n_features]` are feature weights
+    /// - `view[n_features]` is the bias
+    #[inline]
+    pub fn weights_and_bias(&self, group: usize) -> ArrayView1<'_, f32> {
+        self.weights.column(group)
+    }
+
+    /// Mutable variant of [`weights_and_bias`](Self::weights_and_bias).
+    #[inline]
+    pub fn weights_and_bias_mut(&mut self, group: usize) -> ArrayViewMut1<'_, f32> {
+        self.weights.column_mut(group)
     }
 
     /// Raw access to weights as a flat slice.

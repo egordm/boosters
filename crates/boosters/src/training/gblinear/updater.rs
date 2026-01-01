@@ -18,12 +18,11 @@
 //! - Shape `[n_samples, n_outputs]` for unified single/multi-output handling
 //! - Separate `grads[]` and `hess[]` arrays for cache efficiency
 
-use ndarray::ArrayViewMut2;
+use ndarray::ArrayViewMut1;
 use rayon::prelude::*;
 
 use crate::data::Dataset;
-use crate::repr::gblinear::LinearModel;
-use crate::training::Gradients;
+use crate::training::GradsTuple;
 
 use super::selector::FeatureSelector;
 
@@ -74,14 +73,16 @@ impl Updater {
 
     pub(super) fn update_bias_inplace(
         &self,
-        model: &mut LinearModel,
-        gradients: &mut Gradients,
-        output: usize,
-        predictions: ArrayViewMut2<'_, f32>,
+        mut weights_and_bias: ArrayViewMut1<'_, f32>,
+        grad_pairs: &mut [GradsTuple],
+        mut predictions_row: ArrayViewMut1<'_, f32>,
     ) -> f32 {
-        let (sum_grad, sum_hess) = gradients.sum(output, None);
-        let sum_grad = sum_grad as f32;
-        let sum_hess = sum_hess as f32;
+        let mut sum_grad = 0.0f32;
+        let mut sum_hess = 0.0f32;
+        for gh in grad_pairs.iter() {
+            sum_grad += gh.grad;
+            sum_hess += gh.hess;
+        }
 
         // Match XGBoost's stability threshold.
         if sum_hess.abs() <= 1e-5 {
@@ -96,12 +97,13 @@ impl Updater {
             return 0.0;
         }
 
-        model.add_bias(output, delta);
-        apply_bias_delta_to_predictions(delta, output, predictions);
+        let n_features = weights_and_bias.len() - 1;
+        weights_and_bias[n_features] += delta;
+        apply_bias_delta_to_predictions(delta, predictions_row.view_mut());
 
         // XGBoost updater_{shotgun,coordinate}.cc:
         //   p += GradientPair(p.GetHess() * dbias, 0)
-        for gh in gradients.output_pairs_mut(output) {
+        for gh in grad_pairs.iter_mut() {
             gh.grad += gh.hess * delta;
         }
 
@@ -110,31 +112,28 @@ impl Updater {
 
     pub(super) fn update_round_inplace<Sel: FeatureSelector>(
         &self,
-        model: &mut LinearModel,
         data: &Dataset,
-        gradients: &mut Gradients,
+        weights_and_bias: ArrayViewMut1<'_, f32>,
+        grad_pairs: &mut [GradsTuple],
         selector: &mut Sel,
-        output: usize,
         sum_instance_weight: f32,
-        predictions: ArrayViewMut2<'_, f32>,
+        predictions: ArrayViewMut1<'_, f32>,
     ) -> Vec<(usize, f32)> {
         match self.kind {
             UpdateStrategy::Sequential => self.update_round_sequential_inplace(
-                model,
                 data,
-                gradients,
+                weights_and_bias,
+                grad_pairs,
                 selector,
-                output,
                 sum_instance_weight,
                 predictions,
             ),
             UpdateStrategy::Shotgun => {
                 self.update_round_shotgun_inplace(
-                    model,
                     data,
-                    gradients,
+                    weights_and_bias,
+                    grad_pairs,
                     selector,
-                    output,
                     sum_instance_weight,
                     predictions,
                 )
@@ -144,29 +143,29 @@ impl Updater {
 
     fn update_round_sequential_inplace<Sel: FeatureSelector>(
         &self,
-        model: &mut LinearModel,
         data: &Dataset,
-        gradients: &mut Gradients,
+        mut weights_and_bias: ArrayViewMut1<'_, f32>,
+        grad_pairs: &mut [GradsTuple],
         selector: &mut Sel,
-        output: usize,
         sum_instance_weight: f32,
-        mut predictions: ArrayViewMut2<'_, f32>,
+        mut predictions: ArrayViewMut1<'_, f32>,
     ) -> Vec<(usize, f32)> {
         let mut deltas: Vec<(usize, f32)> = Vec::new();
         // Match XGBoost's `DenormalizePenalties(sum_instance_weight)`.
         let alpha = self.alpha * sum_instance_weight;
         let lambda = self.lambda * sum_instance_weight;
+        let n_features = weights_and_bias.len() - 1;
 
         while let Some(feature) = selector.next() {
-            let current_weight = model.weight(feature, output);
+            debug_assert!(feature < n_features);
+            let current_weight = weights_and_bias[feature];
 
             // Accumulate from current residual gradients.
-            let gh = gradients.output_pairs(output);
             let mut sum_grad = 0.0f32;
             let mut sum_hess = 0.0f32;
             data.for_each_feature_value(feature, |row, value| {
-                sum_grad += gh[row].grad * value;
-                sum_hess += gh[row].hess * value * value;
+                sum_grad += grad_pairs[row].grad * value;
+                sum_hess += grad_pairs[row].hess * value * value;
             });
 
             let delta = coordinate_delta(
@@ -182,18 +181,14 @@ impl Updater {
                 continue;
             }
 
-            model.add_weight(feature, output, delta);
+            weights_and_bias[feature] += delta;
             deltas.push((feature, delta));
 
             // Update predictions and residual gradients for touched rows.
-            {
-                let mut output_row = predictions.row_mut(output);
-                let gh_mut = gradients.output_pairs_mut(output);
-                data.for_each_feature_value(feature, |row, value| {
-                    output_row[row] += value * delta;
-                    gh_mut[row].grad += gh_mut[row].hess * value * delta;
-                });
-            }
+            data.for_each_feature_value(feature, |row, value| {
+                predictions[row] += value * delta;
+                grad_pairs[row].grad += grad_pairs[row].hess * value * delta;
+            });
         }
 
         deltas
@@ -201,13 +196,12 @@ impl Updater {
 
     fn update_round_shotgun_inplace<Sel: FeatureSelector>(
         &self,
-        model: &mut LinearModel,
         data: &Dataset,
-        gradients: &mut Gradients,
+        mut weights_and_bias: ArrayViewMut1<'_, f32>,
+        grad_pairs: &mut [GradsTuple],
         selector: &mut Sel,
-        output: usize,
         sum_instance_weight: f32,
-        mut predictions: ArrayViewMut2<'_, f32>,
+        mut predictions: ArrayViewMut1<'_, f32>,
     ) -> Vec<(usize, f32)> {
         // NOTE: This is "shotgun" in the sense that we compute coordinate deltas
         // in parallel from the same residual snapshot, then apply them.
@@ -222,15 +216,19 @@ impl Updater {
         let alpha = self.alpha * sum_instance_weight;
         let lambda = self.lambda * sum_instance_weight;
 
-        let model_ref: &LinearModel = model;
-        let gh = gradients.output_pairs(output);
+        let n_features = weights_and_bias.len() - 1;
+        let weights_view = weights_and_bias.view();
+        let gh: &[GradsTuple] = &*grad_pairs;
         let learning_rate = self.learning_rate;
         let max_delta_step = self.max_delta_step;
 
         let deltas: Vec<(usize, f32)> = indices
             .par_iter()
             .filter_map(|&feature| {
-                let current_weight = model_ref.weight(feature, output);
+                if feature >= n_features {
+                    return None;
+                }
+                let current_weight = weights_view[feature];
                 let mut sum_grad = 0.0f32;
                 let mut sum_hess = 0.0f32;
                 data.for_each_feature_value(feature, |row, value| {
@@ -256,19 +254,15 @@ impl Updater {
 
         // Apply to model.
         for &(feature, delta) in &deltas {
-            model.add_weight(feature, output, delta);
+            weights_and_bias[feature] += delta;
         }
 
         // Apply to predictions and residual gradients.
-        {
-            let mut output_row = predictions.row_mut(output);
-            let gh_mut = gradients.output_pairs_mut(output);
-            for &(feature, delta) in &deltas {
-                data.for_each_feature_value(feature, |row, value| {
-                    output_row[row] += value * delta;
-                    gh_mut[row].grad += gh_mut[row].hess * value * delta;
-                });
-            }
+        for &(feature, delta) in &deltas {
+            data.for_each_feature_value(feature, |row, value| {
+                predictions[row] += value * delta;
+                grad_pairs[row].grad += grad_pairs[row].hess * value * delta;
+            });
         }
 
         deltas
@@ -278,26 +272,22 @@ impl Updater {
 pub(super) fn apply_weight_deltas_to_predictions(
     data: &Dataset,
     deltas: &[(usize, f32)],
-    output: usize,
-    mut predictions: ArrayViewMut2<'_, f32>,
+    mut predictions: ArrayViewMut1<'_, f32>,
 ) {
-    let mut output_row = predictions.row_mut(output);
     for &(feature, delta) in deltas {
         data.for_each_feature_value(feature, |row, value| {
-            output_row[row] += value * delta;
+            predictions[row] += value * delta;
         });
     }
 }
 
 pub(super) fn apply_bias_delta_to_predictions(
     bias_delta: f32,
-    output: usize,
-    mut predictions: ArrayViewMut2<'_, f32>,
+    mut predictions: ArrayViewMut1<'_, f32>,
 ) {
     if bias_delta.abs() > 1e-10 {
-        let mut output_row = predictions.row_mut(output);
-        for i in 0..output_row.len() {
-            output_row[i] += bias_delta;
+        for i in 0..predictions.len() {
+            predictions[i] += bias_delta;
         }
     }
 }
@@ -312,28 +302,22 @@ pub(super) fn apply_bias_delta_to_predictions(
 /// ```
 #[cfg(test)]
 pub(super) fn compute_weight_update(
-    model: &LinearModel,
     data: &Dataset,
-    buffer: &Gradients,
+    grad_pairs: &[GradsTuple],
     feature: usize,
-    output: usize,
+    current_weight: f32,
     alpha: f32,
     lambda: f32,
     learning_rate: f32,
     max_delta_step: f32,
 ) -> f32 {
-    let current_weight = model.weight(feature, output);
-
-    // Feature-major: use output-specific slices for direct indexing by row
-    let grad_hess = buffer.output_pairs(output);
-
     // Accumulate gradient and hessian for this feature
     let mut sum_grad = 0.0f32;
     let mut sum_hess = 0.0f32;
 
     data.for_each_feature_value(feature, |row, value| {
-        sum_grad += grad_hess[row].grad * value;
-        sum_hess += grad_hess[row].hess * value * value;
+        sum_grad += grad_pairs[row].grad * value;
+        sum_hess += grad_pairs[row].hess * value * value;
     });
 
     coordinate_delta(
@@ -394,6 +378,7 @@ pub(super) fn coordinate_delta(
 mod tests {
     use super::super::selector::{CyclicSelector, FeatureSelector};
     use super::*;
+    use crate::training::Gradients;
     use ndarray::array;
 
     fn make_test_data() -> (Dataset, Gradients) {
@@ -419,68 +404,68 @@ mod tests {
     #[test]
     fn sequential_updater_changes_weights() {
         let (dataset, buffer) = make_test_data();
-        let mut model = LinearModel::zeros(2, 1);
+        let mut weights_and_bias = ndarray::Array1::<f32>::zeros(3);
         let mut selector = CyclicSelector::new();
 
         let alpha = 0.0;
         let lambda = 0.0;
         let learning_rate = 1.0;
         let max_delta_step = 0.0;
-        selector.reset(model.n_features());
+        selector.reset(2);
         while let Some(feature) = selector.next() {
+            let current_weight = weights_and_bias[feature];
             let delta = compute_weight_update(
-                &model,
                 &dataset,
-                &buffer,
+                buffer.output_pairs(0),
                 feature,
-                0,
+                current_weight,
                 alpha,
                 lambda,
                 learning_rate,
                 max_delta_step,
             );
             if delta.abs() > 1e-10 {
-                model.add_weight(feature, 0, delta);
+                weights_and_bias[feature] += delta;
             }
         }
 
         // Weights should have changed
-        let w0 = model.weight(0, 0);
-        let w1 = model.weight(1, 0);
+        let w0 = weights_and_bias[0];
+        let w1 = weights_and_bias[1];
         assert!(w0.abs() > 1e-6 || w1.abs() > 1e-6);
     }
 
     #[test]
     fn parallel_updater_changes_weights() {
         let (dataset, buffer) = make_test_data();
-        let mut model = LinearModel::zeros(2, 1);
+        let mut weights_and_bias = ndarray::Array1::<f32>::zeros(3);
         let mut selector = CyclicSelector::new();
 
         let alpha = 0.0;
         let lambda = 0.0;
         let learning_rate = 1.0;
         let max_delta_step = 0.0;
-        selector.reset(model.n_features());
+        selector.reset(2);
         while let Some(feature) = selector.next() {
+            let current_weight = weights_and_bias[feature];
             let delta = compute_weight_update(
-                &model,
                 &dataset,
-                &buffer,
+                buffer.output_pairs(0),
                 feature,
-                0,
+                current_weight,
                 alpha,
                 lambda,
                 learning_rate,
                 max_delta_step,
             );
             if delta.abs() > 1e-10 {
-                model.add_weight(feature, 0, delta);
+                weights_and_bias[feature] += delta;
             }
         }
 
         // Weights should have changed
-        let w0 = model.weight(0, 0);
-        let w1 = model.weight(1, 0);
+        let w0 = weights_and_bias[0];
+        let w1 = weights_and_bias[1];
         assert!(w0.abs() > 1e-6 || w1.abs() > 1e-6);
     }
 
@@ -489,54 +474,54 @@ mod tests {
         let (dataset, buffer) = make_test_data();
 
         // No regularization
-        let mut model1 = LinearModel::zeros(2, 1);
-        model1.set_weight(0, 0, 1.0);
+        let mut weights_and_bias_1 = ndarray::Array1::<f32>::zeros(3);
+        weights_and_bias_1[0] = 1.0;
         let mut selector = CyclicSelector::new();
         let alpha = 0.0;
         let lambda_no_reg = 0.0;
         let learning_rate = 1.0;
         let max_delta_step = 0.0;
-        selector.reset(model1.n_features());
+        selector.reset(2);
         while let Some(feature) = selector.next() {
+            let current_weight = weights_and_bias_1[feature];
             let delta = compute_weight_update(
-                &model1,
                 &dataset,
-                &buffer,
+                buffer.output_pairs(0),
                 feature,
-                0,
+                current_weight,
                 alpha,
                 lambda_no_reg,
                 learning_rate,
                 max_delta_step,
             );
             if delta.abs() > 1e-10 {
-                model1.add_weight(feature, 0, delta);
+                weights_and_bias_1[feature] += delta;
             }
         }
-        let w1_no_reg = model1.weight(0, 0);
+        let w1_no_reg = weights_and_bias_1[0];
 
         // With L2 regularization
-        let mut model2 = LinearModel::zeros(2, 1);
-        model2.set_weight(0, 0, 1.0);
+        let mut weights_and_bias_2 = ndarray::Array1::<f32>::zeros(3);
+        weights_and_bias_2[0] = 1.0;
         let lambda_l2 = 10.0; // Strong L2
-        selector.reset(model2.n_features());
+        selector.reset(2);
         while let Some(feature) = selector.next() {
+            let current_weight = weights_and_bias_2[feature];
             let delta = compute_weight_update(
-                &model2,
                 &dataset,
-                &buffer,
+                buffer.output_pairs(0),
                 feature,
-                0,
+                current_weight,
                 alpha,
                 lambda_l2,
                 learning_rate,
                 max_delta_step,
             );
             if delta.abs() > 1e-10 {
-                model2.add_weight(feature, 0, delta);
+                weights_and_bias_2[feature] += delta;
             }
         }
-        let w1_l2 = model2.weight(0, 0);
+        let w1_l2 = weights_and_bias_2[0];
 
         // L2 should shrink more towards zero
         assert!(w1_l2.abs() < w1_no_reg.abs());

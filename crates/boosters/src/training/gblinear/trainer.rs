@@ -222,38 +222,42 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
 
             // Update each output
             for output in 0..n_outputs {
-                let bias_delta = self.updater.update_bias_inplace(
-                    &mut model,
-                    &mut gradients,
-                    output,
-                    predictions.view_mut(),
-                );
+                let bias_delta = {
+                    let weights_and_bias = model.weights_and_bias_mut(output);
+                    let grad_pairs = gradients.output_pairs_mut(output);
+                    let predictions_row = predictions.row_mut(output);
+                    self.updater
+                        .update_bias_inplace(weights_and_bias, grad_pairs, predictions_row)
+                };
 
                 if bias_delta.abs() > 1e-10 {
                     if let Some(ref mut vp) = val_predictions {
-                        apply_bias_delta_to_predictions(bias_delta, output, vp.view_mut());
+                        apply_bias_delta_to_predictions(bias_delta, vp.row_mut(output));
                     }
                 }
 
                 selector.setup_round(
-                    &model,
+                    model.weights_and_bias(output),
                     train,
-                    &gradients,
-                    output,
+                    gradients.output_pairs(output),
                     self.params.alpha,
                     self.params.lambda,
                     sum_instance_weight,
                 );
 
-                let weight_deltas = self.updater.update_round_inplace(
-                    &mut model,
-                    train,
-                    &mut gradients,
-                    &mut selector,
-                    output,
-                    sum_instance_weight,
-                    predictions.view_mut(),
-                );
+                let weight_deltas = {
+                    let weights_and_bias = model.weights_and_bias_mut(output);
+                    let grad_pairs = gradients.output_pairs_mut(output);
+                    let predictions_row = predictions.row_mut(output);
+                    self.updater.update_round_inplace(
+                        train,
+                        weights_and_bias,
+                        grad_pairs,
+                        &mut selector,
+                        sum_instance_weight,
+                        predictions_row,
+                    )
+                };
 
                 // Keep validation predictions in sync for correct metrics/early stopping.
                 if !weight_deltas.is_empty() {
@@ -263,8 +267,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                         apply_weight_deltas_to_predictions(
                             dataset_val,
                             &weight_deltas,
-                            output,
-                            predictions_val.view_mut(),
+                            predictions_val.row_mut(output),
                         );
                     }
                 }

@@ -24,9 +24,10 @@
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 
+use ndarray::ArrayView1;
+
 use crate::data::Dataset;
-use crate::repr::gblinear::LinearModel;
-use crate::training::Gradients;
+use crate::training::GradsTuple;
 
 // =============================================================================
 // FeatureSelectorKind - Configuration enum
@@ -106,10 +107,9 @@ impl SelectorState {
     /// For other selectors, this just resets the iteration state.
     pub fn setup_round(
         &mut self,
-        model: &LinearModel,
+        weights_and_bias: ArrayView1<'_, f32>,
         data: &Dataset,
-        buffer: &Gradients,
-        output: usize,
+        grad_pairs: &[GradsTuple],
         alpha: f32,
         lambda: f32,
         sum_instance_weight: f32,
@@ -118,17 +118,19 @@ impl SelectorState {
         let alpha = alpha * sum_instance_weight;
         let lambda = lambda * sum_instance_weight;
 
+        let n_features = weights_and_bias.len() - 1;
+
         match self {
-            Self::Cyclic(s) => s.reset(model.n_features()),
-            Self::Shuffle(s) => s.reset(model.n_features()),
-            Self::Random(s) => s.reset(model.n_features()),
+            Self::Cyclic(s) => s.reset(n_features),
+            Self::Shuffle(s) => s.reset(n_features),
+            Self::Random(s) => s.reset(n_features),
             Self::Greedy(s) => {
-                s.setup(model, data, buffer, output, alpha, lambda);
-                s.reset(model.n_features());
+                s.setup(weights_and_bias, data, grad_pairs, alpha, lambda);
+                s.reset(n_features);
             }
             Self::Thrifty(s) => {
-                s.setup(model, data, buffer, output, alpha, lambda);
-                s.reset(model.n_features());
+                s.setup(weights_and_bias, data, grad_pairs, alpha, lambda);
+                s.reset(n_features);
             }
         }
     }
@@ -396,39 +398,35 @@ impl GreedySelector {
     ///
     /// # Arguments
     ///
-    /// * `model` - Current model weights
+    /// * `weights_and_bias` - Per-group weights (length `n_features + 1`, last entry is bias)
     /// * `data` - Training data (Dataset)
-    /// * `buffer` - Gradient buffer
-    /// * `output` - Which output (group) to compute for
+    /// * `grad_pairs` - Per-group `(grad, hess)` slice (length `n_samples`)
     /// * `alpha` - L1 regularization strength
     /// * `lambda` - L2 regularization strength
     pub fn setup(
         &mut self,
-        model: &LinearModel,
+        weights_and_bias: ArrayView1<'_, f32>,
         data: &Dataset,
-        buffer: &Gradients,
-        output: usize,
+        grad_pairs: &[GradsTuple],
         alpha: f32,
         lambda: f32,
     ) {
-        let n_features = model.n_features();
-        // Feature-major: use output-specific slices for direct indexing by row
-        let grad_hess = buffer.output_pairs(output);
+        let n_features = weights_and_bias.len() - 1;
 
         // Compute update magnitude for each feature
         self.update_magnitudes.clear();
         self.update_magnitudes.reserve(n_features);
 
         for feature_idx in 0..n_features {
-            let current_weight = model.weight(feature_idx, output);
+            let current_weight = weights_and_bias[feature_idx];
 
             // Accumulate gradient and hessian
             let mut sum_grad = 0.0f32;
             let mut sum_hess = 0.0f32;
 
             data.for_each_feature_value(feature_idx, |row, value| {
-                sum_grad += grad_hess[row].grad * value;
-                sum_hess += grad_hess[row].hess * value * value;
+                sum_grad += grad_pairs[row].grad * value;
+                sum_hess += grad_pairs[row].hess * value * value;
             });
 
             // Compute coordinate descent update with elastic net
@@ -541,36 +539,32 @@ impl ThriftySelector {
     ///
     /// # Arguments
     ///
-    /// * `model` - Current model weights
+    /// * `weights_and_bias` - Per-group weights (length `n_features + 1`, last entry is bias)
     /// * `data` - Training data (Dataset)
-    /// * `buffer` - Gradient buffer
-    /// * `output` - Which output (group) to compute for
+    /// * `grad_pairs` - Per-group `(grad, hess)` slice (length `n_samples`)
     /// * `alpha` - L1 regularization strength
     /// * `lambda` - L2 regularization strength
     pub fn setup(
         &mut self,
-        model: &LinearModel,
+        weights_and_bias: ArrayView1<'_, f32>,
         data: &Dataset,
-        buffer: &Gradients,
-        output: usize,
+        grad_pairs: &[GradsTuple],
         alpha: f32,
         lambda: f32,
     ) {
-        let n_features = model.n_features();
-        // Feature-major: use output-specific slices for direct indexing by row
-        let grad_hess = buffer.output_pairs(output);
+        let n_features = weights_and_bias.len() - 1;
 
         // Compute update magnitude for each feature
         let mut magnitudes: Vec<(usize, f32)> = (0..n_features)
             .map(|feature_idx| {
-                let current_weight = model.weight(feature_idx, output);
+                let current_weight = weights_and_bias[feature_idx];
 
                 let mut sum_grad = 0.0f32;
                 let mut sum_hess = 0.0f32;
 
                 data.for_each_feature_value(feature_idx, |row, value| {
-                    sum_grad += grad_hess[row].grad * value;
-                    sum_hess += grad_hess[row].hess * value * value;
+                    sum_grad += grad_pairs[row].grad * value;
+                    sum_hess += grad_pairs[row].hess * value * value;
                 });
 
                 let magnitude =
@@ -827,7 +821,7 @@ mod tests {
         buffer.set(2, 0, 0.2, 1.0);
 
         let mut sel = GreedySelector::new(0);
-        sel.setup(&model, &dataset, &buffer, 0, 0.0, 0.0);
+        sel.setup(model.weights_and_bias(0), &dataset, buffer.output_pairs(0), 0.0, 0.0);
         sel.reset(3);
 
         // Feature 1 should be selected first (largest gradient impact)
@@ -884,7 +878,7 @@ mod tests {
         buffer.set(2, 0, 0.2, 1.0);
 
         let mut sel = ThriftySelector::new(0);
-        sel.setup(&model, &dataset, &buffer, 0, 0.0, 0.0);
+        sel.setup(model.weights_and_bias(0), &dataset, buffer.output_pairs(0), 0.0, 0.0);
         sel.reset(3);
 
         // Should return all 3 features in sorted order
