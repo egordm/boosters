@@ -10,12 +10,13 @@ use crate::data::{Dataset, TargetsView, WeightsView};
 use crate::repr::gblinear::LinearModel;
 use crate::training::eval;
 use crate::training::{
-    EarlyStopAction, EarlyStopping, Gradients, MetricFn, ObjectiveFn, TrainingLogger,
-    Verbosity,
+    EarlyStopAction, EarlyStopping, Gradients, MetricFn, ObjectiveFn, TrainingLogger, Verbosity,
 };
 
-use super::selector::{FeatureSelector, FeatureSelectorKind};
-use super::updater::{compute_weight_update, UpdateConfig, Updater, UpdateStrategy};
+use super::selector::FeatureSelectorKind;
+use super::updater::{
+    apply_bias_delta_to_predictions, apply_weight_deltas_to_predictions, UpdateStrategy, Updater,
+};
 
 // ============================================================================
 // GBLinearParams
@@ -89,15 +90,25 @@ pub struct GBLinearTrainer<O: ObjectiveFn, M: MetricFn> {
     objective: O,
     metric: M,
     params: GBLinearParams,
+    updater: Updater,
 }
 
 impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
     /// Create a new trainer with the given objective and parameters.
     pub fn new(objective: O, metric: M, params: GBLinearParams) -> Self {
+        let updater = Updater::new(
+            params.update_strategy,
+            params.alpha,
+            params.lambda,
+            params.learning_rate,
+            params.max_delta_step,
+        );
+
         Self {
             objective,
             metric,
             params,
+            updater,
         }
     }
 
@@ -161,18 +172,8 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
         // Create updater and selector
         let mut selector = self.params.feature_selector.create_state(self.params.seed);
 
-        // Denormalize regularization to the same scale as summed gradients.
-        // This mirrors XGBoost's GBLinear behavior.
+        // Runtime context (data/weights dependent)
         let sum_instance_weight: f32 = weights.iter(n_samples).sum();
-
-        let update_config = UpdateConfig {
-            alpha: self.params.alpha,
-            lambda: self.params.lambda,
-            sum_instance_weight,
-            learning_rate: self.params.learning_rate,
-            max_delta_step: self.params.max_delta_step,
-        };
-        let updater = Updater::new(self.params.update_strategy, update_config.clone());
 
         // Gradient and prediction buffers
         let mut gradients = Gradients::new(n_samples, n_outputs);
@@ -221,32 +222,17 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
 
             // Update each output
             for output in 0..n_outputs {
-                let bias_delta = updater.update_bias(&mut model, &gradients, output);
+                let bias_delta = self.updater.update_bias_inplace(
+                    &mut model,
+                    &mut gradients,
+                    output,
+                    predictions.view_mut(),
+                );
 
-                // Apply bias delta to predictions incrementally
                 if bias_delta.abs() > 1e-10 {
-                    updater.apply_bias_delta_to_predictions(
-                        bias_delta,
-                        output,
-                        predictions.view_mut(),
-                    );
-
-                    // Also update validation predictions (only if evaluation is needed)
                     if let Some(ref mut vp) = val_predictions {
-                        updater.apply_bias_delta_to_predictions(
-                            bias_delta,
-                            output,
-                            vp.view_mut(),
-                        );
+                        apply_bias_delta_to_predictions(bias_delta, output, vp.view_mut());
                     }
-
-                    // Recompute gradients after bias update
-                    self.objective.compute_gradients_into(
-                        predictions.view(),
-                        targets,
-                        weights,
-                        gradients.pairs_array_mut(),
-                    );
                 }
 
                 selector.setup_round(
@@ -256,84 +242,30 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                     output,
                     self.params.alpha,
                     self.params.lambda,
+                    sum_instance_weight,
                 );
 
-                // True coordinate descent for the Sequential strategy.
-                //
-                // Note: This recomputes gradients after each coordinate update. It's slower,
-                // but can be substantially more stable/accurate for some objectives.
-                if self.params.update_strategy == UpdateStrategy::Sequential {
-                    while let Some(feature) = selector.next() {
-                        let delta = compute_weight_update(
-                            &model,
-                            train,
-                            &gradients,
-                            feature,
-                            output,
-                            &update_config,
-                        );
+                let weight_deltas = self.updater.update_round_inplace(
+                    &mut model,
+                    train,
+                    &mut gradients,
+                    &mut selector,
+                    output,
+                    sum_instance_weight,
+                    predictions.view_mut(),
+                );
 
-                        if delta.abs() <= 1e-10 {
-                            continue;
-                        }
-
-                        model.add_weight(feature, output, delta);
-
-                        // Incrementally update train predictions for this feature.
-                        {
-                            let mut output_row = predictions.row_mut(output);
-                            train.for_each_feature_value(feature, |row, value| {
-                                output_row[row] += value * delta;
-                            });
-                        }
-
-                        // Keep validation predictions in sync (only if evaluation is needed).
-                        if let (Some(dataset_val), Some(ref mut predictions_val)) =
-                            (val_set, val_predictions.as_mut())
-                        {
-                            let mut output_row = predictions_val.row_mut(output);
-                            dataset_val.for_each_feature_value(feature, |row, value| {
-                                output_row[row] += value * delta;
-                            });
-                        }
-
-                        // Recompute gradients after each coordinate update.
-                        self.objective.compute_gradients_into(
-                            predictions.view(),
-                            targets,
-                            weights,
-                            gradients.pairs_array_mut(),
-                        );
-                    }
-                } else {
-                    let weight_deltas = updater.update_round(
-                        &mut model,
-                        train,
-                        &gradients,
-                        &mut selector,
-                        output,
-                    );
-
-                    // Apply weight deltas to predictions incrementally
-                    if !weight_deltas.is_empty() {
-                        updater.apply_weight_deltas_to_predictions(
-                            train,
+                // Keep validation predictions in sync for correct metrics/early stopping.
+                if !weight_deltas.is_empty() {
+                    if let (Some(dataset_val), Some(ref mut predictions_val)) =
+                        (val_set, val_predictions.as_mut())
+                    {
+                        apply_weight_deltas_to_predictions(
+                            dataset_val,
                             &weight_deltas,
                             output,
-                            predictions.view_mut(),
+                            predictions_val.view_mut(),
                         );
-
-                        // Keep validation predictions in sync for correct metrics/early stopping.
-                        if let (Some(dataset_val), Some(ref mut predictions_val)) =
-                            (val_set, val_predictions.as_mut())
-                        {
-                            updater.apply_weight_deltas_to_predictions(
-                                dataset_val,
-                                &weight_deltas,
-                                output,
-                                predictions_val.view_mut(),
-                            );
-                        }
                     }
                 }
             }
@@ -347,10 +279,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                     val_set,
                     val_predictions.as_ref().map(|p| p.view()),
                 );
-                let value = eval::Evaluator::<O, M>::early_stop_value(
-                    &metrics,
-                    val_set.is_some(),
-                );
+                let value = eval::Evaluator::<O, M>::early_stop_value(&metrics, val_set.is_some());
                 (metrics, value)
             } else {
                 (Vec::new(), f64::NAN)
@@ -390,7 +319,6 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
             Some(model)
         }
     }
-
 }
 
 // ============================================================================
@@ -404,7 +332,7 @@ mod tests {
     use crate::training::{
         LogLoss, LogisticLoss, MulticlassLogLoss, Rmse, SoftmaxLoss, SquaredLoss,
     };
-    use ndarray::{Array2, array};
+    use ndarray::{array, Array2};
 
     /// Helper to create a Dataset and TargetsView from row-major feature data.
     /// Accepts features in [n_samples, n_features] layout (standard user format)

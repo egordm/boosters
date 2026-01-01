@@ -112,7 +112,12 @@ impl SelectorState {
         output: usize,
         alpha: f32,
         lambda: f32,
+        sum_instance_weight: f32,
     ) {
+        // Match XGBoost's `DenormalizePenalties(sum_instance_weight)`.
+        let alpha = alpha * sum_instance_weight;
+        let lambda = lambda * sum_instance_weight;
+
         match self {
             Self::Cyclic(s) => s.reset(model.n_features()),
             Self::Shuffle(s) => s.reset(model.n_features()),
