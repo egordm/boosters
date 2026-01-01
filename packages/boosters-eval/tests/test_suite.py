@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import numpy as np
 
+from boosters_eval.config import SuiteConfig
 from boosters_eval.suite import (
     ABLATION_SUITES,
     FULL_SUITE,
     MINIMAL_SUITE,
     QUICK_SUITE,
-    SuiteConfig,
     compare,
     create_ablation_suite,
     run_suite,

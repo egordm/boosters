@@ -273,16 +273,16 @@ def run_suite(
                 console.print(f"[yellow]Unknown dataset: {ds_name}[/yellow]")
             continue
 
-        for booster_type in booster_types:
-            configs.append(
-                BenchmarkConfig(
-                    name=f"{ds_name}/{booster_type.value}",
-                    dataset=DATASETS[ds_name],
-                    training=training,
-                    booster_type=booster_type,
-                    libraries=libraries,
-                )
+        configs.extend(
+            BenchmarkConfig(
+                name=f"{ds_name}/{booster_type.value}",
+                dataset=DATASETS[ds_name],
+                training=training,
+                booster_type=booster_type,
+                libraries=libraries,
             )
+            for booster_type in booster_types
+        )
 
     if verbose:
         console.print(f"[bold]Running suite: {suite.name}[/bold]")

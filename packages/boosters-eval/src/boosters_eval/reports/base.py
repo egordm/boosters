@@ -115,9 +115,9 @@ def get_library_versions() -> LibraryVersions:
 
     # numpy
     try:
-        import numpy
+        import numpy as np
 
-        versions = versions.model_copy(update={"numpy": numpy.__version__})
+        versions = versions.model_copy(update={"numpy": np.__version__})
     except ImportError:
         pass
 

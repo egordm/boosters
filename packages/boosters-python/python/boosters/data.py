@@ -355,8 +355,8 @@ class Dataset(_RustDataset):
         )
 
         # Store Python-only attributes (on newly created instance)
-        instance._was_converted = was_converted
-        instance._groups = None
+        instance._was_converted = was_converted  # noqa: SLF001
+        instance._groups = None  # noqa: SLF001
 
         # Handle groups if provided
         if groups is not None:
@@ -367,7 +367,7 @@ class Dataset(_RustDataset):
                 raise ValueError(
                     f"groups shape mismatch: expected {features_arr.shape[0]} samples, got {groups_arr.shape[0]}"
                 )
-            instance._groups = groups_arr
+            instance._groups = groups_arr  # noqa: SLF001
 
         return instance
 

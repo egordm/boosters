@@ -266,7 +266,7 @@ class ResultCollection:
 
         return result
 
-    def _get_raw_values_by_library(
+    def get_raw_values_by_library(
         self,
         task: Task,
         dataset: str,
@@ -306,7 +306,7 @@ class ResultCollection:
             result[r.library].append(val)
         return result
 
-    def _get_primary_metric_for_dataset(self, dataset: str) -> str:
+    def get_primary_metric_for_dataset(self, dataset: str) -> str:
         """Get primary metric for a dataset (override or task default).
 
         Checks if any result for this dataset has a dataset_primary_metric set,
@@ -321,7 +321,7 @@ class ResultCollection:
         # Default
         return "rmse"
 
-    def _is_significantly_better(
+    def is_significantly_better(
         self,
         values_best: list[float],
         values_second: list[float],
@@ -401,11 +401,11 @@ class ResultCollection:
                     significant_winners[metric] = best_lib
                 else:
                     # Check statistical significance
-                    raw_values = self._get_raw_values_by_library(task, str(dataset), metric)
+                    raw_values = self.get_raw_values_by_library(task, str(dataset), metric)
                     best_vals = raw_values.get(best_lib, [])
                     second_vals = raw_values.get(second_lib, [])
 
-                    if self._is_significantly_better(best_vals, second_vals, alpha):
+                    if self.is_significantly_better(best_vals, second_vals, alpha):
                         significant_winners[metric] = best_lib
                     else:
                         # Not significant - don't highlight (tie)
@@ -447,7 +447,7 @@ class ResultCollection:
         # Create DataFrame and use to_markdown
         output_df = pd.DataFrame(output_rows)
         # Reorder columns
-        col_order = ["Dataset", "Library"] + present_metrics
+        col_order = ["Dataset", "Library", *present_metrics]
         output_df = output_df[[c for c in col_order if c in output_df.columns]]
 
         return str(output_df.to_markdown(index=False))
@@ -530,11 +530,11 @@ class ResultCollection:
                     significant_winners[metric] = best_lib
                 else:
                     # Check statistical significance (filter by booster type)
-                    raw_values = self._get_raw_values_by_library(task, dataset, metric, str(booster))
+                    raw_values = self.get_raw_values_by_library(task, dataset, metric, str(booster))
                     best_vals = raw_values.get(best_lib, [])
                     second_vals = raw_values.get(second_lib, [])
 
-                    if self._is_significantly_better(best_vals, second_vals, alpha):
+                    if self.is_significantly_better(best_vals, second_vals, alpha):
                         significant_winners[metric] = best_lib
                     else:
                         # Not significant - don't highlight (tie)
@@ -576,7 +576,7 @@ class ResultCollection:
         # Create DataFrame and use to_markdown
         output_df = pd.DataFrame(output_rows)
         # Reorder columns
-        col_order = ["Booster", "Library"] + present_metrics
+        col_order = ["Booster", "Library", *present_metrics]
         output_df = output_df[[c for c in col_order if c in output_df.columns]]
 
         return str(output_df.to_markdown(index=False))
@@ -639,7 +639,7 @@ class ResultCollection:
 
         for dataset in sorted(summaries.keys()):
             task = dataset_tasks.get(dataset, Task.REGRESSION)
-            primary = self._get_primary_metric_for_dataset(dataset)
+            primary = self.get_primary_metric_for_dataset(dataset)
             sections.append(f"### {dataset} ({task.value}, primary: {primary})")
             sections.append("")
             sections.append(

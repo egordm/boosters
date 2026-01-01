@@ -55,15 +55,10 @@ lint.ignore = [
   "EM101",   # do not enforce message in variable when raising an exception
   "EM102",   # do not enforce message in variable when raising an exception (f-string)
   "FIX002",  # TODO's are allowed when they are linked to an issue (TD003 handles that part)
-  "ICN001",  # Import aliasing is subjective (np vs numpy)
-  "PERF401", # Micro-perf nits are low value here
   "PGH003",  # Allow generic type ignores, since sometimes there are multiple unresolvable issues
   "PLC0415", # Lazy imports are used for CLI startup and optional deps
   "PLR2004", # Magic value comparison - too many false positives (2 for dims, 0.5 for thresholds, etc.)
-  "RUF005",  # Minor list-construction suggestions are low value
   "S607",    # Allow calling common executables like `git` by name
-  "SIM118",  # Simplicity nits (e.g., `.keys()` usage) are low value
-  "SLF001",  # Private access is acceptable inside this small codebase
   "TC001",   # Don't force moving application imports into TYPE_CHECKING blocks
   "TC002",   # Don't force moving third-party imports into TYPE_CHECKING blocks
   "TC003",   # Don't force moving stdlib imports into TYPE_CHECKING blocks
@@ -125,7 +120,7 @@ reportMissingTypeStubs = false
 help = "Lint code (with ruff)"
 control.expr = "check"
 switch = [
-  { case = "True", cmd = "ruff check" },
+  { case = true, cmd = "ruff check" },
   { cmd = "ruff check --fix --show-fixes ${unsafe:+ --unsafe-fixes}" },
 ]
 args = [
@@ -138,7 +133,7 @@ help = "Format code (with ruff)"
 control.expr = "check"
 args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns", default = false } ]
 switch = [
-  { case = "True", cmd = "ruff format --diff" },
+  { case = true, cmd = "ruff format --diff" },
   { cmd = "ruff format" },
 ]
 
@@ -147,7 +142,7 @@ help = "Format pyproject.toml (with pyproject-fmt)"
 control.expr = "check"
 args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns", default = false } ]
 switch = [
-  { case = "True", cmd = "pyproject-fmt --check -n pyproject.toml packages/*/pyproject.toml" },
+  { case = true, cmd = "pyproject-fmt --check -n pyproject.toml packages/*/pyproject.toml" },
   { cmd = "pyproject-fmt -n pyproject.toml packages/*/pyproject.toml" },
 ]
 
@@ -194,7 +189,7 @@ args = [
   { name = "check", type = "boolean", help = "Automatically check formatting without applying changes", default = false },
 ]
 switch = [
-  { case = "True", cmd = "cargo fmt --all -- --check" },
+  { case = true, cmd = "cargo fmt --all -- --check" },
   { cmd = "cargo fmt --all" },
 ]
 
@@ -202,7 +197,7 @@ switch = [
 help = "Lint all Rust code (with cargo clippy)"
 control.expr = "check"
 switch = [
-  { case = "True", cmd = "cargo clippy --workspace --all-features --all-targets -- -D warnings" },
+  { case = true, cmd = "cargo clippy --workspace --all-features --all-targets -- -D warnings" },
   { cmd = "cargo clippy --workspace --all-features --all-targets --fix --allow-dirty --allow-staged -- -D warnings" },
 ]
 args = [ { name = "check", type = "boolean", help = "Do not apply fixes (CI mode)" } ]
@@ -225,7 +220,7 @@ help = "Build all Rust libraries"
 control.expr = "release"
 args = [ { name = "release", type = "boolean", help = "Build in release mode" } ]
 switch = [
-  { case = "True", sequence = [
+  { case = true, sequence = [
     "rust:build:core --release",
     "rust:build:python --release",
   ] },
@@ -265,30 +260,26 @@ cmd = "boosters-eval check --suite minimal --tolerance 0.02"
 help = "Run all Python CI calls"
 control.expr = "check"
 switch = [
-  { case = "True", sequence = [
+  { case = true, sequence = [
     "python:stubs-gen",
     "python:lint --check",
     "python:format --check",
     "python:format-pyproject --check",
     "python:lock",
     "python:type",
+    "python:type-tests",
     "python:develop --release",
     "python:test",
     "python:doctest",
     "eval:check",
-  ] },
+  ], ignore_fail = "return_non_zero" },
   { sequence = [
-    "python:stubs-gen",
     "python:lint",
     "python:format",
     "python:format-pyproject",
     "python:lock",
     "python:type",
-    "python:develop --release",
-    "python:test",
-    "python:doctest",
-    "eval:check",
-  ] },
+  ], ignore_fail = "return_non_zero" },
 ]
 args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns", default = false } ]
 
@@ -296,22 +287,18 @@ args = [ { name = "check", type = "boolean", help = "Does not correct files, onl
 help = "Run all Rust CI calls"
 control.expr = "check"
 switch = [
-  { case = "True", sequence = [
+  { case = true, sequence = [
     "rust:format --check",
     "rust:lint --check",
     "rust:build:core --release",
     "rust:build:python --release",
     "rust:test:core --release --all",
     "rust:test:python --release",
-  ] },
+  ], ignore_fail = "return_non_zero" },
   { sequence = [
     "rust:format",
     "rust:lint",
-    "rust:build:core --release",
-    "rust:build:python --release",
-    "rust:test:core --release --all",
-    "rust:test:python --release",
-  ] },
+  ], ignore_fail = "return_non_zero" },
 ]
 args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns", default = false } ]
 
@@ -319,14 +306,14 @@ args = [ { name = "check", type = "boolean", help = "Does not correct files, onl
 help = "Run all CI calls (Python and Rust)"
 control.expr = "check"
 switch = [
-  { case = "True", sequence = [
+  { case = true, sequence = [
     "python:all --check",
     "rust:all --check",
-  ] },
+  ], ignore_fail = "return_non_zero" },
   { sequence = [
     "python:all",
     "rust:all",
-  ] },
+  ], ignore_fail = "return_non_zero" },
 ]
 args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns", default = false } ]
 

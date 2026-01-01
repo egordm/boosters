@@ -97,7 +97,7 @@ class TestGBDTConfigCombinations:
             objective=Objective.logistic(),
             metric=Metric.logloss(),
         )
-        assert config.objective == Objective.Logistic()
+        assert config.objective == Objective.logistic()
 
     def test_multiclass_classification(self) -> None:
         """Multiclass classification config works."""

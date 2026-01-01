@@ -77,7 +77,7 @@ def format_results_terminal(
             df = summaries[dataset]
 
             # Get primary metric for this dataset
-            pm = results._get_primary_metric_for_dataset(dataset)
+            pm = results.get_primary_metric_for_dataset(dataset)
             pm_mean_col = f"{pm}_mean"
             pm_std_col = f"{pm}_std"
 
@@ -110,10 +110,10 @@ def format_results_terminal(
 
                     if require_significance:
                         second_lib = sorted_libs[1]
-                        raw_values = results._get_raw_values_by_library(task, dataset, pm, str(booster))
+                        raw_values = results.get_raw_values_by_library(task, dataset, pm, str(booster))
                         best_vals = raw_values.get(best_lib_pm, [])
                         second_vals = raw_values.get(second_lib, [])
-                        if not results._is_significantly_better(best_vals, second_vals, 0.05):
+                        if not results.is_significantly_better(best_vals, second_vals, 0.05):
                             best_lib_pm = None
 
                 if show_timing and "train_time_s_mean" in df.columns:
@@ -125,10 +125,10 @@ def format_results_terminal(
 
                         if require_significance:
                             second_time_lib = sorted_time_libs[1]
-                            raw_time = results._get_raw_values_by_library(task, dataset, "train_time_s", str(booster))
+                            raw_time = results.get_raw_values_by_library(task, dataset, "train_time_s", str(booster))
                             best_time_vals = raw_time.get(best_lib_time, [])
                             second_time_vals = raw_time.get(second_time_lib, [])
-                            if not results._is_significantly_better(best_time_vals, second_time_vals, 0.05):
+                            if not results.is_significantly_better(best_time_vals, second_time_vals, 0.05):
                                 best_lib_time = None
 
                 # Add rows

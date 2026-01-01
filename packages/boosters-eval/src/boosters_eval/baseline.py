@@ -257,7 +257,7 @@ def check_baseline(
             # New config, not in baseline - skip
             continue
 
-        for metric_key in metrics_list[0].keys():
+        for metric_key in metrics_list[0]:
             values = [m[metric_key] for m in metrics_list]
             current_mean = float(np.mean(values))
 

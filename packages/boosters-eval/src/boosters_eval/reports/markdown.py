@@ -75,7 +75,7 @@ def format_dataset_table(
     if task is None:
         return f"No results for {dataset} dataset."
 
-    pm = results._get_primary_metric_for_dataset(dataset)
+    pm = results.get_primary_metric_for_dataset(dataset)
     pm_mean_col = f"{pm}_mean"
     pm_std_col = f"{pm}_std"
 
@@ -104,10 +104,10 @@ def format_dataset_table(
 
             if require_significance and highlight_best:
                 second_lib = str(sorted_df.iloc[1]["library"])
-                raw_values = results._get_raw_values_by_library(task, dataset, pm, booster)
+                raw_values = results.get_raw_values_by_library(task, dataset, pm, booster)
                 best_vals = raw_values.get(best_lib_pm, [])
                 second_vals = raw_values.get(second_lib, [])
-                if not results._is_significantly_better(best_vals, second_vals, alpha):
+                if not results.is_significantly_better(best_vals, second_vals, alpha):
                     best_lib_pm = None
 
         if show_timing and "train_time_s_mean" in df.columns:
@@ -118,10 +118,10 @@ def format_dataset_table(
 
                 if require_significance and highlight_best:
                     second_time_lib = str(sorted_time.iloc[1]["library"])
-                    raw_time = results._get_raw_values_by_library(task, dataset, "train_time_s", booster)
+                    raw_time = results.get_raw_values_by_library(task, dataset, "train_time_s", booster)
                     best_time_vals = raw_time.get(best_lib_time, [])
                     second_time_vals = raw_time.get(second_time_lib, [])
-                    if not results._is_significantly_better(best_time_vals, second_time_vals, alpha):
+                    if not results.is_significantly_better(best_time_vals, second_time_vals, alpha):
                         best_lib_time = None
 
         # Format rows
@@ -299,7 +299,7 @@ def render_report(
         lines.append("")
 
         for dataset in datasets:
-            pm = results._get_primary_metric_for_dataset(dataset)
+            pm = results.get_primary_metric_for_dataset(dataset)
             lines.append(f"**{dataset}** (primary: {pm})")
             lines.append("")
             lines.append(
