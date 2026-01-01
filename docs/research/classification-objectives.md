@@ -164,6 +164,52 @@ The {-1, +1} formulation with sigmoid scaling might have better numerical proper
 3. Add multiclass hessian factor, re-run
 4. Add `scale_pos_weight` option, test on imbalanced datasets
 
+## Experimental Results
+
+### Experiment 1: Multiclass Hessian Scaling Factor (K/(K-1))
+
+**Hypothesis**: Adding the K/(K-1) factor would improve multiclass performance by making updates more conservative.
+
+**Result**: NEGATIVE. Performance degraded on all multiclass datasets.
+
+| Dataset | Before | After (K/(K-1)) | Delta |
+|---------|--------|-----------------|-------|
+| covertype | 0.4137 | 0.4215 | +0.0078 ❌ |
+| iris | 0.1738 | 0.1930 | +0.0192 ❌ |
+| synthetic_multi | 0.6704 | 0.6807 | +0.0103 ❌ |
+
+**Conclusion**: The hessian scaling factor is NOT the differentiating factor. Our current implementation without scaling appears correct. The gaps on small datasets are due to other factors (likely `min_data_in_leaf`).
+
+### Experiment 2: Constant Hessian Factor of 2.0 (XGBoost style)
+
+**Hypothesis**: XGBoost uses 2.0 constant, maybe that helps?
+
+**Result**: VERY NEGATIVE. Much worse performance, especially on multiclass.
+
+| Dataset | Before | After (2.0) | Delta |
+|---------|--------|-------------|-------|
+| covertype | 0.4137 | 0.5096 | +0.0959 ❌❌ |
+| iris | 0.1738 | 0.4743 | +0.3005 ❌❌❌ |
+
+**Conclusion**: Higher hessian factors make steps too conservative for our learning rate. Not recommended.
+
+### Analysis: Why LightGBM Wins on Small Datasets
+
+The remaining differences are:
+
+1. **min_data_in_leaf = 20**: LightGBM prevents deep trees on small datasets
+2. **Class imbalance handling**: `is_unbalance` option auto-reweights
+3. **Bagging/sampling defaults**: May provide additional regularization
+4. **Possibly different histogram binning** on small datasets
+
+Since the objective function is correct, the gap is likely due to tree-building constraints rather than gradient computation.
+
+### Next Steps
+
+1. **Do NOT change hessian scaling** - current implementation is optimal
+2. Consider adding `is_unbalance` / `scale_pos_weight` options
+3. Focus on tree-building constraints for small datasets (outside objective scope)
+
 ## References
 
 - LightGBM config.h: `include/LightGBM/config.h`
