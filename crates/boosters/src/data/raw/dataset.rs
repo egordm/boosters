@@ -645,6 +645,21 @@ impl DatasetBuilder {
         self
     }
 
+    /// Add a feature column with explicit metadata.
+    ///
+    /// This is the most flexible way to add features, allowing full control
+    /// over both the storage format (dense/sparse) and metadata.
+    ///
+    /// # Arguments
+    ///
+    /// * `feature` - The feature storage (dense or sparse)
+    /// * `meta` - Feature metadata (type and optional name)
+    pub fn add_feature_with_meta(mut self, feature: Feature, meta: FeatureMeta) -> Self {
+        self.features.push(feature);
+        self.metas.push(meta);
+        self
+    }
+
     /// Add a sparse feature column.
     ///
     /// # Arguments

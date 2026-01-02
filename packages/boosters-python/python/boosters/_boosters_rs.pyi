@@ -79,6 +79,157 @@ class Dataset:
         """
     def __repr__(self) -> builtins.str: ...
 
+class DatasetBuilder:
+    r"""
+    Builder for constructing datasets with flexible feature types.
+    
+    DatasetBuilder collects features (via `add_feature`) and builds a Dataset.
+    Features can be dense or sparse, with per-feature metadata.
+    
+    Example:
+        >>> from boosters import DatasetBuilder, Feature
+        >>> builder = DatasetBuilder()
+        >>> builder.add_feature(Feature.dense(age_array, name="age"))
+        >>> builder.add_feature(Feature.sparse(idx, vals, n, name="rare"))
+        >>> builder.labels(y)
+        >>> dataset = builder.build()
+    """
+    @property
+    def n_features(self) -> builtins.int:
+        r"""
+        Number of features added so far.
+        """
+    def __new__(cls) -> DatasetBuilder:
+        r"""
+        Create a new empty DatasetBuilder.
+        """
+    def add_feature(self, feature: Feature) -> DatasetBuilder:
+        r"""
+        Add a feature to the builder.
+        
+        Args:
+            feature: A Feature object (created via Feature.dense() or Feature.sparse()).
+        
+        Returns:
+            Self for method chaining.
+        """
+    def labels_1d(self, labels: numpy.typing.NDArray[numpy.float32]) -> DatasetBuilder:
+        r"""
+        Set 1D target labels.
+        
+        Args:
+            labels: 1D float32 array of labels (one per sample).
+        
+        Returns:
+            Self for method chaining.
+        """
+    def labels_2d(self, labels: numpy.typing.NDArray[numpy.float32]) -> DatasetBuilder:
+        r"""
+        Set 2D multi-output target labels.
+        
+        Args:
+            labels: 2D float32 array of shape (n_outputs, n_samples).
+        
+        Returns:
+            Self for method chaining.
+        """
+    def weights(self, weights: numpy.typing.NDArray[numpy.float32]) -> DatasetBuilder:
+        r"""
+        Set sample weights.
+        
+        Args:
+            weights: 1D float32 array of weights (one per sample).
+        
+        Returns:
+            Self for method chaining.
+        """
+    def build(self) -> Dataset:
+        r"""
+        Build the dataset.
+        
+        Validates all features have the same sample count, indices are valid,
+        and targets/weights match the sample count.
+        
+        Returns:
+            Constructed Dataset ready for training or prediction.
+        
+        Raises:
+            ValueError: If validation fails (shape mismatch, invalid sparse indices, etc.)
+        """
+    def __repr__(self) -> builtins.str: ...
+
+class Feature:
+    r"""
+    A single feature column with metadata.
+    
+    Features can be dense (array of values) or sparse (indices + values + default).
+    The Python wrapper handles all type conversions; this class just holds validated data.
+    
+    Attributes:
+        name: Optional feature name.
+        categorical: Whether this feature is categorical.
+        n_samples: Number of samples in this feature.
+        is_sparse: Whether this is a sparse feature.
+    
+    Example:
+        >>> from boosters import Feature
+        >>> # Dense feature
+        >>> f = Feature.dense(np.array([1.0, 2.0, 3.0], dtype=np.float32), name="age")
+        >>> # Sparse feature
+        >>> f = Feature.sparse(indices, values, n_samples=1000, name="rare", default=0.0)
+    """
+    @property
+    def name(self) -> typing.Optional[builtins.str]:
+        r"""
+        Feature name (if provided).
+        """
+    @property
+    def categorical(self) -> builtins.bool:
+        r"""
+        Whether this feature is categorical.
+        """
+    @property
+    def n_samples(self) -> builtins.int:
+        r"""
+        Number of samples in this feature.
+        """
+    @property
+    def is_sparse(self) -> builtins.bool:
+        r"""
+        Whether this is a sparse feature.
+        """
+    @staticmethod
+    def dense(values: numpy.typing.NDArray[numpy.float32], name: typing.Optional[builtins.str] = None, categorical: builtins.bool = False) -> Feature:
+        r"""
+        Create a dense feature from a 1D float32 array.
+        
+        Args:
+            values: 1D float32 array of values (one per sample).
+            name: Optional feature name.
+            categorical: Whether this feature is categorical. Default: False.
+        
+        Returns:
+            A new dense Feature.
+        """
+    @staticmethod
+    def sparse(indices: numpy.typing.NDArray[numpy.uint32], values: numpy.typing.NDArray[numpy.float32], n_samples: builtins.int, name: typing.Optional[builtins.str] = None, default: builtins.float = 0.0, categorical: builtins.bool = False) -> Feature:
+        r"""
+        Create a sparse feature.
+        
+        Args:
+            indices: 1D uint32 array of row indices with non-default values.
+                Must be sorted in ascending order with no duplicates.
+            values: 1D float32 array of values at those indices.
+            n_samples: Total number of samples in the dataset.
+            name: Optional feature name.
+            default: Default value for unspecified indices. Default: 0.0.
+            categorical: Whether this feature is categorical. Default: False.
+        
+        Returns:
+            A new sparse Feature.
+        """
+    def __repr__(self) -> builtins.str: ...
+
 @typing.final
 class GBDTConfig:
     r"""

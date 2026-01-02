@@ -16,7 +16,7 @@ use pyo3::prelude::*;
 use pyo3_stub_gen::define_stub_info_gatherer;
 
 pub use config::{PyGBDTConfig, PyGBLinearConfig, PyGrowthStrategy};
-use data::PyDataset;
+use data::{PyDataset, PyDatasetBuilder, PyFeature};
 use metrics::PyMetric;
 use model::{PyGBDTModel, PyGBLinearModel};
 use objectives::PyObjective;
@@ -37,6 +37,8 @@ fn _boosters_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Data types
     m.add_class::<PyDataset>()?;
+    m.add_class::<PyDatasetBuilder>()?;
+    m.add_class::<PyFeature>()?;
 
     // Model types
     m.add_class::<PyGBDTModel>()?;

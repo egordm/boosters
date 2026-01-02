@@ -12,8 +12,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 from sklearn.utils.validation import check_array, check_is_fitted, check_X_y
 
-from boosters import GBDTConfig, GBDTModel, GrowthStrategy, ImportanceType, Metric, Objective
-from boosters.data import Dataset
+from boosters import Dataset, GBDTConfig, GBDTModel, GrowthStrategy, ImportanceType, Metric, Objective
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

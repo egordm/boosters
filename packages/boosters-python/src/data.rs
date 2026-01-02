@@ -1,20 +1,199 @@
 //! Dataset type for Python bindings.
 //!
-//! This module provides the `Dataset` wrapper for NumPy arrays and pandas DataFrames.
+//! This module provides `Feature`, `Dataset` and `DatasetBuilder` for flexible dataset construction.
 //!
 //! # Design Notes
 //!
-//! - Dataset is marked as `subclass` so Python can extend it with convenience methods
-//! - Categorical features can be auto-detected from pandas or specified explicitly
-//! - NaN in features is allowed (treated as missing values)
-//! - Inf in features or NaN/Inf in labels raise errors
+//! The Python API is structured in layers:
+//!
+//! 1. **Feature**: Single feature column (dense or sparse) with metadata (name, categorical).
+//!    Python conversions happen here - the Rust side just accepts validated numpy arrays.
+//!
+//! 2. **DatasetBuilder**: Collects features, labels, weights. Builds a `Dataset`.
+//!
+//! 3. **Dataset**: Immutable container for training/prediction.
+//!
+//! This design keeps Rust simple (just numpy arrays) while Python handles type coercion.
 
 use ndarray::{Array1, Array2};
 use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::prelude::*;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
-use boosters::data::{transpose_to_c_order, Dataset as CoreDataset, DatasetSchema, Feature};
+use crate::error::BoostersError;
+use boosters::data::{
+    transpose_to_c_order, Dataset as CoreDataset, DatasetBuilder as CoreDatasetBuilder,
+    DatasetSchema, Feature, FeatureMeta,
+};
+
+// =============================================================================
+// Feature
+// =============================================================================
+
+/// A single feature column with metadata.
+///
+/// Features can be dense (array of values) or sparse (indices + values + default).
+/// The Python wrapper handles all type conversions; this class just holds validated data.
+///
+/// Attributes:
+///     name: Optional feature name.
+///     categorical: Whether this feature is categorical.
+///     n_samples: Number of samples in this feature.
+///     is_sparse: Whether this is a sparse feature.
+///
+/// Example:
+///     >>> from boosters import Feature
+///     >>> # Dense feature
+///     >>> f = Feature.dense(np.array([1.0, 2.0, 3.0], dtype=np.float32), name="age")
+///     >>> # Sparse feature
+///     >>> f = Feature.sparse(indices, values, n_samples=1000, name="rare", default=0.0)
+#[gen_stub_pyclass]
+#[pyclass(name = "Feature", module = "boosters._boosters_rs", subclass)]
+#[derive(Clone)]
+pub struct PyFeature {
+    /// The underlying feature data.
+    inner: Feature,
+    /// Feature metadata.
+    meta: FeatureMeta,
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl PyFeature {
+    /// Create a dense feature from a 1D float32 array.
+    ///
+    /// Args:
+    ///     values: 1D float32 array of values (one per sample).
+    ///     name: Optional feature name.
+    ///     categorical: Whether this feature is categorical. Default: False.
+    ///
+    /// Returns:
+    ///     A new dense Feature.
+    #[staticmethod]
+    #[pyo3(signature = (values, name=None, categorical=false))]
+    pub fn dense(
+        values: PyReadonlyArray1<'_, f32>,
+        name: Option<String>,
+        categorical: bool,
+    ) -> Self {
+        let values_owned: Array1<f32> = values.as_array().to_owned();
+        let inner = Feature::dense(values_owned);
+        let meta = if categorical {
+            match name {
+                Some(n) => FeatureMeta::categorical_named(n),
+                None => FeatureMeta::categorical(),
+            }
+        } else {
+            match name {
+                Some(n) => FeatureMeta::numeric_named(n),
+                None => FeatureMeta::numeric(),
+            }
+        };
+        Self { inner, meta }
+    }
+
+    /// Create a sparse feature.
+    ///
+    /// Args:
+    ///     indices: 1D uint32 array of row indices with non-default values.
+    ///         Must be sorted in ascending order with no duplicates.
+    ///     values: 1D float32 array of values at those indices.
+    ///     n_samples: Total number of samples in the dataset.
+    ///     name: Optional feature name.
+    ///     default: Default value for unspecified indices. Default: 0.0.
+    ///     categorical: Whether this feature is categorical. Default: False.
+    ///
+    /// Returns:
+    ///     A new sparse Feature.
+    #[staticmethod]
+    #[pyo3(signature = (indices, values, n_samples, name=None, default=0.0, categorical=false))]
+    pub fn sparse(
+        indices: PyReadonlyArray1<'_, u32>,
+        values: PyReadonlyArray1<'_, f32>,
+        n_samples: usize,
+        name: Option<String>,
+        default: f32,
+        categorical: bool,
+    ) -> Self {
+        let indices_vec: Vec<u32> = indices.as_array().to_vec();
+        let values_vec: Vec<f32> = values.as_array().to_vec();
+        let inner = Feature::sparse(indices_vec, values_vec, n_samples, default);
+        let meta = if categorical {
+            match name {
+                Some(n) => FeatureMeta::categorical_named(n),
+                None => FeatureMeta::categorical(),
+            }
+        } else {
+            match name {
+                Some(n) => FeatureMeta::numeric_named(n),
+                None => FeatureMeta::numeric(),
+            }
+        };
+        Self { inner, meta }
+    }
+
+    /// Feature name (if provided).
+    #[getter]
+    pub fn name(&self) -> Option<String> {
+        self.meta.name.clone()
+    }
+
+    /// Whether this feature is categorical.
+    #[getter]
+    pub fn categorical(&self) -> bool {
+        self.meta.feature_type.is_categorical()
+    }
+
+    /// Number of samples in this feature.
+    #[getter]
+    pub fn n_samples(&self) -> usize {
+        self.inner.n_samples()
+    }
+
+    /// Whether this is a sparse feature.
+    #[getter]
+    pub fn is_sparse(&self) -> bool {
+        self.inner.is_sparse()
+    }
+
+    fn __repr__(&self) -> String {
+        let kind = if self.inner.is_sparse() {
+            "sparse"
+        } else {
+            "dense"
+        };
+        let cat = if self.categorical() { ", categorical" } else { "" };
+        match &self.meta.name {
+            Some(name) => format!(
+                "Feature({}, n_samples={}, name={:?}{})",
+                kind,
+                self.n_samples(),
+                name,
+                cat
+            ),
+            None => format!("Feature({}, n_samples={}{})", kind, self.n_samples(), cat),
+        }
+    }
+}
+
+impl PyFeature {
+    /// Get the inner Feature.
+    #[inline]
+    pub fn inner(&self) -> &Feature {
+        &self.inner
+    }
+
+    /// Get the feature metadata.
+    #[inline]
+    pub fn meta(&self) -> &FeatureMeta {
+        &self.meta
+    }
+
+    /// Consume and return inner + meta.
+    pub fn into_parts(self) -> (Feature, FeatureMeta) {
+        (self.inner, self.meta)
+    }
+}
 
 // =============================================================================
 // Dataset
@@ -39,7 +218,7 @@ use boosters::data::{transpose_to_c_order, Dataset as CoreDataset, DatasetSchema
 ///     categorical_features: Indices of categorical features.
 ///     shape: Shape as (n_samples, n_features).
 #[gen_stub_pyclass]
-#[pyclass(name = "Dataset", module = "boosters._boosters_rs", subclass)]
+#[pyclass(name = "Dataset", module = "boosters._boosters_rs", subclass, dict)]
 #[derive(Clone)]
 pub struct PyDataset {
     /// The core dataset containing features, labels, and weights.
@@ -168,6 +347,19 @@ impl PyDataset {
     pub fn inner(&self) -> &CoreDataset {
         &self.inner
     }
+
+    /// Create PyDataset from CoreDataset with metadata.
+    pub fn from_core(
+        inner: CoreDataset,
+        feature_names: Option<Vec<String>>,
+        categorical_features: Vec<usize>,
+    ) -> Self {
+        Self {
+            inner,
+            feature_names,
+            categorical_features,
+        }
+    }
 }
 
 impl AsRef<CoreDataset> for PyDataset {
@@ -175,3 +367,185 @@ impl AsRef<CoreDataset> for PyDataset {
         &self.inner
     }
 }
+
+// =============================================================================
+// DatasetBuilder
+// =============================================================================
+
+/// Builder for constructing datasets with flexible feature types.
+///
+/// DatasetBuilder collects features (via `add_feature`) and builds a Dataset.
+/// Features can be dense or sparse, with per-feature metadata.
+///
+/// Example:
+///     >>> from boosters import DatasetBuilder, Feature
+///     >>> builder = DatasetBuilder()
+///     >>> builder.add_feature(Feature.dense(age_array, name="age"))
+///     >>> builder.add_feature(Feature.sparse(idx, vals, n, name="rare"))
+///     >>> builder.labels(y)
+///     >>> dataset = builder.build()
+#[gen_stub_pyclass]
+#[pyclass(name = "DatasetBuilder", module = "boosters._boosters_rs", subclass)]
+pub struct PyDatasetBuilder {
+    /// Collected features with metadata.
+    features: Vec<PyFeature>,
+    /// Target labels (optional).
+    targets: Option<Array2<f32>>,
+    /// Sample weights (optional).
+    weights: Option<Array1<f32>>,
+}
+
+#[gen_stub_pymethods]
+#[pymethods]
+impl PyDatasetBuilder {
+    /// Create a new empty DatasetBuilder.
+    #[new]
+    pub fn new() -> Self {
+        Self {
+            features: Vec::new(),
+            targets: None,
+            weights: None,
+        }
+    }
+
+    /// Add a feature to the builder.
+    ///
+    /// Args:
+    ///     feature: A Feature object (created via Feature.dense() or Feature.sparse()).
+    ///
+    /// Returns:
+    ///     Self for method chaining.
+    pub fn add_feature<'py>(mut slf: PyRefMut<'py, Self>, feature: PyFeature) -> PyRefMut<'py, Self> {
+        slf.features.push(feature);
+        slf
+    }
+
+    /// Set 1D target labels.
+    ///
+    /// Args:
+    ///     labels: 1D float32 array of labels (one per sample).
+    ///
+    /// Returns:
+    ///     Self for method chaining.
+    pub fn labels_1d<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        labels: PyReadonlyArray1<'py, f32>,
+    ) -> PyRefMut<'py, Self> {
+        let labels_owned: Array1<f32> = labels.as_array().to_owned();
+        let n = labels_owned.len();
+        slf.targets = Some(
+            labels_owned
+                .into_shape_with_order((1, n))
+                .expect("reshape should succeed"),
+        );
+        slf
+    }
+
+    /// Set 2D multi-output target labels.
+    ///
+    /// Args:
+    ///     labels: 2D float32 array of shape (n_outputs, n_samples).
+    ///
+    /// Returns:
+    ///     Self for method chaining.
+    pub fn labels_2d<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        labels: PyReadonlyArray2<'py, f32>,
+    ) -> PyRefMut<'py, Self> {
+        slf.targets = Some(labels.as_array().to_owned());
+        slf
+    }
+
+    /// Set sample weights.
+    ///
+    /// Args:
+    ///     weights: 1D float32 array of weights (one per sample).
+    ///
+    /// Returns:
+    ///     Self for method chaining.
+    pub fn weights<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        weights: PyReadonlyArray1<'py, f32>,
+    ) -> PyRefMut<'py, Self> {
+        slf.weights = Some(weights.as_array().to_owned());
+        slf
+    }
+
+    /// Build the dataset.
+    ///
+    /// Validates all features have the same sample count, indices are valid,
+    /// and targets/weights match the sample count.
+    ///
+    /// Returns:
+    ///     Constructed Dataset ready for training or prediction.
+    ///
+    /// Raises:
+    ///     ValueError: If validation fails (shape mismatch, invalid sparse indices, etc.)
+    pub fn build(slf: PyRefMut<'_, Self>) -> PyResult<PyDataset> {
+        // Build the core dataset
+        let mut core_builder = CoreDatasetBuilder::new();
+
+        // Add features with metadata
+        for py_feature in slf.features.iter() {
+            core_builder = core_builder.add_feature_with_meta(
+                py_feature.inner.clone(),
+                py_feature.meta.clone(),
+            );
+        }
+
+        // Add targets if present
+        if let Some(ref targets) = slf.targets {
+            core_builder = core_builder.targets(targets.view());
+        }
+
+        // Add weights if present
+        if let Some(ref weights) = slf.weights {
+            core_builder = core_builder.weights(weights.view());
+        }
+
+        // Build and handle errors
+        let inner = core_builder.build().map_err(BoostersError::from)?;
+
+        // Extract categorical indices from features
+        let categorical_features: Vec<usize> = slf
+            .features
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.meta.feature_type.is_categorical())
+            .map(|(i, _)| i)
+            .collect();
+
+        // Collect feature names
+        let feature_names: Option<Vec<String>> = if slf.features.iter().any(|f| f.meta.name.is_some()) {
+            Some(
+                slf.features
+                    .iter()
+                    .enumerate()
+                    .map(|(i, f)| f.meta.name.clone().unwrap_or_else(|| format!("f{}", i)))
+                    .collect(),
+            )
+        } else {
+            None
+        };
+
+        Ok(PyDataset::from_core(inner, feature_names, categorical_features))
+    }
+
+    /// Number of features added so far.
+    #[getter]
+    pub fn n_features(&self) -> usize {
+        self.features.len()
+    }
+
+    fn __repr__(&self) -> String {
+        let has_targets = self.targets.is_some();
+        let has_weights = self.weights.is_some();
+        format!(
+            "DatasetBuilder(n_features={}, has_labels={}, has_weights={})",
+            self.features.len(),
+            has_targets,
+            has_weights
+        )
+    }
+}
+

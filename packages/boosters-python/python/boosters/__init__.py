@@ -12,7 +12,7 @@ Example:
 
 See Also:
     - RFC-0014 for API design rationale
-    - https://github.com/your-org/boosters for documentation
+    - https://github.com/egordm/boosters for documentation
 """
 
 # Explainability types
@@ -22,27 +22,17 @@ from boosters._boosters_rs import (
     Verbosity,
     __version__,  # pyright: ignore[reportAttributeAccessIssue]
 )
-
-# Config types
 from boosters.config import GBDTConfig, GBLinearConfig
-
-# Data types
-from boosters.data import Dataset
-
-# Metric enum
+from boosters.dataset import Dataset, DatasetBuilder, Feature
 from boosters.metrics import Metric
-
-# Model types
 from boosters.model import GBDTModel, GBLinearModel
-
-# Objective enum
 from boosters.objectives import Objective
-
-# Type aliases
 from boosters.types import GrowthStrategy
 
 __all__ = [
     "Dataset",
+    "DatasetBuilder",
+    "Feature",
     "GBDTConfig",
     "GBDTModel",
     "GBLinearConfig",
