@@ -6,19 +6,22 @@ This extends the Rust `Dataset` binding with Python-friendly construction.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
+from typing import cast, overload
 
 import numpy as np
 from numpy.typing import NDArray
 
-import boosters._boosters_rs as _rs
+from boosters._boosters_rs import Dataset as _RustDataset
+from boosters.types import (
+    LabelsInput,
+    PandasDataFrame,
+    SparseMatrix,
+    WeightsInput,
+    is_pandas_dataframe,
+    is_sparse_matrix,
+)
 
-from .builder import DatasetBuilder, LabelsInput, WeightsInput
-
-if TYPE_CHECKING:
-    import pandas as pd
-
-_RustDataset = _rs.Dataset  # type: ignore[attr-defined]
+from .builder import DatasetBuilder
 
 __all__ = ["Dataset"]
 
@@ -28,9 +31,39 @@ class Dataset(_RustDataset):
 
     was_converted: bool
 
+    @overload
+    def __new__(
+        cls,
+        features: NDArray[np.generic],
+        labels: LabelsInput = None,
+        weights: WeightsInput = None,
+        feature_names: Sequence[str] | None = None,
+        categorical_features: Sequence[int] | None = None,
+    ) -> Dataset: ...
+
+    @overload
+    def __new__(
+        cls,
+        features: PandasDataFrame,
+        labels: LabelsInput = None,
+        weights: WeightsInput = None,
+        feature_names: Sequence[str] | None = None,
+        categorical_features: Sequence[int] | None = None,
+    ) -> Dataset: ...
+
+    @overload
+    def __new__(
+        cls,
+        features: SparseMatrix,
+        labels: LabelsInput = None,
+        weights: WeightsInput = None,
+        feature_names: Sequence[str] | None = None,
+        categorical_features: Sequence[int] | None = None,
+    ) -> Dataset: ...
+
     def __new__(  # noqa: PYI034
         cls,
-        features: NDArray[np.generic] | pd.DataFrame | object,
+        features: object,
         labels: LabelsInput = None,
         weights: WeightsInput = None,
         feature_names: Sequence[str] | None = None,
@@ -39,11 +72,18 @@ class Dataset(_RustDataset):
         """Create a Dataset from numpy arrays or a pandas DataFrame."""
         builder = DatasetBuilder()
 
-        builder.add_features(
-            features,  # type: ignore[arg-type]
-            feature_names=feature_names,
-            categorical_features=categorical_features,
-        )
+        if isinstance(features, np.ndarray):
+            builder.add_features(features, feature_names=feature_names, categorical_features=categorical_features)
+        elif is_pandas_dataframe(features):
+            if feature_names is not None:
+                raise ValueError("feature_names is not supported for pandas DataFrame inputs")
+            builder.add_features(features, categorical_features=categorical_features)
+        elif is_sparse_matrix(features):
+            builder.add_features(features, feature_names=feature_names, categorical_features=categorical_features)
+        else:
+            raise TypeError(
+                f"expected numpy.ndarray, pandas.DataFrame, or scipy sparse matrix; got {type(features).__name__}"
+            )
 
         was_converted = True
         if isinstance(features, np.ndarray):
@@ -52,13 +92,13 @@ class Dataset(_RustDataset):
         builder.labels(labels)
         builder.weights(weights)
 
-        instance = builder.build()
-        instance.was_converted = was_converted  # type: ignore[attr-defined]
-        return instance  # type: ignore[return-value]
+        instance = cast(Dataset, builder.build())
+        instance.was_converted = was_converted
+        return instance
 
     def __init__(
         self,
-        features: NDArray[np.generic] | pd.DataFrame | object,
+        features: object,
         labels: LabelsInput = None,
         weights: WeightsInput = None,
         feature_names: Sequence[str] | None = None,

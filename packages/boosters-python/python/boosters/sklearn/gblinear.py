@@ -27,7 +27,7 @@ T = TypeVar("T", bound="_GBLinearEstimatorBase")
 # =============================================================================
 
 
-class _GBLinearEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
+class _GBLinearEstimatorBase(BaseEstimator, ABC):
     """Base class for GBLinear estimators.
 
     Handles common initialization, config creation, and fitting logic.
@@ -199,7 +199,7 @@ class _GBLinearEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
 # =============================================================================
 
 
-class GBLinearRegressor(_GBLinearEstimatorBase, RegressorMixin):  # type: ignore[misc]
+class GBLinearRegressor(_GBLinearEstimatorBase, RegressorMixin):
     """Gradient Boosted Linear Regressor.
 
     A sklearn-compatible wrapper around GBLinearModel for linear regression.
@@ -270,7 +270,7 @@ class GBLinearRegressor(_GBLinearEstimatorBase, RegressorMixin):  # type: ignore
 # =============================================================================
 
 
-class GBLinearClassifier(_GBLinearEstimatorBase, ClassifierMixin):  # type: ignore[misc]
+class GBLinearClassifier(_GBLinearEstimatorBase, ClassifierMixin):
     """Gradient Boosted Linear Classifier.
 
     A sklearn-compatible wrapper around GBLinearModel for classification.

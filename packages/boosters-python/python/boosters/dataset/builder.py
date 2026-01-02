@@ -7,49 +7,26 @@ It owns input normalization and feature parsing.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, cast, overload
+from typing import cast, overload
 
 import numpy as np
 from numpy.typing import NDArray
 
 from boosters._boosters_rs import DatasetBuilder as _RustDatasetBuilder
 from boosters._boosters_rs import Feature as _RustFeature
+from boosters.types import (
+    DenseValuesInput,
+    LabelsInput,
+    PandasDataFrame,
+    SparseMatrix,
+    WeightsInput,
+    is_pandas_dataframe,
+    is_sparse_matrix,
+)
 
 from .feature import Feature
 
-if TYPE_CHECKING:
-    import pandas as pd
-    from scipy.sparse import spmatrix
-
-    type DataFrame = pd.DataFrame
-    type SparseMatrix = spmatrix
-else:
-    type DataFrame = object
-    type SparseMatrix = object
-
 __all__ = ["DatasetBuilder"]
-
-# Type aliases for inputs
-LabelsInput = NDArray[np.floating] | Sequence[float] | None
-WeightsInput = NDArray[np.floating] | Sequence[float] | None
-
-
-def _is_pandas_dataframe(obj: object) -> bool:
-    try:
-        import pandas as pd
-
-        return isinstance(obj, pd.DataFrame)
-    except ImportError:
-        return False
-
-
-def _is_sparse_matrix(obj: object) -> bool:
-    try:
-        import scipy.sparse
-
-        return scipy.sparse.issparse(obj)
-    except ImportError:
-        return False
 
 
 def _validate_categorical_features(categorical_features: Sequence[int] | None, n_features: int) -> None:
@@ -88,7 +65,7 @@ class DatasetBuilder(_RustDatasetBuilder):
     def add_feature(self, feature: _RustFeature) -> DatasetBuilder:
         """Add a single feature column."""
         self._set_or_check_n_samples(feature.n_samples)
-        super().add_feature(feature)  # type: ignore[attr-defined]
+        _RustDatasetBuilder.add_feature(self, feature)
         return self
 
     @overload
@@ -103,7 +80,7 @@ class DatasetBuilder(_RustDatasetBuilder):
     @overload
     def add_features(
         self,
-        features: DataFrame,
+        features: PandasDataFrame,
         *,
         categorical_features: Sequence[int] | None = None,
     ) -> DatasetBuilder: ...
@@ -119,7 +96,7 @@ class DatasetBuilder(_RustDatasetBuilder):
 
     def add_features(
         self,
-        features: NDArray[np.generic] | DataFrame | SparseMatrix,
+        features: NDArray[np.generic] | PandasDataFrame | SparseMatrix,
         *,
         feature_names: Sequence[str] | None = None,
         categorical_features: Sequence[int] | None = None,
@@ -132,14 +109,14 @@ class DatasetBuilder(_RustDatasetBuilder):
                 categorical_features=categorical_features,
             )
 
-        if _is_pandas_dataframe(features):
+        if is_pandas_dataframe(features):
             if feature_names is not None:
                 raise ValueError("feature_names is not supported for pandas DataFrame inputs")
-            return self.add_features_from_dataframe(features, categorical_features=categorical_features)  # type: ignore[arg-type]
+            return self.add_features_from_dataframe(features, categorical_features=categorical_features)
 
-        if _is_sparse_matrix(features):
+        if is_sparse_matrix(features):
             return self.add_features_from_sparse(
-                features,  # type: ignore[arg-type]
+                features,
                 feature_names=feature_names,
                 categorical_features=categorical_features,
             )
@@ -177,12 +154,12 @@ class DatasetBuilder(_RustDatasetBuilder):
 
     def add_features_from_dataframe(
         self,
-        df: DataFrame,
+        df: PandasDataFrame,
         *,
         categorical_features: Sequence[int] | None = None,
     ) -> DatasetBuilder:
         """Add multiple features from a pandas DataFrame."""
-        if not _is_pandas_dataframe(df):
+        if not is_pandas_dataframe(df):
             raise TypeError(f"expected pandas DataFrame, got {type(df).__name__}")
 
         n_features = int(df.shape[1])
@@ -203,12 +180,10 @@ class DatasetBuilder(_RustDatasetBuilder):
         categorical_features: Sequence[int] | None = None,
     ) -> DatasetBuilder:
         """Add multiple sparse features from a scipy sparse matrix."""
-        import scipy.sparse
-
-        if not scipy.sparse.issparse(sparse):
+        if not is_sparse_matrix(sparse):
             raise TypeError(f"expected scipy sparse matrix, got {type(sparse).__name__}")
 
-        csc = sparse.tocsc()  # pyright: ignore[reportAttributeAccessIssue]
+        csc = sparse.tocsc()
         n_samples, n_features = csc.shape
         _validate_categorical_features(categorical_features, n_features)
         cat_set = set(categorical_features or [])
@@ -234,7 +209,7 @@ class DatasetBuilder(_RustDatasetBuilder):
     ) -> DatasetBuilder:
         """Add features from a dict of column name -> data."""
         for name, data in features.items():
-            if _is_sparse_matrix(data):
+            if is_sparse_matrix(data):
                 self.add_feature(Feature.from_sparse(cast(SparseMatrix, data), name=str(name)))
             elif isinstance(data, tuple) and len(data) == 2:
                 if n_samples is None:
@@ -242,7 +217,7 @@ class DatasetBuilder(_RustDatasetBuilder):
                 indices, values = data
                 self.add_feature(Feature.from_sparse(indices, values, n_samples, name=str(name)))
             else:
-                self.add_feature(Feature.from_dense(data, name=str(name)))  # type: ignore[arg-type]
+                self.add_feature(Feature.from_dense(cast(DenseValuesInput, data), name=str(name)))
 
         return self
 
@@ -255,7 +230,7 @@ class DatasetBuilder(_RustDatasetBuilder):
         if arr.ndim == 1:
             if self._n_samples is not None and arr.shape[0] != self._n_samples:
                 raise ValueError(f"labels shape mismatch: expected {self._n_samples}, got {arr.shape[0]}")
-            super().labels_1d(np.ascontiguousarray(arr, dtype=np.float32))  # type: ignore[attr-defined]
+            _RustDatasetBuilder.labels_1d(self, np.ascontiguousarray(arr, dtype=np.float32))
             return self
         if arr.ndim != 2:
             raise ValueError(f"labels must be 1D or 2D array, got {arr.ndim}D")
@@ -263,14 +238,14 @@ class DatasetBuilder(_RustDatasetBuilder):
         if self._n_samples is None:
             if arr.shape[0] > arr.shape[1]:
                 arr = arr.T
-            super().labels_2d(np.ascontiguousarray(arr, dtype=np.float32))  # type: ignore[attr-defined]
+            _RustDatasetBuilder.labels_2d(self, np.ascontiguousarray(arr, dtype=np.float32))
             return self
 
         if arr.shape[0] == self._n_samples:
             arr = arr.T
         elif arr.shape[1] != self._n_samples:
             raise ValueError(f"labels shape mismatch: no dimension matches {self._n_samples} samples")
-        super().labels_2d(np.ascontiguousarray(arr, dtype=np.float32))  # type: ignore[attr-defined]
+        _RustDatasetBuilder.labels_2d(self, np.ascontiguousarray(arr, dtype=np.float32))
         return self
 
     def weights(self, weights: WeightsInput) -> DatasetBuilder:
@@ -283,5 +258,5 @@ class DatasetBuilder(_RustDatasetBuilder):
             raise ValueError(f"weights must be 1D array, got {arr.ndim}D")
         if self._n_samples is not None and arr.shape[0] != self._n_samples:
             raise ValueError(f"weights shape mismatch: expected ({self._n_samples},), got {arr.shape}")
-        super().weights(np.ascontiguousarray(arr, dtype=np.float32))  # type: ignore[attr-defined]
+        _RustDatasetBuilder.weights(self, np.ascontiguousarray(arr, dtype=np.float32))
         return self

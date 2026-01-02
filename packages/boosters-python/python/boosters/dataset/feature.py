@@ -17,46 +17,19 @@ Supported sparse inputs:
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, cast
+from typing import cast
 
 import numpy as np
 from numpy.typing import NDArray
 
 from boosters._boosters_rs import Feature as _RustFeature
-
-if TYPE_CHECKING:
-    import pandas as pd
-    from scipy.sparse import spmatrix
-
-    type PandasSeries = pd.Series
-    type SparseMatrix = spmatrix
-else:
-    type PandasSeries = object
-    type SparseMatrix = object
+from boosters.types import DenseValuesInput, PandasSeries, SparseMatrix, is_pandas_series, is_sparse_matrix
 
 __all__ = ["Feature"]
 
 
-def _is_pandas_series(obj: object) -> bool:
-    try:
-        import pandas as pd
-
-        return isinstance(obj, pd.Series)
-    except ImportError:
-        return False
-
-
-def _is_sparse_matrix(obj: object) -> bool:
-    try:
-        import scipy.sparse
-
-        return scipy.sparse.issparse(obj)
-    except ImportError:
-        return False
-
-
 def _series_to_dense(
-    s: pd.Series,
+    s: PandasSeries,
     *,
     categorical: bool | None,
 ) -> tuple[NDArray[np.float32], bool]:
@@ -96,7 +69,7 @@ def _sparse_to_indices_values(
         raise ValueError(f"expected 2D sparse matrix, got shape={shape}")
 
     if shape[1] == 1:
-        csc = sparse.tocsc()  # pyright: ignore[reportAttributeAccessIssue]
+        csc = sparse.tocsc()
         n_samples = int(shape[0])
         start = int(csc.indptr[0])
         end = int(csc.indptr[1])
@@ -105,7 +78,7 @@ def _sparse_to_indices_values(
         return indices, values, n_samples
 
     if shape[0] == 1:
-        csr = sparse.tocsr()  # pyright: ignore[reportAttributeAccessIssue]
+        csr = sparse.tocsr()
         n_samples = int(shape[1])
         start = int(csr.indptr[0])
         end = int(csr.indptr[1])
@@ -130,7 +103,7 @@ class Feature(_RustFeature):
     @classmethod
     def from_dense(
         cls,
-        values: NDArray[np.generic] | PandasSeries | Sequence[float],
+        values: DenseValuesInput,
         *,
         name: str | None = None,
         categorical: bool | None = None,
@@ -141,8 +114,8 @@ class Feature(_RustFeature):
         """
         is_cat: bool
 
-        if _is_pandas_series(values):
-            arr, is_cat = _series_to_dense(values, categorical=categorical)  # type: ignore[arg-type]
+        if is_pandas_series(values):
+            arr, is_cat = _series_to_dense(values, categorical=categorical)
         elif isinstance(values, np.ndarray):
             arr = values
             if arr.ndim == 2 and 1 in arr.shape:
@@ -160,7 +133,7 @@ class Feature(_RustFeature):
             raise TypeError(f"from_dense() expected ndarray, Series, or list; got {type(values).__name__}")
 
         # We intentionally call the Rust constructor here.
-        return cls.dense(arr, name=name, categorical=is_cat)  # type: ignore[return-value]
+        return cast(Feature, cls.dense(arr, name=name, categorical=is_cat))
 
     @classmethod
     def from_sparse(
@@ -179,11 +152,11 @@ class Feature(_RustFeature):
         - a scipy sparse column vector, or
         - (`indices`, `values`, `n_samples`).
         """
-        if _is_sparse_matrix(indices):
+        if is_sparse_matrix(indices):
             if values is not None or n_samples is not None:
                 raise TypeError("from_sparse(scipy_sparse) takes no values/n_samples arguments")
-            idx, vals, n = _sparse_to_indices_values(cast(SparseMatrix, indices))
-            return cls.sparse(idx, vals, n, name=name, default=default, categorical=categorical)  # type: ignore[return-value]
+            idx, vals, n = _sparse_to_indices_values(indices)
+            return cast(Feature, cls.sparse(idx, vals, n, name=name, default=default, categorical=categorical))
 
         if values is None or n_samples is None:
             raise TypeError("from_sparse(indices, values, n_samples, ...) requires all three arguments")
@@ -198,4 +171,7 @@ class Feature(_RustFeature):
         if len(idx) != len(vals):
             raise ValueError(f"indices and values must have same length: {len(idx)} vs {len(vals)}")
 
-        return cls.sparse(idx, vals, int(n_samples), name=name, default=default, categorical=categorical)  # type: ignore[return-value]
+        return cast(
+            Feature,
+            cls.sparse(idx, vals, int(n_samples), name=name, default=default, categorical=categorical),
+        )

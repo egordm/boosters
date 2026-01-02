@@ -162,7 +162,11 @@ impl PyFeature {
         } else {
             "dense"
         };
-        let cat = if self.categorical() { ", categorical" } else { "" };
+        let cat = if self.categorical() {
+            ", categorical"
+        } else {
+            ""
+        };
         match &self.meta.name {
             Some(name) => format!(
                 "Feature({}, n_samples={}, name={:?}{})",
@@ -415,7 +419,10 @@ impl PyDatasetBuilder {
     ///
     /// Returns:
     ///     Self for method chaining.
-    pub fn add_feature<'py>(mut slf: PyRefMut<'py, Self>, feature: PyFeature) -> PyRefMut<'py, Self> {
+    pub fn add_feature<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        feature: PyFeature,
+    ) -> PyRefMut<'py, Self> {
         slf.features.push(feature);
         slf
     }
@@ -487,10 +494,8 @@ impl PyDatasetBuilder {
 
         // Add features with metadata
         for py_feature in slf.features.iter() {
-            core_builder = core_builder.add_feature_with_meta(
-                py_feature.inner.clone(),
-                py_feature.meta.clone(),
-            );
+            core_builder = core_builder
+                .add_feature_with_meta(py_feature.inner.clone(), py_feature.meta.clone());
         }
 
         // Add targets if present
@@ -516,19 +521,24 @@ impl PyDatasetBuilder {
             .collect();
 
         // Collect feature names
-        let feature_names: Option<Vec<String>> = if slf.features.iter().any(|f| f.meta.name.is_some()) {
-            Some(
-                slf.features
-                    .iter()
-                    .enumerate()
-                    .map(|(i, f)| f.meta.name.clone().unwrap_or_else(|| format!("f{}", i)))
-                    .collect(),
-            )
-        } else {
-            None
-        };
+        let feature_names: Option<Vec<String>> =
+            if slf.features.iter().any(|f| f.meta.name.is_some()) {
+                Some(
+                    slf.features
+                        .iter()
+                        .enumerate()
+                        .map(|(i, f)| f.meta.name.clone().unwrap_or_else(|| format!("f{}", i)))
+                        .collect(),
+                )
+            } else {
+                None
+            };
 
-        Ok(PyDataset::from_core(inner, feature_names, categorical_features))
+        Ok(PyDataset::from_core(
+            inner,
+            feature_names,
+            categorical_features,
+        ))
     }
 
     /// Number of features added so far.
@@ -549,3 +559,8 @@ impl PyDatasetBuilder {
     }
 }
 
+impl Default for PyDatasetBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}

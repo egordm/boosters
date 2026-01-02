@@ -27,7 +27,7 @@ T = TypeVar("T", bound="_GBDTEstimatorBase")
 # =============================================================================
 
 
-class _GBDTEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
+class _GBDTEstimatorBase(BaseEstimator, ABC):
     """Base class for GBDT estimators.
 
     Handles common initialization, config creation, and fitting logic.
@@ -232,7 +232,7 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
 # =============================================================================
 
 
-class GBDTRegressor(_GBDTEstimatorBase, RegressorMixin):  # type: ignore[misc]
+class GBDTRegressor(_GBDTEstimatorBase, RegressorMixin):
     """Gradient Boosted Decision Tree Regressor.
 
     A sklearn-compatible wrapper around GBDTModel for regression.
@@ -326,7 +326,7 @@ class GBDTRegressor(_GBDTEstimatorBase, RegressorMixin):  # type: ignore[misc]
 # =============================================================================
 
 
-class GBDTClassifier(_GBDTEstimatorBase, ClassifierMixin):  # type: ignore[misc]
+class GBDTClassifier(_GBDTEstimatorBase, ClassifierMixin):
     """Gradient Boosted Decision Tree Classifier.
 
     A sklearn-compatible wrapper around GBDTModel for classification.
