@@ -48,7 +48,7 @@ class TestFeatureSparse:
         from scipy.sparse import csr_matrix
 
         col = csr_matrix([[0.0], [1.5], [0.0], [2.0]], dtype=np.float32)
-        f = Feature.from_sparse(col, name="x")
+        f = Feature.from_sparse(col, name="x") # pyright: ignore[reportArgumentType]
         assert f.is_sparse
         assert f.name == "x"
         assert f.n_samples == 4
