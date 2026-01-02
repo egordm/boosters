@@ -123,21 +123,14 @@ reportMissingTypeStubs = false
 [tool.poe.tasks]
 [tool.poe.tasks."python:lint"]
 help = "Lint code (with ruff)"
-shell = """
-set -e
-if [ \"$check\" = \"true\" ]; then
-  ruff check
-else
-  if [ \"$unsafe\" = \"true\" ]; then
-    ruff check --fix --show-fixes --unsafe-fixes
-  else
-    ruff check --fix --show-fixes
-  fi
-fi
-"""
+control.expr = "check"
+switch = [
+  { case = "True", cmd = "ruff check" },
+  { cmd = "ruff check --fix --show-fixes ${unsafe:+ --unsafe-fixes}" },
+]
 args = [
-  { name = "check", type = "boolean", help = "Do not apply fixes (CI mode)", default = false },
-  { name = "unsafe", type = "boolean", help = "Allow unsafe fixes (only applies without --check)", default = false },
+  { name = "check", type = "boolean", help = "Do not apply fixes (CI mode)" },
+  { name = "unsafe", type = "boolean", help = "Allow unsafe fixes (only applies without --check)" },
 ]
 
 [tool.poe.tasks."python:format"]
@@ -145,7 +138,7 @@ help = "Format code (with ruff)"
 control.expr = "check"
 args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns", default = false } ]
 switch = [
-  { case = "check", cmd = "ruff format --diff" },
+  { case = "True", cmd = "ruff format --diff" },
   { cmd = "ruff format" },
 ]
 
@@ -154,7 +147,7 @@ help = "Format pyproject.toml (with pyproject-fmt)"
 control.expr = "check"
 args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns", default = false } ]
 switch = [
-  { case = "check", cmd = "pyproject-fmt --check -n pyproject.toml packages/*/pyproject.toml" },
+  { case = "True", cmd = "pyproject-fmt --check -n pyproject.toml packages/*/pyproject.toml" },
   { cmd = "pyproject-fmt -n pyproject.toml packages/*/pyproject.toml" },
 ]
 
@@ -183,7 +176,12 @@ cmd = "pytest --doctest-modules packages/*/src --maxfail=1"
 
 [tool.poe.tasks."python:stubs-gen"]
 help = "Generate Python type stubs for boosters-python"
-shell = "PYTHONHOME=$(python -c 'import sys; print(sys.base_prefix)') cargo run --bin stubgen --package boosters-python"
+uses = { PYTHONHOME = "_python:pyhome" }
+cmd = "cargo run --bin stubgen --package boosters-python"
+
+[tool.poe.tasks."_python:pyhome"]
+help = "(internal) Prints sys.base_prefix for PYTHONHOME"
+cmd = "python -c 'import sys; print(sys.base_prefix)'"
 
 [tool.poe.tasks."rust:clean"]
 help = "Clean all Rust build artifacts"
@@ -196,21 +194,18 @@ args = [
   { name = "check", type = "boolean", help = "Automatically check formatting without applying changes", default = false },
 ]
 switch = [
-  { case = "check", cmd = "cargo fmt --all -- --check" },
+  { case = "True", cmd = "cargo fmt --all -- --check" },
   { cmd = "cargo fmt --all" },
 ]
 
 [tool.poe.tasks."rust:lint"]
 help = "Lint all Rust code (with cargo clippy)"
-shell = """
-set -e
-if [ \"$check\" = \"true\" ]; then
-  cargo clippy --workspace --all-features --all-targets -- -D warnings
-else
-  cargo clippy --workspace --all-features --all-targets --fix --allow-dirty --allow-staged -- -D warnings
-fi
-"""
-args = [ { name = "check", type = "boolean", help = "Do not apply fixes (CI mode)", default = false } ]
+control.expr = "check"
+switch = [
+  { case = "True", cmd = "cargo clippy --workspace --all-features --all-targets -- -D warnings" },
+  { cmd = "cargo clippy --workspace --all-features --all-targets --fix --allow-dirty --allow-staged -- -D warnings" },
+]
+args = [ { name = "check", type = "boolean", help = "Do not apply fixes (CI mode)" } ]
 
 [tool.poe.tasks."rust:build:core"]
 help = "Build the core Rust library"
@@ -230,7 +225,7 @@ help = "Build all Rust libraries"
 control.expr = "release"
 args = [ { name = "release", type = "boolean", help = "Build in release mode" } ]
 switch = [
-  { case = "release", sequence = [
+  { case = "True", sequence = [
     "rust:build:core --release",
     "rust:build:python --release",
   ] },
@@ -250,7 +245,7 @@ args = [
 
 [tool.poe.tasks."rust:test:python"]
 help = "Run Python tests for the Python Rust library"
-shell = "cargo test --package boosters-python ${release:+ --release}"
+cmd = "cargo test --package boosters-python ${release:+ --release}"
 args = [
   { name = "release", type = "boolean", help = "Run tests in release mode", default = false },
 ]
@@ -268,63 +263,71 @@ cmd = "boosters-eval check --suite minimal --tolerance 0.02"
 
 [tool.poe.tasks."python:all"]
 help = "Run all Python CI calls"
-shell = """
-set -e
-PYTHONHOME=$(python -c 'import sys; print(sys.base_prefix)') cargo run --bin stubgen --package boosters-python
-
-if [ \"$check\" = \"true\" ]; then
-  ruff check
-  ruff format --diff
-  pyproject-fmt --check -n pyproject.toml packages/*/pyproject.toml
-else
-  ruff check --fix --show-fixes
-  ruff format
-  pyproject-fmt -n pyproject.toml packages/*/pyproject.toml
-fi
-
-uv lock --check
-pyright packages/*/src packages/*/examples
-maturin develop -m packages/boosters-python/Cargo.toml --release
-pytest --cov --cov-report=term-missing --cov-report=xml:target/coverage.xml
-pytest --doctest-modules packages/*/src --maxfail=1
-boosters-eval check --suite minimal --tolerance 0.02
-"""
+control.expr = "check"
+switch = [
+  { case = "True", sequence = [
+    "python:stubs-gen",
+    "python:lint --check",
+    "python:format --check",
+    "python:format-pyproject --check",
+    "python:lock",
+    "python:type",
+    "python:develop --release",
+    "python:test",
+    "python:doctest",
+    "eval:check",
+  ] },
+  { sequence = [
+    "python:stubs-gen",
+    "python:lint",
+    "python:format",
+    "python:format-pyproject",
+    "python:lock",
+    "python:type",
+    "python:develop --release",
+    "python:test",
+    "python:doctest",
+    "eval:check",
+  ] },
+]
 args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns", default = false } ]
 
 [tool.poe.tasks."rust:all"]
 help = "Run all Rust CI calls"
-shell = """
-set -e
-
-if [ \"$check\" = \"true\" ]; then
-  cargo fmt --all -- --check
-  cargo clippy --workspace --all-features --all-targets -- -D warnings
-else
-  cargo fmt --all
-  cargo clippy --workspace --all-features --all-targets --fix --allow-dirty --allow-staged -- -D warnings
-fi
-
-cargo build --package boosters --release
-PYTHONHOME=$(python -c 'import sys; print(sys.base_prefix)') cargo run --bin stubgen --package boosters-python
-cargo build --package boosters-python --release
-
-cargo test --package boosters --release --all-features
-cargo test --package boosters-python --release
-"""
+control.expr = "check"
+switch = [
+  { case = "True", sequence = [
+    "rust:format --check",
+    "rust:lint --check",
+    "rust:build:core --release",
+    "rust:build:python --release",
+    "rust:test:core --release --all",
+    "rust:test:python --release",
+  ] },
+  { sequence = [
+    "rust:format",
+    "rust:lint",
+    "rust:build:core --release",
+    "rust:build:python --release",
+    "rust:test:core --release --all",
+    "rust:test:python --release",
+  ] },
+]
 args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns", default = false } ]
 
 [tool.poe.tasks."all"]
 help = "Run all CI calls (Python and Rust)"
-shell = """
-set -e
-if [ \"$check\" = \"true\" ]; then
-  poe python:all --check
-  poe rust:all --check
-else
-  poe python:all
-  poe rust:all
-fi
-"""
+control.expr = "check"
+switch = [
+  { case = "True", sequence = [
+    "python:all --check",
+    "rust:all --check",
+  ] },
+  { sequence = [
+    "python:all",
+    "rust:all",
+  ] },
+]
 args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns", default = false } ]
 
 [tool.poe.tasks."check"]
