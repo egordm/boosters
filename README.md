@@ -134,6 +134,12 @@ boosters is functional for both training and inference but not yet production-re
 - Some advanced features (monotonic constraints, SHAP) are not yet implemented
 - Python bindings are planned but not yet available
 
+## Development Workflow
+
+- Run the full workspace checks (required before committing): `uv run poe all --check`
+- Enable the repo hooks to enforce this automatically:
+  - `git config core.hooksPath .githooks`
+
 ## License
 
 MIT

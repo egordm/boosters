@@ -59,7 +59,7 @@ fn train_all_selectors_regression() {
     };
     let shuffle_trainer = GBLinearTrainer::new(SquaredLoss, Rmse, shuffle_params);
     let shuffle_model = shuffle_trainer
-        .train(&train, targets_view.clone(), WeightsView::None, None)
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
     use boosters::training::MetricFn;
     let shuffle_output = shuffle_model.predict(&test_dataset);
@@ -82,7 +82,7 @@ fn train_all_selectors_regression() {
 
         let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
         let model = trainer
-            .train(&train, targets_view.clone(), WeightsView::None, None)
+            .train(&train, targets_view, WeightsView::None, None)
             .unwrap();
         let output = model.predict(&test_dataset);
         let rmse = Rmse.compute(output.view(), eval_targets, WeightsView::None);
@@ -142,7 +142,7 @@ fn train_all_selectors_multiclass() {
         shuffle_params,
     );
     let shuffle_model = shuffle_trainer
-        .train(&train, targets_view.clone(), WeightsView::None, None)
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
     use boosters::training::{MetricFn, MulticlassAccuracy};
     let shuffle_output = shuffle_model.predict(&test_dataset);
@@ -166,8 +166,7 @@ fn train_all_selectors_multiclass() {
     let targets_2d = Array2::from_shape_vec((1, test_labels.len()), test_labels.clone()).unwrap();
     let eval_targets = TargetsView::new(targets_2d.view());
     let shuffle_acc =
-        MulticlassAccuracy.compute(shuffle_pred_arr.view(), eval_targets, WeightsView::None)
-            as f32;
+        MulticlassAccuracy.compute(shuffle_pred_arr.view(), eval_targets, WeightsView::None) as f32;
 
     for (name, selector) in selectors {
         let params = GBLinearParams {
@@ -185,7 +184,7 @@ fn train_all_selectors_multiclass() {
         let trainer =
             GBLinearTrainer::new(SoftmaxLoss::new(num_classes), MulticlassLogLoss, params);
         let model = trainer
-            .train(&train, targets_view.clone(), WeightsView::None, None)
+            .train(&train, targets_view, WeightsView::None, None)
             .unwrap();
         let output = model.predict(&test_dataset);
         // output is [n_groups, n_samples]
@@ -257,7 +256,7 @@ fn train_greedy_selector_feature_priority() {
     let cyclic_trainer = GBLinearTrainer::new(SquaredLoss, Rmse, cyclic_params);
 
     let greedy_model = greedy_trainer
-        .train(&train, targets_view.clone(), WeightsView::None, None)
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
     let cyclic_model = cyclic_trainer
         .train(&train, targets_view, WeightsView::None, None)

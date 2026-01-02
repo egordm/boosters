@@ -85,10 +85,9 @@ fn bench_linear_gbdt_prediction(c: &mut Criterion) {
             |b, m| {
                 let dataset = Dataset::from_array(m.t(), None, None);
                 b.iter(|| {
-                    black_box(linear_predictor.predict(
-                        black_box(&dataset),
-                        Parallelism::Sequential,
-                    ))
+                    black_box(
+                        linear_predictor.predict(black_box(&dataset), Parallelism::Sequential),
+                    )
                 })
             },
         );
@@ -100,10 +99,9 @@ fn bench_linear_gbdt_prediction(c: &mut Criterion) {
             |b, m| {
                 let dataset = Dataset::from_array(m.t(), None, None);
                 b.iter(|| {
-                    black_box(standard_predictor.predict(
-                        black_box(&dataset),
-                        Parallelism::Sequential,
-                    ))
+                    black_box(
+                        standard_predictor.predict(black_box(&dataset), Parallelism::Sequential),
+                    )
                 })
             },
         );
@@ -167,20 +165,12 @@ fn bench_linear_gbdt_overhead(c: &mut Criterion) {
 
     group.bench_function("standard", |b| {
         b.iter(|| {
-            black_box(standard_predictor.predict(
-                black_box(&dataset),
-                Parallelism::Sequential,
-            ))
+            black_box(standard_predictor.predict(black_box(&dataset), Parallelism::Sequential))
         })
     });
 
     group.bench_function("linear", |b| {
-        b.iter(|| {
-            black_box(linear_predictor.predict(
-                black_box(&dataset),
-                Parallelism::Sequential,
-            ))
-        })
+        b.iter(|| black_box(linear_predictor.predict(black_box(&dataset), Parallelism::Sequential)))
     });
 
     group.finish();

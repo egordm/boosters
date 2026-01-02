@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from boosters_eval.reports import (
     LibraryVersions,
@@ -55,7 +56,7 @@ class TestMachineInfo:
     def test_machine_info_frozen(self) -> None:
         """Test machine info is immutable."""
         info = get_machine_info()
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             info.cores = 99  # type: ignore[misc]
 
 

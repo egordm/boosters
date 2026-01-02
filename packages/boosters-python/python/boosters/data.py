@@ -78,7 +78,7 @@ GroupsInput = NDArray[Any] | Sequence[int] | None
 def _is_pandas_dataframe(obj: object) -> bool:
     """Check if object is a pandas DataFrame."""
     try:
-        import pandas as pd  # noqa: PLC0415 (lazy import for optional dependency)
+        import pandas as pd
 
         return isinstance(obj, pd.DataFrame)
     except ImportError:
@@ -88,7 +88,7 @@ def _is_pandas_dataframe(obj: object) -> bool:
 def _is_polars_dataframe(obj: object) -> bool:
     """Check if object is a polars DataFrame."""
     try:
-        import polars as pl  # noqa: PLC0415 (lazy import for optional dependency)
+        import polars as pl
 
         return isinstance(obj, (pl.DataFrame, pl.LazyFrame))
     except ImportError:
@@ -106,7 +106,7 @@ def _extract_pandas_dataframe(
     Returns:
         Tuple of (features_array, feature_names, categorical_indices).
     """
-    import pandas as pd  # noqa: PLC0415 (lazy import for optional dependency)
+    import pandas as pd
 
     # Get feature names
     feature_names = [str(c) for c in df.columns]
@@ -137,7 +137,7 @@ def _extract_polars_dataframe(
     Returns:
         Tuple of (features_array, feature_names, categorical_indices).
     """
-    import polars as pl  # noqa: PLC0415 (lazy import for optional dependency)
+    import polars as pl
 
     # Collect if LazyFrame
     if isinstance(df, pl.LazyFrame):
@@ -186,7 +186,7 @@ def _extract_numpy_array(arr: NDArray[Any]) -> tuple[NDArray[np.float32], bool]:
 def _is_sparse_matrix(obj: object) -> bool:
     """Check if object is a scipy sparse matrix."""
     try:
-        import scipy.sparse  # noqa: PLC0415 (lazy import for optional dependency)
+        import scipy.sparse
 
         return scipy.sparse.issparse(obj)
     except ImportError:
@@ -248,7 +248,7 @@ class Dataset(_RustDataset):
 
     # Dataset constructor is intentionally complex to handle multiple input types
     # (numpy, pandas, polars, lists) with validation and type detection
-    def __new__(  # noqa: C901, PLR0912, PLR0915, PYI034
+    def __new__(  # noqa: PYI034
         cls,
         features: FeaturesInput,
         labels: LabelsInput = None,
@@ -355,8 +355,8 @@ class Dataset(_RustDataset):
         )
 
         # Store Python-only attributes (on newly created instance)
-        instance._was_converted = was_converted  # noqa: SLF001
-        instance._groups = None  # noqa: SLF001
+        instance._was_converted = was_converted
+        instance._groups = None
 
         # Handle groups if provided
         if groups is not None:
@@ -367,7 +367,7 @@ class Dataset(_RustDataset):
                 raise ValueError(
                     f"groups shape mismatch: expected {features_arr.shape[0]} samples, got {groups_arr.shape[0]}"
                 )
-            instance._groups = groups_arr  # noqa: SLF001
+            instance._groups = groups_arr
 
         return instance
 

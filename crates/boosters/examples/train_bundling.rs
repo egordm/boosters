@@ -12,8 +12,8 @@
 use std::time::Instant;
 
 use boosters::data::BinningConfig;
-use boosters::data::binned::BinnedDataset;
 use boosters::data::Dataset;
+use boosters::data::binned::BinnedDataset;
 use boosters::training::GrowthStrategy;
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective};
 use ndarray::{Array1, Array2};
@@ -86,8 +86,8 @@ fn main() {
         .max_bins(256)
         .enable_bundling(false)
         .build();
-    let dataset_no_bundle = BinnedDataset::from_dataset(&dataset, &binning_config_no_bundle)
-        .expect("binning failed");
+    let dataset_no_bundle =
+        BinnedDataset::from_dataset(&dataset, &binning_config_no_bundle).expect("binning failed");
     let binning_time_no_bundle = start.elapsed();
 
     // Without bundling, binned columns = original features
@@ -113,8 +113,8 @@ fn main() {
         .max_bins(256)
         .enable_bundling(true)
         .build();
-    let dataset_bundled = BinnedDataset::from_dataset(&dataset, &binning_config_bundled)
-        .expect("binning failed");
+    let dataset_bundled =
+        BinnedDataset::from_dataset(&dataset, &binning_config_bundled).expect("binning failed");
     let binning_time_bundled = start.elapsed();
 
     // With bundling, sparse one-hot features should be combined

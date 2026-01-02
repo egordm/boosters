@@ -53,7 +53,7 @@ class TestMetricStats:
     def test_frozen(self) -> None:
         """Test stats are immutable."""
         stats = MetricStats(mean=0.5, std=0.1, n=5)
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             stats.mean = 0.6  # type: ignore[misc]
 
 

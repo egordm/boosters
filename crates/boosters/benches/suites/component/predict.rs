@@ -30,8 +30,7 @@ fn bench_gbtree_batch_sizes(c: &mut Criterion) {
             |b, matrix| {
                 let dataset = Dataset::from_array(matrix.t(), None, None);
                 b.iter(|| {
-                    let output =
-                        predictor.predict(black_box(&dataset), Parallelism::Sequential);
+                    let output = predictor.predict(black_box(&dataset), Parallelism::Sequential);
                     black_box(output)
                 });
             },
@@ -65,12 +64,16 @@ fn bench_gbtree_model_sizes(c: &mut Criterion) {
         let dataset = Dataset::from_array(matrix.t(), None, None);
 
         group.throughput(Throughput::Elements(batch_size as u64));
-        group.bench_with_input(BenchmarkId::new(label, batch_size), &dataset, |b, dataset| {
-            b.iter(|| {
-                let output = predictor.predict(black_box(dataset), Parallelism::Sequential);
-                black_box(output)
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::new(label, batch_size),
+            &dataset,
+            |b, dataset| {
+                b.iter(|| {
+                    let output = predictor.predict(black_box(dataset), Parallelism::Sequential);
+                    black_box(output)
+                });
+            },
+        );
     }
 
     group.finish();
@@ -105,18 +108,18 @@ fn bench_traversal_strategies(c: &mut Criterion) {
 
     // Standard traversal (baseline)
     let standard = Predictor::<StandardTraversal>::new(&model.forest).with_block_size(64);
-    group.bench_with_input(BenchmarkId::new("standard", batch_size), &dataset, |b, d| {
-        b.iter(|| black_box(standard.predict(black_box(d), Parallelism::Sequential)))
-    });
+    group.bench_with_input(
+        BenchmarkId::new("standard", batch_size),
+        &dataset,
+        |b, d| b.iter(|| black_box(standard.predict(black_box(d), Parallelism::Sequential))),
+    );
 
     // Unrolled traversal (6 levels)
     let unrolled = Predictor::<UnrolledTraversal6>::new(&model.forest).with_block_size(64);
     group.bench_with_input(
         BenchmarkId::new("unrolled6", batch_size),
         &dataset,
-        |b, d| {
-            b.iter(|| black_box(unrolled.predict(black_box(d), Parallelism::Sequential)))
-        },
+        |b, d| b.iter(|| black_box(unrolled.predict(black_box(d), Parallelism::Sequential))),
     );
 
     group.finish();

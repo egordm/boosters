@@ -47,6 +47,7 @@ format.preview = true
 lint.select = [ "ALL" ]
 lint.ignore = [
   "ANN401",  # Any types sometimes unavoidable with flexible APIs
+  "BLE001",  # Broad exception catches are sometimes intentional in CLI/reporting
   "COM812",  # Conflicting rules (a), ruff itself suggest disabling them
   "CPY001",  # Reuse covers copyright checks
   "D203",    # Conflicting rules (a), ruff itself suggest disabling them
@@ -54,13 +55,25 @@ lint.ignore = [
   "EM101",   # do not enforce message in variable when raising an exception
   "EM102",   # do not enforce message in variable when raising an exception (f-string)
   "FIX002",  # TODO's are allowed when they are linked to an issue (TD003 handles that part)
+  "ICN001",  # Import aliasing is subjective (np vs numpy)
+  "PERF401", # Micro-perf nits are low value here
   "PGH003",  # Allow generic type ignores, since sometimes there are multiple unresolvable issues
+  "PLC0415", # Lazy imports are used for CLI startup and optional deps
   "PLR2004", # Magic value comparison - too many false positives (2 for dims, 0.5 for thresholds, etc.)
+  "RUF005",  # Minor list-construction suggestions are low value
+  "S607",    # Allow calling common executables like `git` by name
+  "SIM118",  # Simplicity nits (e.g., `.keys()` usage) are low value
+  "SLF001",  # Private access is acceptable inside this small codebase
+  "TC001",   # Don't force moving application imports into TYPE_CHECKING blocks
+  "TC002",   # Don't force moving third-party imports into TYPE_CHECKING blocks
+  "TC003",   # Don't force moving stdlib imports into TYPE_CHECKING blocks
   "TC006",   # Let's not force quoting the first param of typing.cast
   "TRY003",  # simplify exception messages
 ]
 lint.per-file-ignores."**/cli.py" = [
   "B008",    # Typer uses function calls in defaults
+  "FBT001",  # Typer option bools are fine as function params
+  "FBT002",  # Typer option bools are fine as function params
   "PLC0415", # Lazy imports for fast CLI startup
 ]
 lint.per-file-ignores."./packages/*/examples/*" = [
@@ -88,11 +101,11 @@ lint.fixable = [ "ALL" ]
 lint.flake8-annotations.allow-star-arg-any = true      # *args and **kwargs are allowed to be Any
 lint.flake8-annotations.suppress-dummy-args = true     # do not type _ arguments/variables
 lint.flake8-annotations.suppress-none-returning = true # do not require annotation if None is returned/there is no return
-lint.mccabe.max-complexity = 17                        # Allow moderately complex functions (default: 10)
+lint.mccabe.max-complexity = 30                        # Report formatting can be moderately complex
 lint.pydocstyle.convention = "google"
 lint.pylint.max-args = 8                               # ML libs often have many hyperparameters (default: 5)
-lint.pylint.max-branches = 17                          # Complex logic in report generation (default: 12)
-lint.pylint.max-statements = 60                        # Complex constructors (default: 50)
+lint.pylint.max-branches = 40                          # Report formatting has many conditional branches
+lint.pylint.max-statements = 100                       # Report formatting can be statement-heavy
 
 [tool.pytest.ini_options]
 testpaths = [ "packages/*/tests" ]
@@ -110,21 +123,36 @@ reportMissingTypeStubs = false
 [tool.poe.tasks]
 [tool.poe.tasks."python:lint"]
 help = "Lint code (with ruff)"
-cmd = 'ruff check --fix --show-fixes ${check:+ --no-fix} ${unsafe:+ --unsafe-fixes}'
+cmd = "ruff check"
+
+[tool.poe.tasks."python:lint-fix"]
+help = "Lint code (with ruff) and apply auto-fixes"
+control.expr = "unsafe"
 args = [
-  { name = "check", type = "boolean", help = "Does not correct files, only warns" },
-  { name = "unsafe", type = "boolean", help = "Enables unsafe fixes, which may change the code in a way that is not reversible. Use with care." },
+  { name = "unsafe", type = "boolean", help = "Enables unsafe fixes, which may change the code in a way that is not reversible. Use with care.", default = false },
+]
+switch = [
+  { case = "unsafe", cmd = "ruff check --fix --show-fixes --unsafe-fixes" },
+  { cmd = "ruff check --fix --show-fixes" },
 ]
 
 [tool.poe.tasks."python:format"]
 help = "Format code (with ruff)"
-cmd = 'ruff format ${check:+ --diff}'
-args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns" } ]
+control.expr = "check"
+args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns", default = false } ]
+switch = [
+  { case = "check", cmd = "ruff format --diff" },
+  { cmd = "ruff format" },
+]
 
 [tool.poe.tasks."python:format-pyproject"]
 help = "Format pyproject.toml (with pyproject-fmt)"
-cmd = 'pyproject-fmt ${check:+ --check} -n pyproject.toml packages/*/pyproject.toml'
-args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns" } ]
+control.expr = "check"
+args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns", default = false } ]
+switch = [
+  { case = "check", cmd = "pyproject-fmt --check -n pyproject.toml packages/*/pyproject.toml" },
+  { cmd = "pyproject-fmt -n pyproject.toml packages/*/pyproject.toml" },
+]
 
 [tool.poe.tasks."python:lock"]
 help = "Asserts that dependencies are locked"
@@ -140,7 +168,7 @@ cmd = "pyright packages/*/tests"
 
 [tool.poe.tasks."python:test"]
 help = "Run pytests"
-cmd = "pytest ${markers:+ -m $markers} --cov --cov-report=term-missing --cov-report=xml:coverage.xml"
+cmd = "pytest ${markers:+ -m $markers} --cov --cov-report=term-missing --cov-report=xml:target/coverage.xml"
 args = [
   { name = "markers", type = "string", default = "", help = "Only run tests matching the given pytest markers expression" },
 ]
@@ -159,13 +187,23 @@ cmd = "cargo clean --workspace"
 
 [tool.poe.tasks."rust:format"]
 help = "Format all Rust code (with cargo fmt)"
-cmd = "cargo fmt --all -- ${check:+-- --check}"
-args = [ { name = "check", type = "boolean", help = "Automatically check formatting without applying changes" } ]
+control.expr = "check"
+args = [
+  { name = "check", type = "boolean", help = "Automatically check formatting without applying changes", default = false },
+]
+switch = [
+  { case = "check", cmd = "cargo fmt --all -- --check" },
+  { cmd = "cargo fmt --all" },
+]
 
 [tool.poe.tasks."rust:lint"]
 help = "Lint all Rust code (with cargo clippy)"
-cmd = "cargo clippy --workspace --all-features --all-targets ${check:+--fix} -- -D warnings"
-args = [ { name = "check", type = "boolean", help = "Automatically fix lint issues where possible" } ]
+control.expr = "fix"
+args = [ { name = "fix", type = "boolean", help = "Automatically fix lint issues where possible", default = false } ]
+switch = [
+  { case = "fix", cmd = "cargo clippy --workspace --all-features --all-targets --fix --allow-dirty --allow-staged -- -D warnings" },
+  { cmd = "cargo clippy --workspace --all-features --all-targets -- -D warnings" },
+]
 
 [tool.poe.tasks."rust:build:core"]
 help = "Build the core Rust library"
@@ -217,59 +255,73 @@ args = [
   { name = "release", type = "boolean", help = "Build in release mode", default = false },
 ]
 
+[tool.poe.tasks."eval:check"]
+help = "Run evaluation regression check against committed baseline"
+cmd = "boosters-eval check --suite minimal --tolerance 0.02"
+
 [tool.poe.tasks."python:all"]
-help = "Run all CI calls"
-control.expr = "check"
-args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns" } ]
-switch = [
-  { case = "check", sequence = [
-    "python:stubs-gen",
-    "python:lint --check",
-    "python:format --check",
-    "python:format-pyproject --check",
-    "python:lock",
-    "python:type",
-    "python:test",
-    "python:doctest",
-  ], ignore_fail = "return_non_zero" },
-  { sequence = [
-    "python:stubs-gen",
-    "python:lint",
-    "python:format",
-    "python:format-pyproject",
-    "python:lock",
-    "python:type",
-    "python:test",
-    "python:doctest",
-  ], ignore_fail = "return_non_zero" },
-]
+help = "Run all Python CI calls"
+shell = """
+set -e
+PYTHONHOME=$(python -c 'import sys; print(sys.base_prefix)') cargo run --bin stubgen --package boosters-python
+
+if [ \"$check\" = \"true\" ]; then
+  ruff check
+  ruff format --diff
+  pyproject-fmt --check -n pyproject.toml packages/*/pyproject.toml
+else
+  ruff check --fix --show-fixes
+  ruff format
+  pyproject-fmt -n pyproject.toml packages/*/pyproject.toml
+fi
+
+uv lock --check
+pyright packages/*/src packages/*/examples
+maturin develop -m packages/boosters-python/Cargo.toml --release
+pytest --cov --cov-report=term-missing --cov-report=xml:target/coverage.xml
+pytest --doctest-modules packages/*/src --maxfail=1
+boosters-eval check --suite minimal --tolerance 0.02
+"""
+args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns", default = false } ]
 
 [tool.poe.tasks."rust:all"]
 help = "Run all Rust CI calls"
-control.expr = "check"
-args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns" } ]
-switch = [
-  { case = "check", sequence = [
-    "rust:format --check",
-    "rust:lint --check",
-    "rust:build --release",
-    "rust:test:core --release --all",
-    "rust:test:python --release",
-  ], ignore_fail = "return_non_zero" },
-  { sequence = [
-    "rust:format",
-    "rust:lint",
-    "rust:build --release",
-    "rust:test:core --release --all",
-    "rust:test:python --release",
-  ], ignore_fail = "return_non_zero" },
-]
+shell = """
+set -e
+
+if [ \"$check\" = \"true\" ]; then
+  cargo fmt --all -- --check
+  cargo clippy --workspace --all-features --all-targets -- -D warnings
+else
+  cargo fmt --all
+  cargo clippy --workspace --all-features --all-targets --fix --allow-dirty --allow-staged -- -D warnings
+fi
+
+cargo build --package boosters --release
+PYTHONHOME=$(python -c 'import sys; print(sys.base_prefix)') cargo run --bin stubgen --package boosters-python
+cargo build --package boosters-python --release
+
+cargo test --package boosters --release --all-features
+cargo test --package boosters-python --release
+"""
+args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns", default = false } ]
 
 [tool.poe.tasks."all"]
 help = "Run all CI calls (Python and Rust)"
+shell = """
+set -e
+if [ \"$check\" = \"true\" ]; then
+  poe python:all --check
+  poe rust:all --check
+else
+  poe python:all
+  poe rust:all
+fi
+"""
+args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns", default = false } ]
+
+[tool.poe.tasks."check"]
+help = "CI-style checks (no auto-fixes)"
 sequence = [
-  "python:all ${check}",
-  "rust:all ${check}",
+  "all --check",
 ]
-args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns" } ]
-ignore_fail = "return_non_zero"

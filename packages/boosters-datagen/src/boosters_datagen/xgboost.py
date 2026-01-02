@@ -288,7 +288,7 @@ def gen_training_binary() -> None:
 
 def generate_all() -> None:
     """Generate all XGBoost test cases."""
-    from boosters_datagen.utils import console  # noqa: PLC0415 - lazy import for generate_all entry point
+    from boosters_datagen.utils import console
 
     ensure_dirs()
     console.print("\n[bold]=== GBTree Inference ===[/bold]")

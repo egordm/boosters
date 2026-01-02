@@ -289,8 +289,9 @@ impl PyGBDTModel {
         let core_val_set = val_set.as_ref().map(|ds| ds.inner());
 
         // Train with GIL released
-        let trained_model = py
-            .detach(|| boosters::GBDTModel::train(core_train, core_val_set, core_config, n_threads));
+        let trained_model = py.detach(|| {
+            boosters::GBDTModel::train(core_train, core_val_set, core_config, n_threads)
+        });
 
         match trained_model {
             Some(model) => {

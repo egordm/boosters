@@ -25,7 +25,7 @@ class TestComputeMetrics:
         assert pytest.approx(metrics["rmse"], rel=1e-3) == 0.577
 
     @pytest.mark.parametrize(
-        "task,expected_metrics",
+        ("task", "expected_metrics"),
         [
             (Task.REGRESSION, ["rmse", "mae", "r2"]),
             (Task.BINARY, ["logloss", "accuracy"]),
@@ -70,7 +70,7 @@ class TestPrimaryMetricAndDirection:
     """Tests for primary_metric and is_lower_better functions."""
 
     @pytest.mark.parametrize(
-        "task,expected_primary",
+        ("task", "expected_primary"),
         [
             (Task.REGRESSION, "rmse"),
             (Task.BINARY, "logloss"),
@@ -82,7 +82,7 @@ class TestPrimaryMetricAndDirection:
         assert primary_metric(task) == expected_primary
 
     @pytest.mark.parametrize(
-        "metric,expected_lower",
+        ("metric", "expected_lower"),
         [
             ("rmse", True),
             ("mae", True),

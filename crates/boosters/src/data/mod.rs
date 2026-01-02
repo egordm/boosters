@@ -39,9 +39,9 @@ pub(crate) mod raw;
 // Core Dataset Types (user-facing)
 // =============================================================================
 
-pub use raw::feature::Feature;
-pub use raw::dataset::{Dataset, DatasetBuilder};
 pub use error::DatasetError;
+pub use raw::dataset::{Dataset, DatasetBuilder};
+pub use raw::feature::Feature;
 pub use raw::schema::{DatasetSchema, FeatureMeta, FeatureType};
 pub use raw::views::{SamplesView, TargetsView, WeightsIter, WeightsView};
 
@@ -56,9 +56,8 @@ pub use ndarray::{axis, init_predictions, init_predictions_into, transpose_to_c_
 // =============================================================================
 
 pub use binned::{
-    BinMapper, BinnedDataset, BinnedFeatureInfo,
-    BinningConfig, BuildError, EffectiveViews, FeatureGroup,
-    FeatureMetadata, FeatureView, MissingType,
+    BinMapper, BinnedDataset, BinnedFeatureInfo, BinningConfig, BuildError, EffectiveViews,
+    FeatureGroup, FeatureMetadata, FeatureView, MissingType,
 };
 
 // Internal types for tests/benchmarks

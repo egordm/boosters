@@ -819,7 +819,13 @@ mod tests {
         buffer.set(2, 0, 0.2, 1.0);
 
         let mut sel = GreedySelector::new(0);
-        sel.setup(model.weights_and_bias(0), &dataset, buffer.output_pairs(0), 0.0, 0.0);
+        sel.setup(
+            model.weights_and_bias(0),
+            &dataset,
+            buffer.output_pairs(0),
+            0.0,
+            0.0,
+        );
         sel.reset(3);
 
         // Feature 1 should be selected first (largest gradient impact)
@@ -876,7 +882,13 @@ mod tests {
         buffer.set(2, 0, 0.2, 1.0);
 
         let mut sel = ThriftySelector::new(0);
-        sel.setup(model.weights_and_bias(0), &dataset, buffer.output_pairs(0), 0.0, 0.0);
+        sel.setup(
+            model.weights_and_bias(0),
+            &dataset,
+            buffer.output_pairs(0),
+            0.0,
+            0.0,
+        );
         sel.reset(3);
 
         // Should return all 3 features in sorted order

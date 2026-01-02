@@ -101,17 +101,35 @@ def format_results_terminal(
                 best_lib_pm: str | None = None
                 best_lib_time: str | None = None
 
-                valid = booster_df.dropna(subset=[pm_mean_col])
+                valid = booster_df.dropna(subset=[pm_mean_col])  # pyright: ignore[reportCallIssue]
                 if len(valid) >= 2:
                     lower_better = pm in LOWER_BETTER_METRICS
-                    best_idx = valid[pm_mean_col].idxmin() if lower_better else valid[pm_mean_col].idxmax()
-                    best_lib_pm = str(valid.loc[best_idx, "library"])  # pyright: ignore[reportArgumentType]
+                    sorted_valid = valid.sort_values(pm_mean_col, ascending=lower_better)
+                    sorted_libs = [str(x) for x in sorted_valid["library"].tolist()]
+                    best_lib_pm = sorted_libs[0]
+
+                    if require_significance:
+                        second_lib = sorted_libs[1]
+                        raw_values = results._get_raw_values_by_library(task, dataset, pm, str(booster))
+                        best_vals = raw_values.get(best_lib_pm, [])
+                        second_vals = raw_values.get(second_lib, [])
+                        if not results._is_significantly_better(best_vals, second_vals, 0.05):
+                            best_lib_pm = None
 
                 if show_timing and "train_time_s_mean" in df.columns:
-                    valid_time = booster_df.dropna(subset=["train_time_s_mean"])
+                    valid_time = booster_df.dropna(subset=["train_time_s_mean"])  # pyright: ignore[reportCallIssue]
                     if len(valid_time) >= 2:
-                        best_time_idx = valid_time["train_time_s_mean"].idxmin()
-                        best_lib_time = str(valid_time.loc[best_time_idx, "library"])  # pyright: ignore[reportArgumentType]
+                        sorted_time = valid_time.sort_values("train_time_s_mean", ascending=True)
+                        sorted_time_libs = [str(x) for x in sorted_time["library"].tolist()]
+                        best_lib_time = sorted_time_libs[0]
+
+                        if require_significance:
+                            second_time_lib = sorted_time_libs[1]
+                            raw_time = results._get_raw_values_by_library(task, dataset, "train_time_s", str(booster))
+                            best_time_vals = raw_time.get(best_lib_time, [])
+                            second_time_vals = raw_time.get(second_time_lib, [])
+                            if not results._is_significantly_better(best_time_vals, second_time_vals, 0.05):
+                                best_lib_time = None
 
                 # Add rows
                 for _, row in booster_df.iterrows():
@@ -122,13 +140,14 @@ def format_results_terminal(
                     mean_val = row[pm_mean_col]
                     std_val = row.get(pm_std_col, np.nan) if pm_std_col in row.index else np.nan
 
-                    if pd.isna(mean_val):
+                    if bool(pd.isna(mean_val)):
                         row_data.append("-")
                     else:
-                        if pd.isna(std_val) or std_val == 0:
+                        if std_val is None or bool(pd.isna(std_val)):
                             val_str = f"{mean_val:.4f}"
                         else:
-                            val_str = f"{mean_val:.4f}±{std_val:.4f}"
+                            std_val_f = float(std_val)
+                            val_str = f"{mean_val:.4f}" if std_val_f == 0.0 else f"{mean_val:.4f}±{std_val_f:.4f}"
 
                         if best_lib_pm == lib:
                             val_str = f"[bold green]{val_str}[/bold green]"
@@ -139,13 +158,16 @@ def format_results_terminal(
                         time_mean = row.get("train_time_s_mean", np.nan)
                         time_std = row.get("train_time_s_std", np.nan)
 
-                        if pd.isna(time_mean):
+                        if bool(pd.isna(time_mean)):
                             row_data.append("-")
                         else:
-                            if pd.isna(time_std) or time_std == 0:
+                            if time_std is None or bool(pd.isna(time_std)):
                                 time_str = f"{time_mean:.4f}"
                             else:
-                                time_str = f"{time_mean:.4f}±{time_std:.4f}"
+                                time_std_f = float(time_std)
+                                time_str = (
+                                    f"{time_mean:.4f}" if time_std_f == 0.0 else f"{time_mean:.4f}±{time_std_f:.4f}"
+                                )
 
                             if best_lib_time == lib:
                                 time_str = f"[bold green]{time_str}[/bold green]"

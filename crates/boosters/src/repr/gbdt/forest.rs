@@ -169,18 +169,10 @@ mod tests {
         let predictor = SimplePredictor::new(&forest);
         let mut output = vec![0.0; 1];
 
-        predictor.predict_row_into(
-            ndarray::array![0.3f32].view(),
-            None,
-            &mut output,
-        );
+        predictor.predict_row_into(ndarray::array![0.3f32].view(), None, &mut output);
         assert_eq!(output, vec![1.0]);
 
-        predictor.predict_row_into(
-            ndarray::array![0.7f32].view(),
-            None,
-            &mut output,
-        );
+        predictor.predict_row_into(ndarray::array![0.7f32].view(), None, &mut output);
         assert_eq!(output, vec![2.0]);
     }
 }

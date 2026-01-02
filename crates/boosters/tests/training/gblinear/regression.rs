@@ -11,7 +11,9 @@ use super::{load_config, load_train_data, load_xgb_weights, make_dataset};
 use approx::assert_relative_eq;
 use boosters::data::transpose_to_c_order;
 use boosters::data::{Dataset, TargetsView, WeightsView};
-use boosters::training::{GBLinearParams, GBLinearTrainer, Rmse, SquaredLoss, UpdateStrategy, Verbosity};
+use boosters::training::{
+    GBLinearParams, GBLinearTrainer, Rmse, SquaredLoss, UpdateStrategy, Verbosity,
+};
 use ndarray::Array2;
 use rstest::rstest;
 
@@ -82,7 +84,7 @@ fn train_l2_regularization_shrinks_weights() {
     };
     let trainer_no_reg = GBLinearTrainer::new(SquaredLoss, Rmse, params_no_reg);
     let no_reg_model = trainer_no_reg
-        .train(&train, targets_view.clone(), WeightsView::None, None)
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
 
     // Train with L2 regularization
@@ -182,7 +184,7 @@ fn parallel_vs_sequential_similar() {
     };
     let trainer_seq = GBLinearTrainer::new(SquaredLoss, Rmse, params_seq);
     let seq_model = trainer_seq
-        .train(&train, targets_view.clone(), WeightsView::None, None)
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
 
     let params_par = GBLinearParams {

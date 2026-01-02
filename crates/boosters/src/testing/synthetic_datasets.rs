@@ -97,12 +97,7 @@ pub fn features_row_major_slice(dataset: &Dataset) -> Vec<f32> {
 /// let config = BinningConfig::builder().max_bins(256).build();
 /// let _binned = BinnedDataset::from_dataset(&dataset, &config).unwrap();
 /// ```
-pub fn synthetic_regression(
-    n_samples: usize,
-    n_features: usize,
-    seed: u64,
-    noise: f32,
-) -> Dataset {
+pub fn synthetic_regression(n_samples: usize, n_features: usize, seed: u64, noise: f32) -> Dataset {
     let features_sm = random_features_array(n_samples, n_features, seed, -1.0, 1.0);
     let targets = generate_linear_targets(features_sm.view(), seed.wrapping_add(1), noise);
     let features_fm = transpose_to_c_order(features_sm.view());
@@ -114,12 +109,7 @@ pub fn synthetic_regression(
 /// Generate a synthetic binary classification dataset.
 ///
 /// Targets are 0.0 or 1.0 based on linear score thresholding.
-pub fn synthetic_binary(
-    n_samples: usize,
-    n_features: usize,
-    seed: u64,
-    noise: f32,
-) -> Dataset {
+pub fn synthetic_binary(n_samples: usize, n_features: usize, seed: u64, noise: f32) -> Dataset {
     let features_sm = random_features_array(n_samples, n_features, seed, -1.0, 1.0);
     let scores = generate_linear_targets(features_sm.view(), seed.wrapping_add(1), noise);
     let targets = scores.mapv(|s| if s > 0.0 { 1.0 } else { 0.0 });

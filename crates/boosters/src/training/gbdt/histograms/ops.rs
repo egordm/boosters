@@ -27,9 +27,9 @@
 //! bin to its original feature and accumulate into the correct feature's histogram.
 //! This preserves the semantic integrity of each feature's gradient statistics.
 
+use super::FeatureView;
 use super::pool::HistogramLayout;
 use super::slices::HistogramFeatureIter;
-use super::FeatureView;
 use crate::training::GradsTuple;
 use crate::utils::Parallelism;
 
@@ -125,7 +125,6 @@ impl HistogramBuilder {
             });
         }
     }
-
 
     /// Suggest parallelism based on workload (may downgrade to sequential).
     #[inline]
@@ -527,10 +526,7 @@ mod tests {
         let bins_f0: Vec<u8> = (0..n_samples).map(|i| (i % 4) as u8).collect();
         let bins_f1: Vec<u8> = (0..n_samples).map(|i| ((i + 1) % 4) as u8).collect();
 
-        let bin_views = vec![
-            FeatureView::U8(&bins_f0),
-            FeatureView::U8(&bins_f1),
-        ];
+        let bin_views = vec![FeatureView::U8(&bins_f0), FeatureView::U8(&bins_f1)];
 
         let indices: Vec<u32> = (0..n_samples as u32).step_by(3).collect();
 
@@ -583,9 +579,7 @@ mod tests {
         let n_samples = 10000;
         let bins: Vec<u8> = (0..n_samples).map(|i| (i % 4) as u8).collect();
 
-        let bin_views: Vec<_> = (0..4)
-            .map(|_| FeatureView::U8(&bins))
-            .collect();
+        let bin_views: Vec<_> = (0..4).map(|_| FeatureView::U8(&bins)).collect();
 
         let ordered_grad_hess: Vec<GradsTuple> = (0..n_samples)
             .map(|i| GradsTuple {

@@ -358,8 +358,8 @@ mod tests {
             0,
             0,
             0.0,
-            0.5,  // min_val
-            3.5,  // max_val
+            0.5, // min_val
+            3.5, // max_val
         )
     }
 
@@ -409,7 +409,7 @@ mod tests {
     fn test_numerical_with_nan_missing() {
         // 3 bins + NaN bin
         let mapper = BinMapper::numerical(
-            vec![1.0, 2.0, 3.0, f64::INFINITY],  // Last is NaN bin
+            vec![1.0, 2.0, 3.0, f64::INFINITY], // Last is NaN bin
             MissingType::NaN,
             3, // default_bin
             0,
@@ -419,8 +419,8 @@ mod tests {
         );
 
         assert_eq!(mapper.n_bins(), 4);
-        assert_eq!(mapper.value_to_bin(f64::NAN), 3);  // NaN goes to last bin
-        assert!(mapper.bin_to_midpoint(3).is_nan());   // NaN bin returns NaN
+        assert_eq!(mapper.value_to_bin(f64::NAN), 3); // NaN goes to last bin
+        assert!(mapper.bin_to_midpoint(3).is_nan()); // NaN bin returns NaN
     }
 
     #[test]
@@ -435,8 +435,8 @@ mod tests {
             3.0,
         );
 
-        assert_eq!(mapper.value_to_bin(0.0), 0);  // Zero goes to default bin
-        assert_eq!(mapper.value_to_bin(1.5), 1);  // Non-zero works normally
+        assert_eq!(mapper.value_to_bin(0.0), 0); // Zero goes to default bin
+        assert_eq!(mapper.value_to_bin(1.5), 1); // Non-zero works normally
     }
 
     // ------------------------------------------------------------------------
@@ -445,13 +445,7 @@ mod tests {
 
     fn create_categorical_mapper() -> BinMapper {
         // Categories: 10, 20, 30 map to bins 0, 1, 2
-        BinMapper::categorical(
-            vec![10, 20, 30],
-            MissingType::None,
-            0,
-            0,
-            0.0,
-        )
+        BinMapper::categorical(vec![10, 20, 30], MissingType::None, 0, 0, 0.0)
     }
 
     #[test]
@@ -511,7 +505,11 @@ mod tests {
         let small = BinMapper::numerical(
             (0..100).map(|i| i as f64).collect(),
             MissingType::None,
-            0, 0, 0.0, 0.0, 100.0,
+            0,
+            0,
+            0.0,
+            0.0,
+            100.0,
         );
         assert!(!small.needs_u16());
         assert_eq!(small.n_bins(), 100);
@@ -520,7 +518,11 @@ mod tests {
         let boundary = BinMapper::numerical(
             (0..256).map(|i| i as f64).collect(),
             MissingType::None,
-            0, 0, 0.0, 0.0, 256.0,
+            0,
+            0,
+            0.0,
+            0.0,
+            256.0,
         );
         assert!(!boundary.needs_u16());
 
@@ -528,7 +530,11 @@ mod tests {
         let large = BinMapper::numerical(
             (0..500).map(|i| i as f64).collect(),
             MissingType::None,
-            0, 0, 0.0, 0.0, 500.0,
+            0,
+            0,
+            0.0,
+            0.0,
+            500.0,
         );
         assert!(large.needs_u16());
         assert_eq!(large.n_bins(), 500);
@@ -537,19 +543,11 @@ mod tests {
     #[test]
     fn test_is_trivial() {
         // 1 bin is trivial (no splits possible)
-        let trivial = BinMapper::numerical(
-            vec![1.0],
-            MissingType::None,
-            0, 0, 0.0, 0.0, 1.0,
-        );
+        let trivial = BinMapper::numerical(vec![1.0], MissingType::None, 0, 0, 0.0, 0.0, 1.0);
         assert!(trivial.is_trivial());
 
         // 0 bins is trivial
-        let empty = BinMapper::numerical(
-            vec![],
-            MissingType::None,
-            0, 0, 0.0, 0.0, 0.0,
-        );
+        let empty = BinMapper::numerical(vec![], MissingType::None, 0, 0, 0.0, 0.0, 0.0);
         assert!(empty.is_trivial());
 
         // 2+ bins is not trivial
@@ -573,9 +571,11 @@ mod tests {
         let sparse = BinMapper::numerical(
             vec![1.0, 2.0],
             MissingType::Zero,
-            0, 0,
+            0,
+            0,
             0.8, // 80% sparse
-            0.0, 2.0,
+            0.0,
+            2.0,
         );
         assert!((sparse.sparse_rate() - 0.8).abs() < 1e-10);
     }

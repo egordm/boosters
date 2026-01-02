@@ -15,7 +15,7 @@ use crate::training::{
 
 use super::selector::FeatureSelectorKind;
 use super::updater::{
-    apply_bias_delta_to_predictions, apply_weight_deltas_to_predictions, UpdateStrategy, Updater,
+    UpdateStrategy, Updater, apply_bias_delta_to_predictions, apply_weight_deltas_to_predictions,
 };
 
 // ============================================================================
@@ -140,10 +140,10 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
         if train.has_categorical() {
             return None;
         }
-        if let Some(vs) = val_set {
-            if vs.has_categorical() {
-                return None;
-            }
+        if let Some(vs) = val_set
+            && vs.has_categorical()
+        {
+            return None;
         }
 
         let n_features = train.n_features();
@@ -223,7 +223,10 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
             // Update each output
             for output in 0..n_outputs {
                 // Compute denormalized regularization once per output (see updater docs)
-                let reg = self.updater.regularization().denormalize(sum_instance_weight);
+                let reg = self
+                    .updater
+                    .regularization()
+                    .denormalize(sum_instance_weight);
 
                 let bias_delta = {
                     let weights_and_bias = model.weights_and_bias_mut(output);
@@ -233,10 +236,10 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                         .update_bias_inplace(weights_and_bias, grad_pairs, predictions_row)
                 };
 
-                if bias_delta.abs() > 1e-10 {
-                    if let Some(ref mut vp) = val_predictions {
-                        apply_bias_delta_to_predictions(bias_delta, vp.row_mut(output));
-                    }
+                if bias_delta.abs() > 1e-10
+                    && let Some(ref mut vp) = val_predictions
+                {
+                    apply_bias_delta_to_predictions(bias_delta, vp.row_mut(output));
                 }
 
                 selector.setup_round(
@@ -261,16 +264,15 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                 };
 
                 // Keep validation predictions in sync for correct metrics/early stopping.
-                if !weight_deltas.is_empty() {
-                    if let (Some(dataset_val), Some(ref mut predictions_val)) =
+                if !weight_deltas.is_empty()
+                    && let (Some(dataset_val), Some(ref mut predictions_val)) =
                         (val_set, val_predictions.as_mut())
-                    {
-                        apply_weight_deltas_to_predictions(
-                            dataset_val,
-                            &weight_deltas,
-                            predictions_val.row_mut(output),
-                        );
-                    }
+                {
+                    apply_weight_deltas_to_predictions(
+                        dataset_val,
+                        &weight_deltas,
+                        predictions_val.row_mut(output),
+                    );
                 }
             }
 
@@ -332,11 +334,11 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::{transpose_to_c_order, Dataset, TargetsView, WeightsView};
+    use crate::data::{Dataset, TargetsView, WeightsView, transpose_to_c_order};
     use crate::training::{
         LogLoss, LogisticLoss, MulticlassLogLoss, Rmse, SoftmaxLoss, SquaredLoss,
     };
-    use ndarray::{array, Array2};
+    use ndarray::{Array2, array};
 
     /// Helper to create a Dataset and TargetsView from row-major feature data.
     /// Accepts features in [n_samples, n_features] layout (standard user format)
@@ -430,7 +432,7 @@ mod tests {
         };
         let trainer_no_reg = GBLinearTrainer::new(SquaredLoss, Rmse, params_no_reg);
         let model_no_reg = trainer_no_reg
-            .train(&train, targets_view.clone(), WeightsView::None, None)
+            .train(&train, targets_view, WeightsView::None, None)
             .unwrap();
 
         // Train with L2 regularization

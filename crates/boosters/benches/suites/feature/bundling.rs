@@ -240,11 +240,8 @@ fn bench_boosters_training(c: &mut Criterion) {
         let binned_no_bundling =
             BinnedDataset::from_dataset(&features_dataset, &binning_config_no_bundling).unwrap();
 
-        let binned_with_bundling = BinnedDataset::from_dataset(
-            &features_dataset,
-            &binning_config_with_bundling,
-        )
-        .unwrap();
+        let binned_with_bundling =
+            BinnedDataset::from_dataset(&features_dataset, &binning_config_with_bundling).unwrap();
 
         // Convert targets to 2D
         let targets_2d = Array2::from_shape_vec((1, targets.len()), targets.clone()).unwrap();
@@ -256,6 +253,7 @@ fn bench_boosters_training(c: &mut Criterion) {
                 black_box(
                     trainer
                         .train(
+                            black_box(&features_dataset),
                             black_box(&binned_no_bundling),
                             targets_view,
                             WeightsView::None,
@@ -274,6 +272,7 @@ fn bench_boosters_training(c: &mut Criterion) {
                 black_box(
                     trainer
                         .train(
+                            black_box(&features_dataset),
                             black_box(&binned_with_bundling),
                             targets_view,
                             WeightsView::None,

@@ -21,13 +21,13 @@ pub(crate) mod view;
 pub use bin_data::BinData;
 pub use bin_mapper::{BinMapper, FeatureType, MissingType};
 pub use dataset::{BinnedDataset, BinnedFeatureInfo, EffectiveViews, FeatureLocation};
+pub use feature_analysis::{BinningConfig, FeatureAnalysis, FeatureMetadata, GroupSpec};
 pub use group::FeatureGroup;
 pub use storage::{
     BundleStorage, CategoricalStorage, FeatureStorage, NumericStorage, SparseCategoricalStorage,
     SparseNumericStorage,
 };
 pub use view::FeatureView;
-pub use feature_analysis::{BinningConfig, FeatureAnalysis, FeatureMetadata, GroupSpec};
 
 // Bundling types (RFC-0018 native)
 pub use bundling::{BundlePlan, BundlingConfig};

@@ -52,11 +52,7 @@ impl<'a> TreeExplainer<'a> {
         let base_value = Self::compute_base_value(forest);
 
         // Compute max depth for PathState allocation
-        let max_depth = forest
-            .trees()
-            .map(|t| tree_depth(t, 0))
-            .max()
-            .unwrap_or(10);
+        let max_depth = forest.trees().map(|t| tree_depth(t, 0)).max().unwrap_or(10);
 
         Ok(Self {
             forest,
@@ -179,13 +175,7 @@ impl<'a> TreeExplainer<'a> {
                 // Get mutable column for this output group: [n_features+1]
                 let mut group_output = sample_output.slice_mut(ndarray::s![.., group]);
                 path_state.reset();
-                self.tree_shap(
-                    &mut group_output,
-                    tree,
-                    sample,
-                    path_state,
-                    0,
-                );
+                self.tree_shap(&mut group_output, tree, sample, path_state, 0);
             }
         }
     }

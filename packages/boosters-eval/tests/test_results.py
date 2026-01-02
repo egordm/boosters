@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from pydantic import ValidationError
 
 from boosters_eval.results import (
     BenchmarkError,
@@ -75,7 +76,7 @@ class TestBenchmarkResult:
     def test_frozen(self) -> None:
         """Test result is immutable."""
         result = make_result()
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             result.library = "xgboost"  # type: ignore[misc]
 
 
@@ -372,7 +373,7 @@ class TestSummaryByTask:
         assert "**" in table
         # boosters should have bold values
         lines = table.split("\n")
-        boosters_line = [l for l in lines if "boosters" in l][0]
+        boosters_line = next(line for line in lines if "boosters" in line)
         assert "**" in boosters_line
 
     def test_format_summary_table_no_highlight_when_not_significant(self) -> None:
@@ -392,7 +393,7 @@ class TestSummaryByTask:
         # With overlapping distributions, rmse should not be bolded for either library
         # Check that neither library has bold rmse in the table
         lines = table.split("\n")
-        data_lines = [l for l in lines if "boosters" in l or "xgboost" in l]
+        data_lines = [line for line in lines if "boosters" in line or "xgboost" in line]
         # The rmse column values should not be bold (ties)
         for line in data_lines:
             # Extract rmse value - it should not be surrounded by **
@@ -416,7 +417,7 @@ class TestSummaryByTask:
         # Best rmse (0.4) from boosters should be bold even without significance check
         assert "**" in table
         lines = table.split("\n")
-        boosters_line = [l for l in lines if "boosters" in l][0]
+        boosters_line = next(line for line in lines if "boosters" in line)
         assert "**" in boosters_line
 
     def test_to_markdown_groups_by_dataset(self) -> None:

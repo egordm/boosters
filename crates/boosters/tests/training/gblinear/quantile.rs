@@ -9,9 +9,11 @@ use super::{
     TEST_CASES_DIR, load_config, load_test_data, load_train_data, make_dataset, pearson_correlation,
 };
 use approx::assert_relative_eq;
-use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::data::transpose_to_c_order;
-use boosters::training::{GBLinearParams, GBLinearTrainer, PinballLoss, Rmse, UpdateStrategy, Verbosity};
+use boosters::data::{Dataset, TargetsView, WeightsView};
+use boosters::training::{
+    GBLinearParams, GBLinearTrainer, PinballLoss, Rmse, UpdateStrategy, Verbosity,
+};
 use rstest::rstest;
 use serde::Deserialize;
 use std::fs;
@@ -130,10 +132,10 @@ fn quantile_regression_predictions_differ() {
     let trainer_high = GBLinearTrainer::new(PinballLoss::new(0.9), Rmse, base_params);
 
     let model_low = trainer_low
-        .train(&train, targets_view.clone(), WeightsView::None, None)
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
     let model_med = trainer_med
-        .train(&train, targets_view.clone(), WeightsView::None, None)
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
     let model_high = trainer_high
         .train(&train, targets_view, WeightsView::None, None)
@@ -313,7 +315,7 @@ fn multi_quantile_vs_separate_models() {
         base_params.clone(),
     );
     let multi_model = multi_trainer
-        .train(&train, targets_view.clone(), WeightsView::None, None)
+        .train(&train, targets_view, WeightsView::None, None)
         .unwrap();
 
     // Train 3 separate single-quantile models
@@ -322,7 +324,7 @@ fn multi_quantile_vs_separate_models() {
         .map(|&alpha| {
             let trainer = GBLinearTrainer::new(PinballLoss::new(alpha), Rmse, base_params.clone());
             trainer
-                .train(&train, targets_view.clone(), WeightsView::None, None)
+                .train(&train, targets_view, WeightsView::None, None)
                 .unwrap()
         })
         .collect();

@@ -56,59 +56,51 @@ from boosters_eval.suite import (
     run_suite,
 )
 
-__all__ = [
-    # Main API
-    "compare",
-    "run_suite",
-    "run_ablation",
-    "create_ablation_suite",
-    # Suite constants
-    "QUICK_SUITE",
+__all__ = (
+    "ABLATION_SUITES",
+    "DATASETS",
     "FULL_SUITE",
     "MINIMAL_SUITE",
-    "ABLATION_SUITES",
-    # Configuration
+    "QUICK_SUITE",
+    "TASK_METRICS",
+    "TIMING_METRICS",
+    "Baseline",
+    "BaselineResult",
     "BenchmarkConfig",
+    "BenchmarkError",
+    "BenchmarkResult",
     "BoosterType",
     "DatasetConfig",
     "GrowthStrategy",
-    "Task",
-    "TrainingConfig",
-    # Datasets
-    "DATASETS",
-    "get_datasets_by_task",
-    # Results
-    "BenchmarkError",
-    "BenchmarkResult",
-    "ResultCollection",
-    "TASK_METRICS",
-    "TIMING_METRICS",
-    # Metrics
-    "compute_metrics",
-    "is_lower_better",
-    "primary_metric",
-    # Runners
-    "Runner",
-    "get_available_runners",
-    "get_runner",
-    # Baseline
-    "Baseline",
-    "BaselineResult",
+    "LibraryVersions",
+    "MachineInfo",
     "MetricChange",
     "MetricStats",
     "RegressionReport",
-    "check_baseline",
-    "load_baseline",
-    "record_baseline",
-    # Report
-    "LibraryVersions",
-    "MachineInfo",
     "ReportMetadata",
+    "ResultCollection",
+    "Runner",
+    "Task",
+    "TrainingConfig",
+    "check_baseline",
+    "compare",
+    "compute_metrics",
+    "create_ablation_suite",
     "generate_report",
+    "get_available_runners",
+    "get_datasets_by_task",
     "get_library_versions",
     "get_machine_info",
+    "get_runner",
+    "is_lower_better",
     "is_significant",
+    "load_baseline",
+    "primary_metric",
+    "record_baseline",
     "render_report",
-]
+    "run_ablation",
+    "run_suite",
+)
+
 
 __version__ = "0.1.0"

@@ -15,10 +15,21 @@ from boosters_eval.datasets import DATASETS
 from boosters_eval.reports import format_results_terminal, generate_report
 from boosters_eval.results import ResultCollection
 from boosters_eval.runners import get_available_runners
-from boosters_eval.suite import ABLATION_SUITES, FULL_SUITE, QUICK_SUITE, compare, run_ablation, run_suite
+from boosters_eval.suite import (
+    ABLATION_SUITES,
+    FULL_SUITE,
+    MINIMAL_SUITE,
+    QUICK_SUITE,
+    compare,
+    run_ablation,
+    run_suite,
+)
 
-# Default baseline path (relative to project root)
-DEFAULT_BASELINE_PATH = Path("tests/baselines/full.json")
+DEFAULT_BASELINES: dict[str, Path] = {
+    "minimal": Path("tests/baselines/minimal.json"),
+    "quick": Path("tests/baselines/quick.json"),
+    "full": Path("tests/baselines/full.json"),
+}
 
 app = typer.Typer(
     name="boosters-eval",
@@ -30,10 +41,11 @@ app.add_typer(baseline_app, name="baseline")
 console = Console()
 
 
-def _find_baseline_path(baseline_path: Path | None = None) -> Path:
+def _find_baseline_path(*, suite: str, baseline_path: Path | None = None) -> Path:
     """Find baseline file, checking common locations.
 
     Args:
+        suite: Suite name used to determine the default baseline path.
         baseline_path: Explicit path to use, or None to auto-detect.
 
     Returns:
@@ -48,11 +60,17 @@ def _find_baseline_path(baseline_path: Path | None = None) -> Path:
         console.print(f"[red]Baseline file not found: {baseline_path}[/red]")
         raise typer.Exit(2)
 
+    default_baseline = DEFAULT_BASELINES.get(suite)
+    if default_baseline is None:
+        console.print(f"[red]Unknown suite: {suite}[/red]")
+        console.print(f"Valid options: {', '.join(sorted(DEFAULT_BASELINES.keys()))}")
+        raise typer.Exit(2)
+
     # Try default locations
     candidates = [
-        DEFAULT_BASELINE_PATH,
-        Path.cwd() / DEFAULT_BASELINE_PATH,
-        Path(__file__).parent.parent.parent.parent.parent.parent / DEFAULT_BASELINE_PATH,
+        default_baseline,
+        Path.cwd() / default_baseline,
+        Path(__file__).parent.parent.parent.parent.parent.parent / default_baseline,
     ]
 
     for candidate in candidates:
@@ -60,7 +78,7 @@ def _find_baseline_path(baseline_path: Path | None = None) -> Path:
             return candidate
 
     console.print("[red]No baseline file found![/red]")
-    console.print(f"Expected at: {DEFAULT_BASELINE_PATH}")
+    console.print(f"Expected at: {default_baseline}")
     console.print("Run 'boosters-eval baseline record' to create one.")
     raise typer.Exit(2)
 
@@ -156,6 +174,10 @@ def full(
 
 @app.command()
 def check(
+    suite: Annotated[
+        str,
+        typer.Option("--suite", "-s", help="Suite to run: minimal, quick, or full."),
+    ] = "minimal",
     baseline_file: Annotated[
         Path | None,
         typer.Option("--baseline", "-b", help="Path to baseline JSON file."),
@@ -179,7 +201,7 @@ def check(
       1 - Regressions detected (when --fail-on-regression is set)
       2 - Baseline file not found
     """
-    baseline_path = _find_baseline_path(baseline_file)
+    baseline_path = _find_baseline_path(suite=suite, baseline_path=baseline_file)
 
     console.print("[bold]Running regression check[/bold]")
     console.print(f"  Baseline: {baseline_path}")
@@ -191,8 +213,19 @@ def check(
     console.print(f"  Baseline git SHA: {baseline.git_sha or 'unknown'}")
     console.print()
 
-    # Run current benchmarks with same suite used for baseline (full)
-    results = run_suite(FULL_SUITE)
+    if suite == "minimal":
+        benchmark_suite = MINIMAL_SUITE
+    elif suite == "quick":
+        benchmark_suite = QUICK_SUITE
+    elif suite == "full":
+        benchmark_suite = FULL_SUITE
+    else:
+        console.print(f"[red]Unknown suite: {suite}[/red]")
+        console.print("Valid options: minimal, quick, full")
+        raise typer.Exit(1)
+
+    # Run current benchmarks
+    results = run_suite(benchmark_suite)
 
     # Check for regressions
     report = check_baseline(results, baseline, tolerance=tolerance)
@@ -487,29 +520,35 @@ def list_tasks() -> None:
 def baseline_record(
     output: Annotated[
         Path | None,
-        typer.Option("--output", "-o", help="Output path for baseline JSON (default: tests/baselines/full.json)."),
+        typer.Option(
+            "--output",
+            "-o",
+            help="Output path for baseline JSON (default depends on --suite).",
+        ),
     ] = None,
     suite: Annotated[
         str,
-        typer.Option("--suite", "-s", help="Suite to run: quick or full."),
-    ] = "full",
+        typer.Option("--suite", "-s", help="Suite to run: minimal, quick or full."),
+    ] = "minimal",
 ) -> None:
     """Record current results as a baseline.
 
-    By default, records results from the full suite to tests/baselines/full.json.
+    By default, records results from the minimal suite to tests/baselines/minimal.json.
     This baseline is used by 'boosters-eval check' for regression testing.
     """
-    if suite == "quick":
+    if suite == "minimal":
+        benchmark_suite = MINIMAL_SUITE
+    elif suite == "quick":
         benchmark_suite = QUICK_SUITE
     elif suite == "full":
         benchmark_suite = FULL_SUITE
     else:
         console.print(f"[red]Unknown suite: {suite}[/red]")
-        console.print("Valid options: quick, full")
+        console.print("Valid options: minimal, quick, full")
         raise typer.Exit(1)
 
     # Default output path
-    output_path = output or DEFAULT_BASELINE_PATH
+    output_path = output or DEFAULT_BASELINES[suite]
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     console.print(f"[bold]Recording baseline using {suite} suite[/bold]\n")
@@ -529,8 +568,8 @@ def baseline_check(
     ],
     suite: Annotated[
         str,
-        typer.Option("--suite", "-s", help="Suite to run: quick or full."),
-    ] = "quick",
+        typer.Option("--suite", "-s", help="Suite to run: minimal, quick or full."),
+    ] = "minimal",
     tolerance: Annotated[
         float,
         typer.Option("--tolerance", "-t", help="Regression tolerance (0.02 = 2%)."),
@@ -545,12 +584,15 @@ def baseline_check(
         console.print(f"[red]Baseline file not found: {baseline_file}[/red]")
         raise typer.Exit(2)
 
-    if suite == "quick":
+    if suite == "minimal":
+        benchmark_suite = MINIMAL_SUITE
+    elif suite == "quick":
         benchmark_suite = QUICK_SUITE
     elif suite == "full":
         benchmark_suite = FULL_SUITE
     else:
         console.print(f"[red]Unknown suite: {suite}[/red]")
+        console.print("Valid options: minimal, quick, full")
         raise typer.Exit(1)
 
     console.print(f"[bold]Checking against baseline: {baseline_file}[/bold]")

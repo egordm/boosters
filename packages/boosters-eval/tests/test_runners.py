@@ -26,12 +26,17 @@ def make_config(
     booster_type: BoosterType = BoosterType.GBDT,
 ) -> BenchmarkConfig:
     """Helper to create a test config."""
+
+    def loader() -> tuple[np.ndarray, np.ndarray]:
+        rng = np.random.default_rng(123)
+        return rng.standard_normal((100, 5)), rng.standard_normal(100)
+
     return BenchmarkConfig(
         name="test/config",
         dataset=DatasetConfig(
             name="test_ds",
             task=task,
-            loader=lambda: (np.random.randn(100, 5), np.random.randn(100)),
+            loader=loader,
             n_classes=3 if task == Task.MULTICLASS else None,
         ),
         training=TrainingConfig(n_estimators=5, max_depth=3),

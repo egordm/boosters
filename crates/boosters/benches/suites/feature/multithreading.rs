@@ -17,8 +17,6 @@ use boosters::data::{BinnedDataset, BinningConfig, WeightsView};
 use boosters::testing::synthetic_datasets::{features_row_major_slice, synthetic_regression};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
 
-use ndarray::Array2;
-
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 #[cfg(feature = "bench-xgboost")]

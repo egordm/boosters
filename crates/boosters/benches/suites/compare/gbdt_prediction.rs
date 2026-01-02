@@ -259,11 +259,9 @@ fn bench_predict_thread_scaling(c: &mut Criterion) {
 
     for &n_threads in common::matrix::THREAD_COUNTS {
         // booste-rs
-        group.bench_with_input(
-            BenchmarkId::new("boosters", n_threads),
-            &dataset,
-            |b, d| b.iter(|| black_box(predictor.predict(black_box(d), Parallelism::Parallel))),
-        );
+        group.bench_with_input(BenchmarkId::new("boosters", n_threads), &dataset, |b, d| {
+            b.iter(|| black_box(predictor.predict(black_box(d), Parallelism::Parallel)))
+        });
 
         // XGBoost
         #[cfg(feature = "bench-xgboost")]

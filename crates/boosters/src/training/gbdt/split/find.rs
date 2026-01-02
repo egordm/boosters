@@ -317,7 +317,12 @@ impl GreedySplitter {
             left_count += 1;
         }
 
-        for (bin, &(bin_grad, bin_hess)) in bins.iter().enumerate().skip(start_bin).take(n_bins - 1 - start_bin) {
+        for (bin, &(bin_grad, bin_hess)) in bins
+            .iter()
+            .enumerate()
+            .skip(start_bin)
+            .take(n_bins - 1 - start_bin)
+        {
             // Accumulate current bin into left child
             left_grad += bin_grad;
             left_hess += bin_hess;
@@ -756,8 +761,16 @@ mod tests {
         let parent_grad = 5.0;
         let parent_hess = 5.0;
         let ctx = NodeGainContext::new(parent_grad, parent_hess, &splitter.gain_params);
-        let split =
-            splitter.find_numerical_split(&bins, 0, parent_grad, parent_hess, 5, false, false, &ctx);
+        let split = splitter.find_numerical_split(
+            &bins,
+            0,
+            parent_grad,
+            parent_hess,
+            5,
+            false,
+            false,
+            &ctx,
+        );
         assert!(!split.is_valid());
     }
 

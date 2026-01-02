@@ -154,9 +154,7 @@ class _GBLinearEstimatorBase(BaseEstimator, ABC):  # type: ignore[misc]
 
         return self
 
-    def _build_val_set(
-        self, eval_set: tuple[NDArray[Any], NDArray[Any]] | None
-    ) -> Dataset | None:
+    def _build_val_set(self, eval_set: tuple[NDArray[Any], NDArray[Any]] | None) -> Dataset | None:
         """Build validation dataset from user input."""
         if eval_set is None:
             return None

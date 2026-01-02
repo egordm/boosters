@@ -9,13 +9,9 @@ mod common;
 use common::criterion_config::default_criterion;
 
 use boosters::Parallelism;
-use boosters::data::binned::BinnedDataset;
-use boosters::data::{BinningConfig, transpose_to_c_order};
-use boosters::data::{Dataset, TargetsView, WeightsView};
-use boosters::testing::synthetic_datasets::synthetic_regression;
+use boosters::data::{BinnedDataset, BinningConfig, WeightsView};
+use boosters::testing::synthetic_datasets::{features_row_major_slice, synthetic_regression};
 use boosters::training::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, Rmse, SquaredLoss};
-
-use ndarray::{Array2, ArrayView2};
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
@@ -56,21 +52,18 @@ fn bench_train_regression(c: &mut Criterion) {
 
     for (name, rows, cols) in configs {
         let dataset = synthetic_regression(rows, cols, 42, 0.05);
-        let targets: Vec<f32> = dataset.targets.to_vec();
-        // Get row-major features for XGBoost/LightGBM
-        let features_row_major = dataset.features_row_major();
-        let features: Vec<f32> = features_row_major.iter().cloned().collect();
+        let targets: Vec<f32> = dataset
+            .targets()
+            .expect("synthetic datasets have targets")
+            .as_single_output()
+            .to_vec();
+        let features: Vec<f32> = features_row_major_slice(&dataset);
 
         group.throughput(Throughput::Elements((rows * cols) as u64));
 
         // =====================================================================
         // booste-rs
         // =====================================================================
-        // Transpose to feature-major for booste-rs (it expects feature-major)
-        let sample_major_view = ArrayView2::from_shape((rows, cols), &features).unwrap();
-        let features_fm = transpose_to_c_order(sample_major_view);
-        let features_dataset = Dataset::from_array(features_fm.view(), None, None);
-
         let params = GBDTParams {
             n_trees,
             learning_rate: 0.1,
@@ -87,13 +80,12 @@ fn bench_train_regression(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("boosters/cold_full", name), |b| {
             b.iter(|| {
                 let binning_config = BinningConfig::builder().max_bins(256).build();
-                let binned = BinnedDataset::from_dataset(&features_dataset, &binning_config).unwrap();
-                let targets_2d =
-                    Array2::from_shape_vec((1, targets.len()), targets.clone()).unwrap();
-                let targets_view = TargetsView::new(targets_2d.view());
+                let binned = BinnedDataset::from_dataset(&dataset, &binning_config).unwrap();
+                let targets_view = dataset.targets().expect("synthetic datasets have targets");
                 black_box(
                     trainer
                         .train(
+                            black_box(&dataset),
                             black_box(&binned),
                             targets_view,
                             WeightsView::None,

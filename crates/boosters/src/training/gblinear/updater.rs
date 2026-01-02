@@ -191,16 +191,14 @@ impl Updater {
                 reg,
                 predictions,
             ),
-            UpdateStrategy::Shotgun => {
-                self.update_round_shotgun_inplace(
-                    data,
-                    weights_and_bias,
-                    grad_pairs,
-                    selector,
-                    reg,
-                    predictions,
-                )
-            }
+            UpdateStrategy::Shotgun => self.update_round_shotgun_inplace(
+                data,
+                weights_and_bias,
+                grad_pairs,
+                selector,
+                reg,
+                predictions,
+            ),
         }
     }
 
@@ -357,6 +355,7 @@ pub(super) fn apply_bias_delta_to_predictions(
 /// delta = soft_threshold(-grad_l2 / hess_l2, alpha / hess_l2) × learning_rate
 /// ```
 #[cfg(test)]
+#[allow(clippy::too_many_arguments)]
 pub(super) fn compute_weight_update(
     data: &Dataset,
     grad_pairs: &[GradsTuple],

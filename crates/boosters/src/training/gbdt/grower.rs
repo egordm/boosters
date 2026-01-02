@@ -145,7 +145,8 @@ impl TreeGrower {
             GreedySplitter::with_config(params.gain.clone(), params.max_onehot_cats, parallelism);
 
         // Column sampler uses effective columns for sampling
-        let col_sampler = ColSampler::new(params.col_sampling.clone(), n_effective_columns as u32, 0);
+        let col_sampler =
+            ColSampler::new(params.col_sampling.clone(), n_effective_columns as u32, 0);
 
         Self {
             params,
@@ -322,6 +323,7 @@ impl TreeGrower {
     }
 
     /// Process a single candidate node.
+    #[allow(clippy::too_many_arguments)]
     fn process_candidate(
         &mut self,
         candidate: NodeCandidate,
@@ -368,7 +370,8 @@ impl TreeGrower {
         // Partition rows based on the split.
         // For bundled columns, the partitioner needs effective views to decode the split
         let (right_node, left_count, right_count) =
-            self.partitioner.split(candidate.node, &candidate.split, dataset, effective);
+            self.partitioner
+                .split(candidate.node, &candidate.split, dataset, effective);
 
         // Use original node as left (now owns only left rows)
         let left_node = candidate.node;
@@ -564,14 +567,11 @@ impl TreeGrower {
         match &split.split_type {
             SplitType::Numerical { bin } => {
                 // Decode effective column + bin to original feature + bin
-                let (orig_feature, orig_bin) = dataset.decode_split_to_original(
-                    effective,
-                    effective_col,
-                    *bin as u32,
-                );
+                let (orig_feature, orig_bin) =
+                    dataset.decode_split_to_original(effective, effective_col, *bin as u32);
 
                 let mapper = dataset.bin_mapper(orig_feature);
-                
+
                 // Debug: ensure bin is in valid range
                 debug_assert!(
                     orig_bin < mapper.n_bins(),
@@ -580,7 +580,7 @@ impl TreeGrower {
                     orig_feature,
                     mapper.n_bins(),
                 );
-                
+
                 let bin_upper = mapper.bin_to_value(orig_bin) as f32;
                 let threshold = Self::next_up_f32(bin_upper);
                 builder.apply_numeric_split(
@@ -738,7 +738,7 @@ mod tests {
     use super::*;
     use crate::data::{BinnedDataset, BinningConfig, Dataset};
     use crate::repr::gbdt::{Tree, TreeView};
-    use ndarray::{array, Array1};
+    use ndarray::{Array1, array};
 
     /// Helper to count leaves in a Tree.
     fn count_leaves<L: crate::repr::gbdt::LeafValue>(tree: &Tree<L>) -> usize {
@@ -816,12 +816,8 @@ mod tests {
         assert_eq!(tree.predict_row(&[threshold]).0, 20.0);
 
         // And the binned path must match training semantics.
-        let x0 = dataset
-            .bin_mapper(0)
-            .bin_to_value(dataset.bin(0, 0)) as f32;
-        let x1 = dataset
-            .bin_mapper(0)
-            .bin_to_value(dataset.bin(1, 0)) as f32;
+        let x0 = dataset.bin_mapper(0).bin_to_value(dataset.bin(0, 0)) as f32;
+        let x1 = dataset.bin_mapper(0).bin_to_value(dataset.bin(1, 0)) as f32;
         assert_eq!(tree.predict_row(&[x0]).0, 10.0);
         assert_eq!(tree.predict_row(&[x1]).0, 20.0);
     }
@@ -1304,10 +1300,7 @@ mod tests {
         let tree = grower.grow(&dataset, &gradients, 0, None).freeze();
 
         // Tree should have been grown successfully
-        assert!(
-            count_leaves(&tree) >= 1,
-            "Tree should have at least 1 leaf"
-        );
+        assert!(count_leaves(&tree) >= 1, "Tree should have at least 1 leaf");
 
         // With only bundle features and sparse data, splits may or may not occur
         // The key test is that the grower handles bundled features without panicking

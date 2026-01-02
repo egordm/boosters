@@ -4,13 +4,13 @@
 //! Access components via [`linear()`](GBLinearModel::linear), [`meta()`](GBLinearModel::meta),
 //! and [`config()`](GBLinearModel::config).
 
+use crate::Parallelism;
 use crate::data::Dataset;
 use crate::explainability::{ExplainError, LinearExplainer, ShapValues};
 use crate::model::meta::ModelMeta;
 use crate::repr::gblinear::LinearModel;
 use crate::training::gblinear::GBLinearTrainer;
 use crate::training::{Metric, ObjectiveFn};
-use crate::Parallelism;
 
 use ndarray::Array2;
 

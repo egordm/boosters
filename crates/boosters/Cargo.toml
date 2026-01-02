@@ -91,12 +91,6 @@ harness = false
 path = "benches/suites/component/train_gbdt.rs"
 
 [[bench]]
-name = "dataset_overhead"
-harness = false
-required-features = ["bench-training"]
-path = "benches/suites/component/dataset_overhead.rs"
-
-[[bench]]
 name = "e2e_train_predict_gbdt"
 harness = false
 path = "benches/suites/e2e/train_predict_gbdt.rs"

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import platform
 import subprocess
-from datetime import datetime
+from datetime import UTC, datetime
+from pathlib import Path
 
 import psutil
 from pydantic import BaseModel, ConfigDict
@@ -64,7 +65,7 @@ def get_machine_info() -> MachineInfo:
     cpu = platform.processor()
     if not cpu and platform.system() == "Linux":
         try:
-            with open("/proc/cpuinfo") as f:
+            with Path("/proc/cpuinfo").open() as f:
                 for line in f:
                     if line.startswith("model name"):
                         cpu = line.split(":")[1].strip()
@@ -163,12 +164,11 @@ def is_significant(
     try:
         result = stats.ttest_ind(values1, values2, equal_var=False)
         return bool(result.pvalue < alpha)  # type: ignore[attr-defined]
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
 
 
 def create_metadata(
-    results_count: int,
     seeds: set[int],
     suite_name: str,
     title: str,
@@ -178,7 +178,7 @@ def create_metadata(
     """Create report metadata from results."""
     return ReportMetadata(
         title=title,
-        created_at=datetime.now().isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
         git_sha=get_git_sha(),
         machine=get_machine_info(),
         library_versions=get_library_versions(),

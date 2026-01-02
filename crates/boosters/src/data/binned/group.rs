@@ -7,8 +7,8 @@
 // Allow dead code during migration - this will be used when we switch over in Epic 7
 #![allow(dead_code)]
 
-use super::view::FeatureView;
 use super::FeatureStorage;
+use super::view::FeatureView;
 
 /// A group of features with homogeneous storage.
 ///
@@ -249,18 +249,16 @@ impl FeatureGroup {
                     },
                 }
             }
-            FeatureStorage::SparseCategorical(s) => {
-                match s.bins() {
-                    super::BinData::U8(bins) => FeatureView::SparseU8 {
-                        sample_indices: s.sample_indices(),
-                        bin_values: bins,
-                    },
-                    super::BinData::U16(bins) => FeatureView::SparseU16 {
-                        sample_indices: s.sample_indices(),
-                        bin_values: bins,
-                    },
-                }
-            }
+            FeatureStorage::SparseCategorical(s) => match s.bins() {
+                super::BinData::U8(bins) => FeatureView::SparseU8 {
+                    sample_indices: s.sample_indices(),
+                    bin_values: bins,
+                },
+                super::BinData::U16(bins) => FeatureView::SparseU16 {
+                    sample_indices: s.sample_indices(),
+                    bin_values: bins,
+                },
+            },
             FeatureStorage::Bundle(s) => {
                 // Bundle storage: return U16 view of encoded bins
                 // Note: For bundles, this is the encoded column view for histogram building.
@@ -292,8 +290,7 @@ impl FeatureGroup {
 mod tests {
     use super::*;
     use crate::data::binned::{
-        BinData, CategoricalStorage, NumericStorage, SparseCategoricalStorage,
-        SparseNumericStorage,
+        BinData, CategoricalStorage, NumericStorage, SparseCategoricalStorage, SparseNumericStorage,
     };
 
     fn make_numeric_group() -> FeatureGroup {
@@ -306,7 +303,7 @@ mod tests {
 
         FeatureGroup::new(
             vec![10, 20].into_boxed_slice(), // Global indices
-            3,                                // n_samples
+            3,                               // n_samples
             storage,
             vec![10, 8].into_boxed_slice(), // bin_counts
         )
@@ -448,7 +445,6 @@ mod tests {
 
         // Sample 0 defaults to bin=0
         assert_eq!(group.bin(0, 0), 0);
-
     }
 
     #[test]

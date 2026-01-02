@@ -159,7 +159,6 @@ impl LinearModel {
         self.weights[[n_features, group]] = value;
     }
 
-
     // =========================================================================
     // Prediction
     // =========================================================================
@@ -310,9 +309,9 @@ mod tests {
 
         // Use weights_and_bias_mut for bulk modification
         let mut wb = model.weights_and_bias_mut(0);
-        wb[0] = 0.5;  // feature 0
-        wb[1] = 0.3;  // feature 1
-        wb[2] = 0.1;  // bias
+        wb[0] = 0.5; // feature 0
+        wb[1] = 0.3; // feature 1
+        wb[2] = 0.1; // bias
 
         assert_eq!(model.weight(0, 0), 0.5);
         assert_eq!(model.weight(1, 0), 0.3);

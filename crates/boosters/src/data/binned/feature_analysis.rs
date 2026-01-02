@@ -115,7 +115,9 @@ impl BinningConfigBuilder {
         let default = BinningConfig::default();
         BinningConfig {
             max_bins: self.max_bins.unwrap_or(default.max_bins),
-            sparsity_threshold: self.sparsity_threshold.unwrap_or(default.sparsity_threshold),
+            sparsity_threshold: self
+                .sparsity_threshold
+                .unwrap_or(default.sparsity_threshold),
             enable_bundling: self.enable_bundling.unwrap_or(default.enable_bundling),
             max_categorical_cardinality: self
                 .max_categorical_cardinality
@@ -260,11 +262,7 @@ impl FeatureAnalysis {
     /// For categorical: n_unique + possible missing bin
     pub fn required_bins(&self, max_bins: u32, has_nan: bool) -> u32 {
         let base_bins = (self.n_unique as u32).min(max_bins);
-        if has_nan {
-            base_bins + 1
-        } else {
-            base_bins
-        }
+        if has_nan { base_bins + 1 } else { base_bins }
     }
 }
 
@@ -723,7 +721,11 @@ pub fn compute_groups(analyses: &[FeatureAnalysis], _config: &BinningConfig) -> 
     // Create individual sparse groups
     for idx in sparse_numeric {
         let needs_u16 = analyses[idx].needs_u16;
-        groups.push(GroupSpec::new(vec![idx], GroupType::SparseNumeric, needs_u16));
+        groups.push(GroupSpec::new(
+            vec![idx],
+            GroupType::SparseNumeric,
+            needs_u16,
+        ));
     }
     for idx in sparse_categorical {
         let needs_u16 = analyses[idx].needs_u16;
@@ -839,12 +841,12 @@ mod tests {
         // Low cardinality integers can be auto-detected as categorical when enabled
         let data = [0.0f32, 1.0, 2.0, 0.0, 1.0, 2.0, 0.0, 1.0];
         let ds = make_dense_dataset(&data, 8, 1);
-        
+
         // With auto-detection disabled (default), integers remain numeric
         let analysis = analyze_features_dataset(&ds, &default_config(), None);
         assert!(analysis[0].is_numeric); // Should be numeric when auto-detection is disabled
         assert_eq!(analysis[0].n_unique, 3);
-        
+
         // With auto-detection enabled, low-cardinality integers become categorical
         let config_with_auto = BinningConfig::builder()
             .max_categorical_cardinality(256)
@@ -965,7 +967,7 @@ mod tests {
             0.1, 0.2, 0.3, 0.4,
         ];
         let ds = make_dense_dataset(&data, 4, 3);
-        
+
         // With auto-detection disabled (default), all features are numeric
         let analysis = analyze_features_dataset(&ds, &default_config(), None);
 
@@ -980,22 +982,22 @@ mod tests {
         // Feature 2: floats → numeric
         assert!(!analysis[2].is_binary);
         assert!(analysis[2].is_numeric);
-        
+
         // With auto-detection enabled, integers become categorical
         let config_with_auto = BinningConfig::builder()
             .max_categorical_cardinality(256)
             .build();
         let ds2 = make_dense_dataset(&data, 4, 3);
         let analysis_auto = analyze_features_dataset(&ds2, &config_with_auto, None);
-        
+
         // Feature 0: binary → still numeric (binary defaults to numeric)
         assert!(analysis_auto[0].is_binary);
         assert!(analysis_auto[0].is_numeric);
-        
+
         // Feature 1: integer → categorical with auto-detection
         assert!(!analysis_auto[1].is_binary);
         assert!(!analysis_auto[1].is_numeric); // Auto-detected categorical
-        
+
         // Feature 2: floats → numeric
         assert!(!analysis_auto[2].is_binary);
         assert!(analysis_auto[2].is_numeric);
@@ -1260,14 +1262,18 @@ mod tests {
 
         // Each sparse feature gets its own group
         assert_eq!(result.groups.len(), 2);
-        assert!(result
-            .groups
-            .iter()
-            .any(|g| g.group_type == GroupType::SparseNumeric));
-        assert!(result
-            .groups
-            .iter()
-            .any(|g| g.group_type == GroupType::SparseCategorical));
+        assert!(
+            result
+                .groups
+                .iter()
+                .any(|g| g.group_type == GroupType::SparseNumeric)
+        );
+        assert!(
+            result
+                .groups
+                .iter()
+                .any(|g| g.group_type == GroupType::SparseCategorical)
+        );
     }
 
     #[test]

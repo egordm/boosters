@@ -240,7 +240,7 @@ class ResultCollection:
                 continue
 
             # Get task type for this dataset
-            task_value = dataset_df["task"].iloc[0]
+            task_value = dataset_df["task"].iloc[0]  # pyright: ignore[reportAttributeAccessIssue]
             task = Task(task_value)
 
             # Get relevant metrics for this task
@@ -332,7 +332,8 @@ class ResultCollection:
             # Not enough data for statistical test
             return False
         _, p_value = stats.ttest_ind(values_best, values_second, equal_var=False)
-        return bool(p_value < alpha)
+        p_value_f = float(p_value)  # pyright: ignore[reportArgumentType]
+        return p_value_f < alpha
 
     def format_summary_table(
         self,
@@ -378,7 +379,7 @@ class ResultCollection:
             significant_winners: dict[str, str | None] = {}
             for metric in present_metrics:
                 mean_col = f"{metric}_mean"
-                valid = dataset_df.dropna(subset=[mean_col])
+                valid = dataset_df.dropna(subset=[mean_col])  # pyright: ignore[reportCallIssue]
                 if len(valid) < 2:
                     # Can't compare if fewer than 2 libraries
                     significant_winners[metric] = None
@@ -422,14 +423,18 @@ class ResultCollection:
                     mean_val = row[mean_col]
                     std_val = row.get(std_col, np.nan)
 
-                    if pd.isna(mean_val):
+                    if bool(pd.isna(mean_val)):
                         row_dict[metric] = "-"
                     else:
                         # Format value with optional std
-                        if pd.isna(std_val) or std_val == 0:
+                        if std_val is None or bool(pd.isna(std_val)):
                             val_str = f"{mean_val:.{precision}f}"
                         else:
-                            val_str = f"{mean_val:.{precision}f}±{std_val:.{precision}f}"
+                            std_val_f = float(std_val)
+                            if std_val_f == 0.0:
+                                val_str = f"{mean_val:.{precision}f}"
+                            else:
+                                val_str = f"{mean_val:.{precision}f}±{std_val_f:.{precision}f}"
 
                         # Bold only if this library is the significant winner
                         if significant_winners.get(metric) == lib:
@@ -445,7 +450,7 @@ class ResultCollection:
         col_order = ["Dataset", "Library"] + present_metrics
         output_df = output_df[[c for c in col_order if c in output_df.columns]]
 
-        return output_df.to_markdown(index=False)
+        return str(output_df.to_markdown(index=False))
 
     def format_dataset_table(
         self,
@@ -503,7 +508,7 @@ class ResultCollection:
             significant_winners: dict[str, str | None] = {}
             for metric in present_metrics:
                 mean_col = f"{metric}_mean"
-                valid = booster_df.dropna(subset=[mean_col])
+                valid = booster_df.dropna(subset=[mean_col])  # pyright: ignore[reportCallIssue]
                 if len(valid) < 2:
                     # Can't compare if fewer than 2 libraries
                     significant_winners[metric] = None
@@ -547,14 +552,18 @@ class ResultCollection:
                     mean_val = row[mean_col]
                     std_val = row.get(std_col, np.nan)
 
-                    if pd.isna(mean_val):
+                    if bool(pd.isna(mean_val)):
                         row_dict[metric] = "-"
                     else:
                         # Format value with optional std
-                        if pd.isna(std_val) or std_val == 0:
+                        if std_val is None or bool(pd.isna(std_val)):
                             val_str = f"{mean_val:.{precision}f}"
                         else:
-                            val_str = f"{mean_val:.{precision}f}±{std_val:.{precision}f}"
+                            std_val_f = float(std_val)
+                            if std_val_f == 0.0:
+                                val_str = f"{mean_val:.{precision}f}"
+                            else:
+                                val_str = f"{mean_val:.{precision}f}±{std_val_f:.{precision}f}"
 
                         # Bold only if this library is the significant winner
                         if significant_winners.get(metric) == lib:
@@ -570,7 +579,7 @@ class ResultCollection:
         col_order = ["Booster", "Library"] + present_metrics
         output_df = output_df[[c for c in col_order if c in output_df.columns]]
 
-        return output_df.to_markdown(index=False)
+        return str(output_df.to_markdown(index=False))
 
     def to_markdown(
         self,

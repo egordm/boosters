@@ -210,7 +210,10 @@ impl Gradients {
         debug_assert!(output < self.n_outputs());
         let ncols = self.data.ncols();
         let start = output * ncols;
-        &mut self.data.as_slice_mut().expect("array should be contiguous")[start..start + ncols]
+        &mut self
+            .data
+            .as_slice_mut()
+            .expect("array should be contiguous")[start..start + ncols]
     }
 
     // =========================================================================

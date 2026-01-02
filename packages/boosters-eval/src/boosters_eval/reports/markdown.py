@@ -6,7 +6,7 @@ and results tables grouped by task type with only primary metric.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -92,7 +92,7 @@ def format_dataset_table(
         best_lib_pm: str | None = None
         best_lib_time: str | None = None
 
-        valid = booster_df.dropna(subset=[pm_mean_col])
+        valid = booster_df.dropna(subset=[pm_mean_col])  # pyright: ignore[reportCallIssue]
         if len(valid) >= 2:
             lower_better = pm in LOWER_BETTER_METRICS
             if lower_better:
@@ -111,7 +111,7 @@ def format_dataset_table(
                     best_lib_pm = None
 
         if show_timing and "train_time_s_mean" in df.columns:
-            valid_time = booster_df.dropna(subset=["train_time_s_mean"])
+            valid_time = booster_df.dropna(subset=["train_time_s_mean"])  # pyright: ignore[reportCallIssue]
             if len(valid_time) >= 2:
                 sorted_time = valid_time.sort_values("train_time_s_mean", ascending=True)
                 best_lib_time = str(sorted_time.iloc[0]["library"])
@@ -133,13 +133,17 @@ def format_dataset_table(
             mean_val = row[pm_mean_col]
             std_val = row.get(pm_std_col, np.nan) if pm_std_col in row.index else np.nan
 
-            if pd.isna(mean_val):
+            if bool(pd.isna(mean_val)):
                 row_dict[pm] = "-"
             else:
-                if pd.isna(std_val) or std_val == 0:
+                if std_val is None or bool(pd.isna(std_val)):
                     val_str = f"{mean_val:.{precision}f}"
                 else:
-                    val_str = f"{mean_val:.{precision}f}±{std_val:.{precision}f}"
+                    std_val_f = float(std_val)
+                    if std_val_f == 0.0:
+                        val_str = f"{mean_val:.{precision}f}"
+                    else:
+                        val_str = f"{mean_val:.{precision}f}±{std_val_f:.{precision}f}"
 
                 if highlight_best and best_lib_pm == lib:
                     val_str = f"**{val_str}**"
@@ -150,13 +154,17 @@ def format_dataset_table(
                 time_mean = row.get("train_time_s_mean", np.nan)
                 time_std = row.get("train_time_s_std", np.nan)
 
-                if pd.isna(time_mean):
+                if bool(pd.isna(time_mean)):
                     row_dict["train_time_s"] = "-"
                 else:
-                    if pd.isna(time_std) or time_std == 0:
+                    if time_std is None or bool(pd.isna(time_std)):
                         time_str = f"{time_mean:.{precision}f}"
                     else:
-                        time_str = f"{time_mean:.{precision}f}±{time_std:.{precision}f}"
+                        time_std_f = float(time_std)
+                        if time_std_f == 0.0:
+                            time_str = f"{time_mean:.{precision}f}"
+                        else:
+                            time_str = f"{time_mean:.{precision}f}±{time_std_f:.{precision}f}"
 
                     if highlight_best and best_lib_time == lib:
                         time_str = f"**{time_str}**"
@@ -171,12 +179,13 @@ def format_dataset_table(
         col_order.append("train_time_s")
     output_df = output_df[[c for c in col_order if c in output_df.columns]]
 
-    return output_df.to_markdown(index=False)
+    return str(output_df.to_markdown(index=False))
 
 
 def render_report(
     results: ResultCollection,
     metadata: ReportMetadata,
+    *,
     require_significance: bool = True,
 ) -> str:
     """Render a benchmark report as markdown.
@@ -352,7 +361,7 @@ def generate_report(
 
     metadata = ReportMetadata(
         title=title,
-        created_at=datetime.now().isoformat(),
+        created_at=datetime.now(UTC).isoformat(),
         git_sha=git_sha,
         machine=machine,
         library_versions=library_versions,

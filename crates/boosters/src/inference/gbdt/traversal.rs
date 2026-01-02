@@ -44,7 +44,11 @@ pub trait TreeTraversal<L: LeafValue>: Clone {
     fn build_tree_state(tree: &Tree<L>) -> Self::TreeState;
 
     /// Traverse a tree with given sample, returning the leaf node index.
-    fn traverse_tree(tree: &Tree<L>, state: &Self::TreeState, sample: ArrayView1<'_, f32>) -> NodeId;
+    fn traverse_tree(
+        tree: &Tree<L>,
+        state: &Self::TreeState,
+        sample: ArrayView1<'_, f32>,
+    ) -> NodeId;
 
     /// Traverse a tree for a block of rows, accumulating results.
     ///
@@ -100,7 +104,11 @@ impl TreeTraversal<ScalarLeaf> for StandardTraversal {
     }
 
     #[inline]
-    fn traverse_tree(tree: &Tree<ScalarLeaf>, _state: &Self::TreeState, sample: ArrayView1<'_, f32>) -> NodeId {
+    fn traverse_tree(
+        tree: &Tree<ScalarLeaf>,
+        _state: &Self::TreeState,
+        sample: ArrayView1<'_, f32>,
+    ) -> NodeId {
         tree.traverse_to_leaf(sample)
     }
 }
@@ -154,7 +162,11 @@ impl<D: UnrollDepth> TreeTraversal<ScalarLeaf> for UnrolledTraversal<D> {
     }
 
     #[inline]
-    fn traverse_tree(tree: &Tree<ScalarLeaf>, state: &Self::TreeState, sample: ArrayView1<'_, f32>) -> NodeId {
+    fn traverse_tree(
+        tree: &Tree<ScalarLeaf>,
+        state: &Self::TreeState,
+        sample: ArrayView1<'_, f32>,
+    ) -> NodeId {
         // Phase 1: Traverse unrolled levels
         let exit_idx = state.traverse_to_exit(sample);
         let node_idx = state.exit_node_idx(exit_idx);
@@ -264,7 +276,8 @@ mod tests {
         let tree = forest.tree(0);
 
         let state = StandardTraversal::build_tree_state(&tree_storage);
-        let result = StandardTraversal::traverse_tree(tree, &state, ndarray::ArrayView1::from(&[0.3f32]));
+        let result =
+            StandardTraversal::traverse_tree(tree, &state, ndarray::ArrayView1::from(&[0.3f32]));
 
         assert_eq!(tree.leaf_value(result).0, 1.0);
     }
@@ -277,7 +290,8 @@ mod tests {
         let tree = forest.tree(0);
 
         let state = StandardTraversal::build_tree_state(&tree_storage);
-        let result = StandardTraversal::traverse_tree(tree, &state, ndarray::ArrayView1::from(&[0.7f32]));
+        let result =
+            StandardTraversal::traverse_tree(tree, &state, ndarray::ArrayView1::from(&[0.7f32]));
 
         assert_eq!(tree.leaf_value(result).0, 2.0);
     }
@@ -290,7 +304,8 @@ mod tests {
         let tree = forest.tree(0);
 
         let state = StandardTraversal::build_tree_state(&tree_storage);
-        let result = StandardTraversal::traverse_tree(tree, &state, ndarray::ArrayView1::from(&[f32::NAN]));
+        let result =
+            StandardTraversal::traverse_tree(tree, &state, ndarray::ArrayView1::from(&[f32::NAN]));
 
         // default_left=true, so goes left
         assert_eq!(tree.leaf_value(result).0, 1.0);
@@ -300,7 +315,11 @@ mod tests {
     fn standard_traversal_threshold_equality_goes_right() {
         let tree_storage = build_simple_tree(1.0, 2.0, 0.5);
         let state = StandardTraversal::build_tree_state(&tree_storage);
-        let result = StandardTraversal::traverse_tree(&tree_storage, &state, ndarray::ArrayView1::from(&[0.5f32]));
+        let result = StandardTraversal::traverse_tree(
+            &tree_storage,
+            &state,
+            ndarray::ArrayView1::from(&[0.5f32]),
+        );
 
         // Spec: numeric split goes left iff value < threshold; equality goes right.
         assert_eq!(tree_storage.leaf_value(result).0, 2.0);
@@ -310,7 +329,11 @@ mod tests {
     fn standard_traversal_missing_default_right() {
         let tree_storage = build_simple_tree_default_right(1.0, 2.0, 0.5);
         let state = StandardTraversal::build_tree_state(&tree_storage);
-        let result = StandardTraversal::traverse_tree(&tree_storage, &state, ndarray::ArrayView1::from(&[f32::NAN]));
+        let result = StandardTraversal::traverse_tree(
+            &tree_storage,
+            &state,
+            ndarray::ArrayView1::from(&[f32::NAN]),
+        );
 
         assert_eq!(tree_storage.leaf_value(result).0, 2.0);
     }
@@ -321,15 +344,27 @@ mod tests {
         let state = StandardTraversal::build_tree_state(&tree_storage);
 
         // In-set categories go RIGHT.
-        let in_set = StandardTraversal::traverse_tree(&tree_storage, &state, ndarray::ArrayView1::from(&[1.0f32]));
+        let in_set = StandardTraversal::traverse_tree(
+            &tree_storage,
+            &state,
+            ndarray::ArrayView1::from(&[1.0f32]),
+        );
         assert_eq!(tree_storage.leaf_value(in_set).0, 20.0);
 
         // Not-in-set goes LEFT.
-        let not_in_set = StandardTraversal::traverse_tree(&tree_storage, &state, ndarray::ArrayView1::from(&[2.0f32]));
+        let not_in_set = StandardTraversal::traverse_tree(
+            &tree_storage,
+            &state,
+            ndarray::ArrayView1::from(&[2.0f32]),
+        );
         assert_eq!(tree_storage.leaf_value(not_in_set).0, 10.0);
 
         // Beyond stored bitset defaults to not-in-set => LEFT.
-        let unknown = StandardTraversal::traverse_tree(&tree_storage, &state, ndarray::ArrayView1::from(&[64.0f32]));
+        let unknown = StandardTraversal::traverse_tree(
+            &tree_storage,
+            &state,
+            ndarray::ArrayView1::from(&[64.0f32]),
+        );
         assert_eq!(tree_storage.leaf_value(unknown).0, 10.0);
     }
 
@@ -337,7 +372,11 @@ mod tests {
     fn standard_traversal_categorical_missing_uses_default_direction() {
         let tree_storage = build_categorical_root_tree(false);
         let state = StandardTraversal::build_tree_state(&tree_storage);
-        let result = StandardTraversal::traverse_tree(&tree_storage, &state, ndarray::ArrayView1::from(&[f32::NAN]));
+        let result = StandardTraversal::traverse_tree(
+            &tree_storage,
+            &state,
+            ndarray::ArrayView1::from(&[f32::NAN]),
+        );
 
         // default_left=false, so missing goes right.
         assert_eq!(tree_storage.leaf_value(result).0, 20.0);
@@ -354,7 +393,11 @@ mod tests {
         let unrolled_state = UnrolledTraversal6::build_tree_state(&tree_storage);
 
         for fval in [0.1, 0.3, 0.5, 0.7, 0.9, f32::NAN] {
-            let std_result = StandardTraversal::traverse_tree(tree, &std_state, ndarray::ArrayView1::from(&[fval]));
+            let std_result = StandardTraversal::traverse_tree(
+                tree,
+                &std_state,
+                ndarray::ArrayView1::from(&[fval]),
+            );
             let unrolled_result = <UnrolledTraversal6 as TreeTraversal<ScalarLeaf>>::traverse_tree(
                 tree,
                 &unrolled_state,

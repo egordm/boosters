@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypedDict
 
+import numpy as np
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from boosters_eval.metrics import is_lower_better
@@ -98,10 +99,10 @@ def get_boosters_version() -> str | None:
     """Get boosters library version."""
     try:
         import boosters
-
-        return boosters.__version__
     except (ImportError, AttributeError):
         return None
+    else:
+        return boosters.__version__
 
 
 def record_baseline(
@@ -138,8 +139,6 @@ def record_baseline(
 
         for metric_key in metric_keys:
             values = [m[metric_key] for m in metrics_list]
-            import numpy as np
-
             mean = float(np.mean(values))
             std = float(np.std(values))
             n = len(values)
@@ -251,15 +250,12 @@ def check_baseline(
     improvements: list[MetricChange] = []
 
     for key, metrics_list in current_agg.items():
-        config_name, library = key
+        config_name, _library = key
         baseline_result = baseline_lookup.get(key)
 
         if baseline_result is None:
             # New config, not in baseline - skip
             continue
-
-        # Compute current means
-        import numpy as np
 
         for metric_key in metrics_list[0].keys():
             values = [m[metric_key] for m in metrics_list]

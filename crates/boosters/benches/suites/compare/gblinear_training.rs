@@ -7,12 +7,9 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
-use boosters::data::Dataset;
-use boosters::data::transpose_to_c_order;
-use boosters::testing::synthetic_datasets::synthetic_regression;
+use boosters::data::{Dataset, Feature, WeightsView};
+use boosters::testing::synthetic_datasets::{features_row_major_slice, synthetic_regression};
 use boosters::training::{GBLinearParams, GBLinearTrainer, Rmse, SquaredLoss, Verbosity};
-
-use ndarray::ArrayView2;
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
@@ -38,32 +35,6 @@ const MEDIUM: (usize, usize) = (50_000, 100);
 const LARGE: (usize, usize) = (100_000, 200);
 
 // =============================================================================
-// Helpers
-// =============================================================================
-
-fn build_features_array(
-    features_row_major: &[f32],
-    rows: usize,
-    cols: usize,
-) -> ndarray::Array2<f32> {
-    let sample_major_view = ArrayView2::from_shape((rows, cols), features_row_major).unwrap();
-    transpose_to_c_order(sample_major_view)
-}
-
-fn build_dataset(
-    features_row_major: &[f32],
-    rows: usize,
-    cols: usize,
-    targets: Vec<f32>,
-) -> Dataset {
-    // Build feature-major Array2: [n_features, n_samples]
-    let feature_major = build_features_array(features_row_major, rows, cols);
-    // Build targets Array2: [1, n_samples]
-    let targets_2d = ndarray::Array2::from_shape_vec((1, targets.len()), targets).unwrap();
-    Dataset::from_array(feature_major.view(), Some(targets_2d), None)
-}
-
-// =============================================================================
 // GBLinear Training Comparison
 // =============================================================================
 
@@ -80,26 +51,12 @@ fn bench_gblinear_regression(c: &mut Criterion) {
 
     for (name, rows, cols) in configs {
         let dataset = synthetic_regression(rows, cols, 42, 0.05);
-        let targets: Vec<f32> = dataset.targets.to_vec();
-        // Convert feature-major to row-major for XGBoost compatibility
-        let features_fm = dataset.features.view();
-        let features: Vec<f32> = {
-            let mut v = Vec::with_capacity(rows * cols);
-            for r in 0..rows {
-                for f in 0..cols {
-                    v.push(features_fm[(f, r)]);
-                }
-            }
-            v
-        };
 
         group.throughput(Throughput::Elements((rows * cols) as u64));
 
         // =====================================================================
         // booste-rs GBLinear
         // =====================================================================
-        let dataset = build_dataset(&features, rows, cols, targets.clone());
-
         let params = GBLinearParams {
             n_rounds,
             learning_rate: 0.5,
@@ -112,7 +69,18 @@ fn bench_gblinear_regression(c: &mut Criterion) {
         let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
 
         group.bench_function(BenchmarkId::new("boosters", name), |b| {
-            b.iter(|| black_box(trainer.train(black_box(&dataset), &[]).unwrap()))
+            b.iter(|| {
+                black_box(
+                    trainer
+                        .train(
+                            black_box(&dataset),
+                            dataset.targets().expect("dataset has targets"),
+                            WeightsView::None,
+                            None,
+                        )
+                        .unwrap(),
+                )
+            })
         });
 
         // =====================================================================
@@ -120,6 +88,13 @@ fn bench_gblinear_regression(c: &mut Criterion) {
         // =====================================================================
         #[cfg(feature = "bench-xgboost")]
         {
+            let targets: Vec<f32> = dataset
+                .targets()
+                .expect("synthetic datasets have targets")
+                .as_single_output()
+                .to_vec();
+            let features: Vec<f32> = features_row_major_slice(&dataset);
+
             let linear_params = LinearBoosterParametersBuilder::default()
                 .lambda(0.0)
                 .alpha(0.0)
@@ -170,25 +145,13 @@ fn bench_gblinear_classification(c: &mut Criterion) {
     let n_rounds = 100u32;
 
     let dataset = synthetic_regression(rows, cols, 42, 0.0);
-    let features_fm = dataset.features.view();
-    let features: Vec<f32> = {
-        let mut v = Vec::with_capacity(rows * cols);
-        for r in 0..rows {
-            for f in 0..cols {
-                v.push(features_fm[(f, r)]);
-            }
-        }
-        v
-    };
+    let features: Vec<f32> = features_row_major_slice(&dataset);
 
     // Generate binary labels based on linear combination
     let mut targets = vec![0.0f32; rows];
-    for i in 0..rows {
-        let mut sum = 0.0f32;
-        for j in 0..cols.min(10) {
-            sum += features[i * cols + j];
-        }
-        targets[i] = if sum > 0.0 { 1.0 } else { 0.0 };
+    for (row_idx, row) in features.chunks_exact(cols).enumerate() {
+        let sum: f32 = row.iter().take(cols.min(10)).copied().sum();
+        targets[row_idx] = if sum > 0.0 { 1.0 } else { 0.0 };
     }
 
     group.throughput(Throughput::Elements((rows * cols) as u64));
@@ -196,7 +159,22 @@ fn bench_gblinear_classification(c: &mut Criterion) {
     // =========================================================================
     // booste-rs GBLinear (binary classification)
     // =========================================================================
-    let dataset = build_dataset(&features, rows, cols, targets.clone());
+    let targets_2d =
+        ndarray::Array2::from_shape_vec((1, rows), targets.clone()).expect("shape mismatch");
+    let mut builder = Dataset::builder();
+    for (feature_idx, feature) in dataset.feature_columns().iter().enumerate() {
+        let name = format!("f{feature_idx}");
+        builder = match feature {
+            Feature::Dense(values) => builder.add_feature(&name, values.clone()),
+            Feature::Sparse {
+                indices,
+                values,
+                n_samples,
+                default,
+            } => builder.add_sparse(&name, indices.clone(), values.clone(), *n_samples, *default),
+        };
+    }
+    let dataset = builder.targets(targets_2d.view()).build().unwrap();
 
     let params = GBLinearParams {
         n_rounds,
@@ -210,7 +188,18 @@ fn bench_gblinear_classification(c: &mut Criterion) {
     let trainer = GBLinearTrainer::new(LogisticLoss, LogLoss, params);
 
     group.bench_function("boosters", |b| {
-        b.iter(|| black_box(trainer.train(black_box(&dataset), &[]).unwrap()))
+        b.iter(|| {
+            black_box(
+                trainer
+                    .train(
+                        black_box(&dataset),
+                        dataset.targets().expect("dataset has targets"),
+                        WeightsView::None,
+                        None,
+                    )
+                    .unwrap(),
+            )
+        })
     });
 
     // =========================================================================

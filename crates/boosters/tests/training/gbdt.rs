@@ -2,15 +2,13 @@
 //!
 //! Focused on behavior and invariants (not default params or superficial shapes).
 
-use boosters::data::{
-    BinnedDataset, BinningConfig, transpose_to_c_order,
-};
+use boosters::Parallelism;
+use boosters::data::{BinnedDataset, BinningConfig, transpose_to_c_order};
 use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::inference::gbdt::SimplePredictor;
 use boosters::model::gbdt::{GBDTConfig, GBDTModel};
 use boosters::repr::gbdt::{Forest, SplitType, TreeView};
 use boosters::training::{GBDTParams, GBDTTrainer, GrowthStrategy, Rmse, SquaredLoss};
-use boosters::Parallelism;
 use ndarray::{Array2, ArrayView2};
 
 /// Predict a single row using the predictor.

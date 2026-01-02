@@ -21,7 +21,6 @@
 
 // RFC-0018 Migration: Allow deprecated types during migration period
 #![allow(deprecated)]
-
 #![allow(clippy::type_complexity, clippy::too_many_arguments)]
 
 use std::collections::HashMap;
@@ -80,10 +79,7 @@ impl Task {
 
 #[derive(Debug, Clone)]
 enum DataSource {
-    Synthetic {
-        rows: usize,
-        cols: usize,
-    },
+    Synthetic { rows: usize, cols: usize },
     LibSvm(PathBuf),
     UciMachine(PathBuf),
     Label0(PathBuf),
@@ -681,7 +677,8 @@ fn train_boosters(
     };
 
     // Train using model API (binning handled internally)
-    let model = GBDTModel::train(&dataset_train, None, gbdt_config, 1).expect("training should succeed");
+    let model =
+        GBDTModel::train(&dataset_train, None, gbdt_config, 1).expect("training should succeed");
 
     // Predict using model API (applies transform automatically)
     let pred = model.predict(&dataset_valid, 1);

@@ -40,18 +40,14 @@ fn bench_gbtree_traversal_strategies(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::new("std_block64", batch_size),
             &dataset,
-            |b, d| {
-                b.iter(|| black_box(std_block64.predict(black_box(d), Parallelism::Sequential)))
-            },
+            |b, d| b.iter(|| black_box(std_block64.predict(black_box(d), Parallelism::Sequential))),
         );
 
         group.bench_with_input(
             BenchmarkId::new("unroll_no_block", batch_size),
             &dataset,
             |b, d| {
-                b.iter(|| {
-                    black_box(unroll_no_block.predict(black_box(d), Parallelism::Sequential))
-                })
+                b.iter(|| black_box(unroll_no_block.predict(black_box(d), Parallelism::Sequential)))
             },
         );
         group.bench_with_input(

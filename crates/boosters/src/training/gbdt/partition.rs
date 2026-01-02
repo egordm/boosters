@@ -243,7 +243,10 @@ impl RowPartitioner {
             // Map effective column to original feature
             if let Some(orig_feature) = effective.effective_to_original(effective_col) {
                 let bin_mapper = dataset.bin_mapper(orig_feature);
-                (bin_mapper.default_bin(), bin_mapper.missing_type() != MissingType::None)
+                (
+                    bin_mapper.default_bin(),
+                    bin_mapper.missing_type() != MissingType::None,
+                )
             } else {
                 // Should not happen for non-bundle columns
                 (0u32, false)
@@ -394,9 +397,7 @@ impl RowPartitioner {
                 // Fallback for sparse views or other unhandled combinations
                 for &idx in &indices[begin..end] {
                     let row = idx as usize;
-                    let bin = view
-                        .get_bin(row)
-                        .unwrap_or(default_bin);
+                    let bin = view.get_bin(row).unwrap_or(default_bin);
                     let goes_left = if bin == default_bin && has_missing {
                         default_left
                     } else {
@@ -506,7 +507,8 @@ mod tests {
 
         // Split on feature 1 at bin 0 (rows 0-3 go left, rows 4-7 go right)
         let split = SplitInfo::numerical(1, 0, 1.0, false);
-        let (right_leaf, left_count, right_count) = partitioner.split(0, &split, &dataset, &effective);
+        let (right_leaf, left_count, right_count) =
+            partitioner.split(0, &split, &dataset, &effective);
 
         assert_eq!(left_count, 4);
         assert_eq!(right_count, 4);
@@ -537,7 +539,8 @@ mod tests {
 
         // Split on feature 0 at bin 0 (even indices go left, odd go right)
         let split = SplitInfo::numerical(0, 0, 1.0, false);
-        let (right_leaf, left_count, right_count) = partitioner.split(0, &split, &dataset, &effective);
+        let (right_leaf, left_count, right_count) =
+            partitioner.split(0, &split, &dataset, &effective);
 
         assert_eq!(left_count, 4);
         assert_eq!(right_count, 4);

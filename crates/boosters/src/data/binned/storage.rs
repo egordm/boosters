@@ -100,7 +100,6 @@ impl NumericStorage {
     pub fn bins(&self) -> &BinData {
         &self.bins
     }
-
 }
 
 /// Dense categorical storage: [n_features × n_samples], column-major.
@@ -245,11 +244,7 @@ impl SparseNumericStorage {
     /// # Panics
     ///
     /// Panics if lengths don't match or sample_indices is not sorted.
-    pub fn new(
-        sample_indices: Box<[u32]>,
-        bins: BinData,
-        n_samples: usize,
-    ) -> Self {
+    pub fn new(sample_indices: Box<[u32]>, bins: BinData, n_samples: usize) -> Self {
         assert_eq!(
             sample_indices.len(),
             bins.len(),
@@ -304,8 +299,7 @@ impl SparseNumericStorage {
     /// Returns the total size in bytes used by this storage.
     #[inline]
     pub fn size_bytes(&self) -> usize {
-        self.sample_indices.len() * std::mem::size_of::<u32>()
-            + self.bins.size_bytes()
+        self.sample_indices.len() * std::mem::size_of::<u32>() + self.bins.size_bytes()
     }
 
     /// Returns a reference to the sample indices.
@@ -982,7 +976,7 @@ mod tests {
         // 2 features, 3 samples
         let bins = BinData::from(vec![
             0u8, 1, 2, // Feature 0: categories
-            5, 6, 7,   // Feature 1: categories
+            5, 6, 7, // Feature 1: categories
         ]);
         let storage = CategoricalStorage::new(bins);
         let n_samples = 3;
@@ -1266,7 +1260,8 @@ mod tests {
         let numeric = FeatureStorage::Numeric(make_numeric_storage());
         let categorical = FeatureStorage::Categorical(make_categorical_storage());
         let sparse_numeric = FeatureStorage::SparseNumeric(make_sparse_numeric_storage());
-        let sparse_categorical = FeatureStorage::SparseCategorical(make_sparse_categorical_storage());
+        let sparse_categorical =
+            FeatureStorage::SparseCategorical(make_sparse_categorical_storage());
 
         assert!(!numeric.is_categorical());
         assert!(categorical.is_categorical());
@@ -1279,7 +1274,8 @@ mod tests {
         let numeric = FeatureStorage::Numeric(make_numeric_storage());
         let categorical = FeatureStorage::Categorical(make_categorical_storage());
         let sparse_numeric = FeatureStorage::SparseNumeric(make_sparse_numeric_storage());
-        let sparse_categorical = FeatureStorage::SparseCategorical(make_sparse_categorical_storage());
+        let sparse_categorical =
+            FeatureStorage::SparseCategorical(make_sparse_categorical_storage());
 
         assert!(!numeric.is_sparse());
         assert!(!categorical.is_sparse());
@@ -1297,7 +1293,8 @@ mod tests {
         let numeric = FeatureStorage::Numeric(make_numeric_storage());
         let categorical = FeatureStorage::Categorical(make_categorical_storage());
         let sparse_numeric = FeatureStorage::SparseNumeric(make_sparse_numeric_storage());
-        let sparse_categorical = FeatureStorage::SparseCategorical(make_sparse_categorical_storage());
+        let sparse_categorical =
+            FeatureStorage::SparseCategorical(make_sparse_categorical_storage());
 
         // Numeric: 3 u8 bins = 3
         assert_eq!(numeric.size_bytes(), 3);
@@ -1325,7 +1322,10 @@ mod tests {
         assert!(matches!(sparse_numeric, FeatureStorage::SparseNumeric(_)));
 
         let sparse_categorical: FeatureStorage = make_sparse_categorical_storage().into();
-        assert!(matches!(sparse_categorical, FeatureStorage::SparseCategorical(_)));
+        assert!(matches!(
+            sparse_categorical,
+            FeatureStorage::SparseCategorical(_)
+        ));
     }
 
     // =========================================================================
@@ -1423,8 +1423,11 @@ mod tests {
 
             let bins: Vec<u8> = (0..nnz).map(|_| rng.gen_range(1..=255)).collect();
 
-            let storage =
-                SparseNumericStorage::new(indices.clone().into_boxed_slice(), BinData::from(bins.clone()), n_samples);
+            let storage = SparseNumericStorage::new(
+                indices.clone().into_boxed_slice(),
+                BinData::from(bins.clone()),
+                n_samples,
+            );
 
             // Property 1: nnz() returns correct count
             assert_eq!(storage.nnz(), nnz);
@@ -1500,9 +1503,7 @@ mod tests {
         let total_len = n_features * n_samples;
 
         // Generate bins with values requiring U16
-        let bins: Vec<u16> = (0..total_len)
-            .map(|_| rng.gen_range(256..=1000))
-            .collect();
+        let bins: Vec<u16> = (0..total_len).map(|_| rng.gen_range(256..=1000)).collect();
 
         let storage = NumericStorage::new(BinData::from(bins.clone()));
 
@@ -1527,13 +1528,13 @@ mod tests {
         // Offsets: [1, 6, 16] (starts at 1, then 1+5=6, then 6+10=16)
         // Total bins: 1 + 5 + 10 + 8 = 24
         BundleStorage::new(
-            vec![0u16, 4, 10, 20].into_boxed_slice(),  // encoded bins
-            vec![2u32, 7, 12].into_boxed_slice(),      // feature indices
-            vec![1u32, 6, 16].into_boxed_slice(),      // bin offsets
-            vec![5u32, 10, 8].into_boxed_slice(),      // n_bins per feature
-            24,                                         // total bins
-            vec![0u32, 0, 0].into_boxed_slice(),       // default bins
-            4,                                          // n_samples
+            vec![0u16, 4, 10, 20].into_boxed_slice(), // encoded bins
+            vec![2u32, 7, 12].into_boxed_slice(),     // feature indices
+            vec![1u32, 6, 16].into_boxed_slice(),     // bin offsets
+            vec![5u32, 10, 8].into_boxed_slice(),     // n_bins per feature
+            24,                                       // total bins
+            vec![0u32, 0, 0].into_boxed_slice(),      // default bins
+            4,                                        // n_samples
         )
     }
 
@@ -1553,8 +1554,8 @@ mod tests {
     fn test_bundle_storage_mismatched_offsets() {
         BundleStorage::new(
             vec![0u16].into_boxed_slice(),
-            vec![1u32, 2].into_boxed_slice(),  // 2 features
-            vec![1u32].into_boxed_slice(),     // only 1 offset
+            vec![1u32, 2].into_boxed_slice(), // 2 features
+            vec![1u32].into_boxed_slice(),    // only 1 offset
             vec![5u32, 10].into_boxed_slice(),
             16,
             vec![0u32, 0].into_boxed_slice(),
@@ -1566,13 +1567,13 @@ mod tests {
     #[should_panic(expected = "encoded_bins length must match n_samples")]
     fn test_bundle_storage_mismatched_samples() {
         BundleStorage::new(
-            vec![0u16, 1, 2].into_boxed_slice(),  // 3 encoded bins
+            vec![0u16, 1, 2].into_boxed_slice(), // 3 encoded bins
             vec![1u32, 2].into_boxed_slice(),
             vec![1u32, 6].into_boxed_slice(),
             vec![5u32, 10].into_boxed_slice(),
             16,
             vec![0u32, 0].into_boxed_slice(),
-            5,  // but says 5 samples
+            5, // but says 5 samples
         );
     }
 
@@ -1587,29 +1588,29 @@ mod tests {
     fn test_bundle_decode_feature_a() {
         let storage = make_test_bundle();
         // Feature A: offset=1, n_bins=5, so encoded 1-5 → bins 0-4
-        assert_eq!(storage.decode(1), Some((0, 0)));  // pos 0, bin 0
-        assert_eq!(storage.decode(2), Some((0, 1)));  // pos 0, bin 1
-        assert_eq!(storage.decode(3), Some((0, 2)));  // pos 0, bin 2
-        assert_eq!(storage.decode(4), Some((0, 3)));  // pos 0, bin 3
-        assert_eq!(storage.decode(5), Some((0, 4)));  // pos 0, bin 4
+        assert_eq!(storage.decode(1), Some((0, 0))); // pos 0, bin 0
+        assert_eq!(storage.decode(2), Some((0, 1))); // pos 0, bin 1
+        assert_eq!(storage.decode(3), Some((0, 2))); // pos 0, bin 2
+        assert_eq!(storage.decode(4), Some((0, 3))); // pos 0, bin 3
+        assert_eq!(storage.decode(5), Some((0, 4))); // pos 0, bin 4
     }
 
     #[test]
     fn test_bundle_decode_feature_b() {
         let storage = make_test_bundle();
         // Feature B: offset=6, n_bins=10, so encoded 6-15 → bins 0-9
-        assert_eq!(storage.decode(6), Some((1, 0)));   // pos 1, bin 0
-        assert_eq!(storage.decode(10), Some((1, 4)));  // pos 1, bin 4
-        assert_eq!(storage.decode(15), Some((1, 9)));  // pos 1, bin 9
+        assert_eq!(storage.decode(6), Some((1, 0))); // pos 1, bin 0
+        assert_eq!(storage.decode(10), Some((1, 4))); // pos 1, bin 4
+        assert_eq!(storage.decode(15), Some((1, 9))); // pos 1, bin 9
     }
 
     #[test]
     fn test_bundle_decode_feature_c() {
         let storage = make_test_bundle();
         // Feature C: offset=16, n_bins=8, so encoded 16-23 → bins 0-7
-        assert_eq!(storage.decode(16), Some((2, 0)));  // pos 2, bin 0
-        assert_eq!(storage.decode(20), Some((2, 4)));  // pos 2, bin 4
-        assert_eq!(storage.decode(23), Some((2, 7)));  // pos 2, bin 7
+        assert_eq!(storage.decode(16), Some((2, 0))); // pos 2, bin 0
+        assert_eq!(storage.decode(20), Some((2, 4))); // pos 2, bin 4
+        assert_eq!(storage.decode(23), Some((2, 7))); // pos 2, bin 7
     }
 
     #[test]
@@ -1624,10 +1625,10 @@ mod tests {
     fn test_bundle_decode_to_original() {
         let storage = make_test_bundle();
         // Feature indices are [2, 7, 12]
-        assert_eq!(storage.decode_to_original(0), None);             // all defaults
-        assert_eq!(storage.decode_to_original(4), Some((2, 3)));     // feature 2, bin 3
-        assert_eq!(storage.decode_to_original(10), Some((7, 4)));    // feature 7, bin 4
-        assert_eq!(storage.decode_to_original(20), Some((12, 4)));   // feature 12, bin 4
+        assert_eq!(storage.decode_to_original(0), None); // all defaults
+        assert_eq!(storage.decode_to_original(4), Some((2, 3))); // feature 2, bin 3
+        assert_eq!(storage.decode_to_original(10), Some((7, 4))); // feature 7, bin 4
+        assert_eq!(storage.decode_to_original(20), Some((12, 4))); // feature 12, bin 4
     }
 
     #[test]
@@ -1643,10 +1644,10 @@ mod tests {
     #[test]
     fn test_bundle_is_all_defaults() {
         let storage = make_test_bundle();
-        assert!(storage.is_all_defaults(0));   // bin 0
-        assert!(!storage.is_all_defaults(1));  // bin 4
-        assert!(!storage.is_all_defaults(2));  // bin 10
-        assert!(!storage.is_all_defaults(3));  // bin 20
+        assert!(storage.is_all_defaults(0)); // bin 0
+        assert!(!storage.is_all_defaults(1)); // bin 4
+        assert!(!storage.is_all_defaults(2)); // bin 10
+        assert!(!storage.is_all_defaults(3)); // bin 20
     }
 
     #[test]
@@ -1666,10 +1667,10 @@ mod tests {
         // Bundle with just 1 feature - should still work
         let storage = BundleStorage::new(
             vec![0u16, 3, 5].into_boxed_slice(),
-            vec![42u32].into_boxed_slice(),     // original feature index
-            vec![1u32].into_boxed_slice(),      // offset starts at 1
-            vec![10u32].into_boxed_slice(),     // 10 bins
-            11,                                  // 1 + 10
+            vec![42u32].into_boxed_slice(), // original feature index
+            vec![1u32].into_boxed_slice(),  // offset starts at 1
+            vec![10u32].into_boxed_slice(), // 10 bins
+            11,                             // 1 + 10
             vec![0u32].into_boxed_slice(),
             3,
         );
@@ -1679,7 +1680,7 @@ mod tests {
         assert_eq!(storage.decode(1), Some((0, 0)));
         assert_eq!(storage.decode(5), Some((0, 4)));
         assert_eq!(storage.decode(10), Some((0, 9)));
-        assert_eq!(storage.decode(11), None);  // out of range
+        assert_eq!(storage.decode(11), None); // out of range
     }
 
     #[test]
@@ -1697,7 +1698,7 @@ mod tests {
         let defaults: Vec<u32> = vec![0; n_features];
 
         let storage = BundleStorage::new(
-            vec![0u16, 3, 8, 25, 47].into_boxed_slice(),  // some sample encoded bins
+            vec![0u16, 3, 8, 25, 47].into_boxed_slice(), // some sample encoded bins
             feature_indices.into_boxed_slice(),
             offsets.into_boxed_slice(),
             n_bins.into_boxed_slice(),

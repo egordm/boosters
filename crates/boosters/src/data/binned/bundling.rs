@@ -11,8 +11,8 @@
 //! 4. **Encode bundles**: Create `BundleStorage` with offset encoding
 
 use fixedbitset::FixedBitSet;
-use rand::prelude::*;
 use rand::SeedableRng;
+use rand::prelude::*;
 use rand_xoshiro::Xoshiro256PlusPlus;
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -87,11 +87,7 @@ struct ConflictGraph {
 
 impl ConflictGraph {
     /// Build a conflict graph from sampled rows.
-    fn build(
-        dataset: &Dataset,
-        sparse_features: &[usize],
-        sampled_rows: &[usize],
-    ) -> Self {
+    fn build(dataset: &Dataset, sparse_features: &[usize], sampled_rows: &[usize]) -> Self {
         let n_features = sparse_features.len();
         let n_sampled = sampled_rows.len();
 
@@ -125,7 +121,9 @@ impl ConflictGraph {
                             }
                         }
                     }
-                    Feature::Sparse { indices, values, .. } => {
+                    Feature::Sparse {
+                        indices, values, ..
+                    } => {
                         // Two-pointer scan: both `sampled_rows` and `indices` are sorted.
                         let mut p = 0usize;
                         for (row_pos, &row_idx) in sampled_rows.iter().enumerate() {
@@ -332,13 +330,11 @@ fn assign_bundles(
             let mut conflict_sum = 0usize;
             for &existing_orig in &bundle.feature_indices {
                 // Find sparse index for existing feature
-                if let Some(&existing_analysis_idx) =
-                    analyses.iter().position(|a| a.feature_idx == existing_orig).as_ref()
+                if let Some(existing_analysis_idx) =
+                    analyses.iter().position(|a| a.feature_idx == existing_orig)
+                    && let Some(&existing_sparse_idx) = sparse_to_sorted.get(&existing_analysis_idx)
                 {
-                    if let Some(&existing_sparse_idx) = sparse_to_sorted.get(&existing_analysis_idx)
-                    {
-                        conflict_sum += conflict_graph.get_conflict(sparse_idx, existing_sparse_idx);
-                    }
+                    conflict_sum += conflict_graph.get_conflict(sparse_idx, existing_sparse_idx);
                 }
             }
 
@@ -461,8 +457,13 @@ pub fn create_bundle_plan(
     }
 
     // Assign features to bundles
-    let bundle_assignments =
-        assign_bundles(analyses, &sparse_categorical, &conflict_graph, config, n_sampled);
+    let bundle_assignments = assign_bundles(
+        analyses,
+        &sparse_categorical,
+        &conflict_graph,
+        config,
+        n_sampled,
+    );
 
     // Separate bundles (2+ features) from singletons
     let mut bundles: Vec<Vec<usize>> = Vec::new();
@@ -516,9 +517,11 @@ pub fn apply_bundling(
         // Bundle always uses U16 for encoded bins
         let needs_u16 = true;
 
-        grouping
-            .groups
-            .push(GroupSpec::new(bundle_features.clone(), GroupType::Bundle, needs_u16));
+        grouping.groups.push(GroupSpec::new(
+            bundle_features.clone(),
+            GroupType::Bundle,
+            needs_u16,
+        ));
     }
 
     grouping
@@ -531,7 +534,7 @@ pub fn apply_bundling(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::{array, Array2};
+    use ndarray::{Array2, array};
 
     fn make_analysis(idx: usize, is_numeric: bool, density: f32) -> FeatureAnalysis {
         FeatureAnalysis {
@@ -601,20 +604,17 @@ mod tests {
     #[test]
     fn test_create_bundle_plan_no_conflicts() {
         // Two sparse categorical features with no conflicts (mutually exclusive)
-        let analyses = vec![
-            make_analysis(0, false, 0.05),
-            make_analysis(1, false, 0.05),
-        ];
+        let analyses = vec![make_analysis(0, false, 0.05), make_analysis(1, false, 0.05)];
 
         // Feature 0 is non-zero only for rows 0-4
         // Feature 1 is non-zero only for rows 5-9
         let mut data0 = vec![0.0; 100];
         let mut data1 = vec![0.0; 100];
-        for i in 0..5 {
-            data0[i] = 1.0;
+        for v in data0.iter_mut().take(5) {
+            *v = 1.0;
         }
-        for i in 5..10 {
-            data1[i] = 1.0;
+        for v in data1.iter_mut().take(10).skip(5) {
+            *v = 1.0;
         }
 
         let flat: Vec<f32> = data0.into_iter().chain(data1).collect();

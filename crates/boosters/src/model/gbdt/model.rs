@@ -152,7 +152,15 @@ impl GBDTModel {
             // Get weights as WeightsView
             let weights = dataset.weights();
 
-            Self::train_inner(dataset, &binned, targets, weights, val_set, config, parallelism)
+            Self::train_inner(
+                dataset,
+                &binned,
+                targets,
+                weights,
+                val_set,
+                config,
+                parallelism,
+            )
         })
     }
 

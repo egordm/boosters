@@ -321,10 +321,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
                     val_set,
                     val_predictions.as_ref().map(|p| p.view()),
                 );
-                let value = eval::Evaluator::<O, M>::early_stop_value(
-                    &metrics,
-                    val_set.is_some(),
-                );
+                let value = eval::Evaluator::<O, M>::early_stop_value(&metrics, val_set.is_some());
                 (metrics, value)
             } else {
                 (Vec::new(), f64::NAN)
@@ -392,7 +389,7 @@ mod tests {
     use crate::data::{BinnedDataset, BinningConfig, Dataset};
     use crate::training::metrics::Rmse;
     use crate::training::objectives::SquaredLoss;
-    use ndarray::{arr2, Array2};
+    use ndarray::{Array2, arr2};
 
     /// Create test datasets - returns (raw Dataset, BinnedDataset)
     fn make_test_datasets() -> (Dataset, BinnedDataset) {
@@ -597,9 +594,9 @@ mod tests {
 
         let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
         let result = trainer.train(
-                &dataset,
-                &binned,
-                targets,
+            &dataset,
+            &binned,
+            targets,
             WeightsView::None,
             None,
             Parallelism::Sequential,
@@ -743,10 +740,8 @@ mod tests {
         let preds_linear = predictor_linear.predict(&dataset, Parallelism::Sequential);
 
         // Compute RMSE using the metrics module
-        let rmse_base =
-            Rmse.compute(preds_base.view(), targets, WeightsView::None);
-        let rmse_linear =
-            Rmse.compute(preds_linear.view(), targets, WeightsView::None);
+        let rmse_base = Rmse.compute(preds_base.view(), targets, WeightsView::None);
+        let rmse_linear = Rmse.compute(preds_linear.view(), targets, WeightsView::None);
 
         // Linear leaves should improve RMSE (at least not make it significantly worse)
         // On synthetic linear data, we expect meaningful improvement

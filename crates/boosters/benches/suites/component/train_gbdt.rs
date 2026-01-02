@@ -46,9 +46,7 @@ fn bench_gbdt_quantize(c: &mut Criterion) {
             |b, ds| {
                 let binning_config = BinningConfig::builder().max_bins(256).build();
                 b.iter(|| {
-                    black_box(
-                        BinnedDataset::from_dataset(black_box(ds), &binning_config).unwrap(),
-                    )
+                    black_box(BinnedDataset::from_dataset(black_box(ds), &binning_config).unwrap())
                 })
             },
         );

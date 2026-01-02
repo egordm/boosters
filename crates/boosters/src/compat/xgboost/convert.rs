@@ -1,8 +1,8 @@
 //! Conversion from XGBoost JSON types to native boosters types.
 
-use ndarray::Array2;
 use crate::repr::gbdt::{Forest, MutableTree, ScalarLeaf, Tree, categories_to_bitset};
 use crate::repr::gblinear::LinearModel;
+use ndarray::Array2;
 
 use super::json::{GradientBooster, ModelTrees, Tree as XgbTree, XgbModel};
 

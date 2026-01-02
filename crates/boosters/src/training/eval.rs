@@ -268,7 +268,11 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
     /// Returns the validation metric if available, otherwise the training metric.
     pub fn early_stop_value(metrics: &[MetricValue], has_val_set: bool) -> f64 {
         // Index 0 is training, index 1 is validation (if present)
-        let idx = if has_val_set && metrics.len() > 1 { 1 } else { 0 };
+        let idx = if has_val_set && metrics.len() > 1 {
+            1
+        } else {
+            0
+        };
         metrics.get(idx).map(|m| m.value).unwrap_or(f64::NAN)
     }
 }

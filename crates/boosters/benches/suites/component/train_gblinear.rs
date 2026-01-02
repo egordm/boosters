@@ -5,37 +5,29 @@ mod common;
 
 use common::criterion_config::default_criterion;
 
-use boosters::data::Dataset;
+use boosters::data::{Dataset, Feature, WeightsView};
 use boosters::testing::synthetic_datasets::synthetic_regression;
 use boosters::training::{
-    GBLinearParams, GBLinearTrainer, MulticlassLogLoss, Rmse, SoftmaxLoss, SquaredLoss, Verbosity,
+    GBLinearParams, GBLinearTrainer, MulticlassLogLoss, Rmse, SoftmaxLoss, SquaredLoss,
+    UpdateStrategy, Verbosity,
 };
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use rand::prelude::*;
-
-/// Helper to build a Dataset from synthetic data
-fn make_dataset(features: ndarray::ArrayView2<'_, f32>, targets: &[f32]) -> Dataset {
-    let targets_2d = ndarray::Array2::from_shape_vec((1, targets.len()), targets.to_vec()).unwrap();
-    Dataset::from_array(features, Some(targets_2d), None)
-}
 
 fn bench_gblinear_regression_train(c: &mut Criterion) {
     let n_features = 100;
     let mut group = c.benchmark_group("component/train/gblinear/regression");
 
     for n_rows in [1_000usize, 10_000, 50_000] {
-        let syn_dataset = synthetic_regression(n_rows, n_features, 42, 0.05);
-        // SyntheticDataset.features is already feature-major [n_features, n_samples]
-        let labels: Vec<f32> = syn_dataset.targets.to_vec();
-        let dataset = make_dataset(syn_dataset.features.view(), &labels);
+        let dataset = synthetic_regression(n_rows, n_features, 42, 0.05);
 
         let params = GBLinearParams {
             n_rounds: 10,
             learning_rate: 0.5,
             alpha: 0.0,
             lambda: 1.0,
-            parallel: true,
+            update_strategy: UpdateStrategy::Shotgun,
             verbosity: Verbosity::Silent,
             ..Default::default()
         };
@@ -43,7 +35,18 @@ fn bench_gblinear_regression_train(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements((n_rows * n_features) as u64));
         group.bench_with_input(BenchmarkId::new("train", n_rows), &dataset, |b, ds| {
-            b.iter(|| black_box(trainer.train(black_box(ds), &[])).unwrap())
+            b.iter(|| {
+                black_box(
+                    trainer
+                        .train(
+                            black_box(ds),
+                            ds.targets().expect("dataset has targets"),
+                            WeightsView::None,
+                            None,
+                        )
+                        .unwrap(),
+                )
+            })
         });
     }
 
@@ -53,10 +56,7 @@ fn bench_gblinear_regression_train(c: &mut Criterion) {
 fn bench_gblinear_updater(c: &mut Criterion) {
     let n_features = 100;
     let n_rows = 10_000usize;
-
-    let syn_dataset = synthetic_regression(n_rows, n_features, 42, 0.05);
-    let labels: Vec<f32> = syn_dataset.targets.to_vec();
-    let dataset = make_dataset(syn_dataset.features.view(), &labels);
+    let dataset = synthetic_regression(n_rows, n_features, 42, 0.05);
 
     let mut group = c.benchmark_group("component/train/gblinear/updater");
     group.throughput(Throughput::Elements((n_rows * n_features) as u64));
@@ -66,14 +66,25 @@ fn bench_gblinear_updater(c: &mut Criterion) {
         learning_rate: 0.5,
         alpha: 0.0,
         lambda: 1.0,
-        parallel: false,
+        update_strategy: UpdateStrategy::Sequential,
         verbosity: Verbosity::Silent,
         ..Default::default()
     };
     let trainer_seq = GBLinearTrainer::new(SquaredLoss, Rmse, params_seq);
 
     group.bench_with_input(BenchmarkId::new("sequential", n_rows), &dataset, |b, ds| {
-        b.iter(|| black_box(trainer_seq.train(black_box(ds), &[])).unwrap())
+        b.iter(|| {
+            black_box(
+                trainer_seq
+                    .train(
+                        black_box(ds),
+                        ds.targets().expect("dataset has targets"),
+                        WeightsView::None,
+                        None,
+                    )
+                    .unwrap(),
+            )
+        })
     });
 
     let params_par = GBLinearParams {
@@ -81,14 +92,25 @@ fn bench_gblinear_updater(c: &mut Criterion) {
         learning_rate: 0.5,
         alpha: 0.0,
         lambda: 1.0,
-        parallel: true,
+        update_strategy: UpdateStrategy::Shotgun,
         verbosity: Verbosity::Silent,
         ..Default::default()
     };
     let trainer_par = GBLinearTrainer::new(SquaredLoss, Rmse, params_par);
 
     group.bench_with_input(BenchmarkId::new("parallel", n_rows), &dataset, |b, ds| {
-        b.iter(|| black_box(trainer_par.train(black_box(ds), &[])).unwrap())
+        b.iter(|| {
+            black_box(
+                trainer_par
+                    .train(
+                        black_box(ds),
+                        ds.targets().expect("dataset has targets"),
+                        WeightsView::None,
+                        None,
+                    )
+                    .unwrap(),
+            )
+        })
     });
 
     group.finish();
@@ -103,22 +125,33 @@ fn bench_gblinear_feature_scaling(c: &mut Criterion) {
         learning_rate: 0.5,
         alpha: 0.0,
         lambda: 1.0,
-        parallel: true,
+        update_strategy: UpdateStrategy::Shotgun,
         verbosity: Verbosity::Silent,
         ..Default::default()
     };
     let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
 
     for n_features in [10usize, 50, 100, 500, 1_000] {
-        let syn_dataset = synthetic_regression(n_rows, n_features, 42, 0.05);
-        let labels: Vec<f32> = syn_dataset.targets.to_vec();
-        let dataset = make_dataset(syn_dataset.features.view(), &labels);
+        let dataset = synthetic_regression(n_rows, n_features, 42, 0.05);
 
         group.throughput(Throughput::Elements((n_rows * n_features) as u64));
         group.bench_with_input(
             BenchmarkId::new("features", n_features),
             &dataset,
-            |b, ds| b.iter(|| black_box(trainer.train(black_box(ds), &[])).unwrap()),
+            |b, ds| {
+                b.iter(|| {
+                    black_box(
+                        trainer
+                            .train(
+                                black_box(ds),
+                                ds.targets().expect("dataset has targets"),
+                                WeightsView::None,
+                                None,
+                            )
+                            .unwrap(),
+                    )
+                })
+            },
         );
     }
 
@@ -132,20 +165,37 @@ fn bench_gblinear_multiclass(c: &mut Criterion) {
 
     for n_rows in [1_000usize, 5_000, 10_000] {
         let syn_dataset = synthetic_regression(n_rows, n_features, 42, 0.0);
-        // SyntheticDataset.features is already feature-major [n_features, n_samples]
         let mut rng = StdRng::seed_from_u64(1337);
         let labels: Vec<f32> = (0..n_rows)
             .map(|_| (rng.r#gen::<u32>() % n_classes as u32) as f32)
             .collect();
 
-        let dataset = make_dataset(syn_dataset.features.view(), &labels);
+        let targets_2d =
+            ndarray::Array2::from_shape_vec((1, n_rows), labels).expect("shape mismatch");
+
+        let mut builder = Dataset::builder();
+        for (feature_idx, feature) in syn_dataset.feature_columns().iter().enumerate() {
+            let name = format!("f{feature_idx}");
+            builder = match feature {
+                Feature::Dense(values) => builder.add_feature(&name, values.clone()),
+                Feature::Sparse {
+                    indices,
+                    values,
+                    n_samples,
+                    default,
+                } => {
+                    builder.add_sparse(&name, indices.clone(), values.clone(), *n_samples, *default)
+                }
+            };
+        }
+        let dataset = builder.targets(targets_2d.view()).build().unwrap();
 
         let params_seq = GBLinearParams {
             n_rounds: 10,
             learning_rate: 0.5,
             alpha: 0.0,
             lambda: 1.0,
-            parallel: false,
+            update_strategy: UpdateStrategy::Sequential,
             verbosity: Verbosity::Silent,
             ..Default::default()
         };
@@ -157,7 +207,7 @@ fn bench_gblinear_multiclass(c: &mut Criterion) {
             learning_rate: 0.5,
             alpha: 0.0,
             lambda: 1.0,
-            parallel: true,
+            update_strategy: UpdateStrategy::Shotgun,
             verbosity: Verbosity::Silent,
             ..Default::default()
         };
@@ -166,10 +216,32 @@ fn bench_gblinear_multiclass(c: &mut Criterion) {
 
         group.throughput(Throughput::Elements((n_rows * n_features) as u64));
         group.bench_with_input(BenchmarkId::new("sequential", n_rows), &dataset, |b, ds| {
-            b.iter(|| black_box(trainer_seq.train(black_box(ds), &[])).unwrap())
+            b.iter(|| {
+                black_box(
+                    trainer_seq
+                        .train(
+                            black_box(ds),
+                            ds.targets().expect("dataset has targets"),
+                            WeightsView::None,
+                            None,
+                        )
+                        .unwrap(),
+                )
+            })
         });
         group.bench_with_input(BenchmarkId::new("parallel", n_rows), &dataset, |b, ds| {
-            b.iter(|| black_box(trainer_par.train(black_box(ds), &[])).unwrap())
+            b.iter(|| {
+                black_box(
+                    trainer_par
+                        .train(
+                            black_box(ds),
+                            ds.targets().expect("dataset has targets"),
+                            WeightsView::None,
+                            None,
+                        )
+                        .unwrap(),
+                )
+            })
         });
     }
 

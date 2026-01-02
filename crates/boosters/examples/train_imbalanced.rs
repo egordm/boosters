@@ -103,7 +103,8 @@ fn main() {
     // Train WITHOUT weights (baseline)
     // =========================================================================
     println!("--- Training WITHOUT weights ---");
-    let model_unweighted = GBDTModel::train(&dataset, None, config.clone(), 1).expect("Training failed");
+    let model_unweighted =
+        GBDTModel::train(&dataset, None, config.clone(), 1).expect("Training failed");
 
     let probs_uw = model_unweighted.predict(&dataset, 1);
 

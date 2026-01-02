@@ -86,7 +86,7 @@ class BoostersRunner(Runner):
         measure_memory: bool = False,
     ) -> BenchmarkResult:
         """Run boosters training and return results."""
-        import boosters  # noqa: PLC0415
+        import boosters
 
         task = config.dataset.task
         tc = config.training
@@ -227,7 +227,7 @@ class XGBoostRunner(Runner):
         measure_memory: bool = False,
     ) -> BenchmarkResult:
         """Run XGBoost training and return results."""
-        import xgboost as xgb  # noqa: PLC0415
+        import xgboost as xgb
 
         task = config.dataset.task
         tc = config.training
@@ -331,7 +331,7 @@ class LightGBMRunner(Runner):
         measure_memory: bool = False,
     ) -> BenchmarkResult:
         """Run LightGBM training and return results."""
-        import lightgbm as lgb  # noqa: PLC0415
+        import lightgbm as lgb
 
         task = config.dataset.task
         tc = config.training
@@ -452,11 +452,11 @@ def get_runner(name: str) -> type[Runner]:
 
     # Verify library is available
     if name == "xgboost":
-        import xgboost  # noqa: F401, PLC0415
+        import xgboost  # noqa: F401
     elif name == "lightgbm":
-        import lightgbm  # noqa: F401, PLC0415
+        import lightgbm  # noqa: F401
     elif name == "boosters":
-        import boosters  # noqa: F401, PLC0415
+        import boosters  # noqa: F401
 
     return runner_cls
 

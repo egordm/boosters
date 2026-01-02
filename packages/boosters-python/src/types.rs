@@ -6,8 +6,8 @@ use pyo3::prelude::*;
 use pyo3_stub_gen::derive::gen_stub_pymethods;
 
 use boosters::explainability::ImportanceType as CoreImportanceType;
-use boosters::training::Verbosity as CoreVerbosity;
 use boosters::training::gblinear::UpdateStrategy as CoreGBLinearUpdateStrategy;
+use boosters::training::Verbosity as CoreVerbosity;
 
 use crate::error::BoostersError;
 

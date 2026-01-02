@@ -4,7 +4,7 @@
 //! raw feature datasets. For training, create a [`crate::data::BinnedDataset`]
 //! using [`BinnedDataset::from_dataset()`](crate::data::BinnedDataset::from_dataset).
 
-use ndarray::{s, Array1, Array2, ArrayView1, ArrayView2};
+use ndarray::{Array1, Array2, ArrayView1, ArrayView2, s};
 
 use super::feature::Feature;
 use super::schema::{DatasetSchema, FeatureMeta};
@@ -305,9 +305,7 @@ impl Dataset {
                 }
             }
             Feature::Sparse {
-                indices,
-                values,
-                ..
+                indices, values, ..
             } => {
                 // Sparse: iterate only stored (non-default) values
                 for (&idx, &val) in indices.iter().zip(values.iter()) {
@@ -355,7 +353,9 @@ impl Dataset {
                 let n_samples = self.n_samples;
 
                 for sample_idx in 0..n_samples {
-                    let val = if sparse_pos < indices.len() && indices[sparse_pos] as usize == sample_idx {
+                    let val = if sparse_pos < indices.len()
+                        && indices[sparse_pos] as usize == sample_idx
+                    {
                         let v = values[sparse_pos];
                         sparse_pos += 1;
                         v
@@ -402,7 +402,12 @@ impl Dataset {
     /// assert_eq!(buffer, vec![2.0, 4.0]);
     /// ```
     #[inline]
-    pub fn gather_feature_values(&self, feature: usize, sample_indices: &[u32], buffer: &mut [f32]) {
+    pub fn gather_feature_values(
+        &self,
+        feature: usize,
+        sample_indices: &[u32],
+        buffer: &mut [f32],
+    ) {
         debug_assert!(
             buffer.len() >= sample_indices.len(),
             "buffer must have length >= sample_indices.len()"
@@ -765,14 +770,19 @@ impl DatasetBuilder {
         // Preserve sparse storage - no densification!
         let schema = DatasetSchema::from_features(self.metas);
 
-        Ok(Dataset::new(schema, self.features, self.targets, self.weights))
+        Ok(Dataset::new(
+            schema,
+            self.features,
+            self.targets,
+            self.weights,
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::schema::FeatureType;
+    use super::*;
     use ndarray::array;
 
     #[test]
@@ -846,13 +856,13 @@ mod tests {
         // Access via feature() method
         assert_eq!(ds.n_features(), 2);
         assert_eq!(ds.n_samples(), 3);
-        
+
         // Feature 0 should be [1, 2, 3]
         match ds.feature(0) {
             Feature::Dense(values) => assert_eq!(values.to_vec(), vec![1.0, 2.0, 3.0]),
             _ => panic!("Expected dense feature"),
         }
-        // Feature 1 should be [4, 5, 6]  
+        // Feature 1 should be [4, 5, 6]
         match ds.feature(1) {
             Feature::Dense(values) => assert_eq!(values.to_vec(), vec![4.0, 5.0, 6.0]),
             _ => panic!("Expected dense feature"),
@@ -1071,11 +1081,7 @@ mod tests {
 
     #[test]
     fn for_each_feature_value_sum() {
-        let ds = Dataset::from_array(
-            array![[1.0f32, 2.0, 3.0, 4.0, 5.0]].view(),
-            None,
-            None,
-        );
+        let ds = Dataset::from_array(array![[1.0f32, 2.0, 3.0, 4.0, 5.0]].view(), None, None);
 
         let mut sum = 0.0;
         ds.for_each_feature_value(0, |_idx, value| {
@@ -1086,11 +1092,7 @@ mod tests {
 
     #[test]
     fn gather_feature_values_basic() {
-        let ds = Dataset::from_array(
-            array![[1.0f32, 2.0, 3.0, 4.0, 5.0]].view(),
-            None,
-            None,
-        );
+        let ds = Dataset::from_array(array![[1.0f32, 2.0, 3.0, 4.0, 5.0]].view(), None, None);
 
         let indices = [1u32, 3];
         let mut buffer = vec![0.0; 2];
@@ -1100,11 +1102,7 @@ mod tests {
 
     #[test]
     fn gather_feature_values_all() {
-        let ds = Dataset::from_array(
-            array![[10.0f32, 20.0, 30.0]].view(),
-            None,
-            None,
-        );
+        let ds = Dataset::from_array(array![[10.0f32, 20.0, 30.0]].view(), None, None);
 
         let indices: Vec<u32> = (0..3).collect();
         let mut buffer = vec![0.0; 3];
@@ -1114,11 +1112,7 @@ mod tests {
 
     #[test]
     fn gather_feature_values_empty() {
-        let ds = Dataset::from_array(
-            array![[1.0f32, 2.0, 3.0]].view(),
-            None,
-            None,
-        );
+        let ds = Dataset::from_array(array![[1.0f32, 2.0, 3.0]].view(), None, None);
 
         let indices: &[u32] = &[];
         let mut buffer: Vec<f32> = vec![];
@@ -1128,11 +1122,7 @@ mod tests {
 
     #[test]
     fn for_each_gathered_value_basic() {
-        let ds = Dataset::from_array(
-            array![[1.0f32, 2.0, 3.0, 4.0, 5.0]].view(),
-            None,
-            None,
-        );
+        let ds = Dataset::from_array(array![[1.0f32, 2.0, 3.0, 4.0, 5.0]].view(), None, None);
 
         let indices = [0u32, 2, 4];
         let mut values = Vec::new();
@@ -1189,11 +1179,7 @@ mod tests {
     #[test]
     fn buffer_samples_partial_block() {
         // 1 feature, 5 samples
-        let ds = Dataset::from_array(
-            array![[1.0f32, 2.0, 3.0, 4.0, 5.0]].view(),
-            None,
-            None,
-        );
+        let ds = Dataset::from_array(array![[1.0f32, 2.0, 3.0, 4.0, 5.0]].view(), None, None);
 
         // Buffer for 2 samples starting at index 3
         let mut buffer = Array2::<f32>::zeros((2, 1));
@@ -1207,11 +1193,7 @@ mod tests {
     #[test]
     fn buffer_samples_last_partial_block() {
         // 1 feature, 5 samples
-        let ds = Dataset::from_array(
-            array![[1.0f32, 2.0, 3.0, 4.0, 5.0]].view(),
-            None,
-            None,
-        );
+        let ds = Dataset::from_array(array![[1.0f32, 2.0, 3.0, 4.0, 5.0]].view(), None, None);
 
         // Buffer for 3 samples starting at index 3 (only 2 available)
         let mut buffer = Array2::<f32>::zeros((3, 1));
@@ -1235,11 +1217,11 @@ mod tests {
         let samples = ds.buffer_samples(&mut buffer, 0);
 
         assert_eq!(samples.n_samples(), 5);
-        assert_eq!(samples.get(0, 0), 0.0);  // default
+        assert_eq!(samples.get(0, 0), 0.0); // default
         assert_eq!(samples.get(1, 0), 10.0); // sparse value
-        assert_eq!(samples.get(2, 0), 0.0);  // default
+        assert_eq!(samples.get(2, 0), 0.0); // default
         assert_eq!(samples.get(3, 0), 30.0); // sparse value
-        assert_eq!(samples.get(4, 0), 0.0);  // default
+        assert_eq!(samples.get(4, 0), 0.0); // default
     }
 
     #[test]
@@ -1255,10 +1237,10 @@ mod tests {
         let samples = ds.buffer_samples(&mut buffer, 2);
 
         assert_eq!(samples.n_samples(), 4);
-        assert_eq!(samples.get(0, 0), 0.0);  // sample 2: default
+        assert_eq!(samples.get(0, 0), 0.0); // sample 2: default
         assert_eq!(samples.get(1, 0), 30.0); // sample 3: sparse value
-        assert_eq!(samples.get(2, 0), 0.0);  // sample 4: default
-        assert_eq!(samples.get(3, 0), 0.0);  // sample 5: default
+        assert_eq!(samples.get(2, 0), 0.0); // sample 4: default
+        assert_eq!(samples.get(3, 0), 0.0); // sample 5: default
     }
 
     #[test]

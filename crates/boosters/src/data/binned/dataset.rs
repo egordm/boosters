@@ -8,11 +8,12 @@
 
 use thiserror::Error;
 
+use super::BinData;
 use super::bin_mapper::{BinMapper, MissingType};
-use super::bundling::{apply_bundling, create_bundle_plan, BundlingConfig};
+use super::bundling::{BundlingConfig, apply_bundling, create_bundle_plan};
 use super::feature_analysis::{
-    analyze_features_dataset, compute_groups, BinningConfig, FeatureAnalysis, FeatureMetadata,
-    GroupSpec, GroupType,
+    BinningConfig, FeatureAnalysis, FeatureMetadata, GroupSpec, GroupType,
+    analyze_features_dataset, compute_groups,
 };
 use super::group::FeatureGroup;
 use super::storage::{
@@ -20,7 +21,6 @@ use super::storage::{
     SparseNumericStorage,
 };
 use super::view::FeatureView;
-use super::BinData;
 use crate::data::Dataset;
 
 /// Errors returned by binned dataset construction.
@@ -37,10 +37,7 @@ pub enum DatasetError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FeatureLocation {
     /// Feature in a regular (Dense or Sparse) group.
-    Direct {
-        group_idx: u32,
-        idx_in_group: u32,
-    },
+    Direct { group_idx: u32, idx_in_group: u32 },
     /// Feature bundled into a Bundle group (EFB).
     /// Not yet implemented - reserved for future use.
     Bundled {
@@ -226,7 +223,9 @@ impl BinnedDataset {
                 categorical.push(idx);
             }
         }
-        let metadata = FeatureMetadata::default().names(names).categorical(categorical);
+        let metadata = FeatureMetadata::default()
+            .names(names)
+            .categorical(categorical);
 
         // Analyze features and compute groups.
         let analyses = analyze_features_dataset(dataset, config, Some(&metadata));
@@ -338,10 +337,7 @@ impl BinnedDataset {
     #[inline]
     pub fn total_bins(&self) -> u32 {
         // Last element is the total
-        self.global_bin_offsets
-            .last()
-            .copied()
-            .unwrap_or(0)
+        self.global_bin_offsets.last().copied().unwrap_or(0)
     }
 
     /// Get feature info for a feature.
@@ -593,7 +589,9 @@ impl BinnedDataset {
                 idx_in_group,
             } => self.groups[group_idx as usize].feature_view(idx_in_group as usize),
             FeatureLocation::Bundled { .. } => {
-                panic!("Cannot get view for bundled feature {feature} - use feature_views() instead")
+                panic!(
+                    "Cannot get view for bundled feature {feature} - use feature_views() instead"
+                )
             }
             FeatureLocation::Skipped => {
                 panic!("Cannot get view for skipped feature {feature}")
@@ -723,11 +721,11 @@ fn create_bin_mappers(
 
             if analysis.is_numeric {
                 // Optimize for common case: dense feature with all samples
-                if sample_indices.is_none() {
-                    if let Some(slice) = dataset.feature(feature_idx).as_slice() {
-                        // Fast path: direct slice access (no copy, no indirection)
-                        return bin_numeric(slice, max_bins);
-                    }
+                if sample_indices.is_none()
+                    && let Some(slice) = dataset.feature(feature_idx).as_slice()
+                {
+                    // Fast path: direct slice access (no copy, no indirection)
+                    return bin_numeric(slice, max_bins);
                 }
 
                 // Fall back to gathering (sampled or sparse features)
@@ -823,7 +821,9 @@ fn build_feature_group(
 ) -> FeatureGroup {
     let storage = match spec.group_type {
         GroupType::NumericDense => build_numeric_dense(spec, bin_mappers, dataset, n_samples),
-        GroupType::CategoricalDense => build_categorical_dense(spec, bin_mappers, dataset, n_samples),
+        GroupType::CategoricalDense => {
+            build_categorical_dense(spec, bin_mappers, dataset, n_samples)
+        }
         GroupType::SparseNumeric => build_sparse_numeric(spec, bin_mappers, dataset, n_samples),
         GroupType::SparseCategorical => {
             build_sparse_categorical(spec, bin_mappers, dataset, n_samples)
@@ -837,11 +837,7 @@ fn build_feature_group(
         .map(|&idx| bin_mappers[idx].n_bins())
         .collect();
 
-    let feature_indices: Box<[u32]> = spec
-        .feature_indices
-        .iter()
-        .map(|&idx| idx as u32)
-        .collect();
+    let feature_indices: Box<[u32]> = spec.feature_indices.iter().map(|&idx| idx as u32).collect();
 
     FeatureGroup::new(feature_indices, n_samples, storage, bin_counts)
 }
@@ -914,7 +910,11 @@ fn build_sparse_numeric(
     dataset: &Dataset,
     n_samples: usize,
 ) -> FeatureStorage {
-    assert_eq!(spec.n_features(), 1, "Sparse groups must have exactly one feature");
+    assert_eq!(
+        spec.n_features(),
+        1,
+        "Sparse groups must have exactly one feature"
+    );
     let feature_idx = spec.feature_indices[0];
     let mapper = &bin_mappers[feature_idx];
 
@@ -942,7 +942,11 @@ fn build_sparse_categorical(
     dataset: &Dataset,
     n_samples: usize,
 ) -> FeatureStorage {
-    assert_eq!(spec.n_features(), 1, "Sparse groups must have exactly one feature");
+    assert_eq!(
+        spec.n_features(),
+        1,
+        "Sparse groups must have exactly one feature"
+    );
     let feature_idx = spec.feature_indices[0];
     let mapper = &bin_mappers[feature_idx];
 
@@ -1003,11 +1007,8 @@ fn build_bundle(
         });
     }
 
-    let feature_indices_u32: Box<[u32]> = spec
-        .feature_indices
-        .iter()
-        .map(|&idx| idx as u32)
-        .collect();
+    let feature_indices_u32: Box<[u32]> =
+        spec.feature_indices.iter().map(|&idx| idx as u32).collect();
 
     FeatureStorage::Bundle(BundleStorage::new(
         encoded_bins.into_boxed_slice(),
@@ -1028,7 +1029,7 @@ fn build_bundle(
 mod tests {
     use super::*;
     use crate::data::binned::feature_analysis::BinningConfig;
-    use ndarray::{array, Array1};
+    use ndarray::{Array1, array};
 
     #[test]
     fn test_from_dataset_single_feature() {
@@ -1102,10 +1103,12 @@ mod tests {
         assert!(dataset.feature_location(1).is_direct());
 
         // Both should be in the same group (numeric dense)
-        if let FeatureLocation::Direct { group_idx: g0, .. } = dataset.feature_location(0) {
-            if let FeatureLocation::Direct { group_idx: g1, .. } = dataset.feature_location(1) {
-                assert_eq!(g0, g1);
-            }
+        if let (
+            FeatureLocation::Direct { group_idx: g0, .. },
+            FeatureLocation::Direct { group_idx: g1, .. },
+        ) = (dataset.feature_location(0), dataset.feature_location(1))
+        {
+            assert_eq!(g0, g1);
         }
     }
 

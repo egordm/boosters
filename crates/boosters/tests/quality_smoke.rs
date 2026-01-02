@@ -1,8 +1,8 @@
 use boosters::data::{Dataset, TargetsView, WeightsView, transpose_to_c_order};
 use boosters::model::gbdt::{GBDTConfig, GBDTModel};
 use boosters::testing::synthetic_datasets::{
-    features_row_major, random_features_array, split_indices, synthetic_binary, synthetic_multiclass,
-    synthetic_regression,
+    features_row_major, random_features_array, split_indices, synthetic_binary,
+    synthetic_multiclass, synthetic_regression,
 };
 use boosters::training::{
     Accuracy, GrowthStrategy, LinearLeafConfig, LogLoss, Mae, MetricFn, MulticlassAccuracy,

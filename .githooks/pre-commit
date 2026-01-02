@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+if ! command -v uv >/dev/null 2>&1; then
+  echo "pre-commit: uv not found; install uv to run checks." >&2
+  exit 1
+fi
+
+echo "pre-commit: running 'uv run poe all --check'..."
+uv run poe all --check

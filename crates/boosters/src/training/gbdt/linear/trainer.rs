@@ -480,10 +480,30 @@ mod tests {
 
         // Verify the gathered values are raw (not binned)
         let gathered = buffer.feature_slice(0);
-        assert!((gathered[0] - 1.1).abs() < 0.01, "Expected 1.1, got {}", gathered[0]);
-        assert!((gathered[1] - 3.3).abs() < 0.01, "Expected 3.3, got {}", gathered[1]);
-        assert!((gathered[2] - 5.5).abs() < 0.01, "Expected 5.5, got {}", gathered[2]);
-        assert!((gathered[3] - 7.7).abs() < 0.01, "Expected 7.7, got {}", gathered[3]);
-        assert!((gathered[4] - 9.9).abs() < 0.01, "Expected 9.9, got {}", gathered[4]);
+        assert!(
+            (gathered[0] - 1.1).abs() < 0.01,
+            "Expected 1.1, got {}",
+            gathered[0]
+        );
+        assert!(
+            (gathered[1] - 3.3).abs() < 0.01,
+            "Expected 3.3, got {}",
+            gathered[1]
+        );
+        assert!(
+            (gathered[2] - 5.5).abs() < 0.01,
+            "Expected 5.5, got {}",
+            gathered[2]
+        );
+        assert!(
+            (gathered[3] - 7.7).abs() < 0.01,
+            "Expected 7.7, got {}",
+            gathered[3]
+        );
+        assert!(
+            (gathered[4] - 9.9).abs() < 0.01,
+            "Expected 9.9, got {}",
+            gathered[4]
+        );
     }
 }
