@@ -123,17 +123,21 @@ reportMissingTypeStubs = false
 [tool.poe.tasks]
 [tool.poe.tasks."python:lint"]
 help = "Lint code (with ruff)"
-cmd = "ruff check"
-
-[tool.poe.tasks."python:lint-fix"]
-help = "Lint code (with ruff) and apply auto-fixes"
-control.expr = "unsafe"
+shell = """
+set -e
+if [ \"$check\" = \"true\" ]; then
+  ruff check
+else
+  if [ \"$unsafe\" = \"true\" ]; then
+    ruff check --fix --show-fixes --unsafe-fixes
+  else
+    ruff check --fix --show-fixes
+  fi
+fi
+"""
 args = [
-  { name = "unsafe", type = "boolean", help = "Enables unsafe fixes, which may change the code in a way that is not reversible. Use with care.", default = false },
-]
-switch = [
-  { case = "unsafe", cmd = "ruff check --fix --show-fixes --unsafe-fixes" },
-  { cmd = "ruff check --fix --show-fixes" },
+  { name = "check", type = "boolean", help = "Do not apply fixes (CI mode)", default = false },
+  { name = "unsafe", type = "boolean", help = "Allow unsafe fixes (only applies without --check)", default = false },
 ]
 
 [tool.poe.tasks."python:format"]
@@ -198,12 +202,15 @@ switch = [
 
 [tool.poe.tasks."rust:lint"]
 help = "Lint all Rust code (with cargo clippy)"
-control.expr = "fix"
-args = [ { name = "fix", type = "boolean", help = "Automatically fix lint issues where possible", default = false } ]
-switch = [
-  { case = "fix", cmd = "cargo clippy --workspace --all-features --all-targets --fix --allow-dirty --allow-staged -- -D warnings" },
-  { cmd = "cargo clippy --workspace --all-features --all-targets -- -D warnings" },
-]
+shell = """
+set -e
+if [ \"$check\" = \"true\" ]; then
+  cargo clippy --workspace --all-features --all-targets -- -D warnings
+else
+  cargo clippy --workspace --all-features --all-targets --fix --allow-dirty --allow-staged -- -D warnings
+fi
+"""
+args = [ { name = "check", type = "boolean", help = "Do not apply fixes (CI mode)", default = false } ]
 
 [tool.poe.tasks."rust:build:core"]
 help = "Build the core Rust library"
