@@ -1,8 +1,8 @@
 # RFC-0021: Data Module Restructuring and Dataset Separation
 
-**Status**: Draft  
+**Status**: Implemented  
 **Created**: 2025-12-30  
-**Updated**: 2025-12-31  
+**Updated**: 2026-01-02  
 **Author**: Team  
 **Supersedes**: RFC-0018, RFC-0008 (io-parquet)  
 **Related**: RFC-0019 (updated to work on Dataset)
@@ -21,14 +21,14 @@ This RFC proposes a comprehensive restructuring of the data module with clear ar
 **Proposed solution**: Two distinct types with clear, separate responsibilities:
 
 - **`Dataset`**: Contains raw feature data (dense or sparse), targets, and weights. Used for prediction, inference, SHAP values, eval sets, and anywhere raw feature values are needed. This is the **public API**.
-- **`BinnedDataset`**: Contains ONLY binned data (bin indices, bin mappers). Used exclusively for histogram building during training. This is an **internal API** not exposed to users.
+- **`BinnedDataset`**: Contains ONLY binned data (bin indices, bin mappers). Used primarily for histogram building during training. The intended user-facing API is `Dataset`, but `BinnedDataset` is currently re-exported for advanced/training-specific use.
 
 **Key architectural principles**:
 
 1. **Models** (high-level API) work only with `Dataset`. They internally create `BinnedDataset` when needed.
 2. **Trainers** receive `Dataset` (mandatory) and `BinnedDataset` (mandatory). Prediction uses `Dataset`.
 3. **Eval sets** are just `Dataset` (no `BinnedDataset` needed - they're only used for prediction/metrics).
-4. **BinnedDataset** is internal - no convenience methods, no public exposure.
+4. **BinnedDataset** is training-oriented - avoid user-focused convenience methods and treat the API as unstable.
 5. **Feature grouping** is handled by `BinnedDataset` internally, not by users in `Dataset`.
 6. **No Arc references** - just copy data when needed. Keep it simple.
 
@@ -36,9 +36,10 @@ This RFC proposes a comprehensive restructuring of the data module with clear ar
 
 ### Current Problems
 
-**1. BinnedDataset is Hard to Test**
+#### 1. BinnedDataset is hard to test
 
 To create a `BinnedDataset` for unit tests, you must:
+
 ```rust
 // Current: Go through entire builder pipeline
 let built = DatasetBuilder::from_array(data.view(), &config)
@@ -51,16 +52,18 @@ let dataset = BinnedDataset::from_built_groups(built);
 
 There's no way to directly construct a `BinnedDataset` with known bin values for testing.
 
-**2. Raw Data Duplication**
+#### 2. Raw data duplication
 
 When training with linear trees or GBLinear:
-- User provides raw data → stored in `Dataset` 
+
+- User provides raw data → stored in `Dataset`
 - During binning, raw values are copied again → stored in `NumericStorage`
 - Memory usage is 2x what's needed
 
-**3. Storage Type Explosion**
+#### 3. Storage type explosion
 
 We historically had 5 storage types because each needed to track both bins AND raw values:
+
 - `NumericStorage` (bins + raw, historical)
 - `SparseNumericStorage` (sparse bins + sparse raw, historical)
 - `CategoricalStorage` (bins only)
@@ -68,18 +71,19 @@ We historically had 5 storage types because each needed to track both bins AND r
 - `BundleStorage` (encoded bins, no raw)
 
 If we separate concerns, storage becomes simpler:
+
 - `DenseBins` (just u8/u16 bins)
 - `SparseBins` (sparse u8/u16 bins)
 - `BundleBins` (encoded u16 for EFB)
 
-**4. RFC-0019 Complexity**
+#### 4. RFC-0019 complexity
 
 RFC-0019 proposes `for_each_feature_value()` and `gather_feature_values()` on `BinnedDataset`. But these methods only make sense for numeric features with raw storage. For bundled or categorical features, they panic. This is a design smell—we're adding APIs that only work for some storage types.
 
 ### What Components Need What Data
 
 | Component | Needs Bins | Needs Raw | Needs Targets | Needs Weights |
-|-----------|------------|-----------|---------------|---------------|
+| --------- | ---------- | --------- | ------------ | ------------- |
 | GBDT histogram building | ✅ | ❌ | ❌ (uses grads) | ❌ |
 | GBDT split finding | ✅ | ❌ | ❌ | ❌ |
 | GBDT prediction | ❌ | ✅ (split thresholds) | ❌ | ❌ |
@@ -170,6 +174,7 @@ model.fit(&train_ds, None, config)?;
 ```
 
 Rationale:
+
 - If users need multiple evaluation sets, they evaluate after training
 - Training needs at most one validation set for early stopping
 - Removes `EvalSet` struct complexity
@@ -182,12 +187,14 @@ Rationale:
 **Remove original_feature vs effective_feature distinction:**
 
 Current API is confusing:
+
 ```rust
 dataset.effective_feature_views()  // Views with bundles
 dataset.original_feature_view(idx) // Single feature view
 ```
 
 Proposed:
+
 ```rust
 dataset.feature_views()            // Views for training (bundles + standalone)
 dataset.n_features()               // Number of training features
@@ -485,11 +492,12 @@ impl BinnedDataset {
 **Decision**: Schema sharing between `Dataset` and `BinnedDataset` is **optional**—only do it if convenient.
 
 EFB (Exclusive Feature Bundling) complicates schema sharing because:
+
 - `Dataset` has N original features
 - `BinnedDataset` may have fewer "effective" features due to bundling
 - Bundled features have different bin counts than original features
 
-**Practical approach**: 
+#### Practical approach
 
 - `Dataset` owns `DatasetSchema` with user-facing feature metadata
 - `BinnedDataset` tracks its own internal feature mapping (groups, offsets, bin counts)
@@ -587,7 +595,8 @@ assert_eq!(hist[0], expected_bin_0);
 ### Memory Comparison
 
 **Current (BinnedDataset stores raw values):**
-```
+
+```text
 Dataset:       features [n_features × n_samples × 4 bytes]  = 40 MB (10K samples × 1K features)
 BinnedDataset: bins     [n_features × n_samples × 1 byte]   = 10 MB
                raw      [n_features × n_samples × 4 bytes]  = 40 MB (duplicated!)
@@ -595,7 +604,8 @@ Total: 90 MB
 ```
 
 **Proposed (BinnedDataset references Dataset):**
-```
+
+```text
 Dataset:       features [n_features × n_samples × 4 bytes]  = 40 MB
 BinnedDataset: bins     [n_features × n_samples × 1 byte]   = 10 MB
                source   Arc<Dataset> (shared reference)     = 0 MB
@@ -644,7 +654,7 @@ This section documents every file, struct, trait, and method that will be remove
 #### Files to Delete Entirely
 
 | File | Lines | Description |
-|------|-------|-------------|
+| ---- | ----- | ----------- |
 | `data/io/mod.rs` | ~50 | I/O module root (parquet) |
 | `data/io/parquet.rs` | ~200 | Parquet I/O implementation |
 | `data/io/record_batches.rs` | ~150 | Arrow RecordBatch handling |
@@ -652,12 +662,12 @@ This section documents every file, struct, trait, and method that will be remove
 | `data/types/accessor.rs` | ~130 | DataAccessor, SampleAccessor traits |
 | `data/binned/builder.rs` | ~700 | BinnedDatasetBuilder (logic moves to from_dataset) |
 
-**Total: ~1,280 lines deleted**
+#### Total: ~1,280 lines deleted
 
 #### Files to Move/Rename
 
 | From | To |
-|------|-----|
+| ---- | --- |
 | `data/types/dataset.rs` | `data/raw/dataset.rs` |
 | `data/types/views.rs` | `data/raw/views.rs` |
 | `data/types/column.rs` | `data/raw/column.rs` |
@@ -668,7 +678,7 @@ This section documents every file, struct, trait, and method that will be remove
 #### Structs to Delete
 
 | Struct | Location | Replacement |
-|--------|----------|-------------|
+| ------ | -------- | ----------- |
 | `EvalSet` | `training/eval.rs` | `Option<&Dataset>` parameter |
 | `PyEvalSet` | `boosters-python/src/data.rs` | `val_set: Dataset \| None` |
 | `BinnedDatasetBuilder` | `data/binned/builder.rs` | `BinnedDataset::from_dataset()` |
@@ -678,14 +688,14 @@ This section documents every file, struct, trait, and method that will be remove
 #### Traits to Delete
 
 | Trait | Location | Replacement |
-|-------|----------|-------------|
+| ----- | -------- | ----------- |
 | `DataAccessor` | `data/types/accessor.rs` | `Dataset::for_each_feature_value()` |
 | `SampleAccessor` | `data/types/accessor.rs` | `Dataset::gather_feature_values()` |
 
 #### Methods to Delete/Rename
 
 | Current Method | On Type | Action |
-|----------------|---------|--------|
+| -------------- | ------- | ------ |
 | `effective_feature_views()` | `BinnedDataset` | Rename to `feature_views()` |
 | `effective_feature_count()` | `BinnedDataset` | Rename to `n_features()` |
 | `original_feature_view()` | `BinnedDataset` | DELETE |
@@ -723,7 +733,7 @@ model.fit(train, val_set=valid_data)  # or val_set=None
 #### Storage Type Simplification
 
 | Current Type | Contains | After |
-|--------------|----------|-------|
+| ------------ | -------- | ----- |
 | `NumericStorage` | bins + raw_values | bins only (raw in Dataset) |
 | `SparseNumericStorage` | bins + raw_values | bins only |
 | `CategoricalStorage` | bins only | unchanged |
@@ -733,14 +743,14 @@ model.fit(train, val_set=valid_data)  # or val_set=None
 #### Constants to Remove
 
 | Constant | Location |
-|----------|----------|
+| -------- | -------- |
 | `CALIFORNIA_HOUSING_PATH` | `quality_benchmark.rs` |
 | `ADULT_PATH` | `quality_benchmark.rs` |
 | `COVERTYPE_PATH` | `quality_benchmark.rs` |
 
 ### Migration Path
 
-**Phase 0: Remove io-parquet (Independent)**
+#### Phase 0: Remove io-parquet (Independent)
 
 1. Delete `data/io/` module entirely
 2. Remove `io-parquet` feature from Cargo.toml
@@ -752,7 +762,7 @@ model.fit(train, val_set=valid_data)  # or val_set=None
    - Remove `CALIFORNIA_HOUSING_PATH`, `ADULT_PATH`, `COVERTYPE_PATH` constants
    - Update docstrings (remove `--features io-parquet` from usage examples)
 
-**Phase 1: Module Restructuring**
+#### Phase 1: Module Restructuring
 
 1. Create `data/raw/` directory
 2. Move from `data/types/`: `dataset.rs`, `views.rs`, `column.rs`, `schema.rs` → `data/raw/`
@@ -761,7 +771,7 @@ model.fit(train, val_set=valid_data)  # or val_set=None
 5. Delete `data/types/` directory
 6. Update `data/mod.rs` re-exports
 
-**Phase 2: API Simplification**
+#### Phase 2: API Simplification
 
 1. Change `eval_sets: &[EvalSet<'_>]` to `val_set: Option<&Dataset>` in all APIs
 2. Remove `EvalSet` struct from `training/eval.rs`
@@ -771,16 +781,16 @@ model.fit(train, val_set=valid_data)  # or val_set=None
 6. Remove `original_feature_view()` method
 7. Python API: `eval_set=[...]` → `val_set=...`
 
-**Phase 3: BinnedDataset Simplification**
+#### Phase 3: BinnedDataset Simplification
 
 1. Delete `BinnedDatasetBuilder` struct entirely
-2. Delete `data/binned/builder.rs` file 
+2. Delete `data/binned/builder.rs` file
 3. Move builder helper functions into `BinnedDataset::from_dataset()` implementation
 4. Add `BinnedDataset::test_builder()` for unit tests (simple, ~50 lines)
 5. Simplify storage types (no raw values in BinnedDataset)
 6. Remove raw value storage from `NumericStorage`, `SparseNumericStorage`
 
-**Phase 4: Cleanup**
+#### Phase 4: Cleanup
 
 1. Remove deprecated old `Dataset` type in `data/types/`
 2. Delete `DataAccessor` and `SampleAccessor` traits

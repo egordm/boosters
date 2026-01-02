@@ -1,8 +1,8 @@
 # RFC-0019: Feature Value Iteration for Linear Models, SHAP, and Linear Trees
 
-**Status**: Draft  
+**Status**: Implemented  
 **Created**: 2025-12-30  
-**Updated**: 2025-12-30  
+**Updated**: 2026-01-02  
 **Author**: Team  
 **Related**: RFC-0021 (Dataset/BinnedDataset Separation)
 
@@ -31,14 +31,14 @@ belong on `Dataset`, not `BinnedDataset`.
 
 ### Access Patterns
 
-| Component           | Pattern                        | Current Implementation                  | New Pattern                       |
-| ------------------- | ------------------------------ | --------------------------------------- | --------------------------------- |
-| GBLinear training   | all samples, per feature       | `FeaturesView::feature(f)`              | `Dataset::for_each_feature_value()` |
-| GBLinear prediction | all samples, per feature       | `FeaturesView::feature(f)`              | `Dataset::for_each_feature_value()` |
-| Linear SHAP         | all samples, per feature       | `FeaturesView::feature(f)[i]`           | `Dataset::for_each_feature_value()` |
-| Linear tree fitting | subset of samples, per feature | `DataAccessor::sample(row).feature(f)`  | `Dataset::gather_feature_values()` |
-| Tree SHAP           | per-sample, all features       | `FeaturesView::get(sample, feat)`       | `Dataset::buffer_samples()` + caller loop |
-| GBDT prediction     | per-sample batches             | `SampleBlocks` (on BinnedDataset)       | `Dataset::buffer_samples()` + caller loop |
+| Component | Pattern | Current Implementation | New Pattern |
+| --- | --- | --- | --- |
+| GBLinear training | all samples, per feature | `FeaturesView::feature(f)` | `Dataset::for_each_feature_value()` |
+| GBLinear prediction | all samples, per feature | `FeaturesView::feature(f)` | `Dataset::for_each_feature_value()` |
+| Linear SHAP | all samples, per feature | `FeaturesView::feature(f)[i]` | `Dataset::for_each_feature_value()` |
+| Linear tree fitting | subset of samples, per feature | `DataAccessor::sample(row).feature(f)` | `Dataset::gather_feature_values()` |
+| Tree SHAP | per-sample, all features | `FeaturesView::get(sample, feat)` | `Dataset::buffer_samples()` + caller loop |
+| GBDT prediction | per-sample batches | `SampleBlocks` (on BinnedDataset) | `Dataset::buffer_samples()` + caller loop |
 
 ### Key Design Decisions
 
@@ -286,7 +286,6 @@ impl<'a> Iterator for FeatureValueIter<'a> {
 
 **Note**: No `Bundled` variant. EFB bundling is a `BinnedDataset` concern for histogram building.
 `Dataset` stores features as simple dense or sparse columns—no bundles.
-```
 
 ### Gather Pattern: `gather_feature_values` on Dataset (Linear Tree Fitting)
 

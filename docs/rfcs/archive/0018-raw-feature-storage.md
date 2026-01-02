@@ -1,6 +1,6 @@
 # RFC-0018: BinnedDataset Redesign with Raw Feature Storage
 
-**Status**: Draft  
+**Status**: Superseded by RFC-0021  
 **Created**: 2025-01-28  
 **Revised**: 2025-01-28  
 **Authors**: Team

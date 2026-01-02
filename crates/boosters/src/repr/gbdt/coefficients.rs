@@ -3,7 +3,7 @@
 //! Stores feature indices and coefficients for linear leaves in a packed format.
 //! Follows the same pattern as `CategoriesStorage` for efficient inference.
 //!
-//! See RFC-0015 for design rationale.
+//! See RFC-0010 for design rationale.
 
 use super::NodeId;
 

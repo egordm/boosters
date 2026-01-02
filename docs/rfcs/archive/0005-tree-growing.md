@@ -21,6 +21,7 @@ $$
 $$
 
 Where:
+
 - $G_L, G_R, G_P$ = gradient sums for left, right, parent
 - $H_L, H_R, H_P$ = hessian sums for left, right, parent
 - $\lambda$ = L2 regularization (`reg_lambda`)
@@ -39,22 +40,26 @@ Where $\alpha$ = L1 regularization (`reg_alpha`). When $\alpha = 0$, simplifies 
 ### Split Enumeration
 
 **Numerical Features** — Bidirectional scanning:
+
 1. **Forward scan**: Accumulate left stats bin-by-bin, missing values go right (`default_left = false`)
 2. **Backward scan** (only if `has_missing`): Accumulate right stats, missing values go left (`default_left = true`)
 3. Return split with highest gain
 
 **Categorical Features** — Strategy based on cardinality:
+
 - **One-hot** (≤ `max_onehot_cats`, default 4): Try each category as singleton left partition, O(k)
 - **Sorted partition** (> `max_onehot_cats`): Sort categories by gradient/hessian ratio, scan for optimal binary partition, O(k log k)
 
 ### Constraints
 
 Splits are rejected if they violate:
+
 - `min_child_weight`: Minimum hessian sum per child (default: 1.0)
 - `min_samples_leaf`: Minimum sample count per child (default: 1)
 - `min_gain`: Minimum split gain threshold (default: 0.0)
 
 Validation check:
+
 ```rust
 hess_left >= min_child_weight
     && hess_right >= min_child_weight
@@ -65,6 +70,7 @@ hess_left >= min_child_weight
 ### Parallel Split Finding
 
 `GreedySplitter` supports parallel feature evaluation via rayon:
+
 - Self-corrects to sequential when `features.len() < 16`
 - Parallel mode evaluates features concurrently, reduces with max gain
 - Categorical sorted splits allocate per-thread scratch space
@@ -106,6 +112,7 @@ The `GrowthStrategy` enum defines two tree construction approaches:
 - **LeafWise** (`max_leaves`): Always expands the leaf with highest gain. Controlled by `max_leaves` parameter (default: 31). LightGBM-style growth that typically produces deeper, more accurate trees.
 
 Each strategy initializes a `GrowthState` that manages the expansion queue:
+
 - DepthWise uses level-by-level `Vec` buffers with `advance()` to move between depths
 - LeafWise uses a max-heap (`BinaryHeap`) ordered by split gain
 
@@ -145,15 +152,17 @@ Split partitioning uses typed dispatch (`FeatureView::U8`/`U16`) for efficient b
 **Learning rate**: Applied to final leaf weights via `tree_builder.apply_learning_rate()`. Also cached per-node for fast prediction updates via `update_predictions_from_last_tree()`.
 
 **Leaf weight computation** (in `GainParams`):
-```
+
+```text
 weight = -sign(G) × max(0, |G| - α) / (H + λ)
 ```
+
 Where α = L1 regularization, λ = L2 regularization.
 
 ## Key Types Summary
 
 | Type | Purpose |
-|------|---------|
+| --- | --- |
 | `GrowthStrategy` | Config enum: `DepthWise { max_depth }` or `LeafWise { max_leaves }` |
 | `GrowthState` | Runtime state with `push()`, `pop_next()`, `advance()`, `should_continue()` |
 | `NodeCandidate` | Expansion candidate with node IDs, split info, gradient sums |

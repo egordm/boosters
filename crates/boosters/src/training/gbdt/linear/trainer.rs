@@ -6,7 +6,7 @@
 //! 3. Fit weighted least squares using coordinate descent
 //! 4. Return fitted coefficients
 //!
-//! See RFC-0015 for design rationale.
+//! See RFC-0010 for design rationale.
 
 use crate::data::Dataset;
 use crate::repr::gbdt::{MutableTree, ScalarLeaf, SplitType, TreeView};

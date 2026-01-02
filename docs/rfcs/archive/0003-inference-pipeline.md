@@ -12,7 +12,7 @@ The inference pipeline provides batch and single-row prediction for GBDT ensembl
 
 ## Design Overview
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                       Predictor<T>                           │
 │  ┌─────────────────────────────────────────────────────────┐│

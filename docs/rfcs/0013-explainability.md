@@ -1,240 +1,259 @@
 # RFC-0013: Explainability
 
-- **Status**: Draft
-- **Created**: 2025-12-19
-- **Updated**: 2025-01-25
-- **Depends on**: RFC-0002, RFC-0009, RFC-0010
-- **Scope**: Feature importance and SHAP value computation
+**Status**: Implemented  
+**Created**: 2025-12-20  
+**Updated**: 2026-01-02  
+**Scope**: Feature importance and SHAP values
 
 ## Summary
 
-Explainability infrastructure for boosters:
+Explainability features help users understand model behavior: which features
+matter (importance) and how they affect individual predictions (SHAP).
 
-1. **Feature importance** - Static model analysis (gain, split count, cover)
-2. **SHAP values** - Per-prediction feature contributions
-3. **Interaction values** - Feature interaction analysis (future)
+## Why Explainability?
 
-## Motivation
-
-- **Model debugging**: Understanding why predictions are made
-- **Feature selection**: Identifying important vs. redundant features
-- **Regulatory compliance**: Explaining predictions (GDPR, FCRA)
-
-## Design Overview
-
-```
-Model
-  .feature_importance(type) → FeatureImportance
-  .shap_values(data) → ShapValues
-                 │
-    ┌────────────┼────────────┐
-    ▼            ▼            ▼
-TreeExplainer  LinearExplainer  HybridExplainer
-   (GBDT)       (GBLinear)     (Linear Leaves)
-```
-
----
+| Need | Solution |
+| ---- | -------- |
+| "Which features matter?" | Feature importance |
+| "Why this prediction?" | SHAP values |
+| "Model debugging" | Both |
+| "Regulatory compliance" | Both |
 
 ## Feature Importance
 
-### Importance Types
-
-| Type | Description |
-|------|-------------|
-| `Split` | Number of times feature is used in splits |
-| `Gain` | Total gain from splits using this feature |
-| `AverageGain` | Gain / split count |
-| `Cover` | Total samples covered by feature splits |
-| `AverageCover` | Cover / split count |
-
-### Data Structures
+### ImportanceType Enum
 
 ```rust
-pub enum ImportanceType { Split, Gain, AverageGain, Cover, AverageCover }
-
-pub struct FeatureImportance {
-    values: Vec<f64>,
-    importance_type: ImportanceType,
-    feature_names: Option<Vec<String>>,
+pub enum ImportanceType {
+    /// Number of times each feature is used in splits.
+    Split,          // Default
+    /// Total gain from splits using each feature.
+    Gain,           // Requires gain storage
+    /// Average gain per split (Gain / Split count).
+    AverageGain,    // Requires gain storage
+    /// Total cover (hessian sum) at nodes splitting on each feature.
+    Cover,          // Requires cover storage
+    /// Average cover per split (Cover / Split count).
+    AverageCover,   // Requires cover storage
 }
 ```
 
-Key methods: `get(idx)`, `get_by_name(name)`, `top_k(k)`, `normalized()`, `to_map()`
+### FeatureImportance Container
 
-### Algorithm (Trees)
+The `FeatureImportance` struct wraps raw importance values with utility methods:
 
+```rust
+impl FeatureImportance {
+    pub fn values(&self) -> &[f32];                    // Raw values
+    pub fn normalized(&self) -> Self;                  // Sum to 1.0
+    pub fn sorted_indices(&self) -> Vec<usize>;        // Descending order
+    pub fn top_k(&self, k: usize) -> Vec<(usize, Option<String>, f32)>;
+    pub fn get_by_name(&self, name: &str) -> Option<f32>;
+}
 ```
-for each tree in forest:
-    for each internal node:
-        feature = node.split_feature
-        split_count[feature] += 1
-        gain_sum[feature] += node.gain       // requires node stats
-        cover_sum[feature] += node.cover     // requires node stats
+
+### GBDTModel API
+
+```rust
+impl GBDTModel {
+    pub fn feature_importance(
+        &self,
+        importance_type: ImportanceType,
+    ) -> Result<FeatureImportance, ExplainError>;
+}
 ```
 
-**Note**: Gain/cover importance requires per-node statistics (`gains`, `covers` arrays in `Tree`). Trees without stats only support `Split` importance.
-
-### Algorithm (Linear Models)
-
-For linear models, importance is based on coefficient magnitude:
-- `Split`: Count of non-zero weights
-- `Gain`: `|weight| × std(feature)` (requires feature statistics)
-
----
+Returns `ExplainError::MissingNodeStats` if gain/cover types are requested
+but the model lacks those statistics.
 
 ## SHAP Values
 
-SHAP (SHapley Additive exPlanations) values explain individual predictions by computing each feature's contribution.
+### Shapley Value Formula
 
-### Data Structures
+$$\phi_j = \sum_{S \subseteq F \setminus \{j\}} \frac{|S|!(|F|-|S|-1)!}{|F|!} [f(S \cup \{j\}) - f(S)]$$
+
+### ShapValues Container
+
+SHAP output is stored in a 3D array:
 
 ```rust
-pub struct ShapValues {
-    values: Array3<f64>,  // [n_samples, n_features + 1, n_outputs]
-    // Last feature slot stores base value (expected output)
+pub struct ShapValues(Array3<f32>);  // [n_samples, n_features + 1, n_outputs]
+
+impl ShapValues {
+    pub fn get(&self, sample: usize, feature: usize, output: usize) -> f32;
+    pub fn base_value(&self, sample: usize, output: usize) -> f32;
+    pub fn feature_shap(&self, sample_idx: usize, output: usize) -> Vec<f32>;
+    pub fn verify(&self, predictions: &[f32], tolerance: f32) -> bool;
 }
 ```
 
-Key methods: `get(sample, feature, output)`, `base_value(sample, output)`, `verify(predictions, tolerance)`
+The `verify()` method checks the sum property: `sum(SHAP) + base ≈ prediction`.
 
-### TreeSHAP Algorithm
+## TreeSHAP
 
-TreeSHAP computes exact SHAP values in polynomial time by tracking contributions through tree paths.
+The `TreeExplainer` computes exact SHAP values for tree ensembles in
+polynomial time using the algorithm from Lundberg et al. (2020).
 
-**Complexity**: O(TLD²) per sample where T = trees, L = leaves, D = depth.
+### API
 
-**Key insight**: At each node, track two quantities:
-- `one_fraction`: Probability of reaching node when feature is in coalition
-- `zero_fraction`: Probability when feature is NOT in coalition
+```rust
+pub struct TreeExplainer<'a> {
+    forest: &'a Forest<ScalarLeaf>,
+    base_value: f64,
+    block_size: usize,
+    max_depth: usize,
+}
 
+impl<'a> TreeExplainer<'a> {
+    pub fn new(forest: &'a Forest<ScalarLeaf>) -> Result<Self, ExplainError>;
+    pub fn base_value(&self) -> f64;
+    pub fn shap_values(&self, dataset: &Dataset, parallelism: Parallelism) -> ShapValues;
+}
 ```
-function tree_shap(node, path_state):
-    if node is leaf:
-        compute_contributions(path_state, leaf_value)
-        return
+
+**Requires cover statistics** — returns `ExplainError::MissingNodeStats` if trees
+don't have covers. Models trained with booste-rs automatically have covers.
+
+### Algorithm
+
+TreeSHAP tracks a path state through the tree:
+
+1. **PathState**: Tracks features seen, zero fractions, one fractions
+2. **Recursive traversal**: At each node, extend path and recurse both branches
+3. **At leaves**: Compute contributions for all features in path
+4. **Unwound sum**: Weight contributions by path weights
+
+```rust
+fn tree_shap(&self, tree: &Tree, sample: ArrayView1, path: &mut PathState, node: u32) {
+    if tree.is_leaf(node) {
+        self.compute_contributions(output, path, leaf_value);
+        return;
+    }
     
-    feature = node.split_feature
-    hot_child = child sample goes to
-    cold_child = other child
+    // Hot path (sample's direction)
+    path.extend(feature, zero_fraction, one_fraction);
+    self.tree_shap(tree, sample, path, hot_child);
+    path.unwind();
     
-    // Recurse hot path (feature in coalition)
-    path_state.extend(feature, zero_frac=cover_ratio, one_frac=1.0)
-    tree_shap(hot_child, path_state)
-    path_state.unwind()
-    
-    // Recurse cold path (feature not in coalition)  
-    path_state.extend(feature, zero_frac=cold_cover_ratio, one_frac=0.0)
-    tree_shap(cold_child, path_state)
-    path_state.unwind()
+    // Cold path (other direction)
+    path.extend(feature, cold_zero_fraction, 0.0);
+    self.tree_shap(tree, sample, path, cold_child);
+    path.unwind();
+}
 ```
 
-**Requirement**: TreeSHAP needs per-node `cover` values to compute path fractions. Models without covers will return an error.
+### TreeSHAP Complexity
 
-### Linear SHAP
+- **Per sample**: O(T × L × D²) where T=trees, L=leaves, D=depth
+- **Parallelization**: Over samples via `Parallelism::Parallel`
+- **Memory**: O(D) path state per thread
 
-For linear models, SHAP has a closed form:
+### GBDTModel.shap_values
 
+```rust
+impl GBDTModel {
+    pub fn shap_values(&self, data: &Dataset) -> Result<ShapValues, ExplainError>;
+}
 ```
-φᵢ = wᵢ × (xᵢ - E[xᵢ])
+
+## Linear SHAP
+
+For `LinearModel`, SHAP values have a closed-form solution:
+
+$$\phi_i = w_i \times (x_i - \mu_i)$$
+
+Where $w_i$ is the feature weight and $\mu_i$ is the background mean.
+
+### LinearExplainer API
+
+```rust
+pub struct LinearExplainer<'a> {
+    model: &'a LinearModel,
+    feature_means: Vec<f64>,
+}
+
+impl<'a> LinearExplainer<'a> {
+    pub fn new(model: &'a LinearModel, feature_means: Vec<f64>) -> Result<Self, ExplainError>;
+    pub fn with_zero_means(model: &'a LinearModel) -> Self;
+    pub fn base_value(&self, output: usize) -> f64;
+    pub fn shap_values(&self, dataset: &Dataset) -> ShapValues;
+}
 ```
 
-Requires feature means from training data.
+### Base Value
 
-### Hybrid SHAP (Linear Leaves)
+The expected prediction given the background distribution:
 
-For trees with linear leaves:
-1. Compute tree path contributions via TreeSHAP
-2. At each leaf, add linear term contributions: `wᵢ × (xᵢ - mean)`
+$$E[f(x)] = \sum_i w_i \mu_i + \text{bias}$$
 
----
+### Linear SHAP Complexity
 
-## Missing Values
+- O(n_features × n_samples) — linear in data size
+- No additional statistics required
 
-**Feature Importance**: Missing values don't affect importance counting. Trees still use features for splits regardless of missing values.
+## File Structure
 
-**SHAP Values**: Missing features use `default_left` direction from training. SHAP contribution is based on which path is taken.
+| Path | Contents |
+| ---- | -------- |
+| `explainability/mod.rs` | Module exports |
+| `explainability/importance.rs` | Feature importance types and computation |
+| `explainability/shap/mod.rs` | SHAP submodule |
+| `explainability/shap/values.rs` | ShapValues container |
+| `explainability/shap/path.rs` | PathState for TreeSHAP |
+| `explainability/shap/tree_explainer.rs` | TreeSHAP implementation |
+| `explainability/shap/linear_explainer.rs` | Linear SHAP implementation |
 
----
+## Design Decisions
+
+**DD-1: Separate from inference.** Explainability is optional and adds
+computation. Keep it in dedicated module, not integrated into prediction.
+
+**DD-2: f64 for intermediate, f32 for output.** TreeSHAP uses f64 internally
+for numerical stability, but stores results as f32 for consistency with
+predictions and memory efficiency.
+
+**DD-3: Base value stored per sample.** The base value is stored in
+`ShapValues` at index `n_features` for each sample/output, enabling
+the `verify()` method to check correctness.
+
+**DD-4: Tree-path SHAP (not interventional).** We implement the faster
+tree-path SHAP variant. Interventional SHAP is more theoretically sound
+but O(2^d) expensive.
+
+**DD-5: Require covers for TreeSHAP.** Rather than estimating covers,
+we require them to be present. Models trained with booste-rs automatically
+store covers during training.
+
+**DD-6: Block-based sample buffering.** TreeExplainer uses the same
+block buffering approach as prediction (buffer_samples) for cache efficiency
+when converting feature-major to sample-major layout.
 
 ## Error Handling
 
 ```rust
 pub enum ExplainError {
-    MissingNodeStats(&'static str),  // Need gains/covers
-    MissingFeatureStats,              // Need feature means for linear SHAP
+    /// Node statistics (gains/covers) are required but not available.
+    MissingNodeStats(&'static str),
+    /// Feature statistics (means) are required but not available.
+    MissingFeatureStats,
+    /// Empty model (no trees).
     EmptyModel,
 }
 ```
 
----
+## Testing Strategy
 
-## Usage Examples
-
-### Python
-
-```python
-# Feature importance
-importance = model.feature_importance("gain")
-for name, score in sorted(importance.items(), key=lambda x: -x[1])[:10]:
-    print(f"{name}: {score:.4f}")
-
-# SHAP values (compatible with shap library)
-shap_values = model.shap_values(X_test)
-shap.summary_plot(shap_values, X_test)
-```
-
-### Rust
-
-```rust
-let importance = model.feature_importance(ImportanceType::Gain)?;
-for (idx, score) in importance.top_k(10) {
-    println!("{}: {:.4}", idx, score);
-}
-
-let explainer = TreeExplainer::new(&forest)?;
-let shap = explainer.shap_values(features_view);
-assert!(shap.verify(&predictions, 1e-6));
-```
-
----
-
-## Design Decisions
-
-### DD-1: f64 for SHAP Accumulators
-
-SHAP involves many additions that accumulate error. Use f64 internally.
-
-### DD-2: TreeSHAP as Default
-
-TreeSHAP is O(TLD²) and leverages tree structure. Interventional SHAP available as option for causal interpretation.
-
-### DD-3: Embedded Node Stats
-
-Store optional `gains` and `covers` in `Tree`. Populated during training or model loading.
-
----
-
-## Integration
-
-| Component | Integration Point |
-|-----------|------------------|
-| RFC-0002 (Trees) | `Tree::gains()`, `Tree::covers()` |
-| RFC-0009 (GBLinear) | `LinearModel` weight access |
-| RFC-0010 (Linear Leaves) | Hybrid SHAP for linear terms |
+| Category | Tests |
+| -------- | ----- |
+| Sum property | `shap.verify(predictions, tol)` returns true |
+| Splitting feature | Non-zero contribution for features that split |
+| Linear exactness | Linear SHAP matches closed-form |
+| Multi-output | Correct shape for multiclass |
+| Missing stats | Proper error when covers unavailable |
+| Importance types | All five types compute correctly |
 
 ## Future Work
 
-- GPU-accelerated SHAP
-- SHAP interaction values
-- Approximate SHAP (sampling-based)
-- Permutation importance
-
-## References
-
-- Lundberg & Lee (2017). "A Unified Approach to Interpreting Model Predictions"
-- Lundberg et al. (2018). "Consistent Individualized Feature Attribution for Tree Ensembles"
-
-## Changelog
-
-- 2025-01-25: Simplified RFC - removed excessive implementation detail, added pseudocode
-- 2025-12-19: Initial draft
+- **SHAP interaction values**: Feature × feature interactions
+- **Approximate SHAP**: Sampling-based for faster large-model computation
+- **Examples and API polish**: Add end-to-end Python examples and stabilize the public surface (without changing the underlying algorithms)

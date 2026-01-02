@@ -17,7 +17,7 @@ This RFC proposes a series of optimizations to close the 6x single-threaded perf
 Benchmarks show boosters is **6x slower than LightGBM** in single-threaded mode:
 
 | Mode | Boosters | LightGBM | Ratio |
-|------|----------|----------|-------|
+| --- | --- | --- | --- |
 | Single-threaded | 0.46s | 0.08s | **6.06x slower** |
 | Multi-threaded (8 cores) | 0.26s | 0.46s | **1.7x faster** |
 
@@ -33,7 +33,7 @@ While multi-threaded performance is excellent, single-threaded performance matte
 After analyzing LightGBM's codebase, the performance gap stems from several key differences:
 
 | Area | Boosters | LightGBM | Impact |
-|------|----------|----------|--------|
+| --- | --- | --- | --- |
 | **Histogram bins** | `(f64, f64)` = 16 bytes | Packed `i32` or `i16` = 4-8 bytes | 2-4x bandwidth |
 | **Gradient storage** | Separate `f32` grad/hess | Packed `i16` grad+hess | 2x loads |
 | **Accumulation** | 2 separate f64 adds | 1 packed integer add | 2x stores |
@@ -43,6 +43,7 @@ After analyzing LightGBM's codebase, the performance gap stems from several key 
 ### Why Parallel Mode Compensates
 
 Our parallel mode is fast because:
+
 1. **Feature-parallel histogram building** utilizes multiple cores effectively
 2. **Memory bandwidth scales** with cores on modern CPUs
 3. **Rayon work-stealing** keeps all cores busy
@@ -412,6 +413,7 @@ pub struct FeatureGroupMeta {
 **Context**: How many bits to use for quantized gradients?
 
 **Options considered**:
+
 1. **8-bit**: 4x memory reduction, but limited precision
 2. **16-bit**: 2x memory reduction, good precision
 3. **Adaptive**: Choose based on gradient range
@@ -419,6 +421,7 @@ pub struct FeatureGroupMeta {
 **Decision**: Start with 16-bit as the primary quantized mode.
 
 **Consequences**:
+
 - 16-bit provides 2-3x speedup with minimal accuracy loss
 - 8-bit can be added later for specific use cases
 - Scale factors must be computed per-tree iteration
@@ -428,6 +431,7 @@ pub struct FeatureGroupMeta {
 **Context**: How far ahead should we prefetch?
 
 **Options considered**:
+
 1. **Fixed distance**: 64 elements (LightGBM's approach)
 2. **Cache-line based**: 64 bytes / sizeof(element)
 3. **Dynamic**: Tune based on cache size
@@ -435,6 +439,7 @@ pub struct FeatureGroupMeta {
 **Decision**: Use fixed 64-element lookahead initially.
 
 **Consequences**:
+
 - Simple implementation
 - May not be optimal for all cache hierarchies
 - Can tune later based on benchmarks
@@ -444,6 +449,7 @@ pub struct FeatureGroupMeta {
 **Context**: When to use full precision vs quantized?
 
 **Options considered**:
+
 1. **Always quantized**: Maximum speed, some accuracy risk
 2. **Auto-select**: Based on gradient range and dataset size
 3. **User-controlled**: Let user choose precision mode
@@ -451,6 +457,7 @@ pub struct FeatureGroupMeta {
 **Decision**: Auto-select with user override option.
 
 **Consequences**:
+
 - Safe default behavior
 - Power users can force modes for specific needs
 - Need to compute gradient statistics for auto mode
@@ -458,7 +465,7 @@ pub struct FeatureGroupMeta {
 ## Integration
 
 | Component | Integration Point | Notes |
-|-----------|------------------|-------|
+| --- | --- | --- |
 | RFC-0004 (Histograms) | HistogramBuilder | Add quantized kernels |
 | RFC-0005 (Tree Growing) | Grower | Select histogram mode |
 | RFC-0011 (Feature Bundling) | EFB | Multi-feature build |
@@ -468,7 +475,7 @@ pub struct FeatureGroupMeta {
 
 Each phase should be benchmarked independently:
 
-```
+```text
 Dataset: Covertype (581k samples, 54 features)
 Metric: Single-tree training time, single-threaded
 Target: Match or beat LightGBM single-threaded performance

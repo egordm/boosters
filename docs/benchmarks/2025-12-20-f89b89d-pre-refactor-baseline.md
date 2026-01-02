@@ -2,7 +2,7 @@
 
 **Date**: 2025-12-20  
 **Commit**: f89b89d  
-**Purpose**: Capture performance and correctness baselines before API Layering Redesign (RFC-0020)
+**Purpose**: Capture performance and correctness baselines before the data/API layering redesign (now RFC-0021)
 
 ---
 
@@ -11,7 +11,7 @@
 ### Prediction Core (`cargo bench --bench prediction_core`)
 
 | Benchmark | Time | Throughput |
-|-----------|------|------------|
+| --------- | ---- | ---------- |
 | batch_size/medium/1 | 9.05 µs | 110.5 Kelem/s |
 | batch_size/medium/10 | 13.30 µs | 751.8 Kelem/s |
 | batch_size/medium/100 | 87.67 µs | 1.14 Melem/s |
@@ -23,7 +23,7 @@
 ### Training GBDT (`cargo bench --bench training_gbdt`)
 
 | Benchmark | Time | Throughput |
-|-----------|------|------------|
+| --------- | ---- | ---------- |
 | quantize/to_binned/max_bins=256/10000x50 | 32.24 ms | 15.51 Melem/s |
 | quantize/to_binned/max_bins=256/50000x100 | 328.4 ms | 15.23 Melem/s |
 | quantize/to_binned/max_bins=256/100000x20 | 132.9 ms | 15.05 Melem/s |
@@ -65,7 +65,7 @@ cargo test
 
 All 3 selected tests pass with tolerance `< 1e-5`:
 
-```
+```text
 test xgboost::predict_regression ... ok
 test xgboost::predict_binary_logistic ... ok
 test xgboost::predict_multiclass ... ok
@@ -78,22 +78,28 @@ test xgboost::predict_multiclass ... ok
 After completing the API refactor, run:
 
 1. **Performance check**:
+
    ```bash
    cargo bench --bench prediction_core
    cargo bench --bench training_gbdt
    ```
+
    Compare against baselines above. Accept if regression < 5%.
 
 2. **Correctness check**:
+
    ```bash
    cargo test --test compat
    ```
+
    All tests must pass with unchanged expected values.
 
 3. **Full test suite**:
+
    ```bash
    cargo test
    ```
+
    All tests must pass.
 
 ---

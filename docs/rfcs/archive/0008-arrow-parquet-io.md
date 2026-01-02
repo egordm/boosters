@@ -1,13 +1,15 @@
 # RFC-0008: Arrow and Parquet I/O
 
-- **Status**: Implemented
 - **Created**: 2024-12-15
-- **Updated**: 2025-01-21
+- **Status**: Superseded by RFC-0021
+- **Updated**: 2026-01-02
 - **Scope**: Data loading from Arrow and Parquet files
 
 ## Summary
 
-Optional data loading from Arrow IPC (Feather) and Parquet files into boosters matrix and dataset types, with support for two schema layouts and automatic missing value handling.
+This RFC described optional data loading from Arrow IPC (Feather) and Parquet.
+
+**Current status**: The `io-arrow` / `io-parquet` features and the associated `data/io` module were removed during the 2025-12 data refactor (see RFC-0021). This document is kept as historical design context.
 
 ## Design
 
@@ -26,6 +28,7 @@ Two column layouts are supported:
 2. **FixedSizeList**: Single `x` column of type `FixedSizeList<Float32, d>`
 
 Required columns:
+
 - `y` (Float32 or Int32): Target values
 
 The loader auto-detects the schema by checking for a `FixedSizeList` column named `x` first, then falling back to wide column enumeration.
@@ -44,6 +47,7 @@ pub(super) struct LoadedBatches {
 ```
 
 Conversion methods:
+
 - `to_dataset()` → `Dataset` (feature columns + targets)
 - `to_row_matrix_f32()` → `SamplesView<f32>` (features only)
 - `to_col_matrix_f32()` → `FeaturesView<f32>` (features only)
@@ -79,7 +83,7 @@ fn read_parquet_file(path: impl AsRef<Path>) -> Result<(Vec<RecordBatch>, Arc<Sc
 ### Arrow IPC (`src/data/io/arrow.rs`)
 
 | Function | Returns |
-|----------|---------|
+| --- | --- |
 | `load_ipc_to_dataset(path)` | `Dataset` |
 | `load_ipc_to_row_matrix_f32(path)` | `SamplesView<f32>` |
 | `load_ipc_to_col_matrix_f32(path)` | `FeaturesView<f32>` |
@@ -89,7 +93,7 @@ fn read_parquet_file(path: impl AsRef<Path>) -> Result<(Vec<RecordBatch>, Arc<Sc
 ### Parquet (`src/data/io/parquet.rs`)
 
 | Function | Returns |
-|----------|---------|
+| --- | --- |
 | `load_parquet_to_dataset(path)` | `Dataset` |
 | `load_parquet_to_row_matrix_f32(path)` | `SamplesView<f32>` |
 | `load_parquet_to_col_matrix_f32(path)` | `FeaturesView<f32>` |

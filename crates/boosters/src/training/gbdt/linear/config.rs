@@ -1,6 +1,6 @@
 //! Configuration for linear leaf training.
 //!
-//! See RFC-0015 for design rationale.
+//! See RFC-0010 for design rationale.
 
 use bon::Builder;
 

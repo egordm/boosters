@@ -1,11 +1,13 @@
-# RFC-0019: EFB Architecture Cleanup
+# RFC-0020: EFB Architecture Cleanup
 
 ## Status
+
 Draft
 
 ## Summary
 
 Refactor the EFB (Exclusive Feature Bundling) histogram building architecture to:
+
 1. Move `BundleDecoder` to the bundling module
 2. Replace complex tuple types with proper structs
 3. Eliminate duplicate histogram building functions by integrating into FeatureView
@@ -14,6 +16,7 @@ Refactor the EFB (Exclusive Feature Bundling) histogram building architecture to
 ## Motivation
 
 Current issues:
+
 - `BundleDecoder` lives in `ops.rs` but is bundling-specific
 - `bundles: Vec<(u32, Vec<(usize, u32, u32)>)>` is hard to read and maintain
 - Four separate histogram building functions: `build_contiguous`, `build_gathered`, `build_unbundled_contiguous`, `build_unbundled_gathered`
@@ -23,6 +26,7 @@ Current issues:
 ## LightGBM's Approach (for reference)
 
 LightGBM builds histograms directly on bundled columns:
+
 1. **Histogram building**: O(n_samples × n_bundled_columns) - no decoding
 2. **Split finding**: Iterate bundled histogram bins, use `bin_offsets` to identify which sub-feature owns each bin
 3. **Partitioning**: Decode bundled bin to original feature only for prediction
@@ -72,11 +76,13 @@ impl<'a> OriginalFeatureAccess<'a> {
 ```
 
 **Pros:**
+
 - Simple mental model: iterate original features, always get original bins
 - Histogram building code unchanged (just different views)
 - Easy to implement
 
 **Cons:**
+
 - Still O(n_samples × n_original_features) for bundled columns
 - Each row must decode for EACH feature in the bundle
 
@@ -102,10 +108,12 @@ for bin in 0..bundled_layout.n_bins {
 ```
 
 **Pros:**
+
 - O(n_samples × n_bundled_columns) - true bundling performance benefit
 - Split finding is just O(total_bins), same as before
 
 **Cons:**
+
 - More complex: histogram layout must accommodate bundled columns
 - Split finder needs bundling awareness
 - Larger change to the codebase

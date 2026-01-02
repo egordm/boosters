@@ -13,7 +13,7 @@
 //! # Design
 //!
 //! Linear leaves fit `intercept + Σ(coef × feature)` at each leaf.
-//! See RFC-0015 for design rationale.
+//! See RFC-0010 for design rationale.
 
 mod buffer;
 mod config;

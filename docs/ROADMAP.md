@@ -2,113 +2,65 @@
 
 ## Current Status
 
-boosters has achieved **performance parity with LightGBM** and is **13-28%% faster than XGBoost** while maintaining full quality compatibility.
+boosters has achieved **performance parity with LightGBM** and is **13-28% faster than XGBoost** while maintaining full quality compatibility.
 
-### Feature Status
+### Implemented Features
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| **Tree Inference** | ✅ Complete | 3-9x faster than XGBoost C++ |
-| **Tree Training** | ✅ Complete | Histogram-based, depth/leaf-wise |
-| **Linear Booster** | ✅ Complete | GBLinear training and inference |
-| **XGBoost Compat** | ✅ Complete | Load JSON models, prediction parity |
-| **LightGBM Compat** | ✅ Complete | Load text models, inference |
-| **Objectives** | ✅ Complete | Binary, multiclass, regression, ranking, quantile |
-| **Metrics** | ✅ Complete | AUC, RMSE, MAE, log-loss, NDCG, etc. |
-| **Sampling** | ✅ Complete | GOSS, row/column sampling |
-| **Sample Weights** | ✅ Complete | Weighted training, class imbalance |
-| **Categorical** | ✅ Complete | Native categorical feature support |
-| **Feature Bundling (EFB)** | ✅ Complete | 84-98% memory reduction for one-hot data |
-| **Per-Feature Binning** | ✅ Complete | Custom max_bins per feature via BinningConfig |
-| **Arrow/Parquet** | ✅ Complete | Data loading (may deprecate after Python bindings) |
+| Feature | Notes |
+| ------- | ----- |
+| **Tree Inference** | 3-9x faster than XGBoost C++ |
+| **Tree Training** | Histogram-based, depth/leaf-wise growth |
+| **Linear Booster** | GBLinear training and inference |
+| **XGBoost Compat** | Load JSON models, prediction parity |
+| **LightGBM Compat** | Load text models, inference |
+| **Objectives** | Binary, multiclass, regression, ranking, quantile |
+| **Metrics** | AUC, RMSE, MAE, log-loss, NDCG, etc. |
+| **Sampling** | GOSS, row/column sampling |
+| **Sample Weights** | Weighted training, class imbalance |
+| **Categorical** | Native categorical feature support |
+| **Feature Bundling (EFB)** | 84-98% memory reduction for one-hot data |
+| **Per-Feature Binning** | Custom max_bins per feature via BinningConfig |
+| **Linear Trees** | Linear models at tree leaves |
+| **Python Bindings** | PyO3 bindings with NumPy/Pandas zero-copy, sklearn estimators |
+| **Explainability** | Feature importance (gain/split count), TreeSHAP, Linear SHAP |
+| **Evaluation Framework** | `boosters-eval` for quality benchmarks and regression testing |
 
 ---
 
-## Release 1.0.0 Roadmap
+## Planned Features
 
-**Target**: Production-ready release with Python ecosystem integration.
-**Estimated Timeline**: ~8-10 weeks
+Ordered by priority. Not yet assigned to releases.
 
-### Release Strategy
+### High Priority
 
-The team has agreed on the following approach after discussion:
+- **Model Serialization**: Stable on-disk format for boosters models (save/load without XGBoost/LightGBM)
+- **Monotonic Constraints**: Enforce monotonic feature relationships during training
+- **GPU Acceleration**: CUDA/Metal histogram building
 
-1. **Code Audit First**: Stabilize internals before exposing Python API
-2. **Python Bindings**: Core value delivery - unlocks user adoption
-3. **Explainability**: Feature importance (gain/split count) + basic SHAP
-4. **GPU Deferred**: Too risky for 1.0 - target for 1.1 or later
+### Medium Priority
 
-### 1.0.0 Required Features
+- **Interaction Constraints**: Limit which features can interact in splits
+- **Training Diagnostics**: Optional verbose logging: per-tree metrics, gradient stats
 
-| Feature | Priority | Status | Effort | Description |
-|---------|----------|--------|--------|-------------|
-| **Code Audit & Cleanup** | 🔴 P0 | Not Started | 2 weeks | Architecture review, API stabilization, test audit |
-| **Python Bindings** | 🔴 P0 | Not Started | 3-4 weeks | PyO3 bindings with NumPy/Pandas zero-copy |
-| **Explainability** | 🟡 P1 | Not Started | 2-3 weeks | Feature importance, TreeSHAP values |
+### Low Priority
 
-### 1.0.0 Code Audit Scope
+- **Natural Gradient Boosting**: NGBoost-style probabilistic predictions
+- **Quantized Histograms**: Integer histogram accumulation for memory-bound hardware
 
-Before 1.0.0, a thorough audit is required:
+---
 
-**Architecture Review**:
-- [ ] Module boundaries analysis (`src/data/`, `src/training/`, `src/inference/`)
-- [ ] Public API surface audit (minimize `pub`, use `pub(crate)`)
-- [ ] Coupling analysis between components
-- [ ] Identify deprecated or dead code paths
+## Small Open Tasks
 
-**Test Coverage Audit**:
-- [ ] GOSS sampling edge cases
-- [ ] Multiclass objective coverage
-- [ ] Quantile regression tests
-- [ ] Integration test expansion
-- [ ] Remove redundant tests
+- [ ] Python examples for explainability (SHAP values, feature importance)
+- [ ] Python bindings to inspect tree structure (nodes, thresholds, splits)
+- [ ] Training diagnostics logging (optional verbose output: per-tree metrics, gradient stats)
+- [ ] Batch prediction in training (use optimized inference for evaluation)
 
-**API Consistency**:
-- [ ] Naming conventions review
-- [ ] Error handling patterns (no silent failures)
-- [ ] Documentation coverage (all public items have examples)
-- [ ] Panic safety audit (intentional vs accidental unwraps)
-
-**Performance Review**:
-- [ ] Identify unnecessary allocations
-- [ ] Profile hot paths
-- [ ] Validate benchmark results are reproducible
-- [ ] **Single-threaded training optimization**: Currently 6x slower than LightGBM in single-threaded mode (but 1.7x faster in multi-threaded mode). See [RFC-0016](./rfcs/0016-single-threaded-optimization.md) for comprehensive analysis and optimization plan (prefetching, quantized histograms, multi-feature building).
-
-### 1.1.0+ Planned Features
-
-| Feature | Priority | Description |
-|---------|----------|-------------|
-| **GPU Acceleration** | High | CUDA/Metal histogram building (deferred from 1.0) |
-| **Monotonic Constraints** | High | Enforce monotonic feature relationships |
-| **Interaction Constraints** | Medium | Limit which features can interact |
-| **Sparse Data** | Medium | CSR/CSC matrix support |
-| **Linear Trees** | Medium | LightGBM-style linear models in leaves |
-| **SIMD Inference** | Medium | Vectorized tree traversal |
-| **Natural Gradient Boosting** | Low | NGBoost-style probabilistic boosting |
-
-### Risk Assessment
-
-| Risk | Likelihood | Impact | Mitigation |
-|------|------------|--------|------------|
-| Python binding complexity | Medium | High | Use PyO3 best practices, test on CI early |
-| SHAP implementation bugs | Medium | Medium | Validate against reference SHAP library |
-| API churn after 1.0 | High | High | Complete code audit before Python release |
-| GPU delays 1.0 | High | High | **Deferred to 1.1** |
+---
 
 ## Design Documents
 
-See [rfcs/](./rfcs/) for 14 RFCs covering all major components.
-
-## Known Improvements
-
-These are opportunities noted during development:
-
-1. **Batch prediction in training**: Use optimized inference pipeline for evaluation instead of per-row prediction
-2. **Thread pool control**: Add `num_threads` parameter to `par_predict`
-3. **Max bins parameter**: Allow users to specify `max_bins` globally and per-feature
-4. **Tree introspection API**: Expose trained tree structure (nodes, thresholds, linear coefficients) for debugging and visualization. Discovered during linear leaves bug investigation - currently no way to inspect tree internals without digging through code.
-5. **Training diagnostics logging**: Add optional verbose output during training showing per-tree metrics, prediction updates, and gradient statistics. Would help catch training/inference prediction mismatches earlier.
+See [rfcs/](./rfcs/) for 15 RFCs covering all major components.
 
 ## Development Philosophy
 

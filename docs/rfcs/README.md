@@ -1,60 +1,54 @@
 # booste-rs RFCs
 
-This directory contains design documents (RFCs) for the booste-rs library.
+Design documents for booste-rs. Each RFC describes the design of a major component.
 
-**Last updated**: 2025-01-25
+Historical RFCs (superseded or refactor-only documents) are in `docs/rfcs/archive/`.
+
+**Last updated**: 2026-01-02
 
 ## RFC Index
 
-### Core (Data & Trees)
-
 | RFC | Title | Status | Description |
-|-----|-------|--------|-------------|
-| [0001](0001-data-types.md) | Data Types | Implemented | Layout convention, view types, accessor traits, Dataset, BinnedData |
-| [0002](0002-forest-and-tree-structures.md) | Forest and Trees | Implemented | SoA tree representation, TreeView trait, MutableTree |
-| [0003](0003-inference-pipeline.md) | Inference Pipeline | Implemented | Batch/single-row prediction, traversal strategies |
-
-### Training (GBDT)
-
-| RFC | Title | Status | Description |
-|-----|-------|--------|-------------|
-| [0004](0004-binning-and-histograms.md) | Binning and Histograms | Implemented | Quantization, BinnedDataset, histogram accumulation |
-| [0005](0005-tree-growing.md) | Tree Growing | Implemented | Split finding, tree construction, depth/leaf-wise growth |
-| [0006](0006-training-configuration.md) | Training Configuration | Implemented | Objectives, metrics, sampling, multi-output |
-
-### Extensions
-
-| RFC | Title | Status | Description |
-|-----|-------|--------|-------------|
-| [0007](0007-model-compatibility.md) | Model Compatibility | Implemented | XGBoost/LightGBM model loading |
-| [0008](0008-arrow-parquet-io.md) | Arrow/Parquet I/O | Implemented | Data loading from Arrow IPC and Parquet |
-| [0009](0009-gblinear.md) | GBLinear | Implemented | Linear booster with coordinate descent |
-| [0010](0010-linear-trees.md) | Linear Leaves | Implemented | Linear model fitting at tree leaves |
-| [0011](0011-feature-bundling.md) | Feature Bundling | Implemented | EFB for sparse/one-hot features |
-| [0012](0012-native-categorical-features.md) | Native Categorical | Implemented | Native categorical feature handling |
-| [0013](0013-explainability.md) | Explainability | Draft | Feature importance and SHAP values |
+| --- | ----- | ------ | ----------- |
+| [0001](0001-dataset.md) | Dataset | Implemented | User-facing data container, feature-major layout, sparse support |
+| [0002](0002-trees.md) | Trees and Forest | Implemented | SoA layout, `Tree<L>`, `MutableTree`, multi-output groups |
+| [0003](0003-binning.md) | Binning | Implemented | Quantization for histograms, `BinnedDataset`, bin types |
+| [0004](0004-efb.md) | Exclusive Feature Bundling | Implemented | Sparse feature bundling, conflict detection, offset encoding |
+| [0005](0005-objectives-metrics.md) | Objectives and Metrics | Implemented | `ObjectiveFn`, `MetricFn`, early stopping |
+| [0006](0006-sampling.md) | Sampling Strategies | Implemented | Row (uniform, GOSS) and column sampling |
+| [0007](0007-histograms.md) | Histogram Building | Implemented | Histogram optimization, subtraction trick, LRU cache |
+| [0008](0008-gbdt-training.md) | GBDT Training | Implemented | `GBDTTrainer`, grower, split finding, growth strategies |
+| [0009](0009-gbdt-inference.md) | GBDT Inference | Implemented | `Predictor`, block processing, `TreeTraversal` trait |
+| [0010](0010-gblinear.md) | GBLinear | Implemented | `LinearModel`, coordinate descent, feature selection |
+| [0011](0011-linear-leaves.md) | Linear Leaves | Implemented | Linear models at tree leaves, WLS fitting |
+| [0012](0012-categoricals.md) | Categorical Features | Implemented | One-hot, sorted partition, `CatBitset` |
+| [0013](0013-explainability.md) | Explainability | Implemented | Feature importance, TreeSHAP, Linear SHAP |
+| [0014](0014-python-bindings.md) | Python Bindings | Implemented | PyO3 bindings, sklearn estimators |
+| [0015](0015-evaluation-framework.md) | Evaluation Framework | Implemented | `boosters-eval` quality benchmarks |
 
 ## Reading Order
 
-For understanding the system architecture:
+1. **Data**: [0001](0001-dataset.md) Dataset → [0002](0002-trees.md) Trees → [0003](0003-binning.md) Binning → [0004](0004-efb.md) EFB
+2. **Training**: [0005](0005-objectives-metrics.md) Objectives → [0006](0006-sampling.md) Sampling → [0007](0007-histograms.md) Histograms → [0008](0008-gbdt-training.md) Training
+3. **Inference**: [0009](0009-gbdt-inference.md) Inference
+4. **Linear**: [0010](0010-gblinear.md) GBLinear → [0011](0011-linear-leaves.md) Linear Leaves
+5. **Advanced**: [0012](0012-categoricals.md) Categoricals → [0013](0013-explainability.md) Explainability
+6. **Python**: [0014](0014-python-bindings.md) Bindings → [0015](0015-evaluation-framework.md) Eval Framework
 
-1. **Data Layer**: RFC-0001 (Data Types)
-2. **Model Layer**: RFC-0002 (Trees), RFC-0009 (GBLinear)
-3. **Inference**: RFC-0003 (Pipeline)
-4. **Training**: RFC-0004 (Binning) → RFC-0005 (Growing) → RFC-0006 (Config)
-5. **Advanced**: RFC-0010 (Linear Leaves), RFC-0011 (Bundling), RFC-0012 (Categoricals)
+## Layers
 
-## RFC Status
+| Layer | Description | User |
+| ----- | ----------- | ---- |
+| **High** | `GBDTModel`, `GBLinearModel` | End users |
+| **Medium** | Trainer, Predictor, Sampler | Power users |
+| **Low** | Histogram ops, split finding | Optimization |
 
-- **Draft**: Design in progress, open for feedback
-- **Accepted**: Design approved, implementation pending
-- **Implemented**: Code complete and tested
-- **Deprecated**: Superseded by newer RFC
+## Status Legend
+
+- **Implemented**: In `crates/boosters` and/or `packages/*`
+- **Draft**: Design in progress
+- **Planned**: Design sketched, not started
 
 ## Archive
 
-Previous RFC versions before the 2025-01-24 restructure are in [archive/pre-restructure/](archive/pre-restructure/).
-
-## Creating New RFCs
-
-Use [TEMPLATE.md](TEMPLATE.md) as a starting point.
+See `docs/rfcs/archive/ARCHIVE.md` for archived RFCs.

@@ -11,7 +11,7 @@ This RFC documents the canonical representation for gradient-boosted decision tr
 
 ## Design Overview
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────┐
 │                    Forest<ScalarLeaf>                        │
 │  ┌─────────────────────────────────────────────────────────┐│
@@ -105,10 +105,10 @@ pub struct Tree<L: LeafValue> {
     // Categorical support
     categories: CategoriesStorage,
     
-    // Linear leaves (RFC-0015)
+    // Linear leaves (RFC-0010)
     leaf_coefficients: LeafCoefficients,
     
-    // Explainability (RFC-0022)
+    // Explainability (RFC-0013)
     gains: Option<Box<[f32]>>,
     covers: Option<Box<[f32]>>,
 }
@@ -250,7 +250,7 @@ impl<L: LeafValue> MutableTree<L> {
     /// Mark node as leaf with value.
     pub fn make_leaf(&mut self, node: NodeId, value: L);
     
-    /// Set linear terms for a leaf (RFC-0015).
+    /// Set linear terms for a leaf (RFC-0010).
     pub fn set_linear_leaf(&mut self, node: NodeId, features: Vec<u32>, 
                            intercept: f32, coefficients: Vec<f32>);
     
@@ -262,6 +262,7 @@ impl<L: LeafValue> TreeView for MutableTree<L> { ... }
 ```
 
 **Workflow**:
+
 1. `init_root()` or `init_root_with_n_nodes()` for pre-allocated trees
 2. Recursive `apply_*_split()` calls to grow the tree
 3. `make_leaf()` to finalize leaf nodes
@@ -306,7 +307,7 @@ pub trait LeafValue: Clone + Default + Send + Sync {
 | `ScalarLeaf(f32)` | Regression, binary classification, per-group trees |
 | `VectorLeaf { values: Vec<f32> }` | Multi-output per leaf (alternative to tree groups) |
 
-## Linear Leaves (RFC-0015)
+## Linear Leaves (RFC-0010)
 
 Trees can have linear models at leaf nodes for improved accuracy:
 
@@ -325,7 +326,7 @@ pub struct LinearTerms {
 
 Accessed via `Tree::leaf_terms(node)` which returns `Option<(&[u32], &[f32])>`.
 
-## Explainability Support (RFC-0022)
+## Explainability Support (RFC-0013)
 
 Trees can optionally store per-node statistics for feature importance and SHAP:
 
@@ -387,6 +388,7 @@ pub enum ForestValidationError {
 **Decision**: SoA layout.
 
 **Rationale**:
+
 - Cache-friendly for traversal (accessing `is_leaf`, `split_index`, `split_threshold` in sequence)
 - SIMD-friendly for batch operations
 - Standard approach in high-performance tree implementations
@@ -398,12 +400,14 @@ pub enum ForestValidationError {
 **Decision**: Separate `MutableTree` and `Tree` types.
 
 **Rationale**:
+
 - `Tree` can use `Box<[T]>` (no reallocation overhead, smaller)
 - `MutableTree` uses `Vec<T>` for growth
 - Clear ownership: grower produces `MutableTree`, freezes to `Tree`
 - Training can use `MutableTree` directly via `TreeView`
 
 **Usage guideline**:
+
 - Use `Tree<L>` for inference (immutable, cache-optimal)
 - Use `MutableTree<L>` only during tree construction in training
 - Call `freeze()` when tree construction is complete
@@ -415,6 +419,7 @@ pub enum ForestValidationError {
 **Decision**: `TreeView` trait with provided `traverse_to_leaf` method.
 
 **Rationale**:
+
 - Generic prediction code works with either type
 - Training can predict on in-progress tree without freezing
 - Single implementation of traversal logic
@@ -426,6 +431,7 @@ pub enum ForestValidationError {
 **Decision**: Per-tree groups (each tree assigned to one output).
 
 **Rationale**:
+
 - Matches XGBoost/LightGBM approach
 - Simpler tree structure
 - Better parallelism (trees can be processed independently)
@@ -439,14 +445,15 @@ pub enum ForestValidationError {
 | RFC-0003 (Inference) | `Predictor` iterates forest, accumulates per group |
 | RFC-0007 (Growing) | `TreeGrower` produces `MutableTree`, freezes to `Tree` |
 | RFC-0012 (Compat) | XGBoost/LightGBM loaders build `Tree` from model files |
-| RFC-0015 (Linear) | `LeafCoefficients` stored in `Tree` |
-| RFC-0022 (Explain) | `gains`/`covers` optional statistics (Draft) |
+| RFC-0010 (Linear) | `LeafCoefficients` stored in `Tree` |
+| RFC-0013 (Explain) | `gains`/`covers` optional statistics |
 
 **Note on explainability fields**: The `gains` and `covers` fields in `Tree` are optional (`Option<Box<[f32]>>`). They are only populated when:
+
 1. Training explicitly computes and stores them
 2. Loading from XGBoost/LightGBM models that include gain/cover statistics
 
-These fields are not required for inference. See RFC-0022 for explainability features.
+These fields are not required for inference. See RFC-0013 for explainability features.
 
 ## Changelog
 

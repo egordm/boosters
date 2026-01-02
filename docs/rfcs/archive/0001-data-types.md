@@ -189,6 +189,7 @@ let predictions = model.predict(&dataset, parallelism);
 ```
 
 **Why group-major?**
+
 - Base score initialization is contiguous per group
 - Tree accumulation writes contiguously per group
 - Matches gradient layout for training
@@ -231,7 +232,7 @@ if value.is_nan() {
 
 ## Changelog
 
-- 2025-12-25: Restructured RFC. Merged RFC-0019 (Dataset Format) and RFC-0020 (Data Access Layer) into this RFC.
+- 2025-12-25: Restructured RFC to reflect the current data layer (views/accessors) after the 2025-12 refactors.
 - 2025-01-23: Updated accessor traits to `SampleAccessor`/`DataAccessor`.
 - 2025-01-21: Major rewrite for ndarray migration.
 - 2024-11-15: Initial RFC.
