@@ -2,8 +2,6 @@
 
 Design documents for booste-rs. Each RFC describes the design of a major component.
 
-Historical RFCs (superseded or refactor-only documents) are in `docs/rfcs/archive/`.
-
 **Last updated**: 2026-01-02
 
 ## RFC Index
@@ -48,7 +46,3 @@ Historical RFCs (superseded or refactor-only documents) are in `docs/rfcs/archiv
 - **Implemented**: In `crates/boosters` and/or `packages/*`
 - **Draft**: Design in progress
 - **Planned**: Design sketched, not started
-
-## Archive
-
-See `docs/rfcs/archive/ARCHIVE.md` for archived RFCs.
