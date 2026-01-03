@@ -330,18 +330,6 @@ mod tests {
     use approx::assert_abs_diff_eq;
     use ndarray::Array2;
 
-    fn assert_array2_abs_diff_eq(a: &Array2<f32>, b: &Array2<f32>, epsilon: f32) {
-        assert_eq!(a.shape(), b.shape());
-
-        for ((row, col), &a_val) in a.indexed_iter() {
-            let b_val = b[[row, col]];
-            assert!(
-                (a_val - b_val).abs() <= epsilon,
-                "mismatch at [{row}, {col}]: {a_val} vs {b_val} (epsilon={epsilon})"
-            );
-        }
-    }
-
     fn build_simple_tree(left_val: f32, right_val: f32, threshold: f32) -> Tree<ScalarLeaf> {
         crate::scalar_tree! {
             0 => num(0, threshold, L) -> 1, 2,
@@ -515,7 +503,7 @@ mod tests {
             let simple_output = simple.predict(&dataset, Parallelism::Sequential);
             let unrolled_output = unrolled.predict(&dataset, Parallelism::Sequential);
 
-            assert_array2_abs_diff_eq(&simple_output, &unrolled_output, 1e-6);
+            assert_abs_diff_eq!(simple_output, unrolled_output, epsilon = 1e-6);
         }
     }
 
@@ -540,7 +528,7 @@ mod tests {
         let unrolled_output = unrolled.predict(&dataset, Parallelism::Sequential);
 
         // Expected leaves: [1.0, 2.0, 3.0, 4.0]
-        assert_array2_abs_diff_eq(&simple_output, &unrolled_output, 1e-6);
+        assert_abs_diff_eq!(simple_output, unrolled_output, epsilon = 1e-6);
     }
 
     #[test]
@@ -573,7 +561,7 @@ mod tests {
             unrolled_output.view_mut(),
         );
 
-        assert_array2_abs_diff_eq(&simple_output, &unrolled_output, 1e-6);
+        assert_abs_diff_eq!(simple_output, unrolled_output, epsilon = 1e-6);
     }
 
     // =========================================================================
@@ -617,8 +605,8 @@ mod tests {
         let o64 = p64.predict(&dataset, Parallelism::Sequential);
         let o128 = p128.predict(&dataset, Parallelism::Sequential);
 
-        assert_array2_abs_diff_eq(&o16, &o64, 1e-6);
-        assert_array2_abs_diff_eq(&o64, &o128, 1e-6);
+        assert_abs_diff_eq!(o16, o64, epsilon = 1e-6);
+        assert_abs_diff_eq!(o64, o128, epsilon = 1e-6);
     }
 
     // =========================================================================
@@ -666,8 +654,8 @@ mod tests {
             let seq_unrolled = unrolled.predict(&dataset, Parallelism::Sequential);
             let par_unrolled = unrolled.predict(&dataset, Parallelism::Parallel);
 
-            assert_array2_abs_diff_eq(&seq_simple, &par_simple, 1e-6);
-            assert_array2_abs_diff_eq(&seq_unrolled, &par_unrolled, 1e-6);
+            assert_abs_diff_eq!(seq_simple, par_simple, epsilon = 1e-6);
+            assert_abs_diff_eq!(seq_unrolled, par_unrolled, epsilon = 1e-6);
         }
     }
 
@@ -700,7 +688,7 @@ mod tests {
             par_output.view_mut(),
         );
 
-        assert_array2_abs_diff_eq(&seq_output, &par_output, 1e-6);
+        assert_abs_diff_eq!(seq_output, par_output, epsilon = 1e-6);
     }
 
     #[test]
@@ -718,7 +706,7 @@ mod tests {
         let seq_output = predictor.predict(&dataset, Parallelism::Sequential);
         let par_output = predictor.predict(&dataset, Parallelism::Parallel);
 
-        assert_array2_abs_diff_eq(&seq_output, &par_output, 1e-6);
+        assert_abs_diff_eq!(seq_output, par_output, epsilon = 1e-6);
     }
 
     #[test]
