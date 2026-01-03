@@ -37,6 +37,7 @@ from boosters.persist.schema import (
     GBLinearConfigSchema,
     GBLinearModelSchema,
     JsonEnvelope,
+    LinearCoefficientsSchema,
     LinearWeightsSchema,
     ModelMetaSchema,
     NoneMetric,
@@ -300,35 +301,36 @@ def _convert_xgb_gbtree(
     )
 
     # Build minimal config (we don't have all training params)
-    config = GBDTConfigSchema(
-        objective=SquaredLossObjective(type="squared_loss"),  # placeholder
-        metric=NoneMetric(type="none"),
-        n_trees=len(trees),
-        learning_rate=0.1,  # placeholder
-        growth_strategy=DepthWiseGrowth(type="depth_wise", max_depth=6),  # placeholder
-        max_onehot_cats=4,
-        lambda_=1.0,
-        alpha=0.0,
-        min_child_weight=1.0,
-        min_gain=0.0,
-        min_samples_leaf=1,
-        subsample=1.0,
-        colsample_bytree=1.0,
-        colsample_bylevel=1.0,
-        binning={
+    # Use model_validate() to avoid type-checker confusion around aliased fields (e.g. `lambda`).
+    config = GBDTConfigSchema.model_validate({
+        "objective": SquaredLossObjective(type="squared_loss"),  # placeholder
+        "metric": NoneMetric(type="none"),
+        "n_trees": len(trees),
+        "learning_rate": 0.1,  # placeholder
+        "growth_strategy": DepthWiseGrowth(type="depth_wise", max_depth=6),  # placeholder
+        "max_onehot_cats": 4,
+        "lambda_": 1.0,
+        "alpha": 0.0,
+        "min_child_weight": 1.0,
+        "min_gain": 0.0,
+        "min_samples_leaf": 1,
+        "subsample": 1.0,
+        "colsample_bytree": 1.0,
+        "colsample_bylevel": 1.0,
+        "binning": {
             "max_bins": 256,
             "sparsity_threshold": 0.3,
             "enable_bundling": True,
             "max_categorical_cardinality": 64,
             "sample_cnt": 200000,
-        },  # type: ignore[arg-type]
-        linear_leaves=None,
-        early_stopping_rounds=None,
-        cache_size=0,
-        seed=0,
-        verbosity="silent",
-        extra={"xgboost_objective": objective_name},
-    )
+        },
+        "linear_leaves": None,
+        "early_stopping_rounds": None,
+        "cache_size": 0,
+        "seed": 0,
+        "verbosity": "silent",
+        "extra": {"xgboost_objective": objective_name},
+    })
 
     model = GBDTModelSchema(meta=meta, forest=forest, config=config)
     return model, booster_name
@@ -397,21 +399,22 @@ def _convert_xgb_gblinear(xgb_json: dict[str, Any]) -> GBLinearModelSchema:
     )
 
     # Build minimal config
-    config = GBLinearConfigSchema(
-        objective=SquaredLossObjective(type="squared_loss"),  # placeholder
-        metric=NoneMetric(type="none"),
-        n_rounds=1,
-        learning_rate=0.1,
-        alpha=0.0,
-        lambda_=1.0,
-        update_strategy="shotgun",
-        feature_selector=CyclicSelector(type="cyclic"),
-        max_delta_step=0.0,
-        early_stopping_rounds=None,
-        seed=0,
-        verbosity="silent",
-        extra={"xgboost_objective": objective_name},
-    )
+    # Use model_validate() to avoid type-checker confusion around aliased fields (e.g. `lambda`).
+    config = GBLinearConfigSchema.model_validate({
+        "objective": SquaredLossObjective(type="squared_loss"),  # placeholder
+        "metric": NoneMetric(type="none"),
+        "n_rounds": 1,
+        "learning_rate": 0.1,
+        "alpha": 0.0,
+        "lambda_": 1.0,
+        "update_strategy": "shotgun",
+        "feature_selector": CyclicSelector(type="cyclic"),
+        "max_delta_step": 0.0,
+        "early_stopping_rounds": None,
+        "seed": 0,
+        "verbosity": "silent",
+        "extra": {"xgboost_objective": objective_name},
+    })
 
     return GBLinearModelSchema(
         meta=meta,
@@ -547,6 +550,17 @@ def _parse_lgb_tree_structure(
         # Leaf node
         node["is_leaf"] = True
         node["leaf_value"] = tree_struct["leaf_value"]
+
+        # LightGBM linear-tree leaves may include a per-leaf linear model.
+        # - leaf_const: intercept term
+        # - leaf_features: feature indices used in the linear model
+        # - leaf_coeff: coefficients aligned with leaf_features
+        if "leaf_const" in tree_struct:
+            node["leaf_const"] = tree_struct["leaf_const"]
+        if "leaf_features" in tree_struct:
+            node["leaf_features"] = tree_struct["leaf_features"]
+        if "leaf_coeff" in tree_struct:
+            node["leaf_coeff"] = tree_struct["leaf_coeff"]
     else:
         # Internal node
         node["is_leaf"] = False
@@ -584,7 +598,11 @@ def _convert_lgb_tree(tree_data: dict[str, Any]) -> TreeSchema:
     out_default_left: list[bool] = []
     out_leaf_values: list[float] = []
 
-    for node in nodes:
+    # Linear leaf support (LightGBM linear trees): packed coefficients per node.
+    linear_node_indices: list[int] = []
+    linear_coefficients: list[list[float]] = []
+
+    for node_id, node in enumerate(nodes):
         if node["is_leaf"]:
             # Leaf node: placeholder values for split info, actual leaf value
             out_split_indices.append(0)
@@ -593,6 +611,21 @@ def _convert_lgb_tree(tree_data: dict[str, Any]) -> TreeSchema:
             out_children_right.append(0)
             out_default_left.append(False)
             out_leaf_values.append(float(node["leaf_value"]))
+
+            leaf_features = node.get("leaf_features", [])
+            leaf_coeff = node.get("leaf_coeff", [])
+            if leaf_features or leaf_coeff:
+                if len(leaf_features) != len(leaf_coeff):
+                    msg = (
+                        "LightGBM leaf_features and leaf_coeff must have the same length "
+                        f"(got {len(leaf_features)} and {len(leaf_coeff)})"
+                    )
+                    raise ValueError(msg)
+
+                intercept = float(node.get("leaf_const", node["leaf_value"]))
+                packed = [intercept] + [float(f) for f in leaf_features] + [float(c) for c in leaf_coeff]
+                linear_node_indices.append(node_id)
+                linear_coefficients.append(packed)
         else:
             # Internal node
             out_split_indices.append(int(node["split_feature"]))
@@ -611,6 +644,10 @@ def _convert_lgb_tree(tree_data: dict[str, Any]) -> TreeSchema:
         default_left=out_default_left,
         leaf_values=ScalarLeafValues(type="scalar", values=out_leaf_values),
         categories=CategoriesSchema(),
+        linear_coefficients=LinearCoefficientsSchema(
+            node_indices=linear_node_indices,
+            coefficients=linear_coefficients,
+        ),
     )
 
 
@@ -680,35 +717,36 @@ def lightgbm_to_schema(path_or_booster: str | Path | lgb.Booster) -> GBDTModelSc
     )
 
     # Build minimal config
-    config = GBDTConfigSchema(  # type: ignore[call-arg]
-        objective=SquaredLossObjective(type="squared_loss"),
-        metric=NoneMetric(type="none"),
-        n_trees=len(trees),
-        learning_rate=lgb_json.get("learning_rate", 0.1),
-        growth_strategy=DepthWiseGrowth(type="depth_wise", max_depth=max_depth),
-        max_onehot_cats=4,
-        lambda_=lgb_json.get("lambda_l2", 0.0),
-        alpha=lgb_json.get("lambda_l1", 0.0),
-        min_child_weight=lgb_json.get("min_sum_hessian_in_leaf", 1e-3),
-        min_gain=lgb_json.get("min_gain_to_split", 0.0),
-        min_samples_leaf=lgb_json.get("min_data_in_leaf", 20),
-        subsample=lgb_json.get("bagging_fraction", 1.0),
-        colsample_bytree=lgb_json.get("feature_fraction", 1.0),
-        colsample_bylevel=1.0,
-        binning={
+    # Use model_validate() to avoid type-checker confusion around aliased fields (e.g. `lambda`).
+    config = GBDTConfigSchema.model_validate({
+        "objective": SquaredLossObjective(type="squared_loss"),
+        "metric": NoneMetric(type="none"),
+        "n_trees": len(trees),
+        "learning_rate": lgb_json.get("learning_rate", 0.1),
+        "growth_strategy": DepthWiseGrowth(type="depth_wise", max_depth=max_depth),
+        "max_onehot_cats": 4,
+        "lambda_": lgb_json.get("lambda_l2", 0.0),
+        "alpha": lgb_json.get("lambda_l1", 0.0),
+        "min_child_weight": lgb_json.get("min_sum_hessian_in_leaf", 1e-3),
+        "min_gain": lgb_json.get("min_gain_to_split", 0.0),
+        "min_samples_leaf": lgb_json.get("min_data_in_leaf", 20),
+        "subsample": lgb_json.get("bagging_fraction", 1.0),
+        "colsample_bytree": lgb_json.get("feature_fraction", 1.0),
+        "colsample_bylevel": 1.0,
+        "binning": {
             "max_bins": lgb_json.get("max_bin", 255),
             "sparsity_threshold": 0.3,
             "enable_bundling": True,
             "max_categorical_cardinality": 64,
             "sample_cnt": 200000,
-        },  # type: ignore[arg-type]
-        linear_leaves=None,
-        early_stopping_rounds=None,
-        cache_size=0,
-        seed=0,
-        verbosity="silent",
-        extra={"lightgbm_objective": objective},
-    )
+        },
+        "linear_leaves": None,
+        "early_stopping_rounds": None,
+        "cache_size": 0,
+        "seed": 0,
+        "verbosity": "silent",
+        "extra": {"lightgbm_objective": objective},
+    })
 
     return GBDTModelSchema(meta=meta, forest=forest, config=config)
 

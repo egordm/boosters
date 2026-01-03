@@ -1,0 +1,281 @@
+{
+  "bstr_version": 1,
+  "model_type": "gbdt",
+  "model": {
+    "meta": {
+      "task": "regression",
+      "num_features": 5,
+      "num_classes": null,
+      "feature_names": [
+        "Column_0",
+        "Column_1",
+        "Column_2",
+        "Column_3",
+        "Column_4"
+      ],
+      "feature_types": null
+    },
+    "forest": {
+      "trees": [
+        {
+          "num_nodes": 7,
+          "split_indices": [
+            1,
+            2,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "thresholds": [
+            0.4247654696287298,
+            -0.6566934061871023,
+            0.0,
+            0.0,
+            2.4320566279574725,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            0,
+            5,
+            0,
+            0
+          ],
+          "children_right": [
+            4,
+            3,
+            0,
+            0,
+            6,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            false,
+            true,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              -65.94379937041889,
+              -7.123211835622787,
+              0.0,
+              43.8956155866843,
+              144.17374813079834
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 7,
+          "split_indices": [
+            4,
+            1,
+            0,
+            0,
+            1,
+            0,
+            0
+          ],
+          "thresholds": [
+            0.23897639247500305,
+            -0.6910389077279214,
+            0.0,
+            0.0,
+            0.8607182463230557,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            0,
+            5,
+            0,
+            0
+          ],
+          "children_right": [
+            4,
+            3,
+            0,
+            0,
+            6,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            false,
+            true,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              -75.24936370849603,
+              -9.515945726319364,
+              0.0,
+              9.549440872669217,
+              61.0101629892985
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 7,
+          "split_indices": [
+            0,
+            0,
+            4,
+            1,
+            0,
+            0,
+            0
+          ],
+          "thresholds": [
+            -0.8639589185634954,
+            0.0,
+            -0.956253355071222,
+            1.0000000180025095e-35,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            0,
+            3,
+            4,
+            0,
+            0,
+            0
+          ],
+          "children_right": [
+            2,
+            0,
+            6,
+            5,
+            0,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            false,
+            true,
+            true,
+            false,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              -27.020076990127563,
+              0.0,
+              0.0,
+              -84.62801361083984,
+              5.594549179077147,
+              14.445858041445414
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        }
+      ],
+      "tree_groups": [
+        0,
+        0,
+        0
+      ],
+      "n_groups": 1,
+      "base_score": [
+        0.0
+      ]
+    },
+    "config": {
+      "objective": {
+        "type": "squared_loss"
+      },
+      "metric": {
+        "type": "none"
+      },
+      "n_trees": 3,
+      "learning_rate": 0.1,
+      "growth_strategy": {
+        "type": "depth_wise",
+        "max_depth": 3
+      },
+      "max_onehot_cats": 4,
+      "lambda": 0.0,
+      "alpha": 0.0,
+      "min_child_weight": 0.001,
+      "min_gain": 0.0,
+      "min_samples_leaf": 20,
+      "subsample": 1.0,
+      "colsample_bytree": 1.0,
+      "colsample_bylevel": 1.0,
+      "binning": {
+        "max_bins": 255,
+        "sparsity_threshold": 0.3,
+        "enable_bundling": true,
+        "max_categorical_cardinality": 64,
+        "sample_cnt": 200000
+      },
+      "linear_leaves": null,
+      "early_stopping_rounds": null,
+      "cache_size": 0,
+      "seed": 0,
+      "verbosity": "silent",
+      "extra": {
+        "lightgbm_objective": "regression"
+      }
+    },
+    "MODEL_TYPE": "gbdt"
+  }
+}

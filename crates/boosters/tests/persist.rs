@@ -1,6 +1,6 @@
 //! Integration tests for the native persist format.
 //!
-//! These tests load models from `.model.bstr` / `.model.bstr.json` fixtures and verify
+//! These tests load models from `.model.bstr.json` fixtures and verify
 //! prediction parity with expected outputs.
 
 use std::fs::File;
@@ -34,6 +34,10 @@ fn dart_dir() -> PathBuf {
     test_cases_dir().join("dart/inference")
 }
 
+fn lightgbm_dir() -> PathBuf {
+    test_cases_dir().join("lightgbm/inference")
+}
+
 fn load_json<T: DeserializeOwned>(path: &std::path::Path) -> T {
     let file =
         File::open(path).unwrap_or_else(|e| panic!("Failed to open {}: {e}", path.display()));
@@ -42,15 +46,10 @@ fn load_json<T: DeserializeOwned>(path: &std::path::Path) -> T {
 }
 
 fn load_model_and_data(dir: &std::path::Path, name: &str) -> (Model, TestInput, TestExpected) {
-    let bin_path = dir.join(format!("{name}.model.bstr"));
     let json_path = dir.join(format!("{name}.model.bstr.json"));
 
-    let model = if bin_path.exists() {
-        Model::load_binary(bin_path)
-    } else {
-        Model::load_json(json_path)
-    }
-    .unwrap_or_else(|e| panic!("Failed to load model {name}: {e}"));
+    let model = Model::load_json(&json_path)
+        .unwrap_or_else(|e| panic!("Failed to load model {name} from {json_path:?}: {e}"));
     let input: TestInput = load_json(&dir.join(format!("{name}.input.json")));
     let expected: TestExpected = load_json(&dir.join(format!("{name}.expected.json")));
     (model, input, expected)
@@ -78,6 +77,16 @@ fn load_gblinear(name: &str) -> (LinearModel, TestInput, TestExpected) {
 
 fn load_dart(name: &str) -> (Forest, TestInput, TestExpected) {
     let (model, input, expected) = load_model_and_data(&dart_dir(), name);
+    let forest = model
+        .into_gbdt()
+        .expect("expected GBDT model")
+        .forest()
+        .clone();
+    (forest, input, expected)
+}
+
+fn load_lightgbm(name: &str) -> (Forest, TestInput, TestExpected) {
+    let (model, input, expected) = load_model_and_data(&lightgbm_dir().join(name), name);
     let forest = model
         .into_gbdt()
         .expect("expected GBDT model")
@@ -389,6 +398,113 @@ fn predict_gblinear_multiclass() {
         assert_preds_match(
             &pred,
             &expected_preds[i],
+            DEFAULT_TOLERANCE_F64,
+            &format!("row {i}"),
+        );
+    }
+}
+
+// =============================================================================
+// LightGBM Fixtures (native format) Prediction Tests
+// =============================================================================
+
+#[test]
+fn predict_lightgbm_small_tree() {
+    let (forest, input, expected) = load_lightgbm("small_tree");
+    forest.validate().expect("forest should be valid");
+
+    let expected_preds = expected.as_flat();
+    for (i, features) in input.to_f32_rows().iter().enumerate() {
+        let pred = predict_row(&forest, features);
+        assert_preds_match(
+            &pred,
+            &[expected_preds[i]],
+            DEFAULT_TOLERANCE_F64,
+            &format!("row {i}"),
+        );
+    }
+}
+
+#[test]
+fn predict_lightgbm_regression() {
+    let (forest, input, expected) = load_lightgbm("regression");
+    forest.validate().expect("forest should be valid");
+
+    let expected_preds = expected.as_flat();
+    for (i, features) in input.to_f32_rows().iter().enumerate() {
+        let pred = predict_row(&forest, features);
+        assert_preds_match(
+            &pred,
+            &[expected_preds[i]],
+            DEFAULT_TOLERANCE_F64,
+            &format!("row {i}"),
+        );
+    }
+}
+
+#[test]
+fn predict_lightgbm_regression_missing() {
+    let (forest, input, expected) = load_lightgbm("regression_missing");
+    forest.validate().expect("forest should be valid");
+
+    let expected_preds = expected.as_flat();
+    for (i, features) in input.to_f32_rows().iter().enumerate() {
+        let pred = predict_row(&forest, features);
+        assert_preds_match(
+            &pred,
+            &[expected_preds[i]],
+            DEFAULT_TOLERANCE_F64,
+            &format!("row {i}"),
+        );
+    }
+}
+
+#[test]
+fn predict_lightgbm_binary_classification() {
+    let (forest, input, expected) = load_lightgbm("binary_classification");
+    forest.validate().expect("forest should be valid");
+
+    let expected_preds = expected.as_flat();
+    for (i, features) in input.to_f32_rows().iter().enumerate() {
+        let pred = predict_row(&forest, features);
+        assert_preds_match(
+            &pred,
+            &[expected_preds[i]],
+            DEFAULT_TOLERANCE_F64,
+            &format!("row {i}"),
+        );
+    }
+}
+
+#[test]
+fn predict_lightgbm_multiclass() {
+    let (forest, input, expected) = load_lightgbm("multiclass");
+    forest.validate().expect("forest should be valid");
+
+    let expected_preds = expected.as_nested();
+    for (i, features) in input.to_f32_rows().iter().enumerate() {
+        let pred = predict_row(&forest, features);
+        assert_eq!(pred.len(), 3, "expected 3 classes");
+        assert_preds_match(
+            &pred,
+            &expected_preds[i],
+            DEFAULT_TOLERANCE_F64,
+            &format!("row {i}"),
+        );
+    }
+}
+
+#[test]
+fn predict_lightgbm_linear_tree() {
+    let (forest, input, expected) = load_lightgbm("linear_tree");
+    forest.validate().expect("forest should be valid");
+
+    let expected_preds = expected.as_flat();
+    for (i, features) in input.to_f32_rows().iter().enumerate() {
+        let pred = predict_row(&forest, features);
+        assert_preds_match(
+            &pred,
+            &[expected_preds[i]],
             DEFAULT_TOLERANCE_F64,
             &format!("row {i}"),
         );

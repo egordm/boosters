@@ -40,10 +40,6 @@ use super::NodeId;
 /// }
 /// ```
 #[derive(Debug, Clone, Default)]
-#[cfg_attr(
-    feature = "xgboost-compat",
-    derive(serde::Serialize, serde::Deserialize)
-)]
 pub struct LeafCoefficients {
     /// Flat array of feature indices for all linear leaves.
     feature_indices: Box<[u32]>,

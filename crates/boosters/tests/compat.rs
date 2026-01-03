@@ -1,16 +1,5 @@
-//! Integration tests grouped by compatibility layer.
+//! Compatibility tests.
 //!
-//! This crate groups the feature-gated compat test suites so the `tests/` root
-//! stays tidy.
-
-#[cfg(feature = "xgboost-compat")]
-#[path = "compat/test_data.rs"]
-mod test_data;
-
-#[cfg(feature = "lightgbm-compat")]
-#[path = "compat/lightgbm.rs"]
-mod lightgbm;
-
-#[cfg(feature = "xgboost-compat")]
-#[path = "compat/xgboost.rs"]
-mod xgboost;
+//! Compatibility/parity integration tests against external libraries (XGBoost/LightGBM)
+//! were removed. This file is intentionally empty to keep the historical test target
+//! name stable.

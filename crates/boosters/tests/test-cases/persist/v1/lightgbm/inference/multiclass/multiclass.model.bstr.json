@@ -1,0 +1,2925 @@
+{
+  "bstr_version": 1,
+  "model_type": "gbdt",
+  "model": {
+    "meta": {
+      "task": "multiclass_classification",
+      "num_features": 10,
+      "num_classes": 3,
+      "feature_names": [
+        "Column_0",
+        "Column_1",
+        "Column_2",
+        "Column_3",
+        "Column_4",
+        "Column_5",
+        "Column_6",
+        "Column_7",
+        "Column_8",
+        "Column_9"
+      ],
+      "feature_types": null
+    },
+    "forest": {
+      "trees": [
+        {
+          "num_nodes": 9,
+          "split_indices": [
+            8,
+            4,
+            0,
+            0,
+            4,
+            0,
+            0,
+            0,
+            0
+          ],
+          "thresholds": [
+            -1.5496735703368005,
+            1.6047616438067405,
+            0.0,
+            0.0,
+            -0.09749047584792979,
+            0.0,
+            0.7304908577920014,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            0,
+            5,
+            0,
+            7,
+            0,
+            0
+          ],
+          "children_right": [
+            4,
+            3,
+            0,
+            0,
+            6,
+            0,
+            8,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            false,
+            true,
+            false,
+            true,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              -1.1986122886681096,
+              -1.1386122886681098,
+              0.0,
+              -1.155755145810967,
+              0.0,
+              -1.0541678442236653,
+              -0.9276445467326259
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 11,
+          "split_indices": [
+            6,
+            4,
+            0,
+            0,
+            0,
+            0,
+            4,
+            0,
+            0,
+            0,
+            0
+          ],
+          "thresholds": [
+            -0.028468401857499655,
+            -0.09749047584792979,
+            0.0,
+            1.4359558505975012,
+            0.0,
+            0.0,
+            0.37766241073189777,
+            0.8338767995701752,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            4,
+            0,
+            0,
+            7,
+            8,
+            0,
+            0,
+            0
+          ],
+          "children_right": [
+            6,
+            3,
+            0,
+            5,
+            0,
+            0,
+            10,
+            9,
+            0,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            true,
+            false,
+            false,
+            true,
+            true,
+            false,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              -1.1086122886681098,
+              0.0,
+              -1.1986122886681096,
+              -1.1986122886681099,
+              0.0,
+              0.0,
+              -0.9586122886681099,
+              -0.8986122886681098,
+              -1.1146122886681098
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 11,
+          "split_indices": [
+            8,
+            5,
+            8,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0
+          ],
+          "thresholds": [
+            -1.0188032699573564,
+            2.9994660094612264,
+            -2.0038751836901274,
+            0.0,
+            0.0,
+            0.0,
+            0.2978814549227845,
+            0.0,
+            0.2801888740133123,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            3,
+            0,
+            0,
+            0,
+            7,
+            0,
+            9,
+            0,
+            0
+          ],
+          "children_right": [
+            6,
+            5,
+            4,
+            0,
+            0,
+            0,
+            8,
+            0,
+            10,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            true,
+            false,
+            false,
+            false,
+            true,
+            false,
+            true,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              0.0,
+              -0.9106122886681098,
+              -0.9886122886681098,
+              -1.1097233997792209,
+              0.0,
+              -1.1386122886681098,
+              0.0,
+              -1.1986122886681096,
+              -1.1986122886681099
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 9,
+          "split_indices": [
+            8,
+            4,
+            0,
+            0,
+            4,
+            0,
+            0,
+            0,
+            0
+          ],
+          "thresholds": [
+            -1.5496735703368005,
+            1.6047616438067405,
+            0.0,
+            0.0,
+            -0.22992797214792823,
+            0.0,
+            0.7304908577920014,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            0,
+            5,
+            0,
+            7,
+            0,
+            0
+          ],
+          "children_right": [
+            4,
+            3,
+            0,
+            0,
+            6,
+            0,
+            8,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            false,
+            true,
+            false,
+            true,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              -0.09464900684031492,
+              -0.037790962902815445,
+              0.0,
+              -0.06658580441511025,
+              0.0,
+              0.030343296549803247,
+              0.14686631577910053
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 13,
+          "split_indices": [
+            6,
+            4,
+            0,
+            5,
+            0,
+            0,
+            0,
+            0,
+            4,
+            3,
+            0,
+            0,
+            0
+          ],
+          "thresholds": [
+            -0.028468401857499655,
+            -0.09749047584792979,
+            0.0,
+            -0.21001794699592694,
+            0.0,
+            1.7772242619112633,
+            0.0,
+            0.0,
+            0.37766241073189777,
+            0.47775997896600614,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            4,
+            0,
+            6,
+            0,
+            0,
+            9,
+            10,
+            0,
+            0,
+            0
+          ],
+          "children_right": [
+            8,
+            3,
+            0,
+            5,
+            0,
+            7,
+            0,
+            0,
+            12,
+            11,
+            0,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false,
+            false,
+            true,
+            true,
+            false,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              -0.010069763223456797,
+              0.0,
+              -0.09630492501999675,
+              0.0,
+              -0.09478393488276281,
+              -0.09589803377189134,
+              0.0,
+              0.0,
+              0.11745895620661835,
+              0.17316354704264994,
+              -0.014729994948638922
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 11,
+          "split_indices": [
+            8,
+            5,
+            3,
+            0,
+            0,
+            0,
+            8,
+            0,
+            6,
+            0,
+            0
+          ],
+          "thresholds": [
+            -0.8960027526887161,
+            2.9994660094612264,
+            -0.8284187739965989,
+            0.0,
+            0.0,
+            0.0,
+            1.0000000180025095e-35,
+            0.0,
+            1.0000000180025095e-35,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            3,
+            0,
+            0,
+            0,
+            7,
+            0,
+            9,
+            0,
+            0
+          ],
+          "children_right": [
+            6,
+            5,
+            4,
+            0,
+            0,
+            0,
+            8,
+            0,
+            10,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            true,
+            false,
+            false,
+            false,
+            true,
+            false,
+            true,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              0.0,
+              0.16331041466723914,
+              0.06948471949860184,
+              -0.010250575849585398,
+              0.0,
+              -0.05032772183203307,
+              0.0,
+              -0.09726986968650199,
+              -0.0952258179038572
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 9,
+          "split_indices": [
+            8,
+            6,
+            0,
+            0,
+            4,
+            0,
+            0,
+            0,
+            0
+          ],
+          "thresholds": [
+            -1.5496735703368005,
+            -0.4011589730087486,
+            0.0,
+            0.0,
+            -0.22992797214792823,
+            0.0,
+            0.7304908577920014,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            0,
+            5,
+            0,
+            7,
+            0,
+            0
+          ],
+          "children_right": [
+            4,
+            3,
+            0,
+            0,
+            6,
+            0,
+            8,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            false,
+            true,
+            false,
+            true,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              -0.03743971585057301,
+              -0.09277741923407487,
+              0.0,
+              -0.062459541743581565,
+              0.0,
+              0.0259338670765315,
+              0.1285779073563227
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 11,
+          "split_indices": [
+            6,
+            4,
+            0,
+            5,
+            0,
+            9,
+            0,
+            0,
+            4,
+            0,
+            0
+          ],
+          "thresholds": [
+            0.23956080185262704,
+            -0.258583385571172,
+            0.0,
+            -0.46883414944823565,
+            0.0,
+            0.06397563860985549,
+            0.0,
+            0.0,
+            0.5346096461835886,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            4,
+            0,
+            6,
+            0,
+            0,
+            9,
+            0,
+            0
+          ],
+          "children_right": [
+            8,
+            3,
+            0,
+            5,
+            0,
+            7,
+            0,
+            0,
+            10,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false,
+            false,
+            true,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              0.03483060813085289,
+              0.0,
+              -0.0946931305846304,
+              0.0,
+              -0.09128913191847507,
+              -0.09318245748769982,
+              0.0,
+              0.13277344124895676,
+              0.006593794534981299
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 11,
+          "split_indices": [
+            8,
+            5,
+            3,
+            0,
+            0,
+            0,
+            8,
+            0,
+            6,
+            0,
+            0
+          ],
+          "thresholds": [
+            -0.8960027526887161,
+            2.9994660094612264,
+            -0.8284187739965989,
+            0.0,
+            0.0,
+            0.0,
+            1.0000000180025095e-35,
+            0.0,
+            1.0000000180025095e-35,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            3,
+            0,
+            0,
+            0,
+            7,
+            0,
+            9,
+            0,
+            0
+          ],
+          "children_right": [
+            6,
+            5,
+            4,
+            0,
+            0,
+            0,
+            8,
+            0,
+            10,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            true,
+            false,
+            false,
+            false,
+            true,
+            false,
+            true,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              0.0,
+              0.142977252934536,
+              0.06263726709412619,
+              -0.010192222885098527,
+              0.0,
+              -0.04663560237064052,
+              0.0,
+              -0.09447314704186165,
+              -0.09085787959578391
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 9,
+          "split_indices": [
+            8,
+            4,
+            0,
+            0,
+            4,
+            0,
+            0,
+            0,
+            0
+          ],
+          "thresholds": [
+            -1.4834858611910986,
+            1.6852331555669513,
+            0.0,
+            0.0,
+            -0.22992797214792823,
+            0.0,
+            0.6682887374976249,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            0,
+            5,
+            0,
+            7,
+            0,
+            0
+          ],
+          "children_right": [
+            4,
+            3,
+            0,
+            0,
+            6,
+            0,
+            8,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            false,
+            true,
+            false,
+            true,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              -0.08794908630617453,
+              -0.025448242594328215,
+              0.0,
+              -0.05879538604582821,
+              0.0,
+              0.020563918563458062,
+              0.12297080915378991
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 11,
+          "split_indices": [
+            6,
+            4,
+            0,
+            3,
+            6,
+            5,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "thresholds": [
+            1.102180092785339,
+            -0.39744537088635756,
+            0.0,
+            1.1667179807160553,
+            -0.4533842541442657,
+            0.2157383121827868,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            4,
+            5,
+            6,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "children_right": [
+            10,
+            3,
+            0,
+            9,
+            8,
+            7,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            true,
+            true,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              0.06691204338061182,
+              0.0,
+              0.0,
+              0.0,
+              -0.0899751143207122,
+              -0.08814783848288907,
+              -0.095668842559368,
+              -0.06263877085159854,
+              0.12334811931510055
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 11,
+          "split_indices": [
+            8,
+            5,
+            3,
+            0,
+            0,
+            0,
+            8,
+            0,
+            6,
+            0,
+            0
+          ],
+          "thresholds": [
+            -0.8960027526887161,
+            2.9994660094612264,
+            -0.8284187739965989,
+            0.0,
+            0.0,
+            0.0,
+            1.0000000180025095e-35,
+            0.0,
+            0.3225971317152892,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            3,
+            0,
+            0,
+            0,
+            7,
+            0,
+            9,
+            0,
+            0
+          ],
+          "children_right": [
+            6,
+            5,
+            4,
+            0,
+            0,
+            0,
+            8,
+            0,
+            10,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            true,
+            false,
+            false,
+            false,
+            true,
+            false,
+            true,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              0.0,
+              0.12916310885330115,
+              0.056674141587902176,
+              -0.010103183811069743,
+              0.0,
+              -0.04320342179018028,
+              0.0,
+              -0.09152619299631819,
+              -0.08713246219912268
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 9,
+          "split_indices": [
+            8,
+            6,
+            0,
+            0,
+            4,
+            0,
+            0,
+            0,
+            0
+          ],
+          "thresholds": [
+            -1.5496735703368005,
+            -0.4011589730087486,
+            0.0,
+            0.0,
+            -0.22992797214792823,
+            0.0,
+            0.7304908577920014,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            0,
+            5,
+            0,
+            7,
+            0,
+            0
+          ],
+          "children_right": [
+            4,
+            3,
+            0,
+            0,
+            6,
+            0,
+            8,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            false,
+            true,
+            false,
+            true,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              -0.029297076239639987,
+              -0.08796814692341397,
+              0.0,
+              -0.055237424224545466,
+              0.0,
+              0.018295830970724822,
+              0.10485270508209538
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 13,
+          "split_indices": [
+            6,
+            4,
+            0,
+            5,
+            0,
+            8,
+            0,
+            0,
+            4,
+            0,
+            0,
+            0,
+            0
+          ],
+          "thresholds": [
+            -0.028468401857499655,
+            -0.09749047584792979,
+            0.0,
+            -0.21001794699592694,
+            0.0,
+            -1.5496735703368005,
+            0.0,
+            0.0,
+            0.6331140546299583,
+            0.8338767995701752,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            4,
+            0,
+            6,
+            0,
+            0,
+            9,
+            10,
+            0,
+            0,
+            0
+          ],
+          "children_right": [
+            8,
+            3,
+            0,
+            5,
+            0,
+            7,
+            0,
+            0,
+            12,
+            11,
+            0,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false,
+            false,
+            true,
+            true,
+            false,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              -0.011906635186086152,
+              0.0,
+              -0.08869359297584374,
+              0.0,
+              -0.08725014596305748,
+              -0.08454151698021958,
+              0.0,
+              0.0,
+              0.07800768120604981,
+              0.131396157692084,
+              -0.017971060903736926
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 11,
+          "split_indices": [
+            3,
+            6,
+            0,
+            0,
+            4,
+            4,
+            6,
+            0,
+            0,
+            0,
+            0
+          ],
+          "thresholds": [
+            -0.22871380133882305,
+            1.0000000180025095e-35,
+            0.0,
+            0.0,
+            1.8939242960305225,
+            0.6331140546299583,
+            0.3225971317152892,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            0,
+            5,
+            6,
+            7,
+            0,
+            0,
+            0,
+            0
+          ],
+          "children_right": [
+            4,
+            3,
+            0,
+            0,
+            10,
+            9,
+            8,
+            0,
+            0,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            false,
+            true,
+            true,
+            true,
+            false,
+            false,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              0.10686181640876842,
+              0.013314966005896345,
+              0.0,
+              0.0,
+              0.0,
+              -0.09179672345018071,
+              -0.08637721312532265,
+              -0.07296199901794305,
+              0.01648768400477114
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 11,
+          "split_indices": [
+            8,
+            4,
+            0,
+            0,
+            0,
+            0,
+            4,
+            0,
+            0,
+            0,
+            0
+          ],
+          "thresholds": [
+            -1.1905542723539002,
+            1.7446425466478266,
+            1.5696639610103522,
+            0.0,
+            0.0,
+            0.0,
+            -0.09749047584792979,
+            0.0,
+            0.6682887374976249,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            3,
+            0,
+            0,
+            0,
+            7,
+            0,
+            9,
+            0,
+            0
+          ],
+          "children_right": [
+            6,
+            5,
+            4,
+            0,
+            0,
+            0,
+            8,
+            0,
+            10,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            true,
+            false,
+            false,
+            false,
+            true,
+            false,
+            true,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              0.0,
+              -0.07060328155384758,
+              -0.08814782189756111,
+              0.0021441582342794537,
+              0.0,
+              -0.039431659472634176,
+              0.0,
+              0.0355875520946294,
+              0.10750419787043142
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 11,
+          "split_indices": [
+            6,
+            4,
+            0,
+            3,
+            6,
+            3,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "thresholds": [
+            1.102180092785339,
+            -0.39744537088635756,
+            0.0,
+            1.2994955214829749,
+            -0.4533842541442657,
+            -0.26928096141065877,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            4,
+            5,
+            6,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "children_right": [
+            10,
+            3,
+            0,
+            9,
+            8,
+            7,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            true,
+            true,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              0.05468184457741685,
+              0.0,
+              0.0,
+              0.0,
+              -0.08312274153348495,
+              -0.08543631741134888,
+              -0.09230147262232526,
+              -0.05403347150921032,
+              0.10590580598299618
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 11,
+          "split_indices": [
+            8,
+            5,
+            3,
+            0,
+            0,
+            0,
+            8,
+            0,
+            6,
+            0,
+            0
+          ],
+          "thresholds": [
+            -0.8960027526887161,
+            2.9994660094612264,
+            -0.8284187739965989,
+            0.0,
+            0.0,
+            0.0,
+            1.0000000180025095e-35,
+            0.0,
+            0.3225971317152892,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            3,
+            0,
+            0,
+            0,
+            7,
+            0,
+            9,
+            0,
+            0
+          ],
+          "children_right": [
+            6,
+            5,
+            4,
+            0,
+            0,
+            0,
+            8,
+            0,
+            10,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            true,
+            false,
+            false,
+            false,
+            true,
+            false,
+            true,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              0.0,
+              0.11080548991308024,
+              0.04732490825649072,
+              -0.009055681559006329,
+              0.0,
+              -0.03650128795583562,
+              0.0,
+              -0.08778523686412865,
+              -0.0823261660112577
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 9,
+          "split_indices": [
+            8,
+            2,
+            0,
+            0,
+            4,
+            0,
+            0,
+            0,
+            0
+          ],
+          "thresholds": [
+            -1.5496735703368005,
+            0.19881010820821884,
+            0.0,
+            0.0,
+            -0.22992797214792823,
+            0.0,
+            0.7304908577920014,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            0,
+            5,
+            0,
+            7,
+            0,
+            0
+          ],
+          "children_right": [
+            4,
+            3,
+            0,
+            0,
+            6,
+            0,
+            8,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            false,
+            true,
+            false,
+            true,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              -0.08565701948661991,
+              -0.023763940794700417,
+              0.0,
+              -0.049346988820894055,
+              0.0,
+              0.012774290566869077,
+              0.09167285242976893
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 11,
+          "split_indices": [
+            6,
+            4,
+            0,
+            6,
+            0,
+            0,
+            0,
+            0,
+            4,
+            0,
+            0
+          ],
+          "thresholds": [
+            0.23956080185262704,
+            -0.6071407350314034,
+            0.0,
+            -0.4533842541442657,
+            0.6682887374976249,
+            0.0,
+            0.0,
+            0.0,
+            0.5346096461835886,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            4,
+            5,
+            0,
+            0,
+            0,
+            9,
+            0,
+            0
+          ],
+          "children_right": [
+            8,
+            3,
+            0,
+            7,
+            6,
+            0,
+            0,
+            0,
+            10,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            true,
+            true,
+            false,
+            false,
+            false,
+            true,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              0.02822516461919812,
+              0.0,
+              0.0,
+              -0.08485272763624933,
+              -0.08104373402598469,
+              -0.08690892149844422,
+              0.0,
+              0.09716793773300542,
+              0.004669775457271748
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 13,
+          "split_indices": [
+            3,
+            1,
+            0,
+            6,
+            0,
+            0,
+            4,
+            9,
+            0,
+            6,
+            0,
+            0,
+            0
+          ],
+          "thresholds": [
+            -0.11002725218547336,
+            -1.3176212166675418,
+            0.0,
+            -0.16201285163810306,
+            0.0,
+            0.0,
+            2.0740359501627252,
+            -0.3834146504617355,
+            0.0,
+            0.3225971317152892,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            4,
+            0,
+            0,
+            7,
+            8,
+            0,
+            10,
+            0,
+            0,
+            0
+          ],
+          "children_right": [
+            6,
+            3,
+            0,
+            5,
+            0,
+            0,
+            12,
+            9,
+            0,
+            11,
+            0,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            true,
+            false,
+            false,
+            true,
+            true,
+            false,
+            true,
+            false,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              0.11427529533215329,
+              0.0,
+              0.06856076637932697,
+              -0.000690206177378043,
+              0.0,
+              0.0,
+              -0.06669421217505984,
+              0.0,
+              -0.0870699192577625,
+              -0.08154041684929572,
+              0.01511636250307254
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 11,
+          "split_indices": [
+            3,
+            0,
+            0,
+            0,
+            4,
+            0,
+            6,
+            8,
+            0,
+            0,
+            0
+          ],
+          "thresholds": [
+            -0.6102567521806802,
+            0.4831566301485794,
+            0.0,
+            0.0,
+            -0.22992797214792823,
+            0.0,
+            0.3225971317152892,
+            -0.155199812320538,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            0,
+            5,
+            0,
+            7,
+            8,
+            0,
+            0,
+            0
+          ],
+          "children_right": [
+            4,
+            3,
+            0,
+            0,
+            6,
+            0,
+            10,
+            9,
+            0,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            false,
+            true,
+            false,
+            true,
+            true,
+            false,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              -0.036180555189404724,
+              -0.09023576734941907,
+              0.0,
+              -0.06046356153709934,
+              0.0,
+              0.0,
+              0.04215713631694872,
+              0.11719064107587336,
+              -0.018832839975794886
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 11,
+          "split_indices": [
+            6,
+            4,
+            0,
+            3,
+            6,
+            9,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "thresholds": [
+            1.102180092785339,
+            -0.39744537088635756,
+            0.0,
+            1.2994955214829749,
+            -0.16201285163810306,
+            0.09933325851717596,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            4,
+            5,
+            6,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "children_right": [
+            10,
+            3,
+            0,
+            9,
+            8,
+            7,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            true,
+            true,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              0.045045141978769625,
+              0.0,
+              0.0,
+              0.0,
+              -0.07954863557176667,
+              -0.08362978881534203,
+              -0.09121562192329036,
+              -0.04902199417153145,
+              0.09448504987190316
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 11,
+          "split_indices": [
+            8,
+            0,
+            8,
+            0,
+            0,
+            0,
+            8,
+            0,
+            6,
+            0,
+            0
+          ],
+          "thresholds": [
+            -0.8960027526887161,
+            2.1943597465827778,
+            -1.7721496255384797,
+            0.0,
+            0.0,
+            0.0,
+            -0.155199812320538,
+            0.0,
+            0.3225971317152892,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            3,
+            0,
+            0,
+            0,
+            7,
+            0,
+            9,
+            0,
+            0
+          ],
+          "children_right": [
+            6,
+            5,
+            4,
+            0,
+            0,
+            0,
+            8,
+            0,
+            10,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            true,
+            false,
+            false,
+            false,
+            true,
+            false,
+            true,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              0.0,
+              0.10813981886125888,
+              0.030650974991950183,
+              -0.007377369220303575,
+              0.0,
+              -0.022367667250054193,
+              0.0,
+              -0.0852551244226499,
+              -0.07871906288075692
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 11,
+          "split_indices": [
+            3,
+            7,
+            0,
+            0,
+            4,
+            0,
+            6,
+            8,
+            0,
+            0,
+            0
+          ],
+          "thresholds": [
+            -0.6102567521806802,
+            0.4411053904693744,
+            0.0,
+            0.0,
+            -0.22992797214792823,
+            0.0,
+            0.3225971317152892,
+            -0.155199812320538,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            0,
+            5,
+            0,
+            7,
+            8,
+            0,
+            0,
+            0
+          ],
+          "children_right": [
+            4,
+            3,
+            0,
+            0,
+            6,
+            0,
+            10,
+            9,
+            0,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            false,
+            true,
+            false,
+            true,
+            true,
+            false,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              -0.08712604088138459,
+              -0.03281510625883038,
+              0.0,
+              -0.057604171364669804,
+              0.0,
+              0.0,
+              0.037910066344841085,
+              0.10881646615626857,
+              -0.017549493641833454
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 11,
+          "split_indices": [
+            6,
+            4,
+            0,
+            6,
+            0,
+            0,
+            0,
+            0,
+            4,
+            0,
+            0
+          ],
+          "thresholds": [
+            0.23956080185262704,
+            -0.6071407350314034,
+            0.0,
+            -0.4533842541442657,
+            0.6682887374976249,
+            0.0,
+            0.0,
+            0.0,
+            0.5346096461835886,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            4,
+            5,
+            0,
+            0,
+            0,
+            9,
+            0,
+            0
+          ],
+          "children_right": [
+            8,
+            3,
+            0,
+            7,
+            6,
+            0,
+            0,
+            0,
+            10,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            true,
+            true,
+            false,
+            false,
+            false,
+            true,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              0.01997151103973887,
+              0.0,
+              0.0,
+              -0.08136824791185933,
+              -0.0779995238571583,
+              -0.08348284949793722,
+              0.0,
+              0.08762266374628985,
+              0.003394941988129454
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 13,
+          "split_indices": [
+            3,
+            1,
+            0,
+            6,
+            0,
+            0,
+            4,
+            6,
+            0,
+            1,
+            0,
+            0,
+            0
+          ],
+          "thresholds": [
+            -0.11002725218547336,
+            -1.3176212166675418,
+            0.0,
+            -0.16201285163810306,
+            0.0,
+            0.0,
+            2.0740359501627252,
+            -0.7967300179317252,
+            0.0,
+            0.7996155154470096,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            4,
+            0,
+            0,
+            7,
+            8,
+            0,
+            10,
+            0,
+            0,
+            0
+          ],
+          "children_right": [
+            6,
+            3,
+            0,
+            5,
+            0,
+            0,
+            12,
+            9,
+            0,
+            11,
+            0,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            true,
+            false,
+            false,
+            true,
+            true,
+            false,
+            true,
+            false,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              0.1031885635499405,
+              0.0,
+              0.059956130537085685,
+              -0.0015324397775175861,
+              0.0,
+              0.0,
+              -0.06171513821227551,
+              0.0,
+              -0.0871467086725627,
+              -0.07829655174137791,
+              0.012862621463216609
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 11,
+          "split_indices": [
+            8,
+            6,
+            0,
+            0,
+            6,
+            1,
+            0,
+            3,
+            0,
+            0,
+            0
+          ],
+          "thresholds": [
+            -1.5496735703368005,
+            -0.4011589730087486,
+            0.0,
+            0.0,
+            0.6782272859454093,
+            -0.13511270293900066,
+            0.0,
+            1.1667179807160553,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            0,
+            5,
+            6,
+            0,
+            8,
+            0,
+            0,
+            0
+          ],
+          "children_right": [
+            4,
+            3,
+            0,
+            0,
+            10,
+            7,
+            0,
+            9,
+            0,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            false,
+            true,
+            true,
+            false,
+            true,
+            false,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              -0.013964023190223732,
+              -0.08208644386725066,
+              0.0,
+              0.0,
+              -0.010648192079332028,
+              0.0,
+              0.12008633947170816,
+              0.03995142883212673,
+              -0.04136969518361994
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 13,
+          "split_indices": [
+            6,
+            4,
+            0,
+            6,
+            3,
+            4,
+            0,
+            3,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "thresholds": [
+            1.102180092785339,
+            -1.0212789253290264,
+            0.0,
+            0.22516663905069859,
+            1.0456539537232812,
+            0.501808488819062,
+            0.0,
+            -0.22871380133882305,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            4,
+            5,
+            6,
+            0,
+            8,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "children_right": [
+            12,
+            3,
+            0,
+            11,
+            10,
+            7,
+            0,
+            9,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            true,
+            true,
+            true,
+            false,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              0.06773576489505288,
+              0.0,
+              0.0,
+              0.0,
+              -0.09531996138862021,
+              0.0,
+              -0.07731360176988933,
+              -0.0801006939939429,
+              -0.06110225138876969,
+              -0.015241626142010054,
+              0.08394774357528888
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        },
+        {
+          "num_nodes": 13,
+          "split_indices": [
+            8,
+            0,
+            0,
+            4,
+            0,
+            0,
+            1,
+            0,
+            5,
+            0,
+            8,
+            0,
+            0
+          ],
+          "thresholds": [
+            -0.8960027526887161,
+            0.4831566301485794,
+            0.0,
+            0.9139174418940444,
+            0.0,
+            0.0,
+            -0.09186618968076786,
+            0.0,
+            -1.7650271239700928,
+            0.0,
+            0.648759865124828,
+            0.0,
+            0.0
+          ],
+          "children_left": [
+            1,
+            2,
+            0,
+            4,
+            0,
+            0,
+            7,
+            0,
+            9,
+            0,
+            11,
+            0,
+            0
+          ],
+          "children_right": [
+            6,
+            3,
+            0,
+            5,
+            0,
+            0,
+            8,
+            0,
+            10,
+            0,
+            12,
+            0,
+            0
+          ],
+          "default_left": [
+            true,
+            true,
+            false,
+            true,
+            false,
+            false,
+            true,
+            false,
+            true,
+            false,
+            true,
+            false,
+            false
+          ],
+          "leaf_values": {
+            "type": "scalar",
+            "values": [
+              0.0,
+              0.0,
+              0.09476601371931183,
+              0.0,
+              -0.03095454785209997,
+              0.04113442121678451,
+              0.0,
+              -0.011699884638547887,
+              0.0,
+              -0.08229430506046849,
+              0.0,
+              -0.0791415553998794,
+              -0.07601103902627736
+            ]
+          },
+          "categories": {
+            "node_indices": [],
+            "category_sets": []
+          },
+          "linear_coefficients": {
+            "node_indices": [],
+            "coefficients": []
+          },
+          "gains": null,
+          "covers": null
+        }
+      ],
+      "tree_groups": [
+        0,
+        1,
+        2,
+        0,
+        1,
+        2,
+        0,
+        1,
+        2,
+        0,
+        1,
+        2,
+        0,
+        1,
+        2,
+        0,
+        1,
+        2,
+        0,
+        1,
+        2,
+        0,
+        1,
+        2,
+        0,
+        1,
+        2,
+        0,
+        1,
+        2
+      ],
+      "n_groups": 3,
+      "base_score": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    "config": {
+      "objective": {
+        "type": "squared_loss"
+      },
+      "metric": {
+        "type": "none"
+      },
+      "n_trees": 30,
+      "learning_rate": 0.1,
+      "growth_strategy": {
+        "type": "depth_wise",
+        "max_depth": 6
+      },
+      "max_onehot_cats": 4,
+      "lambda": 0.0,
+      "alpha": 0.0,
+      "min_child_weight": 0.001,
+      "min_gain": 0.0,
+      "min_samples_leaf": 20,
+      "subsample": 1.0,
+      "colsample_bytree": 1.0,
+      "colsample_bylevel": 1.0,
+      "binning": {
+        "max_bins": 255,
+        "sparsity_threshold": 0.3,
+        "enable_bundling": true,
+        "max_categorical_cardinality": 64,
+        "sample_cnt": 200000
+      },
+      "linear_leaves": null,
+      "early_stopping_rounds": null,
+      "cache_size": 0,
+      "seed": 0,
+      "verbosity": "silent",
+      "extra": {
+        "lightgbm_objective": "multiclass num_class:3"
+      }
+    },
+    "MODEL_TYPE": "gbdt"
+  }
+}

@@ -20,8 +20,9 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 pub struct TestInput {
     /// Features matrix, where None represents NaN (missing value)
+    #[serde(alias = "data")]
     pub features: Vec<Vec<Option<f64>>>,
-    #[serde(rename = "num_rows")]
+    #[serde(rename = "num_rows", alias = "num_samples")]
     pub n_rows: usize,
     #[serde(rename = "num_features")]
     pub n_features: usize,
@@ -36,19 +37,32 @@ impl TestInput {
         self.features
             .iter()
             .map(|row| {
-                row.iter()
+                let mut out: Vec<f32> = row
+                    .iter()
+                    .take(self.n_features)
                     .map(|&x| x.map(|v| v as f32).unwrap_or(f32::NAN))
-                    .collect()
+                    .collect();
+                out.resize(self.n_features, f32::NAN);
+                out
             })
             .collect()
     }
 
     /// Convert to flat f32 slice for RowMatrix.
     pub fn to_flat_f32(&self) -> Vec<f32> {
-        self.features
-            .iter()
-            .flat_map(|row| row.iter().map(|&x| x.map(|v| v as f32).unwrap_or(f32::NAN)))
-            .collect()
+        let mut out = Vec::with_capacity(self.n_rows * self.n_features);
+        for row in &self.features {
+            out.extend(
+                row.iter()
+                    .take(self.n_features)
+                    .map(|&x| x.map(|v| v as f32).unwrap_or(f32::NAN)),
+            );
+            out.resize(
+                out.len() + (self.n_features.saturating_sub(row.len())),
+                f32::NAN,
+            );
+        }
+        out
     }
 }
 
@@ -59,15 +73,16 @@ impl TestInput {
 #[derive(Debug, Deserialize)]
 pub struct TestExpected {
     /// Raw predictions (margin scores). Can be `Vec<f64>` or `Vec<Vec<f64>>`.
+    #[serde(alias = "raw", alias = "raw_predictions")]
     pub predictions: serde_json::Value,
     /// Transformed predictions (after sigmoid/softmax)
-    #[serde(default)]
+    #[serde(default, alias = "proba")]
     pub predictions_transformed: Option<serde_json::Value>,
     /// Objective function name
-    #[serde(default)]
+    #[serde(default, alias = "xgboost_objective")]
     pub objective: Option<String>,
     /// Number of classes (for multiclass)
-    #[serde(default)]
+    #[serde(default, alias = "num_class")]
     pub n_class: Option<u32>,
 }
 

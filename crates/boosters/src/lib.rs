@@ -27,9 +27,6 @@
 
 // Re-export approx traits for users who want to compare predictions
 pub use approx;
-
-#[cfg(any(feature = "xgboost-compat", feature = "lightgbm-compat"))]
-pub mod compat;
 pub mod data;
 pub mod explainability;
 pub mod inference;
