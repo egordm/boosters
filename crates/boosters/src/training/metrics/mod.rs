@@ -48,6 +48,116 @@ use crate::data::{TargetsView, WeightsView};
 use crate::inference::PredictionKind;
 
 // =============================================================================
+// Custom Metric
+// =============================================================================
+
+/// Type alias for the custom metric compute function.
+///
+/// Takes predictions (shape `[n_outputs, n_samples]`), targets, and weights.
+/// Returns a scalar metric value.
+pub type CustomMetricFn = Box<
+    dyn Fn(ArrayView2<f32>, TargetsView<'_>, WeightsView<'_>) -> f64 + Send + Sync + 'static,
+>;
+
+/// A user-provided custom metric.
+///
+/// Allows defining metrics via closures rather than implementing a trait.
+/// This is the preferred way to create custom metrics in the vNext API.
+///
+/// # Example
+///
+/// ```ignore
+/// use boosters::training::{CustomMetric, Metric};
+/// use boosters::inference::PredictionKind;
+///
+/// // Custom MAE metric
+/// let custom_mae = CustomMetric::new(
+///     "custom_mae",
+///     |preds, targets, weights| {
+///         let targets = targets.output(0);
+///         let preds = preds.row(0);
+///         let n = preds.len() as f64;
+///         preds.iter()
+///             .zip(targets.iter())
+///             .map(|(p, t)| (*p as f64 - *t as f64).abs())
+///             .sum::<f64>() / n
+///     },
+///     PredictionKind::Value,
+///     false, // lower is better
+/// );
+///
+/// let metric = Metric::Custom(custom_mae);
+/// ```
+pub struct CustomMetric {
+    /// Name of the metric (for logging).
+    pub name: &'static str,
+    /// The compute function.
+    compute_fn: CustomMetricFn,
+    /// What prediction space this metric expects.
+    pub expected_prediction_kind: PredictionKind,
+    /// Whether higher values indicate better performance.
+    pub higher_is_better: bool,
+}
+
+impl CustomMetric {
+    /// Create a new custom metric.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Name for logging (e.g., "custom_mae"). Must be a static string.
+    /// * `compute_fn` - Function that computes the metric value
+    /// * `expected_prediction_kind` - What prediction space this metric expects
+    /// * `higher_is_better` - Whether higher values indicate better performance
+    pub fn new(
+        name: &'static str,
+        compute_fn: impl Fn(ArrayView2<f32>, TargetsView<'_>, WeightsView<'_>) -> f64
+            + Send
+            + Sync
+            + 'static,
+        expected_prediction_kind: PredictionKind,
+        higher_is_better: bool,
+    ) -> Self {
+        Self {
+            name,
+            compute_fn: Box::new(compute_fn),
+            expected_prediction_kind,
+            higher_is_better,
+        }
+    }
+
+    /// Compute the metric value.
+    pub fn compute(
+        &self,
+        predictions: ArrayView2<f32>,
+        targets: TargetsView<'_>,
+        weights: WeightsView<'_>,
+    ) -> f64 {
+        (self.compute_fn)(predictions, targets, weights)
+    }
+
+    /// Get the metric name.
+    pub fn name(&self) -> &'static str {
+        self.name
+    }
+}
+
+impl std::fmt::Debug for CustomMetric {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CustomMetric")
+            .field("name", &self.name)
+            .field("expected_prediction_kind", &self.expected_prediction_kind)
+            .field("higher_is_better", &self.higher_is_better)
+            .finish()
+    }
+}
+
+impl Clone for CustomMetric {
+    fn clone(&self) -> Self {
+        panic!("CustomMetric cannot be cloned because it contains a boxed closure. Use Arc<CustomMetric> if sharing is needed.");
+    }
+}
+
+// =============================================================================
 // Metric Enum (Convenience wrapper)
 // =============================================================================
 
@@ -104,7 +214,7 @@ pub enum Metric {
     /// Poisson Deviance for count data.
     PoissonDeviance(PoissonDeviance),
     /// Custom user-provided metric.
-    Custom(std::sync::Arc<dyn MetricFn>),
+    Custom(std::sync::Arc<CustomMetric>),
 }
 
 impl std::fmt::Debug for Metric {
@@ -127,7 +237,7 @@ impl std::fmt::Debug for Metric {
             Self::Quantile(inner) => f.debug_tuple("Quantile").field(inner).finish(),
             Self::Huber(inner) => f.debug_tuple("Huber").field(inner).finish(),
             Self::PoissonDeviance(inner) => f.debug_tuple("PoissonDeviance").field(inner).finish(),
-            Self::Custom(_) => f.debug_tuple("Custom").field(&"<dyn MetricFn>").finish(),
+            Self::Custom(inner) => f.debug_tuple("Custom").field(inner).finish(),
         }
     }
 }
@@ -222,7 +332,24 @@ impl Metric {
     }
 
     /// Custom user-provided metric.
-    pub fn custom(metric: impl MetricFn + 'static) -> Self {
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use boosters::training::{CustomMetric, Metric};
+    /// use boosters::inference::PredictionKind;
+    ///
+    /// let metric = Metric::custom(CustomMetric::new(
+    ///     "custom_mae",
+    ///     |preds, targets, _weights| {
+    ///         // Compute custom metric
+    ///         0.0
+    ///     },
+    ///     PredictionKind::Value,
+    ///     false, // lower is better
+    /// ));
+    /// ```
+    pub fn custom(metric: CustomMetric) -> Self {
         Self::Custom(std::sync::Arc::new(metric))
     }
 }
@@ -267,7 +394,7 @@ impl MetricFn for Metric {
             Self::Quantile(inner) => inner.expected_prediction_kind(),
             Self::Huber(inner) => inner.expected_prediction_kind(),
             Self::PoissonDeviance(inner) => inner.expected_prediction_kind(),
-            Self::Custom(inner) => inner.expected_prediction_kind(),
+            Self::Custom(inner) => inner.expected_prediction_kind,
         }
     }
 
@@ -286,7 +413,7 @@ impl MetricFn for Metric {
             Self::Quantile(inner) => inner.higher_is_better(),
             Self::Huber(inner) => inner.higher_is_better(),
             Self::PoissonDeviance(inner) => inner.higher_is_better(),
-            Self::Custom(inner) => inner.higher_is_better(),
+            Self::Custom(inner) => inner.higher_is_better,
         }
     }
 
@@ -305,7 +432,7 @@ impl MetricFn for Metric {
             Self::Quantile(inner) => inner.name(),
             Self::Huber(inner) => inner.name(),
             Self::PoissonDeviance(inner) => inner.name(),
-            Self::Custom(inner) => inner.name(),
+            Self::Custom(inner) => inner.name,
         }
     }
 
@@ -375,4 +502,63 @@ pub trait MetricFn: Send + Sync {
     }
 }
 
-// hello? Read the comment above ^^
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::data::WeightsView;
+    use ndarray::Array2;
+
+    fn make_preds(n_outputs: usize, n_samples: usize, data: &[f32]) -> Array2<f32> {
+        Array2::from_shape_vec((n_outputs, n_samples), data.to_vec()).unwrap()
+    }
+
+    fn make_targets(data: &[f32]) -> Array2<f32> {
+        Array2::from_shape_vec((1, data.len()), data.to_vec()).unwrap()
+    }
+
+    #[test]
+    fn custom_metric_works() {
+        // Create a simple custom MAE metric
+        let custom_mae = CustomMetric::new(
+            "custom_mae",
+            |preds, targets, _weights| {
+                let targets = targets.output(0);
+                let preds = preds.row(0);
+                let n = preds.len() as f64;
+                preds
+                    .iter()
+                    .zip(targets.iter())
+                    .map(|(p, t)| (*p as f64 - *t as f64).abs())
+                    .sum::<f64>()
+                    / n
+            },
+            PredictionKind::Value,
+            false, // lower is better
+        );
+
+        let metric = Metric::custom(custom_mae);
+
+        // Test compute
+        let preds = make_preds(1, 2, &[1.0, 2.0]);
+        let labels = make_targets(&[0.0, 0.0]);
+        let value = metric.compute(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        approx::assert_abs_diff_eq!(value, 1.5, epsilon = 1e-10);
+
+        // Test properties
+        assert_eq!(metric.name(), "custom_mae");
+        assert!(!metric.higher_is_better());
+        assert_eq!(metric.expected_prediction_kind(), PredictionKind::Value);
+        assert!(metric.is_enabled());
+    }
+
+    #[test]
+    fn metric_none_disabled() {
+        let metric = Metric::none();
+        assert!(!metric.is_enabled());
+        assert_eq!(metric.name(), "<none>");
+    }
+}

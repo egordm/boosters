@@ -57,8 +57,8 @@ pub use eval::{Evaluator, MetricValue};
 pub use gradients::{Gradients, GradsTuple};
 pub use logger::{TrainingLogger, Verbosity};
 pub use metrics::{
-    Accuracy, Auc, HuberMetric, LogLoss, Mae, Mape, MarginAccuracy, Metric, MetricFn,
-    MulticlassAccuracy, MulticlassLogLoss, PoissonDeviance, QuantileMetric, Rmse,
+    Accuracy, Auc, CustomMetric, CustomMetricFn, HuberMetric, LogLoss, Mae, Mape, MarginAccuracy,
+    Metric, MetricFn, MulticlassAccuracy, MulticlassLogLoss, PoissonDeviance, QuantileMetric, Rmse,
 };
 pub use objectives::{
     AbsoluteLoss, BaseScoreFn, CustomObjective, GradientFn, HingeLoss, LambdaRankLoss,
