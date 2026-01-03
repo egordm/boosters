@@ -8,6 +8,7 @@ use crate::Parallelism;
 use crate::data::Dataset;
 use crate::explainability::{ExplainError, LinearExplainer, ShapValues};
 use crate::model::meta::ModelMeta;
+use crate::model::OutputTransform;
 use crate::repr::gblinear::LinearModel;
 use crate::training::gblinear::GBLinearTrainer;
 use crate::training::{Metric, ObjectiveFn};
@@ -25,10 +26,15 @@ pub struct GBLinearModel {
     model: LinearModel,
     /// Model metadata.
     meta: ModelMeta,
-    /// Objective function used for prediction post-processing.
+    /// Output transform for prediction (derived from objective).
     ///
-    /// This is needed to apply the same output transform as training
-    /// (e.g., sigmoid/softmax for classification).
+    /// This is persisted with the model and used for inference-time
+    /// transformation (e.g., sigmoid for binary classification).
+    output_transform: OutputTransform,
+    /// Objective function used for training.
+    ///
+    /// Kept for compatibility and training-related queries.
+    /// For prediction transform, use `output_transform` instead.
     objective: crate::training::Objective,
 }
 
@@ -115,10 +121,12 @@ impl GBLinearModel {
     /// or for quick testing. For training new models, prefer [`GBLinearModel::train`].
     pub fn from_linear_model(model: LinearModel, meta: ModelMeta) -> Self {
         let objective = Self::default_objective(meta.task);
+        let output_transform = objective.output_transform();
         Self {
             model,
             meta,
             objective,
+            output_transform,
         }
     }
 
@@ -131,10 +139,30 @@ impl GBLinearModel {
         meta: ModelMeta,
         objective: crate::training::Objective,
     ) -> Self {
+        let output_transform = objective.output_transform();
         Self {
             model,
             meta,
             objective,
+            output_transform,
+        }
+    }
+
+    /// Create a model from all parts, including an explicit output transform.
+    ///
+    /// Used when loading models from persistence where the transform is stored
+    /// separately. For training, prefer [`GBLinearModel::train`].
+    pub fn from_parts_with_transform(
+        model: LinearModel,
+        meta: ModelMeta,
+        objective: crate::training::Objective,
+        output_transform: OutputTransform,
+    ) -> Self {
+        Self {
+            model,
+            meta,
+            objective,
+            output_transform,
         }
     }
 
@@ -155,6 +183,11 @@ impl GBLinearModel {
     /// Get reference to the objective function.
     pub fn objective(&self) -> &crate::training::Objective {
         &self.objective
+    }
+
+    /// Get reference to the output transform.
+    pub fn output_transform(&self) -> &OutputTransform {
+        &self.output_transform
     }
 
     /// Set feature names.
@@ -196,8 +229,12 @@ impl GBLinearModel {
         // Use efficient feature-major prediction
         let mut output = self.predict_raw(dataset);
 
-        // Apply transformation
-        self.objective.transform_predictions_inplace(output.view_mut());
+        // Apply output transform (sigmoid, softmax, or identity)
+        let n_outputs = self.meta.n_groups;
+        self.output_transform.transform_inplace(
+            output.as_slice_mut().expect("output must be contiguous"),
+            n_outputs,
+        );
 
         output
     }

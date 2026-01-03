@@ -50,6 +50,11 @@ pub struct ModelMetaSchema {
     /// Feature types (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub feature_types: Option<Vec<FeatureTypeSchema>>,
+    /// Objective name (for debugging/reproducibility).
+    ///
+    /// Added in schema v3. Not used for inference.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub objective_name: Option<String>,
 }
 
 /// Leaf values schema (supports scalar and multi-output).
@@ -151,6 +156,21 @@ pub enum ObjectiveSchema {
     Custom { name: String },
 }
 
+/// Output transform schema for inference-time transformation.
+///
+/// Per RFC-0005 vNext, models persist only the output transform
+/// (not the full objective) for clean inference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputTransformSchema {
+    /// No transformation (raw predictions).
+    Identity,
+    /// Sigmoid for binary classification.
+    Sigmoid,
+    /// Softmax for multiclass classification.
+    Softmax,
+}
+
 /// GBLinear weight schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinearWeightsSchema {
@@ -169,8 +189,17 @@ pub struct GBDTModelSchema {
     pub meta: ModelMetaSchema,
     /// Tree forest.
     pub forest: ForestSchema,
-    /// Objective (needed for prediction post-processing).
-    pub objective: ObjectiveSchema,
+    /// Output transform for inference (schema v3+).
+    ///
+    /// This is the preferred field for new models.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_transform: Option<OutputTransformSchema>,
+    /// Objective (legacy, for backward compatibility).
+    ///
+    /// In schema v3+, this is ignored during loading (output_transform is used instead).
+    /// Kept for debugging and potential future use.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub objective: Option<ObjectiveSchema>,
 }
 
 impl GBDTModelSchema {
@@ -187,8 +216,17 @@ pub struct GBLinearModelSchema {
     pub weights: LinearWeightsSchema,
     /// Base score(s).
     pub base_score: Vec<f64>,
-    /// Objective (needed for prediction post-processing).
-    pub objective: ObjectiveSchema,
+    /// Output transform for inference (schema v3+).
+    ///
+    /// This is the preferred field for new models.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_transform: Option<OutputTransformSchema>,
+    /// Objective (legacy, for backward compatibility).
+    ///
+    /// In schema v3+, this is ignored during loading (output_transform is used instead).
+    /// Kept for debugging and potential future use.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub objective: Option<ObjectiveSchema>,
 }
 
 impl GBLinearModelSchema {
@@ -233,12 +271,14 @@ mod tests {
             num_classes: None,
             feature_names: None,
             feature_types: None,
+            objective_name: None,
         };
 
         let json = serde_json::to_string(&meta).unwrap();
         assert!(!json.contains("num_classes"));
         assert!(!json.contains("feature_names"));
         assert!(!json.contains("feature_types"));
+        assert!(!json.contains("objective_name"));
     }
 
     #[test]

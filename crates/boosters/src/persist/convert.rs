@@ -9,11 +9,12 @@
 use super::schema::{
     CategoriesSchema, FeatureTypeSchema, ForestSchema, GBDTModelSchema, GBLinearModelSchema,
     LeafValuesSchema, LinearCoefficientsSchema, LinearWeightsSchema, ModelMetaSchema,
-    ObjectiveSchema, TaskKindSchema, TreeSchema,
+    ObjectiveSchema, OutputTransformSchema, TaskKindSchema, TreeSchema,
 };
-use crate::model::{FeatureType, GBDTModel, GBLinearModel, ModelMeta, TaskKind};
+use crate::model::{FeatureType, GBDTModel, GBLinearModel, ModelMeta, OutputTransform, TaskKind};
 use crate::repr::gbdt::{Forest, ScalarLeaf, Tree};
 use crate::repr::gblinear::LinearModel;
+use crate::training::ObjectiveFn;
 
 // =============================================================================
 // Objective conversions (schema <-> runtime)
@@ -64,6 +65,30 @@ impl TryFrom<ObjectiveSchema> for crate::training::Objective {
                 )));
             }
         })
+    }
+}
+
+// =============================================================================
+// OutputTransform conversions
+// =============================================================================
+
+impl From<OutputTransform> for OutputTransformSchema {
+    fn from(t: OutputTransform) -> Self {
+        match t {
+            OutputTransform::Identity => OutputTransformSchema::Identity,
+            OutputTransform::Sigmoid => OutputTransformSchema::Sigmoid,
+            OutputTransform::Softmax => OutputTransformSchema::Softmax,
+        }
+    }
+}
+
+impl From<OutputTransformSchema> for OutputTransform {
+    fn from(s: OutputTransformSchema) -> Self {
+        match s {
+            OutputTransformSchema::Identity => OutputTransform::Identity,
+            OutputTransformSchema::Sigmoid => OutputTransform::Sigmoid,
+            OutputTransformSchema::Softmax => OutputTransform::Softmax,
+        }
     }
 }
 
@@ -138,6 +163,7 @@ impl From<&ModelMeta> for ModelMetaSchema {
                 .feature_types
                 .as_ref()
                 .map(|types| types.iter().map(FeatureTypeSchema::from).collect()),
+            objective_name: None, // Set by caller when saving
         }
     }
 }
@@ -804,10 +830,15 @@ mod roundtrip_tests {
 
 impl From<&GBDTModel> for GBDTModelSchema {
     fn from(model: &GBDTModel) -> Self {
+        let mut meta = ModelMetaSchema::from(model.meta());
+        // Store objective name for debugging
+        meta.objective_name = Some(model.objective().name().to_string());
+
         GBDTModelSchema {
-            meta: ModelMetaSchema::from(model.meta()),
+            meta,
             forest: ForestSchema::from(model.forest()),
-            objective: ObjectiveSchema::from(model.objective()),
+            output_transform: Some(OutputTransformSchema::from(model.output_transform())),
+            objective: Some(ObjectiveSchema::from(model.objective())),
         }
     }
 }
@@ -822,8 +853,42 @@ impl TryFrom<GBDTModelSchema> for GBDTModel {
         // Fill base_scores from forest
         meta.base_scores = forest.base_score().to_vec();
 
-        let objective = crate::training::Objective::try_from(schema.objective)?;
-        Ok(GBDTModel::from_parts(forest, meta, objective))
+        // Get output_transform (prefer new field, fallback to deriving from objective)
+        let output_transform = match schema.output_transform {
+            Some(ot) => OutputTransform::from(ot),
+            None => {
+                // Legacy: derive from objective
+                if let Some(obj_schema) = &schema.objective {
+                    let objective = crate::training::Objective::try_from(obj_schema.clone())?;
+                    objective.output_transform()
+                } else {
+                    // Default to Identity if neither is present
+                    OutputTransform::Identity
+                }
+            }
+        };
+
+        // Get objective (for training compatibility)
+        let objective = match schema.objective {
+            Some(obj_schema) => crate::training::Objective::try_from(obj_schema)?,
+            None => {
+                // Default objective based on task
+                match meta.task {
+                    TaskKind::BinaryClassification => crate::training::Objective::logistic(),
+                    TaskKind::MulticlassClassification { n_classes } => {
+                        crate::training::Objective::softmax(n_classes)
+                    }
+                    _ => crate::training::Objective::squared(),
+                }
+            }
+        };
+
+        Ok(GBDTModel::from_parts_with_transform(
+            forest,
+            meta,
+            output_transform,
+            objective,
+        ))
     }
 }
 
@@ -858,11 +923,16 @@ impl From<LinearWeightsSchema> for LinearModel {
 
 impl From<&GBLinearModel> for GBLinearModelSchema {
     fn from(model: &GBLinearModel) -> Self {
+        let mut meta = ModelMetaSchema::from(model.meta());
+        // Store objective name for debugging
+        meta.objective_name = Some(model.objective().name().to_string());
+
         GBLinearModelSchema {
-            meta: ModelMetaSchema::from(model.meta()),
+            meta,
             weights: LinearWeightsSchema::from(model.linear()),
             base_score: model.meta().base_scores.iter().map(|&s| s as f64).collect(),
-            objective: ObjectiveSchema::from(model.objective()),
+            output_transform: Some(OutputTransformSchema::from(model.output_transform().clone())),
+            objective: Some(ObjectiveSchema::from(model.objective())),
         }
     }
 }
@@ -877,8 +947,41 @@ impl TryFrom<GBLinearModelSchema> for GBLinearModel {
         // Fill base_scores from schema
         meta.base_scores = schema.base_score.iter().map(|&s| s as f32).collect();
 
-        let objective = crate::training::Objective::try_from(schema.objective)?;
-        Ok(GBLinearModel::from_parts(linear, meta, objective))
+        // Get output_transform (prefer new field, fallback to deriving from objective)
+        let output_transform = match schema.output_transform {
+            Some(ot) => OutputTransform::from(ot),
+            None => {
+                // Legacy: derive from objective
+                if let Some(obj_schema) = &schema.objective {
+                    let objective = crate::training::Objective::try_from(obj_schema.clone())?;
+                    objective.output_transform()
+                } else {
+                    OutputTransform::Identity
+                }
+            }
+        };
+
+        // Get objective (for training compatibility)
+        let objective = match schema.objective {
+            Some(obj_schema) => crate::training::Objective::try_from(obj_schema)?,
+            None => {
+                // Default objective based on task
+                match meta.task {
+                    TaskKind::BinaryClassification => crate::training::Objective::logistic(),
+                    TaskKind::MulticlassClassification { n_classes } => {
+                        crate::training::Objective::softmax(n_classes)
+                    }
+                    _ => crate::training::Objective::squared(),
+                }
+            }
+        };
+
+        Ok(GBLinearModel::from_parts_with_transform(
+            linear,
+            meta,
+            objective,
+            output_transform,
+        ))
     }
 }
 
