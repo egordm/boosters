@@ -1,6 +1,6 @@
 # RFC-0005: Objectives and Metrics
 
-**Status**: Implemented (OutputTransform pending for schema v3)  
+**Status**: Implemented (objective/metric separation); Proposed (OutputTransform + schema v3)  
 **Created**: 2025-12-15  
 **Updated**: 2026-01-03  
 **Scope**: Loss functions, evaluation metrics, output transformations, early stopping
@@ -11,7 +11,12 @@ Objectives compute gradients for training; metrics evaluate model quality.
 Separation allows training with one loss and evaluating with another.
 
 Output transformations convert raw predictions to interpretable values
-(probabilities, counts). They are decoupled from objectives for clean persistence.
+(probabilities). They are decoupled from objectives for clean persistence.
+
+## Implementation Status
+
+- Implemented: objective/metric separation; training-time transforms via `ObjectiveFn::transform_predictions_inplace()`.
+- Proposed for schema v3: persist `OutputTransform` instead of persisting the full objective.
 
 ## Why Separate Objectives and Metrics?
 
@@ -158,7 +163,11 @@ impl OutputTransform {
         match self {
             Self::Identity => { /* no-op */ }
             Self::Sigmoid => {
-                predictions.mapv_inplace(|x| 1.0 / (1.0 + (-x).exp()));
+                // exp() overflows around ~88 for f32.
+                predictions.mapv_inplace(|x| {
+                    let x = x.clamp(-88.0, 88.0);
+                    1.0 / (1.0 + (-x).exp())
+                });
             }
             Self::Softmax => {
                 // Softmax across outputs (axis 0) for each sample (axis 1)
@@ -191,7 +200,7 @@ impl OutputTransform {
 
 **Note on Poisson**: Uses identity transform (raw log-lambda values).
 This differs from XGBoost which applies `exp()` for expected counts.
-Users requiring counts should apply `exp()` themselves.
+If you want expected counts, apply `exp()` in user code.
 
 ### Model Storage
 
@@ -255,7 +264,7 @@ pub trait MetricFn: Send + Sync {
 
 ## Implemented Metrics
 
-### Regression
+### Regression Metrics
 
 - `Rmse`: Root Mean Squared Error (lower is better)
 - `Mae`: Mean Absolute Error
@@ -263,7 +272,7 @@ pub trait MetricFn: Send + Sync {
 - `QuantileMetric`: Pinball loss for quantile regression
 - `PoissonDeviance`: For count data
 
-### Classification
+### Classification Metrics
 
 - `LogLoss`: Binary cross-entropy
 - `Accuracy`: Classification accuracy (threshold-based)

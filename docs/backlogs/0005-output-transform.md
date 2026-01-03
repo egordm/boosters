@@ -23,7 +23,7 @@ training-only parameters from model files.
 
 Add the `OutputTransform` enum to the model module for inference-time transformations.
 
-### Tasks
+### Tasks (Story 1)
 
 - [ ] 1.1: Create `model/transform.rs` with `OutputTransform` enum (Identity, Sigmoid, Softmax)
 - [ ] 1.2: Implement `transform_inplace(&self, predictions: ArrayViewMut2<f32>)`
@@ -37,7 +37,7 @@ Add the `OutputTransform` enum to the model module for inference-time transforma
 - [ ] 1.8: Verify numerical equivalence with existing objective transforms
 - [ ] 1.9: Export from `model/mod.rs`
 
-### Definition of Done
+### Definition of Done (Story 1)
 
 - [ ] `OutputTransform` enum with 3 variants
 - [ ] `transform_inplace` applies correct math for each variant
@@ -51,7 +51,7 @@ Add the `OutputTransform` enum to the model module for inference-time transforma
 
 Extend the `ObjectiveFn` trait with a method to return the output transform.
 
-### Tasks
+### Tasks (Story 2)
 
 - [ ] 2.1: Add `fn output_transform(&self) -> OutputTransform` to `ObjectiveFn` trait
 - [ ] 2.2: Implement for `SquaredLoss` → `Identity`
@@ -66,7 +66,7 @@ Extend the `ObjectiveFn` trait with a method to return the output transform.
 - [ ] 2.11: Implement for `Objective` enum (delegate to inner)
 - [ ] 2.12: Add tests verifying each objective returns correct transform
 
-### Definition of Done
+### Definition of Done (Story 2)
 
 - [ ] All built-in objectives implement `output_transform()`
 - [ ] Custom objectives can override with their transform
@@ -78,7 +78,7 @@ Extend the `ObjectiveFn` trait with a method to return the output transform.
 
 Store the objective name in model metadata for debugging/reproducibility.
 
-### Tasks
+### Tasks (Story 3)
 
 - [ ] 3.1: Add `objective_name: Option<String>` field to `ModelMeta`
 - [ ] 3.2: Update `ModelMeta` constructors to accept objective name
@@ -87,7 +87,7 @@ Store the objective name in model metadata for debugging/reproducibility.
 - [ ] 3.5: Update Python schema mirror (`ModelMetaSchema` in pydantic)
 - [ ] 3.6: Add test for round-trip with objective name
 
-### Definition of Done
+### Definition of Done (Story 3)
 
 - [ ] `ModelMeta.objective_name` stores objective name
 - [ ] Schema persists objective name
@@ -100,7 +100,7 @@ Store the objective name in model metadata for debugging/reproducibility.
 
 Replace `objective` field with `output_transform` in both `GBDTModel` and `GBLinearModel`.
 
-### Tasks
+### Tasks (Story 4)
 
 #### Preparation
 
@@ -135,7 +135,7 @@ Replace `objective` field with `output_transform` in both `GBDTModel` and `GBLin
   - Predict and verify output matches expected sigmoid-transformed values
 - [ ] 4.16: Verify no additional allocations in predict path (transform reuses buffer)
 
-### Definition of Done
+### Definition of Done (Story 4)
 
 - [ ] Both models store `OutputTransform` instead of `Objective`
 - [ ] `predict()` applies correct transformation for all objective types
@@ -149,7 +149,7 @@ Replace `objective` field with `output_transform` in both `GBDTModel` and `GBLin
 
 Replace `ObjectiveSchema` with `OutputTransformSchema` in persistence layer.
 
-### Tasks
+### Tasks (Story 5)
 
 - [ ] 5.1: Grep for `ObjectiveSchema` usages to ensure safe deletion
 - [ ] 5.2: Add `OutputTransformSchema` enum to `persist/schema.rs`
@@ -164,7 +164,7 @@ Replace `ObjectiveSchema` with `OutputTransformSchema` in persistence layer.
   - Softmax: save → load → predict gives probability distribution
 - [ ] 5.9: Add test that v2 models fail with error: "Schema version 2 is not supported. Please re-export your model with the current library version."
 
-### Definition of Done
+### Definition of Done (Story 5)
 
 - [ ] Schema v3 uses `OutputTransformSchema`
 - [ ] `ObjectiveSchema` removed
@@ -177,7 +177,7 @@ Replace `ObjectiveSchema` with `OutputTransformSchema` in persistence layer.
 
 Update PyO3 bindings for the new model structure.
 
-### Tasks
+### Tasks (Story 6)
 
 - [ ] 6.1: Add `OutputTransform` to Python bindings (as enum with values: Identity, Sigmoid, Softmax)
 - [ ] 6.2: Update `GBDTModel.output_transform` property (returns enum)
@@ -188,7 +188,7 @@ Update PyO3 bindings for the new model structure.
 - [ ] 6.7: Update Python tests
 - [ ] 6.8: Update sklearn wrappers if affected
 
-### Definition of Done
+### Definition of Done (Story 6)
 
 - [ ] Python models expose `output_transform` property
 - [ ] Python schema includes `OutputTransformSchema`
@@ -200,7 +200,7 @@ Update PyO3 bindings for the new model structure.
 
 Update documentation and examples for the new API.
 
-### Tasks
+### Tasks (Story 7)
 
 - [ ] 7.1: Update rustdoc on `OutputTransform` with usage examples
 - [ ] 7.2: Update `GBDTModel` rustdoc to mention `output_transform`
@@ -209,7 +209,7 @@ Update documentation and examples for the new API.
 - [ ] 7.5: Update RFC-0016 (Model Serialization) to document v3 schema format
 - [ ] 7.6: Regenerate Python stubs
 
-### Definition of Done
+### Definition of Done (Story 7)
 
 - [ ] Rustdoc complete for new types
 - [ ] Python docstrings updated
@@ -221,17 +221,17 @@ Update documentation and examples for the new API.
 
 Conduct review and gather feedback after implementation.
 
-### Tasks
+### Tasks (Story 8)
 
-- [ ] 8.1: Check `tmp/stakeholder_feedback.md` for related feedback
+- [ ] 8.1: Check `workdir/tmp/stakeholder_feedback.md` for related feedback
 - [ ] 8.2: Prepare demo showing:
   - Smaller model files (compare v2 vs v3 file sizes)
   - Custom objective serialization works end-to-end
   - No performance regression in predict path
-- [ ] 8.3: Document review in `tmp/development_review_<timestamp>.md`
+- [ ] 8.3: Document review in chat and in `workdir/tmp/development_review_<timestamp>.md`
 - [ ] 8.4: Create follow-up stories for any deferred work
 
-### Definition of Done
+### Definition of Done (Story 8)
 
 - [ ] Stakeholder feedback reviewed
 - [ ] Demo conducted with acceptance criteria met
@@ -243,16 +243,17 @@ Conduct review and gather feedback after implementation.
 
 Conduct retrospective after all stories complete.
 
-### Tasks
+### Tasks (Story 9)
 
-- [ ] 10.1: Gather team reflections
-- [ ] 10.2: Document in `tmp/retrospective.md`
-- [ ] 10.3: Create backlog items for process improvements
+- [ ] 9.1: Gather team reflections
+- [ ] 9.2: Document in `workdir/tmp/retrospective.md`
+- [ ] 9.3: Create backlog items for process improvements
 
-### Definition of Done
+### Definition of Done (Story 9)
 
 - [ ] Retrospective documented
 - [ ] Action items captured
+- [ ] At least one high-priority improvement turned into backlog work (if warranted)
 
 ---
 
