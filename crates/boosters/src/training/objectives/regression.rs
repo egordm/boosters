@@ -6,7 +6,7 @@
 
 use ndarray::{ArrayView1, ArrayView2, ArrayViewMut2};
 
-use super::{ObjectiveFn, TargetSchema, TaskKind};
+use super::{ObjectiveFn, TaskKind};
 use crate::data::{TargetsView, WeightsView};
 use crate::inference::PredictionKind;
 use crate::training::GradsTuple;
@@ -85,10 +85,6 @@ impl ObjectiveFn for SquaredLoss {
         TaskKind::Regression
     }
 
-    fn target_schema(&self) -> TargetSchema {
-        TargetSchema::Continuous
-    }
-
     fn transform_predictions_inplace(&self, _predictions: ArrayViewMut2<f32>) -> PredictionKind {
         PredictionKind::Value
     }
@@ -155,10 +151,6 @@ impl ObjectiveFn for AbsoluteLoss {
 
     fn task_kind(&self) -> TaskKind {
         TaskKind::Regression
-    }
-
-    fn target_schema(&self) -> TargetSchema {
-        TargetSchema::Continuous
     }
 
     fn transform_predictions_inplace(&self, _predictions: ArrayViewMut2<f32>) -> PredictionKind {
@@ -255,10 +247,6 @@ impl ObjectiveFn for PinballLoss {
         TaskKind::Regression
     }
 
-    fn target_schema(&self) -> TargetSchema {
-        TargetSchema::Continuous
-    }
-
     fn transform_predictions_inplace(&self, _predictions: ArrayViewMut2<f32>) -> PredictionKind {
         PredictionKind::Value
     }
@@ -346,10 +334,6 @@ impl ObjectiveFn for PseudoHuberLoss {
         TaskKind::Regression
     }
 
-    fn target_schema(&self) -> TargetSchema {
-        TargetSchema::Continuous
-    }
-
     fn transform_predictions_inplace(&self, _predictions: ArrayViewMut2<f32>) -> PredictionKind {
         PredictionKind::Value
     }
@@ -434,10 +418,6 @@ impl ObjectiveFn for PoissonLoss {
 
     fn task_kind(&self) -> TaskKind {
         TaskKind::Regression
-    }
-
-    fn target_schema(&self) -> TargetSchema {
-        TargetSchema::CountNonNegative
     }
 
     fn transform_predictions_inplace(&self, _predictions: ArrayViewMut2<f32>) -> PredictionKind {

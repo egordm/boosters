@@ -14,7 +14,7 @@ use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::inference::PredictionKind;
 use boosters::inference::gbdt::SimplePredictor;
 use boosters::repr::gbdt::Forest;
-use boosters::training::{GBDTParams, GBDTTrainer, GradsTuple, GrowthStrategy, Rmse, TargetSchema};
+use boosters::training::{GBDTParams, GBDTTrainer, GradsTuple, GrowthStrategy, Rmse};
 use boosters::{ObjectiveFn, Parallelism, TaskKind};
 use ndarray::{Array2, ArrayView2, ArrayViewMut2};
 
@@ -111,10 +111,6 @@ impl ObjectiveFn for HuberLoss {
 
     fn task_kind(&self) -> TaskKind {
         TaskKind::Regression
-    }
-
-    fn target_schema(&self) -> TargetSchema {
-        TargetSchema::Continuous
     }
 
     fn transform_predictions_inplace(&self, _predictions: ArrayViewMut2<f32>) -> PredictionKind {

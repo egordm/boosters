@@ -63,7 +63,7 @@ pub use metrics::{
 pub use objectives::{
     AbsoluteLoss, BaseScoreFn, CustomObjective, GradientFn, HingeLoss, LambdaRankLoss,
     LogisticLoss, Objective, ObjectiveFn, PinballLoss, PoissonLoss, PseudoHuberLoss, SoftmaxLoss,
-    SquaredLoss, TargetSchema,
+    SquaredLoss,
 };
 
 // Re-export gbdt trainer and params

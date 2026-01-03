@@ -49,25 +49,6 @@ use ndarray::{ArrayView2, ArrayViewMut2};
 pub use crate::model::TaskKind;
 
 // =============================================================================
-// RFC 0028: Target Semantics
-// =============================================================================
-
-/// Target encoding/schema expected by an objective.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TargetSchema {
-    /// Continuous real-valued targets.
-    Continuous,
-    /// Binary targets encoded as {0, 1}.
-    Binary01,
-    /// Binary targets encoded as {-1, +1} (or convertible from {0, 1}).
-    BinarySigned,
-    /// Multiclass targets encoded as a single class index in [0, K).
-    MulticlassIndex,
-    /// Non-negative counts (Poisson-style).
-    CountNonNegative,
-}
-
-// =============================================================================
 // Custom Objective (boxed closures)
 // =============================================================================
 
@@ -160,11 +141,6 @@ impl ObjectiveFn for CustomObjective {
     fn task_kind(&self) -> TaskKind {
         // Custom objectives don't have a fixed task kind; default to regression
         TaskKind::Regression
-    }
-
-    fn target_schema(&self) -> TargetSchema {
-        // Custom objectives define their own target schema
-        TargetSchema::Continuous
     }
 
     fn transform_predictions_inplace(&self, mut predictions: ArrayViewMut2<f32>) -> PredictionKind {
@@ -280,9 +256,6 @@ pub trait ObjectiveFn: Send + Sync {
 
     /// High-level task kind implied by this objective.
     fn task_kind(&self) -> TaskKind;
-
-    /// Target encoding/schema expected by this objective.
-    fn target_schema(&self) -> TargetSchema;
 
     /// Transform raw predictions in-place (column-major layout).
     ///
@@ -540,20 +513,6 @@ impl ObjectiveFn for Objective {
             Self::PseudoHuberLoss(inner) => inner.task_kind(),
             Self::PoissonLoss(inner) => inner.task_kind(),
             Self::Custom(inner) => inner.task_kind(),
-        }
-    }
-
-    fn target_schema(&self) -> TargetSchema {
-        match self {
-            Self::SquaredLoss(inner) => inner.target_schema(),
-            Self::AbsoluteLoss(inner) => inner.target_schema(),
-            Self::LogisticLoss(inner) => inner.target_schema(),
-            Self::HingeLoss(inner) => inner.target_schema(),
-            Self::SoftmaxLoss(inner) => inner.target_schema(),
-            Self::PinballLoss(inner) => inner.target_schema(),
-            Self::PseudoHuberLoss(inner) => inner.target_schema(),
-            Self::PoissonLoss(inner) => inner.target_schema(),
-            Self::Custom(inner) => inner.target_schema(),
         }
     }
 

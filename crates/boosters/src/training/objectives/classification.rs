@@ -2,7 +2,7 @@
 
 use ndarray::{ArrayView2, ArrayViewMut2};
 
-use super::{ObjectiveFn, TargetSchema, TaskKind};
+use super::{ObjectiveFn, TaskKind};
 use crate::data::TargetsView;
 use crate::data::WeightsView;
 use crate::inference::PredictionKind;
@@ -93,10 +93,6 @@ impl ObjectiveFn for LogisticLoss {
         TaskKind::BinaryClassification
     }
 
-    fn target_schema(&self) -> TargetSchema {
-        TargetSchema::Binary01
-    }
-
     fn transform_predictions_inplace(&self, mut predictions: ArrayViewMut2<f32>) -> PredictionKind {
         for x in predictions.iter_mut() {
             *x = Self::sigmoid(*x);
@@ -165,10 +161,6 @@ impl ObjectiveFn for HingeLoss {
 
     fn task_kind(&self) -> TaskKind {
         TaskKind::BinaryClassification
-    }
-
-    fn target_schema(&self) -> TargetSchema {
-        TargetSchema::BinarySigned
     }
 
     fn transform_predictions_inplace(&self, _predictions: ArrayViewMut2<f32>) -> PredictionKind {
@@ -298,10 +290,6 @@ impl ObjectiveFn for SoftmaxLoss {
         TaskKind::MulticlassClassification {
             n_classes: self.n_classes,
         }
-    }
-
-    fn target_schema(&self) -> TargetSchema {
-        TargetSchema::MulticlassIndex
     }
 
     fn transform_predictions_inplace(&self, mut predictions: ArrayViewMut2<f32>) -> PredictionKind {
@@ -520,10 +508,6 @@ impl ObjectiveFn for LambdaRankLoss {
 
     fn task_kind(&self) -> TaskKind {
         TaskKind::Ranking
-    }
-
-    fn target_schema(&self) -> TargetSchema {
-        TargetSchema::Continuous
     }
 
     fn transform_predictions_inplace(&self, _predictions: ArrayViewMut2<f32>) -> PredictionKind {
