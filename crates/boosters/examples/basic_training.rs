@@ -9,7 +9,7 @@
 //! ```
 
 use boosters::data::Dataset;
-use boosters::training::GrowthStrategy;
+use boosters::training::{GrowthStrategy, ObjectiveFn};
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective};
 use ndarray::{Array1, Array2};
 
@@ -74,9 +74,9 @@ fn main() {
     println!("Task: {:?}", model.meta().task);
     println!("Train RMSE: {:.4}", rmse);
 
-    // Access training config
-    let config = model.config();
-    println!("Learning rate used: {}", config.learning_rate);
+    // Training config is not stored in the trained model.
+    // We keep only inference-relevant metadata like the objective.
+    println!("Objective: {}", model.objective().name());
 
     println!("\nNote: For production, split data into train/validation/test sets!");
 }

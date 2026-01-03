@@ -2,7 +2,7 @@
 //!
 //! High-level wrapper around [`LinearModel`] with training and prediction.
 //! Access components via [`linear()`](GBLinearModel::linear), [`meta()`](GBLinearModel::meta),
-//! and [`config()`](GBLinearModel::config).
+//! and [`objective()`](GBLinearModel::objective).
 
 use crate::Parallelism;
 use crate::data::Dataset;
@@ -19,21 +19,33 @@ use super::GBLinearConfig;
 /// High-level GBLinear model with training, prediction, and explainability.
 ///
 /// Access components via [`linear()`](Self::linear), [`meta()`](Self::meta),
-/// and [`config()`](Self::config).
+/// and [`objective()`](Self::objective).
 pub struct GBLinearModel {
     /// The underlying linear model.
     model: LinearModel,
     /// Model metadata.
     meta: ModelMeta,
-    /// Training configuration (if available).
+    /// Objective function used for prediction post-processing.
     ///
-    /// This is `Some` when trained with the new API or loaded from a format
-    /// that includes config. May be `None` for models loaded from legacy
-    /// formats or created with `from_linear_model()`.
-    config: GBLinearConfig,
+    /// This is needed to apply the same output transform as training
+    /// (e.g., sigmoid/softmax for classification).
+    objective: crate::training::Objective,
 }
 
 impl GBLinearModel {
+    fn default_objective(task: crate::model::TaskKind) -> crate::training::Objective {
+        match task {
+            crate::model::TaskKind::Regression => crate::training::Objective::squared(),
+            crate::model::TaskKind::BinaryClassification => {
+                crate::training::Objective::logistic()
+            }
+            crate::model::TaskKind::MulticlassClassification { n_classes } => {
+                crate::training::Objective::softmax(n_classes)
+            }
+            crate::model::TaskKind::Ranking => crate::training::Objective::squared(),
+        }
+    }
+
     /// Train a new GBLinear model.
     ///
     /// # Arguments
@@ -94,11 +106,7 @@ impl GBLinearModel {
             ..Default::default()
         };
 
-        Some(Self {
-            model: linear_model,
-            meta,
-            config,
-        })
+        Some(Self::from_parts(linear_model, meta, config.objective))
     }
 
     /// Create a model from a linear model and metadata.
@@ -106,22 +114,27 @@ impl GBLinearModel {
     /// Use this when loading models from formats that don't include config,
     /// or for quick testing. For training new models, prefer [`GBLinearModel::train`].
     pub fn from_linear_model(model: LinearModel, meta: ModelMeta) -> Self {
+        let objective = Self::default_objective(meta.task);
         Self {
             model,
             meta,
-            config: GBLinearConfig::default(),
+            objective,
         }
     }
 
     /// Create a model from all its parts.
     ///
-    /// Used when loading from a format that includes config, or after training
-    /// with the new config-based API.
-    pub fn from_parts(model: LinearModel, meta: ModelMeta, config: GBLinearConfig) -> Self {
+    /// Used when loading from a format that includes an explicit objective,
+    /// or after training.
+    pub fn from_parts(
+        model: LinearModel,
+        meta: ModelMeta,
+        objective: crate::training::Objective,
+    ) -> Self {
         Self {
             model,
             meta,
-            config,
+            objective,
         }
     }
 
@@ -139,9 +152,9 @@ impl GBLinearModel {
         &self.meta
     }
 
-    /// Get reference to training configuration.
-    pub fn config(&self) -> &GBLinearConfig {
-        &self.config
+    /// Get reference to the objective function.
+    pub fn objective(&self) -> &crate::training::Objective {
+        &self.objective
     }
 
     /// Set feature names.
@@ -183,10 +196,8 @@ impl GBLinearModel {
         // Use efficient feature-major prediction
         let mut output = self.predict_raw(dataset);
 
-        // Apply transformation if we have config with objective
-        self.config
-            .objective
-            .transform_predictions_inplace(output.view_mut());
+        // Apply transformation
+        self.objective.transform_predictions_inplace(output.view_mut());
 
         output
     }
@@ -244,7 +255,6 @@ impl std::fmt::Debug for GBLinearModel {
         f.debug_struct("GBLinearModel")
             .field("n_features", &self.meta.n_features)
             .field("n_groups", &self.meta.n_groups)
-            .field("n_rounds", &self.config.n_rounds)
             .field("task", &self.meta.task)
             .finish()
     }
@@ -268,18 +278,18 @@ mod tests {
 
         assert_eq!(model.linear().n_features(), 2);
         assert_eq!(model.linear().n_groups(), 1);
-        // from_linear_model uses default config
-        assert_eq!(model.config().n_rounds, GBLinearConfig::default().n_rounds);
+        // from_linear_model selects a default objective from task kind
+        assert_eq!(model.objective().name(), "squared");
     }
 
     #[test]
     fn from_parts_with_config() {
         let linear = make_simple_model();
         let meta = ModelMeta::for_regression(2);
-        let config = GBLinearConfig::builder().n_rounds(200).build().unwrap();
-        let model = GBLinearModel::from_parts(linear, meta, config);
+        let objective = crate::training::Objective::logistic();
+        let model = GBLinearModel::from_parts(linear, meta, objective);
 
-        assert_eq!(model.config().n_rounds, 200);
+        assert_eq!(model.objective().name(), "logistic");
     }
 
     #[test]

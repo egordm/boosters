@@ -171,8 +171,12 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):
         train_data = Dataset(X, y_prepared, weights=sample_weight)
         val_data = self._build_val_set(eval_set)
 
-        self.model_ = GBDTModel(config=self._config)
-        self.model_.fit(train_data, val_set=val_data)
+        self.model_ = GBDTModel.train(
+            train_data,
+            config=self._config,
+            val_set=val_data,
+            n_threads=self.n_threads,
+        )
 
         return self
 

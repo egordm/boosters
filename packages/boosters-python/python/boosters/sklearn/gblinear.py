@@ -69,6 +69,7 @@ class _GBLinearEstimatorBase(BaseEstimator, ABC):
         l2: float = 1.0,
         early_stopping_rounds: int | None = None,
         seed: int = 42,
+        n_threads: int = 0,
         verbose: int = 1,
         objective: Objective | None = None,
         metric: Metric | None = None,
@@ -80,6 +81,7 @@ class _GBLinearEstimatorBase(BaseEstimator, ABC):
         self.l2 = l2
         self.early_stopping_rounds = early_stopping_rounds
         self.seed = seed
+        self.n_threads = n_threads
         self.verbose = verbose
         self.objective = objective
         self.metric = metric
@@ -148,8 +150,12 @@ class _GBLinearEstimatorBase(BaseEstimator, ABC):
         train_data = Dataset(X, y_prepared, weights=sample_weight)
         val_data = self._build_val_set(eval_set)
 
-        self.model_ = GBLinearModel(config=self._config)
-        self.model_.fit(train_data, val_set=val_data)
+        self.model_ = GBLinearModel.train(
+            train_data,
+            config=self._config,
+            val_set=val_data,
+            n_threads=self.n_threads,
+        )
 
         return self
 

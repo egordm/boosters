@@ -2,7 +2,7 @@
 //!
 //! High-level wrapper around [`Forest`] with training and prediction.
 //! Access components via [`forest()`](GBDTModel::forest), [`meta()`](GBDTModel::meta),
-//! and [`config()`](GBDTModel::config).
+//! and [`objective()`](GBDTModel::objective).
 
 use crate::data::binned::BinnedDataset;
 use crate::data::{Dataset, TargetsView, WeightsView};
@@ -24,42 +24,59 @@ use super::GBDTConfig;
 /// High-level GBDT model with training, prediction, and explainability.
 ///
 /// Access components via [`forest()`](Self::forest), [`meta()`](Self::meta),
-/// and [`config()`](Self::config).
+/// and [`objective()`](Self::objective).
 pub struct GBDTModel {
     /// The underlying forest.
     forest: Forest<ScalarLeaf>,
     /// Model metadata.
     meta: ModelMeta,
-    /// Training configuration (if available).
+    /// Objective function used for prediction post-processing.
     ///
-    /// This is `Some` when trained with the new API or loaded from a format
-    /// that includes config. May be `None` for models loaded from legacy
-    /// formats or created with `from_forest()`.
-    config: GBDTConfig,
+    /// This is needed to apply the same output transform as training
+    /// (e.g., sigmoid/softmax for classification).
+    objective: crate::training::Objective,
 }
 
 impl GBDTModel {
+    fn default_objective(task: crate::model::TaskKind) -> crate::training::Objective {
+        match task {
+            crate::model::TaskKind::Regression => crate::training::Objective::squared(),
+            crate::model::TaskKind::BinaryClassification => {
+                crate::training::Objective::logistic()
+            }
+            crate::model::TaskKind::MulticlassClassification { n_classes } => {
+                crate::training::Objective::softmax(n_classes)
+            }
+            crate::model::TaskKind::Ranking => crate::training::Objective::squared(),
+        }
+    }
+
     /// Create a model from a forest and metadata.
     ///
     /// Use this when loading models from formats that don't include config,
     /// or for quick testing. For training new models, prefer [`GBDTModel::train`].
     pub fn from_forest(forest: Forest<ScalarLeaf>, meta: ModelMeta) -> Self {
+        let objective = Self::default_objective(meta.task);
         Self {
             forest,
             meta,
-            config: GBDTConfig::default(),
+            objective,
         }
     }
 
     /// Create a model from all its parts.
     ///
-    /// Used when loading from a format that includes config, or after training
-    /// with the new config-based API.
-    pub fn from_parts(forest: Forest<ScalarLeaf>, meta: ModelMeta, config: GBDTConfig) -> Self {
+    /// Used when loading from a format that includes an explicit objective,
+    /// or after training.
+    pub fn from_parts(
+        forest: Forest<ScalarLeaf>,
+        meta: ModelMeta,
+        objective: crate::training::Objective,
+    ) -> Self {
         Self {
             forest,
             meta,
-            config,
+            objective,
         }
     }
 
@@ -77,9 +94,9 @@ impl GBDTModel {
         &self.meta
     }
 
-    /// Get reference to training configuration.
-    pub fn config(&self) -> &GBDTConfig {
-        &self.config
+    /// Get reference to the objective function.
+    pub fn objective(&self) -> &crate::training::Objective {
+        &self.objective
     }
 
     /// Set feature names.
@@ -204,11 +221,7 @@ impl GBDTModel {
             ..Default::default()
         };
 
-        Some(Self {
-            forest,
-            meta,
-            config,
-        })
+        Some(Self::from_parts(forest, meta, config.objective))
     }
 
     // =========================================================================
@@ -244,9 +257,7 @@ impl GBDTModel {
         let mut output = self.predict_raw(data, n_threads);
 
         // Apply transformation (sigmoid/softmax for classification)
-        self.config
-            .objective
-            .transform_predictions_inplace(output.view_mut());
+        self.objective.transform_predictions_inplace(output.view_mut());
 
         output
     }
@@ -360,18 +371,18 @@ mod tests {
         assert_eq!(model.forest().n_trees(), 1);
         assert_eq!(model.meta().n_features, 2);
         assert_eq!(model.meta().n_groups, 1);
-        // from_forest uses default config
-        assert_eq!(model.config().n_trees, GBDTConfig::default().n_trees);
+        // from_forest selects a default objective from task kind
+        assert_eq!(model.objective().name(), "squared");
     }
 
     #[test]
     fn from_parts_with_config() {
         let forest = make_simple_forest();
         let meta = ModelMeta::for_regression(2);
-        let config = GBDTConfig::builder().n_trees(100).build().unwrap();
-        let model = GBDTModel::from_parts(forest, meta, config);
+        let objective = crate::training::Objective::logistic();
+        let model = GBDTModel::from_parts(forest, meta, objective);
 
-        assert_eq!(model.config().n_trees, 100);
+        assert_eq!(model.objective().name(), "logistic");
     }
 
     #[test]

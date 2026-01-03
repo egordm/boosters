@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 import tracemalloc
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     import numpy as np
@@ -120,8 +120,7 @@ class BoostersRunner(Runner):
                 objective=objective,
                 seed=seed,
             )
-            model = boosters.GBDTModel(model_config)
-            warmup_model = boosters.GBDTModel(model_config)
+            is_gblinear = False
         elif config.booster_type == BoosterType.LINEAR_TREES:
             # Linear trees: GBDT with linear_leaves enabled
             model_config = boosters.GBDTConfig(
@@ -145,8 +144,7 @@ class BoostersRunner(Runner):
                 objective=objective,
                 seed=seed,
             )
-            model = boosters.GBDTModel(model_config)
-            warmup_model = boosters.GBDTModel(model_config)
+            is_gblinear = False
         else:  # GBLINEAR
             model_config = boosters.GBLinearConfig(
                 n_estimators=tc.n_estimators,
@@ -157,8 +155,7 @@ class BoostersRunner(Runner):
                 objective=objective,
                 seed=seed,
             )
-            model = boosters.GBLinearModel(model_config)
-            warmup_model = boosters.GBLinearModel(model_config)
+            is_gblinear = True
 
         # Create Dataset objects
         train_ds = boosters.Dataset(x_train.astype("float32"), y_train.astype("float32"))
@@ -167,7 +164,12 @@ class BoostersRunner(Runner):
         # Warmup for timing mode
         if timing_mode:
             warmup_ds = boosters.Dataset(x_train[:100].astype("float32"), y_train[:100].astype("float32"))
-            warmup_model.fit(warmup_ds, n_threads=tc.n_threads)
+            if is_gblinear:
+                _ = boosters.GBLinearModel.train(
+                    warmup_ds, config=cast(boosters.GBLinearConfig, model_config), n_threads=tc.n_threads
+                )
+            else:
+                _ = boosters.GBDTModel.train(warmup_ds, config=cast(boosters.GBDTConfig, model_config), n_threads=tc.n_threads)
 
         # Memory tracking
         if measure_memory:
@@ -175,7 +177,10 @@ class BoostersRunner(Runner):
 
         # Train
         start_train = time.perf_counter()
-        model.fit(train_ds, n_threads=tc.n_threads)
+        if is_gblinear:
+            model = boosters.GBLinearModel.train(train_ds, config=cast(boosters.GBLinearConfig, model_config), n_threads=tc.n_threads)
+        else:
+            model = boosters.GBDTModel.train(train_ds, config=cast(boosters.GBDTConfig, model_config), n_threads=tc.n_threads)
         train_time = time.perf_counter() - start_train
 
         # Predict

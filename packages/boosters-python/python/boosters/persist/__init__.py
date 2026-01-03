@@ -20,28 +20,19 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 __all__ = [
-    "BinningConfigSchema",
     "CategoriesSchema",
-    "FeatureSelectorSchema",
     "FeatureType",
     "ForestSchema",
-    "GBDTConfigSchema",
     "GBDTModelSchema",
-    "GBLinearConfigSchema",
     "GBLinearModelSchema",
-    "GrowthStrategySchema",
     "JsonEnvelope",
     "LeafValuesSchema",
     "LinearCoefficientsSchema",
-    "LinearLeafConfigSchema",
     "LinearWeightsSchema",
-    "MetricSchema",
     "ModelMetaSchema",
     "ObjectiveSchema",
     "TaskKind",
     "TreeSchema",
-    "UpdateStrategy",
-    "Verbosity",
 ]
 
 
@@ -63,26 +54,17 @@ def __getattr__(name: str):  # noqa: ANN202
 
 if TYPE_CHECKING:
     from boosters.persist.schema import (
-        BinningConfigSchema,
         CategoriesSchema,
-        FeatureSelectorSchema,
         FeatureType,
         ForestSchema,
-        GBDTConfigSchema,
         GBDTModelSchema,
-        GBLinearConfigSchema,
         GBLinearModelSchema,
-        GrowthStrategySchema,
         JsonEnvelope,
         LeafValuesSchema,
         LinearCoefficientsSchema,
-        LinearLeafConfigSchema,
         LinearWeightsSchema,
-        MetricSchema,
         ModelMetaSchema,
         ObjectiveSchema,
         TaskKind,
         TreeSchema,
-        UpdateStrategy,
-        Verbosity,
     )

@@ -14,7 +14,8 @@ use boosters::persist::{
 use crate::config::PyGBLinearConfig;
 use crate::data::PyDataset;
 use crate::error::BoostersError;
-use crate::validation::{require_fitted, validate_feature_count};
+use crate::objectives::PyObjective;
+use crate::validation::validate_feature_count;
 
 /// Gradient Boosted Linear model.
 ///
@@ -34,24 +35,41 @@ use crate::validation::{require_fitted, validate_feature_count};
 #[gen_stub_pyclass]
 #[pyclass(name = "GBLinearModel", module = "boosters._boosters_rs")]
 pub struct PyGBLinearModel {
-    config: boosters::GBLinearConfig,
-    model: Option<boosters::GBLinearModel>,
+    model: boosters::GBLinearModel,
 }
 
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyGBLinearModel {
-    /// Create a new GBLinear model.
+    /// Train a new GBLinear model.
+    ///
+    /// This matches the Rust API style: training is a class-level constructor.
     ///
     /// Args:
+    ///     train: Training dataset containing features and labels.
     ///     config: Optional GBLinearConfig. If not provided, uses default config.
+    ///     val_set: Optional validation dataset for early stopping and evaluation.
+    ///     n_threads: Number of threads for parallel training (0 = auto).
     ///
     /// Returns:
-    ///     New GBLinearModel instance (not yet fitted).
-    #[new]
-    #[pyo3(signature = (config=None))]
-    pub fn new(py: Python<'_>, config: Option<Py<PyGBLinearConfig>>) -> PyResult<Self> {
-        let core_config = match config {
+    ///     Trained GBLinearModel.
+    #[staticmethod]
+    #[pyo3(signature = (train, config=None, val_set=None, n_threads=0))]
+    pub fn train(
+        py: Python<'_>,
+        train: PyRef<'_, PyDataset>,
+        config: Option<Py<PyGBLinearConfig>>,
+        val_set: Option<PyRef<'_, PyDataset>>,
+        n_threads: usize,
+    ) -> PyResult<Self> {
+        if !train.has_labels() {
+            return Err(BoostersError::ValidationError(
+                "Training dataset must have labels".to_string(),
+            )
+            .into());
+        }
+
+        let core_config: boosters::GBLinearConfig = match config {
             Some(c) => {
                 let borrowed = c.bind(py).borrow();
                 (&*borrowed).into()
@@ -59,23 +77,26 @@ impl PyGBLinearModel {
             None => (&PyGBLinearConfig::default()).into(),
         };
 
-        Ok(Self {
-            config: core_config,
-            model: None,
-        })
-    }
+        let core_train = train.inner();
+        let core_val_set = val_set.as_ref().map(|ds| ds.inner());
 
-    /// Whether the model has been fitted.
-    #[getter]
-    pub fn is_fitted(&self) -> bool {
-        self.model.is_some()
+        let trained_model = py.detach(|| {
+            boosters::GBLinearModel::train(core_train, core_val_set, core_config, n_threads)
+        });
+
+        match trained_model {
+            Some(model) => Ok(Self { model }),
+            None => Err(BoostersError::TrainingError(
+                "Training failed to produce a model".to_string(),
+            )
+            .into()),
+        }
     }
 
     /// Number of features the model was trained on.
     #[getter]
     pub fn n_features_in_(&self) -> PyResult<usize> {
-        let model = self.fitted_model("n_features_in_")?;
-        Ok(model.meta().n_features)
+        Ok(self.model.meta().n_features)
     }
 
     /// Model coefficients (weights).
@@ -85,9 +106,7 @@ impl PyGBLinearModel {
     ///     or (n_features, n_outputs) for multi-output models.
     #[getter]
     pub fn coef_<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
-        let model = self.fitted_model("coef_")?;
-
-        let linear = model.linear();
+        let linear = self.model.linear();
         let n_features = linear.n_features();
         let n_groups = linear.n_groups();
 
@@ -110,31 +129,22 @@ impl PyGBLinearModel {
     ///     Array of shape (n_outputs,).
     #[getter]
     pub fn intercept_<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f32>>> {
-        let model = self.fitted_model("intercept_")?;
-
-        let linear = model.linear();
+        let linear = self.model.linear();
         let biases = linear.biases();
 
         Ok(PyArray1::from_iter(py, biases.iter().copied()))
     }
 
-    /// Get the model configuration.
+    /// Get the model objective.
     #[getter]
-    pub fn config(&self, py: Python<'_>) -> PyResult<Py<PyGBLinearConfig>> {
-        let py_config: PyGBLinearConfig = (&self.config).into();
-        Py::new(py, py_config)
+    #[gen_stub(override_return_type(type_repr = "Objective"))]
+    pub fn objective(&self) -> PyObjective {
+        self.model.objective().into()
     }
 
     /// String representation.
     fn __repr__(&self) -> String {
-        if let Some(model) = &self.model {
-            format!(
-                "GBLinearModel(n_features={}, fitted=True)",
-                model.meta().n_features
-            )
-        } else {
-            "GBLinearModel(fitted=False)".to_string()
-        }
+        format!("GBLinearModel(n_features={})", self.model.meta().n_features)
     }
 
     /// Make predictions on features.
@@ -155,13 +165,12 @@ impl PyGBLinearModel {
         data: PyRef<'_, PyDataset>,
         #[allow(unused_variables)] n_threads: usize,
     ) -> PyResult<Bound<'py, PyArray2<f32>>> {
-        let model = self.fitted_model("predict")?;
         let dataset = data.inner();
 
-        validate_feature_count(model.meta().n_features, dataset.n_features())?;
+        validate_feature_count(self.model.meta().n_features, dataset.n_features())?;
 
         // GBLinearModel::predict takes &Dataset
-        let output = py.detach(|| model.predict(dataset));
+        let output = py.detach(|| self.model.predict(dataset));
 
         // Transpose from (n_outputs, n_samples) to (n_samples, n_outputs) for sklearn
         Ok(PyArray2::from_owned_array(py, output.t().to_owned()))
@@ -185,65 +194,15 @@ impl PyGBLinearModel {
         data: PyRef<'_, PyDataset>,
         #[allow(unused_variables)] n_threads: usize,
     ) -> PyResult<Bound<'py, PyArray2<f32>>> {
-        let model = self.fitted_model("predict_raw")?;
         let dataset = data.inner();
 
-        validate_feature_count(model.meta().n_features, dataset.n_features())?;
+        validate_feature_count(self.model.meta().n_features, dataset.n_features())?;
 
         // GBLinearModel::predict_raw takes &Dataset
-        let output = py.detach(|| model.predict_raw(dataset));
+        let output = py.detach(|| self.model.predict_raw(dataset));
 
         // Transpose from (n_outputs, n_samples) to (n_samples, n_outputs) for sklearn
         Ok(PyArray2::from_owned_array(py, output.t().to_owned()))
-    }
-
-    /// Train the model on a dataset.
-    ///
-    /// Args:
-    ///     train: Training dataset containing features and labels.
-    ///     val_set: Optional validation dataset for early stopping and evaluation.
-    ///     n_threads: Number of threads for parallel training (0 = auto).
-    ///
-    /// Returns:
-    ///     Self (for method chaining).
-    #[pyo3(signature = (train, val_set=None, n_threads=0))]
-    pub fn fit<'py>(
-        mut slf: PyRefMut<'py, Self>,
-        py: Python<'py>,
-        train: PyRef<'py, PyDataset>,
-        val_set: Option<PyRef<'py, PyDataset>>,
-        n_threads: usize,
-    ) -> PyResult<PyRefMut<'py, Self>> {
-        if !train.has_labels() {
-            return Err(BoostersError::ValidationError(
-                "Training dataset must have labels".to_string(),
-            )
-            .into());
-        }
-
-        let core_config = slf.config.clone();
-
-        let core_train = train.inner();
-
-        // Get validation dataset if provided
-        let core_val_set = val_set.as_ref().map(|ds| ds.inner());
-
-        // Train with GIL released
-        let trained_model = py.detach(|| {
-            boosters::GBLinearModel::train(core_train, core_val_set, core_config, n_threads)
-        });
-
-        match trained_model {
-            Some(model) => {
-                slf.config = model.config().clone();
-                slf.model = Some(model);
-                Ok(slf)
-            }
-            None => Err(BoostersError::TrainingError(
-                "Training failed to produce a model".to_string(),
-            )
-            .into()),
-        }
     }
 
     // =========================================================================
@@ -258,9 +217,8 @@ impl PyGBLinearModel {
     /// Raises:
     ///     RuntimeError: If model is not fitted or serialization fails.
     pub fn to_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-        let model = self.fitted_model("to_bytes")?;
         let mut buf = Vec::new();
-        model
+        self.model
             .write_into(&mut buf, &BinaryWriteOptions::default())
             .map_err(|e| BoostersError::WriteError(e.to_string()))?;
         Ok(PyBytes::new(py, &buf))
@@ -274,9 +232,8 @@ impl PyGBLinearModel {
     /// Raises:
     ///     RuntimeError: If model is not fitted or serialization fails.
     pub fn to_json_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-        let model = self.fitted_model("to_json_bytes")?;
         let mut buf = Vec::new();
-        model
+        self.model
             .write_json_into(&mut buf, &JsonWriteOptions::compact())
             .map_err(|e| BoostersError::WriteError(e.to_string()))?;
         Ok(PyBytes::new(py, &buf))
@@ -302,13 +259,8 @@ impl PyGBLinearModel {
             boosters::GBLinearModel::read_from(Cursor::new(data), &BinaryReadOptions::default())
                 .map_err(|e| BoostersError::ModelReadError(e.to_string()))?;
 
-        let config = model.config().clone();
-
         let _ = py;
-        Ok(Self {
-            config,
-            model: Some(model),
-        })
+        Ok(Self { model })
     }
 
     /// Load model from JSON bytes.
@@ -330,26 +282,14 @@ impl PyGBLinearModel {
         let model = boosters::GBLinearModel::read_json_from(Cursor::new(data))
             .map_err(|e| BoostersError::ModelReadError(e.to_string()))?;
 
-        let config = model.config().clone();
-
         let _ = py;
-        Ok(Self {
-            config,
-            model: Some(model),
-        })
+        Ok(Self { model })
     }
 }
 
 impl PyGBLinearModel {
-    fn fitted_model(&self, method: &str) -> PyResult<&boosters::GBLinearModel> {
-        require_fitted(self.model.as_ref(), method)
-    }
-
     /// Create from a core model (used by polymorphic loading).
     pub(crate) fn from_model(model: boosters::GBLinearModel) -> Self {
-        Self {
-            config: model.config().clone(),
-            model: Some(model),
-        }
+        Self { model }
     }
 }

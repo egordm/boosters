@@ -39,9 +39,8 @@ def main() -> None:
 
     # Create model and train
     print("\n--- Training Model ---")
-    model = bst.GBDTModel(config=config)
     train_data = bst.Dataset(features, y)
-    model.fit(train_data)
+    model = bst.GBDTModel.train(train_data, config=config)
     print("Model trained successfully!")
 
     # Predict

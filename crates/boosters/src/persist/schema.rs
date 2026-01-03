@@ -8,8 +8,6 @@
 //!
 //! All schema types use `BTreeMap` for deterministic JSON output.
 
-use std::collections::BTreeMap;
-
 use serde::{Deserialize, Serialize};
 
 /// Task type for model output interpretation.
@@ -135,63 +133,6 @@ pub struct ForestSchema {
     pub base_score: Vec<f64>,
 }
 
-/// GBDT training configuration schema.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GBDTConfigSchema {
-    /// Objective function (built-in only).
-    pub objective: ObjectiveSchema,
-    /// Evaluation metric.
-    ///
-    /// `None` means "no metric".
-    pub metric: Option<MetricSchema>,
-
-    /// Number of boosting rounds (trees).
-    pub n_trees: u32,
-    /// Learning rate.
-    pub learning_rate: f64,
-
-    /// Tree growth strategy.
-    pub growth_strategy: GrowthStrategySchema,
-    /// Maximum categories for one-hot encoding.
-    pub max_onehot_cats: u32,
-
-    /// L2 regularization term on leaf weights.
-    pub lambda: f64,
-    /// L1 regularization term on leaf weights.
-    pub alpha: f64,
-    /// Minimum sum of hessians required in a leaf.
-    pub min_child_weight: f64,
-    /// Minimum gain required to make a split.
-    pub min_gain: f64,
-    /// Minimum samples in a leaf.
-    pub min_samples_leaf: u32,
-
-    /// Row subsampling ratio.
-    pub subsample: f64,
-    /// Column subsampling ratio per tree.
-    pub colsample_bytree: f64,
-    /// Column subsampling ratio per level.
-    pub colsample_bylevel: f64,
-
-    /// Binning configuration.
-    pub binning: BinningConfigSchema,
-    /// Linear leaf configuration.
-    pub linear_leaves: Option<LinearLeafConfigSchema>,
-    /// Early stopping rounds.
-    pub early_stopping_rounds: Option<u32>,
-
-    /// Histogram cache size.
-    pub cache_size: usize,
-    /// Random seed.
-    pub seed: u64,
-    /// Verbosity level.
-    pub verbosity: VerbositySchema,
-
-    /// Additional parameters (key → value).
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub extra: BTreeMap<String, serde_json::Value>,
-}
-
 /// Objective schema (stable serialization format).
 ///
 /// Note: this is intentionally separate from `training::Objective` to avoid
@@ -210,85 +151,6 @@ pub enum ObjectiveSchema {
     Custom { name: String },
 }
 
-/// Metric schema (stable serialization format).
-///
-/// Note: this is intentionally separate from `training::Metric` to avoid
-/// adding persistence-only types/representations into the training module.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum MetricSchema {
-    None,
-    Rmse,
-    Mae,
-    Mape,
-    LogLoss,
-    Accuracy { threshold: f64 },
-    MarginAccuracy,
-    Auc,
-    MulticlassLogLoss,
-    MulticlassAccuracy,
-    Quantile { alphas: Vec<f64> },
-    Huber { delta: f64 },
-    PoissonDeviance,
-    Custom { name: String },
-}
-
-/// Tree growth strategy schema.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum GrowthStrategySchema {
-    DepthWise { max_depth: u32 },
-    LeafWise { max_leaves: u32 },
-}
-
-/// Binning configuration schema.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BinningConfigSchema {
-    pub max_bins: u32,
-    pub sparsity_threshold: f64,
-    pub enable_bundling: bool,
-    pub max_categorical_cardinality: u32,
-    pub sample_cnt: usize,
-}
-
-/// Linear leaf configuration schema.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LinearLeafConfigSchema {
-    pub lambda: f64,
-    pub alpha: f64,
-    pub max_iterations: u32,
-    pub tolerance: f64,
-    pub min_samples: usize,
-    pub coefficient_threshold: f64,
-    pub max_features: usize,
-}
-
-/// Verbosity schema.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VerbositySchema {
-    Silent,
-    Warning,
-    Info,
-    Debug,
-}
-
-/// Full GBDT model schema.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GBDTModelSchema {
-    /// Model metadata.
-    pub meta: ModelMetaSchema,
-    /// Tree forest.
-    pub forest: ForestSchema,
-    /// Training configuration.
-    pub config: GBDTConfigSchema,
-}
-
-impl GBDTModelSchema {
-    /// Model type string.
-    pub const MODEL_TYPE: &'static str = "gbdt";
-}
-
 /// GBLinear weight schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinearWeightsSchema {
@@ -300,60 +162,20 @@ pub struct LinearWeightsSchema {
     pub num_groups: usize,
 }
 
-/// GBLinear training configuration schema.
+/// Full GBDT model schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GBLinearConfigSchema {
-    /// Objective function (built-in only).
+pub struct GBDTModelSchema {
+    /// Model metadata.
+    pub meta: ModelMetaSchema,
+    /// Tree forest.
+    pub forest: ForestSchema,
+    /// Objective (needed for prediction post-processing).
     pub objective: ObjectiveSchema,
-    /// Evaluation metric (optional).
-    pub metric: Option<MetricSchema>,
-
-    /// Number of boosting rounds.
-    pub n_rounds: u32,
-    /// Learning rate.
-    pub learning_rate: f64,
-
-    /// L1 regularization.
-    pub alpha: f64,
-    /// L2 regularization.
-    pub lambda: f64,
-
-    /// Coordinate descent update strategy.
-    pub update_strategy: UpdateStrategySchema,
-    /// Feature selection strategy.
-    pub feature_selector: FeatureSelectorSchema,
-
-    /// Maximum per-coordinate Newton step (0 disables).
-    pub max_delta_step: f64,
-    /// Early stopping rounds.
-    pub early_stopping_rounds: Option<u32>,
-    /// Random seed.
-    pub seed: u64,
-    /// Verbosity.
-    pub verbosity: VerbositySchema,
-
-    /// Additional parameters.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
-/// Update strategy schema (GBLinear).
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum UpdateStrategySchema {
-    Shotgun,
-    Sequential,
-}
-
-/// Feature selector schema (GBLinear).
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum FeatureSelectorSchema {
-    Cyclic,
-    Shuffle,
-    Random,
-    Greedy { top_k: usize },
-    Thrifty { top_k: usize },
+impl GBDTModelSchema {
+    /// Model type string.
+    pub const MODEL_TYPE: &'static str = "gbdt";
 }
 
 /// Full GBLinear model schema.
@@ -365,8 +187,8 @@ pub struct GBLinearModelSchema {
     pub weights: LinearWeightsSchema,
     /// Base score(s).
     pub base_score: Vec<f64>,
-    /// Training configuration.
-    pub config: GBLinearConfigSchema,
+    /// Objective (needed for prediction post-processing).
+    pub objective: ObjectiveSchema,
 }
 
 impl GBLinearModelSchema {
@@ -417,51 +239,6 @@ mod tests {
         assert!(!json.contains("num_classes"));
         assert!(!json.contains("feature_names"));
         assert!(!json.contains("feature_types"));
-    }
-
-    #[test]
-    fn gbdt_config_extra_deterministic() {
-        let mut extra = BTreeMap::new();
-        extra.insert("z_param".to_string(), serde_json::json!(1));
-        extra.insert("a_param".to_string(), serde_json::json!(2));
-        extra.insert("m_param".to_string(), serde_json::json!(3));
-
-        let config = GBDTConfigSchema {
-            objective: ObjectiveSchema::SquaredLoss,
-            metric: None,
-            n_trees: 100,
-            learning_rate: 0.1,
-            growth_strategy: GrowthStrategySchema::DepthWise { max_depth: 6 },
-            max_onehot_cats: 4,
-            lambda: 1.0,
-            alpha: 0.0,
-            min_child_weight: 1.0,
-            min_gain: 0.0,
-            min_samples_leaf: 1,
-            subsample: 1.0,
-            colsample_bytree: 1.0,
-            colsample_bylevel: 1.0,
-            binning: BinningConfigSchema {
-                max_bins: 256,
-                sparsity_threshold: 0.9,
-                enable_bundling: true,
-                max_categorical_cardinality: 0,
-                sample_cnt: 200_000,
-            },
-            linear_leaves: None,
-            early_stopping_rounds: None,
-            cache_size: 8,
-            seed: 42,
-            verbosity: VerbositySchema::Silent,
-            extra,
-        };
-
-        let json = serde_json::to_string(&config).unwrap();
-        // BTreeMap ensures a_param < m_param < z_param in output
-        let a_pos = json.find("a_param").unwrap();
-        let m_pos = json.find("m_param").unwrap();
-        let z_pos = json.find("z_param").unwrap();
-        assert!(a_pos < m_pos && m_pos < z_pos);
     }
 
     #[test]

@@ -123,7 +123,7 @@ class TestXGBoostConverter:
         json_bytes = xgboost_to_json_bytes(model_path)
         envelope = JsonEnvelope[GBDTModelSchema].model_validate_json(json_bytes)
 
-        assert envelope.bstr_version == 1
+        assert envelope.bstr_version == 2
         assert envelope.model_type == "gbdt"
         assert envelope.model.meta.task == "regression"
 
@@ -226,7 +226,7 @@ class TestLightGBMConverter:
         json_bytes = lightgbm_to_json_bytes(model_path)
         envelope = JsonEnvelope[GBDTModelSchema].model_validate_json(json_bytes)
 
-        assert envelope.bstr_version == 1
+        assert envelope.bstr_version == 2
         assert envelope.model_type == "gbdt"
 
 

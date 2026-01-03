@@ -35,9 +35,7 @@ class TestJsonEnvelopeParsing:
         X = rng.standard_normal((200, 5)).astype(np.float32)  # noqa: N806
         y = (X[:, 0] + 0.5 * X[:, 1] + rng.standard_normal(200) * 0.1).astype(np.float32)
 
-        model = GBDTModel(config=GBDTConfig(n_estimators=10))
-        model.fit(Dataset(X, y))
-        return model
+        return GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=10))
 
     @pytest.fixture
     def gblinear_model(self) -> GBLinearModel:
@@ -46,9 +44,7 @@ class TestJsonEnvelopeParsing:
         X = rng.standard_normal((200, 5)).astype(np.float32)  # noqa: N806
         y = (X[:, 0] + 0.5 * X[:, 1]).astype(np.float32)
 
-        model = GBLinearModel(config=GBLinearConfig(n_estimators=50))
-        model.fit(Dataset(X, y))
-        return model
+        return GBLinearModel.train(Dataset(X, y), config=GBLinearConfig(n_estimators=50))
 
     def test_gbdt_json_parses_with_pydantic(self, gbdt_model: GBDTModel) -> None:
         """GBDT JSON from Rust parses successfully with pydantic."""
@@ -59,7 +55,7 @@ class TestJsonEnvelopeParsing:
         envelope = JsonEnvelope[GBDTModelSchema].model_validate_json(json_str)
 
         # Verify envelope structure
-        assert envelope.bstr_version == 1
+        assert envelope.bstr_version == 2
         assert envelope.model_type == "gbdt"
         assert isinstance(envelope.model, GBDTModelSchema)
 
@@ -72,7 +68,7 @@ class TestJsonEnvelopeParsing:
         envelope = JsonEnvelope[GBLinearModelSchema].model_validate_json(json_str)
 
         # Verify envelope structure
-        assert envelope.bstr_version == 1
+        assert envelope.bstr_version == 2
         assert envelope.model_type == "gblinear"
         assert isinstance(envelope.model, GBLinearModelSchema)
 
@@ -93,6 +89,9 @@ class TestJsonEnvelopeParsing:
         assert len(model.forest.trees) == 10  # n_estimators=10
         assert model.forest.n_groups == 1
         assert len(model.forest.base_score) == 1
+
+        # Objective is persisted for correct post-processing
+        assert model.objective.type == "squared_loss"
 
         # Check trees have valid structure
         for tree in model.forest.trees:
@@ -123,33 +122,33 @@ class TestJsonEnvelopeParsing:
         # weights include bias term: (num_features + 1) * num_groups
         assert len(model.weights.values) == 6  # 5 features + 1 bias
 
+        # Base score may be empty for models trained by booste-rs (it can be baked into the bias term)
+        assert len(model.base_score) in {0, 1}
+
+        # Objective is persisted for correct post-processing
+        assert model.objective.type == "squared_loss"
+
         # GBLinear stores base score in the bias term of the linear model,
         # so schema.base_score is empty (or can be non-empty if explicitly set)
         # This is an implementation detail - we just verify the schema parses
 
-    def test_gbdt_config_preserved(self, gbdt_model: GBDTModel) -> None:
-        """Training config is preserved in serialized model."""
+    def test_gbdt_objective_preserved(self, gbdt_model: GBDTModel) -> None:
+        """Objective is preserved in serialized model."""
         json_bytes = gbdt_model.to_json_bytes()
         json_str = json_bytes.decode("utf-8")
 
         envelope = JsonEnvelope[GBDTModelSchema].model_validate_json(json_str)
-        config = envelope.model.config
 
-        # Check key config values
-        assert config.n_trees == 10
-        assert config.objective.type == "squared_loss"
+        assert envelope.model.objective.type == "squared_loss"
 
-    def test_gblinear_config_preserved(self, gblinear_model: GBLinearModel) -> None:
-        """Training config is preserved in serialized model."""
+    def test_gblinear_objective_preserved(self, gblinear_model: GBLinearModel) -> None:
+        """Objective is preserved in serialized model."""
         json_bytes = gblinear_model.to_json_bytes()
         json_str = json_bytes.decode("utf-8")
 
         envelope = JsonEnvelope[GBLinearModelSchema].model_validate_json(json_str)
-        config = envelope.model.config
 
-        # Check key config values
-        assert config.n_rounds == 50
-        assert config.objective.type == "squared_loss"
+        assert envelope.model.objective.type == "squared_loss"
 
 
 class TestBinaryClassification:
@@ -161,14 +160,13 @@ class TestBinaryClassification:
         X = rng.standard_normal((200, 5)).astype(np.float32)  # noqa: N806
         y = (X[:, 0] > 0).astype(np.float32)
 
-        model = GBDTModel(config=GBDTConfig(n_estimators=10, objective=Objective.logistic()))
-        model.fit(Dataset(X, y))
+        model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=10, objective=Objective.logistic()))
 
         json_str = model.to_json_bytes().decode("utf-8")
         envelope = JsonEnvelope[GBDTModelSchema].model_validate_json(json_str)
 
         assert envelope.model.meta.task == "binary_classification"
-        assert envelope.model.config.objective.type == "logistic_loss"
+        assert envelope.model.objective.type == "logistic_loss"
 
 
 class TestMulticlass:
@@ -180,15 +178,14 @@ class TestMulticlass:
         X = rng.standard_normal((300, 5)).astype(np.float32)  # noqa: N806
         y = (np.digitize(X[:, 0], bins=[-0.5, 0.5])).astype(np.float32)  # 3 classes
 
-        model = GBDTModel(config=GBDTConfig(n_estimators=10, objective=Objective.softmax(n_classes=3)))
-        model.fit(Dataset(X, y))
+        model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=10, objective=Objective.softmax(n_classes=3)))
 
         json_str = model.to_json_bytes().decode("utf-8")
         envelope = JsonEnvelope[GBDTModelSchema].model_validate_json(json_str)
 
         assert envelope.model.meta.task == "multiclass_classification"
         assert envelope.model.meta.num_classes == 3
-        assert envelope.model.config.objective.type == "softmax_loss"
+        assert envelope.model.objective.type == "softmax_loss"
 
 
 class TestSchemaValidation:
@@ -197,7 +194,7 @@ class TestSchemaValidation:
     def test_invalid_task_kind_rejected(self) -> None:
         """Invalid task kind is rejected by pydantic."""
         invalid_json = json.dumps({
-            "bstr_version": 1,
+            "bstr_version": 2,
             "model_type": "gbdt",
             "model": {
                 "meta": {
@@ -209,7 +206,7 @@ class TestSchemaValidation:
                     "n_groups": 1,
                     "base_score": [0.0],
                 },
-                "config": {},
+                "objective": {"type": "squared_loss"},
             },
         })
 
@@ -219,14 +216,14 @@ class TestSchemaValidation:
     def test_missing_required_field_rejected(self) -> None:
         """Missing required field is rejected by pydantic."""
         invalid_json = json.dumps({
-            "bstr_version": 1,
+            "bstr_version": 2,
             "model_type": "gbdt",
             "model": {
                 "meta": {
                     # Missing 'task' and 'num_features'
                 },
                 "forest": {},
-                "config": {},
+                "objective": {"type": "squared_loss"},
             },
         })
 
@@ -240,8 +237,7 @@ class TestCrossLanguageRoundTrip:
     def test_gbdt_roundtrip_rust_python_rust(self) -> None:
         """GBDT: Rust JSON → Python pydantic → JSON → Rust loads correctly."""
         X, y = make_regression_data()  # noqa: N806
-        model = GBDTModel(config=GBDTConfig(n_estimators=10))
-        model.fit(Dataset(X, y))
+        model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=10))
 
         # Step 1: Rust → JSON
         original_preds = model.predict(Dataset(X))
@@ -265,8 +261,7 @@ class TestCrossLanguageRoundTrip:
     def test_gblinear_roundtrip_rust_python_rust(self) -> None:
         """GBLinear: Rust JSON → Python pydantic → JSON → Rust loads correctly."""
         X, y = make_regression_data()  # noqa: N806
-        model = GBLinearModel(config=GBLinearConfig(n_estimators=50))
-        model.fit(Dataset(X, y))
+        model = GBLinearModel.train(Dataset(X, y), config=GBLinearConfig(n_estimators=50))
 
         # Step 1: Rust → JSON
         original_preds = model.predict(Dataset(X))
@@ -292,8 +287,7 @@ class TestCrossLanguageRoundTrip:
         X = rng.standard_normal((200, 5)).astype(np.float32)  # noqa: N806
         y = (X[:, 0] > 0).astype(np.float32)
 
-        model = GBDTModel(config=GBDTConfig(n_estimators=10, objective=Objective.logistic()))
-        model.fit(Dataset(X, y))
+        model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=10, objective=Objective.logistic()))
 
         original_preds = model.predict(Dataset(X))
         json_str = model.to_json_bytes().decode("utf-8")
@@ -312,8 +306,7 @@ class TestCrossLanguageRoundTrip:
         X = rng.standard_normal((300, 5)).astype(np.float32)  # noqa: N806
         y = (np.digitize(X[:, 0], bins=[-0.5, 0.5])).astype(np.float32)
 
-        model = GBDTModel(config=GBDTConfig(n_estimators=10, objective=Objective.softmax(n_classes=3)))
-        model.fit(Dataset(X, y))
+        model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=10, objective=Objective.softmax(n_classes=3)))
 
         original_preds = model.predict(Dataset(X))
         json_str = model.to_json_bytes().decode("utf-8")

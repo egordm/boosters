@@ -13,10 +13,10 @@ use super::error::{ReadError, WriteError};
 pub const MAGIC: [u8; 4] = *b"BSTR";
 
 /// Current schema version.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Maximum supported schema version for reading.
-pub const MAX_SUPPORTED_VERSION: u32 = 1;
+pub const MAX_SUPPORTED_VERSION: u32 = 2;
 
 /// Header size in bytes.
 pub const HEADER_SIZE: usize = 32;

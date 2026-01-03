@@ -456,11 +456,6 @@ class GBDTModel:
         >>> predictions = model.predict(train)
     """
     @property
-    def is_fitted(self) -> builtins.bool:
-        r"""
-        Whether the model has been fitted.
-        """
-    @property
     def n_trees(self) -> builtins.int:
         r"""
         Number of trees in the fitted model.
@@ -471,19 +466,25 @@ class GBDTModel:
         Number of features the model was trained on.
         """
     @property
-    def config(self) -> GBDTConfig:
+    def objective(self) -> Objective:
         r"""
-        Get the model configuration.
+        Get the model objective.
         """
-    def __new__(cls, config: typing.Optional[GBDTConfig] = None) -> GBDTModel:
+    @staticmethod
+    def train(train: Dataset, config: typing.Optional[GBDTConfig] = None, val_set: typing.Optional[Dataset] = None, n_threads: builtins.int = 0) -> GBDTModel:
         r"""
-        Create a new GBDT model.
+        Train a new GBDT model.
+        
+        This matches the Rust API style: training is a class-level constructor.
         
         Args:
+            train: Training dataset containing features and labels.
             config: Optional GBDTConfig. If not provided, uses default config.
+            val_set: Optional validation dataset for early stopping and evaluation.
+            n_threads: Number of threads for parallel training (0 = auto).
         
         Returns:
-            New GBDTModel instance (not yet fitted).
+            Trained GBDTModel.
         """
     def feature_importance(self, importance_type: ImportanceType = ImportanceType.Split) -> numpy.typing.NDArray[numpy.float32]:
         r"""
@@ -536,18 +537,6 @@ class GBDTModel:
         
         Returns:
             Raw scores array with shape (n_samples, n_outputs).
-        """
-    def fit(self, train: Dataset, val_set: typing.Optional[Dataset] = None, n_threads: builtins.int = 0) -> GBDTModel:
-        r"""
-        Train the model on a dataset.
-        
-        Args:
-            train: Training dataset containing features and labels.
-            val_set: Optional validation dataset for early stopping and evaluation.
-            n_threads: Number of threads for parallel training (0 = auto).
-        
-        Returns:
-            Self (for method chaining).
         """
     def to_bytes(self) -> bytes:
         r"""
@@ -704,11 +693,6 @@ class GBLinearModel:
         >>> predictions = model.predict(X_test)
     """
     @property
-    def is_fitted(self) -> builtins.bool:
-        r"""
-        Whether the model has been fitted.
-        """
-    @property
     def n_features_in_(self) -> builtins.int:
         r"""
         Number of features the model was trained on.
@@ -731,19 +715,25 @@ class GBLinearModel:
             Array of shape (n_outputs,).
         """
     @property
-    def config(self) -> GBLinearConfig:
+    def objective(self) -> Objective:
         r"""
-        Get the model configuration.
+        Get the model objective.
         """
-    def __new__(cls, config: typing.Optional[GBLinearConfig] = None) -> GBLinearModel:
+    @staticmethod
+    def train(train: Dataset, config: typing.Optional[GBLinearConfig] = None, val_set: typing.Optional[Dataset] = None, n_threads: builtins.int = 0) -> GBLinearModel:
         r"""
-        Create a new GBLinear model.
+        Train a new GBLinear model.
+        
+        This matches the Rust API style: training is a class-level constructor.
         
         Args:
+            train: Training dataset containing features and labels.
             config: Optional GBLinearConfig. If not provided, uses default config.
+            val_set: Optional validation dataset for early stopping and evaluation.
+            n_threads: Number of threads for parallel training (0 = auto).
         
         Returns:
-            New GBLinearModel instance (not yet fitted).
+            Trained GBLinearModel.
         """
     def __repr__(self) -> builtins.str:
         r"""
@@ -776,18 +766,6 @@ class GBLinearModel:
         
         Returns:
             Raw scores array with shape (n_samples, n_outputs).
-        """
-    def fit(self, train: Dataset, val_set: typing.Optional[Dataset] = None, n_threads: builtins.int = 0) -> GBLinearModel:
-        r"""
-        Train the model on a dataset.
-        
-        Args:
-            train: Training dataset containing features and labels.
-            val_set: Optional validation dataset for early stopping and evaluation.
-            n_threads: Number of threads for parallel training (0 = auto).
-        
-        Returns:
-            Self (for method chaining).
         """
     def to_bytes(self) -> bytes:
         r"""

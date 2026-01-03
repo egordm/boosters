@@ -48,7 +48,6 @@ mod convert;
 mod envelope;
 mod error;
 mod json;
-mod migrate;
 mod schema;
 
 use std::fs::File;
@@ -71,9 +70,9 @@ pub use envelope::{
 
 // Re-export schema types
 pub use schema::{
-    CategoriesSchema, FeatureTypeSchema, ForestSchema, GBDTConfigSchema, GBDTModelSchema,
-    GBLinearConfigSchema, GBLinearModelSchema, LeafValuesSchema, LinearCoefficientsSchema,
-    LinearWeightsSchema, ModelMetaSchema, TaskKindSchema, TreeSchema,
+    CategoriesSchema, FeatureTypeSchema, ForestSchema, GBDTModelSchema, GBLinearModelSchema,
+    LeafValuesSchema, LinearCoefficientsSchema, LinearWeightsSchema, ModelMetaSchema,
+    ObjectiveSchema, TaskKindSchema, TreeSchema,
 };
 
 // Re-export JSON options

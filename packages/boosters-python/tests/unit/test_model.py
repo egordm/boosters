@@ -42,10 +42,7 @@ class TestGBDTModelFitPredict:
     def test_regression_workflow(self) -> None:
         """Complete regression workflow works."""
         X, y = make_regression_data()  # noqa: N806
-        model = GBDTModel(config=GBDTConfig(n_estimators=20))
-        model.fit(Dataset(X, y))
-
-        assert model.is_fitted
+        model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=20))
         assert model.n_trees == 20
         assert model.n_features == 5
 
@@ -56,8 +53,10 @@ class TestGBDTModelFitPredict:
     def test_binary_classification_workflow(self) -> None:
         """Binary classification workflow works."""
         X, y = make_binary_data()  # noqa: N806
-        model = GBDTModel(config=GBDTConfig(n_estimators=20, objective=Objective.logistic()))
-        model.fit(Dataset(X, y))
+        model = GBDTModel.train(
+            Dataset(X, y),
+            config=GBDTConfig(n_estimators=20, objective=Objective.logistic()),
+        )
 
         preds = model.predict(Dataset(X))
         # Should be probabilities in [0, 1]
@@ -66,8 +65,10 @@ class TestGBDTModelFitPredict:
     def test_predict_vs_predict_raw(self) -> None:
         """predict returns transformed, predict_raw returns margins."""
         X, y = make_binary_data()  # noqa: N806
-        model = GBDTModel(config=GBDTConfig(n_estimators=20, objective=Objective.logistic()))
-        model.fit(Dataset(X, y))
+        model = GBDTModel.train(
+            Dataset(X, y),
+            config=GBDTConfig(n_estimators=20, objective=Objective.logistic()),
+        )
 
         preds = model.predict(Dataset(X[:10]))
         raw = model.predict_raw(Dataset(X[:10]))
@@ -82,32 +83,22 @@ class TestGBDTModelFitPredict:
         X_train, X_val = X[:300], X[300:]  # noqa: N806
         y_train, y_val = y[:300], y[300:]
 
-        model = GBDTModel(
+        model = GBDTModel.train(
+            Dataset(X_train, y_train),
+            val_set=Dataset(X_val, y_val),
             config=GBDTConfig(
                 n_estimators=1000,
                 early_stopping_rounds=10,
                 metric=Metric.rmse(),
-            )
-        )
-        model.fit(
-            Dataset(X_train, y_train),
-            val_set=Dataset(X_val, y_val),
+            ),
         )
 
         assert model.n_trees < 1000
 
-    def test_fit_returns_self(self) -> None:
-        """fit returns self for method chaining."""
-        X, y = make_regression_data()  # noqa: N806
-        model = GBDTModel(config=GBDTConfig(n_estimators=5))
-        result = model.fit(Dataset(X, y))
-        assert result is model
-
     def test_feature_importance(self) -> None:
         """Feature importance has correct shape."""
         X, y = make_regression_data()  # noqa: N806
-        model = GBDTModel(config=GBDTConfig(n_estimators=20))
-        model.fit(Dataset(X, y))
+        model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=20))
 
         importance = model.feature_importance()
         assert importance.shape == (5,)
@@ -118,18 +109,17 @@ class TestGBDTModelErrors:
     """Tests for GBDTModel error handling."""
 
     def test_predict_before_fit_raises(self) -> None:
-        """predict before fit raises clear error."""
-        model = GBDTModel()
+        """Unfitted models are not constructible; training requires labels."""
         rng = np.random.default_rng(42)
         X = rng.random((10, 5)).astype(np.float32)  # noqa: N806
-        with pytest.raises(RuntimeError, match="not fitted"):
-            model.predict(Dataset(X))
+
+        with pytest.raises((ValueError, RuntimeError), match="labels"):
+            GBDTModel.train(Dataset(X), config=GBDTConfig(n_estimators=3))
 
     def test_wrong_feature_count_raises(self) -> None:
         """Predicting with wrong feature count raises error."""
         X, y = make_regression_data()  # noqa: N806
-        model = GBDTModel(config=GBDTConfig(n_estimators=10))
-        model.fit(Dataset(X, y))
+        model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=10))
 
         rng = np.random.default_rng(42)
         X_wrong = rng.random((10, 3)).astype(np.float32)  # noqa: N806
@@ -137,12 +127,11 @@ class TestGBDTModelErrors:
             model.predict(Dataset(X_wrong))
 
     def test_fit_without_labels_raises(self) -> None:
-        """fit without labels raises error."""
+        """train without labels raises error."""
         rng = np.random.default_rng(42)
         X = rng.random((100, 5)).astype(np.float32)  # noqa: N806
-        model = GBDTModel()
         with pytest.raises((ValueError, RuntimeError), match="labels"):
-            model.fit(Dataset(X))
+            GBDTModel.train(Dataset(X), config=GBDTConfig(n_estimators=3))
 
 
 class TestGBLinearModelFitPredict:
@@ -155,10 +144,10 @@ class TestGBLinearModelFitPredict:
         true_weights = np.array([1, 0.5, -0.3, 0.2, 0], dtype=np.float32)
         y = X @ true_weights
 
-        model = GBLinearModel(config=GBLinearConfig(n_estimators=100, learning_rate=0.5))
-        model.fit(Dataset(X, y))
-
-        assert model.is_fitted
+        model = GBLinearModel.train(
+            Dataset(X, y),
+            config=GBLinearConfig(n_estimators=100, learning_rate=0.5),
+        )
         assert model.coef_.shape == (5,)
         assert model.intercept_.shape == (1,)
 
@@ -171,11 +160,15 @@ class TestGBLinearModelFitPredict:
         X = rng.standard_normal((200, 5)).astype(np.float32)  # noqa: N806
         y = (X[:, 0] + X[:, 1]).astype(np.float32)
 
-        model_low_reg = GBLinearModel(config=GBLinearConfig(n_estimators=50, l2=0.01))
-        model_low_reg.fit(Dataset(X, y))
+        model_low_reg = GBLinearModel.train(
+            Dataset(X, y),
+            config=GBLinearConfig(n_estimators=50, l2=0.01),
+        )
 
-        model_high_reg = GBLinearModel(config=GBLinearConfig(n_estimators=50, l2=100.0))
-        model_high_reg.fit(Dataset(X, y))
+        model_high_reg = GBLinearModel.train(
+            Dataset(X, y),
+            config=GBLinearConfig(n_estimators=50, l2=100.0),
+        )
 
         assert np.linalg.norm(model_high_reg.coef_) < np.linalg.norm(model_low_reg.coef_)
 
@@ -186,8 +179,7 @@ class TestGBDTModelPersistence:
     def test_binary_roundtrip_preserves_predictions(self) -> None:
         """to_bytes → from_bytes preserves predictions exactly."""
         X, y = make_regression_data()  # noqa: N806
-        model = GBDTModel(config=GBDTConfig(n_estimators=20))
-        model.fit(Dataset(X, y))
+        model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=20))
 
         original_preds = model.predict(Dataset(X))
 
@@ -200,8 +192,7 @@ class TestGBDTModelPersistence:
     def test_json_roundtrip_preserves_predictions(self) -> None:
         """to_json_bytes → from_json_bytes preserves predictions."""
         X, y = make_regression_data()  # noqa: N806
-        model = GBDTModel(config=GBDTConfig(n_estimators=20))
-        model.fit(Dataset(X, y))
+        model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=20))
 
         original_preds = model.predict(Dataset(X))
 
@@ -214,8 +205,10 @@ class TestGBDTModelPersistence:
     def test_binary_classification_roundtrip(self) -> None:
         """Binary classification model roundtrips correctly."""
         X, y = make_binary_data()  # noqa: N806
-        model = GBDTModel(config=GBDTConfig(n_estimators=20, objective=Objective.logistic()))
-        model.fit(Dataset(X, y))
+        model = GBDTModel.train(
+            Dataset(X, y),
+            config=GBDTConfig(n_estimators=20, objective=Objective.logistic()),
+        )
 
         original_preds = model.predict(Dataset(X))
 
@@ -227,12 +220,10 @@ class TestGBDTModelPersistence:
     def test_serialized_model_properties(self) -> None:
         """Loaded model has correct properties."""
         X, y = make_regression_data()  # noqa: N806
-        model = GBDTModel(config=GBDTConfig(n_estimators=20))
-        model.fit(Dataset(X, y))
+        model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=20))
 
         loaded = GBDTModel.from_bytes(model.to_bytes())
 
-        assert loaded.is_fitted
         assert loaded.n_trees == model.n_trees
         assert loaded.n_features == model.n_features
 
@@ -246,8 +237,7 @@ class TestGBLinearModelPersistence:
         X = rng.standard_normal((200, 5)).astype(np.float32)  # noqa: N806
         y = (X[:, 0] + 0.5 * X[:, 1]).astype(np.float32)
 
-        model = GBLinearModel(config=GBLinearConfig(n_estimators=50))
-        model.fit(Dataset(X, y))
+        model = GBLinearModel.train(Dataset(X, y), config=GBLinearConfig(n_estimators=50))
 
         original_preds = model.predict(Dataset(X))
 
@@ -263,8 +253,7 @@ class TestGBLinearModelPersistence:
         X = rng.standard_normal((200, 5)).astype(np.float32)  # noqa: N806
         y = (X[:, 0] + 0.5 * X[:, 1]).astype(np.float32)
 
-        model = GBLinearModel(config=GBLinearConfig(n_estimators=50))
-        model.fit(Dataset(X, y))
+        model = GBLinearModel.train(Dataset(X, y), config=GBLinearConfig(n_estimators=50))
 
         original_preds = model.predict(Dataset(X))
 
@@ -280,8 +269,7 @@ class TestGBLinearModelPersistence:
         X = rng.standard_normal((200, 5)).astype(np.float32)  # noqa: N806
         y = (X[:, 0] + 0.5 * X[:, 1]).astype(np.float32)
 
-        model = GBLinearModel(config=GBLinearConfig(n_estimators=50))
-        model.fit(Dataset(X, y))
+        model = GBLinearModel.train(Dataset(X, y), config=GBLinearConfig(n_estimators=50))
 
         loaded = GBLinearModel.from_bytes(model.to_bytes())
 
@@ -300,14 +288,12 @@ class TestPolymorphicLoading:
         X = rng.standard_normal((100, 5)).astype(np.float32)  # noqa: N806
         y = rng.standard_normal(100).astype(np.float32)
 
-        model = GBDTModel(config=GBDTConfig(n_estimators=3))
-        model.fit(Dataset(X, y))
+        model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=3))
 
         data = model.to_bytes()
         loaded = boosters.Model.load_from_bytes(data)
 
         assert isinstance(loaded, GBDTModel)
-        assert loaded.is_fitted
         assert loaded.n_trees == 3
 
     def test_loads_gbdt_json(self) -> None:
@@ -318,14 +304,13 @@ class TestPolymorphicLoading:
         X = rng.standard_normal((100, 5)).astype(np.float32)  # noqa: N806
         y = rng.standard_normal(100).astype(np.float32)
 
-        model = GBDTModel(config=GBDTConfig(n_estimators=3))
-        model.fit(Dataset(X, y))
+        model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=3))
 
         data = model.to_json_bytes()
         loaded = boosters.Model.load_from_bytes(data)
 
         assert isinstance(loaded, GBDTModel)
-        assert loaded.is_fitted
+        assert loaded.n_trees == 3
 
     def test_loads_gblinear(self) -> None:
         """Model.load_from_bytes returns GBLinearModel from GBLinear data."""
@@ -335,14 +320,13 @@ class TestPolymorphicLoading:
         X = rng.standard_normal((100, 5)).astype(np.float32)  # noqa: N806
         y = rng.standard_normal(100).astype(np.float32)
 
-        model = GBLinearModel(config=GBLinearConfig(n_estimators=5))
-        model.fit(Dataset(X, y))
+        model = GBLinearModel.train(Dataset(X, y), config=GBLinearConfig(n_estimators=5))
 
         data = model.to_bytes()
         loaded = boosters.Model.load_from_bytes(data)
 
         assert isinstance(loaded, GBLinearModel)
-        assert loaded.is_fitted
+        assert loaded.n_features_in_ == 5
 
     def test_loads_preserves_predictions(self) -> None:
         """Model.load_from_bytes produces a model with identical predictions."""
@@ -353,8 +337,7 @@ class TestPolymorphicLoading:
         y = rng.standard_normal(100).astype(np.float32)
         ds = Dataset(X, y)
 
-        model = GBDTModel(config=GBDTConfig(n_estimators=5))
-        model.fit(ds)
+        model = GBDTModel.train(ds, config=GBDTConfig(n_estimators=5))
         original_preds = model.predict(ds)
 
         loaded = boosters.Model.load_from_bytes(model.to_bytes())
@@ -370,13 +353,12 @@ class TestPolymorphicLoading:
         X = rng.standard_normal((100, 5)).astype(np.float32)  # noqa: N806
         y = rng.standard_normal(100).astype(np.float32)
 
-        model = GBDTModel(config=GBDTConfig(n_estimators=3))
-        model.fit(Dataset(X, y))
+        model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=3))
 
         data = model.to_bytes()
         info = boosters.Model.inspect_bytes(data)
 
-        assert info.schema_version == 1
+        assert info.schema_version == 2
         assert info.model_type == "gbdt"
         assert info.format == "binary"
         assert isinstance(info.is_compressed, bool)
@@ -389,13 +371,12 @@ class TestPolymorphicLoading:
         X = rng.standard_normal((100, 5)).astype(np.float32)  # noqa: N806
         y = rng.standard_normal(100).astype(np.float32)
 
-        model = GBDTModel(config=GBDTConfig(n_estimators=3))
-        model.fit(Dataset(X, y))
+        model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=3))
 
         data = model.to_json_bytes()
         info = boosters.Model.inspect_bytes(data)
 
-        assert info.schema_version == 1
+        assert info.schema_version == 2
         assert info.model_type == "gbdt"
         assert info.format == "json"
         assert info.is_compressed is False
@@ -408,8 +389,7 @@ class TestPolymorphicLoading:
         X = rng.standard_normal((100, 5)).astype(np.float32)  # noqa: N806
         y = rng.standard_normal(100).astype(np.float32)
 
-        model = GBLinearModel(config=GBLinearConfig(n_estimators=5))
-        model.fit(Dataset(X, y))
+        model = GBLinearModel.train(Dataset(X, y), config=GBLinearConfig(n_estimators=5))
 
         info = boosters.Model.inspect_bytes(model.to_bytes())
 
@@ -424,8 +404,7 @@ class TestPolymorphicLoading:
         X = rng.standard_normal((50, 3)).astype(np.float32)  # noqa: N806
         y = rng.standard_normal(50).astype(np.float32)
 
-        model = GBDTModel(config=GBDTConfig(n_estimators=2))
-        model.fit(Dataset(X, y))
+        model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=2))
 
         info = boosters.Model.inspect_bytes(model.to_bytes())
         repr_str = repr(info)

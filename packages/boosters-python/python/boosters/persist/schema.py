@@ -17,7 +17,7 @@ Example:
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -55,10 +55,6 @@ class JsonEnvelope[T](BaseModel):
 TaskKind = Literal["regression", "binary_classification", "multiclass_classification", "ranking"]
 
 FeatureType = Literal["numeric", "categorical"]
-
-Verbosity = Literal["silent", "warning", "info", "debug"]
-
-UpdateStrategy = Literal["shotgun", "sequential"]
 
 
 # -----------------------------------------------------------------------------
@@ -324,381 +320,6 @@ ObjectiveSchema = Annotated[
 
 
 # -----------------------------------------------------------------------------
-# Metric Schema (discriminated union)
-# -----------------------------------------------------------------------------
-
-
-class NoneMetric(BaseModel):
-    """No evaluation metric."""
-
-    model_config = ConfigDict(strict=True)
-    type: Literal["none"]
-
-
-class RmseMetric(BaseModel):
-    """Root Mean Squared Error."""
-
-    model_config = ConfigDict(strict=True)
-    type: Literal["rmse"]
-
-
-class MaeMetric(BaseModel):
-    """Mean Absolute Error."""
-
-    model_config = ConfigDict(strict=True)
-    type: Literal["mae"]
-
-
-class MapeMetric(BaseModel):
-    """Mean Absolute Percentage Error."""
-
-    model_config = ConfigDict(strict=True)
-    type: Literal["mape"]
-
-
-class LogLossMetric(BaseModel):
-    """Log Loss (binary cross-entropy)."""
-
-    model_config = ConfigDict(strict=True)
-    type: Literal["log_loss"]
-
-
-class AccuracyMetric(BaseModel):
-    """Classification accuracy with threshold."""
-
-    model_config = ConfigDict(strict=True)
-    type: Literal["accuracy"]
-    threshold: float
-
-
-class MarginAccuracyMetric(BaseModel):
-    """Margin-based accuracy."""
-
-    model_config = ConfigDict(strict=True)
-    type: Literal["margin_accuracy"]
-
-
-class AucMetric(BaseModel):
-    """Area Under ROC Curve."""
-
-    model_config = ConfigDict(strict=True)
-    type: Literal["auc"]
-
-
-class MulticlassLogLossMetric(BaseModel):
-    """Multiclass Log Loss."""
-
-    model_config = ConfigDict(strict=True)
-    type: Literal["multiclass_log_loss"]
-
-
-class MulticlassAccuracyMetric(BaseModel):
-    """Multiclass Accuracy."""
-
-    model_config = ConfigDict(strict=True)
-    type: Literal["multiclass_accuracy"]
-
-
-class QuantileMetric(BaseModel):
-    """Quantile loss metric."""
-
-    model_config = ConfigDict(strict=True)
-    type: Literal["quantile"]
-    alphas: list[float]
-
-
-class HuberMetric(BaseModel):
-    """Huber loss metric."""
-
-    model_config = ConfigDict(strict=True)
-    type: Literal["huber"]
-    delta: float
-
-
-class PoissonDevianceMetric(BaseModel):
-    """Poisson deviance metric."""
-
-    model_config = ConfigDict(strict=True)
-    type: Literal["poisson_deviance"]
-
-
-class CustomMetric(BaseModel):
-    """Custom user-defined metric."""
-
-    model_config = ConfigDict(strict=True)
-    type: Literal["custom"]
-    name: str
-
-
-MetricSchema = Annotated[
-    NoneMetric
-    | RmseMetric
-    | MaeMetric
-    | MapeMetric
-    | LogLossMetric
-    | AccuracyMetric
-    | MarginAccuracyMetric
-    | AucMetric
-    | MulticlassLogLossMetric
-    | MulticlassAccuracyMetric
-    | QuantileMetric
-    | HuberMetric
-    | PoissonDevianceMetric
-    | CustomMetric,
-    Field(discriminator="type"),
-]
-
-
-# -----------------------------------------------------------------------------
-# Growth Strategy (discriminated union)
-# -----------------------------------------------------------------------------
-
-
-class DepthWiseGrowth(BaseModel):
-    """Depth-wise tree growth."""
-
-    model_config = ConfigDict(strict=True)
-    type: Literal["depth_wise"]
-    max_depth: int
-
-
-class LeafWiseGrowth(BaseModel):
-    """Leaf-wise (best-first) tree growth."""
-
-    model_config = ConfigDict(strict=True)
-    type: Literal["leaf_wise"]
-    max_leaves: int
-
-
-GrowthStrategySchema = Annotated[
-    DepthWiseGrowth | LeafWiseGrowth,
-    Field(discriminator="type"),
-]
-
-
-# -----------------------------------------------------------------------------
-# Feature Selector (discriminated union)
-# -----------------------------------------------------------------------------
-
-
-class CyclicSelector(BaseModel):
-    """Cyclic feature selection."""
-
-    model_config = ConfigDict(strict=True)
-    type: Literal["cyclic"]
-
-
-class ShuffleSelector(BaseModel):
-    """Shuffled feature selection."""
-
-    model_config = ConfigDict(strict=True)
-    type: Literal["shuffle"]
-
-
-class RandomSelector(BaseModel):
-    """Random feature selection."""
-
-    model_config = ConfigDict(strict=True)
-    type: Literal["random"]
-
-
-class GreedySelector(BaseModel):
-    """Greedy top-k feature selection."""
-
-    model_config = ConfigDict(strict=True)
-    type: Literal["greedy"]
-    top_k: int
-
-
-class ThriftySelector(BaseModel):
-    """Thrifty top-k feature selection."""
-
-    model_config = ConfigDict(strict=True)
-    type: Literal["thrifty"]
-    top_k: int
-
-
-FeatureSelectorSchema = Annotated[
-    CyclicSelector | ShuffleSelector | RandomSelector | GreedySelector | ThriftySelector,
-    Field(discriminator="type"),
-]
-
-
-# -----------------------------------------------------------------------------
-# Binning Config
-# -----------------------------------------------------------------------------
-
-
-class BinningConfigSchema(BaseModel):
-    """Histogram binning configuration.
-
-    Attributes:
-    ----------
-    max_bins
-        Maximum number of bins for histograms.
-    sparsity_threshold
-        Threshold for treating features as sparse.
-    enable_bundling
-        Whether to enable exclusive feature bundling.
-    max_categorical_cardinality
-        Maximum cardinality for categorical features.
-    sample_cnt
-        Number of samples for bin boundary estimation.
-    """
-
-    model_config = ConfigDict(strict=True)
-
-    max_bins: int
-    sparsity_threshold: float
-    enable_bundling: bool
-    max_categorical_cardinality: int
-    sample_cnt: int
-
-
-# -----------------------------------------------------------------------------
-# Linear Leaf Config
-# -----------------------------------------------------------------------------
-
-
-class LinearLeafConfigSchema(BaseModel):
-    """Linear-in-leaves configuration.
-
-    Attributes:
-    ----------
-    lambda_
-        L2 regularization for linear coefficients.
-    alpha
-        L1 regularization for linear coefficients.
-    max_iterations
-        Maximum iterations for coefficient fitting.
-    tolerance
-        Convergence tolerance.
-    min_samples
-        Minimum samples to fit linear model in a leaf.
-    coefficient_threshold
-        Threshold below which coefficients are zeroed.
-    max_features
-        Maximum features to use in linear model.
-    """
-
-    model_config = ConfigDict(strict=True)
-
-    lambda_: float = Field(alias="lambda")
-    alpha: float
-    max_iterations: int
-    tolerance: float
-    min_samples: int
-    coefficient_threshold: float
-    max_features: int
-
-
-# -----------------------------------------------------------------------------
-# GBDT Config
-# -----------------------------------------------------------------------------
-
-
-class GBDTConfigSchema(BaseModel):
-    """GBDT training configuration.
-
-    Attributes:
-    ----------
-    objective
-        Loss function to optimize.
-    metric
-        Evaluation metric (None means no metric).
-    n_trees
-        Number of boosting rounds.
-    learning_rate
-        Step size shrinkage.
-    growth_strategy
-        Tree growth strategy (depth-wise or leaf-wise).
-    max_onehot_cats
-        Maximum categories for one-hot encoding.
-    lambda_
-        L2 regularization on leaf weights.
-    alpha
-        L1 regularization on leaf weights.
-    min_child_weight
-        Minimum sum of hessians in a child.
-    min_gain
-        Minimum gain to make a split.
-    min_samples_leaf
-        Minimum samples in a leaf.
-    subsample
-        Row subsampling ratio.
-    colsample_bytree
-        Column subsampling ratio per tree.
-    colsample_bylevel
-        Column subsampling ratio per level.
-    binning
-        Histogram binning configuration.
-    linear_leaves
-        Optional linear-in-leaves configuration.
-    early_stopping_rounds
-        Early stopping patience (None = disabled).
-    cache_size
-        Histogram cache size.
-    seed
-        Random seed.
-    verbosity
-        Logging verbosity level.
-    extra
-        Additional parameters.
-    """
-
-    model_config = ConfigDict(strict=True, populate_by_name=True)
-
-    objective: ObjectiveSchema
-    metric: MetricSchema | None = None
-    n_trees: int
-    learning_rate: float
-    growth_strategy: GrowthStrategySchema
-    max_onehot_cats: int
-    lambda_: float = Field(alias="lambda")
-    alpha: float
-    min_child_weight: float
-    min_gain: float
-    min_samples_leaf: int
-    subsample: float
-    colsample_bytree: float
-    colsample_bylevel: float
-    binning: BinningConfigSchema
-    linear_leaves: LinearLeafConfigSchema | None = None
-    early_stopping_rounds: int | None = None
-    cache_size: int
-    seed: int
-    verbosity: Verbosity
-    extra: dict[str, Any] = Field(default_factory=dict)
-
-
-# -----------------------------------------------------------------------------
-# Full GBDT Model Schema
-# -----------------------------------------------------------------------------
-
-
-class GBDTModelSchema(BaseModel):
-    """Complete GBDT model schema.
-
-    Attributes:
-    ----------
-    meta
-        Model metadata (task type, features, etc.).
-    forest
-        Tree ensemble.
-    config
-        Training configuration.
-    """
-
-    model_config = ConfigDict(strict=True)
-
-    meta: ModelMetaSchema
-    forest: ForestSchema
-    config: GBDTConfigSchema
-
-    MODEL_TYPE: str = "gbdt"
-
-
-# -----------------------------------------------------------------------------
 # Linear Weights
 # -----------------------------------------------------------------------------
 
@@ -724,78 +345,29 @@ class LinearWeightsSchema(BaseModel):
 
 
 # -----------------------------------------------------------------------------
-# GBLinear Config
+# Full Model Schemas
 # -----------------------------------------------------------------------------
 
 
-class GBLinearConfigSchema(BaseModel):
-    """GBLinear training configuration.
+class GBDTModelSchema(BaseModel):
+    """Complete GBDT model schema.
 
-    Attributes:
-    ----------
-    objective
-        Loss function to optimize.
-    metric
-        Evaluation metric (None = no metric).
-    n_rounds
-        Number of boosting rounds.
-    learning_rate
-        Step size shrinkage.
-    alpha
-        L1 regularization.
-    lambda_
-        L2 regularization.
-    update_strategy
-        Coordinate descent update strategy.
-    feature_selector
-        Feature selection strategy.
-    max_delta_step
-        Maximum per-coordinate Newton step (0 = disabled).
-    early_stopping_rounds
-        Early stopping patience (None = disabled).
-    seed
-        Random seed.
-    verbosity
-        Logging verbosity level.
-    extra
-        Additional parameters.
+    Mirrors Rust `GBDTModelSchema`.
     """
 
-    model_config = ConfigDict(strict=True, populate_by_name=True)
+    model_config = ConfigDict(strict=True)
 
+    meta: ModelMetaSchema
+    forest: ForestSchema
     objective: ObjectiveSchema
-    metric: MetricSchema | None = None
-    n_rounds: int
-    learning_rate: float
-    alpha: float
-    lambda_: float = Field(alias="lambda")
-    update_strategy: UpdateStrategy
-    feature_selector: FeatureSelectorSchema
-    max_delta_step: float
-    early_stopping_rounds: int | None = None
-    seed: int
-    verbosity: Verbosity
-    extra: dict[str, Any] = Field(default_factory=dict)
 
-
-# -----------------------------------------------------------------------------
-# Full GBLinear Model Schema
-# -----------------------------------------------------------------------------
+    MODEL_TYPE: str = "gbdt"
 
 
 class GBLinearModelSchema(BaseModel):
     """Complete GBLinear model schema.
 
-    Attributes:
-    ----------
-    meta
-        Model metadata (task type, features, etc.).
-    weights
-        Linear model weights.
-    base_score
-        Base score(s).
-    config
-        Training configuration.
+    Mirrors Rust `GBLinearModelSchema`.
     """
 
     model_config = ConfigDict(strict=True)
@@ -803,6 +375,6 @@ class GBLinearModelSchema(BaseModel):
     meta: ModelMetaSchema
     weights: LinearWeightsSchema
     base_score: list[float]
-    config: GBLinearConfigSchema
+    objective: ObjectiveSchema
 
     MODEL_TYPE: str = "gblinear"

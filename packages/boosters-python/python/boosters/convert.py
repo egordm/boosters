@@ -28,20 +28,19 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from boosters.persist.schema import (
+    AbsoluteLossObjective,
     CategoriesSchema,
-    CyclicSelector,
-    DepthWiseGrowth,
+    CustomObjective,
     ForestSchema,
-    GBDTConfigSchema,
     GBDTModelSchema,
-    GBLinearConfigSchema,
     GBLinearModelSchema,
     JsonEnvelope,
     LinearCoefficientsSchema,
     LinearWeightsSchema,
     ModelMetaSchema,
-    NoneMetric,
+    LogisticLossObjective,
     ScalarLeafValues,
+    SoftmaxLossObjective,
     SquaredLossObjective,
     TreeSchema,
 )
@@ -149,6 +148,20 @@ def _xgboost_objective_to_task(objective: str, num_class: int) -> str:
     if objective.startswith("rank:"):
         return "ranking"
     return "regression"
+
+
+def _objective_schema_from_xgboost(objective: str, num_class: int):  # noqa: ANN202
+    """Map an XGBoost objective string to a persisted ObjectiveSchema."""
+    if objective in ("reg:squarederror", "reg:linear"):
+        return SquaredLossObjective(type="squared_loss")
+    if objective in ("reg:absoluteerror",):
+        return AbsoluteLossObjective(type="absolute_loss")
+    if objective in ("binary:logistic", "reg:logistic"):
+        return LogisticLossObjective(type="logistic_loss")
+    if objective in ("multi:softprob", "multi:softmax") or num_class > 2:
+        return SoftmaxLossObjective(type="softmax_loss", n_classes=max(2, int(num_class)))
+
+    return CustomObjective(type="custom", name=objective)
 
 
 def _xgboost_feature_type_to_boosters(ft: str) -> str:
@@ -300,39 +313,9 @@ def _convert_xgb_gbtree(
         base_score=base_scores,
     )
 
-    # Build minimal config (we don't have all training params)
-    # Use model_validate() to avoid type-checker confusion around aliased fields (e.g. `lambda`).
-    config = GBDTConfigSchema.model_validate({
-        "objective": SquaredLossObjective(type="squared_loss"),  # placeholder
-        "metric": NoneMetric(type="none"),
-        "n_trees": len(trees),
-        "learning_rate": 0.1,  # placeholder
-        "growth_strategy": DepthWiseGrowth(type="depth_wise", max_depth=6),  # placeholder
-        "max_onehot_cats": 4,
-        "lambda_": 1.0,
-        "alpha": 0.0,
-        "min_child_weight": 1.0,
-        "min_gain": 0.0,
-        "min_samples_leaf": 1,
-        "subsample": 1.0,
-        "colsample_bytree": 1.0,
-        "colsample_bylevel": 1.0,
-        "binning": {
-            "max_bins": 256,
-            "sparsity_threshold": 0.3,
-            "enable_bundling": True,
-            "max_categorical_cardinality": 64,
-            "sample_cnt": 200000,
-        },
-        "linear_leaves": None,
-        "early_stopping_rounds": None,
-        "cache_size": 0,
-        "seed": 0,
-        "verbosity": "silent",
-        "extra": {"xgboost_objective": objective_name},
-    })
+    objective_schema = _objective_schema_from_xgboost(objective_name, num_class)
 
-    model = GBDTModelSchema(meta=meta, forest=forest, config=config)
+    model = GBDTModelSchema(meta=meta, forest=forest, objective=objective_schema)
     return model, booster_name
 
 
@@ -367,7 +350,9 @@ def _convert_xgb_gblinear(xgb_json: dict[str, Any]) -> GBLinearModelSchema:
     # The last row is bias. We need to bake base_score into bias.
     weight_list = [float(w) for w in weights]
 
-    # Bake base_scores into bias (last row)
+    # Bake base_scores into bias (last row). Our GBLinear predictor currently
+    # only uses the weight matrix (including bias), so base_score must be folded
+    # into the bias to match XGBoost behavior.
     for g in range(n_groups):
         bias_idx = num_features * n_groups + g
         weight_list[bias_idx] += base_scores[g]
@@ -398,29 +383,13 @@ def _convert_xgb_gblinear(xgb_json: dict[str, Any]) -> GBLinearModelSchema:
         num_groups=n_groups,
     )
 
-    # Build minimal config
-    # Use model_validate() to avoid type-checker confusion around aliased fields (e.g. `lambda`).
-    config = GBLinearConfigSchema.model_validate({
-        "objective": SquaredLossObjective(type="squared_loss"),  # placeholder
-        "metric": NoneMetric(type="none"),
-        "n_rounds": 1,
-        "learning_rate": 0.1,
-        "alpha": 0.0,
-        "lambda_": 1.0,
-        "update_strategy": "shotgun",
-        "feature_selector": CyclicSelector(type="cyclic"),
-        "max_delta_step": 0.0,
-        "early_stopping_rounds": None,
-        "seed": 0,
-        "verbosity": "silent",
-        "extra": {"xgboost_objective": objective_name},
-    })
+    objective_schema = _objective_schema_from_xgboost(objective_name, num_class)
 
     return GBLinearModelSchema(
         meta=meta,
         weights=weights_schema,
-        base_score=[],  # base_score is baked into weights
-        config=config,
+        base_score=[0.0] * n_groups,  # baked into weights
+        objective=objective_schema,
     )
 
 
@@ -479,7 +448,7 @@ def xgboost_to_json_bytes(path_or_booster: str | Path | xgb.Booster, *, pretty: 
     model_type = "gblinear" if isinstance(schema, GBLinearModelSchema) else "gbdt"
 
     envelope = JsonEnvelope[type(schema)](  # type: ignore[misc, valid-type]
-        bstr_version=1,
+        bstr_version=2,
         model_type=model_type,
         model=schema,
     )
@@ -526,6 +495,29 @@ def _lightgbm_objective_to_task(objective: str) -> str:
     if obj_lower.startswith("rank") or "lambdarank" in obj_lower:
         return "ranking"
     return "regression"
+
+
+def _objective_schema_from_lightgbm(objective: str, num_class: int):  # noqa: ANN202
+    """Map a LightGBM objective string to a persisted ObjectiveSchema."""
+    obj_lower = objective.lower().split()[0]
+
+    if obj_lower in ("regression", "l2", "rmse"):
+        return SquaredLossObjective(type="squared_loss")
+    if obj_lower in ("l1", "mae"):
+        return AbsoluteLossObjective(type="absolute_loss")
+    if obj_lower in ("binary", "binary_logloss", "cross_entropy"):
+        return LogisticLossObjective(type="logistic_loss")
+    if obj_lower in (
+        "multiclass",
+        "multiclassova",
+        "softmax",
+        "multiclass_ova",
+        "multiclass_logloss",
+    ):
+        n_classes = int(num_class) if int(num_class) > 0 else 2
+        return SoftmaxLossObjective(type="softmax_loss", n_classes=n_classes)
+
+    return CustomObjective(type="custom", name=objective)
 
 
 def _parse_lgb_tree_structure(
@@ -689,10 +681,6 @@ def lightgbm_to_schema(path_or_booster: str | Path | lgb.Booster) -> GBDTModelSc
     tree_infos = lgb_json.get("tree_info", [])
     trees = [_convert_lgb_tree(t) for t in tree_infos]
 
-    # LightGBM uses max_depth=-1 to mean "no limit", but our persisted schema
-    # must be compatible with the Rust loader which expects `u32`.
-    max_depth = _forest_max_depth(trees)
-
     # Tree groups - LightGBM stores trees round-robin across groups
     tree_groups = [i % n_groups for i in range(len(trees))]
 
@@ -716,39 +704,9 @@ def lightgbm_to_schema(path_or_booster: str | Path | lgb.Booster) -> GBDTModelSc
         base_score=[0.0] * n_groups,  # LightGBM handles base score differently
     )
 
-    # Build minimal config
-    # Use model_validate() to avoid type-checker confusion around aliased fields (e.g. `lambda`).
-    config = GBDTConfigSchema.model_validate({
-        "objective": SquaredLossObjective(type="squared_loss"),
-        "metric": NoneMetric(type="none"),
-        "n_trees": len(trees),
-        "learning_rate": lgb_json.get("learning_rate", 0.1),
-        "growth_strategy": DepthWiseGrowth(type="depth_wise", max_depth=max_depth),
-        "max_onehot_cats": 4,
-        "lambda_": lgb_json.get("lambda_l2", 0.0),
-        "alpha": lgb_json.get("lambda_l1", 0.0),
-        "min_child_weight": lgb_json.get("min_sum_hessian_in_leaf", 1e-3),
-        "min_gain": lgb_json.get("min_gain_to_split", 0.0),
-        "min_samples_leaf": lgb_json.get("min_data_in_leaf", 20),
-        "subsample": lgb_json.get("bagging_fraction", 1.0),
-        "colsample_bytree": lgb_json.get("feature_fraction", 1.0),
-        "colsample_bylevel": 1.0,
-        "binning": {
-            "max_bins": lgb_json.get("max_bin", 255),
-            "sparsity_threshold": 0.3,
-            "enable_bundling": True,
-            "max_categorical_cardinality": 64,
-            "sample_cnt": 200000,
-        },
-        "linear_leaves": None,
-        "early_stopping_rounds": None,
-        "cache_size": 0,
-        "seed": 0,
-        "verbosity": "silent",
-        "extra": {"lightgbm_objective": objective},
-    })
+    objective_schema = _objective_schema_from_lightgbm(objective, num_class)
 
-    return GBDTModelSchema(meta=meta, forest=forest, config=config)
+    return GBDTModelSchema(meta=meta, forest=forest, objective=objective_schema)
 
 
 def _tree_max_depth(tree: TreeSchema) -> int:
@@ -817,7 +775,7 @@ def lightgbm_to_json_bytes(path_or_booster: str | Path | lgb.Booster, *, pretty:
     schema = lightgbm_to_schema(path_or_booster)
 
     envelope = JsonEnvelope[GBDTModelSchema](
-        bstr_version=1,
+        bstr_version=2,
         model_type="gbdt",
         model=schema,
     )
