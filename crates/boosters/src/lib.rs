@@ -21,12 +21,6 @@
 //! Use [`persist`] module to save/load models in native binary or JSON format.
 //! For converting XGBoost/LightGBM models, use the Python utilities in `boosters.convert`.
 
-// RFC-0018 Migration: Allow deprecated types throughout crate during migration.
-// This will be removed once migration is complete and deprecated module is deleted.
-#![allow(deprecated)]
-
-// Re-export approx traits for users who want to compare predictions
-pub use approx;
 pub mod data;
 pub mod explainability;
 pub mod inference;

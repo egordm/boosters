@@ -1,14 +1,14 @@
 //! Training throughput benchmarks using the high-level model API.
 
-#[path = "common/mod.rs"]
-mod common;
+#[path = "common/criterion_config.rs"]
+mod criterion_config;
 
 use boosters::model::GBDTModel;
 use boosters::model::gbdt::GBDTConfig;
 use boosters::testing::synthetic_datasets::synthetic_regression;
 use boosters::training::{Metric, Objective};
 
-use common::criterion_config::default_criterion;
+use criterion_config::default_criterion;
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 

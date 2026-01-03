@@ -1,5 +1,3 @@
-use approx::AbsDiffEq;
-
 /// Format a git-style diff between two f32 slices.
 #[doc(hidden)]
 pub fn format_slice_diff(actual: &[f32], expected: &[f32], epsilon: f32) -> String {
@@ -18,7 +16,7 @@ pub fn format_slice_diff(actual: &[f32], expected: &[f32], epsilon: f32) -> Stri
         let exp = expected.get(i);
 
         match (act, exp) {
-            (Some(&a), Some(&e)) if !a.abs_diff_eq(&e, epsilon) => {
+            (Some(&a), Some(&e)) if (a - e).abs() > epsilon => {
                 result.push_str(&format!("[{i:4}] - {e:>14.6}  (expected)\n"));
                 result.push_str(&format!("       + {a:>14.6}  (actual)\n"));
                 diff_count += 1;
@@ -40,7 +38,6 @@ pub fn format_slice_diff(actual: &[f32], expected: &[f32], epsilon: f32) -> Stri
     }
     result
 }
-
 /// Format a diff between f32 actual and f64 expected slices.
 #[doc(hidden)]
 pub fn format_slice_diff_f64(actual: &[f32], expected: &[f64], epsilon: f64) -> String {
@@ -59,7 +56,7 @@ pub fn format_slice_diff_f64(actual: &[f32], expected: &[f64], epsilon: f64) -> 
         let exp = expected.get(i);
 
         match (act, exp) {
-            (Some(&a), Some(&e)) if !(a as f64).abs_diff_eq(&e, epsilon) => {
+            (Some(&a), Some(&e)) if ((a as f64) - e).abs() > epsilon => {
                 result.push_str(&format!("[{i:4}] - {e:>14.6}  (expected)\n"));
                 result.push_str(&format!("       + {a:>14.6}  (actual)\n"));
                 diff_count += 1;
@@ -137,7 +134,6 @@ macro_rules! assert_slices_approx_eq {
         }
     }};
 }
-
 /// Assert f32 actual slice approximately equals f64 expected slice.
 ///
 /// Useful when expected values come from test data stored as f64.

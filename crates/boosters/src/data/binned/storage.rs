@@ -1333,12 +1333,12 @@ mod tests {
     // =========================================================================
 
     use rand::{Rng, SeedableRng};
-    use rand_chacha::ChaCha8Rng;
+    use rand_xoshiro::Xoshiro256PlusPlus;
 
     /// Generate random NumericStorage and verify invariants
     #[test]
     fn test_property_numeric_storage_invariants() {
-        let mut rng = ChaCha8Rng::seed_from_u64(12345);
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(12345);
 
         for _ in 0..20 {
             let n_features = rng.gen_range(1..=10);
@@ -1369,7 +1369,7 @@ mod tests {
     /// Generate random CategoricalStorage and verify invariants
     #[test]
     fn test_property_categorical_storage_invariants() {
-        let mut rng = ChaCha8Rng::seed_from_u64(67890);
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(67890);
 
         for _ in 0..20 {
             let n_features = rng.gen_range(1..=10);
@@ -1408,7 +1408,7 @@ mod tests {
     /// Generate random SparseNumericStorage and verify invariants
     #[test]
     fn test_property_sparse_numeric_storage_invariants() {
-        let mut rng = ChaCha8Rng::seed_from_u64(11111);
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(11111);
 
         for _ in 0..20 {
             let n_samples = rng.gen_range(10..=100);
@@ -1496,7 +1496,7 @@ mod tests {
     /// Test U16 storage with values > 255
     #[test]
     fn test_property_u16_large_bins() {
-        let mut rng = ChaCha8Rng::seed_from_u64(22222);
+        let mut rng = Xoshiro256PlusPlus::seed_from_u64(22222);
 
         let n_features = 3;
         let n_samples = 10;

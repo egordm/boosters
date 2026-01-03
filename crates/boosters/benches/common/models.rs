@@ -1,5 +1,5 @@
 use rand::{Rng, SeedableRng};
-use rand_chacha::ChaCha8Rng;
+use rand_xoshiro::Xoshiro256PlusPlus;
 
 use boosters::repr::gbdt::MutableTree;
 use boosters::repr::gbdt::{Forest, ScalarLeaf};
@@ -14,7 +14,7 @@ pub struct LoadedForestModel {
 fn build_balanced_tree(
     depth: u32,
     n_features: u32,
-    rng: &mut ChaCha8Rng,
+    rng: &mut Xoshiro256PlusPlus,
 ) -> boosters::repr::gbdt::Tree<ScalarLeaf> {
     let depth = depth.clamp(1, 12);
     let n_nodes = (1u32 << (depth + 1)) - 1;
@@ -42,7 +42,7 @@ fn build_balanced_tree(
 }
 
 fn build_forest(n_features: usize, n_trees: usize, depth: u32, seed: u64) -> Forest<ScalarLeaf> {
-    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
     let mut forest = Forest::for_regression().with_base_score(vec![0.0]);
     for _ in 0..n_trees {
         let tree = build_balanced_tree(depth, n_features as u32, &mut rng);
