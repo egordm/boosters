@@ -350,62 +350,62 @@ Make pydantic optional via extras.
 
 ---
 
-## Epic 4: Python Conversion Utilities
+## Epic 4: Python Conversion Utilities ✅
 
 Provide Python utilities for converting XGBoost/LightGBM models to `.bstr.json`.
 
-### Story 4.1: XGBoost Converter [L]
+### Story 4.1: XGBoost Converter [L] ✅
 
 Implement XGBoost → `.bstr.json` conversion.
 
 **Tasks**:
 
-- [ ] 4.1.1: Create `packages/boosters-python/src/boosters/convert.py`
-- [ ] 4.1.2: Implement `xgboost_to_json_bytes(path_or_booster) -> bytes`
-- [ ] 4.1.3: Implement `xgboost_to_schema(path_or_booster) -> ModelFile` (optional)
-- [ ] 4.1.4: Handle file path input (read JSON) and Booster object input
-- [ ] 4.1.5: Test with gbtree, gblinear, and dart model types
-- [ ] 4.1.6: Test with multi-class and multi-output models
-- [ ] 4.1.7: Compare predictions: original XGBoost vs boosters-loaded (tolerance 1e-6)
+- [x] 4.1.1: Create `packages/boosters-python/src/boosters/convert.py`
+- [x] 4.1.2: Implement `xgboost_to_json_bytes(path_or_booster) -> bytes`
+- [x] 4.1.3: Implement `xgboost_to_schema(path_or_booster) -> ModelFile` (optional)
+- [x] 4.1.4: Handle file path input (read JSON) and Booster object input
+- [x] 4.1.5: Test with gbtree, gblinear, and dart model types
+- [x] 4.1.6: Test with multi-class and multi-output models
+- [x] 4.1.7: Compare predictions: original XGBoost vs boosters-loaded (tolerance 1e-6)
 
 **Definition of Done**:
 
-- XGBoost models convert to valid `.bstr.json`
-- Converted models load correctly in boosters
-- All XGBoost test cases from datagen covered
-- Converter outputs JSON-only and does not require instantiating boosters runtime model types
+- XGBoost models convert to valid `.bstr.json` ✅
+- Converted models load correctly in boosters ✅
+- All XGBoost test cases from datagen covered ✅
+- Converter outputs JSON-only and does not require instantiating boosters runtime model types ✅
 
-### Story 4.2: LightGBM Converter [L]
+### Story 4.2: LightGBM Converter [L] ✅
 
 Implement LightGBM → `.bstr.json` conversion.
 
 **Tasks**:
 
-- [ ] 4.2.1: Implement `lightgbm_to_json_bytes(path_or_booster) -> bytes`
-- [ ] 4.2.2: Implement `lightgbm_to_schema(path_or_booster) -> ModelFile` (optional)
-- [ ] 4.2.3: Handle text model file input and Booster object input
-- [ ] 4.2.4: Test with regression, binary, and multiclass models
-- [ ] 4.2.5: Test with linear tree models
-- [ ] 4.2.6: Compare predictions: original LightGBM vs boosters-loaded (tolerance 1e-6)
+- [x] 4.2.1: Implement `lightgbm_to_json_bytes(path_or_booster) -> bytes`
+- [x] 4.2.2: Implement `lightgbm_to_schema(path_or_booster) -> ModelFile` (optional)
+- [x] 4.2.3: Handle text model file input and Booster object input
+- [x] 4.2.4: Test with regression, binary, and multiclass models
+- [x] 4.2.5: Test with linear tree models
+- [x] 4.2.6: Compare predictions: original LightGBM vs boosters-loaded (tolerance 1e-6)
 
 **Definition of Done**:
 
-- LightGBM models convert to valid `.bstr.json`
-- Converted models load correctly in boosters
-- All LightGBM test cases from datagen covered
-- Converter outputs JSON-only and does not require instantiating boosters runtime model types
+- LightGBM models convert to valid `.bstr.json` ✅
+- Converted models load correctly in boosters ✅
+- All LightGBM test cases from datagen covered ✅
+- Converter outputs JSON-only and does not require instantiating boosters runtime model types ✅
 
-### Story 4.3: Review and Demo (Epic 4) [S]
+### Story 4.3: Review and Demo (Epic 4) [S] ✅
 
 **Tasks**:
 
-- [ ] 4.3.1: Stakeholder feedback check for Epic 4
-- [ ] 4.3.2: Demo: convert XGBoost model, load in boosters, compare predictions
-- [ ] 4.3.3: Document in `workdir/tmp/development_review_<timestamp>_epic4.md`
+- [x] 4.3.1: Stakeholder feedback check for Epic 4
+- [x] 4.3.2: Demo: convert XGBoost model, load in boosters, compare predictions
+- [x] 4.3.3: Document in `tmp/development_review_2026-01-03_epic4.md`
 
 **Definition of Done**:
 
-- Demo executed and documented
+- Demo executed and documented ✅
 
 ---
 

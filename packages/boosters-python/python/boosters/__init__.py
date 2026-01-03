@@ -26,6 +26,12 @@ from boosters._boosters_rs import (
     Verbosity,
 )
 from boosters.config import GBDTConfig, GBLinearConfig
+from boosters.convert import (
+    lightgbm_to_json_bytes,
+    lightgbm_to_schema,
+    xgboost_to_json_bytes,
+    xgboost_to_schema,
+)
 from boosters.dataset import Dataset, DatasetBuilder, Feature
 from boosters.metrics import Metric
 from boosters.model import GBDTModel, GBLinearModel
@@ -52,4 +58,8 @@ __all__ = [
     "ReadError",
     "Verbosity",
     "__version__",
+    "lightgbm_to_json_bytes",
+    "lightgbm_to_schema",
+    "xgboost_to_json_bytes",
+    "xgboost_to_schema",
 ]
