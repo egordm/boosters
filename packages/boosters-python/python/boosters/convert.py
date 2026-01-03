@@ -105,11 +105,7 @@ def _parse_base_scores(value: Any, n_groups: int, objective: str) -> list[float]
         s = value.strip()
         if s.startswith("[") and s.endswith("]"):
             inner = s[1:-1]
-            scores = (
-                [float(x.strip()) for x in inner.split(",")]
-                if "," in inner
-                else [float(inner)] * n_groups
-            )
+            scores = [float(x.strip()) for x in inner.split(",")] if "," in inner else [float(inner)] * n_groups
         else:
             scores = [float(s)] * n_groups
     else:
@@ -588,7 +584,7 @@ def _convert_lgb_tree(tree_data: dict[str, Any]) -> TreeSchema:
     out_default_left: list[bool] = []
     out_leaf_values: list[float] = []
 
-    for node_id, node in enumerate(nodes):
+    for node in nodes:
         if node["is_leaf"]:
             # Leaf node: placeholder values for split info, actual leaf value
             out_split_indices.append(0)
@@ -656,6 +652,10 @@ def lightgbm_to_schema(path_or_booster: str | Path | lgb.Booster) -> GBDTModelSc
     tree_infos = lgb_json.get("tree_info", [])
     trees = [_convert_lgb_tree(t) for t in tree_infos]
 
+    # LightGBM uses max_depth=-1 to mean "no limit", but our persisted schema
+    # must be compatible with the Rust loader which expects `u32`.
+    max_depth = _forest_max_depth(trees)
+
     # Tree groups - LightGBM stores trees round-robin across groups
     tree_groups = [i % n_groups for i in range(len(trees))]
 
@@ -680,12 +680,12 @@ def lightgbm_to_schema(path_or_booster: str | Path | lgb.Booster) -> GBDTModelSc
     )
 
     # Build minimal config
-    config = GBDTConfigSchema(
+    config = GBDTConfigSchema(  # type: ignore[call-arg]
         objective=SquaredLossObjective(type="squared_loss"),
         metric=NoneMetric(type="none"),
         n_trees=len(trees),
         learning_rate=lgb_json.get("learning_rate", 0.1),
-        growth_strategy=DepthWiseGrowth(type="depth_wise", max_depth=lgb_json.get("max_depth", -1)),
+        growth_strategy=DepthWiseGrowth(type="depth_wise", max_depth=max_depth),
         max_onehot_cats=4,
         lambda_=lgb_json.get("lambda_l2", 0.0),
         alpha=lgb_json.get("lambda_l1", 0.0),
@@ -711,6 +711,47 @@ def lightgbm_to_schema(path_or_booster: str | Path | lgb.Booster) -> GBDTModelSc
     )
 
     return GBDTModelSchema(meta=meta, forest=forest, config=config)
+
+
+def _tree_max_depth(tree: TreeSchema) -> int:
+    """Compute max depth (root depth = 0) from a TreeSchema.
+
+    Note: our TreeSchema uses `0` as the sentinel for "no child".
+    Root node id is also `0`, but internal nodes never reference `0` as a child,
+    so we treat a node as leaf when both children are `0`.
+    """
+    if tree.num_nodes <= 0:
+        return 0
+
+    max_depth = 0
+    stack: list[tuple[int, int]] = [(0, 0)]  # (node_id, depth)
+
+    while stack:
+        node_id, depth = stack.pop()
+        max_depth = max(max_depth, depth)
+
+        if node_id < 0 or node_id >= tree.num_nodes:
+            continue
+
+        left = int(tree.children_left[node_id])
+        right = int(tree.children_right[node_id])
+
+        is_leaf = left == 0 and right == 0
+        if is_leaf:
+            continue
+
+        if left != 0:
+            stack.append((left, depth + 1))
+        if right != 0:
+            stack.append((right, depth + 1))
+
+    return max_depth
+
+
+def _forest_max_depth(trees: list[TreeSchema]) -> int:
+    if not trees:
+        return 0
+    return max(_tree_max_depth(t) for t in trees)
 
 
 def lightgbm_to_json_bytes(path_or_booster: str | Path | lgb.Booster, *, pretty: bool = True) -> bytes:

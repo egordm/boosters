@@ -1,0 +1,41 @@
+name: Fuzz
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly fuzz run (Sunday 03:00 UTC)
+    - cron: "0 3 * * 0"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz-binary-read:
+    name: cargo-fuzz (binary read)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-fuzz-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-fuzz-
+
+      - name: Run fuzz target (bounded)
+        run: |
+          cd crates/boosters-fuzz
+          cargo +nightly fuzz run fuzz_binary_read -- -max_total_time=900

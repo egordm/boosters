@@ -372,15 +372,103 @@ impl TryFrom<TreeSchema> for Tree<ScalarLeaf> {
 
         let n_nodes = schema.num_nodes as usize;
 
+        // Basic length validation (avoid debug_assert panics in Tree::new).
+        if schema.split_indices.len() != n_nodes
+            || schema.thresholds.len() != n_nodes
+            || schema.children_left.len() != n_nodes
+            || schema.children_right.len() != n_nodes
+            || schema.default_left.len() != n_nodes
+        {
+            return Err(super::error::ReadError::Validation(
+                "Tree schema arrays must all have length num_nodes".into(),
+            ));
+        }
+
+        if let Some(gains) = &schema.gains
+            && gains.len() != n_nodes
+        {
+            return Err(super::error::ReadError::Validation(
+                "Tree schema gains must have length num_nodes".into(),
+            ));
+        }
+
+        if let Some(covers) = &schema.covers
+            && covers.len() != n_nodes
+        {
+            return Err(super::error::ReadError::Validation(
+                "Tree schema covers must have length num_nodes".into(),
+            ));
+        }
+
+        if schema.categories.node_indices.len() != schema.categories.category_sets.len() {
+            return Err(super::error::ReadError::Validation(
+                "Tree schema categories.node_indices and categories.category_sets must have same length".into(),
+            ));
+        }
+        for &node_id in &schema.categories.node_indices {
+            if node_id as usize >= n_nodes {
+                return Err(super::error::ReadError::Validation(
+                    "Tree schema categories contains out-of-bounds node index".into(),
+                ));
+            }
+        }
+
+        if schema.linear_coefficients.node_indices.len()
+            != schema.linear_coefficients.coefficients.len()
+        {
+            return Err(super::error::ReadError::Validation(
+                "Tree schema linear_coefficients.node_indices and linear_coefficients.coefficients must have same length".into(),
+            ));
+        }
+        for (idx, &node_id) in schema.linear_coefficients.node_indices.iter().enumerate() {
+            if node_id as usize >= n_nodes {
+                return Err(super::error::ReadError::Validation(
+                    "Tree schema linear_coefficients contains out-of-bounds node index".into(),
+                ));
+            }
+            let packed = &schema.linear_coefficients.coefficients[idx];
+            if packed.len() > 1 {
+                // packed = [intercept, feat_idx..., coef...]
+                let remaining = packed.len() - 1;
+                if !remaining.is_multiple_of(2) {
+                    return Err(super::error::ReadError::Validation(
+                        "Tree schema linear_coefficients packed array must have length 1 + 2*k"
+                            .into(),
+                    ));
+                }
+            }
+        }
+
         // Convert leaf values
         let leaf_values: Vec<ScalarLeaf> = match schema.leaf_values {
             LeafValuesSchema::Scalar { values } => {
+                if values.len() != n_nodes {
+                    return Err(super::error::ReadError::Validation(
+                        "Tree schema leaf_values must have length num_nodes".into(),
+                    ));
+                }
                 values.into_iter().map(|v| ScalarLeaf(v as f32)).collect()
             }
-            LeafValuesSchema::Vector { .. } => {
-                return Err(super::error::ReadError::Validation(
-                    "VectorLeaf not yet supported for Tree<ScalarLeaf>".into(),
-                ));
+            LeafValuesSchema::Vector { values } => {
+                if values.len() != n_nodes {
+                    return Err(super::error::ReadError::Validation(
+                        "Tree schema leaf_values must have length num_nodes".into(),
+                    ));
+                }
+
+                // Allow vector leaves only when K=1 (degenerate vector leaf). True multi-output
+                // vector leaves are handled at ForestSchema level by expansion to per-group trees.
+                let k = values.first().map(|v| v.len()).unwrap_or(0);
+                if k != 1 || values.iter().any(|v| v.len() != k) {
+                    return Err(super::error::ReadError::Validation(
+                        "VectorLeaf requires K=1 for Tree<ScalarLeaf> (multi-output is forest-level)".into(),
+                    ));
+                }
+
+                values
+                    .into_iter()
+                    .map(|v| ScalarLeaf(v.first().copied().unwrap_or(0.0) as f32))
+                    .collect()
             }
         };
 
@@ -472,6 +560,10 @@ impl TryFrom<TreeSchema> for Tree<ScalarLeaf> {
             tree
         };
 
+        tree.validate().map_err(|e| {
+            super::error::ReadError::Validation(format!("Invalid tree structure: {e:?}"))
+        })?;
+
         Ok(tree)
     }
 }
@@ -499,25 +591,273 @@ impl TryFrom<ForestSchema> for Forest<ScalarLeaf> {
     type Error = super::error::ReadError;
 
     fn try_from(schema: ForestSchema) -> Result<Self, Self::Error> {
-        let n_groups = schema.n_groups as u32;
-        let mut forest = Forest::new(n_groups);
+        let n_groups_usize = schema.n_groups;
+        let n_groups = n_groups_usize as u32;
+
+        if schema.base_score.len() != n_groups_usize {
+            return Err(super::error::ReadError::Validation(
+                "Forest schema base_score must have length n_groups".into(),
+            ));
+        }
+
+        if let Some(groups) = &schema.tree_groups
+            && groups.len() != schema.trees.len()
+        {
+            return Err(super::error::ReadError::Validation(
+                "Forest schema tree_groups must have same length as trees".into(),
+            ));
+        }
 
         // Set base score
         let base_scores: Vec<f32> = schema.base_score.iter().map(|&s| s as f32).collect();
-        forest = forest.with_base_score(base_scores);
+        let mut forest = Forest::new(n_groups).with_base_score(base_scores);
 
         // Add trees
         let tree_groups: Vec<u32> = schema
             .tree_groups
-            .map(|groups| groups.iter().map(|&g| g as u32).collect())
+            .map(|groups| groups.into_iter().map(|g| g as u32).collect())
             .unwrap_or_else(|| vec![0; schema.trees.len()]);
 
-        for (tree_schema, group) in schema.trees.into_iter().zip(tree_groups) {
-            let tree = Tree::try_from(tree_schema)?;
-            forest.push_tree(tree, group);
+        for (tree_idx, tree_schema) in schema.trees.into_iter().enumerate() {
+            let group = tree_groups[tree_idx];
+            if group >= n_groups {
+                return Err(super::error::ReadError::Validation(
+                    "Forest schema tree group out of range".into(),
+                ));
+            }
+
+            match &tree_schema.leaf_values {
+                LeafValuesSchema::Scalar { .. } => {
+                    let tree = Tree::try_from(tree_schema)?;
+                    forest.push_tree(tree, group);
+                }
+                LeafValuesSchema::Vector { values } => {
+                    let n_nodes = tree_schema.num_nodes as usize;
+                    if values.len() != n_nodes {
+                        return Err(super::error::ReadError::Validation(
+                            "Tree schema leaf_values must have length num_nodes".into(),
+                        ));
+                    }
+
+                    let k = values.first().map(|v| v.len()).unwrap_or(0);
+                    if k == 0 || values.iter().any(|v| v.len() != k) {
+                        return Err(super::error::ReadError::Validation(
+                            "VectorLeaf values must have consistent non-zero length".into(),
+                        ));
+                    }
+
+                    if k == 1 {
+                        // Degenerate vector leaf: treat as scalar.
+                        let scalar_values: Vec<f64> = values
+                            .iter()
+                            .map(|v| v.first().copied().unwrap_or(0.0))
+                            .collect();
+
+                        let TreeSchema {
+                            num_nodes,
+                            split_indices,
+                            thresholds,
+                            children_left,
+                            children_right,
+                            default_left,
+                            leaf_values: _,
+                            categories,
+                            linear_coefficients,
+                            gains,
+                            covers,
+                        } = tree_schema;
+
+                        let tree = Tree::try_from(TreeSchema {
+                            num_nodes,
+                            split_indices,
+                            thresholds,
+                            children_left,
+                            children_right,
+                            default_left,
+                            leaf_values: LeafValuesSchema::Scalar {
+                                values: scalar_values,
+                            },
+                            categories,
+                            linear_coefficients,
+                            gains,
+                            covers,
+                        })?;
+                        forest.push_tree(tree, group);
+                    } else if k == n_groups_usize {
+                        // Multi-output vector leaf tree: expand into K scalar trees.
+                        let TreeSchema {
+                            num_nodes,
+                            split_indices,
+                            thresholds,
+                            children_left,
+                            children_right,
+                            default_left,
+                            leaf_values: _,
+                            categories,
+                            linear_coefficients,
+                            gains,
+                            covers,
+                        } = tree_schema;
+
+                        for out_group in 0..n_groups_usize {
+                            let scalar_values: Vec<f64> =
+                                values.iter().map(|v| v[out_group]).collect();
+
+                            let tree = Tree::try_from(TreeSchema {
+                                num_nodes,
+                                split_indices: split_indices.clone(),
+                                thresholds: thresholds.clone(),
+                                children_left: children_left.clone(),
+                                children_right: children_right.clone(),
+                                default_left: default_left.clone(),
+                                leaf_values: LeafValuesSchema::Scalar {
+                                    values: scalar_values,
+                                },
+                                categories: categories.clone(),
+                                linear_coefficients: linear_coefficients.clone(),
+                                gains: gains.clone(),
+                                covers: covers.clone(),
+                            })?;
+                            forest.push_tree(tree, out_group as u32);
+                        }
+                    } else {
+                        return Err(super::error::ReadError::Validation(
+                            "VectorLeaf length must be 1 or equal to forest n_groups".into(),
+                        ));
+                    }
+                }
+            }
         }
 
+        forest
+            .validate()
+            .map_err(|e| super::error::ReadError::Validation(format!("Invalid forest: {e:?}")))?;
+
         Ok(forest)
+    }
+}
+
+#[cfg(test)]
+mod roundtrip_tests {
+    use super::*;
+    use crate::persist::error::ReadError;
+    use crate::repr::gbdt::{Forest, ScalarLeaf, Tree};
+
+    fn minimal_tree_schema_scalar() -> TreeSchema {
+        TreeSchema {
+            num_nodes: 1,
+            split_indices: vec![0],
+            thresholds: vec![0.0],
+            children_left: vec![0],
+            children_right: vec![0],
+            default_left: vec![false],
+            leaf_values: LeafValuesSchema::Scalar { values: vec![1.0] },
+            categories: CategoriesSchema::default(),
+            linear_coefficients: LinearCoefficientsSchema::default(),
+            gains: None,
+            covers: None,
+        }
+    }
+
+    #[test]
+    fn tree_schema_mismatched_lengths_rejected() {
+        let bad = TreeSchema {
+            num_nodes: 1,
+            split_indices: vec![0],
+            thresholds: vec![],
+            children_left: vec![0],
+            children_right: vec![0],
+            default_left: vec![false],
+            leaf_values: LeafValuesSchema::Scalar { values: vec![1.0] },
+            categories: CategoriesSchema::default(),
+            linear_coefficients: LinearCoefficientsSchema::default(),
+            gains: None,
+            covers: None,
+        };
+
+        let err = Tree::<ScalarLeaf>::try_from(bad).unwrap_err();
+        assert!(matches!(err, ReadError::Validation(_)));
+    }
+
+    #[test]
+    fn tree_schema_out_of_bounds_child_rejected() {
+        let bad = TreeSchema {
+            num_nodes: 3,
+            split_indices: vec![0, 0, 0],
+            thresholds: vec![0.5, 0.0, 0.0],
+            children_left: vec![1, 0, 0],
+            children_right: vec![99, 0, 0],
+            default_left: vec![true, false, false],
+            leaf_values: LeafValuesSchema::Scalar {
+                values: vec![0.0, 1.0, 2.0],
+            },
+            categories: CategoriesSchema::default(),
+            linear_coefficients: LinearCoefficientsSchema::default(),
+            gains: None,
+            covers: None,
+        };
+
+        let err = Tree::<ScalarLeaf>::try_from(bad).unwrap_err();
+        assert!(matches!(err, ReadError::Validation(_)));
+    }
+
+    #[test]
+    fn forest_schema_tree_groups_len_mismatch_rejected() {
+        let schema = ForestSchema {
+            trees: vec![minimal_tree_schema_scalar()],
+            tree_groups: Some(vec![0, 0]),
+            n_groups: 1,
+            base_score: vec![0.0],
+        };
+        let err = Forest::<ScalarLeaf>::try_from(schema).unwrap_err();
+        assert!(matches!(err, ReadError::Validation(_)));
+    }
+
+    #[test]
+    fn forest_schema_base_score_len_mismatch_rejected() {
+        let schema = ForestSchema {
+            trees: vec![minimal_tree_schema_scalar()],
+            tree_groups: None,
+            n_groups: 2,
+            base_score: vec![0.0],
+        };
+        let err = Forest::<ScalarLeaf>::try_from(schema).unwrap_err();
+        assert!(matches!(err, ReadError::Validation(_)));
+    }
+
+    #[test]
+    fn vector_leaf_k1_is_accepted_as_scalar() {
+        let tree_schema = TreeSchema {
+            leaf_values: LeafValuesSchema::Vector {
+                values: vec![vec![1.0]],
+            },
+            ..minimal_tree_schema_scalar()
+        };
+
+        let tree = Tree::<ScalarLeaf>::try_from(tree_schema).unwrap();
+        tree.validate().unwrap();
+    }
+
+    #[test]
+    fn vector_leaf_expands_to_group_trees() {
+        let tree_schema = TreeSchema {
+            leaf_values: LeafValuesSchema::Vector {
+                values: vec![vec![1.0, 2.0]],
+            },
+            ..minimal_tree_schema_scalar()
+        };
+
+        let schema = ForestSchema {
+            trees: vec![tree_schema],
+            tree_groups: None,
+            n_groups: 2,
+            base_score: vec![0.0, 0.0],
+        };
+
+        let forest = Forest::<ScalarLeaf>::try_from(schema).unwrap();
+        assert_eq!(forest.n_groups(), 2);
+        assert_eq!(forest.n_trees(), 2);
+        assert_eq!(forest.tree_groups(), &[0, 1]);
     }
 }
 

@@ -21,71 +21,187 @@ use boosters::repr::gblinear::LinearModel;
 
 /// Strategy for generating valid f32 values (no NaN/Inf).
 fn arb_finite_f32() -> impl Strategy<Value = f32> {
-    prop::num::f32::ANY
-        .prop_filter("must be finite", |x| x.is_finite())
-        .prop_map(|x| x.clamp(-1e6, 1e6))
+    // IMPORTANT: avoid `prop_filter(is_finite)` here.
+    // Many generated models contain *lots* of floats; filtering any single float
+    // causes the whole model strategy to reject, which quickly leads to
+    // `Too many local rejects`.
+    prop::num::f32::NORMAL.prop_map(|x| x.clamp(-1e6, 1e6))
 }
 
 /// Build a simple tree with the given depth using MutableTree.
-fn build_tree_from_depth(
-    depth: usize,
-    leaf_values: &[f32],
-    thresholds: &[f32],
-) -> boosters::repr::gbdt::Tree<ScalarLeaf> {
-    match depth {
-        0 => {
-            // Single leaf
-            let leaf_val = leaf_values.first().copied().unwrap_or(0.0);
-            let mut tree = MutableTree::<ScalarLeaf>::with_capacity(1);
-            tree.init_root_with_n_nodes(1);
-            tree.make_leaf(0, ScalarLeaf(leaf_val));
-            tree.freeze()
-        }
-        1 => {
-            // One split, two leaves
-            let thresh = thresholds.first().copied().unwrap_or(0.5);
-            let lv0 = leaf_values.first().copied().unwrap_or(1.0);
-            let lv1 = leaf_values.get(1).copied().unwrap_or(2.0);
+#[derive(Clone, Debug)]
+enum SplitSpec {
+    Numeric {
+        feature: u32,
+        threshold: f32,
+        default_left: bool,
+    },
+    Categorical {
+        feature: u32,
+        category_bitset_words: Vec<u32>,
+        default_left: bool,
+    },
+}
 
-            let mut tree = MutableTree::<ScalarLeaf>::with_capacity(3);
-            tree.init_root_with_n_nodes(3);
-            tree.set_numeric_split(0, 0, thresh, true, 1, 2);
-            tree.make_leaf(1, ScalarLeaf(lv0));
-            tree.make_leaf(2, ScalarLeaf(lv1));
-            tree.freeze()
-        }
-        _ => {
-            // Two+ splits: three internal nodes, four leaves
-            let t0 = thresholds.first().copied().unwrap_or(0.5);
-            let t1 = thresholds.get(1).copied().unwrap_or(0.25);
-            let t2 = thresholds.get(2).copied().unwrap_or(0.75);
-            let lv0 = leaf_values.first().copied().unwrap_or(1.0);
-            let lv1 = leaf_values.get(1).copied().unwrap_or(2.0);
-            let lv2 = leaf_values.get(2).copied().unwrap_or(3.0);
-            let lv3 = leaf_values.get(3).copied().unwrap_or(4.0);
+#[derive(Clone, Debug)]
+struct LinearLeafSpec {
+    feature_indices: Vec<u32>,
+    coefficients: Vec<f32>,
+    intercept: f32,
+}
 
-            let mut tree = MutableTree::<ScalarLeaf>::with_capacity(7);
-            tree.init_root_with_n_nodes(7);
-            tree.set_numeric_split(0, 0, t0, true, 1, 2);
-            tree.set_numeric_split(1, 1, t1, true, 3, 4);
-            tree.set_numeric_split(2, 1, t2, true, 5, 6);
-            tree.make_leaf(3, ScalarLeaf(lv0));
-            tree.make_leaf(4, ScalarLeaf(lv1));
-            tree.make_leaf(5, ScalarLeaf(lv2));
-            tree.make_leaf(6, ScalarLeaf(lv3));
-            tree.freeze()
-        }
+#[derive(Clone, Debug)]
+enum NodeSpec {
+    Leaf {
+        value: f32,
+        linear: Option<LinearLeafSpec>,
+    },
+    Split {
+        split: SplitSpec,
+        left: Box<NodeSpec>,
+        right: Box<NodeSpec>,
+    },
+}
+
+fn count_nodes(spec: &NodeSpec) -> usize {
+    match spec {
+        NodeSpec::Leaf { .. } => 1,
+        NodeSpec::Split { left, right, .. } => 1 + count_nodes(left) + count_nodes(right),
     }
 }
 
-/// Strategy for generating a simple tree.
-fn arb_simple_tree() -> impl Strategy<Value = boosters::repr::gbdt::Tree<ScalarLeaf>> {
-    (
-        0usize..=2,
-        prop_vec(arb_finite_f32(), 4),
-        prop_vec(arb_finite_f32(), 3),
+fn build_tree_from_spec(spec: &NodeSpec) -> boosters::repr::gbdt::Tree<ScalarLeaf> {
+    let n_nodes = count_nodes(spec);
+    let mut builder = MutableTree::<ScalarLeaf>::with_capacity(n_nodes);
+    builder.init_root_with_n_nodes(n_nodes);
+
+    fn fill(builder: &mut MutableTree<ScalarLeaf>, spec: &NodeSpec, next_id: &mut u32) -> u32 {
+        let my_id = *next_id;
+        *next_id += 1;
+
+        match spec {
+            NodeSpec::Leaf { value, linear } => {
+                builder.make_leaf(my_id, ScalarLeaf(*value));
+                if let Some(l) = linear {
+                    builder.set_linear_leaf(
+                        my_id,
+                        l.feature_indices.clone(),
+                        l.intercept,
+                        l.coefficients.clone(),
+                    );
+                }
+            }
+            NodeSpec::Split { split, left, right } => {
+                let left_id = fill(builder, left, next_id);
+                let right_id = fill(builder, right, next_id);
+
+                match split {
+                    SplitSpec::Numeric {
+                        feature,
+                        threshold,
+                        default_left,
+                    } => builder.set_numeric_split(
+                        my_id,
+                        *feature,
+                        *threshold,
+                        *default_left,
+                        left_id,
+                        right_id,
+                    ),
+                    SplitSpec::Categorical {
+                        feature,
+                        category_bitset_words,
+                        default_left,
+                    } => builder.set_categorical_split(
+                        my_id,
+                        *feature,
+                        category_bitset_words.clone(),
+                        *default_left,
+                        left_id,
+                        right_id,
+                    ),
+                }
+            }
+        }
+
+        my_id
+    }
+
+    let mut next_id = 0u32;
+    let root_id = fill(&mut builder, spec, &mut next_id);
+    debug_assert_eq!(root_id, 0);
+    debug_assert_eq!(next_id as usize, n_nodes);
+
+    builder.freeze()
+}
+
+fn arb_split_spec(n_features: u32) -> impl Strategy<Value = SplitSpec> {
+    let max_feat = n_features.max(1);
+    prop_oneof![
+        (0u32..max_feat, arb_finite_f32(), any::<bool>(),).prop_map(
+            |(feature, threshold, default_left)| SplitSpec::Numeric {
+                feature,
+                threshold,
+                default_left,
+            }
+        ),
+        (0u32..max_feat, prop_vec(any::<u32>(), 1..=4), any::<bool>(),).prop_map(
+            |(feature, bitset, default_left)| SplitSpec::Categorical {
+                feature,
+                category_bitset_words: bitset,
+                default_left,
+            }
+        ),
+    ]
+}
+
+fn arb_linear_leaf_spec(n_features: u32) -> impl Strategy<Value = LinearLeafSpec> {
+    let max_feat = n_features.max(1);
+
+    // Keep these tiny so trees stay cheap.
+    (1usize..=3).prop_flat_map(move |len| {
+        (
+            prop_vec(0u32..max_feat, len),
+            prop_vec(arb_finite_f32(), len),
+            arb_finite_f32(),
+        )
+            .prop_map(|(mut idxs, coeffs, intercept)| {
+                idxs.sort_unstable();
+                idxs.dedup();
+                // If dedup shrank, truncate coeffs to match deterministically.
+                let coeffs = coeffs.into_iter().take(idxs.len()).collect::<Vec<_>>();
+                LinearLeafSpec {
+                    feature_indices: idxs,
+                    coefficients: coeffs,
+                    intercept,
+                }
+            })
+    })
+}
+
+fn arb_node_spec(max_depth: u32, n_features: u32) -> impl Strategy<Value = NodeSpec> {
+    let leaf = (
+        arb_finite_f32(),
+        prop::option::of(arb_linear_leaf_spec(n_features)),
     )
-        .prop_map(|(depth, leaves, thresholds)| build_tree_from_depth(depth, &leaves, &thresholds))
+        .prop_map(|(value, linear)| NodeSpec::Leaf { value, linear });
+
+    leaf.prop_recursive(max_depth, 2048, 2, move |inner| {
+        (arb_split_spec(n_features), inner.clone(), inner).prop_map(|(split, left, right)| {
+            NodeSpec::Split {
+                split,
+                left: Box::new(left),
+                right: Box::new(right),
+            }
+        })
+    })
+}
+
+fn arb_tree(
+    max_depth: u32,
+    n_features: u32,
+) -> impl Strategy<Value = boosters::repr::gbdt::Tree<ScalarLeaf>> {
+    arb_node_spec(max_depth, n_features).prop_map(|spec| build_tree_from_spec(&spec))
 }
 
 /// Strategy for generating a task with consistent n_groups.
@@ -103,25 +219,28 @@ fn arb_task_kind() -> impl Strategy<Value = (TaskKind, usize)> {
 }
 
 /// Strategy for generating a forest with a consistent task.
-fn arb_forest_with_task() -> impl Strategy<Value = (Forest<ScalarLeaf>, TaskKind, usize)> {
+fn arb_forest_with_task() -> impl Strategy<Value = (Forest<ScalarLeaf>, TaskKind, usize, usize)> {
     arb_task_kind().prop_flat_map(|(task, n_groups)| {
-        let n_trees = 1usize..=10;
+        let n_trees = 1usize..=100;
         let base_scores = prop_vec(arb_finite_f32(), n_groups);
-        let trees = prop_vec(arb_simple_tree(), n_trees);
-
-        (base_scores, trees).prop_map(move |(base, trees)| {
-            let mut forest = Forest::new(n_groups as u32).with_base_score(base);
-            for (i, tree) in trees.into_iter().enumerate() {
-                forest.push_tree(tree, (i % n_groups) as u32);
-            }
-            (forest, task, n_groups)
-        })
+        (1usize..=100, 1u32..=20, base_scores, n_trees)
+            .prop_flat_map(move |(n_features, max_depth, base, n_trees)| {
+                let trees = prop_vec(arb_tree(max_depth, n_features as u32), n_trees);
+                (Just(n_features), Just(max_depth), Just(base), trees)
+            })
+            .prop_map(move |(n_features, _max_depth, base, trees)| {
+                let mut forest = Forest::new(n_groups as u32).with_base_score(base);
+                for (i, tree) in trees.into_iter().enumerate() {
+                    forest.push_tree(tree, (i % n_groups) as u32);
+                }
+                (forest, task, n_groups, n_features)
+            })
     })
 }
 
 /// Strategy for generating a GBDT model.
 fn arb_gbdt_model() -> impl Strategy<Value = GBDTModel> {
-    (1usize..=100, arb_forest_with_task()).prop_map(|(n_features, (forest, task, n_groups))| {
+    arb_forest_with_task().prop_map(|(forest, task, n_groups, n_features)| {
         let meta = ModelMeta {
             n_features,
             n_groups,
@@ -140,8 +259,7 @@ fn arb_gblinear_model() -> impl Strategy<Value = GBLinearModel> {
     (1usize..=50, arb_task_kind()).prop_flat_map(|(n_features, (task, n_groups))| {
         let total = (n_features + 1) * n_groups;
         prop_vec(arb_finite_f32(), total).prop_map(move |weights| {
-            let arr =
-                ndarray::Array2::from_shape_vec((n_features + 1, n_groups), weights).unwrap();
+            let arr = ndarray::Array2::from_shape_vec((n_features + 1, n_groups), weights).unwrap();
             let linear = LinearModel::new(arr);
             let meta = ModelMeta {
                 n_features,

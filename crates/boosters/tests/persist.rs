@@ -1,7 +1,7 @@
 //! Integration tests for the native persist format.
 //!
-//! These tests load models from `.bstr.json` fixtures and verify prediction parity
-//! with expected outputs.
+//! These tests load models from `.model.bstr` / `.model.bstr.json` fixtures and verify
+//! prediction parity with expected outputs.
 
 use std::fs::File;
 use std::path::PathBuf;
@@ -12,7 +12,7 @@ use boosters::inference::gbdt::SimplePredictor;
 use boosters::persist::Model;
 use boosters::repr::gbdt::Forest;
 use boosters::repr::gblinear::LinearModel;
-use boosters::testing::{TestExpected, TestInput, DEFAULT_TOLERANCE_F64};
+use boosters::testing::{DEFAULT_TOLERANCE_F64, TestExpected, TestInput};
 
 // =============================================================================
 // Test Data Loading
@@ -42,8 +42,15 @@ fn load_json<T: DeserializeOwned>(path: &std::path::Path) -> T {
 }
 
 fn load_model_and_data(dir: &std::path::Path, name: &str) -> (Model, TestInput, TestExpected) {
-    let model = Model::load_json(dir.join(format!("{name}.model.bstr.json")))
-        .unwrap_or_else(|e| panic!("Failed to load model {name}: {e}"));
+    let bin_path = dir.join(format!("{name}.model.bstr"));
+    let json_path = dir.join(format!("{name}.model.bstr.json"));
+
+    let model = if bin_path.exists() {
+        Model::load_binary(bin_path)
+    } else {
+        Model::load_json(json_path)
+    }
+    .unwrap_or_else(|e| panic!("Failed to load model {name}: {e}"));
     let input: TestInput = load_json(&dir.join(format!("{name}.input.json")));
     let expected: TestExpected = load_json(&dir.join(format!("{name}.expected.json")));
     (model, input, expected)
@@ -51,19 +58,31 @@ fn load_model_and_data(dir: &std::path::Path, name: &str) -> (Model, TestInput, 
 
 fn load_gbtree(name: &str) -> (Forest, TestInput, TestExpected) {
     let (model, input, expected) = load_model_and_data(&gbtree_dir(), name);
-    let forest = model.into_gbdt().expect("expected GBDT model").forest().clone();
+    let forest = model
+        .into_gbdt()
+        .expect("expected GBDT model")
+        .forest()
+        .clone();
     (forest, input, expected)
 }
 
 fn load_gblinear(name: &str) -> (LinearModel, TestInput, TestExpected) {
     let (model, input, expected) = load_model_and_data(&gblinear_dir(), name);
-    let linear = model.into_gblinear().expect("expected GBLinear model").linear().clone();
+    let linear = model
+        .into_gblinear()
+        .expect("expected GBLinear model")
+        .linear()
+        .clone();
     (linear, input, expected)
 }
 
 fn load_dart(name: &str) -> (Forest, TestInput, TestExpected) {
     let (model, input, expected) = load_model_and_data(&dart_dir(), name);
-    let forest = model.into_gbdt().expect("expected GBDT model").forest().clone();
+    let forest = model
+        .into_gbdt()
+        .expect("expected GBDT model")
+        .forest()
+        .clone();
     (forest, input, expected)
 }
 

@@ -55,6 +55,57 @@ jobs:
       - name: Run full workspace checks
         run: uv run poe check
 
+  persist-cross-language:
+    name: Persist Cross-Language
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-crosslang-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-crosslang-
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Build Python bindings
+        run: uv run poe python:develop --release
+
+      - name: Rust -> binary (.bstr) and Python reads
+        run: |
+          FIXTURE=crates/boosters/tests/test-cases/persist/v1/gbtree/inference/gbtree_regression.model.bstr.json
+          OUT_BSTR=target/tmp/rust_written.model.bstr
+          mkdir -p target/tmp
+          cargo run --package boosters --example persist_json_to_bstr -- "$FIXTURE" "$OUT_BSTR"
+          uv run python -c "import boosters; b=open('$OUT_BSTR','rb').read(); m=boosters.Model.load_from_bytes(b); info=boosters.Model.inspect_bytes(b); assert info.schema_version >= 1"
+
+      - name: Python schema -> JSON (.bstr.json) and Rust reads
+        run: |
+          FIXTURE=crates/boosters/tests/test-cases/persist/v1/gbtree/inference/gbtree_regression.model.bstr.json
+          OUT_JSON=target/tmp/python_written.model.bstr.json
+          OUT_BSTR=target/tmp/rust_read_python.model.bstr
+          uv run python -c "import json; from pathlib import Path; from boosters.persist.schema import ModelFile; p=Path('$FIXTURE'); mf=ModelFile.model_validate(json.loads(p.read_text())); Path('$OUT_JSON').write_text(mf.model_dump_json())"
+          cargo run --package boosters --example persist_json_to_bstr -- "$OUT_JSON" "$OUT_BSTR"
+
   stub-freshness:
     name: Check Stub Freshness
     runs-on: ubuntu-latest

@@ -6,11 +6,13 @@ the Python conversion utilities from boosters.convert.
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
-from boosters.convert import lightgbm_to_json_bytes, xgboost_to_json_bytes
 from rich.console import Console
+
+from boosters.convert import lightgbm_to_json_bytes, xgboost_to_json_bytes
 
 console = Console()
 
@@ -21,6 +23,34 @@ LIGHTGBM_CASES_DIR = _PKG_ROOT / "crates/boosters/tests/test-cases/lightgbm"
 BENCHMARK_CASES_DIR = _PKG_ROOT / "crates/boosters/tests/test-cases/benchmark"
 PERSIST_DIR = _PKG_ROOT / "crates/boosters/tests/test-cases/persist/v1"
 PERSIST_BENCHMARK_DIR = _PKG_ROOT / "crates/boosters/tests/test-cases/persist/benchmark"
+
+
+def _write_binary_fixture(json_bytes: bytes, json_path: Path) -> None:
+    """Write a `.model.bstr` binary fixture next to a `.model.bstr.json` fixture.
+
+    This uses the Rust-backed boosters Python bindings to load JSON bytes and
+    re-export the compressed binary format.
+    """
+    try:
+        import boosters  # type: ignore
+    except Exception as e:  # pragma: no cover
+        raise RuntimeError(
+            "Generating binary fixtures requires boosters-python bindings. Run `uv run poe python:develop` first."
+        ) from e
+
+    env = json.loads(json_bytes)
+    model_type = env.get("model_type")
+
+    if model_type == "gbdt":
+        model = boosters.GBDTModel.from_json_bytes(json_bytes)
+    elif model_type == "gblinear":
+        model = boosters.GBLinearModel.from_json_bytes(json_bytes)
+    else:
+        raise RuntimeError(f"Unsupported model_type for binary fixture: {model_type!r}")
+
+    bin_bytes = model.to_bytes()
+    bin_path = json_path.with_suffix("")  # .model.bstr.json -> .model.bstr
+    bin_path.write_bytes(bin_bytes)
 
 
 def _convert_xgboost_cases() -> int:
@@ -52,6 +82,7 @@ def _convert_xgboost_cases() -> int:
                     json_bytes = xgboost_to_json_bytes(model_file)
                     output_model = output_dir / f"{name}.model.bstr.json"
                     output_model.write_bytes(json_bytes)
+                    _write_binary_fixture(json_bytes, output_model)
                     count += 1
 
                     # Copy input and expected files
@@ -81,9 +112,11 @@ def _convert_lightgbm_cases() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     count = 0
 
-    for model_file in sorted(LIGHTGBM_CASES_DIR.rglob("*.model.json")):
+    # LightGBM fixtures in this repo are typically named `model.json`/`model.txt`
+    # with sibling `input.json`/`expected.json`.
+    for model_file in sorted(LIGHTGBM_CASES_DIR.rglob("model.json")):
         rel_path = model_file.relative_to(LIGHTGBM_CASES_DIR)
-        name = model_file.stem.replace(".model", "")
+        name = rel_path.parent.name
 
         output_subdir = output_dir / rel_path.parent
         output_subdir.mkdir(parents=True, exist_ok=True)
@@ -92,11 +125,19 @@ def _convert_lightgbm_cases() -> int:
             json_bytes = lightgbm_to_json_bytes(model_file)
             output_model = output_subdir / f"{name}.model.bstr.json"
             output_model.write_bytes(json_bytes)
+            _write_binary_fixture(json_bytes, output_model)
             count += 1
 
-            # Copy input and expected files
-            input_file = model_file.parent / f"{name}.input.json"
-            expected_file = model_file.parent / f"{name}.expected.json"
+            # Copy input and expected files.
+            # Support both `input.json` naming (LightGBM fixtures) and
+            # `<name>.input.json` naming (XGBoost-style fixtures).
+            input_file = model_file.parent / "input.json"
+            if not input_file.exists():
+                input_file = model_file.parent / f"{name}.input.json"
+
+            expected_file = model_file.parent / "expected.json"
+            if not expected_file.exists():
+                expected_file = model_file.parent / f"{name}.expected.json"
 
             if input_file.exists():
                 shutil.copy(input_file, output_subdir / f"{name}.input.json")
@@ -130,6 +171,7 @@ def _convert_benchmark_models() -> int:
             json_bytes = xgboost_to_json_bytes(model_file)
             output_model = PERSIST_BENCHMARK_DIR / f"{name}.model.bstr.json"
             output_model.write_bytes(json_bytes)
+            _write_binary_fixture(json_bytes, output_model)
             count += 1
         except Exception as e:
             console.print(f"  [red]ERROR[/red]: benchmark/{name}: {e}")
@@ -142,6 +184,7 @@ def _convert_benchmark_models() -> int:
             json_bytes = lightgbm_to_json_bytes(model_file)
             output_model = PERSIST_BENCHMARK_DIR / f"{name}.model.bstr.json"
             output_model.write_bytes(json_bytes)
+            _write_binary_fixture(json_bytes, output_model)
             count += 1
         except Exception as e:
             console.print(f"  [red]ERROR[/red]: benchmark/{name}: {e}")
@@ -159,7 +202,10 @@ def _create_readme() -> None:
     readme.write_text("""\
 # Native Persist Fixtures (v1)
 
-This directory contains test fixtures in the native boosters `.bstr.json` format.
+This directory contains test fixtures in the native boosters formats:
+
+- `.model.bstr` (binary, messagepack+zstd)
+- `.model.bstr.json` (human-readable JSON)
 
 ## Structure
 
@@ -177,6 +223,7 @@ v1/
 
 ## File Naming
 
+- `<name>.model.bstr` - Model in native binary format
 - `<name>.model.bstr.json` - Model in native JSON format
 - `<name>.input.json` - Input features for testing
 - `<name>.expected.json` - Expected predictions
@@ -186,6 +233,7 @@ v1/
 These fixtures were generated using:
 
 ```bash
+uv run poe python:develop
 uv run boosters-datagen bstr
 ```
 
@@ -200,7 +248,7 @@ uv run boosters-datagen all
 ```rust
 use boosters::persist::Model;
 
-let model = Model::load_json("path/to/model.bstr.json")?;
+let model = Model::load("path/to/model.bstr")?;
 let gbdt = model.into_gbdt().unwrap();
 ```
 """)
@@ -229,6 +277,5 @@ def generate_native_fixtures() -> None:
     _create_readme()
 
     console.print(
-        f"\n[green]✓ Generated {xgb_count} XGBoost, {lgb_count} LightGBM, "
-        f"and {bench_count} benchmark fixtures[/green]"
+        f"\n[green]✓ Generated {xgb_count} XGBoost, {lgb_count} LightGBM, and {bench_count} benchmark fixtures[/green]"
     )

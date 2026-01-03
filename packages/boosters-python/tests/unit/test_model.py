@@ -485,16 +485,14 @@ class TestReadError:
         """ReadError can be caught as ValueError."""
         import boosters
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=r".+"):
             boosters.Model.load_from_bytes(b"invalid")
 
     def test_read_error_has_message(self) -> None:
         """ReadError contains a descriptive message."""
         import boosters
 
-        try:
+        with pytest.raises(boosters.ReadError, match=r".+") as excinfo:
             boosters.Model.load_from_bytes(b"invalid model data")
-            pytest.fail("Should have raised ReadError")
-        except boosters.ReadError as e:
-            # Should contain some indication of what went wrong
-            assert len(str(e)) > 0
+
+        assert str(excinfo.value)

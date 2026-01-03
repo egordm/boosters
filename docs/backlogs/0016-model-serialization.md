@@ -2,7 +2,7 @@
 
 **RFC**: [docs/rfcs/0016-model-serialization.md](../rfcs/0016-model-serialization.md)  
 **Created**: 2026-01-02  
-**Status**: Refined (Ready for Implementation)
+**Status**: In Progress (Implementation largely complete; remaining QA/commit tasks below)
 
 ---
 
@@ -409,11 +409,11 @@ Implement LightGBM → `.bstr.json` conversion.
 
 ---
 
-## Epic 5: Test Fixture Migration ✅
+## Epic 5: Test Fixture Migration ⚠️
 
 Migrate test cases from XGBoost JSON to native `.bstr` format and remove Rust compat layer.
 
-### Story 5.1: Generate Native Fixtures [M] ✅
+### Story 5.1: Generate Native Fixtures [M] ⚠️
 
 Create `.bstr` and `.bstr.json` fixtures from existing XGBoost test cases.
 
@@ -427,7 +427,7 @@ Create `.bstr` and `.bstr.json` fixtures from existing XGBoost test cases.
 - [x] 5.1.6: Create `tests/test-cases/persist/v1/` directory structure
 - [x] 5.1.7: Include expected prediction outputs for each fixture (for verification)
 - [x] 5.1.8: Generate benchmark model fixtures (for benches without compat)
-- [x] 5.1.9: Commit fixtures as immutable test data
+- [ ] 5.1.9: Commit fixtures as immutable test data (both `.model.bstr.json` and `.model.bstr`)
 
 **Definition of Done**:
 
@@ -586,7 +586,7 @@ library has no users. Migration guide not needed at this time.
 
 ---
 
-## Epic 7: Quality Assurance and Release ✅
+## Epic 7: Quality Assurance and Release ⚠️
 
 Final testing, performance validation, and release preparation.
 
@@ -624,9 +624,9 @@ Set up fuzz testing for binary parser.
 - No crashes in 1 hour of fuzzing
 - Parser handles malformed input gracefully
 
-**Note**: Fuzz infrastructure created in `crates/boosters/fuzz/`. Requires `cargo +nightly fuzz run`.
+**Note**: Fuzz infrastructure lives in `crates/boosters-fuzz/`. Requires `cargo +nightly fuzz run`.
 
-### Story 7.3: Performance Benchmarks [M] ✅
+### Story 7.3: Performance Benchmarks [M] ⚠️
 
 Validate performance targets from RFC.
 
@@ -636,7 +636,7 @@ Validate performance targets from RFC.
 - [x] 7.3.2: Benchmark write (100 trees, 1K nodes) - **15.9ms** ✅
 - [x] 7.3.3: Benchmark write (1000 trees, 1K nodes) - **159.4ms** ✅
 - [x] 7.3.4: Benchmark read (100 trees) - **3.1ms** ✅
-- [ ] 7.3.5: Benchmark inspect (header only) - target <1ms (not implemented yet)
+- [x] 7.3.5: Benchmark inspect (header only) - target <1ms ✅
 - [ ] 7.3.6: Compare against compat layer load performance (baseline)
 - [x] 7.3.7: Document benchmark results in `docs/benchmarks/`
 
@@ -644,7 +644,7 @@ Validate performance targets from RFC.
 
 **Definition of Done**:
 
-- All performance targets met (3/4 - header-only deferred) ✅
+- All performance targets met (pending compat baseline comparison) ⚠️
 - Benchmark results documented ✅
 
 ### Story 7.4: Cross-Platform Testing [S] ⚠️ (CI Required)
@@ -653,7 +653,7 @@ Verify binary format works across platforms.
 
 **Tasks**:
 
-- [x] 7.4.1: Generate fixtures on macOS ARM64 (fixtures exist)
+- [ ] 7.4.1: Generate binary fixtures (`.model.bstr`) on macOS ARM64 and commit alongside `.model.bstr.json`
 - [ ] 7.4.2: Verify fixtures load on Linux x86_64 (CI)
 - [ ] 7.4.3: Verify fixtures load on Windows x86_64 (CI if available)
 
@@ -662,21 +662,21 @@ Verify binary format works across platforms.
 - Same fixtures load on all platforms
 - CI validates cross-platform compatibility
 
-### Story 7.5: Final Retrospective [S] ✅
+### Story 7.5: Final Retrospective [S] ⚠️
 
 **Tasks**:
 
 - [x] 7.5.1: Run retrospective for RFC-0016 implementation
 - [x] 7.5.2: Document outcomes in `tmp/retrospective.md`
 - [x] 7.5.3: Create follow-up backlog items for any improvements identified
-- [x] 7.5.4: Verify all RFC-0016 acceptance criteria are met
-- [x] 7.5.5: Update RFC-0016 status to "Implemented"
+- [ ] 7.5.4: Verify all RFC-0016 acceptance criteria are met
+- [ ] 7.5.5: Update RFC-0016 status to "Implemented"
 
 **Definition of Done**:
 
 - Retrospective completed ✅
 - Lessons learned documented ✅
-- RFC marked as implemented ✅
+- RFC marked as implemented ⚠️
 
 ---
 
@@ -735,3 +735,4 @@ Verify binary format works across platforms.
 - 2026-01-02: Round 4 - Added parallelization section, negative tests, RFC acceptance verification, version bump task
 - 2026-01-02: Round 5 - Added success metrics, out of scope, compression level, regression tests, CI gates, API review
 - 2026-01-02: Round 6 - Final polish: fixture specification, allocation note, status updated to Refined
+- 2026-01-03: Status updated to In Progress (pending commit/QA tasks)

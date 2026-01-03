@@ -1,6 +1,9 @@
 # Native Persist Fixtures (v1)
 
-This directory contains test fixtures in the native boosters `.bstr.json` format.
+This directory contains test fixtures in the native boosters formats:
+
+- `.model.bstr` (binary, messagepack+zstd)
+- `.model.bstr.json` (human-readable JSON)
 
 ## Structure
 
@@ -18,6 +21,7 @@ v1/
 
 ## File Naming
 
+- `<name>.model.bstr` - Model in native binary format
 - `<name>.model.bstr.json` - Model in native JSON format
 - `<name>.input.json` - Input features for testing
 - `<name>.expected.json` - Expected predictions
@@ -27,6 +31,7 @@ v1/
 These fixtures were generated using:
 
 ```bash
+uv run poe python:develop --release
 uv run boosters-datagen bstr
 ```
 
@@ -41,6 +46,6 @@ uv run boosters-datagen all
 ```rust
 use boosters::persist::Model;
 
-let model = Model::load_json("path/to/model.bstr.json")?;
+let model = Model::load("path/to/model.bstr")?;
 let gbdt = model.into_gbdt().unwrap();
 ```

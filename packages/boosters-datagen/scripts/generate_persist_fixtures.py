@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+# ruff: noqa: INP001
+
 """Generate .bstr.json fixtures from existing XGBoost test cases.
 
 This script converts existing XGBoost JSON test cases to native boosters format.
@@ -7,11 +8,14 @@ Run from repository root: uv run python packages/boosters-datagen/scripts/genera
 
 from __future__ import annotations
 
-import json
 import shutil
 from pathlib import Path
 
+from rich.console import Console
+
 from boosters.convert import lightgbm_to_json_bytes, xgboost_to_json_bytes
+
+console = Console()
 
 REPO_ROOT = Path(__file__).parents[3]
 XGBOOST_CASES_DIR = REPO_ROOT / "crates/boosters/tests/test-cases/xgboost"
@@ -42,7 +46,7 @@ def convert_xgboost_cases() -> None:
             # Find all model files
             for model_file in sorted(subcat_dir.glob("*.model.json")):
                 name = model_file.name.replace(".model.json", "")
-                print(f"  Converting {category}/{subcat}/{name}...")
+                console.print(f"  Converting {category}/{subcat}/{name}...")
 
                 # Convert model to native format
                 try:
@@ -50,7 +54,7 @@ def convert_xgboost_cases() -> None:
                     output_model = output_dir / f"{name}.model.bstr.json"
                     output_model.write_bytes(json_bytes)
                 except Exception as e:
-                    print(f"    ERROR: {e}")
+                    console.print(f"    ERROR: {e}")
                     continue
 
                 # Copy input and expected files
@@ -67,7 +71,7 @@ def convert_xgboost_cases() -> None:
 def convert_lightgbm_cases() -> None:
     """Convert all LightGBM test cases to native format."""
     if not LIGHTGBM_CASES_DIR.exists():
-        print("  No LightGBM test cases found, skipping")
+        console.print("  No LightGBM test cases found, skipping")
         return
 
     # Similar structure to XGBoost
@@ -83,14 +87,14 @@ def convert_lightgbm_cases() -> None:
         output_subdir = output_dir / rel_path.parent
         output_subdir.mkdir(parents=True, exist_ok=True)
 
-        print(f"  Converting lightgbm/{rel_path.parent}/{name}...")
+        console.print(f"  Converting lightgbm/{rel_path.parent}/{name}...")
 
         try:
             json_bytes = lightgbm_to_json_bytes(model_file)
             output_model = output_subdir / f"{name}.model.bstr.json"
             output_model.write_bytes(json_bytes)
         except Exception as e:
-            print(f"    ERROR: {e}")
+            console.print(f"    ERROR: {e}")
             continue
 
         # Copy input and expected files
@@ -158,7 +162,7 @@ def convert_benchmark_models() -> None:
     the xgboost-compat feature flag.
     """
     if not BENCHMARK_CASES_DIR.exists():
-        print("  No benchmark models found, skipping")
+        console.print("  No benchmark models found, skipping")
         return
 
     # Clean and create output directory
@@ -169,27 +173,27 @@ def convert_benchmark_models() -> None:
     # Convert XGBoost models (.model.json)
     for model_file in sorted(BENCHMARK_CASES_DIR.glob("*.model.json")):
         name = model_file.stem.replace(".model", "")
-        print(f"  Converting benchmark/{name} (XGBoost)...")
+        console.print(f"  Converting benchmark/{name} (XGBoost)...")
 
         try:
             json_bytes = xgboost_to_json_bytes(model_file)
             output_model = PERSIST_BENCHMARK_DIR / f"{name}.model.bstr.json"
             output_model.write_bytes(json_bytes)
         except Exception as e:
-            print(f"    ERROR: {e}")
+            console.print(f"    ERROR: {e}")
             continue
 
     # Convert LightGBM models (.lgb.txt)
     for model_file in sorted(BENCHMARK_CASES_DIR.glob("*.lgb.txt")):
         name = model_file.stem.replace(".lgb", "")
-        print(f"  Converting benchmark/{name} (LightGBM)...")
+        console.print(f"  Converting benchmark/{name} (LightGBM)...")
 
         try:
             json_bytes = lightgbm_to_json_bytes(model_file)
             output_model = PERSIST_BENCHMARK_DIR / f"{name}.model.bstr.json"
             output_model.write_bytes(json_bytes)
         except Exception as e:
-            print(f"    ERROR: {e}")
+            console.print(f"    ERROR: {e}")
             continue
 
     # Copy timing files (used for benchmark setup)
@@ -199,29 +203,29 @@ def convert_benchmark_models() -> None:
 
 def main() -> None:
     """Generate native persist fixtures from XGBoost/LightGBM test cases."""
-    print("Generating native persist fixtures...")
+    console.print("Generating native persist fixtures...")
 
     # Clean output directory
     if PERSIST_DIR.exists():
         shutil.rmtree(PERSIST_DIR)
     PERSIST_DIR.mkdir(parents=True)
 
-    print("\nConverting XGBoost test cases:")
+    console.print("\nConverting XGBoost test cases:")
     convert_xgboost_cases()
 
-    print("\nConverting LightGBM test cases:")
+    console.print("\nConverting LightGBM test cases:")
     convert_lightgbm_cases()
 
-    print("\nConverting benchmark models:")
+    console.print("\nConverting benchmark models:")
     convert_benchmark_models()
 
-    print("\nCreating README...")
+    console.print("\nCreating README...")
     create_readme()
 
     # Count generated files
     model_count = len(list(PERSIST_DIR.rglob("*.model.bstr.json")))
     bench_count = len(list(PERSIST_BENCHMARK_DIR.rglob("*.model.bstr.json")))
-    print(f"\nDone! Generated {model_count} test fixtures and {bench_count} benchmark fixtures.")
+    console.print(f"\nDone! Generated {model_count} test fixtures and {bench_count} benchmark fixtures.")
 
 
 if __name__ == "__main__":

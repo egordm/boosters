@@ -138,7 +138,7 @@ class TestXGBoostBoosterInput:
         import xgboost as xgb
         from sklearn.datasets import make_regression
 
-        X, y = make_regression(n_samples=100, n_features=5, random_state=42)
+        X, y, *_ = make_regression(n_samples=100, n_features=5, random_state=42)
         X = X.astype(np.float32)
         y = y.astype(np.float32)
 
@@ -240,7 +240,7 @@ class TestLightGBMBoosterInput:
         import lightgbm as lgb
         from sklearn.datasets import make_regression
 
-        X, y = make_regression(n_samples=100, n_features=10, random_state=42)
+        X, y, *_ = make_regression(n_samples=100, n_features=10, random_state=42)
         X = X.astype(np.float64)
         y = y.astype(np.float64)
 
@@ -282,7 +282,7 @@ class TestPredictionCompatibility:
 
         import boosters as bst
 
-        X, y = make_regression(n_samples=100, n_features=5, random_state=42)
+        X, y, *_ = make_regression(n_samples=100, n_features=5, random_state=42)
         X = X.astype(np.float32)
         y = y.astype(np.float32)
 
@@ -298,7 +298,7 @@ class TestPredictionCompatibility:
         model = bst.Model.load_from_bytes(json_bytes)
 
         # Get boosters predictions
-        bst_preds = model.predict_margin(X[:10])
+        bst_preds = model.predict_raw(bst.Dataset(X[:10]))
 
         # Compare predictions
         np.testing.assert_allclose(bst_preds.flatten(), xgb_preds, rtol=1e-5, atol=1e-5)
@@ -313,7 +313,7 @@ class TestPredictionCompatibility:
 
         import boosters as bst
 
-        X, y = make_regression(n_samples=100, n_features=10, random_state=42)
+        X, y, *_ = make_regression(n_samples=100, n_features=10, random_state=42)
         X = X.astype(np.float64)
         y = y.astype(np.float64)
 
@@ -327,7 +327,7 @@ class TestPredictionCompatibility:
         lgb_model = lgb.train(params, train_data, num_boost_round=10)
 
         # Get LightGBM predictions
-        lgb_preds = lgb_model.predict(X[:10], raw_score=True)
+        lgb_preds = np.asarray(lgb_model.predict(X[:10], raw_score=True))
 
         # Convert to boosters format and load
         json_bytes = lightgbm_to_json_bytes(lgb_model)
@@ -335,7 +335,7 @@ class TestPredictionCompatibility:
 
         # Get boosters predictions
         X_f32 = X[:10].astype(np.float32)
-        bst_preds = model.predict_margin(X_f32)
+        bst_preds = model.predict_raw(bst.Dataset(X_f32))
 
         # Compare predictions
         np.testing.assert_allclose(bst_preds.flatten(), lgb_preds, rtol=1e-5, atol=1e-5)

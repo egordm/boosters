@@ -39631,7 +39631,7 @@
       "learning_rate": 0.1,
       "growth_strategy": {
         "type": "depth_wise",
-        "max_depth": -1
+        "max_depth": 6
       },
       "max_onehot_cats": 4,
       "lambda": 0.0,
