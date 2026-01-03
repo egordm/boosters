@@ -180,9 +180,7 @@ class TestMulticlass:
         X = rng.standard_normal((300, 5)).astype(np.float32)  # noqa: N806
         y = (np.digitize(X[:, 0], bins=[-0.5, 0.5])).astype(np.float32)  # 3 classes
 
-        model = GBDTModel(
-            config=GBDTConfig(n_estimators=10, objective=Objective.softmax(n_classes=3))
-        )
+        model = GBDTModel(config=GBDTConfig(n_estimators=10, objective=Objective.softmax(n_classes=3)))
         model.fit(Dataset(X, y))
 
         json_str = model.to_json_bytes().decode("utf-8")
@@ -198,43 +196,39 @@ class TestSchemaValidation:
 
     def test_invalid_task_kind_rejected(self) -> None:
         """Invalid task kind is rejected by pydantic."""
-        invalid_json = json.dumps(
-            {
-                "bstr_version": 1,
-                "model_type": "gbdt",
-                "model": {
-                    "meta": {
-                        "task": "invalid_task",  # Invalid
-                        "num_features": 5,
-                    },
-                    "forest": {
-                        "trees": [],
-                        "n_groups": 1,
-                        "base_score": [0.0],
-                    },
-                    "config": {},
+        invalid_json = json.dumps({
+            "bstr_version": 1,
+            "model_type": "gbdt",
+            "model": {
+                "meta": {
+                    "task": "invalid_task",  # Invalid
+                    "num_features": 5,
                 },
-            }
-        )
+                "forest": {
+                    "trees": [],
+                    "n_groups": 1,
+                    "base_score": [0.0],
+                },
+                "config": {},
+            },
+        })
 
         with pytest.raises(Exception):  # pydantic validation error  # noqa: B017, PT011
             JsonEnvelope[GBDTModelSchema].model_validate_json(invalid_json)
 
     def test_missing_required_field_rejected(self) -> None:
         """Missing required field is rejected by pydantic."""
-        invalid_json = json.dumps(
-            {
-                "bstr_version": 1,
-                "model_type": "gbdt",
-                "model": {
-                    "meta": {
-                        # Missing 'task' and 'num_features'
-                    },
-                    "forest": {},
-                    "config": {},
+        invalid_json = json.dumps({
+            "bstr_version": 1,
+            "model_type": "gbdt",
+            "model": {
+                "meta": {
+                    # Missing 'task' and 'num_features'
                 },
-            }
-        )
+                "forest": {},
+                "config": {},
+            },
+        })
 
         with pytest.raises(Exception):  # pydantic validation error  # noqa: B017, PT011
             JsonEnvelope[GBDTModelSchema].model_validate_json(invalid_json)
@@ -318,9 +312,7 @@ class TestCrossLanguageRoundTrip:
         X = rng.standard_normal((300, 5)).astype(np.float32)  # noqa: N806
         y = (np.digitize(X[:, 0], bins=[-0.5, 0.5])).astype(np.float32)
 
-        model = GBDTModel(
-            config=GBDTConfig(n_estimators=10, objective=Objective.softmax(n_classes=3))
-        )
+        model = GBDTModel(config=GBDTConfig(n_estimators=10, objective=Objective.softmax(n_classes=3)))
         model.fit(Dataset(X, y))
 
         original_preds = model.predict(Dataset(X))

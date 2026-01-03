@@ -40,20 +40,32 @@ let model = GBDTModel::train(&dataset, &[], config, 0)?;
 let predictions = model.predict(&dataset, 0);
 ```
 
-### Loading XGBoost Models
+### Loading Models
 
 ```rust
-use boosters::compat::xgboost::XgbModel;
-use boosters::inference::gbdt::{Predictor, StandardTraversal};
+use boosters::persist::Model;
 use boosters::data::Dataset;
 
-// Load and convert
-let model = XgbModel::from_file("model.json")?;
-let forest = model.to_forest()?;
+// Load from native .bstr.json format
+let model = Model::load_json("model.bstr.json")?;
 
-// Predict
-let predictor = Predictor::<StandardTraversal>::new(&forest);
-let predictions = predictor.predict(&dataset);
+// Or load from native binary format (.bstr)
+let model = Model::load("model.bstr")?;
+
+// Predict using the loaded model
+let gbdt = model.into_gbdt().expect("expected GBDT model");
+let predictions = gbdt.predict(&dataset);
+```
+
+To convert XGBoost or LightGBM models, use the Python utilities:
+
+```python
+from boosters.convert import xgboost_to_json_bytes
+
+# Convert from XGBoost JSON to native .bstr.json
+json_bytes = xgboost_to_json_bytes("xgb_model.json")
+with open("model.bstr.json", "wb") as f:
+    f.write(json_bytes)
 ```
 
 ## Performance
@@ -110,9 +122,10 @@ Equal or better across regression, binary, and multiclass tasks — with booster
   - Classification: accuracy, log-loss, AUC
   - Ranking: NDCG, MAP
 
-- **Model Compatibility**
-  - Load XGBoost JSON models
-  - Load LightGBM text models
+- **Model Serialization**
+  - Native binary format (.bstr) with compression
+  - Native JSON format (.bstr.json)
+  - Python utilities to convert from XGBoost/LightGBM
   - DART booster support
   - Sample weights
 

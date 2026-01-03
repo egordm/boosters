@@ -54,8 +54,7 @@ def __getattr__(name: str):  # noqa: ANN202
             return getattr(_schema, name)
         except ImportError as e:
             msg = (
-                f"Cannot import '{name}' because pydantic is not installed. "
-                "Install with: pip install boosters[schema]"
+                f"Cannot import '{name}' because pydantic is not installed. Install with: pip install boosters[schema]"
             )
             raise ImportError(msg) from e
     msg = f"module {__name__!r} has no attribute {name!r}"

@@ -1,5 +1,7 @@
-// Note: This module is only compiled with the xgboost-compat feature.
-// The feature gate is already applied in testing/mod.rs.
+// Test case loading utilities for native format.
+//
+// This module provides structures for loading test inputs and expected outputs
+// from JSON files. It does NOT depend on any external model format compatibility.
 
 use serde::Deserialize;
 

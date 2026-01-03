@@ -47,7 +47,6 @@ mod tree;
 
 pub mod synthetic_datasets;
 
-#[cfg(feature = "xgboost-compat")]
 mod cases;
 
 // =============================================================================
@@ -65,7 +64,6 @@ pub use slices::{format_slice_diff, format_slice_diff_f64};
 pub use stats::pearson_correlation;
 pub use tree::{scalar_tree_fn, scalar_tree_with_capacity};
 
-#[cfg(feature = "xgboost-compat")]
 pub use cases::{TestExpected, TestInput};
 
 // Re-export the macros at testing module level.

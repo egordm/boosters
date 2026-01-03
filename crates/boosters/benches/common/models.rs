@@ -1,8 +1,7 @@
-use std::fs::File;
 use std::path::PathBuf;
 
-use boosters::compat::XgbModel;
-use boosters::compat::xgboost::Booster;
+use boosters::model::{GBDTModel, GBLinearModel};
+use boosters::persist::Model;
 use boosters::repr::gbdt::{Forest, ScalarLeaf};
 use boosters::repr::gblinear::LinearModel;
 
@@ -20,41 +19,46 @@ pub struct LoadedLinearModel {
     pub n_features: usize,
 }
 
-/// Path to benchmark models directory.
-///
-/// This matches the existing test-cases layout.
+/// Path to benchmark models directory (native format).
 pub fn bench_models_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test-cases/persist/benchmark")
+}
+
+/// Path to original benchmark models directory (for LightGBM .lgb.txt files).
+///
+/// Used when benchmarking against native LightGBM library which requires its
+/// original text format.
+pub fn original_bench_models_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test-cases/benchmark")
 }
 
-/// Load a booste-rs GBDT model from JSON file.
+/// Load a booste-rs GBDT model from native format.
 pub fn load_boosters_model(name: &str) -> LoadedForestModel {
-    let path = bench_models_dir().join(format!("{name}.model.json"));
-    let file = File::open(&path).unwrap_or_else(|_| panic!("Failed to open model: {path:?}"));
-    let xgb_model: XgbModel = serde_json::from_reader(file).expect("Failed to parse model");
+    let path = bench_models_dir().join(format!("{name}.model.bstr.json"));
+    let model = Model::load_json(&path).unwrap_or_else(|e| panic!("Failed to load {path:?}: {e}"));
 
-    let forest = xgb_model
-        .to_forest()
-        .expect("Failed to convert model to Forest");
-    let n_features = xgb_model.learner.learner_model_param.n_features as usize;
+    let gbdt = model
+        .into_gbdt()
+        .expect("Expected GBDT model for forest benchmark");
+    let n_features = gbdt.meta().n_features;
+    let forest = gbdt.forest().clone();
 
     LoadedForestModel { forest, n_features }
 }
 
-/// Load a booste-rs GBLinear model from JSON file.
+/// Load a booste-rs GBLinear model from native format.
 pub fn load_linear_model(name: &str) -> LoadedLinearModel {
-    let path = bench_models_dir().join(format!("{name}.model.json"));
-    let file = File::open(&path).unwrap_or_else(|_| panic!("Failed to open model: {path:?}"));
-    let xgb_model: XgbModel = serde_json::from_reader(file).expect("Failed to parse model");
+    let path = bench_models_dir().join(format!("{name}.model.bstr.json"));
+    let model = Model::load_json(&path).unwrap_or_else(|e| panic!("Failed to load {path:?}: {e}"));
 
-    let booster = xgb_model
-        .to_booster()
-        .expect("Failed to convert model to Booster");
-    let model = match booster {
-        Booster::Linear(linear) => linear,
-        _ => panic!("Expected GBLinear model but got tree-based model"),
-    };
-    let n_features = xgb_model.learner.learner_model_param.n_features as usize;
+    let gblinear = model
+        .into_gblinear()
+        .expect("Expected GBLinear model for linear benchmark");
+    let n_features = gblinear.meta().n_features;
+    let linear = gblinear.linear().clone();
 
-    LoadedLinearModel { model, n_features }
+    LoadedLinearModel {
+        model: linear,
+        n_features,
+    }
 }

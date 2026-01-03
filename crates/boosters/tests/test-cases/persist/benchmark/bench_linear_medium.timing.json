@@ -1,0 +1,10 @@
+{
+  "name": "bench_linear_medium",
+  "n_rows": 50000,
+  "n_cols": 100,
+  "n_trees": 50,
+  "max_depth": 6,
+  "linear_tree": true,
+  "training_time_ms": 1678.7545333849266,
+  "n_runs": 5
+}

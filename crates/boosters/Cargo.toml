@@ -58,12 +58,12 @@ rand_chacha = "0.3"  # For reproducible RNG in benchmarks
 tempfile = "3.20"  # For temporary file tests
 
 [features]
-default = ["persist", "xgboost-compat"]
+default = ["persist"]
 
 # Enables the native `.bstr` persistence module (JSON + binary + compression).
 persist = ["dep:serde", "dep:serde_json", "dep:rmp-serde", "dep:crc32c", "dep:zstd"]
 
-# Optional: XGBoost compatibility extensions
+# Legacy: XGBoost/LightGBM compatibility extensions (deprecated, use Python converters)
 xgboost-compat = ["dep:serde", "dep:serde_json", "dep:serde_with"]
 lightgbm-compat = []
 # Unified comparison feature - enables both XGBoost and LightGBM bindings

@@ -1,0 +1,95 @@
+{
+  "bstr_version": 1,
+  "model_type": "gblinear",
+  "model": {
+    "meta": {
+      "task": "regression",
+      "num_features": 50,
+      "num_classes": null,
+      "feature_names": null,
+      "feature_types": null
+    },
+    "weights": {
+      "values": [
+        -1.2999266,
+        0.70216,
+        -0.2692283,
+        1.0533127,
+        -1.0648413,
+        1.2239859,
+        -2.6051328,
+        34.734646,
+        87.8074,
+        76.78235,
+        88.01244,
+        -0.2502324,
+        -0.24306394,
+        13.969649,
+        90.0009,
+        -2.758475,
+        1.7466558,
+        44.0385,
+        -0.48198935,
+        -0.4148557,
+        0.5404201,
+        -0.8295782,
+        -0.26036885,
+        -0.06917314,
+        -2.266462,
+        0.6890755,
+        0.60292256,
+        -0.8784587,
+        -0.030840112,
+        0.9424231,
+        0.7672753,
+        1.5794805,
+        -0.99500495,
+        -0.40482858,
+        -0.12026051,
+        0.4096904,
+        0.74571455,
+        0.07613806,
+        -1.0136057,
+        0.8718734,
+        0.8039227,
+        1.6338059,
+        83.73971,
+        -1.1911829,
+        -0.0075495467,
+        1.8532987,
+        0.7850238,
+        48.471153,
+        1.411526,
+        -0.6538327,
+        0.6399716
+      ],
+      "num_features": 50,
+      "num_groups": 1
+    },
+    "base_score": [],
+    "config": {
+      "objective": {
+        "type": "squared_loss"
+      },
+      "metric": {
+        "type": "none"
+      },
+      "n_rounds": 1,
+      "learning_rate": 0.1,
+      "alpha": 0.0,
+      "lambda": 1.0,
+      "update_strategy": "shotgun",
+      "feature_selector": {
+        "type": "cyclic"
+      },
+      "max_delta_step": 0.0,
+      "early_stopping_rounds": null,
+      "seed": 0,
+      "verbosity": "silent",
+      "extra": {
+        "xgboost_objective": "reg:squarederror"
+      }
+    },
+    "MODEL_TYPE": "gblinear"
+  }
+}

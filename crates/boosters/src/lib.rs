@@ -1,7 +1,8 @@
 //! boosters: A gradient boosting library for Rust.
 //!
 //! Native Rust implementations for gradient boosted decision trees,
-//! with support for loading models from XGBoost and LightGBM.
+//! with support for loading and saving models in native format, and
+//! converting from XGBoost/LightGBM via Python utilities.
 //!
 //! # Key Types
 //!
@@ -15,10 +16,10 @@
 //! Use `GBDTConfig::builder()` to configure, then `GBDTModel::train()`.
 //! See the [`model`] module for details.
 //!
-//! # Loading XGBoost Models
+//! # Model Serialization
 //!
-//! Use [`compat::xgboost::XgbModel`] to load JSON models.
-//! See the [`compat`] module for details.
+//! Use [`persist`] module to save/load models in native binary or JSON format.
+//! For converting XGBoost/LightGBM models, use the Python utilities in `boosters.convert`.
 
 // RFC-0018 Migration: Allow deprecated types throughout crate during migration.
 // This will be removed once migration is complete and deprecated module is deleted.
@@ -27,6 +28,7 @@
 // Re-export approx traits for users who want to compare predictions
 pub use approx;
 
+#[cfg(any(feature = "xgboost-compat", feature = "lightgbm-compat"))]
 pub mod compat;
 pub mod data;
 pub mod explainability;

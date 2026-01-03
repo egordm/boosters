@@ -1,7 +1,7 @@
 //! Comparison benchmarks: booste-rs vs LightGBM linear GBDT prediction.
 //!
 //! Uses models trained with LightGBM's `linear_tree=True` option, loaded via
-//! our LightGBM text format parser.
+//! native booste-rs format.
 //!
 //! Run with: `cargo bench --features bench-lightgbm --bench linear_tree_prediction`
 
@@ -9,13 +9,14 @@
 mod common;
 
 use boosters::data::Dataset;
+use boosters::model::GBDTModel;
+use boosters::persist::Model;
 use boosters::repr::gbdt::{Forest, ScalarLeaf};
 use common::criterion_config::default_criterion;
 #[cfg(feature = "bench-lightgbm")]
-use common::models::bench_models_dir;
+use common::models::original_bench_models_dir;
 
 use boosters::Parallelism;
-use boosters::compat::lightgbm::LgbModel;
 use boosters::inference::gbdt::{Predictor, UnrolledTraversal6};
 use boosters::testing::synthetic_datasets::random_features_array;
 
@@ -25,14 +26,21 @@ use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, 
 // Helpers
 // =============================================================================
 
-fn load_lgb_linear_model(name: &str) -> (Forest<ScalarLeaf>, usize) {
-    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/test-cases/benchmark")
-        .join(format!("{name}.lgb.txt"));
-    let lgb_model = LgbModel::from_file(&path)
-        .unwrap_or_else(|_| panic!("Failed to parse LightGBM model: {path:?}"));
-    let forest = lgb_model.to_forest().expect("Failed to convert to forest");
-    let n_features = lgb_model.header.max_feature_idx as usize + 1;
+/// Path to benchmark models directory (native format).
+fn persist_benchmark_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test-cases/persist/benchmark")
+}
+
+fn load_linear_model(name: &str) -> (Forest<ScalarLeaf>, usize) {
+    let path = persist_benchmark_dir().join(format!("{name}.model.bstr.json"));
+    let model =
+        Model::load_json(&path).unwrap_or_else(|e| panic!("Failed to load model {path:?}: {e}"));
+
+    let gbdt: GBDTModel = model
+        .into_gbdt()
+        .expect("Expected GBDT model for linear tree benchmark");
+    let n_features = gbdt.meta().n_features;
+    let forest = gbdt.forest().clone();
     (forest, n_features)
 }
 
@@ -42,18 +50,18 @@ fn load_lgb_linear_model(name: &str) -> (Forest<ScalarLeaf>, usize) {
 
 fn bench_linear_gbdt_prediction(c: &mut Criterion) {
     // Load linear GBDT model
-    let (linear_forest, n_features) = load_lgb_linear_model("bench_linear_medium");
+    let (linear_forest, n_features) = load_linear_model("bench_linear_medium");
     let linear_predictor = Predictor::<UnrolledTraversal6>::new(&linear_forest).with_block_size(64);
 
     // Load standard model for comparison
-    let (standard_forest, _) = load_lgb_linear_model("bench_standard_medium");
+    let (standard_forest, _) = load_linear_model("bench_standard_medium");
     let standard_predictor =
         Predictor::<UnrolledTraversal6>::new(&standard_forest).with_block_size(64);
 
-    // Also load LightGBM native models for comparison
+    // Also load LightGBM native models for comparison (using original .lgb.txt files)
     #[cfg(feature = "bench-lightgbm")]
     let lgb_linear = lightgbm3::Booster::from_file(
-        bench_models_dir()
+        original_bench_models_dir()
             .join("bench_linear_medium.lgb.txt")
             .to_str()
             .unwrap(),
@@ -62,7 +70,7 @@ fn bench_linear_gbdt_prediction(c: &mut Criterion) {
 
     #[cfg(feature = "bench-lightgbm")]
     let lgb_standard = lightgbm3::Booster::from_file(
-        bench_models_dir()
+        original_bench_models_dir()
             .join("bench_standard_medium.lgb.txt")
             .to_str()
             .unwrap(),
@@ -149,10 +157,10 @@ fn bench_linear_gbdt_prediction(c: &mut Criterion) {
 // =============================================================================
 
 fn bench_linear_gbdt_overhead(c: &mut Criterion) {
-    let (linear_forest, n_features) = load_lgb_linear_model("bench_linear_medium");
+    let (linear_forest, n_features) = load_linear_model("bench_linear_medium");
     let linear_predictor = Predictor::<UnrolledTraversal6>::new(&linear_forest).with_block_size(64);
 
-    let (standard_forest, _) = load_lgb_linear_model("bench_standard_medium");
+    let (standard_forest, _) = load_linear_model("bench_standard_medium");
     let standard_predictor =
         Predictor::<UnrolledTraversal6>::new(&standard_forest).with_block_size(64);
 

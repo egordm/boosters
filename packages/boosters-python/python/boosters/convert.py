@@ -162,11 +162,15 @@ def _xgboost_feature_type_to_boosters(ft: str) -> str:
 
 
 def _convert_xgb_tree(tree_data: dict[str, Any]) -> TreeSchema:
-    """Convert a single XGBoost tree to TreeSchema."""
+    """Convert a single XGBoost tree to TreeSchema.
+
+    The output format matches boosters' Rust schema where ALL nodes (internal + leaves)
+    appear in every array. Leaf nodes have children_left=0, children_right=0 as sentinels.
+    """
     num_nodes = int(tree_data["tree_param"]["num_nodes"])
     left_children = tree_data["left_children"]
     right_children = tree_data["right_children"]
-    split_indices = tree_data["split_indices"]
+    split_indices_raw = tree_data["split_indices"]
     split_conditions = tree_data["split_conditions"]
     default_left = tree_data["default_left"]
     base_weights = tree_data["base_weights"]
@@ -180,49 +184,48 @@ def _convert_xgb_tree(tree_data: dict[str, Any]) -> TreeSchema:
     cat_sizes = tree_data.get("categories_sizes", [])
     categories_raw = tree_data.get("categories", [])
 
-    # Build category map: node_idx -> list of category values
     cat_map: dict[int, list[int]] = {}
     for i, node_idx in enumerate(cat_nodes):
         start = cat_segments[i]
         size = cat_sizes[i]
         cat_map[node_idx] = [int(c) for c in categories_raw[start : start + size]]
 
-    # Separate internal nodes from leaves
     # XGBoost marks leaves with left_child == -1
     is_leaf = [lc == -1 for lc in left_children]
-    leaf_indices = [i for i, leaf in enumerate(is_leaf) if leaf]
-    internal_indices = [i for i, leaf in enumerate(is_leaf) if not leaf]
 
-    # Build leaf values
-    leaf_values = [float(base_weights[i]) for i in leaf_indices]
+    # Output arrays - same length as num_nodes
+    out_split_indices: list[int] = []
+    out_thresholds: list[float] = []
+    out_children_left: list[int] = []
+    out_children_right: list[int] = []
+    out_default_left: list[bool] = []
+    out_leaf_values: list[float] = []
 
-    # Build internal node data
-    out_split_indices = [int(split_indices[i]) for i in internal_indices]
-    out_thresholds = [float(split_conditions[i]) for i in internal_indices]
-    out_children_left = []
-    out_children_right = []
-    out_default_left = []
+    # Categories (only for categorical split nodes)
+    cat_node_indices: list[int] = []
+    cat_sets: list[list[int]] = []
 
-    # Map from original node index to new node index
-    # New layout: internal nodes first, then leaves
-    old_to_new: dict[int, int] = {old_idx: new_idx for new_idx, old_idx in enumerate(internal_indices)}
-    for new_idx, old_idx in enumerate(leaf_indices):
-        old_to_new[old_idx] = len(internal_indices) + new_idx
+    for node_id in range(num_nodes):
+        out_split_indices.append(int(split_indices_raw[node_id]))
+        out_thresholds.append(float(split_conditions[node_id]))
+        out_leaf_values.append(float(base_weights[node_id]))
+        out_default_left.append(default_left[node_id] != 0)
 
-    for old_idx in internal_indices:
-        lc = left_children[old_idx]
-        rc = right_children[old_idx]
-        out_children_left.append(old_to_new.get(lc, 0))
-        out_children_right.append(old_to_new.get(rc, 0))
-        out_default_left.append(default_left[old_idx] != 0)
+        if is_leaf[node_id]:
+            # Leaf node: use 0 as sentinel for "no child"
+            out_children_left.append(0)
+            out_children_right.append(0)
+        else:
+            # Internal node: convert -1 sentinel to actual child indices
+            lc = left_children[node_id]
+            rc = right_children[node_id]
+            out_children_left.append(lc if lc != -1 else 0)
+            out_children_right.append(rc if rc != -1 else 0)
 
-    # Build categories schema
-    cat_node_indices = []
-    cat_sets = []
-    for i, old_idx in enumerate(internal_indices):
-        if split_types[old_idx] == 1:  # categorical
-            cat_node_indices.append(i)
-            cat_sets.append(cat_map.get(old_idx, []))
+            # Track categorical nodes
+            if split_types[node_id] == 1:  # categorical
+                cat_node_indices.append(node_id)
+                cat_sets.append(cat_map.get(node_id, []))
 
     return TreeSchema(
         num_nodes=num_nodes,
@@ -231,7 +234,7 @@ def _convert_xgb_tree(tree_data: dict[str, Any]) -> TreeSchema:
         children_left=out_children_left,
         children_right=out_children_right,
         default_left=out_default_left,
-        leaf_values=ScalarLeafValues(type="scalar", values=leaf_values),
+        leaf_values=ScalarLeafValues(type="scalar", values=out_leaf_values),
         categories=CategoriesSchema(node_indices=cat_node_indices, category_sets=cat_sets),
     )
 
@@ -393,7 +396,7 @@ def _convert_xgb_gblinear(xgb_json: dict[str, Any]) -> GBLinearModelSchema:
     # Build weights schema
     weights_schema = LinearWeightsSchema(
         values=weight_list,
-        num_features=num_features + 1,  # includes bias row
+        num_features=num_features,  # NOT including bias row
         num_groups=n_groups,
     )
 
@@ -566,47 +569,51 @@ def _parse_lgb_tree_structure(
 
 
 def _convert_lgb_tree(tree_data: dict[str, Any]) -> TreeSchema:
-    """Convert a single LightGBM tree to TreeSchema."""
-    # Parse tree structure recursively
+    """Convert a single LightGBM tree to TreeSchema.
+
+    The output format matches boosters' Rust schema where ALL nodes (internal + leaves)
+    appear in every array. Leaf nodes have children_left=0, children_right=0 as sentinels.
+    """
+    # Parse tree structure recursively to get flat node list
     nodes: list[dict[str, Any]] = []
     _parse_lgb_tree_structure(tree_data["tree_structure"], nodes, parent_idx=-1, is_left=True)
 
     num_nodes = len(nodes)
 
-    # Separate leaves from internal nodes
-    leaf_indices = [i for i, n in enumerate(nodes) if n["is_leaf"]]
-    internal_indices = [i for i, n in enumerate(nodes) if not n["is_leaf"]]
+    # Output arrays - same length as num_nodes
+    out_split_indices: list[int] = []
+    out_thresholds: list[float] = []
+    out_children_left: list[int] = []
+    out_children_right: list[int] = []
+    out_default_left: list[bool] = []
+    out_leaf_values: list[float] = []
 
-    # Map old index to new index (internals first, then leaves)
-    old_to_new: dict[int, int] = {old_idx: new_idx for new_idx, old_idx in enumerate(internal_indices)}
-    for new_idx, old_idx in enumerate(leaf_indices):
-        old_to_new[old_idx] = len(internal_indices) + new_idx
-
-    # Build arrays
-    leaf_values = [float(nodes[i]["leaf_value"]) for i in leaf_indices]
-
-    split_indices = []
-    thresholds = []
-    children_left = []
-    children_right = []
-    default_left = []
-
-    for old_idx in internal_indices:
-        node = nodes[old_idx]
-        split_indices.append(int(node["split_feature"]))
-        thresholds.append(float(node["threshold"]))
-        children_left.append(old_to_new[node["left_child"]])
-        children_right.append(old_to_new[node["right_child"]])
-        default_left.append(bool(node["default_left"]))
+    for node_id, node in enumerate(nodes):
+        if node["is_leaf"]:
+            # Leaf node: placeholder values for split info, actual leaf value
+            out_split_indices.append(0)
+            out_thresholds.append(0.0)
+            out_children_left.append(0)  # Sentinel for "no child"
+            out_children_right.append(0)
+            out_default_left.append(False)
+            out_leaf_values.append(float(node["leaf_value"]))
+        else:
+            # Internal node
+            out_split_indices.append(int(node["split_feature"]))
+            out_thresholds.append(float(node["threshold"]))
+            out_children_left.append(int(node["left_child"]))
+            out_children_right.append(int(node["right_child"]))
+            out_default_left.append(bool(node["default_left"]))
+            out_leaf_values.append(0.0)  # Placeholder for internal nodes
 
     return TreeSchema(
         num_nodes=num_nodes,
-        split_indices=split_indices,
-        thresholds=thresholds,
-        children_left=children_left,
-        children_right=children_right,
-        default_left=default_left,
-        leaf_values=ScalarLeafValues(type="scalar", values=leaf_values),
+        split_indices=out_split_indices,
+        thresholds=out_thresholds,
+        children_left=out_children_left,
+        children_right=out_children_right,
+        default_left=out_default_left,
+        leaf_values=ScalarLeafValues(type="scalar", values=out_leaf_values),
         categories=CategoriesSchema(),
     )
 

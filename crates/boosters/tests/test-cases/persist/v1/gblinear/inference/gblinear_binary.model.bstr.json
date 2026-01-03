@@ -1,0 +1,49 @@
+{
+  "bstr_version": 1,
+  "model_type": "gblinear",
+  "model": {
+    "meta": {
+      "task": "binary_classification",
+      "num_features": 4,
+      "num_classes": null,
+      "feature_names": null,
+      "feature_types": null
+    },
+    "weights": {
+      "values": [
+        0.96457493,
+        0.36611578,
+        0.13234836,
+        0.5285079,
+        -0.19230475
+      ],
+      "num_features": 4,
+      "num_groups": 1
+    },
+    "base_score": [],
+    "config": {
+      "objective": {
+        "type": "squared_loss"
+      },
+      "metric": {
+        "type": "none"
+      },
+      "n_rounds": 1,
+      "learning_rate": 0.1,
+      "alpha": 0.0,
+      "lambda": 1.0,
+      "update_strategy": "shotgun",
+      "feature_selector": {
+        "type": "cyclic"
+      },
+      "max_delta_step": 0.0,
+      "early_stopping_rounds": null,
+      "seed": 0,
+      "verbosity": "silent",
+      "extra": {
+        "xgboost_objective": "binary:logistic"
+      }
+    },
+    "MODEL_TYPE": "gblinear"
+  }
+}
