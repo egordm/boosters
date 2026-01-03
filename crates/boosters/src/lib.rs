@@ -32,6 +32,8 @@ pub mod data;
 pub mod explainability;
 pub mod inference;
 pub mod model;
+#[cfg(feature = "persist")]
+pub mod persist;
 pub mod repr;
 pub mod testing;
 pub mod training;

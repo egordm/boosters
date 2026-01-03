@@ -23,12 +23,16 @@ rand_xoshiro = "0.6"
 # Efficient bitset operations for feature bundling conflict detection
 fixedbitset = "0.5"
 
-# Optional: XGBoost compatibility
+# Serialization (enabled via `persist` and/or compat features)
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", optional = true }
+rmp-serde = { version = "1.3", optional = true }
+crc32c = { version = "0.6", optional = true }
+
+# Optional: XGBoost compatibility extensions
 serde_with = { version = "3.16.0", features = ["json"], optional = true }
 
-# Optional: dataset loaders for benches/tools
+# Optional: zstd compression for persist module
 zstd = { version = "0.13", optional = true }
 
 # Optional: XGBoost C++ bindings for benchmark comparison
@@ -46,23 +50,27 @@ ndarray = {version = "0.16", features = ["rayon", "approx"]}
 [dev-dependencies]
 glob = "0.3.3"
 rstest = "0.21"
-serde = { version = "1.0", features = ["derive"] } # Needed by integration tests under --no-default-features
-serde_json = "1.0"  # Always available in tests
+serde = { version = "1.0", features = ["derive"] } # Used by feature-gated modules/tests
+serde_json = "1.0"  # Used by feature-gated modules/tests
 criterion = { version = "0.5", features = ["html_reports"] }
 rand = "0.8"  # For generating random benchmark inputs
 rand_chacha = "0.3"  # For reproducible RNG in benchmarks
 tempfile = "3.20"  # For temporary file tests
 
 [features]
-default = ["xgboost-compat"]
+default = ["persist", "xgboost-compat"]
+
+# Enables the native `.bstr` persistence module (JSON + binary + compression).
+persist = ["dep:serde", "dep:serde_json", "dep:rmp-serde", "dep:crc32c", "dep:zstd"]
+
+# Optional: XGBoost compatibility extensions
 xgboost-compat = ["dep:serde", "dep:serde_json", "dep:serde_with"]
-lightgbm-compat = ["dep:serde", "dep:serde_json"]
+lightgbm-compat = []
 # Unified comparison feature - enables both XGBoost and LightGBM bindings
 bench-compare = ["bench-xgboost", "bench-lightgbm"]
 bench-xgboost = ["dep:xgb", "xgboost-compat"]
 bench-lightgbm = ["dep:lightgbm3", "lightgbm-compat"]
 bench-training = []
-testing-utils = ["dep:serde", "dep:serde_json", "dep:zstd"]
 
 [[bench]]
 name = "prediction_core"

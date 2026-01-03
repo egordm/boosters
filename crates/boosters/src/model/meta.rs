@@ -2,10 +2,8 @@
 //!
 //! Shared metadata types for model introspection.
 
-use serde::{Deserialize, Serialize};
-
 /// Type of machine learning task.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TaskKind {
     /// Regression (continuous target).
     #[default]
@@ -47,7 +45,7 @@ impl TaskKind {
 }
 
 /// Feature type information.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum FeatureType {
     /// Numeric feature.
     #[default]
@@ -62,7 +60,7 @@ pub enum FeatureType {
 /// Shared metadata for all model types.
 ///
 /// Contains introspection data about the model's structure and training context.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default)]
 pub struct ModelMeta {
     /// Feature names (optional).
     pub feature_names: Option<Vec<String>>,
@@ -167,22 +165,5 @@ mod tests {
         let multi = ModelMeta::for_multiclass(8, 4);
         assert_eq!(multi.n_groups, 4);
         assert_eq!(multi.base_scores.len(), 4);
-    }
-
-    #[test]
-    fn meta_serde_roundtrip() {
-        let meta = ModelMeta::for_regression(10)
-            .with_feature_names(vec!["a".into(), "b".into()])
-            .with_best_iteration(42);
-
-        let json = serde_json::to_string(&meta).unwrap();
-        let restored: ModelMeta = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(restored.n_features, 10);
-        assert_eq!(restored.best_iteration, Some(42));
-        assert_eq!(
-            restored.feature_names,
-            Some(vec!["a".to_string(), "b".to_string()])
-        );
     }
 }
