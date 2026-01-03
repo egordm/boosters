@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 5a42f33ec15b6668c01ebae853fac2b9406f0707f8be9831f71ef3d6001fdb2e # shrinks to model = GBLinearModel { n_features: 1, n_groups: 2, n_rounds: 100, task: BinaryClassification }
+cc 9abebeb857cfab1caef88dd4749bf6fd39e07be2611e5d1d84c9085820c2d613 # shrinks to model = GBLinearModel { n_features: 1, n_groups: 2, n_rounds: 100, task: BinaryClassification }

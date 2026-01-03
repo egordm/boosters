@@ -1,0 +1,21 @@
+[package]
+name = "boosters-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.boosters]
+path = ".."
+
+[[bin]]
+name = "fuzz_binary_read"
+path = "fuzz_targets/fuzz_binary_read.rs"
+test = false
+doc = false
+bench = false

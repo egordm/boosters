@@ -56,6 +56,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 rand = "0.8"  # For generating random benchmark inputs
 rand_chacha = "0.3"  # For reproducible RNG in benchmarks
 tempfile = "3.20"  # For temporary file tests
+proptest = "1.4"  # Property-based testing for persist module
 
 [features]
 default = ["persist"]
@@ -86,6 +87,11 @@ path = "benches/suites/component/predict_strategies.rs"
 name = "prediction_parallel"
 harness = false
 path = "benches/suites/component/predict_parallel.rs"
+
+[[bench]]
+name = "persist"
+harness = false
+path = "benches/suites/component/persist.rs"
 
 [[bench]]
 name = "training_core"
