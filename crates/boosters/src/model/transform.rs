@@ -54,7 +54,7 @@ impl OutputTransform {
     pub fn transform_inplace(&self, predictions: &mut [f32], n_outputs: usize) {
         assert!(n_outputs > 0, "n_outputs must be > 0");
         assert!(
-            predictions.len() % n_outputs == 0,
+            predictions.len().is_multiple_of(n_outputs),
             "predictions.len() must be divisible by n_outputs"
         );
 

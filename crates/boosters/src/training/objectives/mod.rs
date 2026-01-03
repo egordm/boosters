@@ -265,6 +265,35 @@ impl Objective {
     pub fn custom<O: ObjectiveFn + 'static>(objective: O) -> Self {
         Self::Custom(std::sync::Arc::new(objective))
     }
+
+    /// Returns the output transform for this objective.
+    ///
+    /// This is used by models to transform raw predictions (margins)
+    /// to final predictions (probabilities, values, etc.) at inference time.
+    pub fn output_transform(&self) -> crate::model::OutputTransform {
+        use crate::model::OutputTransform;
+        match self {
+            // Regression: identity (raw values)
+            Self::SquaredLoss(_)
+            | Self::AbsoluteLoss(_)
+            | Self::PinballLoss(_)
+            | Self::PseudoHuberLoss(_)
+            | Self::PoissonLoss(_) => OutputTransform::Identity,
+
+            // Binary classification: sigmoid
+            Self::LogisticLoss(_) => OutputTransform::Sigmoid,
+
+            // Hinge: identity (margins)
+            Self::HingeLoss(_) => OutputTransform::Identity,
+
+            // Multiclass: softmax
+            Self::SoftmaxLoss(_) => OutputTransform::Softmax,
+
+            // Custom: we don't know, default to identity
+            // (custom objectives should set their own transform)
+            Self::Custom(_) => OutputTransform::Identity,
+        }
+    }
 }
 
 impl Default for Objective {
@@ -488,5 +517,24 @@ mod tests {
         assert!((grad_hess[[0, 0]].grad - 0.5).abs() < 1e-6); // pred > target
         assert!((grad_hess[[0, 1]].grad - -0.5).abs() < 1e-6); // pred < target
         assert!((grad_hess[[0, 2]].grad - 0.5).abs() < 1e-6); // pred > target
+    }
+
+    #[test]
+    fn output_transform_mapping() {
+        use crate::model::OutputTransform;
+
+        // Regression objectives -> Identity
+        assert_eq!(Objective::squared().output_transform(), OutputTransform::Identity);
+        assert_eq!(Objective::absolute().output_transform(), OutputTransform::Identity);
+        assert_eq!(Objective::quantile(0.5).output_transform(), OutputTransform::Identity);
+        assert_eq!(Objective::pseudo_huber(1.0).output_transform(), OutputTransform::Identity);
+        assert_eq!(Objective::poisson().output_transform(), OutputTransform::Identity);
+
+        // Binary classification
+        assert_eq!(Objective::logistic().output_transform(), OutputTransform::Sigmoid);
+        assert_eq!(Objective::hinge().output_transform(), OutputTransform::Identity);
+
+        // Multiclass
+        assert_eq!(Objective::softmax(3).output_transform(), OutputTransform::Softmax);
     }
 }
