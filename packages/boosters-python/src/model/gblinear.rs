@@ -1,13 +1,23 @@
 //! GBLinear Model Python bindings.
 
+use std::io::Cursor;
+
 use numpy::{PyArray1, PyArray2};
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
+
+use boosters::persist::{BinaryReadOptions, BinaryWriteOptions, JsonWriteOptions, SerializableModel};
 
 use crate::config::PyGBLinearConfig;
 use crate::data::PyDataset;
 use crate::error::BoostersError;
-use crate::validation::{require_fitted, validate_feature_count};
+use crate::validation::validate_feature_count;
+
+enum GBLinearState {
+    Unfitted { config: boosters::GBLinearConfig },
+    Fitted { model: boosters::GBLinearModel },
+}
 
 /// Gradient Boosted Linear model.
 ///
@@ -27,20 +37,7 @@ use crate::validation::{require_fitted, validate_feature_count};
 #[gen_stub_pyclass]
 #[pyclass(name = "GBLinearModel", module = "boosters._boosters_rs")]
 pub struct PyGBLinearModel {
-    /// Configuration for the model.
-    config: Py<PyGBLinearConfig>,
-
-    /// Inner trained model (None until fit() is called).
-    inner: Option<boosters::GBLinearModel>,
-
-    /// Evaluation results from training (populated after fit).
-    eval_results: Option<Py<PyAny>>,
-
-    /// Best iteration from early stopping (if applicable).
-    best_iteration: Option<usize>,
-
-    /// Best score from early stopping (if applicable).
-    best_score: Option<f64>,
+    state: GBLinearState,
 }
 
 #[gen_stub_pymethods]
@@ -56,35 +53,31 @@ impl PyGBLinearModel {
     #[new]
     #[pyo3(signature = (config=None))]
     pub fn new(py: Python<'_>, config: Option<Py<PyGBLinearConfig>>) -> PyResult<Self> {
-        let config = match config {
-            Some(c) => c,
-            None => {
-                let boosters_mod = py.import("boosters._boosters_rs")?;
-                let config_class = boosters_mod.getattr("GBLinearConfig")?;
-                let config_obj = config_class.call0()?;
-                config_obj.extract::<Py<PyGBLinearConfig>>()?
+        let core_config = match config {
+            Some(c) => {
+                let borrowed = c.bind(py).borrow();
+                (&*borrowed).into()
             }
+            None => (&PyGBLinearConfig::default()).into(),
         };
 
         Ok(Self {
-            config,
-            inner: None,
-            eval_results: None,
-            best_iteration: None,
-            best_score: None,
+            state: GBLinearState::Unfitted {
+                config: core_config,
+            },
         })
     }
 
     /// Whether the model has been fitted.
     #[getter]
     pub fn is_fitted(&self) -> bool {
-        self.inner.is_some()
+        matches!(self.state, GBLinearState::Fitted { .. })
     }
 
     /// Number of features the model was trained on.
     #[getter]
     pub fn n_features_in_(&self) -> PyResult<usize> {
-        let model = require_fitted(self.inner.as_ref(), "n_features_in_")?;
+        let model = self.fitted_model("n_features_in_")?;
         Ok(model.meta().n_features)
     }
 
@@ -95,7 +88,7 @@ impl PyGBLinearModel {
     ///     or (n_features, n_outputs) for multi-output models.
     #[getter]
     pub fn coef_<'py>(&self, py: Python<'py>) -> PyResult<Py<PyAny>> {
-        let model = require_fitted(self.inner.as_ref(), "coef_")?;
+        let model = self.fitted_model("coef_")?;
 
         let linear = model.linear();
         let n_features = linear.n_features();
@@ -120,7 +113,7 @@ impl PyGBLinearModel {
     ///     Array of shape (n_outputs,).
     #[getter]
     pub fn intercept_<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyArray1<f32>>> {
-        let model = require_fitted(self.inner.as_ref(), "intercept_")?;
+        let model = self.fitted_model("intercept_")?;
 
         let linear = model.linear();
         let biases = linear.biases();
@@ -128,35 +121,20 @@ impl PyGBLinearModel {
         Ok(PyArray1::from_iter(py, biases.iter().copied()))
     }
 
-    /// Best iteration from early stopping.
-    #[getter]
-    pub fn best_iteration(&self) -> Option<usize> {
-        self.best_iteration
-            .or_else(|| self.inner.as_ref().and_then(|m| m.meta().best_iteration))
-    }
-
-    /// Best score from early stopping.
-    #[getter]
-    pub fn best_score(&self) -> Option<f64> {
-        self.best_score
-    }
-
-    /// Evaluation results from training.
-    #[getter]
-    #[gen_stub(override_return_type(type_repr = "dict[str, dict[str, list[float]]] | None", imports = ()))]
-    pub fn eval_results(&self, py: Python<'_>) -> Option<Py<PyAny>> {
-        self.eval_results.as_ref().map(|r| r.clone_ref(py))
-    }
-
     /// Get the model configuration.
     #[getter]
-    pub fn config(&self, py: Python<'_>) -> Py<PyGBLinearConfig> {
-        self.config.clone_ref(py)
+    pub fn config(&self, py: Python<'_>) -> PyResult<Py<PyGBLinearConfig>> {
+        let core_config = match &self.state {
+            GBLinearState::Unfitted { config } => config,
+            GBLinearState::Fitted { model } => model.config(),
+        };
+        let py_config: PyGBLinearConfig = core_config.into();
+        Py::new(py, py_config)
     }
 
     /// String representation.
     fn __repr__(&self) -> String {
-        if let Some(model) = &self.inner {
+        if let GBLinearState::Fitted { model } = &self.state {
             format!(
                 "GBLinearModel(n_features={}, fitted=True)",
                 model.meta().n_features
@@ -184,7 +162,7 @@ impl PyGBLinearModel {
         data: PyRef<'_, PyDataset>,
         #[allow(unused_variables)] n_threads: usize,
     ) -> PyResult<Bound<'py, PyArray2<f32>>> {
-        let model = require_fitted(self.inner.as_ref(), "predict")?;
+        let model = self.fitted_model("predict")?;
         let dataset = data.inner();
 
         validate_feature_count(model.meta().n_features, dataset.n_features())?;
@@ -214,7 +192,7 @@ impl PyGBLinearModel {
         data: PyRef<'_, PyDataset>,
         #[allow(unused_variables)] n_threads: usize,
     ) -> PyResult<Bound<'py, PyArray2<f32>>> {
-        let model = require_fitted(self.inner.as_ref(), "predict_raw")?;
+        let model = self.fitted_model("predict_raw")?;
         let dataset = data.inner();
 
         validate_feature_count(model.meta().n_features, dataset.n_features())?;
@@ -250,10 +228,10 @@ impl PyGBLinearModel {
             .into());
         }
 
-        // Convert Python config to core config using Into trait
-        let config = slf.config.bind(py).borrow();
-        let core_config: boosters::GBLinearConfig = (&*config).into();
-        drop(config);
+        let core_config = match &slf.state {
+            GBLinearState::Unfitted { config } => config.clone(),
+            GBLinearState::Fitted { model } => model.config().clone(),
+        };
 
         let core_train = train.inner();
 
@@ -267,14 +245,119 @@ impl PyGBLinearModel {
 
         match trained_model {
             Some(model) => {
-                slf.best_iteration = model.meta().best_iteration;
-                slf.inner = Some(model);
+                slf.state = GBLinearState::Fitted { model };
                 Ok(slf)
             }
             None => Err(BoostersError::TrainingError(
                 "Training failed to produce a model".to_string(),
             )
             .into()),
+        }
+    }
+
+    // =========================================================================
+    // Serialization methods
+    // =========================================================================
+
+    /// Serialize model to binary bytes.
+    ///
+    /// Returns:
+    ///     Binary representation of the model (.bstr format).
+    ///
+    /// Raises:
+    ///     RuntimeError: If model is not fitted or serialization fails.
+    pub fn to_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let model = self.fitted_model("to_bytes")?;
+        let mut buf = Vec::new();
+        model
+            .write_into(&mut buf, &BinaryWriteOptions::default())
+            .map_err(|e| BoostersError::WriteError(e.to_string()))?;
+        Ok(PyBytes::new(py, &buf))
+    }
+
+    /// Serialize model to JSON bytes.
+    ///
+    /// Returns:
+    ///     UTF-8 JSON representation of the model (.bstr.json format).
+    ///
+    /// Raises:
+    ///     RuntimeError: If model is not fitted or serialization fails.
+    pub fn to_json_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let model = self.fitted_model("to_json_bytes")?;
+        let mut buf = Vec::new();
+        model
+            .write_json_into(&mut buf, &JsonWriteOptions::compact())
+            .map_err(|e| BoostersError::WriteError(e.to_string()))?;
+        Ok(PyBytes::new(py, &buf))
+    }
+
+    /// Load model from binary bytes.
+    ///
+    /// Args:
+    ///     data: Binary bytes in .bstr format.
+    ///
+    /// Returns:
+    ///     Loaded GBLinearModel instance.
+    ///
+    /// Raises:
+    ///     ValueError: If bytes are invalid or corrupted.
+    #[staticmethod]
+    #[pyo3(signature = (data))]
+    pub fn from_bytes(
+        py: Python<'_>,
+        #[gen_stub(override_type(type_repr = "bytes"))] data: &[u8],
+    ) -> PyResult<Self> {
+        let model =
+            boosters::GBLinearModel::read_from(Cursor::new(data), &BinaryReadOptions::default())
+                .map_err(|e| BoostersError::ModelReadError(e.to_string()))?;
+
+        let _ = py;
+        Ok(Self {
+            state: GBLinearState::Fitted { model },
+        })
+    }
+
+    /// Load model from JSON bytes.
+    ///
+    /// Args:
+    ///     data: UTF-8 JSON bytes in .bstr.json format.
+    ///
+    /// Returns:
+    ///     Loaded GBLinearModel instance.
+    ///
+    /// Raises:
+    ///     ValueError: If JSON is invalid.
+    #[staticmethod]
+    #[pyo3(signature = (data))]
+    pub fn from_json_bytes(
+        py: Python<'_>,
+        #[gen_stub(override_type(type_repr = "bytes"))] data: &[u8],
+    ) -> PyResult<Self> {
+        let model = boosters::GBLinearModel::read_json_from(Cursor::new(data))
+            .map_err(|e| BoostersError::ModelReadError(e.to_string()))?;
+
+        let _ = py;
+        Ok(Self {
+            state: GBLinearState::Fitted { model },
+        })
+    }
+}
+
+impl PyGBLinearModel {
+    fn fitted_model(&self, method: &str) -> PyResult<&boosters::GBLinearModel> {
+        match &self.state {
+            GBLinearState::Fitted { model } => Ok(model),
+            GBLinearState::Unfitted { .. } => Err(BoostersError::NotFitted {
+                method: method.to_string(),
+            }
+            .into()),
+        }
+    }
+
+    /// Create from a core model (used by polymorphic loading).
+    pub(crate) fn from_model(model: boosters::GBLinearModel) -> Self {
+        Self {
+            state: GBLinearState::Fitted { model },
         }
     }
 }

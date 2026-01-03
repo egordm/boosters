@@ -1,16 +1,25 @@
 //! GBDT Model Python bindings.
 
+use std::io::Cursor;
+
 use numpy::{PyArray1, PyArray2, PyArray3};
 use pyo3::prelude::*;
+use pyo3::types::PyBytes;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use boosters::explainability::ShapValues;
+use boosters::persist::{BinaryReadOptions, BinaryWriteOptions, JsonWriteOptions, SerializableModel};
 
 use crate::config::PyGBDTConfig;
 use crate::data::PyDataset;
 use crate::error::BoostersError;
 use crate::types::PyImportanceType;
-use crate::validation::{require_fitted, validate_feature_count};
+use crate::validation::validate_feature_count;
+
+enum GBDTState {
+    Unfitted { config: boosters::GBDTConfig },
+    Fitted { model: boosters::GBDTModel },
+}
 
 /// Gradient Boosted Decision Tree model.
 ///
@@ -21,9 +30,6 @@ use crate::validation::{require_fitted, validate_feature_count};
 ///     is_fitted: Whether the model has been fitted.
 ///     n_trees: Number of trees in the fitted model.
 ///     n_features: Number of features the model was trained on.
-///     best_iteration: Best iteration from early stopping.
-///     best_score: Best score from early stopping.
-///     eval_results: Evaluation results from training.
 ///     config: Model configuration.
 ///
 /// Examples:
@@ -34,20 +40,7 @@ use crate::validation::{require_fitted, validate_feature_count};
 #[gen_stub_pyclass]
 #[pyclass(name = "GBDTModel", module = "boosters._boosters_rs")]
 pub struct PyGBDTModel {
-    /// Configuration for the model.
-    config: Py<PyGBDTConfig>,
-
-    /// Inner trained model (None until fit() is called).
-    inner: Option<boosters::GBDTModel>,
-
-    /// Evaluation results from training (populated after fit).
-    eval_results: Option<Py<PyAny>>,
-
-    /// Best iteration from early stopping (if applicable).
-    best_iteration: Option<usize>,
-
-    /// Best score from early stopping (if applicable).
-    best_score: Option<f64>,
+    state: GBDTState,
 }
 
 #[gen_stub_pymethods]
@@ -63,69 +56,50 @@ impl PyGBDTModel {
     #[new]
     #[pyo3(signature = (config=None))]
     pub fn new(py: Python<'_>, config: Option<Py<PyGBDTConfig>>) -> PyResult<Self> {
-        let config = match config {
-            Some(c) => c,
-            None => {
-                let boosters_mod = py.import("boosters._boosters_rs")?;
-                let config_class = boosters_mod.getattr("GBDTConfig")?;
-                let config_obj = config_class.call0()?;
-                config_obj.extract::<Py<PyGBDTConfig>>()?
+        let core_config = match config {
+            Some(c) => {
+                let borrowed = c.bind(py).borrow();
+                (&*borrowed).into()
             }
+            None => (&PyGBDTConfig::default()).into(),
         };
 
         Ok(Self {
-            config,
-            inner: None,
-            eval_results: None,
-            best_iteration: None,
-            best_score: None,
+            state: GBDTState::Unfitted {
+                config: core_config,
+            },
         })
     }
 
     /// Whether the model has been fitted.
     #[getter]
     pub fn is_fitted(&self) -> bool {
-        self.inner.is_some()
+        matches!(self.state, GBDTState::Fitted { .. })
     }
 
     /// Number of trees in the fitted model.
     #[getter]
     pub fn n_trees(&self) -> PyResult<usize> {
-        let model = require_fitted(self.inner.as_ref(), "n_trees")?;
+        let model = self.fitted_model("n_trees")?;
         Ok(model.forest().n_trees())
     }
 
     /// Number of features the model was trained on.
     #[getter]
     pub fn n_features(&self) -> PyResult<usize> {
-        let model = require_fitted(self.inner.as_ref(), "n_features")?;
+        let model = self.fitted_model("n_features")?;
         Ok(model.meta().n_features)
-    }
-
-    /// Best iteration from early stopping.
-    #[getter]
-    pub fn best_iteration(&self) -> Option<usize> {
-        self.best_iteration
-            .or_else(|| self.inner.as_ref().and_then(|m| m.meta().best_iteration))
-    }
-
-    /// Best score from early stopping.
-    #[getter]
-    pub fn best_score(&self) -> Option<f64> {
-        self.best_score
-    }
-
-    /// Evaluation results from training.
-    #[getter]
-    #[gen_stub(override_return_type(type_repr = "dict[str, dict[str, list[float]]] | None", imports = ()))]
-    pub fn eval_results(&self, py: Python<'_>) -> Option<Py<PyAny>> {
-        self.eval_results.as_ref().map(|r| r.clone_ref(py))
     }
 
     /// Get the model configuration.
     #[getter]
-    pub fn config(&self, py: Python<'_>) -> Py<PyGBDTConfig> {
-        self.config.clone_ref(py)
+    pub fn config(&self, py: Python<'_>) -> PyResult<Py<PyGBDTConfig>> {
+        let core_config = match &self.state {
+            GBDTState::Unfitted { config } => config,
+            GBDTState::Fitted { model } => model.config(),
+        };
+        let py_config: PyGBDTConfig = core_config.into();
+        Py::new(py, py_config)
     }
 
     /// Get feature importance scores.
@@ -141,7 +115,7 @@ impl PyGBDTModel {
         py: Python<'py>,
         importance_type: PyImportanceType,
     ) -> PyResult<Bound<'py, PyArray1<f32>>> {
-        let model = require_fitted(self.inner.as_ref(), "feature_importance")?;
+        let model = self.fitted_model("feature_importance")?;
 
         let importance = model
             .feature_importance(importance_type.into())
@@ -164,7 +138,7 @@ impl PyGBDTModel {
         py: Python<'py>,
         data: PyRef<'_, PyDataset>,
     ) -> PyResult<Bound<'py, PyArray3<f32>>> {
-        let model = require_fitted(self.inner.as_ref(), "shap_values")?;
+        let model = self.fitted_model("shap_values")?;
         let dataset = data.inner();
 
         validate_feature_count(model.meta().n_features, dataset.n_features())?;
@@ -183,7 +157,7 @@ impl PyGBDTModel {
 
     /// String representation.
     fn __repr__(&self) -> String {
-        if let Some(model) = &self.inner {
+        if let GBDTState::Fitted { model } = &self.state {
             format!(
                 "GBDTModel(n_trees={}, n_features={}, fitted=True)",
                 model.forest().n_trees(),
@@ -212,7 +186,7 @@ impl PyGBDTModel {
         data: PyRef<'_, PyDataset>,
         n_threads: usize,
     ) -> PyResult<Bound<'py, PyArray2<f32>>> {
-        let model = require_fitted(self.inner.as_ref(), "predict")?;
+        let model = self.fitted_model("predict")?;
         let dataset = data.inner();
 
         validate_feature_count(model.meta().n_features, dataset.n_features())?;
@@ -242,7 +216,7 @@ impl PyGBDTModel {
         data: PyRef<'_, PyDataset>,
         n_threads: usize,
     ) -> PyResult<Bound<'py, PyArray2<f32>>> {
-        let model = require_fitted(self.inner.as_ref(), "predict_raw")?;
+        let model = self.fitted_model("predict_raw")?;
         let dataset = data.inner();
 
         validate_feature_count(model.meta().n_features, dataset.n_features())?;
@@ -278,10 +252,10 @@ impl PyGBDTModel {
             .into());
         }
 
-        // Convert Python config to core config
-        let config = slf.config.bind(py).borrow();
-        let core_config: boosters::GBDTConfig = (&*config).into();
-        drop(config);
+        let core_config = match &slf.state {
+            GBDTState::Unfitted { config } => config.clone(),
+            GBDTState::Fitted { model } => model.config().clone(),
+        };
 
         let core_train = train.inner();
 
@@ -295,14 +269,118 @@ impl PyGBDTModel {
 
         match trained_model {
             Some(model) => {
-                slf.best_iteration = model.meta().best_iteration;
-                slf.inner = Some(model);
+                slf.state = GBDTState::Fitted { model };
                 Ok(slf)
             }
             None => Err(BoostersError::TrainingError(
                 "Training failed to produce a model".to_string(),
             )
             .into()),
+        }
+    }
+
+    // =========================================================================
+    // Serialization methods
+    // =========================================================================
+
+    /// Serialize model to binary bytes.
+    ///
+    /// Returns:
+    ///     Binary representation of the model (.bstr format).
+    ///
+    /// Raises:
+    ///     RuntimeError: If model is not fitted or serialization fails.
+    pub fn to_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let model = self.fitted_model("to_bytes")?;
+        let mut buf = Vec::new();
+        model
+            .write_into(&mut buf, &BinaryWriteOptions::default())
+            .map_err(|e| BoostersError::WriteError(e.to_string()))?;
+        Ok(PyBytes::new(py, &buf))
+    }
+
+    /// Serialize model to JSON bytes.
+    ///
+    /// Returns:
+    ///     UTF-8 JSON representation of the model (.bstr.json format).
+    ///
+    /// Raises:
+    ///     RuntimeError: If model is not fitted or serialization fails.
+    pub fn to_json_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let model = self.fitted_model("to_json_bytes")?;
+        let mut buf = Vec::new();
+        model
+            .write_json_into(&mut buf, &JsonWriteOptions::compact())
+            .map_err(|e| BoostersError::WriteError(e.to_string()))?;
+        Ok(PyBytes::new(py, &buf))
+    }
+
+    /// Load model from binary bytes.
+    ///
+    /// Args:
+    ///     data: Binary bytes in .bstr format.
+    ///
+    /// Returns:
+    ///     Loaded GBDTModel instance.
+    ///
+    /// Raises:
+    ///     ValueError: If bytes are invalid or corrupted.
+    #[staticmethod]
+    #[pyo3(signature = (data))]
+    pub fn from_bytes(
+        py: Python<'_>,
+        #[gen_stub(override_type(type_repr = "bytes"))] data: &[u8],
+    ) -> PyResult<Self> {
+        let model = boosters::GBDTModel::read_from(Cursor::new(data), &BinaryReadOptions::default())
+            .map_err(|e| BoostersError::ModelReadError(e.to_string()))?;
+
+        let _ = py;
+        Ok(Self {
+            state: GBDTState::Fitted { model },
+        })
+    }
+
+    /// Load model from JSON bytes.
+    ///
+    /// Args:
+    ///     data: UTF-8 JSON bytes in .bstr.json format.
+    ///
+    /// Returns:
+    ///     Loaded GBDTModel instance.
+    ///
+    /// Raises:
+    ///     ValueError: If JSON is invalid.
+    #[staticmethod]
+    #[pyo3(signature = (data))]
+    pub fn from_json_bytes(
+        py: Python<'_>,
+        #[gen_stub(override_type(type_repr = "bytes"))] data: &[u8],
+    ) -> PyResult<Self> {
+        let model = boosters::GBDTModel::read_json_from(Cursor::new(data))
+            .map_err(|e| BoostersError::ModelReadError(e.to_string()))?;
+
+        let _ = py;
+        Ok(Self {
+            state: GBDTState::Fitted { model },
+        })
+    }
+}
+
+impl PyGBDTModel {
+    fn fitted_model(&self, method: &str) -> PyResult<&boosters::GBDTModel> {
+        match &self.state {
+            GBDTState::Fitted { model } => Ok(model),
+            GBDTState::Unfitted { .. } => Err(BoostersError::NotFitted {
+                method: method.to_string(),
+            }
+            .into()),
+        }
+    }
+
+    /// Create from a core model (used by polymorphic loading).
+    pub(crate) fn from_model(model: boosters::GBDTModel) -> Self {
+        Self {
+            state: GBDTState::Fitted { model },
         }
     }
 }

@@ -17,7 +17,14 @@ See Also:
 
 # Explainability types
 import boosters._boosters_rs as _rs
-from boosters._boosters_rs import GBLinearUpdateStrategy, ImportanceType, Verbosity
+from boosters._boosters_rs import (
+    GBLinearUpdateStrategy,
+    ImportanceType,
+    Model,
+    ModelInfo,
+    ReadError,
+    Verbosity,
+)
 from boosters.config import GBDTConfig, GBLinearConfig
 from boosters.dataset import Dataset, DatasetBuilder, Feature
 from boosters.metrics import Metric
@@ -28,6 +35,7 @@ from boosters.types import GrowthStrategy
 __version__: str = getattr(_rs, "__version__", "0.0.0")
 
 __all__ = [
+    "__version__",
     "Dataset",
     "DatasetBuilder",
     "Feature",
@@ -39,7 +47,9 @@ __all__ = [
     "GrowthStrategy",
     "ImportanceType",
     "Metric",
+    "Model",
+    "ModelInfo",
     "Objective",
+    "ReadError",
     "Verbosity",
-    "__version__",
 ]

@@ -503,6 +503,95 @@ impl From<&PyGBDTConfig> for boosters::GBDTConfig {
     }
 }
 
+impl From<&boosters::GBDTConfig> for PyGBDTConfig {
+    fn from(config: &boosters::GBDTConfig) -> Self {
+        use boosters::training::gbdt::GrowthStrategy;
+
+        // Convert objective
+        let objective: PyObjective = (&config.objective).into();
+
+        // Convert metric
+        let metric = config.metric.as_ref().map(|m| m.into());
+
+        // Convert growth strategy
+        let (growth_strategy, max_depth, n_leaves) = match config.growth_strategy {
+            GrowthStrategy::DepthWise { max_depth } => {
+                (PyGrowthStrategy::Depthwise, max_depth, 31)
+            }
+            GrowthStrategy::LeafWise { max_leaves } => {
+                (PyGrowthStrategy::Leafwise, 6, max_leaves)
+            }
+        };
+
+        // Convert linear leaves config
+        let (
+            linear_leaves,
+            linear_l2,
+            linear_l1,
+            linear_max_iterations,
+            linear_tolerance,
+            linear_min_samples,
+            linear_coefficient_threshold,
+            linear_max_features,
+        ) = if let Some(ref ll) = config.linear_leaves {
+            (
+                true,
+                ll.lambda as f64,
+                ll.alpha as f64,
+                ll.max_iterations,
+                ll.tolerance,
+                ll.min_samples as u32,
+                ll.coefficient_threshold as f64,
+                ll.max_features as u32,
+            )
+        } else {
+            (false, 0.01, 0.0, 10, 1e-6, 50, 1e-6, 10)
+        };
+
+        // Convert verbosity
+        let verbosity = match config.verbosity {
+            boosters::training::Verbosity::Silent => PyVerbosity::Silent,
+            boosters::training::Verbosity::Warning => PyVerbosity::Warning,
+            boosters::training::Verbosity::Info => PyVerbosity::Info,
+            boosters::training::Verbosity::Debug => PyVerbosity::Debug,
+        };
+
+        Self {
+            n_estimators: config.n_trees,
+            learning_rate: config.learning_rate as f64,
+            objective,
+            metric,
+            growth_strategy,
+            max_depth,
+            n_leaves,
+            max_onehot_cats: config.max_onehot_cats,
+            l1: config.alpha as f64,
+            l2: config.lambda as f64,
+            min_gain_to_split: config.min_gain as f64,
+            min_child_weight: config.min_child_weight as f64,
+            min_samples_leaf: config.min_samples_leaf,
+            subsample: config.subsample as f64,
+            colsample_bytree: config.colsample_bytree as f64,
+            colsample_bylevel: config.colsample_bylevel as f64,
+            linear_leaves,
+            linear_l2,
+            linear_l1,
+            linear_max_iterations,
+            linear_tolerance,
+            linear_min_samples,
+            linear_coefficient_threshold,
+            linear_max_features,
+            max_bins: config.binning.max_bins,
+            enable_bundling: config.binning.enable_bundling,
+            bundling_conflict_rate: 0.0001,  // Not stored in core config
+            bundling_min_sparsity: config.binning.sparsity_threshold as f64,
+            early_stopping_rounds: config.early_stopping_rounds,
+            seed: config.seed,
+            verbosity,
+        }
+    }
+}
+
 // =============================================================================
 // GBLinear Config
 // =============================================================================
@@ -670,6 +759,46 @@ impl From<&PyGBLinearConfig> for boosters::GBLinearConfig {
             early_stopping_rounds: py_config.early_stopping_rounds,
             seed: py_config.seed,
             verbosity: py_config.verbosity.into(),
+        }
+    }
+}
+
+impl From<&boosters::GBLinearConfig> for PyGBLinearConfig {
+    fn from(config: &boosters::GBLinearConfig) -> Self {
+        use boosters::training::gblinear::UpdateStrategy;
+
+        // Convert objective
+        let objective: PyObjective = (&config.objective).into();
+
+        // Convert metric
+        let metric = config.metric.as_ref().map(|m| m.into());
+
+        // Convert update strategy
+        let update_strategy = match config.update_strategy {
+            UpdateStrategy::Shotgun => PyGBLinearUpdateStrategy::Shotgun,
+            UpdateStrategy::Sequential => PyGBLinearUpdateStrategy::Sequential,
+        };
+
+        // Convert verbosity
+        let verbosity = match config.verbosity {
+            boosters::training::Verbosity::Silent => PyVerbosity::Silent,
+            boosters::training::Verbosity::Warning => PyVerbosity::Warning,
+            boosters::training::Verbosity::Info => PyVerbosity::Info,
+            boosters::training::Verbosity::Debug => PyVerbosity::Debug,
+        };
+
+        Self {
+            n_estimators: config.n_rounds,
+            learning_rate: config.learning_rate as f64,
+            update_strategy,
+            objective,
+            metric,
+            l1: config.alpha as f64,
+            l2: config.lambda as f64,
+            max_delta_step: config.max_delta_step as f64,
+            early_stopping_rounds: config.early_stopping_rounds,
+            seed: config.seed,
+            verbosity,
         }
     }
 }

@@ -250,6 +250,34 @@ impl From<PyObjective> for boosters::training::Objective {
     }
 }
 
+impl From<&boosters::training::Objective> for PyObjective {
+    fn from(obj: &boosters::training::Objective) -> Self {
+        use boosters::training::Objective;
+
+        match obj {
+            Objective::SquaredLoss(_) => PyObjective::Squared {},
+            Objective::AbsoluteLoss(_) => PyObjective::Absolute {},
+            Objective::PoissonLoss(_) => PyObjective::Poisson {},
+            Objective::LogisticLoss(_) => PyObjective::Logistic {},
+            Objective::HingeLoss(_) => PyObjective::Hinge {},
+            Objective::PseudoHuberLoss(inner) => PyObjective::Huber {
+                delta: inner.delta as f64,
+            },
+            Objective::PinballLoss(inner) => PyObjective::Pinball {
+                alpha: inner.alphas.iter().map(|&a| a as f64).collect(),
+            },
+            Objective::SoftmaxLoss(inner) => PyObjective::Softmax {
+                n_classes: inner.n_classes as u32,
+            },
+            Objective::Custom(_) => {
+                // Custom objectives can't be round-tripped
+                // Default to squared loss
+                PyObjective::Squared {}
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

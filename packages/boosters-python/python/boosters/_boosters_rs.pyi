@@ -7,6 +7,10 @@ import numpy
 import numpy.typing
 import typing
 
+class ReadError(ValueError):
+    """Exception raised when reading a serialized model fails."""
+
+
 class Dataset:
     r"""
     Internal dataset holding features, labels, and optional metadata.
@@ -447,9 +451,6 @@ class GBDTModel:
         is_fitted: Whether the model has been fitted.
         n_trees: Number of trees in the fitted model.
         n_features: Number of features the model was trained on.
-        best_iteration: Best iteration from early stopping.
-        best_score: Best score from early stopping.
-        eval_results: Evaluation results from training.
         config: Model configuration.
     
     Examples:
@@ -472,21 +473,6 @@ class GBDTModel:
     def n_features(self) -> builtins.int:
         r"""
         Number of features the model was trained on.
-        """
-    @property
-    def best_iteration(self) -> typing.Optional[builtins.int]:
-        r"""
-        Best iteration from early stopping.
-        """
-    @property
-    def best_score(self) -> typing.Optional[builtins.float]:
-        r"""
-        Best score from early stopping.
-        """
-    @property
-    def eval_results(self) -> dict[str, dict[str, list[float]]] | None:
-        r"""
-        Evaluation results from training.
         """
     @property
     def config(self) -> GBDTConfig:
@@ -566,6 +552,54 @@ class GBDTModel:
         
         Returns:
             Self (for method chaining).
+        """
+    def to_bytes(self) -> bytes:
+        r"""
+        Serialize model to binary bytes.
+        
+        Returns:
+            Binary representation of the model (.bstr format).
+        
+        Raises:
+            RuntimeError: If model is not fitted or serialization fails.
+        """
+    def to_json_bytes(self) -> bytes:
+        r"""
+        Serialize model to JSON bytes.
+        
+        Returns:
+            UTF-8 JSON representation of the model (.bstr.json format).
+        
+        Raises:
+            RuntimeError: If model is not fitted or serialization fails.
+        """
+    @staticmethod
+    def from_bytes(data: bytes) -> GBDTModel:
+        r"""
+        Load model from binary bytes.
+        
+        Args:
+            data: Binary bytes in .bstr format.
+        
+        Returns:
+            Loaded GBDTModel instance.
+        
+        Raises:
+            ValueError: If bytes are invalid or corrupted.
+        """
+    @staticmethod
+    def from_json_bytes(data: bytes) -> GBDTModel:
+        r"""
+        Load model from JSON bytes.
+        
+        Args:
+            data: UTF-8 JSON bytes in .bstr.json format.
+        
+        Returns:
+            Loaded GBDTModel instance.
+        
+        Raises:
+            ValueError: If JSON is invalid.
         """
 
 @typing.final
@@ -701,21 +735,6 @@ class GBLinearModel:
             Array of shape (n_outputs,).
         """
     @property
-    def best_iteration(self) -> typing.Optional[builtins.int]:
-        r"""
-        Best iteration from early stopping.
-        """
-    @property
-    def best_score(self) -> typing.Optional[builtins.float]:
-        r"""
-        Best score from early stopping.
-        """
-    @property
-    def eval_results(self) -> dict[str, dict[str, list[float]]] | None:
-        r"""
-        Evaluation results from training.
-        """
-    @property
     def config(self) -> GBLinearConfig:
         r"""
         Get the model configuration.
@@ -774,6 +793,136 @@ class GBLinearModel:
         Returns:
             Self (for method chaining).
         """
+    def to_bytes(self) -> bytes:
+        r"""
+        Serialize model to binary bytes.
+        
+        Returns:
+            Binary representation of the model (.bstr format).
+        
+        Raises:
+            RuntimeError: If model is not fitted or serialization fails.
+        """
+    def to_json_bytes(self) -> bytes:
+        r"""
+        Serialize model to JSON bytes.
+        
+        Returns:
+            UTF-8 JSON representation of the model (.bstr.json format).
+        
+        Raises:
+            RuntimeError: If model is not fitted or serialization fails.
+        """
+    @staticmethod
+    def from_bytes(data: bytes) -> GBLinearModel:
+        r"""
+        Load model from binary bytes.
+        
+        Args:
+            data: Binary bytes in .bstr format.
+        
+        Returns:
+            Loaded GBLinearModel instance.
+        
+        Raises:
+            ValueError: If bytes are invalid or corrupted.
+        """
+    @staticmethod
+    def from_json_bytes(data: bytes) -> GBLinearModel:
+        r"""
+        Load model from JSON bytes.
+        
+        Args:
+            data: UTF-8 JSON bytes in .bstr.json format.
+        
+        Returns:
+            Loaded GBLinearModel instance.
+        
+        Raises:
+            ValueError: If JSON is invalid.
+        """
+
+@typing.final
+class Model:
+    r"""
+    Namespace for polymorphic model loading and inspection.
+    
+    Prefer this over a global `loads()` function.
+    
+    Examples:
+        >>> data = model.to_bytes()
+        >>> loaded = boosters.Model.load_from_bytes(data)
+        >>> info = boosters.Model.inspect_bytes(data)
+    """
+    @staticmethod
+    def load_from_bytes(data: bytes) -> GBDTModel | GBLinearModel:
+        r"""
+        Load a model from binary or JSON bytes, auto-detecting the format and model type.
+        
+        Args:
+            data: Binary bytes (.bstr format) or UTF-8 JSON bytes (.bstr.json format).
+        
+        Returns:
+            The loaded model (either GBDTModel or GBLinearModel).
+        
+        Raises:
+            ValueError: If the data is invalid, corrupted, or uses an unsupported format.
+        """
+    @staticmethod
+    def inspect_bytes(data: bytes) -> ModelInfo:
+        r"""
+        Inspect serialized model bytes without fully deserializing.
+        
+        Args:
+            data: Binary bytes (.bstr format) or UTF-8 JSON bytes (.bstr.json format).
+        
+        Returns:
+            ModelInfo object with schema_version, model_type, format, and is_compressed.
+        
+        Raises:
+            ValueError: If the data is invalid or cannot be inspected.
+        """
+
+@typing.final
+class ModelInfo:
+    r"""
+    Information about a serialized model, obtained without full deserialization.
+    
+    This is useful for quick inspection of model files to determine their type,
+    format, and schema version before loading the full model.
+    
+    Attributes:
+        schema_version: The bstr schema version (e.g., 1).
+        model_type: The type of model ("gbdt" or "gblinear").
+        format: The serialization format ("binary" or "json").
+        is_compressed: Whether the binary payload is compressed (always False for JSON).
+    
+    Examples:
+        >>> data = model.to_bytes()
+        >>> info = boosters.Model.inspect_bytes(data)
+        >>> print(f"Model type: {info.model_type}, version: {info.schema_version}")
+    """
+    @property
+    def schema_version(self) -> builtins.int:
+        r"""
+        Schema version (e.g., 1).
+        """
+    @property
+    def model_type(self) -> builtins.str:
+        r"""
+        Model type string ("gbdt" or "gblinear").
+        """
+    @property
+    def format(self) -> builtins.str:
+        r"""
+        Format string ("binary" or "json").
+        """
+    @property
+    def is_compressed(self) -> builtins.bool:
+        r"""
+        Whether the payload is compressed (binary only).
+        """
+    def __repr__(self) -> builtins.str: ...
 
 @typing.final
 class GBLinearUpdateStrategy(enum.Enum):

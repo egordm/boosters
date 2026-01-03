@@ -175,6 +175,28 @@ impl From<PyMetric> for boosters::training::Metric {
     }
 }
 
+impl From<&boosters::training::Metric> for PyMetric {
+    fn from(metric: &boosters::training::Metric) -> Self {
+        use boosters::training::Metric;
+
+        match metric {
+            Metric::None => PyMetric::Rmse {},  // Default fallback
+            Metric::Rmse(_) => PyMetric::Rmse {},
+            Metric::Mae(_) => PyMetric::Mae {},
+            Metric::Mape(_) => PyMetric::Mape {},
+            Metric::LogLoss(_) => PyMetric::LogLoss {},
+            Metric::Auc(_) => PyMetric::Auc {},
+            Metric::Accuracy(_) | Metric::MarginAccuracy(_) => PyMetric::Accuracy {},
+            Metric::MulticlassLogLoss(_) => PyMetric::LogLoss {},
+            Metric::MulticlassAccuracy(_) => PyMetric::Accuracy {},
+            Metric::Quantile(_) => PyMetric::Mae {},  // Best approximation
+            Metric::Huber(_) => PyMetric::Mae {},     // Best approximation
+            Metric::PoissonDeviance(_) => PyMetric::Rmse {},  // Best approximation
+            Metric::Custom(_) => PyMetric::Rmse {},   // Custom can't be round-tripped
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -9,6 +9,7 @@ mod error;
 mod metrics;
 mod model;
 mod objectives;
+mod persist;
 mod types;
 mod validation;
 
@@ -20,6 +21,7 @@ use data::{PyDataset, PyDatasetBuilder, PyFeature};
 use metrics::PyMetric;
 use model::{PyGBDTModel, PyGBLinearModel};
 use objectives::PyObjective;
+use persist::{PyModel, PyModelInfo};
 use types::{PyGBLinearUpdateStrategy, PyImportanceType, PyVerbosity};
 
 /// Python module for boosters.
@@ -28,7 +30,11 @@ use types::{PyGBLinearUpdateStrategy, PyImportanceType, PyVerbosity};
 /// package, not directly from `_boosters_rs`.
 #[pymodule]
 fn _boosters_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    let py = m.py();
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
+
+    // Register custom exception types
+    error::register_exceptions(py, m)?;
 
     // Config types
     m.add_class::<PyGrowthStrategy>()?;
@@ -43,6 +49,10 @@ fn _boosters_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Model types
     m.add_class::<PyGBDTModel>()?;
     m.add_class::<PyGBLinearModel>()?;
+
+    // Persistence types
+    m.add_class::<PyModelInfo>()?;
+    m.add_class::<PyModel>()?;
 
     // Objective and Metric enums (complex enums with variants)
     m.add_class::<PyObjective>()?;

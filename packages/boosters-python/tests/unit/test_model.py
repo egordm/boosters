@@ -178,3 +178,323 @@ class TestGBLinearModelFitPredict:
         model_high_reg.fit(Dataset(X, y))
 
         assert np.linalg.norm(model_high_reg.coef_) < np.linalg.norm(model_low_reg.coef_)
+
+
+class TestGBDTModelPersistence:
+    """Tests for GBDTModel serialization round-trip."""
+
+    def test_binary_roundtrip_preserves_predictions(self) -> None:
+        """to_bytes → from_bytes preserves predictions exactly."""
+        X, y = make_regression_data()  # noqa: N806
+        model = GBDTModel(config=GBDTConfig(n_estimators=20))
+        model.fit(Dataset(X, y))
+
+        original_preds = model.predict(Dataset(X))
+
+        data = model.to_bytes()
+        loaded = GBDTModel.from_bytes(data)
+        loaded_preds = loaded.predict(Dataset(X))
+
+        np.testing.assert_allclose(loaded_preds, original_preds, rtol=1e-6)
+
+    def test_json_roundtrip_preserves_predictions(self) -> None:
+        """to_json_bytes → from_json_bytes preserves predictions."""
+        X, y = make_regression_data()  # noqa: N806
+        model = GBDTModel(config=GBDTConfig(n_estimators=20))
+        model.fit(Dataset(X, y))
+
+        original_preds = model.predict(Dataset(X))
+
+        data = model.to_json_bytes()
+        loaded = GBDTModel.from_json_bytes(data)
+        loaded_preds = loaded.predict(Dataset(X))
+
+        np.testing.assert_allclose(loaded_preds, original_preds, rtol=1e-6)
+
+    def test_binary_classification_roundtrip(self) -> None:
+        """Binary classification model roundtrips correctly."""
+        X, y = make_binary_data()  # noqa: N806
+        model = GBDTModel(config=GBDTConfig(n_estimators=20, objective=Objective.logistic()))
+        model.fit(Dataset(X, y))
+
+        original_preds = model.predict(Dataset(X))
+
+        loaded = GBDTModel.from_bytes(model.to_bytes())
+        loaded_preds = loaded.predict(Dataset(X))
+
+        np.testing.assert_allclose(loaded_preds, original_preds, rtol=1e-6)
+
+    def test_serialized_model_properties(self) -> None:
+        """Loaded model has correct properties."""
+        X, y = make_regression_data()  # noqa: N806
+        model = GBDTModel(config=GBDTConfig(n_estimators=20))
+        model.fit(Dataset(X, y))
+
+        loaded = GBDTModel.from_bytes(model.to_bytes())
+
+        assert loaded.is_fitted
+        assert loaded.n_trees == model.n_trees
+        assert loaded.n_features == model.n_features
+
+
+class TestGBLinearModelPersistence:
+    """Tests for GBLinearModel serialization round-trip."""
+
+    def test_binary_roundtrip_preserves_predictions(self) -> None:
+        """to_bytes → from_bytes preserves predictions exactly."""
+        rng = np.random.default_rng(42)
+        X = rng.standard_normal((200, 5)).astype(np.float32)  # noqa: N806
+        y = (X[:, 0] + 0.5 * X[:, 1]).astype(np.float32)
+
+        model = GBLinearModel(config=GBLinearConfig(n_estimators=50))
+        model.fit(Dataset(X, y))
+
+        original_preds = model.predict(Dataset(X))
+
+        data = model.to_bytes()
+        loaded = GBLinearModel.from_bytes(data)
+        loaded_preds = loaded.predict(Dataset(X))
+
+        np.testing.assert_allclose(loaded_preds, original_preds, rtol=1e-6)
+
+    def test_json_roundtrip_preserves_predictions(self) -> None:
+        """to_json_bytes → from_json_bytes preserves predictions."""
+        rng = np.random.default_rng(42)
+        X = rng.standard_normal((200, 5)).astype(np.float32)  # noqa: N806
+        y = (X[:, 0] + 0.5 * X[:, 1]).astype(np.float32)
+
+        model = GBLinearModel(config=GBLinearConfig(n_estimators=50))
+        model.fit(Dataset(X, y))
+
+        original_preds = model.predict(Dataset(X))
+
+        data = model.to_json_bytes()
+        loaded = GBLinearModel.from_json_bytes(data)
+        loaded_preds = loaded.predict(Dataset(X))
+
+        np.testing.assert_allclose(loaded_preds, original_preds, rtol=1e-6)
+
+    def test_serialized_model_preserves_weights(self) -> None:
+        """Loaded model has same weights."""
+        rng = np.random.default_rng(42)
+        X = rng.standard_normal((200, 5)).astype(np.float32)  # noqa: N806
+        y = (X[:, 0] + 0.5 * X[:, 1]).astype(np.float32)
+
+        model = GBLinearModel(config=GBLinearConfig(n_estimators=50))
+        model.fit(Dataset(X, y))
+
+        loaded = GBLinearModel.from_bytes(model.to_bytes())
+
+        np.testing.assert_allclose(loaded.coef_, model.coef_, rtol=1e-6)
+        np.testing.assert_allclose(loaded.intercept_, model.intercept_, rtol=1e-6)
+
+
+class TestPolymorphicLoading:
+    """Tests for boosters.Model polymorphic loading and inspection."""
+
+    def test_loads_gbdt_binary(self) -> None:
+        """Model.load_from_bytes returns GBDTModel from binary GBDT data."""
+        import boosters
+
+        rng = np.random.default_rng(42)
+        X = rng.standard_normal((100, 5)).astype(np.float32)  # noqa: N806
+        y = rng.standard_normal(100).astype(np.float32)
+
+        model = GBDTModel(config=GBDTConfig(n_estimators=3))
+        model.fit(Dataset(X, y))
+
+        data = model.to_bytes()
+        loaded = boosters.Model.load_from_bytes(data)
+
+        assert isinstance(loaded, GBDTModel)
+        assert loaded.is_fitted
+        assert loaded.n_trees == 3
+
+    def test_loads_gbdt_json(self) -> None:
+        """Model.load_from_bytes returns GBDTModel from JSON GBDT data."""
+        import boosters
+
+        rng = np.random.default_rng(42)
+        X = rng.standard_normal((100, 5)).astype(np.float32)  # noqa: N806
+        y = rng.standard_normal(100).astype(np.float32)
+
+        model = GBDTModel(config=GBDTConfig(n_estimators=3))
+        model.fit(Dataset(X, y))
+
+        data = model.to_json_bytes()
+        loaded = boosters.Model.load_from_bytes(data)
+
+        assert isinstance(loaded, GBDTModel)
+        assert loaded.is_fitted
+
+    def test_loads_gblinear(self) -> None:
+        """Model.load_from_bytes returns GBLinearModel from GBLinear data."""
+        import boosters
+
+        rng = np.random.default_rng(42)
+        X = rng.standard_normal((100, 5)).astype(np.float32)  # noqa: N806
+        y = rng.standard_normal(100).astype(np.float32)
+
+        model = GBLinearModel(config=GBLinearConfig(n_estimators=5))
+        model.fit(Dataset(X, y))
+
+        data = model.to_bytes()
+        loaded = boosters.Model.load_from_bytes(data)
+
+        assert isinstance(loaded, GBLinearModel)
+        assert loaded.is_fitted
+
+    def test_loads_preserves_predictions(self) -> None:
+        """Model.load_from_bytes produces a model with identical predictions."""
+        import boosters
+
+        rng = np.random.default_rng(42)
+        X = rng.standard_normal((100, 5)).astype(np.float32)  # noqa: N806
+        y = rng.standard_normal(100).astype(np.float32)
+        ds = Dataset(X, y)
+
+        model = GBDTModel(config=GBDTConfig(n_estimators=5))
+        model.fit(ds)
+        original_preds = model.predict(ds)
+
+        loaded = boosters.Model.load_from_bytes(model.to_bytes())
+        loaded_preds = loaded.predict(ds)
+
+        np.testing.assert_allclose(loaded_preds, original_preds, rtol=1e-6)
+
+    def test_inspect_binary_gbdt(self) -> None:
+        """Model.inspect_bytes returns correct ModelInfo for binary GBDT."""
+        import boosters
+
+        rng = np.random.default_rng(42)
+        X = rng.standard_normal((100, 5)).astype(np.float32)  # noqa: N806
+        y = rng.standard_normal(100).astype(np.float32)
+
+        model = GBDTModel(config=GBDTConfig(n_estimators=3))
+        model.fit(Dataset(X, y))
+
+        data = model.to_bytes()
+        info = boosters.Model.inspect_bytes(data)
+
+        assert info.schema_version == 1
+        assert info.model_type == "gbdt"
+        assert info.format == "binary"
+        assert isinstance(info.is_compressed, bool)
+
+    def test_inspect_json_gbdt(self) -> None:
+        """Model.inspect_bytes returns correct ModelInfo for JSON GBDT."""
+        import boosters
+
+        rng = np.random.default_rng(42)
+        X = rng.standard_normal((100, 5)).astype(np.float32)  # noqa: N806
+        y = rng.standard_normal(100).astype(np.float32)
+
+        model = GBDTModel(config=GBDTConfig(n_estimators=3))
+        model.fit(Dataset(X, y))
+
+        data = model.to_json_bytes()
+        info = boosters.Model.inspect_bytes(data)
+
+        assert info.schema_version == 1
+        assert info.model_type == "gbdt"
+        assert info.format == "json"
+        assert info.is_compressed is False
+
+    def test_inspect_gblinear(self) -> None:
+        """Model.inspect_bytes returns correct ModelInfo for GBLinear."""
+        import boosters
+
+        rng = np.random.default_rng(42)
+        X = rng.standard_normal((100, 5)).astype(np.float32)  # noqa: N806
+        y = rng.standard_normal(100).astype(np.float32)
+
+        model = GBLinearModel(config=GBLinearConfig(n_estimators=5))
+        model.fit(Dataset(X, y))
+
+        info = boosters.Model.inspect_bytes(model.to_bytes())
+
+        assert info.model_type == "gblinear"
+        assert info.format == "binary"
+
+    def test_model_info_repr(self) -> None:
+        """ModelInfo has readable repr."""
+        import boosters
+
+        rng = np.random.default_rng(42)
+        X = rng.standard_normal((50, 3)).astype(np.float32)  # noqa: N806
+        y = rng.standard_normal(50).astype(np.float32)
+
+        model = GBDTModel(config=GBDTConfig(n_estimators=2))
+        model.fit(Dataset(X, y))
+
+        info = boosters.Model.inspect_bytes(model.to_bytes())
+        repr_str = repr(info)
+
+        assert "ModelInfo" in repr_str
+        assert "schema_version=" in repr_str
+        assert "model_type=" in repr_str
+
+
+class TestReadError:
+    """Tests for boosters.ReadError exception handling."""
+
+    def test_read_error_exists(self) -> None:
+        """ReadError is exported from boosters package."""
+        import boosters
+
+        assert hasattr(boosters, "ReadError")
+        assert issubclass(boosters.ReadError, ValueError)
+
+    def test_loads_invalid_data_raises_read_error(self) -> None:
+        """Model.load_from_bytes raises ReadError for invalid data."""
+        import boosters
+
+        with pytest.raises(boosters.ReadError):
+            boosters.Model.load_from_bytes(b"not valid model data")
+
+    def test_loads_truncated_data_raises_read_error(self) -> None:
+        """Model.load_from_bytes raises ReadError for truncated binary data."""
+        import boosters
+
+        # BSTR magic followed by incomplete header
+        with pytest.raises(boosters.ReadError):
+            boosters.Model.load_from_bytes(b"BSTR\x00\x00")
+
+    def test_inspect_invalid_data_raises_read_error(self) -> None:
+        """Model.inspect_bytes raises ReadError for invalid data."""
+        import boosters
+
+        with pytest.raises(boosters.ReadError):
+            boosters.Model.inspect_bytes(b"garbage")
+
+    def test_from_bytes_invalid_raises_read_error(self) -> None:
+        """GBDTModel.from_bytes raises ReadError for invalid data."""
+        import boosters
+
+        with pytest.raises(boosters.ReadError):
+            GBDTModel.from_bytes(b"invalid")
+
+    def test_from_json_bytes_invalid_raises_read_error(self) -> None:
+        """GBDTModel.from_json_bytes raises ReadError for invalid JSON."""
+        import boosters
+
+        with pytest.raises(boosters.ReadError):
+            GBDTModel.from_json_bytes(b"not json")
+
+    def test_read_error_caught_as_value_error(self) -> None:
+        """ReadError can be caught as ValueError."""
+        import boosters
+
+        with pytest.raises(ValueError):
+            boosters.Model.load_from_bytes(b"invalid")
+
+    def test_read_error_has_message(self) -> None:
+        """ReadError contains a descriptive message."""
+        import boosters
+
+        try:
+            boosters.Model.load_from_bytes(b"invalid model data")
+            pytest.fail("Should have raised ReadError")
+        except boosters.ReadError as e:
+            # Should contain some indication of what went wrong
+            assert len(str(e)) > 0

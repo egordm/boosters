@@ -48,16 +48,6 @@ pub fn validate_ratio(name: &str, value: f64) -> PyResult<()> {
     Ok(())
 }
 
-/// Validate that a model is fitted before accessing a property or method.
-pub fn require_fitted<'a, T>(model: Option<&'a T>, method: &str) -> PyResult<&'a T> {
-    model.ok_or_else(|| {
-        BoostersError::NotFitted {
-            method: method.to_string(),
-        }
-        .into()
-    })
-}
-
 /// Validate that the actual feature count matches the expected count.
 pub fn validate_feature_count(expected: usize, actual: usize) -> PyResult<()> {
     if actual != expected {

@@ -2,9 +2,36 @@
 //!
 //! This module defines error types and conversions from Rust errors to Python exceptions.
 
+use pyo3::create_exception;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use thiserror::Error;
+
+// =============================================================================
+// Custom Python Exception Types
+// =============================================================================
+
+// Create ReadError as a subclass of ValueError
+create_exception!(boosters._boosters_rs, ReadError, PyValueError, "Exception raised when reading a serialized model fails.
+
+This exception is raised when model deserialization encounters:
+- Invalid file format (wrong magic number)
+- Corrupted data (checksum mismatch)
+- Unsupported schema version
+- Invalid JSON structure
+
+Examples:
+    >>> try:
+    ...     model = boosters.Model.load_from_bytes(invalid_bytes)
+    ... except boosters.ReadError as e:
+    ...     print(f'Failed to load model: {e}')
+");
+
+/// Register custom exception types with the module.
+pub fn register_exceptions(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add("ReadError", m.py().get_type::<ReadError>())?;
+    Ok(())
+}
 
 // =============================================================================
 // Error Types
@@ -48,6 +75,14 @@ pub enum BoostersError {
     /// Explainability error.
     #[error("Explainability error: {0}")]
     ExplainError(String),
+
+    /// Model serialization/deserialization error.
+    #[error("{0}")]
+    ModelReadError(String),
+
+    /// Model write error.
+    #[error("{0}")]
+    WriteError(String),
 }
 
 // =============================================================================
@@ -66,6 +101,8 @@ impl From<BoostersError> for PyErr {
             BoostersError::TrainingError(_) => PyRuntimeError::new_err(err.to_string()),
             BoostersError::Prediction(_) => PyRuntimeError::new_err(err.to_string()),
             BoostersError::ExplainError(_) => PyRuntimeError::new_err(err.to_string()),
+            BoostersError::ModelReadError(msg) => ReadError::new_err(msg.clone()),
+            BoostersError::WriteError(_) => PyRuntimeError::new_err(err.to_string()),
         }
     }
 }
