@@ -45,7 +45,9 @@
 pub mod gbdt;
 pub mod gblinear;
 mod meta;
+mod transform;
 
 pub use gbdt::GBDTModel;
 pub use gblinear::GBLinearModel;
 pub use meta::{FeatureType, ModelMeta, TaskKind};
+pub use transform::OutputTransform;

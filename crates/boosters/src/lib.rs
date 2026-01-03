@@ -37,7 +37,7 @@ pub mod utils;
 // =============================================================================
 
 // High-level model types
-pub use model::{GBDTModel, GBLinearModel, ModelMeta, TaskKind};
+pub use model::{GBDTModel, GBLinearModel, ModelMeta, OutputTransform, TaskKind};
 
 // Configuration types (most users want these)
 pub use model::gbdt::GBDTConfig;
