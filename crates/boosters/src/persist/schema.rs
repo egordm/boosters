@@ -12,7 +12,6 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-
 /// Task type for model output interpretation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -9,19 +9,18 @@
 use std::collections::BTreeMap;
 
 use super::schema::{
-    CategoriesSchema, FeatureTypeSchema, ForestSchema, GBDTConfigSchema, GBDTModelSchema,
-    GBLinearConfigSchema, GBLinearModelSchema, LeafValuesSchema, LinearCoefficientsSchema,
-    LinearWeightsSchema, ModelMetaSchema, TaskKindSchema, TreeSchema,
-    MetricSchema, ObjectiveSchema,
-    BinningConfigSchema, FeatureSelectorSchema, GrowthStrategySchema, LinearLeafConfigSchema,
-    UpdateStrategySchema, VerbositySchema,
+    BinningConfigSchema, CategoriesSchema, FeatureSelectorSchema, FeatureTypeSchema, ForestSchema,
+    GBDTConfigSchema, GBDTModelSchema, GBLinearConfigSchema, GBLinearModelSchema,
+    GrowthStrategySchema, LeafValuesSchema, LinearCoefficientsSchema, LinearLeafConfigSchema,
+    LinearWeightsSchema, MetricSchema, ModelMetaSchema, ObjectiveSchema, TaskKindSchema,
+    TreeSchema, UpdateStrategySchema, VerbositySchema,
 };
 use crate::model::gbdt::GBDTConfig;
-use crate::training::gbdt::GrowthStrategy;
 use crate::model::gblinear::GBLinearConfig;
 use crate::model::{FeatureType, GBDTModel, GBLinearModel, ModelMeta, TaskKind};
 use crate::repr::gbdt::{Forest, ScalarLeaf, Tree};
 use crate::repr::gblinear::LinearModel;
+use crate::training::gbdt::GrowthStrategy;
 
 // =============================================================================
 // Objective / Metric conversions (schema <-> runtime)
@@ -34,19 +33,19 @@ impl From<&crate::training::Objective> for ObjectiveSchema {
             crate::training::Objective::AbsoluteLoss(_) => Self::AbsoluteLoss,
             crate::training::Objective::LogisticLoss(_) => Self::LogisticLoss,
             crate::training::Objective::HingeLoss(_) => Self::HingeLoss,
-            crate::training::Objective::SoftmaxLoss(inner) => {
-                Self::SoftmaxLoss { n_classes: inner.n_classes }
-            }
+            crate::training::Objective::SoftmaxLoss(inner) => Self::SoftmaxLoss {
+                n_classes: inner.n_classes,
+            },
             crate::training::Objective::PinballLoss(inner) => Self::PinballLoss {
                 alphas: inner.alphas.iter().map(|&a| a as f64).collect(),
             },
-            crate::training::Objective::PseudoHuberLoss(inner) => {
-                Self::PseudoHuberLoss { delta: inner.delta as f64 }
-            }
+            crate::training::Objective::PseudoHuberLoss(inner) => Self::PseudoHuberLoss {
+                delta: inner.delta as f64,
+            },
             crate::training::Objective::PoissonLoss(_) => Self::PoissonLoss,
-            crate::training::Objective::Custom(inner) => {
-                Self::Custom { name: inner.name().to_string() }
-            }
+            crate::training::Objective::Custom(inner) => Self::Custom {
+                name: inner.name().to_string(),
+            },
         }
     }
 }
@@ -83,9 +82,9 @@ impl From<&crate::training::Metric> for MetricSchema {
             crate::training::Metric::Mae(_) => Self::Mae,
             crate::training::Metric::Mape(_) => Self::Mape,
             crate::training::Metric::LogLoss(_) => Self::LogLoss,
-            crate::training::Metric::Accuracy(inner) => {
-                Self::Accuracy { threshold: inner.threshold as f64 }
-            }
+            crate::training::Metric::Accuracy(inner) => Self::Accuracy {
+                threshold: inner.threshold as f64,
+            },
             crate::training::Metric::MarginAccuracy(_) => Self::MarginAccuracy,
             crate::training::Metric::Auc(_) => Self::Auc,
             crate::training::Metric::MulticlassLogLoss(_) => Self::MulticlassLogLoss,
@@ -93,9 +92,7 @@ impl From<&crate::training::Metric> for MetricSchema {
             crate::training::Metric::Quantile(inner) => Self::Quantile {
                 alphas: inner.alphas.iter().map(|&a| a as f64).collect(),
             },
-            crate::training::Metric::Huber(inner) => Self::Huber {
-                delta: inner.delta,
-            },
+            crate::training::Metric::Huber(inner) => Self::Huber { delta: inner.delta },
             crate::training::Metric::PoissonDeviance(_) => Self::PoissonDeviance,
             crate::training::Metric::Custom(inner) => Self::Custom {
                 name: inner.name().to_string(),
@@ -447,11 +444,7 @@ impl TryFrom<TreeSchema> for Tree<ScalarLeaf> {
 
         // Compute is_leaf from children: a node is a leaf if left_child == 0
         // (0 is the sentinel for "no child" in our schema)
-        let is_leaf: Vec<bool> = schema
-            .children_left
-            .iter()
-            .map(|&left| left == 0)
-            .collect();
+        let is_leaf: Vec<bool> = schema.children_left.iter().map(|&left| left == 0).collect();
 
         let tree = Tree::new(
             schema.split_indices,
@@ -642,7 +635,10 @@ impl From<&GBDTConfig> for GBDTConfigSchema {
             colsample_bytree: config.colsample_bytree as f64,
             colsample_bylevel: config.colsample_bylevel as f64,
             binning: BinningConfigSchema::from(&config.binning),
-            linear_leaves: config.linear_leaves.as_ref().map(LinearLeafConfigSchema::from),
+            linear_leaves: config
+                .linear_leaves
+                .as_ref()
+                .map(LinearLeafConfigSchema::from),
             early_stopping_rounds: config.early_stopping_rounds,
             cache_size: config.cache_size,
             seed: config.seed,
@@ -834,8 +830,12 @@ impl TryFrom<GBLinearModelSchema> for GBLinearModel {
             learning_rate: cfg_schema.learning_rate as f32,
             alpha: cfg_schema.alpha as f32,
             lambda: cfg_schema.lambda as f32,
-            update_strategy: crate::training::gblinear::UpdateStrategy::from(cfg_schema.update_strategy),
-            feature_selector: crate::training::gblinear::FeatureSelectorKind::from(cfg_schema.feature_selector),
+            update_strategy: crate::training::gblinear::UpdateStrategy::from(
+                cfg_schema.update_strategy,
+            ),
+            feature_selector: crate::training::gblinear::FeatureSelectorKind::from(
+                cfg_schema.feature_selector,
+            ),
             max_delta_step: cfg_schema.max_delta_step as f32,
             early_stopping_rounds: cfg_schema.early_stopping_rounds,
             seed: cfg_schema.seed,

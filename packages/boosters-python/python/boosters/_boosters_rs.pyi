@@ -7,10 +7,6 @@ import numpy
 import numpy.typing
 import typing
 
-class ReadError(ValueError):
-    """Exception raised when reading a serialized model fails."""
-
-
 class Dataset:
     r"""
     Internal dataset holding features, labels, and optional metadata.
@@ -923,6 +919,24 @@ class ModelInfo:
         Whether the payload is compressed (binary only).
         """
     def __repr__(self) -> builtins.str: ...
+
+class ReadError(builtins.ValueError):
+    r"""
+    Exception raised when reading a serialized model fails.
+    
+    This exception is raised when model deserialization encounters:
+    - Invalid file format (wrong magic number)
+    - Corrupted data (checksum mismatch)
+    - Unsupported schema version
+    - Invalid JSON structure
+    
+    Examples:
+        >>> try:
+        ...     model = boosters.Model.load_from_bytes(invalid_bytes)
+        ... except boosters.ReadError as e:
+        ...     print(f'Failed to load model: {e}')
+    """
+    ...
 
 @typing.final
 class GBLinearUpdateStrategy(enum.Enum):

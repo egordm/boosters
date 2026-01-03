@@ -2,17 +2,24 @@
 //!
 //! This module defines error types and conversions from Rust errors to Python exceptions.
 
-use pyo3::create_exception;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3_stub_gen::create_exception;
 use thiserror::Error;
 
 // =============================================================================
 // Custom Python Exception Types
 // =============================================================================
 
-// Create ReadError as a subclass of ValueError
-create_exception!(boosters._boosters_rs, ReadError, PyValueError, "Exception raised when reading a serialized model fails.
+// Create ReadError as a subclass of ValueError.
+//
+// NOTE: We intentionally use pyo3-stub-gen's `create_exception!` wrapper here,
+// not PyO3's, so stub generation reliably emits this exception class.
+create_exception!(
+    boosters._boosters_rs,
+    ReadError,
+    PyValueError,
+    "Exception raised when reading a serialized model fails.
 
 This exception is raised when model deserialization encounters:
 - Invalid file format (wrong magic number)
@@ -25,7 +32,8 @@ Examples:
     ...     model = boosters.Model.load_from_bytes(invalid_bytes)
     ... except boosters.ReadError as e:
     ...     print(f'Failed to load model: {e}')
-");
+"
+);
 
 /// Register custom exception types with the module.
 pub fn register_exceptions(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {

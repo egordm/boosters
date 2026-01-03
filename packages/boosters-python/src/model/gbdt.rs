@@ -8,7 +8,9 @@ use pyo3::types::PyBytes;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 use boosters::explainability::ShapValues;
-use boosters::persist::{BinaryReadOptions, BinaryWriteOptions, JsonWriteOptions, SerializableModel};
+use boosters::persist::{
+    BinaryReadOptions, BinaryWriteOptions, JsonWriteOptions, SerializableModel,
+};
 
 use crate::config::PyGBDTConfig;
 use crate::data::PyDataset;
@@ -320,8 +322,9 @@ impl PyGBDTModel {
         py: Python<'_>,
         #[gen_stub(override_type(type_repr = "bytes"))] data: &[u8],
     ) -> PyResult<Self> {
-        let model = boosters::GBDTModel::read_from(Cursor::new(data), &BinaryReadOptions::default())
-            .map_err(|e| BoostersError::ModelReadError(e.to_string()))?;
+        let model =
+            boosters::GBDTModel::read_from(Cursor::new(data), &BinaryReadOptions::default())
+                .map_err(|e| BoostersError::ModelReadError(e.to_string()))?;
 
         let config = model.config().clone();
 

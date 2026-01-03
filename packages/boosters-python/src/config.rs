@@ -515,12 +515,8 @@ impl From<&boosters::GBDTConfig> for PyGBDTConfig {
 
         // Convert growth strategy
         let (growth_strategy, max_depth, n_leaves) = match config.growth_strategy {
-            GrowthStrategy::DepthWise { max_depth } => {
-                (PyGrowthStrategy::Depthwise, max_depth, 31)
-            }
-            GrowthStrategy::LeafWise { max_leaves } => {
-                (PyGrowthStrategy::Leafwise, 6, max_leaves)
-            }
+            GrowthStrategy::DepthWise { max_depth } => (PyGrowthStrategy::Depthwise, max_depth, 31),
+            GrowthStrategy::LeafWise { max_leaves } => (PyGrowthStrategy::Leafwise, 6, max_leaves),
         };
 
         // Convert linear leaves config
@@ -583,7 +579,7 @@ impl From<&boosters::GBDTConfig> for PyGBDTConfig {
             linear_max_features,
             max_bins: config.binning.max_bins,
             enable_bundling: config.binning.enable_bundling,
-            bundling_conflict_rate: 0.0001,  // Not stored in core config
+            bundling_conflict_rate: 0.0001, // Not stored in core config
             bundling_min_sparsity: config.binning.sparsity_threshold as f64,
             early_stopping_rounds: config.early_stopping_rounds,
             seed: config.seed,

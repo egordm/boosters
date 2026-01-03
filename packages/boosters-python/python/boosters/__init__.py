@@ -35,7 +35,6 @@ from boosters.types import GrowthStrategy
 __version__: str = getattr(_rs, "__version__", "0.0.0")
 
 __all__ = [
-    "__version__",
     "Dataset",
     "DatasetBuilder",
     "Feature",
@@ -52,4 +51,5 @@ __all__ = [
     "Objective",
     "ReadError",
     "Verbosity",
+    "__version__",
 ]

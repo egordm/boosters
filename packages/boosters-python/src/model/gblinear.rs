@@ -7,7 +7,9 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
-use boosters::persist::{BinaryReadOptions, BinaryWriteOptions, JsonWriteOptions, SerializableModel};
+use boosters::persist::{
+    BinaryReadOptions, BinaryWriteOptions, JsonWriteOptions, SerializableModel,
+};
 
 use crate::config::PyGBLinearConfig;
 use crate::data::PyDataset;
