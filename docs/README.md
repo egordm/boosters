@@ -7,9 +7,10 @@ Pure Rust gradient boosting library with XGBoost compatibility.
 | Section | Description |
 |---------|-------------|
 | [ROADMAP.md](./ROADMAP.md) | Feature status and future plans |
-| [rfcs/](./rfcs/) | Design documents (15 RFCs) |
+| [rfcs/](./rfcs/) | Design documents (15+ RFCs) |
 | [research/](./research/) | Implementation research |
 | [benchmarks/](./benchmarks/) | Performance and quality reports |
+| [backlogs/](./backlogs/) | Implementation backlogs |
 
 ## Features
 
@@ -22,7 +23,8 @@ Pure Rust gradient boosting library with XGBoost compatibility.
 - **Sampling**: GOSS, row/column sampling
 - **Sample Weights**: Weighted training, class imbalance
 - **Categorical**: Native categorical feature support
-- **Compatibility**: Load XGBoost JSON models, LightGBM text models
+- **Model Serialization**: Native binary (.bstr) and JSON (.bstr.json) formats
+- **Python Conversion**: Convert XGBoost/LightGBM models to native format
 - **I/O**: Arrow and Parquet data loading
 - **Feature Bundling (EFB)**: Exclusive feature bundling for one-hot data
 - **Python Bindings**: PyO3 bindings with sklearn estimators
@@ -30,6 +32,5 @@ Pure Rust gradient boosting library with XGBoost compatibility.
 
 ### Future Work
 
-- Model serialization (stable on-disk format)
 - Monotonic/interaction constraints
 - GPU acceleration

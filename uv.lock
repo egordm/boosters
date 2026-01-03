@@ -87,6 +87,7 @@ name = "boosters-datagen"
 version = "0.1.0"
 source = { editable = "packages/boosters-datagen" }
 dependencies = [
+    { name = "boosters", extra = ["schema"] },
     { name = "lightgbm" },
     { name = "numpy" },
     { name = "rich" },
@@ -102,6 +103,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "boosters", extras = ["schema"], editable = "packages/boosters-python" },
     { name = "lightgbm", specifier = ">=4" },
     { name = "numpy", specifier = ">=2" },
     { name = "rich", specifier = ">=13" },

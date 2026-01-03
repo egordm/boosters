@@ -24,17 +24,23 @@ v1/
 
 ## Generation
 
-These fixtures were generated from XGBoost/LightGBM test cases using:
+These fixtures were generated using:
 
 ```bash
-uv run python packages/boosters-datagen/scripts/generate_persist_fixtures.py
+uv run boosters-datagen bstr
+```
+
+Or generate all test cases:
+
+```bash
+uv run boosters-datagen all
 ```
 
 ## Usage
 
 ```rust
-use boosters::persist::{load_json_file, JsonEnvelope};
+use boosters::persist::Model;
 
-let envelope: JsonEnvelope = load_json_file("path/to/model.bstr.json")?;
-let model = envelope.into_model();
+let model = Model::load_json("path/to/model.bstr.json")?;
+let gbdt = model.into_gbdt().unwrap();
 ```
