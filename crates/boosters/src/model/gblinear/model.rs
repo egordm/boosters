@@ -11,7 +11,7 @@ use crate::model::meta::ModelMeta;
 use crate::model::OutputTransform;
 use crate::repr::gblinear::LinearModel;
 use crate::training::gblinear::GBLinearTrainer;
-use crate::training::{Metric, ObjectiveFn};
+use crate::training::ObjectiveFn;
 
 use ndarray::Array2;
 
@@ -98,8 +98,11 @@ impl GBLinearModel {
         // Convert config to trainer params
         let params = config.to_trainer_params();
 
-        // Convert Option<Metric> to Metric (None -> Metric::None)
-        let metric = config.metric.clone().unwrap_or(Metric::none());
+        // Use provided metric or derive default from objective
+        let metric = config
+            .metric
+            .clone()
+            .unwrap_or_else(|| crate::training::default_metric_for_objective(&config.objective));
 
         // Create trainer with objective and metric from config
         let trainer = GBLinearTrainer::new(config.objective.clone(), metric, params);
