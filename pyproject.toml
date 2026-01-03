@@ -17,6 +17,7 @@ dev = [
   "microsoft-python-type-stubs",
   "nbmake>=1.5",
   "poethepoet>=0.31",
+  "pydantic>=2",
   "pyproject-fmt>=2",
   "pyright>=1.1",
   "pytest>=8",

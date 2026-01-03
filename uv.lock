@@ -62,6 +62,9 @@ dependencies = [
 pandas = [
     { name = "pandas" },
 ]
+schema = [
+    { name = "pydantic" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -72,8 +75,9 @@ dev = [
 requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "pandas", marker = "extra == 'pandas'", specifier = ">=2" },
+    { name = "pydantic", marker = "extra == 'schema'", specifier = ">=2" },
 ]
-provides-extras = ["pandas"]
+provides-extras = ["pandas", "schema"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "polars", specifier = ">=1.36.1" }]
@@ -167,6 +171,7 @@ dev = [
     { name = "microsoft-python-type-stubs" },
     { name = "nbmake" },
     { name = "poethepoet" },
+    { name = "pydantic" },
     { name = "pyproject-fmt" },
     { name = "pyright" },
     { name = "pytest" },
@@ -182,6 +187,7 @@ dev = [
     { name = "microsoft-python-type-stubs", git = "https://github.com/microsoft/python-type-stubs.git" },
     { name = "nbmake", specifier = ">=1.5" },
     { name = "poethepoet", specifier = ">=0.31" },
+    { name = "pydantic", specifier = ">=2" },
     { name = "pyproject-fmt", specifier = ">=2" },
     { name = "pyright", specifier = ">=1.1" },
     { name = "pytest", specifier = ">=8" },
