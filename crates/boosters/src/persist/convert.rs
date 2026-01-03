@@ -931,7 +931,7 @@ impl From<&GBLinearModel> for GBLinearModelSchema {
             meta,
             weights: LinearWeightsSchema::from(model.linear()),
             base_score: model.meta().base_scores.iter().map(|&s| s as f64).collect(),
-            output_transform: Some(OutputTransformSchema::from(model.output_transform().clone())),
+            output_transform: Some(OutputTransformSchema::from(*model.output_transform())),
             objective: Some(ObjectiveSchema::from(model.objective())),
         }
     }
