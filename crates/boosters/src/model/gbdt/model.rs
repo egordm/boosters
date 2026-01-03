@@ -12,6 +12,7 @@ use crate::explainability::{
 };
 use crate::inference::gbdt::UnrolledPredictor6;
 use crate::model::meta::ModelMeta;
+use crate::model::OutputTransform;
 use crate::repr::gbdt::{Forest, ScalarLeaf};
 use crate::training::gbdt::GBDTTrainer;
 use crate::training::{Metric, ObjectiveFn};
@@ -30,10 +31,15 @@ pub struct GBDTModel {
     forest: Forest<ScalarLeaf>,
     /// Model metadata.
     meta: ModelMeta,
-    /// Objective function used for prediction post-processing.
+    /// Output transform for prediction (derived from objective).
     ///
-    /// This is needed to apply the same output transform as training
-    /// (e.g., sigmoid/softmax for classification).
+    /// This is persisted with the model and used for inference-time
+    /// transformation (e.g., sigmoid for binary classification).
+    output_transform: OutputTransform,
+    /// Objective function used for training.
+    ///
+    /// Kept for compatibility and training-related queries.
+    /// For prediction transform, use `output_transform` instead.
     objective: crate::training::Objective,
 }
 
@@ -57,9 +63,11 @@ impl GBDTModel {
     /// or for quick testing. For training new models, prefer [`GBDTModel::train`].
     pub fn from_forest(forest: Forest<ScalarLeaf>, meta: ModelMeta) -> Self {
         let objective = Self::default_objective(meta.task);
+        let output_transform = objective.output_transform();
         Self {
             forest,
             meta,
+            output_transform,
             objective,
         }
     }
@@ -73,9 +81,29 @@ impl GBDTModel {
         meta: ModelMeta,
         objective: crate::training::Objective,
     ) -> Self {
+        let output_transform = objective.output_transform();
         Self {
             forest,
             meta,
+            output_transform,
+            objective,
+        }
+    }
+
+    /// Create a model from parts with explicit output transform.
+    ///
+    /// Used when loading from persistence (schema v3+) where the output
+    /// transform is stored separately from the objective.
+    pub fn from_parts_with_transform(
+        forest: Forest<ScalarLeaf>,
+        meta: ModelMeta,
+        output_transform: OutputTransform,
+        objective: crate::training::Objective,
+    ) -> Self {
+        Self {
+            forest,
+            meta,
+            output_transform,
             objective,
         }
     }
@@ -92,6 +120,13 @@ impl GBDTModel {
     /// Get reference to model metadata.
     pub fn meta(&self) -> &ModelMeta {
         &self.meta
+    }
+
+    /// Get the output transform (for inference).
+    ///
+    /// This is used to transform raw predictions to probabilities/values.
+    pub fn output_transform(&self) -> OutputTransform {
+        self.output_transform
     }
 
     /// Get reference to the objective function.
@@ -257,7 +292,12 @@ impl GBDTModel {
         let mut output = self.predict_raw(data, n_threads);
 
         // Apply transformation (sigmoid/softmax for classification)
-        self.objective.transform_predictions_inplace(output.view_mut());
+        // Uses OutputTransform instead of objective for cleaner inference path
+        let n_outputs = self.meta.n_groups;
+        self.output_transform.transform_inplace(
+            output.as_slice_mut().expect("output must be contiguous"),
+            n_outputs,
+        );
 
         output
     }
