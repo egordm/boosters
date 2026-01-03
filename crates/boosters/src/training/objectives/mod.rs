@@ -68,6 +68,152 @@ pub enum TargetSchema {
 }
 
 // =============================================================================
+// Custom Objective (boxed closures)
+// =============================================================================
+
+/// Type alias for custom gradient computation function.
+///
+/// Arguments: (predictions, targets, weights, grad_hess_out)
+pub type GradientFn = Box<
+    dyn Fn(ArrayView2<f32>, TargetsView<'_>, WeightsView<'_>, ArrayViewMut2<GradsTuple>)
+        + Send
+        + Sync,
+>;
+
+/// Type alias for custom base score computation function.
+///
+/// Arguments: (targets, weights) -> base_scores
+pub type BaseScoreFn = Box<dyn Fn(TargetsView<'_>, WeightsView<'_>) -> Vec<f32> + Send + Sync>;
+
+/// A user-defined objective function using boxed closures.
+///
+/// This allows users to define custom objectives without implementing
+/// the `ObjectiveFn` trait. All behavior is specified via closures.
+///
+/// # Example
+///
+/// ```ignore
+/// use boosters::training::{CustomObjective, Objective};
+/// use boosters::model::OutputTransform;
+///
+/// let custom = CustomObjective {
+///     name: "my_loss".into(),
+///     compute_gradients_into: Box::new(|preds, targets, weights, mut grad_hess| {
+///         // Custom gradient computation
+///     }),
+///     compute_base_score: Box::new(|targets, weights| vec![0.0]),
+///     output_transform: OutputTransform::Identity,
+///     n_outputs: 1,
+/// };
+///
+/// let objective = Objective::Custom(custom);
+/// ```
+pub struct CustomObjective {
+    /// Name of the objective (for logging).
+    pub name: String,
+
+    /// Function to compute gradients and hessians.
+    pub compute_gradients_into: GradientFn,
+
+    /// Function to compute initial base score from targets.
+    pub compute_base_score: BaseScoreFn,
+
+    /// Output transform for inference.
+    pub output_transform: crate::model::OutputTransform,
+
+    /// Number of outputs per sample.
+    pub n_outputs: usize,
+}
+
+impl std::fmt::Debug for CustomObjective {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CustomObjective")
+            .field("name", &self.name)
+            .field("output_transform", &self.output_transform)
+            .field("n_outputs", &self.n_outputs)
+            .finish_non_exhaustive()
+    }
+}
+
+// CustomObjective is not Clone due to boxed closures.
+// Use Arc<CustomObjective> for sharing.
+
+impl ObjectiveFn for CustomObjective {
+    fn n_outputs(&self) -> usize {
+        self.n_outputs
+    }
+
+    fn compute_gradients_into(
+        &self,
+        predictions: ArrayView2<f32>,
+        targets: TargetsView<'_>,
+        weights: WeightsView<'_>,
+        grad_hess: ArrayViewMut2<GradsTuple>,
+    ) {
+        (self.compute_gradients_into)(predictions, targets, weights, grad_hess);
+    }
+
+    fn compute_base_score(&self, targets: TargetsView<'_>, weights: WeightsView<'_>) -> Vec<f32> {
+        (self.compute_base_score)(targets, weights)
+    }
+
+    fn task_kind(&self) -> TaskKind {
+        // Custom objectives don't have a fixed task kind; default to regression
+        TaskKind::Regression
+    }
+
+    fn target_schema(&self) -> TargetSchema {
+        // Custom objectives define their own target schema
+        TargetSchema::Continuous
+    }
+
+    fn transform_predictions_inplace(&self, mut predictions: ArrayViewMut2<f32>) -> PredictionKind {
+        // Use the stored output transform
+        let n_outputs = predictions.nrows();
+        let n_rows = predictions.ncols();
+        // Convert to flat slice for transform_inplace
+        if let Some(slice) = predictions.as_slice_mut() {
+            // Note: transform_inplace expects row-major, but we have column-major
+            // For now, just apply the transform element-wise for Identity/Sigmoid
+            // Softmax would need special handling (not typical for custom objectives)
+            match self.output_transform {
+                crate::model::OutputTransform::Identity => {}
+                crate::model::OutputTransform::Sigmoid => {
+                    for x in slice.iter_mut() {
+                        *x = 1.0 / (1.0 + (-*x).exp());
+                    }
+                }
+                crate::model::OutputTransform::Softmax => {
+                    // For column-major multiclass, apply softmax per sample
+                    for col in 0..n_rows {
+                        let mut max = f32::NEG_INFINITY;
+                        for row in 0..n_outputs {
+                            max = max.max(predictions[[row, col]]);
+                        }
+                        let mut sum = 0.0f32;
+                        for row in 0..n_outputs {
+                            let e = (predictions[[row, col]] - max).exp();
+                            predictions[[row, col]] = e;
+                            sum += e;
+                        }
+                        for row in 0..n_outputs {
+                            predictions[[row, col]] /= sum;
+                        }
+                    }
+                }
+            }
+        }
+        PredictionKind::Probability
+    }
+
+    fn name(&self) -> &'static str {
+        // We can't return &'static str from a String, so leak it (or use a static approach)
+        // For now, return a generic name; the actual name is available via CustomObjective.name
+        "custom"
+    }
+}
+
+// =============================================================================
 // Objective Trait
 // =============================================================================
 
@@ -536,5 +682,49 @@ mod tests {
 
         // Multiclass
         assert_eq!(Objective::softmax(3).output_transform(), OutputTransform::Softmax);
+    }
+
+    #[test]
+    fn custom_objective_works() {
+        use crate::model::OutputTransform;
+
+        // Create a simple custom objective that mimics squared loss
+        let custom = CustomObjective {
+            name: "test_squared".into(),
+            compute_gradients_into: Box::new(|preds, targets, _weights, mut grad_hess| {
+                let targets_view = targets.view();
+                for col in 0..preds.ncols() {
+                    let pred = preds[[0, col]];
+                    let target = targets_view[[0, col]];
+                    grad_hess[[0, col]] = GradsTuple {
+                        grad: pred - target,
+                        hess: 1.0,
+                    };
+                }
+            }),
+            compute_base_score: Box::new(|_targets, _weights| vec![0.0]),
+            output_transform: OutputTransform::Identity,
+            n_outputs: 1,
+        };
+
+        // Wrap in Objective enum
+        let obj = Objective::custom(custom);
+
+        // Test that it works
+        let preds = Array2::from_shape_vec((1, 3), vec![1.0, 2.0, 3.0]).unwrap();
+        let targets = make_targets(&[0.5, 2.5, 2.5]);
+        let mut grad_hess = make_grad_hess_array(1, 3);
+
+        obj.compute_gradients_into(
+            preds.view(),
+            TargetsView::new(targets.view()),
+            WeightsView::None,
+            grad_hess.view_mut(),
+        );
+
+        // Should match squared loss behavior
+        assert!((grad_hess[[0, 0]].grad - 0.5).abs() < 1e-6);
+        assert!((grad_hess[[0, 1]].grad - -0.5).abs() < 1e-6);
+        assert!((grad_hess[[0, 2]].grad - 0.5).abs() < 1e-6);
     }
 }

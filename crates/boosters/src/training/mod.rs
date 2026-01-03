@@ -61,8 +61,9 @@ pub use metrics::{
     MulticlassAccuracy, MulticlassLogLoss, PoissonDeviance, QuantileMetric, Rmse,
 };
 pub use objectives::{
-    AbsoluteLoss, HingeLoss, LambdaRankLoss, LogisticLoss, Objective, ObjectiveFn, PinballLoss,
-    PoissonLoss, PseudoHuberLoss, SoftmaxLoss, SquaredLoss, TargetSchema,
+    AbsoluteLoss, BaseScoreFn, CustomObjective, GradientFn, HingeLoss, LambdaRankLoss,
+    LogisticLoss, Objective, ObjectiveFn, PinballLoss, PoissonLoss, PseudoHuberLoss, SoftmaxLoss,
+    SquaredLoss, TargetSchema,
 };
 
 // Re-export gbdt trainer and params
