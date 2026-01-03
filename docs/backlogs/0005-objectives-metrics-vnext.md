@@ -360,15 +360,15 @@ including default metric selection.
 
 **Tasks**:
 
-- [ ] 4.4.1 Expose `Objective` variants to Python config
-- [ ] 4.4.2 Expose `Metric` variants to Python config
-- [ ] 4.4.3 Support Python callables for `CustomObjective`
-- [ ] 4.4.4 Support Python callables for `CustomMetric`
+- [x] 4.4.1 Expose `Objective` variants to Python config
+- [x] 4.4.2 Expose `Metric` variants to Python config
+- Deferred: 4.4.3 Support Python callables for `CustomObjective` → Story 4.6
+- Deferred: 4.4.4 Support Python callables for `CustomMetric` → Story 4.6
 
 **Definition of Done**:
 
-- [ ] Python users can specify objectives/metrics by name or enum
-- [ ] Custom Python objectives/metrics work (with FFI overhead)
+- [x] Python users can specify objectives/metrics by name or enum
+- Deferred: Custom Python objectives/metrics work (with FFI overhead) → Story 4.6
 - [ ] Python tests pass
 
 ---
@@ -388,6 +388,48 @@ including default metric selection.
 
 - [ ] `cargo test --doc` passes (or `cargo test --all` if doc tests are part of it)
 - [ ] No docs/examples refer to the removed traits
+
+---
+
+### Story 4.6: Python custom callables (Deferred)
+
+**Description**: Support Python callables for `CustomObjective` and `CustomMetric`.
+Deferred from Story 4.4 due to FFI complexity.
+
+**Tasks**:
+
+- [ ] 4.6.1 Implement `PyCustomObjective` wrapper that calls Python gradients function
+- [ ] 4.6.2 Implement `PyCustomMetric` wrapper that calls Python compute function
+- [ ] 4.6.3 Handle GIL acquisition and error propagation across FFI boundary
+- [ ] 4.6.4 Document FFI overhead and usage patterns
+
+**Definition of Done**:
+
+- [ ] Python users can pass callables for custom objectives/metrics
+- [ ] FFI overhead is documented and benchmarked
+- [ ] Error messages from Python exceptions are preserved
+
+**Notes**: This is optional functionality that incurs FFI overhead per batch.
+The core enum-based API is complete without this.
+
+---
+
+### Story 4.7: Fix multiclass softmax probabilities (Pre-existing bug)
+
+**Description**: Multiclass softmax predictions don't sum to 1.0 properly.
+The current implementation applies per-class sigmoid instead of proper softmax.
+This is a pre-existing bug discovered during RFC-0005 implementation.
+
+**Tasks**:
+
+- [ ] 4.7.1 Investigate why multiclass probabilities don't sum to 1.0
+- [ ] 4.7.2 Fix OutputTransform::Softmax implementation
+- [ ] 4.7.3 Verify sklearn test_multiclass passes
+
+**Definition of Done**:
+
+- [ ] `predict_proba().sum(axis=1) == 1.0` for multiclass classification
+- [ ] All sklearn tests pass
 
 ---
 
