@@ -12,12 +12,7 @@ use boosters::persist::{BinaryReadOptions, BinaryWriteOptions, JsonWriteOptions,
 use crate::config::PyGBLinearConfig;
 use crate::data::PyDataset;
 use crate::error::BoostersError;
-use crate::validation::validate_feature_count;
-
-enum GBLinearState {
-    Unfitted { config: boosters::GBLinearConfig },
-    Fitted { model: boosters::GBLinearModel },
-}
+use crate::validation::{require_fitted, validate_feature_count};
 
 /// Gradient Boosted Linear model.
 ///
@@ -37,7 +32,8 @@ enum GBLinearState {
 #[gen_stub_pyclass]
 #[pyclass(name = "GBLinearModel", module = "boosters._boosters_rs")]
 pub struct PyGBLinearModel {
-    state: GBLinearState,
+    config: boosters::GBLinearConfig,
+    model: Option<boosters::GBLinearModel>,
 }
 
 #[gen_stub_pymethods]
@@ -62,16 +58,15 @@ impl PyGBLinearModel {
         };
 
         Ok(Self {
-            state: GBLinearState::Unfitted {
-                config: core_config,
-            },
+            config: core_config,
+            model: None,
         })
     }
 
     /// Whether the model has been fitted.
     #[getter]
     pub fn is_fitted(&self) -> bool {
-        matches!(self.state, GBLinearState::Fitted { .. })
+        self.model.is_some()
     }
 
     /// Number of features the model was trained on.
@@ -124,17 +119,13 @@ impl PyGBLinearModel {
     /// Get the model configuration.
     #[getter]
     pub fn config(&self, py: Python<'_>) -> PyResult<Py<PyGBLinearConfig>> {
-        let core_config = match &self.state {
-            GBLinearState::Unfitted { config } => config,
-            GBLinearState::Fitted { model } => model.config(),
-        };
-        let py_config: PyGBLinearConfig = core_config.into();
+        let py_config: PyGBLinearConfig = (&self.config).into();
         Py::new(py, py_config)
     }
 
     /// String representation.
     fn __repr__(&self) -> String {
-        if let GBLinearState::Fitted { model } = &self.state {
+        if let Some(model) = &self.model {
             format!(
                 "GBLinearModel(n_features={}, fitted=True)",
                 model.meta().n_features
@@ -228,10 +219,7 @@ impl PyGBLinearModel {
             .into());
         }
 
-        let core_config = match &slf.state {
-            GBLinearState::Unfitted { config } => config.clone(),
-            GBLinearState::Fitted { model } => model.config().clone(),
-        };
+        let core_config = slf.config.clone();
 
         let core_train = train.inner();
 
@@ -245,7 +233,8 @@ impl PyGBLinearModel {
 
         match trained_model {
             Some(model) => {
-                slf.state = GBLinearState::Fitted { model };
+                slf.config = model.config().clone();
+                slf.model = Some(model);
                 Ok(slf)
             }
             None => Err(BoostersError::TrainingError(
@@ -311,9 +300,12 @@ impl PyGBLinearModel {
             boosters::GBLinearModel::read_from(Cursor::new(data), &BinaryReadOptions::default())
                 .map_err(|e| BoostersError::ModelReadError(e.to_string()))?;
 
+        let config = model.config().clone();
+
         let _ = py;
         Ok(Self {
-            state: GBLinearState::Fitted { model },
+            config,
+            model: Some(model),
         })
     }
 
@@ -336,28 +328,26 @@ impl PyGBLinearModel {
         let model = boosters::GBLinearModel::read_json_from(Cursor::new(data))
             .map_err(|e| BoostersError::ModelReadError(e.to_string()))?;
 
+        let config = model.config().clone();
+
         let _ = py;
         Ok(Self {
-            state: GBLinearState::Fitted { model },
+            config,
+            model: Some(model),
         })
     }
 }
 
 impl PyGBLinearModel {
     fn fitted_model(&self, method: &str) -> PyResult<&boosters::GBLinearModel> {
-        match &self.state {
-            GBLinearState::Fitted { model } => Ok(model),
-            GBLinearState::Unfitted { .. } => Err(BoostersError::NotFitted {
-                method: method.to_string(),
-            }
-            .into()),
-        }
+        require_fitted(self.model.as_ref(), method)
     }
 
     /// Create from a core model (used by polymorphic loading).
     pub(crate) fn from_model(model: boosters::GBLinearModel) -> Self {
         Self {
-            state: GBLinearState::Fitted { model },
+            config: model.config().clone(),
+            model: Some(model),
         }
     }
 }

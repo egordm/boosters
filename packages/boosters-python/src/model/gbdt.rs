@@ -14,12 +14,7 @@ use crate::config::PyGBDTConfig;
 use crate::data::PyDataset;
 use crate::error::BoostersError;
 use crate::types::PyImportanceType;
-use crate::validation::validate_feature_count;
-
-enum GBDTState {
-    Unfitted { config: boosters::GBDTConfig },
-    Fitted { model: boosters::GBDTModel },
-}
+use crate::validation::{require_fitted, validate_feature_count};
 
 /// Gradient Boosted Decision Tree model.
 ///
@@ -40,7 +35,8 @@ enum GBDTState {
 #[gen_stub_pyclass]
 #[pyclass(name = "GBDTModel", module = "boosters._boosters_rs")]
 pub struct PyGBDTModel {
-    state: GBDTState,
+    config: boosters::GBDTConfig,
+    model: Option<boosters::GBDTModel>,
 }
 
 #[gen_stub_pymethods]
@@ -65,16 +61,15 @@ impl PyGBDTModel {
         };
 
         Ok(Self {
-            state: GBDTState::Unfitted {
-                config: core_config,
-            },
+            config: core_config,
+            model: None,
         })
     }
 
     /// Whether the model has been fitted.
     #[getter]
     pub fn is_fitted(&self) -> bool {
-        matches!(self.state, GBDTState::Fitted { .. })
+        self.model.is_some()
     }
 
     /// Number of trees in the fitted model.
@@ -94,11 +89,7 @@ impl PyGBDTModel {
     /// Get the model configuration.
     #[getter]
     pub fn config(&self, py: Python<'_>) -> PyResult<Py<PyGBDTConfig>> {
-        let core_config = match &self.state {
-            GBDTState::Unfitted { config } => config,
-            GBDTState::Fitted { model } => model.config(),
-        };
-        let py_config: PyGBDTConfig = core_config.into();
+        let py_config: PyGBDTConfig = (&self.config).into();
         Py::new(py, py_config)
     }
 
@@ -157,7 +148,7 @@ impl PyGBDTModel {
 
     /// String representation.
     fn __repr__(&self) -> String {
-        if let GBDTState::Fitted { model } = &self.state {
+        if let Some(model) = &self.model {
             format!(
                 "GBDTModel(n_trees={}, n_features={}, fitted=True)",
                 model.forest().n_trees(),
@@ -252,10 +243,7 @@ impl PyGBDTModel {
             .into());
         }
 
-        let core_config = match &slf.state {
-            GBDTState::Unfitted { config } => config.clone(),
-            GBDTState::Fitted { model } => model.config().clone(),
-        };
+        let core_config = slf.config.clone();
 
         let core_train = train.inner();
 
@@ -269,7 +257,8 @@ impl PyGBDTModel {
 
         match trained_model {
             Some(model) => {
-                slf.state = GBDTState::Fitted { model };
+                slf.config = model.config().clone();
+                slf.model = Some(model);
                 Ok(slf)
             }
             None => Err(BoostersError::TrainingError(
@@ -334,9 +323,12 @@ impl PyGBDTModel {
         let model = boosters::GBDTModel::read_from(Cursor::new(data), &BinaryReadOptions::default())
             .map_err(|e| BoostersError::ModelReadError(e.to_string()))?;
 
+        let config = model.config().clone();
+
         let _ = py;
         Ok(Self {
-            state: GBDTState::Fitted { model },
+            config,
+            model: Some(model),
         })
     }
 
@@ -359,28 +351,26 @@ impl PyGBDTModel {
         let model = boosters::GBDTModel::read_json_from(Cursor::new(data))
             .map_err(|e| BoostersError::ModelReadError(e.to_string()))?;
 
+        let config = model.config().clone();
+
         let _ = py;
         Ok(Self {
-            state: GBDTState::Fitted { model },
+            config,
+            model: Some(model),
         })
     }
 }
 
 impl PyGBDTModel {
     fn fitted_model(&self, method: &str) -> PyResult<&boosters::GBDTModel> {
-        match &self.state {
-            GBDTState::Fitted { model } => Ok(model),
-            GBDTState::Unfitted { .. } => Err(BoostersError::NotFitted {
-                method: method.to_string(),
-            }
-            .into()),
-        }
+        require_fitted(self.model.as_ref(), method)
     }
 
     /// Create from a core model (used by polymorphic loading).
     pub(crate) fn from_model(model: boosters::GBDTModel) -> Self {
         Self {
-            state: GBDTState::Fitted { model },
+            config: model.config().clone(),
+            model: Some(model),
         }
     }
 }
