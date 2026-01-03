@@ -532,6 +532,76 @@ impl ObjectiveFn for Objective {
 }
 
 // =============================================================================
+// Default Metric Selection
+// =============================================================================
+
+use super::metrics::{
+    HuberMetric, LogLoss, MarginAccuracy, Metric, MulticlassLogLoss, PoissonDeviance,
+    QuantileMetric, Rmse,
+};
+
+/// Returns the default metric for a given objective.
+///
+/// This centralizes the mapping from loss functions to evaluation metrics,
+/// avoiding scattered task-kind branching across call sites.
+///
+/// # Examples
+///
+/// ```
+/// use boosters::training::{Objective, Metric, default_metric_for_objective};
+///
+/// // Regression: default to RMSE
+/// let metric = default_metric_for_objective(&Objective::squared());
+/// assert!(matches!(metric, Metric::Rmse(_)));
+///
+/// // Binary classification: default to LogLoss
+/// let metric = default_metric_for_objective(&Objective::logistic());
+/// assert!(matches!(metric, Metric::LogLoss(_)));
+///
+/// // Custom objectives get no metric
+/// let custom = Objective::custom(boosters::training::CustomObjective {
+///     name: "custom".into(),
+///     compute_gradients_into: Box::new(|_, _, _, _| {}),
+///     compute_base_score: Box::new(|_, _| vec![0.0]),
+///     output_transform: boosters::model::OutputTransform::Identity,
+///     n_outputs: 1,
+/// });
+/// let metric = default_metric_for_objective(&custom);
+/// assert!(matches!(metric, Metric::None));
+/// ```
+pub fn default_metric_for_objective(objective: &Objective) -> Metric {
+    match objective {
+        // Regression losses → RMSE (most common default)
+        Objective::SquaredLoss(_) | Objective::AbsoluteLoss(_) => Metric::Rmse(Rmse),
+
+        // Quantile regression → Quantile metric (pinball loss)
+        Objective::PinballLoss(inner) => {
+            Metric::Quantile(QuantileMetric::new(inner.alphas.clone()))
+        }
+
+        // Robust regression → Huber metric
+        Objective::PseudoHuberLoss(inner) => {
+            Metric::Huber(HuberMetric::new(inner.delta as f64))
+        }
+
+        // Poisson → Poisson deviance
+        Objective::PoissonLoss(_) => Metric::PoissonDeviance(PoissonDeviance),
+
+        // Binary classification → LogLoss
+        Objective::LogisticLoss(_) => Metric::LogLoss(LogLoss),
+
+        // Hinge loss → Margin accuracy (threshold=0)
+        Objective::HingeLoss(_) => Metric::MarginAccuracy(MarginAccuracy::default()),
+
+        // Multiclass → Multiclass LogLoss
+        Objective::SoftmaxLoss(_) => Metric::MulticlassLogLoss(MulticlassLogLoss),
+
+        // Custom objectives get no default metric
+        Objective::Custom(_) => Metric::None,
+    }
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -685,5 +755,71 @@ mod tests {
         assert!((grad_hess[[0, 0]].grad - 0.5).abs() < 1e-6);
         assert!((grad_hess[[0, 1]].grad - -0.5).abs() < 1e-6);
         assert!((grad_hess[[0, 2]].grad - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn default_metric_for_all_objectives() {
+        use super::default_metric_for_objective;
+        use crate::model::OutputTransform;
+        use crate::training::metrics::Metric;
+
+        // Regression objectives → RMSE
+        assert!(matches!(
+            default_metric_for_objective(&Objective::squared()),
+            Metric::Rmse(_)
+        ));
+        assert!(matches!(
+            default_metric_for_objective(&Objective::absolute()),
+            Metric::Rmse(_)
+        ));
+
+        // Quantile → Quantile metric
+        assert!(matches!(
+            default_metric_for_objective(&Objective::quantile(0.5)),
+            Metric::Quantile(_)
+        ));
+
+        // Pseudo-Huber → Huber metric
+        assert!(matches!(
+            default_metric_for_objective(&Objective::pseudo_huber(1.0)),
+            Metric::Huber(_)
+        ));
+
+        // Poisson → Poisson deviance
+        assert!(matches!(
+            default_metric_for_objective(&Objective::poisson()),
+            Metric::PoissonDeviance(_)
+        ));
+
+        // Binary classification → LogLoss
+        assert!(matches!(
+            default_metric_for_objective(&Objective::logistic()),
+            Metric::LogLoss(_)
+        ));
+
+        // Hinge → MarginAccuracy
+        assert!(matches!(
+            default_metric_for_objective(&Objective::hinge()),
+            Metric::MarginAccuracy(_)
+        ));
+
+        // Multiclass → Multiclass LogLoss
+        assert!(matches!(
+            default_metric_for_objective(&Objective::softmax(3)),
+            Metric::MulticlassLogLoss(_)
+        ));
+
+        // Custom → None
+        let custom = CustomObjective {
+            name: "test".into(),
+            compute_gradients_into: Box::new(|_, _, _, _| {}),
+            compute_base_score: Box::new(|_, _| vec![0.0]),
+            output_transform: OutputTransform::Identity,
+            n_outputs: 1,
+        };
+        assert!(matches!(
+            default_metric_for_objective(&Objective::custom(custom)),
+            Metric::None
+        ));
     }
 }
