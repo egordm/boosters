@@ -31,26 +31,13 @@ crc32c = { version = "0.6", optional = true }
 
 # Optional: zstd compression for persist module
 zstd = { version = "0.13", optional = true }
-
-# Optional: XGBoost C++ bindings for benchmark comparison
-# Fork with reset() method for accurate benchmarking (clears internal caches)
-# Requires: libclang-dev (Debian/Ubuntu), clang (Arch), or Xcode (macOS)
-xgb = { git = "https://github.com/egordm/rust-xgboost-bindings.git", optional = true }
-
-# Optional: LightGBM C++ bindings for benchmark comparison
-# Compiles LightGBM from source for fair native performance comparison
-# Requires: cmake, libclang-dev (Debian/Ubuntu), clang (Arch), or Xcode (macOS)
-lightgbm3 = { version = "1.0", optional = true }
 # Note: ndarray 0.16 required for compatibility with numpy crate (rust-numpy)
 ndarray = {version = "0.16", features = ["rayon", "approx"]}
 
 [dev-dependencies]
-glob = "0.3.3"
-rstest = "0.21"
 serde = { version = "1.0", features = ["derive"] } # Used by feature-gated modules/tests
 serde_json = "1.0"  # Used by feature-gated modules/tests
 criterion = { version = "0.5", features = ["html_reports"] }
-rand = "0.8"  # For generating random benchmark inputs
 rand_chacha = "0.3"  # For reproducible RNG in benchmarks
 tempfile = "3.20"  # For temporary file tests
 proptest = "1.4"  # Property-based testing for persist module
@@ -61,96 +48,17 @@ default = ["persist"]
 # Enables the native `.bstr` persistence module (JSON + binary + compression).
 persist = ["dep:serde", "dep:serde_json", "dep:rmp-serde", "dep:crc32c", "dep:zstd"]
 
-# Unified comparison feature - enables both XGBoost and LightGBM bindings
-bench-compare = ["bench-xgboost", "bench-lightgbm"]
-bench-xgboost = ["dep:xgb"]
-bench-lightgbm = ["dep:lightgbm3"]
-bench-training = []
+[[bench]]
+name = "predict_gbdt"
+harness = false
+path = "benches/predict_gbdt.rs"
 
 [[bench]]
-name = "prediction_core"
+name = "train_gbdt"
 harness = false
-path = "benches/suites/component/predict.rs"
-
-[[bench]]
-name = "prediction_strategies"
-harness = false
-path = "benches/suites/component/predict_strategies.rs"
-
-[[bench]]
-name = "prediction_parallel"
-harness = false
-path = "benches/suites/component/predict_parallel.rs"
+path = "benches/train_gbdt.rs"
 
 [[bench]]
 name = "persist"
 harness = false
-path = "benches/suites/component/persist.rs"
-
-[[bench]]
-name = "training_core"
-harness = false
-required-features = ["bench-training"]
-path = "benches/suites/component/train_gblinear.rs"
-
-[[bench]]
-name = "training_gbdt"
-harness = false
-path = "benches/suites/component/train_gbdt.rs"
-
-[[bench]]
-name = "e2e_train_predict_gbdt"
-harness = false
-path = "benches/suites/e2e/train_predict_gbdt.rs"
-
-[[bench]]
-name = "e2e_train_linear_leaves"
-harness = false
-path = "benches/suites/e2e/train_linear_leaves.rs"
-
-# Unified comparison benchmarks (preferred)
-[[bench]]
-name = "gbdt_training"
-harness = false
-path = "benches/suites/compare/gbdt_training.rs"
-
-[[bench]]
-name = "gbdt_prediction"
-harness = false
-path = "benches/suites/compare/gbdt_prediction.rs"
-
-[[bench]]
-name = "gblinear_training"
-harness = false
-path = "benches/suites/compare/gblinear_training.rs"
-
-[[bench]]
-name = "gblinear_prediction"
-harness = false
-path = "benches/suites/compare/gblinear_prediction.rs"
-
-[[bench]]
-name = "linear_tree_prediction"
-harness = false
-path = "benches/suites/compare/linear_tree_prediction.rs"
-
-# Feature benchmarks
-[[bench]]
-name = "multithreading"
-harness = false
-path = "benches/suites/feature/multithreading.rs"
-
-[[bench]]
-name = "scaling"
-harness = false
-path = "benches/suites/feature/scaling.rs"
-
-[[bench]]
-name = "sampling"
-harness = false
-path = "benches/suites/feature/sampling.rs"
-
-[[bench]]
-name = "bundling"
-harness = false
-path = "benches/suites/feature/bundling.rs"
+path = "benches/persist.rs"

@@ -2,14 +2,31 @@
 
 use std::io::Cursor;
 
-use boosters::persist::{Model, ReadError};
+use boosters::model::{GBDTModel, ModelMeta};
+use boosters::persist::{JsonWriteOptions, Model, ReadError, SerializableModel};
+use boosters::repr::gbdt::Forest;
 use serde_json::Value;
 
 fn load_fixture_value() -> Value {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/test-cases/persist/v1/gbtree/inference/gbtree_regression.model.bstr.json");
-    let bytes = std::fs::read(&path).expect("read fixture");
-    serde_json::from_slice(&bytes).expect("parse fixture json")
+    // Create a tiny, deterministic model and serialize it to the persisted JSON envelope.
+    // This keeps validation tests self-contained (no filesystem fixtures).
+    let tree = boosters::scalar_tree! {
+        0 => num(0, 0.5, L) -> 1, 2,
+        1 => leaf(1.0),
+        2 => leaf(2.0),
+    };
+
+    let mut forest = Forest::for_regression().with_base_score(vec![0.0]);
+    forest.push_tree(tree, 0);
+
+    let model = GBDTModel::from_forest(forest, ModelMeta::for_regression(1));
+
+    let mut buf = Vec::new();
+    model
+        .write_json_into(&mut buf, &JsonWriteOptions::compact())
+        .expect("serialize model");
+
+    serde_json::from_slice(&buf).expect("parse fixture json")
 }
 
 fn roundtrip_model_err(v: Value) -> ReadError {

@@ -9,7 +9,6 @@ resolution-markers = [
 [manifest]
 members = [
     "boosters",
-    "boosters-datagen",
     "boosters-eval",
     "boosters-workspace",
 ]
@@ -81,39 +80,6 @@ provides-extras = ["pandas", "schema"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "polars", specifier = ">=1.36.1" }]
-
-[[package]]
-name = "boosters-datagen"
-version = "0.1.0"
-source = { editable = "packages/boosters-datagen" }
-dependencies = [
-    { name = "boosters", extra = ["schema"] },
-    { name = "lightgbm" },
-    { name = "numpy" },
-    { name = "rich" },
-    { name = "scikit-learn" },
-    { name = "typer" },
-    { name = "xgboost" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pytest" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "boosters", extras = ["schema"], editable = "packages/boosters-python" },
-    { name = "lightgbm", specifier = ">=4" },
-    { name = "numpy", specifier = ">=2" },
-    { name = "rich", specifier = ">=13" },
-    { name = "scikit-learn", specifier = ">=1.5" },
-    { name = "typer", specifier = ">=0.12" },
-    { name = "xgboost", specifier = ">=2" },
-]
-
-[package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=8" }]
 
 [[package]]
 name = "boosters-eval"

@@ -33,7 +33,6 @@ members = [ "packages/*" ]
 
 [tool.uv.sources]
 boosters = { workspace = true }
-boosters-datagen = { workspace = true }
 boosters-eval = { workspace = true }
 microsoft-python-type-stubs = { git = "https://github.com/microsoft/python-type-stubs.git" }
 

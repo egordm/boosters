@@ -1,9 +1,8 @@
-use std::path::PathBuf;
+use rand::{Rng, SeedableRng};
+use rand_chacha::ChaCha8Rng;
 
-use boosters::model::{GBDTModel, GBLinearModel};
-use boosters::persist::Model;
+use boosters::repr::gbdt::MutableTree;
 use boosters::repr::gbdt::{Forest, ScalarLeaf};
-use boosters::repr::gblinear::LinearModel;
 
 /// Minimal model wrapper for benchmarks.
 ///
@@ -12,53 +11,56 @@ pub struct LoadedForestModel {
     pub forest: Forest<ScalarLeaf>,
     pub n_features: usize,
 }
+fn build_balanced_tree(
+    depth: u32,
+    n_features: u32,
+    rng: &mut ChaCha8Rng,
+) -> boosters::repr::gbdt::Tree<ScalarLeaf> {
+    let depth = depth.clamp(1, 12);
+    let n_nodes = (1u32 << (depth + 1)) - 1;
 
-/// GBLinear model wrapper for benchmarks.
-pub struct LoadedLinearModel {
-    pub model: LinearModel,
-    pub n_features: usize,
-}
+    let mut builder = MutableTree::<ScalarLeaf>::with_capacity(n_nodes as usize);
+    builder.init_root_with_n_nodes(n_nodes as usize);
 
-/// Path to benchmark models directory (native format).
-pub fn bench_models_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test-cases/persist/benchmark")
-}
-
-/// Path to original benchmark models directory (for LightGBM .lgb.txt files).
-///
-/// Used when benchmarking against native LightGBM library which requires its
-/// original text format.
-pub fn original_bench_models_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/test-cases/benchmark")
-}
-
-/// Load a booste-rs GBDT model from native format.
-pub fn load_boosters_model(name: &str) -> LoadedForestModel {
-    let path = bench_models_dir().join(format!("{name}.model.bstr.json"));
-    let model = Model::load_json(&path).unwrap_or_else(|e| panic!("Failed to load {path:?}: {e}"));
-
-    let gbdt = model
-        .into_gbdt()
-        .expect("Expected GBDT model for forest benchmark");
-    let n_features = gbdt.meta().n_features;
-    let forest = gbdt.forest().clone();
-
-    LoadedForestModel { forest, n_features }
-}
-
-/// Load a booste-rs GBLinear model from native format.
-pub fn load_linear_model(name: &str) -> LoadedLinearModel {
-    let path = bench_models_dir().join(format!("{name}.model.bstr.json"));
-    let model = Model::load_json(&path).unwrap_or_else(|e| panic!("Failed to load {path:?}: {e}"));
-
-    let gblinear = model
-        .into_gblinear()
-        .expect("Expected GBLinear model for linear benchmark");
-    let n_features = gblinear.meta().n_features;
-    let linear = gblinear.linear().clone();
-
-    LoadedLinearModel {
-        model: linear,
-        n_features,
+    // Fill the complete binary tree in index order.
+    for node_id in 0..n_nodes {
+        let is_leaf = node_id >= (1u32 << depth) - 1;
+        if is_leaf {
+            let v = rng.gen_range(-1.0f32..=1.0f32);
+            builder.make_leaf(node_id, ScalarLeaf(v));
+        } else {
+            let feature = rng.gen_range(0u32..n_features.max(1));
+            let threshold = rng.gen_range(-5.0f32..=5.0f32);
+            let default_left = rng.gen_bool(0.5);
+            let left_id = 2 * node_id + 1;
+            let right_id = 2 * node_id + 2;
+            builder.set_numeric_split(node_id, feature, threshold, default_left, left_id, right_id);
+        }
     }
+
+    builder.freeze()
+}
+
+fn build_forest(n_features: usize, n_trees: usize, depth: u32, seed: u64) -> Forest<ScalarLeaf> {
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    let mut forest = Forest::for_regression().with_base_score(vec![0.0]);
+    for _ in 0..n_trees {
+        let tree = build_balanced_tree(depth, n_features as u32, &mut rng);
+        forest.push_tree(tree, 0);
+    }
+    forest
+}
+
+/// Load a deterministic in-memory GBDT model for benchmarks.
+pub fn load_boosters_model(name: &str) -> LoadedForestModel {
+    let (n_features, n_trees, depth, seed) = match name {
+        // Sizes chosen for stable iteration speed while still being non-trivial.
+        "bench_small" => (50usize, 100usize, 6u32, 0xB001),
+        "bench_medium" => (100usize, 500usize, 8u32, 0xB002),
+        "bench_large" => (200usize, 1_000usize, 10u32, 0xB003),
+        _ => panic!("Unknown benchmark model name: {name}"),
+    };
+
+    let forest = build_forest(n_features, n_trees, depth, seed);
+    LoadedForestModel { forest, n_features }
 }
