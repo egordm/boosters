@@ -5,8 +5,9 @@
 //! ## Shared Infrastructure
 //!
 //! - [`Gradients`]: Interleaved gradient storage
-//! - [`Objective`]: Trait for computing gradients (supports single and multi-output)
-//! - [`Metric`]: Evaluation metrics during training
+//! - [`Objective`]: Enum of loss functions for computing gradients
+//! - [`Metric`]: Enum of evaluation metrics during training
+//! - [`default_metric_for_objective`]: Central mapping from objective to default metric
 //! - [`EarlyStopping`]: Callback for stopping when validation metric plateaus
 //! - [`TrainingLogger`], [`Verbosity`]: Structured logging
 //!
@@ -16,6 +17,8 @@
 //! - [`gblinear`]: GBLinear training via coordinate descent
 //!
 //! ## Objectives (Loss Functions)
+//!
+//! Use `Objective::squared()`, `Objective::logistic()`, etc. to construct.
 //!
 //! Regression:
 //! - [`SquaredLoss`]: Squared error for regression (L2)
@@ -32,14 +35,20 @@
 //! Ranking:
 //! - [`LambdaRankLoss`]: LambdaMART for learning to rank
 //!
+//! Custom: Use [`CustomObjective`] for user-defined objectives.
+//!
 //! ## Metrics
+//!
+//! Use `Metric::rmse()`, `Metric::logloss()`, etc. to construct.
 //!
 //! - [`Rmse`], [`Mae`], [`Mape`]: Regression metrics
 //! - [`LogLoss`], [`Auc`], [`Accuracy`]: Binary classification metrics
 //! - [`MulticlassLogLoss`], [`MulticlassAccuracy`]: Multiclass metrics
 //! - [`QuantileMetric`]: Pinball loss metric for quantile regression
 //!
-//! See RFC-0009 for design rationale.
+//! Custom: Use [`CustomMetric`] for user-defined metrics.
+//!
+//! See RFC-0005 for design rationale.
 
 mod callback;
 mod eval;

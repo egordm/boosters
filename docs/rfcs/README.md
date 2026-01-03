@@ -12,7 +12,7 @@ Design documents for booste-rs. Each RFC describes the design of a major compone
 | [0002](0002-trees.md) | Trees and Forest | Implemented | SoA layout, `Tree<L>`, `MutableTree`, multi-output groups |
 | [0003](0003-binning.md) | Binning | Implemented | Quantization for histograms, `BinnedDataset`, bin types |
 | [0004](0004-efb.md) | Exclusive Feature Bundling | Implemented | Sparse feature bundling, conflict detection, offset encoding |
-| [0005](0005-objectives-metrics.md) | Objectives and Metrics | Implemented | `ObjectiveFn`, `MetricFn`, early stopping |
+| [0005](0005-objectives-metrics.md) | Objectives and Metrics | Implemented | `Objective`, `Metric` enums, `OutputTransform` |
 | [0006](0006-sampling.md) | Sampling Strategies | Implemented | Row (uniform, GOSS) and column sampling |
 | [0007](0007-histograms.md) | Histogram Building | Implemented | Histogram optimization, subtraction trick, LRU cache |
 | [0008](0008-gbdt-training.md) | GBDT Training | Implemented | `GBDTTrainer`, grower, split finding, growth strategies |

@@ -9,7 +9,7 @@
 //! ```
 
 use boosters::data::Dataset;
-use boosters::training::{GrowthStrategy, ObjectiveFn};
+use boosters::training::GrowthStrategy;
 use boosters::{GBDTConfig, GBDTModel, Metric, Objective};
 use ndarray::{Array1, Array2};
 

@@ -43,8 +43,8 @@ pub use model::{GBDTModel, GBLinearModel, ModelMeta, OutputTransform, TaskKind};
 pub use model::gbdt::GBDTConfig;
 pub use model::gblinear::GBLinearConfig;
 
-// Training types (objectives, metrics)
-pub use training::{Metric, MetricFn, Objective, ObjectiveFn};
+// Training types (objectives, metrics, default metric selection)
+pub use training::{Metric, MetricFn, Objective, ObjectiveFn, default_metric_for_objective};
 
 // Data types (for preparing training data)
 pub use data::{
