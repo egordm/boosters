@@ -5,10 +5,10 @@
 
 use ndarray::ArrayView2;
 
+use super::Metric;
 use crate::data::{Dataset, TargetsView, WeightsView};
 use crate::inference::PredictionKind;
 use crate::model::OutputTransform;
-use super::Metric;
 
 // =============================================================================
 // MetricValue

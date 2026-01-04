@@ -8,8 +8,7 @@
 
 use super::schema::{
     CategoriesSchema, FeatureTypeSchema, ForestSchema, GBDTModelSchema, GBLinearModelSchema,
-    LeafValuesSchema, LinearCoefficientsSchema, LinearWeightsSchema, ModelMetaSchema,
-    TreeSchema,
+    LeafValuesSchema, LinearCoefficientsSchema, LinearWeightsSchema, ModelMetaSchema, TreeSchema,
 };
 use crate::model::{FeatureType, GBDTModel, GBLinearModel, ModelMeta};
 use crate::repr::gbdt::{Forest, ScalarLeaf, Tree};
@@ -788,7 +787,11 @@ impl TryFrom<GBLinearModelSchema> for GBLinearModel {
         // Fill base_scores from schema
         meta.base_scores = schema.base_score.iter().map(|&s| s as f32).collect();
 
-        Ok(GBLinearModel::from_parts(linear, meta, schema.output_transform))
+        Ok(GBLinearModel::from_parts(
+            linear,
+            meta,
+            schema.output_transform,
+        ))
     }
 }
 

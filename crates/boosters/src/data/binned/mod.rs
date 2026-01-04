@@ -20,7 +20,10 @@ pub(crate) mod view;
 // Core types
 pub use bin_data::BinData;
 pub use bin_mapper::{BinMapper, FeatureType, MissingType};
-pub use dataset::{BinnedDataset, BinnedFeatureInfo, EffectiveViews, FeatureLocation};
+pub use dataset::{
+    BinnedDataset, BinnedFeatureColumnSource, BinnedFeatureInfo, BinnedFeatureViews,
+    FeatureLocation,
+};
 pub use feature_analysis::{BinningConfig, FeatureAnalysis, FeatureMetadata, GroupSpec};
 pub use group::FeatureGroup;
 pub use storage::{

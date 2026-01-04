@@ -169,7 +169,9 @@ class BoostersRunner(Runner):
                     warmup_ds, config=cast(boosters.GBLinearConfig, model_config), n_threads=tc.n_threads
                 )
             else:
-                _ = boosters.GBDTModel.train(warmup_ds, config=cast(boosters.GBDTConfig, model_config), n_threads=tc.n_threads)
+                _ = boosters.GBDTModel.train(
+                    warmup_ds, config=cast(boosters.GBDTConfig, model_config), n_threads=tc.n_threads
+                )
 
         # Memory tracking
         if measure_memory:
@@ -178,9 +180,13 @@ class BoostersRunner(Runner):
         # Train
         start_train = time.perf_counter()
         if is_gblinear:
-            model = boosters.GBLinearModel.train(train_ds, config=cast(boosters.GBLinearConfig, model_config), n_threads=tc.n_threads)
+            model = boosters.GBLinearModel.train(
+                train_ds, config=cast(boosters.GBLinearConfig, model_config), n_threads=tc.n_threads
+            )
         else:
-            model = boosters.GBDTModel.train(train_ds, config=cast(boosters.GBDTConfig, model_config), n_threads=tc.n_threads)
+            model = boosters.GBDTModel.train(
+                train_ds, config=cast(boosters.GBDTConfig, model_config), n_threads=tc.n_threads
+            )
         train_time = time.perf_counter() - start_train
 
         # Predict

@@ -2,9 +2,9 @@
 //!
 //! Metrics for evaluating classification model quality.
 
-use ndarray::ArrayView2;
 use crate::data::TargetsView;
 use crate::data::WeightsView;
+use ndarray::ArrayView2;
 
 // =============================================================================
 // LogLoss (Binary Cross-Entropy)
@@ -63,11 +63,19 @@ pub(super) fn compute_accuracy(
         .zip(weights.iter(n_rows))
         .fold((0.0f64, 0.0f64), |(sc, sw), ((&p, &l), w)| {
             let pred_class = if p >= threshold { 1.0 } else { 0.0 };
-            let correct = if (pred_class - l).abs() < 0.5 { 1.0 } else { 0.0 };
+            let correct = if (pred_class - l).abs() < 0.5 {
+                1.0
+            } else {
+                0.0
+            };
             (sc + (w as f64) * correct, sw + w as f64)
         });
 
-    if sum_w > 0.0 { sum_correct / sum_w } else { 0.0 }
+    if sum_w > 0.0 {
+        sum_correct / sum_w
+    } else {
+        0.0
+    }
 }
 
 // =============================================================================
@@ -94,11 +102,19 @@ pub(super) fn compute_margin_accuracy(
         .zip(weights.iter(n_rows))
         .fold((0.0f64, 0.0f64), |(sc, sw), ((&p, &l), w)| {
             let pred_class = if p >= threshold { 1.0 } else { 0.0 };
-            let correct = if (pred_class - l).abs() < 0.5 { 1.0 } else { 0.0 };
+            let correct = if (pred_class - l).abs() < 0.5 {
+                1.0
+            } else {
+                0.0
+            };
             (sc + (w as f64) * correct, sw + w as f64)
         });
 
-    if sum_w > 0.0 { sum_correct / sum_w } else { 0.0 }
+    if sum_w > 0.0 {
+        sum_correct / sum_w
+    } else {
+        0.0
+    }
 }
 
 // =============================================================================
@@ -125,11 +141,19 @@ pub(super) fn compute_multiclass_accuracy(
             .zip(targets.iter())
             .zip(weights.iter(n_rows))
             .fold((0.0f64, 0.0f64), |(sc, sw), ((&p, &l), w)| {
-                let correct = if (p.round() - l).abs() < 0.5 { 1.0 } else { 0.0 };
+                let correct = if (p.round() - l).abs() < 0.5 {
+                    1.0
+                } else {
+                    0.0
+                };
                 (sc + (w as f64) * correct, sw + w as f64)
             });
 
-        return if sum_w > 0.0 { sum_correct / sum_w } else { 0.0 };
+        return if sum_w > 0.0 {
+            sum_correct / sum_w
+        } else {
+            0.0
+        };
     }
 
     // Multi-output: find argmax for each sample
@@ -147,12 +171,20 @@ pub(super) fn compute_multiclass_accuracy(
         (0.0f64, 0.0f64),
         |(sc, sw), ((i, &l), w)| {
             let pred_class = argmax(i) as f32;
-            let correct = if (pred_class - l).abs() < 0.5 { 1.0 } else { 0.0 };
+            let correct = if (pred_class - l).abs() < 0.5 {
+                1.0
+            } else {
+                0.0
+            };
             (sc + (w as f64) * correct, sw + w as f64)
         },
     );
 
-    if sum_w > 0.0 { sum_correct / sum_w } else { 0.0 }
+    if sum_w > 0.0 {
+        sum_correct / sum_w
+    } else {
+        0.0
+    }
 }
 
 // =============================================================================
@@ -247,15 +279,16 @@ fn compute_auc_weighted(items: &[(f32, f32, f32)]) -> f64 {
         pa.partial_cmp(&pb).unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    let (sum_pos, sum_neg) = items
-        .iter()
-        .fold((0.0f64, 0.0f64), |(sp, sn), &(_, label, weight)| {
-            if label > 0.5 {
-                (sp + weight as f64, sn)
-            } else {
-                (sp, sn + weight as f64)
-            }
-        });
+    let (sum_pos, sum_neg) =
+        items
+            .iter()
+            .fold((0.0f64, 0.0f64), |(sp, sn), &(_, label, weight)| {
+                if label > 0.5 {
+                    (sp + weight as f64, sn)
+                } else {
+                    (sp, sn + weight as f64)
+                }
+            });
 
     if sum_pos == 0.0 || sum_neg == 0.0 {
         return 0.5;
@@ -354,7 +387,11 @@ mod tests {
     fn logloss_perfect() {
         let preds = make_preds(1, 2, &[0.9999, 0.0001]);
         let labels = make_targets(&[1.0, 0.0]);
-        let ll = compute_logloss(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let ll = compute_logloss(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert!(ll < 0.01);
     }
 
@@ -362,7 +399,11 @@ mod tests {
     fn logloss_random() {
         let preds = make_preds(1, 2, &[0.5, 0.5]);
         let labels = make_targets(&[1.0, 0.0]);
-        let ll = compute_logloss(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let ll = compute_logloss(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert_abs_diff_eq!(ll as f32, 0.693, epsilon = 0.01);
     }
 
@@ -371,8 +412,11 @@ mod tests {
         let preds = make_preds(1, 2, &[0.9, 0.1]);
         let labels = make_targets(&[1.0, 1.0]);
 
-        let unweighted =
-            compute_logloss(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let unweighted = compute_logloss(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
 
         // High weight on good prediction → lower loss
         let weights = ndarray::array![10.0f32, 1.0];
@@ -392,8 +436,12 @@ mod tests {
     fn accuracy_perfect() {
         let preds = make_preds(1, 4, &[0.9, 0.1, 0.8, 0.2]);
         let labels = make_targets(&[1.0, 0.0, 1.0, 0.0]);
-        let acc =
-            compute_accuracy(preds.view(), TargetsView::new(labels.view()), WeightsView::None, 0.5);
+        let acc = compute_accuracy(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+            0.5,
+        );
         assert_abs_diff_eq!(acc as f32, 1.0, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -401,8 +449,12 @@ mod tests {
     fn accuracy_half() {
         let preds = make_preds(1, 4, &[0.9, 0.9, 0.1, 0.1]);
         let labels = make_targets(&[1.0, 0.0, 1.0, 0.0]);
-        let acc =
-            compute_accuracy(preds.view(), TargetsView::new(labels.view()), WeightsView::None, 0.5);
+        let acc = compute_accuracy(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+            0.5,
+        );
         assert_abs_diff_eq!(acc as f32, 0.5, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -455,7 +507,11 @@ mod tests {
     fn auc_perfect() {
         let preds = make_preds(1, 4, &[0.9, 0.8, 0.3, 0.2]);
         let labels = make_targets(&[1.0, 1.0, 0.0, 0.0]);
-        let auc = compute_auc(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let auc = compute_auc(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert_abs_diff_eq!(auc as f32, 1.0, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -463,7 +519,11 @@ mod tests {
     fn auc_random() {
         let preds = make_preds(1, 4, &[0.5, 0.5, 0.5, 0.5]);
         let labels = make_targets(&[1.0, 0.0, 1.0, 0.0]);
-        let auc = compute_auc(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let auc = compute_auc(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert_abs_diff_eq!(auc as f32, 0.5, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -471,7 +531,11 @@ mod tests {
     fn auc_worst() {
         let preds = make_preds(1, 4, &[0.2, 0.3, 0.8, 0.9]);
         let labels = make_targets(&[1.0, 1.0, 0.0, 0.0]);
-        let auc = compute_auc(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let auc = compute_auc(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert!(auc < 0.01);
     }
 
@@ -520,5 +584,4 @@ mod tests {
         );
         assert_abs_diff_eq!(mlogloss as f32, 1.099, epsilon = 0.01);
     }
-
 }

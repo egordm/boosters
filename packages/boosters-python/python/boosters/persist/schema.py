@@ -52,8 +52,6 @@ class JsonEnvelope[T](BaseModel):
 # Simple Type Aliases
 # -----------------------------------------------------------------------------
 
-TaskKind = Literal["regression", "binary_classification", "multiclass_classification", "ranking"]
-
 OutputTransform = Literal["identity", "sigmoid", "softmax"]
 
 FeatureType = Literal["numeric", "categorical"]
@@ -69,18 +67,10 @@ class ModelMetaSchema(BaseModel):
 
     Mirrors Rust `ModelMetaSchema`.
 
-    Notes:
-    This schema also accepts a few legacy fields for backward compatibility
-    (e.g. `task`, `num_classes`) that may exist in older JSON.
-
     Attributes:
     ----------
-    task
-        The learning task type.
     num_features
         Number of input features.
-    num_classes
-        Number of classes (for multiclass tasks), or None.
     feature_names
         Optional list of feature names.
     feature_types
@@ -89,11 +79,6 @@ class ModelMetaSchema(BaseModel):
 
     model_config = ConfigDict(strict=True, extra="forbid")
 
-    # Legacy fields (not emitted by Rust anymore)
-    task: TaskKind | None = None
-    num_classes: int | None = None
-
-    # Current Rust fields
     num_features: int
     num_groups: int = 1
     feature_names: list[str] | None = None
@@ -247,92 +232,6 @@ class ForestSchema(BaseModel):
 
 
 # -----------------------------------------------------------------------------
-# Objective Schema (discriminated union)
-# -----------------------------------------------------------------------------
-
-
-class SquaredLossObjective(BaseModel):
-    """Squared error loss."""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-    type: Literal["squared_loss"]
-
-
-class AbsoluteLossObjective(BaseModel):
-    """Absolute error loss."""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-    type: Literal["absolute_loss"]
-
-
-class LogisticLossObjective(BaseModel):
-    """Logistic loss for binary classification."""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-    type: Literal["logistic_loss"]
-
-
-class HingeLossObjective(BaseModel):
-    """Hinge loss for classification."""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-    type: Literal["hinge_loss"]
-
-
-class SoftmaxLossObjective(BaseModel):
-    """Softmax loss for multiclass classification."""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-    type: Literal["softmax_loss"]
-    n_classes: int
-
-
-class PinballLossObjective(BaseModel):
-    """Pinball loss for quantile regression."""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-    type: Literal["pinball_loss"]
-    alphas: list[float]
-
-
-class PseudoHuberLossObjective(BaseModel):
-    """Pseudo-Huber loss for robust regression."""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-    type: Literal["pseudo_huber_loss"]
-    delta: float
-
-
-class PoissonLossObjective(BaseModel):
-    """Poisson loss for count data."""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-    type: Literal["poisson_loss"]
-
-
-class CustomObjective(BaseModel):
-    """Custom user-defined objective."""
-
-    model_config = ConfigDict(strict=True, extra="forbid")
-    type: Literal["custom"]
-    name: str
-
-
-ObjectiveSchema = Annotated[
-    SquaredLossObjective
-    | AbsoluteLossObjective
-    | LogisticLossObjective
-    | HingeLossObjective
-    | SoftmaxLossObjective
-    | PinballLossObjective
-    | PseudoHuberLossObjective
-    | PoissonLossObjective
-    | CustomObjective,
-    Field(discriminator="type"),
-]
-
-
-# -----------------------------------------------------------------------------
 # Linear Weights
 # -----------------------------------------------------------------------------
 
@@ -373,7 +272,6 @@ class GBDTModelSchema(BaseModel):
     meta: ModelMetaSchema
     forest: ForestSchema
     output_transform: OutputTransform
-    objective: ObjectiveSchema | None = None
 
     MODEL_TYPE: str = "gbdt"
 
@@ -390,6 +288,5 @@ class GBLinearModelSchema(BaseModel):
     weights: LinearWeightsSchema
     base_score: list[float]
     output_transform: OutputTransform
-    objective: ObjectiveSchema | None = None
 
     MODEL_TYPE: str = "gblinear"

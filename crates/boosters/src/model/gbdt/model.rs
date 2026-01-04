@@ -11,8 +11,8 @@ use crate::explainability::{
     compute_forest_importance,
 };
 use crate::inference::gbdt::UnrolledPredictor6;
-use crate::model::meta::ModelMeta;
 use crate::model::OutputTransform;
+use crate::model::meta::ModelMeta;
 use crate::repr::gbdt::{Forest, ScalarLeaf};
 use crate::training::gbdt::GBDTTrainer;
 use crate::utils::{Parallelism, run_with_threads};
@@ -159,9 +159,7 @@ impl GBDTModel {
         // Convert config to trainer params, then move out the objective/metric.
         let params = config.to_trainer_params();
         let GBDTConfig {
-            objective,
-            metric,
-            ..
+            objective, metric, ..
         } = config;
 
         let n_outputs = objective.n_outputs();
@@ -181,11 +179,7 @@ impl GBDTModel {
             ..Default::default()
         };
 
-        Some(Self::from_parts(
-            forest,
-            meta,
-            output_transform,
-        ))
+        Some(Self::from_parts(forest, meta, output_transform))
     }
 
     // =========================================================================
@@ -436,7 +430,11 @@ mod tests {
         };
         let mut forest2 = crate::repr::gbdt::Forest::for_regression().with_base_score(vec![0.0]);
         forest2.push_tree(tree2, 0);
-        let model2 = GBDTModel::from_parts(forest2, ModelMeta::for_regression(2), OutputTransform::Identity);
+        let model2 = GBDTModel::from_parts(
+            forest2,
+            ModelMeta::for_regression(2),
+            OutputTransform::Identity,
+        );
 
         // Gain fails without stats
         assert!(matches!(
@@ -494,7 +492,11 @@ mod tests {
         };
         let mut forest2 = crate::repr::gbdt::Forest::for_regression().with_base_score(vec![0.0]);
         forest2.push_tree(tree2, 0);
-        let model2 = GBDTModel::from_parts(forest2, ModelMeta::for_regression(2), OutputTransform::Identity);
+        let model2 = GBDTModel::from_parts(
+            forest2,
+            ModelMeta::for_regression(2),
+            OutputTransform::Identity,
+        );
 
         assert!(matches!(
             model2.shap_values(&dataset),

@@ -3,7 +3,7 @@
 #[path = "common/mod.rs"]
 mod common;
 
-use boosters::model::{GBDTModel, ModelMeta};
+use boosters::model::{GBDTModel, ModelMeta, OutputTransform};
 use boosters::persist::{
     BinaryReadOptions, BinaryWriteOptions, JsonWriteOptions, SerializableModel,
 };
@@ -16,7 +16,7 @@ use criterion::{Criterion, black_box, criterion_group, criterion_main};
 fn bench_persist_gbdt(c: &mut Criterion) {
     let loaded = load_boosters_model("bench_medium");
     let meta = ModelMeta::for_regression(loaded.n_features);
-    let model = GBDTModel::from_forest(loaded.forest, meta);
+    let model = GBDTModel::from_parts(loaded.forest, meta, OutputTransform::Identity);
 
     c.bench_function("persist/gbdt/binary_write", |b| {
         let options = BinaryWriteOptions::default();

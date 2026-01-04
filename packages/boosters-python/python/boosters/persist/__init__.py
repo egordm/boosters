@@ -30,8 +30,6 @@ __all__ = [
     "LinearCoefficientsSchema",
     "LinearWeightsSchema",
     "ModelMetaSchema",
-    "ObjectiveSchema",
-    "TaskKind",
     "TreeSchema",
 ]
 
@@ -64,7 +62,5 @@ if TYPE_CHECKING:
         LinearCoefficientsSchema,
         LinearWeightsSchema,
         ModelMetaSchema,
-        ObjectiveSchema,
-        TaskKind,
         TreeSchema,
     )

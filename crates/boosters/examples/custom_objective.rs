@@ -13,7 +13,9 @@ use boosters::data::binned::BinnedDataset;
 use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::inference::gbdt::SimplePredictor;
 use boosters::repr::gbdt::Forest;
-use boosters::training::{CustomObjective, GBDTParams, GBDTTrainer, GradsTuple, GrowthStrategy, Metric, Objective};
+use boosters::training::{
+    CustomObjective, GBDTParams, GBDTTrainer, GradsTuple, GrowthStrategy, Metric, Objective,
+};
 use boosters::{OutputTransform, Parallelism};
 use ndarray::Array2;
 
@@ -32,9 +34,9 @@ fn predict_row(forest: &Forest, features: &[f32]) -> Vec<f32> {
 /// - For |error| <= delta: grad = error, hess = 1.0
 /// - For |error| > delta: grad = delta * sign(error), hess = small epsilon
 fn huber_objective(delta: f32) -> Objective {
-    let custom = CustomObjective {
-        name: format!("huber(delta={delta})"),
-        compute_gradients_into: Box::new(move |preds, targets, weights, mut grad_hess| {
+    let custom = CustomObjective::new(
+        format!("huber(delta={delta})"),
+        move |preds, targets, weights, mut grad_hess| {
             let n_rows = targets.n_samples();
             let targets_row = targets.output(0);
 
@@ -51,8 +53,8 @@ fn huber_objective(delta: f32) -> Objective {
 
                 grad_hess[[0, i]] = GradsTuple { grad, hess };
             }
-        }),
-        compute_base_score: Box::new(|targets, weights| {
+        },
+        |targets, weights| {
             let n_rows = targets.n_samples();
             if n_rows == 0 {
                 return vec![0.0];
@@ -72,10 +74,10 @@ fn huber_objective(delta: f32) -> Objective {
             } else {
                 vec![sum_y / sum_w]
             }
-        }),
-        output_transform: OutputTransform::Identity,
-        n_outputs: 1,
-    };
+        },
+        OutputTransform::Identity,
+        1,
+    );
 
     Objective::Custom(custom)
 }

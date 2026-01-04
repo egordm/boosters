@@ -38,7 +38,7 @@ class TestXGBoostConverter:
         schema = xgboost_to_schema(model_path)
 
         assert isinstance(schema, GBDTModelSchema)
-        assert schema.meta.task == "regression"
+        assert schema.output_transform == "identity"
         assert schema.meta.num_features == 5
         assert len(schema.forest.trees) > 0
 
@@ -51,7 +51,7 @@ class TestXGBoostConverter:
         schema = xgboost_to_schema(model_path)
 
         assert isinstance(schema, GBDTModelSchema)
-        assert schema.meta.task == "binary_classification"
+        assert schema.output_transform == "sigmoid"
         assert schema.forest.n_groups == 1
 
     def test_gbtree_multiclass_conversion(self) -> None:
@@ -63,8 +63,7 @@ class TestXGBoostConverter:
         schema = xgboost_to_schema(model_path)
 
         assert isinstance(schema, GBDTModelSchema)
-        assert schema.meta.task == "multiclass_classification"
-        assert schema.meta.num_classes == 3
+        assert schema.output_transform == "softmax"
         assert schema.forest.n_groups == 3
 
     def test_gblinear_regression_conversion(self) -> None:
@@ -76,7 +75,7 @@ class TestXGBoostConverter:
         schema = xgboost_to_schema(model_path)
 
         assert isinstance(schema, GBLinearModelSchema)
-        assert schema.meta.task == "regression"
+        assert schema.output_transform == "identity"
         assert schema.meta.num_features == 5
         assert schema.weights.num_groups == 1
 
@@ -89,7 +88,7 @@ class TestXGBoostConverter:
         schema = xgboost_to_schema(model_path)
 
         assert isinstance(schema, GBLinearModelSchema)
-        assert schema.meta.task == "binary_classification"
+        assert schema.output_transform == "sigmoid"
 
     def test_dart_regression_conversion(self) -> None:
         """Convert DART regression model to schema."""
@@ -100,7 +99,7 @@ class TestXGBoostConverter:
         schema = xgboost_to_schema(model_path)
 
         assert isinstance(schema, GBDTModelSchema)
-        assert schema.meta.task == "regression"
+        assert schema.output_transform == "identity"
 
     def test_xgboost_to_json_bytes(self) -> None:
         """Convert XGBoost model to JSON bytes."""
@@ -125,7 +124,7 @@ class TestXGBoostConverter:
 
         assert envelope.bstr_version == 2
         assert envelope.model_type == "gbdt"
-        assert envelope.model.meta.task == "regression"
+        assert envelope.model.output_transform == "identity"
 
 
 class TestXGBoostBoosterInput:
@@ -175,7 +174,7 @@ class TestLightGBMConverter:
         schema = lightgbm_to_schema(model_path)
 
         assert isinstance(schema, GBDTModelSchema)
-        assert schema.meta.task == "regression"
+        assert schema.output_transform == "identity"
         assert len(schema.forest.trees) > 0
 
     def test_binary_conversion(self) -> None:
@@ -188,7 +187,7 @@ class TestLightGBMConverter:
         schema = lightgbm_to_schema(model_path)
 
         assert isinstance(schema, GBDTModelSchema)
-        assert schema.meta.task == "binary_classification"
+        assert schema.output_transform == "sigmoid"
 
     def test_multiclass_conversion(self) -> None:
         """Convert LightGBM multiclass model to schema."""
@@ -200,7 +199,7 @@ class TestLightGBMConverter:
         schema = lightgbm_to_schema(model_path)
 
         assert isinstance(schema, GBDTModelSchema)
-        assert schema.meta.task == "multiclass_classification"
+        assert schema.output_transform == "softmax"
         assert schema.forest.n_groups == 3
 
     def test_lightgbm_to_json_bytes(self) -> None:

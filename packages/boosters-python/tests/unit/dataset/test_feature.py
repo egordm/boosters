@@ -1,5 +1,7 @@
 """Unit tests for dataset Feature conversions."""
 
+from typing import Any, cast
+
 import numpy as np
 import pytest
 
@@ -21,7 +23,7 @@ class TestFeatureDense:
 
         col = csr_matrix([[0.0], [1.5], [0.0], [2.0]], dtype=np.float32)
         with pytest.raises(TypeError, match="from_dense"):
-            Feature.from_dense(col, name="x")  # type: ignore[arg-type]
+            Feature.from_dense(cast(Any, col), name="x")
 
 
 class TestFeaturePandas:
@@ -48,7 +50,7 @@ class TestFeatureSparse:
         from scipy.sparse import csr_matrix
 
         col = csr_matrix([[0.0], [1.5], [0.0], [2.0]], dtype=np.float32)
-        f = Feature.from_sparse(col, name="x")  # pyright: ignore[reportArgumentType]
+        f = Feature.from_sparse(cast(Any, col), name="x")
         assert f.is_sparse
         assert f.name == "x"
         assert f.n_samples == 4

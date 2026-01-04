@@ -6,9 +6,9 @@
 //!
 //! For multi-output models, metrics are computed per-output and then averaged.
 
-use ndarray::ArrayView2;
 use crate::data::TargetsView;
 use crate::data::WeightsView;
+use ndarray::ArrayView2;
 
 // =============================================================================
 // RMSE (Root Mean Squared Error)
@@ -240,7 +240,7 @@ pub(super) fn compute_huber(
             } else {
                 delta * (r - 0.5 * delta)
             };
-            (swl + w * loss, sw + w as f64)
+            (swl + w * loss, sw + w)
         });
 
     if sum_w > 0.0 { sum_wloss / sum_w } else { 0.0 }
@@ -274,7 +274,11 @@ mod tests {
     fn rmse_perfect() {
         let preds = make_preds(1, 3, &[1.0, 2.0, 3.0]);
         let labels = make_targets(&[1.0, 2.0, 3.0]);
-        let rmse = compute_rmse(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let rmse = compute_rmse(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert!(rmse.abs() < 1e-10);
     }
 
@@ -283,7 +287,11 @@ mod tests {
         // RMSE of [1, 2] vs [0, 0] = sqrt((1 + 4) / 2) = sqrt(2.5)
         let preds = make_preds(1, 2, &[1.0, 2.0]);
         let labels = make_targets(&[0.0, 0.0]);
-        let rmse = compute_rmse(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let rmse = compute_rmse(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert!((rmse - 2.5f64.sqrt()).abs() < 1e-10);
     }
 
@@ -311,7 +319,11 @@ mod tests {
     fn mae_perfect() {
         let preds = make_preds(1, 3, &[1.0, 2.0, 3.0]);
         let labels = make_targets(&[1.0, 2.0, 3.0]);
-        let mae = compute_mae(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let mae = compute_mae(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert!(mae.abs() < 1e-10);
     }
 
@@ -320,7 +332,11 @@ mod tests {
         // MAE of [1, 2] vs [0, 0] = (1 + 2) / 2 = 1.5
         let preds = make_preds(1, 2, &[1.0, 2.0]);
         let labels = make_targets(&[0.0, 0.0]);
-        let mae = compute_mae(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let mae = compute_mae(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert_abs_diff_eq!(mae as f32, 1.5, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -348,7 +364,11 @@ mod tests {
     fn mape_perfect() {
         let preds = make_preds(1, 3, &[1.0, 2.0, 3.0]);
         let labels = make_targets(&[1.0, 2.0, 3.0]);
-        let mape = compute_mape(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let mape = compute_mape(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert!(mape.abs() < 1e-10);
     }
 
@@ -357,7 +377,11 @@ mod tests {
         // |1-2|/2 = 0.5, |3-4|/4 = 0.25 → mean = 0.375 → 37.5%
         let preds = make_preds(1, 2, &[1.0, 3.0]);
         let labels = make_targets(&[2.0, 4.0]);
-        let mape = compute_mape(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let mape = compute_mape(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         assert_abs_diff_eq!(mape as f32, 37.5, epsilon = DEFAULT_TOLERANCE);
     }
 

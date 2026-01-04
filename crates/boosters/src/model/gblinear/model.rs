@@ -7,8 +7,8 @@
 use crate::Parallelism;
 use crate::data::Dataset;
 use crate::explainability::{ExplainError, LinearExplainer, ShapValues};
-use crate::model::meta::ModelMeta;
 use crate::model::OutputTransform;
+use crate::model::meta::ModelMeta;
 use crate::repr::gblinear::LinearModel;
 use crate::training::gblinear::GBLinearTrainer;
 
@@ -34,7 +34,6 @@ pub struct GBLinearModel {
 }
 
 impl GBLinearModel {
-
     /// Train a new GBLinear model.
     ///
     /// # Arguments
@@ -76,9 +75,7 @@ impl GBLinearModel {
         // Convert config to trainer params, then move out the objective/metric.
         let params = config.to_trainer_params();
         let GBLinearConfig {
-            objective,
-            metric,
-            ..
+            objective, metric, ..
         } = config;
 
         let n_outputs = objective.n_outputs();
@@ -95,11 +92,7 @@ impl GBLinearModel {
             ..Default::default()
         };
 
-        Some(Self::from_parts(
-            linear_model,
-            meta,
-            output_transform,
-        ))
+        Some(Self::from_parts(linear_model, meta, output_transform))
     }
 
     /// Create a model from all its parts.

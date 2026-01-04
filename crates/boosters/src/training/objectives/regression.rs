@@ -4,9 +4,9 @@
 //! Data layout: predictions/gradients are `[n_outputs, n_samples]` (row-major within ndarray).
 //! Targets are TargetsView with shape `[n_outputs, n_samples]`, weights are WeightsView.
 
-use ndarray::{ArrayView1, ArrayView2, ArrayViewMut2};
 use crate::data::{TargetsView, WeightsView};
 use crate::training::GradsTuple;
+use ndarray::{ArrayView1, ArrayView2, ArrayViewMut2};
 
 // =============================================================================
 // Squared Loss
@@ -60,7 +60,11 @@ pub(super) fn compute_squared_base_score(
             (sw + w as f64, swy + w as f64 * y as f64)
         });
 
-    let base = if sum_w > 0.0 { (sum_wy / sum_w) as f32 } else { 0.0 };
+    let base = if sum_w > 0.0 {
+        (sum_wy / sum_w) as f32
+    } else {
+        0.0
+    };
     vec![base]
 }
 

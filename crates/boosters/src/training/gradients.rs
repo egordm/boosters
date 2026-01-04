@@ -215,61 +215,6 @@ impl Gradients {
             .as_slice_mut()
             .expect("array should be contiguous")[start..start + ncols]
     }
-
-    // =========================================================================
-    // Aggregation helpers
-    // =========================================================================
-
-    /// Sum gradients and hessians for a specific output.
-    ///
-    /// # Arguments
-    /// * `output` - Which output to sum
-    /// * `rows` - Optional subset of row indices. If `None`, sums all samples.
-    ///
-    /// This intentionally accumulates into `f64` to reduce numerical drift in
-    /// gain / Newton-step style computations, while keeping the underlying storage
-    /// in `f32` for performance.
-    #[inline]
-    pub fn sum(&self, output: usize, rows: Option<&[u32]>) -> (f64, f64) {
-        // TODO: remove dead code
-        let row = self.data.row(output);
-
-        let mut sum_grad = 0.0f64;
-        let mut sum_hess = 0.0f64;
-
-        match rows {
-            None => {
-                for pair in row.iter() {
-                    sum_grad += pair.grad as f64;
-                    sum_hess += pair.hess as f64;
-                }
-            }
-            Some(rows) => {
-                for &idx in rows {
-                    let pair = row[idx as usize];
-                    sum_grad += pair.grad as f64;
-                    sum_hess += pair.hess as f64;
-                }
-            }
-        }
-        (sum_grad, sum_hess)
-    }
-
-    /// Compute Newton step for bias update: -sum(grad) / sum(hess).
-    ///
-    /// # Arguments
-    ///
-    /// * `output` - Which output to compute for
-    /// * `min_hess` - Minimum hessian to avoid division by zero
-    pub fn bias_update(&self, output: usize, min_hess: f32) -> f32 {
-        // TODO: remove dead code
-        let (sum_grad, sum_hess) = self.sum(output, None);
-        if sum_hess.abs() < min_hess as f64 {
-            0.0
-        } else {
-            (-sum_grad / sum_hess) as f32
-        }
-    }
 }
 
 // =============================================================================
@@ -359,41 +304,6 @@ mod tests {
         // Use view for output 1
         let view = buffer.output_view(1);
         assert_eq!(view[0].grad, 10.0);
-    }
-
-    #[test]
-    fn sum_gradients() {
-        let mut buffer = Gradients::new(4, 2);
-
-        // Output 0: grads = [1, 2, 3, 4], hess = [1, 1, 1, 1]
-        for i in 0..4 {
-            buffer.set(i, 0, (i + 1) as f32, 1.0);
-        }
-
-        // Sum all
-        let (sum_g, sum_h) = buffer.sum(0, None);
-        assert_eq!(sum_g, 10.0); // 1+2+3+4
-        assert_eq!(sum_h, 4.0);
-
-        // Sum subset of rows
-        let (sum_g, sum_h) = buffer.sum(0, Some(&[1, 3]));
-        assert_eq!(sum_g, 6.0); // 2+4
-        assert_eq!(sum_h, 2.0);
-    }
-
-    #[test]
-    fn bias_update() {
-        let mut buffer = Gradients::new(4, 1);
-
-        // grad = [1, 2, 3, 4] → sum = 10
-        // hess = [1, 1, 1, 1] → sum = 4
-        // bias_update = -10/4 = -2.5
-        for i in 0..4 {
-            buffer.set(i, 0, (i + 1) as f32, 1.0);
-        }
-
-        let update = buffer.bias_update(0, 1e-6);
-        assert!((update - (-2.5)).abs() < 1e-6);
     }
 
     #[test]

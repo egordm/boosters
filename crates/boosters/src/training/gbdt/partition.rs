@@ -32,7 +32,7 @@
 
 use super::split::{SplitInfo, SplitType};
 use crate::data::binned::FeatureView;
-use crate::data::{BinnedDataset, EffectiveViews, MissingType};
+use crate::data::{BinnedDataset, BinnedFeatureColumnSource, BinnedFeatureViews, MissingType};
 
 /// Leaf identifier (index during training).
 pub type LeafId = u32;
@@ -70,6 +70,80 @@ pub struct RowPartitioner {
 }
 
 impl RowPartitioner {
+    fn stable_partition_range(
+        indices: &mut [u32],
+        scratch: &mut [u32],
+        begin: usize,
+        end: usize,
+        mut goes_left: impl FnMut(u32) -> bool,
+    ) -> (u32, Option<u32>, bool, Option<u32>, bool) {
+        // Single-pass stable partition: write left from start, right from end of scratch,
+        // then reverse right portion in-place for stable ordering.
+        let mut left_write = begin;
+        let mut right_write = end; // Points past the end, we decrement before writing
+
+        // Track whether each child partition is strictly sequential in the produced order.
+        // This stays correct even when the root indices come from an arbitrary sampled order.
+        let mut left_seq_start: Option<u32> = None;
+        let mut left_prev: u32 = 0;
+        let mut left_is_seq = true;
+        let mut right_seq_start: Option<u32> = None;
+        let mut right_prev: u32 = 0;
+        let mut right_is_seq = true;
+
+        #[inline]
+        fn update_seq(start: &mut Option<u32>, prev: &mut u32, is_seq: &mut bool, idx: u32) {
+            match *start {
+                None => {
+                    *start = Some(idx);
+                    *prev = idx;
+                }
+                Some(_) => {
+                    if *is_seq {
+                        if idx == prev.wrapping_add(1) {
+                            *prev = idx;
+                        } else {
+                            *is_seq = false;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Iterate over the original indices and write the partition into scratch.
+        for &idx in &indices[begin..end] {
+            if goes_left(idx) {
+                scratch[left_write] = idx;
+                left_write += 1;
+                update_seq(&mut left_seq_start, &mut left_prev, &mut left_is_seq, idx);
+            } else {
+                right_write -= 1;
+                scratch[right_write] = idx;
+                update_seq(
+                    &mut right_seq_start,
+                    &mut right_prev,
+                    &mut right_is_seq,
+                    idx,
+                );
+            }
+        }
+
+        let left_count = (left_write - begin) as u32;
+        debug_assert_eq!(left_write, right_write, "partition pointers should meet");
+
+        // Right portion was written in reverse. Reverse it to restore stable ordering.
+        scratch[left_write..end].reverse();
+        indices[begin..end].copy_from_slice(&scratch[begin..end]);
+
+        (
+            left_count,
+            left_seq_start,
+            left_is_seq,
+            right_seq_start,
+            right_is_seq,
+        )
+    }
+
     #[inline]
     fn sequential_start(indices: &[u32]) -> Option<u32> {
         let (first, rest) = indices.split_first()?;
@@ -224,7 +298,7 @@ impl RowPartitioner {
         leaf: LeafId,
         split: &SplitInfo,
         dataset: &BinnedDataset,
-        effective: &EffectiveViews<'_>,
+        effective: &BinnedFeatureViews<'_>,
     ) -> (LeafId, u32, u32) {
         let begin = self.leaf_begin[leaf as usize] as usize;
         let count = self.leaf_count[leaf as usize] as usize;
@@ -235,203 +309,60 @@ impl RowPartitioner {
         let effective_col = split.feature as usize;
         let view = effective.views[effective_col];
 
-        // For bundles: default_bin is 0 (all defaults), has_missing is true
-        // For standalone: use the original feature's bin_mapper
-        let (default_bin, has_missing) = if effective.is_bundle[effective_col] {
-            (0u32, true)
-        } else {
-            // Map effective column to original feature
-            if let Some(orig_feature) = effective.effective_to_original(effective_col) {
-                let bin_mapper = dataset.bin_mapper(orig_feature);
+        // Bundles: default_bin is 0 (all defaults), has_missing is true.
+        // Standalone: use the original feature's bin mapper.
+        let (default_bin, has_missing) = match effective.sources[effective_col] {
+            BinnedFeatureColumnSource::Bundle { .. } => (0u32, true),
+            BinnedFeatureColumnSource::Standalone { feature_idx } => {
+                let bin_mapper = dataset.bin_mapper(feature_idx);
                 (
                     bin_mapper.default_bin(),
                     bin_mapper.missing_type() != MissingType::None,
                 )
-            } else {
-                // Should not happen for non-bundle columns
-                (0u32, false)
             }
         };
         let default_left = split.default_left;
 
-        // Single-pass stable partition: write left from start, right from end of scratch,
-        // then reverse right portion in-place for stable ordering.
-        let (indices, scratch) = (&mut self.indices, &mut self.scratch);
+        // Common decision predicate on *bin* (already default-filled for sparse).
+        // Missing bins are represented as default_bin when has_missing is true.
+        let goes_left_for_bin = |bin: u32| {
+            if has_missing && bin == default_bin {
+                default_left
+            } else {
+                match &split.split_type {
+                    SplitType::Numerical { bin: threshold } => bin <= (*threshold as u32),
+                    SplitType::Categorical { left_cats } => left_cats.contains(bin),
+                }
+            }
+        };
 
-        // Single-pass partition: left goes forward [begin..], right goes backward [..end)
-        let mut left_write = begin;
-        let mut right_write = end; // Points past the end, we decrement before writing
-
-        // Track whether each child partition is strictly sequential in the produced order.
-        // This stays correct even when the root indices come from an arbitrary sampled order.
-        let mut left_seq_start: Option<u32> = None;
-        let mut left_prev: u32 = 0;
-        let mut left_is_seq = true;
-        let mut right_seq_start: Option<u32> = None;
-        let mut right_prev: u32 = 0;
-        let mut right_is_seq = true;
-
-        #[inline]
-        fn update_seq(start: &mut Option<u32>, prev: &mut u32, is_seq: &mut bool, idx: u32) {
-            match *start {
-                None => {
-                    *start = Some(idx);
-                    *prev = idx;
-                }
-                Some(_) => {
-                    if *is_seq {
-                        if idx == prev.wrapping_add(1) {
-                            *prev = idx;
-                        } else {
-                            *is_seq = false;
-                        }
-                    }
-                }
-            }
-        }
-
-        match (&split.split_type, view) {
-            (SplitType::Numerical { bin: threshold }, FeatureView::U8(bins)) => {
-                let threshold = *threshold as u8;
-                for &idx in &indices[begin..end] {
-                    let row = idx as usize;
-                    let bin = bins[row];
-                    let goes_left = if bin == default_bin as u8 && has_missing {
-                        default_left
-                    } else {
-                        bin <= threshold
-                    };
-                    if goes_left {
-                        scratch[left_write] = idx;
-                        left_write += 1;
-                        update_seq(&mut left_seq_start, &mut left_prev, &mut left_is_seq, idx);
-                    } else {
-                        right_write -= 1;
-                        scratch[right_write] = idx;
-                        update_seq(
-                            &mut right_seq_start,
-                            &mut right_prev,
-                            &mut right_is_seq,
-                            idx,
-                        );
-                    }
-                }
-            }
-            (SplitType::Numerical { bin: threshold }, FeatureView::U16(bins)) => {
-                let threshold = *threshold;
-                for &idx in &indices[begin..end] {
-                    let row = idx as usize;
-                    let bin = bins[row];
-                    let goes_left = if bin == default_bin as u16 && has_missing {
-                        default_left
-                    } else {
-                        bin <= threshold
-                    };
-                    if goes_left {
-                        scratch[left_write] = idx;
-                        left_write += 1;
-                        update_seq(&mut left_seq_start, &mut left_prev, &mut left_is_seq, idx);
-                    } else {
-                        right_write -= 1;
-                        scratch[right_write] = idx;
-                        update_seq(
-                            &mut right_seq_start,
-                            &mut right_prev,
-                            &mut right_is_seq,
-                            idx,
-                        );
-                    }
-                }
-            }
-            (SplitType::Categorical { left_cats }, FeatureView::U8(bins)) => {
-                for &idx in &indices[begin..end] {
-                    let row = idx as usize;
-                    let bin = bins[row] as u32;
-                    let goes_left = if bin == default_bin && has_missing {
-                        default_left
-                    } else {
-                        left_cats.contains(bin)
-                    };
-                    if goes_left {
-                        scratch[left_write] = idx;
-                        left_write += 1;
-                        update_seq(&mut left_seq_start, &mut left_prev, &mut left_is_seq, idx);
-                    } else {
-                        right_write -= 1;
-                        scratch[right_write] = idx;
-                        update_seq(
-                            &mut right_seq_start,
-                            &mut right_prev,
-                            &mut right_is_seq,
-                            idx,
-                        );
-                    }
-                }
-            }
-            (SplitType::Categorical { left_cats }, FeatureView::U16(bins)) => {
-                for &idx in &indices[begin..end] {
-                    let row = idx as usize;
-                    let bin = bins[row] as u32;
-                    let goes_left = if bin == default_bin && has_missing {
-                        default_left
-                    } else {
-                        left_cats.contains(bin)
-                    };
-                    if goes_left {
-                        scratch[left_write] = idx;
-                        left_write += 1;
-                        update_seq(&mut left_seq_start, &mut left_prev, &mut left_is_seq, idx);
-                    } else {
-                        right_write -= 1;
-                        scratch[right_write] = idx;
-                        update_seq(
-                            &mut right_seq_start,
-                            &mut right_prev,
-                            &mut right_is_seq,
-                            idx,
-                        );
-                    }
-                }
-            }
-            _ => {
-                // Fallback for sparse views or other unhandled combinations
-                for &idx in &indices[begin..end] {
+        let (left_count, left_seq_start, left_is_seq, right_seq_start, right_is_seq) = match view {
+            FeatureView::U8(bins) => Self::stable_partition_range(
+                &mut self.indices,
+                &mut self.scratch,
+                begin,
+                end,
+                |idx| goes_left_for_bin(bins[idx as usize] as u32),
+            ),
+            FeatureView::U16(bins) => Self::stable_partition_range(
+                &mut self.indices,
+                &mut self.scratch,
+                begin,
+                end,
+                |idx| goes_left_for_bin(bins[idx as usize] as u32),
+            ),
+            _ => Self::stable_partition_range(
+                &mut self.indices,
+                &mut self.scratch,
+                begin,
+                end,
+                |idx| {
                     let row = idx as usize;
                     let bin = view.get_bin(row).unwrap_or(default_bin);
-                    let goes_left = if bin == default_bin && has_missing {
-                        default_left
-                    } else {
-                        match &split.split_type {
-                            SplitType::Numerical { bin: threshold } => bin <= *threshold as u32,
-                            SplitType::Categorical { left_cats } => left_cats.contains(bin),
-                        }
-                    };
-                    if goes_left {
-                        scratch[left_write] = idx;
-                        left_write += 1;
-                        update_seq(&mut left_seq_start, &mut left_prev, &mut left_is_seq, idx);
-                    } else {
-                        right_write -= 1;
-                        scratch[right_write] = idx;
-                        update_seq(
-                            &mut right_seq_start,
-                            &mut right_prev,
-                            &mut right_is_seq,
-                            idx,
-                        );
-                    }
-                }
-            }
-        }
-
-        // Compute counts from write pointers
-        let left_count = (left_write - begin) as u32;
-        debug_assert_eq!(left_write, right_write, "partition pointers should meet");
-
-        // Right portion is in reverse order in scratch[left_write..end], reverse to restore stable order
-        scratch[left_write..end].reverse();
-
-        indices[begin..end].copy_from_slice(&scratch[begin..end]);
+                    goes_left_for_bin(bin)
+                },
+            ),
+        };
 
         let right_count = count as u32 - left_count;
 
@@ -501,7 +432,7 @@ mod tests {
     #[test]
     fn test_split_numerical() {
         let dataset = make_test_dataset();
-        let effective = dataset.effective_feature_views();
+        let effective = dataset.feature_views();
         let mut partitioner = RowPartitioner::new(8, 16);
         partitioner.reset(8, None);
 
@@ -533,7 +464,7 @@ mod tests {
     #[test]
     fn test_split_alternating() {
         let dataset = make_test_dataset();
-        let effective = dataset.effective_feature_views();
+        let effective = dataset.feature_views();
         let mut partitioner = RowPartitioner::new(8, 16);
         partitioner.reset(8, None);
 
@@ -561,7 +492,7 @@ mod tests {
     #[test]
     fn test_multiple_splits() {
         let dataset = make_test_dataset();
-        let effective = dataset.effective_feature_views();
+        let effective = dataset.feature_views();
         let mut partitioner = RowPartitioner::new(8, 32);
         partitioner.reset(8, None);
 

@@ -111,7 +111,7 @@ impl TreeGrower {
         let n_samples = dataset.n_samples();
 
         // Get effective feature layout (bundles + standalone features)
-        let effective = dataset.effective_feature_views();
+        let effective = dataset.feature_views();
         let n_effective_columns = effective.n_columns();
 
         // Build histogram layout from effective bin counts
@@ -129,7 +129,9 @@ impl TreeGrower {
         // Use effective feature metadata directly
         let feature_types = effective.is_categorical.clone();
         let feature_has_missing = effective.has_missing.clone();
-        let feature_is_bundle = effective.is_bundle.clone();
+        let feature_is_bundle: Vec<bool> = (0..n_effective_columns)
+            .map(|col| effective.is_bundle(col))
+            .collect();
 
         // Maximum nodes: 2*max_leaves - 1 for a full binary tree
         let max_leaves = params.max_leaves();
@@ -262,7 +264,7 @@ impl TreeGrower {
 
         // Pre-compute effective feature views once per tree
         // This includes bundle views (if any) followed by standalone feature views
-        let effective = dataset.effective_feature_views();
+        let effective = dataset.feature_views();
         let bin_views = &effective.views;
 
         // Initialize growth state
@@ -328,7 +330,7 @@ impl TreeGrower {
         &mut self,
         candidate: NodeCandidate,
         dataset: &BinnedDataset,
-        effective: &crate::data::EffectiveViews<'_>,
+        effective: &crate::data::BinnedFeatureViews<'_>,
         gradients: &Gradients,
         output: usize,
         bin_views: &[FeatureView<'_>],
@@ -559,7 +561,7 @@ impl TreeGrower {
         node: u32,
         split: &SplitInfo,
         dataset: &BinnedDataset,
-        effective: &crate::data::EffectiveViews<'_>,
+        effective: &crate::data::BinnedFeatureViews<'_>,
     ) -> (u32, u32) {
         // Decode effective column index to original feature and bin
         let effective_col = split.feature as usize;
@@ -793,7 +795,7 @@ mod tests {
     #[test]
     fn phase4_numeric_threshold_translation_preserves_boundary() {
         let dataset = make_numeric_boundary_dataset();
-        let effective = dataset.effective_feature_views();
+        let effective = dataset.feature_views();
 
         let mut builder = MutableTree::<ScalarLeaf>::with_capacity(3);
         let root = builder.init_root();
@@ -825,7 +827,7 @@ mod tests {
     #[test]
     fn phase5_categorical_domain_is_bin_indices_and_semantics_match() {
         let dataset = make_categorical_domain_dataset();
-        let effective = dataset.effective_feature_views();
+        let effective = dataset.feature_views();
 
         let mut builder = MutableTree::<ScalarLeaf>::with_capacity(3);
         let root = builder.init_root();
@@ -1260,7 +1262,7 @@ mod tests {
         let dataset = BinnedDataset::from_dataset(&raw, &config).unwrap();
 
         // Verify bundling occurred
-        let effective = dataset.effective_feature_views();
+        let effective = dataset.feature_views();
         assert!(
             effective.has_bundles(),
             "Should have bundles with sparse categorical features (n_bundles={})",

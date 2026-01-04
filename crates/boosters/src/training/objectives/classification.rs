@@ -158,7 +158,12 @@ pub(super) fn compute_softmax_gradients_into(
     // Use column views to avoid repeated double-indexing
     for (i, (&target, w)) in targets.iter().zip(weights.iter(n_rows)).enumerate() {
         let label = target as usize;
-        debug_assert!(label < n_outputs, "label {} >= n_classes {}", label, n_outputs);
+        debug_assert!(
+            label < n_outputs,
+            "label {} >= n_classes {}",
+            label,
+            n_outputs
+        );
 
         // Get column views for this sample
         let pred_col = predictions.column(i);
@@ -368,5 +373,4 @@ mod tests {
         assert!(outputs[0] > outputs[1]); // Class 0 more frequent
         assert_abs_diff_eq!(outputs[1], outputs[2], epsilon = DEFAULT_TOLERANCE);
     }
-
 }

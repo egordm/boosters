@@ -102,62 +102,59 @@ impl BinnedFeatureInfo {
     }
 }
 
-/// Result of `effective_feature_views()` - views in the effective layout.
+/// Where an effective feature column comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BinnedFeatureColumnSource {
+    /// An encoded bundle column (EFB). The value points to a bundle group.
+    Bundle { group_idx: usize },
+    /// A standalone (non-bundled) original feature.
+    Standalone { feature_idx: usize },
+}
+
+/// Result of `feature_views()` - views in the effective layout.
 ///
-/// The effective layout puts bundles first, then standalone features:
+/// Effective layout puts bundles first, then standalone features:
 /// ```text
 /// [bundle_0, bundle_1, ..., standalone_0, standalone_1, ...]
 /// ```
-///
-/// This struct provides both the views and metadata needed by the grower.
 #[derive(Debug)]
-pub struct EffectiveViews<'a> {
+pub struct BinnedFeatureViews<'a> {
     /// Feature views in effective order.
     pub views: Vec<FeatureView<'a>>,
     /// Bin counts for each effective column.
     pub bin_counts: Vec<u32>,
-    /// Whether each effective column is a bundle.
-    pub is_bundle: Vec<bool>,
-    /// Number of bundle columns (first `n_bundles` entries are bundles).
-    pub n_bundles: usize,
-    /// Group indices for bundle columns (for decoding splits).
-    pub bundle_groups: Vec<usize>,
-    /// Original feature indices for standalone columns (effective_idx - n_bundles → original_feature).
-    pub standalone_features: Vec<usize>,
     /// Whether each effective column is categorical.
-    /// For bundles: always true (encoded bins are categorical-like).
-    /// For standalone: matches the original feature type.
+    /// For bundles: always true (encoded bin space).
     pub is_categorical: Vec<bool>,
     /// Whether each effective column has missing values.
     /// For bundles: always true (bin 0 is "all defaults" / missing).
-    /// For standalone: matches the original feature.
     pub has_missing: Vec<bool>,
+    /// Source mapping for each effective column.
+    pub sources: Vec<BinnedFeatureColumnSource>,
+    /// Number of bundle columns (first `n_bundles` columns are bundles).
+    pub n_bundles: usize,
 }
 
-impl<'a> EffectiveViews<'a> {
-    /// Get the number of effective columns (bundles + standalone features).
+impl<'a> BinnedFeatureViews<'a> {
+    /// Number of effective columns (bundles + standalone features).
     #[inline]
     pub fn n_columns(&self) -> usize {
         self.views.len()
     }
 
-    /// Check if the dataset has any bundles.
+    /// Whether the dataset contains any bundles.
     #[inline]
     pub fn has_bundles(&self) -> bool {
         self.n_bundles > 0
     }
 
-    /// Map an effective column index to the original feature index.
-    ///
-    /// For bundle columns, returns `None` (bundles contain multiple features).
-    /// For standalone columns, returns `Some(original_feature_idx)`.
+    /// Returns true if the effective column is a bundle.
     #[inline]
-    pub fn effective_to_original(&self, effective_idx: usize) -> Option<usize> {
-        if effective_idx < self.n_bundles {
-            None // Bundle column - contains multiple features
-        } else {
-            Some(self.standalone_features[effective_idx - self.n_bundles])
-        }
+    pub fn is_bundle(&self, effective_col: usize) -> bool {
+        matches!(
+            self.sources[effective_col],
+            BinnedFeatureColumnSource::Bundle { .. }
+        )
     }
 }
 
@@ -450,66 +447,25 @@ impl BinnedDataset {
 
     /// Get feature views for histogram building.
     ///
-    /// Returns views for all non-trivial features, in global feature index order.
-    /// This is the primary API for training - the hot path for histogram building.
-    ///
-    /// # Returns
-    ///
-    /// A vector of `FeatureView`s, one per non-trivial feature, in order of
-    /// global feature index.
-    pub fn feature_views(&self) -> Vec<FeatureView<'_>> {
-        let mut views = Vec::with_capacity(self.features.len());
-
-        for feature_idx in 0..self.features.len() {
-            let location = self.features[feature_idx].location;
-            match location {
-                FeatureLocation::Direct {
-                    group_idx,
-                    idx_in_group,
-                } => {
-                    let view = self.groups[group_idx as usize].feature_view(idx_in_group as usize);
-                    views.push(view);
-                }
-                FeatureLocation::Bundled { .. } => {
-                    // TODO: Handle bundled features when EFB is implemented
-                    // For now, skip bundled features
-                }
-                FeatureLocation::Skipped => {
-                    // Trivial features are skipped - don't add a view
-                }
-            }
-        }
-
-        views
-    }
-
-    /// Get effective feature views for histogram building.
-    ///
-    /// This returns views in the "effective" feature layout used by the grower:
+    /// Returns views in the effective layout used by the grower:
     /// - First: One view per bundle (the encoded bundle column)
     /// - Then: One view per standalone (non-bundled) feature
     ///
-    /// The returned `EffectiveViews` struct contains both the views and metadata
-    /// about which columns are bundles.
-    ///
-    /// # Layout
-    ///
+    /// # Effective Layout
     /// ```text
     /// Effective columns: [bundle_0, bundle_1, ..., standalone_0, standalone_1, ...]
     /// ```
     ///
-    /// For datasets without bundling, this is equivalent to `feature_views()`.
-    pub fn effective_feature_views(&self) -> EffectiveViews<'_> {
+    /// For datasets without bundling, this is simply all non-trivial features.
+    pub fn feature_views(&self) -> BinnedFeatureViews<'_> {
         use crate::data::MissingType;
 
         let mut views = Vec::new();
         let mut bin_counts = Vec::new();
-        let mut is_bundle = Vec::new();
         let mut is_categorical = Vec::new();
         let mut has_missing = Vec::new();
-        let mut bundle_groups = Vec::new();
-        let mut standalone_features = Vec::new();
-        let mut n_bundles = 0;
+        let mut sources = Vec::new();
+        let mut n_bundles = 0usize;
 
         // Phase 1: Collect bundle views (bundle groups)
         for (group_idx, group) in self.groups.iter().enumerate() {
@@ -522,12 +478,11 @@ impl BinnedDataset {
                     // Should not happen, but fallback to bin_counts[0]
                     bin_counts.push(group.bin_counts()[0]);
                 }
-                is_bundle.push(true);
                 // Bundles are treated as categorical (encoded bin space)
                 is_categorical.push(true);
                 // Bundles always have "missing" (bin 0 = all defaults)
                 has_missing.push(true);
-                bundle_groups.push(group_idx);
+                sources.push(BinnedFeatureColumnSource::Bundle { group_idx });
                 n_bundles += 1;
             }
         }
@@ -543,14 +498,13 @@ impl BinnedDataset {
                     let group = &self.groups[group_idx as usize];
                     views.push(group.feature_view(idx_in_group as usize));
                     bin_counts.push(group.bin_counts()[idx_in_group as usize]);
-                    is_bundle.push(false);
                     // Use original feature's categorical flag
                     is_categorical.push(self.features[feature_idx].is_categorical());
                     // Check if original feature has missing
                     has_missing.push(
                         self.features[feature_idx].bin_mapper.missing_type() != MissingType::None,
                     );
-                    standalone_features.push(feature_idx);
+                    sources.push(BinnedFeatureColumnSource::Standalone { feature_idx });
                 }
                 FeatureLocation::Bundled { .. } | FeatureLocation::Skipped => {
                     // Bundled features are accessed via their bundle
@@ -559,53 +513,23 @@ impl BinnedDataset {
             }
         }
 
-        EffectiveViews {
+        BinnedFeatureViews {
             views,
             bin_counts,
-            is_bundle,
-            n_bundles,
-            bundle_groups,
-            standalone_features,
             is_categorical,
             has_missing,
-        }
-    }
-
-    /// Get view for a single original feature.
-    ///
-    /// Use this when you need access to a specific feature, not for bulk iteration.
-    ///
-    /// # Parameters
-    /// - `feature`: Global feature index (0..n_features)
-    ///
-    /// # Panics
-    ///
-    /// Panics if the feature is skipped (trivial) or bundled.
-    pub fn original_feature_view(&self, feature: usize) -> FeatureView<'_> {
-        let location = self.features[feature].location;
-        match location {
-            FeatureLocation::Direct {
-                group_idx,
-                idx_in_group,
-            } => self.groups[group_idx as usize].feature_view(idx_in_group as usize),
-            FeatureLocation::Bundled { .. } => {
-                panic!(
-                    "Cannot get view for bundled feature {feature} - use feature_views() instead"
-                )
-            }
-            FeatureLocation::Skipped => {
-                panic!("Cannot get view for skipped feature {feature}")
-            }
+            sources,
+            n_bundles,
         }
     }
 
     /// Decode a split on an effective column to the original feature and bin.
     ///
-    /// When working with effective columns (from `effective_feature_views()`), splits
+    /// When working with effective columns (from `feature_views()`), splits
     /// need to be decoded back to original feature indices for tree storage.
     ///
     /// # Parameters
-    /// - `effective_views`: The EffectiveViews from `effective_feature_views()`
+    /// - `effective_views`: The BinnedFeatureViews from `feature_views()`
     /// - `effective_col`: The effective column index (0..n_effective_columns)
     /// - `bin`: The bin value for the split
     ///
@@ -618,17 +542,19 @@ impl BinnedDataset {
     /// bundle with bin 0.
     pub fn decode_split_to_original(
         &self,
-        effective_views: &EffectiveViews<'_>,
+        effective_views: &BinnedFeatureViews<'_>,
         effective_col: usize,
         bin: u32,
     ) -> (usize, u32) {
-        if effective_col < effective_views.n_bundles {
-            // Bundle column: decode using BundleStorage
-            let group_idx = effective_views.bundle_groups[effective_col];
-            let group = &self.groups[group_idx];
-            if let Some(bundle) = group.as_bundle() {
+        match effective_views.sources[effective_col] {
+            BinnedFeatureColumnSource::Bundle { group_idx } => {
+                // Bundle column: decode using BundleStorage
+                let group = &self.groups[group_idx];
+                let Some(bundle) = group.as_bundle() else {
+                    panic!("Bundle group {} has no BundleStorage", group_idx);
+                };
+
                 if let Some((pos_in_bundle, orig_bin)) = bundle.decode(bin as u16) {
-                    // Map position in bundle to original feature
                     let orig_feature = bundle.feature_indices()[pos_in_bundle] as usize;
                     (orig_feature, orig_bin)
                 } else {
@@ -636,14 +562,8 @@ impl BinnedDataset {
                     let first_feature = bundle.feature_indices()[0] as usize;
                     (first_feature, 0)
                 }
-            } else {
-                panic!("Bundle group {} has no BundleStorage", group_idx);
             }
-        } else {
-            // Standalone column: direct mapping
-            let standalone_idx = effective_col - effective_views.n_bundles;
-            let orig_feature = effective_views.standalone_features[standalone_idx];
-            (orig_feature, bin)
+            BinnedFeatureColumnSource::Standalone { feature_idx } => (feature_idx, bin),
         }
     }
 
@@ -1177,7 +1097,7 @@ mod tests {
         let views = dataset.feature_views();
 
         // Should have exactly 2 views (one per non-trivial feature)
-        assert_eq!(views.len(), 2);
+        assert_eq!(views.views.len(), 2);
     }
 
     #[test]
@@ -1191,29 +1111,9 @@ mod tests {
         let dataset = BinnedDataset::from_dataset(&raw, &config).unwrap();
         let views = dataset.feature_views();
 
-        assert_eq!(views.len(), 1);
-        assert!(views[0].is_dense());
-        assert_eq!(views[0].len(), 5); // 5 samples
-    }
-
-    #[test]
-    fn test_original_feature_view() {
-        let config = BinningConfig::default();
-        let raw = Dataset::builder()
-            .add_feature_unnamed(array![1.1, 2.2, 3.3, 4.4, 5.5])
-            .add_feature_unnamed(array![10.1, 20.2, 30.3, 40.4, 50.5])
-            .build()
-            .unwrap();
-        let dataset = BinnedDataset::from_dataset(&raw, &config).unwrap();
-
-        // Get views for individual features
-        let view0 = dataset.original_feature_view(0);
-        let view1 = dataset.original_feature_view(1);
-
-        assert!(view0.is_dense());
-        assert!(view1.is_dense());
-        assert_eq!(view0.len(), 5);
-        assert_eq!(view1.len(), 5);
+        assert_eq!(views.views.len(), 1);
+        assert!(views.views[0].is_dense());
+        assert_eq!(views.views[0].len(), 5); // 5 samples
     }
 
     #[test]
@@ -1230,10 +1130,10 @@ mod tests {
         let views = dataset.feature_views();
 
         // Should have 2 views (one numeric, one categorical)
-        assert_eq!(views.len(), 2);
+        assert_eq!(views.views.len(), 2);
 
         // Both should be dense (not sparse)
-        for view in &views {
+        for view in &views.views {
             assert!(view.is_dense());
             assert_eq!(view.len(), 5);
         }
@@ -1278,7 +1178,7 @@ mod tests {
 
         let dataset = BinnedDataset::from_dataset(&raw, &config).unwrap();
 
-        let effective = dataset.effective_feature_views();
+        let effective = dataset.feature_views();
 
         // Verify bundling occurred
         assert_eq!(effective.n_bundles, 1, "Should have 1 bundle");

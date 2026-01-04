@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import numpy as np
 import pytest
 
@@ -18,7 +20,7 @@ class TestDatasetNumpy:
 
         assert d.n_samples == 10
         assert d.n_features == 3
-        assert d.was_converted is False  # type: ignore[attr-defined]
+        assert d.was_converted is False
 
     def test_dataset_from_array_converts_dtype(self) -> None:
         rng = np.random.default_rng(0)
@@ -29,14 +31,14 @@ class TestDatasetNumpy:
 
         assert d.n_samples == 10
         assert d.n_features == 3
-        assert d.was_converted is True  # type: ignore[attr-defined]
+        assert d.was_converted is True
 
     def test_dataset_rejects_non_2d_features(self) -> None:
         x = np.array([1.0, 2.0, 3.0], dtype=np.float32)
         y = np.array([0.0, 1.0, 0.0], dtype=np.float32)
 
         with pytest.raises(ValueError, match="features must be 2D"):
-            Dataset(x, y)  # type: ignore[arg-type]
+            Dataset(cast(Any, x), y)
 
 
 class TestDatasetPandas:

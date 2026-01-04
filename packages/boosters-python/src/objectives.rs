@@ -192,11 +192,9 @@ impl From<&PyObjective> for boosters::training::Objective {
             PyObjective::Logistic {} => Objective::LogisticLoss,
             PyObjective::Hinge {} => Objective::HingeLoss,
             PyObjective::Huber { delta } => Objective::PseudoHuberLoss { delta: *delta },
-            PyObjective::Pinball { alpha } => {
-                Objective::PinballLoss {
-                    alphas: alpha.clone(),
-                }
-            }
+            PyObjective::Pinball { alpha } => Objective::PinballLoss {
+                alphas: alpha.clone(),
+            },
             PyObjective::Softmax { n_classes } => Objective::SoftmaxLoss {
                 n_classes: *n_classes as usize,
             },
@@ -220,9 +218,7 @@ impl From<&boosters::training::Objective> for PyObjective {
             Objective::PoissonLoss => PyObjective::Poisson {},
             Objective::LogisticLoss => PyObjective::Logistic {},
             Objective::HingeLoss => PyObjective::Hinge {},
-            Objective::PseudoHuberLoss { delta } => PyObjective::Huber {
-                delta: *delta,
-            },
+            Objective::PseudoHuberLoss { delta } => PyObjective::Huber { delta: *delta },
             Objective::PinballLoss { alphas } => PyObjective::Pinball {
                 alpha: alphas.clone(),
             },

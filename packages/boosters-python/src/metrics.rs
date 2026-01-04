@@ -100,11 +100,11 @@ pub enum PyMetric {
 #[gen_stub_pymethods]
 #[pymethods]
 impl PyMetric {
-        /// Create no-metric.
-        #[staticmethod]
-        fn none() -> Self {
-            PyMetric::None {}
-        }
+    /// Create no-metric.
+    #[staticmethod]
+    fn none() -> Self {
+        PyMetric::None {}
+    }
 
     // Static constructors for convenience and validation
 

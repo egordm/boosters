@@ -214,8 +214,8 @@ fn arb_output_semantics() -> impl Strategy<Value = (OutputTransform, usize)> {
 }
 
 /// Strategy for generating a forest with consistent output semantics.
-fn arb_forest_with_semantics(
-) -> impl Strategy<Value = (Forest<ScalarLeaf>, OutputTransform, usize, usize)> {
+fn arb_forest_with_semantics()
+-> impl Strategy<Value = (Forest<ScalarLeaf>, OutputTransform, usize, usize)> {
     arb_output_semantics().prop_flat_map(|(output_transform, n_groups)| {
         let n_trees = 1usize..=100;
         let base_scores = prop_vec(arb_finite_f32(), n_groups);
@@ -251,22 +251,25 @@ fn arb_gbdt_model() -> impl Strategy<Value = GBDTModel> {
 
 /// Strategy for generating a GBLinear model.
 fn arb_gblinear_model() -> impl Strategy<Value = GBLinearModel> {
-    (1usize..=50, arb_output_semantics()).prop_flat_map(|(n_features, (output_transform, n_groups))| {
-        let total = (n_features + 1) * n_groups;
-        prop_vec(arb_finite_f32(), total).prop_map(move |weights| {
-            let arr = ndarray::Array2::from_shape_vec((n_features + 1, n_groups), weights).unwrap();
-            let linear = LinearModel::new(arr);
-            let meta = ModelMeta {
-                n_features,
-                n_groups,
-                base_scores: vec![0.0; n_groups],
-                feature_names: None,
-                feature_types: None,
-                best_iteration: None,
-            };
-            GBLinearModel::from_parts(linear, meta, output_transform)
-        })
-    })
+    (1usize..=50, arb_output_semantics()).prop_flat_map(
+        |(n_features, (output_transform, n_groups))| {
+            let total = (n_features + 1) * n_groups;
+            prop_vec(arb_finite_f32(), total).prop_map(move |weights| {
+                let arr =
+                    ndarray::Array2::from_shape_vec((n_features + 1, n_groups), weights).unwrap();
+                let linear = LinearModel::new(arr);
+                let meta = ModelMeta {
+                    n_features,
+                    n_groups,
+                    base_scores: vec![0.0; n_groups],
+                    feature_names: None,
+                    feature_types: None,
+                    best_iteration: None,
+                };
+                GBLinearModel::from_parts(linear, meta, output_transform)
+            })
+        },
+    )
 }
 
 // =============================================================================

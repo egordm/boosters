@@ -24,11 +24,11 @@
 //!     .unwrap();
 //! ```
 
-use bon::Builder;
 use crate::data::BinningConfig;
 use crate::training::Verbosity;
 use crate::training::gbdt::{GrowthStrategy, LinearLeafConfig};
 use crate::training::{Metric, Objective};
+use bon::Builder;
 
 // =============================================================================
 // ConfigError
@@ -103,7 +103,7 @@ impl std::error::Error for ConfigError {}
 ///     .build()
 ///     .unwrap();
 /// ```
-#[derive(Debug, Builder)]
+#[derive(Debug, Clone, Builder)]
 #[builder(
     derive(Debug),
     finish_fn(vis = "", name = __build_internal)

@@ -63,10 +63,8 @@ pub use callback::{EarlyStopAction, EarlyStopping};
 pub use eval::{Evaluator, MetricValue};
 pub use gradients::{Gradients, GradsTuple};
 pub use logger::{TrainingLogger, Verbosity};
-pub use metrics::{default_metric_for_objective, CustomMetric, CustomMetricFn, Metric};
-pub use objectives::{
-    BaseScoreFn, CustomObjective, GradientFn, Objective,
-};
+pub use metrics::{CustomMetric, CustomMetricFn, Metric, default_metric_for_objective};
+pub use objectives::{BaseScoreFn, CustomObjective, GradientFn, Objective};
 
 // Re-export gbdt trainer and params
 pub use gbdt::{GBDTParams, GBDTTrainer, GainParams, GrowthStrategy, LinearLeafConfig};

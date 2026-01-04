@@ -140,7 +140,7 @@ impl RegularizationParams {
 ///     .build()
 ///     .unwrap();
 /// ```
-#[derive(Debug, Builder)]
+#[derive(Debug, Clone, Builder)]
 #[builder(
     derive(Debug),
     finish_fn(vis = "", name = __build_internal)

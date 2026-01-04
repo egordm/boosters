@@ -38,6 +38,7 @@
 mod classification;
 mod regression;
 use ndarray::ArrayView2;
+use std::sync::Arc;
 
 use super::objectives::Objective;
 
@@ -52,9 +53,8 @@ use crate::inference::PredictionKind;
 ///
 /// Takes predictions (shape `[n_outputs, n_samples]`), targets, and weights.
 /// Returns a scalar metric value.
-pub type CustomMetricFn = Box<
-    dyn Fn(ArrayView2<f32>, TargetsView<'_>, WeightsView<'_>) -> f64 + Send + Sync + 'static,
->;
+pub type CustomMetricFn =
+    Arc<dyn Fn(ArrayView2<f32>, TargetsView<'_>, WeightsView<'_>) -> f64 + Send + Sync + 'static>;
 
 /// A user-provided custom metric.
 ///
@@ -85,6 +85,7 @@ pub type CustomMetricFn = Box<
 ///
 /// let metric = Metric::Custom(custom_mae);
 /// ```
+#[derive(Clone)]
 pub struct CustomMetric {
     /// Name of the metric (for logging).
     pub name: String,
@@ -108,15 +109,15 @@ impl CustomMetric {
     pub fn new(
         name: impl Into<String>,
         compute_fn: impl Fn(ArrayView2<f32>, TargetsView<'_>, WeightsView<'_>) -> f64
-            + Send
-            + Sync
-            + 'static,
+        + Send
+        + Sync
+        + 'static,
         expected_prediction_kind: PredictionKind,
         higher_is_better: bool,
     ) -> Self {
         Self {
             name: name.into(),
-            compute_fn: Box::new(compute_fn),
+            compute_fn: Arc::new(compute_fn),
             expected_prediction_kind,
             higher_is_better,
         }
@@ -169,12 +170,13 @@ impl std::fmt::Debug for CustomMetric {
 /// let accuracy = Metric::Accuracy { threshold: 0.7 };
 /// let none = Metric::None;
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Default, Clone)]
 pub enum Metric {
     /// No metric - skips evaluation entirely.
     ///
     /// When used, the trainer skips metric computation and prediction
     /// transformation, avoiding wasted compute.
+    #[default]
     None,
     /// Root Mean Squared Error (regression).
     Rmse,
@@ -229,12 +231,6 @@ pub fn default_metric_for_objective(objective: &Objective) -> Metric {
     }
 }
 
-impl Default for Metric {
-    fn default() -> Self {
-        Self::None
-    }
-}
-
 impl Metric {
     pub fn compute(
         &self,
@@ -264,8 +260,12 @@ impl Metric {
             Self::Quantile { alphas } => {
                 regression::compute_quantile_pinball(predictions, targets, weights, alphas)
             }
-            Self::Huber { delta } => regression::compute_huber(predictions, targets, weights, *delta),
-            Self::PoissonDeviance => regression::compute_poisson_deviance(predictions, targets, weights),
+            Self::Huber { delta } => {
+                regression::compute_huber(predictions, targets, weights, *delta)
+            }
+            Self::PoissonDeviance => {
+                regression::compute_poisson_deviance(predictions, targets, weights)
+            }
             Self::Custom(inner) => inner.compute(predictions, targets, weights),
         }
     }
@@ -296,10 +296,9 @@ impl Metric {
             | Self::Quantile { .. }
             | Self::Huber { .. }
             | Self::PoissonDeviance => false,
-            Self::Accuracy { .. }
-            | Self::MarginAccuracy
-            | Self::Auc
-            | Self::MulticlassAccuracy => true,
+            Self::Accuracy { .. } | Self::MarginAccuracy | Self::Auc | Self::MulticlassAccuracy => {
+                true
+            }
             Self::Custom(inner) => inner.higher_is_better,
         }
     }
@@ -367,7 +366,11 @@ mod tests {
         // Test compute
         let preds = make_preds(1, 2, &[1.0, 2.0]);
         let labels = make_targets(&[0.0, 0.0]);
-        let value = metric.compute(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
+        let value = metric.compute(
+            preds.view(),
+            TargetsView::new(labels.view()),
+            WeightsView::None,
+        );
         approx::assert_abs_diff_eq!(value, 1.5, epsilon = 1e-10);
 
         // Test properties

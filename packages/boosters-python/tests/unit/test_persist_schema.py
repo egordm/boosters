@@ -176,7 +176,9 @@ class TestMulticlass:
         X = rng.standard_normal((300, 5)).astype(np.float32)  # noqa: N806
         y = (np.digitize(X[:, 0], bins=[-0.5, 0.5])).astype(np.float32)  # 3 classes
 
-        model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=10, objective=Objective.softmax(n_classes=3)))
+        model = GBDTModel.train(
+            Dataset(X, y), config=GBDTConfig(n_estimators=10, objective=Objective.softmax(n_classes=3))
+        )
 
         json_str = model.to_json_bytes().decode("utf-8")
         envelope = JsonEnvelope[GBDTModelSchema].model_validate_json(json_str)
@@ -302,7 +304,9 @@ class TestCrossLanguageRoundTrip:
         X = rng.standard_normal((300, 5)).astype(np.float32)  # noqa: N806
         y = (np.digitize(X[:, 0], bins=[-0.5, 0.5])).astype(np.float32)
 
-        model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=10, objective=Objective.softmax(n_classes=3)))
+        model = GBDTModel.train(
+            Dataset(X, y), config=GBDTConfig(n_estimators=10, objective=Objective.softmax(n_classes=3))
+        )
 
         original_preds = model.predict(Dataset(X))
         json_str = model.to_json_bytes().decode("utf-8")

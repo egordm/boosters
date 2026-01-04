@@ -56,8 +56,8 @@ pub use ndarray::{axis, init_predictions, init_predictions_into, transpose_to_c_
 // =============================================================================
 
 pub use binned::{
-    BinMapper, BinnedDataset, BinnedFeatureInfo, BinningConfig, BuildError, EffectiveViews,
-    FeatureGroup, FeatureMetadata, FeatureView, MissingType,
+    BinMapper, BinnedDataset, BinnedFeatureColumnSource, BinnedFeatureInfo, BinnedFeatureViews,
+    BinningConfig, BuildError, FeatureGroup, FeatureMetadata, FeatureView, MissingType,
 };
 
 // Internal types for tests/benchmarks

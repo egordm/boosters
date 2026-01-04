@@ -71,8 +71,7 @@ pub use envelope::{
 // Re-export schema types
 pub use schema::{
     CategoriesSchema, FeatureTypeSchema, ForestSchema, GBDTModelSchema, GBLinearModelSchema,
-    LeafValuesSchema, LinearCoefficientsSchema, LinearWeightsSchema, ModelMetaSchema,
-    TreeSchema,
+    LeafValuesSchema, LinearCoefficientsSchema, LinearWeightsSchema, ModelMetaSchema, TreeSchema,
 };
 
 // Re-export JSON options

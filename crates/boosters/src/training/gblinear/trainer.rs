@@ -9,7 +9,9 @@ use crate::data::init_predictions;
 use crate::data::{Dataset, TargetsView, WeightsView};
 use crate::repr::gblinear::LinearModel;
 use crate::training::eval;
-use crate::training::{EarlyStopAction, EarlyStopping, Gradients, Metric, Objective, TrainingLogger, Verbosity};
+use crate::training::{
+    EarlyStopAction, EarlyStopping, Gradients, Metric, Objective, TrainingLogger, Verbosity,
+};
 
 use super::selector::FeatureSelectorKind;
 use super::updater::{

@@ -4,7 +4,7 @@
 mod common;
 
 use boosters::data::Dataset;
-use boosters::model::{GBDTModel, ModelMeta};
+use boosters::model::{GBDTModel, ModelMeta, OutputTransform};
 use boosters::testing::synthetic_datasets::random_features_array;
 
 use common::criterion_config::default_criterion;
@@ -25,7 +25,7 @@ fn bench_predict_gbdt(c: &mut Criterion) {
         let loaded = load_boosters_model(model_name);
         let n_features = loaded.n_features;
         let meta = ModelMeta::for_regression(n_features);
-        let model = GBDTModel::from_forest(loaded.forest, meta);
+        let model = GBDTModel::from_parts(loaded.forest, meta, OutputTransform::Identity);
 
         for &n_threads in &[1usize, 0] {
             for &batch_size in &[1usize, 128, 1_024, 16_384] {

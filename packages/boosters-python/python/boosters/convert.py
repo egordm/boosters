@@ -25,12 +25,11 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from boosters.persist.schema import (
-    AbsoluteLossObjective,
     CategoriesSchema,
-    CustomObjective,
+    FeatureType,
     ForestSchema,
     GBDTModelSchema,
     GBLinearModelSchema,
@@ -38,10 +37,8 @@ from boosters.persist.schema import (
     LinearCoefficientsSchema,
     LinearWeightsSchema,
     ModelMetaSchema,
-    LogisticLossObjective,
+    OutputTransform,
     ScalarLeafValues,
-    SoftmaxLossObjective,
-    SquaredLossObjective,
     TreeSchema,
 )
 
@@ -55,11 +52,19 @@ if TYPE_CHECKING:
 # =============================================================================
 
 
-def _task_to_output_transform(task: str) -> str:
-    if task == "binary_classification":
-        return "sigmoid"
-    if task == "multiclass_classification":
+def _objective_to_output_transform(objective_name: str, n_groups: int) -> OutputTransform:
+    """Infer the output transform from objective + number of groups."""
+    obj = objective_name.lower().split()[0]
+
+    if n_groups > 1:
         return "softmax"
+
+    if obj in ("multi:softprob", "multi:softmax", "multiclass", "multiclassova", "multiclass_ova"):
+        return "softmax"
+
+    if obj in ("binary:logistic", "reg:logistic", "binary", "binary_logloss", "cross_entropy"):
+        return "sigmoid"
+
     return "identity"
 
 
@@ -67,7 +72,11 @@ def _load_xgboost_json(path_or_booster: str | Path | xgb.Booster) -> dict[str, A
     """Load XGBoost JSON model from path or Booster object."""
     if isinstance(path_or_booster, (str, Path)):
         with Path(path_or_booster).open() as f:
-            return json.load(f)  # type: ignore[no-any-return]
+            data: Any = json.load(f)
+            if not isinstance(data, dict):
+                msg = "XGBoost JSON root must be an object"
+                raise TypeError(msg)
+            return cast(dict[str, Any], data)
     else:
         # xgb.Booster - save to JSON bytes and parse
         import tempfile
@@ -75,7 +84,11 @@ def _load_xgboost_json(path_or_booster: str | Path | xgb.Booster) -> dict[str, A
         with tempfile.NamedTemporaryFile(suffix=".json", delete=True) as tmp:
             path_or_booster.save_model(tmp.name)
             with Path(tmp.name).open() as f:
-                return json.load(f)  # type: ignore[no-any-return]
+                data: Any = json.load(f)
+                if not isinstance(data, dict):
+                    msg = "XGBoost JSON root must be an object"
+                    raise TypeError(msg)
+                return cast(dict[str, Any], data)
 
 
 def _parse_number_field(value: Any) -> float:
@@ -145,34 +158,7 @@ def _prob_to_margin(base_score: float, objective: str) -> float:
     return base_score
 
 
-def _xgboost_objective_to_task(objective: str, num_class: int) -> str:
-    """Map XGBoost objective to boosters task kind."""
-    if objective.startswith("reg:") or objective == "count:poisson":
-        return "regression"
-    if objective in ("binary:logistic", "binary:logitraw", "binary:hinge"):
-        return "binary_classification"
-    if objective in ("multi:softprob", "multi:softmax") or num_class > 2:
-        return "multiclass_classification"
-    if objective.startswith("rank:"):
-        return "ranking"
-    return "regression"
-
-
-def _objective_schema_from_xgboost(objective: str, num_class: int):  # noqa: ANN202
-    """Map an XGBoost objective string to a persisted ObjectiveSchema."""
-    if objective in ("reg:squarederror", "reg:linear"):
-        return SquaredLossObjective(type="squared_loss")
-    if objective in ("reg:absoluteerror",):
-        return AbsoluteLossObjective(type="absolute_loss")
-    if objective in ("binary:logistic", "reg:logistic"):
-        return LogisticLossObjective(type="logistic_loss")
-    if objective in ("multi:softprob", "multi:softmax") or num_class > 2:
-        return SoftmaxLossObjective(type="softmax_loss", n_classes=max(2, int(num_class)))
-
-    return CustomObjective(type="custom", name=objective)
-
-
-def _xgboost_feature_type_to_boosters(ft: str) -> str:
+def _xgboost_feature_type_to_boosters(ft: str) -> FeatureType:
     """Map XGBoost feature type to boosters feature type."""
     if ft in ("c", "categorical"):
         return "categorical"
@@ -297,21 +283,16 @@ def _convert_xgb_gbtree(
     # Feature names and types
     feature_names = learner.get("feature_names", None)
     feature_types_raw = learner.get("feature_types", None)
-    feature_types = None
+    feature_types: list[FeatureType] | None = None
     if feature_types_raw:
         feature_types = [_xgboost_feature_type_to_boosters(ft) for ft in feature_types_raw]
 
-    # Build task
-    task = _xgboost_objective_to_task(objective_name, num_class)
-
     # Build metadata
     meta = ModelMetaSchema(
-        task=task,  # type: ignore[arg-type]
         num_features=num_features,
         num_groups=n_groups,
-        num_classes=num_class if num_class > 2 else None,
         feature_names=feature_names if feature_names else None,
-        feature_types=feature_types,  # type: ignore[arg-type]
+        feature_types=feature_types,
         objective_name=objective_name,
     )
 
@@ -323,13 +304,10 @@ def _convert_xgb_gbtree(
         base_score=base_scores,
     )
 
-    objective_schema = _objective_schema_from_xgboost(objective_name, num_class)
-
     model = GBDTModelSchema(
         meta=meta,
         forest=forest,
-        output_transform=_task_to_output_transform(task),
-        objective=objective_schema,
+        output_transform=_objective_to_output_transform(objective_name, n_groups),
     )
     return model, booster_name
 
@@ -375,21 +353,16 @@ def _convert_xgb_gblinear(xgb_json: dict[str, Any]) -> GBLinearModelSchema:
     # Feature names and types
     feature_names = learner.get("feature_names", None)
     feature_types_raw = learner.get("feature_types", None)
-    feature_types = None
+    feature_types: list[FeatureType] | None = None
     if feature_types_raw:
         feature_types = [_xgboost_feature_type_to_boosters(ft) for ft in feature_types_raw]
 
-    # Build task
-    task = _xgboost_objective_to_task(objective_name, num_class)
-
     # Build metadata
     meta = ModelMetaSchema(
-        task=task,  # type: ignore[arg-type]
         num_features=num_features,
         num_groups=n_groups,
-        num_classes=num_class if num_class > 2 else None,
         feature_names=feature_names if feature_names else None,
-        feature_types=feature_types,  # type: ignore[arg-type]
+        feature_types=feature_types,
         objective_name=objective_name,
     )
 
@@ -400,14 +373,11 @@ def _convert_xgb_gblinear(xgb_json: dict[str, Any]) -> GBLinearModelSchema:
         num_groups=n_groups,
     )
 
-    objective_schema = _objective_schema_from_xgboost(objective_name, num_class)
-
     return GBLinearModelSchema(
         meta=meta,
         weights=weights_schema,
         base_score=[0.0] * n_groups,  # baked into weights
-        output_transform=_task_to_output_transform(task),
-        objective=objective_schema,
+        output_transform=_objective_to_output_transform(objective_name, n_groups),
     )
 
 
@@ -428,7 +398,7 @@ def xgboost_to_schema(path_or_booster: str | Path | xgb.Booster) -> GBDTModelSch
     -------
     >>> from boosters.convert import xgboost_to_schema
     >>> schema = xgboost_to_schema("model.json")
-    >>> print(schema.meta.task)
+    >>> print(schema.meta.objective_name)
     """
     xgb_json = _load_xgboost_json(path_or_booster)
     gradient_booster = xgb_json["learner"]["gradient_booster"]
@@ -463,13 +433,18 @@ def xgboost_to_json_bytes(path_or_booster: str | Path | xgb.Booster, *, pretty: 
     """
     schema = xgboost_to_schema(path_or_booster)
 
-    model_type = "gblinear" if isinstance(schema, GBLinearModelSchema) else "gbdt"
-
-    envelope = JsonEnvelope[type(schema)](  # type: ignore[misc, valid-type]
-        bstr_version=2,
-        model_type=model_type,
-        model=schema,
-    )
+    if isinstance(schema, GBLinearModelSchema):
+        envelope = JsonEnvelope[GBLinearModelSchema](
+            bstr_version=2,
+            model_type="gblinear",
+            model=schema,
+        )
+    else:
+        envelope = JsonEnvelope[GBDTModelSchema](
+            bstr_version=2,
+            model_type="gbdt",
+            model=schema,
+        )
 
     indent = 2 if pretty else None
     return envelope.model_dump_json(by_alias=True, indent=indent).encode("utf-8")
@@ -487,55 +462,25 @@ def _load_lightgbm_json(path_or_booster: str | Path | lgb.Booster) -> dict[str, 
         # If .json file, load directly
         if path.suffix == ".json":
             with path.open() as f:
-                return json.load(f)  # type: ignore[no-any-return]
+                data: Any = json.load(f)
+                if not isinstance(data, dict):
+                    msg = "LightGBM JSON root must be an object"
+                    raise TypeError(msg)
+                return cast(dict[str, Any], data)
         # Otherwise use lightgbm to load text model
         import lightgbm as lgb
 
         model = lgb.Booster(model_file=str(path_or_booster))
-        return model.dump_model()  # type: ignore[no-any-return]
-    return path_or_booster.dump_model()  # type: ignore[no-any-return]
-
-
-def _lightgbm_objective_to_task(objective: str) -> str:
-    """Map LightGBM objective to boosters task kind."""
-    # LightGBM objective can include parameters like "multiclass num_class:3"
-    obj_lower = objective.lower().split()[0]
-    if obj_lower in ("binary", "binary_logloss", "cross_entropy"):
-        return "binary_classification"
-    if obj_lower in (
-        "multiclass",
-        "multiclassova",
-        "softmax",
-        "multiclass_ova",
-        "multiclass_logloss",
-    ):
-        return "multiclass_classification"
-    if obj_lower.startswith("rank") or "lambdarank" in obj_lower:
-        return "ranking"
-    return "regression"
-
-
-def _objective_schema_from_lightgbm(objective: str, num_class: int):  # noqa: ANN202
-    """Map a LightGBM objective string to a persisted ObjectiveSchema."""
-    obj_lower = objective.lower().split()[0]
-
-    if obj_lower in ("regression", "l2", "rmse"):
-        return SquaredLossObjective(type="squared_loss")
-    if obj_lower in ("l1", "mae"):
-        return AbsoluteLossObjective(type="absolute_loss")
-    if obj_lower in ("binary", "binary_logloss", "cross_entropy"):
-        return LogisticLossObjective(type="logistic_loss")
-    if obj_lower in (
-        "multiclass",
-        "multiclassova",
-        "softmax",
-        "multiclass_ova",
-        "multiclass_logloss",
-    ):
-        n_classes = int(num_class) if int(num_class) > 0 else 2
-        return SoftmaxLossObjective(type="softmax_loss", n_classes=n_classes)
-
-    return CustomObjective(type="custom", name=objective)
+        dumped: Any = model.dump_model()
+        if not isinstance(dumped, dict):
+            msg = "LightGBM dump_model() must return a dict"
+            raise TypeError(msg)
+        return cast(dict[str, Any], dumped)
+    dumped: Any = path_or_booster.dump_model()
+    if not isinstance(dumped, dict):
+        msg = "LightGBM dump_model() must return a dict"
+        raise TypeError(msg)
+    return cast(dict[str, Any], dumped)
 
 
 def _parse_lgb_tree_structure(
@@ -678,13 +623,12 @@ def lightgbm_to_schema(path_or_booster: str | Path | lgb.Booster) -> GBDTModelSc
     -------
     >>> from boosters.convert import lightgbm_to_schema
     >>> schema = lightgbm_to_schema("model.txt")
-    >>> print(schema.meta.task)
+    >>> print(schema.meta.objective_name)
     """
     lgb_json = _load_lightgbm_json(path_or_booster)
 
     # Extract model info
     num_features = lgb_json.get("max_feature_idx", 0) + 1
-    num_class = lgb_json.get("num_class", 1)
     objective = lgb_json.get("objective", "regression")
 
     # Parse average_output which indicates number of groups
@@ -702,15 +646,10 @@ def lightgbm_to_schema(path_or_booster: str | Path | lgb.Booster) -> GBDTModelSc
     # Tree groups - LightGBM stores trees round-robin across groups
     tree_groups = [i % n_groups for i in range(len(trees))]
 
-    # Task
-    task = _lightgbm_objective_to_task(objective)
-
     # Build metadata
     meta = ModelMetaSchema(
-        task=task,  # type: ignore[arg-type]
         num_features=num_features,
         num_groups=n_groups,
-        num_classes=num_class if num_class > 2 else None,
         feature_names=feature_names,
         feature_types=None,
         objective_name=objective,
@@ -724,13 +663,10 @@ def lightgbm_to_schema(path_or_booster: str | Path | lgb.Booster) -> GBDTModelSc
         base_score=[0.0] * n_groups,  # LightGBM handles base score differently
     )
 
-    objective_schema = _objective_schema_from_lightgbm(objective, num_class)
-
     return GBDTModelSchema(
         meta=meta,
         forest=forest,
-        output_transform=_task_to_output_transform(task),
-        objective=objective_schema,
+        output_transform=_objective_to_output_transform(objective, n_groups),
     )
 
 

@@ -16,7 +16,9 @@ use ndarray::{ArrayViewMut1, ArrayViewMut2, Axis};
 ///
 /// Models persist this instead of the full objective so that prediction
 /// can work without knowing training configuration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum OutputTransform {
     /// No transformation; output = margin.
@@ -143,8 +145,7 @@ mod tests {
 
     #[test]
     fn sigmoid_output_in_zero_one() {
-        let mut preds =
-            Array2::from_shape_vec((1, 5), vec![-10.0, -1.0, 0.0, 1.0, 10.0]).unwrap();
+        let mut preds = Array2::from_shape_vec((1, 5), vec![-10.0, -1.0, 0.0, 1.0, 10.0]).unwrap();
         OutputTransform::Sigmoid.transform_inplace(preds.view_mut());
         for &p in preds.as_slice().unwrap() {
             assert!(p > 0.0 && p < 1.0, "sigmoid output {} not in (0,1)", p);
@@ -174,7 +175,8 @@ mod tests {
 
     #[test]
     fn sigmoid_inf_stable() {
-        let mut preds = Array2::from_shape_vec((1, 2), vec![f32::INFINITY, f32::NEG_INFINITY]).unwrap();
+        let mut preds =
+            Array2::from_shape_vec((1, 2), vec![f32::INFINITY, f32::NEG_INFINITY]).unwrap();
         OutputTransform::Sigmoid.transform_inplace(preds.view_mut());
         // +inf clamped to 500 -> close to 1
         assert!(preds[[0, 0]] > 0.999);

@@ -3,6 +3,8 @@
 Focuses on validation that catches user errors early.
 """
 
+from typing import Any, cast
+
 import pytest
 
 from boosters import GBDTConfig, GBLinearConfig, GrowthStrategy, Metric, Objective
@@ -50,14 +52,14 @@ class TestGBDTConfigValidation:
     def test_invalid_objective_type_rejected(self) -> None:
         """Non-Objective types are rejected."""
         with pytest.raises(TypeError):
-            GBDTConfig(objective="squared")  # type: ignore[arg-type]
+            GBDTConfig(objective=cast(Any, "squared"))
 
     def test_invalid_metric_type_rejected(self) -> None:
         """Non-Metric types are rejected."""
         with pytest.raises(TypeError):
-            GBDTConfig(metric="rmse")  # type: ignore[arg-type]
+            GBDTConfig(metric=cast(Any, "rmse"))
         with pytest.raises(TypeError):
-            GBDTConfig(metric=Objective.squared())  # type: ignore[arg-type]
+            GBDTConfig(metric=cast(Any, Objective.squared()))
 
 
 class TestGBLinearConfigValidation:
