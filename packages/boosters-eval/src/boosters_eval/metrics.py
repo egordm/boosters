@@ -22,7 +22,7 @@ from boosters_eval.config import Task
 BINARY_THRESHOLD = 0.5
 
 # Metrics where lower values are better
-LOWER_BETTER_METRICS = frozenset({"rmse", "mae", "logloss", "mlogloss", "peak_memory_mb"})
+LOWER_BETTER_METRICS = frozenset({"rmse", "mae", "rmae", "logloss", "mlogloss", "peak_memory_mb"})
 
 
 def compute_metrics(
@@ -43,9 +43,14 @@ def compute_metrics(
         Dictionary of metric name to value.
     """
     if task == Task.REGRESSION:
+        # Relative MAE: MAE normalized by the mean absolute target value.
+        # Useful for time-series forecasting where absolute scales vary.
+        denom = float(np.mean(np.abs(y_true)))
+        denom = denom if denom > 0.0 else 1.0
         return {
             "rmse": float(np.sqrt(mean_squared_error(y_true, y_pred))),
             "mae": float(mean_absolute_error(y_true, y_pred)),
+            "rmae": float(mean_absolute_error(y_true, y_pred) / denom),
             "r2": float(r2_score(y_true, y_pred)),
         }
     if task == Task.BINARY:

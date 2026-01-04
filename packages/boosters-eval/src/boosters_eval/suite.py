@@ -14,6 +14,7 @@ from boosters_eval.config import (
     BoosterType,
     GrowthStrategy,
     SuiteConfig,
+    Task,
 )
 from boosters_eval.datasets import DATASETS
 from boosters_eval.results import BenchmarkError, ResultCollection
@@ -248,7 +249,7 @@ def run_suite(
     Returns:
         ResultCollection with all results and errors.
     """
-    from boosters_eval.runners import get_available_runners, get_runner
+    from boosters_eval.runners import RunData, get_available_runners, get_runner
 
     collection = ResultCollection()
     available_runners = get_available_runners()
@@ -273,16 +274,20 @@ def run_suite(
                 console.print(f"[yellow]Unknown dataset: {ds_name}[/yellow]")
             continue
 
-        configs.extend(
-            BenchmarkConfig(
-                name=f"{ds_name}/{booster_type.value}",
-                dataset=DATASETS[ds_name],
-                training=training,
-                booster_type=booster_type,
-                libraries=libraries,
+        ds = DATASETS[ds_name]
+        supported = ds.supported_booster_types
+        for booster_type in booster_types:
+            if supported is not None and booster_type not in supported:
+                continue
+            configs.append(
+                BenchmarkConfig(
+                    name=f"{ds_name}/{booster_type.value}",
+                    dataset=ds,
+                    training=training,
+                    booster_type=booster_type,
+                    libraries=libraries,
+                )
             )
-            for booster_type in booster_types
-        )
 
     if verbose:
         console.print(f"[bold]Running suite: {suite.name}[/bold]")
@@ -305,17 +310,54 @@ def run_suite(
         for config in configs:
             for seed in suite.seeds:
                 # Load and split data
-                x, y = config.dataset.loader()
+                data = config.dataset.loader()
+                categorical_features = data.categorical_features
+                feature_names = data.feature_names
 
-                # Subsample if needed
-                if config.dataset.subsample and len(y) > config.dataset.subsample:
+                # Subsample if needed.
+                # For datasets that provide a custom splitter (typically time-series),
+                # random subsampling is disabled.
+                if config.dataset.subsample and len(data.y) > config.dataset.subsample:
+                    if config.dataset.splitter is not None:
+                        raise ValueError(
+                            f"Dataset {config.dataset.name} uses a custom splitter; random subsample is disabled. "
+                            "Use a dataset-specific splitter/subsample strategy instead."
+                        )
                     rng = np.random.default_rng(seed)
-                    idx = rng.choice(len(y), config.dataset.subsample, replace=False)
-                    x, y = x[idx], y[idx]
+                    idx = rng.choice(len(data.y), config.dataset.subsample, replace=False)
+                    data = data.model_copy(update={"x": data.x[idx], "y": data.y[idx]})
 
-                x_train, x_valid, y_train, y_valid = train_test_split(
-                    x, y, test_size=validation_fraction, random_state=seed
-                )
+                if config.dataset.splitter is not None:
+                    x_train, x_valid, y_train, y_valid = config.dataset.splitter(data, seed)
+                else:
+                    x_train, x_valid, y_train, y_valid = train_test_split(
+                        data.x,
+                        data.y,
+                        test_size=validation_fraction,
+                        random_state=seed,
+                    )
+
+                # GBLinear models do not support categorical features.
+                # Drop categorical columns for this run (keeping them for tree-based boosters).
+                if config.booster_type == BoosterType.GBLINEAR and categorical_features:
+                    cat = sorted(set(categorical_features))
+                    keep_cols = [i for i in range(x_train.shape[1]) if i not in cat]
+                    x_train = x_train[:, keep_cols]
+                    x_valid = x_valid[:, keep_cols]
+                    if feature_names is not None:
+                        feature_names = [feature_names[i] for i in keep_cols]
+                    categorical_features = []
+
+                # Normalize regression targets using train-set mean/std, and
+                # apply the same parameters to validation targets.
+                # Metrics are computed on the normalized scale.
+                if config.dataset.task == Task.REGRESSION:
+                    target_mean = float(np.mean(y_train))
+                    target_std = float(np.std(y_train))
+                    if not np.isfinite(target_std) or target_std <= 0.0:
+                        target_std = 1.0
+                    y_train = (y_train - target_mean) / target_std
+                    y_valid = (y_valid - target_mean) / target_std
 
                 for library in config.libraries:
                     progress.update(
@@ -331,10 +373,14 @@ def run_suite(
 
                         result = runner.run(
                             config=config,
-                            x_train=x_train,
-                            y_train=y_train,
-                            x_valid=x_valid,
-                            y_valid=y_valid,
+                            data=RunData(
+                                x_train=x_train,
+                                y_train=y_train,
+                                x_valid=x_valid,
+                                y_valid=y_valid,
+                                categorical_features=categorical_features,
+                                feature_names=feature_names,
+                            ),
                             seed=seed,
                             timing_mode=timing_mode,
                             measure_memory=measure_memory,
@@ -367,6 +413,7 @@ def compare(
     seeds: list[int] | None = None,
     n_estimators: int = 100,
     booster_type: BoosterType = BoosterType.GBDT,
+    booster_types: list[BoosterType] | None = None,
     verbose: bool = True,
 ) -> ResultCollection:
     """Compare libraries on specified datasets.
@@ -379,6 +426,7 @@ def compare(
         seeds: Random seeds to use. Default: [42, 1379, 2716].
         n_estimators: Number of trees/rounds. Default: 100.
         booster_type: Type of booster. Default: GBDT.
+        booster_types: If set, runs these booster types instead of a single booster.
         verbose: Print progress. Default: True.
 
     Returns:
@@ -403,6 +451,7 @@ def compare(
         seeds=seeds,
         libraries=libraries,
         booster_type=booster_type,
+        booster_types=booster_types,
     )
 
     return run_suite(suite, verbose=verbose)

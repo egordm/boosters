@@ -9,12 +9,14 @@ from boosters_eval.config import (
     BenchmarkConfig,
     BoosterType,
     DatasetConfig,
+    LoadedDataset,
     Task,
     TrainingConfig,
 )
 from boosters_eval.runners import (
     BoostersRunner,
     LightGBMRunner,
+    RunData,
     XGBoostRunner,
     get_available_runners,
     get_runner,
@@ -27,9 +29,11 @@ def make_config(
 ) -> BenchmarkConfig:
     """Helper to create a test config."""
 
-    def loader() -> tuple[np.ndarray, np.ndarray]:
+    def loader() -> LoadedDataset:
         rng = np.random.default_rng(123)
-        return rng.standard_normal((100, 5)), rng.standard_normal(100)
+        x = rng.standard_normal((100, 5)).astype(np.float32)
+        y = rng.standard_normal(100).astype(np.float32)
+        return LoadedDataset(x=x, y=y, feature_names=[f"f{i}" for i in range(x.shape[1])])
 
     return BenchmarkConfig(
         name="test/config",
@@ -149,7 +153,18 @@ class TestBoostersRunner:
         config = make_config(task=Task.REGRESSION)
         x_train, x_valid, y_train, y_valid = make_data(Task.REGRESSION)
 
-        result = BoostersRunner.run(config, x_train, y_train, x_valid, y_valid, seed=42)
+        result = BoostersRunner.run(
+            config,
+            RunData(
+                x_train=x_train,
+                y_train=y_train,
+                x_valid=x_valid,
+                y_valid=y_valid,
+                categorical_features=[],
+                feature_names=None,
+            ),
+            seed=42,
+        )
 
         assert result.library == "boosters"
         assert "rmse" in result.metrics
@@ -161,7 +176,18 @@ class TestBoostersRunner:
         config = make_config(task=Task.BINARY)
         x_train, x_valid, y_train, y_valid = make_data(Task.BINARY)
 
-        result = BoostersRunner.run(config, x_train, y_train, x_valid, y_valid, seed=42)
+        result = BoostersRunner.run(
+            config,
+            RunData(
+                x_train=x_train,
+                y_train=y_train,
+                x_valid=x_valid,
+                y_valid=y_valid,
+                categorical_features=[],
+                feature_names=None,
+            ),
+            seed=42,
+        )
 
         assert "logloss" in result.metrics
         assert "accuracy" in result.metrics
@@ -171,7 +197,18 @@ class TestBoostersRunner:
         config = make_config(task=Task.MULTICLASS)
         x_train, x_valid, y_train, y_valid = make_data(Task.MULTICLASS)
 
-        result = BoostersRunner.run(config, x_train, y_train, x_valid, y_valid, seed=42)
+        result = BoostersRunner.run(
+            config,
+            RunData(
+                x_train=x_train,
+                y_train=y_train,
+                x_valid=x_valid,
+                y_valid=y_valid,
+                categorical_features=[],
+                feature_names=None,
+            ),
+            seed=42,
+        )
 
         assert "mlogloss" in result.metrics
         assert "accuracy" in result.metrics
@@ -185,7 +222,18 @@ class TestXGBoostRunner:
         config = make_config(task=Task.REGRESSION)
         x_train, x_valid, y_train, y_valid = make_data(Task.REGRESSION)
 
-        result = XGBoostRunner.run(config, x_train, y_train, x_valid, y_valid, seed=42)
+        result = XGBoostRunner.run(
+            config,
+            RunData(
+                x_train=x_train,
+                y_train=y_train,
+                x_valid=x_valid,
+                y_valid=y_valid,
+                categorical_features=[],
+                feature_names=None,
+            ),
+            seed=42,
+        )
 
         assert result.library == "xgboost"
         assert "rmse" in result.metrics
@@ -196,7 +244,18 @@ class TestXGBoostRunner:
         config = make_config(task=Task.BINARY)
         x_train, x_valid, y_train, y_valid = make_data(Task.BINARY)
 
-        result = XGBoostRunner.run(config, x_train, y_train, x_valid, y_valid, seed=42)
+        result = XGBoostRunner.run(
+            config,
+            RunData(
+                x_train=x_train,
+                y_train=y_train,
+                x_valid=x_valid,
+                y_valid=y_valid,
+                categorical_features=[],
+                feature_names=None,
+            ),
+            seed=42,
+        )
 
         assert "logloss" in result.metrics
         assert np.isfinite(result.metrics["logloss"])
@@ -206,7 +265,18 @@ class TestXGBoostRunner:
         config = make_config(booster_type=BoosterType.GBLINEAR)
         x_train, x_valid, y_train, y_valid = make_data(Task.REGRESSION)
 
-        result = XGBoostRunner.run(config, x_train, y_train, x_valid, y_valid, seed=42)
+        result = XGBoostRunner.run(
+            config,
+            RunData(
+                x_train=x_train,
+                y_train=y_train,
+                x_valid=x_valid,
+                y_valid=y_valid,
+                categorical_features=[],
+                feature_names=None,
+            ),
+            seed=42,
+        )
 
         assert result.booster_type == "gblinear"
 
@@ -219,7 +289,18 @@ class TestLightGBMRunner:
         config = make_config(task=Task.REGRESSION)
         x_train, x_valid, y_train, y_valid = make_data(Task.REGRESSION)
 
-        result = LightGBMRunner.run(config, x_train, y_train, x_valid, y_valid, seed=42)
+        result = LightGBMRunner.run(
+            config,
+            RunData(
+                x_train=x_train,
+                y_train=y_train,
+                x_valid=x_valid,
+                y_valid=y_valid,
+                categorical_features=[],
+                feature_names=None,
+            ),
+            seed=42,
+        )
 
         assert result.library == "lightgbm"
         assert "rmse" in result.metrics
@@ -230,7 +311,18 @@ class TestLightGBMRunner:
         config = make_config(task=Task.BINARY)
         x_train, x_valid, y_train, y_valid = make_data(Task.BINARY)
 
-        result = LightGBMRunner.run(config, x_train, y_train, x_valid, y_valid, seed=42)
+        result = LightGBMRunner.run(
+            config,
+            RunData(
+                x_train=x_train,
+                y_train=y_train,
+                x_valid=x_valid,
+                y_valid=y_valid,
+                categorical_features=[],
+                feature_names=None,
+            ),
+            seed=42,
+        )
 
         assert "logloss" in result.metrics
         assert np.isfinite(result.metrics["logloss"])
@@ -240,7 +332,18 @@ class TestLightGBMRunner:
         config = make_config(booster_type=BoosterType.LINEAR_TREES)
         x_train, x_valid, y_train, y_valid = make_data(Task.REGRESSION)
 
-        result = LightGBMRunner.run(config, x_train, y_train, x_valid, y_valid, seed=42)
+        result = LightGBMRunner.run(
+            config,
+            RunData(
+                x_train=x_train,
+                y_train=y_train,
+                x_valid=x_valid,
+                y_valid=y_valid,
+                categorical_features=[],
+                feature_names=None,
+            ),
+            seed=42,
+        )
 
         assert result.booster_type == "linear_trees"
 
@@ -253,7 +356,19 @@ class TestTimingAndMemory:
         config = make_config()
         x_train, x_valid, y_train, y_valid = make_data()
 
-        result = BoostersRunner.run(config, x_train, y_train, x_valid, y_valid, seed=42, timing_mode=True)
+        result = BoostersRunner.run(
+            config,
+            RunData(
+                x_train=x_train,
+                y_train=y_train,
+                x_valid=x_valid,
+                y_valid=y_valid,
+                categorical_features=[],
+                feature_names=None,
+            ),
+            seed=42,
+            timing_mode=True,
+        )
 
         assert result.train_time_s is not None
         assert result.predict_time_s is not None
@@ -263,7 +378,19 @@ class TestTimingAndMemory:
         config = make_config()
         x_train, x_valid, y_train, y_valid = make_data()
 
-        result = BoostersRunner.run(config, x_train, y_train, x_valid, y_valid, seed=42, measure_memory=True)
+        result = BoostersRunner.run(
+            config,
+            RunData(
+                x_train=x_train,
+                y_train=y_train,
+                x_valid=x_valid,
+                y_valid=y_valid,
+                categorical_features=[],
+                feature_names=None,
+            ),
+            seed=42,
+            measure_memory=True,
+        )
 
         assert result.peak_memory_mb is not None
         assert result.peak_memory_mb >= 0

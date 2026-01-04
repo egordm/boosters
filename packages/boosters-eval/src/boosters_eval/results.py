@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import warnings
 from typing import Any
 
 import numpy as np
@@ -16,7 +17,7 @@ from boosters_eval.metrics import LOWER_BETTER_METRICS, primary_metric
 
 # Metrics relevant to each task type
 TASK_METRICS: dict[Task, list[str]] = {
-    Task.REGRESSION: ["rmse", "mae", "r2"],
+    Task.REGRESSION: ["rmse", "mae", "rmae", "r2"],
     Task.BINARY: ["logloss", "accuracy"],
     Task.MULTICLASS: ["mlogloss", "accuracy"],
 }
@@ -331,7 +332,17 @@ class ResultCollection:
         if len(values_best) < 2 or len(values_second) < 2:
             # Not enough data for statistical test
             return False
-        _, p_value = stats.ttest_ind(values_best, values_second, equal_var=False)
+
+        best = np.asarray(values_best, dtype=np.float64)
+        second = np.asarray(values_second, dtype=np.float64)
+        if np.allclose(best, second):
+            return False
+        if float(np.std(best)) == 0.0 and float(np.std(second)) == 0.0:
+            return False
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            _, p_value = stats.ttest_ind(best, second, equal_var=False)
         p_value_f = float(p_value)  # pyright: ignore[reportArgumentType]
         return p_value_f < alpha
 

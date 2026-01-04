@@ -44,11 +44,38 @@ class DatasetConfig(BaseModel):
 
     name: str
     task: Task
-    loader: Callable[[], tuple[NDArray[np.floating[Any]], NDArray[np.floating[Any]]]]
+    loader: Callable[[], LoadedDataset]
     n_classes: int | None = None
     subsample: int | None = None
     # Optional per-dataset metric override (e.g., "mape" for forecasting datasets)
     primary_metric: str | None = None
+    supported_booster_types: list[BoosterType] | None = None
+    splitter: Callable[[LoadedDataset, int], tuple[
+        NDArray[np.floating[Any]],
+        NDArray[np.floating[Any]],
+        NDArray[np.floating[Any]],
+        NDArray[np.floating[Any]],
+    ]] | None = None
+
+
+class LoadedDataset(BaseModel):
+    """Loaded dataset with optional metadata.
+
+    This allows benchmarks to implement non-random splitting (e.g. time-series
+    forecasting) while keeping the rest of the pipeline unchanged.
+    """
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    x: NDArray[np.floating[Any]]
+    y: NDArray[np.floating[Any]]
+    feature_names: list[str] | None = None
+    categorical_features: list[int] = []
+
+    # Optional precomputed chronological split indices for time-series datasets.
+    # If present, split is trivial: train = [:train_end], valid = [train_end:valid_end].
+    train_end: int | None = None
+    valid_end: int | None = None
 
 
 class TrainingConfig(BaseModel):

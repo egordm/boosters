@@ -377,9 +377,13 @@ def compare_cmd(
         typer.Option("--library", "-l", help="Libraries to compare. Default: all available."),
     ] = None,
     booster: Annotated[
-        str,
-        typer.Option("--booster", "-b", help="Booster type: gbdt, gblinear, linear_trees."),
-    ] = "gbdt",
+        str | None,
+        typer.Option(
+            "--booster",
+            "-b",
+            help="Booster type: gbdt, gblinear, linear_trees. If omitted, runs all.",
+        ),
+    ] = None,
     n_estimators: Annotated[
         int,
         typer.Option("--trees", "-t", help="Number of trees/rounds."),
@@ -410,12 +414,17 @@ def compare_cmd(
         console.print("[red]No libraries available![/red]")
         raise typer.Exit(1)
 
-    try:
-        booster_type = BoosterType(booster)
-    except ValueError:
-        console.print(f"[red]Invalid booster type: {booster}[/red]")
-        console.print(f"Valid options: {[b.value for b in BoosterType]}")
-        raise typer.Exit(1) from None
+    booster_type: BoosterType = BoosterType.GBDT
+    booster_types: list[BoosterType] | None = None
+    if booster is not None:
+        try:
+            booster_type = BoosterType(booster)
+        except ValueError:
+            console.print(f"[red]Invalid booster type: {booster}[/red]")
+            console.print(f"Valid options: {[b.value for b in BoosterType]}")
+            raise typer.Exit(1) from None
+    else:
+        booster_types = list(BoosterType)
 
     # Default datasets
     dataset_names = datasets or ["california", "breast_cancer", "iris"]
@@ -436,7 +445,10 @@ def compare_cmd(
     console.print("[bold]Running comparison[/bold]")
     console.print(f"  Datasets: {valid_datasets}")
     console.print(f"  Libraries: {libs}")
-    console.print(f"  Booster: {booster_type.value}")
+    if booster_types is None:
+        console.print(f"  Booster: {booster_type.value}")
+    else:
+        console.print(f"  Boosters: {[b.value for b in booster_types]}")
     console.print()
 
     results = compare(
@@ -445,6 +457,7 @@ def compare_cmd(
         seeds=list(range(seeds)),
         n_estimators=training.n_estimators,
         booster_type=booster_type,
+        booster_types=booster_types,
     )
 
     # Terminal display: compact Rich tables

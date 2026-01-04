@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
+import numpy as np
 
 from boosters_eval.config import (
     BenchmarkConfig,
     BoosterType,
     DatasetConfig,
+    LoadedDataset,
     SuiteConfig,
     Task,
     TrainingConfig,
@@ -55,7 +57,7 @@ class TestBenchmarkConfig:
         dataset = DatasetConfig(
             name="test",
             task=Task.BINARY,
-            loader=lambda: (None, None),  # type: ignore[return-value]
+            loader=lambda: LoadedDataset(x=np.zeros((1, 1), dtype=np.float32), y=np.zeros(1, dtype=np.float32)),
         )
         training = TrainingConfig(n_estimators=50)
         config = BenchmarkConfig(
