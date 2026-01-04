@@ -10,9 +10,8 @@ use crate::training::Verbosity;
 use crate::training::callback::{EarlyStopAction, EarlyStopping};
 use crate::training::eval;
 use crate::training::logger::TrainingLogger;
-use crate::training::metrics::MetricFn;
-use crate::training::objectives::ObjectiveFn;
 use crate::training::sampling::{ColSamplingParams, RowSampler, RowSamplingParams};
+use crate::training::{Metric, Objective};
 
 use super::expansion::GrowthStrategy;
 use super::grower::{GrowerParams, TreeGrower};
@@ -111,18 +110,18 @@ impl GBDTParams {
 // =============================================================================
 
 /// GBDT Trainer.
-pub struct GBDTTrainer<O: ObjectiveFn, M: MetricFn> {
+pub struct GBDTTrainer {
     /// Objective function.
-    objective: O,
+    objective: Objective,
     /// Evaluation metric.
-    metric: M,
+    metric: Metric,
     /// Training parameters.
     params: GBDTParams,
 }
 
-impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
+impl GBDTTrainer {
     /// Create a new GBDT trainer.
-    pub fn new(objective: O, metric: M, params: GBDTParams) -> Self {
+    pub fn new(objective: Objective, metric: Metric, params: GBDTParams) -> Self {
         Self {
             objective,
             metric,
@@ -136,12 +135,12 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
     }
 
     /// Get reference to objective.
-    pub fn objective(&self) -> &O {
+    pub fn objective(&self) -> &Objective {
         &self.objective
     }
 
     /// Get reference to metric.
-    pub fn metric(&self) -> &M {
+    pub fn metric(&self) -> &Metric {
         &self.metric
     }
 
@@ -208,8 +207,8 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
         let mut forest =
             Forest::<ScalarLeaf>::new(n_outputs as u32).with_base_score(base_scores.clone());
 
-        // Check if we need evaluation (metric is enabled)
-        let needs_evaluation = self.metric.is_enabled();
+        // Check if we need evaluation
+        let needs_evaluation = !matches!(&self.metric, Metric::None);
 
         // Initialize validation predictions with base scores
         // Shape: [n_outputs, n_val_samples]
@@ -227,7 +226,8 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
         let mut best_n_trees: usize = 0;
 
         // Evaluator for computing metrics (only used if evaluation is needed)
-        let mut evaluator = eval::Evaluator::new(&self.objective, &self.metric, n_outputs);
+        let mut evaluator =
+            eval::Evaluator::new(&self.metric, self.objective.output_transform(), n_outputs);
 
         // Logger
         let mut logger = TrainingLogger::new(self.params.verbosity);
@@ -321,7 +321,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBDTTrainer<O, M> {
                     val_set,
                     val_predictions.as_ref().map(|p| p.view()),
                 );
-                let value = eval::Evaluator::<O, M>::early_stop_value(&metrics, val_set.is_some());
+                let value = eval::Evaluator::early_stop_value(&metrics, val_set.is_some());
                 (metrics, value)
             } else {
                 (Vec::new(), f64::NAN)
@@ -387,8 +387,8 @@ mod tests {
     use super::*;
     use crate::data::WeightsView;
     use crate::data::{BinnedDataset, BinningConfig, Dataset};
-    use crate::training::metrics::Rmse;
-    use crate::training::objectives::SquaredLoss;
+    use crate::training::metrics::Metric;
+    use crate::training::objectives::Objective;
     use ndarray::{Array2, arr2};
 
     /// Create test datasets - returns (raw Dataset, BinnedDataset)
@@ -456,7 +456,7 @@ mod tests {
             ..Default::default()
         };
 
-        let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+        let trainer = GBDTTrainer::new(Objective::SquaredLoss, Metric::Rmse, params);
         let forest = trainer
             .train(
                 &dataset,
@@ -484,7 +484,7 @@ mod tests {
             ..Default::default()
         };
 
-        let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+        let trainer = GBDTTrainer::new(Objective::SquaredLoss, Metric::Rmse, params);
         let forest = trainer
             .train(
                 &dataset,
@@ -515,7 +515,7 @@ mod tests {
             ..Default::default()
         };
 
-        let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+        let trainer = GBDTTrainer::new(Objective::SquaredLoss, Metric::Rmse, params);
         let forest = trainer
             .train(
                 &dataset,
@@ -542,7 +542,7 @@ mod tests {
             ..Default::default()
         };
 
-        let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+        let trainer = GBDTTrainer::new(Objective::SquaredLoss, Metric::Rmse, params);
         let forest = trainer
             .train(
                 &dataset,
@@ -569,7 +569,7 @@ mod tests {
             ..Default::default()
         };
 
-        let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+        let trainer = GBDTTrainer::new(Objective::SquaredLoss, Metric::Rmse, params);
         let forest = trainer
             .train(
                 &dataset,
@@ -592,7 +592,7 @@ mod tests {
 
         let params = GBDTParams::default();
 
-        let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+        let trainer = GBDTTrainer::new(Objective::SquaredLoss, Metric::Rmse, params);
         let result = trainer.train(
             &dataset,
             &binned,
@@ -619,7 +619,7 @@ mod tests {
             ..Default::default()
         };
 
-        let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+        let trainer = GBDTTrainer::new(Objective::SquaredLoss, Metric::Rmse, params);
         let forest = trainer
             .train(
                 &dataset,
@@ -652,7 +652,7 @@ mod tests {
             ..Default::default()
         };
 
-        let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+        let trainer = GBDTTrainer::new(Objective::SquaredLoss, Metric::Rmse, params);
         let forest = trainer
             .train(
                 &dataset,
@@ -697,7 +697,7 @@ mod tests {
             linear_leaves: None,
             ..Default::default()
         };
-        let trainer_base = GBDTTrainer::new(SquaredLoss, Rmse, params_base);
+        let trainer_base = GBDTTrainer::new(Objective::SquaredLoss, Metric::Rmse, params_base);
         let forest_base = trainer_base
             .train(
                 &dataset,
@@ -721,7 +721,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        let trainer_linear = GBDTTrainer::new(SquaredLoss, Rmse, params_linear);
+        let trainer_linear = GBDTTrainer::new(Objective::SquaredLoss, Metric::Rmse, params_linear);
         let forest_linear = trainer_linear
             .train(
                 &dataset,
@@ -740,8 +740,8 @@ mod tests {
         let preds_linear = predictor_linear.predict(&dataset, Parallelism::Sequential);
 
         // Compute RMSE using the metrics module
-        let rmse_base = Rmse.compute(preds_base.view(), targets, WeightsView::None);
-        let rmse_linear = Rmse.compute(preds_linear.view(), targets, WeightsView::None);
+        let rmse_base = Metric::Rmse.compute(preds_base.view(), targets, WeightsView::None);
+        let rmse_linear = Metric::Rmse.compute(preds_linear.view(), targets, WeightsView::None);
 
         // Linear leaves should improve RMSE (at least not make it significantly worse)
         // On synthetic linear data, we expect meaningful improvement
@@ -775,7 +775,7 @@ mod tests {
             ..Default::default()
         };
 
-        let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+        let trainer = GBDTTrainer::new(Objective::SquaredLoss, Metric::Rmse, params);
         let forest = trainer
             .train(
                 &dataset,

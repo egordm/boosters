@@ -10,7 +10,7 @@
 
 use boosters::data::Dataset;
 use boosters::training::GrowthStrategy;
-use boosters::{GBDTConfig, GBDTModel, Metric, Objective, ObjectiveFn};
+use boosters::{GBDTConfig, GBDTModel, Metric, Objective};
 use ndarray::{Array1, Array2};
 
 fn main() {
@@ -35,8 +35,8 @@ fn main() {
         .n_trees(50)
         .learning_rate(0.1)
         .growth_strategy(GrowthStrategy::DepthWise { max_depth: 4 })
-        .objective(Objective::squared())
-        .metric(Metric::rmse())
+        .objective(Objective::SquaredLoss)
+        .metric(Metric::Rmse)
         .build()
         .expect("Invalid configuration");
 
@@ -71,12 +71,12 @@ fn main() {
     println!("\n=== Model Information ===");
     println!("Trees: {}", model.forest().n_trees());
     println!("Features: {}", model.meta().n_features);
-    println!("Task: {:?}", model.meta().task);
+    println!("Groups: {}", model.meta().n_groups);
     println!("Train RMSE: {:.4}", rmse);
 
     // Training config is not stored in the trained model.
-    // We keep only inference-relevant metadata like the objective.
-    println!("Objective: {}", model.objective().name());
+    // We keep only inference-relevant metadata like the output transform.
+    println!("Output transform: {:?}", model.output_transform());
 
     println!("\nNote: For production, split data into train/validation/test sets!");
 }

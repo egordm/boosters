@@ -37,14 +37,14 @@ pub mod utils;
 // =============================================================================
 
 // High-level model types
-pub use model::{GBDTModel, GBLinearModel, ModelMeta, OutputTransform, TaskKind};
+pub use model::{GBDTModel, GBLinearModel, ModelMeta, OutputTransform};
 
 // Configuration types (most users want these)
 pub use model::gbdt::GBDTConfig;
 pub use model::gblinear::GBLinearConfig;
 
-// Training types (objectives, metrics, default metric selection)
-pub use training::{Metric, MetricFn, Objective, ObjectiveFn, default_metric_for_objective};
+// Training types (objectives, metrics)
+pub use training::{Metric, Objective};
 
 // Data types (for preparing training data)
 pub use data::{

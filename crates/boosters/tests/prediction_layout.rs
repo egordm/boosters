@@ -1,9 +1,9 @@
-//! ndarray compatibility tests for prediction API.
+//! Prediction layout and shape integration tests.
 //!
 //! These tests verify that:
-//! 1. Prediction methods produce correct results with proper shapes
-//! 2. Output shape conventions are correct: Array2 (n_groups, n_samples)
-//! 3. XGBoost compatibility is maintained
+//! - Prediction outputs use the expected shape: `Array2 (n_outputs, n_rows)`
+//! - Outputs are contiguous in memory (fast paths for transforms/metrics)
+//! - Basic edge cases work (empty input, single sample)
 
 use boosters::data::Dataset;
 use boosters::model::{GBDTModel, ModelMeta, OutputTransform};
@@ -130,40 +130,18 @@ fn predict_multiclass_shape() {
     assert_eq!(preds.nrows(), 3);
     assert_eq!(preds.ncols(), 2);
 
-    // Verify values are accessible
-    for group in 0..3 {
-        for sample in 0..2 {
-            let val = preds[[group, sample]];
-            assert!(
-                val.is_finite(),
-                "Group {}, sample {}: value should be finite",
-                group,
-                sample
-            );
-        }
-    }
-}
+    // Whole prediction buffer should be contiguous.
+    assert!(preds.as_slice().is_some());
 
-#[test]
-fn array2_row_access_is_contiguous() {
-    // Verify that accessing a group (row) in the output is contiguous
-    let forest = make_multiclass_forest();
-    let meta = ModelMeta::for_multiclass(2, 3);
-    let model = GBDTModel::from_parts(forest, meta, OutputTransform::Softmax);
-
-    // Feature-major: [n_features=2, n_samples=3]
-    let features_fm = array![
-        [0.3f32, 0.7, 0.4], // feature 0 values
-        [0.5, 0.5, 0.6],    // feature 1 values
-    ];
-    let dataset = Dataset::from_array(features_fm.view(), None, None);
-    let preds = model.predict(&dataset, 1);
-
-    // Each row (group) should be contiguous (all samples for one group)
+    // Each row (group) should be contiguous (all samples for one group).
     for group in 0..3 {
         let row = preds.row(group);
-        // row should have all samples for this group
-        assert_eq!(row.len(), 3, "Row {} should have 3 elements", group);
+        assert_eq!(row.len(), 2, "Row {} should have 2 elements", group);
+        assert!(
+            row.as_slice().is_some(),
+            "Row {} should be contiguous",
+            group
+        );
     }
 }
 

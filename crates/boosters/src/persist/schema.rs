@@ -10,19 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Task type for model output interpretation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskKindSchema {
-    /// Regression task.
-    Regression,
-    /// Binary classification task.
-    BinaryClassification,
-    /// Multiclass classification task.
-    MulticlassClassification,
-    /// Ranking task.
-    Ranking,
-}
+use crate::model::OutputTransform;
 
 /// Feature type for metadata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,13 +25,11 @@ pub enum FeatureTypeSchema {
 /// Model metadata schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelMetaSchema {
-    /// Task type.
-    pub task: TaskKindSchema,
     /// Number of features.
     pub num_features: usize,
-    /// Number of classes (for multiclass).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub num_classes: Option<usize>,
+    /// Number of output groups.
+    #[serde(default = "default_num_groups")]
+    pub num_groups: usize,
     /// Feature names (optional).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub feature_names: Option<Vec<String>>,
@@ -55,6 +41,10 @@ pub struct ModelMetaSchema {
     /// Added in schema v3. Not used for inference.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub objective_name: Option<String>,
+}
+
+fn default_num_groups() -> usize {
+    1
 }
 
 /// Leaf values schema (supports scalar and multi-output).
@@ -138,39 +128,6 @@ pub struct ForestSchema {
     pub base_score: Vec<f64>,
 }
 
-/// Objective schema (stable serialization format).
-///
-/// Note: this is intentionally separate from `training::Objective` to avoid
-/// adding persistence-only types/representations into the training module.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum ObjectiveSchema {
-    SquaredLoss,
-    AbsoluteLoss,
-    LogisticLoss,
-    HingeLoss,
-    SoftmaxLoss { n_classes: usize },
-    PinballLoss { alphas: Vec<f64> },
-    PseudoHuberLoss { delta: f64 },
-    PoissonLoss,
-    Custom { name: String },
-}
-
-/// Output transform schema for inference-time transformation.
-///
-/// Per RFC-0005 vNext, models persist only the output transform
-/// (not the full objective) for clean inference.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OutputTransformSchema {
-    /// No transformation (raw predictions).
-    Identity,
-    /// Sigmoid for binary classification.
-    Sigmoid,
-    /// Softmax for multiclass classification.
-    Softmax,
-}
-
 /// GBLinear weight schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinearWeightsSchema {
@@ -189,17 +146,8 @@ pub struct GBDTModelSchema {
     pub meta: ModelMetaSchema,
     /// Tree forest.
     pub forest: ForestSchema,
-    /// Output transform for inference (schema v3+).
-    ///
-    /// This is the preferred field for new models.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub output_transform: Option<OutputTransformSchema>,
-    /// Objective (legacy, for backward compatibility).
-    ///
-    /// In schema v3+, this is ignored during loading (output_transform is used instead).
-    /// Kept for debugging and potential future use.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub objective: Option<ObjectiveSchema>,
+    /// Output transform for inference.
+    pub output_transform: OutputTransform,
 }
 
 impl GBDTModelSchema {
@@ -216,17 +164,8 @@ pub struct GBLinearModelSchema {
     pub weights: LinearWeightsSchema,
     /// Base score(s).
     pub base_score: Vec<f64>,
-    /// Output transform for inference (schema v3+).
-    ///
-    /// This is the preferred field for new models.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub output_transform: Option<OutputTransformSchema>,
-    /// Objective (legacy, for backward compatibility).
-    ///
-    /// In schema v3+, this is ignored during loading (output_transform is used instead).
-    /// Kept for debugging and potential future use.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub objective: Option<ObjectiveSchema>,
+    /// Output transform for inference.
+    pub output_transform: OutputTransform,
 }
 
 impl GBLinearModelSchema {
@@ -237,16 +176,6 @@ impl GBLinearModelSchema {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn task_kind_serde() {
-        let task = TaskKindSchema::BinaryClassification;
-        let json = serde_json::to_string(&task).unwrap();
-        assert_eq!(json, r#""binary_classification""#);
-
-        let parsed: TaskKindSchema = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, task);
-    }
 
     #[test]
     fn leaf_values_tagged() {
@@ -266,16 +195,14 @@ mod tests {
     #[test]
     fn model_meta_optional_fields() {
         let meta = ModelMetaSchema {
-            task: TaskKindSchema::Regression,
             num_features: 10,
-            num_classes: None,
+            num_groups: 1,
             feature_names: None,
             feature_types: None,
             objective_name: None,
         };
 
         let json = serde_json::to_string(&meta).unwrap();
-        assert!(!json.contains("num_classes"));
         assert!(!json.contains("feature_names"));
         assert!(!json.contains("feature_types"));
         assert!(!json.contains("objective_name"));

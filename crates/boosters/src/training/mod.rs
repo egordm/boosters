@@ -7,7 +7,6 @@
 //! - [`Gradients`]: Interleaved gradient storage
 //! - [`Objective`]: Enum of loss functions for computing gradients
 //! - [`Metric`]: Enum of evaluation metrics during training
-//! - [`default_metric_for_objective`]: Central mapping from objective to default metric
 //! - [`EarlyStopping`]: Callback for stopping when validation metric plateaus
 //! - [`TrainingLogger`], [`Verbosity`]: Structured logging
 //!
@@ -18,33 +17,32 @@
 //!
 //! ## Objectives (Loss Functions)
 //!
-//! Use `Objective::squared()`, `Objective::logistic()`, etc. to construct.
+//! Use enum variants like `Objective::SquaredLoss`, `Objective::LogisticLoss`, etc.
 //!
 //! Regression:
-//! - [`SquaredLoss`]: Squared error for regression (L2)
-//! - [`AbsoluteLoss`]: Mean absolute error (L1)
-//! - [`PinballLoss`]: Quantile regression (single or multiple quantiles)
-//! - [`PseudoHuberLoss`]: Robust regression, smooth approximation of Huber
-//! - [`PoissonLoss`]: Count data regression
+//! - [`Objective::SquaredLoss`]: Squared error for regression (L2)
+//! - [`Objective::AbsoluteLoss`]: Mean absolute error (L1)
+//! - [`Objective::PinballLoss`]: Quantile regression (single or multiple quantiles)
+//! - [`Objective::PseudoHuberLoss`]: Robust regression, smooth approximation of Huber
+//! - [`Objective::PoissonLoss`]: Count data regression
 //!
 //! Classification:
-//! - [`LogisticLoss`]: Binary cross-entropy
-//! - [`HingeLoss`]: SVM-style binary classification
-//! - [`SoftmaxLoss`]: Multiclass cross-entropy
+//! - [`Objective::LogisticLoss`]: Binary cross-entropy
+//! - [`Objective::HingeLoss`]: SVM-style binary classification
+//! - [`Objective::SoftmaxLoss`]: Multiclass cross-entropy
 //!
 //! Ranking:
-//! - [`LambdaRankLoss`]: LambdaMART for learning to rank
 //!
 //! Custom: Use [`CustomObjective`] for user-defined objectives.
 //!
 //! ## Metrics
 //!
-//! Use `Metric::rmse()`, `Metric::logloss()`, etc. to construct.
+//! Use `Metric::Rmse`, `Metric::LogLoss`, etc. to construct.
 //!
-//! - [`Rmse`], [`Mae`], [`Mape`]: Regression metrics
-//! - [`LogLoss`], [`Auc`], [`Accuracy`]: Binary classification metrics
-//! - [`MulticlassLogLoss`], [`MulticlassAccuracy`]: Multiclass metrics
-//! - [`QuantileMetric`]: Pinball loss metric for quantile regression
+//! - Regression: [`Metric::Rmse`], [`Metric::Mae`], [`Metric::Mape`]
+//! - Binary classification: [`Metric::LogLoss`], [`Metric::Auc`], [`Metric::Accuracy`]
+//! - Multiclass: [`Metric::MulticlassLogLoss`], [`Metric::MulticlassAccuracy`]
+//! - Quantile: [`Metric::Quantile`]
 //!
 //! Custom: Use [`CustomMetric`] for user-defined metrics.
 //!
@@ -65,14 +63,9 @@ pub use callback::{EarlyStopAction, EarlyStopping};
 pub use eval::{Evaluator, MetricValue};
 pub use gradients::{Gradients, GradsTuple};
 pub use logger::{TrainingLogger, Verbosity};
-pub use metrics::{
-    Accuracy, Auc, CustomMetric, CustomMetricFn, HuberMetric, LogLoss, Mae, Mape, MarginAccuracy,
-    Metric, MetricFn, MulticlassAccuracy, MulticlassLogLoss, PoissonDeviance, QuantileMetric, Rmse,
-};
+pub use metrics::{default_metric_for_objective, CustomMetric, CustomMetricFn, Metric};
 pub use objectives::{
-    AbsoluteLoss, BaseScoreFn, CustomObjective, GradientFn, HingeLoss, LambdaRankLoss,
-    LogisticLoss, Objective, ObjectiveFn, PinballLoss, PoissonLoss, PseudoHuberLoss, SoftmaxLoss,
-    SquaredLoss, default_metric_for_objective,
+    BaseScoreFn, CustomObjective, GradientFn, Objective,
 };
 
 // Re-export gbdt trainer and params

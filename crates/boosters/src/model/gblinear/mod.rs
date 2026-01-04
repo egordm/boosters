@@ -14,7 +14,7 @@
 //! // Classification with L1 regularization
 //! use boosters::training::Objective;
 //! let config = GBLinearConfig::builder()
-//!     .objective(Objective::logistic())
+//!     .objective(Objective::LogisticLoss)
 //!     .n_rounds(200)
 //!     .alpha(0.1)
 //!     .build()

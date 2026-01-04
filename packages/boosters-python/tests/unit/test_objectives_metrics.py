@@ -41,10 +41,7 @@ class TestObjectiveValidation:
         with pytest.raises((ValueError, Exception)):
             Objective.softmax(n_classes=1)
 
-    def test_lambdarank_ndcg_at_must_be_positive(self) -> None:
-        """LambdaRank ndcg_at must be >= 1."""
-        with pytest.raises((ValueError, Exception)):
-            Objective.lambdarank(ndcg_at=0)
+    # Note: ranking objectives are not exposed yet.
 
 
 class TestObjectiveEquality:
@@ -66,10 +63,19 @@ class TestObjectiveEquality:
 class TestMetricValidation:
     """Tests for Metric parameter validation."""
 
-    def test_ndcg_at_must_be_positive(self) -> None:
-        """NDCG at must be >= 1."""
+    def test_accuracy_threshold_must_be_in_0_1(self) -> None:
+        """Accuracy threshold must be in (0, 1]."""
         with pytest.raises((ValueError, Exception)):
-            Metric.ndcg(at=0)
+            Metric.accuracy_at(threshold=0.0)
+        with pytest.raises((ValueError, Exception)):
+            Metric.accuracy_at(threshold=1.1)
+
+    def test_quantile_alpha_must_be_in_0_1(self) -> None:
+        """Quantile alphas must be in (0, 1)."""
+        with pytest.raises((ValueError, Exception)):
+            Metric.quantile(alpha=[0.0])
+        with pytest.raises((ValueError, Exception)):
+            Metric.quantile(alpha=[1.0])
 
 
 class TestMetricEquality:
@@ -78,9 +84,11 @@ class TestMetricEquality:
     def test_same_metrics_equal(self) -> None:
         """Same metrics are equal."""
         assert Metric.rmse() == Metric.rmse()
-        assert Metric.ndcg(at=5) == Metric.ndcg(at=5)
+        assert Metric.accuracy_at(threshold=0.7) == Metric.accuracy_at(threshold=0.7)
+        assert Metric.quantile(alpha=[0.5]) == Metric.quantile(alpha=[0.5])
 
     def test_different_metrics_not_equal(self) -> None:
         """Different metrics are not equal."""
         assert Metric.rmse() != Metric.mae()
-        assert Metric.ndcg(at=5) != Metric.ndcg(at=10)
+        assert Metric.accuracy_at(threshold=0.4) != Metric.accuracy_at(threshold=0.6)
+        assert Metric.quantile(alpha=[0.1]) != Metric.quantile(alpha=[0.9])

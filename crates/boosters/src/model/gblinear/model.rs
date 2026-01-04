@@ -2,7 +2,7 @@
 //!
 //! High-level wrapper around [`LinearModel`] with training and prediction.
 //! Access components via [`linear()`](GBLinearModel::linear), [`meta()`](GBLinearModel::meta),
-//! and [`objective()`](GBLinearModel::objective).
+//! and [`output_transform()`](GBLinearModel::output_transform).
 
 use crate::Parallelism;
 use crate::data::Dataset;
@@ -11,7 +11,6 @@ use crate::model::meta::ModelMeta;
 use crate::model::OutputTransform;
 use crate::repr::gblinear::LinearModel;
 use crate::training::gblinear::GBLinearTrainer;
-use crate::training::ObjectiveFn;
 
 use ndarray::Array2;
 
@@ -20,7 +19,8 @@ use super::GBLinearConfig;
 /// High-level GBLinear model with training, prediction, and explainability.
 ///
 /// Access components via [`linear()`](Self::linear), [`meta()`](Self::meta),
-/// and [`objective()`](Self::objective).
+/// and [`output_transform()`](Self::output_transform).
+#[derive(Clone)]
 pub struct GBLinearModel {
     /// The underlying linear model.
     model: LinearModel,
@@ -31,26 +31,9 @@ pub struct GBLinearModel {
     /// This is persisted with the model and used for inference-time
     /// transformation (e.g., sigmoid for binary classification).
     output_transform: OutputTransform,
-    /// Objective function used for training.
-    ///
-    /// Kept for compatibility and training-related queries.
-    /// For prediction transform, use `output_transform` instead.
-    objective: crate::training::Objective,
 }
 
 impl GBLinearModel {
-    fn default_objective(task: crate::model::TaskKind) -> crate::training::Objective {
-        match task {
-            crate::model::TaskKind::Regression => crate::training::Objective::squared(),
-            crate::model::TaskKind::BinaryClassification => {
-                crate::training::Objective::logistic()
-            }
-            crate::model::TaskKind::MulticlassClassification { n_classes } => {
-                crate::training::Objective::softmax(n_classes)
-            }
-            crate::model::TaskKind::Ranking => crate::training::Objective::squared(),
-        }
-    }
 
     /// Train a new GBLinear model.
     ///
@@ -82,11 +65,6 @@ impl GBLinearModel {
         _parallelism: Parallelism, // Reserved for future use
     ) -> Option<Self> {
         let n_features = dataset.n_features();
-        let n_outputs = config.objective.n_outputs();
-
-        // Get task kind from objective (not inferred from n_outputs)
-        // This correctly handles multi-output regression (e.g., multi-quantile)
-        let task = config.objective.task_kind();
 
         // GBLinear uses Dataset directly - no binning needed!
         // Extract targets and weights from Dataset
@@ -95,76 +73,46 @@ impl GBLinearModel {
             .expect("dataset must have targets for training");
         let weights = dataset.weights();
 
-        // Convert config to trainer params
+        // Convert config to trainer params, then move out the objective/metric.
         let params = config.to_trainer_params();
+        let GBLinearConfig {
+            objective,
+            metric,
+            ..
+        } = config;
 
-        // Use provided metric or derive default from objective
-        let metric = config
-            .metric
-            .clone()
-            .unwrap_or_else(|| crate::training::default_metric_for_objective(&config.objective));
+        let n_outputs = objective.n_outputs();
+
+        let output_transform = objective.output_transform();
 
         // Create trainer with objective and metric from config
-        let trainer = GBLinearTrainer::new(config.objective.clone(), metric, params);
+        let trainer = GBLinearTrainer::new(objective, metric, params);
         let linear_model = trainer.train(dataset, targets, weights, val_set)?;
 
         let meta = ModelMeta {
             n_features,
             n_groups: n_outputs,
-            task,
             ..Default::default()
         };
 
-        Some(Self::from_parts(linear_model, meta, config.objective))
-    }
-
-    /// Create a model from a linear model and metadata.
-    ///
-    /// Use this when loading models from formats that don't include config,
-    /// or for quick testing. For training new models, prefer [`GBLinearModel::train`].
-    pub fn from_linear_model(model: LinearModel, meta: ModelMeta) -> Self {
-        let objective = Self::default_objective(meta.task);
-        let output_transform = objective.output_transform();
-        Self {
-            model,
+        Some(Self::from_parts(
+            linear_model,
             meta,
-            objective,
             output_transform,
-        }
+        ))
     }
 
     /// Create a model from all its parts.
     ///
-    /// Used when loading from a format that includes an explicit objective,
-    /// or after training.
+    /// Used when loading from persistence, or after training.
     pub fn from_parts(
         model: LinearModel,
         meta: ModelMeta,
-        objective: crate::training::Objective,
-    ) -> Self {
-        let output_transform = objective.output_transform();
-        Self {
-            model,
-            meta,
-            objective,
-            output_transform,
-        }
-    }
-
-    /// Create a model from all parts, including an explicit output transform.
-    ///
-    /// Used when loading models from persistence where the transform is stored
-    /// separately. For training, prefer [`GBLinearModel::train`].
-    pub fn from_parts_with_transform(
-        model: LinearModel,
-        meta: ModelMeta,
-        objective: crate::training::Objective,
         output_transform: OutputTransform,
     ) -> Self {
         Self {
             model,
             meta,
-            objective,
             output_transform,
         }
     }
@@ -183,23 +131,9 @@ impl GBLinearModel {
         &self.meta
     }
 
-    /// Get reference to the objective function.
-    pub fn objective(&self) -> &crate::training::Objective {
-        &self.objective
-    }
-
-    /// Get reference to the output transform.
-    pub fn output_transform(&self) -> &OutputTransform {
-        &self.output_transform
-    }
-
-    /// Set feature names.
-    ///
-    /// This mutates the metadata. For new models, prefer setting feature names
-    /// during training.
-    pub fn with_feature_names(mut self, names: Vec<String>) -> Self {
-        self.meta.feature_names = Some(names);
-        self
+    /// Get the inference-time output transform.
+    pub fn output_transform(&self) -> OutputTransform {
+        self.output_transform
     }
 
     // =========================================================================
@@ -233,11 +167,7 @@ impl GBLinearModel {
         let mut output = self.predict_raw(dataset);
 
         // Apply output transform (sigmoid, softmax, or identity)
-        let n_outputs = self.meta.n_groups;
-        self.output_transform.transform_inplace(
-            output.as_slice_mut().expect("output must be contiguous"),
-            n_outputs,
-        );
+        self.output_transform.transform_inplace(output.view_mut());
 
         output
     }
@@ -295,7 +225,6 @@ impl std::fmt::Debug for GBLinearModel {
         f.debug_struct("GBLinearModel")
             .field("n_features", &self.meta.n_features)
             .field("n_groups", &self.meta.n_groups)
-            .field("task", &self.meta.task)
             .finish()
     }
 }
@@ -311,32 +240,30 @@ mod tests {
     }
 
     #[test]
-    fn from_linear_model() {
+    fn from_parts() {
         let linear = make_simple_model();
         let meta = ModelMeta::for_regression(2);
-        let model = GBLinearModel::from_linear_model(linear, meta);
+        let model = GBLinearModel::from_parts(linear, meta, OutputTransform::Identity);
 
         assert_eq!(model.linear().n_features(), 2);
         assert_eq!(model.linear().n_groups(), 1);
-        // from_linear_model selects a default objective from task kind
-        assert_eq!(model.objective().name(), "squared");
+        assert_eq!(model.output_transform(), OutputTransform::Identity);
     }
 
     #[test]
-    fn from_parts_with_config() {
+    fn from_parts_stores_transform() {
         let linear = make_simple_model();
         let meta = ModelMeta::for_regression(2);
-        let objective = crate::training::Objective::logistic();
-        let model = GBLinearModel::from_parts(linear, meta, objective);
+        let model = GBLinearModel::from_parts(linear, meta, OutputTransform::Sigmoid);
 
-        assert_eq!(model.objective().name(), "logistic");
+        assert_eq!(model.output_transform(), OutputTransform::Sigmoid);
     }
 
     #[test]
     fn predict_basic() {
         let linear = make_simple_model();
         let meta = ModelMeta::for_regression(2);
-        let model = GBLinearModel::from_linear_model(linear, meta);
+        let model = GBLinearModel::from_parts(linear, meta, OutputTransform::Identity);
 
         // y = 0.5*1.0 + 0.3*2.0 + 0.1 = 0.5 + 0.6 + 0.1 = 1.2
         // Feature-major: [n_features=2, n_samples=1]
@@ -350,7 +277,7 @@ mod tests {
     fn predict_batch_rows() {
         let linear = make_simple_model();
         let meta = ModelMeta::for_regression(2);
-        let model = GBLinearModel::from_linear_model(linear, meta);
+        let model = GBLinearModel::from_parts(linear, meta, OutputTransform::Identity);
 
         // Feature-major: [n_features=2, n_samples=2]
         // feature 0: [1.0, 0.0]
@@ -373,7 +300,7 @@ mod tests {
     fn weights_and_bias_via_accessor() {
         let linear = make_simple_model();
         let meta = ModelMeta::for_regression(2);
-        let model = GBLinearModel::from_linear_model(linear, meta);
+        let model = GBLinearModel::from_parts(linear, meta, OutputTransform::Identity);
 
         assert_eq!(model.linear().weight(0, 0), 0.5);
         assert_eq!(model.linear().weight(1, 0), 0.3);
@@ -384,7 +311,7 @@ mod tests {
     fn shap_values() {
         let linear = make_simple_model();
         let meta = ModelMeta::for_regression(2);
-        let model = GBLinearModel::from_linear_model(linear, meta);
+        let model = GBLinearModel::from_parts(linear, meta, OutputTransform::Identity);
 
         // Test with means - feature-major layout [n_features=2, n_samples=1]
         let features = arr2(&[[1.0], [2.0]]);
@@ -406,7 +333,7 @@ mod tests {
     fn shap_values_zero_means() {
         let linear = make_simple_model();
         let meta = ModelMeta::for_regression(2);
-        let model = GBLinearModel::from_linear_model(linear, meta);
+        let model = GBLinearModel::from_parts(linear, meta, OutputTransform::Identity);
 
         // Feature-major layout [n_features=2, n_samples=1]
         let features = arr2(&[[1.0], [2.0]]);
@@ -429,7 +356,7 @@ mod tests {
     fn predict_from_dataset() {
         let linear = make_simple_model();
         let meta = ModelMeta::for_regression(2);
-        let model = GBLinearModel::from_linear_model(linear, meta);
+        let model = GBLinearModel::from_parts(linear, meta, OutputTransform::Identity);
 
         // Feature-major layout: [n_features=2, n_samples=2]
         // feature 0: [1.0, 0.0]

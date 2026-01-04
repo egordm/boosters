@@ -8,7 +8,7 @@ use boosters::data::{Dataset, TargetsView, WeightsView};
 use boosters::inference::gbdt::SimplePredictor;
 use boosters::model::gbdt::{GBDTConfig, GBDTModel};
 use boosters::repr::gbdt::{Forest, SplitType, TreeView};
-use boosters::training::{GBDTParams, GBDTTrainer, GrowthStrategy, Rmse, SquaredLoss};
+use boosters::training::{GBDTParams, GBDTTrainer, GrowthStrategy, Metric, Objective};
 use ndarray::{Array2, ArrayView2};
 
 /// Predict a single row using the predictor.
@@ -39,7 +39,7 @@ fn train_rejects_invalid_targets_len() {
     let dataset = BinnedDataset::from_dataset(&features_dataset, &binning_config)
         .expect("Failed to build binned dataset");
 
-    let trainer = GBDTTrainer::new(SquaredLoss, Rmse, GBDTParams::default());
+    let trainer = GBDTTrainer::new(Objective::SquaredLoss, Metric::Rmse, GBDTParams::default());
     let targets_2d = Array2::from_shape_vec((1, targets.len()), targets).unwrap();
     let targets_view = TargetsView::new(targets_2d.view());
     let result = trainer.train(
@@ -75,7 +75,7 @@ fn trained_model_improves_over_base_score_on_simple_problem() {
         ..Default::default()
     };
 
-    let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+    let trainer = GBDTTrainer::new(Objective::SquaredLoss, Metric::Rmse, params);
     let targets_2d = Array2::from_shape_vec((1, targets.len()), targets.clone()).unwrap();
     let targets_view = TargetsView::new(targets_2d.view());
     let forest = trainer
@@ -148,7 +148,7 @@ fn trained_model_improves_over_base_score_on_medium_problem() {
         ..Default::default()
     };
 
-    let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+    let trainer = GBDTTrainer::new(Objective::SquaredLoss, Metric::Rmse, params);
     let targets_2d = Array2::from_shape_vec((1, targets.len()), targets.clone()).unwrap();
     let targets_view = TargetsView::new(targets_2d.view());
     let forest = trainer
@@ -234,7 +234,7 @@ fn train_with_categorical_features_produces_categorical_splits() {
         ..Default::default()
     };
 
-    let trainer = GBDTTrainer::new(SquaredLoss, Rmse, params);
+    let trainer = GBDTTrainer::new(Objective::SquaredLoss, Metric::Rmse, params);
     let targets_2d = Array2::from_shape_vec((1, targets.len()), targets.clone()).unwrap();
     let targets_view = TargetsView::new(targets_2d.view());
     let forest = trainer

@@ -231,6 +231,7 @@ impl Gradients {
     /// in `f32` for performance.
     #[inline]
     pub fn sum(&self, output: usize, rows: Option<&[u32]>) -> (f64, f64) {
+        // TODO: remove dead code
         let row = self.data.row(output);
 
         let mut sum_grad = 0.0f64;
@@ -261,6 +262,7 @@ impl Gradients {
     /// * `output` - Which output to compute for
     /// * `min_hess` - Minimum hessian to avoid division by zero
     pub fn bias_update(&self, output: usize, min_hess: f32) -> f32 {
+        // TODO: remove dead code
         let (sum_grad, sum_hess) = self.sum(output, None);
         if sum_hess.abs() < min_hess as f64 {
             0.0

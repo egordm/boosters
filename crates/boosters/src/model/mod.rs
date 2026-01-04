@@ -23,7 +23,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use boosters::model::{GBDTModel, TaskKind};
+//! use boosters::model::GBDTModel;
 //! use boosters::model::gbdt::GBDTConfig;
 //! use boosters::data::Dataset;
 //! use boosters::training::{Objective, Metric};
@@ -31,7 +31,7 @@
 //! // Train a model
 //! let config = GBDTConfig::builder()
 //!     .objective(Objective::squared_error())
-//!     .metric(Metric::rmse())
+//!     .metric(Metric::Rmse)
 //!     .n_trees(50)
 //!     .learning_rate(0.1)
 //!     .build()
@@ -49,5 +49,5 @@ mod transform;
 
 pub use gbdt::GBDTModel;
 pub use gblinear::GBLinearModel;
-pub use meta::{FeatureType, ModelMeta, TaskKind};
+pub use meta::{FeatureType, ModelMeta};
 pub use transform::OutputTransform;

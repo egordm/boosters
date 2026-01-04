@@ -10,11 +10,14 @@
 //! - [`Sigmoid`](OutputTransform::Sigmoid): Logistic sigmoid for binary classification
 //! - [`Softmax`](OutputTransform::Softmax): Softmax for multiclass classification
 
+use ndarray::{ArrayViewMut1, ArrayViewMut2, Axis};
+
 /// Inference-time output transformation.
 ///
 /// Models persist this instead of the full objective so that prediction
 /// can work without knowing training configuration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum OutputTransform {
     /// No transformation; output = margin.
     /// Used for regression and raw margin outputs.
@@ -31,12 +34,14 @@ pub enum OutputTransform {
 }
 
 impl OutputTransform {
-    /// Apply the transformation in-place to a row-major predictions buffer.
+    /// Apply the transformation in-place to an output-major predictions matrix.
     ///
     /// # Arguments
     ///
-    /// * `predictions` - Mutable slice of predictions, shape `(n_rows, n_outputs)` in row-major order.
-    /// * `n_outputs` - Number of output columns (1 for regression/binary, n_classes for multiclass).
+    /// * `predictions` - Mutable view of predictions, shape `(n_outputs, n_samples)`.
+    ///
+    /// Layout semantics are **output-major**:
+    /// `predictions[[output, sample]]`.
     ///
     /// # Numerical Stability
     ///
@@ -45,18 +50,14 @@ impl OutputTransform {
     ///
     /// # Panics
     ///
-    /// Panics if `predictions.len()` is not divisible by `n_outputs` or if `n_outputs` is 0.
+    /// Panics if `n_outputs == 0`.
     ///
     /// # NaN/Inf Behavior
     ///
     /// NaN and Inf inputs propagate through without panics (garbage-in, garbage-out).
     #[inline]
-    pub fn transform_inplace(&self, predictions: &mut [f32], n_outputs: usize) {
-        assert!(n_outputs > 0, "n_outputs must be > 0");
-        assert!(
-            predictions.len().is_multiple_of(n_outputs),
-            "predictions.len() must be divisible by n_outputs"
-        );
+    pub fn transform_inplace(&self, mut predictions: ArrayViewMut2<'_, f32>) {
+        assert!(predictions.nrows() > 0, "n_outputs must be > 0");
 
         match self {
             OutputTransform::Identity => {
@@ -68,14 +69,31 @@ impl OutputTransform {
                 }
             }
             OutputTransform::Softmax => {
-                let n_rows = predictions.len() / n_outputs;
-                for row_idx in 0..n_rows {
-                    let start = row_idx * n_outputs;
-                    let end = start + n_outputs;
-                    let row = &mut predictions[start..end];
-                    softmax_inplace(row);
+                for sample in predictions.axis_iter_mut(Axis(1)) {
+                    softmax_inplace(sample);
                 }
             }
+        }
+    }
+}
+
+#[inline]
+fn softmax_inplace(mut scores: ArrayViewMut1<'_, f32>) {
+    let mut max = f32::NEG_INFINITY;
+    for &x in scores.iter() {
+        max = max.max(x);
+    }
+
+    let mut sum = 0.0f32;
+    for x in scores.iter_mut() {
+        let e = (*x - max).exp();
+        *x = e;
+        sum += e;
+    }
+
+    if sum > 0.0 {
+        for x in scores.iter_mut() {
+            *x /= sum;
         }
     }
 }
@@ -94,36 +112,11 @@ fn sigmoid(x: f32) -> f32 {
     }
 }
 
-/// Numerically stable softmax in-place.
-/// Subtracts max before exponentiating to avoid overflow.
-#[inline]
-fn softmax_inplace(row: &mut [f32]) {
-    if row.is_empty() {
-        return;
-    }
-
-    // Find max for numerical stability
-    let max = row.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-
-    // Compute exp(x - max) and sum
-    let mut sum = 0.0f32;
-    for x in row.iter_mut() {
-        *x = (*x - max).exp();
-        sum += *x;
-    }
-
-    // Normalize
-    if sum > 0.0 {
-        for x in row.iter_mut() {
-            *x /= sum;
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use approx::assert_abs_diff_eq;
+    use ndarray::Array2;
 
     // =========================================================================
     // Identity tests
@@ -131,9 +124,9 @@ mod tests {
 
     #[test]
     fn identity_is_noop() {
-        let mut preds = vec![1.0, -2.0, 3.5, 0.0];
+        let mut preds = Array2::from_shape_vec((1, 4), vec![1.0, -2.0, 3.5, 0.0]).unwrap();
         let original = preds.clone();
-        OutputTransform::Identity.transform_inplace(&mut preds, 1);
+        OutputTransform::Identity.transform_inplace(preds.view_mut());
         assert_eq!(preds, original);
     }
 
@@ -143,49 +136,50 @@ mod tests {
 
     #[test]
     fn sigmoid_zero_is_half() {
-        let mut preds = vec![0.0];
-        OutputTransform::Sigmoid.transform_inplace(&mut preds, 1);
-        assert_abs_diff_eq!(preds[0], 0.5, epsilon = 1e-6);
+        let mut preds = Array2::from_shape_vec((1, 1), vec![0.0]).unwrap();
+        OutputTransform::Sigmoid.transform_inplace(preds.view_mut());
+        assert_abs_diff_eq!(preds[[0, 0]], 0.5, epsilon = 1e-6);
     }
 
     #[test]
     fn sigmoid_output_in_zero_one() {
-        let mut preds = vec![-10.0, -1.0, 0.0, 1.0, 10.0];
-        OutputTransform::Sigmoid.transform_inplace(&mut preds, 1);
-        for &p in &preds {
+        let mut preds =
+            Array2::from_shape_vec((1, 5), vec![-10.0, -1.0, 0.0, 1.0, 10.0]).unwrap();
+        OutputTransform::Sigmoid.transform_inplace(preds.view_mut());
+        for &p in preds.as_slice().unwrap() {
             assert!(p > 0.0 && p < 1.0, "sigmoid output {} not in (0,1)", p);
         }
     }
 
     #[test]
     fn sigmoid_large_values_stable() {
-        let mut preds = vec![-100.0, 100.0, -500.0, 500.0];
-        OutputTransform::Sigmoid.transform_inplace(&mut preds, 1);
+        let mut preds = Array2::from_shape_vec((1, 4), vec![-100.0, 100.0, -500.0, 500.0]).unwrap();
+        OutputTransform::Sigmoid.transform_inplace(preds.view_mut());
 
         // Very negative -> close to 0
-        assert!(preds[0] < 0.001);
-        assert!(preds[2] < 0.001);
+        assert!(preds[[0, 0]] < 0.001);
+        assert!(preds[[0, 2]] < 0.001);
 
         // Very positive -> close to 1
-        assert!(preds[1] > 0.999);
-        assert!(preds[3] > 0.999);
+        assert!(preds[[0, 1]] > 0.999);
+        assert!(preds[[0, 3]] > 0.999);
     }
 
     #[test]
     fn sigmoid_nan_propagates() {
-        let mut preds = vec![f32::NAN];
-        OutputTransform::Sigmoid.transform_inplace(&mut preds, 1);
-        assert!(preds[0].is_nan());
+        let mut preds = Array2::from_shape_vec((1, 1), vec![f32::NAN]).unwrap();
+        OutputTransform::Sigmoid.transform_inplace(preds.view_mut());
+        assert!(preds[[0, 0]].is_nan());
     }
 
     #[test]
     fn sigmoid_inf_stable() {
-        let mut preds = vec![f32::INFINITY, f32::NEG_INFINITY];
-        OutputTransform::Sigmoid.transform_inplace(&mut preds, 1);
+        let mut preds = Array2::from_shape_vec((1, 2), vec![f32::INFINITY, f32::NEG_INFINITY]).unwrap();
+        OutputTransform::Sigmoid.transform_inplace(preds.view_mut());
         // +inf clamped to 500 -> close to 1
-        assert!(preds[0] > 0.999);
+        assert!(preds[[0, 0]] > 0.999);
         // -inf clamped to -500 -> close to 0
-        assert!(preds[1] < 0.001);
+        assert!(preds[[0, 1]] < 0.001);
     }
 
     // =========================================================================
@@ -194,59 +188,58 @@ mod tests {
 
     #[test]
     fn softmax_sums_to_one() {
-        let mut preds = vec![1.0, 2.0, 3.0];
-        OutputTransform::Softmax.transform_inplace(&mut preds, 3);
+        // One row with 3 outputs.
+        let mut preds = Array2::from_shape_vec((3, 1), vec![1.0, 2.0, 3.0]).unwrap();
+        OutputTransform::Softmax.transform_inplace(preds.view_mut());
 
-        let sum: f32 = preds.iter().sum();
+        let sum: f32 = (0..3).map(|o| preds[[o, 0]]).sum();
         assert_abs_diff_eq!(sum, 1.0, epsilon = 1e-6);
     }
 
     #[test]
     fn softmax_preserves_order() {
-        let mut preds = vec![1.0, 2.0, 3.0];
-        OutputTransform::Softmax.transform_inplace(&mut preds, 3);
+        let mut preds = Array2::from_shape_vec((3, 1), vec![1.0, 2.0, 3.0]).unwrap();
+        OutputTransform::Softmax.transform_inplace(preds.view_mut());
 
-        assert!(preds[0] < preds[1]);
-        assert!(preds[1] < preds[2]);
+        assert!(preds[[0, 0]] < preds[[1, 0]]);
+        assert!(preds[[1, 0]] < preds[[2, 0]]);
     }
 
     #[test]
     fn softmax_multiple_rows() {
-        let mut preds = vec![
-            1.0, 2.0, 3.0, // row 0
-            0.0, 0.0, 0.0, // row 1 (uniform)
-        ];
-        OutputTransform::Softmax.transform_inplace(&mut preds, 3);
+        // Two rows, 3 outputs each.
+        let mut preds = Array2::from_shape_vec((3, 2), vec![1.0, 0.0, 2.0, 0.0, 3.0, 0.0]).unwrap();
+        OutputTransform::Softmax.transform_inplace(preds.view_mut());
 
         // Row 0 sums to 1
-        let sum0: f32 = preds[0..3].iter().sum();
+        let sum0: f32 = (0..3).map(|o| preds[[o, 0]]).sum();
         assert_abs_diff_eq!(sum0, 1.0, epsilon = 1e-6);
 
         // Row 1 sums to 1 and is uniform
-        let sum1: f32 = preds[3..6].iter().sum();
+        let sum1: f32 = (0..3).map(|o| preds[[o, 1]]).sum();
         assert_abs_diff_eq!(sum1, 1.0, epsilon = 1e-6);
-        assert_abs_diff_eq!(preds[3], preds[4], epsilon = 1e-6);
-        assert_abs_diff_eq!(preds[4], preds[5], epsilon = 1e-6);
+        assert_abs_diff_eq!(preds[[0, 1]], preds[[1, 1]], epsilon = 1e-6);
+        assert_abs_diff_eq!(preds[[1, 1]], preds[[2, 1]], epsilon = 1e-6);
     }
 
     #[test]
     fn softmax_large_values_stable() {
-        let mut preds = vec![100.0, 200.0, 300.0];
-        OutputTransform::Softmax.transform_inplace(&mut preds, 3);
+        let mut preds = Array2::from_shape_vec((3, 1), vec![100.0, 200.0, 300.0]).unwrap();
+        OutputTransform::Softmax.transform_inplace(preds.view_mut());
 
-        let sum: f32 = preds.iter().sum();
+        let sum: f32 = (0..3).map(|o| preds[[o, 0]]).sum();
         assert_abs_diff_eq!(sum, 1.0, epsilon = 1e-6);
 
         // Largest input should dominate
-        assert!(preds[2] > 0.99);
+        assert!(preds[[2, 0]] > 0.99);
     }
 
     #[test]
     fn softmax_nan_propagates() {
-        let mut preds = vec![1.0, f32::NAN, 2.0];
-        OutputTransform::Softmax.transform_inplace(&mut preds, 3);
+        let mut preds = Array2::from_shape_vec((3, 1), vec![1.0, f32::NAN, 2.0]).unwrap();
+        OutputTransform::Softmax.transform_inplace(preds.view_mut());
         // At least one output should be NaN
-        assert!(preds.iter().any(|x| x.is_nan()));
+        assert!((0..3).any(|o| preds[[o, 0]].is_nan()));
     }
 
     // =========================================================================
@@ -256,15 +249,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "n_outputs must be > 0")]
     fn panics_on_zero_n_outputs() {
-        let mut preds = vec![];
-        OutputTransform::Identity.transform_inplace(&mut preds, 0);
-    }
-
-    #[test]
-    #[should_panic(expected = "predictions.len() must be divisible by n_outputs")]
-    fn panics_on_mismatched_length() {
-        let mut preds = vec![1.0, 2.0, 3.0];
-        OutputTransform::Sigmoid.transform_inplace(&mut preds, 2);
+        let mut preds = Array2::<f32>::zeros((0, 0));
+        OutputTransform::Identity.transform_inplace(preds.view_mut());
     }
 
     #[test]

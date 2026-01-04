@@ -133,23 +133,25 @@ fn main() {
     // =========================================================================
     // Train and compare
     // =========================================================================
-    let config_base = GBDTConfig::builder()
-        .objective(Objective::squared())
-        .metric(Metric::rmse())
+    let config_no_bundle = GBDTConfig::builder()
+        .objective(Objective::SquaredLoss)
+        .metric(Metric::Rmse)
+        .binning(binning_config_no_bundle.clone())
         .n_trees(20)
         .learning_rate(0.1)
         .growth_strategy(GrowthStrategy::DepthWise { max_depth: 4 })
         .build()
         .expect("Invalid configuration");
 
-    let config_no_bundle = GBDTConfig {
-        binning: binning_config_no_bundle.clone(),
-        ..config_base.clone()
-    };
-    let config_bundled = GBDTConfig {
-        binning: binning_config_bundled.clone(),
-        ..config_base
-    };
+    let config_bundled = GBDTConfig::builder()
+        .objective(Objective::SquaredLoss)
+        .metric(Metric::Rmse)
+        .binning(binning_config_bundled.clone())
+        .n_trees(20)
+        .learning_rate(0.1)
+        .growth_strategy(GrowthStrategy::DepthWise { max_depth: 4 })
+        .build()
+        .expect("Invalid configuration");
 
     println!("\n=== Training Models ===\n");
 

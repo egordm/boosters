@@ -396,16 +396,26 @@ class GBDTConfig:
         Bundles sparse/one-hot features to reduce memory and speed up training.
         """
     @property
-    def bundling_conflict_rate(self) -> builtins.float:
+    def sparsity_threshold(self) -> builtins.float:
         r"""
-        Maximum allowed conflict rate for bundling (0.0-1.0). Default: 0.0001.
-        Higher values allow more aggressive bundling but may reduce accuracy.
+        Sparsity threshold (fraction of zeros to use sparse storage).
+        Features with density ≤ (1 - threshold) are considered sparse.
         """
     @property
-    def bundling_min_sparsity(self) -> builtins.float:
+    def max_categorical_cardinality(self) -> builtins.int:
         r"""
-        Minimum sparsity for a feature to be bundled (0.0-1.0). Default: 0.9.
-        Features with fewer than this fraction of zeros are not bundled.
+        Max cardinality to auto-detect as categorical.
+        Features with ≤ this many unique integer values may be treated as categorical.
+        """
+    @property
+    def binning_sample_cnt(self) -> builtins.int:
+        r"""
+        Number of samples for computing bin boundaries (for large datasets).
+        """
+    @property
+    def cache_size(self) -> builtins.int:
+        r"""
+        Histogram cache size (number of slots). Default: 8.
         """
     @property
     def early_stopping_rounds(self) -> typing.Optional[builtins.int]:
@@ -432,7 +442,7 @@ class GBDTConfig:
         r"""
         Get the evaluation metric (or None).
         """
-    def __new__(cls, n_estimators: builtins.int = 100, learning_rate: builtins.float = 0.3, objective: Objective | None = None, metric: Metric | None = None, growth_strategy: GrowthStrategy = GrowthStrategy.Depthwise, max_depth: builtins.int = 6, n_leaves: builtins.int = 31, max_onehot_cats: builtins.int = 4, l1: builtins.float = 0.0, l2: builtins.float = 1.0, min_gain_to_split: builtins.float = 0.0, min_child_weight: builtins.float = 1.0, min_samples_leaf: builtins.int = 1, subsample: builtins.float = 1.0, colsample_bytree: builtins.float = 1.0, colsample_bylevel: builtins.float = 1.0, linear_leaves: builtins.bool = False, linear_l2: builtins.float = 0.01, linear_l1: builtins.float = 0.0, linear_max_iterations: builtins.int = 10, linear_tolerance: builtins.float = 1e-06, linear_min_samples: builtins.int = 50, linear_coefficient_threshold: builtins.float = 1e-06, linear_max_features: builtins.int = 10, max_bins: builtins.int = 256, enable_bundling: builtins.bool = True, bundling_conflict_rate: builtins.float = 0.0001, bundling_min_sparsity: builtins.float = 0.9, early_stopping_rounds: typing.Optional[builtins.int] = None, seed: builtins.int = 42, verbosity: Verbosity = Verbosity.Silent) -> GBDTConfig: ...
+    def __new__(cls, n_estimators: builtins.int = 100, learning_rate: builtins.float = 0.30000001192092896, objective: Objective | None = None, metric: Metric | None = None, growth_strategy: GrowthStrategy = GrowthStrategy.Depthwise, max_depth: builtins.int = 6, n_leaves: builtins.int = 31, max_onehot_cats: builtins.int = 4, l1: builtins.float = 0.0, l2: builtins.float = 1.0, min_gain_to_split: builtins.float = 0.0, min_child_weight: builtins.float = 1.0, min_samples_leaf: builtins.int = 1, subsample: builtins.float = 1.0, colsample_bytree: builtins.float = 1.0, colsample_bylevel: builtins.float = 1.0, linear_leaves: builtins.bool = False, linear_l2: builtins.float = 0.009999999776482582, linear_l1: builtins.float = 0.0, linear_max_iterations: builtins.int = 10, linear_tolerance: builtins.float = 1e-06, linear_min_samples: builtins.int = 50, linear_coefficient_threshold: builtins.float = 9.999999974752427e-07, linear_max_features: builtins.int = 10, max_bins: builtins.int = 256, enable_bundling: builtins.bool = True, sparsity_threshold: builtins.float = 0.8999999761581421, max_categorical_cardinality: builtins.int = 0, binning_sample_cnt: builtins.int = 200000, cache_size: builtins.int = 8, early_stopping_rounds: typing.Optional[builtins.int] = None, seed: builtins.int = 42, verbosity: Verbosity = Verbosity.Silent) -> GBDTConfig: ...
     def __repr__(self) -> builtins.str: ...
 
 @typing.final
@@ -464,11 +474,6 @@ class GBDTModel:
     def n_features(self) -> builtins.int:
         r"""
         Number of features the model was trained on.
-        """
-    @property
-    def objective(self) -> Objective:
-        r"""
-        Get the model objective.
         """
     @staticmethod
     def train(train: Dataset, config: typing.Optional[GBDTConfig] = None, val_set: typing.Optional[Dataset] = None, n_threads: builtins.int = 0) -> GBDTModel:
@@ -713,11 +718,6 @@ class GBLinearModel:
         
         Returns:
             Array of shape (n_outputs,).
-        """
-    @property
-    def objective(self) -> Objective:
-        r"""
-        Get the model objective.
         """
     @staticmethod
     def train(train: Dataset, config: typing.Optional[GBLinearConfig] = None, val_set: typing.Optional[Dataset] = None, n_threads: builtins.int = 0) -> GBLinearModel:
@@ -1053,22 +1053,25 @@ class Metric(enum.Enum):
         - Metric.Auc(): Area Under ROC Curve
         - Metric.Accuracy(): Classification accuracy
     
-    Ranking:
-        - Metric.Ndcg(at): Normalized Discounted Cumulative Gain@k
+    Note: ranking metrics are not implemented in core yet.
     
     Examples
     --------
     >>> from boosters import Metric
     >>> metric = Metric.rmse()  # Regression
     >>> metric = Metric.auc()  # Binary classification
-    >>> metric = Metric.ndcg(at=5)  # Ranking
+    >>> metric = Metric.Accuracy(threshold=0.7)
     
     Pattern matching:
     >>> match metric:
     ...     case Metric.Rmse():
     ...         print("RMSE")
-    ...     case Metric.Ndcg(at=k):
-    ...         print(f"NDCG@{k}")
+    ...     case Metric.Accuracy(threshold=t):
+    ...         print(f"Accuracy@{t}")
+    """
+    None = ...
+    r"""
+    No metric - skips evaluation entirely.
     """
     Rmse = ...
     r"""
@@ -1093,15 +1096,39 @@ class Metric(enum.Enum):
     Accuracy = ...
     r"""
     Classification accuracy (binary or multiclass).
-    """
-    Ndcg = ...
-    r"""
-    Normalized Discounted Cumulative Gain for ranking.
     
     Parameters:
-        at: Truncation point for NDCG calculation (NDCG@k). Default: 10.
+        threshold: Probability threshold in (0, 1] for positive class. Default: 0.5.
+    """
+    MarginAccuracy = ...
+    r"""
+    Accuracy computed on raw margins (no sigmoid/softmax).
+    """
+    MulticlassLogLoss = ...
+    r"""
+    Multiclass log loss (cross-entropy).
+    """
+    MulticlassAccuracy = ...
+    r"""
+    Multiclass accuracy.
+    """
+    Quantile = ...
+    r"""
+    Quantile loss metric.
+    
+    Parameters:
+        alpha: List of quantiles to evaluate. Each value must be in (0, 1).
+    """
+    PoissonDeviance = ...
+    r"""
+    Poisson deviance for count regression.
     """
 
+    @staticmethod
+    def none() -> Metric:
+        r"""
+        Create no-metric.
+        """
     @staticmethod
     def rmse() -> Metric:
         r"""
@@ -1128,14 +1155,34 @@ class Metric(enum.Enum):
         Create AUC metric.
         """
     @staticmethod
-    def accuracy() -> Metric:
+    def accuracy_at(threshold: builtins.float = 0.5) -> Metric:
         r"""
-        Create accuracy metric.
+        Create accuracy metric with validation.
         """
     @staticmethod
-    def ndcg(at: builtins.int = 10) -> Metric:
+    def margin_accuracy() -> Metric:
         r"""
-        Create NDCG@k metric with validation.
+        Create margin accuracy metric.
+        """
+    @staticmethod
+    def multiclass_logloss() -> Metric:
+        r"""
+        Create multiclass log loss metric.
+        """
+    @staticmethod
+    def multiclass_accuracy() -> Metric:
+        r"""
+        Create multiclass accuracy metric.
+        """
+    @staticmethod
+    def quantile(alpha: typing.Sequence[builtins.float]) -> Metric:
+        r"""
+        Create quantile metric with validation.
+        """
+    @staticmethod
+    def poisson_deviance() -> Metric:
+        r"""
+        Create Poisson deviance metric.
         """
     def __repr__(self) -> builtins.str: ...
 
@@ -1159,8 +1206,7 @@ class Objective(enum.Enum):
         - Objective.Hinge(): SVM-style hinge loss
         - Objective.Softmax(n_classes): Multiclass cross-entropy
     
-    Ranking:
-        - Objective.LambdaRank(ndcg_at): LambdaMART for NDCG optimization
+    Note: ranking objectives are not implemented in core yet.
     
     Examples
     --------
@@ -1218,13 +1264,6 @@ class Objective(enum.Enum):
     Parameters:
         n_classes: Number of classes. Must be >= 2.
     """
-    LambdaRank = ...
-    r"""
-    LambdaRank loss for learning to rank.
-    
-    Parameters:
-        ndcg_at: Truncation point for NDCG calculation. Default: 10.
-    """
 
     @staticmethod
     def squared() -> Objective:
@@ -1265,11 +1304,6 @@ class Objective(enum.Enum):
     def softmax(n_classes: builtins.int) -> Objective:
         r"""
         Create softmax loss with validation.
-        """
-    @staticmethod
-    def lambdarank(ndcg_at: builtins.int = 10) -> Objective:
-        r"""
-        Create LambdaRank loss with validation.
         """
     def __repr__(self) -> builtins.str: ...
 

@@ -25,8 +25,8 @@ fn bench_train_gbdt(c: &mut Criterion) {
         let dataset = synthetic_regression(n_samples, n_features, 42, 0.05);
 
         let config = GBDTConfig::builder()
-            .objective(Objective::squared())
-            .metric(Metric::rmse())
+            .objective(Objective::SquaredLoss)
+            .metric(Metric::Rmse)
             .n_trees(n_trees as u32)
             .learning_rate(0.1)
             .build()

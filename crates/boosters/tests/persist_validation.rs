@@ -2,7 +2,7 @@
 
 use std::io::Cursor;
 
-use boosters::model::{GBDTModel, ModelMeta};
+use boosters::model::{GBDTModel, ModelMeta, OutputTransform};
 use boosters::persist::{JsonWriteOptions, Model, ReadError, SerializableModel};
 use boosters::repr::gbdt::Forest;
 use serde_json::Value;
@@ -19,7 +19,11 @@ fn load_fixture_value() -> Value {
     let mut forest = Forest::for_regression().with_base_score(vec![0.0]);
     forest.push_tree(tree, 0);
 
-    let model = GBDTModel::from_forest(forest, ModelMeta::for_regression(1));
+    let model = GBDTModel::from_parts(
+        forest,
+        ModelMeta::for_regression(1),
+        OutputTransform::Identity,
+    );
 
     let mut buf = Vec::new();
     model

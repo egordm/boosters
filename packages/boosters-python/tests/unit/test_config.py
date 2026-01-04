@@ -103,9 +103,9 @@ class TestGBDTConfigCombinations:
         """Multiclass classification config works."""
         config = GBDTConfig(
             objective=Objective.softmax(n_classes=5),
-            metric=Metric.accuracy(),
+            metric=Metric.accuracy_at(threshold=0.5),
         )
-        assert config.objective.n_classes == 5  # type: ignore[attr-defined]
+        assert config.objective == Objective.softmax(n_classes=5)
 
     def test_leafwise_growth(self) -> None:
         """Leafwise growth strategy works."""
@@ -116,7 +116,7 @@ class TestGBDTConfigCombinations:
         """Linear leaves config works."""
         config = GBDTConfig(linear_leaves=True, linear_l2=0.1)
         assert config.linear_leaves is True
-        assert config.linear_l2 == 0.1
+        assert config.linear_l2 == pytest.approx(0.1)
 
 
 class TestGBLinearConfigCombinations:
@@ -125,5 +125,5 @@ class TestGBLinearConfigCombinations:
     def test_elastic_net_style(self) -> None:
         """Elastic net style regularization works."""
         config = GBLinearConfig(l1=0.3, l2=0.7)
-        assert config.l1 == 0.3
-        assert config.l2 == 0.7
+        assert config.l1 == pytest.approx(0.3)
+        assert config.l2 == pytest.approx(0.7)

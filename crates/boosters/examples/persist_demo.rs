@@ -29,7 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .n_trees(10)
         .learning_rate(0.1)
         .growth_strategy(GrowthStrategy::DepthWise { max_depth: 3 })
-        .objective(Objective::squared())
+        .objective(Objective::SquaredLoss)
         .build()?;
 
     let model = GBDTModel::train(&dataset, None, config, 1).expect("Training failed");

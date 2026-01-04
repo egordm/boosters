@@ -9,117 +9,11 @@
 use super::schema::{
     CategoriesSchema, FeatureTypeSchema, ForestSchema, GBDTModelSchema, GBLinearModelSchema,
     LeafValuesSchema, LinearCoefficientsSchema, LinearWeightsSchema, ModelMetaSchema,
-    ObjectiveSchema, OutputTransformSchema, TaskKindSchema, TreeSchema,
+    TreeSchema,
 };
-use crate::model::{FeatureType, GBDTModel, GBLinearModel, ModelMeta, OutputTransform, TaskKind};
+use crate::model::{FeatureType, GBDTModel, GBLinearModel, ModelMeta};
 use crate::repr::gbdt::{Forest, ScalarLeaf, Tree};
 use crate::repr::gblinear::LinearModel;
-use crate::training::ObjectiveFn;
-
-// =============================================================================
-// Objective conversions (schema <-> runtime)
-// =============================================================================
-
-impl From<&crate::training::Objective> for ObjectiveSchema {
-    fn from(obj: &crate::training::Objective) -> Self {
-        match obj {
-            crate::training::Objective::SquaredLoss(_) => Self::SquaredLoss,
-            crate::training::Objective::AbsoluteLoss(_) => Self::AbsoluteLoss,
-            crate::training::Objective::LogisticLoss(_) => Self::LogisticLoss,
-            crate::training::Objective::HingeLoss(_) => Self::HingeLoss,
-            crate::training::Objective::SoftmaxLoss(inner) => Self::SoftmaxLoss {
-                n_classes: inner.n_classes,
-            },
-            crate::training::Objective::PinballLoss(inner) => Self::PinballLoss {
-                alphas: inner.alphas.iter().map(|&a| a as f64).collect(),
-            },
-            crate::training::Objective::PseudoHuberLoss(inner) => Self::PseudoHuberLoss {
-                delta: inner.delta as f64,
-            },
-            crate::training::Objective::PoissonLoss(_) => Self::PoissonLoss,
-            crate::training::Objective::Custom(inner) => Self::Custom {
-                name: inner.name().to_string(),
-            },
-        }
-    }
-}
-
-impl TryFrom<ObjectiveSchema> for crate::training::Objective {
-    type Error = super::error::ReadError;
-
-    fn try_from(schema: ObjectiveSchema) -> Result<Self, Self::Error> {
-        Ok(match schema {
-            ObjectiveSchema::SquaredLoss => Self::squared(),
-            ObjectiveSchema::AbsoluteLoss => Self::absolute(),
-            ObjectiveSchema::LogisticLoss => Self::logistic(),
-            ObjectiveSchema::HingeLoss => Self::hinge(),
-            ObjectiveSchema::SoftmaxLoss { n_classes } => Self::softmax(n_classes),
-            ObjectiveSchema::PinballLoss { alphas } => {
-                Self::multi_quantile(alphas.into_iter().map(|a| a as f32).collect())
-            }
-            ObjectiveSchema::PseudoHuberLoss { delta } => Self::pseudo_huber(delta as f32),
-            ObjectiveSchema::PoissonLoss => Self::poisson(),
-            ObjectiveSchema::Custom { name } => {
-                return Err(super::error::ReadError::Validation(format!(
-                    "cannot deserialize custom objective: {name}"
-                )));
-            }
-        })
-    }
-}
-
-// =============================================================================
-// OutputTransform conversions
-// =============================================================================
-
-impl From<OutputTransform> for OutputTransformSchema {
-    fn from(t: OutputTransform) -> Self {
-        match t {
-            OutputTransform::Identity => OutputTransformSchema::Identity,
-            OutputTransform::Sigmoid => OutputTransformSchema::Sigmoid,
-            OutputTransform::Softmax => OutputTransformSchema::Softmax,
-        }
-    }
-}
-
-impl From<OutputTransformSchema> for OutputTransform {
-    fn from(s: OutputTransformSchema) -> Self {
-        match s {
-            OutputTransformSchema::Identity => OutputTransform::Identity,
-            OutputTransformSchema::Sigmoid => OutputTransform::Sigmoid,
-            OutputTransformSchema::Softmax => OutputTransform::Softmax,
-        }
-    }
-}
-
-// =============================================================================
-// TaskKind conversions
-// =============================================================================
-
-impl From<TaskKind> for TaskKindSchema {
-    fn from(task: TaskKind) -> Self {
-        match task {
-            TaskKind::Regression => TaskKindSchema::Regression,
-            TaskKind::BinaryClassification => TaskKindSchema::BinaryClassification,
-            TaskKind::MulticlassClassification { .. } => TaskKindSchema::MulticlassClassification,
-            TaskKind::Ranking => TaskKindSchema::Ranking,
-        }
-    }
-}
-
-impl From<TaskKindSchema> for TaskKind {
-    fn from(task: TaskKindSchema) -> Self {
-        match task {
-            TaskKindSchema::Regression => TaskKind::Regression,
-            TaskKindSchema::BinaryClassification => TaskKind::BinaryClassification,
-            // num_classes will be filled from ModelMetaSchema.num_classes
-            TaskKindSchema::MulticlassClassification => {
-                TaskKind::MulticlassClassification { n_classes: 0 }
-            }
-            TaskKindSchema::Ranking => TaskKind::Ranking,
-        }
-    }
-}
 
 // =============================================================================
 // FeatureType conversions
@@ -149,15 +43,9 @@ impl From<FeatureTypeSchema> for FeatureType {
 
 impl From<&ModelMeta> for ModelMetaSchema {
     fn from(meta: &ModelMeta) -> Self {
-        let num_classes = match meta.task {
-            TaskKind::MulticlassClassification { n_classes } => Some(n_classes),
-            _ => None,
-        };
-
         ModelMetaSchema {
-            task: meta.task.into(),
             num_features: meta.n_features,
-            num_classes,
+            num_groups: meta.n_groups,
             feature_names: meta.feature_names.clone(),
             feature_types: meta
                 .feature_types
@@ -170,17 +58,9 @@ impl From<&ModelMeta> for ModelMetaSchema {
 
 impl From<ModelMetaSchema> for ModelMeta {
     fn from(schema: ModelMetaSchema) -> Self {
-        let task = match schema.task {
-            TaskKindSchema::MulticlassClassification => TaskKind::MulticlassClassification {
-                n_classes: schema.num_classes.unwrap_or(0),
-            },
-            other => other.into(),
-        };
-
         ModelMeta {
-            task,
             n_features: schema.num_features,
-            n_groups: task.n_groups(),
+            n_groups: schema.num_groups,
             feature_names: schema.feature_names,
             feature_types: schema
                 .feature_types
@@ -831,14 +711,12 @@ mod roundtrip_tests {
 impl From<&GBDTModel> for GBDTModelSchema {
     fn from(model: &GBDTModel) -> Self {
         let mut meta = ModelMetaSchema::from(model.meta());
-        // Store objective name for debugging
-        meta.objective_name = Some(model.objective().name().to_string());
+        meta.objective_name = None;
 
         GBDTModelSchema {
             meta,
             forest: ForestSchema::from(model.forest()),
-            output_transform: Some(OutputTransformSchema::from(model.output_transform())),
-            objective: Some(ObjectiveSchema::from(model.objective())),
+            output_transform: model.output_transform(),
         }
     }
 }
@@ -853,42 +731,7 @@ impl TryFrom<GBDTModelSchema> for GBDTModel {
         // Fill base_scores from forest
         meta.base_scores = forest.base_score().to_vec();
 
-        // Get output_transform (prefer new field, fallback to deriving from objective)
-        let output_transform = match schema.output_transform {
-            Some(ot) => OutputTransform::from(ot),
-            None => {
-                // Legacy: derive from objective
-                if let Some(obj_schema) = &schema.objective {
-                    let objective = crate::training::Objective::try_from(obj_schema.clone())?;
-                    objective.output_transform()
-                } else {
-                    // Default to Identity if neither is present
-                    OutputTransform::Identity
-                }
-            }
-        };
-
-        // Get objective (for training compatibility)
-        let objective = match schema.objective {
-            Some(obj_schema) => crate::training::Objective::try_from(obj_schema)?,
-            None => {
-                // Default objective based on task
-                match meta.task {
-                    TaskKind::BinaryClassification => crate::training::Objective::logistic(),
-                    TaskKind::MulticlassClassification { n_classes } => {
-                        crate::training::Objective::softmax(n_classes)
-                    }
-                    _ => crate::training::Objective::squared(),
-                }
-            }
-        };
-
-        Ok(GBDTModel::from_parts_with_transform(
-            forest,
-            meta,
-            output_transform,
-            objective,
-        ))
+        Ok(GBDTModel::from_parts(forest, meta, schema.output_transform))
     }
 }
 
@@ -924,15 +767,13 @@ impl From<LinearWeightsSchema> for LinearModel {
 impl From<&GBLinearModel> for GBLinearModelSchema {
     fn from(model: &GBLinearModel) -> Self {
         let mut meta = ModelMetaSchema::from(model.meta());
-        // Store objective name for debugging
-        meta.objective_name = Some(model.objective().name().to_string());
+        meta.objective_name = None;
 
         GBLinearModelSchema {
             meta,
             weights: LinearWeightsSchema::from(model.linear()),
             base_score: model.meta().base_scores.iter().map(|&s| s as f64).collect(),
-            output_transform: Some(OutputTransformSchema::from(*model.output_transform())),
-            objective: Some(ObjectiveSchema::from(model.objective())),
+            output_transform: model.output_transform(),
         }
     }
 }
@@ -947,76 +788,16 @@ impl TryFrom<GBLinearModelSchema> for GBLinearModel {
         // Fill base_scores from schema
         meta.base_scores = schema.base_score.iter().map(|&s| s as f32).collect();
 
-        // Get output_transform (prefer new field, fallback to deriving from objective)
-        let output_transform = match schema.output_transform {
-            Some(ot) => OutputTransform::from(ot),
-            None => {
-                // Legacy: derive from objective
-                if let Some(obj_schema) = &schema.objective {
-                    let objective = crate::training::Objective::try_from(obj_schema.clone())?;
-                    objective.output_transform()
-                } else {
-                    OutputTransform::Identity
-                }
-            }
-        };
-
-        // Get objective (for training compatibility)
-        let objective = match schema.objective {
-            Some(obj_schema) => crate::training::Objective::try_from(obj_schema)?,
-            None => {
-                // Default objective based on task
-                match meta.task {
-                    TaskKind::BinaryClassification => crate::training::Objective::logistic(),
-                    TaskKind::MulticlassClassification { n_classes } => {
-                        crate::training::Objective::softmax(n_classes)
-                    }
-                    _ => crate::training::Objective::squared(),
-                }
-            }
-        };
-
-        Ok(GBLinearModel::from_parts_with_transform(
-            linear,
-            meta,
-            objective,
-            output_transform,
-        ))
+        Ok(GBLinearModel::from_parts(linear, meta, schema.output_transform))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::OutputTransform;
     use crate::repr::gbdt::tree_view::TreeView;
     use crate::scalar_tree;
-    use crate::training::ObjectiveFn;
-
-    #[test]
-    fn task_kind_roundtrip() {
-        let tasks = [
-            TaskKind::Regression,
-            TaskKind::BinaryClassification,
-            TaskKind::MulticlassClassification { n_classes: 5 },
-            TaskKind::Ranking,
-        ];
-
-        for task in tasks {
-            let schema: TaskKindSchema = task.into();
-            let restored: TaskKind = schema.into();
-
-            match (task, restored) {
-                (TaskKind::Regression, TaskKind::Regression) => {}
-                (TaskKind::BinaryClassification, TaskKind::BinaryClassification) => {}
-                (
-                    TaskKind::MulticlassClassification { .. },
-                    TaskKind::MulticlassClassification { .. },
-                ) => {}
-                (TaskKind::Ranking, TaskKind::Ranking) => {}
-                _ => panic!("Task kind mismatch: {:?} vs {:?}", task, restored),
-            }
-        }
-    }
 
     #[test]
     fn model_meta_roundtrip() {
@@ -1079,12 +860,12 @@ mod tests {
         forest.push_tree(tree, 0);
 
         let meta = ModelMeta::for_binary_classification(2);
-        let model = GBDTModel::from_parts(forest, meta, crate::training::Objective::logistic());
+        let model = GBDTModel::from_parts(forest, meta, OutputTransform::Sigmoid);
 
         let schema = GBDTModelSchema::from(&model);
         let restored = GBDTModel::try_from(schema).unwrap();
         assert_eq!(restored.forest().n_trees(), 1);
-        assert_eq!(restored.objective().name(), "logistic");
+        assert_eq!(restored.output_transform(), OutputTransform::Sigmoid);
     }
 
     #[test]
@@ -1110,12 +891,12 @@ mod tests {
         let weights = array![[0.5], [0.3], [0.1]];
         let linear = LinearModel::new(weights);
         let meta = ModelMeta::for_binary_classification(2);
-        let model = GBLinearModel::from_parts(linear, meta, crate::training::Objective::logistic());
+        let model = GBLinearModel::from_parts(linear, meta, OutputTransform::Sigmoid);
 
         let schema = GBLinearModelSchema::from(&model);
         let restored = GBLinearModel::try_from(schema).unwrap();
         assert_eq!(restored.linear().n_features(), 2);
-        assert_eq!(restored.objective().name(), "logistic");
+        assert_eq!(restored.output_transform(), OutputTransform::Sigmoid);
     }
 
     #[test]

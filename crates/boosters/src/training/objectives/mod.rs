@@ -19,34 +19,29 @@
 //!
 //! # Available Objectives
 //!
-//! ## Regression
-//! - [`SquaredLoss`]: Standard squared error (L2 loss)
-//! - [`AbsoluteLoss`]: Mean absolute error (L1 loss)
-//! - [`PinballLoss`]: Pinball loss for quantile regression
-//! - [`PseudoHuberLoss`]: Robust regression with configurable delta
-//! - [`PoissonLoss`]: Poisson regression for count data
-//!
-//! ## Classification
-//! - [`LogisticLoss`]: Binary classification (log loss / cross-entropy)
-//! - [`HingeLoss`]: SVM-style binary classification
-//! - [`SoftmaxLoss`]: Multiclass classification (softmax cross-entropy)
-//!
-//! ## Ranking
-//! - [`LambdaRankLoss`]: LambdaMART for learning to rank (NDCG optimization)
+//! Configure objectives via the [`Objective`] enum:
+//! - Regression: [`Objective::SquaredLoss`], [`Objective::AbsoluteLoss`],
+//!   [`Objective::PinballLoss`], [`Objective::PseudoHuberLoss`], [`Objective::PoissonLoss`]
+//! - Classification: [`Objective::LogisticLoss`], [`Objective::HingeLoss`],
+//!   [`Objective::SoftmaxLoss`]
 
 mod classification;
 mod regression;
 
-pub use classification::{HingeLoss, LambdaRankLoss, LogisticLoss, SoftmaxLoss};
-pub use regression::{AbsoluteLoss, PinballLoss, PoissonLoss, PseudoHuberLoss, SquaredLoss};
+use classification::{
+    compute_hinge_base_score, compute_hinge_gradients_into, compute_logistic_base_score,
+    compute_logistic_gradients_into, compute_softmax_base_score, compute_softmax_gradients_into,
+};
+use regression::{
+    compute_absolute_base_score, compute_absolute_gradients_into, compute_pinball_base_score,
+    compute_pinball_gradients_into, compute_poisson_base_score, compute_poisson_gradients_into,
+    compute_pseudo_huber_base_score, compute_pseudo_huber_gradients_into,
+    compute_squared_base_score, compute_squared_gradients_into,
+};
 
 use crate::data::{TargetsView, WeightsView};
-use crate::inference::PredictionKind;
 use crate::training::GradsTuple;
 use ndarray::{ArrayView2, ArrayViewMut2};
-
-// Re-export TaskKind from model module for unified usage
-pub use crate::model::TaskKind;
 
 // =============================================================================
 // Custom Objective (boxed closures)
@@ -69,7 +64,7 @@ pub type BaseScoreFn = Box<dyn Fn(TargetsView<'_>, WeightsView<'_>) -> Vec<f32> 
 /// A user-defined objective function using boxed closures.
 ///
 /// This allows users to define custom objectives without implementing
-/// the `ObjectiveFn` trait. All behavior is specified via closures.
+/// a trait. All behavior is specified via closures.
 ///
 /// # Example
 ///
@@ -117,14 +112,13 @@ impl std::fmt::Debug for CustomObjective {
 }
 
 // CustomObjective is not Clone due to boxed closures.
-// Use Arc<CustomObjective> for sharing.
 
-impl ObjectiveFn for CustomObjective {
-    fn n_outputs(&self) -> usize {
+impl CustomObjective {
+    pub fn n_outputs(&self) -> usize {
         self.n_outputs
     }
 
-    fn compute_gradients_into(
+    pub fn compute_gradients_into(
         &self,
         predictions: ArrayView2<f32>,
         targets: TargetsView<'_>,
@@ -134,142 +128,21 @@ impl ObjectiveFn for CustomObjective {
         (self.compute_gradients_into)(predictions, targets, weights, grad_hess);
     }
 
-    fn compute_base_score(&self, targets: TargetsView<'_>, weights: WeightsView<'_>) -> Vec<f32> {
+    pub fn compute_base_score(
+        &self,
+        targets: TargetsView<'_>,
+        weights: WeightsView<'_>,
+    ) -> Vec<f32> {
         (self.compute_base_score)(targets, weights)
     }
 
-    fn task_kind(&self) -> TaskKind {
-        // Custom objectives don't have a fixed task kind; default to regression
-        TaskKind::Regression
+    pub fn output_transform(&self) -> crate::model::OutputTransform {
+        self.output_transform
     }
 
-    fn transform_predictions_inplace(&self, mut predictions: ArrayViewMut2<f32>) -> PredictionKind {
-        // Use the stored output transform
-        let n_outputs = predictions.nrows();
-        let n_rows = predictions.ncols();
-        // Convert to flat slice for transform_inplace
-        if let Some(slice) = predictions.as_slice_mut() {
-            // Note: transform_inplace expects row-major, but we have column-major
-            // For now, just apply the transform element-wise for Identity/Sigmoid
-            // Softmax would need special handling (not typical for custom objectives)
-            match self.output_transform {
-                crate::model::OutputTransform::Identity => {}
-                crate::model::OutputTransform::Sigmoid => {
-                    for x in slice.iter_mut() {
-                        *x = 1.0 / (1.0 + (-*x).exp());
-                    }
-                }
-                crate::model::OutputTransform::Softmax => {
-                    // For column-major multiclass, apply softmax per sample
-                    for col in 0..n_rows {
-                        let mut max = f32::NEG_INFINITY;
-                        for row in 0..n_outputs {
-                            max = max.max(predictions[[row, col]]);
-                        }
-                        let mut sum = 0.0f32;
-                        for row in 0..n_outputs {
-                            let e = (predictions[[row, col]] - max).exp();
-                            predictions[[row, col]] = e;
-                            sum += e;
-                        }
-                        for row in 0..n_outputs {
-                            predictions[[row, col]] /= sum;
-                        }
-                    }
-                }
-            }
-        }
-        PredictionKind::Probability
+    pub fn name(&self) -> &str {
+        &self.name
     }
-
-    fn name(&self) -> &'static str {
-        // We can't return &'static str from a String, so leak it (or use a static approach)
-        // For now, return a generic name; the actual name is available via CustomObjective.name
-        "custom"
-    }
-}
-
-// =============================================================================
-// Objective Trait
-// =============================================================================
-
-/// An objective (loss) function for training gradient boosted models.
-///
-/// Objectives compute gradients and hessians for optimization.
-///
-/// # Multi-Output Layout
-///
-/// All data is stored in **column-major** order:
-/// - `predictions`: `[n_outputs * n_rows]` - each output's predictions are contiguous
-/// - `targets`: `[n_targets * n_rows]` - each target's values are contiguous
-/// - `gradients/hessians`: `[n_outputs * n_rows]` - matching predictions layout
-///
-/// The relationship between `n_outputs` and `n_targets` depends on the objective:
-/// - SquaredLoss: `n_outputs == n_targets` (1:1 mapping)
-/// - PinballLoss: `n_outputs` quantiles, `n_targets` can be 1 (shared) or `n_outputs`
-/// - SoftmaxLoss: `n_outputs` = n_classes, `n_targets` = 1 (class indices)
-///
-/// # Weighted Training
-///
-/// Pass `None` for `weights` for unweighted training.
-/// When `Some`, the array view must have length `n_rows`.
-pub trait ObjectiveFn: Send + Sync {
-    /// Number of outputs (predictions per sample).
-    ///
-    /// For most objectives this is 1 (single-output).
-    /// For multiclass (SoftmaxLoss) this is n_classes.
-    /// For multi-quantile this is the number of quantiles.
-    fn n_outputs(&self) -> usize;
-
-    /// Compute gradients and hessians for the given predictions.
-    ///
-    /// # Arguments
-    ///
-    /// * `n_rows` - Number of samples
-    /// * `n_outputs` - Number of outputs (predictions per sample)
-    /// * `predictions` - Model predictions, column-major `[n_outputs * n_rows]`
-    /// * `targets` - Ground truth labels, column-major `[n_targets * n_rows]`
-    /// * `weights` - Sample weights (use `WeightsView::uniform(n)` for unweighted)
-    /// * `grad_hess` - Interleaved (grad, hess) pairs, column-major `[n_outputs * n_rows]`
-    fn compute_gradients_into(
-        &self,
-        predictions: ArrayView2<f32>,
-        targets: TargetsView<'_>,
-        weights: WeightsView<'_>,
-        grad_hess: ArrayViewMut2<GradsTuple>,
-    );
-
-    /// Compute the initial base score (bias) from targets.
-    ///
-    /// This is the optimal constant prediction before any trees are added.
-    /// Returns a vector of length `n_outputs()`.
-    ///
-    /// # Arguments
-    ///
-    /// * `targets` - Ground truth labels
-    /// * `weights` - Sample weights (use `WeightsView::uniform(n)` for unweighted)
-    fn compute_base_score(&self, targets: TargetsView<'_>, weights: WeightsView<'_>) -> Vec<f32>;
-
-    // =========================================================================
-    // RFC 0028: Semantics + Prediction Transforms
-    // =========================================================================
-
-    /// High-level task kind implied by this objective.
-    fn task_kind(&self) -> TaskKind;
-
-    /// Transform raw predictions in-place (column-major layout).
-    ///
-    /// Converts margins/logits to semantic predictions (probabilities, values, etc.).
-    /// Returns the semantic kind of the resulting values.
-    ///
-    /// Layout: `predictions[output * n_rows + row]`
-    ///
-    /// Most regression objectives are no-ops. Classification objectives apply
-    /// sigmoid (binary) or softmax (multiclass).
-    fn transform_predictions_inplace(&self, predictions: ArrayViewMut2<f32>) -> PredictionKind;
-
-    /// Name of the objective (for logging).
-    fn name(&self) -> &'static str;
 }
 
 // =============================================================================
@@ -279,11 +152,7 @@ pub trait ObjectiveFn: Send + Sync {
 /// Objective function enum for easy configuration.
 ///
 /// This enum wraps all available objective types and provides a unified
-/// interface for trainers. It implements `ObjectiveFn` by delegating to the
-/// underlying concrete type.
-///
-/// Each variant stores a pre-constructed instance of the underlying loss type,
-/// avoiding allocation on each method call (newtype pattern).
+/// interface for trainers.
 ///
 /// # Example
 ///
@@ -291,98 +160,114 @@ pub trait ObjectiveFn: Send + Sync {
 /// use boosters::training::{GBDTTrainer, Objective};
 ///
 /// let trainer = GBDTTrainer::builder()
-///     .objective(Objective::logistic())
+///     .objective(Objective::LogisticLoss)
 ///     .build()
 ///     .unwrap();
 /// ```
-#[derive(Clone)]
+#[derive(Debug)]
 pub enum Objective {
     /// Squared error loss (L2) for regression.
-    SquaredLoss(SquaredLoss),
+    SquaredLoss,
     /// Absolute error loss (L1) for robust regression.
-    AbsoluteLoss(AbsoluteLoss),
+    AbsoluteLoss,
     /// Logistic loss for binary classification.
-    LogisticLoss(LogisticLoss),
+    LogisticLoss,
     /// Hinge loss for SVM-style classification.
-    HingeLoss(HingeLoss),
+    HingeLoss,
     /// Softmax loss for multiclass classification.
-    SoftmaxLoss(SoftmaxLoss),
+    SoftmaxLoss { n_classes: usize },
     /// Pinball loss for quantile regression (single or multi-quantile).
-    PinballLoss(PinballLoss),
+    PinballLoss {
+        /// Quantile levels for each output, each in (0, 1).
+        alphas: Vec<f32>,
+    },
     /// Pseudo-Huber loss for robust regression.
-    PseudoHuberLoss(PseudoHuberLoss),
+    PseudoHuberLoss { delta: f32 },
     /// Poisson loss for count data regression.
-    PoissonLoss(PoissonLoss),
+    PoissonLoss,
     /// Custom objective (user-provided implementation).
-    Custom(std::sync::Arc<dyn ObjectiveFn>),
+    Custom(CustomObjective),
 }
 
-impl std::fmt::Debug for Objective {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Objective {
+    pub fn n_outputs(&self) -> usize {
         match self {
-            Self::SquaredLoss(inner) => f.debug_tuple("SquaredLoss").field(inner).finish(),
-            Self::AbsoluteLoss(inner) => f.debug_tuple("AbsoluteLoss").field(inner).finish(),
-            Self::LogisticLoss(inner) => f.debug_tuple("LogisticLoss").field(inner).finish(),
-            Self::HingeLoss(inner) => f.debug_tuple("HingeLoss").field(inner).finish(),
-            Self::SoftmaxLoss(inner) => f.debug_tuple("SoftmaxLoss").field(inner).finish(),
-            Self::PinballLoss(inner) => f.debug_tuple("PinballLoss").field(inner).finish(),
-            Self::PseudoHuberLoss(inner) => f.debug_tuple("PseudoHuberLoss").field(inner).finish(),
-            Self::PoissonLoss(inner) => f.debug_tuple("PoissonLoss").field(inner).finish(),
-            Self::Custom(_) => f.debug_tuple("Custom").field(&"<dyn ObjectiveFn>").finish(),
+            Self::SquaredLoss => 1,
+            Self::AbsoluteLoss => 1,
+            Self::LogisticLoss => 1,
+            Self::HingeLoss => 1,
+            Self::SoftmaxLoss { n_classes } => *n_classes,
+            Self::PinballLoss { alphas } => alphas.len(),
+            Self::PseudoHuberLoss { .. } => 1,
+            Self::PoissonLoss => 1,
+            Self::Custom(inner) => inner.n_outputs(),
         }
     }
-}
 
-/// Convenience constructors for common objectives.
-impl Objective {
-    /// Squared error (L2) loss for regression.
-    pub fn squared() -> Self {
-        Self::SquaredLoss(SquaredLoss)
+    pub fn compute_gradients_into(
+        &self,
+        predictions: ArrayView2<f32>,
+        targets: TargetsView<'_>,
+        weights: WeightsView<'_>,
+        grad_hess: ArrayViewMut2<GradsTuple>,
+    ) {
+        match self {
+            Self::SquaredLoss => {
+                compute_squared_gradients_into(predictions, targets, weights, grad_hess)
+            }
+            Self::AbsoluteLoss => {
+                compute_absolute_gradients_into(predictions, targets, weights, grad_hess)
+            }
+            Self::LogisticLoss => {
+                compute_logistic_gradients_into(predictions, targets, weights, grad_hess)
+            }
+            Self::HingeLoss => compute_hinge_gradients_into(predictions, targets, weights, grad_hess),
+            Self::SoftmaxLoss { n_classes } => {
+                compute_softmax_gradients_into(predictions, targets, weights, *n_classes, grad_hess)
+            }
+            Self::PinballLoss { alphas } => {
+                compute_pinball_gradients_into(predictions, targets, weights, alphas, grad_hess)
+            }
+            Self::PseudoHuberLoss { delta } => {
+                compute_pseudo_huber_gradients_into(
+                    predictions,
+                    targets,
+                    weights,
+                    *delta,
+                    grad_hess,
+                )
+            }
+            Self::PoissonLoss => compute_poisson_gradients_into(predictions, targets, weights, grad_hess),
+            Self::Custom(inner) => inner.compute_gradients_into(predictions, targets, weights, grad_hess),
+        }
     }
 
-    /// Absolute error (L1) loss for robust regression.
-    pub fn absolute() -> Self {
-        Self::AbsoluteLoss(AbsoluteLoss)
+    pub fn compute_base_score(&self, targets: TargetsView<'_>, weights: WeightsView<'_>) -> Vec<f32> {
+        match self {
+            Self::SquaredLoss => compute_squared_base_score(targets, weights),
+            Self::AbsoluteLoss => compute_absolute_base_score(targets, weights),
+            Self::LogisticLoss => compute_logistic_base_score(targets, weights),
+            Self::HingeLoss => compute_hinge_base_score(targets, weights),
+            Self::SoftmaxLoss { n_classes } => compute_softmax_base_score(targets, weights, *n_classes),
+            Self::PinballLoss { alphas } => compute_pinball_base_score(targets, weights, alphas),
+            Self::PseudoHuberLoss { delta } => compute_pseudo_huber_base_score(targets, weights, *delta),
+            Self::PoissonLoss => compute_poisson_base_score(targets, weights),
+            Self::Custom(inner) => inner.compute_base_score(targets, weights),
+        }
     }
 
-    /// Binary logistic loss for classification.
-    pub fn logistic() -> Self {
-        Self::LogisticLoss(LogisticLoss)
-    }
-
-    /// Hinge loss for SVM-style classification.
-    pub fn hinge() -> Self {
-        Self::HingeLoss(HingeLoss)
-    }
-
-    /// Softmax loss for multiclass classification.
-    pub fn softmax(n_classes: usize) -> Self {
-        Self::SoftmaxLoss(SoftmaxLoss::new(n_classes))
-    }
-
-    /// Pinball loss for single quantile regression.
-    pub fn quantile(alpha: f32) -> Self {
-        Self::PinballLoss(PinballLoss::new(alpha))
-    }
-
-    /// Pinball loss for multiple quantile regression.
-    pub fn multi_quantile(alphas: Vec<f32>) -> Self {
-        Self::PinballLoss(PinballLoss::with_quantiles(alphas))
-    }
-
-    /// Pseudo-Huber loss for robust regression.
-    pub fn pseudo_huber(delta: f32) -> Self {
-        Self::PseudoHuberLoss(PseudoHuberLoss::new(delta))
-    }
-
-    /// Poisson loss for count data regression.
-    pub fn poisson() -> Self {
-        Self::PoissonLoss(PoissonLoss)
-    }
-
-    /// Custom objective with user-provided implementation.
-    pub fn custom<O: ObjectiveFn + 'static>(objective: O) -> Self {
-        Self::Custom(std::sync::Arc::new(objective))
+    pub fn name(&self) -> &str {
+        match self {
+            Self::SquaredLoss => "squared",
+            Self::AbsoluteLoss => "absolute",
+            Self::LogisticLoss => "logistic",
+            Self::HingeLoss => "hinge",
+            Self::SoftmaxLoss { .. } => "softmax",
+            Self::PinballLoss { .. } => "quantile",
+            Self::PseudoHuberLoss { .. } => "pseudo_huber",
+            Self::PoissonLoss => "poisson",
+            Self::Custom(inner) => inner.name(),
+        }
     }
 
     /// Returns the output transform for this objective.
@@ -393,211 +278,30 @@ impl Objective {
         use crate::model::OutputTransform;
         match self {
             // Regression: identity (raw values)
-            Self::SquaredLoss(_)
-            | Self::AbsoluteLoss(_)
-            | Self::PinballLoss(_)
-            | Self::PseudoHuberLoss(_)
-            | Self::PoissonLoss(_) => OutputTransform::Identity,
+            Self::SquaredLoss
+            | Self::AbsoluteLoss
+            | Self::PinballLoss { .. }
+            | Self::PseudoHuberLoss { .. }
+            | Self::PoissonLoss => OutputTransform::Identity,
 
             // Binary classification: sigmoid
-            Self::LogisticLoss(_) => OutputTransform::Sigmoid,
+            Self::LogisticLoss => OutputTransform::Sigmoid,
 
             // Hinge: identity (margins)
-            Self::HingeLoss(_) => OutputTransform::Identity,
+            Self::HingeLoss => OutputTransform::Identity,
 
             // Multiclass: softmax
-            Self::SoftmaxLoss(_) => OutputTransform::Softmax,
+            Self::SoftmaxLoss { .. } => OutputTransform::Softmax,
 
-            // Custom: we don't know, default to identity
-            // (custom objectives should set their own transform)
-            Self::Custom(_) => OutputTransform::Identity,
+            // Custom: delegate to the objective implementation
+            Self::Custom(inner) => inner.output_transform(),
         }
     }
 }
 
 impl Default for Objective {
     fn default() -> Self {
-        Self::SquaredLoss(SquaredLoss)
-    }
-}
-
-impl ObjectiveFn for Objective {
-    fn n_outputs(&self) -> usize {
-        match self {
-            Self::SquaredLoss(inner) => inner.n_outputs(),
-            Self::AbsoluteLoss(inner) => inner.n_outputs(),
-            Self::LogisticLoss(inner) => inner.n_outputs(),
-            Self::HingeLoss(inner) => inner.n_outputs(),
-            Self::SoftmaxLoss(inner) => inner.n_outputs(),
-            Self::PinballLoss(inner) => inner.n_outputs(),
-            Self::PseudoHuberLoss(inner) => inner.n_outputs(),
-            Self::PoissonLoss(inner) => inner.n_outputs(),
-            Self::Custom(inner) => inner.n_outputs(),
-        }
-    }
-
-    fn compute_gradients_into(
-        &self,
-        predictions: ArrayView2<f32>,
-        targets: TargetsView<'_>,
-        weights: WeightsView<'_>,
-        grad_hess: ArrayViewMut2<GradsTuple>,
-    ) {
-        match self {
-            Self::SquaredLoss(inner) => {
-                inner.compute_gradients_into(predictions, targets, weights, grad_hess)
-            }
-            Self::AbsoluteLoss(inner) => {
-                inner.compute_gradients_into(predictions, targets, weights, grad_hess)
-            }
-            Self::LogisticLoss(inner) => {
-                inner.compute_gradients_into(predictions, targets, weights, grad_hess)
-            }
-            Self::HingeLoss(inner) => {
-                inner.compute_gradients_into(predictions, targets, weights, grad_hess)
-            }
-            Self::SoftmaxLoss(inner) => {
-                inner.compute_gradients_into(predictions, targets, weights, grad_hess)
-            }
-            Self::PinballLoss(inner) => {
-                inner.compute_gradients_into(predictions, targets, weights, grad_hess)
-            }
-            Self::PseudoHuberLoss(inner) => {
-                inner.compute_gradients_into(predictions, targets, weights, grad_hess)
-            }
-            Self::PoissonLoss(inner) => {
-                inner.compute_gradients_into(predictions, targets, weights, grad_hess)
-            }
-            Self::Custom(inner) => {
-                inner.compute_gradients_into(predictions, targets, weights, grad_hess)
-            }
-        }
-    }
-
-    fn compute_base_score(&self, targets: TargetsView<'_>, weights: WeightsView<'_>) -> Vec<f32> {
-        match self {
-            Self::SquaredLoss(inner) => inner.compute_base_score(targets, weights),
-            Self::AbsoluteLoss(inner) => inner.compute_base_score(targets, weights),
-            Self::LogisticLoss(inner) => inner.compute_base_score(targets, weights),
-            Self::HingeLoss(inner) => inner.compute_base_score(targets, weights),
-            Self::SoftmaxLoss(inner) => inner.compute_base_score(targets, weights),
-            Self::PinballLoss(inner) => inner.compute_base_score(targets, weights),
-            Self::PseudoHuberLoss(inner) => inner.compute_base_score(targets, weights),
-            Self::PoissonLoss(inner) => inner.compute_base_score(targets, weights),
-            Self::Custom(inner) => inner.compute_base_score(targets, weights),
-        }
-    }
-
-    fn name(&self) -> &'static str {
-        match self {
-            Self::SquaredLoss(inner) => inner.name(),
-            Self::AbsoluteLoss(inner) => inner.name(),
-            Self::LogisticLoss(inner) => inner.name(),
-            Self::HingeLoss(inner) => inner.name(),
-            Self::SoftmaxLoss(inner) => inner.name(),
-            Self::PinballLoss(inner) => inner.name(),
-            Self::PseudoHuberLoss(inner) => inner.name(),
-            Self::PoissonLoss(inner) => inner.name(),
-            Self::Custom(inner) => inner.name(),
-        }
-    }
-
-    fn task_kind(&self) -> TaskKind {
-        match self {
-            Self::SquaredLoss(inner) => inner.task_kind(),
-            Self::AbsoluteLoss(inner) => inner.task_kind(),
-            Self::LogisticLoss(inner) => inner.task_kind(),
-            Self::HingeLoss(inner) => inner.task_kind(),
-            Self::SoftmaxLoss(inner) => inner.task_kind(),
-            Self::PinballLoss(inner) => inner.task_kind(),
-            Self::PseudoHuberLoss(inner) => inner.task_kind(),
-            Self::PoissonLoss(inner) => inner.task_kind(),
-            Self::Custom(inner) => inner.task_kind(),
-        }
-    }
-
-    fn transform_predictions_inplace(&self, predictions: ArrayViewMut2<f32>) -> PredictionKind {
-        match self {
-            Self::SquaredLoss(inner) => inner.transform_predictions_inplace(predictions),
-            Self::AbsoluteLoss(inner) => inner.transform_predictions_inplace(predictions),
-            Self::LogisticLoss(inner) => inner.transform_predictions_inplace(predictions),
-            Self::HingeLoss(inner) => inner.transform_predictions_inplace(predictions),
-            Self::SoftmaxLoss(inner) => inner.transform_predictions_inplace(predictions),
-            Self::PinballLoss(inner) => inner.transform_predictions_inplace(predictions),
-            Self::PseudoHuberLoss(inner) => inner.transform_predictions_inplace(predictions),
-            Self::PoissonLoss(inner) => inner.transform_predictions_inplace(predictions),
-            Self::Custom(inner) => inner.transform_predictions_inplace(predictions),
-        }
-    }
-}
-
-// =============================================================================
-// Default Metric Selection
-// =============================================================================
-
-use super::metrics::{
-    HuberMetric, LogLoss, MarginAccuracy, Metric, MulticlassLogLoss, PoissonDeviance,
-    QuantileMetric, Rmse,
-};
-
-/// Returns the default metric for a given objective.
-///
-/// This centralizes the mapping from loss functions to evaluation metrics,
-/// avoiding scattered task-kind branching across call sites.
-///
-/// # Examples
-///
-/// ```
-/// use boosters::training::{Objective, Metric, default_metric_for_objective};
-///
-/// // Regression: default to RMSE
-/// let metric = default_metric_for_objective(&Objective::squared());
-/// assert!(matches!(metric, Metric::Rmse(_)));
-///
-/// // Binary classification: default to LogLoss
-/// let metric = default_metric_for_objective(&Objective::logistic());
-/// assert!(matches!(metric, Metric::LogLoss(_)));
-///
-/// // Custom objectives get no metric
-/// let custom = Objective::custom(boosters::training::CustomObjective {
-///     name: "custom".into(),
-///     compute_gradients_into: Box::new(|_, _, _, _| {}),
-///     compute_base_score: Box::new(|_, _| vec![0.0]),
-///     output_transform: boosters::model::OutputTransform::Identity,
-///     n_outputs: 1,
-/// });
-/// let metric = default_metric_for_objective(&custom);
-/// assert!(matches!(metric, Metric::None));
-/// ```
-pub fn default_metric_for_objective(objective: &Objective) -> Metric {
-    match objective {
-        // Regression losses → RMSE (most common default)
-        Objective::SquaredLoss(_) | Objective::AbsoluteLoss(_) => Metric::Rmse(Rmse),
-
-        // Quantile regression → Quantile metric (pinball loss)
-        Objective::PinballLoss(inner) => {
-            Metric::Quantile(QuantileMetric::new(inner.alphas.clone()))
-        }
-
-        // Robust regression → Huber metric
-        Objective::PseudoHuberLoss(inner) => {
-            Metric::Huber(HuberMetric::new(inner.delta as f64))
-        }
-
-        // Poisson → Poisson deviance
-        Objective::PoissonLoss(_) => Metric::PoissonDeviance(PoissonDeviance),
-
-        // Binary classification → LogLoss
-        Objective::LogisticLoss(_) => Metric::LogLoss(LogLoss),
-
-        // Hinge loss → Margin accuracy (threshold=0)
-        Objective::HingeLoss(_) => Metric::MarginAccuracy(MarginAccuracy::default()),
-
-        // Multiclass → Multiclass LogLoss
-        Objective::SoftmaxLoss(_) => Metric::MulticlassLogLoss(MulticlassLogLoss),
-
-        // Custom objectives get no default metric
-        Objective::Custom(_) => Metric::None,
+        Self::SquaredLoss
     }
 }
 
@@ -627,7 +331,7 @@ mod tests {
 
     #[test]
     fn squared_loss_gradients() {
-        let obj = SquaredLoss;
+        let obj = Objective::SquaredLoss;
         let preds = Array2::from_shape_vec((1, 3), vec![1.0, 2.0, 3.0]).unwrap();
         let targets = make_targets(&[0.5, 2.5, 2.5]);
         let mut grad_hess = make_grad_hess_array(1, 3);
@@ -652,7 +356,7 @@ mod tests {
 
     #[test]
     fn weighted_squared_loss() {
-        let obj = SquaredLoss;
+        let obj = Objective::SquaredLoss;
         let preds = Array2::from_shape_vec((1, 2), vec![1.0, 2.0]).unwrap();
         let targets = make_targets(&[0.5, 2.5]);
         let weights = ndarray::array![2.0f32, 0.5];
@@ -676,7 +380,7 @@ mod tests {
 
     #[test]
     fn pinball_loss_median() {
-        let obj = PinballLoss::new(0.5);
+        let obj = Objective::PinballLoss { alphas: vec![0.5] };
         let preds = Array2::from_shape_vec((1, 3), vec![1.0, 2.0, 3.0]).unwrap();
         let targets = make_targets(&[0.5, 2.5, 2.5]);
         let mut grad_hess = make_grad_hess_array(1, 3);
@@ -699,18 +403,27 @@ mod tests {
         use crate::model::OutputTransform;
 
         // Regression objectives -> Identity
-        assert_eq!(Objective::squared().output_transform(), OutputTransform::Identity);
-        assert_eq!(Objective::absolute().output_transform(), OutputTransform::Identity);
-        assert_eq!(Objective::quantile(0.5).output_transform(), OutputTransform::Identity);
-        assert_eq!(Objective::pseudo_huber(1.0).output_transform(), OutputTransform::Identity);
-        assert_eq!(Objective::poisson().output_transform(), OutputTransform::Identity);
+        assert_eq!(Objective::SquaredLoss.output_transform(), OutputTransform::Identity);
+        assert_eq!(Objective::AbsoluteLoss.output_transform(), OutputTransform::Identity);
+        assert_eq!(
+            Objective::PinballLoss { alphas: vec![0.5] }.output_transform(),
+            OutputTransform::Identity
+        );
+        assert_eq!(
+            Objective::PseudoHuberLoss { delta: 1.0 }.output_transform(),
+            OutputTransform::Identity
+        );
+        assert_eq!(Objective::PoissonLoss.output_transform(), OutputTransform::Identity);
 
         // Binary classification
-        assert_eq!(Objective::logistic().output_transform(), OutputTransform::Sigmoid);
-        assert_eq!(Objective::hinge().output_transform(), OutputTransform::Identity);
+        assert_eq!(Objective::LogisticLoss.output_transform(), OutputTransform::Sigmoid);
+        assert_eq!(Objective::HingeLoss.output_transform(), OutputTransform::Identity);
 
         // Multiclass
-        assert_eq!(Objective::softmax(3).output_transform(), OutputTransform::Softmax);
+        assert_eq!(
+            Objective::SoftmaxLoss { n_classes: 3 }.output_transform(),
+            OutputTransform::Softmax
+        );
     }
 
     #[test]
@@ -737,7 +450,7 @@ mod tests {
         };
 
         // Wrap in Objective enum
-        let obj = Objective::custom(custom);
+        let obj = Objective::Custom(custom);
 
         // Test that it works
         let preds = Array2::from_shape_vec((1, 3), vec![1.0, 2.0, 3.0]).unwrap();
@@ -757,69 +470,5 @@ mod tests {
         assert!((grad_hess[[0, 2]].grad - 0.5).abs() < 1e-6);
     }
 
-    #[test]
-    fn default_metric_for_all_objectives() {
-        use super::default_metric_for_objective;
-        use crate::model::OutputTransform;
-        use crate::training::metrics::Metric;
-
-        // Regression objectives → RMSE
-        assert!(matches!(
-            default_metric_for_objective(&Objective::squared()),
-            Metric::Rmse(_)
-        ));
-        assert!(matches!(
-            default_metric_for_objective(&Objective::absolute()),
-            Metric::Rmse(_)
-        ));
-
-        // Quantile → Quantile metric
-        assert!(matches!(
-            default_metric_for_objective(&Objective::quantile(0.5)),
-            Metric::Quantile(_)
-        ));
-
-        // Pseudo-Huber → Huber metric
-        assert!(matches!(
-            default_metric_for_objective(&Objective::pseudo_huber(1.0)),
-            Metric::Huber(_)
-        ));
-
-        // Poisson → Poisson deviance
-        assert!(matches!(
-            default_metric_for_objective(&Objective::poisson()),
-            Metric::PoissonDeviance(_)
-        ));
-
-        // Binary classification → LogLoss
-        assert!(matches!(
-            default_metric_for_objective(&Objective::logistic()),
-            Metric::LogLoss(_)
-        ));
-
-        // Hinge → MarginAccuracy
-        assert!(matches!(
-            default_metric_for_objective(&Objective::hinge()),
-            Metric::MarginAccuracy(_)
-        ));
-
-        // Multiclass → Multiclass LogLoss
-        assert!(matches!(
-            default_metric_for_objective(&Objective::softmax(3)),
-            Metric::MulticlassLogLoss(_)
-        ));
-
-        // Custom → None
-        let custom = CustomObjective {
-            name: "test".into(),
-            compute_gradients_into: Box::new(|_, _, _, _| {}),
-            compute_base_score: Box::new(|_, _| vec![0.0]),
-            output_transform: OutputTransform::Identity,
-            n_outputs: 1,
-        };
-        assert!(matches!(
-            default_metric_for_objective(&Objective::custom(custom)),
-            Metric::None
-        ));
-    }
+    
 }

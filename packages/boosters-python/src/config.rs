@@ -153,7 +153,7 @@ pub struct PyGBDTConfig {
     pub n_estimators: u32,
     /// Learning rate (step size shrinkage).
     #[pyo3(get)]
-    pub learning_rate: f64,
+    pub learning_rate: f32,
     /// Objective function.
     pub objective: PyObjective,
     /// Evaluation metric (optional).
@@ -176,16 +176,16 @@ pub struct PyGBDTConfig {
     // === Regularization ===
     /// L1 regularization on leaf weights.
     #[pyo3(get)]
-    pub l1: f64,
+    pub l1: f32,
     /// L2 regularization on leaf weights.
     #[pyo3(get)]
-    pub l2: f64,
+    pub l2: f32,
     /// Minimum gain required to make a split.
     #[pyo3(get)]
-    pub min_gain_to_split: f64,
+    pub min_gain_to_split: f32,
     /// Minimum sum of hessians required in a leaf.
     #[pyo3(get)]
-    pub min_child_weight: f64,
+    pub min_child_weight: f32,
     /// Minimum number of samples required in a leaf.
     #[pyo3(get)]
     pub min_samples_leaf: u32,
@@ -193,13 +193,13 @@ pub struct PyGBDTConfig {
     // === Sampling ===
     /// Row subsampling ratio per tree.
     #[pyo3(get)]
-    pub subsample: f64,
+    pub subsample: f32,
     /// Column subsampling ratio per tree.
     #[pyo3(get)]
-    pub colsample_bytree: f64,
+    pub colsample_bytree: f32,
     /// Column subsampling ratio per level.
     #[pyo3(get)]
-    pub colsample_bylevel: f64,
+    pub colsample_bylevel: f32,
 
     // === Linear leaves ===
     /// Enable linear models in leaves.
@@ -207,10 +207,10 @@ pub struct PyGBDTConfig {
     pub linear_leaves: bool,
     /// L2 regularization for linear coefficients.
     #[pyo3(get)]
-    pub linear_l2: f64,
+    pub linear_l2: f32,
     /// L1 regularization for linear coefficients.
     #[pyo3(get)]
-    pub linear_l1: f64,
+    pub linear_l1: f32,
     /// Maximum coordinate descent iterations for linear leaves.
     #[pyo3(get)]
     pub linear_max_iterations: u32,
@@ -222,7 +222,7 @@ pub struct PyGBDTConfig {
     pub linear_min_samples: u32,
     /// Threshold for pruning small coefficients.
     #[pyo3(get)]
-    pub linear_coefficient_threshold: f64,
+    pub linear_coefficient_threshold: f32,
     /// Maximum features in linear model per leaf.
     #[pyo3(get)]
     pub linear_max_features: u32,
@@ -237,14 +237,22 @@ pub struct PyGBDTConfig {
     /// Bundles sparse/one-hot features to reduce memory and speed up training.
     #[pyo3(get)]
     pub enable_bundling: bool,
-    /// Maximum allowed conflict rate for bundling (0.0-1.0). Default: 0.0001.
-    /// Higher values allow more aggressive bundling but may reduce accuracy.
+    /// Sparsity threshold (fraction of zeros to use sparse storage).
+    /// Features with density ≤ (1 - threshold) are considered sparse.
     #[pyo3(get)]
-    pub bundling_conflict_rate: f64,
-    /// Minimum sparsity for a feature to be bundled (0.0-1.0). Default: 0.9.
-    /// Features with fewer than this fraction of zeros are not bundled.
+    pub sparsity_threshold: f32,
+    /// Max cardinality to auto-detect as categorical.
+    /// Features with ≤ this many unique integer values may be treated as categorical.
     #[pyo3(get)]
-    pub bundling_min_sparsity: f64,
+    pub max_categorical_cardinality: u32,
+    /// Number of samples for computing bin boundaries (for large datasets).
+    #[pyo3(get)]
+    pub binning_sample_cnt: usize,
+
+    // === Resource control ===
+    /// Histogram cache size (number of slots). Default: 8.
+    #[pyo3(get)]
+    pub cache_size: usize,
 
     // === Training control ===
     /// Early stopping rounds (None = disabled).
@@ -289,8 +297,10 @@ impl PyGBDTConfig {
         linear_max_features = 10,
         max_bins = 256,
         enable_bundling = true,
-        bundling_conflict_rate = 0.0001,
-        bundling_min_sparsity = 0.9,
+        sparsity_threshold = 0.9,
+        max_categorical_cardinality = 0,
+        binning_sample_cnt = 200000,
+        cache_size = 8,
         early_stopping_rounds = None,
         seed = 42,
         verbosity = PyVerbosity::Silent
@@ -298,33 +308,35 @@ impl PyGBDTConfig {
     #[allow(clippy::too_many_arguments)]
     fn new(
         n_estimators: u32,
-        learning_rate: f64,
+        learning_rate: f32,
         #[gen_stub(override_type(type_repr = "Objective | None"))] objective: Option<PyObjective>,
         #[gen_stub(override_type(type_repr = "Metric | None"))] metric: Option<PyMetric>,
         growth_strategy: PyGrowthStrategy,
         max_depth: u32,
         n_leaves: u32,
         max_onehot_cats: u32,
-        l1: f64,
-        l2: f64,
-        min_gain_to_split: f64,
-        min_child_weight: f64,
+        l1: f32,
+        l2: f32,
+        min_gain_to_split: f32,
+        min_child_weight: f32,
         min_samples_leaf: u32,
-        subsample: f64,
-        colsample_bytree: f64,
-        colsample_bylevel: f64,
+        subsample: f32,
+        colsample_bytree: f32,
+        colsample_bylevel: f32,
         linear_leaves: bool,
-        linear_l2: f64,
-        linear_l1: f64,
+        linear_l2: f32,
+        linear_l1: f32,
         linear_max_iterations: u32,
         linear_tolerance: f64,
         linear_min_samples: u32,
-        linear_coefficient_threshold: f64,
+        linear_coefficient_threshold: f32,
         linear_max_features: u32,
         max_bins: u32,
         enable_bundling: bool,
-        bundling_conflict_rate: f64,
-        bundling_min_sparsity: f64,
+        sparsity_threshold: f32,
+        max_categorical_cardinality: u32,
+        binning_sample_cnt: usize,
+        cache_size: usize,
         early_stopping_rounds: Option<u32>,
         seed: u64,
         verbosity: PyVerbosity,
@@ -339,8 +351,9 @@ impl PyGBDTConfig {
         validate_non_negative("l2", l2)?;
         validate_non_negative("min_child_weight", min_child_weight)?;
         validate_non_negative("min_gain_to_split", min_gain_to_split)?;
-        validate_ratio("bundling_conflict_rate", bundling_conflict_rate)?;
-        validate_ratio("bundling_min_sparsity", bundling_min_sparsity)?;
+        validate_ratio("sparsity_threshold", sparsity_threshold)?;
+        validate_positive("binning_sample_cnt", binning_sample_cnt)?;
+        validate_positive("cache_size", cache_size)?;
 
         Ok(Self {
             n_estimators,
@@ -369,8 +382,10 @@ impl PyGBDTConfig {
             linear_max_features,
             max_bins,
             enable_bundling,
-            bundling_conflict_rate,
-            bundling_min_sparsity,
+            sparsity_threshold,
+            max_categorical_cardinality,
+            binning_sample_cnt,
+            cache_size,
             early_stopping_rounds,
             seed,
             verbosity,
@@ -428,8 +443,10 @@ impl Default for PyGBDTConfig {
             linear_max_features: 10,
             max_bins: 256,
             enable_bundling: true,
-            bundling_conflict_rate: 0.0001,
-            bundling_min_sparsity: 0.9,
+            sparsity_threshold: 0.9,
+            max_categorical_cardinality: 0,
+            binning_sample_cnt: 200_000,
+            cache_size: 8,
             early_stopping_rounds: None,
             seed: 42,
             verbosity: PyVerbosity::Silent,
@@ -444,8 +461,11 @@ impl From<&PyGBDTConfig> for boosters::GBDTConfig {
         // Convert objective
         let objective: boosters::training::Objective = (&py_config.objective).into();
 
-        // Convert metric (optional)
-        let metric = py_config.metric.as_ref().map(|m| m.into());
+        // Convert metric. If not specified in Python, use the core default.
+        let metric: boosters::training::Metric = match py_config.metric.as_ref() {
+            Some(m) => m.into(),
+            None => boosters::training::default_metric_for_objective(&objective),
+        };
 
         // Convert growth strategy
         let growth_strategy = match py_config.growth_strategy {
@@ -460,12 +480,12 @@ impl From<&PyGBDTConfig> for boosters::GBDTConfig {
         // Convert linear leaves config (optional)
         let linear_leaves = if py_config.linear_leaves {
             Some(boosters::training::gbdt::LinearLeafConfig {
-                lambda: py_config.linear_l2 as f32,
-                alpha: py_config.linear_l1 as f32,
+                lambda: py_config.linear_l2,
+                alpha: py_config.linear_l1,
                 max_iterations: py_config.linear_max_iterations,
                 tolerance: py_config.linear_tolerance,
                 min_samples: py_config.linear_min_samples as usize,
-                coefficient_threshold: py_config.linear_coefficient_threshold as f32,
+                coefficient_threshold: py_config.linear_coefficient_threshold,
                 max_features: py_config.linear_max_features as usize,
             })
         } else {
@@ -476,27 +496,28 @@ impl From<&PyGBDTConfig> for boosters::GBDTConfig {
             objective,
             metric,
             n_trees: py_config.n_estimators,
-            learning_rate: py_config.learning_rate as f32,
+            learning_rate: py_config.learning_rate,
             growth_strategy,
             max_onehot_cats: py_config.max_onehot_cats,
-            lambda: py_config.l2 as f32,
-            alpha: py_config.l1 as f32,
-            min_gain: py_config.min_gain_to_split as f32,
-            min_child_weight: py_config.min_child_weight as f32,
+            lambda: py_config.l2,
+            alpha: py_config.l1,
+            min_gain: py_config.min_gain_to_split,
+            min_child_weight: py_config.min_child_weight,
             min_samples_leaf: py_config.min_samples_leaf,
-            subsample: py_config.subsample as f32,
-            colsample_bytree: py_config.colsample_bytree as f32,
-            colsample_bylevel: py_config.colsample_bylevel as f32,
+            subsample: py_config.subsample,
+            colsample_bytree: py_config.colsample_bytree,
+            colsample_bylevel: py_config.colsample_bylevel,
             // Binning config with bundling settings
             binning: BinningConfig {
                 max_bins: py_config.max_bins,
+                sparsity_threshold: py_config.sparsity_threshold,
                 enable_bundling: py_config.enable_bundling,
-                sparsity_threshold: py_config.bundling_min_sparsity as f32,
-                ..BinningConfig::default()
+                max_categorical_cardinality: py_config.max_categorical_cardinality,
+                sample_cnt: py_config.binning_sample_cnt,
             },
             linear_leaves,
             early_stopping_rounds: py_config.early_stopping_rounds,
-            cache_size: 8,
+            cache_size: py_config.cache_size,
             seed: py_config.seed,
             verbosity: py_config.verbosity.into(),
         }
@@ -511,7 +532,10 @@ impl From<&boosters::GBDTConfig> for PyGBDTConfig {
         let objective: PyObjective = (&config.objective).into();
 
         // Convert metric
-        let metric = config.metric.as_ref().map(|m| m.into());
+        let metric = match &config.metric {
+            boosters::training::Metric::None => None,
+            m => Some(m.into()),
+        };
 
         // Convert growth strategy
         let (growth_strategy, max_depth, n_leaves) = match config.growth_strategy {
@@ -532,12 +556,12 @@ impl From<&boosters::GBDTConfig> for PyGBDTConfig {
         ) = if let Some(ref ll) = config.linear_leaves {
             (
                 true,
-                ll.lambda as f64,
-                ll.alpha as f64,
+                ll.lambda,
+                ll.alpha,
                 ll.max_iterations,
                 ll.tolerance,
                 ll.min_samples as u32,
-                ll.coefficient_threshold as f64,
+                ll.coefficient_threshold,
                 ll.max_features as u32,
             )
         } else {
@@ -554,21 +578,21 @@ impl From<&boosters::GBDTConfig> for PyGBDTConfig {
 
         Self {
             n_estimators: config.n_trees,
-            learning_rate: config.learning_rate as f64,
+            learning_rate: config.learning_rate,
             objective,
             metric,
             growth_strategy,
             max_depth,
             n_leaves,
             max_onehot_cats: config.max_onehot_cats,
-            l1: config.alpha as f64,
-            l2: config.lambda as f64,
-            min_gain_to_split: config.min_gain as f64,
-            min_child_weight: config.min_child_weight as f64,
+            l1: config.alpha,
+            l2: config.lambda,
+            min_gain_to_split: config.min_gain,
+            min_child_weight: config.min_child_weight,
             min_samples_leaf: config.min_samples_leaf,
-            subsample: config.subsample as f64,
-            colsample_bytree: config.colsample_bytree as f64,
-            colsample_bylevel: config.colsample_bylevel as f64,
+            subsample: config.subsample,
+            colsample_bytree: config.colsample_bytree,
+            colsample_bylevel: config.colsample_bylevel,
             linear_leaves,
             linear_l2,
             linear_l1,
@@ -579,8 +603,10 @@ impl From<&boosters::GBDTConfig> for PyGBDTConfig {
             linear_max_features,
             max_bins: config.binning.max_bins,
             enable_bundling: config.binning.enable_bundling,
-            bundling_conflict_rate: 0.0001, // Not stored in core config
-            bundling_min_sparsity: config.binning.sparsity_threshold as f64,
+            sparsity_threshold: config.binning.sparsity_threshold,
+            max_categorical_cardinality: config.binning.max_categorical_cardinality,
+            binning_sample_cnt: config.binning.sample_cnt,
+            cache_size: config.cache_size,
             early_stopping_rounds: config.early_stopping_rounds,
             seed: config.seed,
             verbosity,
@@ -623,7 +649,7 @@ pub struct PyGBLinearConfig {
     pub n_estimators: u32,
     /// Learning rate (step size).
     #[pyo3(get)]
-    pub learning_rate: f64,
+    pub learning_rate: f32,
     /// Coordinate descent update strategy.
     #[pyo3(get)]
     pub update_strategy: PyGBLinearUpdateStrategy,
@@ -633,15 +659,15 @@ pub struct PyGBLinearConfig {
     pub metric: Option<PyMetric>,
     /// L1 regularization (alpha).
     #[pyo3(get)]
-    pub l1: f64,
+    pub l1: f32,
     /// L2 regularization (lambda).
     #[pyo3(get)]
-    pub l2: f64,
+    pub l2: f32,
     /// Maximum per-coordinate Newton step (stability), in absolute value.
     ///
     /// Set to `0.0` to disable.
     #[pyo3(get)]
-    pub max_delta_step: f64,
+    pub max_delta_step: f32,
     /// Early stopping rounds (None = disabled).
     #[pyo3(get)]
     pub early_stopping_rounds: Option<u32>,
@@ -673,13 +699,13 @@ impl PyGBLinearConfig {
     #[allow(clippy::too_many_arguments)]
     fn new(
         n_estimators: u32,
-        learning_rate: f64,
+        learning_rate: f32,
         #[gen_stub(override_type(type_repr = "Objective | None"))] objective: Option<PyObjective>,
         #[gen_stub(override_type(type_repr = "Metric | None"))] metric: Option<PyMetric>,
-        l1: f64,
-        l2: f64,
+        l1: f32,
+        l2: f32,
         update_strategy: PyGBLinearUpdateStrategy,
-        max_delta_step: f64,
+        max_delta_step: f32,
         early_stopping_rounds: Option<u32>,
         seed: u64,
         verbosity: PyVerbosity,
@@ -739,19 +765,22 @@ impl From<&PyGBLinearConfig> for boosters::GBLinearConfig {
         // Convert objective
         let objective: boosters::training::Objective = (&py_config.objective).into();
 
-        // Convert metric if present
-        let metric = py_config.metric.as_ref().map(|m| m.into());
+        // Convert metric. If not specified in Python, use the core default.
+        let metric: boosters::training::Metric = match py_config.metric.as_ref() {
+            Some(m) => m.into(),
+            None => boosters::training::default_metric_for_objective(&objective),
+        };
 
         boosters::GBLinearConfig {
             objective,
             metric,
             n_rounds: py_config.n_estimators,
-            learning_rate: py_config.learning_rate as f32,
-            alpha: py_config.l1 as f32,
-            lambda: py_config.l2 as f32,
+            learning_rate: py_config.learning_rate,
+            alpha: py_config.l1,
+            lambda: py_config.l2,
             update_strategy: py_config.update_strategy.into(),
             feature_selector: Default::default(),
-            max_delta_step: py_config.max_delta_step as f32,
+            max_delta_step: py_config.max_delta_step,
             early_stopping_rounds: py_config.early_stopping_rounds,
             seed: py_config.seed,
             verbosity: py_config.verbosity.into(),
@@ -767,7 +796,10 @@ impl From<&boosters::GBLinearConfig> for PyGBLinearConfig {
         let objective: PyObjective = (&config.objective).into();
 
         // Convert metric
-        let metric = config.metric.as_ref().map(|m| m.into());
+        let metric = match &config.metric {
+            boosters::training::Metric::None => None,
+            m => Some(m.into()),
+        };
 
         // Convert update strategy
         let update_strategy = match config.update_strategy {
@@ -785,13 +817,13 @@ impl From<&boosters::GBLinearConfig> for PyGBLinearConfig {
 
         Self {
             n_estimators: config.n_rounds,
-            learning_rate: config.learning_rate as f64,
+            learning_rate: config.learning_rate,
             update_strategy,
             objective,
             metric,
-            l1: config.alpha as f64,
-            l2: config.lambda as f64,
-            max_delta_step: config.max_delta_step as f64,
+            l1: config.alpha,
+            l2: config.lambda,
+            max_delta_step: config.max_delta_step,
             early_stopping_rounds: config.early_stopping_rounds,
             seed: config.seed,
             verbosity,

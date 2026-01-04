@@ -23,26 +23,23 @@
 //! # Available Metrics
 //!
 //! ## Regression
-//! - [`Rmse`]: Root Mean Squared Error
-//! - [`Mae`]: Mean Absolute Error
-//! - [`Mape`]: Mean Absolute Percentage Error
-//! - [`QuantileMetric`]: Pinball loss for quantile regression
+//! - `Metric::Rmse`: Root Mean Squared Error
+//! - `Metric::Mae`: Mean Absolute Error
+//! - `Metric::Mape`: Mean Absolute Percentage Error
+//! - `Metric::Quantile { alphas }`: Pinball loss for quantile regression
 //!
 //! ## Classification
-//! - [`LogLoss`]: Binary cross-entropy
-//! - [`Accuracy`]: Binary classification accuracy
-//! - [`Auc`]: Area Under ROC Curve
-//! - [`MulticlassLogLoss`]: Multiclass cross-entropy
-//! - [`MulticlassAccuracy`]: Multiclass accuracy
+//! - `Metric::LogLoss`: Binary cross-entropy
+//! - `Metric::Accuracy { threshold }`: Binary classification accuracy
+//! - `Metric::Auc`: Area Under ROC Curve
+//! - `Metric::MulticlassLogLoss`: Multiclass cross-entropy
+//! - `Metric::MulticlassAccuracy`: Multiclass accuracy
 
 mod classification;
 mod regression;
-
-pub use classification::{
-    Accuracy, Auc, LogLoss, MarginAccuracy, MulticlassAccuracy, MulticlassLogLoss,
-};
 use ndarray::ArrayView2;
-pub use regression::{HuberMetric, Mae, Mape, PoissonDeviance, QuantileMetric, Rmse};
+
+use super::objectives::Objective;
 
 use crate::data::{TargetsView, WeightsView};
 use crate::inference::PredictionKind;
@@ -90,7 +87,7 @@ pub type CustomMetricFn = Box<
 /// ```
 pub struct CustomMetric {
     /// Name of the metric (for logging).
-    pub name: &'static str,
+    pub name: String,
     /// The compute function.
     compute_fn: CustomMetricFn,
     /// What prediction space this metric expects.
@@ -104,12 +101,12 @@ impl CustomMetric {
     ///
     /// # Arguments
     ///
-    /// * `name` - Name for logging (e.g., "custom_mae"). Must be a static string.
+    /// * `name` - Name for logging (e.g., "custom_mae").
     /// * `compute_fn` - Function that computes the metric value
     /// * `expected_prediction_kind` - What prediction space this metric expects
     /// * `higher_is_better` - Whether higher values indicate better performance
     pub fn new(
-        name: &'static str,
+        name: impl Into<String>,
         compute_fn: impl Fn(ArrayView2<f32>, TargetsView<'_>, WeightsView<'_>) -> f64
             + Send
             + Sync
@@ -118,7 +115,7 @@ impl CustomMetric {
         higher_is_better: bool,
     ) -> Self {
         Self {
-            name,
+            name: name.into(),
             compute_fn: Box::new(compute_fn),
             expected_prediction_kind,
             higher_is_better,
@@ -136,8 +133,8 @@ impl CustomMetric {
     }
 
     /// Get the metric name.
-    pub fn name(&self) -> &'static str {
-        self.name
+    pub fn name(&self) -> &str {
+        &self.name
     }
 }
 
@@ -151,38 +148,28 @@ impl std::fmt::Debug for CustomMetric {
     }
 }
 
-impl Clone for CustomMetric {
-    fn clone(&self) -> Self {
-        panic!("CustomMetric cannot be cloned because it contains a boxed closure. Use Arc<CustomMetric> if sharing is needed.");
-    }
-}
-
 // =============================================================================
 // Metric Enum (Convenience wrapper)
 // =============================================================================
 
 /// A dynamically-dispatched metric function.
 ///
-/// This enum wraps all available metrics using the newtype pattern,
-/// allowing metric selection at runtime without generics.
-///
-/// Each variant wraps its corresponding struct type directly, enabling
-/// clean delegation and avoiding per-call struct instantiation.
+/// This enum provides runtime metric selection without generics.
+/// Most variants are simple unit variants; a few carry configuration
+/// (e.g. `Accuracy { threshold }`, `Quantile { alphas }`).
 ///
 /// # Example
 ///
 /// ```ignore
 /// use boosters::training::Metric;
 ///
-/// // Use convenience constructors
-/// let rmse = Metric::rmse();
-/// let logloss = Metric::logloss();
-/// let accuracy = Metric::accuracy_with_threshold(0.7);
-///
-/// // No metric (skips evaluation)
-/// let none = Metric::none();
+/// // Use enum variants
+/// let rmse = Metric::Rmse;
+/// let logloss = Metric::LogLoss;
+/// let accuracy = Metric::Accuracy { threshold: 0.7 };
+/// let none = Metric::None;
 /// ```
-#[derive(Clone)]
+#[derive(Debug)]
 pub enum Metric {
     /// No metric - skips evaluation entirely.
     ///
@@ -190,172 +177,66 @@ pub enum Metric {
     /// transformation, avoiding wasted compute.
     None,
     /// Root Mean Squared Error (regression).
-    Rmse(Rmse),
+    Rmse,
     /// Mean Absolute Error (regression).
-    Mae(Mae),
+    Mae,
     /// Mean Absolute Percentage Error (regression).
-    Mape(Mape),
+    Mape,
     /// Log Loss / Binary Cross-Entropy (binary classification).
-    LogLoss(LogLoss),
+    LogLoss,
     /// Accuracy (binary classification) with configurable threshold.
-    Accuracy(Accuracy),
+    Accuracy { threshold: f32 },
     /// Margin-based accuracy (threshold=0.0, for hinge loss).
-    MarginAccuracy(MarginAccuracy),
+    MarginAccuracy,
     /// Area Under ROC Curve (binary classification).
-    Auc(Auc),
+    Auc,
     /// Multiclass Log Loss (multiclass classification).
-    MulticlassLogLoss(MulticlassLogLoss),
+    MulticlassLogLoss,
     /// Multiclass Accuracy (multiclass classification).
-    MulticlassAccuracy(MulticlassAccuracy),
+    MulticlassAccuracy,
     /// Quantile metric (pinball loss).
-    Quantile(QuantileMetric),
+    Quantile { alphas: Vec<f32> },
     /// Huber metric for robust regression.
-    Huber(HuberMetric),
+    Huber { delta: f64 },
     /// Poisson Deviance for count data.
-    PoissonDeviance(PoissonDeviance),
+    PoissonDeviance,
     /// Custom user-provided metric.
-    Custom(std::sync::Arc<CustomMetric>),
+    Custom(CustomMetric),
 }
 
-impl std::fmt::Debug for Metric {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::None => f.write_str("None"),
-            Self::Rmse(inner) => f.debug_tuple("Rmse").field(inner).finish(),
-            Self::Mae(inner) => f.debug_tuple("Mae").field(inner).finish(),
-            Self::Mape(inner) => f.debug_tuple("Mape").field(inner).finish(),
-            Self::LogLoss(inner) => f.debug_tuple("LogLoss").field(inner).finish(),
-            Self::Accuracy(inner) => f.debug_tuple("Accuracy").field(inner).finish(),
-            Self::MarginAccuracy(inner) => f.debug_tuple("MarginAccuracy").field(inner).finish(),
-            Self::Auc(inner) => f.debug_tuple("Auc").field(inner).finish(),
-            Self::MulticlassLogLoss(inner) => {
-                f.debug_tuple("MulticlassLogLoss").field(inner).finish()
-            }
-            Self::MulticlassAccuracy(inner) => {
-                f.debug_tuple("MulticlassAccuracy").field(inner).finish()
-            }
-            Self::Quantile(inner) => f.debug_tuple("Quantile").field(inner).finish(),
-            Self::Huber(inner) => f.debug_tuple("Huber").field(inner).finish(),
-            Self::PoissonDeviance(inner) => f.debug_tuple("PoissonDeviance").field(inner).finish(),
-            Self::Custom(inner) => f.debug_tuple("Custom").field(inner).finish(),
-        }
+/// Returns the default evaluation metric for a given training objective.
+///
+/// This is the single, centralized mapping used when the user does not
+/// explicitly configure a metric.
+pub fn default_metric_for_objective(objective: &Objective) -> Metric {
+    match objective {
+        // Regression
+        Objective::SquaredLoss
+        | Objective::AbsoluteLoss
+        | Objective::PseudoHuberLoss { .. }
+        | Objective::PoissonLoss => Metric::Rmse,
+        Objective::PinballLoss { alphas } => Metric::Quantile {
+            alphas: alphas.clone(),
+        },
+
+        // Classification
+        Objective::LogisticLoss => Metric::LogLoss,
+        Objective::HingeLoss => Metric::MarginAccuracy,
+        Objective::SoftmaxLoss { .. } => Metric::MulticlassLogLoss,
+
+        // Custom
+        Objective::Custom(_) => Metric::None,
     }
 }
 
 impl Default for Metric {
     fn default() -> Self {
-        Self::Rmse(Rmse)
+        Self::None
     }
 }
 
 impl Metric {
-    // =========================================================================
-    // Convenience Constructors
-    // =========================================================================
-
-    /// No metric - skips evaluation entirely.
-    ///
-    /// When used, the trainer skips metric computation and prediction
-    /// transformation, avoiding wasted compute.
-    pub fn none() -> Self {
-        Self::None
-    }
-
-    /// Root Mean Squared Error for regression.
-    pub fn rmse() -> Self {
-        Self::Rmse(Rmse)
-    }
-
-    /// Mean Absolute Error for regression.
-    pub fn mae() -> Self {
-        Self::Mae(Mae)
-    }
-
-    /// Mean Absolute Percentage Error for regression.
-    pub fn mape() -> Self {
-        Self::Mape(Mape)
-    }
-
-    /// Log Loss for binary classification.
-    pub fn logloss() -> Self {
-        Self::LogLoss(LogLoss)
-    }
-
-    /// Accuracy for binary classification with threshold 0.5.
-    pub fn accuracy() -> Self {
-        Self::Accuracy(Accuracy::default())
-    }
-
-    /// Accuracy for binary classification with custom threshold.
-    pub fn accuracy_with_threshold(threshold: f32) -> Self {
-        Self::Accuracy(Accuracy::with_threshold(threshold))
-    }
-
-    /// Margin-based accuracy (threshold=0.0) for hinge loss.
-    pub fn margin_accuracy() -> Self {
-        Self::MarginAccuracy(MarginAccuracy::default())
-    }
-
-    /// Area Under ROC Curve for binary classification.
-    pub fn auc() -> Self {
-        Self::Auc(Auc)
-    }
-
-    /// Multiclass Log Loss for multiclass classification.
-    pub fn multiclass_logloss() -> Self {
-        Self::MulticlassLogLoss(MulticlassLogLoss)
-    }
-
-    /// Multiclass Accuracy.
-    pub fn multiclass_accuracy() -> Self {
-        Self::MulticlassAccuracy(MulticlassAccuracy)
-    }
-
-    /// Quantile metric (pinball loss) with given alpha.
-    pub fn quantile(alpha: f32) -> Self {
-        Self::Quantile(QuantileMetric::new(vec![alpha]))
-    }
-
-    /// Multi-quantile metric with given alphas.
-    pub fn multi_quantile(alphas: Vec<f32>) -> Self {
-        Self::Quantile(QuantileMetric::new(alphas))
-    }
-
-    /// Huber metric with given delta.
-    pub fn huber(delta: f32) -> Self {
-        Self::Huber(HuberMetric::new(delta.into()))
-    }
-
-    /// Poisson Deviance for count data.
-    pub fn poisson_deviance() -> Self {
-        Self::PoissonDeviance(PoissonDeviance)
-    }
-
-    /// Custom user-provided metric.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use boosters::training::{CustomMetric, Metric};
-    /// use boosters::inference::PredictionKind;
-    ///
-    /// let metric = Metric::custom(CustomMetric::new(
-    ///     "custom_mae",
-    ///     |preds, targets, _weights| {
-    ///         // Compute custom metric
-    ///         0.0
-    ///     },
-    ///     PredictionKind::Value,
-    ///     false, // lower is better
-    /// ));
-    /// ```
-    pub fn custom(metric: CustomMetric) -> Self {
-        Self::Custom(std::sync::Arc::new(metric))
-    }
-}
-
-impl MetricFn for Metric {
-    fn compute(
+    pub fn compute(
         &self,
         predictions: ArrayView2<f32>,
         targets: TargetsView<'_>,
@@ -363,142 +244,83 @@ impl MetricFn for Metric {
     ) -> f64 {
         match self {
             Self::None => f64::NAN,
-            Self::Rmse(inner) => inner.compute(predictions, targets, weights),
-            Self::Mae(inner) => inner.compute(predictions, targets, weights),
-            Self::Mape(inner) => inner.compute(predictions, targets, weights),
-            Self::LogLoss(inner) => inner.compute(predictions, targets, weights),
-            Self::Accuracy(inner) => inner.compute(predictions, targets, weights),
-            Self::MarginAccuracy(inner) => inner.compute(predictions, targets, weights),
-            Self::Auc(inner) => inner.compute(predictions, targets, weights),
-            Self::MulticlassLogLoss(inner) => inner.compute(predictions, targets, weights),
-            Self::MulticlassAccuracy(inner) => inner.compute(predictions, targets, weights),
-            Self::Quantile(inner) => inner.compute(predictions, targets, weights),
-            Self::Huber(inner) => inner.compute(predictions, targets, weights),
-            Self::PoissonDeviance(inner) => inner.compute(predictions, targets, weights),
+            Self::Rmse => regression::compute_rmse(predictions, targets, weights),
+            Self::Mae => regression::compute_mae(predictions, targets, weights),
+            Self::Mape => regression::compute_mape(predictions, targets, weights),
+            Self::LogLoss => classification::compute_logloss(predictions, targets, weights),
+            Self::Accuracy { threshold } => {
+                classification::compute_accuracy(predictions, targets, weights, *threshold)
+            }
+            Self::MarginAccuracy => {
+                classification::compute_margin_accuracy(predictions, targets, weights, 0.0)
+            }
+            Self::Auc => classification::compute_auc(predictions, targets, weights),
+            Self::MulticlassLogLoss => {
+                classification::compute_multiclass_logloss(predictions, targets, weights)
+            }
+            Self::MulticlassAccuracy => {
+                classification::compute_multiclass_accuracy(predictions, targets, weights)
+            }
+            Self::Quantile { alphas } => {
+                regression::compute_quantile_pinball(predictions, targets, weights, alphas)
+            }
+            Self::Huber { delta } => regression::compute_huber(predictions, targets, weights, *delta),
+            Self::PoissonDeviance => regression::compute_poisson_deviance(predictions, targets, weights),
             Self::Custom(inner) => inner.compute(predictions, targets, weights),
         }
     }
 
-    fn expected_prediction_kind(&self) -> PredictionKind {
+    pub fn expected_prediction_kind(&self) -> PredictionKind {
         match self {
             Self::None => PredictionKind::Margin,
-            Self::Rmse(inner) => inner.expected_prediction_kind(),
-            Self::Mae(inner) => inner.expected_prediction_kind(),
-            Self::Mape(inner) => inner.expected_prediction_kind(),
-            Self::LogLoss(inner) => inner.expected_prediction_kind(),
-            Self::Accuracy(inner) => inner.expected_prediction_kind(),
-            Self::MarginAccuracy(inner) => inner.expected_prediction_kind(),
-            Self::Auc(inner) => inner.expected_prediction_kind(),
-            Self::MulticlassLogLoss(inner) => inner.expected_prediction_kind(),
-            Self::MulticlassAccuracy(inner) => inner.expected_prediction_kind(),
-            Self::Quantile(inner) => inner.expected_prediction_kind(),
-            Self::Huber(inner) => inner.expected_prediction_kind(),
-            Self::PoissonDeviance(inner) => inner.expected_prediction_kind(),
+            Self::Rmse | Self::Mae | Self::Mape | Self::Quantile { .. } | Self::Huber { .. } => {
+                PredictionKind::Value
+            }
+            Self::LogLoss | Self::Accuracy { .. } => PredictionKind::Probability,
+            Self::MarginAccuracy => PredictionKind::Margin,
+            Self::Auc => PredictionKind::Probability,
+            Self::MulticlassLogLoss | Self::MulticlassAccuracy => PredictionKind::Probability,
+            Self::PoissonDeviance => PredictionKind::Value,
             Self::Custom(inner) => inner.expected_prediction_kind,
         }
     }
 
-    fn higher_is_better(&self) -> bool {
+    pub fn higher_is_better(&self) -> bool {
         match self {
             Self::None => false,
-            Self::Rmse(inner) => inner.higher_is_better(),
-            Self::Mae(inner) => inner.higher_is_better(),
-            Self::Mape(inner) => inner.higher_is_better(),
-            Self::LogLoss(inner) => inner.higher_is_better(),
-            Self::Accuracy(inner) => inner.higher_is_better(),
-            Self::MarginAccuracy(inner) => inner.higher_is_better(),
-            Self::Auc(inner) => inner.higher_is_better(),
-            Self::MulticlassLogLoss(inner) => inner.higher_is_better(),
-            Self::MulticlassAccuracy(inner) => inner.higher_is_better(),
-            Self::Quantile(inner) => inner.higher_is_better(),
-            Self::Huber(inner) => inner.higher_is_better(),
-            Self::PoissonDeviance(inner) => inner.higher_is_better(),
+            Self::Rmse
+            | Self::Mae
+            | Self::Mape
+            | Self::LogLoss
+            | Self::MulticlassLogLoss
+            | Self::Quantile { .. }
+            | Self::Huber { .. }
+            | Self::PoissonDeviance => false,
+            Self::Accuracy { .. }
+            | Self::MarginAccuracy
+            | Self::Auc
+            | Self::MulticlassAccuracy => true,
             Self::Custom(inner) => inner.higher_is_better,
         }
     }
 
-    fn name(&self) -> &'static str {
+    pub fn name(&self) -> &str {
         match self {
             Self::None => "<none>",
-            Self::Rmse(inner) => inner.name(),
-            Self::Mae(inner) => inner.name(),
-            Self::Mape(inner) => inner.name(),
-            Self::LogLoss(inner) => inner.name(),
-            Self::Accuracy(inner) => inner.name(),
-            Self::MarginAccuracy(inner) => inner.name(),
-            Self::Auc(inner) => inner.name(),
-            Self::MulticlassLogLoss(inner) => inner.name(),
-            Self::MulticlassAccuracy(inner) => inner.name(),
-            Self::Quantile(inner) => inner.name(),
-            Self::Huber(inner) => inner.name(),
-            Self::PoissonDeviance(inner) => inner.name(),
-            Self::Custom(inner) => inner.name,
+            Self::Rmse => "rmse",
+            Self::Mae => "mae",
+            Self::Mape => "mape",
+            Self::LogLoss => "logloss",
+            Self::Accuracy { .. } => "accuracy",
+            Self::MarginAccuracy => "margin_accuracy",
+            Self::Auc => "auc",
+            Self::MulticlassLogLoss => "mlogloss",
+            Self::MulticlassAccuracy => "merror",
+            Self::Quantile { .. } => "quantile",
+            Self::Huber { .. } => "huber",
+            Self::PoissonDeviance => "poisson",
+            Self::Custom(inner) => inner.name.as_ref(),
         }
-    }
-
-    fn is_enabled(&self) -> bool {
-        !matches!(self, Self::None)
-    }
-}
-
-// =============================================================================
-// Metric Trait
-// =============================================================================
-
-/// A metric for evaluating model quality.
-///
-/// Unlike objectives (which compute gradients for optimization),
-/// metrics compute scalar values for model evaluation and monitoring.
-///
-/// # Multi-Output Support
-///
-/// For multi-output models (multiclass, multi-quantile), pass `n_outputs > 1`.
-/// The predictions buffer uses **column-major** layout: `predictions[output * n_rows + row]`.
-/// This matches the training prediction layout for zero-copy evaluation.
-///
-/// # Weighted Evaluation
-///
-/// Pass `weights: Some(&weights)` for sample-weighted metrics. The default
-/// implementation treats `None` as uniform weights.
-///
-/// # Implementation Notes
-///
-/// - `evaluate`: Called with predictions, labels, optional weights, and n_outputs
-/// - Higher is better for some metrics (accuracy, AUC), lower for others (RMSE, logloss)
-/// - Use `higher_is_better()` to determine the direction
-pub trait MetricFn: Send + Sync {
-    /// Compute metric value.
-    ///
-    /// Predictions are expected in **column-major** layout: `predictions[output * n_rows + row]`.
-    ///
-    /// Use `WeightsView::none()` for unweighted computation.
-    fn compute(
-        &self,
-        predictions: ArrayView2<f32>,
-        targets: TargetsView<'_>,
-        weights: WeightsView<'_>,
-    ) -> f64;
-
-    /// What prediction space does this metric expect?
-    fn expected_prediction_kind(&self) -> PredictionKind;
-
-    /// Whether higher values indicate better performance.
-    ///
-    /// - `true`: Higher is better (accuracy, AUC)
-    /// - `false`: Lower is better (RMSE, MAE, logloss)
-    fn higher_is_better(&self) -> bool;
-
-    /// Name of the metric (for logging).
-    fn name(&self) -> &'static str;
-
-    /// Whether this metric is enabled.
-    ///
-    /// When `false`, the trainer should skip metric computation entirely,
-    /// avoiding wasted compute on prediction transformation and evaluation.
-    ///
-    /// Default implementation returns `true`. Only `NoMetric` returns `false`.
-    fn is_enabled(&self) -> bool {
-        true
     }
 }
 
@@ -540,7 +362,7 @@ mod tests {
             false, // lower is better
         );
 
-        let metric = Metric::custom(custom_mae);
+        let metric = Metric::Custom(custom_mae);
 
         // Test compute
         let preds = make_preds(1, 2, &[1.0, 2.0]);
@@ -552,13 +374,11 @@ mod tests {
         assert_eq!(metric.name(), "custom_mae");
         assert!(!metric.higher_is_better());
         assert_eq!(metric.expected_prediction_kind(), PredictionKind::Value);
-        assert!(metric.is_enabled());
     }
 
     #[test]
     fn metric_none_disabled() {
-        let metric = Metric::none();
-        assert!(!metric.is_enabled());
+        let metric = Metric::None;
         assert_eq!(metric.name(), "<none>");
     }
 }

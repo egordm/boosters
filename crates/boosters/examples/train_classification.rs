@@ -61,8 +61,8 @@ fn main() {
     println!("=== Depth-wise Growth (XGBoost style) ===\n");
 
     let config_depth = GBDTConfig::builder()
-        .objective(Objective::logistic())
-        .metric(Metric::logloss())
+        .objective(Objective::LogisticLoss)
+        .metric(Metric::LogLoss)
         .n_trees(30)
         .learning_rate(0.1)
         .growth_strategy(GrowthStrategy::DepthWise { max_depth: 3 })
@@ -84,8 +84,8 @@ fn main() {
     println!("\n=== Leaf-wise Growth (LightGBM style) ===\n");
 
     let config_leaf = GBDTConfig::builder()
-        .objective(Objective::logistic())
-        .metric(Metric::logloss())
+        .objective(Objective::LogisticLoss)
+        .metric(Metric::LogLoss)
         .n_trees(30)
         .learning_rate(0.1)
         .growth_strategy(GrowthStrategy::LeafWise { max_leaves: 8 })
@@ -121,8 +121,8 @@ fn main() {
         .collect();
 
     let config_weighted = GBDTConfig::builder()
-        .objective(Objective::logistic())
-        .metric(Metric::logloss())
+        .objective(Objective::LogisticLoss)
+        .metric(Metric::LogLoss)
         .n_trees(30)
         .learning_rate(0.1)
         .growth_strategy(GrowthStrategy::DepthWise { max_depth: 3 })

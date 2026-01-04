@@ -14,7 +14,6 @@ use boosters::persist::{
 use crate::config::PyGBLinearConfig;
 use crate::data::PyDataset;
 use crate::error::BoostersError;
-use crate::objectives::PyObjective;
 use crate::validation::validate_feature_count;
 
 /// Gradient Boosted Linear model.
@@ -133,13 +132,6 @@ impl PyGBLinearModel {
         let biases = linear.biases();
 
         Ok(PyArray1::from_iter(py, biases.iter().copied()))
-    }
-
-    /// Get the model objective.
-    #[getter]
-    #[gen_stub(override_return_type(type_repr = "Objective"))]
-    pub fn objective(&self) -> PyObjective {
-        self.model.objective().into()
     }
 
     /// String representation.

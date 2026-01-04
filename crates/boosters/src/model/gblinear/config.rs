@@ -14,7 +14,7 @@
 //!
 //! // Classification with L1/L2 regularization
 //! let config = GBLinearConfig::builder()
-//!     .objective(Objective::logistic())
+//!     .objective(Objective::LogisticLoss)
 //!     .n_rounds(200)
 //!     .learning_rate(0.1)
 //!     .alpha(0.1)  // L1
@@ -133,16 +133,16 @@ impl RegularizationParams {
 /// // Classification with early stopping
 /// use boosters::training::{Objective, Metric};
 /// let config = GBLinearConfig::builder()
-///     .objective(Objective::logistic())
-///     .metric(Metric::auc())
+///     .objective(Objective::LogisticLoss)
+///     .metric(Metric::Auc)
 ///     .n_rounds(500)
 ///     .early_stopping_rounds(10)
 ///     .build()
 ///     .unwrap();
 /// ```
-#[derive(Debug, Clone, Builder)]
+#[derive(Debug, Builder)]
 #[builder(
-    derive(Clone, Debug),
+    derive(Debug),
     finish_fn(vis = "", name = __build_internal)
 )]
 pub struct GBLinearConfig {
@@ -151,8 +151,13 @@ pub struct GBLinearConfig {
     #[builder(default)]
     pub objective: Objective,
 
-    /// Evaluation metric. If `None`, no eval metrics are computed.
-    pub metric: Option<Metric>,
+    /// Evaluation metric.
+    ///
+    /// If not set explicitly, a default is derived from [`Objective`].
+    ///
+    /// To disable evaluation entirely, set [`Metric::None`].
+    #[builder(default = crate::training::default_metric_for_objective(&objective))]
+    pub metric: Metric,
 
     // === Boosting parameters ===
     /// Number of boosting rounds. Default: 100.
@@ -376,7 +381,7 @@ mod tests {
         use crate::training::Objective;
 
         let config = GBLinearConfig::builder()
-            .objective(Objective::logistic())
+            .objective(Objective::LogisticLoss)
             .build();
         assert!(config.is_ok());
     }
@@ -385,7 +390,7 @@ mod tests {
     fn test_custom_metric() {
         use crate::training::Metric;
 
-        let config = GBLinearConfig::builder().metric(Metric::auc()).build();
+        let config = GBLinearConfig::builder().metric(Metric::Auc).build();
         assert!(config.is_ok());
     }
 

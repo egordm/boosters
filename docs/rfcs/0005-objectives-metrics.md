@@ -1,9 +1,9 @@
 
 # RFC-0005: Objectives, Metrics, and Output Transforms (vNext)
 
-**Status**: Proposed (vNext)  
+**Status**: Implemented  
 **Created**: 2025-12-15  
-**Updated**: 2026-01-03  
+**Updated**: 2026-01-04  
 **Scope**: Objectives (loss), metrics, output transforms, early stopping, persistence schema v3
 
 This RFC is intentionally written as the target design “to be”.
@@ -39,7 +39,7 @@ All objective behavior is expressed as methods on a single enum. Variants carry 
 as struct-like fields when needed.
 
 ```rust
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum Objective {
     // Regression
     SquaredLoss,
@@ -73,7 +73,7 @@ We intentionally do not keep a separate `TaskKind` type in vNext.
 Similarly, metrics are a single enum with configuration where needed.
 
 ```rust
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum Metric {
     None,
 

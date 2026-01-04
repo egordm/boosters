@@ -2,7 +2,7 @@
 //!
 //! High-level wrapper around [`Forest`] with training and prediction.
 //! Access components via [`forest()`](GBDTModel::forest), [`meta()`](GBDTModel::meta),
-//! and [`objective()`](GBDTModel::objective).
+//! and [`output_transform()`](GBDTModel::output_transform).
 
 use crate::data::binned::BinnedDataset;
 use crate::data::{Dataset, TargetsView, WeightsView};
@@ -15,7 +15,6 @@ use crate::model::meta::ModelMeta;
 use crate::model::OutputTransform;
 use crate::repr::gbdt::{Forest, ScalarLeaf};
 use crate::training::gbdt::GBDTTrainer;
-use crate::training::ObjectiveFn;
 use crate::utils::{Parallelism, run_with_threads};
 
 use ndarray::Array2;
@@ -25,7 +24,8 @@ use super::GBDTConfig;
 /// High-level GBDT model with training, prediction, and explainability.
 ///
 /// Access components via [`forest()`](Self::forest), [`meta()`](Self::meta),
-/// and [`objective()`](Self::objective).
+/// and [`output_transform()`](Self::output_transform).
+#[derive(Clone)]
 pub struct GBDTModel {
     /// The underlying forest.
     forest: Forest<ScalarLeaf>,
@@ -36,75 +36,21 @@ pub struct GBDTModel {
     /// This is persisted with the model and used for inference-time
     /// transformation (e.g., sigmoid for binary classification).
     output_transform: OutputTransform,
-    /// Objective function used for training.
-    ///
-    /// Kept for compatibility and training-related queries.
-    /// For prediction transform, use `output_transform` instead.
-    objective: crate::training::Objective,
 }
 
 impl GBDTModel {
-    fn default_objective(task: crate::model::TaskKind) -> crate::training::Objective {
-        match task {
-            crate::model::TaskKind::Regression => crate::training::Objective::squared(),
-            crate::model::TaskKind::BinaryClassification => {
-                crate::training::Objective::logistic()
-            }
-            crate::model::TaskKind::MulticlassClassification { n_classes } => {
-                crate::training::Objective::softmax(n_classes)
-            }
-            crate::model::TaskKind::Ranking => crate::training::Objective::squared(),
-        }
-    }
-
-    /// Create a model from a forest and metadata.
-    ///
-    /// Use this when loading models from formats that don't include config,
-    /// or for quick testing. For training new models, prefer [`GBDTModel::train`].
-    pub fn from_forest(forest: Forest<ScalarLeaf>, meta: ModelMeta) -> Self {
-        let objective = Self::default_objective(meta.task);
-        let output_transform = objective.output_transform();
-        Self {
-            forest,
-            meta,
-            output_transform,
-            objective,
-        }
-    }
-
     /// Create a model from all its parts.
     ///
-    /// Used when loading from a format that includes an explicit objective,
-    /// or after training.
+    /// Used when loading from persistence, or after training.
     pub fn from_parts(
         forest: Forest<ScalarLeaf>,
         meta: ModelMeta,
-        objective: crate::training::Objective,
-    ) -> Self {
-        let output_transform = objective.output_transform();
-        Self {
-            forest,
-            meta,
-            output_transform,
-            objective,
-        }
-    }
-
-    /// Create a model from parts with explicit output transform.
-    ///
-    /// Used when loading from persistence (schema v3+) where the output
-    /// transform is stored separately from the objective.
-    pub fn from_parts_with_transform(
-        forest: Forest<ScalarLeaf>,
-        meta: ModelMeta,
         output_transform: OutputTransform,
-        objective: crate::training::Objective,
     ) -> Self {
         Self {
             forest,
             meta,
             output_transform,
-            objective,
         }
     }
 
@@ -127,26 +73,6 @@ impl GBDTModel {
     /// This is used to transform raw predictions to probabilities/values.
     pub fn output_transform(&self) -> OutputTransform {
         self.output_transform
-    }
-
-    /// Get reference to the objective function.
-    pub fn objective(&self) -> &crate::training::Objective {
-        &self.objective
-    }
-
-    /// Set feature names.
-    ///
-    /// This mutates the metadata. For new models, prefer setting feature names
-    /// during training.
-    pub fn with_feature_names(mut self, names: Vec<String>) -> Self {
-        self.meta.feature_names = Some(names);
-        self
-    }
-
-    /// Set best iteration (from early stopping).
-    pub fn with_best_iteration(mut self, iter: usize) -> Self {
-        self.meta.best_iteration = Some(iter);
-        self
     }
 
     // =========================================================================
@@ -176,7 +102,7 @@ impl GBDTModel {
     /// let dataset = Dataset::from_array(features.view(), Some(targets.view()), None);
     ///
     /// let config = GBDTConfig::builder()
-    ///     .objective(Objective::squared_loss())
+    ///     .objective(Objective::SquaredLoss)
     ///     .n_trees(10)
     ///     .build();
     ///
@@ -230,23 +156,20 @@ impl GBDTModel {
         parallelism: Parallelism,
     ) -> Option<Self> {
         let n_features = binned.n_features();
-        let n_outputs = config.objective.n_outputs();
-
-        // Get task kind from objective (not inferred from n_outputs)
-        // This correctly handles multi-output regression (e.g., multi-quantile)
-        let task = config.objective.task_kind();
-
-        // Convert config to trainer params
+        // Convert config to trainer params, then move out the objective/metric.
         let params = config.to_trainer_params();
+        let GBDTConfig {
+            objective,
+            metric,
+            ..
+        } = config;
 
-        // Use provided metric or derive default from objective
-        let metric = config
-            .metric
-            .clone()
-            .unwrap_or_else(|| crate::training::default_metric_for_objective(&config.objective));
+        let n_outputs = objective.n_outputs();
+
+        let output_transform = objective.output_transform();
 
         // Create trainer with objective and metric from config
-        let trainer = GBDTTrainer::new(config.objective.clone(), metric, params);
+        let trainer = GBDTTrainer::new(objective, metric, params);
 
         // Components receive parallelism flag; thread pool is already set up
         let forest = trainer.train(dataset, binned, targets, weights, val_set, parallelism)?;
@@ -254,12 +177,15 @@ impl GBDTModel {
         let meta = ModelMeta {
             n_features,
             n_groups: n_outputs,
-            task,
             base_scores: forest.base_score().to_vec(),
             ..Default::default()
         };
 
-        Some(Self::from_parts(forest, meta, config.objective))
+        Some(Self::from_parts(
+            forest,
+            meta,
+            output_transform,
+        ))
     }
 
     // =========================================================================
@@ -296,11 +222,7 @@ impl GBDTModel {
 
         // Apply transformation (sigmoid/softmax for classification)
         // Uses OutputTransform instead of objective for cleaner inference path
-        let n_outputs = self.meta.n_groups;
-        self.output_transform.transform_inplace(
-            output.as_slice_mut().expect("output must be contiguous"),
-            n_outputs,
-        );
+        self.output_transform.transform_inplace(output.view_mut());
 
         output
     }
@@ -380,7 +302,6 @@ impl std::fmt::Debug for GBDTModel {
             .field("n_trees", &self.forest.n_trees())
             .field("n_features", &self.meta.n_features)
             .field("n_groups", &self.meta.n_groups)
-            .field("task", &self.meta.task)
             .finish()
     }
 }
@@ -406,33 +327,31 @@ mod tests {
     }
 
     #[test]
-    fn from_forest() {
+    fn from_parts() {
         let forest = make_simple_forest();
         let meta = ModelMeta::for_regression(2);
-        let model = GBDTModel::from_forest(forest, meta);
+        let model = GBDTModel::from_parts(forest, meta, OutputTransform::Identity);
 
         assert_eq!(model.forest().n_trees(), 1);
         assert_eq!(model.meta().n_features, 2);
         assert_eq!(model.meta().n_groups, 1);
-        // from_forest selects a default objective from task kind
-        assert_eq!(model.objective().name(), "squared");
+        assert_eq!(model.output_transform(), OutputTransform::Identity);
     }
 
     #[test]
-    fn from_parts_with_config() {
+    fn from_parts_stores_transform() {
         let forest = make_simple_forest();
         let meta = ModelMeta::for_regression(2);
-        let objective = crate::training::Objective::logistic();
-        let model = GBDTModel::from_parts(forest, meta, objective);
+        let model = GBDTModel::from_parts(forest, meta, OutputTransform::Sigmoid);
 
-        assert_eq!(model.objective().name(), "logistic");
+        assert_eq!(model.output_transform(), OutputTransform::Sigmoid);
     }
 
     #[test]
     fn predict_basic() {
         let forest = make_simple_forest();
         let meta = ModelMeta::for_regression(2);
-        let model = GBDTModel::from_forest(forest, meta);
+        let model = GBDTModel::from_parts(forest, meta, OutputTransform::Identity);
 
         // x0 < 0.5 → leaf 1.0
         // Feature-major: [n_features=2, n_samples=1]
@@ -452,7 +371,7 @@ mod tests {
     fn predict_batch_rows() {
         let forest = make_simple_forest();
         let meta = ModelMeta::for_regression(2);
-        let model = GBDTModel::from_forest(forest, meta);
+        let model = GBDTModel::from_parts(forest, meta, OutputTransform::Identity);
 
         // Feature-major: [n_features=2, n_samples=2]
         // sample 0: [0.3, 0.5], sample 1: [0.7, 0.5]
@@ -473,7 +392,7 @@ mod tests {
 
         let forest = make_simple_forest();
         let meta = ModelMeta::for_regression(2);
-        let model = GBDTModel::from_forest(forest, meta);
+        let model = GBDTModel::from_parts(forest, meta, OutputTransform::Identity);
 
         let importance = model.feature_importance(ImportanceType::Split).unwrap();
         assert_eq!(importance.values(), &[1.0, 1.0]); // feature 0 and 1 each used once
@@ -499,7 +418,7 @@ mod tests {
         forest.push_tree(tree, 0);
 
         let meta = ModelMeta::for_regression(2);
-        let model = GBDTModel::from_forest(forest, meta);
+        let model = GBDTModel::from_parts(forest, meta, OutputTransform::Identity);
 
         // Split importance always works
         let split_imp = model.feature_importance(ImportanceType::Split).unwrap();
@@ -517,7 +436,7 @@ mod tests {
         };
         let mut forest2 = crate::repr::gbdt::Forest::for_regression().with_base_score(vec![0.0]);
         forest2.push_tree(tree2, 0);
-        let model2 = GBDTModel::from_forest(forest2, ModelMeta::for_regression(2));
+        let model2 = GBDTModel::from_parts(forest2, ModelMeta::for_regression(2), OutputTransform::Identity);
 
         // Gain fails without stats
         assert!(matches!(
@@ -529,9 +448,9 @@ mod tests {
     #[test]
     fn feature_names() {
         let forest = make_simple_forest();
-        let meta = ModelMeta::for_regression(2);
-        let model =
-            GBDTModel::from_forest(forest, meta).with_feature_names(vec!["a".into(), "b".into()]);
+        let mut meta = ModelMeta::for_regression(2);
+        meta.feature_names = Some(vec!["a".into(), "b".into()]);
+        let model = GBDTModel::from_parts(forest, meta, OutputTransform::Identity);
 
         assert_eq!(
             model.meta().feature_names.as_deref(),
@@ -555,7 +474,7 @@ mod tests {
         forest.push_tree(tree, 0);
 
         let meta = ModelMeta::for_regression(2);
-        let model = GBDTModel::from_forest(forest, meta);
+        let model = GBDTModel::from_parts(forest, meta, OutputTransform::Identity);
 
         // Compute SHAP values - feature-major: [n_features=2, n_samples=1]
         let features = arr2(&[[0.3], [0.7]]);
@@ -575,7 +494,7 @@ mod tests {
         };
         let mut forest2 = crate::repr::gbdt::Forest::for_regression().with_base_score(vec![0.0]);
         forest2.push_tree(tree2, 0);
-        let model2 = GBDTModel::from_forest(forest2, ModelMeta::for_regression(2));
+        let model2 = GBDTModel::from_parts(forest2, ModelMeta::for_regression(2), OutputTransform::Identity);
 
         assert!(matches!(
             model2.shap_values(&dataset),

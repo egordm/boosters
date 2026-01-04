@@ -8,7 +8,7 @@ use std::io::Cursor;
 use proptest::collection::vec as prop_vec;
 use proptest::prelude::*;
 
-use boosters::model::{GBDTModel, GBLinearModel, ModelMeta, TaskKind};
+use boosters::model::{GBDTModel, GBLinearModel, ModelMeta, OutputTransform};
 use boosters::persist::{
     BinaryReadOptions, BinaryWriteOptions, JsonWriteOptions, Model, SerializableModel,
 };
@@ -204,23 +204,19 @@ fn arb_tree(
     arb_node_spec(max_depth, n_features).prop_map(|spec| build_tree_from_spec(&spec))
 }
 
-/// Strategy for generating a task with consistent n_groups.
-///
-/// TaskKind determines n_groups:
-/// - Regression: 1
-/// - BinaryClassification: 1
-/// - MulticlassClassification(n): n (3+)
-fn arb_task_kind() -> impl Strategy<Value = (TaskKind, usize)> {
+/// Strategy for generating (output transform, n_groups) pairs.
+fn arb_output_semantics() -> impl Strategy<Value = (OutputTransform, usize)> {
     prop_oneof![
-        Just((TaskKind::Regression, 1)),
-        Just((TaskKind::BinaryClassification, 1)),
-        (3usize..=5).prop_map(|n| (TaskKind::MulticlassClassification { n_classes: n }, n)),
+        Just((OutputTransform::Identity, 1)),
+        Just((OutputTransform::Sigmoid, 1)),
+        (3usize..=5).prop_map(|n| (OutputTransform::Softmax, n)),
     ]
 }
 
-/// Strategy for generating a forest with a consistent task.
-fn arb_forest_with_task() -> impl Strategy<Value = (Forest<ScalarLeaf>, TaskKind, usize, usize)> {
-    arb_task_kind().prop_flat_map(|(task, n_groups)| {
+/// Strategy for generating a forest with consistent output semantics.
+fn arb_forest_with_semantics(
+) -> impl Strategy<Value = (Forest<ScalarLeaf>, OutputTransform, usize, usize)> {
+    arb_output_semantics().prop_flat_map(|(output_transform, n_groups)| {
         let n_trees = 1usize..=100;
         let base_scores = prop_vec(arb_finite_f32(), n_groups);
         (1usize..=100, 1u32..=20, base_scores, n_trees)
@@ -233,30 +229,29 @@ fn arb_forest_with_task() -> impl Strategy<Value = (Forest<ScalarLeaf>, TaskKind
                 for (i, tree) in trees.into_iter().enumerate() {
                     forest.push_tree(tree, (i % n_groups) as u32);
                 }
-                (forest, task, n_groups, n_features)
+                (forest, output_transform, n_groups, n_features)
             })
     })
 }
 
 /// Strategy for generating a GBDT model.
 fn arb_gbdt_model() -> impl Strategy<Value = GBDTModel> {
-    arb_forest_with_task().prop_map(|(forest, task, n_groups, n_features)| {
+    arb_forest_with_semantics().prop_map(|(forest, output_transform, n_groups, n_features)| {
         let meta = ModelMeta {
             n_features,
             n_groups,
-            task,
             base_scores: forest.base_score().to_vec(),
             feature_names: None,
             feature_types: None,
             best_iteration: None,
         };
-        GBDTModel::from_forest(forest, meta)
+        GBDTModel::from_parts(forest, meta, output_transform)
     })
 }
 
 /// Strategy for generating a GBLinear model.
 fn arb_gblinear_model() -> impl Strategy<Value = GBLinearModel> {
-    (1usize..=50, arb_task_kind()).prop_flat_map(|(n_features, (task, n_groups))| {
+    (1usize..=50, arb_output_semantics()).prop_flat_map(|(n_features, (output_transform, n_groups))| {
         let total = (n_features + 1) * n_groups;
         prop_vec(arb_finite_f32(), total).prop_map(move |weights| {
             let arr = ndarray::Array2::from_shape_vec((n_features + 1, n_groups), weights).unwrap();
@@ -264,13 +259,12 @@ fn arb_gblinear_model() -> impl Strategy<Value = GBLinearModel> {
             let meta = ModelMeta {
                 n_features,
                 n_groups,
-                task,
                 base_scores: vec![0.0; n_groups],
                 feature_names: None,
                 feature_types: None,
                 best_iteration: None,
             };
-            GBLinearModel::from_linear_model(linear, meta)
+            GBLinearModel::from_parts(linear, meta, output_transform)
         })
     })
 }
@@ -291,7 +285,7 @@ proptest! {
 
         prop_assert_eq!(loaded.meta().n_features, model.meta().n_features);
         prop_assert_eq!(loaded.meta().n_groups, model.meta().n_groups);
-        prop_assert_eq!(loaded.meta().task, model.meta().task);
+        prop_assert_eq!(loaded.output_transform(), model.output_transform());
         prop_assert_eq!(loaded.forest().n_trees(), model.forest().n_trees());
         prop_assert_eq!(loaded.forest().n_groups(), model.forest().n_groups());
 
@@ -309,6 +303,7 @@ proptest! {
 
         prop_assert_eq!(loaded.meta().n_features, model.meta().n_features);
         prop_assert_eq!(loaded.meta().n_groups, model.meta().n_groups);
+        prop_assert_eq!(loaded.output_transform(), model.output_transform());
         prop_assert_eq!(loaded.forest().n_trees(), model.forest().n_trees());
     }
 
@@ -321,6 +316,7 @@ proptest! {
 
         prop_assert_eq!(loaded.meta().n_features, model.meta().n_features);
         prop_assert_eq!(loaded.meta().n_groups, model.meta().n_groups);
+        prop_assert_eq!(loaded.output_transform(), model.output_transform());
 
         let orig = model.linear().as_slice();
         let load = loaded.linear().as_slice();
@@ -339,6 +335,7 @@ proptest! {
 
         prop_assert_eq!(loaded.meta().n_features, model.meta().n_features);
         prop_assert_eq!(loaded.meta().n_groups, model.meta().n_groups);
+        prop_assert_eq!(loaded.output_transform(), model.output_transform());
     }
 
     /// Polymorphic loading returns correct type for GBDT.
@@ -384,7 +381,7 @@ fn corrupted_payload_rejected() {
     let mut forest = Forest::for_regression().with_base_score(vec![0.0]);
     forest.push_tree(tree, 0);
     let meta = ModelMeta::for_regression(2);
-    let model = GBDTModel::from_forest(forest, meta);
+    let model = GBDTModel::from_parts(forest, meta, OutputTransform::Identity);
 
     let mut buf = Vec::new();
     model
@@ -411,7 +408,7 @@ fn truncated_file_rejected() {
     let mut forest = Forest::for_regression().with_base_score(vec![0.0]);
     forest.push_tree(tree, 0);
     let meta = ModelMeta::for_regression(2);
-    let model = GBDTModel::from_forest(forest, meta);
+    let model = GBDTModel::from_parts(forest, meta, OutputTransform::Identity);
 
     let mut buf = Vec::new();
     model
@@ -434,17 +431,15 @@ fn invalid_json_rejected() {
 fn wrong_model_type_rejected() {
     let weights = ndarray::array![[0.1, 0.2], [0.3, 0.4], [0.01, 0.02]];
     let linear = LinearModel::new(weights);
-    let task = TaskKind::BinaryClassification;
     let meta = ModelMeta {
         n_features: 2,
         n_groups: 2,
-        task,
         base_scores: vec![0.0, 0.0],
         feature_names: None,
         feature_types: None,
         best_iteration: None,
     };
-    let model = GBLinearModel::from_linear_model(linear, meta);
+    let model = GBLinearModel::from_parts(linear, meta, OutputTransform::Sigmoid);
 
     let mut buf = Vec::new();
     model

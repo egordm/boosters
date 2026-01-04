@@ -13,9 +13,10 @@ as described in RFC-0005.
 
 Refactor objectives from trait-based to enum-based dispatch.
 
-**Architecture Note**: The implementation uses a "newtype wrapper" pattern where individual
-loss structs implement `ObjectiveFn` and the `Objective` enum wraps each struct variant and
-delegates via match arms. This achieves enum-only API while preserving backward compatibility.
+**Architecture Note**: The implementation is enum-first.
+
+- `Objective` is a single enum with inherent methods implemented via `match` dispatch.
+- There is no `ObjectiveFn` trait; custom objectives use `CustomObjective` (boxed closures) via `Objective::Custom`.
 
 ### Story 1.0: Define `OutputTransform` enum
 
@@ -50,8 +51,8 @@ Include struct-like fields for configurable objectives (PseudoHuberLoss, Pinball
 **Tasks**:
 
 - [x] 1.1.1 Define `Objective` enum in `training/objectives/mod.rs`
-- [x] 1.1.2 Implement `Clone`, `Debug` derives
-- [x] 1.1.3 Add `Custom(Arc<dyn ObjectiveFn>)` variant
+- [x] 1.1.2 Implement `Debug` derive
+- [x] 1.1.3 Add `Custom(CustomObjective)` variant
 - [x] 1.1.4 Re-export `Objective` from crate root
 
 **Definition of Done**:
@@ -112,10 +113,7 @@ Include struct-like fields for configurable objectives (PseudoHuberLoss, Pinball
 **Description**: Move gradient/base_score logic from existing regression objective structs
 into the enum match arms.
 
-**Status**: ✅ COMPLETE (newtype pattern)
-
-**Implementation Note**: Logic lives in individual structs (SquaredLoss, etc.), enum delegates
-via match arms. This is functionally equivalent to "inlined" logic with better code organization.
+**Status**: ✅ COMPLETE
 
 **Tasks**:
 
@@ -124,13 +122,12 @@ via match arms. This is functionally equivalent to "inlined" logic with better c
 - [x] 1.4.3 Migrate PseudoHuberLoss logic
 - [x] 1.4.4 Migrate PoissonLoss logic
 - [x] 1.4.5 Migrate PinballLoss logic
-- Deferred: 1.4.6 Delete old regression objective structs (kept for newtype pattern)
 - [x] 1.4.7 Remove `TargetSchema` (already absent from codebase)
 
 **Definition of Done**:
 
 - [x] All regression objectives use enum dispatch
-- Deferred: Old regression objective structs deleted (kept for backward compat)
+- [x] No legacy objective trait is required for built-in objectives
 - [x] Existing regression tests pass
 
 ---
@@ -140,21 +137,20 @@ via match arms. This is functionally equivalent to "inlined" logic with better c
 **Description**: Move gradient/base_score logic from existing classification objective structs
 into the enum match arms. Delete `ObjectiveFn` trait.
 
-**Status**: ✅ COMPLETE (trait deletion deferred)
+**Status**: ✅ COMPLETE
 
 **Tasks**:
 
 - [x] 1.5.1 Migrate LogisticLoss logic
 - [x] 1.5.2 Migrate HingeLoss logic
 - [x] 1.5.3 Migrate SoftmaxLoss logic
-- Deferred: 1.5.4 Delete old classification objective structs (kept for newtype pattern)
-- Deferred: 1.5.5 Delete `ObjectiveFn` trait (backward compatibility)
-- Deferred: 1.5.6 Remove `TaskKind` (used by persistence schema)
+- [x] 1.5.4 Delete `ObjectiveFn` trait
+- [x] 1.5.5 Remove `TaskKind` from runtime training/inference APIs
 
 **Definition of Done**:
 
-- Deferred: No `ObjectiveFn` trait remains (kept for backward compat)
-- Deferred: No `TaskKind` references remain (used by persistence)
+- [x] No `ObjectiveFn` trait remains
+- [x] No `TaskKind` references remain in runtime code
 - [x] All existing tests pass with new enum-based objectives
 - [x] `cargo clippy --all-targets` passes with no warnings
 
@@ -164,8 +160,10 @@ into the enum match arms. Delete `ObjectiveFn` trait.
 
 Refactor metrics from trait-based to enum-based dispatch.
 
-**Architecture Note**: Same newtype wrapper pattern as objectives. Individual metric structs
-implement `MetricFn` and the `Metric` enum wraps each struct variant and delegates via match arms.
+**Architecture Note**: The implementation is enum-first.
+
+- `Metric` is a single enum with inherent methods implemented via `match` dispatch.
+- There is no `MetricFn` trait; custom metrics use `CustomMetric` (boxed closures) via `Metric::Custom`.
 
 ### Story 2.1: Define `Metric` enum with all variants
 
@@ -233,7 +231,7 @@ Include `None` variant for no-evaluation case.
 **Description**: Move metric logic from existing structs into enum match arms.
 Delete old metric structs and legacy `MetricFn` trait.
 
-**Status**: ✅ COMPLETE (trait deletion deferred)
+**Status**: ✅ COMPLETE
 
 **Tasks**:
 
@@ -241,11 +239,11 @@ Delete old metric structs and legacy `MetricFn` trait.
 - [x] 2.4.2 Migrate Quantile/PoissonDeviance logic
 - [x] 2.4.3 Migrate LogLoss, Accuracy, AUC logic
 - [x] 2.4.4 Migrate MulticlassLogLoss, MulticlassAccuracy logic
-- Deferred: 2.4.5 Delete old metric structs and legacy `MetricFn` trait (backward compatibility)
+- [x] 2.4.5 Delete `MetricFn` trait
 
 **Definition of Done**:
 
-- Deferred: No legacy `MetricFn` trait remains (kept for backward compat)
+- [x] No `MetricFn` trait remains
 - [x] All existing metric tests pass
 - [x] `cargo clippy --all-targets` passes with no warnings
 
@@ -399,7 +397,7 @@ including default metric selection.
 
 **Description**: Expose new `Objective` and `Metric` enums to Python.
 
-**Status**: ✅ PARTIAL (commit e06d1f8)
+**Status**: ✅ COMPLETE (core enums + defaults)
 
 **Tasks**:
 
@@ -412,7 +410,7 @@ including default metric selection.
 
 - [x] Python users can specify objectives/metrics by name or enum
 - Deferred: Custom Python objectives/metrics work (with FFI overhead) → Story 4.6
-- [x] Python tests pass (1 pre-existing failure tracked in Story 4.7)
+- [x] Python tests pass
 
 ---
 
@@ -432,7 +430,7 @@ including default metric selection.
 **Definition of Done**:
 
 - [x] `cargo test --doc` passes
-- Note: ObjectiveFn/MetricFn traits still exist for backward compatibility (Story 1.5 deferred)
+- Note: The trait-based objective/metric APIs were removed; docs/examples use enum variants directly.
 
 ---
 
@@ -465,16 +463,18 @@ The core enum-based API is complete without this.
 The current implementation applies per-class sigmoid instead of proper softmax.
 This is a pre-existing bug discovered during RFC-0005 implementation.
 
+**Status**: ✅ COMPLETE
+
 **Tasks**:
 
-- [ ] 4.7.1 Investigate why multiclass probabilities don't sum to 1.0
-- [ ] 4.7.2 Fix OutputTransform::Softmax implementation
-- [ ] 4.7.3 Verify sklearn test_multiclass passes
+- [x] 4.7.1 Investigate why multiclass probabilities don't sum to 1.0
+- [x] 4.7.2 Fix/verify `OutputTransform::Softmax` implementation
+- [x] 4.7.3 Verify sklearn multiclass tests pass
 
 **Definition of Done**:
 
-- [ ] `predict_proba().sum(axis=1) == 1.0` for multiclass classification
-- [ ] All sklearn tests pass
+- [x] `predict_proba().sum(axis=1) == 1.0` for multiclass classification
+- [x] All sklearn tests pass
 
 ---
 
@@ -485,7 +485,7 @@ This is a pre-existing bug discovered during RFC-0005 implementation.
 **When**: After Stories 1.5 and 2.4 are done  
 **Artifacts**: `workdir/tmp/development_review_<timestamp>.md`
 
-**Status**: ✅ COMPLETE - Core enum API implemented with newtype pattern
+**Status**: ✅ COMPLETE - Core enum API implemented (traits removed)
 
 - [x] Demonstrate enum-based objective/metric dispatch
 - [x] Show test coverage for gradients and metrics

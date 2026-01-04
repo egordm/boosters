@@ -11,12 +11,11 @@
 use boosters::data::BinningConfig;
 use boosters::data::binned::BinnedDataset;
 use boosters::data::{Dataset, TargetsView, WeightsView};
-use boosters::inference::PredictionKind;
 use boosters::inference::gbdt::SimplePredictor;
 use boosters::repr::gbdt::Forest;
-use boosters::training::{GBDTParams, GBDTTrainer, GradsTuple, GrowthStrategy, Rmse};
-use boosters::{ObjectiveFn, Parallelism, TaskKind};
-use ndarray::{Array2, ArrayView2, ArrayViewMut2};
+use boosters::training::{CustomObjective, GBDTParams, GBDTTrainer, GradsTuple, GrowthStrategy, Metric, Objective};
+use boosters::{OutputTransform, Parallelism};
+use ndarray::Array2;
 
 /// Predict a single row using the predictor.
 fn predict_row(forest: &Forest, features: &[f32]) -> Vec<f32> {
@@ -27,95 +26,58 @@ fn predict_row(forest: &Forest, features: &[f32]) -> Vec<f32> {
     output
 }
 
-/// A custom objective: Huber loss with delta=1.0
+/// A custom objective: Huber loss.
 ///
 /// Huber loss combines the best of MSE (smooth near zero) and MAE (robust to outliers).
-/// - For |error| <= delta: loss = 0.5 * error^2 (like MSE)
-/// - For |error| > delta: loss = delta * (|error| - 0.5 * delta) (like MAE)
-///
-/// Gradients:
 /// - For |error| <= delta: grad = error, hess = 1.0
-/// - For |error| > delta: grad = delta * sign(error), hess = 0.0 (or small epsilon)
-#[derive(Clone, Debug)]
-pub struct HuberLoss {
-    delta: f32,
-}
+/// - For |error| > delta: grad = delta * sign(error), hess = small epsilon
+fn huber_objective(delta: f32) -> Objective {
+    let custom = CustomObjective {
+        name: format!("huber(delta={delta})"),
+        compute_gradients_into: Box::new(move |preds, targets, weights, mut grad_hess| {
+            let n_rows = targets.n_samples();
+            let targets_row = targets.output(0);
 
-impl HuberLoss {
-    pub fn new(delta: f32) -> Self {
-        Self { delta }
-    }
-}
-
-impl ObjectiveFn for HuberLoss {
-    fn n_outputs(&self) -> usize {
-        1
-    }
-
-    fn compute_gradients_into(
-        &self,
-        predictions: ArrayView2<f32>,
-        targets: TargetsView<'_>,
-        weights: WeightsView<'_>,
-        mut grad_hess: ArrayViewMut2<GradsTuple>,
-    ) {
-        let (n_outputs, n_rows) = predictions.dim();
-        // Get targets row for single-output objective
-        let targets_row = targets.output(0);
-        let targets_slice = targets_row.as_slice().unwrap();
-
-        for out_idx in 0..n_outputs {
-            let preds_row = predictions.row(out_idx);
-            let preds_slice = preds_row.as_slice().unwrap();
-            let mut gh_row = grad_hess.row_mut(out_idx);
-            let gh_slice = gh_row.as_slice_mut().unwrap();
-
-            for (i, (gh, (&pred, w))) in gh_slice
-                .iter_mut()
-                .zip(preds_slice.iter().zip(weights.iter(n_rows)))
-                .enumerate()
-            {
-                let target = targets_slice[i];
+            for (i, w) in weights.iter(n_rows).enumerate() {
+                let pred = preds[[0, i]];
+                let target = targets_row[i];
                 let error = pred - target;
 
-                let (grad, hess) = if error.abs() <= self.delta {
-                    // Quadratic region
+                let (grad, hess) = if error.abs() <= delta {
                     (w * error, w)
                 } else {
-                    // Linear region
-                    (w * self.delta * error.signum(), w * 1e-6) // Small hess for stability
+                    (w * delta * error.signum(), w * 1e-6)
                 };
 
-                gh.grad = grad;
-                gh.hess = hess;
+                grad_hess[[0, i]] = GradsTuple { grad, hess };
             }
-        }
-    }
+        }),
+        compute_base_score: Box::new(|targets, weights| {
+            let n_rows = targets.n_samples();
+            if n_rows == 0 {
+                return vec![0.0];
+            }
 
-    fn compute_base_score(&self, targets: TargetsView<'_>, _weights: WeightsView<'_>) -> Vec<f32> {
-        // Use median for Huber (more robust than mean)
-        // For simplicity, using mean here
-        let n_rows = targets.n_samples();
-        if n_rows == 0 {
-            return vec![0.0];
-        }
+            let targets_row = targets.output(0);
+            let mut sum_w = 0.0f32;
+            let mut sum_y = 0.0f32;
 
-        let targets_row = targets.output(0);
-        let sum: f32 = targets_row.iter().sum();
-        vec![sum / n_rows as f32]
-    }
+            for (y, w) in targets_row.iter().zip(weights.iter(n_rows)) {
+                sum_w += w;
+                sum_y += w * *y;
+            }
 
-    fn name(&self) -> &'static str {
-        "huber"
-    }
+            if sum_w == 0.0 {
+                vec![0.0]
+            } else {
+                vec![sum_y / sum_w]
+            }
+        }),
+        output_transform: OutputTransform::Identity,
+        n_outputs: 1,
+    };
 
-    fn task_kind(&self) -> TaskKind {
-        TaskKind::Regression
-    }
-
-    fn transform_predictions_inplace(&self, _predictions: ArrayViewMut2<f32>) -> PredictionKind {
-        PredictionKind::Value
-    }
+    Objective::Custom(custom)
 }
 
 fn main() {
@@ -149,8 +111,8 @@ fn main() {
     let targets_2d = ndarray::Array2::from_shape_vec((1, labels.len()), labels.clone()).unwrap();
     let targets = TargetsView::new(targets_2d.view());
 
-    let huber = HuberLoss::new(1.0);
-    let trainer = GBDTTrainer::new(huber, Rmse, params);
+    let objective = huber_objective(1.0);
+    let trainer = GBDTTrainer::new(objective, Metric::Rmse, params);
     let forest = trainer
         .train(
             &features_dataset,

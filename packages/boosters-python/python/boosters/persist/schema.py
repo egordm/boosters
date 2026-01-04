@@ -41,7 +41,7 @@ class JsonEnvelope[T](BaseModel):
         The model schema payload.
     """
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, extra="forbid")
 
     bstr_version: int
     model_type: str
@@ -54,6 +54,8 @@ class JsonEnvelope[T](BaseModel):
 
 TaskKind = Literal["regression", "binary_classification", "multiclass_classification", "ranking"]
 
+OutputTransform = Literal["identity", "sigmoid", "softmax"]
+
 FeatureType = Literal["numeric", "categorical"]
 
 
@@ -63,7 +65,13 @@ FeatureType = Literal["numeric", "categorical"]
 
 
 class ModelMetaSchema(BaseModel):
-    """Model metadata including task type and feature information.
+    """Model metadata.
+
+    Mirrors Rust `ModelMetaSchema`.
+
+    Notes:
+    This schema also accepts a few legacy fields for backward compatibility
+    (e.g. `task`, `num_classes`) that may exist in older JSON.
 
     Attributes:
     ----------
@@ -79,13 +87,18 @@ class ModelMetaSchema(BaseModel):
         Optional list of feature types (numeric or categorical).
     """
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, extra="forbid")
 
-    task: TaskKind
-    num_features: int
+    # Legacy fields (not emitted by Rust anymore)
+    task: TaskKind | None = None
     num_classes: int | None = None
+
+    # Current Rust fields
+    num_features: int
+    num_groups: int = 1
     feature_names: list[str] | None = None
     feature_types: list[FeatureType] | None = None
+    objective_name: str | None = None
 
 
 # -----------------------------------------------------------------------------
@@ -96,7 +109,7 @@ class ModelMetaSchema(BaseModel):
 class ScalarLeafValues(BaseModel):
     """Scalar leaf values (one f64 per leaf)."""
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, extra="forbid")
 
     type: Literal["scalar"]
     values: list[float]
@@ -105,7 +118,7 @@ class ScalarLeafValues(BaseModel):
 class VectorLeafValues(BaseModel):
     """Vector leaf values (multiple f64 per leaf)."""
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, extra="forbid")
 
     type: Literal["vector"]
     values: list[list[float]]
@@ -133,7 +146,7 @@ class CategoriesSchema(BaseModel):
         Category sets (one per node in node_indices).
     """
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, extra="forbid")
 
     node_indices: list[int] = Field(default_factory=list)
     category_sets: list[list[int]] = Field(default_factory=list)
@@ -150,7 +163,7 @@ class LinearCoefficientsSchema(BaseModel):
         Coefficient arrays (one per node in node_indices).
     """
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, extra="forbid")
 
     node_indices: list[int] = Field(default_factory=list)
     coefficients: list[list[float]] = Field(default_factory=list)
@@ -190,7 +203,7 @@ class TreeSchema(BaseModel):
         Optional sample covers for each node.
     """
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, extra="forbid")
 
     num_nodes: int
     split_indices: list[int]
@@ -225,7 +238,7 @@ class ForestSchema(BaseModel):
         Base score(s) for the ensemble.
     """
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, extra="forbid")
 
     trees: list[TreeSchema]
     tree_groups: list[int] | None = None
@@ -241,35 +254,35 @@ class ForestSchema(BaseModel):
 class SquaredLossObjective(BaseModel):
     """Squared error loss."""
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, extra="forbid")
     type: Literal["squared_loss"]
 
 
 class AbsoluteLossObjective(BaseModel):
     """Absolute error loss."""
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, extra="forbid")
     type: Literal["absolute_loss"]
 
 
 class LogisticLossObjective(BaseModel):
     """Logistic loss for binary classification."""
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, extra="forbid")
     type: Literal["logistic_loss"]
 
 
 class HingeLossObjective(BaseModel):
     """Hinge loss for classification."""
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, extra="forbid")
     type: Literal["hinge_loss"]
 
 
 class SoftmaxLossObjective(BaseModel):
     """Softmax loss for multiclass classification."""
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, extra="forbid")
     type: Literal["softmax_loss"]
     n_classes: int
 
@@ -277,7 +290,7 @@ class SoftmaxLossObjective(BaseModel):
 class PinballLossObjective(BaseModel):
     """Pinball loss for quantile regression."""
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, extra="forbid")
     type: Literal["pinball_loss"]
     alphas: list[float]
 
@@ -285,7 +298,7 @@ class PinballLossObjective(BaseModel):
 class PseudoHuberLossObjective(BaseModel):
     """Pseudo-Huber loss for robust regression."""
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, extra="forbid")
     type: Literal["pseudo_huber_loss"]
     delta: float
 
@@ -293,14 +306,14 @@ class PseudoHuberLossObjective(BaseModel):
 class PoissonLossObjective(BaseModel):
     """Poisson loss for count data."""
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, extra="forbid")
     type: Literal["poisson_loss"]
 
 
 class CustomObjective(BaseModel):
     """Custom user-defined objective."""
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, extra="forbid")
     type: Literal["custom"]
     name: str
 
@@ -337,7 +350,7 @@ class LinearWeightsSchema(BaseModel):
         Number of output groups.
     """
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, extra="forbid")
 
     values: list[float]
     num_features: int
@@ -355,11 +368,12 @@ class GBDTModelSchema(BaseModel):
     Mirrors Rust `GBDTModelSchema`.
     """
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, extra="forbid")
 
     meta: ModelMetaSchema
     forest: ForestSchema
-    objective: ObjectiveSchema
+    output_transform: OutputTransform
+    objective: ObjectiveSchema | None = None
 
     MODEL_TYPE: str = "gbdt"
 
@@ -370,11 +384,12 @@ class GBLinearModelSchema(BaseModel):
     Mirrors Rust `GBLinearModelSchema`.
     """
 
-    model_config = ConfigDict(strict=True)
+    model_config = ConfigDict(strict=True, extra="forbid")
 
     meta: ModelMetaSchema
     weights: LinearWeightsSchema
     base_score: list[float]
-    objective: ObjectiveSchema
+    output_transform: OutputTransform
+    objective: ObjectiveSchema | None = None
 
     MODEL_TYPE: str = "gblinear"

@@ -15,7 +15,6 @@ use boosters::persist::{
 use crate::config::PyGBDTConfig;
 use crate::data::PyDataset;
 use crate::error::BoostersError;
-use crate::objectives::PyObjective;
 use crate::types::PyImportanceType;
 use crate::validation::validate_feature_count;
 
@@ -106,13 +105,6 @@ impl PyGBDTModel {
     #[getter]
     pub fn n_features(&self) -> PyResult<usize> {
         Ok(self.model.meta().n_features)
-    }
-
-    /// Get the model objective.
-    #[getter]
-    #[gen_stub(override_return_type(type_repr = "Objective"))]
-    pub fn objective(&self) -> PyObjective {
-        self.model.objective().into()
     }
 
     /// Get feature importance scores.

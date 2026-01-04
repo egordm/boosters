@@ -153,7 +153,7 @@ grid.fit(X, y)
 | `Metric.mae()` | Mean absolute error |
 | `Metric.logloss()` | Log loss / cross-entropy |
 | `Metric.auc()` | Area under ROC curve |
-| `Metric.accuracy()` | Classification accuracy |
+| `Metric.Accuracy()` | Classification accuracy |
 | `Metric.ndcg(at)` | Normalized discounted cumulative gain |
 
 ## Examples

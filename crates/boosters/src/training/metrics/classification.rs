@@ -3,178 +3,121 @@
 //! Metrics for evaluating classification model quality.
 
 use ndarray::ArrayView2;
-
-use super::MetricFn;
 use crate::data::TargetsView;
 use crate::data::WeightsView;
-use crate::inference::PredictionKind;
 
 // =============================================================================
 // LogLoss (Binary Cross-Entropy)
 // =============================================================================
 
-/// Binary cross-entropy: -mean(y*log(p) + (1-y)*log(1-p))
-///
-/// Lower is better. Used for binary classification.
-/// Expects predictions to be probabilities in (0, 1).
-#[derive(Debug, Clone, Copy, Default)]
-pub struct LogLoss;
-
-impl MetricFn for LogLoss {
-    fn compute(
-        &self,
-        predictions: ArrayView2<f32>,
-        targets: TargetsView<'_>,
-        weights: WeightsView<'_>,
-    ) -> f64 {
-        let targets = targets.output(0);
-        let (_, n_rows) = predictions.dim();
-        if n_rows == 0 {
-            return 0.0;
-        }
-
-        const EPS: f64 = 1e-15;
-
-        let preds_row = predictions.row(0);
-
-        let (sum_loss, sum_w) = preds_row
-            .iter()
-            .zip(targets.iter())
-            .zip(weights.iter(n_rows))
-            .fold((0.0f64, 0.0f64), |(sl, sw), ((&p, &l), w)| {
-                let p = (p as f64).clamp(EPS, 1.0 - EPS);
-                let l = l as f64;
-                let loss = -(l * p.ln() + (1.0 - l) * (1.0 - p).ln());
-                (sl + (w as f64) * loss, sw + w as f64)
-            });
-
-        if sum_w > 0.0 { sum_loss / sum_w } else { 0.0 }
+pub(super) fn compute_logloss(
+    predictions: ArrayView2<f32>,
+    targets: TargetsView<'_>,
+    weights: WeightsView<'_>,
+) -> f64 {
+    let targets = targets.output(0);
+    let (_, n_rows) = predictions.dim();
+    if n_rows == 0 {
+        return 0.0;
     }
 
-    fn higher_is_better(&self) -> bool {
-        false
-    }
+    const EPS: f64 = 1e-15;
 
-    fn expected_prediction_kind(&self) -> PredictionKind {
-        PredictionKind::Probability
-    }
+    let preds_row = predictions.row(0);
 
-    fn name(&self) -> &'static str {
-        "logloss"
-    }
+    let (sum_loss, sum_w) = preds_row
+        .iter()
+        .zip(targets.iter())
+        .zip(weights.iter(n_rows))
+        .fold((0.0f64, 0.0f64), |(sl, sw), ((&p, &l), w)| {
+            let p = (p as f64).clamp(EPS, 1.0 - EPS);
+            let l = l as f64;
+            let loss = -(l * p.ln() + (1.0 - l) * (1.0 - p).ln());
+            (sl + (w as f64) * loss, sw + w as f64)
+        });
+
+    if sum_w > 0.0 { sum_loss / sum_w } else { 0.0 }
 }
 
 // =============================================================================
 // Accuracy
 // =============================================================================
 
-/// Classification accuracy: proportion of correct predictions.
-///
-/// Higher is better. For binary classification, uses configurable threshold.
-#[derive(Debug, Clone, Copy)]
-pub struct Accuracy {
-    pub threshold: f32,
-}
-
-impl Default for Accuracy {
-    fn default() -> Self {
-        Self { threshold: 0.5 }
-    }
-}
-
-impl Accuracy {
-    pub fn with_threshold(threshold: f32) -> Self {
-        Self { threshold }
-    }
-}
-
-impl MetricFn for Accuracy {
-    fn compute(
-        &self,
-        predictions: ArrayView2<f32>,
-        targets: TargetsView<'_>,
-        weights: WeightsView<'_>,
-    ) -> f64 {
-        let targets = targets.output(0);
-        let (_, n_rows) = predictions.dim();
-        if n_rows == 0 {
-            return 0.0;
-        }
-
-        let preds_row = predictions.row(0);
-
-        let (sum_correct, sum_w) = preds_row
-            .iter()
-            .zip(targets.iter())
-            .zip(weights.iter(n_rows))
-            .fold((0.0f64, 0.0f64), |(sc, sw), ((&p, &l), w)| {
-                let pred_class = if p >= self.threshold { 1.0 } else { 0.0 };
-                let correct = if (pred_class - l).abs() < 0.5 {
-                    1.0
-                } else {
-                    0.0
-                };
-                (sc + (w as f64) * correct, sw + w as f64)
-            });
-
-        if sum_w > 0.0 {
-            sum_correct / sum_w
-        } else {
-            0.0
-        }
+pub(super) fn compute_accuracy(
+    predictions: ArrayView2<f32>,
+    targets: TargetsView<'_>,
+    weights: WeightsView<'_>,
+    threshold: f32,
+) -> f64 {
+    let targets = targets.output(0);
+    let (_, n_rows) = predictions.dim();
+    if n_rows == 0 {
+        return 0.0;
     }
 
-    fn higher_is_better(&self) -> bool {
-        true
-    }
+    let preds_row = predictions.row(0);
 
-    fn expected_prediction_kind(&self) -> PredictionKind {
-        PredictionKind::Probability
-    }
+    let (sum_correct, sum_w) = preds_row
+        .iter()
+        .zip(targets.iter())
+        .zip(weights.iter(n_rows))
+        .fold((0.0f64, 0.0f64), |(sc, sw), ((&p, &l), w)| {
+            let pred_class = if p >= threshold { 1.0 } else { 0.0 };
+            let correct = if (pred_class - l).abs() < 0.5 { 1.0 } else { 0.0 };
+            (sc + (w as f64) * correct, sw + w as f64)
+        });
 
-    fn name(&self) -> &'static str {
-        "accuracy"
-    }
+    if sum_w > 0.0 { sum_correct / sum_w } else { 0.0 }
 }
 
 // =============================================================================
 // Margin Accuracy
 // =============================================================================
 
-/// Binary classification accuracy for **margin** predictions.
-///
-/// Higher is better. Uses a configurable threshold in margin space (default: 0.0).
-#[derive(Debug, Clone, Copy)]
-pub struct MarginAccuracy {
-    pub threshold: f32,
-}
-
-impl Default for MarginAccuracy {
-    fn default() -> Self {
-        Self { threshold: 0.0 }
+pub(super) fn compute_margin_accuracy(
+    predictions: ArrayView2<f32>,
+    targets: TargetsView<'_>,
+    weights: WeightsView<'_>,
+    threshold: f32,
+) -> f64 {
+    let targets = targets.output(0);
+    let (_, n_rows) = predictions.dim();
+    if n_rows == 0 {
+        return 0.0;
     }
+
+    let preds_row = predictions.row(0);
+
+    let (sum_correct, sum_w) = preds_row
+        .iter()
+        .zip(targets.iter())
+        .zip(weights.iter(n_rows))
+        .fold((0.0f64, 0.0f64), |(sc, sw), ((&p, &l), w)| {
+            let pred_class = if p >= threshold { 1.0 } else { 0.0 };
+            let correct = if (pred_class - l).abs() < 0.5 { 1.0 } else { 0.0 };
+            (sc + (w as f64) * correct, sw + w as f64)
+        });
+
+    if sum_w > 0.0 { sum_correct / sum_w } else { 0.0 }
 }
 
-impl MarginAccuracy {
-    #[allow(dead_code)]
-    pub fn with_threshold(threshold: f32) -> Self {
-        Self { threshold }
+// =============================================================================
+// Multiclass Accuracy
+// =============================================================================
+
+pub(super) fn compute_multiclass_accuracy(
+    predictions: ArrayView2<f32>,
+    targets: TargetsView<'_>,
+    weights: WeightsView<'_>,
+) -> f64 {
+    let targets = targets.output(0);
+    let (n_outputs, n_rows) = predictions.dim();
+    if n_rows == 0 {
+        return 0.0;
     }
-}
 
-impl MetricFn for MarginAccuracy {
-    fn compute(
-        &self,
-        predictions: ArrayView2<f32>,
-        targets: TargetsView<'_>,
-        weights: WeightsView<'_>,
-    ) -> f64 {
-        let targets = targets.output(0);
-        let (_, n_rows) = predictions.dim();
-        if n_rows == 0 {
-            return 0.0;
-        }
-
+    // Single output: predictions are class indices
+    if n_outputs == 1 {
         let preds_row = predictions.row(0);
 
         let (sum_correct, sum_w) = preds_row
@@ -182,191 +125,85 @@ impl MetricFn for MarginAccuracy {
             .zip(targets.iter())
             .zip(weights.iter(n_rows))
             .fold((0.0f64, 0.0f64), |(sc, sw), ((&p, &l), w)| {
-                let pred_class = if p >= self.threshold { 1.0 } else { 0.0 };
-                let correct = if (pred_class - l).abs() < 0.5 {
-                    1.0
-                } else {
-                    0.0
-                };
+                let correct = if (p.round() - l).abs() < 0.5 { 1.0 } else { 0.0 };
                 (sc + (w as f64) * correct, sw + w as f64)
             });
 
-        if sum_w > 0.0 {
-            sum_correct / sum_w
-        } else {
-            0.0
-        }
+        return if sum_w > 0.0 { sum_correct / sum_w } else { 0.0 };
     }
 
-    fn higher_is_better(&self) -> bool {
-        true
-    }
+    // Multi-output: find argmax for each sample
+    let argmax = |sample: usize| -> usize {
+        (0..n_outputs)
+            .max_by(|&a, &b| {
+                let va = predictions[[a, sample]];
+                let vb = predictions[[b, sample]];
+                va.partial_cmp(&vb).unwrap_or(std::cmp::Ordering::Less)
+            })
+            .unwrap_or(0)
+    };
 
-    fn expected_prediction_kind(&self) -> PredictionKind {
-        PredictionKind::Margin
-    }
+    let (sum_correct, sum_w) = targets.iter().enumerate().zip(weights.iter(n_rows)).fold(
+        (0.0f64, 0.0f64),
+        |(sc, sw), ((i, &l), w)| {
+            let pred_class = argmax(i) as f32;
+            let correct = if (pred_class - l).abs() < 0.5 { 1.0 } else { 0.0 };
+            (sc + (w as f64) * correct, sw + w as f64)
+        },
+    );
 
-    fn name(&self) -> &'static str {
-        "margin_accuracy"
-    }
-}
-
-// =============================================================================
-// Multiclass Accuracy
-// =============================================================================
-
-/// Multiclass accuracy.
-///
-/// Expects predictions as per-class scores with shape `[n_classes, n_samples]`.
-/// Labels are class indices in `0..n_classes`.
-///
-/// Higher is better.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct MulticlassAccuracy;
-
-impl MetricFn for MulticlassAccuracy {
-    fn compute(
-        &self,
-        predictions: ArrayView2<f32>,
-        targets: TargetsView<'_>,
-        weights: WeightsView<'_>,
-    ) -> f64 {
-        let targets = targets.output(0);
-        let (n_outputs, n_rows) = predictions.dim();
-        if n_rows == 0 {
-            return 0.0;
-        }
-
-        // Single output: predictions are class indices
-        if n_outputs == 1 {
-            let preds_row = predictions.row(0);
-
-            let (sum_correct, sum_w) = preds_row
-                .iter()
-                .zip(targets.iter())
-                .zip(weights.iter(n_rows))
-                .fold((0.0f64, 0.0f64), |(sc, sw), ((&p, &l), w)| {
-                    let correct = if (p.round() - l).abs() < 0.5 {
-                        1.0
-                    } else {
-                        0.0
-                    };
-                    (sc + (w as f64) * correct, sw + w as f64)
-                });
-
-            return if sum_w > 0.0 {
-                sum_correct / sum_w
-            } else {
-                0.0
-            };
-        }
-
-        // Multi-output: find argmax for each sample
-        let argmax = |sample: usize| -> usize {
-            (0..n_outputs)
-                .max_by(|&a, &b| {
-                    let va = predictions[[a, sample]];
-                    let vb = predictions[[b, sample]];
-                    va.partial_cmp(&vb).unwrap_or(std::cmp::Ordering::Less)
-                })
-                .unwrap_or(0)
-        };
-
-        let (sum_correct, sum_w) = targets.iter().enumerate().zip(weights.iter(n_rows)).fold(
-            (0.0f64, 0.0f64),
-            |(sc, sw), ((i, &l), w)| {
-                let pred_class = argmax(i) as f32;
-                let correct = if (pred_class - l).abs() < 0.5 {
-                    1.0
-                } else {
-                    0.0
-                };
-                (sc + (w as f64) * correct, sw + w as f64)
-            },
-        );
-
-        if sum_w > 0.0 {
-            sum_correct / sum_w
-        } else {
-            0.0
-        }
-    }
-
-    fn higher_is_better(&self) -> bool {
-        true
-    }
-
-    fn expected_prediction_kind(&self) -> PredictionKind {
-        PredictionKind::Probability
-    }
-
-    fn name(&self) -> &'static str {
-        "multiclass_accuracy"
-    }
+    if sum_w > 0.0 { sum_correct / sum_w } else { 0.0 }
 }
 
 // =============================================================================
 // AUC (Area Under ROC Curve)
 // =============================================================================
 
-/// Area Under the ROC Curve for binary classification.
-///
-/// Higher is better. Measures ranking quality.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Auc;
+pub(super) fn compute_auc(
+    predictions: ArrayView2<f32>,
+    targets: TargetsView<'_>,
+    weights: WeightsView<'_>,
+) -> f64 {
+    let targets = targets.output(0);
+    let (_, n_rows) = predictions.dim();
+    if n_rows == 0 {
+        return 0.5;
+    }
 
-impl MetricFn for Auc {
-    fn compute(
-        &self,
-        predictions: ArrayView2<f32>,
-        targets: TargetsView<'_>,
-        weights: WeightsView<'_>,
-    ) -> f64 {
-        let targets = targets.output(0);
-        let (_, n_rows) = predictions.dim();
-        if n_rows == 0 {
-            return 0.5;
+    let preds_row = predictions.row(0);
+
+    match weights {
+        WeightsView::None => {
+            let items: Vec<(f32, f32)> = preds_row
+                .iter()
+                .zip(targets.iter())
+                .map(|(&p, &l)| (p, l))
+                .collect();
+            compute_auc_unweighted(&items)
         }
-
-        let preds_row = predictions.row(0);
-        let preds_slice = preds_row
-            .as_slice()
-            .expect("predictions row should be contiguous");
-        let targets_slice = targets.as_slice().expect("targets should be contiguous");
-
-        match weights {
-            WeightsView::None => compute_auc_unweighted(preds_slice, targets_slice),
-            WeightsView::Some(w) => {
-                let weights_slice = w.as_slice().expect("weights should be contiguous");
-                compute_auc_weighted(preds_slice, targets_slice, weights_slice)
-            }
+        WeightsView::Some(w) => {
+            let items: Vec<(f32, f32, f32)> = preds_row
+                .iter()
+                .zip(targets.iter())
+                .zip(w.iter())
+                .map(|((&p, &l), &weight)| (p, l, weight))
+                .collect();
+            compute_auc_weighted(&items)
         }
-    }
-
-    fn higher_is_better(&self) -> bool {
-        true
-    }
-
-    fn expected_prediction_kind(&self) -> PredictionKind {
-        PredictionKind::Probability
-    }
-
-    fn name(&self) -> &'static str {
-        "auc"
     }
 }
 
-fn compute_auc_unweighted(predictions: &[f32], labels: &[f32]) -> f64 {
-    let n = predictions.len();
+fn compute_auc_unweighted(items: &[(f32, f32)]) -> f64 {
+    let n = items.len();
 
     let mut indices: Vec<usize> = (0..n).collect();
     indices.sort_by(|&a, &b| {
-        predictions[b]
-            .partial_cmp(&predictions[a])
-            .unwrap_or(std::cmp::Ordering::Equal)
+        let pa = items[a].0;
+        let pb = items[b].0;
+        pb.partial_cmp(&pa).unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    let n_pos = labels.iter().filter(|&&l| l > 0.5).count();
+    let n_pos = items.iter().filter(|(_, l)| *l > 0.5).count();
     let n_neg = n - n_pos;
 
     if n_pos == 0 || n_neg == 0 {
@@ -378,14 +215,14 @@ fn compute_auc_unweighted(predictions: &[f32], labels: &[f32]) -> f64 {
 
     while i < n {
         let mut j = i + 1;
-        while j < n && (predictions[indices[i]] - predictions[indices[j]]).abs() < 1e-10 {
+        while j < n && (items[indices[i]].0 - items[indices[j]].0).abs() < 1e-10 {
             j += 1;
         }
 
         let avg_rank = (i + 1 + j) as f64 / 2.0;
 
         for &idx in indices.iter().take(j).skip(i) {
-            if labels[idx] > 0.5 {
+            if items[idx].1 > 0.5 {
                 rank_sum_pos += avg_rank;
             }
         }
@@ -400,27 +237,25 @@ fn compute_auc_unweighted(predictions: &[f32], labels: &[f32]) -> f64 {
     (sum_ascending_ranks - n_pos_f * (n_pos_f + 1.0) / 2.0) / (n_pos_f * n_neg_f)
 }
 
-fn compute_auc_weighted(predictions: &[f32], labels: &[f32], weights: &[f32]) -> f64 {
-    let n = predictions.len();
+fn compute_auc_weighted(items: &[(f32, f32, f32)]) -> f64 {
+    let n = items.len();
 
     let mut indices: Vec<usize> = (0..n).collect();
     indices.sort_by(|&a, &b| {
-        predictions[a]
-            .partial_cmp(&predictions[b])
-            .unwrap_or(std::cmp::Ordering::Equal)
+        let pa = items[a].0;
+        let pb = items[b].0;
+        pa.partial_cmp(&pb).unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    let (sum_pos, sum_neg) =
-        labels
-            .iter()
-            .zip(weights.iter())
-            .fold((0.0f64, 0.0f64), |(sp, sn), (&l, &w)| {
-                if l > 0.5 {
-                    (sp + w as f64, sn)
-                } else {
-                    (sp, sn + w as f64)
-                }
-            });
+    let (sum_pos, sum_neg) = items
+        .iter()
+        .fold((0.0f64, 0.0f64), |(sp, sn), &(_, label, weight)| {
+            if label > 0.5 {
+                (sp + weight as f64, sn)
+            } else {
+                (sp, sn + weight as f64)
+            }
+        });
 
     if sum_pos == 0.0 || sum_neg == 0.0 {
         return 0.5;
@@ -432,7 +267,7 @@ fn compute_auc_weighted(predictions: &[f32], labels: &[f32], weights: &[f32]) ->
 
     while i < n {
         let mut j = i + 1;
-        while j < n && (predictions[indices[i]] - predictions[indices[j]]).abs() < 1e-10 {
+        while j < n && (items[indices[i]].0 - items[indices[j]].0).abs() < 1e-10 {
             j += 1;
         }
 
@@ -440,10 +275,11 @@ fn compute_auc_weighted(predictions: &[f32], labels: &[f32], weights: &[f32]) ->
         let mut group_neg_weight = 0.0f64;
 
         for &idx in indices.iter().take(j).skip(i) {
-            if labels[idx] > 0.5 {
-                group_pos_weight += weights[idx] as f64;
+            let (_, label, weight) = items[idx];
+            if label > 0.5 {
+                group_pos_weight += weight as f64;
             } else {
-                group_neg_weight += weights[idx] as f64;
+                group_neg_weight += weight as f64;
             }
         }
 
@@ -460,55 +296,34 @@ fn compute_auc_weighted(predictions: &[f32], labels: &[f32], weights: &[f32]) ->
 // Multiclass LogLoss
 // =============================================================================
 
-/// Multiclass cross-entropy: -mean(log(p_true_class))
-///
-/// Lower is better. Labels are class indices in `0..n_classes`.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct MulticlassLogLoss;
-
-impl MetricFn for MulticlassLogLoss {
-    fn compute(
-        &self,
-        predictions: ArrayView2<f32>,
-        targets: TargetsView<'_>,
-        weights: WeightsView<'_>,
-    ) -> f64 {
-        let targets = targets.output(0);
-        let (n_outputs, n_rows) = predictions.dim();
-        if n_rows == 0 || n_outputs == 0 {
-            return 0.0;
-        }
-
-        const EPS: f64 = 1e-15;
-
-        let (sum_loss, sum_w) = targets.iter().enumerate().zip(weights.iter(n_rows)).fold(
-            (0.0f64, 0.0f64),
-            |(sl, sw), ((i, &label), w)| {
-                let class_idx = label.round() as usize;
-                debug_assert!(class_idx < n_outputs, "label out of bounds");
-
-                let prob = predictions[[class_idx, i]] as f64;
-                let prob = prob.clamp(EPS, 1.0 - EPS);
-                let loss = -prob.ln();
-
-                (sl + (w as f64) * loss, sw + w as f64)
-            },
-        );
-
-        if sum_w > 0.0 { sum_loss / sum_w } else { 0.0 }
+pub(super) fn compute_multiclass_logloss(
+    predictions: ArrayView2<f32>,
+    targets: TargetsView<'_>,
+    weights: WeightsView<'_>,
+) -> f64 {
+    let targets = targets.output(0);
+    let (n_outputs, n_rows) = predictions.dim();
+    if n_rows == 0 || n_outputs == 0 {
+        return 0.0;
     }
 
-    fn higher_is_better(&self) -> bool {
-        false
-    }
+    const EPS: f64 = 1e-15;
 
-    fn expected_prediction_kind(&self) -> PredictionKind {
-        PredictionKind::Probability
-    }
+    let (sum_loss, sum_w) = targets.iter().enumerate().zip(weights.iter(n_rows)).fold(
+        (0.0f64, 0.0f64),
+        |(sl, sw), ((i, &label), w)| {
+            let class_idx = label.round() as usize;
+            debug_assert!(class_idx < n_outputs, "label out of bounds");
 
-    fn name(&self) -> &'static str {
-        "mlogloss"
-    }
+            let prob = predictions[[class_idx, i]] as f64;
+            let prob = prob.clamp(EPS, 1.0 - EPS);
+            let loss = -prob.ln();
+
+            (sl + (w as f64) * loss, sw + w as f64)
+        },
+    );
+
+    if sum_w > 0.0 { sum_loss / sum_w } else { 0.0 }
 }
 
 // =============================================================================
@@ -539,11 +354,7 @@ mod tests {
     fn logloss_perfect() {
         let preds = make_preds(1, 2, &[0.9999, 0.0001]);
         let labels = make_targets(&[1.0, 0.0]);
-        let ll = LogLoss.compute(
-            preds.view(),
-            TargetsView::new(labels.view()),
-            WeightsView::None,
-        );
+        let ll = compute_logloss(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
         assert!(ll < 0.01);
     }
 
@@ -551,11 +362,7 @@ mod tests {
     fn logloss_random() {
         let preds = make_preds(1, 2, &[0.5, 0.5]);
         let labels = make_targets(&[1.0, 0.0]);
-        let ll = LogLoss.compute(
-            preds.view(),
-            TargetsView::new(labels.view()),
-            WeightsView::None,
-        );
+        let ll = compute_logloss(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
         assert_abs_diff_eq!(ll as f32, 0.693, epsilon = 0.01);
     }
 
@@ -564,15 +371,12 @@ mod tests {
         let preds = make_preds(1, 2, &[0.9, 0.1]);
         let labels = make_targets(&[1.0, 1.0]);
 
-        let unweighted = LogLoss.compute(
-            preds.view(),
-            TargetsView::new(labels.view()),
-            WeightsView::None,
-        );
+        let unweighted =
+            compute_logloss(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
 
         // High weight on good prediction → lower loss
         let weights = ndarray::array![10.0f32, 1.0];
-        let weighted = LogLoss.compute(
+        let weighted = compute_logloss(
             preds.view(),
             TargetsView::new(labels.view()),
             WeightsView::from_array(weights.view()),
@@ -588,11 +392,8 @@ mod tests {
     fn accuracy_perfect() {
         let preds = make_preds(1, 4, &[0.9, 0.1, 0.8, 0.2]);
         let labels = make_targets(&[1.0, 0.0, 1.0, 0.0]);
-        let acc = Accuracy::default().compute(
-            preds.view(),
-            TargetsView::new(labels.view()),
-            WeightsView::None,
-        );
+        let acc =
+            compute_accuracy(preds.view(), TargetsView::new(labels.view()), WeightsView::None, 0.5);
         assert_abs_diff_eq!(acc as f32, 1.0, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -600,11 +401,8 @@ mod tests {
     fn accuracy_half() {
         let preds = make_preds(1, 4, &[0.9, 0.9, 0.1, 0.1]);
         let labels = make_targets(&[1.0, 0.0, 1.0, 0.0]);
-        let acc = Accuracy::default().compute(
-            preds.view(),
-            TargetsView::new(labels.view()),
-            WeightsView::None,
-        );
+        let acc =
+            compute_accuracy(preds.view(), TargetsView::new(labels.view()), WeightsView::None, 0.5);
         assert_abs_diff_eq!(acc as f32, 0.5, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -615,10 +413,11 @@ mod tests {
 
         // High weight on correct sample
         let weights = ndarray::array![10.0f32, 1.0];
-        let weighted = Accuracy::default().compute(
+        let weighted = compute_accuracy(
             preds.view(),
             TargetsView::new(labels.view()),
             WeightsView::from_array(weights.view()),
+            0.5,
         );
         assert_abs_diff_eq!(weighted as f32, 10.0 / 11.0, epsilon = DEFAULT_TOLERANCE);
     }
@@ -640,7 +439,7 @@ mod tests {
             ],
         );
         let labels = make_targets(&[0.0, 1.0, 2.0, 0.0]); // Last one wrong
-        let acc = MulticlassAccuracy.compute(
+        let acc = compute_multiclass_accuracy(
             preds.view(),
             TargetsView::new(labels.view()),
             WeightsView::None,
@@ -656,11 +455,7 @@ mod tests {
     fn auc_perfect() {
         let preds = make_preds(1, 4, &[0.9, 0.8, 0.3, 0.2]);
         let labels = make_targets(&[1.0, 1.0, 0.0, 0.0]);
-        let auc = Auc.compute(
-            preds.view(),
-            TargetsView::new(labels.view()),
-            WeightsView::None,
-        );
+        let auc = compute_auc(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
         assert_abs_diff_eq!(auc as f32, 1.0, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -668,11 +463,7 @@ mod tests {
     fn auc_random() {
         let preds = make_preds(1, 4, &[0.5, 0.5, 0.5, 0.5]);
         let labels = make_targets(&[1.0, 0.0, 1.0, 0.0]);
-        let auc = Auc.compute(
-            preds.view(),
-            TargetsView::new(labels.view()),
-            WeightsView::None,
-        );
+        let auc = compute_auc(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
         assert_abs_diff_eq!(auc as f32, 0.5, epsilon = DEFAULT_TOLERANCE);
     }
 
@@ -680,11 +471,7 @@ mod tests {
     fn auc_worst() {
         let preds = make_preds(1, 4, &[0.2, 0.3, 0.8, 0.9]);
         let labels = make_targets(&[1.0, 1.0, 0.0, 0.0]);
-        let auc = Auc.compute(
-            preds.view(),
-            TargetsView::new(labels.view()),
-            WeightsView::None,
-        );
+        let auc = compute_auc(preds.view(), TargetsView::new(labels.view()), WeightsView::None);
         assert!(auc < 0.01);
     }
 
@@ -705,7 +492,7 @@ mod tests {
             ],
         );
         let labels = make_targets(&[0.0, 1.0]);
-        let mlogloss = MulticlassLogLoss.compute(
+        let mlogloss = compute_multiclass_logloss(
             preds.view(),
             TargetsView::new(labels.view()),
             WeightsView::None,
@@ -726,7 +513,7 @@ mod tests {
             ],
         );
         let labels = make_targets(&[0.0, 1.0, 2.0]);
-        let mlogloss = MulticlassLogLoss.compute(
+        let mlogloss = compute_multiclass_logloss(
             preds.view(),
             TargetsView::new(labels.view()),
             WeightsView::None,
@@ -734,22 +521,4 @@ mod tests {
         assert_abs_diff_eq!(mlogloss as f32, 1.099, epsilon = 0.01);
     }
 
-    // =========================================================================
-    // Metric properties
-    // =========================================================================
-
-    #[test]
-    fn metric_properties() {
-        assert!(!LogLoss.higher_is_better());
-        assert!(Accuracy::default().higher_is_better());
-        assert!(MulticlassAccuracy.higher_is_better());
-        assert!(Auc.higher_is_better());
-        assert!(!MulticlassLogLoss.higher_is_better());
-
-        assert_eq!(LogLoss.name(), "logloss");
-        assert_eq!(Accuracy::default().name(), "accuracy");
-        assert_eq!(MulticlassAccuracy.name(), "multiclass_accuracy");
-        assert_eq!(Auc.name(), "auc");
-        assert_eq!(MulticlassLogLoss.name(), "mlogloss");
-    }
 }

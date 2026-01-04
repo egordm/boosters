@@ -6,7 +6,7 @@
 //! # Example
 //!
 //! ```ignore
-//! use boosters::training::{GBLinearTrainer, GBLinearParams, SquaredLoss};
+//! use boosters::training::{GBLinearParams, GBLinearTrainer, Metric, Objective};
 //!
 //! let params = GBLinearParams {
 //!     n_rounds: 100,
@@ -15,8 +15,8 @@
 //!     ..Default::default()
 //! };
 //!
-//! let trainer = GBLinearTrainer::new(SquaredLoss, params);
-//! let model = trainer.train(&data, &labels, None, &[]);
+//! let trainer = GBLinearTrainer::new(Objective::SquaredLoss, Metric::Rmse, params);
+//! let model = trainer.train(&data, &labels, None, None);
 //! ```
 //!
 //! # Feature Selectors

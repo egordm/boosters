@@ -4,10 +4,7 @@ use boosters::testing::synthetic_datasets::{
     features_row_major, random_features_array, split_indices, synthetic_binary,
     synthetic_multiclass, synthetic_regression,
 };
-use boosters::training::{
-    Accuracy, GrowthStrategy, LinearLeafConfig, LogLoss, Mae, MetricFn, MulticlassAccuracy,
-    MulticlassLogLoss, Objective, Rmse,
-};
+use boosters::training::{GrowthStrategy, LinearLeafConfig, Metric, Objective};
 use ndarray::Array2;
 
 /// Select samples from Array2 by indices, returns sample-major Array2.
@@ -57,7 +54,7 @@ fn run_synthetic_regression(
     let row_valid = x_valid;
 
     let config = GBDTConfig::builder()
-        .objective(Objective::squared())
+        .objective(Objective::SquaredLoss)
         .n_trees(trees)
         .learning_rate(0.1)
         .growth_strategy(GrowthStrategy::DepthWise { max_depth: depth })
@@ -75,8 +72,8 @@ fn run_synthetic_regression(
     let targets_2d = Array2::from_shape_vec((1, y_valid.len()), y_valid).unwrap();
     let targets = TargetsView::new(targets_2d.view());
 
-    let rmse = Rmse.compute(pred.view(), targets, WeightsView::None);
-    let mae = Mae.compute(pred.view(), targets, WeightsView::None);
+    let rmse = Metric::Rmse.compute(pred.view(), targets, WeightsView::None);
+    let mae = Metric::Mae.compute(pred.view(), targets, WeightsView::None);
     (rmse, mae)
 }
 
@@ -102,7 +99,7 @@ fn run_synthetic_binary(rows: usize, cols: usize, trees: u32, depth: u32, seed: 
     let row_valid = x_valid;
 
     let config = GBDTConfig::builder()
-        .objective(Objective::logistic())
+        .objective(Objective::LogisticLoss)
         .n_trees(trees)
         .learning_rate(0.1)
         .growth_strategy(GrowthStrategy::DepthWise { max_depth: depth })
@@ -120,8 +117,8 @@ fn run_synthetic_binary(rows: usize, cols: usize, trees: u32, depth: u32, seed: 
     let targets_2d = Array2::from_shape_vec((1, y_valid.len()), y_valid).unwrap();
     let targets = TargetsView::new(targets_2d.view());
 
-    let ll = LogLoss.compute(pred.view(), targets, WeightsView::None);
-    let acc = Accuracy::default().compute(pred.view(), targets, WeightsView::None);
+    let ll = Metric::LogLoss.compute(pred.view(), targets, WeightsView::None);
+    let acc = Metric::Accuracy { threshold: 0.5 }.compute(pred.view(), targets, WeightsView::None);
     (ll, acc)
 }
 
@@ -154,7 +151,7 @@ fn run_synthetic_multiclass(
     let row_valid = x_valid;
 
     let config = GBDTConfig::builder()
-        .objective(Objective::softmax(classes))
+        .objective(Objective::SoftmaxLoss { n_classes: classes })
         .n_trees(trees)
         .learning_rate(0.1)
         .growth_strategy(GrowthStrategy::DepthWise { max_depth: depth })
@@ -172,8 +169,8 @@ fn run_synthetic_multiclass(
     let targets_2d = Array2::from_shape_vec((1, y_valid.len()), y_valid).unwrap();
     let targets = TargetsView::new(targets_2d.view());
 
-    let ll = MulticlassLogLoss.compute(pred.view(), targets, WeightsView::None);
-    let acc = MulticlassAccuracy.compute(pred.view(), targets, WeightsView::None);
+    let ll = Metric::MulticlassLogLoss.compute(pred.view(), targets, WeightsView::None);
+    let acc = Metric::MulticlassAccuracy.compute(pred.view(), targets, WeightsView::None);
     (ll, acc)
 }
 
@@ -276,7 +273,7 @@ fn test_quality_improvement_linear_leaves() {
 
     // --- Train without linear leaves ---
     let base_config = GBDTConfig::builder()
-        .objective(Objective::squared())
+        .objective(Objective::SquaredLoss)
         .n_trees(N_TREES)
         .learning_rate(0.1)
         .growth_strategy(GrowthStrategy::DepthWise {
@@ -294,11 +291,11 @@ fn test_quality_improvement_linear_leaves() {
     let pred_baseline = model_baseline.predict(&dataset_valid, 1);
     let targets_2d = Array2::from_shape_vec((1, y_valid.len()), y_valid).unwrap();
     let targets = TargetsView::new(targets_2d.view());
-    let rmse_baseline = Rmse.compute(pred_baseline.view(), targets, WeightsView::None);
+    let rmse_baseline = Metric::Rmse.compute(pred_baseline.view(), targets, WeightsView::None);
 
     // --- Train with linear leaves ---
     let linear_config = GBDTConfig::builder()
-        .objective(Objective::squared())
+        .objective(Objective::SquaredLoss)
         .n_trees(N_TREES)
         .learning_rate(0.1)
         .growth_strategy(GrowthStrategy::DepthWise {
@@ -313,7 +310,7 @@ fn test_quality_improvement_linear_leaves() {
     eprintln!("Training with linear leaves...");
     let model_linear = GBDTModel::train(&dataset_train, None, linear_config, 1).unwrap();
     let pred_linear = model_linear.predict(&dataset_valid, 1);
-    let rmse_linear = Rmse.compute(pred_linear.view(), targets, WeightsView::None);
+    let rmse_linear = Metric::Rmse.compute(pred_linear.view(), targets, WeightsView::None);
 
     // Assert: linear leaves should improve RMSE by at least 5%
     let improvement = (rmse_baseline - rmse_linear) / rmse_baseline;

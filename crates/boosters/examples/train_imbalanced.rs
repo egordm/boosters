@@ -89,9 +89,19 @@ fn main() {
         weight_class_0, weight_class_1
     );
 
-    let config = GBDTConfig::builder()
-        .objective(Objective::logistic())
-        .metric(Metric::logloss())
+    let config_unweighted = GBDTConfig::builder()
+        .objective(Objective::LogisticLoss)
+        .metric(Metric::LogLoss)
+        .n_trees(30)
+        .learning_rate(0.1)
+        .growth_strategy(GrowthStrategy::DepthWise { max_depth: 4 })
+        .cache_size(32)
+        .build()
+        .expect("Invalid configuration");
+
+    let config_weighted = GBDTConfig::builder()
+        .objective(Objective::LogisticLoss)
+        .metric(Metric::LogLoss)
         .n_trees(30)
         .learning_rate(0.1)
         .growth_strategy(GrowthStrategy::DepthWise { max_depth: 4 })
@@ -104,7 +114,7 @@ fn main() {
     // =========================================================================
     println!("--- Training WITHOUT weights ---");
     let model_unweighted =
-        GBDTModel::train(&dataset, None, config.clone(), 1).expect("Training failed");
+        GBDTModel::train(&dataset, None, config_unweighted, 1).expect("Training failed");
 
     let probs_uw = model_unweighted.predict(&dataset, 1);
 
@@ -127,7 +137,7 @@ fn main() {
         Some(Array1::from_vec(class_weights)),
     );
     let model_weighted =
-        GBDTModel::train(&dataset_weighted, None, config, 1).expect("Training failed");
+        GBDTModel::train(&dataset_weighted, None, config_weighted, 1).expect("Training failed");
 
     let probs_w = model_weighted.predict(&dataset_weighted, 1);
 

@@ -55,6 +55,14 @@ if TYPE_CHECKING:
 # =============================================================================
 
 
+def _task_to_output_transform(task: str) -> str:
+    if task == "binary_classification":
+        return "sigmoid"
+    if task == "multiclass_classification":
+        return "softmax"
+    return "identity"
+
+
 def _load_xgboost_json(path_or_booster: str | Path | xgb.Booster) -> dict[str, Any]:
     """Load XGBoost JSON model from path or Booster object."""
     if isinstance(path_or_booster, (str, Path)):
@@ -300,9 +308,11 @@ def _convert_xgb_gbtree(
     meta = ModelMetaSchema(
         task=task,  # type: ignore[arg-type]
         num_features=num_features,
+        num_groups=n_groups,
         num_classes=num_class if num_class > 2 else None,
         feature_names=feature_names if feature_names else None,
         feature_types=feature_types,  # type: ignore[arg-type]
+        objective_name=objective_name,
     )
 
     # Build forest
@@ -315,7 +325,12 @@ def _convert_xgb_gbtree(
 
     objective_schema = _objective_schema_from_xgboost(objective_name, num_class)
 
-    model = GBDTModelSchema(meta=meta, forest=forest, objective=objective_schema)
+    model = GBDTModelSchema(
+        meta=meta,
+        forest=forest,
+        output_transform=_task_to_output_transform(task),
+        objective=objective_schema,
+    )
     return model, booster_name
 
 
@@ -371,9 +386,11 @@ def _convert_xgb_gblinear(xgb_json: dict[str, Any]) -> GBLinearModelSchema:
     meta = ModelMetaSchema(
         task=task,  # type: ignore[arg-type]
         num_features=num_features,
+        num_groups=n_groups,
         num_classes=num_class if num_class > 2 else None,
         feature_names=feature_names if feature_names else None,
         feature_types=feature_types,  # type: ignore[arg-type]
+        objective_name=objective_name,
     )
 
     # Build weights schema
@@ -389,6 +406,7 @@ def _convert_xgb_gblinear(xgb_json: dict[str, Any]) -> GBLinearModelSchema:
         meta=meta,
         weights=weights_schema,
         base_score=[0.0] * n_groups,  # baked into weights
+        output_transform=_task_to_output_transform(task),
         objective=objective_schema,
     )
 
@@ -691,9 +709,11 @@ def lightgbm_to_schema(path_or_booster: str | Path | lgb.Booster) -> GBDTModelSc
     meta = ModelMetaSchema(
         task=task,  # type: ignore[arg-type]
         num_features=num_features,
+        num_groups=n_groups,
         num_classes=num_class if num_class > 2 else None,
         feature_names=feature_names,
         feature_types=None,
+        objective_name=objective,
     )
 
     # Build forest
@@ -706,7 +726,12 @@ def lightgbm_to_schema(path_or_booster: str | Path | lgb.Booster) -> GBDTModelSc
 
     objective_schema = _objective_schema_from_lightgbm(objective, num_class)
 
-    return GBDTModelSchema(meta=meta, forest=forest, objective=objective_schema)
+    return GBDTModelSchema(
+        meta=meta,
+        forest=forest,
+        output_transform=_task_to_output_transform(task),
+        objective=objective_schema,
+    )
 
 
 def _tree_max_depth(tree: TreeSchema) -> int:

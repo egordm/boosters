@@ -48,8 +48,8 @@ fn main() {
     // Train
     // =========================================================================
     let config = GBDTConfig::builder()
-        .objective(Objective::squared())
-        .metric(Metric::rmse())
+        .objective(Objective::SquaredLoss)
+            .metric(Metric::Rmse)
         .n_trees(50)
         .learning_rate(0.1)
         .growth_strategy(GrowthStrategy::DepthWise { max_depth: 4 })

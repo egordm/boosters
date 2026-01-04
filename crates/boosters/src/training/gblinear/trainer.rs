@@ -9,9 +9,7 @@ use crate::data::init_predictions;
 use crate::data::{Dataset, TargetsView, WeightsView};
 use crate::repr::gblinear::LinearModel;
 use crate::training::eval;
-use crate::training::{
-    EarlyStopAction, EarlyStopping, Gradients, MetricFn, ObjectiveFn, TrainingLogger, Verbosity,
-};
+use crate::training::{EarlyStopAction, EarlyStopping, Gradients, Metric, Objective, TrainingLogger, Verbosity};
 
 use super::selector::FeatureSelectorKind;
 use super::updater::{
@@ -85,17 +83,17 @@ impl Default for GBLinearParams {
 // ============================================================================
 
 /// Gradient boosted linear model trainer.
-#[derive(Clone, Debug)]
-pub struct GBLinearTrainer<O: ObjectiveFn, M: MetricFn> {
-    objective: O,
-    metric: M,
+#[derive(Debug)]
+pub struct GBLinearTrainer {
+    objective: Objective,
+    metric: Metric,
     params: GBLinearParams,
     updater: Updater,
 }
 
-impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
+impl GBLinearTrainer {
     /// Create a new trainer with the given objective and parameters.
-    pub fn new(objective: O, metric: M, params: GBLinearParams) -> Self {
+    pub fn new(objective: Objective, metric: Metric, params: GBLinearParams) -> Self {
         let updater = Updater::new(
             params.update_strategy,
             params.alpha,
@@ -181,8 +179,8 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
         // Shape: [n_outputs, n_samples] - column-major for efficient group access
         let mut predictions = init_predictions(&base_scores, n_samples);
 
-        // Check if we need evaluation (metric is enabled)
-        let needs_evaluation = self.metric.is_enabled();
+        // Check if we need evaluation
+        let needs_evaluation = !matches!(&self.metric, Metric::None);
 
         // Initialize validation predictions with base scores
         // Shape: [n_outputs, n_val_samples]
@@ -204,7 +202,8 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
         logger.start_training(self.params.n_rounds as usize);
 
         // Evaluator for computing metrics
-        let mut evaluator = eval::Evaluator::new(&self.objective, &self.metric, n_outputs);
+        let mut evaluator =
+            eval::Evaluator::new(&self.metric, self.objective.output_transform(), n_outputs);
 
         // Training loop
         for round in 0..self.params.n_rounds {
@@ -285,7 +284,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
                     val_set,
                     val_predictions.as_ref().map(|p| p.view()),
                 );
-                let value = eval::Evaluator::<O, M>::early_stop_value(&metrics, val_set.is_some());
+                let value = eval::Evaluator::early_stop_value(&metrics, val_set.is_some());
                 (metrics, value)
             } else {
                 (Vec::new(), f64::NAN)
@@ -335,9 +334,7 @@ impl<O: ObjectiveFn, M: MetricFn> GBLinearTrainer<O, M> {
 mod tests {
     use super::*;
     use crate::data::{Dataset, TargetsView, WeightsView, transpose_to_c_order};
-    use crate::training::{
-        LogLoss, LogisticLoss, MulticlassLogLoss, Rmse, SoftmaxLoss, SquaredLoss,
-    };
+    use crate::training::{Metric, Objective};
     use ndarray::{Array2, array};
 
     /// Helper to create a Dataset and TargetsView from row-major feature data.
@@ -398,7 +395,7 @@ mod tests {
             ..Default::default()
         };
 
-        let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
+        let trainer = GBLinearTrainer::new(Objective::SquaredLoss, Metric::Rmse, params);
         let model = trainer
             .train(&train, targets_view, WeightsView::None, None)
             .unwrap();
@@ -430,7 +427,8 @@ mod tests {
             verbosity: Verbosity::Silent,
             ..Default::default()
         };
-        let trainer_no_reg = GBLinearTrainer::new(SquaredLoss, Rmse, params_no_reg);
+        let trainer_no_reg =
+            GBLinearTrainer::new(Objective::SquaredLoss, Metric::Rmse, params_no_reg);
         let model_no_reg = trainer_no_reg
             .train(&train, targets_view, WeightsView::None, None)
             .unwrap();
@@ -443,7 +441,7 @@ mod tests {
             verbosity: Verbosity::Silent,
             ..Default::default()
         };
-        let trainer_l2 = GBLinearTrainer::new(SquaredLoss, Rmse, params_l2);
+        let trainer_l2 = GBLinearTrainer::new(Objective::SquaredLoss, Metric::Rmse, params_l2);
         let model_l2 = trainer_l2
             .train(&train, targets_view, WeightsView::None, None)
             .unwrap();
@@ -477,7 +475,7 @@ mod tests {
             ..Default::default()
         };
 
-        let trainer = GBLinearTrainer::new(SquaredLoss, Rmse, params);
+        let trainer = GBLinearTrainer::new(Objective::SquaredLoss, Metric::Rmse, params);
         let model = trainer
             .train(&train, targets_view, WeightsView::None, None)
             .unwrap();
@@ -515,7 +513,11 @@ mod tests {
             ..Default::default()
         };
 
-        let trainer = GBLinearTrainer::new(SoftmaxLoss::new(3), MulticlassLogLoss, params);
+        let trainer = GBLinearTrainer::new(
+            Objective::SoftmaxLoss { n_classes: 3 },
+            Metric::MulticlassLogLoss,
+            params,
+        );
         let model = trainer
             .train(&train, targets_view, WeightsView::None, None)
             .unwrap();
@@ -556,7 +558,7 @@ mod tests {
             ..Default::default()
         };
 
-        let trainer = GBLinearTrainer::new(LogisticLoss, LogLoss, params);
+        let trainer = GBLinearTrainer::new(Objective::LogisticLoss, Metric::LogLoss, params);
         let model = trainer
             .train(&train, targets_view, WeightsView::None, None)
             .unwrap();

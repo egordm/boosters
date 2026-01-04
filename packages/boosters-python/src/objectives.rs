@@ -7,6 +7,7 @@ use pyo3::prelude::*;
 use pyo3_stub_gen::derive::*;
 
 use crate::error::BoostersError;
+use crate::validation::{validate_positive, validate_ratio_open};
 
 /// Objective (loss) functions for gradient boosting.
 ///
@@ -25,8 +26,7 @@ use crate::error::BoostersError;
 ///     - Objective.Hinge(): SVM-style hinge loss
 ///     - Objective.Softmax(n_classes): Multiclass cross-entropy
 ///
-/// Ranking:
-///     - Objective.LambdaRank(ndcg_at): LambdaMART for NDCG optimization
+/// Note: ranking objectives are not implemented in core yet.
 ///
 /// Examples
 /// --------
@@ -71,26 +71,19 @@ pub enum PyObjective {
     /// Parameters:
     ///     delta: Transition point between quadratic and linear loss. Default: 1.0.
     #[pyo3(constructor = (delta = 1.0))]
-    Huber { delta: f64 },
+    Huber { delta: f32 },
 
     /// Pinball loss for quantile regression.
     ///
     /// Parameters:
     ///     alpha: List of quantiles to predict. Each value must be in (0, 1).
-    Pinball { alpha: Vec<f64> },
+    Pinball { alpha: Vec<f32> },
 
     /// Softmax loss for multiclass classification.
     ///
     /// Parameters:
     ///     n_classes: Number of classes. Must be >= 2.
     Softmax { n_classes: u32 },
-
-    /// LambdaRank loss for learning to rank.
-    ///
-    /// Parameters:
-    ///     ndcg_at: Truncation point for NDCG calculation. Default: 10.
-    #[pyo3(constructor = (ndcg_at = 10))]
-    LambdaRank { ndcg_at: u32 },
 }
 
 #[gen_stub_pymethods]
@@ -131,20 +124,14 @@ impl PyObjective {
     /// Create Huber loss with validation.
     #[staticmethod]
     #[pyo3(signature = (delta = 1.0))]
-    fn huber(delta: f64) -> PyResult<Self> {
-        if delta <= 0.0 {
-            return Err(BoostersError::InvalidParameter {
-                name: "delta".to_string(),
-                reason: "must be positive".to_string(),
-            }
-            .into());
-        }
+    fn huber(delta: f32) -> PyResult<Self> {
+        validate_positive("delta", delta)?;
         Ok(PyObjective::Huber { delta })
     }
 
     /// Create pinball loss with validation.
     #[staticmethod]
-    fn pinball(alpha: Vec<f64>) -> PyResult<Self> {
+    fn pinball(alpha: Vec<f32>) -> PyResult<Self> {
         if alpha.is_empty() {
             return Err(BoostersError::InvalidParameter {
                 name: "alpha".to_string(),
@@ -153,13 +140,7 @@ impl PyObjective {
             .into());
         }
         for (i, &a) in alpha.iter().enumerate() {
-            if a <= 0.0 || a >= 1.0 {
-                return Err(BoostersError::InvalidParameter {
-                    name: format!("alpha[{}]", i),
-                    reason: format!("must be in (0, 1), got {}", a),
-                }
-                .into());
-            }
+            validate_ratio_open(&format!("alpha[{}]", i), a)?;
         }
         Ok(PyObjective::Pinball { alpha })
     }
@@ -167,6 +148,7 @@ impl PyObjective {
     /// Create softmax loss with validation.
     #[staticmethod]
     fn softmax(n_classes: u32) -> PyResult<Self> {
+        validate_positive("n_classes", n_classes)?;
         if n_classes < 2 {
             return Err(BoostersError::InvalidParameter {
                 name: "n_classes".to_string(),
@@ -175,20 +157,6 @@ impl PyObjective {
             .into());
         }
         Ok(PyObjective::Softmax { n_classes })
-    }
-
-    /// Create LambdaRank loss with validation.
-    #[staticmethod]
-    #[pyo3(signature = (ndcg_at = 10))]
-    fn lambdarank(ndcg_at: u32) -> PyResult<Self> {
-        if ndcg_at == 0 {
-            return Err(BoostersError::InvalidParameter {
-                name: "ndcg_at".to_string(),
-                reason: "must be positive".to_string(),
-            }
-            .into());
-        }
-        Ok(PyObjective::LambdaRank { ndcg_at })
     }
 
     fn __repr__(&self) -> String {
@@ -202,9 +170,6 @@ impl PyObjective {
             PyObjective::Pinball { alpha } => format!("Objective.Pinball(alpha={:?})", alpha),
             PyObjective::Softmax { n_classes } => {
                 format!("Objective.Softmax(n_classes={})", n_classes)
-            }
-            PyObjective::LambdaRank { ndcg_at } => {
-                format!("Objective.LambdaRank(ndcg_at={})", ndcg_at)
             }
         }
     }
@@ -221,25 +186,20 @@ impl From<&PyObjective> for boosters::training::Objective {
         use boosters::training::Objective;
 
         match py_obj {
-            PyObjective::Squared {} => Objective::squared(),
-            PyObjective::Absolute {} => Objective::absolute(),
-            PyObjective::Poisson {} => Objective::poisson(),
-            PyObjective::Logistic {} => Objective::logistic(),
-            PyObjective::Hinge {} => Objective::hinge(),
-            PyObjective::Huber { delta } => Objective::pseudo_huber(*delta as f32),
+            PyObjective::Squared {} => Objective::SquaredLoss,
+            PyObjective::Absolute {} => Objective::AbsoluteLoss,
+            PyObjective::Poisson {} => Objective::PoissonLoss,
+            PyObjective::Logistic {} => Objective::LogisticLoss,
+            PyObjective::Hinge {} => Objective::HingeLoss,
+            PyObjective::Huber { delta } => Objective::PseudoHuberLoss { delta: *delta },
             PyObjective::Pinball { alpha } => {
-                if alpha.len() == 1 {
-                    Objective::quantile(alpha[0] as f32)
-                } else {
-                    Objective::multi_quantile(alpha.iter().map(|&a| a as f32).collect())
+                Objective::PinballLoss {
+                    alphas: alpha.clone(),
                 }
             }
-            PyObjective::Softmax { n_classes } => Objective::softmax(*n_classes as usize),
-            PyObjective::LambdaRank { .. } => {
-                // LambdaRank not yet implemented in core - use logistic as placeholder
-                // TODO: Add LambdaRank to core objective enum
-                Objective::logistic()
-            }
+            PyObjective::Softmax { n_classes } => Objective::SoftmaxLoss {
+                n_classes: *n_classes as usize,
+            },
         }
     }
 }
@@ -255,19 +215,19 @@ impl From<&boosters::training::Objective> for PyObjective {
         use boosters::training::Objective;
 
         match obj {
-            Objective::SquaredLoss(_) => PyObjective::Squared {},
-            Objective::AbsoluteLoss(_) => PyObjective::Absolute {},
-            Objective::PoissonLoss(_) => PyObjective::Poisson {},
-            Objective::LogisticLoss(_) => PyObjective::Logistic {},
-            Objective::HingeLoss(_) => PyObjective::Hinge {},
-            Objective::PseudoHuberLoss(inner) => PyObjective::Huber {
-                delta: inner.delta as f64,
+            Objective::SquaredLoss => PyObjective::Squared {},
+            Objective::AbsoluteLoss => PyObjective::Absolute {},
+            Objective::PoissonLoss => PyObjective::Poisson {},
+            Objective::LogisticLoss => PyObjective::Logistic {},
+            Objective::HingeLoss => PyObjective::Hinge {},
+            Objective::PseudoHuberLoss { delta } => PyObjective::Huber {
+                delta: *delta,
             },
-            Objective::PinballLoss(inner) => PyObjective::Pinball {
-                alpha: inner.alphas.iter().map(|&a| a as f64).collect(),
+            Objective::PinballLoss { alphas } => PyObjective::Pinball {
+                alpha: alphas.clone(),
             },
-            Objective::SoftmaxLoss(inner) => PyObjective::Softmax {
-                n_classes: inner.n_classes as u32,
+            Objective::SoftmaxLoss { n_classes } => PyObjective::Softmax {
+                n_classes: *n_classes as u32,
             },
             Objective::Custom(_) => {
                 // Custom objectives can't be round-tripped
@@ -288,10 +248,10 @@ mod tests {
 
         // Test parameterless objectives
         let obj: Objective = (&PyObjective::Squared {}).into();
-        assert!(matches!(obj, Objective::SquaredLoss(_)));
+        assert!(matches!(obj, Objective::SquaredLoss));
 
         let obj: Objective = (&PyObjective::Logistic {}).into();
-        assert!(matches!(obj, Objective::LogisticLoss(_)));
+        assert!(matches!(obj, Objective::LogisticLoss));
     }
 
     #[test]
@@ -300,7 +260,7 @@ mod tests {
 
         let py_objective = PyObjective::Pinball { alpha: vec![0.5] };
         let core: Objective = (&py_objective).into();
-        assert!(matches!(core, Objective::PinballLoss(_)));
+        assert!(matches!(core, Objective::PinballLoss { .. }));
     }
 
     #[test]
@@ -311,7 +271,7 @@ mod tests {
             alpha: vec![0.1, 0.5, 0.9],
         };
         let core: Objective = (&py_objective).into();
-        assert!(matches!(core, Objective::PinballLoss(_)));
+        assert!(matches!(core, Objective::PinballLoss { .. }));
     }
 
     #[test]
@@ -320,7 +280,7 @@ mod tests {
 
         let py_objective = PyObjective::Softmax { n_classes: 5 };
         let core: Objective = (&py_objective).into();
-        assert!(matches!(core, Objective::SoftmaxLoss(_)));
+        assert!(matches!(core, Objective::SoftmaxLoss { .. }));
     }
 
     #[test]
@@ -329,6 +289,6 @@ mod tests {
 
         let py_objective = PyObjective::Huber { delta: 2.0 };
         let core: Objective = (&py_objective).into();
-        assert!(matches!(core, Objective::PseudoHuberLoss(_)));
+        assert!(matches!(core, Objective::PseudoHuberLoss { .. }));
     }
 }

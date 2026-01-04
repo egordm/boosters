@@ -81,17 +81,16 @@ class TestJsonEnvelopeParsing:
         model = envelope.model
 
         # Check metadata
-        assert model.meta.task == "regression"
         assert model.meta.num_features == 5
-        assert model.meta.num_classes is None
+        assert model.meta.num_groups == 1
 
         # Check forest
         assert len(model.forest.trees) == 10  # n_estimators=10
         assert model.forest.n_groups == 1
         assert len(model.forest.base_score) == 1
 
-        # Objective is persisted for correct post-processing
-        assert model.objective.type == "squared_loss"
+        # Output transform is persisted for correct post-processing
+        assert model.output_transform == "identity"
 
         # Check trees have valid structure
         for tree in model.forest.trees:
@@ -112,9 +111,8 @@ class TestJsonEnvelopeParsing:
         model = envelope.model
 
         # Check metadata
-        assert model.meta.task == "regression"
         assert model.meta.num_features == 5
-        assert model.meta.num_classes is None
+        assert model.meta.num_groups == 1
 
         # Check weights
         assert model.weights.num_features == 5
@@ -125,30 +123,30 @@ class TestJsonEnvelopeParsing:
         # Base score may be empty for models trained by booste-rs (it can be baked into the bias term)
         assert len(model.base_score) in {0, 1}
 
-        # Objective is persisted for correct post-processing
-        assert model.objective.type == "squared_loss"
+        # Output transform is persisted for correct post-processing
+        assert model.output_transform == "identity"
 
         # GBLinear stores base score in the bias term of the linear model,
         # so schema.base_score is empty (or can be non-empty if explicitly set)
         # This is an implementation detail - we just verify the schema parses
 
     def test_gbdt_objective_preserved(self, gbdt_model: GBDTModel) -> None:
-        """Objective is preserved in serialized model."""
+        """Output transform is preserved in serialized model."""
         json_bytes = gbdt_model.to_json_bytes()
         json_str = json_bytes.decode("utf-8")
 
         envelope = JsonEnvelope[GBDTModelSchema].model_validate_json(json_str)
 
-        assert envelope.model.objective.type == "squared_loss"
+        assert envelope.model.output_transform == "identity"
 
     def test_gblinear_objective_preserved(self, gblinear_model: GBLinearModel) -> None:
-        """Objective is preserved in serialized model."""
+        """Output transform is preserved in serialized model."""
         json_bytes = gblinear_model.to_json_bytes()
         json_str = json_bytes.decode("utf-8")
 
         envelope = JsonEnvelope[GBLinearModelSchema].model_validate_json(json_str)
 
-        assert envelope.model.objective.type == "squared_loss"
+        assert envelope.model.output_transform == "identity"
 
 
 class TestBinaryClassification:
@@ -165,8 +163,8 @@ class TestBinaryClassification:
         json_str = model.to_json_bytes().decode("utf-8")
         envelope = JsonEnvelope[GBDTModelSchema].model_validate_json(json_str)
 
-        assert envelope.model.meta.task == "binary_classification"
-        assert envelope.model.objective.type == "logistic_loss"
+        assert envelope.model.meta.num_groups == 1
+        assert envelope.model.output_transform == "sigmoid"
 
 
 class TestMulticlass:
@@ -183,9 +181,8 @@ class TestMulticlass:
         json_str = model.to_json_bytes().decode("utf-8")
         envelope = JsonEnvelope[GBDTModelSchema].model_validate_json(json_str)
 
-        assert envelope.model.meta.task == "multiclass_classification"
-        assert envelope.model.meta.num_classes == 3
-        assert envelope.model.objective.type == "softmax_loss"
+        assert envelope.model.meta.num_groups == 3
+        assert envelope.model.output_transform == "softmax"
 
 
 class TestSchemaValidation:
@@ -206,7 +203,7 @@ class TestSchemaValidation:
                     "n_groups": 1,
                     "base_score": [0.0],
                 },
-                "objective": {"type": "squared_loss"},
+                "output_transform": "identity",
             },
         })
 
@@ -223,7 +220,7 @@ class TestSchemaValidation:
                     # Missing 'task' and 'num_features'
                 },
                 "forest": {},
-                "objective": {"type": "squared_loss"},
+                "output_transform": "identity",
             },
         })
 
@@ -248,8 +245,7 @@ class TestCrossLanguageRoundTrip:
         envelope = JsonEnvelope[GBDTModelSchema].model_validate_json(json_str)
 
         # Step 3: Python pydantic → JSON
-        # Use model_dump_json with by_alias=True to preserve field names like "lambda"
-        roundtrip_json = envelope.model_dump_json(by_alias=True)
+        roundtrip_json = envelope.model_dump_json(by_alias=True, exclude_none=True)
 
         # Step 4: JSON → Rust (via from_json_bytes)
         loaded = GBDTModel.from_json_bytes(roundtrip_json.encode("utf-8"))
@@ -272,7 +268,7 @@ class TestCrossLanguageRoundTrip:
         envelope = JsonEnvelope[GBLinearModelSchema].model_validate_json(json_str)
 
         # Step 3: Python pydantic → JSON
-        roundtrip_json = envelope.model_dump_json(by_alias=True)
+        roundtrip_json = envelope.model_dump_json(by_alias=True, exclude_none=True)
 
         # Step 4: JSON → Rust (via from_json_bytes)
         loaded = GBLinearModel.from_json_bytes(roundtrip_json.encode("utf-8"))
@@ -293,7 +289,7 @@ class TestCrossLanguageRoundTrip:
         json_str = model.to_json_bytes().decode("utf-8")
 
         envelope = JsonEnvelope[GBDTModelSchema].model_validate_json(json_str)
-        roundtrip_json = envelope.model_dump_json(by_alias=True)
+        roundtrip_json = envelope.model_dump_json(by_alias=True, exclude_none=True)
 
         loaded = GBDTModel.from_json_bytes(roundtrip_json.encode("utf-8"))
         loaded_preds = loaded.predict(Dataset(X))
@@ -312,7 +308,7 @@ class TestCrossLanguageRoundTrip:
         json_str = model.to_json_bytes().decode("utf-8")
 
         envelope = JsonEnvelope[GBDTModelSchema].model_validate_json(json_str)
-        roundtrip_json = envelope.model_dump_json(by_alias=True)
+        roundtrip_json = envelope.model_dump_json(by_alias=True, exclude_none=True)
 
         loaded = GBDTModel.from_json_bytes(roundtrip_json.encode("utf-8"))
         loaded_preds = loaded.predict(Dataset(X))

@@ -72,7 +72,7 @@ pub use envelope::{
 pub use schema::{
     CategoriesSchema, FeatureTypeSchema, ForestSchema, GBDTModelSchema, GBLinearModelSchema,
     LeafValuesSchema, LinearCoefficientsSchema, LinearWeightsSchema, ModelMetaSchema,
-    ObjectiveSchema, TaskKindSchema, TreeSchema,
+    TreeSchema,
 };
 
 // Re-export JSON options
@@ -425,6 +425,7 @@ impl From<GBLinearModel> for Model {
 mod tests {
     use super::*;
     use crate::model::ModelMeta;
+    use crate::model::OutputTransform;
     use crate::repr::gbdt::Forest;
     use crate::repr::gblinear::LinearModel;
     use crate::scalar_tree;
@@ -440,7 +441,7 @@ mod tests {
         let mut forest = Forest::for_regression().with_base_score(vec![0.5]);
         forest.push_tree(tree, 0);
         let meta = ModelMeta::for_regression(2);
-        GBDTModel::from_forest(forest, meta)
+        GBDTModel::from_parts(forest, meta, OutputTransform::Identity)
     }
 
     fn create_test_gblinear() -> GBLinearModel {
@@ -452,8 +453,8 @@ mod tests {
             [0.01, 0.02, 0.03]  // biases
         ];
         let linear = LinearModel::new(weights);
-        let meta = ModelMeta::for_multiclass(3, 2);
-        GBLinearModel::from_linear_model(linear, meta)
+        let meta = ModelMeta::for_multiclass(2, 3);
+        GBLinearModel::from_parts(linear, meta, OutputTransform::Softmax)
     }
 
     #[test]

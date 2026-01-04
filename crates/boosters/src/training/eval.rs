@@ -7,9 +7,8 @@ use ndarray::ArrayView2;
 
 use crate::data::{Dataset, TargetsView, WeightsView};
 use crate::inference::PredictionKind;
-
-use super::metrics::MetricFn;
-use super::objectives::ObjectiveFn;
+use crate::model::OutputTransform;
+use super::Metric;
 
 // =============================================================================
 // MetricValue
@@ -75,11 +74,13 @@ impl std::fmt::Display for MetricValue {
 /// # Example
 ///
 /// ```ignore
-/// use boosters::training::{Evaluator, SquaredLoss, Rmse};
+/// use boosters::model::OutputTransform;
+/// use boosters::training::{Evaluator, Metric, Objective};
 ///
-/// let objective = SquaredLoss;
-/// let metric = Rmse;
-/// let mut evaluator = Evaluator::new(&objective, &metric, n_outputs);
+/// let objective = Objective::SquaredLoss;
+/// let metric = Metric::Rmse;
+/// let n_outputs = objective.n_outputs();
+/// let mut evaluator = Evaluator::new(&metric, objective.output_transform(), n_outputs);
 ///
 /// // During training loop:
 /// let metrics = evaluator.evaluate_round(
@@ -88,25 +89,25 @@ impl std::fmt::Display for MetricValue {
 /// );
 /// let early_stop_value = Evaluator::early_stop_value(&metrics, val_set.is_some());
 /// ```
-pub struct Evaluator<'a, O: ObjectiveFn, M: MetricFn> {
-    objective: &'a O,
-    metric: &'a M,
+pub struct Evaluator<'a> {
+    metric: &'a Metric,
+    output_transform: OutputTransform,
     n_outputs: usize,
     transform_buffer: Vec<f32>,
 }
 
-impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
+impl<'a> Evaluator<'a> {
     /// Create a new evaluator.
     ///
     /// # Arguments
     ///
-    /// * `objective` - The objective function (for prediction transforms)
     /// * `metric` - The metric to compute
+    /// * `output_transform` - Output transform to apply when metric expects non-margin predictions
     /// * `n_outputs` - Number of outputs per sample
-    pub fn new(objective: &'a O, metric: &'a M, n_outputs: usize) -> Self {
+    pub fn new(metric: &'a Metric, output_transform: OutputTransform, n_outputs: usize) -> Self {
         Self {
-            objective,
             metric,
+            output_transform,
             n_outputs,
             transform_buffer: Vec::new(),
         }
@@ -128,15 +129,8 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
     }
 
     /// The metric name.
-    pub fn metric_name(&self) -> &'static str {
+    pub fn metric_name(&self) -> &str {
         self.metric.name()
-    }
-
-    /// Whether the metric is enabled.
-    ///
-    /// When `false`, evaluation should be skipped entirely.
-    pub fn is_enabled(&self) -> bool {
-        self.metric.is_enabled()
     }
 
     /// Compute a single metric value.
@@ -171,13 +165,12 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
                 .expect("predictions must be contiguous");
             self.transform_buffer[..required].copy_from_slice(&pred_slice[..required]);
 
-            let mut view = ndarray::ArrayViewMut2::from_shape(
+            let view = ndarray::ArrayViewMut2::from_shape(
                 (self.n_outputs, n_samples),
                 &mut self.transform_buffer[..required],
             )
             .expect("transform buffer shape mismatch");
-            self.objective
-                .transform_predictions_inplace(view.view_mut());
+            self.output_transform.transform_inplace(view);
 
             let preds_view = ArrayView2::from_shape(
                 (self.n_outputs, n_samples),
@@ -230,8 +223,8 @@ impl<'a, O: ObjectiveFn, M: MetricFn> Evaluator<'a, O, M> {
         val_set: Option<&Dataset>,
         val_predictions: Option<ArrayView2<f32>>,
     ) -> Vec<MetricValue> {
-        // Skip evaluation entirely if metric is not enabled
-        if !self.metric.is_enabled() {
+        // Skip evaluation entirely if metric is Metric::None
+        if matches!(self.metric, Metric::None) {
             return Vec::new();
         }
 
