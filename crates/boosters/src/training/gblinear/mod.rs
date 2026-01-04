@@ -16,7 +16,7 @@
 //! };
 //!
 //! let trainer = GBLinearTrainer::new(Objective::SquaredLoss, Metric::Rmse, params);
-//! let model = trainer.train(&data, &labels, None, None);
+//! let model = trainer.train(&data, &labels, None, None).unwrap();
 //! ```
 //!
 //! # Feature Selectors
@@ -41,10 +41,12 @@
 //!
 //! See RFC-0009 for design rationale.
 
+mod error;
 mod selector;
 mod trainer;
 mod updater;
 
+pub use error::GBLinearTrainError;
 pub use selector::FeatureSelectorKind;
 pub use trainer::{GBLinearParams, GBLinearTrainer};
 pub use updater::UpdateStrategy;

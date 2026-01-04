@@ -547,6 +547,7 @@ mod tests {
             n_unique: 10,
             n_nonzero: (density * 100.0) as usize,
             n_valid: 100,
+            n_nan: 0,
             n_samples: 100,
             min_val: 0.0,
             max_val: 10.0,

@@ -10,7 +10,7 @@ use crate::explainability::{ExplainError, LinearExplainer, ShapValues};
 use crate::model::OutputTransform;
 use crate::model::meta::ModelMeta;
 use crate::repr::gblinear::LinearModel;
-use crate::training::gblinear::GBLinearTrainer;
+use crate::training::gblinear::{GBLinearTrainError, GBLinearTrainer};
 
 use ndarray::Array2;
 
@@ -47,7 +47,7 @@ impl GBLinearModel {
         val_set: Option<&Dataset>,
         config: GBLinearConfig,
         n_threads: usize,
-    ) -> Option<Self> {
+    ) -> Result<Self, GBLinearTrainError> {
         crate::run_with_threads(n_threads, |parallelism| {
             Self::train_inner(dataset, val_set, config, parallelism)
         })
@@ -62,7 +62,7 @@ impl GBLinearModel {
         val_set: Option<&Dataset>,
         config: GBLinearConfig,
         _parallelism: Parallelism, // Reserved for future use
-    ) -> Option<Self> {
+    ) -> Result<Self, GBLinearTrainError> {
         let n_features = dataset.n_features();
 
         // GBLinear uses Dataset directly - no binning needed!
@@ -92,7 +92,7 @@ impl GBLinearModel {
             ..Default::default()
         };
 
-        Some(Self::from_parts(linear_model, meta, output_transform))
+        Ok(Self::from_parts(linear_model, meta, output_transform))
     }
 
     /// Create a model from all its parts.

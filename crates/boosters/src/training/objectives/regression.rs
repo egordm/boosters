@@ -124,7 +124,7 @@ pub(super) fn compute_absolute_base_score(
 /// Pinball loss helpers for quantile regression.
 ///
 /// - Loss: `α * (target - pred)` if `target > pred`, else `(1-α) * (pred - target)`
-/// - Gradient: `α - 1` if `pred < target`, else `α`
+/// - Gradient: `-α` if `pred < target`, else `1-α`
 /// - Hessian: `1.0`
 pub(super) fn compute_pinball_gradients_into(
     predictions: ArrayView2<f32>,
@@ -147,7 +147,7 @@ pub(super) fn compute_pinball_gradients_into(
             .enumerate()
         {
             let diff = pred - target;
-            let g = if diff < 0.0 { alpha - 1.0 } else { alpha };
+            let g = if diff < 0.0 { -alpha } else { 1.0 - alpha };
             gh_row[i].grad = w * g;
             gh_row[i].hess = w;
         }
@@ -367,6 +367,43 @@ mod tests {
         assert!((gh[[0, 1]].grad - -0.5).abs() < 1e-6); // 2.0 - 2.5
         assert!((gh[[0, 2]].grad - 0.5).abs() < 1e-6); // 3.0 - 2.5
         assert!((gh[[0, 0]].hess - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn pinball_gradients_match_definition() {
+        // Targets chosen so we hit both sides of the kink for each sample.
+        // y: [2.0, 1.0]
+        // pred: [1.0, 2.0]
+        // residual (pred - y): [-1.0, +1.0]
+        let preds = make_preds(1, 2, &[1.0, 2.0]);
+        let targets_arr = make_targets_array(&[2.0, 1.0]);
+        let targets = TargetsView::new(targets_arr.view());
+
+        // alpha = 0.1: grad = -alpha when pred < y, else 1 - alpha
+        let mut gh = make_grad_hess(1, 2);
+        compute_pinball_gradients_into(
+            preds.view(),
+            targets,
+            WeightsView::None,
+            &[0.1],
+            gh.view_mut(),
+        );
+        assert!((gh[[0, 0]].grad - -0.1).abs() < 1e-6);
+        assert!((gh[[0, 1]].grad - 0.9).abs() < 1e-6);
+        assert!((gh[[0, 0]].hess - 1.0).abs() < 1e-6);
+
+        // alpha = 0.9: grad = -alpha when pred < y, else 1 - alpha
+        let mut gh = make_grad_hess(1, 2);
+        compute_pinball_gradients_into(
+            preds.view(),
+            targets,
+            WeightsView::None,
+            &[0.9],
+            gh.view_mut(),
+        );
+        assert!((gh[[0, 0]].grad - -0.9).abs() < 1e-6);
+        assert!((gh[[0, 1]].grad - 0.1).abs() < 1e-6);
+        assert!((gh[[0, 1]].hess - 1.0).abs() < 1e-6);
     }
 
     #[test]

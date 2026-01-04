@@ -6,13 +6,14 @@
 use ndarray::Array2;
 
 use crate::data::init_predictions;
-use crate::data::{Dataset, TargetsView, WeightsView};
+use crate::data::{Dataset, Feature, TargetsView, WeightsView};
 use crate::repr::gblinear::LinearModel;
 use crate::training::eval;
 use crate::training::{
     EarlyStopAction, EarlyStopping, Gradients, Metric, Objective, TrainingLogger, Verbosity,
 };
 
+use super::GBLinearTrainError;
 use super::selector::FeatureSelectorKind;
 use super::updater::{
     UpdateStrategy, Updater, apply_bias_delta_to_predictions, apply_weight_deltas_to_predictions,
@@ -126,24 +127,39 @@ impl GBLinearTrainer {
     ///
     /// # Returns
     ///
-    /// Returns `None` if:
+    /// Returns an error if:
     /// - Dataset contains categorical features (not supported by GBLinear)
-    /// - Validation set has categorical features
+    /// - Dataset contains NaNs (GBLinear requires imputation)
+    /// - Validation set has categorical features, NaNs, or is missing targets
     pub fn train(
         &self,
         train: &Dataset,
         targets: TargetsView<'_>,
         weights: WeightsView<'_>,
         val_set: Option<&Dataset>,
-    ) -> Option<LinearModel> {
+    ) -> Result<LinearModel, GBLinearTrainError> {
         // Validate: GBLinear doesn't support categorical features
         if train.has_categorical() {
-            return None;
+            return Err(GBLinearTrainError::CategoricalFeaturesNotSupported);
         }
         if let Some(vs) = val_set
             && vs.has_categorical()
         {
-            return None;
+            return Err(GBLinearTrainError::CategoricalFeaturesNotSupported);
+        }
+
+        // Validate: GBLinear does not support NaNs anywhere.
+        validate_no_nans_in_features(train, "train")?;
+        validate_no_nans_in_targets(targets, "train")?;
+        validate_no_nans_in_weights(weights, "train")?;
+
+        if let Some(vs) = val_set {
+            validate_no_nans_in_features(vs, "valid")?;
+            let vs_targets = vs
+                .targets()
+                .ok_or(GBLinearTrainError::ValidationSetMissingTargets)?;
+            validate_no_nans_in_targets(vs_targets, "valid")?;
+            validate_no_nans_in_weights(vs.weights(), "valid")?;
         }
 
         let n_features = train.n_features();
@@ -320,12 +336,65 @@ impl GBLinearTrainer {
         logger.finish_training();
 
         // Return best model if early stopping was active and found a best
-        if early_stopping.is_enabled() && best_model.is_some() {
-            best_model
+        if early_stopping.is_enabled() {
+            if let Some(best_model) = best_model {
+                Ok(best_model)
+            } else {
+                Ok(model)
+            }
         } else {
-            Some(model)
+            Ok(model)
         }
     }
+}
+
+fn validate_no_nans_in_features(
+    dataset: &Dataset,
+    dataset_name: &'static str,
+) -> Result<(), GBLinearTrainError> {
+    for (feature_idx, feature) in dataset.feature_columns().iter().enumerate() {
+        let has_nan = match feature {
+            Feature::Dense(values) => values.iter().any(|v| v.is_nan()),
+            Feature::Sparse {
+                values, default, ..
+            } => default.is_nan() || values.iter().any(|v| v.is_nan()),
+        };
+
+        if has_nan {
+            return Err(GBLinearTrainError::NaNInFeatures {
+                dataset: dataset_name,
+                feature_idx,
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_no_nans_in_targets(
+    targets: TargetsView<'_>,
+    dataset_name: &'static str,
+) -> Result<(), GBLinearTrainError> {
+    if targets.view().iter().any(|v| v.is_nan()) {
+        return Err(GBLinearTrainError::NaNInTargets {
+            dataset: dataset_name,
+        });
+    }
+    Ok(())
+}
+
+fn validate_no_nans_in_weights(
+    weights: WeightsView<'_>,
+    dataset_name: &'static str,
+) -> Result<(), GBLinearTrainError> {
+    if let Some(w) = weights.as_array()
+        && w.iter().any(|v| v.is_nan())
+    {
+        return Err(GBLinearTrainError::NaNInWeights {
+            dataset: dataset_name,
+        });
+    }
+    Ok(())
 }
 
 // ============================================================================

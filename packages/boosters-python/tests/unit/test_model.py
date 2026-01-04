@@ -228,6 +228,24 @@ class TestGBDTModelPersistence:
         assert loaded.n_features == model.n_features
 
 
+class TestGBLinearModelValidation:
+    def test_train_raises_on_nan_features(self) -> None:
+        x, y = make_regression_data()
+        x = x.copy()
+        x[0, 0] = np.nan
+
+        with pytest.raises(ValueError, match="NaN"):
+            GBLinearModel.train(Dataset(x, y), config=GBLinearConfig(n_estimators=5))
+
+    def test_train_raises_on_nan_targets(self) -> None:
+        x, y = make_regression_data()
+        y = y.copy()
+        y[0] = np.nan
+
+        with pytest.raises(ValueError, match="NaN"):
+            GBLinearModel.train(Dataset(x, y), config=GBLinearConfig(n_estimators=5))
+
+
 class TestGBLinearModelPersistence:
     """Tests for GBLinearModel serialization round-trip."""
 

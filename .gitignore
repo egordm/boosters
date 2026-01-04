@@ -8,6 +8,13 @@
 __pycache__/
 *.pyc
 
+# Common local caches
+.cache/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.pyright/
+
 .DS_Store
 tmp
 *.so
@@ -18,3 +25,6 @@ coverage.xml
 
 # boosters-eval output (generated)
 /results.md
+
+# VS Code workspace files (local developer preference)
+*.code-workspace

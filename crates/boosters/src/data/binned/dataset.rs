@@ -639,13 +639,15 @@ fn create_bin_mappers(
                 .and_then(|m| m.max_bins.get(&feature_idx).copied())
                 .unwrap_or(config.max_bins);
 
+            let has_nan = analysis.n_nan > 0;
+
             if analysis.is_numeric {
                 // Optimize for common case: dense feature with all samples
                 if sample_indices.is_none()
                     && let Some(slice) = dataset.feature(feature_idx).as_slice()
                 {
                     // Fast path: direct slice access (no copy, no indirection)
-                    return bin_numeric(slice, max_bins);
+                    return bin_numeric(slice, max_bins, has_nan);
                 }
 
                 // Fall back to gathering (sampled or sparse features)
@@ -655,7 +657,7 @@ fn create_bin_mappers(
                 );
                 let mut values = vec![0.0f32; indices.len()];
                 dataset.gather_feature_values(feature_idx, &indices, &mut values);
-                bin_numeric(&values, max_bins)
+                bin_numeric(&values, max_bins, has_nan)
             } else {
                 // For categorical features, sampling can miss categories that exist in the dataset.
                 // Build the category set directly without materializing the full column.
@@ -678,7 +680,7 @@ fn create_bin_mappers(
         .collect()
 }
 
-fn bin_numeric(data: &[f32], max_bins: u32) -> BinMapper {
+fn bin_numeric(data: &[f32], max_bins: u32, has_nan: bool) -> BinMapper {
     // Collect non-NaN values and compute min/max
     let mut min_val = f32::MAX;
     let mut max_val = f32::MIN;
@@ -721,10 +723,25 @@ fn bin_numeric(data: &[f32], max_bins: u32) -> BinMapper {
     }
     bounds.push(f64::MAX);
 
+    // If this feature has NaNs, allocate a dedicated last bin for NaN values.
+    // This enables LightGBM/XGBoost-style default-direction routing.
+    if has_nan {
+        bounds.push(f64::MAX);
+    }
+
+    let missing_type = if has_nan {
+        MissingType::NaN
+    } else {
+        MissingType::None
+    };
+
+    let n_bins = bounds.len() as u32;
+    let default_bin = if has_nan { n_bins - 1 } else { 0 };
+
     BinMapper::numerical(
         bounds,
-        MissingType::None,
-        0,
+        missing_type,
+        default_bin,
         0,
         0.0,
         min_val as f64,

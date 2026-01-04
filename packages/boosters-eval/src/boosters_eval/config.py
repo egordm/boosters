@@ -50,12 +50,18 @@ class DatasetConfig(BaseModel):
     # Optional per-dataset metric override (e.g., "mape" for forecasting datasets)
     primary_metric: str | None = None
     supported_booster_types: list[BoosterType] | None = None
-    splitter: Callable[[LoadedDataset, int], tuple[
-        NDArray[np.floating[Any]],
-        NDArray[np.floating[Any]],
-        NDArray[np.floating[Any]],
-        NDArray[np.floating[Any]],
-    ]] | None = None
+    splitter: (
+        Callable[
+            [LoadedDataset, int],
+            tuple[
+                NDArray[np.floating[Any]],
+                NDArray[np.floating[Any]],
+                NDArray[np.floating[Any]],
+                NDArray[np.floating[Any]],
+            ],
+        ]
+        | None
+    ) = None
 
 
 class LoadedDataset(BaseModel):

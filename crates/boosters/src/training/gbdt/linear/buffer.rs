@@ -101,6 +101,16 @@ impl LeafFeatureBuffer {
             let col_offset = feat_idx * self.max_rows;
             let buffer = &mut self.data[col_offset..col_offset + rows.len()];
             data.gather_feature_values(feat as usize, rows, buffer);
+
+            // Treat NaNs as missing values for linear leaves.
+            // Using 0.0 makes them contribute nothing to dot products and keeps
+            // the solver numerically stable.
+            for v in buffer.iter_mut() {
+                // TODO: see if this can be improved.
+                if v.is_nan() {
+                    *v = 0.0;
+                }
+            }
         }
     }
 
@@ -218,6 +228,22 @@ mod tests {
         // Try to gather 10 rows - should panic
         let rows: Vec<u32> = (0..10).collect();
         buffer.gather(&rows, &dataset, &[0]);
+    }
+
+    #[test]
+    fn test_leaf_buffer_gather_replaces_nans_with_zero() {
+        // 2 features, 3 samples (feature-major)
+        // f0: [1.0, NaN, 3.0]
+        // f1: [NaN, 2.0, NaN]
+        let arr = Array2::from_shape_vec((2, 3), vec![1.0, f32::NAN, 3.0, f32::NAN, 2.0, f32::NAN])
+            .unwrap();
+        let dataset = Dataset::from_array(arr.view(), None, None);
+
+        let mut buffer = LeafFeatureBuffer::new(3, 2);
+        buffer.gather(&[0, 1, 2], &dataset, &[0, 1]);
+
+        assert_eq!(buffer.feature_slice(0), &[1.0, 0.0, 3.0]);
+        assert_eq!(buffer.feature_slice(1), &[0.0, 2.0, 0.0]);
     }
 
     #[test]

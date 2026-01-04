@@ -305,7 +305,20 @@ impl GreedySplitter {
         // This bin cannot be represented as a single-feature threshold split.
         let start_bin = if is_bundle { 1 } else { 0 };
 
-        // Forward scan: missing values go right
+        // Forward scan: missing values go right.
+        //
+        // Convention:
+        // - Bundles: bin 0 is the default bin ("all defaults"), treated as missing/default.
+        // - Standalone numeric with MissingType::NaN: NaN values are encoded as the LAST bin.
+        //
+        // The grower currently only sets `has_missing` for those two cases, so we can
+        // derive the missing bin position from `(has_missing, is_bundle)`.
+        let missing_bin = if has_missing {
+            Some(if is_bundle { 0 } else { n_bins - 1 })
+        } else {
+            None
+        };
+
         let mut left_grad = 0.0;
         let mut left_hess = 0.0;
         let mut left_count = 0u32;
@@ -359,7 +372,13 @@ impl GreedySplitter {
             // For bundles, don't allow splitting at bin 0 (so stop backward scan at bin 1)
             let min_split_bin = if is_bundle { 1 } else { 0 };
 
-            for bin in (min_split_bin + 1..n_bins).rev() {
+            // Exclude the missing bin from the RIGHT accumulation so that it stays in LEFT.
+            let max_bin_exclusive = match missing_bin {
+                Some(mb) if mb + 1 == n_bins => n_bins - 1, // last bin is missing
+                _ => n_bins,
+            };
+
+            for bin in (min_split_bin + 1..max_bin_exclusive).rev() {
                 // Accumulate current bin into right child
                 let (bin_grad, bin_hess) = bins[bin];
                 right_grad += bin_grad;

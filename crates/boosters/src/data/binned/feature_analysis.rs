@@ -232,6 +232,9 @@ pub struct FeatureAnalysis {
     /// Total number of valid (non-NaN) values.
     pub n_valid: usize,
 
+    /// Total number of NaN values.
+    pub n_nan: usize,
+
     /// Total number of samples.
     pub n_samples: usize,
 
@@ -413,6 +416,7 @@ impl FeatureStats {
             n_unique,
             n_nonzero: self.non_zero_count,
             n_valid: self.valid_count,
+            n_nan: self.nan_count,
             n_samples,
             min_val: if self.valid_count > 0 {
                 self.min
@@ -482,6 +486,7 @@ pub fn analyze_features_dataset(
                 n_unique: 0,
                 n_nonzero: 0,
                 n_valid: 0,
+                n_nan: 0,
                 n_samples,
                 min_val: f32::NAN,
                 max_val: f32::NAN,
@@ -1077,6 +1082,7 @@ mod tests {
                 n_unique: 2,
                 n_nonzero: 50,
                 n_valid: 100,
+                n_nan: 0,
                 n_samples: 100,
                 min_val: 0.0,
                 max_val: 1.0,
@@ -1092,6 +1098,7 @@ mod tests {
                 n_unique: 100,
                 n_nonzero: 100,
                 n_valid: 100,
+                n_nan: 0,
                 n_samples: 100,
                 min_val: 0.0,
                 max_val: 99.0,
@@ -1107,6 +1114,7 @@ mod tests {
                 n_unique: 5,
                 n_nonzero: 100,
                 n_valid: 100,
+                n_nan: 0,
                 n_samples: 100,
                 min_val: 0.0,
                 max_val: 4.0,
@@ -1122,6 +1130,7 @@ mod tests {
                 n_unique: 10,
                 n_nonzero: 5,
                 n_valid: 100,
+                n_nan: 0,
                 n_samples: 100,
                 min_val: 0.0,
                 max_val: 9.0,
@@ -1137,6 +1146,7 @@ mod tests {
                 n_unique: 1,
                 n_nonzero: 0,
                 n_valid: 100,
+                n_nan: 0,
                 n_samples: 100,
                 min_val: 0.0,
                 max_val: 0.0,
@@ -1193,6 +1203,7 @@ mod tests {
                 n_unique: 500,
                 n_nonzero: 100,
                 n_valid: 100,
+                n_nan: 0,
                 n_samples: 100,
                 min_val: 0.0,
                 max_val: 499.0,
@@ -1207,6 +1218,7 @@ mod tests {
                 n_unique: 100,
                 n_nonzero: 100,
                 n_valid: 100,
+                n_nan: 0,
                 n_samples: 100,
                 min_val: 0.0,
                 max_val: 99.0,
@@ -1238,6 +1250,7 @@ mod tests {
                 n_unique: 10,
                 n_nonzero: 5,
                 n_valid: 100,
+                n_nan: 0,
                 n_samples: 100,
                 min_val: 0.0,
                 max_val: 9.0,
@@ -1252,6 +1265,7 @@ mod tests {
                 n_unique: 3,
                 n_nonzero: 5,
                 n_valid: 100,
+                n_nan: 0,
                 n_samples: 100,
                 min_val: 0.0,
                 max_val: 2.0,
@@ -1289,6 +1303,7 @@ mod tests {
                 n_unique: 0,
                 n_nonzero: 0,
                 n_valid: 0,
+                n_nan: 0,
                 n_samples: 100,
                 min_val: f32::NAN,
                 max_val: f32::NAN,
@@ -1303,6 +1318,7 @@ mod tests {
                 n_unique: 1,
                 n_nonzero: 0,
                 n_valid: 100,
+                n_nan: 0,
                 n_samples: 100,
                 min_val: 0.0,
                 max_val: 0.0,

@@ -304,8 +304,9 @@ class XGBoostRunner(Runner):
             import pandas as pd
 
             col_names = data.feature_names or [f"f{i}" for i in range(data.x_train.shape[1])]
-            train_df = pd.DataFrame(data.x_train, columns=col_names)
-            valid_df = pd.DataFrame(data.x_valid, columns=col_names)
+            columns = pd.Index(col_names)
+            train_df = pd.DataFrame(data.x_train, columns=columns)
+            valid_df = pd.DataFrame(data.x_valid, columns=columns)
 
             for idx in data.categorical_features:
                 col = col_names[idx]
@@ -324,7 +325,7 @@ class XGBoostRunner(Runner):
                 import pandas as pd
 
                 col_names = data.feature_names or [f"f{i}" for i in range(data.x_train.shape[1])]
-                small_df = pd.DataFrame(data.x_train[:100], columns=col_names)
+                small_df = pd.DataFrame(data.x_train[:100], columns=pd.Index(col_names))
                 for idx in data.categorical_features:
                     col = col_names[idx]
                     small_df[col] = pd.Categorical(small_df[col].astype("int32"))

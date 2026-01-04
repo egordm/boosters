@@ -135,9 +135,17 @@ def _latest_available_at_per_timestamp(df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("Expected a 'timestamp' column")
 
     out = df.copy()
-    out["timestamp"] = pd.to_datetime(out["timestamp"], utc=True)
+    # Treat timestamps as opaque identifiers.
+    #
+    # Some real-world parquet files mix tz-aware and tz-naive timestamps.
+    # Parsing them into pandas datetime can later trigger:
+    #   TypeError: Cannot compare tz-naive and tz-aware timestamps
+    #
+    # For boosters-eval we don't need timestamp semantics; we only need a
+    # stable key to de-duplicate and join.
+    out["timestamp"] = out["timestamp"].astype("string")
     if "available_at" in out.columns:
-        out["available_at"] = pd.to_datetime(out["available_at"], utc=True)
+        out["available_at"] = out["available_at"].astype("string")
         out = out.sort_values(["timestamp", "available_at"]).drop_duplicates("timestamp", keep="last")
     else:
         out = out.sort_values(["timestamp"]).drop_duplicates("timestamp", keep="last")
@@ -237,26 +245,9 @@ def liander_energy_prices_os_gorredijk(
     df = df.merge(epex_df, on="timestamp", how="left", suffixes=("", "_epex"))
     df = df.merge(profiles_df, on="timestamp", how="left", suffixes=("", "_profiles"))
 
-    # Sort chronologically (so the split can be done via slicing)
-    ts = pd.to_datetime(df["timestamp"], utc=True)
-    df = df.assign(_ts=ts).sort_values("_ts").drop(columns=["_ts"]).reset_index(drop=True)
-    ts = pd.to_datetime(df["timestamp"], utc=True)
-
-    # The dataset contains some noisy/weird values early in January.
-    # Drop the first ~half month to stabilize the benchmark.
-    cutoff = ts.iloc[0] + pd.Timedelta(days=15)
-    keep = ts >= cutoff
-    df = df.loc[keep].reset_index(drop=True)
-    ts = pd.to_datetime(df["timestamp"], utc=True)
-
-    # Precompute split indices: train = first 4 months, valid = next 2 months.
-    start = ts.iloc[0]
-    train_end_ts = start + pd.DateOffset(months=4)
-    valid_end_ts = train_end_ts + pd.DateOffset(months=2)
-    train_end = int(np.searchsorted(ts.to_numpy(), train_end_ts.to_datetime64(), side="left"))
-    valid_end = int(np.searchsorted(ts.to_numpy(), valid_end_ts.to_datetime64(), side="left"))
-    df["dow"] = ts.dt.dayofweek.astype("int16")
-    df["qod"] = (ts.dt.hour * 4 + (ts.dt.minute // 15)).astype("int16")
+    # NOTE: We intentionally do NOT parse timestamps for evaluation purposes.
+    # Splits are done purely by sample index; the caller is responsible for
+    # ensuring any time ordering they care about before running benchmarks.
 
     # Build X/y
     exclude_cols = {
@@ -266,25 +257,23 @@ def liander_energy_prices_os_gorredijk(
     }
     exclude_cols.update({c for c in df.columns if c.endswith(("_x", "_y"))})
     # Keep only numeric features
-    feature_cols = [
-        c
-        for c in df.columns
-        if c not in exclude_cols and pd.api.types.is_numeric_dtype(df[c])
-    ]
+    feature_cols = [c for c in df.columns if c not in exclude_cols and pd.api.types.is_numeric_dtype(df[c])]
 
-    # Ensure deterministic column order (and keep dow/qod at the end)
-    feature_cols = [c for c in feature_cols if c not in ("dow", "qod")] + ["dow", "qod"]
+    # Ensure deterministic column order
+    feature_cols = sorted(feature_cols)
 
     x = df[feature_cols].to_numpy(dtype=np.float32, copy=True)
     y = df[target_col].to_numpy(dtype=np.float32, copy=True)
 
-    categorical_features = [feature_cols.index("dow"), feature_cols.index("qod")]
+    n_samples = len(y)
+    train_end = int((2 * n_samples) / 3)
+    valid_end = n_samples
 
     return LoadedDataset(
         x=x,
         y=y,
         feature_names=feature_cols,
-        categorical_features=categorical_features,
+        categorical_features=[],
         train_end=train_end,
         valid_end=valid_end,
     )

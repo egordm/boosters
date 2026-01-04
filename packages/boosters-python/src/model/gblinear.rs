@@ -84,11 +84,8 @@ impl PyGBLinearModel {
         });
 
         match trained_model {
-            Some(model) => Ok(Self { model }),
-            None => Err(BoostersError::TrainingError(
-                "Training failed to produce a model".to_string(),
-            )
-            .into()),
+            Ok(model) => Ok(Self { model }),
+            Err(err) => Err(BoostersError::ValidationError(err.to_string()).into()),
         }
     }
 

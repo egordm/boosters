@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 from pydantic import ValidationError
-import numpy as np
 
 from boosters_eval.config import (
     BenchmarkConfig,
