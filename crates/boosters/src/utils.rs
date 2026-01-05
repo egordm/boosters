@@ -37,7 +37,9 @@ where
 
     // For uniform weights, the k-th element where cumulative weight >= alpha * n
     // is at position ceil(alpha * n) - 1 (0-indexed)
-    let k = ((alpha * n as f32).ceil() as usize).saturating_sub(1).min(n - 1);
+    let k = ((alpha * n as f32).ceil() as usize)
+        .saturating_sub(1)
+        .min(n - 1);
 
     // Partial sort: O(n) average case
     // After this, scratch[k] is the k-th smallest value (by value_fn)
@@ -339,7 +341,12 @@ mod tests {
     use super::*;
 
     // Helper for weighted quantile tests
-    fn test_weighted_quantile(values: &[f32], weights: &[f32], alpha: f32, scratch: &mut Vec<u32>) -> f32 {
+    fn test_weighted_quantile(
+        values: &[f32],
+        weights: &[f32],
+        alpha: f32,
+        scratch: &mut Vec<u32>,
+    ) -> f32 {
         let indices: Vec<u32> = (0..values.len() as u32).collect();
         let value_fn = |i: u32| values[i as usize];
         let weight_fn = |i: u32| weights[i as usize];
@@ -356,7 +363,13 @@ mod tests {
     #[test]
     fn test_weighted_quantile_empty() {
         let mut scratch = Vec::new();
-        let result = weighted_quantile_indexed::<_, fn(u32) -> f32>(&[], |_| 0.0, |_| 1.0, 0.5, &mut scratch);
+        let result = weighted_quantile_indexed::<_, fn(u32) -> f32>(
+            &[],
+            |_| 0.0,
+            |_| 1.0,
+            0.5,
+            &mut scratch,
+        );
         assert!(result.is_nan());
     }
 
