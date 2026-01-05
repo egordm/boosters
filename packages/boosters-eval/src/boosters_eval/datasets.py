@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from functools import lru_cache
+from functools import lru_cache, partial
 from pathlib import Path
 from typing import Any, cast
 
@@ -93,7 +92,7 @@ def california_housing_weighted(
     q80 = float(np.quantile(y, 0.8))
     w = np.ones(len(y), dtype=np.float32)
     w[y >= q80] = 5.0
-    w *= (1.0 + rng.normal(loc=0.0, scale=0.01, size=len(y)).astype(np.float32))
+    w *= 1.0 + rng.normal(loc=0.0, scale=0.01, size=len(y)).astype(np.float32)
     w = np.clip(w, 0.01, None)
 
     return LoadedDataset(
@@ -201,6 +200,7 @@ def synthetic_multi_small() -> LoadedDataset:
     """Small synthetic multiclass classification dataset."""
     return _synthetic_classification(2000, 50, 5)
 
+
 @lru_cache(maxsize=1)
 def liander_energy_forecasting(
     *,
@@ -283,9 +283,12 @@ def liander_energy_forecasting(
     df = df.sort_index()
 
     # Add categorical seasonality features
-    ts = pd.DatetimeIndex(df.index)
-    df["day_of_week"] = ts.dayofweek.astype(np.int16)
-    df["quarter_of_day"] = ((ts.hour * 60 + ts.minute) // 15).astype(np.int16)
+    # Use Series.dt accessors for better type checking support.
+    ts = pd.Series(pd.to_datetime(df.index), index=df.index)
+    df["day_of_week"] = ts.dt.dayofweek.astype(np.int16).to_numpy()
+    df["quarter_of_day"] = ((ts.dt.hour * 60 + ts.dt.minute) // 15).astype(np.int16).to_numpy()
+    df["lag_7d"] = df[target_col].shift(7 * 24 * 4)  # 7 days ago lag
+    df["lag_14d"] = df[target_col].shift(14 * 24 * 4)  # 14 days ago lag
 
     # Keep a fixed 4-month window after skipping the first 2 months.
     # 15-minute resolution => 96 samples/day. We use 30-day months for simple iloc slicing.
@@ -294,8 +297,7 @@ def liander_energy_forecasting(
     end = start + (4 * samples_per_month)
     if len(df) < end:
         raise ValueError(
-            "Liander dataset is shorter than expected after joins; "
-            f"need at least {end} samples, got {len(df)}."
+            f"Liander dataset is shorter than expected after joins; need at least {end} samples, got {len(df)}."
         )
     df = df.iloc[start:end]
 
@@ -311,49 +313,92 @@ def liander_energy_forecasting(
     x = df[feature_cols].to_numpy(dtype=np.float32, copy=True)
     y = df[target_col].to_numpy(dtype=np.float32, copy=True)
 
-    n_samples = len(y)
-    train_end = int((2 * n_samples) / 3)
-    valid_end = n_samples
-
     return LoadedDataset(
         x=x,
         y=y,
         feature_names=feature_cols,
         categorical_features=categorical_features,
-        train_end=train_end,
-        valid_end=valid_end,
     )
 
 
-def split_at_index(
+def rolling_origin_splitter(
+    data: LoadedDataset,
+    seed: int,
+    *,
+    train_window: int,
+    valid_window: int,
+) -> tuple[
+    NDArray[np.floating[Any]],
+    NDArray[np.floating[Any]],
+    NDArray[np.floating[Any]],
+    NDArray[np.floating[Any]],
+    NDArray[np.floating[Any]] | None,
+    NDArray[np.floating[Any]] | None,
+]:
+    """Time-series split with a rolling cut point.
+
+    Picks a cut point (end of train) based on seed, then returns:
+      train = [cut - train_window : cut]
+      valid = [cut : cut + valid_window]
+
+    This matches forecasting evaluation where the validation horizon directly
+    follows the training window.
+    """
+    if train_window <= 0:
+        raise ValueError("train_window must be positive")
+    if valid_window <= 0:
+        raise ValueError("valid_window must be positive")
+
+    n = len(data.y)
+    if n < train_window + valid_window:
+        raise ValueError(
+            "Time-series split requires enough samples for both windows; "
+            f"need at least {train_window + valid_window}, got {n}."
+        )
+
+    rng = np.random.default_rng(seed)
+    cut = int(rng.integers(low=train_window, high=(n - valid_window + 1)))
+
+    train_start = cut - train_window
+    train_end = cut
+    valid_end = cut + valid_window
+
+    return (
+        data.x[train_start:train_end],
+        data.x[train_end:valid_end],
+        data.y[train_start:train_end],
+        data.y[train_end:valid_end],
+        (data.sample_weight[train_start:train_end] if data.sample_weight is not None else None),
+        (data.sample_weight[train_end:valid_end] if data.sample_weight is not None else None),
+    )
+
+
+def split_at_index_splitter(
+    data: LoadedDataset,
+    _seed: int,
+    *,
     train_end: int,
     valid_end: int | None = None,
-) -> Callable[
-    [LoadedDataset, int],
-    tuple[
-        NDArray[np.floating[Any]],
-        NDArray[np.floating[Any]],
-        NDArray[np.floating[Any]],
-        NDArray[np.floating[Any]],
-    ],
+) -> tuple[
+    NDArray[np.floating[Any]],
+    NDArray[np.floating[Any]],
+    NDArray[np.floating[Any]],
+    NDArray[np.floating[Any]],
+    NDArray[np.floating[Any]] | None,
+    NDArray[np.floating[Any]] | None,
 ]:
     """Create a deterministic split function based on sample indices."""
-
-    def _split(
-        data: LoadedDataset,
-        _seed: int,
-    ) -> tuple[
-        NDArray[np.floating[Any]],
-        NDArray[np.floating[Any]],
-        NDArray[np.floating[Any]],
-        NDArray[np.floating[Any]],
-    ]:
-        end = valid_end if valid_end is not None else len(data.y)
-        if train_end <= 0 or end <= train_end or end > len(data.y):
-            raise ValueError("Split indices are invalid")
-        return data.x[:train_end], data.x[train_end:end], data.y[:train_end], data.y[train_end:end]
-
-    return _split
+    end = valid_end if valid_end is not None else len(data.y)
+    if train_end <= 0 or end <= train_end or end > len(data.y):
+        raise ValueError("Split indices are invalid")
+    return (
+        data.x[:train_end],
+        data.x[train_end:end],
+        data.y[:train_end],
+        data.y[train_end:end],
+        (data.sample_weight[:train_end] if data.sample_weight is not None else None),
+        (data.sample_weight[train_end:end] if data.sample_weight is not None else None),
+    )
 
 
 def split_by_precomputed_indices(
@@ -364,12 +409,14 @@ def split_by_precomputed_indices(
     NDArray[np.floating[Any]],
     NDArray[np.floating[Any]],
     NDArray[np.floating[Any]],
+    NDArray[np.floating[Any]] | None,
+    NDArray[np.floating[Any]] | None,
 ]:
     """Split using LoadedDataset.train_end/valid_end."""
     if data.train_end is None or data.valid_end is None:
         raise ValueError("Dataset split requires precomputed train_end/valid_end")
 
-    return split_at_index(data.train_end, data.valid_end)(data, _seed)
+    return split_at_index_splitter(data, _seed, train_end=data.train_end, valid_end=data.valid_end)
 
 
 # Pre-defined dataset configurations
@@ -439,10 +486,16 @@ DATASETS: dict[str, DatasetConfig] = {
     # Real-world regression (time-series forecasting)
     "liander_energy_forecasting": DatasetConfig(
         name="liander_energy_forecasting",
-        task=Task.REGRESSION,
+        task=Task.QUANTILE_REGRESSION,
+        quantiles=[0.95, 0.8, 0.7, 0.5, 0.3, 0.2, 0.05],
         loader=liander_energy_forecasting,
-        splitter=split_by_precomputed_indices,
-        primary_metric="rmae",
+        splitter=partial(
+            rolling_origin_splitter,
+            train_window=60 * 24 * 4,  # 60 days
+            valid_window=7 * 24 * 4,  # 7 days
+        ),
+        allow_random_subsample=False,
+        primary_metric="rcrps",
         supported_booster_types=[BoosterType.GBDT, BoosterType.GBLINEAR, BoosterType.LINEAR_TREES],
     ),
 }

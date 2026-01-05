@@ -26,9 +26,10 @@ if TYPE_CHECKING:
     from boosters_eval.results import ResultCollection
 
 # Task display order and names
-TASK_ORDER = [Task.REGRESSION, Task.BINARY, Task.MULTICLASS]
+TASK_ORDER = [Task.REGRESSION, Task.QUANTILE_REGRESSION, Task.BINARY, Task.MULTICLASS]
 TASK_NAMES = {
     Task.REGRESSION: "Regression",
+    Task.QUANTILE_REGRESSION: "Quantile Regression",
     Task.BINARY: "Binary Classification",
     Task.MULTICLASS: "Multiclass Classification",
 }

@@ -18,6 +18,7 @@ from boosters_eval.metrics import LOWER_BETTER_METRICS, primary_metric
 # Metrics relevant to each task type
 TASK_METRICS: dict[Task, list[str]] = {
     Task.REGRESSION: ["rmse", "mae", "rmae", "r2"],
+    Task.QUANTILE_REGRESSION: ["pinball", "rcrps"],
     Task.BINARY: ["logloss", "accuracy"],
     Task.MULTICLASS: ["mlogloss", "accuracy"],
 }

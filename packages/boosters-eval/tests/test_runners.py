@@ -26,6 +26,8 @@ from boosters_eval.runners import (
 def make_config(
     task: Task = Task.REGRESSION,
     booster_type: BoosterType = BoosterType.GBDT,
+    *,
+    quantiles: list[float] | None = None,
 ) -> BenchmarkConfig:
     """Helper to create a test config."""
 
@@ -42,6 +44,7 @@ def make_config(
             task=task,
             loader=loader,
             n_classes=3 if task == Task.MULTICLASS else None,
+            quantiles=quantiles,
         ),
         training=TrainingConfig(n_estimators=5, max_depth=3),
         booster_type=booster_type,
@@ -213,6 +216,27 @@ class TestBoostersRunner:
         assert "mlogloss" in result.metrics
         assert "accuracy" in result.metrics
 
+    def test_quantile_regression(self) -> None:
+        """Test boosters runner on quantile regression."""
+        config = make_config(task=Task.QUANTILE_REGRESSION, quantiles=[0.95, 0.5, 0.05])
+        x_train, x_valid, y_train, y_valid = make_data(Task.REGRESSION)
+
+        result = BoostersRunner.run(
+            config,
+            RunData(
+                x_train=x_train,
+                y_train=y_train,
+                x_valid=x_valid,
+                y_valid=y_valid,
+                categorical_features=[],
+                feature_names=None,
+            ),
+            seed=42,
+        )
+
+        assert "pinball" in result.metrics
+        assert "rcrps" in result.metrics
+
 
 class TestXGBoostRunner:
     """Tests for XGBoostRunner."""
@@ -279,6 +303,54 @@ class TestXGBoostRunner:
         )
 
         assert result.booster_type == "gblinear"
+
+    def test_quantile_regression_gbtree(self) -> None:
+        """Test xgboost runner on quantile regression (gbtree multi-output)."""
+        config = make_config(task=Task.QUANTILE_REGRESSION, booster_type=BoosterType.GBDT, quantiles=[0.95, 0.5, 0.05])
+        x_train, x_valid, y_train, y_valid = make_data(Task.REGRESSION)
+
+        result = XGBoostRunner.run(
+            config,
+            RunData(
+                x_train=x_train,
+                y_train=y_train,
+                x_valid=x_valid,
+                y_valid=y_valid,
+                categorical_features=[],
+                feature_names=None,
+            ),
+            seed=42,
+        )
+
+        assert "pinball" in result.metrics
+        assert "rcrps" in result.metrics
+        assert np.isfinite(result.metrics["rcrps"])
+
+    def test_quantile_regression_gblinear(self) -> None:
+        """Test xgboost runner on quantile regression (gblinear native multi-quantile)."""
+        config = make_config(
+            task=Task.QUANTILE_REGRESSION,
+            booster_type=BoosterType.GBLINEAR,
+            quantiles=[0.1, 0.5, 0.9],
+        )
+        x_train, x_valid, y_train, y_valid = make_data(Task.REGRESSION)
+
+        result = XGBoostRunner.run(
+            config,
+            RunData(
+                x_train=x_train,
+                y_train=y_train,
+                x_valid=x_valid,
+                y_valid=y_valid,
+                categorical_features=[],
+                feature_names=None,
+            ),
+            seed=42,
+        )
+
+        assert result.booster_type == "gblinear"
+        assert "pinball" in result.metrics
+        assert "rcrps" in result.metrics
 
 
 class TestLightGBMRunner:

@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 console = Console()
 
 # Task display order
-TASK_ORDER = [Task.REGRESSION, Task.BINARY, Task.MULTICLASS]
+TASK_ORDER = [Task.REGRESSION, Task.QUANTILE_REGRESSION, Task.BINARY, Task.MULTICLASS]
 
 
 def format_results_terminal(
@@ -65,6 +65,7 @@ def format_results_terminal(
         # Task header
         task_names = {
             Task.REGRESSION: "Regression",
+            Task.QUANTILE_REGRESSION: "Quantile Regression",
             Task.BINARY: "Binary Classification",
             Task.MULTICLASS: "Multiclass Classification",
         }

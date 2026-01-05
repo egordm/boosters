@@ -28,6 +28,7 @@ class TestComputeMetrics:
         ("task", "expected_metrics"),
         [
             (Task.REGRESSION, ["rmse", "mae", "r2"]),
+            (Task.QUANTILE_REGRESSION, ["pinball", "rcrps"]),
             (Task.BINARY, ["logloss", "accuracy"]),
             (Task.MULTICLASS, ["mlogloss", "accuracy"]),
         ],
@@ -38,6 +39,15 @@ class TestComputeMetrics:
             y_true = np.array([1.0, 2.0, 3.0])
             y_pred = np.array([1.1, 2.0, 2.9])
             metrics = compute_metrics(task, y_true, y_pred)
+        elif task == Task.QUANTILE_REGRESSION:
+            y_true = np.array([1.0, 2.0, 3.0])
+            quantiles = np.array([0.1, 0.5, 0.9])
+            y_pred = np.array([
+                [0.5, 1.0, 1.5],
+                [1.5, 2.0, 2.5],
+                [2.5, 3.0, 3.5],
+            ])
+            metrics = compute_metrics(task, y_true, y_pred, quantiles=quantiles)
         elif task == Task.BINARY:
             y_true = np.array([0, 1, 0, 1])
             y_pred = np.array([0.3, 0.7, 0.4, 0.6])
@@ -73,6 +83,7 @@ class TestPrimaryMetricAndDirection:
         ("task", "expected_primary"),
         [
             (Task.REGRESSION, "rmse"),
+            (Task.QUANTILE_REGRESSION, "rcrps"),
             (Task.BINARY, "logloss"),
             (Task.MULTICLASS, "mlogloss"),
         ],

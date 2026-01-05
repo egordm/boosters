@@ -26,7 +26,7 @@ class TestDatasetRegistry:
         """Test that all dataset configs have required fields."""
         for name, config in DATASETS.items():
             assert config.name == name
-            assert config.task in (Task.REGRESSION, Task.BINARY, Task.MULTICLASS)
+            assert config.task in (Task.REGRESSION, Task.QUANTILE_REGRESSION, Task.BINARY, Task.MULTICLASS)
             assert callable(config.loader)
 
 
@@ -36,14 +36,17 @@ class TestGetDatasetsByTask:
     def test_filter_by_task(self) -> None:
         """Test filtering datasets by task type."""
         regression = get_datasets_by_task(Task.REGRESSION)
+        quantile = get_datasets_by_task(Task.QUANTILE_REGRESSION)
         binary = get_datasets_by_task(Task.BINARY)
         multiclass = get_datasets_by_task(Task.MULTICLASS)
 
         assert "california" in regression
+        assert "liander_energy_forecasting" in quantile
         assert "breast_cancer" in binary
         assert "iris" in multiclass
 
         assert all(d.task == Task.REGRESSION for d in regression.values())
+        assert all(d.task == Task.QUANTILE_REGRESSION for d in quantile.values())
         assert all(d.task == Task.BINARY for d in binary.values())
         assert all(d.task == Task.MULTICLASS for d in multiclass.values())
 

@@ -1158,6 +1158,9 @@ class Metric(enum.Enum):
     def accuracy_at(threshold: builtins.float = 0.5) -> Metric:
         r"""
         Create accuracy metric with validation.
+        
+        Use `Metric.Accuracy()` for default threshold, `Metric.Accuracy(threshold=...)`
+        for direct construction, or this helper for validation.
         """
     @staticmethod
     def margin_accuracy() -> Metric:

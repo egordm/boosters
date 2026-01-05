@@ -7,7 +7,8 @@ from typing import Any
 import numpy as np
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
-from sklearn.model_selection import train_test_split
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import StandardScaler
 
 from boosters_eval.config import (
     BenchmarkConfig,
@@ -15,6 +16,8 @@ from boosters_eval.config import (
     GrowthStrategy,
     SuiteConfig,
     Task,
+    TrainingConfig,
+    resolve_training_config,
 )
 from boosters_eval.datasets import DATASETS
 from boosters_eval.results import BenchmarkError, ResultCollection
@@ -232,7 +235,6 @@ def create_ablation_suite(
 def run_suite(
     suite: SuiteConfig,
     *,
-    validation_fraction: float = 0.2,
     verbose: bool = True,
     timing_mode: bool = False,
     measure_memory: bool = False,
@@ -241,7 +243,6 @@ def run_suite(
 
     Args:
         suite: Suite configuration to run.
-        validation_fraction: Fraction of data to use for validation.
         verbose: Print progress information.
         timing_mode: Enable timing mode with warmup runs.
         measure_memory: Measure peak memory usage.
@@ -261,8 +262,7 @@ def run_suite(
             console.print("[yellow]No libraries available to run![/yellow]")
         return collection
 
-    # Build configs from suite's training parameters
-    training = suite.to_training_config()
+    base_training = TrainingConfig()
 
     # Get all booster types to run
     booster_types = suite.get_booster_types()
@@ -275,6 +275,7 @@ def run_suite(
             continue
 
         ds = DATASETS[ds_name]
+        training = resolve_training_config(dataset=ds, suite=suite, base=base_training)
         supported = ds.supported_booster_types
         for booster_type in booster_types:
             if supported is not None and booster_type not in supported:
@@ -318,7 +319,7 @@ def run_suite(
                 # For datasets that provide a custom splitter (typically time-series),
                 # random subsampling is disabled.
                 if config.dataset.subsample and len(data.y) > config.dataset.subsample:
-                    if config.dataset.splitter is not None:
+                    if not config.dataset.allow_random_subsample:
                         raise ValueError(
                             f"Dataset {config.dataset.name} uses a custom splitter; random subsample is disabled. "
                             "Use a dataset-specific splitter/subsample strategy instead."
@@ -330,39 +331,26 @@ def run_suite(
                         update["sample_weight"] = data.sample_weight[idx]
                     data = data.model_copy(update=update)
 
-                w_train = None
-                w_valid = None
-                if config.dataset.splitter is not None:
-                    if data.sample_weight is not None:
-                        raise ValueError(
-                            f"Dataset {config.dataset.name} provides sample_weight but also uses a custom splitter. "
-                            "Update the dataset splitter to return weights, or use the default splitter."
-                        )
-                    x_train, x_valid, y_train, y_valid = config.dataset.splitter(data, seed)
-                else:
-                    if data.sample_weight is None:
-                        x_train, x_valid, y_train, y_valid = train_test_split(
-                            data.x,
-                            data.y,
-                            test_size=validation_fraction,
-                            random_state=seed,
-                        )
-                    else:
-                        x_train, x_valid, y_train, y_valid, w_train, w_valid = train_test_split(
-                            data.x,
-                            data.y,
-                            data.sample_weight,
-                            test_size=validation_fraction,
-                            random_state=seed,
-                        )
+                x_train, x_valid, y_train, y_valid, w_train, w_valid = config.dataset.splitter(data, seed)
 
                 # GBLinear models do not support categorical features.
                 # Drop categorical columns for this run (keeping them for tree-based boosters).
                 if config.booster_type == BoosterType.GBLINEAR and categorical_features:
                     cat = sorted(set(categorical_features))
                     keep_cols = [i for i in range(x_train.shape[1]) if i not in cat]
-                    x_train = x_train[:, keep_cols]
-                    x_valid = x_valid[:, keep_cols]
+
+                    # Use an sklearn transformer so the logic is reusable and explicit.
+                    selector = ColumnTransformer(
+                        [("keep", "passthrough", keep_cols)],
+                        remainder="drop",
+                        verbose_feature_names_out=False,
+                    )
+                    x_train = selector.fit_transform(x_train)
+                    x_valid = selector.transform(x_valid)
+
+                    # ColumnTransformer may upcast to float64; keep inputs compact.
+                    x_train = np.asarray(x_train, dtype=np.float32)
+                    x_valid = np.asarray(x_valid, dtype=np.float32)
                     if feature_names is not None:
                         feature_names = [feature_names[i] for i in keep_cols]
                     categorical_features = []
@@ -371,20 +359,9 @@ def run_suite(
                 # apply the same parameters to validation targets.
                 # Metrics are computed on the normalized scale.
                 if config.dataset.task == Task.REGRESSION:
-                    if w_train is None:
-                        target_mean = float(np.mean(y_train))
-                        target_std = float(np.std(y_train))
-                    else:
-                        w_sum = float(np.sum(w_train))
-                        if not np.isfinite(w_sum) or w_sum <= 0.0:
-                            w_sum = 1.0
-                        target_mean = float(np.sum(w_train * y_train) / w_sum)
-                        target_var = float(np.sum(w_train * (y_train - target_mean) ** 2) / w_sum)
-                        target_std = float(np.sqrt(target_var))
-                    if not np.isfinite(target_std) or target_std <= 0.0:
-                        target_std = 1.0
-                    y_train = (y_train - target_mean) / target_std
-                    y_valid = (y_valid - target_mean) / target_std
+                    scaler = StandardScaler()
+                    y_train = scaler.fit_transform(y_train.reshape(-1, 1)).reshape(-1)
+                    y_valid = scaler.transform(y_valid.reshape(-1, 1)).reshape(-1)
 
                 for library in config.libraries:
                     progress.update(

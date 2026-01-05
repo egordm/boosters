@@ -519,6 +519,7 @@ def list_tasks() -> None:
 
     task_info = [
         (Task.REGRESSION, "Predict continuous values", "RMSE"),
+        (Task.QUANTILE_REGRESSION, "Predict multiple quantiles", "rCRPS"),
         (Task.BINARY, "Binary classification", "Log Loss"),
         (Task.MULTICLASS, "Multi-class classification", "Multi-class Log Loss"),
     ]

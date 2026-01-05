@@ -14,6 +14,8 @@ from boosters_eval.config import (
     SuiteConfig,
     Task,
     TrainingConfig,
+    TrainingOverrides,
+    resolve_training_config,
 )
 
 
@@ -87,3 +89,63 @@ class TestSuiteConfig:
         assert config.n_estimators == 50
         assert config.seeds == [42]
         assert len(config.datasets) == 2
+
+
+class TestTrainingOverrides:
+    def test_merge_order_base_dataset_suite(self) -> None:
+        dataset = DatasetConfig(
+            name="test",
+            task=Task.REGRESSION,
+            loader=lambda: LoadedDataset(x=np.zeros((1, 1), dtype=np.float32), y=np.zeros(1, dtype=np.float32)),
+            training_overrides=TrainingOverrides(max_depth=3, n_estimators=200),
+        )
+        suite = SuiteConfig(
+            name="custom",
+            description="Custom suite",
+            datasets=["test"],
+            n_estimators=50,
+            seeds=[42],
+            libraries=["boosters"],
+        )
+        base = TrainingConfig(n_estimators=100, max_depth=6, learning_rate=0.1)
+
+        resolved = resolve_training_config(dataset=dataset, suite=suite, base=base)
+        assert resolved.n_estimators == 50
+        assert resolved.max_depth == 3
+
+    def test_suite_defaults_do_not_override_dataset_overrides(self) -> None:
+        dataset = DatasetConfig(
+            name="test",
+            task=Task.REGRESSION,
+            loader=lambda: LoadedDataset(x=np.zeros((1, 1), dtype=np.float32), y=np.zeros(1, dtype=np.float32)),
+            training_overrides=TrainingOverrides(max_depth=3),
+        )
+        suite = SuiteConfig(
+            name="custom",
+            description="Custom suite",
+            datasets=["test"],
+            n_estimators=100,
+            seeds=[42],
+            libraries=["boosters"],
+        )
+        resolved = resolve_training_config(dataset=dataset, suite=suite)
+        assert resolved.max_depth == 3
+
+    def test_suite_explicit_override_wins(self) -> None:
+        dataset = DatasetConfig(
+            name="test",
+            task=Task.REGRESSION,
+            loader=lambda: LoadedDataset(x=np.zeros((1, 1), dtype=np.float32), y=np.zeros(1, dtype=np.float32)),
+            training_overrides=TrainingOverrides(max_depth=3),
+        )
+        suite = SuiteConfig(
+            name="custom",
+            description="Custom suite",
+            datasets=["test"],
+            n_estimators=100,
+            max_depth=9,
+            seeds=[42],
+            libraries=["boosters"],
+        )
+        resolved = resolve_training_config(dataset=dataset, suite=suite)
+        assert resolved.max_depth == 9
