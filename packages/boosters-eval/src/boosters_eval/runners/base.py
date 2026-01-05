@@ -7,11 +7,12 @@ import tracemalloc
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from boosters_eval.config import BenchmarkConfig
+from boosters_eval.config import BenchmarkConfig, Task
 from boosters_eval.results import BenchmarkResult
 
 if TYPE_CHECKING:
@@ -33,6 +34,97 @@ class RunData:
     feature_names: list[str] | None
     sample_weight_train: NDArray[np.floating[Any]] | None = None
     sample_weight_valid: NDArray[np.floating[Any]] | None = None
+
+    @cached_property
+    def has_nans(self) -> bool:
+        """Check if any feature array contains NaN values."""
+        return bool(np.isnan(self.x_train).any() or np.isnan(self.x_valid).any())
+
+
+@dataclass(frozen=True, slots=True)
+class RunContext:
+    """Immutable context for a benchmark run.
+
+    Captures all configuration needed to train/predict without
+    re-reading from nested config objects.
+    """
+
+    # Core training parameters
+    n_estimators: int
+    learning_rate: float
+    max_depth: int
+    num_leaves: int
+    reg_lambda: float
+    reg_alpha: float
+    min_child_weight: float
+    min_samples_leaf: int
+    subsample: float
+    colsample_bytree: float
+    max_bins: int
+    n_threads: int
+    seed: int
+
+    # Task info
+    task: Task
+    n_classes: int | None
+    quantiles: np.ndarray | None
+
+    # Linear trees
+    linear_l2: float
+    linear_max_features: int | None
+
+    # Dataset metadata
+    dataset_name: str
+    config_name: str
+    primary_metric: str | None
+
+    # Run options
+    timing_mode: bool = False
+    measure_memory: bool = False
+
+    @classmethod
+    def from_config(
+        cls,
+        config: BenchmarkConfig,
+        seed: int,
+        *,
+        timing_mode: bool = False,
+        measure_memory: bool = False,
+    ) -> RunContext:
+        """Create a RunContext from a BenchmarkConfig."""
+        tc = config.training
+
+        # Resolve quantiles for quantile regression
+        quantiles: np.ndarray | None = None
+        if config.dataset.task == Task.QUANTILE_REGRESSION:
+            q = config.dataset.quantiles or tc.quantiles or [0.1, 0.5, 0.9]
+            quantiles = np.asarray(q, dtype=np.float64)
+
+        return cls(
+            n_estimators=tc.n_estimators,
+            learning_rate=tc.learning_rate,
+            max_depth=tc.max_depth,
+            num_leaves=tc.num_leaves,
+            reg_lambda=tc.reg_lambda,
+            reg_alpha=tc.reg_alpha,
+            min_child_weight=tc.min_child_weight,
+            min_samples_leaf=tc.min_samples_leaf,
+            subsample=tc.subsample,
+            colsample_bytree=tc.colsample_bytree,
+            max_bins=tc.max_bins,
+            n_threads=tc.n_threads,
+            seed=seed,
+            task=config.dataset.task,
+            n_classes=config.dataset.n_classes,
+            quantiles=quantiles,
+            linear_l2=tc.linear_l2,
+            linear_max_features=tc.linear_max_features,
+            dataset_name=config.dataset.name,
+            config_name=config.name,
+            primary_metric=config.dataset.primary_metric,
+            timing_mode=timing_mode,
+            measure_memory=measure_memory,
+        )
 
 
 class Runner(ABC):

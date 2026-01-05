@@ -6,15 +6,15 @@ This module defines all Pydantic models for benchmark configuration.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from enum import Enum
 from functools import partial
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-from pydantic import BaseModel, ConfigDict, field_validator
-from sklearn.model_selection import train_test_split
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from boosters_eval.utils import train_valid_split
 
 
 class Task(str, Enum):
@@ -41,58 +41,6 @@ class GrowthStrategy(str, Enum):
     LEAFWISE = "leafwise"
 
 
-def sklearn_split(
-    data: LoadedDataset,
-    seed: int,
-    *,
-    validation_fraction: float = 0.2,
-) -> tuple[
-    NDArray[np.floating[Any]],
-    NDArray[np.floating[Any]],
-    NDArray[np.floating[Any]],
-    NDArray[np.floating[Any]],
-    NDArray[np.floating[Any]] | None,
-    NDArray[np.floating[Any]] | None,
-]:
-    """Default dataset splitter using sklearn's train_test_split.
-
-    Splits sample weights when present.
-    """
-    if data.sample_weight is None:
-        x_train, x_valid, y_train, y_valid = train_test_split(
-            data.x,
-            data.y,
-            test_size=validation_fraction,
-            random_state=seed,
-        )
-        return x_train, x_valid, y_train, y_valid, None, None
-
-    x_train, x_valid, y_train, y_valid, w_train, w_valid = train_test_split(
-        data.x,
-        data.y,
-        data.sample_weight,
-        test_size=validation_fraction,
-        random_state=seed,
-    )
-    return x_train, x_valid, y_train, y_valid, w_train, w_valid
-
-
-DEFAULT_SPLITTER = cast(
-    Callable[
-        ["LoadedDataset", int],
-        tuple[
-            NDArray[np.floating[Any]],
-            NDArray[np.floating[Any]],
-            NDArray[np.floating[Any]],
-            NDArray[np.floating[Any]],
-            NDArray[np.floating[Any]] | None,
-            NDArray[np.floating[Any]] | None,
-        ],
-    ],
-    partial(sklearn_split, validation_fraction=0.2),
-)
-
-
 class DatasetConfig(BaseModel):
     """Configuration for a dataset."""
 
@@ -104,13 +52,9 @@ class DatasetConfig(BaseModel):
     n_classes: int | None = None
     # Quantile regression: quantiles used for training + evaluation.
     quantiles: list[float] | None = None
-    subsample: int | None = None
-    # If False (typically time-series), random subsampling is disabled.
-    allow_random_subsample: bool = True
     # Optional per-dataset metric override (e.g., "mape" for forecasting datasets)
     primary_metric: str | None = None
-    supported_booster_types: list[BoosterType] | None = None
-    training_overrides: TrainingOverrides | None = None
+    training: TrainingConfig = Field(default_factory=lambda: TrainingConfig())
     splitter: Callable[
         [LoadedDataset, int],
         tuple[
@@ -121,7 +65,7 @@ class DatasetConfig(BaseModel):
             NDArray[np.floating[Any]] | None,
             NDArray[np.floating[Any]] | None,
         ],
-    ] = DEFAULT_SPLITTER
+    ] = partial(train_valid_split, validation_fraction=0.2)
 
     @field_validator("quantiles")
     @classmethod
@@ -165,50 +109,6 @@ class LoadedDataset(BaseModel):
     # If present, split is trivial: train = [:train_end], valid = [train_end:valid_end].
     train_end: int | None = None
     valid_end: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class TrainingOverrides:
-    """Partial TrainingConfig override.
-
-    Fields set to None are not applied.
-    """
-
-    n_estimators: int | None = None
-    max_depth: int | None = None
-    learning_rate: float | None = None
-    quantiles: list[float] | None = None
-    reg_lambda: float | None = None
-    reg_alpha: float | None = None
-    min_child_weight: float | None = None
-    min_samples_leaf: int | None = None
-    subsample: float | None = None
-    colsample_bytree: float | None = None
-    max_bins: int | None = None
-    n_threads: int | None = None
-    growth_strategy: GrowthStrategy | None = None
-    linear_l2: float | None = None
-    linear_max_features: int | None = None
-
-    def to_update_dict(self) -> dict[str, Any]:
-        """Convert override values to an update dict.
-
-        Only fields with non-None values are included.
-        """
-        update: dict[str, Any] = {}
-        for field_name in self.__dataclass_fields__:
-            value = getattr(self, field_name)
-            if value is not None:
-                update[field_name] = value
-        return update
-
-    def merged(self, other: TrainingOverrides | None) -> TrainingOverrides:
-        """Merge another override on top of this one."""
-        if other is None:
-            return self
-        merged = self.to_update_dict()
-        merged.update(other.to_update_dict())
-        return TrainingOverrides(**merged)
 
 
 class TrainingConfig(BaseModel):
@@ -272,29 +172,43 @@ class TrainingConfig(BaseModel):
         return v
 
 
-def _apply_training_overrides(
-    base: TrainingConfig,
-    overrides: TrainingOverrides | None,
-) -> TrainingConfig:
-    if overrides is None:
-        return base
-    return base.model_copy(update=overrides.to_update_dict())
+# Base training defaults per model family (booster type).
+#
+# This is the first layer in config resolution:
+#   (1) base per model → (2) dataset → (3) suite → (4) CLI overrides
+#
+# Note: The current defaults are intentionally identical across booster types.
+# This keeps existing baselines stable while still centralizing the place where
+# model-type-specific defaults should live (e.g. GBLinear vs GBDT).
+DEFAULT_BASE_TRAINING_BY_BOOSTER_TYPE: dict[BoosterType, TrainingConfig] = {
+    BoosterType.GBDT: TrainingConfig(),
+    BoosterType.GBLINEAR: TrainingConfig(),
+    BoosterType.LINEAR_TREES: TrainingConfig(),
+}
 
 
 def resolve_training_config(
     *,
+    booster_type: BoosterType,
     dataset: DatasetConfig,
     suite: SuiteConfig | None = None,
-    base: TrainingConfig | None = None,
+    cli: TrainingConfig | None = None,
+    base_by_booster_type: dict[BoosterType, TrainingConfig] | None = None,
 ) -> TrainingConfig:
     """Resolve final TrainingConfig for a dataset run.
 
-    Merge order is base → dataset overrides → suite overrides.
+    Merge order is base (per model) → dataset overrides → suite overrides → CLI overrides.
     """
-    resolved = base or TrainingConfig()
-    resolved = _apply_training_overrides(resolved, dataset.training_overrides)
+    base_map = DEFAULT_BASE_TRAINING_BY_BOOSTER_TYPE
+    if base_by_booster_type is not None:
+        base_map = {**base_map, **base_by_booster_type}
+
+    resolved = base_map[booster_type]
+    resolved = resolved.model_copy(update=dataset.training.model_dump(exclude_unset=True))
     if suite is not None:
-        resolved = _apply_training_overrides(resolved, suite.to_training_overrides())
+        resolved = resolved.model_copy(update=suite.training.model_dump(exclude_unset=True))
+    if cli is not None:
+        resolved = resolved.model_copy(update=cli.model_dump(exclude_unset=True))
     return resolved
 
 
@@ -318,45 +232,11 @@ class SuiteConfig(BaseModel):
     name: str
     description: str
     datasets: list[str]
-    n_estimators: int = 100
-    max_depth: int = 6
-    learning_rate: float = 0.1
-    quantiles: list[float] | None = None
-    reg_lambda: float = 0.0  # L2 regularization
-    reg_alpha: float = 0.0  # L1 regularization
+    training: TrainingConfig = Field(default_factory=lambda: TrainingConfig())
     seeds: list[int] = [42, 1379, 2716]
     libraries: list[str] = ["boosters", "xgboost", "lightgbm"]
     booster_type: BoosterType = BoosterType.GBDT
     booster_types: list[BoosterType] | None = None  # If set, runs multiple booster types
-    growth_strategy: GrowthStrategy = GrowthStrategy.LEAFWISE  # Default to leafwise
-
-    # Optional structured overrides (useful for parameters not exposed as SuiteConfig fields).
-    training_overrides: TrainingOverrides | None = None
-
-    def to_training_config(self) -> TrainingConfig:
-        """Convert suite config to training config."""
-        return _apply_training_overrides(TrainingConfig(), self.to_training_overrides())
-
-    def to_training_overrides(self) -> TrainingOverrides:
-        """Convert *explicitly set* suite fields to TrainingOverrides.
-
-        This prevents defaults from unintentionally overriding per-dataset overrides.
-        """
-        update: dict[str, Any] = {}
-        for field_name in (
-            "n_estimators",
-            "max_depth",
-            "learning_rate",
-            "quantiles",
-            "reg_lambda",
-            "reg_alpha",
-            "growth_strategy",
-        ):
-            if field_name in self.model_fields_set:
-                update[field_name] = getattr(self, field_name)
-
-        overrides = TrainingOverrides(**update)
-        return overrides.merged(self.training_overrides)
 
     def get_booster_types(self) -> list[BoosterType]:
         """Get list of booster types to run."""

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from boosters_eval.config import SuiteConfig
+from boosters_eval.config import SuiteConfig, TrainingConfig
 from boosters_eval.suite import (
     ABLATION_SUITES,
     FULL_SUITE,
@@ -58,7 +58,7 @@ class TestAblationSuites:
             name="base",
             description="Base suite",
             datasets=["synthetic_reg_small"],
-            n_estimators=10,
+            training=TrainingConfig(n_estimators=10),
             seeds=[42],
             libraries=["boosters"],
         )
@@ -72,9 +72,9 @@ class TestAblationSuites:
 
         assert len(suites) == 2
         assert suites[0].name == "test_small"
-        assert suites[0].n_estimators == 5
+        assert suites[0].training.n_estimators == 5
         assert suites[1].name == "test_large"
-        assert suites[1].n_estimators == 20
+        assert suites[1].training.n_estimators == 20
 
     def test_ablation_preserves_base(self) -> None:
         """Test ablation preserves non-overridden fields."""
@@ -82,7 +82,7 @@ class TestAblationSuites:
             name="base",
             description="Base suite",
             datasets=["synthetic_reg_small"],
-            n_estimators=10,
+            training=TrainingConfig(n_estimators=10),
             seeds=[42, 123],
             libraries=["boosters", "xgboost"],
         )
@@ -106,7 +106,7 @@ class TestRunSuite:
             name="test",
             description="Test suite",
             datasets=["synthetic_reg_small"],
-            n_estimators=5,
+            training=TrainingConfig(n_estimators=5),
             seeds=[42],
             libraries=["boosters"],
         )
@@ -122,7 +122,7 @@ class TestRunSuite:
             name="test",
             description="Test suite",
             datasets=["synthetic_reg_small"],
-            n_estimators=5,
+            training=TrainingConfig(n_estimators=5),
             seeds=[42],
             libraries=["boosters", "xgboost", "lightgbm"],
         )
@@ -140,7 +140,7 @@ class TestRunSuite:
             name="test",
             description="Test suite",
             datasets=["synthetic_reg_small"],
-            n_estimators=5,
+            training=TrainingConfig(n_estimators=5),
             seeds=[42, 123],
             libraries=["boosters"],
         )
@@ -158,7 +158,7 @@ class TestRunSuite:
             name="test",
             description="Test suite",
             datasets=["synthetic_reg_small"],
-            n_estimators=5,
+            training=TrainingConfig(n_estimators=5),
             seeds=[42],
             libraries=["boosters"],
         )
@@ -173,7 +173,7 @@ class TestRunSuite:
             name="test",
             description="Test suite",
             datasets=["nonexistent_dataset", "synthetic_reg_small"],
-            n_estimators=5,
+            training=TrainingConfig(n_estimators=5),
             seeds=[42],
             libraries=["boosters"],
         )
@@ -192,7 +192,7 @@ class TestCompare:
         results = compare(
             datasets=["synthetic_reg_small"],
             seeds=[42],
-            n_estimators=5,
+            training=TrainingConfig(n_estimators=5),
             libraries=["boosters"],
             verbose=False,
         )
@@ -204,7 +204,7 @@ class TestCompare:
         results = compare(
             datasets=["synthetic_reg_small"],
             seeds=[42],
-            n_estimators=5,
+            training=TrainingConfig(n_estimators=5),
             verbose=False,
         )
 
@@ -222,7 +222,7 @@ class TestResultIntegrity:
             name="test",
             description="Test suite",
             datasets=["synthetic_reg_small"],
-            n_estimators=5,
+            training=TrainingConfig(n_estimators=5),
             seeds=[42],
             libraries=["boosters"],
         )
@@ -239,7 +239,7 @@ class TestResultIntegrity:
             name="test",
             description="Test suite",
             datasets=["synthetic_reg_small"],
-            n_estimators=5,
+            training=TrainingConfig(n_estimators=5),
             seeds=[42],
             libraries=["boosters"],
         )

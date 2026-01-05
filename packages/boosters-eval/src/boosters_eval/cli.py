@@ -100,7 +100,7 @@ def quick(
 
     # File output: full report with training config
     if output:
-        tc = QUICK_SUITE.to_training_config()
+        tc = QUICK_SUITE.training
         booster_types = QUICK_SUITE.get_booster_types()
         generate_report(
             results,
@@ -160,7 +160,7 @@ def full(
 
     # File output: full report with training config
     if output:
-        tc = suite.to_training_config()
+        tc = suite.training
         generate_report(
             results,
             suite_name="full",
@@ -326,7 +326,7 @@ def ablation(
 
         # Get training config from first variant
         first_suite = ABLATION_SUITES[study][0]
-        tc = first_suite.to_training_config()
+        tc = first_suite.training
         booster_types = first_suite.get_booster_types()
 
         generate_report(
@@ -455,7 +455,7 @@ def compare_cmd(
         datasets=valid_datasets,
         libraries=libs,
         seeds=list(range(seeds)),
-        n_estimators=training.n_estimators,
+        training=training,
         booster_type=booster_type,
         booster_types=booster_types,
     )
@@ -689,7 +689,7 @@ def report_cmd(
     save_path = None if dry_run else output
 
     # Get training config for report
-    tc = benchmark_suite.to_training_config()
+    tc = benchmark_suite.training
     booster_types = benchmark_suite.get_booster_types()
 
     report = generate_report(

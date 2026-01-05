@@ -4,22 +4,19 @@ from __future__ import annotations
 
 from typing import Any
 
-import numpy as np
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
-from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import StandardScaler
 
 from boosters_eval.config import (
     BenchmarkConfig,
     BoosterType,
     GrowthStrategy,
     SuiteConfig,
-    Task,
     TrainingConfig,
     resolve_training_config,
 )
 from boosters_eval.datasets import DATASETS
+from boosters_eval.preprocessing import prepare_run_data
 from boosters_eval.results import BenchmarkError, ResultCollection
 
 console = Console()
@@ -33,7 +30,7 @@ QUICK_SUITE = SuiteConfig(
     name="quick",
     description="Quick benchmark suite for development (3 seeds, 2 datasets, 50 trees)",
     datasets=["california", "breast_cancer"],
-    n_estimators=50,
+    training=TrainingConfig(n_estimators=50),
     seeds=[42, 1379, 2716],
     libraries=["boosters", "xgboost", "lightgbm"],
 )
@@ -42,7 +39,7 @@ FULL_SUITE = SuiteConfig(
     name="full",
     description="Full benchmark suite (5 seeds, all datasets, 100 trees, all booster types)",
     datasets=list(DATASETS.keys()),
-    n_estimators=100,
+    training=TrainingConfig(n_estimators=100),
     seeds=[42, 1379, 2716, 4053, 5390],
     libraries=["boosters", "xgboost", "lightgbm"],
     booster_types=[BoosterType.GBDT, BoosterType.GBLINEAR, BoosterType.LINEAR_TREES],
@@ -52,7 +49,7 @@ MINIMAL_SUITE = SuiteConfig(
     name="minimal",
     description="Minimal suite for CI (1 seed, 2 small datasets)",
     datasets=["synthetic_reg_small", "synthetic_bin_small"],
-    n_estimators=10,
+    training=TrainingConfig(n_estimators=10),
     seeds=[42],
     libraries=["boosters", "xgboost", "lightgbm"],
 )
@@ -68,8 +65,7 @@ ABLATION_DEPTH = [
         name="ablation_depth_4",
         description="Depth ablation: max_depth=4",
         datasets=["california", "breast_cancer", "iris"],
-        n_estimators=100,
-        max_depth=4,
+        training=TrainingConfig(n_estimators=100, max_depth=4),
         seeds=[42, 1379, 2716],
         libraries=["boosters", "xgboost", "lightgbm"],
         booster_type=BoosterType.GBDT,
@@ -78,8 +74,7 @@ ABLATION_DEPTH = [
         name="ablation_depth_6",
         description="Depth ablation: max_depth=6",
         datasets=["california", "breast_cancer", "iris"],
-        n_estimators=100,
-        max_depth=6,
+        training=TrainingConfig(n_estimators=100, max_depth=6),
         seeds=[42, 1379, 2716],
         libraries=["boosters", "xgboost", "lightgbm"],
         booster_type=BoosterType.GBDT,
@@ -88,8 +83,7 @@ ABLATION_DEPTH = [
         name="ablation_depth_8",
         description="Depth ablation: max_depth=8",
         datasets=["california", "breast_cancer", "iris"],
-        n_estimators=100,
-        max_depth=8,
+        training=TrainingConfig(n_estimators=100, max_depth=8),
         seeds=[42, 1379, 2716],
         libraries=["boosters", "xgboost", "lightgbm"],
         booster_type=BoosterType.GBDT,
@@ -102,8 +96,7 @@ ABLATION_LR = [
         name="ablation_lr_0.01",
         description="Learning rate ablation: lr=0.01",
         datasets=["california", "breast_cancer", "iris"],
-        n_estimators=100,
-        learning_rate=0.01,
+        training=TrainingConfig(n_estimators=100, learning_rate=0.01),
         seeds=[42, 1379, 2716],
         libraries=["boosters", "xgboost", "lightgbm"],
         booster_type=BoosterType.GBDT,
@@ -112,8 +105,7 @@ ABLATION_LR = [
         name="ablation_lr_0.1",
         description="Learning rate ablation: lr=0.1",
         datasets=["california", "breast_cancer", "iris"],
-        n_estimators=100,
-        learning_rate=0.1,
+        training=TrainingConfig(n_estimators=100, learning_rate=0.1),
         seeds=[42, 1379, 2716],
         libraries=["boosters", "xgboost", "lightgbm"],
         booster_type=BoosterType.GBDT,
@@ -122,8 +114,7 @@ ABLATION_LR = [
         name="ablation_lr_0.3",
         description="Learning rate ablation: lr=0.3",
         datasets=["california", "breast_cancer", "iris"],
-        n_estimators=100,
-        learning_rate=0.3,
+        training=TrainingConfig(n_estimators=100, learning_rate=0.3),
         seeds=[42, 1379, 2716],
         libraries=["boosters", "xgboost", "lightgbm"],
         booster_type=BoosterType.GBDT,
@@ -136,21 +127,19 @@ ABLATION_GROWTH = [
         name="ablation_growth_depthwise",
         description="Growth strategy ablation: depthwise",
         datasets=["california", "breast_cancer", "iris"],
-        n_estimators=100,
+        training=TrainingConfig(n_estimators=100, growth_strategy=GrowthStrategy.DEPTHWISE),
         seeds=[42, 1379, 2716],
         libraries=["boosters", "lightgbm"],
         booster_type=BoosterType.GBDT,
-        growth_strategy=GrowthStrategy.DEPTHWISE,
     ),
     SuiteConfig(
         name="ablation_growth_leafwise",
         description="Growth strategy ablation: leafwise",
         datasets=["california", "breast_cancer", "iris"],
-        n_estimators=100,
+        training=TrainingConfig(n_estimators=100, growth_strategy=GrowthStrategy.LEAFWISE),
         seeds=[42, 1379, 2716],
         libraries=["boosters", "lightgbm"],
         booster_type=BoosterType.GBDT,
-        growth_strategy=GrowthStrategy.LEAFWISE,
     ),
 ]
 
@@ -221,8 +210,15 @@ def create_ablation_suite(
         suite_dict = base_suite.model_dump()
         suite_dict["name"] = f"{name}_{variant_name}"
         suite_dict["description"] = f"{base_suite.description} - {variant_name}"
+        training_dict = dict(suite_dict.get("training") or {})
+
         for k, v in overrides.items():
-            suite_dict[k] = v
+            if k in TrainingConfig.model_fields:
+                training_dict[k] = v
+            else:
+                suite_dict[k] = v
+
+        suite_dict["training"] = training_dict
         result.append(SuiteConfig(**suite_dict))
     return result
 
@@ -238,6 +234,7 @@ def run_suite(
     verbose: bool = True,
     timing_mode: bool = False,
     measure_memory: bool = False,
+    cli_training: TrainingConfig | None = None,
 ) -> ResultCollection:
     """Run a benchmark suite and return collected results.
 
@@ -246,11 +243,12 @@ def run_suite(
         verbose: Print progress information.
         timing_mode: Enable timing mode with warmup runs.
         measure_memory: Measure peak memory usage.
+        cli_training: Training config overrides applied after suite/dataset/base.
 
     Returns:
         ResultCollection with all results and errors.
     """
-    from boosters_eval.runners import RunData, get_available_runners, get_runner
+    from boosters_eval.runners import get_available_runners, get_runner
 
     collection = ResultCollection()
     available_runners = get_available_runners()
@@ -261,8 +259,6 @@ def run_suite(
         if verbose:
             console.print("[yellow]No libraries available to run![/yellow]")
         return collection
-
-    base_training = TrainingConfig()
 
     # Get all booster types to run
     booster_types = suite.get_booster_types()
@@ -275,11 +271,13 @@ def run_suite(
             continue
 
         ds = DATASETS[ds_name]
-        training = resolve_training_config(dataset=ds, suite=suite, base=base_training)
-        supported = ds.supported_booster_types
         for booster_type in booster_types:
-            if supported is not None and booster_type not in supported:
-                continue
+            training = resolve_training_config(
+                booster_type=booster_type,
+                dataset=ds,
+                suite=suite,
+                cli=cli_training,
+            )
             configs.append(
                 BenchmarkConfig(
                     name=f"{ds_name}/{booster_type.value}",
@@ -311,57 +309,8 @@ def run_suite(
         for config in configs:
             for seed in suite.seeds:
                 # Load and split data
-                data = config.dataset.loader()
-                categorical_features = data.categorical_features
-                feature_names = data.feature_names
-
-                # Subsample if needed.
-                # For datasets that provide a custom splitter (typically time-series),
-                # random subsampling is disabled.
-                if config.dataset.subsample and len(data.y) > config.dataset.subsample:
-                    if not config.dataset.allow_random_subsample:
-                        raise ValueError(
-                            f"Dataset {config.dataset.name} uses a custom splitter; random subsample is disabled. "
-                            "Use a dataset-specific splitter/subsample strategy instead."
-                        )
-                    rng = np.random.default_rng(seed)
-                    idx = rng.choice(len(data.y), config.dataset.subsample, replace=False)
-                    update = {"x": data.x[idx], "y": data.y[idx]}
-                    if data.sample_weight is not None:
-                        update["sample_weight"] = data.sample_weight[idx]
-                    data = data.model_copy(update=update)
-
-                x_train, x_valid, y_train, y_valid, w_train, w_valid = config.dataset.splitter(data, seed)
-
-                # GBLinear models do not support categorical features.
-                # Drop categorical columns for this run (keeping them for tree-based boosters).
-                if config.booster_type == BoosterType.GBLINEAR and categorical_features:
-                    cat = sorted(set(categorical_features))
-                    keep_cols = [i for i in range(x_train.shape[1]) if i not in cat]
-
-                    # Use an sklearn transformer so the logic is reusable and explicit.
-                    selector = ColumnTransformer(
-                        [("keep", "passthrough", keep_cols)],
-                        remainder="drop",
-                        verbose_feature_names_out=False,
-                    )
-                    x_train = selector.fit_transform(x_train)
-                    x_valid = selector.transform(x_valid)
-
-                    # ColumnTransformer may upcast to float64; keep inputs compact.
-                    x_train = np.asarray(x_train, dtype=np.float32)
-                    x_valid = np.asarray(x_valid, dtype=np.float32)
-                    if feature_names is not None:
-                        feature_names = [feature_names[i] for i in keep_cols]
-                    categorical_features = []
-
-                # Normalize regression targets using train-set mean/std, and
-                # apply the same parameters to validation targets.
-                # Metrics are computed on the normalized scale.
-                if config.dataset.task == Task.REGRESSION:
-                    scaler = StandardScaler()
-                    y_train = scaler.fit_transform(y_train.reshape(-1, 1)).reshape(-1)
-                    y_valid = scaler.transform(y_valid.reshape(-1, 1)).reshape(-1)
+                loaded = config.dataset.loader()
+                run_data = prepare_run_data(config=config, loaded=loaded, seed=seed)
 
                 for library in config.libraries:
                     progress.update(
@@ -377,16 +326,7 @@ def run_suite(
 
                         result = runner.run(
                             config=config,
-                            data=RunData(
-                                x_train=x_train,
-                                y_train=y_train,
-                                x_valid=x_valid,
-                                y_valid=y_valid,
-                                sample_weight_train=w_train,
-                                sample_weight_valid=w_valid,
-                                categorical_features=categorical_features,
-                                feature_names=feature_names,
-                            ),
+                            data=run_data,
                             seed=seed,
                             timing_mode=timing_mode,
                             measure_memory=measure_memory,
@@ -417,7 +357,7 @@ def compare(
     *,
     libraries: list[str] | None = None,
     seeds: list[int] | None = None,
-    n_estimators: int = 100,
+    training: TrainingConfig | None = None,
     booster_type: BoosterType = BoosterType.GBDT,
     booster_types: list[BoosterType] | None = None,
     verbose: bool = True,
@@ -430,7 +370,7 @@ def compare(
         datasets: Dataset names to benchmark. Default: ["california", "breast_cancer"].
         libraries: Libraries to compare. Default: all available.
         seeds: Random seeds to use. Default: [42, 1379, 2716].
-        n_estimators: Number of trees/rounds. Default: 100.
+        training: Training config overrides from the caller (applied last, like CLI overrides).
         booster_type: Type of booster. Default: GBDT.
         booster_types: If set, runs these booster types instead of a single booster.
         verbose: Print progress. Default: True.
@@ -448,16 +388,14 @@ def compare(
     datasets = datasets or ["california", "breast_cancer"]
     libraries = libraries or get_available_runners()
     seeds = seeds or [42, 1379, 2716]
-
     suite = SuiteConfig(
         name="compare",
         description="Ad-hoc comparison",
         datasets=datasets,
-        n_estimators=n_estimators,
         seeds=seeds,
         libraries=libraries,
         booster_type=booster_type,
         booster_types=booster_types,
     )
 
-    return run_suite(suite, verbose=verbose)
+    return run_suite(suite, verbose=verbose, cli_training=training)

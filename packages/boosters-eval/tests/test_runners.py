@@ -147,6 +147,11 @@ class TestRunnerSupports:
         config = make_config(booster_type=BoosterType.LINEAR_TREES)
         assert LightGBMRunner.supports(config)
 
+    def test_lightgbm_supports_quantile_regression(self) -> None:
+        """Test lightgbm supports quantile regression for tree-based boosters."""
+        config = make_config(task=Task.QUANTILE_REGRESSION, booster_type=BoosterType.GBDT, quantiles=[0.9, 0.1, 0.5])
+        assert LightGBMRunner.supports(config)
+
 
 class TestBoostersRunner:
     """Tests for BoostersRunner."""
@@ -418,6 +423,29 @@ class TestLightGBMRunner:
         )
 
         assert result.booster_type == "linear_trees"
+
+    def test_quantile_regression_single_model(self) -> None:
+        """Test lightgbm runner on quantile regression (single model via augmented feature)."""
+        config = make_config(task=Task.QUANTILE_REGRESSION, booster_type=BoosterType.GBDT, quantiles=[0.95, 0.5, 0.05])
+        x_train, x_valid, y_train, y_valid = make_data(Task.REGRESSION)
+
+        result = LightGBMRunner.run(
+            config,
+            RunData(
+                x_train=x_train,
+                y_train=y_train,
+                x_valid=x_valid,
+                y_valid=y_valid,
+                categorical_features=[],
+                feature_names=None,
+            ),
+            seed=42,
+        )
+
+        assert result.library == "lightgbm"
+        assert "pinball" in result.metrics
+        assert "rcrps" in result.metrics
+        assert np.isfinite(result.metrics["rcrps"])
 
 
 class TestTimingAndMemory:
