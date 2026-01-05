@@ -16,6 +16,28 @@ use super::partition::RowPartitioner;
 use super::split::{GainParams, GreedySplitter, SplitInfo, SplitType};
 use crate::utils::Parallelism;
 
+// =============================================================================
+// Prefetching Utility
+// =============================================================================
+
+/// Software prefetch for read access (T0 = all cache levels).
+#[inline(always)]
+fn prefetch_read<T>(ptr: *const T) {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    unsafe {
+        #[cfg(target_arch = "x86")]
+        use core::arch::x86::_mm_prefetch;
+        #[cfg(target_arch = "x86_64")]
+        use core::arch::x86_64::_mm_prefetch;
+
+        // _MM_HINT_T0 = 3: prefetch into all cache levels
+        _mm_prefetch(ptr as *const i8, 3);
+    }
+
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    let _ = ptr;
+}
+
 /// Parameters for tree growth.
 #[derive(Clone, Debug)]
 pub struct GrowerParams {
@@ -693,10 +715,28 @@ impl TreeGrower {
 
             // Gather gradients in partition order with direct writes (no capacity checks)
             // SAFETY: We just ensured capacity >= n_rows, and row indices are valid
+            // Prefetch gradient data ahead of time to hide memory latency
             unsafe {
                 self.ordered_grad_hess.set_len(n_rows);
                 let gh_ptr = self.ordered_grad_hess.as_mut_ptr();
-                for i in 0..n_rows {
+                let gh_slice_ptr = grad_hess_slice.as_ptr();
+
+                // Prefetch offset: 32 elements ahead (64 bytes / 8 bytes per GradsTuple)
+                const PF_OFFSET: usize = 32;
+                let pf_end = n_rows.saturating_sub(PF_OFFSET);
+
+                // Main loop with prefetching
+                for i in 0..pf_end {
+                    // Prefetch gradient data for future iteration
+                    let pf_row = *rows.get_unchecked(i + PF_OFFSET) as usize;
+                    prefetch_read(gh_slice_ptr.add(pf_row));
+
+                    let row = *rows.get_unchecked(i) as usize;
+                    *gh_ptr.add(i) = *grad_hess_slice.get_unchecked(row);
+                }
+
+                // Tail loop without prefetching
+                for i in pf_end..n_rows {
                     let row = *rows.get_unchecked(i) as usize;
                     *gh_ptr.add(i) = *grad_hess_slice.get_unchecked(row);
                 }
