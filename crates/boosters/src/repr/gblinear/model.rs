@@ -213,6 +213,10 @@ impl LinearModel {
             let feat_weights = self.weights.row(feat_idx);
 
             dataset.for_each_feature_value(feat_idx, |sample_idx, value| {
+                // Treat NaN as missing: contributes 0 to the dot product.
+                if value.is_nan() {
+                    return;
+                }
                 for (group, &weight) in feat_weights.iter().enumerate() {
                     output[[group, sample_idx]] += value * weight;
                 }
@@ -243,6 +247,10 @@ impl LinearModel {
 
         // Accumulate weighted features
         for (feat_idx, &value) in features.iter().take(n_features).enumerate() {
+            // Treat NaN as missing: contributes 0 to the dot product.
+            if value.is_nan() {
+                continue;
+            }
             let feat_weights = self.weights.row(feat_idx);
             for (group, out) in output.iter_mut().enumerate().take(n_groups) {
                 *out += value * feat_weights[group];
@@ -474,5 +482,41 @@ mod tests {
         assert!((output[[1, 0]] - 1.6).abs() < 1e-6);
         assert!((output[[0, 1]] - 2.0).abs() < 1e-6);
         assert!((output[[1, 1]] - 2.8).abs() < 1e-6);
+    }
+
+    #[test]
+    fn predict_row_into_skips_nan_feature() {
+        // y = 0.5 * x0 + 0.3 * x1 + 0.1
+        // If x1 is NaN, treat it as missing (0 contribution).
+        let weights = array![[0.5], [0.3], [0.1]];
+        let model = LinearModel::new(weights);
+
+        let mut output = [0.0f32; 1];
+        model.predict_row_into(&[2.0, f32::NAN], &mut output);
+
+        // 0.5*2.0 + 0.1 = 1.1
+        assert!((output[0] - 1.1).abs() < 1e-6);
+        assert!(output[0].is_finite());
+    }
+
+    #[test]
+    fn predict_batch_skips_nan_feature() {
+        // 2 features, 1 group
+        let weights = array![[1.0], [2.0], [0.0]];
+        let model = LinearModel::new(weights);
+
+        // Feature-major: [2 features, 2 samples]
+        // sample 0: x0=1.0, x1=NaN => y = 1.0*1.0 + 2.0*0.0 = 1.0
+        // sample 1: x0=1.0, x1=3.0 => y = 1.0 + 6.0 = 7.0
+        let features = array![[1.0, 1.0], [f32::NAN, 3.0]];
+        let dataset = Dataset::from_array(features.view(), None, None);
+
+        let output = model.predict(&dataset);
+
+        assert_eq!(output.dim(), (1, 2));
+        assert!((output[[0, 0]] - 1.0).abs() < 1e-6);
+        assert!((output[[0, 1]] - 7.0).abs() < 1e-6);
+        assert!(output[[0, 0]].is_finite());
+        assert!(output[[0, 1]].is_finite());
     }
 }

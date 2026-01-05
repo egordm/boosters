@@ -6,12 +6,6 @@ pub enum GBLinearTrainError {
     /// GBLinear does not support categorical features.
     CategoricalFeaturesNotSupported,
 
-    /// NaN was found in feature values.
-    NaNInFeatures {
-        dataset: &'static str,
-        feature_idx: usize,
-    },
-
     /// NaN was found in target values.
     NaNInTargets { dataset: &'static str },
 
@@ -28,20 +22,13 @@ impl std::fmt::Display for GBLinearTrainError {
             Self::CategoricalFeaturesNotSupported => {
                 write!(f, "GBLinear does not support categorical features")
             }
-            Self::NaNInFeatures {
-                dataset,
-                feature_idx,
-            } => write!(
-                f,
-                "GBLinear does not support NaNs: found NaN in {dataset} features (feature_idx={feature_idx})"
-            ),
             Self::NaNInTargets { dataset } => write!(
                 f,
-                "GBLinear does not support NaNs: found NaN in {dataset} targets"
+                "GBLinear does not support NaNs in targets: found NaN in {dataset} targets"
             ),
             Self::NaNInWeights { dataset } => write!(
                 f,
-                "GBLinear does not support NaNs: found NaN in {dataset} weights"
+                "GBLinear does not support NaNs in weights: found NaN in {dataset} weights"
             ),
             Self::ValidationSetMissingTargets => {
                 write!(f, "Validation set must have targets")

@@ -222,6 +222,10 @@ impl Updater {
             let mut sum_grad = 0.0f32;
             let mut sum_hess = 0.0f32;
             data.for_each_feature_value(feature, |row, value| {
+                // Treat NaN as missing: contributes 0.
+                if value.is_nan() {
+                    return;
+                }
                 sum_grad += grad_pairs[row].grad * value;
                 sum_hess += grad_pairs[row].hess * value * value;
             });
@@ -244,6 +248,9 @@ impl Updater {
 
             // Update predictions and residual gradients for touched rows.
             data.for_each_feature_value(feature, |row, value| {
+                if value.is_nan() {
+                    return;
+                }
                 predictions[row] += value * delta;
                 grad_pairs[row].grad += grad_pairs[row].hess * value * delta;
             });
@@ -286,6 +293,9 @@ impl Updater {
                 let mut sum_grad = 0.0f32;
                 let mut sum_hess = 0.0f32;
                 data.for_each_feature_value(feature, |row, value| {
+                    if value.is_nan() {
+                        return;
+                    }
                     sum_grad += gh[row].grad * value;
                     sum_hess += gh[row].hess * value * value;
                 });
@@ -314,6 +324,9 @@ impl Updater {
         // Apply to predictions and residual gradients.
         for &(feature, delta) in &deltas {
             data.for_each_feature_value(feature, |row, value| {
+                if value.is_nan() {
+                    return;
+                }
                 predictions[row] += value * delta;
                 grad_pairs[row].grad += grad_pairs[row].hess * value * delta;
             });
@@ -330,6 +343,9 @@ pub(super) fn apply_weight_deltas_to_predictions(
 ) {
     for &(feature, delta) in deltas {
         data.for_each_feature_value(feature, |row, value| {
+            if value.is_nan() {
+                return;
+            }
             predictions[row] += value * delta;
         });
     }
@@ -371,6 +387,9 @@ pub(super) fn compute_weight_update(
     let mut sum_hess = 0.0f32;
 
     data.for_each_feature_value(feature, |row, value| {
+        if value.is_nan() {
+            return;
+        }
         sum_grad += grad_pairs[row].grad * value;
         sum_hess += grad_pairs[row].hess * value * value;
     });

@@ -229,13 +229,16 @@ class TestGBDTModelPersistence:
 
 
 class TestGBLinearModelValidation:
-    def test_train_raises_on_nan_features(self) -> None:
+    def test_train_allows_nan_features(self) -> None:
         x, y = make_regression_data()
         x = x.copy()
         x[0, 0] = np.nan
 
-        with pytest.raises(ValueError, match="NaN"):
-            GBLinearModel.train(Dataset(x, y), config=GBLinearConfig(n_estimators=5))
+        model = GBLinearModel.train(Dataset(x, y), config=GBLinearConfig(n_estimators=5))
+        preds = model.predict(Dataset(x))
+
+        assert preds.shape == (len(y), 1)
+        assert np.isfinite(preds).all()
 
     def test_train_raises_on_nan_targets(self) -> None:
         x, y = make_regression_data()

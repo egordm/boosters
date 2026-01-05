@@ -423,6 +423,9 @@ impl GreedySelector {
             let mut sum_hess = 0.0f32;
 
             data.for_each_feature_value(feature_idx, |row, value| {
+                if value.is_nan() {
+                    return;
+                }
                 sum_grad += grad_pairs[row].grad * value;
                 sum_hess += grad_pairs[row].hess * value * value;
             });
@@ -561,6 +564,9 @@ impl ThriftySelector {
                 let mut sum_hess = 0.0f32;
 
                 data.for_each_feature_value(feature_idx, |row, value| {
+                    if value.is_nan() {
+                        return;
+                    }
                     sum_grad += grad_pairs[row].grad * value;
                     sum_hess += grad_pairs[row].hess * value * value;
                 });

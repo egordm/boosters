@@ -6,7 +6,7 @@
 use ndarray::Array2;
 
 use crate::data::init_predictions;
-use crate::data::{Dataset, Feature, TargetsView, WeightsView};
+use crate::data::{Dataset, TargetsView, WeightsView};
 use crate::repr::gblinear::LinearModel;
 use crate::training::eval;
 use crate::training::{
@@ -129,8 +129,9 @@ impl GBLinearTrainer {
     ///
     /// Returns an error if:
     /// - Dataset contains categorical features (not supported by GBLinear)
-    /// - Dataset contains NaNs (GBLinear requires imputation)
-    /// - Validation set has categorical features, NaNs, or is missing targets
+    /// - Targets contain NaNs
+    /// - Weights contain NaNs
+    /// - Validation set has categorical features, NaN targets/weights, or is missing targets
     pub fn train(
         &self,
         train: &Dataset,
@@ -148,13 +149,11 @@ impl GBLinearTrainer {
             return Err(GBLinearTrainError::CategoricalFeaturesNotSupported);
         }
 
-        // Validate: GBLinear does not support NaNs anywhere.
-        validate_no_nans_in_features(train, "train")?;
+        // Feature NaNs are allowed and treated as missing (0 contribution), matching XGBoost gblinear.
         validate_no_nans_in_targets(targets, "train")?;
         validate_no_nans_in_weights(weights, "train")?;
 
         if let Some(vs) = val_set {
-            validate_no_nans_in_features(vs, "valid")?;
             let vs_targets = vs
                 .targets()
                 .ok_or(GBLinearTrainError::ValidationSetMissingTargets)?;
@@ -346,29 +345,6 @@ impl GBLinearTrainer {
             Ok(model)
         }
     }
-}
-
-fn validate_no_nans_in_features(
-    dataset: &Dataset,
-    dataset_name: &'static str,
-) -> Result<(), GBLinearTrainError> {
-    for (feature_idx, feature) in dataset.feature_columns().iter().enumerate() {
-        let has_nan = match feature {
-            Feature::Dense(values) => values.iter().any(|v| v.is_nan()),
-            Feature::Sparse {
-                values, default, ..
-            } => default.is_nan() || values.iter().any(|v| v.is_nan()),
-        };
-
-        if has_nan {
-            return Err(GBLinearTrainError::NaNInFeatures {
-                dataset: dataset_name,
-                feature_idx,
-            });
-        }
-    }
-
-    Ok(())
 }
 
 fn validate_no_nans_in_targets(
@@ -635,5 +611,34 @@ mod tests {
             .unwrap();
 
         assert_eq!(model.n_groups(), 1);
+    }
+
+    #[test]
+    fn train_allows_nan_features_as_missing() {
+        // One feature regression; treat NaN as 0 contribution.
+        // y = 2*x + 1, with one missing x.
+        let features = array![[1.0], [2.0], [f32::NAN], [4.0]]; // [n_samples=4, n_features=1]
+        let targets = array![[3.0], [5.0], [1.0], [9.0]]; // For NaN row: x treated as 0 => y=1
+        let (train, targets_fm) = make_dataset(features, targets);
+        let targets_view = TargetsView::new(targets_fm.view());
+
+        let params = GBLinearParams {
+            n_rounds: 50,
+            learning_rate: 0.5,
+            alpha: 0.0,
+            lambda: 0.0,
+            update_strategy: UpdateStrategy::Sequential,
+            verbosity: Verbosity::Silent,
+            ..Default::default()
+        };
+
+        let trainer = GBLinearTrainer::new(Objective::SquaredLoss, Metric::Rmse, params);
+        let model = trainer
+            .train(&train, targets_view, WeightsView::None, None)
+            .unwrap();
+
+        let mut output = [0.0f32; 1];
+        model.predict_row_into(&[f32::NAN], &mut output);
+        assert!(output[0].is_finite());
     }
 }

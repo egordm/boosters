@@ -13,11 +13,11 @@ from boosters_eval.config import BenchmarkConfig, BoosterType, Task
 from boosters_eval.metrics import compute_metrics
 from boosters_eval.results import BenchmarkResult
 from boosters_eval.runners.base import (
-    RunContext,
     RunData,
     Runner,
     _maybe_get_peak_memory,
     _maybe_start_memory,
+    resolve_quantiles,
 )
 
 
@@ -56,26 +56,27 @@ def _prepare_categoricals(data: RunData) -> _CategoricalData | None:
     )
 
 
-def _build_xgb_params(ctx: RunContext, *, booster: str) -> dict[str, Any]:
-    """Build XGBoost parameter dict from run context."""
+def _build_xgb_params(config: BenchmarkConfig, *, booster: str, seed: int) -> dict[str, Any]:
+    """Build XGBoost parameter dict from config."""
+    tc = config.training
     params: dict[str, Any] = {
         "booster": booster,
-        "n_estimators": ctx.n_estimators,
-        "learning_rate": ctx.learning_rate,
-        "reg_lambda": ctx.reg_lambda,
-        "reg_alpha": ctx.reg_alpha,
-        "n_jobs": ctx.n_threads,
-        "random_state": ctx.seed,
+        "n_estimators": tc.n_estimators,
+        "learning_rate": tc.learning_rate,
+        "reg_lambda": tc.reg_lambda,
+        "reg_alpha": tc.reg_alpha,
+        "n_jobs": tc.n_threads,
+        "random_state": seed,
         "verbosity": 0,
     }
 
     if booster == "gbtree":
         params |= {
-            "max_depth": ctx.max_depth,
-            "min_child_weight": ctx.min_child_weight,
-            "subsample": ctx.subsample,
-            "colsample_bytree": ctx.colsample_bytree,
-            "max_bin": ctx.max_bins,
+            "max_depth": tc.max_depth,
+            "min_child_weight": tc.min_child_weight,
+            "subsample": tc.subsample,
+            "colsample_bytree": tc.colsample_bytree,
+            "max_bin": tc.max_bins,
             "tree_method": "hist",
         }
 
@@ -83,15 +84,18 @@ def _build_xgb_params(ctx: RunContext, *, booster: str) -> dict[str, Any]:
 
 
 def _run_quantile(
-    ctx: RunContext,
+    config: BenchmarkConfig,
     data: RunData,
     *,
     booster: str,
+    seed: int,
+    timing_mode: bool,
+    measure_memory: bool,
 ) -> BenchmarkResult:
     """Run quantile regression with XGBoost's built-in objective."""
     import xgboost as xgb
 
-    quantiles = ctx.quantiles
+    quantiles = resolve_quantiles(config)
     if quantiles is None:
         raise ValueError("Quantiles must be specified for quantile regression")
 
@@ -99,7 +103,7 @@ def _run_quantile(
     cat_data = _prepare_categoricals(data) if booster == "gbtree" else None
 
     # Build params with quantile objective
-    params = _build_xgb_params(ctx, booster=booster) | {
+    params = _build_xgb_params(config, booster=booster, seed=seed) | {
         "multi_strategy": "one_output_per_tree",
         "objective": "reg:quantileerror",
         "quantile_alpha": quantiles.tolist(),
@@ -114,8 +118,8 @@ def _run_quantile(
     x_small = cat_data.train_small if cat_data else data.x_train[:100]
 
     # Optional warmup
-    if ctx.timing_mode:
-        warmup = xgb.XGBRegressor(**{**params, "n_estimators": min(5, ctx.n_estimators)})
+    if timing_mode:
+        warmup = xgb.XGBRegressor(**{**params, "n_estimators": min(5, config.training.n_estimators)})
         warmup.fit(
             x_small,
             data.y_train[:100],
@@ -124,7 +128,7 @@ def _run_quantile(
         )
 
     # Train
-    _maybe_start_memory(measure_memory=ctx.measure_memory)
+    _maybe_start_memory(measure_memory=measure_memory)
 
     start_train = time.perf_counter()
     model = xgb.XGBRegressor(**params)
@@ -148,7 +152,7 @@ def _run_quantile(
     if y_pred_arr.ndim == 1:
         y_pred_arr = y_pred_arr.reshape(len(data.y_valid), n_quantiles)
 
-    peak_memory = _maybe_get_peak_memory(measure_memory=ctx.measure_memory)
+    peak_memory = _maybe_get_peak_memory(measure_memory=measure_memory)
 
     metrics = compute_metrics(
         task=Task.QUANTILE_REGRESSION,
@@ -160,33 +164,38 @@ def _run_quantile(
     )
 
     return BenchmarkResult(
-        config_name=ctx.config_name,
+        config_name=config.name,
         library=XGBoostRunner.name,
-        seed=ctx.seed,
+        seed=seed,
         task=Task.QUANTILE_REGRESSION.value,
         booster_type=BoosterType.GBDT.value if booster == "gbtree" else BoosterType.GBLINEAR.value,
-        dataset_name=ctx.dataset_name,
+        dataset_name=config.dataset.name,
         metrics=metrics,
         train_time_s=train_time,
         predict_time_s=predict_time,
         peak_memory_mb=peak_memory,
-        dataset_primary_metric=ctx.primary_metric,
+        dataset_primary_metric=config.dataset.primary_metric,
     )
 
 
 def _run_standard(
-    ctx: RunContext,
+    config: BenchmarkConfig,
     data: RunData,
     *,
     booster: str,
+    seed: int,
+    timing_mode: bool,
+    measure_memory: bool,
 ) -> BenchmarkResult:
     """Run standard regression/classification with XGBoost."""
     import xgboost as xgb
 
+    tc = config.training
+
     cat_data = _prepare_categoricals(data) if booster == "gbtree" else None
 
     # Build objective-specific params
-    match ctx.task:
+    match config.dataset.task:
         case Task.REGRESSION:
             objective = "reg:squarederror"
         case Task.BINARY:
@@ -194,30 +203,30 @@ def _run_standard(
         case Task.MULTICLASS:
             objective = "multi:softprob"
         case _:
-            raise ValueError(f"Unexpected task: {ctx.task}")
+            raise ValueError(f"Unexpected task: {config.dataset.task}")
 
     # Use low-level xgb.train for standard tasks (matches original behavior)
     params: dict[str, Any] = {
         "booster": booster,
-        "eta": ctx.learning_rate,
-        "max_depth": ctx.max_depth if booster == "gbtree" else 0,
-        "lambda": ctx.reg_lambda,
-        "alpha": ctx.reg_alpha,
-        "subsample": ctx.subsample,
-        "colsample_bytree": ctx.colsample_bytree,
-        "max_bin": ctx.max_bins,
+        "eta": tc.learning_rate,
+        "max_depth": tc.max_depth if booster == "gbtree" else 0,
+        "lambda": tc.reg_lambda,
+        "alpha": tc.reg_alpha,
+        "subsample": tc.subsample,
+        "colsample_bytree": tc.colsample_bytree,
+        "max_bin": tc.max_bins,
         "tree_method": "hist",
-        "nthread": ctx.n_threads,
-        "seed": ctx.seed,
+        "nthread": tc.n_threads,
+        "seed": seed,
         "verbosity": 0,
         "objective": objective,
     }
 
     if booster == "gbtree":
-        params["min_child_weight"] = ctx.min_child_weight
+        params["min_child_weight"] = tc.min_child_weight
 
-    if ctx.task == Task.MULTICLASS:
-        params["num_class"] = ctx.n_classes
+    if config.dataset.task == Task.MULTICLASS:
+        params["num_class"] = config.dataset.n_classes
 
     if cat_data:
         params["enable_categorical"] = True
@@ -241,20 +250,20 @@ def _run_standard(
     )
 
     # Optional warmup
-    if ctx.timing_mode:
+    if timing_mode:
         dtrain_small = xgb.DMatrix(
             x_small,
             label=data.y_train[:100],
             weight=data.sample_weight_train[:100] if data.sample_weight_train is not None else None,
             enable_categorical=bool(cat_data),
         )
-        xgb.train(params, dtrain_small, num_boost_round=min(5, ctx.n_estimators))
+        xgb.train(params, dtrain_small, num_boost_round=min(5, tc.n_estimators))
 
     # Train
-    _maybe_start_memory(measure_memory=ctx.measure_memory)
+    _maybe_start_memory(measure_memory=measure_memory)
 
     start_train = time.perf_counter()
-    model = xgb.train(params, dtrain, num_boost_round=ctx.n_estimators)
+    model = xgb.train(params, dtrain, num_boost_round=tc.n_estimators)
     train_time = time.perf_counter() - start_train
 
     # Predict
@@ -262,28 +271,28 @@ def _run_standard(
     y_pred = model.predict(dvalid)
     predict_time = time.perf_counter() - start_predict
 
-    peak_memory = _maybe_get_peak_memory(measure_memory=ctx.measure_memory)
+    peak_memory = _maybe_get_peak_memory(measure_memory=measure_memory)
 
     metrics = compute_metrics(
-        task=ctx.task,
+        task=config.dataset.task,
         y_true=data.y_valid,
         y_pred=y_pred,
-        n_classes=ctx.n_classes,
+        n_classes=config.dataset.n_classes,
         sample_weight=data.sample_weight_valid,
     )
 
     return BenchmarkResult(
-        config_name=ctx.config_name,
+        config_name=config.name,
         library=XGBoostRunner.name,
-        seed=ctx.seed,
-        task=ctx.task.value,
+        seed=seed,
+        task=config.dataset.task.value,
         booster_type=BoosterType.GBDT.value if booster == "gbtree" else BoosterType.GBLINEAR.value,
-        dataset_name=ctx.dataset_name,
+        dataset_name=config.dataset.name,
         metrics=metrics,
         train_time_s=train_time,
         predict_time_s=predict_time,
         peak_memory_mb=peak_memory,
-        dataset_primary_metric=ctx.primary_metric,
+        dataset_primary_metric=config.dataset.primary_metric,
     )
 
 
@@ -308,10 +317,23 @@ class XGBoostRunner(Runner):
         measure_memory: bool = False,
     ) -> BenchmarkResult:
         """Train and evaluate an XGBoost model."""
-        ctx = RunContext.from_config(config, seed, timing_mode=timing_mode, measure_memory=measure_memory)
         booster = "gbtree" if config.booster_type == BoosterType.GBDT else "gblinear"
 
-        if ctx.task == Task.QUANTILE_REGRESSION:
-            return _run_quantile(ctx, data, booster=booster)
+        if config.dataset.task == Task.QUANTILE_REGRESSION:
+            return _run_quantile(
+                config,
+                data,
+                booster=booster,
+                seed=seed,
+                timing_mode=timing_mode,
+                measure_memory=measure_memory,
+            )
 
-        return _run_standard(ctx, data, booster=booster)
+        return _run_standard(
+            config,
+            data,
+            booster=booster,
+            seed=seed,
+            timing_mode=timing_mode,
+            measure_memory=measure_memory,
+        )
