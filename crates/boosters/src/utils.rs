@@ -9,73 +9,118 @@ use rayon::prelude::*;
 // Statistical Utilities
 // =============================================================================
 
-/// Compute the weighted quantile of a slice using a step function.
+/// Compute unweighted quantile using partial sort (O(n) average case).
+///
+/// For uniform weights, we only need to find the k-th smallest element,
+/// which is much faster than full sorting.
+#[inline]
+pub fn unweighted_quantile_indexed<V>(
+    indices: &[u32],
+    value_fn: V,
+    alpha: f32,
+    scratch: &mut Vec<u32>,
+) -> f32
+where
+    V: Fn(u32) -> f32,
+{
+    let n = indices.len();
+    if n == 0 {
+        return f32::NAN;
+    }
+    if n == 1 {
+        return value_fn(indices[0]);
+    }
+
+    // Prepare scratch buffer: copy indices for partial sorting
+    scratch.clear();
+    scratch.extend_from_slice(indices);
+
+    // For uniform weights, the k-th element where cumulative weight >= alpha * n
+    // is at position ceil(alpha * n) - 1 (0-indexed)
+    let k = ((alpha * n as f32).ceil() as usize).saturating_sub(1).min(n - 1);
+
+    // Partial sort: O(n) average case
+    // After this, scratch[k] is the k-th smallest value (by value_fn)
+    scratch.select_nth_unstable_by(k, |&a, &b| {
+        value_fn(a)
+            .partial_cmp(&value_fn(b))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    value_fn(scratch[k])
+}
+
+/// Compute the weighted quantile over indexed data using a step function.
 ///
 /// This implements the same algorithm as XGBoost's `WeightedQuantile` function:
 /// no interpolation, returns the value at the point where the cumulative weight
 /// first exceeds `alpha * total_weight`.
 ///
+/// This zero-allocation version works directly with row indices into data arrays,
+/// avoiding the need to collect values/weights into intermediate vectors.
+///
 /// # Arguments
-/// * `values` - The values to compute the quantile over
-/// * `weights` - Optional weights for each value (None = uniform weights)
+/// * `indices` - Row indices into the data arrays
+/// * `value_fn` - Function to get the value for a given index
+/// * `weight_fn` - Function to get the weight for a given index (return 1.0 for uniform)
 /// * `alpha` - The quantile level in (0, 1)
 /// * `scratch` - Mutable scratch space for sorting indices (will be resized if needed)
 ///
 /// # Returns
-/// The weighted quantile value. Returns `f32::NAN` if values is empty.
+/// The weighted quantile value. Returns `f32::NAN` if indices is empty.
 ///
 /// # Algorithm
-/// 1. Sort values by value (using index array for stability)
-/// 2. Compute cumulative weights in sorted order
-/// 3. Find first index where cumulative weight >= alpha * total_weight
-/// 4. Return value at that index
+/// 1. Copy indices to scratch buffer
+/// 2. Sort by value (using provided accessor)
+/// 3. Compute cumulative weights in sorted order
+/// 4. Find first index where cumulative weight >= alpha * total_weight
+/// 5. Return value at that index
 #[inline]
-pub fn weighted_quantile(
-    values: &[f32],
-    weights: Option<&[f32]>,
+pub fn weighted_quantile_indexed<V, W>(
+    indices: &[u32],
+    value_fn: V,
+    weight_fn: W,
     alpha: f32,
-    scratch: &mut Vec<usize>,
-) -> f32 {
-    let n = values.len();
+    scratch: &mut Vec<u32>,
+) -> f32
+where
+    V: Fn(u32) -> f32,
+    W: Fn(u32) -> f32,
+{
+    let n = indices.len();
     if n == 0 {
         return f32::NAN;
     }
     if n == 1 {
-        return values[0];
+        return value_fn(indices[0]);
     }
 
-    // Prepare scratch buffer for sorting indices
+    // Prepare scratch buffer: copy indices for sorting
     scratch.clear();
-    scratch.extend(0..n);
+    scratch.extend_from_slice(indices);
 
     // Sort indices by value
     scratch.sort_by(|&a, &b| {
-        values[a]
-            .partial_cmp(&values[b])
+        value_fn(a)
+            .partial_cmp(&value_fn(b))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
     // Compute total weight and threshold
-    let total_weight: f32 = if let Some(w) = weights {
-        w.iter().sum()
-    } else {
-        n as f32
-    };
-
+    let total_weight: f32 = indices.iter().map(|&i| weight_fn(i)).sum();
     let threshold = total_weight * alpha;
 
     // Find the quantile using cumulative weights
     let mut cumulative = 0.0f32;
     for &idx in scratch.iter() {
-        let w = weights.map_or(1.0, |ws| ws[idx]);
-        cumulative += w;
+        cumulative += weight_fn(idx);
         if cumulative >= threshold {
-            return values[idx];
+            return value_fn(idx);
         }
     }
 
     // Edge case: return last value
-    values[scratch[n - 1]]
+    value_fn(scratch[n - 1])
 }
 
 // =============================================================================
@@ -293,62 +338,83 @@ pub fn disjoint_slices_mut<T>(
 mod tests {
     use super::*;
 
+    // Helper for weighted quantile tests
+    fn test_weighted_quantile(values: &[f32], weights: &[f32], alpha: f32, scratch: &mut Vec<u32>) -> f32 {
+        let indices: Vec<u32> = (0..values.len() as u32).collect();
+        let value_fn = |i: u32| values[i as usize];
+        let weight_fn = |i: u32| weights[i as usize];
+        weighted_quantile_indexed(&indices, value_fn, weight_fn, alpha, scratch)
+    }
+
+    // Helper for unweighted quantile tests
+    fn test_unweighted_quantile(values: &[f32], alpha: f32, scratch: &mut Vec<u32>) -> f32 {
+        let indices: Vec<u32> = (0..values.len() as u32).collect();
+        let value_fn = |i: u32| values[i as usize];
+        unweighted_quantile_indexed(&indices, value_fn, alpha, scratch)
+    }
+
     #[test]
     fn test_weighted_quantile_empty() {
         let mut scratch = Vec::new();
-        let result = weighted_quantile(&[], None, 0.5, &mut scratch);
+        let result = weighted_quantile_indexed::<_, fn(u32) -> f32>(&[], |_| 0.0, |_| 1.0, 0.5, &mut scratch);
         assert!(result.is_nan());
     }
 
     #[test]
-    fn test_weighted_quantile_single() {
+    fn test_unweighted_quantile_empty() {
         let mut scratch = Vec::new();
-        let result = weighted_quantile(&[42.0], None, 0.5, &mut scratch);
+        let result = unweighted_quantile_indexed::<fn(u32) -> f32>(&[], |_| 0.0, 0.5, &mut scratch);
+        assert!(result.is_nan());
+    }
+
+    #[test]
+    fn test_unweighted_quantile_single() {
+        let mut scratch = Vec::new();
+        let values = [42.0];
+        let result = test_unweighted_quantile(&values, 0.5, &mut scratch);
         assert!((result - 42.0).abs() < 1e-6);
     }
 
     #[test]
-    fn test_weighted_quantile_unweighted_median() {
+    fn test_unweighted_quantile_median() {
         let mut scratch = Vec::new();
         // Values: 1, 2, 3, 4, 5 - median should be 3
         let values = [1.0, 2.0, 3.0, 4.0, 5.0];
-        let result = weighted_quantile(&values, None, 0.5, &mut scratch);
+        let result = test_unweighted_quantile(&values, 0.5, &mut scratch);
         assert!((result - 3.0).abs() < 1e-6);
     }
 
     #[test]
-    fn test_weighted_quantile_unweighted_q25() {
+    fn test_unweighted_quantile_q25() {
         let mut scratch = Vec::new();
-        // Values: 1, 2, 3, 4 - 25th percentile should be 1
-        // Total weight = 4, threshold = 1.0
-        // Cumulative: 1 >= 1 -> return 1.0
+        // Values: 1, 2, 3, 4 - 25th percentile
+        // k = ceil(0.25 * 4) - 1 = 0, so returns smallest
         let values = [1.0, 2.0, 3.0, 4.0];
-        let result = weighted_quantile(&values, None, 0.25, &mut scratch);
+        let result = test_unweighted_quantile(&values, 0.25, &mut scratch);
         assert!((result - 1.0).abs() < 1e-6);
     }
 
     #[test]
-    fn test_weighted_quantile_unweighted_q75() {
+    fn test_unweighted_quantile_q75() {
         let mut scratch = Vec::new();
-        // Values: 1, 2, 3, 4 - 75th percentile should be 3
-        // Total weight = 4, threshold = 3.0
-        // Cumulative: 1, 2, 3 >= 3 -> return 3.0
+        // Values: 1, 2, 3, 4 - 75th percentile
+        // k = ceil(0.75 * 4) - 1 = 2
         let values = [1.0, 2.0, 3.0, 4.0];
-        let result = weighted_quantile(&values, None, 0.75, &mut scratch);
+        let result = test_unweighted_quantile(&values, 0.75, &mut scratch);
         assert!((result - 3.0).abs() < 1e-6);
     }
 
     #[test]
-    fn test_weighted_quantile_unsorted_input() {
+    fn test_unweighted_quantile_unsorted_input() {
         let mut scratch = Vec::new();
         // Values in random order, but should still find correct median
         let values = [5.0, 1.0, 3.0, 2.0, 4.0];
-        let result = weighted_quantile(&values, None, 0.5, &mut scratch);
+        let result = test_unweighted_quantile(&values, 0.5, &mut scratch);
         assert!((result - 3.0).abs() < 1e-6);
     }
 
     #[test]
-    fn test_weighted_quantile_with_weights() {
+    fn test_weighted_quantile_basic() {
         let mut scratch = Vec::new();
         // Values: 1, 2, 3 with weights 1, 2, 1
         // Total weight = 4, threshold for median = 2.0
@@ -358,7 +424,7 @@ mod tests {
         // At index 1: cumulative = 3 >= 2 -> return 2.0
         let values = [1.0, 2.0, 3.0];
         let weights = [1.0, 2.0, 1.0];
-        let result = weighted_quantile(&values, Some(&weights), 0.5, &mut scratch);
+        let result = test_weighted_quantile(&values, &weights, 0.5, &mut scratch);
         assert!((result - 2.0).abs() < 1e-6);
     }
 
@@ -371,7 +437,7 @@ mod tests {
         // Cumulative: 1 < 5, then 10 >= 5 -> return 10.0
         let values = [1.0, 10.0];
         let weights = [1.0, 9.0];
-        let result = weighted_quantile(&values, Some(&weights), 0.5, &mut scratch);
+        let result = test_weighted_quantile(&values, &weights, 0.5, &mut scratch);
         assert!((result - 10.0).abs() < 1e-6);
     }
 

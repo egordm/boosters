@@ -237,7 +237,7 @@ impl GBDTTrainer {
         let needs_leaf_renew = self.objective.needs_leaf_renew();
 
         // Scratch buffer for quantile computation (reused across leaves/outputs/rounds)
-        let mut quantile_scratch = Vec::new();
+        let mut quantile_scratch: Vec<u32> = Vec::new();
 
         for round in 0..self.params.n_trees {
             // Compute gradients for all outputs
@@ -263,32 +263,29 @@ impl GBDTTrainer {
                 // For these objectives, the optimal leaf value is the α-quantile of residuals,
                 // not the Newton-step from gradient sums. This follows XGBoost/LightGBM pattern.
                 if needs_leaf_renew {
-                    // Collect leaf samples from partitioner
+                    // Get leaf info from grower
                     let leaf_mapping = grower.leaf_node_mapping();
                     let partitioner = grower.partitioner();
 
-                    let leaf_samples: Vec<&[u32]> = leaf_mapping
-                        .iter()
-                        .map(|(_, part_node)| partitioner.get_leaf_indices(*part_node))
-                        .collect();
+                    // Update leaf values directly (avoiding intermediate allocations)
+                    for &(tree_node, part_node) in leaf_mapping.iter() {
+                        let indices = partitioner.get_leaf_indices(part_node);
+                        if indices.is_empty() {
+                            continue;
+                        }
 
-                    // Compute renewed leaf values
-                    let renewed = self.objective.renew_leaf_values(
-                        output,
-                        &leaf_samples,
-                        targets,
-                        predictions.view(),
-                        weights,
-                        &mut quantile_scratch,
-                    );
+                        let new_value = self.objective.renew_single_leaf_value(
+                            output,
+                            indices,
+                            targets,
+                            predictions.view(),
+                            weights,
+                            &mut quantile_scratch,
+                        );
 
-                    // Update leaf values in tree
-                    // Note: grower.grow() already applied learning_rate, so we need to
-                    // apply it to the renewed values too
-                    for ((tree_node, _), new_value) in leaf_mapping.iter().zip(renewed.iter()) {
                         if !new_value.is_nan() {
-                            let scaled_value = *new_value * self.params.learning_rate;
-                            mutable_tree.set_leaf_value(*tree_node, ScalarLeaf(scaled_value));
+                            let scaled_value = new_value * self.params.learning_rate;
+                            mutable_tree.set_leaf_value(tree_node, ScalarLeaf(scaled_value));
                         }
                     }
                 }

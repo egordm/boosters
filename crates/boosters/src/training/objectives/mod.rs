@@ -354,57 +354,57 @@ impl Objective {
         matches!(self, Self::PinballLoss { .. } | Self::AbsoluteLoss)
     }
 
-    /// Compute renewed leaf values for a single output using residuals.
+    /// Compute renewed leaf value for a single leaf.
     ///
-    /// This is called after tree structure is finalized for objectives where the
-    /// optimal leaf value differs from the Newton-step formula.
+    /// For objectives like quantile regression and L1 loss, the optimal leaf value
+    /// is the α-quantile of residuals rather than the Newton-step formula.
     ///
     /// # Arguments
     /// * `output` - Which output index this is (for multi-output objectives)
-    /// * `leaf_samples` - For each leaf, the row indices assigned to it
-    /// * `targets` - Target values (shape: [n_outputs, n_samples])
-    /// * `predictions` - Current predictions (shape: [n_outputs, n_samples])
+    /// * `indices` - Row indices in this leaf
+    /// * `targets` - Target values
+    /// * `predictions` - Current predictions
     /// * `weights` - Sample weights
-    /// * `scratch` - Scratch space for quantile computation (resized as needed)
+    /// * `scratch` - Scratch space for quantile computation
     ///
     /// # Returns
-    /// A vector of renewed leaf values, one per leaf.
-    pub fn renew_leaf_values(
+    /// The renewed leaf value, or NAN if not applicable.
+    #[inline]
+    pub fn renew_single_leaf_value(
         &self,
         output: usize,
-        leaf_samples: &[&[u32]],
+        indices: &[u32],
         targets: TargetsView<'_>,
         predictions: ndarray::ArrayView2<f32>,
         weights: WeightsView<'_>,
-        scratch: &mut Vec<usize>,
-    ) -> Vec<f32> {
-        match self {
-            Self::PinballLoss { alphas } => {
-                let alpha = alphas.get(output).copied().unwrap_or(0.5);
-                regression::renew_pinball_leaf_values(
-                    leaf_samples,
-                    targets,
-                    predictions,
-                    output,
-                    weights,
-                    alpha,
-                    scratch,
-                )
-            }
-            Self::AbsoluteLoss => {
-                // L1 loss: optimal leaf value is median of residuals (α=0.5)
-                regression::renew_pinball_leaf_values(
-                    leaf_samples,
-                    targets,
-                    predictions,
-                    output,
-                    weights,
-                    0.5,
-                    scratch,
-                )
-            }
+        scratch: &mut Vec<u32>,
+    ) -> f32 {
+        if indices.is_empty() {
+            return f32::NAN;
+        }
+
+        let alpha = match self {
+            Self::PinballLoss { alphas } => alphas.get(output).copied().unwrap_or(0.5),
+            Self::AbsoluteLoss => 0.5,
             // Other objectives don't need renewing
-            _ => vec![f32::NAN; leaf_samples.len()],
+            _ => return f32::NAN,
+        };
+
+        let targets_row = targets.output(0);
+        let preds_row = predictions.row(output);
+
+        // Zero-allocation residual computation via closure
+        let residual = |idx: u32| {
+            let i = idx as usize;
+            targets_row[i] - preds_row[i]
+        };
+
+        // Use optimized O(n) algorithm for unweighted case, O(n log n) for weighted
+        if weights.is_none() {
+            crate::utils::unweighted_quantile_indexed(indices, residual, alpha, scratch)
+        } else {
+            let weight = |idx: u32| weights.get(idx as usize);
+            crate::utils::weighted_quantile_indexed(indices, residual, weight, alpha, scratch)
         }
     }
 }
