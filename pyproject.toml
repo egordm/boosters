@@ -262,7 +262,7 @@ args = [
 
 [tool.poe.tasks."eval:check"]
 help = "Run evaluation regression check against committed baseline"
-cmd = "boosters-eval check --suite minimal --tolerance 0.02"
+cmd = "boosters-eval check --suite full --tolerance 0.02"
 
 [tool.poe.tasks."python:all"]
 help = "Run all Python CI calls"
