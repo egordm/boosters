@@ -325,17 +325,36 @@ def run_suite(
                         )
                     rng = np.random.default_rng(seed)
                     idx = rng.choice(len(data.y), config.dataset.subsample, replace=False)
-                    data = data.model_copy(update={"x": data.x[idx], "y": data.y[idx]})
+                    update = {"x": data.x[idx], "y": data.y[idx]}
+                    if data.sample_weight is not None:
+                        update["sample_weight"] = data.sample_weight[idx]
+                    data = data.model_copy(update=update)
 
+                w_train = None
+                w_valid = None
                 if config.dataset.splitter is not None:
+                    if data.sample_weight is not None:
+                        raise ValueError(
+                            f"Dataset {config.dataset.name} provides sample_weight but also uses a custom splitter. "
+                            "Update the dataset splitter to return weights, or use the default splitter."
+                        )
                     x_train, x_valid, y_train, y_valid = config.dataset.splitter(data, seed)
                 else:
-                    x_train, x_valid, y_train, y_valid = train_test_split(
-                        data.x,
-                        data.y,
-                        test_size=validation_fraction,
-                        random_state=seed,
-                    )
+                    if data.sample_weight is None:
+                        x_train, x_valid, y_train, y_valid = train_test_split(
+                            data.x,
+                            data.y,
+                            test_size=validation_fraction,
+                            random_state=seed,
+                        )
+                    else:
+                        x_train, x_valid, y_train, y_valid, w_train, w_valid = train_test_split(
+                            data.x,
+                            data.y,
+                            data.sample_weight,
+                            test_size=validation_fraction,
+                            random_state=seed,
+                        )
 
                 # GBLinear models do not support categorical features.
                 # Drop categorical columns for this run (keeping them for tree-based boosters).
@@ -352,8 +371,16 @@ def run_suite(
                 # apply the same parameters to validation targets.
                 # Metrics are computed on the normalized scale.
                 if config.dataset.task == Task.REGRESSION:
-                    target_mean = float(np.mean(y_train))
-                    target_std = float(np.std(y_train))
+                    if w_train is None:
+                        target_mean = float(np.mean(y_train))
+                        target_std = float(np.std(y_train))
+                    else:
+                        w_sum = float(np.sum(w_train))
+                        if not np.isfinite(w_sum) or w_sum <= 0.0:
+                            w_sum = 1.0
+                        target_mean = float(np.sum(w_train * y_train) / w_sum)
+                        target_var = float(np.sum(w_train * (y_train - target_mean) ** 2) / w_sum)
+                        target_std = float(np.sqrt(target_var))
                     if not np.isfinite(target_std) or target_std <= 0.0:
                         target_std = 1.0
                     y_train = (y_train - target_mean) / target_std
@@ -378,6 +405,8 @@ def run_suite(
                                 y_train=y_train,
                                 x_valid=x_valid,
                                 y_valid=y_valid,
+                                sample_weight_train=w_train,
+                                sample_weight_valid=w_valid,
                                 categorical_features=categorical_features,
                                 feature_names=feature_names,
                             ),

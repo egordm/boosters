@@ -30,6 +30,8 @@ class RunData:
     y_valid: NDArray[np.floating[Any]]
     categorical_features: list[int]
     feature_names: list[str] | None
+    sample_weight_train: NDArray[np.floating[Any]] | None = None
+    sample_weight_valid: NDArray[np.floating[Any]] | None = None
 
 
 class Runner(ABC):
@@ -169,14 +171,24 @@ class BoostersRunner(Runner):
 
         # Create Dataset objects
         train_ds = boosters.Dataset(
-            data.x_train.astype("float32"),
-            data.y_train.astype("float32"),
+            features=data.x_train.astype("float32"),
+            labels=data.y_train.astype("float32"),
+            weights=(
+                data.sample_weight_train.astype("float32")
+                if data.sample_weight_train is not None
+                else None
+            ),
             categorical_features=data.categorical_features,
             feature_names=data.feature_names,
         )
         valid_ds = boosters.Dataset(
-            data.x_valid.astype("float32"),
-            data.y_valid.astype("float32"),
+            features=data.x_valid.astype("float32"),
+            labels=data.y_valid.astype("float32"),
+            weights=(
+                data.sample_weight_valid.astype("float32")
+                if data.sample_weight_valid is not None
+                else None
+            ),
             categorical_features=data.categorical_features,
             feature_names=data.feature_names,
         )
@@ -184,8 +196,13 @@ class BoostersRunner(Runner):
         # Warmup for timing mode
         if timing_mode:
             warmup_ds = boosters.Dataset(
-                data.x_train[:100].astype("float32"),
-                data.y_train[:100].astype("float32"),
+                features=data.x_train[:100].astype("float32"),
+                labels=data.y_train[:100].astype("float32"),
+                weights=(
+                    data.sample_weight_train[:100].astype("float32")
+                    if data.sample_weight_train is not None
+                    else None
+                ),
                 categorical_features=data.categorical_features,
                 feature_names=data.feature_names,
             )
@@ -226,7 +243,13 @@ class BoostersRunner(Runner):
         peak_memory = _get_peak_memory() if measure_memory else None
 
         # Compute metrics
-        metrics = compute_metrics(task, data.y_valid, y_pred, config.dataset.n_classes)
+        metrics = compute_metrics(
+            task=task,
+            y_true=data.y_valid,
+            y_pred=y_pred,
+            n_classes=config.dataset.n_classes,
+            sample_weight=data.sample_weight_valid,
+        )
 
         return BenchmarkResult(
             config_name=config.name,
@@ -313,11 +336,21 @@ class XGBoostRunner(Runner):
                 train_df[col] = pd.Categorical(train_df[col].astype("int32"))
                 valid_df[col] = pd.Categorical(valid_df[col].astype("int32"))
 
-            dtrain = xgb.DMatrix(train_df, label=data.y_train, enable_categorical=True)
-            dvalid = xgb.DMatrix(valid_df, label=data.y_valid, enable_categorical=True)
+            dtrain = xgb.DMatrix(
+                train_df,
+                label=data.y_train,
+                weight=data.sample_weight_train,
+                enable_categorical=True,
+            )
+            dvalid = xgb.DMatrix(
+                valid_df,
+                label=data.y_valid,
+                weight=data.sample_weight_valid,
+                enable_categorical=True,
+            )
         else:
-            dtrain = xgb.DMatrix(data.x_train, label=data.y_train)
-            dvalid = xgb.DMatrix(data.x_valid, label=data.y_valid)
+            dtrain = xgb.DMatrix(data.x_train, label=data.y_train, weight=data.sample_weight_train)
+            dvalid = xgb.DMatrix(data.x_valid, label=data.y_valid, weight=data.sample_weight_valid)
 
         # Warmup for timing mode
         if timing_mode:
@@ -329,9 +362,18 @@ class XGBoostRunner(Runner):
                 for idx in data.categorical_features:
                     col = col_names[idx]
                     small_df[col] = pd.Categorical(small_df[col].astype("int32"))
-                dtrain_small = xgb.DMatrix(small_df, label=data.y_train[:100], enable_categorical=True)
+                dtrain_small = xgb.DMatrix(
+                    small_df,
+                    label=data.y_train[:100],
+                    weight=(data.sample_weight_train[:100] if data.sample_weight_train is not None else None),
+                    enable_categorical=True,
+                )
             else:
-                dtrain_small = xgb.DMatrix(data.x_train[:100], label=data.y_train[:100])
+                dtrain_small = xgb.DMatrix(
+                    data.x_train[:100],
+                    label=data.y_train[:100],
+                    weight=(data.sample_weight_train[:100] if data.sample_weight_train is not None else None),
+                )
             xgb.train(params, dtrain_small, num_boost_round=5)
 
         if measure_memory:
@@ -347,7 +389,13 @@ class XGBoostRunner(Runner):
 
         peak_memory = _get_peak_memory() if measure_memory else None
 
-        metrics = compute_metrics(task, data.y_valid, y_pred, config.dataset.n_classes)
+        metrics = compute_metrics(
+            task=task,
+            y_true=data.y_valid,
+            y_pred=y_pred,
+            n_classes=config.dataset.n_classes,
+            sample_weight=data.sample_weight_valid,
+        )
 
         return BenchmarkResult(
             config_name=config.name,
@@ -444,6 +492,7 @@ class LightGBMRunner(Runner):
         dtrain = lgb.Dataset(
             data.x_train,
             label=data.y_train,
+            weight=data.sample_weight_train,
             feature_name=feature_names,
             categorical_feature=data.categorical_features,
             params={"verbose": -1},
@@ -451,6 +500,7 @@ class LightGBMRunner(Runner):
         dvalid = lgb.Dataset(
             data.x_valid,
             label=data.y_valid,
+            weight=data.sample_weight_valid,
             feature_name=feature_names,
             categorical_feature=data.categorical_features,
             reference=dtrain,
@@ -462,6 +512,7 @@ class LightGBMRunner(Runner):
             dtrain_small = lgb.Dataset(
                 data.x_train[:100],
                 label=data.y_train[:100],
+                weight=(data.sample_weight_train[:100] if data.sample_weight_train is not None else None),
                 feature_name=feature_names,
                 categorical_feature=data.categorical_features,
                 params={"verbose": -1},
@@ -490,9 +541,17 @@ class LightGBMRunner(Runner):
         y_pred = model.predict(data.x_valid)
         predict_time = time.perf_counter() - start_predict
 
+        y_pred_arr = np.asarray(y_pred, dtype=np.float32)
+
         peak_memory = _get_peak_memory() if measure_memory else None
 
-        metrics = compute_metrics(task, data.y_valid, y_pred, config.dataset.n_classes)  # pyright: ignore[reportArgumentType]
+        metrics = compute_metrics(
+            task=task,
+            y_true=data.y_valid,
+            y_pred=y_pred_arr,
+            n_classes=config.dataset.n_classes,
+            sample_weight=data.sample_weight_valid,
+        )
 
         return BenchmarkResult(
             config_name=config.name,

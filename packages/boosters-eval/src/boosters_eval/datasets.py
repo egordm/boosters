@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, cast
@@ -29,6 +30,77 @@ def california_housing() -> LoadedDataset:
         x=data.data.astype(np.float32),
         y=data.target.astype(np.float32),  # pyright: ignore[reportAttributeAccessIssue]
         feature_names=[f"f{i}" for i in range(data.data.shape[1])],
+    )
+
+
+@lru_cache(maxsize=1)
+def california_housing_with_nans(
+    *,
+    nan_fraction: float = 0.1,
+    seed: int = 42,
+) -> LoadedDataset:
+    """California housing regression with NaNs in feature columns.
+
+    Missingness is partially correlated with the target to make the NaN pattern
+    informative for models that support missing values.
+    """
+    if nan_fraction < 0.0 or nan_fraction >= 1.0:
+        raise ValueError("nan_fraction must be in [0.0, 1.0)")
+
+    data = cast(Any, fetch_california_housing())
+    x = data.data.astype(np.float32, copy=True)
+    y = data.target.astype(np.float32)  # pyright: ignore[reportAttributeAccessIssue]
+    feature_names = [f"f{i}" for i in range(x.shape[1])]
+
+    rng = np.random.default_rng(seed)
+
+    # Target-correlated missingness: hide f0 for ~half of higher-target samples.
+    median = float(np.median(y))
+    hi = np.flatnonzero(y > median)
+    if len(hi) > 0:
+        chosen = rng.choice(hi, size=len(hi) // 2, replace=False)
+        x[chosen, 0] = np.nan
+
+    # Random missingness across the rest of the matrix.
+    if nan_fraction > 0.0:
+        mask = rng.random(x.shape) < nan_fraction
+        x[mask] = np.nan
+
+    return LoadedDataset(
+        x=x,
+        y=y,
+        feature_names=feature_names,
+    )
+
+
+@lru_cache(maxsize=1)
+def california_housing_weighted(
+    *,
+    seed: int = 42,
+) -> LoadedDataset:
+    """California housing regression with sample weights.
+
+    Weights emphasize higher-target examples to exercise weighted training.
+    """
+    data = cast(Any, fetch_california_housing())
+    x = data.data.astype(np.float32)
+    y = data.target.astype(np.float32)  # pyright: ignore[reportAttributeAccessIssue]
+    feature_names = [f"f{i}" for i in range(x.shape[1])]
+
+    rng = np.random.default_rng(seed)
+
+    # Emphasize upper quintile; add small noise so weights are not all identical.
+    q80 = float(np.quantile(y, 0.8))
+    w = np.ones(len(y), dtype=np.float32)
+    w[y >= q80] = 5.0
+    w *= (1.0 + rng.normal(loc=0.0, scale=0.01, size=len(y)).astype(np.float32))
+    w = np.clip(w, 0.01, None)
+
+    return LoadedDataset(
+        x=x,
+        y=y,
+        sample_weight=w,
+        feature_names=feature_names,
     )
 
 
@@ -129,69 +201,14 @@ def synthetic_multi_small() -> LoadedDataset:
     """Small synthetic multiclass classification dataset."""
     return _synthetic_classification(2000, 50, 5)
 
-
-def _latest_available_at_per_timestamp(df: pd.DataFrame) -> pd.DataFrame:
-    if "timestamp" not in df.columns:
-        raise ValueError("Expected a 'timestamp' column")
-
-    out = df.copy()
-    # Treat timestamps as opaque identifiers.
-    #
-    # Some real-world parquet files mix tz-aware and tz-naive timestamps.
-    # Parsing them into pandas datetime can later trigger:
-    #   TypeError: Cannot compare tz-naive and tz-aware timestamps
-    #
-    # For boosters-eval we don't need timestamp semantics; we only need a
-    # stable key to de-duplicate and join.
-    out["timestamp"] = out["timestamp"].astype("string")
-    if "available_at" in out.columns:
-        out["available_at"] = out["available_at"].astype("string")
-        out = out.sort_values(["timestamp", "available_at"]).drop_duplicates("timestamp", keep="last")
-    else:
-        out = out.sort_values(["timestamp"]).drop_duplicates("timestamp", keep="last")
-
-    return out
-
-
-def _detect_target_column(load_df: pd.DataFrame) -> str:
-    candidates = [
-        "value",
-        "load",
-        "measurement",
-        "y",
-        "target",
-    ]
-    for name in candidates:
-        if name in load_df.columns:
-            return name
-
-    excluded = {"timestamp", "available_at"}
-    numeric_cols = [c for c in load_df.columns if c not in excluded and pd.api.types.is_numeric_dtype(load_df[c])]
-    if len(numeric_cols) == 1:
-        return numeric_cols[0]
-
-    raise ValueError(
-        "Could not infer regression target column from load_measurements parquet. "
-        f"Tried {candidates}. Numeric candidates: {numeric_cols}."
-    )
-
-
 @lru_cache(maxsize=1)
-def liander_energy_prices_os_gorredijk(
+def liander_energy_forecasting(
     *,
     repo_id: str = "OpenSTEF/liander2024-energy-forecasting-benchmark",
     target: str = "mv_feeder/OS Gorredijk",
     cache_dir: str | None = None,
 ) -> LoadedDataset:
-    """Liander energy forecasting benchmark (subset) as a regression dataset.
-
-    Data source: HuggingFace dataset OpenSTEF/liander2024-energy-forecasting-benchmark.
-
-    Notes:
-    - Each parquet contains (timestamp, available_at, ...). We take the latest available_at per timestamp.
-    - We join load measurements (target) with weather forecasts, EPEX and profiles on timestamp.
-    - We add seasonality features: day-of-week and quarter-hour-of-day as categorical features.
-    """
+    """Liander energy forecasting benchmark (subset) as a regression dataset."""
     try:
         from huggingface_hub import hf_hub_download  # pyright: ignore[reportMissingImports]
     except ImportError as e:  # pragma: no cover
@@ -199,6 +216,25 @@ def liander_energy_prices_os_gorredijk(
             "huggingface_hub is required for the Liander benchmark. "
             "Install with: uv add -p packages/boosters-eval huggingface_hub"
         ) from e
+
+    def preprocess_part(df: pd.DataFrame) -> pd.DataFrame:
+        if "timestamp" not in df.columns:
+            raise ValueError("Expected a 'timestamp' column")
+
+        out = df.copy()
+        out["timestamp"] = pd.to_datetime(out["timestamp"], utc=True, errors="coerce")
+        out = out.dropna(subset=["timestamp"])
+
+        if "available_at" in out.columns:
+            out["available_at"] = pd.to_datetime(out["available_at"], utc=True, errors="coerce")
+            out = out.sort_values(["timestamp", "available_at"], na_position="first").drop_duplicates(
+                "timestamp", keep="last"
+            )
+            out = out.drop(columns=["available_at"], errors="ignore")
+        else:
+            out = out.sort_values(["timestamp"]).drop_duplicates("timestamp", keep="last")
+
+        return out.set_index("timestamp", drop=True).sort_index()
 
     local_dir = Path(cache_dir) if cache_dir else Path(".cache") / "liander_dataset"
     local_dir.mkdir(parents=True, exist_ok=True)
@@ -233,34 +269,44 @@ def liander_energy_prices_os_gorredijk(
             "Install with: uv add -p packages/boosters-eval pyarrow"
         ) from e
 
-    load_df = _latest_available_at_per_timestamp(load_df)
-    weather_df = _latest_available_at_per_timestamp(weather_df)
-    epex_df = _latest_available_at_per_timestamp(epex_df)
-    profiles_df = _latest_available_at_per_timestamp(profiles_df)
+    load_df = load_df.pipe(preprocess_part)
+    weather_df = weather_df.pipe(preprocess_part)
+    epex_df = epex_df.pipe(preprocess_part)
+    profiles_df = profiles_df.pipe(preprocess_part)
 
-    target_col = _detect_target_column(load_df)
+    target_col = "load"
+    if target_col not in load_df.columns:
+        raise ValueError("Expected 'load' column in load_measurements parquet")
 
     # Join (load as base to define the target)
-    df = load_df.merge(weather_df, on="timestamp", how="inner", suffixes=("", "_weather"))
-    df = df.merge(epex_df, on="timestamp", how="left", suffixes=("", "_epex"))
-    df = df.merge(profiles_df, on="timestamp", how="left", suffixes=("", "_profiles"))
+    df = load_df.join(weather_df, how="inner").join(epex_df, how="left").join(profiles_df, how="left")
+    df = df.sort_index()
 
-    # NOTE: We intentionally do NOT parse timestamps for evaluation purposes.
-    # Splits are done purely by sample index; the caller is responsible for
-    # ensuring any time ordering they care about before running benchmarks.
+    # Add categorical seasonality features
+    ts = pd.DatetimeIndex(df.index)
+    df["day_of_week"] = ts.dayofweek.astype(np.int16)
+    df["quarter_of_day"] = ((ts.hour * 60 + ts.minute) // 15).astype(np.int16)
+
+    # Keep a fixed 4-month window after skipping the first 2 months.
+    # 15-minute resolution => 96 samples/day. We use 30-day months for simple iloc slicing.
+    samples_per_month = 30 * 24 * 4
+    start = 2 * samples_per_month
+    end = start + (4 * samples_per_month)
+    if len(df) < end:
+        raise ValueError(
+            "Liander dataset is shorter than expected after joins; "
+            f"need at least {end} samples, got {len(df)}."
+        )
+    df = df.iloc[start:end]
 
     # Build X/y
-    exclude_cols = {
-        "timestamp",
-        "available_at",
-        target_col,
-    }
+    exclude_cols = {target_col}
     exclude_cols.update({c for c in df.columns if c.endswith(("_x", "_y"))})
-    # Keep only numeric features
-    feature_cols = [c for c in df.columns if c not in exclude_cols and pd.api.types.is_numeric_dtype(df[c])]
 
-    # Ensure deterministic column order
+    feature_cols = [c for c in df.columns if c not in exclude_cols and pd.api.types.is_numeric_dtype(df[c])]
     feature_cols = sorted(feature_cols)
+    categorical_feature_names = ["day_of_week", "quarter_of_day"]
+    categorical_features = [feature_cols.index(name) for name in categorical_feature_names]
 
     x = df[feature_cols].to_numpy(dtype=np.float32, copy=True)
     y = df[target_col].to_numpy(dtype=np.float32, copy=True)
@@ -273,13 +319,44 @@ def liander_energy_prices_os_gorredijk(
         x=x,
         y=y,
         feature_names=feature_cols,
-        categorical_features=[],
+        categorical_features=categorical_features,
         train_end=train_end,
         valid_end=valid_end,
     )
 
 
-def _liander_time_split_4m_train_2m_valid(
+def split_at_index(
+    train_end: int,
+    valid_end: int | None = None,
+) -> Callable[
+    [LoadedDataset, int],
+    tuple[
+        NDArray[np.floating[Any]],
+        NDArray[np.floating[Any]],
+        NDArray[np.floating[Any]],
+        NDArray[np.floating[Any]],
+    ],
+]:
+    """Create a deterministic split function based on sample indices."""
+
+    def _split(
+        data: LoadedDataset,
+        _seed: int,
+    ) -> tuple[
+        NDArray[np.floating[Any]],
+        NDArray[np.floating[Any]],
+        NDArray[np.floating[Any]],
+        NDArray[np.floating[Any]],
+    ]:
+        end = valid_end if valid_end is not None else len(data.y)
+        if train_end <= 0 or end <= train_end or end > len(data.y):
+            raise ValueError("Split indices are invalid")
+        return data.x[:train_end], data.x[train_end:end], data.y[:train_end], data.y[train_end:end]
+
+    return _split
+
+
+def split_by_precomputed_indices(
     data: LoadedDataset,
     _seed: int,
 ) -> tuple[
@@ -288,19 +365,11 @@ def _liander_time_split_4m_train_2m_valid(
     NDArray[np.floating[Any]],
     NDArray[np.floating[Any]],
 ]:
+    """Split using LoadedDataset.train_end/valid_end."""
     if data.train_end is None or data.valid_end is None:
-        raise ValueError("Liander split requires precomputed train_end/valid_end")
+        raise ValueError("Dataset split requires precomputed train_end/valid_end")
 
-    train_end = data.train_end
-    valid_end = data.valid_end
-    if train_end <= 0 or valid_end <= train_end or valid_end > len(data.y):
-        raise ValueError("Liander split indices are invalid; check time span after joins")
-
-    x_train = data.x[:train_end]
-    y_train = data.y[:train_end]
-    x_valid = data.x[train_end:valid_end]
-    y_valid = data.y[train_end:valid_end]
-    return x_train, x_valid, y_train, y_valid
+    return split_at_index(data.train_end, data.valid_end)(data, _seed)
 
 
 # Pre-defined dataset configurations
@@ -310,6 +379,16 @@ DATASETS: dict[str, DatasetConfig] = {
         name="california",
         task=Task.REGRESSION,
         loader=california_housing,
+    ),
+    "california_nan": DatasetConfig(
+        name="california_nan",
+        task=Task.REGRESSION,
+        loader=california_housing_with_nans,
+    ),
+    "california_weighted": DatasetConfig(
+        name="california_weighted",
+        task=Task.REGRESSION,
+        loader=california_housing_weighted,
     ),
     "synthetic_reg_small": DatasetConfig(
         name="synthetic_reg_small",
@@ -358,11 +437,11 @@ DATASETS: dict[str, DatasetConfig] = {
         n_classes=5,
     ),
     # Real-world regression (time-series forecasting)
-    "liander_energy_os_gorredijk": DatasetConfig(
-        name="liander_energy_os_gorredijk",
+    "liander_energy_forecasting": DatasetConfig(
+        name="liander_energy_forecasting",
         task=Task.REGRESSION,
-        loader=liander_energy_prices_os_gorredijk,
-        splitter=_liander_time_split_4m_train_2m_valid,
+        loader=liander_energy_forecasting,
+        splitter=split_by_precomputed_indices,
         primary_metric="rmae",
         supported_booster_types=[BoosterType.GBDT, BoosterType.GBLINEAR, BoosterType.LINEAR_TREES],
     ),

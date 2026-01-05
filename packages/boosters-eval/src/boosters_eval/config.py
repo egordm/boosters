@@ -75,6 +75,7 @@ class LoadedDataset(BaseModel):
 
     x: NDArray[np.floating[Any]]
     y: NDArray[np.floating[Any]]
+    sample_weight: NDArray[np.floating[Any]] | None = None
     feature_names: list[str] | None = None
     categorical_features: list[int] = []
 
