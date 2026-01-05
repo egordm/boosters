@@ -333,6 +333,79 @@ fn compute_weighted_quantile(values: ArrayView1<f32>, weights: WeightsView<'_>, 
 }
 
 // =============================================================================
+// Leaf Value Renewing (for quantile/L1 objectives)
+// =============================================================================
+
+/// Renew leaf values for pinball/quantile loss using weighted quantile of residuals.
+///
+/// For quantile regression, the optimal leaf value is the α-quantile of residuals
+/// (target - prediction) within each leaf, NOT the Newton-step based on gradient sums.
+///
+/// This follows the XGBoost/LightGBM pattern:
+/// - XGBoost: `UpdateTreeLeaf()` in `adaptive.cc` computes `Quantile(residuals, alpha)`
+/// - LightGBM: `RenewTreeOutput()` with `WeightedPercentileFun` on residuals
+///
+/// # Arguments
+/// * `leaf_samples` - For each leaf, the row indices assigned to it
+/// * `targets` - Target values
+/// * `predictions` - Current predictions
+/// * `output` - Which output index to use for predictions
+/// * `weights` - Sample weights
+/// * `alpha` - Quantile level in (0, 1)
+/// * `scratch` - Scratch buffer for sorting indices (reused across leaves)
+///
+/// # Returns
+/// Vector of renewed leaf values, one per leaf.
+pub(super) fn renew_pinball_leaf_values(
+    leaf_samples: &[&[u32]],
+    targets: TargetsView<'_>,
+    predictions: ndarray::ArrayView2<f32>,
+    output: usize,
+    weights: WeightsView<'_>,
+    alpha: f32,
+    scratch: &mut Vec<usize>,
+) -> Vec<f32> {
+    let targets_row = targets.output(0);
+    let preds_row = predictions.row(output);
+
+    leaf_samples
+        .iter()
+        .map(|&indices| {
+            if indices.is_empty() {
+                return f32::NAN;
+            }
+
+            // Compute residuals (target - prediction) for samples in this leaf
+            let residuals: Vec<f32> = indices
+                .iter()
+                .map(|&idx| {
+                    let i = idx as usize;
+                    targets_row[i] - preds_row[i]
+                })
+                .collect();
+
+            // Extract weights for this leaf's samples (if weighted)
+            let leaf_weights: Option<Vec<f32>> = match weights {
+                WeightsView::None => None,
+                _ => Some(
+                    indices
+                        .iter()
+                        .map(|&idx| weights.get(idx as usize))
+                        .collect(),
+                ),
+            };
+
+            crate::utils::weighted_quantile(
+                &residuals,
+                leaf_weights.as_deref(),
+                alpha,
+                scratch,
+            )
+        })
+        .collect()
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 

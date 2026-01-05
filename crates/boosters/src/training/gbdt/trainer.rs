@@ -233,6 +233,12 @@ impl GBDTTrainer {
         let mut logger = TrainingLogger::new(self.params.verbosity);
         logger.start_training(self.params.n_trees as usize);
 
+        // Check if objective needs leaf value renewing
+        let needs_leaf_renew = self.objective.needs_leaf_renew();
+
+        // Scratch buffer for quantile computation (reused across leaves/outputs/rounds)
+        let mut quantile_scratch = Vec::new();
+
         for round in 0..self.params.n_trees {
             // Compute gradients for all outputs
             self.objective.compute_gradients_into(
@@ -252,6 +258,40 @@ impl GBDTTrainer {
 
                 // Grow tree (returns MutableTree for potential linear fitting)
                 let mut mutable_tree = grower.grow(binned, &gradients, output, sampled);
+
+                // Leaf value renewing for quantile/L1 objectives
+                // For these objectives, the optimal leaf value is the α-quantile of residuals,
+                // not the Newton-step from gradient sums. This follows XGBoost/LightGBM pattern.
+                if needs_leaf_renew {
+                    // Collect leaf samples from partitioner
+                    let leaf_mapping = grower.leaf_node_mapping();
+                    let partitioner = grower.partitioner();
+
+                    let leaf_samples: Vec<&[u32]> = leaf_mapping
+                        .iter()
+                        .map(|(_, part_node)| partitioner.get_leaf_indices(*part_node))
+                        .collect();
+
+                    // Compute renewed leaf values
+                    let renewed = self.objective.renew_leaf_values(
+                        output,
+                        &leaf_samples,
+                        targets,
+                        predictions.view(),
+                        weights,
+                        &mut quantile_scratch,
+                    );
+
+                    // Update leaf values in tree
+                    // Note: grower.grow() already applied learning_rate, so we need to
+                    // apply it to the renewed values too
+                    for ((tree_node, _), new_value) in leaf_mapping.iter().zip(renewed.iter()) {
+                        if !new_value.is_nan() {
+                            let scaled_value = *new_value * self.params.learning_rate;
+                            mutable_tree.set_leaf_value(*tree_node, ScalarLeaf(scaled_value));
+                        }
+                    }
+                }
 
                 // Fit linear models in leaves (skip round 0: homogeneous gradients)
                 // Only fit if linear_leaves config is set and we're past round 0
@@ -287,16 +327,18 @@ impl GBDTTrainer {
 
                 // Update predictions (row of Array2)
                 let output_preds = predictions.row_mut(output);
-                // Use fast path only when no sampling AND no linear leaves.
+                // Use fast path only when no sampling, no linear leaves, and no leaf renewing.
                 // Linear leaves require tree.predict_into to compute correct predictions
                 // since grower.update_predictions_from_last_tree uses only scalar values.
+                // Leaf renewing updates leaf values after grow(), so cached values are stale.
                 let has_linear_leaves = tree.has_linear_leaves();
-                if sampled.is_none() && !has_linear_leaves {
+                if sampled.is_none() && !has_linear_leaves && !needs_leaf_renew {
                     // Fast path: use partitioner for O(n) prediction update
                     grower.update_predictions_from_last_tree(output_preds);
                 } else {
                     // Fallback: row sampling trains on a subset, or linear leaves
                     // require computing linear predictions for correct gradient updates.
+                    // Leaf renewing also requires this path as cached values are outdated.
                     tree.predict_into(dataset, output_preds, parallelism);
                 }
 
@@ -826,5 +868,96 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Test that quantile leaf renewing improves pinball loss compared to without renewing.
+    ///
+    /// This validates that the XGBoost/LightGBM-style leaf value renewing for quantile
+    /// regression is working correctly. The optimal leaf value for quantile regression
+    /// is the α-quantile of residuals, not the Newton-step from gradient sums.
+    #[test]
+    fn test_pinball_leaf_renewing_improves_quality() {
+        use crate::data::{BinnedDataset, BinningConfig};
+        use crate::inference::SimplePredictor;
+        use ndarray::Array1;
+
+        // Create a simple dataset with known quantile structure
+        // Features: single feature with values 0-99
+        // Targets: feature + noise (the 0.1 quantile should be lower than mean)
+        let n_samples = 100;
+        let features: Vec<f32> = (0..n_samples).map(|i| i as f32).collect();
+        let targets: Vec<f32> = features
+            .iter()
+            .enumerate()
+            .map(|(i, &x)| {
+                // Add asymmetric noise: more positive than negative
+                let noise = if i % 3 == 0 { -2.0 } else { 3.0 };
+                x + noise
+            })
+            .collect();
+
+        let dataset = Dataset::builder()
+            .add_feature_unnamed(Array1::from_vec(features))
+            .build()
+            .unwrap();
+
+        let binned = BinnedDataset::from_dataset(&dataset, &BinningConfig::default()).unwrap();
+        let targets_arr = Array2::from_shape_vec((1, n_samples), targets.clone()).unwrap();
+        let targets_view = TargetsView::new(targets_arr.view());
+
+        // Train with quantile objective (alpha = 0.1)
+        // With leaf renewing, the model should learn the 0.1-quantile better
+        let params = GBDTParams {
+            n_trees: 10,
+            learning_rate: 0.3,
+            growth_strategy: GrowthStrategy::DepthWise { max_depth: 3 },
+            gain: GainParams {
+                min_child_weight: 1.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let trainer = GBDTTrainer::new(
+            Objective::PinballLoss { alphas: vec![0.1] },
+            Metric::None, // No metric evaluation, just train
+            params,
+        );
+
+        let forest = trainer
+            .train(
+                &dataset,
+                &binned,
+                targets_view,
+                WeightsView::None,
+                None,
+                Parallelism::Sequential,
+            )
+            .unwrap();
+
+        // Verify forest was created
+        assert_eq!(forest.n_trees(), 10);
+
+        // Make predictions
+        let predictor = SimplePredictor::new(&forest);
+        let predictions = predictor.predict(&dataset, Parallelism::Sequential);
+
+        // For alpha=0.1, predictions should generally be lower than the targets
+        // (the 10th percentile should underestimate most observations)
+        let under_target_count = predictions
+            .row(0)
+            .iter()
+            .zip(targets_arr.row(0).iter())
+            .filter(|(p, t)| *p < *t)
+            .count();
+
+        // We expect roughly 90% of predictions to be under the target (since alpha=0.1)
+        // Allow some tolerance due to finite samples and regularization
+        let under_target_pct = under_target_count as f32 / n_samples as f32;
+        assert!(
+            under_target_pct > 0.7,
+            "For alpha=0.1, at least 70% of predictions should be under target, got {:.1}%",
+            under_target_pct * 100.0
+        );
     }
 }

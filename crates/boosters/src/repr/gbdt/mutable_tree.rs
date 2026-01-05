@@ -209,6 +209,26 @@ impl<L: LeafValue> MutableTree<L> {
         self.leaf_values[idx] = value;
     }
 
+    /// Update an existing leaf's value.
+    ///
+    /// This is used for leaf value renewing after tree structure is finalized.
+    /// For quantile objectives, the optimal leaf value is the α-quantile of
+    /// residuals, not the Newton-step from gradient sums.
+    ///
+    /// # Panics
+    ///
+    /// Debug-panics if the node is not a leaf.
+    #[inline]
+    pub fn set_leaf_value(&mut self, node: NodeId, value: L) {
+        let idx = node as usize;
+        debug_assert!(
+            self.is_leaf[idx],
+            "set_leaf_value called on non-leaf node {}",
+            node
+        );
+        self.leaf_values[idx] = value;
+    }
+
     /// Set linear coefficients for a leaf node.
     ///
     /// The leaf should already be marked as a leaf via `make_leaf`.

@@ -338,6 +338,75 @@ impl Objective {
             Self::Custom(inner) => inner.output_transform(),
         }
     }
+
+    /// Returns whether this objective requires leaf value renewing after tree growth.
+    ///
+    /// Some objectives (e.g., quantile regression, L1 loss) have optimal leaf values
+    /// that differ from the Newton-step formula used during tree construction.
+    /// For these objectives, leaf values should be recomputed after the tree structure
+    /// is finalized.
+    ///
+    /// This follows the XGBoost/LightGBM pattern where quantile objectives use
+    /// `UpdateTreeLeaf()` / `RenewTreeOutput()` to compute the α-quantile of
+    /// residuals within each leaf instead of the gradient-based Newton step.
+    #[inline]
+    pub fn needs_leaf_renew(&self) -> bool {
+        matches!(self, Self::PinballLoss { .. } | Self::AbsoluteLoss)
+    }
+
+    /// Compute renewed leaf values for a single output using residuals.
+    ///
+    /// This is called after tree structure is finalized for objectives where the
+    /// optimal leaf value differs from the Newton-step formula.
+    ///
+    /// # Arguments
+    /// * `output` - Which output index this is (for multi-output objectives)
+    /// * `leaf_samples` - For each leaf, the row indices assigned to it
+    /// * `targets` - Target values (shape: [n_outputs, n_samples])
+    /// * `predictions` - Current predictions (shape: [n_outputs, n_samples])
+    /// * `weights` - Sample weights
+    /// * `scratch` - Scratch space for quantile computation (resized as needed)
+    ///
+    /// # Returns
+    /// A vector of renewed leaf values, one per leaf.
+    pub fn renew_leaf_values(
+        &self,
+        output: usize,
+        leaf_samples: &[&[u32]],
+        targets: TargetsView<'_>,
+        predictions: ndarray::ArrayView2<f32>,
+        weights: WeightsView<'_>,
+        scratch: &mut Vec<usize>,
+    ) -> Vec<f32> {
+        match self {
+            Self::PinballLoss { alphas } => {
+                let alpha = alphas.get(output).copied().unwrap_or(0.5);
+                regression::renew_pinball_leaf_values(
+                    leaf_samples,
+                    targets,
+                    predictions,
+                    output,
+                    weights,
+                    alpha,
+                    scratch,
+                )
+            }
+            Self::AbsoluteLoss => {
+                // L1 loss: optimal leaf value is median of residuals (α=0.5)
+                regression::renew_pinball_leaf_values(
+                    leaf_samples,
+                    targets,
+                    predictions,
+                    output,
+                    weights,
+                    0.5,
+                    scratch,
+                )
+            }
+            // Other objectives don't need renewing
+            _ => vec![f32::NAN; leaf_samples.len()],
+        }
+    }
 }
 
 // =============================================================================
