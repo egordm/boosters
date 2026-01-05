@@ -23,51 +23,19 @@ from boosters_eval.runners.base import (
 # =============================================================================
 
 
-def _augment_with_quantiles(
-    x: np.ndarray,
-    *,
-    quantiles: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Repeat rows in block-by-quantile layout and append quantile indicator feature.
+def _pinball_loss_objective(alpha: float) -> Any:
+    """Create a LightGBM custom objective for single-quantile pinball loss.
 
-    Layout: [all rows for q0] [all rows for q1] ...
-    This matches common LightGBM custom-objective examples and enables
-    reshape-based gradient computation.
-
-    Returns:
-        (x_augmented, quantile_per_row)
-    """
-    n_rows = x.shape[0]
-    n_quantiles = len(quantiles)
-
-    # Stack copies and append quantile column
-    x_rep = np.concatenate([x] * n_quantiles, axis=0)
-    q_rep = np.repeat(quantiles.astype(np.float32), repeats=n_rows)
-    x_aug = np.column_stack([x_rep, q_rep])
-
-    return x_aug, q_rep
-
-
-def _pinball_loss_objective(quantiles: np.ndarray) -> Any:
-    """Create a LightGBM custom objective for multi-quantile pinball loss.
-
-    Assumes block-by-quantile data layout from `_augment_with_quantiles`.
     Uses constant Hessian approximation (pinball loss is piecewise linear).
     """
-    alphas = quantiles.astype(np.float64)
-    n_quantiles = len(alphas)
 
     def _objective(preds: np.ndarray, train_data: Any) -> tuple[np.ndarray, np.ndarray]:
         y_true = train_data.get_label().astype(np.float64)
         pred = preds.astype(np.float64)
-
-        # Reshape as (n_quantiles, n_rows)
-        y2 = y_true.reshape(n_quantiles, -1)
-        p2 = pred.reshape(n_quantiles, -1)
-        residual = y2 - p2
+        residual = y_true - pred
 
         # Gradient: 1_{residual<0} - alpha  (derivative of pinball loss w.r.t. pred)
-        grad = ((residual < 0.0).astype(np.float64) - alphas.reshape(-1, 1)).ravel()
+        grad = (residual < 0.0).astype(np.float64) - alpha
         hess = np.ones_like(grad)
 
         # Apply sample weights if present
@@ -143,7 +111,11 @@ def _run_quantile(
     timing_mode: bool,
     measure_memory: bool,
 ) -> BenchmarkResult:
-    """Run quantile regression with custom pinball loss objective."""
+    """Run quantile regression with one model per quantile (one_output_per_tree strategy).
+
+    This matches XGBoost's multi_strategy='one_output_per_tree' approach for fair comparison.
+    Each quantile gets its own tree per boosting round.
+    """
     import lightgbm as lgb
 
     quantiles = resolve_quantiles(config)
@@ -151,37 +123,25 @@ def _run_quantile(
         raise ValueError("Quantiles must be specified for quantile regression")
 
     quantiles = np.unique(np.sort(quantiles))
-    n_quantiles = len(quantiles)
-    n_rows_valid = len(data.y_valid)
 
-    # Augment data with quantile feature
-    x_train_aug, _ = _augment_with_quantiles(data.x_train, quantiles=quantiles)
-    y_train_aug = np.tile(data.y_train, reps=n_quantiles)
-    w_train_aug = np.tile(data.sample_weight_train, reps=n_quantiles) if data.sample_weight_train is not None else None
-
-    x_valid_aug, _ = _augment_with_quantiles(data.x_valid, quantiles=quantiles)
-    y_valid_aug = np.tile(data.y_valid, reps=n_quantiles)
-    w_valid_aug = np.tile(data.sample_weight_valid, reps=n_quantiles) if data.sample_weight_valid is not None else None
-
-    # Build feature names with quantile indicator
     feature_names: list[str] | str = "auto"
     if data.feature_names is not None:
-        feature_names = [*data.feature_names, "quantile"]
+        feature_names = list(data.feature_names)
 
-    # Create datasets
+    # Create training dataset (shared across all quantiles)
     dtrain = lgb.Dataset(
-        x_train_aug,
-        label=y_train_aug,
-        weight=w_train_aug,
+        data.x_train,
+        label=data.y_train,
+        weight=data.sample_weight_train,
         feature_name=feature_names,
         categorical_feature=data.categorical_features,
         free_raw_data=False,
         params={"verbose": -1},
     )
     dvalid = lgb.Dataset(
-        x_valid_aug,
-        label=y_valid_aug,
-        weight=w_valid_aug,
+        data.x_valid,
+        label=data.y_valid,
+        weight=data.sample_weight_valid,
         feature_name=feature_names,
         categorical_feature=data.categorical_features,
         reference=dtrain,
@@ -189,56 +149,61 @@ def _run_quantile(
         params={"verbose": -1},
     )
 
-    # Build params
-    params = _build_lgb_params(config, seed=seed, for_quantile=True)
-    params["objective"] = _pinball_loss_objective(quantiles)
-
-    if linear_tree:
-        params["linear_tree"] = True
-        params["linear_lambda"] = config.training.linear_l2
-
-    # Monotone constraint on quantile feature (last column)
-    if isinstance(feature_names, list):
-        params["monotone_constraints"] = [0] * (len(feature_names) - 1) + [1]
-
-    # Optional warmup
+    # Optional warmup (single quantile)
     if timing_mode:
         dtrain_small = lgb.Dataset(
-            x_train_aug[: 100 * n_quantiles],
-            label=y_train_aug[: 100 * n_quantiles],
-            weight=w_train_aug[: 100 * n_quantiles] if w_train_aug is not None else None,
+            data.x_train[:100],
+            label=data.y_train[:100],
+            weight=data.sample_weight_train[:100] if data.sample_weight_train is not None else None,
             feature_name=feature_names,
             categorical_feature=data.categorical_features,
             free_raw_data=False,
             params={"verbose": -1},
         )
+        warmup_params = _build_lgb_params(config, seed=seed, for_quantile=True)
+        warmup_params["objective"] = _pinball_loss_objective(float(quantiles[0]))
+        if linear_tree:
+            warmup_params["linear_tree"] = True
+            warmup_params["linear_lambda"] = config.training.linear_l2
         lgb.train(
-            params,
+            warmup_params,
             dtrain_small,
             num_boost_round=min(5, config.training.n_estimators),
             callbacks=[lgb.log_evaluation(0)],
         )
 
-    # Train
+    # Train one model per quantile (one_output_per_tree strategy)
     _maybe_start_memory(measure_memory=measure_memory)
 
+    models: list[Any] = []
     start_train = time.perf_counter()
-    model = lgb.train(
-        params,
-        dtrain,
-        num_boost_round=config.training.n_estimators,
-        valid_sets=[dvalid],
-        callbacks=[lgb.log_evaluation(period=0)],
-    )
+
+    for q_idx, alpha in enumerate(quantiles):
+        params = _build_lgb_params(config, seed=seed + q_idx, for_quantile=True)
+        params["objective"] = _pinball_loss_objective(float(alpha))
+
+        if linear_tree:
+            params["linear_tree"] = True
+            params["linear_lambda"] = config.training.linear_l2
+
+        model = lgb.train(
+            params,
+            dtrain,
+            num_boost_round=config.training.n_estimators,
+            valid_sets=[dvalid],
+            callbacks=[lgb.log_evaluation(period=0)],
+        )
+        models.append(model)
+
     train_time = time.perf_counter() - start_train
 
-    # Predict
+    # Predict with all models
     start_predict = time.perf_counter()
-    y_pred_aug = model.predict(x_valid_aug)
+    y_preds = [model.predict(data.x_valid) for model in models]
     predict_time = time.perf_counter() - start_predict
 
-    # Reshape predictions from block layout to (n_rows, n_quantiles)
-    y_pred = np.asarray(y_pred_aug, dtype=np.float32).reshape(n_quantiles, n_rows_valid).T
+    # Stack predictions: shape (n_rows, n_quantiles)
+    y_pred = np.column_stack(y_preds).astype(np.float32)
 
     peak_memory = _maybe_get_peak_memory(measure_memory=measure_memory)
 

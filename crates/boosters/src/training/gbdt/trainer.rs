@@ -263,36 +263,27 @@ impl GBDTTrainer {
                 // For these objectives, the optimal leaf value is the α-quantile of residuals,
                 // not the Newton-step from gradient sums. This follows XGBoost/LightGBM pattern.
                 if needs_leaf_renew {
-                    // Collect renewed values first, then update grower's cached values
-                    let renewed_values: Vec<_> = {
-                        let leaf_mapping = grower.leaf_node_mapping();
-                        let partitioner = grower.partitioner();
-                        leaf_mapping
-                            .iter()
-                            .filter_map(|&(tree_node, part_node)| {
-                                let indices = partitioner.get_leaf_indices(part_node);
-                                if indices.is_empty() {
-                                    return None;
-                                }
-                                let new_value = self.objective.renew_single_leaf_value(
-                                    output,
-                                    indices,
-                                    targets,
-                                    predictions.view(),
-                                    weights,
-                                    &mut quantile_scratch,
-                                );
-                                if new_value.is_nan() {
-                                    None
-                                } else {
-                                    Some((tree_node, part_node, new_value))
-                                }
-                            })
-                            .collect()
-                    };
-
-                    // Apply renewed values
-                    for (tree_node, part_node, new_value) in renewed_values {
+                    // Iterate by index to avoid Vec allocation. We access leaf_node_mapping
+                    // by index and immediately apply changes. The learning_rate is applied
+                    // once per leaf.
+                    let n_leaves = grower.leaf_node_mapping().len();
+                    for leaf_idx in 0..n_leaves {
+                        let (tree_node, part_node) = grower.leaf_node_mapping()[leaf_idx];
+                        let indices = grower.partitioner().get_leaf_indices(part_node);
+                        if indices.is_empty() {
+                            continue;
+                        }
+                        let new_value = self.objective.renew_single_leaf_value(
+                            output,
+                            indices,
+                            targets,
+                            predictions.view(),
+                            weights,
+                            &mut quantile_scratch,
+                        );
+                        if new_value.is_nan() {
+                            continue;
+                        }
                         let scaled_value = new_value * self.params.learning_rate;
                         mutable_tree.set_leaf_value(tree_node, ScalarLeaf(scaled_value));
                         grower.update_cached_leaf_value(part_node, scaled_value);
