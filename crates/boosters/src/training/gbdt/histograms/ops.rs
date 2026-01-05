@@ -12,6 +12,7 @@
 //! - The subtraction trick (sibling = parent - child) provides 10-44x speedup
 //! - **Ordered gradients**: gradients are pre-gathered into partition order before
 //!   histogram building, enabling sequential memory access instead of random access
+//! - **Software prefetching**: Bin data is prefetched ahead of time to hide memory latency
 //!
 //! # Numeric Precision
 //!
@@ -39,6 +40,31 @@ use crate::utils::Parallelism;
 /// gradients are `f32`. The subtraction trick means small differences between
 /// large sums are common, which requires extra precision to avoid drift.
 pub type HistogramBin = (f64, f64);
+
+// =============================================================================
+// Prefetching Utilities
+// =============================================================================
+
+/// Software prefetch for read access (T0 = all cache levels).
+///
+/// This is a no-op on architectures without prefetch support.
+#[inline(always)]
+fn prefetch_read<T>(ptr: *const T) {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    unsafe {
+        #[cfg(target_arch = "x86")]
+        use core::arch::x86::_mm_prefetch;
+        #[cfg(target_arch = "x86_64")]
+        use core::arch::x86_64::_mm_prefetch;
+
+        // _MM_HINT_T0 = 3: prefetch into all cache levels
+        _mm_prefetch(ptr as *const i8, 3);
+    }
+
+    // On non-x86, this is a no-op. LLVM may auto-insert prefetches.
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64")))]
+    let _ = ptr;
+}
 
 // =============================================================================
 // HistogramBuilder
@@ -168,6 +194,12 @@ fn build_feature_gathered(
     }
 }
 
+/// Prefetch offset: 64 bytes / 1 byte per u8 bin = 64 elements ahead.
+const PREFETCH_OFFSET_U8: usize = 64;
+
+/// Prefetch offset: 64 bytes / 2 bytes per u16 bin = 32 elements ahead.
+const PREFETCH_OFFSET_U16: usize = 32;
+
 #[inline]
 fn build_u8_gathered(
     bins: &[u8],
@@ -175,7 +207,25 @@ fn build_u8_gathered(
     histogram: &mut [HistogramBin],
     indices: &[u32],
 ) {
-    for i in 0..indices.len() {
+    let n = indices.len();
+    let pf_end = n.saturating_sub(PREFETCH_OFFSET_U8);
+
+    // Main loop with prefetching
+    for i in 0..pf_end {
+        // Prefetch bin data for future iteration
+        let pf_row = unsafe { *indices.get_unchecked(i + PREFETCH_OFFSET_U8) } as usize;
+        prefetch_read(unsafe { bins.as_ptr().add(pf_row) });
+
+        let row = unsafe { *indices.get_unchecked(i) } as usize;
+        let bin = unsafe { *bins.get_unchecked(row) } as usize;
+        let slot = unsafe { histogram.get_unchecked_mut(bin) };
+        let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
+        slot.0 += gh.grad as f64;
+        slot.1 += gh.hess as f64;
+    }
+
+    // Tail loop without prefetching
+    for i in pf_end..n {
         let row = unsafe { *indices.get_unchecked(i) } as usize;
         let bin = unsafe { *bins.get_unchecked(row) } as usize;
         let slot = unsafe { histogram.get_unchecked_mut(bin) };
@@ -192,7 +242,25 @@ fn build_u16_gathered(
     histogram: &mut [HistogramBin],
     indices: &[u32],
 ) {
-    for i in 0..indices.len() {
+    let n = indices.len();
+    let pf_end = n.saturating_sub(PREFETCH_OFFSET_U16);
+
+    // Main loop with prefetching
+    for i in 0..pf_end {
+        // Prefetch bin data for future iteration
+        let pf_row = unsafe { *indices.get_unchecked(i + PREFETCH_OFFSET_U16) } as usize;
+        prefetch_read(unsafe { bins.as_ptr().add(pf_row) });
+
+        let row = unsafe { *indices.get_unchecked(i) } as usize;
+        let bin = unsafe { *bins.get_unchecked(row) } as usize;
+        let slot = unsafe { histogram.get_unchecked_mut(bin) };
+        let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
+        slot.0 += gh.grad as f64;
+        slot.1 += gh.hess as f64;
+    }
+
+    // Tail loop without prefetching
+    for i in pf_end..n {
         let row = unsafe { *indices.get_unchecked(i) } as usize;
         let bin = unsafe { *bins.get_unchecked(row) } as usize;
         let slot = unsafe { histogram.get_unchecked_mut(bin) };
@@ -255,7 +323,24 @@ fn build_u8_contiguous(
     histogram: &mut [HistogramBin],
     start_row: usize,
 ) {
-    for i in 0..ordered_grad_hess.len() {
+    let n = ordered_grad_hess.len();
+    let pf_end = n.saturating_sub(PREFETCH_OFFSET_U8);
+
+    // Main loop with prefetching (contiguous access pattern)
+    for i in 0..pf_end {
+        // Prefetch bin data for future iteration (sequential in bins)
+        prefetch_read(unsafe { bins.as_ptr().add(start_row + i + PREFETCH_OFFSET_U8) });
+
+        let row = start_row + i;
+        let bin = unsafe { *bins.get_unchecked(row) } as usize;
+        let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
+        let slot = unsafe { histogram.get_unchecked_mut(bin) };
+        slot.0 += gh.grad as f64;
+        slot.1 += gh.hess as f64;
+    }
+
+    // Tail loop without prefetching
+    for i in pf_end..n {
         let row = start_row + i;
         let bin = unsafe { *bins.get_unchecked(row) } as usize;
         let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
@@ -272,7 +357,24 @@ fn build_u16_contiguous(
     histogram: &mut [HistogramBin],
     start_row: usize,
 ) {
-    for i in 0..ordered_grad_hess.len() {
+    let n = ordered_grad_hess.len();
+    let pf_end = n.saturating_sub(PREFETCH_OFFSET_U16);
+
+    // Main loop with prefetching (contiguous access pattern)
+    for i in 0..pf_end {
+        // Prefetch bin data for future iteration (sequential in bins)
+        prefetch_read(unsafe { bins.as_ptr().add(start_row + i + PREFETCH_OFFSET_U16) });
+
+        let row = start_row + i;
+        let bin = unsafe { *bins.get_unchecked(row) } as usize;
+        let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
+        let slot = unsafe { histogram.get_unchecked_mut(bin) };
+        slot.0 += gh.grad as f64;
+        slot.1 += gh.hess as f64;
+    }
+
+    // Tail loop without prefetching
+    for i in pf_end..n {
         let row = start_row + i;
         let bin = unsafe { *bins.get_unchecked(row) } as usize;
         let gh = unsafe { *ordered_grad_hess.get_unchecked(i) };
