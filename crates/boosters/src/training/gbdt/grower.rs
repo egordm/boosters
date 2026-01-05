@@ -218,6 +218,23 @@ impl TreeGrower {
         }
     }
 
+    /// Update a cached leaf value for fast prediction updates after leaf renewing.
+    ///
+    /// When leaf values are renewed (e.g., for quantile objectives), the cached
+    /// values in `last_leaf_values` become stale. This method updates them so that
+    /// `update_predictions_from_last_tree` can be used instead of tree traversal.
+    ///
+    /// # Arguments
+    /// * `partitioner_node` - The partitioner node ID (from `leaf_node_mapping()`)
+    /// * `new_value` - The new leaf value (already scaled by learning rate)
+    #[inline]
+    pub fn update_cached_leaf_value(&mut self, partitioner_node: NodeId, new_value: f32) {
+        let node = partitioner_node as usize;
+        if node < self.last_leaf_values.len() {
+            self.last_leaf_values[node] = new_value;
+        }
+    }
+
     /// Record a leaf value for fast prediction updates.
     /// Also records the mapping from tree node to partitioner node.
     fn record_leaf_value(&mut self, tree_node: NodeId, partitioner_node: NodeId, weight: f32) {

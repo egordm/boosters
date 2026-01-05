@@ -292,15 +292,19 @@ fn build_sparse_u8_contiguous(
 ) {
     let start = start_row as u32;
     let end = start + ordered_grad_hess.len() as u32;
-    for (i, &row) in sample_indices.iter().enumerate() {
-        if row < start || row >= end {
-            continue;
+    // Binary search to find first index >= start
+    let first = sample_indices.partition_point(|&r| r < start);
+    for i in first..sample_indices.len() {
+        let row = unsafe { *sample_indices.get_unchecked(i) };
+        if row >= end {
+            break; // Early exit when past range
         }
         let idx = (row - start) as usize;
-        let bin = bin_values[i] as usize;
+        let bin = unsafe { *bin_values.get_unchecked(i) } as usize;
         let gh = unsafe { *ordered_grad_hess.get_unchecked(idx) };
-        histogram[bin].0 += gh.grad as f64;
-        histogram[bin].1 += gh.hess as f64;
+        let slot = unsafe { histogram.get_unchecked_mut(bin) };
+        slot.0 += gh.grad as f64;
+        slot.1 += gh.hess as f64;
     }
 }
 
@@ -314,15 +318,19 @@ fn build_sparse_u16_contiguous(
 ) {
     let start = start_row as u32;
     let end = start + ordered_grad_hess.len() as u32;
-    for (i, &row) in row_indices.iter().enumerate() {
-        if row < start || row >= end {
-            continue;
+    // Binary search to find first index >= start
+    let first = row_indices.partition_point(|&r| r < start);
+    for i in first..row_indices.len() {
+        let row = unsafe { *row_indices.get_unchecked(i) };
+        if row >= end {
+            break; // Early exit when past range
         }
         let idx = (row - start) as usize;
-        let bin = bin_values[i] as usize;
+        let bin = unsafe { *bin_values.get_unchecked(i) } as usize;
         let gh = unsafe { *ordered_grad_hess.get_unchecked(idx) };
-        histogram[bin].0 += gh.grad as f64;
-        histogram[bin].1 += gh.hess as f64;
+        let slot = unsafe { histogram.get_unchecked_mut(bin) };
+        slot.0 += gh.grad as f64;
+        slot.1 += gh.hess as f64;
     }
 }
 

@@ -263,30 +263,39 @@ impl GBDTTrainer {
                 // For these objectives, the optimal leaf value is the α-quantile of residuals,
                 // not the Newton-step from gradient sums. This follows XGBoost/LightGBM pattern.
                 if needs_leaf_renew {
-                    // Get leaf info from grower
-                    let leaf_mapping = grower.leaf_node_mapping();
-                    let partitioner = grower.partitioner();
+                    // Collect renewed values first, then update grower's cached values
+                    let renewed_values: Vec<_> = {
+                        let leaf_mapping = grower.leaf_node_mapping();
+                        let partitioner = grower.partitioner();
+                        leaf_mapping
+                            .iter()
+                            .filter_map(|&(tree_node, part_node)| {
+                                let indices = partitioner.get_leaf_indices(part_node);
+                                if indices.is_empty() {
+                                    return None;
+                                }
+                                let new_value = self.objective.renew_single_leaf_value(
+                                    output,
+                                    indices,
+                                    targets,
+                                    predictions.view(),
+                                    weights,
+                                    &mut quantile_scratch,
+                                );
+                                if new_value.is_nan() {
+                                    None
+                                } else {
+                                    Some((tree_node, part_node, new_value))
+                                }
+                            })
+                            .collect()
+                    };
 
-                    // Update leaf values directly (avoiding intermediate allocations)
-                    for &(tree_node, part_node) in leaf_mapping.iter() {
-                        let indices = partitioner.get_leaf_indices(part_node);
-                        if indices.is_empty() {
-                            continue;
-                        }
-
-                        let new_value = self.objective.renew_single_leaf_value(
-                            output,
-                            indices,
-                            targets,
-                            predictions.view(),
-                            weights,
-                            &mut quantile_scratch,
-                        );
-
-                        if !new_value.is_nan() {
-                            let scaled_value = new_value * self.params.learning_rate;
-                            mutable_tree.set_leaf_value(tree_node, ScalarLeaf(scaled_value));
-                        }
+                    // Apply renewed values
+                    for (tree_node, part_node, new_value) in renewed_values {
+                        let scaled_value = new_value * self.params.learning_rate;
+                        mutable_tree.set_leaf_value(tree_node, ScalarLeaf(scaled_value));
+                        grower.update_cached_leaf_value(part_node, scaled_value);
                     }
                 }
 
@@ -324,18 +333,19 @@ impl GBDTTrainer {
 
                 // Update predictions (row of Array2)
                 let output_preds = predictions.row_mut(output);
-                // Use fast path only when no sampling, no linear leaves, and no leaf renewing.
+                // Use fast path when possible:
+                // - No sampling (all rows are in partitioner)
+                // - No linear leaves (require computing linear predictions)
                 // Linear leaves require tree.predict_into to compute correct predictions
                 // since grower.update_predictions_from_last_tree uses only scalar values.
-                // Leaf renewing updates leaf values after grow(), so cached values are stale.
+                // Note: leaf renewing now updates cached values, so fast path works!
                 let has_linear_leaves = tree.has_linear_leaves();
-                if sampled.is_none() && !has_linear_leaves && !needs_leaf_renew {
+                if sampled.is_none() && !has_linear_leaves {
                     // Fast path: use partitioner for O(n) prediction update
                     grower.update_predictions_from_last_tree(output_preds);
                 } else {
                     // Fallback: row sampling trains on a subset, or linear leaves
                     // require computing linear predictions for correct gradient updates.
-                    // Leaf renewing also requires this path as cached values are outdated.
                     tree.predict_into(dataset, output_preds, parallelism);
                 }
 
