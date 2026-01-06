@@ -21,6 +21,6 @@ mod solver;
 mod trainer;
 
 pub use buffer::LeafFeatureBuffer;
-pub use config::LinearLeafConfig;
+pub use config::{LinearFeatureSelection, LinearLeafConfig};
 pub use solver::WeightedLeastSquaresSolver;
 pub use trainer::{FittedLeaf, LeafLinearTrainer};

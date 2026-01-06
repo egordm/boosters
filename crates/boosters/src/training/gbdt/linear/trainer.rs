@@ -1,7 +1,7 @@
 //! Leaf linear trainer for fitting linear models at tree leaves.
 //!
 //! Orchestrates the full training flow:
-//! 1. For each leaf, select path features (numeric splits on root→leaf path)
+//! 1. For each leaf, select features (path or global based on config)
 //! 2. Gather feature values into column-major buffer
 //! 3. Fit weighted least squares using coordinate descent
 //! 4. Return fitted coefficients
@@ -13,7 +13,9 @@ use crate::repr::gbdt::{MutableTree, ScalarLeaf, SplitType, TreeView};
 use crate::training::gbdt::partition::RowPartitioner;
 use crate::training::{Gradients, GradsTuple};
 
-use super::{LeafFeatureBuffer, LinearLeafConfig, WeightedLeastSquaresSolver};
+use super::{
+    LeafFeatureBuffer, LinearFeatureSelection, LinearLeafConfig, WeightedLeastSquaresSolver,
+};
 
 /// Result of fitting a linear model to a leaf.
 #[derive(Debug, Clone)]
@@ -57,6 +59,8 @@ pub struct LeafLinearTrainer {
     solver: WeightedLeastSquaresSolver,
     /// Pre-allocated gradient/hessian buffer (reused per leaf)
     grad_hess_buffer: Vec<GradsTuple>,
+    /// Cached global features for GlobalFeatures mode (computed once per tree)
+    cached_global_features: Vec<u32>,
 }
 
 impl LeafLinearTrainer {
@@ -70,6 +74,7 @@ impl LeafLinearTrainer {
             feature_buffer: LeafFeatureBuffer::new(max_leaf_samples, config.max_features),
             solver: WeightedLeastSquaresSolver::new(config.max_features),
             grad_hess_buffer: vec![GradsTuple::default(); max_leaf_samples],
+            cached_global_features: Vec::new(),
             config,
         }
     }
@@ -79,10 +84,40 @@ impl LeafLinearTrainer {
         &self.config
     }
 
+    /// Compute global features from a tree based on split frequency.
+    ///
+    /// Returns the top-k most frequently used numeric features across all splits.
+    /// This is used for GlobalFeatures mode where all leaves use the same features.
+    fn compute_global_features<T: TreeView>(&self, tree: &T) -> Vec<u32> {
+        use std::collections::HashMap;
+
+        let mut feature_counts: HashMap<u32, u32> = HashMap::new();
+
+        // Walk all nodes and count numeric split features
+        for node_id in 0..tree.n_nodes() {
+            if !tree.is_leaf(node_id as u32)
+                && tree.split_type(node_id as u32) == SplitType::Numeric
+            {
+                let feat = tree.split_index(node_id as u32);
+                *feature_counts.entry(feat).or_insert(0) += 1;
+            }
+        }
+
+        // Sort by count (descending) and take top-k
+        let mut features: Vec<(u32, u32)> = feature_counts.into_iter().collect();
+        features.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+
+        features
+            .into_iter()
+            .take(self.config.max_features)
+            .map(|(f, _)| f)
+            .collect()
+    }
+
     /// Train linear models for all leaves in a tree.
     ///
     /// Returns a vector of fitted leaves. Leaves that are skipped (too few samples,
-    /// no numeric path features, or failed convergence) are not included.
+    /// no features, or failed convergence) are not included.
     ///
     /// # Arguments
     /// * `tree` - The tree being trained (implements TreeView for path traversal)
@@ -111,6 +146,18 @@ impl LeafLinearTrainer {
         output: usize,
         learning_rate: f32,
     ) -> Vec<FittedLeaf> {
+        // Compute global features once if using GlobalFeatures mode
+        let use_global = matches!(
+            self.config.feature_selection,
+            LinearFeatureSelection::GlobalFeatures
+        );
+        if use_global {
+            self.cached_global_features = self.compute_global_features(tree);
+            if self.cached_global_features.is_empty() {
+                return Vec::new();
+            }
+        }
+
         let mut results = Vec::new();
 
         for &(tree_node, partitioner_node) in leaf_node_mapping {
@@ -121,8 +168,13 @@ impl LeafLinearTrainer {
                 continue;
             }
 
-            // Select path features (numeric only) - uses tree node ID
-            let features = self.select_path_features(tree, tree_node);
+            // Select features based on mode
+            let features = if use_global {
+                self.cached_global_features.clone()
+            } else {
+                self.select_path_features(tree, tree_node)
+            };
+
             if features.is_empty() {
                 continue;
             }

@@ -290,33 +290,35 @@ impl GBDTTrainer {
                     }
                 }
 
-                // Fit linear models in leaves (skip round 0: homogeneous gradients)
-                // Only fit if linear_leaves config is set and we're past round 0
-                if round > 0
-                    && let Some(ref mut linear_trainer) = linear_trainer
-                {
-                    let fitted = linear_trainer.train(
-                        &mutable_tree,
-                        dataset,
-                        grower.partitioner(),
-                        grower.leaf_node_mapping(),
-                        &gradients,
-                        output,
-                        self.params.learning_rate,
-                    );
-                    // Apply fitted coefficients to tree
-                    #[cfg(debug_assertions)]
-                    let fitted_count = fitted.len();
-                    for leaf in fitted {
-                        mutable_tree.set_linear_leaf(
-                            leaf.node_id,
-                            leaf.features,
-                            leaf.intercept,
-                            leaf.coefficients,
+                // Fit linear models in leaves
+                // Skip first N trees based on config (default 1: first tree has homogeneous gradients)
+                // Only fit if linear_leaves config is set
+                if let Some(ref mut linear_trainer) = linear_trainer {
+                    let skip_n = linear_trainer.config().skip_first_n_trees;
+                    if round >= skip_n {
+                        let fitted = linear_trainer.train(
+                            &mutable_tree,
+                            dataset,
+                            grower.partitioner(),
+                            grower.leaf_node_mapping(),
+                            &gradients,
+                            output,
+                            self.params.learning_rate,
                         );
+                        // Apply fitted coefficients to tree
+                        #[cfg(debug_assertions)]
+                        let fitted_count = fitted.len();
+                        for leaf in fitted {
+                            mutable_tree.set_linear_leaf(
+                                leaf.node_id,
+                                leaf.features,
+                                leaf.intercept,
+                                leaf.coefficients,
+                            );
+                        }
+                        #[cfg(debug_assertions)]
+                        eprintln!("Round {}: set {} linear leaves", round, fitted_count);
                     }
-                    #[cfg(debug_assertions)]
-                    eprintln!("Round {}: set {} linear leaves", round, fitted_count);
                 }
 
                 // Freeze tree

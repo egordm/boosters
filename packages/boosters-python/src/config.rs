@@ -226,6 +226,15 @@ pub struct PyGBDTConfig {
     /// Maximum features in linear model per leaf.
     #[pyo3(get)]
     pub linear_max_features: u32,
+    /// Use global features instead of path features for linear models.
+    /// When true, uses the top-k most frequently split features for all leaves.
+    /// This can improve extrapolation by ensuring important features are always included.
+    #[pyo3(get)]
+    pub linear_use_global_features: bool,
+    /// Number of initial trees to skip linear leaf fitting.
+    /// Default is 1 (first tree has homogeneous gradients). Set to 0 to enable from first tree.
+    #[pyo3(get)]
+    pub linear_skip_first_n_trees: u32,
 
     // === Binning ===
     /// Maximum bins per feature for binning (1-256).
@@ -295,6 +304,8 @@ impl PyGBDTConfig {
         linear_min_samples = 50,
         linear_coefficient_threshold = 1e-6,
         linear_max_features = 10,
+        linear_use_global_features = false,
+        linear_skip_first_n_trees = 1,
         max_bins = 256,
         enable_bundling = true,
         sparsity_threshold = 0.9,
@@ -331,6 +342,8 @@ impl PyGBDTConfig {
         linear_min_samples: u32,
         linear_coefficient_threshold: f32,
         linear_max_features: u32,
+        linear_use_global_features: bool,
+        linear_skip_first_n_trees: u32,
         max_bins: u32,
         enable_bundling: bool,
         sparsity_threshold: f32,
@@ -380,6 +393,8 @@ impl PyGBDTConfig {
             linear_min_samples,
             linear_coefficient_threshold,
             linear_max_features,
+            linear_use_global_features,
+            linear_skip_first_n_trees,
             max_bins,
             enable_bundling,
             sparsity_threshold,
@@ -441,6 +456,8 @@ impl Default for PyGBDTConfig {
             linear_min_samples: 50,
             linear_coefficient_threshold: 1e-6,
             linear_max_features: 10,
+            linear_use_global_features: false,
+            linear_skip_first_n_trees: 1,
             max_bins: 256,
             enable_bundling: true,
             sparsity_threshold: 0.9,
@@ -479,6 +496,12 @@ impl From<&PyGBDTConfig> for boosters::GBDTConfig {
 
         // Convert linear leaves config (optional)
         let linear_leaves = if py_config.linear_leaves {
+            use boosters::training::gbdt::LinearFeatureSelection;
+            let feature_selection = if py_config.linear_use_global_features {
+                LinearFeatureSelection::GlobalFeatures
+            } else {
+                LinearFeatureSelection::PathFeatures
+            };
             Some(boosters::training::gbdt::LinearLeafConfig {
                 lambda: py_config.linear_l2,
                 alpha: py_config.linear_l1,
@@ -487,6 +510,8 @@ impl From<&PyGBDTConfig> for boosters::GBDTConfig {
                 min_samples: py_config.linear_min_samples as usize,
                 coefficient_threshold: py_config.linear_coefficient_threshold,
                 max_features: py_config.linear_max_features as usize,
+                feature_selection,
+                skip_first_n_trees: py_config.linear_skip_first_n_trees,
             })
         } else {
             None
@@ -553,7 +578,11 @@ impl From<&boosters::GBDTConfig> for PyGBDTConfig {
             linear_min_samples,
             linear_coefficient_threshold,
             linear_max_features,
+            linear_use_global_features,
+            linear_skip_first_n_trees,
         ) = if let Some(ref ll) = config.linear_leaves {
+            use boosters::training::gbdt::LinearFeatureSelection;
+            let use_global = matches!(ll.feature_selection, LinearFeatureSelection::GlobalFeatures);
             (
                 true,
                 ll.lambda,
@@ -563,9 +592,11 @@ impl From<&boosters::GBDTConfig> for PyGBDTConfig {
                 ll.min_samples as u32,
                 ll.coefficient_threshold,
                 ll.max_features as u32,
+                use_global,
+                ll.skip_first_n_trees,
             )
         } else {
-            (false, 0.01, 0.0, 10, 1e-6, 50, 1e-6, 10)
+            (false, 0.01, 0.0, 10, 1e-6, 50, 1e-6, 10, false, 1)
         };
 
         // Convert verbosity
@@ -601,6 +632,8 @@ impl From<&boosters::GBDTConfig> for PyGBDTConfig {
             linear_min_samples,
             linear_coefficient_threshold,
             linear_max_features,
+            linear_use_global_features,
+            linear_skip_first_n_trees,
             max_bins: config.binning.max_bins,
             enable_bundling: config.binning.enable_bundling,
             sparsity_threshold: config.binning.sparsity_threshold,

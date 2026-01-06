@@ -29,7 +29,9 @@ pub use histograms::{
     FeatureView, HistogramBin, HistogramBuilder, HistogramLayout, HistogramPool, HistogramSlot,
     HistogramSlotMut,
 };
-pub use linear::{LeafFeatureBuffer, LinearLeafConfig, WeightedLeastSquaresSolver};
+pub use linear::{
+    LeafFeatureBuffer, LinearFeatureSelection, LinearLeafConfig, WeightedLeastSquaresSolver,
+};
 pub use partition::{LeafId, RowPartitioner};
 pub use split::{DEFAULT_MAX_ONEHOT_CATS, GainParams, GreedySplitter, SplitInfo, SplitType};
 pub use trainer::{GBDTParams, GBDTTrainer};

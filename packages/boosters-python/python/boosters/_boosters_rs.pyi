@@ -385,6 +385,19 @@ class GBDTConfig:
         Maximum features in linear model per leaf.
         """
     @property
+    def linear_use_global_features(self) -> builtins.bool:
+        r"""
+        Use global features instead of path features for linear models.
+        When true, uses the top-k most frequently split features for all leaves.
+        This can improve extrapolation by ensuring important features are always included.
+        """
+    @property
+    def linear_skip_first_n_trees(self) -> builtins.int:
+        r"""
+        Number of initial trees to skip linear leaf fitting.
+        Default is 1 (first tree has homogeneous gradients). Set to 0 to enable from first tree.
+        """
+    @property
     def max_bins(self) -> builtins.int:
         r"""
         Maximum bins per feature for binning (1-256).
@@ -442,7 +455,7 @@ class GBDTConfig:
         r"""
         Get the evaluation metric (or None).
         """
-    def __new__(cls, n_estimators: builtins.int = 100, learning_rate: builtins.float = 0.30000001192092896, objective: Objective | None = None, metric: Metric | None = None, growth_strategy: GrowthStrategy = GrowthStrategy.Depthwise, max_depth: builtins.int = 6, n_leaves: builtins.int = 31, max_onehot_cats: builtins.int = 4, l1: builtins.float = 0.0, l2: builtins.float = 1.0, min_gain_to_split: builtins.float = 0.0, min_child_weight: builtins.float = 1.0, min_samples_leaf: builtins.int = 1, subsample: builtins.float = 1.0, colsample_bytree: builtins.float = 1.0, colsample_bylevel: builtins.float = 1.0, linear_leaves: builtins.bool = False, linear_l2: builtins.float = 0.009999999776482582, linear_l1: builtins.float = 0.0, linear_max_iterations: builtins.int = 10, linear_tolerance: builtins.float = 1e-06, linear_min_samples: builtins.int = 50, linear_coefficient_threshold: builtins.float = 9.999999974752427e-07, linear_max_features: builtins.int = 10, max_bins: builtins.int = 256, enable_bundling: builtins.bool = True, sparsity_threshold: builtins.float = 0.8999999761581421, max_categorical_cardinality: builtins.int = 0, binning_sample_cnt: builtins.int = 200000, cache_size: builtins.int = 8, early_stopping_rounds: typing.Optional[builtins.int] = None, seed: builtins.int = 42, verbosity: Verbosity = Verbosity.Silent) -> GBDTConfig: ...
+    def __new__(cls, n_estimators: builtins.int = 100, learning_rate: builtins.float = 0.30000001192092896, objective: Objective | None = None, metric: Metric | None = None, growth_strategy: GrowthStrategy = GrowthStrategy.Depthwise, max_depth: builtins.int = 6, n_leaves: builtins.int = 31, max_onehot_cats: builtins.int = 4, l1: builtins.float = 0.0, l2: builtins.float = 1.0, min_gain_to_split: builtins.float = 0.0, min_child_weight: builtins.float = 1.0, min_samples_leaf: builtins.int = 1, subsample: builtins.float = 1.0, colsample_bytree: builtins.float = 1.0, colsample_bylevel: builtins.float = 1.0, linear_leaves: builtins.bool = False, linear_l2: builtins.float = 0.009999999776482582, linear_l1: builtins.float = 0.0, linear_max_iterations: builtins.int = 10, linear_tolerance: builtins.float = 1e-06, linear_min_samples: builtins.int = 50, linear_coefficient_threshold: builtins.float = 9.999999974752427e-07, linear_max_features: builtins.int = 10, linear_use_global_features: builtins.bool = False, linear_skip_first_n_trees: builtins.int = 1, max_bins: builtins.int = 256, enable_bundling: builtins.bool = True, sparsity_threshold: builtins.float = 0.8999999761581421, max_categorical_cardinality: builtins.int = 0, binning_sample_cnt: builtins.int = 200000, cache_size: builtins.int = 8, early_stopping_rounds: typing.Optional[builtins.int] = None, seed: builtins.int = 42, verbosity: Verbosity = Verbosity.Silent) -> GBDTConfig: ...
     def __repr__(self) -> builtins.str: ...
 
 @typing.final
