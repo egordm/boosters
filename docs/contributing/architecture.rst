@@ -39,7 +39,4 @@ See the :doc:`/design/rfcs` section for detailed RFCs on:
 Contributing Guidelines
 -----------------------
 
-For detailed contribution guidelines, see the 
-`.github/instructions/CONTRIBUTING.instructions.md 
-<https://github.com/your-org/booste-rs/blob/main/.github/instructions/CONTRIBUTING.instructions.md>`_
-file in the repository.
+For detailed contribution guidelines, see the :doc:`/contributing/development` section.

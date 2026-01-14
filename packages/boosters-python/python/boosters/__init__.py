@@ -12,7 +12,7 @@ Example:
 
 See Also:
     - RFC-0014 for API design rationale
-    - https://github.com/egordm/boosters for documentation
+    - https://github.com/egordm/booste-rs for documentation
 """
 
 # Explainability types
