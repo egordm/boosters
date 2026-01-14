@@ -129,14 +129,12 @@ version = "0.1.0"
 source = { editable = "packages/boosters-python" }
 dependencies = [
     { name = "numpy" },
+    { name = "pydantic" },
 ]
 
 [package.optional-dependencies]
 pandas = [
     { name = "pandas" },
-]
-schema = [
-    { name = "pydantic" },
 ]
 
 [package.dev-dependencies]
@@ -148,9 +146,9 @@ dev = [
 requires-dist = [
     { name = "numpy", specifier = ">=1.26" },
     { name = "pandas", marker = "extra == 'pandas'", specifier = ">=2" },
-    { name = "pydantic", marker = "extra == 'schema'", specifier = ">=2" },
+    { name = "pydantic", specifier = ">=2" },
 ]
-provides-extras = ["pandas", "schema"]
+provides-extras = ["pandas"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "polars", specifier = ">=1.36.1" }]
