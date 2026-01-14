@@ -170,7 +170,7 @@ cmd = "pyright packages/*/tests"
 
 [tool.poe.tasks."python:test"]
 help = "Run pytests"
-cmd = "pytest ${markers:+ -m $markers} --cov --cov-report=term-missing --cov-report=xml:target/coverage.xml"
+cmd = "pytest ${markers:+ -m $markers} --maxfail=1 --cov --cov-report=term-missing --cov-report=xml:target/coverage.xml"
 args = [
   { name = "markers", type = "string", default = "", help = "Only run tests matching the given pytest markers expression" },
 ]

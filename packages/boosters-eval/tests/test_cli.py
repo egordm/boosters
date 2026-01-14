@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 
 from boosters_eval.cli import app
 
-runner = CliRunner()
+runner = CliRunner(env={"NO_COLOR": "1"})
 
 
 class TestCliHelp:
@@ -157,7 +157,7 @@ class TestReportCommand:
 
     def test_report_help(self) -> None:
         """Test report command help."""
-        result = runner.invoke(app, ["report", "--help"], env={"NO_COLOR": "1"})
+        result = runner.invoke(app, ["report", "--help"])
         assert result.exit_code == 0
         assert "dry-run" in result.stdout.lower()
         assert "output" in result.stdout.lower()
