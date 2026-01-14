@@ -6,7 +6,7 @@ A fast, pure-Rust gradient boosting library for training and inference.
 [![PyPI](https://img.shields.io/pypi/v/boosters)](https://pypi.org/project/boosters/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> **Work in Progress**: This library is under active development but already functional for training and inference with XGBoost/LightGBM compatibility.
+> **Work in Progress**: This library is under active development but already functional for training and inference with XGBoost/LightGBM compatibility. **Python bindings available via `pip install boosters`**
 
 ## What is boosters?
 
@@ -165,9 +165,6 @@ Equal or better across regression, binary, and multiclass tasks — with booster
   - Python utilities to convert from XGBoost/LightGBM
   - DART booster support
   - Sample weights
-
-- **Data I/O**
-  - Arrow IPC and Parquet loading (feature-gated)
 
 ## Documentation
 
