@@ -170,14 +170,14 @@ cmd = "pyright packages/*/tests"
 
 [tool.poe.tasks."python:test"]
 help = "Run pytests"
-cmd = "pytest ${markers:+ -m $markers} --maxfail=1 --cov --cov-report=term-missing --cov-report=xml:target/coverage.xml"
+cmd = "pytest ${markers:+ -m $markers} --cov --cov-report=term-missing --cov-report=xml:target/coverage.xml"
 args = [
   { name = "markers", type = "string", default = "", help = "Only run tests matching the given pytest markers expression" },
 ]
 
 [tool.poe.tasks."python:doctest"]
 help = "Run all docstring examples via pytest's doctest plugin"
-cmd = "pytest --doctest-modules packages/*/src --maxfail=1"
+cmd = "pytest --doctest-modules packages/*/src"
 
 [tool.poe.tasks."python:stubs-gen"]
 help = "Generate Python type stubs for boosters-python"
@@ -294,7 +294,7 @@ switch = [
     "python:test",
     "python:doctest",
     # "eval:check", # Takes too long. Figure out later how to do this efficiently in CI
-  ], ignore_fail = "return_non_zero" },
+  ] },
   { sequence = [
     "python:lint",
     "python:format",
@@ -315,7 +315,7 @@ switch = [
     "rust:lint --check",
     "rust:test:core --all",
     "rust:test:python",
-  ], ignore_fail = "return_non_zero" },
+  ] },
   { sequence = [
     "rust:format",
     "rust:lint",
@@ -330,7 +330,7 @@ switch = [
   { case = true, sequence = [
     "python:all --check",
     "rust:all --check",
-  ], ignore_fail = "return_non_zero" },
+  ] },
   { sequence = [
     "python:all",
     "rust:all",
