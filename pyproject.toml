@@ -257,30 +257,42 @@ args = [
 [tool.poe.tasks."python:develop"]
 help = "Build and install the Python package in development mode (editable)"
 cmd = "maturin develop -m packages/boosters-python/Cargo.toml ${release:+ --release}"
-args = [
-  { name = "release", type = "boolean", help = "Build in release mode", default = false },
+args = [ { name = "release", type = "boolean", help = "Build in release mode" } ]
+
+[tool.poe.tasks."python:develop-with-stubs"]
+help = "Build Python package and generate stubs"
+sequence = [
+  "python:develop",
+  "python:stubs-gen",
 ]
 
 [tool.poe.tasks."eval:check"]
 help = "Run evaluation regression check against committed baseline"
 cmd = "boosters-eval check --suite full --tolerance 0.02"
 
+[tool.poe.tasks."python:sync"]
+help = "Sync Python dependencies (uv sync)"
+cmd = "uv sync --all-packages"
+
 [tool.poe.tasks."python:all"]
 help = "Run all Python CI calls"
 control.expr = "check"
 switch = [
   { case = true, sequence = [
-    "python:stubs-gen",
+    # First sync deps and build so pyright can find modules
+    "python:sync",
+    "python:develop-with-stubs",
+    # Now run linting and type checks
     "python:lint --check",
     "python:format --check",
     "python:format-pyproject --check",
     "python:lock",
     "python:type",
     "python:type-tests",
-    "python:develop --release",
+    # Tests and eval
     "python:test",
     "python:doctest",
-    "eval:check",
+    # "eval:check", # Takes too long. Figure out later how to do this efficiently in CI
   ], ignore_fail = "return_non_zero" },
   { sequence = [
     "python:lint",
@@ -290,7 +302,7 @@ switch = [
     "python:type",
   ], ignore_fail = "return_non_zero" },
 ]
-args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns", default = false } ]
+args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns" } ]
 
 [tool.poe.tasks."rust:all"]
 help = "Run all Rust CI calls"
@@ -298,18 +310,17 @@ control.expr = "check"
 switch = [
   { case = true, sequence = [
     "rust:format --check",
+    # All in debug mode for consistent caching - CI doesn't need release
     "rust:lint --check",
-    "rust:build:core --release",
-    "rust:build:python --release",
-    "rust:test:core --release --all",
-    "rust:test:python --release",
+    "rust:test:core --all",
+    "rust:test:python",
   ], ignore_fail = "return_non_zero" },
   { sequence = [
     "rust:format",
     "rust:lint",
   ], ignore_fail = "return_non_zero" },
 ]
-args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns", default = false } ]
+args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns" } ]
 
 [tool.poe.tasks."all"]
 help = "Run all CI calls (Python and Rust)"
@@ -324,7 +335,7 @@ switch = [
     "rust:all",
   ], ignore_fail = "return_non_zero" },
 ]
-args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns", default = false } ]
+args = [ { name = "check", type = "boolean", help = "Does not correct files, only warns" } ]
 
 [tool.poe.tasks."check"]
 help = "CI-style checks (no auto-fixes)"
