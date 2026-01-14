@@ -294,7 +294,7 @@ switch = [
     "python:test",
     "python:doctest",
     # "eval:check", # Takes too long. Figure out later how to do this efficiently in CI
-  ] },
+  ], ignore_fail = "return_non_zero" },
   { sequence = [
     "python:lint",
     "python:format",
