@@ -1,6 +1,7 @@
 """Test pickle serialization for boosters models."""
 
 import pickle
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -9,7 +10,7 @@ from boosters import Dataset, GBDTConfig, GBDTModel, GBLinearConfig, GBLinearMod
 
 
 @pytest.fixture
-def simple_dataset():
+def simple_dataset() -> Dataset:
     """Create a simple synthetic dataset for testing."""
     rng = np.random.default_rng(42)
     X = rng.standard_normal((100, 5), dtype=np.float32)
@@ -17,7 +18,7 @@ def simple_dataset():
     return Dataset(X, y)
 
 
-def test_gbdt_pickle_roundtrip(simple_dataset):
+def test_gbdt_pickle_roundtrip(simple_dataset: Dataset) -> None:
     """Test that GBDTModel can be pickled and unpickled."""
     # Train a simple model
     config = GBDTConfig(
@@ -34,7 +35,7 @@ def test_gbdt_pickle_roundtrip(simple_dataset):
 
     # Pickle and unpickle
     pickled = pickle.dumps(model)
-    restored = pickle.loads(pickled)
+    restored = pickle.loads(pickled)  # noqa: S301 - Testing pickle serialization
 
     # Verify predictions match
     predictions_after = restored.predict(simple_dataset)
@@ -45,7 +46,7 @@ def test_gbdt_pickle_roundtrip(simple_dataset):
     assert restored.n_features == model.n_features
 
 
-def test_gblinear_pickle_roundtrip(simple_dataset):
+def test_gblinear_pickle_roundtrip(simple_dataset: Dataset) -> None:
     """Test that GBLinearModel can be pickled and unpickled."""
     # Train a simple model
     config = GBLinearConfig(
@@ -63,7 +64,7 @@ def test_gblinear_pickle_roundtrip(simple_dataset):
 
     # Pickle and unpickle
     pickled = pickle.dumps(model)
-    restored = pickle.loads(pickled)
+    restored = pickle.loads(pickled)  # noqa: S301 - Testing pickle serialization
 
     # Verify predictions match
     predictions_after = restored.predict(simple_dataset)
@@ -77,7 +78,7 @@ def test_gblinear_pickle_roundtrip(simple_dataset):
     assert restored.n_features_in_ == model.n_features_in_
 
 
-def test_pickle_protocol_versions(simple_dataset):
+def test_pickle_protocol_versions(simple_dataset: Dataset) -> None:
     """Test that pickling works with different protocol versions."""
     config = GBDTConfig(n_estimators=5, max_depth=2)
     model = GBDTModel.train(simple_dataset, config=config)
@@ -87,12 +88,12 @@ def test_pickle_protocol_versions(simple_dataset):
     # Test with different pickle protocols
     for protocol in range(pickle.HIGHEST_PROTOCOL + 1):
         pickled = pickle.dumps(model, protocol=protocol)
-        restored = pickle.loads(pickled)
+        restored = pickle.loads(pickled)  # noqa: S301 - Testing pickle serialization
         predictions_restored = restored.predict(simple_dataset)
         np.testing.assert_array_almost_equal(predictions_original, predictions_restored, decimal=6)
 
 
-def test_pickle_file_io(simple_dataset, tmp_path):
+def test_pickle_file_io(simple_dataset: Dataset, tmp_path: Path) -> None:
     """Test that models can be saved to and loaded from pickle files."""
     # Train model
     config = GBDTConfig(n_estimators=10, max_depth=3)
@@ -101,12 +102,10 @@ def test_pickle_file_io(simple_dataset, tmp_path):
 
     # Save to file
     pickle_path = tmp_path / "model.pkl"
-    with open(pickle_path, "wb") as f:
-        pickle.dump(model, f)
+    pickle_path.write_bytes(pickle.dumps(model))
 
     # Load from file
-    with open(pickle_path, "rb") as f:
-        restored = pickle.load(f)
+    restored = pickle.loads(pickle_path.read_bytes())  # noqa: S301 - Testing pickle serialization
 
     # Verify
     predictions_after = restored.predict(simple_dataset)

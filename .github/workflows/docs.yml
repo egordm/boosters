@@ -1,11 +1,8 @@
 name: Documentation
 
-# DISABLED: Using poe tasks in ci.yml instead
 on:
   push:
-    branches: [never]  # Disable this workflow
-  pull_request:
-    branches: [never]  # Disable this workflow
+    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
